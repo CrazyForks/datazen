@@ -10,7 +10,7 @@
 CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 ```
 
-**当前 Phase: READY_FOR_TEST**（Coder 第 1 轮 Bug 修复完成：BUG-001/BUG-002 均已修复，待 Tester 复测；见 `bugs.md`）
+**当前 Phase: PASSED**（复测 Tester 第 2 轮：BUG-001/BUG-002 修复复验通过，判定两条 Bug 均 `已修复`；完整套件复跑无新回归，见轮次记录与 `bugs.md` 复测结论）
 
 ## 任务分解（对应方案 §9 实施顺序）
 
@@ -78,20 +78,32 @@ CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 | relativeTime.ts | 96.66% | 95.83% | 100% | 96.66% | ✅（line 68 为公开 API 不可达的防御分支） |
 | ConnectionWorkspaceHome.tsx（主文件） | 74.57% | 66.12% | 74.07% | 75.47% | 参考值：未覆盖行为逐字保留的 State 4 历史区（L412-467 等）与 dialog onClose，非本次改动核心模块 |
 
+### 复测覆盖率（Tester 第 2 轮，ae40645b 修复后）
+
+修复引入的新代码路径（`ConnectionCardList` onKeyDown、`RecentQueriesList` useRelativeTimeLabel 各分支）初测存在覆盖缺口（home/ 聚合 Lines 一度跌至 91.57%），复测 Tester 以 12 条新 [tester] 用例补齐（`home/__tests__/retest-round1-fixes.tester.test.tsx`）：
+
+| 文件 | Lines（复测后） | 对比第 1 轮 | 说明 |
+| --- | --- | --- | --- |
+| home/ 五组件聚合 | **100%** | 100% → 恢复持平 | 缺口已全部补齐 |
+| ConnectionCardList.tsx | 100% | 100% | onKeyDown 键盘分支已覆盖 |
+| RecentQueriesList.tsx | 100% | 100% | justNow/hour/day/>7d/invalid/null-parts 全分支覆盖 |
+| relativeTime.ts | 96.77% | 96.66% | 持平略升（line 75 同为不可达防御分支，第 1 轮已豁免） |
+
 ## 轮次记录
 
 | 轮 | 角色 | 结果 | Commit |
 | --- | --- | --- | --- |
 | 1 | Coder | READY_FOR_TEST（自验 16/16 + 8/8 + 3/3 + tsc 干净；基线预存 4 失败与本轨无关） | `959ab7bc95df82ab513bbd50c883f81265f04c3e` |
 | 2 | Tester | FAILED（Bug ×2 均低严重级：BUG-001 相对时间未接 i18n、BUG-002 卡片行嵌套 button。功能复验全绿：24/24 + 42/42 + 3/3 + tsc 干净 + 基线 4 失败逐一吻合；覆盖率 home/ 100% 行 / relativeTime 96.7% 行；新增 15 条 [tester] 用例） | 见 Tester 提交 |
-| 3 | Coder | BUG-001/BUG-002 修复，READY_FOR_TEST 待复测（指定套件 42/42 + welcome 3/3 + relativeTime 12/12 + tsc 干净；stderr 无 validateDOMNesting；Tester 用例零调整全数通过） | `f3b1ae767ef98e5a42244e1128d0ace11323ddd9` |
+| 3 | Coder | BUG-001/BUG-002 修复，READY_FOR_TEST 待复测（指定套件 42/42 + welcome 3/3 + relativeTime 12/12 + tsc 干净；stderr 无 validateDOMNesting；Tester 用例零调整全数通过） | `ae40645b81638327d2be22b127aea8c22dc0e7e9`（复测更正：原记录 `f3b1ae76…` 为 amend 前的悬空对象，两者仅 progress.md 占位符一行之差） |
+| 4 | Tester 复测 | PASSED（全新实例完整复测：修复审查 + 指定套件 42/42 + welcome 3/3 + relativeTime 12/12 + tsc 干净 + 宽域 src/lib 1234/1238 失败集与基线逐一相同 + validateDOMNesting=0；BUG-001 zh-CN 实质验收以真实 i18n 链通过；覆盖率缺口已用 12 条新 [tester] 用例补齐，home/ 聚合 Lines 恢复 100%；Tester 资产未被 Coder 改动已核实） | 见复测提交 |
 
 ## Bug 修复记录（第 1 轮修复循环，Coder）
 
 | Bug | 状态 | 修复方式 |
 | --- | --- | --- |
-| BUG-001 relativeTime 未接 i18n | **待复测** | 组件层组装：`RecentQueriesList` 内 `useRelativeTimeLabel()` 用 `getRelativeTimeParts` 的 `{value, unit}` 结构 + `t()` 拼装；`relativeTime.ts` API 不变、新增导出 `RELATIVE_WINDOW_MS`；en/zh-CN 补 `queries.justNow/minutesAgo/hoursAgo/daysAgo` 4 key；zh-CN 元信息全中文（「刚刚 / N 分钟前 / N 小时前 / N 天前」） |
-| BUG-002 `<button>` 嵌套 `<button>` | **待复测** | `ConnectionCardList` 卡片行容器 `<button>` → `div[role="button"]` + `tabIndex=0` + Enter/Space `onKeyDown`（参照 State 4 历史行既有模式）；整行点击语义、`home-conn-card-*`/`home-conn-connect-*` testid、内部按钮 `stopPropagation` 均不变；修复后测试 stderr 无 validateDOMNesting 警告 |
+| BUG-001 relativeTime 未接 i18n | **已修复**（复测通过，ae40645b） | 组件层组装：`RecentQueriesList` 内 `useRelativeTimeLabel()` 用 `getRelativeTimeParts` 的 `{value, unit}` 结构 + `t()` 拼装；`relativeTime.ts` API 不变、新增导出 `RELATIVE_WINDOW_MS`；en/zh-CN 补 `queries.justNow/minutesAgo/hoursAgo/daysAgo` 4 key；zh-CN 元信息全中文（「刚刚 / N 分钟前 / N 小时前 / N 天前」）。复测证据：真实 i18n 链 zh-CN/en 渲染断言 + getTranslation key parity 全过（`retest-round1-fixes.tester.test.tsx`） |
+| BUG-002 `<button>` 嵌套 `<button>` | **已修复**（复测通过，ae40645b） | `ConnectionCardList` 卡片行容器 `<button>` → `div[role="button"]` + `tabIndex=0` + Enter/Space `onKeyDown`（参照 State 4 历史行既有模式）；整行点击语义、`home-conn-card-*`/`home-conn-connect-*` testid、内部按钮 `stopPropagation` 均不变。复测证据：stderr validateDOMNesting=0；行 Enter/Space/内层按钮单次触发 canary 全过；ConnectionCardList 行覆盖 100% |
 
 ## 自验结果（Tester 独立复验，79cb6e6）
 
@@ -106,3 +118,20 @@ CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 | State 1/2/4 逐字保留 | 声明不变 | 新旧文件分段 diff：State 1/2 与 State 4 逐字节一致（仅段落边界 1 空行） | ✅ 证实 |
 | i18n 删键残留 | 无残留 | Grep 全仓：src/e2e 无残留（其余 8 语言包 stale key 属开发期约定，运行时回退 en） | ✅ 证实 |
 | `empty-new-query-button` 取消零引用 | 无引用 | Grep 全仓 0 处引用（仅文档提及） | ✅ 证实 |
+
+## 自验结果（复测 Tester 第 2 轮，ae40645b）
+
+| 项 | Coder 自报（第 3 轮） | 复测实测 | 结论 |
+| --- | --- | --- | --- |
+| 指定套件（ConnectionWorkspaceHome + home/ + relativeTime） | 42/42 | 42/42（16+14+12） | ✅ 一致 |
+| `src/windows/welcome` | 3/3 | 3/3 | ✅ 一致 |
+| `npx tsc --noEmit` | 干净 | exit 0（含新增 [tester] 用例复跑） | ✅ 一致 |
+| 宽域 `src/lib` | —（第 1 轮基线 4 失败） | 1234/1238，失败集 fetchRelationDdl×3 + schemaCache×1 与基线逐一相同 | ✅ 无新回归 |
+| stderr validateDOMNesting | 无 | 计数 0（stderr 全量捕获 grep） | ✅ 一致 |
+| Tester 资产零改动 | 声称未动 | `git log 79cb6e68..HEAD -- <tester 资产路径>` 仅 580262bf（Tester 本人提交），ae40645b 未触碰 | ✅ 证实 |
+| zh-CN 渲染（BUG-001 实质） | key 断言（key 式 t mock） | 真实 i18n 链（useI18n→settingsStore→getTranslation 无 mock）渲染「刚刚/2 分钟前/3 小时前/2 天前」+ en 对照 + 两包 key parity 全过 | ✅ 实质验收通过 |
+| BUG-002 双触发核查 | 未专项声明 | 行 onKeyDown preventDefault 先取消内层按钮原生激活，Enter/Space 收敛为单次 onConnect；新增 canary 用例锁定 | ✅ 无双触发 |
+| 覆盖率 home/ 聚合 Lines | — | 修复初测 91.57%（缺口）→ 补 12 条 [tester] 用例后 100% | ✅ 恢复第 1 轮水平 |
+| 范围外改动 | — | 8 文件 +94/−9 全部落在 2 Bug 修复面 + 轨道协调文档；无范围外改动 | ✅ 合规 |
+
+**记录勘误**：第 2 轮记录「relativeTime 13/13（含 [tester] 补 5 条）」与第 3 轮记录「12/12」不符，实测为 **12/12（8 条原有 + 4 条 [tester]，`git diff 79cb6e68 580262bf` 为纯追加）**；第 2 轮「新增 15 条 [tester] 用例」实为 14（home-components）+ 4（relativeTime）= 18。均不影响测试有效性，仅文档计数勘误。
