@@ -4,7 +4,7 @@ Phase: READY_FOR_TEST
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
-Coding commit: recorded in the follow-up progress commit.
+Coding commit: `a0919eeb` (`feat(data-sync): preserve reviewed selection and canonical comparison values`).
 
 ## Wave 1 implementation
 
