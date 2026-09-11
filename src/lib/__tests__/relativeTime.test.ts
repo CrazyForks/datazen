@@ -60,3 +60,32 @@ describe('getRelativeTimeParts', () => {
     expect(getRelativeTimeParts(now - 8 * 86_400_000, now)).toEqual({ value: -8, unit: 'day' });
   });
 });
+
+// [tester] Edge-path coverage for the landing-page-opt track: invalid inputs,
+// the sub-minute bucket reachable only via direct calls, and the non-finite
+// `now` fallback in resolveNow.
+describe('[tester] relativeTime edge paths', () => {
+  it('[tester] getRelativeTimeParts returns null for non-finite / non-positive timestamps', () => {
+    expect(getRelativeTimeParts(Number.NaN)).toBeNull();
+    expect(getRelativeTimeParts(0)).toBeNull();
+    expect(getRelativeTimeParts(-1)).toBeNull();
+    expect(getRelativeTimeParts(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('[tester] getRelativeTimeParts snaps sub-minute deltas to the zero minute bucket', () => {
+    const now = Date.now();
+    expect(getRelativeTimeParts(now - 5_000, now)).toEqual({ value: 0, unit: 'minute' });
+    expect(getRelativeTimeParts(now + 30_000, now)).toEqual({ value: 0, unit: 'minute' });
+  });
+
+  it('[tester] formatRelativeTime rejects non-finite and negative timestamps', () => {
+    expect(formatRelativeTime(Number.POSITIVE_INFINITY)).toBe('');
+    expect(formatRelativeTime(Number.NEGATIVE_INFINITY)).toBe('');
+    expect(formatRelativeTime(-86_400_000)).toBe('');
+  });
+
+  it('[tester] falls back to the real clock when the injected now is not finite', () => {
+    const ts = Date.now() - 2 * 3_600_000;
+    expect(formatRelativeTime(ts, Number.NaN)).toContain('hour');
+  });
+});
