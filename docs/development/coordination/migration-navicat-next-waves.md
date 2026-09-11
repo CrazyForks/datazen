@@ -51,3 +51,8 @@ Each test worktree needs its own Rust target and app data directory. The current
 ## Final acceptance gates
 
 Independent test reports must distinguish measured coverage from code-path estimates, actual database tests from mocks, and tests deferred from tests passed. The core capability matrix, module user journeys, fault recovery and large-table memory behavior must all pass. A hardcoded protective restriction, explicit unsupported message or a green compilation alone is not evidence of Navicat parity. Database families absent from the registry remain implementation work and must be reported honestly.
+
+## Cross-track findings requiring closure before final acceptance
+
+- Transfer driver byte-decoding fixes make typed `Value::Bytes` reach consumers that previously received driver-specific text. `commands/export.rs` currently uses lossy UTF-8 in both CSV/text and JSON formatting; its SQL exporter delegates to the similarly lossy `data_sync::sql::format_literal`. The Sync SQL preview/apply path uses that helper too. Add an independent lossless-value consumer track after shared writer integration: typed synchronization DML, driver-owned SQL-file literals, and lossless CSV/JSON representation with display/export regression tests. Do not declare binary migration correctness solely from Transfer round trips.
+- `store/models.rs::SyncTask` still serializes runtime session IDs and assumes offset-based resumability. Replace or explicitly migrate this legacy format in the profiles/run-lifecycle wave; a restarted process must resolve current connections and never reuse stale session IDs or claim offset resumption is safe.
