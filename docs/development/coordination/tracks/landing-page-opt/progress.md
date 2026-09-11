@@ -1,5 +1,10 @@
 # Track: landing-page-opt — Database Landing Page 优化（未打开任何连接时）
 
+- **任务**: Database 落地页（State 3）重构：home/ 五组件拆分、动态 Hero、连接卡过滤与显式 Connect/Open、相对时间 i18n、MCP promo bar、keymap 快捷键 footer
+- **状态**: MERGED
+- **编码 commit**: 79cb6e68（R1 修复 ae40645b）
+- **测试 commit**: 580262bf（复测补齐 e4c1d48f）
+- **合并 commit**: 795daa43
 - **Worktree**: `.worktrees/datazen-landing-page-opt`（分支 `feature/landing-page-opt`，基于 `main@0fef9fdd`）
 - **方案文档**: `docs/reviews/database-land-page-optimization.md`（本轨随 feature 提交）
 - **协调者**: 主会话 Agent
