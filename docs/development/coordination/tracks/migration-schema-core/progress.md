@@ -4,7 +4,7 @@ Phase: READY_FOR_TEST
 
 Branch: codex/migration-schema-core
 Worktree: /Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-core
-Coding commit: recorded in the follow-up progress commit after implementation commit creation.
+Coding commit: `f6a1b473` (`feat(schema-diff): bind reviewed plans and enforce dependency-safe deployment`).
 
 ## Implemented wave 1
 
