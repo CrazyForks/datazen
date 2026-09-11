@@ -148,6 +148,8 @@ pub struct ColumnTypeOverride {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaDiffPlan {
+    #[serde(default)]
+    pub plan_id: Option<String>,
     pub table: String,
     pub tables: Vec<String>,
     pub source_dialect: String,
@@ -172,6 +174,7 @@ pub struct RollbackCompleteness {
 #[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
     Committed,
+    Unknown,
     RolledBack,
     Mixed,
     Failed,

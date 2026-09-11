@@ -90,6 +90,17 @@ pub async fn prepare_schema_diff_plan(
         .await
         .cmd_err("prepare_schema_diff_plan")?;
 
+    if tgt_config.read_only {
+        return Err(CommandError::Validation(
+            "Target connection is read-only".into(),
+        ));
+    }
+    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config) {
+        return Err(CommandError::Validation(
+            "Source and target must identify different database scopes".into(),
+        ));
+    }
+
     let (src_driver, src_handle) = state
         .connection_manager
         .get_session(&source_db_session_id)
@@ -122,7 +133,7 @@ pub async fn prepare_schema_diff_plan(
     let tgt_d = normalize_dialect(&tgt_config.database_type);
     let include_indexes = include_indexes.unwrap_or(true);
 
-    let plan = if src_d != tgt_d {
+    let mut plan = if src_d != tgt_d {
         state
             .sync_adapters
             .ensure_pair(&src_config.database_type, &tgt_config.database_type)
@@ -137,8 +148,8 @@ pub async fn prepare_schema_diff_plan(
             .ok_or_else(|| CommandError::Validation("missing target sync adapter".into()))?;
 
         let tgt_is_mysql = tgt_d == "mysql";
-        let mapper = |source_type: &str, col_name: &str| -> Result<String, String> {
-            for (tgt_tbl, src, _) in &pairs {
+        let mapper = |table: &str, source_type: &str, col_name: &str| -> Result<String, String> {
+            for (tgt_tbl, src, _) in pairs.iter().filter(|(t, _, _)| t == table) {
                 let matching_col = src
                     .columns
                     .iter()
@@ -148,10 +159,9 @@ pub async fn prepare_schema_diff_plan(
                     // 1. User explicit column type overrides take highest priority
                     if let Some(ref overrides) = type_overrides {
                         if let Some(ov) = overrides.iter().find(|o| {
-                            (o.table.eq_ignore_ascii_case(tgt_tbl)
-                                || tgt_tbl.ends_with(&format!(".{}", o.table))
-                                || o.table.ends_with(&format!(".{}", tgt_tbl)))
-                                && o.column.eq_ignore_ascii_case(col_name)
+                            resolve_table_for_dialect(&tgt_config.database_type, &o.table)
+                                == *tgt_tbl
+                                && o.column == col_name
                         }) {
                             return Ok(ov.target_type.clone());
                         }
@@ -203,6 +213,18 @@ pub async fn prepare_schema_diff_plan(
         )
     };
 
+    crate::schema_diff::reviewed::freeze(
+        &mut plan,
+        target_db_session_id,
+        &tgt_handle,
+        &tgt_config,
+        pairs
+            .iter()
+            .map(|(table, _, target)| (table.clone(), target.clone()))
+            .collect(),
+    )
+    .await;
+
     tracing::info!(
         statements = plan.statements.len(),
         warnings = plan.warnings.len(),
@@ -218,6 +240,7 @@ pub async fn execute_schema_diff_deploy(
     target_db_session_id: String,
     plan: SchemaDiffPlan,
     use_transaction: Option<bool>,
+    require_rollback: Option<bool>,
     confirm_destructive: Option<String>,
     job_id: Option<String>,
 ) -> Result<SchemaDiffDeployResult, CommandError> {
@@ -228,6 +251,48 @@ pub async fn execute_schema_diff_deploy(
         "execute_schema_diff_deploy"
     );
 
+    let (driver, handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("execute_schema_diff_deploy")?;
+    let config = state
+        .connection_manager
+        .get_session_config(&target_db_session_id)
+        .await
+        .cmd_err("execute_schema_diff_deploy")?;
+    let owner = state
+        .connection_manager
+        .owner_connection_id(&target_db_session_id)
+        .await
+        .ok_or_else(|| CommandError::Validation("Target connection owner is unavailable".into()))?;
+    let persisted = state
+        .store
+        .get_connection(&owner)
+        .await
+        .ok_or_else(|| CommandError::Validation("Target connection was removed".into()))?;
+    if config.read_only || persisted.read_only {
+        return Err(CommandError::Validation(
+            "Target connection is read-only".into(),
+        ));
+    }
+    if require_rollback.unwrap_or(false)
+        && (!plan.rollback_completeness.complete
+            || !use_transaction.unwrap_or(true)
+            || !matches!(
+                driver.ddl_atomicity(),
+                crate::db::DdlAtomicity::Transactional
+            ))
+    {
+        return Err(CommandError::Validation(
+            "Complete rollback requires transactional DDL and a complete rollback plan".into(),
+        ));
+    }
+    if !plan.requirements.is_empty() {
+        return Err(CommandError::Validation(
+            "Resolve plan requirements and prepare again before deploying".into(),
+        ));
+    }
     if plan_has_destructive(&plan) {
         let token = confirm_destructive.as_deref().unwrap_or("");
         if token != DESTRUCTIVE_CONFIRM_TOKEN {
@@ -237,16 +302,20 @@ pub async fn execute_schema_diff_deploy(
         }
     }
 
+    let reviewed =
+        crate::schema_diff::reviewed::consume(&plan, &target_db_session_id, &handle, &config)
+            .await
+            .map_err(CommandError::Validation)?;
+    for (table, snapshot) in &reviewed.snapshots {
+        let current = fetch_target_table_schema(driver.as_ref(), &handle, table).await?;
+        crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
+            .map_err(CommandError::Validation)?;
+    }
+    let plan = reviewed.plan;
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(ensure_job(id).await),
         None => None,
     };
-
-    let (driver, handle) = state
-        .connection_manager
-        .get_session(&target_db_session_id)
-        .await
-        .cmd_err("execute_schema_diff_deploy")?;
 
     let opts = DeployOptions {
         use_transaction: use_transaction.unwrap_or(true),

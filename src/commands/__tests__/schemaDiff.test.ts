@@ -255,3 +255,12 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 });
+
+it('keeps the immutable plan identity and forwards required rollback to the backend', async () => {
+  const plan = samplePlan({ planId: 'reviewed-plan-42' });
+  invokeMock.mockResolvedValueOnce({ status: 'unknown' });
+  await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'target', plan, requireRollback: true, useTransaction: true });
+  expect(invokeMock).toHaveBeenLastCalledWith('execute_schema_diff_deploy', expect.objectContaining({
+    plan: expect.objectContaining({ planId: 'reviewed-plan-42' }), requireRollback: true,
+  }));
+});

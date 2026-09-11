@@ -3,7 +3,7 @@ import type { TableSchemaDiff } from '../types';
 
 export type StatementRisk = 'additive' | 'destructive' | 'rewrite';
 
-export type DeployStatus = 'committed' | 'rolled_back' | 'mixed' | 'failed' | 'cancelled';
+export type DeployStatus = 'committed' | 'unknown' | 'rolled_back' | 'mixed' | 'failed' | 'cancelled';
 
 export interface PlanStatement {
   sql: string;
@@ -102,6 +102,7 @@ export function rollbackCompletenessCounts(plan: SchemaDiffPlan): RollbackComple
 }
 
 export interface SchemaDiffPlan {
+  planId?: string;
   table: string;
   tables: string[];
   sourceDialect: string;
@@ -195,6 +196,7 @@ export const schemaDiffCommands = {
     targetDbSessionId: string;
     plan: SchemaDiffPlan;
     useTransaction?: boolean;
+    requireRollback?: boolean;
     confirmDestructive?: string;
     jobId?: string;
   }) =>
@@ -202,6 +204,7 @@ export const schemaDiffCommands = {
       targetDbSessionId: params.targetDbSessionId,
       plan: denormalizePlan(params.plan),
       useTransaction: params.useTransaction,
+      requireRollback: params.requireRollback,
       confirmDestructive: params.confirmDestructive,
       jobId: params.jobId,
     }),

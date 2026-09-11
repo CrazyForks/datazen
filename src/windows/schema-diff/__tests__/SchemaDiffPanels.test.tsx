@@ -347,3 +347,20 @@ describe('SchemaDiffDeployPanel', () => {
     expect(errorsList).toHaveTextContent('Multiple primary key defined');
   });
 });
+
+it('blocks execution across rollback and result state transitions', () => {
+  const props = { plan: samplePlan, targetLabel: 'target', useTransaction: true,
+    onUseTransactionChange: vi.fn(), requireRollback: true, onRequireRollbackChange: vi.fn(),
+    confirmText: '', onConfirmTextChange: vi.fn(), deploying: false, onDeploy: vi.fn(), result: null };
+  const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+  rerender(<SchemaDiffDeployPanel {...props} useTransaction={false} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  rerender(<SchemaDiffDeployPanel {...props} plan={{ ...samplePlan, targetDialect: 'mysql' }} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  rerender(<SchemaDiffDeployPanel {...props} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+  rerender(<SchemaDiffDeployPanel {...props} result={{ status: 'unknown', executedCount: 1, statementCount: 1, errors: ['COMMIT outcome unknown'], statementResults: [] }} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
+});
