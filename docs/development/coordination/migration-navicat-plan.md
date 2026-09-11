@@ -25,4 +25,6 @@ Independent fresh Tester after each coder READY_FOR_TEST. Driver-specific tests 
 
 ## Progress
 
-Wave 1 bootstrapping. Docker daemon unavailable at initial probe; local mysql/psql clients installed. Coordinator to provision isolated test services if feasible.
+Wave 1 independent testing in progress. Sync code `a0919eeb` (handoff `4ae9bb32`) and Schema code `f6a1b473` (handoff `99f54d41`) have fresh independent testers assigned. Transfer remains in coding/self-validation. No business track has passed independent acceptance or been merged yet.
+
+Local PostgreSQL and MySQL are running; separate `dz_mig_0910_{sync,transfer,schema}_{src,tgt}` databases were created for isolated tests. Integration baseline passed the regular basic-driver WebDriver build. Baseline window-only smoke: Schema 2, Sync 8, Transfer 3 tests passed; these 13 tests do not validate new migration writes. Detailed continuation contracts and isolated testing instructions are in [migration-navicat-next-waves.md](migration-navicat-next-waves.md).
