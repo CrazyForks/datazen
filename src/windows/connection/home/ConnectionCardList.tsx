@@ -131,12 +131,19 @@ export function ConnectionCardList({
             : conn.database || getDbLabel(conn.databaseType);
 
           return (
-            <button
+            <div
               key={conn.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => onConnect(conn.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onConnect(conn.id);
+                }
+              }}
               data-testid={`home-conn-card-${conn.id}`}
-              className="group flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-surface-raised"
+              className="group flex w-full cursor-pointer items-center justify-between px-4 py-3 text-left transition-colors hover:bg-surface-raised"
             >
               <div className="flex min-w-0 items-center gap-3.5">
                 <DbTypeBadge databaseType={conn.databaseType} size={34} />
@@ -209,7 +216,7 @@ export function ConnectionCardList({
                   </Button>
                 )}
               </div>
-            </button>
+            </div>
           );
         })}
 

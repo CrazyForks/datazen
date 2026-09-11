@@ -10,7 +10,7 @@
 CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 ```
 
-**当前 Phase: FAILED**（Tester 第 1 轮：登记 2 条低严重级 Bug，见 `bugs.md`；功能测试全绿，Bug 均不阻断）
+**当前 Phase: READY_FOR_TEST**（Coder 第 1 轮 Bug 修复完成：BUG-001/BUG-002 均已修复，待 Tester 复测；见 `bugs.md`）
 
 ## 任务分解（对应方案 §9 实施顺序）
 
@@ -53,6 +53,7 @@ CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 3. **footer 无 `footer.*` 新 key**：方案 §7 列的 `footer.newQuery/history/newConnection` 中 history/newConnection 在 keymap.ts 未注册（注册表仅 execute/executeAll/newQuery/closeTab/saveQuery/formatSql），按「未注册不渲染」原则 footer 只含 newQuery/saveQuery/formatSql，标签直接复用 eager `settings` 域现成 key `keymap.action.*`，避免重复翻译。
 4. **`empty-new-query-button` testid 取消**：原属 Common Ops「新建查询」入口，方案未安排迁移目标（§3.2 仅列 New/Import 入 section head）。已 grep 确认全部 e2e/spec 无引用，安全移除。
 5. **State 4 逻辑未动**：quickActions / recentPanels / 连接内历史列表逐字保留（含 copied 态），仅随文件瘦身合并。
+6. **【BUG-001 补记·已修复】relativeTime 未接 i18n**（Tester 第 1 轮发现，偏离方案 §7 未记录）：首版 `RecentQueriesList` 直接渲染 lib 英文文案（硬编码 'just now' / `Intl.RelativeTimeFormat('en')`），方案 §7 的 `queries.justNow/minutesAgo/hoursAgo/daysAgo` 四 key 未创建。第 1 轮修复采用**组件层组装**：`relativeTime.ts` 保持既有 API（`formatRelativeTime`/`getRelativeTimeParts`，Tester 12 条用例零调整），仅新增导出 `RELATIVE_WINDOW_MS`（7 天窗口常量单一来源）；组件内 `useRelativeTimeLabel()` 按 parts 以 `t()` 拼装本地化文案（justNow / {count} 分钟·小时·天前），>7d 回退短日期；en/zh-CN 已补 4 key，zh-CN 元信息全中文。
 
 ## E2E 用例登记
 
@@ -83,6 +84,14 @@ CODING → READY_FOR_TEST → (TESTING ⇄ BUG_FIX)* → PASSED → MERGED
 | --- | --- | --- | --- |
 | 1 | Coder | READY_FOR_TEST（自验 16/16 + 8/8 + 3/3 + tsc 干净；基线预存 4 失败与本轨无关） | `959ab7bc95df82ab513bbd50c883f81265f04c3e` |
 | 2 | Tester | FAILED（Bug ×2 均低严重级：BUG-001 相对时间未接 i18n、BUG-002 卡片行嵌套 button。功能复验全绿：24/24 + 42/42 + 3/3 + tsc 干净 + 基线 4 失败逐一吻合；覆盖率 home/ 100% 行 / relativeTime 96.7% 行；新增 15 条 [tester] 用例） | 见 Tester 提交 |
+| 3 | Coder | BUG-001/BUG-002 修复，READY_FOR_TEST 待复测（指定套件 42/42 + welcome 3/3 + relativeTime 12/12 + tsc 干净；stderr 无 validateDOMNesting；Tester 用例零调整全数通过） | `f3b1ae767ef98e5a42244e1128d0ace11323ddd9` |
+
+## Bug 修复记录（第 1 轮修复循环，Coder）
+
+| Bug | 状态 | 修复方式 |
+| --- | --- | --- |
+| BUG-001 relativeTime 未接 i18n | **待复测** | 组件层组装：`RecentQueriesList` 内 `useRelativeTimeLabel()` 用 `getRelativeTimeParts` 的 `{value, unit}` 结构 + `t()` 拼装；`relativeTime.ts` API 不变、新增导出 `RELATIVE_WINDOW_MS`；en/zh-CN 补 `queries.justNow/minutesAgo/hoursAgo/daysAgo` 4 key；zh-CN 元信息全中文（「刚刚 / N 分钟前 / N 小时前 / N 天前」） |
+| BUG-002 `<button>` 嵌套 `<button>` | **待复测** | `ConnectionCardList` 卡片行容器 `<button>` → `div[role="button"]` + `tabIndex=0` + Enter/Space `onKeyDown`（参照 State 4 历史行既有模式）；整行点击语义、`home-conn-card-*`/`home-conn-connect-*` testid、内部按钮 `stopPropagation` 均不变；修复后测试 stderr 无 validateDOMNesting 警告 |
 
 ## 自验结果（Tester 独立复验，79cb6e6）
 

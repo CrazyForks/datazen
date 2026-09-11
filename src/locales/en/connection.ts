@@ -196,6 +196,10 @@ const pack = {
   'connWin.home.connections.connect': 'Connect',
   'connWin.home.connections.open': 'Open',
   'connWin.home.queries.rerun': 'Re-run',
+  'connWin.home.queries.justNow': 'just now',
+  'connWin.home.queries.minutesAgo': '{count} min ago',
+  'connWin.home.queries.hoursAgo': '{count} hr ago',
+  'connWin.home.queries.daysAgo': '{count} d ago',
   'connWin.home.mcp.shortDesc':
     'Let Cursor, Claude Code and other AI tools query your databases via MCP.',
   'connWin.home.emptyNoConnectionsHint':

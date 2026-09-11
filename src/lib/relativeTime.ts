@@ -10,6 +10,13 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 const MAX_RELATIVE_DAYS = 7;
 
+/**
+ * Upper bound of the relative window (7 days). Deltas beyond this fall back
+ * to a short locale date — exported so locale-aware callers (e.g. the
+ * i18n-composed label in RecentQueriesList) share the exact cutoff.
+ */
+export const RELATIVE_WINDOW_MS = MAX_RELATIVE_DAYS * DAY_MS;
+
 export interface RelativeTimeParts {
   /** Signed value passed to Intl.RelativeTimeFormat (negative = past). */
   value: number;

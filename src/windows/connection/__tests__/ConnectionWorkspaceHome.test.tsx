@@ -507,6 +507,15 @@ describe('ConnectionWorkspaceHome', () => {
         executionTimeMs: 15,
         success: true,
       },
+      {
+        id: 'hist-2',
+        connectionId: 'conn-1',
+        database: 'postgres',
+        sql: 'UPDATE users SET id = id;',
+        executedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+        executionTimeMs: 8,
+        success: true,
+      },
     ]);
 
     render(
@@ -534,8 +543,12 @@ describe('ConnectionWorkspaceHome', () => {
 
     // Source connection name resolved from savedConnections
     expect(screen.getByTestId('home-query-source-hist-1').textContent).toBe('PostgreSQL-Local');
-    // Relative time for a just-executed query
-    expect(screen.getByText('just now')).toBeInTheDocument();
+    // Relative time for a just-executed query (key-style t mock renders the key)
+    expect(screen.getByText('connWin.home.queries.justNow')).toBeInTheDocument();
+    // Minute bucket composes the localized label with the count param
+    expect(screen.getByText('connWin.home.queries.minutesAgo', { exact: false }).textContent).toBe(
+      'connWin.home.queries.minutesAgo 2',
+    );
 
     // Hover action: Re-run delegates to onSelectHistoryQuery
     fireEvent.click(screen.getByTestId('home-query-rerun-hist-1'));

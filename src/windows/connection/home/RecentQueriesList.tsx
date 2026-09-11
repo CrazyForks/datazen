@@ -2,10 +2,49 @@ import { useState } from 'react';
 import { Check, ChevronRight, Clock, Copy, Play } from 'lucide-react';
 import { useI18n } from '../../../hooks/useI18n';
 import { cn } from '../../../lib/cn';
-import { formatRelativeTime } from '../../../lib/relativeTime';
+import { getRelativeTimeParts, RELATIVE_WINDOW_MS } from '../../../lib/relativeTime';
 import type { ConnectionConfig, QueryHistoryEntry } from '../../../types';
 
 const MAX_VISIBLE = 5;
+
+/**
+ * Builds the localized relative-time label for a history timestamp from the
+ * structured {value, unit} parts returned by the lib. Returns null for
+ * invalid timestamps (the segment is then omitted entirely). Falls back to a
+ * short locale date beyond the 7-day relative window.
+ */
+function useRelativeTimeLabel() {
+  const { t } = useI18n();
+  return (timestamp: number): string | null => {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) {
+      return null;
+    }
+    const now = Date.now();
+    const parts = getRelativeTimeParts(timestamp, now);
+    if (!parts) {
+      return null;
+    }
+    if (parts.value === 0) {
+      // Sub-minute delta (or near-future clock skew).
+      return t('connWin.home.queries.justNow');
+    }
+    if (now - timestamp > RELATIVE_WINDOW_MS) {
+      return new Date(timestamp).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    }
+    const count = Math.abs(parts.value);
+    if (parts.unit === 'minute') {
+      return t('connWin.home.queries.minutesAgo', { count });
+    }
+    if (parts.unit === 'hour') {
+      return t('connWin.home.queries.hoursAgo', { count });
+    }
+    return t('connWin.home.queries.daysAgo', { count });
+  };
+}
 
 interface RecentQueriesListProps {
   entries: QueryHistoryEntry[];
@@ -26,6 +65,7 @@ export function RecentQueriesList({
 }: RecentQueriesListProps) {
   const { t } = useI18n();
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null);
+  const formatRelativeLabel = useRelativeTimeLabel();
 
   const connectionNameById = new Map(savedConnections.map((c) => [c.id, c.name] as const));
 
@@ -57,7 +97,7 @@ export function RecentQueriesList({
             {entries.slice(0, MAX_VISIBLE).map((item) => {
               const sourceName =
                 connectionNameById.get(item.connectionId) || item.database || 'default';
-              const relative = formatRelativeTime(new Date(item.executedAt).getTime());
+              const relative = formatRelativeLabel(new Date(item.executedAt).getTime());
 
               return (
                 <div
