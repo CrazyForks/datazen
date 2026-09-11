@@ -1,6 +1,8 @@
 /** Auto-split domain: sync (zh-CN) — unified sync / transfer / schemaDiff */
 const pack = {
   // --- Data Sync ---
+  'sync.executionUnknown': '无法确认写入结果。请重新比较后再重试。',
+  'sync.cancellingExecution': '已请求取消，正在等待事务结果…',
   'sync.source': '源数据库',
   'sync.target': '目标数据库',
   'sync.selectSource': '选择源连接',

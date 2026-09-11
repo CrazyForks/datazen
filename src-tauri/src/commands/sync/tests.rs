@@ -486,8 +486,7 @@ async fn cancel_data_sync_stops_execute_before_start() {
 }
 
 #[tokio::test]
-async fn compare_data_sync_fills_row_diff_for_matched_tables() {
-    use crate::data_sync::TableMappingStatus;
+async fn compare_rejects_mock_driver_that_repeats_keyset_pages() {
     use crate::testing::app_state::TestAppState;
 
     let test = TestAppState::with_tables().await;
@@ -495,7 +494,7 @@ async fn compare_data_sync_fills_row_diff_for_matched_tables() {
     test.save_and_connect("tgt-cmp").await;
     let src = test.connect_config("src-cmp").await;
     let tgt = test.connect_config("tgt-cmp").await;
-    let results = super::compare_data_sync_impl(
+    let err = super::compare_data_sync_impl(
         &test.state,
         src,
         tgt,
@@ -509,17 +508,14 @@ async fn compare_data_sync_fills_row_diff_for_matched_tables() {
         &[],
     )
     .await
-    .unwrap();
-    let users = results
-        .iter()
-        .find(|r| r.source_table == "users")
-        .expect("users");
-    assert_eq!(users.status, TableMappingStatus::Matched);
-    assert!(!users.rows.is_empty());
+    .unwrap_err();
+    // The shared mock always returns the same page and cannot honor keyset WHERE.
+    // This must fail rather than treating a repeated page as end-of-stream.
+    assert!(err.to_string().contains("not strictly increasing"));
 }
 
 #[tokio::test]
-async fn apply_data_sync_rejects_empty_change_set() {
+async fn legacy_apply_rejects_unreviewed_recomparison() {
     use crate::testing::app_state::TestAppState;
 
     let test = TestAppState::with_tables().await;
@@ -541,11 +537,7 @@ async fn apply_data_sync_rejects_empty_change_set() {
     )
     .await
     .unwrap_err();
-    assert!(
-        err.to_string().to_lowercase().contains("empty")
-            || err.to_string().to_lowercase().contains("nothing"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("reviewed row selection"), "{err}");
 }
 
 #[test]

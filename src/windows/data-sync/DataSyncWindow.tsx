@@ -116,6 +116,7 @@ export function DataSyncWindow() {
   const [explainText, setExplainText] = useState('');
   const jobIdRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
+  const writeInFlightRef = useRef(false);
 
   useEffect(() => {
     void loadSettings();
@@ -707,6 +708,10 @@ export function DataSyncWindow() {
       await syncCommands.cancelDataSync(jobId);
       jobIdRef.current = null;
     }
+    if (writeInFlightRef.current) {
+      setStatusMsg(t('sync.cancellingExecution'));
+      return;
+    }
     compareGenerationRef.current += 1;
     setSyncState(mappingResults.length > 0 ? 'compared' : 'idle');
     setStatusMsg(t('sync.compareCancelled'));
@@ -783,6 +788,7 @@ export function DataSyncWindow() {
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
 
+    let writeStarted = false;
     try {
       const { source, target } = await refreshEndpointSessions();
       const srcConnId = source?.dbSessionId;
@@ -796,61 +802,27 @@ export function DataSyncWindow() {
         (r) => r.status === 'MATCHED' && selectedRowCount(r, syncOptions) > 0,
       );
 
-      let executed = false;
-      let usedApplyFallback = false;
-      try {
-        const stmts = await syncCommands.generateDataSyncSql(
-          srcConnId,
-          tgtConnId,
-          tablesWithSelection,
-          syncOptions,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-        );
-        const selected = stmts.filter((s) => operationAllowed(s.operation, syncOptions));
-        if (selected.length > 0) {
-          setExecuteProgress(t('sync.executingSql', { count: selected.length }));
-          const result = await syncCommands.executeDataSync(
-            tgtConnId,
-            selected,
-            jobId,
-            targetDatabase,
-          );
-          if (result.rolledBack) {
-            setErrorMsg(t('sync.rolledBack'));
-            setErrorOpen(true);
-            setSyncState('compared');
-            return;
-          }
-          executed = true;
-        }
-      } catch {
-        /* backend generate not available */
+      const stmts = await syncCommands.generateDataSyncSql(
+        srcConnId, tgtConnId, tablesWithSelection, syncOptions,
+        sourceDatabase, targetDatabase, sourceSchema || undefined, targetSchema || undefined,
+      );
+      if (jobIdRef.current !== jobId) return;
+      const selected = stmts.filter((statement) => operationAllowed(statement.operation, syncOptions));
+      if (selected.length === 0) {
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
       }
-
-      if (!executed) {
-        usedApplyFallback = true;
-        const tableNames = tablesWithSelection.map((r) => r.sourceTable);
-        setExecuteProgress(t('sync.executingTables', { count: tableNames.length }));
-        const result = await syncCommands.applyDataSync(
-          srcConnId,
-          tgtConnId,
-          tableNames,
-          jobId,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-          syncOptions,
-        );
-        if (result.rolledBack) {
-          setErrorMsg(t('sync.rolledBack'));
-          setErrorOpen(true);
-          setSyncState('compared');
-          return;
-        }
+      setExecuteProgress(t('sync.executingSql', { count: selected.length }));
+      writeStarted = true;
+      writeInFlightRef.current = true;
+      const result = await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      if (result.rolledBack) {
+        setErrorMsg(t('sync.rolledBack'));
+        setErrorOpen(true);
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
       }
 
       setExecuteProgress(t('sync.recomparing'));
@@ -875,16 +847,14 @@ export function DataSyncWindow() {
       setSyncState('done');
       setStep('result');
       setExecuteProgress('');
-      if (usedApplyFallback) {
-        setStatusMsg(t('sync.applyFallbackUsed'));
-      } else {
-        setStatusMsg('');
-      }
+      setStatusMsg('');
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorMsg(`${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`);
       setErrorOpen(true);
-      setSyncState('compared');
+      setSyncState(writeStarted ? 'unknown' : 'compared');
       setExecuteProgress('');
+    } finally {
+      writeInFlightRef.current = false;
     }
   }, [
     sourceId,
@@ -917,7 +887,7 @@ export function DataSyncWindow() {
     setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
   }, []);
 
-  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'done';
+  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'unknown' || syncState === 'done';
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
   const compareDisabled = Boolean(sourceSessionError || targetSessionError);
   const stepIndex = WIZARD_STEPS.indexOf(step);
@@ -1289,7 +1259,7 @@ export function DataSyncWindow() {
           hasDeletes={hasSelectedDeletes}
           targetReadOnly={targetReadOnly}
           executing={syncState === 'executing'}
-          canExecute={mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
+          canExecute={syncState !== 'unknown' && mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
           onExecute={() => void handleExecute()}
           onCancel={() => void handleCancel()}
         />

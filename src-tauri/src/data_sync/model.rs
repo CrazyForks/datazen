@@ -87,9 +87,9 @@ impl Default for SyncOptions {
 
 impl SyncOptions {
     pub fn validate(&self) -> Result<(), DataSyncError> {
-        if self.batch_size == 0 {
+        if self.batch_size == 0 || self.batch_size > 1000 {
             return Err(DataSyncError::validation(
-                "batchSize must be greater than 0",
+                "batchSize must be between 1 and 1000",
             ));
         }
         if !self.insert && !self.update && !self.delete {
@@ -315,6 +315,15 @@ pub struct TableResult {
     pub target_table: String,
     pub status: TableMappingStatus,
     pub incompatible_reason: Option<String>,
+    /// Canonical projection used by both reads; never target physical order.
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub column_types: Vec<String>,
+    #[serde(default)]
+    pub primary_keys: Vec<String>,
+    #[serde(default)]
+    pub unchanged_count: usize,
     pub rows: Vec<RowChange>,
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -333,6 +342,10 @@ impl TableResult {
             incompatible_reason: None,
             rows,
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
         }
     }
 
@@ -348,6 +361,10 @@ impl TableResult {
             incompatible_reason: Some(reason.into()),
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
         }
     }
 
@@ -359,6 +376,10 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
         }
     }
 
@@ -371,6 +392,10 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
         }
     }
 
@@ -383,6 +408,10 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
         }
     }
 
@@ -399,7 +428,7 @@ impl TableResult {
     }
 
     pub fn unchanged_row_count(&self) -> usize {
-        self.count_op(ChangeOperation::Unchanged)
+        self.unchanged_count + self.count_op(ChangeOperation::Unchanged)
     }
 
     fn count_op(&self, op: ChangeOperation) -> usize {

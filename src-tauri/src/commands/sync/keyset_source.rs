@@ -81,6 +81,18 @@ impl RowPageSource for DriverKeysetSource {
             .query_with_params(&self.handle, &sql, &params)
             .await
             .map_err(|e| DataSyncError::validation(e.to_string()))?;
+        for row in &result.rows {
+            for pk in &self.pk_columns {
+                let idx = self
+                    .columns
+                    .iter()
+                    .position(|c| c == pk)
+                    .ok_or_else(|| DataSyncError::validation("key missing from projection"))?;
+                if !matches!(row.get(idx), Some(Some(Value::Integer(_)))) {
+                    return Err(DataSyncError::validation(format!("key {pk} was not decoded as an exact integer; normalized driver key support is required")));
+                }
+            }
+        }
         Ok(result.rows)
     }
 }

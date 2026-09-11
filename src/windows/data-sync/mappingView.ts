@@ -24,7 +24,7 @@ export function rowDiffCounts(row: DataSyncTableResult): {
     inserts: rows.filter((r) => r.operation === 'INSERT').length,
     updates: rows.filter((r) => r.operation === 'UPDATE').length,
     deletes: rows.filter((r) => r.operation === 'DELETE').length,
-    unchanged: rows.filter((r) => r.operation === 'UNCHANGED').length,
+    unchanged: (row.unchangedCount ?? 0) + rows.filter((r) => r.operation === 'UNCHANGED').length,
   };
 }
 
@@ -136,10 +136,7 @@ export function applyOptionsToRows(
 ): DataSyncRowChange[] {
   return rows.map((row) => ({
     ...row,
-    selected:
-      row.operation === 'DELETE'
-        ? row.selected && options.delete
-        : defaultRowSelected(row.operation, options),
+    selected: row.selected && operationAllowed(row.operation, options),
   }));
 }
 
@@ -197,7 +194,7 @@ export function mergeCompareIntoMappings(
     const cmp = bySource.get(key);
     if (!cmp) return m;
     if (m.status === 'DISABLED') return m;
-    return { ...m, rows: cmp.rows, warnings: cmp.warnings ?? m.warnings };
+    return { ...m, ...cmp, warnings: cmp.warnings ?? m.warnings };
   });
 }
 
