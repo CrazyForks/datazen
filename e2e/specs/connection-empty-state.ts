@@ -57,7 +57,7 @@ describe('连接工作区空状态 (EMPTY)', () => {
     await browser.pause(300);
   });
 
-  it('EMPTY-001: 有连接但未选中时应显示选择连接引导', async () => {
+  it('EMPTY-001: 有连接但未选中时应显示动态摘要落地页', async () => {
     await browser.waitUntil(async () => (await $$('[data-conn-item]')).length > 0, {
       timeout: 10000,
       timeoutMsg: '等待侧栏连接项',
@@ -69,11 +69,15 @@ describe('连接工作区空状态 (EMPTY)', () => {
 
     const body = await $('body').getText();
     expect(body).toContain(t('connWin.home.selectConnectionTitle'));
-    expect(body).toContain(t('connWin.home.selectConnectionHint'));
-    expect(body).toContain(t('connWin.home.selectConnectionTip'));
+    expect(body).toContain(t('connWin.home.hero.subtitleConnections'));
 
+    // Preserved CTA testids (section head of "Your connections")
     await expect(await $('[data-testid="empty-new-connection-button"]')).toBeDisplayed();
     await expect(await $('[data-testid="empty-import-connections-button"]')).toBeDisplayed();
+
+    // Backup / Restore were removed from the no-active-connection landing page
+    expect(await $('[data-testid="empty-backup-button"]').isExisting()).toBe(false);
+    expect(await $('[data-testid="empty-restore-button"]').isExisting()).toBe(false);
 
     // Should not show connected quick actions yet
     expect(await $('[data-testid="home-quick-new-query"]').isExisting()).toBe(false);

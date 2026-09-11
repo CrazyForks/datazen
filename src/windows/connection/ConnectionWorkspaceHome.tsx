@@ -1,22 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  ArchiveRestore,
   Check,
   ChevronRight,
-  Clock,
   Code2,
   Copy,
   Database,
-  DatabaseBackup,
   Download,
   GitFork,
-  Info,
   Loader2,
   Plus,
-  Sparkles,
-  Star,
   TableProperties,
-  Terminal,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { DbTypeBadge } from '../../components/DbTypeBadge';
@@ -31,8 +24,11 @@ import { queryCommands } from '../../commands/query';
 import type { DatabaseType, QueryHistoryEntry } from '../../types';
 import { getPanelIcon, getPanelLabel } from './contentViewHelpers';
 import { GlobalQueryHistoryDialog } from '../../components/history/GlobalQueryHistoryDialog';
-import { openBackupWindow } from '../../lib/windowManager';
-import { formatMcpCliCommand, useAppExecutablePath } from '../../lib/mcpAgentConfig';
+import { HomeHero } from './home/HomeHero';
+import { ConnectionCardList } from './home/ConnectionCardList';
+import { RecentQueriesList } from './home/RecentQueriesList';
+import { McpPromoBar } from './home/McpPromoBar';
+import { ShortcutFooter } from './home/ShortcutFooter';
 
 export interface ConnectionWorkspaceHomeProps {
   hasConnections: boolean;
@@ -130,7 +126,6 @@ export function ConnectionWorkspaceHome({
 
   const [recentQueries, setRecentQueries] = useState<QueryHistoryEntry[]>([]);
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null);
-  const [copiedMcp, setCopiedMcp] = useState(false);
   const [globalHistoryOpen, setGlobalHistoryOpen] = useState(false);
 
   // Load recent query history (global or connection-scoped)
@@ -154,26 +149,14 @@ export function ConnectionWorkspaceHome({
     };
   }, [connectionContext?.connectionId]);
 
-  const pinnedCount = useMemo(() => {
-    return savedConnections.filter((c) => c.pinned).length;
-  }, [savedConnections]);
-
   const distinctDbTypes = useMemo(() => {
     return Array.from(new Set(savedConnections.map((c) => c.databaseType)));
   }, [savedConnections]);
 
-  // Top connections for quick start: pinned first, then lastConnectedAt, then name. Strictly capped at 4.
-  const quickConnections = useMemo(() => {
-    return [...savedConnections]
-      .sort((a, b) => {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
-        const aTime = a.lastConnectedAt ? new Date(a.lastConnectedAt).getTime() : 0;
-        const bTime = b.lastConnectedAt ? new Date(b.lastConnectedAt).getTime() : 0;
-        if (aTime !== bTime) return bTime - aTime;
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, 4);
+  const groupCount = useMemo(() => {
+    return new Set(
+      savedConnections.map((c) => c.group).filter((group): group is string => Boolean(group)),
+    ).size;
   }, [savedConnections]);
 
   const handleConnect = (connectionId: string) => {
@@ -187,55 +170,9 @@ export function ConnectionWorkspaceHome({
     }
   };
 
-  const appExecutablePath = useAppExecutablePath();
-  const mcpCliCommand = useMemo(() => formatMcpCliCommand(appExecutablePath), [appExecutablePath]);
-
-  const handleCopyMcpCommand = () => {
-    void navigator.clipboard?.writeText(mcpCliCommand);
-    setCopiedMcp(true);
-    setTimeout(() => setCopiedMcp(false), 2000);
-  };
-
-  const handleNewQueryClick = () => {
-    if (connectionContext) {
-      onNewQuery();
-      return;
-    }
-    // If a connection is already connected, select it and open query
-    const connectedEntry = Object.values(activeConnections).find((c) => c?.status === 'connected');
-    if (connectedEntry && onSelectConnection) {
-      onSelectConnection(connectedEntry.connectionId);
-      onNewQuery();
-      return;
-    }
-    // If we have saved connections, select the first quick connection
-    if (quickConnections.length > 0 && onSelectConnection) {
-      handleConnect(quickConnections[0].id);
-      onNewQuery();
-    }
-  };
-
   /** Open the global query history dialog */
   const handleOpenHistory = () => {
     setGlobalHistoryOpen(true);
-  };
-
-  const handleBackup = () => {
-    const connectedEntry = Object.values(activeConnections).find((c) => c?.status === 'connected');
-    if (connectedEntry) {
-      openBackupWindow('backup', { connectionId: connectedEntry.connectionId });
-    } else {
-      openBackupWindow('backup');
-    }
-  };
-
-  const handleRestore = () => {
-    const connectedEntry = Object.values(activeConnections).find((c) => c?.status === 'connected');
-    if (connectedEntry) {
-      openBackupWindow('restore', { connectionId: connectedEntry.connectionId });
-    } else {
-      openBackupWindow('restore');
-    }
   };
 
   // ── State 1: No connections at all ──
@@ -288,7 +225,7 @@ export function ConnectionWorkspaceHome({
     );
   }
 
-  // ── State 3: DBX-Style Dashboard when no connection session is active ──
+  // ── State 3: Landing page when no connection session is active ──
   if (!connectionContext) {
     return (
       <div
@@ -296,379 +233,30 @@ export function ConnectionWorkspaceHome({
         data-testid="connection-workspace-home"
       >
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-          {/* Header Title & Subtitle */}
-          <div>
-            <h2 className="text-lg font-bold tracking-tight text-fg sm:text-xl">
-              {t('connWin.home.selectConnectionTitle')}
-            </h2>
-            <p className="mt-1 text-sm text-fg-muted">{t('connWin.home.selectConnectionHint')}</p>
-          </div>
+          <HomeHero
+            connectionCount={savedConnections.length}
+            groupCount={groupCount}
+            dbTypes={distinctDbTypes}
+          />
 
-          {/* Metric Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {/* Card 1: Total Connections */}
-            <div className="flex items-center gap-4 rounded-xl border border-edge bg-surface-alt p-4 transition-colors hover:bg-surface-raised">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                <Database className="h-6 w-6" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-fg">{savedConnections.length}</div>
-                <div className="text-xs text-fg-muted">{t('connWin.home.metrics.connections')}</div>
-              </div>
-            </div>
+          <ConnectionCardList
+            connections={savedConnections}
+            activeConnections={activeConnections}
+            onConnect={handleConnect}
+            onNewConnection={onNewConnection}
+            onImportConnections={onImportConnections}
+          />
 
-            {/* Card 2: Pinned Connections */}
-            <div className="flex items-center gap-4 rounded-xl border border-edge bg-surface-alt p-4 transition-colors hover:bg-surface-raised">
-              <div
-                className={cn(
-                  'flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
-                  pinnedCount > 0
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'bg-surface-raised text-fg-muted',
-                )}
-              >
-                <Star className={cn('h-6 w-6', pinnedCount > 0 && 'fill-current')} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl font-bold text-fg">{pinnedCount}</span>
-                </div>
-                <div className="text-xs text-fg-muted">{t('connWin.home.metrics.pinned')}</div>
-              </div>
-            </div>
+          <RecentQueriesList
+            entries={recentQueries}
+            savedConnections={savedConnections}
+            onSelectHistoryQuery={onSelectHistoryQuery}
+            onOpenHistory={handleOpenHistory}
+          />
 
-            {/* Card 3: Database Types */}
-            <div className="flex items-center justify-between rounded-xl border border-edge bg-surface-alt p-4 transition-colors hover:bg-surface-raised">
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
-                  <Sparkles className="h-6 w-6" />
-                </div>
-                <div>
-                  <div className="text-2xl font-bold text-fg">{distinctDbTypes.length}</div>
-                  <div className="text-xs text-fg-muted">{t('connWin.home.metrics.dbTypes')}</div>
-                </div>
-              </div>
-              <div className="flex items-center -space-x-1.5 overflow-hidden pl-2">
-                {distinctDbTypes.slice(0, 4).map((dbType) => (
-                  <div
-                    key={dbType}
-                    className="rounded-full ring-2 ring-surface"
-                    title={getDbLabel(dbType)}
-                  >
-                    <DbTypeBadge databaseType={dbType} size={22} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <McpPromoBar />
 
-          {/* Middle Section: Quick Start (Single Unified List Card) + Common Operations */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            {/* Quick Start (2 columns span, rendered as a single cohesive list panel) */}
-            <div className="flex h-full flex-col gap-2.5 lg:col-span-2">
-              <div className="flex h-5 items-center justify-between px-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                  {t('connWin.home.quickStart')}
-                </h3>
-                {savedConnections.length > 4 && (
-                  <span className="text-xs text-fg-muted">
-                    {t('connWin.home.totalCount', { count: String(savedConnections.length) })}
-                  </span>
-                )}
-              </div>
-
-              <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-edge bg-surface-alt divide-y divide-edge/60">
-                {quickConnections.map((conn) => {
-                  const isActive = activeConnections[conn.id]?.status === 'connected';
-                  const isConnLoading = activeConnections[conn.id]?.status === 'connecting';
-                  const hostPort = conn.host
-                    ? `${conn.host}${conn.port ? `:${conn.port}` : ''}`
-                    : conn.database || getDbLabel(conn.databaseType);
-
-                  return (
-                    <button
-                      key={conn.id}
-                      type="button"
-                      onClick={() => handleConnect(conn.id)}
-                      className="group flex flex-1 w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-surface-raised"
-                    >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <DbTypeBadge databaseType={conn.databaseType} size={32} />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-semibold text-fg group-hover:text-accent transition-colors">
-                              {conn.name}
-                            </span>
-                            <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted border border-edge/60">
-                              {getDbLabel(conn.databaseType)}
-                            </span>
-                          </div>
-                          <div className="truncate font-mono text-xs text-fg-muted mt-0.5">
-                            {hostPort}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0 ml-3">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            isActive
-                              ? 'bg-success/15 text-success'
-                              : isConnLoading
-                                ? 'bg-accent/15 text-accent'
-                                : 'bg-surface text-fg-muted',
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'h-1.5 w-1.5 rounded-full',
-                              isActive
-                                ? 'bg-success'
-                                : isConnLoading
-                                  ? 'bg-accent animate-ping'
-                                  : 'bg-fg-muted/40',
-                            )}
-                          />
-                          {isActive
-                            ? t('connWin.home.status.connected')
-                            : isConnLoading
-                              ? t('conn.connecting')
-                              : t('connWin.home.status.offline')}
-                        </span>
-
-                        <ChevronRight className="h-4 w-4 text-fg-muted opacity-0 group-hover:opacity-100 group-hover:text-accent transition-all -translate-x-1 group-hover:translate-x-0" />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Common Operations (1 column) */}
-            <div className="flex h-full flex-col gap-2.5">
-              <div className="flex h-5 items-center px-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                  {t('connWin.home.commonOps')}
-                </h3>
-              </div>
-
-              <div className="@container flex flex-1 flex-col justify-between rounded-xl border border-edge bg-surface-alt p-3">
-                <div className="grid grid-cols-1 @[240px]:grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    data-testid="empty-new-connection-button"
-                    onClick={onNewConnection}
-                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs sm:text-sm font-medium text-fg transition-colors hover:bg-surface-raised hover:text-accent min-w-0"
-                    title={t('common.newConnection')}
-                  >
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
-                      <Plus className="h-4 w-4" />
-                    </div>
-                    <span className="truncate">{t('common.newConnection')}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="empty-new-query-button"
-                    onClick={handleNewQueryClick}
-                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs sm:text-sm font-medium text-fg transition-colors hover:bg-surface-raised hover:text-accent min-w-0"
-                    title={t('common.newQuery')}
-                  >
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
-                      <Code2 className="h-4 w-4" />
-                    </div>
-                    <span className="truncate">{t('common.newQuery')}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="empty-backup-button"
-                    onClick={handleBackup}
-                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs sm:text-sm font-medium text-fg transition-colors hover:bg-surface-raised hover:text-accent min-w-0"
-                    title={t('common.backupDatabase')}
-                  >
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
-                      <DatabaseBackup className="h-4 w-4" />
-                    </div>
-                    <span className="truncate">{t('common.backupDatabase')}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="empty-restore-button"
-                    onClick={handleRestore}
-                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs sm:text-sm font-medium text-fg transition-colors hover:bg-surface-raised hover:text-accent min-w-0"
-                    title={t('common.restoreDatabase')}
-                  >
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
-                      <ArchiveRestore className="h-4 w-4" />
-                    </div>
-                    <span className="truncate">{t('common.restoreDatabase')}</span>
-                  </button>
-
-                  {onImportConnections && (
-                    <button
-                      type="button"
-                      data-testid="empty-import-connections-button"
-                      onClick={onImportConnections}
-                      className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs sm:text-sm font-medium text-fg transition-colors hover:bg-surface-raised hover:text-accent min-w-0"
-                      title={t('common.importConnections')}
-                    >
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
-                        <Download className="h-4 w-4" />
-                      </div>
-                      <span className="truncate">{t('common.importConnections')}</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="mt-2 flex items-start gap-2 border-t border-edge/60 pt-2 text-[11px] text-fg-muted">
-                  <Info className="h-3.5 w-3.5 shrink-0 text-fg-secondary mt-0.5" />
-                  <p className="leading-snug">{t('connWin.home.selectConnectionTip')}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom Section: Query History + AI Assistant */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {/* Query History */}
-            <div className="flex h-full flex-col gap-2.5">
-              <div className="flex h-5 items-center justify-between px-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                  {t('connWin.home.recentQueries')}
-                </h3>
-                <button
-                  type="button"
-                  data-testid="view-all-history-button"
-                  onClick={handleOpenHistory}
-                  className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
-                >
-                  <span>{t('connWin.home.viewAll')}</span>
-                  <ChevronRight className="h-3 w-3" />
-                </button>
-              </div>
-
-              <div className="flex flex-1 flex-col rounded-xl border border-edge bg-surface-alt p-4">
-                {recentQueries.length === 0 ? (
-                  <div className="flex flex-1 flex-col items-center justify-center text-center text-fg-muted">
-                    <Clock className="h-6 w-6 opacity-40 mb-2" />
-                    <p className="text-xs">{t('connWin.home.noRecentQueries')}</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-1 flex-col gap-2">
-                    {recentQueries.slice(0, 3).map((item) => (
-                      <div
-                        key={item.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onSelectHistoryQuery?.(item)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            onSelectHistoryQuery?.(item);
-                          }
-                        }}
-                        className="group flex flex-col gap-1 rounded-lg border border-edge/70 bg-surface p-2.5 transition-colors hover:border-accent/40 hover:bg-surface-raised cursor-pointer text-left"
-                      >
-                        <div className="flex items-center justify-between text-[11px] text-fg-muted">
-                          <div className="flex items-center gap-1.5 font-medium">
-                            <span
-                              className={cn(
-                                'h-1.5 w-1.5 rounded-full',
-                                item.success ? 'bg-success' : 'bg-danger',
-                              )}
-                            />
-                            <span>{item.database || 'default'}</span>
-                            <span>·</span>
-                            <span>{item.executionTimeMs}ms</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void navigator.clipboard?.writeText(item.sql);
-                              setCopiedSqlId(item.id);
-                              setTimeout(() => setCopiedSqlId(null), 2000);
-                            }}
-                            className="flex items-center gap-1 text-fg-muted hover:text-accent text-[11px]"
-                          >
-                            {copiedSqlId === item.id ? (
-                              <>
-                                <Check className="h-3 w-3 text-success" />
-                                <span className="text-success">
-                                  {t('connWin.home.aiIntegration.copied')}
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="h-3 w-3" />
-                                <span>{t('connWin.home.aiIntegration.copy')}</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                        <div className="truncate font-mono text-xs text-fg-secondary">
-                          {item.sql}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* AI Assistant & MCP Integration */}
-            <div className="flex h-full flex-col gap-2.5">
-              <div className="flex h-5 items-center px-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                  {t('connWin.home.aiIntegration.title')}
-                </h3>
-              </div>
-
-              <div className="flex flex-1 flex-col justify-between rounded-xl border border-edge bg-surface-alt p-4">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-                    <Sparkles className="h-4 w-4 text-accent" />
-                    <span>DataZen MCP Server</span>
-                  </div>
-                  <p className="mt-1.5 text-xs leading-relaxed text-fg-muted">
-                    {t('connWin.home.aiIntegration.desc')}
-                  </p>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-edge bg-surface px-3 py-2">
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <Terminal className="h-4 w-4 shrink-0 text-fg-muted" />
-                    <code className="font-mono text-xs text-fg truncate" title={mcpCliCommand}>
-                      {mcpCliCommand}
-                    </code>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleCopyMcpCommand}
-                    className="h-7 shrink-0 gap-1 px-2 text-xs"
-                  >
-                    {copiedMcp ? (
-                      <>
-                        <Check className="h-3.5 w-3.5 text-success" />
-                        <span className="text-success">
-                          {t('connWin.home.aiIntegration.copied')}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>{t('connWin.home.aiIntegration.copy')}</span>
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ShortcutFooter />
         </div>
         {globalHistoryOpen && (
           <GlobalQueryHistoryDialog
