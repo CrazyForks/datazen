@@ -198,4 +198,24 @@ mod tests {
         });
         assert!(validate_snapshot("t", &old, &current).is_err());
     }
+    #[tokio::test]
+    async fn test_tester_concurrent_deploy_consumes_exactly_once() {
+        let mut plan = plan();
+        let cfg = config();
+        let handle = ConnectionHandle { id: "concurrent".into(), pool_id: "concurrent_pool".into() };
+        freeze(&mut plan, "concurrent".into(), &handle, &cfg, vec![]).await;
+        let (a, b) = tokio::join!(consume(&plan, "concurrent", &handle, &cfg), consume(&plan, "concurrent", &handle, &cfg));
+        assert_ne!(a.is_ok(), b.is_ok());
+    }
+    #[tokio::test]
+    async fn test_tester_pool_change_rejected_without_consuming_valid_plan() {
+        let mut plan = plan();
+        let cfg = config();
+        let handle = ConnectionHandle { id: "pooltest".into(), pool_id: "original".into() };
+        freeze(&mut plan, "pooltest".into(), &handle, &cfg, vec![]).await;
+        let changed = ConnectionHandle { id: "pooltest".into(), pool_id: "replacement".into() };
+        assert!(consume(&plan, "pooltest", &changed, &cfg).await.is_err());
+        assert!(consume(&plan, "pooltest", &handle, &cfg).await.is_ok());
+    }
+
 }

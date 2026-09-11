@@ -364,3 +364,33 @@ it('blocks execution across rollback and result state transitions', () => {
   expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
   expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
 });
+
+describe('[tester] deployment review control journey', () => {
+  it('forwards edits and keeps deployment closed until requirements clear', () => {
+    const onUseTransactionChange = vi.fn();
+    const onRequireRollbackChange = vi.fn();
+    const onConfirmTextChange = vi.fn();
+    const onDeploy = vi.fn();
+    const plan = { ...samplePlan, statements: [{ ...samplePlan.statements[0], risk: 'destructive' as const }] };
+    const props = { plan, targetLabel: 'test', useTransaction: true, onUseTransactionChange,
+      requireRollback: true, onRequireRollbackChange, confirmText: '', onConfirmTextChange,
+      deploying: false, onDeploy, result: null };
+    const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    expect(onUseTransactionChange).toHaveBeenCalledWith(false);
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    expect(onRequireRollbackChange).toHaveBeenCalledWith(false);
+    fireEvent.change(screen.getByPlaceholderText('DEPLOY'), { target: { value: 'DEPLOY' } });
+    expect(onConfirmTextChange).toHaveBeenCalledWith('DEPLOY');
+    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" useTransaction={false} />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('schema-diff-deploy'));
+    expect(onDeploy).toHaveBeenCalledTimes(1);
+    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" result={{status:'unknown', executedCount:1, statementCount:1, errors:['Commit outcome unknown'], statementResults:[]}} />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
+  });
+});

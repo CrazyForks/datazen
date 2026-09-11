@@ -702,3 +702,29 @@ fn unapproved_primary_key_replacement_produces_no_half_plan() {
     assert!(plan.statements.is_empty());
     assert!(plan.warnings.iter().any(|w| w.contains("dependent")));
 }
+
+#[test]
+fn test_tester_primary_key_removal_precedes_nullable_relaxation() {
+    let source = schema(vec![col("id", "integer")]);
+    let mut target = source.clone();
+    target.columns[0].nullable = false;
+    target.columns[0].is_primary_key = true;
+    target.primary_keys = vec!["id".into()];
+    let plan = build_schema_diff_plan(&[("users".into(), source, target)], "postgresql", "postgresql",
+        PlanOptions { allow_destructive: true, include_indexes: true, ..PlanOptions::default() });
+    let drop_pk = plan.statements.iter().position(|s| s.sql.contains("DROP CONSTRAINT")).expect("PK drop");
+    let nullable = plan.statements.iter().position(|s| s.sql.contains("DROP NOT NULL")).expect("nullable change");
+    assert!(drop_pk < nullable, "PK must be removed before its column can become nullable: {:?}", plan.statements);
+}
+
+#[test]
+fn test_tester_excluding_pk_drop_excludes_dependent_nullable_change() {
+    let source = schema(vec![col("id", "integer"), col("extra", "text")]);
+    let mut target = schema(vec![col("id", "integer")]);
+    target.columns[0].nullable = false;
+    target.columns[0].is_primary_key = true;
+    target.primary_keys = vec!["id".into()];
+    let plan = build_schema_diff_plan(&[("users".into(), source, target)], "postgresql", "postgresql", PlanOptions::default());
+    assert!(!plan.statements.iter().any(|s| s.sql.contains("DROP NOT NULL")), "Cannot relax nullability while retaining primary key");
+    assert!(plan.statements.iter().any(|s| s.sql.contains("ADD COLUMN") && s.sql.contains("extra")), "unrelated additive operation must remain");
+}

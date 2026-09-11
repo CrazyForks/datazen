@@ -1,6 +1,6 @@
 # migration-schema-core
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 Branch: codex/migration-schema-core
 Worktree: /Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-core
@@ -43,3 +43,24 @@ Coding commit: `f6a1b473` (`feat(schema-diff): bind reviewed plans and enforce d
 - Existing TableSchema covers columns/PK/index/FK only, and current MigrationOperation still does not express FK/CHECK/table options/views/routines/triggers/sequences/drop table. Full-object snapshot, dependency and renderer capability contracts remain required for parity.
 - Complete rollback enforcement is deliberately conservative; rollback SQL alone is not a data recovery guarantee.
 - READY_FOR_TEST is coder completion only; independent tester must confirm before PASSED.
+
+## Independent tester 1 — 2026-09-11
+
+Phase: FAILED
+
+A. Reviewed all 15 changed files against F06/F07/F09. Frozen plan exact equality, one-shot mutex consume, pool/session/config binding and snapshot comparison are present. Added concurrent consumption and changed-pool tests: pass. Physical aliases/DDL lock/full object metadata remain explicitly deferred. Found concrete PK-nullability ordering and selection-closure defect (BUG-001).
+
+B. Independently reran coder suites: Rust 63/63; frontend 37/37 in 6 files; `tsc --noEmit` passed. No reliance on coder results. Driver injection restored after each cargo run. No dependency install or main-checkout modifications.
+
+C. Added two PK-nullability regressions, concurrent-plan and pool-change regressions, and a continuous deployment-panel edit/transaction/confirmation/result journey. Frontend now 38/38. V8 line coverage before → after: panel 66.66 → 100%; window 33.73 → 33.73%; command wrapper 75.86 → 75.86%; all three 39.08 → 40.14%. Gate remains failed; no fabricated Rust coverage percentage. Rust logic review plus tests covers registry acceptance/rejection/replay/concurrent consumption, but IPC persisted-readonly/require-rollback branches and real production transaction errors remain insufficiently exercised for ≥80% claim.
+
+Real database confirmation: isolated PostgreSQL transaction reproduces exact generated SQL ordering failure (`column "id" is in a primary key`); reversed operation control succeeds. Both rollback/connection close remove temporary tables. This is SQL/database validation, not desktop E2E.
+
+### E2E registration
+
+- `packages/drivers/postgres/e2e/schema-primary-key-nullability.ts`: 【留待 R 回归】 after BUG-001 fix; exact track WebDriver build, isolated app data, loopback PG and `dz_mig_0910_schema_src/tgt`. Covers create desired/current snapshots → prepare → deployment → replay refusal → empty post-deploy diff. Uses unique tables and cleans only owned fixtures.
+- Desktop E2E not executed in this failed round: the newly reproduced backend defect prevents the desired successful journey. Do not count the registered spec or SQL probe as a desktop pass.
+
+D. TEST_FAILED; BUG-001 and BUG-002 require correction and fresh tester. No business code changed by tester; reviewed.rs edits are test-only.
+
+Final Rust rerun with all new regressions: 65 passed, 2 failed (both BUG-001 reproductions), 0 ignored. Final frontend typecheck passed; `git diff --check` passed.
