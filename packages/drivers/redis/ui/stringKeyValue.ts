@@ -33,3 +33,84 @@ export function initialStringEditorValue(value: unknown): string {
   const raw = unwrapStringKeyValue(value);
   return tryPrettyJson(raw) ?? raw;
 }
+
+/** Max decompressed payload size (50 MiB). */
+export const DECOMPRESS_MAX_BYTES = 50 * 1024 * 1024;
+
+export type DecompressCodec = 'gzip' | 'zlib' | 'deflate';
+
+export interface DecompressResult {
+  codec: DecompressCodec;
+  text: string;
+  bytes: number;
+}
+
+function base64ToUint8Array(b64: string): Uint8Array | null {
+  try {
+    const bin = atob(b64.replace(/\s/g, ''));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Detect binary-looking payloads that may be compressed. */
+export function valueLooksCompressed(raw: string): boolean {
+  if (!raw || raw.length < 4) return false;
+  if (raw.charCodeAt(0) === 0x1f && raw.charCodeAt(1) === 0x8b) return true;
+  if (raw.charCodeAt(0) === 0x78 && [0x01, 0x9c, 0xda, 0x5e].includes(raw.charCodeAt(1))) {
+    return true;
+  }
+  if (/^[A-Za-z0-9+/\r\n]+=*$/.test(raw.slice(0, 64)) && raw.length > 16) {
+    const bytes = base64ToUint8Array(raw);
+    if (bytes && bytes.length >= 2) {
+      if (bytes[0] === 0x1f && bytes[1] === 0x8b) return true;
+      if (bytes[0] === 0x78) return true;
+    }
+  }
+  return false;
+}
+
+/** Attempt gzip/zlib decompression via DecompressionStream. */
+export async function tryDecompressString(raw: string): Promise<DecompressResult | null> {
+  if (typeof DecompressionStream === 'undefined') return null;
+
+  let bytes: Uint8Array | null = null;
+  if (raw.charCodeAt(0) === 0x1f || raw.charCodeAt(0) === 0x78) {
+    bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
+  } else {
+    bytes = base64ToUint8Array(raw);
+  }
+  if (!bytes || bytes.length < 2) return null;
+
+  const attempts: Array<{ codec: DecompressCodec; format: CompressionFormat }> = [];
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    attempts.push({ codec: 'gzip', format: 'gzip' });
+  } else if (bytes[0] === 0x78) {
+    attempts.push({ codec: 'zlib', format: 'deflate' });
+  } else {
+    attempts.push({ codec: 'gzip', format: 'gzip' }, { codec: 'deflate', format: 'deflate' });
+  }
+
+  for (const { codec, format } of attempts) {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+      const ab = await new Response(stream).arrayBuffer();
+      if (ab.byteLength > DECOMPRESS_MAX_BYTES) {
+        return {
+          codec,
+          text: `[decompressed size ${ab.byteLength} exceeds ${DECOMPRESS_MAX_BYTES} byte limit]`,
+          bytes: ab.byteLength,
+        };
+      }
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(ab);
+      return { codec, text: tryPrettyJson(text) ?? text, bytes: ab.byteLength };
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
