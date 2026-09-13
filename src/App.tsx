@@ -55,7 +55,10 @@ mark(`windowKind resolved: "${windowKind}"`);
 function WindowContent() {
   useEffect(() => {
     mark('window component mounted');
-    hideSplash(document.getElementById('splash'));
+    // Main window hides splash after connections load (see MainPage).
+    if (windowKind !== 'main') {
+      hideSplash(document.getElementById('splash'));
+    }
   }, []);
 
   switch (windowKind) {

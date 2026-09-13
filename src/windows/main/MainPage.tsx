@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { TitleBar } from '../../components/TitleBar';
 import { MenuBar } from '../../components/MenuBar';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { useI18n } from '../../hooks/useI18n';
 import { listenCrossWindow } from '../../lib/crossWindowBus';
 import { openConnectionShareDialog } from '../../lib/connectionShare';
+import { hideSplash } from '../../lib/splash';
 import type { ConnectionImportSource } from '../../components/connection/ConnectionShareDialog';
 import { openNewConnectionDialog } from '../../lib/windowManager';
 import { useConnectionStore } from '../../stores/connectionStore';
@@ -33,6 +34,15 @@ export function MainPage() {
     void fetchConnections();
     void fetchGroups();
   }, [fetchConnections, fetchGroups]);
+
+  // Hide the splash screen once the first connection load completes.
+  const splashHidden = useRef(false);
+  useEffect(() => {
+    if (connectionsLoaded && !splashHidden.current) {
+      splashHidden.current = true;
+      hideSplash(document.getElementById('splash'));
+    }
+  }, [connectionsLoaded]);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -89,25 +99,7 @@ export function MainPage() {
     return () => cleanups.forEach((fn) => fn());
   }, []);
 
-  if (!connectionsLoaded) {
-    return (
-      <div className="flex h-full min-h-0 flex-col bg-surface text-fg">
-        <TitleBar
-          title={t('menu.appName')}
-          leftContent={<MenuBar />}
-          rightContent={<ThemeToggle />}
-        />
-        <div
-          className="flex flex-1 items-center justify-center"
-          data-testid="main-connections-loading"
-        >
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        </div>
-        <ConnectionEditorDialogHost />
-        <ConnectionShareDialogHost />
-      </div>
-    );
-  }
+  if (!connectionsLoaded) return null;
 
   if (connections.length === 0 && loadError) {
     return (

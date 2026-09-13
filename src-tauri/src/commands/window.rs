@@ -259,7 +259,7 @@ pub fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, Box<dyn std:
     let is_mac = cfg!(target_os = "macos");
     let bg = resolved_window_background(app, None);
 
-    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("window.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("DataZen")
         .inner_size(MAIN_WINDOW_DEFAULT_W, MAIN_WINDOW_DEFAULT_H)
         .min_inner_size(MAIN_WINDOW_MIN_W, MAIN_WINDOW_MIN_H)
@@ -306,7 +306,7 @@ pub fn create_onboarding_window(
         WebviewUrl::App("window.html?window=onboarding".into()),
     )
     .title("DataZen")
-    .inner_size(800.0, 700.0)
+    .inner_size(960.0, 720.0)
     .min_inner_size(640.0, 480.0)
     .decorations(true)
     .transparent(false)

@@ -100,9 +100,8 @@ afterEach(() => {
 });
 
 describe('MainPage', () => {
-  it('shows loading until connections are loaded', () => {
+  it('renders nothing until connections are loaded', () => {
     render(<MainPage />);
-    expect(screen.getByTestId('main-connections-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('welcome-page')).not.toBeInTheDocument();
     expect(screen.queryByTestId('connection-page-shell')).not.toBeInTheDocument();
   });
