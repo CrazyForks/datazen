@@ -183,11 +183,21 @@ async fn backup_database_to_path(
         .await
         .cmd_err("backup_database")?;
 
-    let (driver, handle) = state
+    // Open an independent connection for the dump instead of reusing the
+    // workspace session's pool.  The workspace pool may carry a poisoned
+    // connection from a failed query/transaction, which would immediately
+    // abort every backup query with "current transaction is aborted".
+    let (driver, _workspace_handle) = state
         .connection_manager
         .get_session(&db_session_id)
         .await
         .cmd_err("backup_database")?;
+
+    let dump_handle = driver.connect(&config).await.map_err(|e| {
+        let err: CommandError = e.into();
+        tracing::error!(cmd = "backup_database", error = %err, "Failed to open independent backup connection");
+        err
+    })?;
 
     let db_name = database
         .as_deref()
@@ -196,14 +206,22 @@ async fn backup_database_to_path(
     let opts = parse_backup_options(&options.unwrap_or_default())?;
 
     let mut on_progress = |progress: DumpProgress| emit_backup_progress(app, progress);
-    let out = driver
-        .dump_database_with_progress(&handle, &db_name, &opts, &mut on_progress)
+    let out = match driver
+        .dump_database_with_progress(&dump_handle, &db_name, &opts, &mut on_progress)
         .await
-        .map_err(|e| {
+    {
+        Ok(out) => out,
+        Err(e) => {
+            // Best-effort cleanup of the independent connection.
+            let _ = driver.disconnect(dump_handle).await;
             let err = CommandError::from(e);
             tracing::error!(cmd = "backup_database", error = %err);
-            err
-        })?;
+            return Err(err);
+        }
+    };
+
+    // Close the independent backup connection after a successful dump.
+    let _ = driver.disconnect(dump_handle).await;
 
     emit_backup_progress(
         app,
@@ -383,7 +401,7 @@ async fn restore_database_from_path(
         },
     );
 
-    let (driver, handle) = state
+    let (driver, _workspace_handle) = state
         .connection_manager
         .get_session(&db_session_id)
         .await
@@ -404,44 +422,67 @@ async fn restore_database_from_path(
         ));
     }
 
+    // Open an independent connection for the restore, same as backup, to
+    // avoid inheriting a poisoned transaction from the workspace pool.
+    let restore_handle = driver.connect(&config).await.map_err(|e| {
+        let err: CommandError = e.into();
+        tracing::error!(cmd = "restore_database", error = %err, "Failed to open independent restore connection");
+        err
+    })?;
+
     let restore_opts = parse_restore_options(&options.unwrap_or_default());
     tracing::info!(
         %db_session_id,
         overwrite = restore_opts.overwrite,
         "restore_database streaming"
     );
-    if restore_opts.overwrite {
-        let db_name = if let Some(name) = database.as_deref().filter(|s| !s.is_empty()) {
-            name.to_string()
-        } else {
-            config.database.unwrap_or_default()
-        };
-        if !db_name.is_empty() {
-            drop_existing_restore_targets(&driver, &handle, &db_name, app).await?;
-        }
-    }
 
-    let mut throttle = ThrottledRestoreProgress::new(app);
-    {
-        let mut on_progress = |progress: DumpProgress| throttle.emit(progress);
-        if driver.uses_sql_restore_pipeline() {
-            stream_sql_file_into_session(
-                &input_path,
-                driver.as_ref(),
-                &handle,
-                &restore_opts,
-                config.read_only,
-                state.store.get_settings().await.safe_mode,
-                &mut on_progress,
-            )
-            .await?;
-        } else {
-            driver
-                .restore_sql_with_progress(&handle, "", Some(&restore_opts), &mut on_progress)
-                .await?;
+    let restore_result: Result<(), CommandError> = async {
+        if restore_opts.overwrite {
+            let db_name = if let Some(name) = database.as_deref().filter(|s| !s.is_empty()) {
+                name.to_string()
+            } else {
+                config.database.unwrap_or_default()
+            };
+            if !db_name.is_empty() {
+                drop_existing_restore_targets(&driver, &restore_handle, &db_name, app).await?;
+            }
         }
+
+        let mut throttle = ThrottledRestoreProgress::new(app);
+        {
+            let mut on_progress = |progress: DumpProgress| throttle.emit(progress);
+            if driver.uses_sql_restore_pipeline() {
+                stream_sql_file_into_session(
+                    &input_path,
+                    driver.as_ref(),
+                    &restore_handle,
+                    &restore_opts,
+                    config.read_only,
+                    state.store.get_settings().await.safe_mode,
+                    &mut on_progress,
+                )
+                .await?;
+            } else {
+                driver
+                    .restore_sql_with_progress(
+                        &restore_handle,
+                        "",
+                        Some(&restore_opts),
+                        &mut on_progress,
+                    )
+                    .await?;
+            }
+        }
+        throttle.flush();
+        Ok(())
     }
-    throttle.flush();
+    .await;
+
+    // Always close the independent restore connection.
+    let _ = driver.disconnect(restore_handle).await;
+
+    restore_result?;
 
     emit_restore_progress(
         app,
