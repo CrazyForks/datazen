@@ -98,7 +98,13 @@ export const DATAZEN_EDITION = 'pro' as const;
 const SQL_EDITOR_PRO_ID = 'sql-editor-pro';
 const PRO_DEV_ENTRY = '${devEntry}';
 
-async function resolveBuiltinEpEntryUrl(): Promise<string | null> {
+/**
+ * Resolve the asset URL for the builtin Pro extension entry point, then
+ * fetch its content and return a blob URL.  Dynamic \`import()\` cannot
+ * handle Tauri's custom \`asset://\` (macOS) or \`http://asset.localhost\`
+ * (Windows) schemes in all WebView engines, but blob URLs work universally.
+ */
+async function resolveBuiltinEpBlobUrl(): Promise<string | null> {
   if (!('__TAURI_INTERNALS__' in globalThis)) {
     return null;
   }
@@ -110,7 +116,17 @@ async function resolveBuiltinEpEntryUrl(): Promise<string | null> {
     const { convertFileSrc } = await import('@tauri-apps/api/core');
     const base = await resourceDir();
     const entryPath = await join(base, 'builtin-ep', SQL_EDITOR_PRO_ID, 'dist', 'index.esm.js');
-    return convertFileSrc(entryPath);
+    const assetUrl = convertFileSrc(entryPath);
+
+    // Fetch the ESM bundle via the Tauri asset protocol and create a blob URL
+    // so that dynamic import() works on both macOS (asset://) and Windows
+    // (http://asset.localhost).
+    const resp = await fetch(assetUrl);
+    if (!resp.ok) {
+      throw new Error(\`fetch failed: \${resp.status} \${resp.statusText}\`);
+    }
+    const blob = await resp.blob();
+    return URL.createObjectURL(new Blob([blob], { type: 'application/javascript' }));
   } catch (err) {
     console.warn('[pro] failed to resolve builtin SQL Editor Pro entry:', err);
     return null;
@@ -119,13 +135,13 @@ async function resolveBuiltinEpEntryUrl(): Promise<string | null> {
 
 export function initProExtensions(): void {
   void (async () => {
-    const entryUrl = await resolveBuiltinEpEntryUrl();
-    if (!entryUrl) {
+    const blobUrl = await resolveBuiltinEpBlobUrl();
+    if (!blobUrl) {
       console.warn('[pro] builtin SQL Editor Pro extension not found; running community fallback');
       return;
     }
     try {
-      await hostExtensionLoader.loadFromUrl(SQL_EDITOR_PRO_ID, entryUrl);
+      await hostExtensionLoader.loadFromUrl(SQL_EDITOR_PRO_ID, blobUrl);
     } catch (err) {
       console.error('[pro] failed to activate SQL Editor Pro from builtin-ep:', err);
     }
