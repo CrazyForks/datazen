@@ -7,6 +7,7 @@ use datazen_driver_api::*;
 mod commands;
 mod connect;
 mod ops;
+mod ops_ttl;
 mod ops_cluster;
 mod ops_exec;
 mod ops_io;

@@ -2,8 +2,6 @@
 
 use redis::AsyncCommands;
 
-/// TTL `-1` means remove expiry (PERSIST); non-negative values set EXPIRE;
-/// absolute unix timestamps use EXPIREAT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtlSpec {
     Persist,
@@ -51,6 +49,13 @@ where
             .map(|_| ())
             .map_err(|e| e.to_string()),
     }
+}
+
+pub async fn set_expire_at_key<C>(conn: &mut C, key: &str, expire_at: i64) -> Result<(), String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    apply_ttl(conn, key, resolve_expire_at(expire_at)?).await
 }
 
 /// SET value. When `keep_ttl` is true, uses `SET key value KEEPTTL` (Redis ≥ 6).
