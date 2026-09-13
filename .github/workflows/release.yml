@@ -553,19 +553,11 @@ jobs:
           }
 
           canonical_name() {
-            local type="$1"
             local ext="$2"
-            # Avoid duplicate type+ext (e.g. dmg.dmg, deb.deb, rpm.rpm, appimage.AppImage)
-            local label
-            if [ "$(echo "$type" | tr '[:upper:]' '[:lower:]')" = "$(echo "$ext" | tr '[:upper:]' '[:lower:]')" ]; then
-              label="$ext"
-            else
-              label="${type}.${ext}"
-            fi
             if [ -n "$VARIANT" ]; then
-              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}-${label}"
+              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
             else
-              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${label}"
+              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}.${ext}"
             fi
           }
 
@@ -587,7 +579,7 @@ jobs:
             ext=$(file_ext "$base")
             [ -z "$type" ] && continue
 
-            newbase=$(canonical_name "$type" "$ext")
+            newbase=$(canonical_name "$ext")
             echo "${base}=${newbase}" >> "$MAPPING_FILE"
             cp "$file" "artifacts/$newbase"
             echo "  $base → $newbase"
@@ -606,10 +598,9 @@ jobs:
             newbase=$(grep "^${sigstem}=" "$MAPPING_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
 
             if [ -z "$newbase" ]; then
-              type=$(installer_type "$sigstem")
               ext=$(file_ext "$sigstem")
-              [ -z "$type" ] && { echo "  SKIP unrecognized sig: $base"; continue; }
-              newbase="$(canonical_name "$type" "$ext")"
+              [ -z "$ext" ] && { echo "  SKIP unrecognized sig: $base"; continue; }
+              newbase="$(canonical_name "$ext")"
             fi
 
             cp "$file" "artifacts/${newbase}.sig"

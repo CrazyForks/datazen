@@ -16,7 +16,7 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self' asset:",
+        "script-src": "'self' asset: http://asset.localhost",
         "frame-src": "'self' datazen:",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self' data: asset: tauri: blob: datazen:",
