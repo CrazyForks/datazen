@@ -36,8 +36,12 @@ ORDER BY total DESC;`;
  *
  * S0 entry choice → S1 step 1 of 2 (inline import form / connection form /
  * sample dataset) → S2 step 2 of 2 (AI provider, always) → S3 done.
+ *
+ * When `onComplete` is provided (standalone wizard window), it is called after
+ * settings have been persisted so the caller can close the window / signal the
+ * main window.  When omitted the component is a no-op after completion.
  */
-export function OnboardingWizard() {
+export function OnboardingWizard({ onComplete }: { onComplete?: () => void } = {}) {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const [state, dispatch] = useReducer(wizardReducer, INITIAL_STATE);
   const saveProfile = useAiStore((s) => s.saveProfile);
@@ -70,8 +74,10 @@ export function OnboardingWizard() {
         // localStorage unavailable — graceful no-op.
       }
     }
-    void updateSettings({ onboarding: completedOnboardingState() });
-  }, [updateSettings, state.entry, state.connectionName]);
+    void updateSettings({ onboarding: completedOnboardingState() }).then(() => {
+      onComplete?.();
+    });
+  }, [updateSettings, state.entry, state.connectionName, onComplete]);
 
   const handleFinish = useCallback(async () => {
     // Nothing typed → AI stays unconfigured (the journey never forces a key).

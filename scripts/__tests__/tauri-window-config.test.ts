@@ -16,28 +16,20 @@ function readWindows(filename: string): WindowConfig[] {
 }
 
 describe('Tauri platform window replacement', () => {
-  const baseWindows = readWindows('tauri.conf.json');
+  // The main window is created programmatically by Rust at startup
+  // (see `create_main_window` / `create_onboarding_window` in commands/window.rs)
+  // so all config files define an empty windows array.
 
-  it('routes main-window drags through HTML5', () => {
-    expect(baseWindows.find((window) => window.label === 'main')?.dragDropEnabled).toBe(false);
+  it('has no statically defined windows (created programmatically)', () => {
+    const baseWindows = readWindows('tauri.conf.json');
+    expect(baseWindows).toHaveLength(0);
   });
 
-  it.each([
-    ['macos', {}],
-    ['windows', { decorations: false }],
-  ] as const)(
-    '%s retains base settings when its window array replaces the base array',
-    (platform, overrides) => {
-      // Tauri uses JSON Merge Patch, which replaces the entire windows array.
-      // A partial platform window silently restores omitted Tauri defaults.
+  it.each([['macos'], ['windows']] as const)(
+    '%s config defines an empty windows array (merged into base)',
+    (platform) => {
       const platformWindows = readWindows(`tauri.${platform}.conf.json`);
-      expect(platformWindows).toHaveLength(baseWindows.length);
-      for (const baseWindow of baseWindows) {
-        expect(platformWindows.find((window) => window.label === baseWindow.label)).toMatchObject({
-          ...baseWindow,
-          ...overrides,
-        });
-      }
+      expect(platformWindows).toHaveLength(0);
     },
   );
 });

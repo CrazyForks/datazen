@@ -7,12 +7,6 @@ const fetchGroupsMock = vi.fn().mockResolvedValue(undefined);
 const listenCrossWindowMock = vi.fn().mockResolvedValue(() => {});
 const openNewConnectionDialogMock = vi.fn();
 
-const settingsState = {
-  settings: {
-    onboarding: { completed: true, version: 1 },
-  } as Record<string, unknown>,
-};
-
 const storeState = {
   connections: [] as Array<{ id: string }>,
   connectionsLoaded: false,
@@ -27,14 +21,12 @@ vi.mock('../../../hooks/useI18n', () => ({
 
 vi.mock('../../../stores/connectionStore', () => ({
   useConnectionStore: (sel: (s: typeof storeState) => unknown) => sel(storeState),
-}));
-
-vi.mock('../../../stores/settingsStore', () => ({
-  useSettingsStore: (sel: (s: typeof settingsState) => unknown) => sel(settingsState),
+  groupConnectionsWithPinnedSection: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('../../../lib/crossWindowBus', () => ({
   listenCrossWindow: (...args: unknown[]) => listenCrossWindowMock(...args),
+  emitCrossWindow: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../lib/windowManager', () => ({
@@ -45,7 +37,7 @@ vi.mock('../../connection/ConnectionPage', () => ({
   ConnectionPage: () => <div data-testid="connection-page-shell">connection shell</div>,
 }));
 
-vi.mock('../welcome/WelcomePage', () => ({
+vi.mock('../../welcome/WelcomePage', () => ({
   WelcomePage: () => (
     <div data-testid="welcome-page">
       welcome
@@ -58,10 +50,6 @@ vi.mock('../welcome/WelcomePage', () => ({
       </button>
     </div>
   ),
-}));
-
-vi.mock('../../onboarding/OnboardingWizard', () => ({
-  OnboardingWizard: () => <div data-testid="onboarding-wizard">onboarding</div>,
 }));
 
 vi.mock('../../../components/TitleBar', () => ({
@@ -105,7 +93,6 @@ beforeEach(() => {
   storeState.connections = [];
   storeState.connectionsLoaded = false;
   storeState.error = null;
-  settingsState.settings = { onboarding: { completed: true, version: 1 } };
 });
 
 afterEach(() => {
@@ -209,36 +196,5 @@ describe('MainPage', () => {
         expect.any(Function),
       ),
     );
-  });
-
-  it('shows OnboardingWizard when onboarding is explicitly not completed', () => {
-    settingsState.settings = { onboarding: { completed: false, version: 1 } };
-    storeState.connectionsLoaded = true;
-    render(<MainPage />);
-    expect(screen.getByTestId('onboarding-wizard')).toBeInTheDocument();
-    expect(screen.queryByTestId('welcome-page')).not.toBeInTheDocument();
-  });
-
-  it('never shows OnboardingWizard for an upgrading user (legacy settings.json without onboarding)', () => {
-    settingsState.settings = { onboarding: null };
-    storeState.connectionsLoaded = true;
-    render(<MainPage />);
-    expect(screen.queryByTestId('onboarding-wizard')).not.toBeInTheDocument();
-    expect(screen.getByTestId('welcome-page')).toBeInTheDocument();
-  });
-
-  it('never shows OnboardingWizard when the onboarding key is missing entirely', () => {
-    settingsState.settings = {};
-    storeState.connectionsLoaded = true;
-    render(<MainPage />);
-    expect(screen.queryByTestId('onboarding-wizard')).not.toBeInTheDocument();
-    expect(screen.getByTestId('welcome-page')).toBeInTheDocument();
-  });
-
-  it('hides OnboardingWizard once the journey was completed', () => {
-    settingsState.settings = { onboarding: { completed: true, version: 1 } };
-    storeState.connectionsLoaded = true;
-    render(<MainPage />);
-    expect(screen.queryByTestId('onboarding-wizard')).not.toBeInTheDocument();
   });
 });

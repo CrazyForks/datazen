@@ -8,17 +8,18 @@ import { openConnectionShareDialog } from '../../lib/connectionShare';
 import type { ConnectionImportSource } from '../../components/connection/ConnectionShareDialog';
 import { openNewConnectionDialog } from '../../lib/windowManager';
 import { useConnectionStore } from '../../stores/connectionStore';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { Button } from '../../components/ui/Button';
 import { ConnectionEditorDialogHost } from '../../components/connection/NewConnectionDialog';
 import { ConnectionShareDialogHost } from '../../components/connection/ConnectionShareDialogHost';
 import { ConnectionPage } from '../connection/ConnectionPage';
 import { WelcomePage } from '../welcome/WelcomePage';
-import { OnboardingWizard } from '../onboarding/OnboardingWizard';
-import { shouldShowOnboarding } from '../onboarding/onboardingGate';
+
 /**
- * Main window entry: first-run welcome when no saved connections,
- * otherwise the unified connection workspace.
+ * Main window entry.
+ *
+ * This window is created by Rust **after** the onboarding wizard has finished
+ * (or immediately on an upgrade/normal launch).  It never renders the wizard
+ * itself — that lives in a separate Tauri window.
  */
 export function MainPage() {
   const { t } = useI18n();
@@ -27,7 +28,6 @@ export function MainPage() {
   const loadError = useConnectionStore((s) => s.error);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const fetchGroups = useConnectionStore((s) => s.fetchGroups);
-  const onboarding = useSettingsStore((s) => s.settings.onboarding);
 
   useEffect(() => {
     void fetchConnections();
@@ -107,13 +107,6 @@ export function MainPage() {
         <ConnectionShareDialogHost />
       </div>
     );
-  }
-
-  // First-run journey gate: the backend marks a fresh install as
-  // `onboarding: { completed: false }` and an upgrade as `{ completed: true }`,
-  // so a missing state (legacy settings.json) never re-onboards anyone.
-  if (shouldShowOnboarding(onboarding)) {
-    return <OnboardingWizard />;
   }
 
   if (connections.length === 0 && loadError) {

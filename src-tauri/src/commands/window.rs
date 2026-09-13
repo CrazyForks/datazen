@@ -10,7 +10,7 @@ use tauri::{
 
 /// Main window defaults from `tauri.conf.json`.
 const MAIN_WINDOW_DEFAULT_W: f64 = 1280.0;
-const MAIN_WINDOW_DEFAULT_H: f64 = 960.0;
+const MAIN_WINDOW_DEFAULT_H: f64 = 900.0;
 const MAIN_WINDOW_MIN_W: f64 = 960.0;
 const MAIN_WINDOW_MIN_H: f64 = 640.0;
 /// Legacy launcher size before the unified workspace shell.
@@ -42,6 +42,9 @@ pub struct CreateWindowOptions {
     /// Last-resolved `--c-surface` hex from the opener (`#rgb` / `#rrggbb`).
     #[serde(default)]
     pub background_color: Option<String>,
+    /// Override native decorations. `None` = platform default (macOS true, others false).
+    #[serde(default)]
+    pub decorations: Option<bool>,
 }
 
 fn default_title() -> String {
@@ -135,6 +138,7 @@ pub async fn create_sub_window(
 
     let is_mac = cfg!(target_os = "macos");
     let transparent = options.transparent.unwrap_or(false);
+    let use_decorations = options.decorations.unwrap_or(is_mac);
     let label_for_log = options.label.clone();
 
     let mut builder = WebviewWindowBuilder::new(
@@ -144,7 +148,7 @@ pub async fn create_sub_window(
     )
     .title(&options.title)
     .inner_size(options.width, options.height)
-    .decorations(is_mac)
+    .decorations(use_decorations)
     .transparent(transparent)
     .visible(false)
     .background_color(resolved_window_background(
@@ -245,6 +249,108 @@ fn ensure_main_window_size(window: &WebviewWindow) {
         to_h = MAIN_WINDOW_DEFAULT_H,
         "main window resized to configured default"
     );
+}
+
+/// Create the main application window programmatically.
+///
+/// Called from bootstrap when onboarding is already completed (normal launch).
+/// The window starts hidden and is shown after page-load to avoid a white flash.
+pub fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let is_mac = cfg!(target_os = "macos");
+    let bg = resolved_window_background(app, None);
+
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("window.html".into()))
+        .title("DataZen")
+        .inner_size(MAIN_WINDOW_DEFAULT_W, MAIN_WINDOW_DEFAULT_H)
+        .min_inner_size(MAIN_WINDOW_MIN_W, MAIN_WINDOW_MIN_H)
+        .decorations(is_mac)
+        .transparent(false)
+        .visible(false)
+        .background_color(bg)
+        .accept_first_mouse(true)
+        .center()
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                tracing::info!("main window shown after page load");
+            }
+        });
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0));
+    }
+
+    let win = builder.build()?;
+    prepare_main_window(&win);
+    Ok(win)
+}
+
+/// Create the onboarding wizard window.
+///
+/// Called from bootstrap when onboarding has not yet been completed.
+/// The wizard gets native decorations on all platforms (no frameless hacks).
+pub fn create_onboarding_window(
+    app: &AppHandle,
+) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let bg = resolved_window_background(app, None);
+
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        "onboarding",
+        WebviewUrl::App("window.html?window=onboarding".into()),
+    )
+    .title("DataZen")
+    .inner_size(800.0, 700.0)
+    .min_inner_size(640.0, 480.0)
+    .decorations(true)
+    .transparent(false)
+    .visible(false)
+    .background_color(bg)
+    .accept_first_mouse(true)
+    .center()
+    .on_page_load(|window, payload| {
+        if payload.event() == PageLoadEvent::Finished {
+            let _ = window.show();
+            let _ = window.set_focus();
+            tracing::info!("onboarding window shown after page load");
+        }
+    });
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0));
+    }
+
+    let win = builder.build()?;
+    Ok(win)
+}
+
+/// Called by the onboarding wizard frontend after settings have been persisted.
+/// Creates the main window and closes the wizard window.
+#[tauri::command]
+pub async fn onboarding_complete(app: AppHandle) -> Result<(), CommandError> {
+    // Close the wizard window.
+    if let Some(wizard) = app.get_webview_window("onboarding") {
+        let _ = wizard.close();
+    }
+
+    // Create the main window (ignore error if it already exists).
+    if app.get_webview_window("main").is_none() {
+        if let Err(e) = create_main_window(&app) {
+            tracing::error!(error = %e, "failed to create main window after onboarding");
+        }
+    }
+
+    Ok(())
 }
 
 /// Labels of open windows excluding the main window.
@@ -389,6 +495,7 @@ pub async fn open_migration_sub_window(
             accept_first_mouse: true,
             transparent: None,
             background_color: None,
+            decorations: None,
         },
     )
     .await

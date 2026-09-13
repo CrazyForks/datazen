@@ -355,13 +355,35 @@ pub fn run() {
                 tray::sync_tray(&handle);
             }
 
-            if let Some(main) = app.get_webview_window("main") {
-                crate::commands::window::prepare_main_window(&main);
-                let main_for_deferred = main.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    crate::commands::window::prepare_main_window(&main_for_deferred);
-                });
+            // ── Window creation ───────────────────────────────────────────
+            // No windows are defined in tauri.conf.json — we create the
+            // appropriate one here based on the onboarding state so the two
+            // never coexist.
+            {
+                let state = handle.state::<AppState>();
+                let settings = tauri::async_runtime::block_on(state.store.get_settings());
+                let needs_onboarding = settings.onboarding.as_ref().map_or(true, |o| !o.completed);
+
+                if needs_onboarding {
+                    tracing::info!("onboarding not completed — creating wizard window");
+                    if let Err(e) = crate::commands::window::create_onboarding_window(&handle) {
+                        tracing::error!(error = %e, "failed to create onboarding window");
+                    }
+                } else {
+                    tracing::info!("onboarding completed — creating main window");
+                    match crate::commands::window::create_main_window(&handle) {
+                        Ok(main) => {
+                            let main_for_deferred = main.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                crate::commands::window::prepare_main_window(&main_for_deferred);
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to create main window");
+                        }
+                    }
+                }
             }
 
             // Optional embedded MCP: only if user explicitly enabled it in settings (default off).
@@ -569,6 +591,7 @@ pub fn run() {
             crate::commands::mcp_client_tools,
             crate::commands::mcp_client_call_tool,
             crate::commands::create_sub_window,
+            crate::commands::onboarding_complete,
             crate::commands::prompt_list,
             crate::commands::prompt_set_override,
             crate::commands::prompt_remove_override,

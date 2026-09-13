@@ -42,6 +42,12 @@ const BackupWindow = lazy(() =>
     return { default: m.BackupWindow };
   }),
 );
+const OnboardingWindow = lazy(() =>
+  import('./windows/onboarding/OnboardingWindow').then((m) => {
+    mark('OnboardingWindow chunk loaded');
+    return { default: m.OnboardingWindow };
+  }),
+);
 
 const windowKind = getWindowKind();
 mark(`windowKind resolved: "${windowKind}"`);
@@ -53,6 +59,8 @@ function WindowContent() {
   }, []);
 
   switch (windowKind) {
+    case 'onboarding':
+      return <OnboardingWindow />;
     case 'data-sync':
       return <DataSyncWindow />;
     case 'data-transfer':

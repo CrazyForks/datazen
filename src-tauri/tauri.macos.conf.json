@@ -1,25 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "dragDropEnabled": false,
-        "title": "DataZen",
-        "width": 1280,
-        "height": 900,
-        "minWidth": 960,
-        "minHeight": 640,
-        "center": true,
-        "decorations": true,
-        "transparent": false,
-        "visible": false,
-        "backgroundColor": "#0b0e14",
-        "acceptFirstMouse": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": { "x": 16, "y": 18 }
-      }
-    ]
+    "windows": []
   }
 }
