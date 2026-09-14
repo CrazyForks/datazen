@@ -107,7 +107,7 @@ pub async fn execute_redis_command(
     let db = db_index(&input);
 
     match command {
-include!("commands_exec_arms_a.rs")
-include!("commands_exec_arms_b.rs")
+include!("commands_exec_mutate.rs")
+include!("commands_exec_ops.rs")
     }
 }
