@@ -1,5 +1,10 @@
 /**
- * F5 welcome page journeys (F5-E2E-001 ~ F5-E2E-005).
+ * Zero-connection workspace empty state (ZERO-001 ~ ZERO-005).
+ *
+ * Replaces the retired WelcomePage suite (`welcome.ts`): with no saved
+ * connections the main window now renders `ConnectionPage` directly, and the
+ * empty state is owned by `ConnectionWorkspaceHome` state 1 (no-connections
+ * CTA) plus the navigator `no-connections` row.
  *
  * wdio.conf.ts always seeds `conn_e2e_pg` in the global `before` hook, so this
  * suite clears all connections locally, reloads the main window, and restores
@@ -71,15 +76,16 @@ async function reseedE2ePgConnection() {
   });
 }
 
-describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
+describe('零连接工作区空状态 (ZERO-001 ~ ZERO-005)', () => {
   let mainWindow: string;
-  const welcomeConnName = 'F5-E2E-欢迎页连接';
+  const zeroConnName = 'ZERO-零连接工作区连接';
 
   before(async () => {
     mainWindow = await browser.getWindowHandle();
     await deleteAllConnections();
-    // Bypass the onboarding wizard gate (MainPage shows the wizard when
-    // `onboarding.completed !== true`); this suite asserts WelcomePage itself.
+    // Bypass the onboarding wizard gate (a wiped data dir is a fresh install
+    // whose wizard window replaces the main window); this suite asserts the
+    // post-onboarding zero-connection workspace itself.
     const settings = await invokeBackend<Record<string, unknown>>('get_settings');
     await invokeBackend('save_settings', {
       settings: { ...settings, onboarding: { completed: true, version: 1 } },
@@ -97,7 +103,7 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
   after(async () => {
     const conns = await invokeBackend<Conn[]>('get_connections');
     for (const c of conns) {
-      if (c.name === welcomeConnName || c.id.startsWith('f5-e2e-welcome-')) {
+      if (c.name === zeroConnName || c.id.startsWith('zero-e2e-conn-')) {
         await invokeBackend('delete_connection', { id: c.id });
       }
     }
@@ -113,26 +119,25 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
     await browser.pause(1500);
   });
 
-  it('F5-E2E-001: 无连接时主窗显示欢迎页而非工作区侧栏', async () => {
-    const welcome = await $('[data-testid="welcome-page"]');
-    await welcome.waitForDisplayed({ timeout: 15000 });
-    await expect(welcome).toBeDisplayed();
-    await expect(await $('[data-testid="workspace-nav-databases"]')).not.toBeExisting();
+  it('ZERO-001: 无连接时主窗直接显示工作区空状态（导航栏仍在）', async () => {
+    const home = await $('[data-testid="connection-workspace-home"]');
+    await home.waitForDisplayed({ timeout: 15000 });
+    await expect(home).toBeDisplayed();
+    await expect(await $('[data-testid="workspace-nav-databases"]')).toBeDisplayed();
   });
 
-  it('F5-E2E-002: 欢迎页展示标题与四宫格功能介绍', async () => {
-    await $('[data-testid="welcome-page"]').waitForDisplayed({ timeout: 15000 });
+  it('ZERO-002: 空状态展示无连接文案与新建/导入入口', async () => {
+    await $('[data-testid="connection-workspace-home"]').waitForDisplayed({ timeout: 15000 });
     const body = await $('body').getText();
-    expect(body).toContain(t('welcome.title'));
-    expect(body).toContain(t('welcome.feature.connections.title'));
-    expect(body).toContain(t('welcome.feature.dashboard.title'));
-    expect(body).toContain(t('welcome.feature.workflow.title'));
-    expect(body).toContain(t('common.aiAssistant'));
+    expect(body).toContain(t('main.noConnections'));
+    expect(body).toContain(t('connWin.home.emptyNoConnectionsHint'));
+    await expect(await $('[data-testid="new-connection-button"]')).toBeDisplayed();
+    await expect(await $('[data-testid="import-connections-button"]')).toBeDisplayed();
   });
 
-  it('F5-E2E-003: 欢迎页 CTA 打开新建连接弹窗', async () => {
-    await $('[data-testid="welcome-page"]').waitForDisplayed({ timeout: 15000 });
-    const cta = await $('[data-testid="welcome-create-connection"]');
+  it('ZERO-003: 空状态 CTA 打开新建连接弹窗', async () => {
+    await $('[data-testid="connection-workspace-home"]').waitForDisplayed({ timeout: 15000 });
+    const cta = await $('[data-testid="new-connection-button"]');
     await cta.click();
     await waitForNewConnectionDialog();
     await expect(await $('[data-testid="new-connection-dialog"]')).toBeDisplayed();
@@ -140,13 +145,13 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
     await closeNewConnectionDialogFromUi();
   });
 
-  it('F5-E2E-004: 保存首个连接后主窗进入 ConnectionPage 工作区', async () => {
-    await $('[data-testid="welcome-page"]').waitForDisplayed({ timeout: 15000 });
-    await $('[data-testid="welcome-create-connection"]').click();
+  it('ZERO-004: 保存首个连接后空状态消失、连接列表出现', async () => {
+    await $('[data-testid="connection-workspace-home"]').waitForDisplayed({ timeout: 15000 });
+    await $('[data-testid="new-connection-button"]').click();
     await waitForNewConnectionDialog();
 
     const nameInput = await $('input[placeholder="例如：主数据库"]');
-    await nameInput.setValue(welcomeConnName);
+    await nameInput.setValue(zeroConnName);
     await clickNewConnectionSave();
 
     await browser.waitUntil(
@@ -158,7 +163,7 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
     const nav = await $('[data-testid="workspace-nav-databases"]');
     await nav.waitForDisplayed({ timeout: 15000 });
     await expect(nav).toBeDisplayed();
-    await expect(await $('[data-testid="welcome-page"]')).not.toBeExisting();
+    expect(await $('[data-testid="new-connection-button"]').isExisting()).toBe(false);
 
     await browser.waitUntil(async () => (await $$('[data-conn-item]')).length > 0, {
       timeout: 10000,
@@ -166,7 +171,7 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
     });
   });
 
-  it('F5-E2E-005: 删除最后一个连接后回到欢迎页', async () => {
+  it('ZERO-005: 删除最后一个连接后回到工作区空状态', async () => {
     const conns = await invokeBackend<Conn[]>('get_connections');
     expect(conns.length).toBeGreaterThan(0);
     for (const c of conns) {
@@ -176,9 +181,9 @@ describe('首次安装欢迎页 (F5-E2E-001 ~ F5-E2E-005)', () => {
     await browser.execute(() => location.reload());
     await browser.pause(1500);
 
-    const welcome = await $('[data-testid="welcome-page"]');
-    await welcome.waitForDisplayed({ timeout: 15000 });
-    await expect(welcome).toBeDisplayed();
-    await expect(await $('[data-testid="workspace-nav-databases"]')).not.toBeExisting();
+    const home = await $('[data-testid="connection-workspace-home"]');
+    await home.waitForDisplayed({ timeout: 15000 });
+    await expect(home).toBeDisplayed();
+    await expect(await $('[data-testid="workspace-nav-databases"]')).toBeDisplayed();
   });
 });

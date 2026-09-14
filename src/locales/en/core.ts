@@ -80,22 +80,8 @@ const pack = {
   'main.ready': 'Ready',
   'main.connectionCount': 'Connections: {count}',
   'main.allGroups': 'All',
-  'welcome.title': 'Welcome to DataZen',
-  'welcome.subtitle': 'A cross-platform database manager with AI-assisted workflows.',
-  'welcome.feature.connections.title': 'Database Management',
-  'welcome.feature.connections.description':
-    'Connect to PostgreSQL, MySQL, SQLite, Redis, and more.',
-  'welcome.feature.dashboard.title': 'Data Dashboards',
-  'welcome.feature.dashboard.description': 'Build visual dashboards from your query results.',
-  'welcome.feature.workflow.title': 'Workflows',
-  'welcome.feature.workflow.description': 'Automate repetitive tasks with YAML-driven workflows.',
   'common.aiAssistant': 'AI Assistant',
-  'welcome.feature.ai.description':
-    'Generate SQL, explain queries, and get help from multiple AI providers.',
-  'welcome.createConnection': 'Create Your First Connection',
   'common.importConnections': 'Import Connections',
-  'welcome.importConnectionHint':
-    'Import from TablePlus, Navicat, DataGrip, DBeaver, DBX, or a DataZen export file.',
   'common.newGroup': 'New Group',
   'main.ctx.renameGroup': 'Rename Group',
   'main.ctx.deleteGroup': 'Delete Group',

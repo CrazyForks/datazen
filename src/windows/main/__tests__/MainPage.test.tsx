@@ -34,16 +34,12 @@ vi.mock('../../../lib/windowManager', () => ({
 }));
 
 vi.mock('../../connection/ConnectionPage', () => ({
-  ConnectionPage: () => <div data-testid="connection-page-shell">connection shell</div>,
-}));
-
-vi.mock('../../welcome/WelcomePage', () => ({
-  WelcomePage: () => (
-    <div data-testid="welcome-page">
-      welcome
+  ConnectionPage: () => (
+    <div data-testid="connection-page-shell">
+      connection shell
       <button
         type="button"
-        data-testid="welcome-create-connection"
+        data-testid="new-connection-button"
         onClick={() => openNewConnectionDialogMock()}
       >
         create
@@ -102,28 +98,25 @@ afterEach(() => {
 describe('MainPage', () => {
   it('renders nothing until connections are loaded', () => {
     render(<MainPage />);
-    expect(screen.queryByTestId('welcome-page')).not.toBeInTheDocument();
     expect(screen.queryByTestId('connection-page-shell')).not.toBeInTheDocument();
   });
 
-  it('renders WelcomePage when loaded with no connections and no error', () => {
+  it('renders ConnectionPage workspace when loaded with no connections and no error', () => {
     storeState.connectionsLoaded = true;
     storeState.error = null;
 
     render(<MainPage />);
-    expect(screen.getByTestId('welcome-page')).toBeInTheDocument();
-    expect(screen.queryByTestId('connection-page-shell')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('welcome-load-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('connection-page-shell')).toBeInTheDocument();
+    expect(screen.queryByTestId('main-load-error')).not.toBeInTheDocument();
   });
 
-  it('shows load error instead of WelcomePage when fetch failed with no connections', () => {
+  it('shows load error instead of workspace when fetch failed with no connections', () => {
     storeState.connectionsLoaded = true;
     storeState.error = 'network down';
 
     render(<MainPage />);
-    expect(screen.getByTestId('welcome-load-error')).toBeInTheDocument();
+    expect(screen.getByTestId('main-load-error')).toBeInTheDocument();
     expect(screen.getByText('network down')).toBeInTheDocument();
-    expect(screen.queryByTestId('welcome-page')).not.toBeInTheDocument();
     expect(screen.queryByTestId('connection-page-shell')).not.toBeInTheDocument();
   });
 
@@ -132,7 +125,7 @@ describe('MainPage', () => {
     storeState.error = 'network down';
 
     render(<MainPage />);
-    fireEvent.click(screen.getByTestId('welcome-load-retry'));
+    fireEvent.click(screen.getByTestId('main-load-retry'));
     expect(fetchConnectionsMock).toHaveBeenCalled();
   });
 
@@ -143,7 +136,7 @@ describe('MainPage', () => {
 
     render(<MainPage />);
     expect(screen.getByTestId('connection-page-shell')).toBeInTheDocument();
-    expect(screen.queryByTestId('welcome-load-error')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('main-load-error')).not.toBeInTheDocument();
   });
 
   it('renders ConnectionPage when connections exist', () => {
@@ -152,14 +145,13 @@ describe('MainPage', () => {
 
     render(<MainPage />);
     expect(screen.getByTestId('connection-page-shell')).toBeInTheDocument();
-    expect(screen.queryByTestId('welcome-page')).not.toBeInTheDocument();
   });
 
-  it('welcome CTA calls openNewConnectionDialog', () => {
+  it('empty-state CTA calls openNewConnectionDialog', () => {
     storeState.connectionsLoaded = true;
 
     render(<MainPage />);
-    fireEvent.click(screen.getByTestId('welcome-create-connection'));
+    fireEvent.click(screen.getByTestId('new-connection-button'));
     expect(openNewConnectionDialogMock).toHaveBeenCalledOnce();
   });
 
@@ -174,7 +166,7 @@ describe('MainPage', () => {
     );
   });
 
-  it('listens for menu:import-connections on welcome state', async () => {
+  it('listens for menu:import-connections on empty workspace state', async () => {
     storeState.connectionsLoaded = true;
     render(<MainPage />);
     await waitFor(() =>

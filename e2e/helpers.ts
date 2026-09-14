@@ -25,7 +25,7 @@ export async function waitForNewConnectionDialog(timeout = 15000) {
 
 /** CSS selector for any entry point that opens the new-connection dialog. */
 export function newConnectionButtonSelector() {
-  return '[data-testid="new-connection-button"], [data-testid="welcome-create-connection"]';
+  return '[data-testid="new-connection-button"], [data-testid="empty-new-connection-button"]';
 }
 
 /** Wait until a new-connection entry point is visible. */
@@ -34,8 +34,8 @@ export async function waitForNewConnectionButton(timeout = 15000) {
     async () => {
       const toolbar = await $('[data-testid="new-connection-button"]');
       if (await toolbar.isDisplayed()) return true;
-      const welcome = await $('[data-testid="welcome-create-connection"]');
-      return welcome.isDisplayed();
+      const empty = await $('[data-testid="empty-new-connection-button"]');
+      return empty.isDisplayed();
     },
     { timeout, timeoutMsg: '等待新建连接按钮超时' },
   );
@@ -49,8 +49,8 @@ export async function clickNewConnectionButton() {
     await toolbar.click();
     return;
   }
-  const welcome = await $('[data-testid="welcome-create-connection"]');
-  await welcome.click();
+  const empty = await $('[data-testid="empty-new-connection-button"]');
+  await empty.click();
 }
 
 /** Select a driver type in the new-connection dialog sidebar. */

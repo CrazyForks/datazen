@@ -4,7 +4,7 @@
 
 ## 主窗口承载上下文
 
-主窗口的路由壳是 `MainPage`：没有连接时显示 `WelcomePage`，有连接时显示 `ConnectionPage`。ConnectionPage 统一承载连接树、SQL 面板、Schema 浏览、Workflow 和 Dashboard 导航。
+主窗口的路由壳是 `MainPage`：首次启动走独立 `onboarding` 向导窗口，完成后（或升级/正常启动）直进 `ConnectionPage`。零连接时的空状态由 `ConnectionWorkspaceHome` 直接承接（新建/导入 CTA）。ConnectionPage 统一承载连接树、SQL 面板、Schema 浏览、Workflow 和 Dashboard 导航。
 
 Settings 也以内嵌 `SettingsPage` 呈现。Docs 则直接在系统浏览器打开官网手册，不再创建一个“文档子窗口”。
 
