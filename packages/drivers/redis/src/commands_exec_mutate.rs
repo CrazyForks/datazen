@@ -5,8 +5,14 @@
                 .get("count")
                 .and_then(JsonValue::as_u64)
                 .unwrap_or(100) as u32;
+            let key_type = opt_str(&input, "keyType").or_else(|| opt_str(&input, "key_type"));
+            let with_memory = input
+                .get("withMemory")
+                .or_else(|| input.get("with_memory"))
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
             let (next, keys, db_size) = driver
-                .scan_keys_with_info(handle, db, pattern, cursor, count)
+                .scan_keys_with_info(handle, db, pattern, cursor, count, key_type, with_memory)
                 .await?;
             json_ok(serde_json::json!({ "cursor": next, "keys": keys, "dbSize": db_size }))
         }
