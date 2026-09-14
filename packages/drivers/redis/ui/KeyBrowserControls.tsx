@@ -1,5 +1,4 @@
 import { FolderTree, List } from 'lucide-react';
-import { Button } from '@datazen/ui';
 import { Select } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
 import { cn } from '../../../../src/lib/cn';
@@ -35,10 +34,10 @@ export function KeyBrowserControls({
     <div className="flex flex-wrap items-center gap-2">
       <Select
         value={keyType}
-        onChange={(e) => onKeyTypeChange(e.target.value)}
+        onChange={(value) => onKeyTypeChange(value)}
         options={typeOptions}
         className="h-7 w-28 text-xs"
-        aria-label={t('redis.filterByType')}
+        title={t('redis.filterByType')}
       />
       <div className="flex overflow-hidden rounded-md border border-edge">
         <button
