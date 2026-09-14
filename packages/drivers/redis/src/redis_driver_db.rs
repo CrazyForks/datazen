@@ -55,37 +55,29 @@ impl DatabaseDriver for RedisDriver {
         })
     }
 
-    async fn disconnect(&self, handle: &ConnectionHandle) -> Result<(), DriverError> {
+    async fn disconnect(&self, handle: ConnectionHandle) -> Result<(), DriverError> {
         let mut conns = self.connections.write().await;
         conns.remove(&handle.id);
         Ok(())
     }
 
-    async fn get_databases(
-        &self,
-        handle: &ConnectionHandle,
-    ) -> Result<Vec<DatabaseInfo>, DriverError> {
+    async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
         with_redis_conn!(self, handle, |conn| {
-            let info: String = redis::cmd("INFO").arg("keyspace").query_async(conn).await.map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            let info: String = redis::cmd("INFO")
+                .arg("keyspace")
+                .query_async(conn)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
             let mut dbs = Vec::new();
             for line in info.lines() {
                 if line.starts_with("db") {
                     if let Some(idx) = line.find(':') {
-                        let name = &line[..idx];
-                        dbs.push(DatabaseInfo {
-                            name: name.to_string(),
-                            size: None,
-                            tables: None,
-                        });
+                        dbs.push(line[..idx].to_string());
                     }
                 }
             }
             if dbs.is_empty() {
-                dbs.push(DatabaseInfo {
-                    name: "db0".to_string(),
-                    size: None,
-                    tables: None,
-                });
+                dbs.push("db0".to_string());
             }
             Ok(dbs)
         })
@@ -99,111 +91,99 @@ impl DatabaseDriver for RedisDriver {
         get_tables_on(self, handle, database).await
     }
 
-    async fn get_columns(
+    async fn get_table_schema(
         &self,
         _handle: &ConnectionHandle,
         _database: Option<&str>,
         _table: &str,
-    ) -> Result<Vec<ColumnInfo>, DriverError> {
-        Ok(vec![])
-    }
-
-    async fn get_indexes(
-        &self,
-        _handle: &ConnectionHandle,
-        _database: Option<&str>,
-        _table: &str,
-    ) -> Result<Vec<IndexInfo>, DriverError> {
-        Ok(vec![])
-    }
-
-    async fn get_foreign_keys(
-        &self,
-        _handle: &ConnectionHandle,
-        _database: Option<&str>,
-        _table: &str,
-    ) -> Result<Vec<ForeignKeyInfo>, DriverError> {
-        Ok(vec![])
+    ) -> Result<TableSchema, DriverError> {
+        Ok(TableSchema {
+            columns: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            primary_key: None,
+        })
     }
 
     async fn query(
         &self,
         handle: &ConnectionHandle,
         sql: &str,
-        params: Option<&[QueryParam]>,
     ) -> Result<QueryResult, DriverError> {
-        query_cmd_on(self, handle, sql, params).await
+        query_cmd_on(self, handle, sql, None).await
     }
 
-    async fn execute(
+    async fn query_multi(
         &self,
         handle: &ConnectionHandle,
         sql: &str,
-        params: Option<&[QueryParam]>,
-    ) -> Result<ExecuteResult, DriverError> {
-        let result = query_cmd_on(self, handle, sql, params).await?;
-        Ok(ExecuteResult {
-            rows_affected: result.rows.len() as u64,
-            last_insert_id: None,
-        })
+    ) -> Result<Vec<QueryResult>, DriverError> {
+        let one = query_cmd_on(self, handle, sql, None).await?;
+        Ok(vec![one])
     }
 
-    async fn begin_transaction(
+    async fn query_stream(
         &self,
         handle: &ConnectionHandle,
-    ) -> Result<TransactionHandle, DriverError> {
-        with_redis_conn!(self, handle, |conn| {
-            redis::cmd("MULTI").query_async::<_, ()>(conn).await.map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            Ok(TransactionHandle {
-                id: format!("tx_{}", uuid::Uuid::new_v4()),
-                connection_id: handle.id.clone(),
-            })
-        })
-    }
-
-    async fn commit_transaction(
-        &self,
-        handle: &ConnectionHandle,
-        _tx: &TransactionHandle,
+        sql: &str,
+        _on_batch: &mut (dyn FnMut(QueryResult) -> bool + Send),
     ) -> Result<(), DriverError> {
-        with_redis_conn!(self, handle, |conn| {
-            redis::cmd("EXEC").query_async::<_, ()>(conn).await.map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            Ok(())
-        })
+        let _ = query_cmd_on(self, handle, sql, None).await?;
+        Ok(())
     }
 
-    async fn rollback_transaction(
+    async fn query_with_params(
         &self,
         handle: &ConnectionHandle,
-        _tx: &TransactionHandle,
-    ) -> Result<(), DriverError> {
-        with_redis_conn!(self, handle, |conn| {
-            redis::cmd("DISCARD").query_async::<_, ()>(conn).await.map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            Ok(())
-        })
+        sql: &str,
+        params: &[QueryParam],
+    ) -> Result<QueryResult, DriverError> {
+        query_cmd_on(self, handle, sql, Some(params)).await
     }
 
-    async fn get_server_info(
+    async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
+        let result = query_cmd_on(self, handle, sql, None).await?;
+        Ok(result.rows.len() as u64)
+    }
+
+    fn command_definitions(&self) -> Vec<datazen_driver_api::DriverCommandDefinition> {
+        crate::commands::command_definitions()
+    }
+
+    async fn execute_command(
         &self,
         handle: &ConnectionHandle,
-    ) -> Result<ServerInfo, DriverError> {
+        command_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, DriverError> {
+        crate::commands_exec::execute_command(self, handle, command_id, input).await
+    }
+
+    async fn cancel_query(&self, _handle: &ConnectionHandle) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    async fn get_server_info(&self, handle: &ConnectionHandle) -> Result<ServerInfo, DriverError> {
         info_server_on(self, handle).await
     }
 
-    async fn export_sql(
+    async fn dump_database_with_progress(
         &self,
         _handle: &ConnectionHandle,
-        _options: &ExportOptions,
+        _opts: Option<&BackupRestoreOptions>,
+        _on_progress: &mut (dyn FnMut(DumpProgress) + Send),
     ) -> Result<String, DriverError> {
         Err(DriverError::NotSupported(
-            "Redis does not export SQL".into(),
+            "Redis does not use SQL dump; export keys via driver commands".into(),
         ))
     }
 
-    async fn import_sql(
+    async fn restore_sql_with_progress(
         &self,
         _handle: &ConnectionHandle,
         _sql: &str,
+        _opts: Option<&BackupRestoreOptions>,
+        _on_progress: &mut (dyn FnMut(DumpProgress) + Send),
     ) -> Result<(), DriverError> {
         Err(DriverError::NotSupported(
             "Redis does not restore SQL files; import via driver commands".into(),
