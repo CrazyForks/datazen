@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
@@ -115,7 +115,7 @@ export function ListEditor({
           {t('redis.pushRight')}
         </Button>
         <Button
-          variant="outline"
+          variant="secondary"
           className="h-7 px-2 text-xs"
           onClick={() =>
             void invokeListPop(dbSessionId, dbIndex, detail.key, 'left').then(onChanged)
@@ -124,7 +124,7 @@ export function ListEditor({
           {t('redis.popLeft')}
         </Button>
         <Button
-          variant="outline"
+          variant="secondary"
           className="h-7 px-2 text-xs"
           onClick={() =>
             void invokeListPop(dbSessionId, dbIndex, detail.key, 'right').then(onChanged)
