@@ -70,10 +70,17 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "scan_keys",
             "Scan keys",
-            "Scan keys with type, TTL, and preview",
+            "Scan keys with type, TTL, and preview (optional TYPE filter and MEMORY USAGE)",
             "redis:allow-info",
             object_schema(
-                serde_json::json!({ "dbIndex": db, "pattern": { "type": "string" }, "cursor": { "type": "integer" }, "count": { "type": "integer" } }),
+                serde_json::json!({
+                    "dbIndex": db,
+                    "pattern": { "type": "string" },
+                    "cursor": { "type": "integer" },
+                    "count": { "type": "integer" },
+                    "keyType": { "type": "string", "description": "Optional Redis TYPE filter (string/hash/list/set/zset/stream)" },
+                    "withMemory": { "type": "boolean", "description": "When true, size uses MEMORY USAGE (bytes)" }
+                }),
                 &[],
             ),
         ),
