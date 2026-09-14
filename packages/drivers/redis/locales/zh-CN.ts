@@ -32,6 +32,7 @@ const locale = {
   'redis.errorsCount': '{count} 个错误',
   'redis.expireAt': '绝对过期时间',
   'redis.expireAtInvalid': '无效的过期时间',
+  'redis.setExpireAt': '设置绝对过期',
   'redis.field': '字段',
   'redis.flushAll': '清空全部库',
   'redis.flushConfirm': '执行清空',
