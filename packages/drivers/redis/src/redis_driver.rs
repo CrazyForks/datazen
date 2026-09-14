@@ -2,14 +2,16 @@
 
 use datazen_driver_api::*;
 use redis::AsyncCommands;
-use redis::FromRedisValue;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::connect::{
     build_connection_plan, looks_like_connection_loss, open_live_conn, open_pinned_node_conn,
     ConnectionPlan, RedisLiveConn,
+};
+use crate::redis_driver_on::{
+    get_key_detail_on, info_server_on, scan_keys_with_info_on, select_db_on,
 };
 use crate::with_redis_conn;
 
