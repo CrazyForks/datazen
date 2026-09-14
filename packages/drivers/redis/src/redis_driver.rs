@@ -126,6 +126,8 @@ impl RedisDriver {
         pattern: &str,
         cursor: u64,
         count: u32,
+        key_type: Option<&str>,
+        with_memory: bool,
     ) -> Result<(u64, Vec<KeyEntry>, u64), DriverError> {
         let t0 = std::time::Instant::now();
         tracing::info!(db_index, %pattern, cursor, count, "redis scan_keys_with_info: acquiring lock");
@@ -139,8 +141,16 @@ impl RedisDriver {
             .await
             .map_err(DriverError::QueryFailed)?;
         let pattern = pattern.to_string();
+        let key_type = key_type.map(str::to_string);
         with_redis_conn!(&mut rc.live, |conn| scan_keys_with_info_on(
-            conn, db_index, &pattern, cursor, count, t0
+            conn,
+            db_index,
+            &pattern,
+            cursor,
+            count,
+            key_type.as_deref(),
+            with_memory,
+            t0
         )
         .await)
     }
