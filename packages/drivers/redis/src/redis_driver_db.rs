@@ -289,7 +289,7 @@ impl DatabaseDriver for RedisDriver {
     }
 
     fn command_definitions(&self) -> Vec<datazen_driver_api::DriverCommandDefinition> {
-        crate::commands::command_definitions()
+        crate::commands::redis_command_definitions()
     }
 
     async fn execute_command(
