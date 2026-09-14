@@ -2,12 +2,11 @@
 
 use async_trait::async_trait;
 use datazen_driver_api::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::connect::{build_connection_plan, open_live_conn};
 use crate::redis_driver::{RedisConn, RedisDriver, TEST_CONNECTION_TLS_GRACE};
 use crate::redis_driver_on::{get_tables_on, info_server_on, query_cmd_on};
-use crate::redis_value::{parse_redis_command_args, redis_value_to_rows, value_to_string};
 use crate::with_redis_conn;
 
 #[async_trait]
@@ -50,37 +49,41 @@ impl DatabaseDriver for RedisDriver {
         drop(conns);
 
         Ok(ConnectionHandle {
-            id: pool_id,
+            id: pool_id.clone(),
+            pool_id,
             driver_type: "redis".to_string(),
         })
     }
 
     async fn disconnect(&self, handle: ConnectionHandle) -> Result<(), DriverError> {
         let mut conns = self.connections.write().await;
-        conns.remove(&handle.id);
+        conns.remove(&handle.pool_id);
         Ok(())
     }
 
     async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
-        with_redis_conn!(self, handle, |conn| {
-            let info: String = redis::cmd("INFO")
-                .arg("keyspace")
-                .query_async(conn)
+        let mut conns = self.connections.write().await;
+        let rc = Self::get_conn(&mut conns, handle)?;
+
+        // Prefer CONFIG GET databases; fall back to 16.
+        let db_count: u32 = match with_redis_conn!(&mut rc.live, |conn| {
+            redis::cmd("CONFIG")
+                .arg("GET")
+                .arg("databases")
+                .query_async::<redis::Value>(conn)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            let mut dbs = Vec::new();
-            for line in info.lines() {
-                if line.starts_with("db") {
-                    if let Some(idx) = line.find(':') {
-                        dbs.push(line[..idx].to_string());
-                    }
-                }
+        }) {
+            Ok(val) => {
+                let s = crate::redis_value::value_to_string(&val);
+                s.lines()
+                    .filter_map(|l| l.trim().parse::<u32>().ok())
+                    .next()
+                    .unwrap_or(16)
             }
-            if dbs.is_empty() {
-                dbs.push("db0".to_string());
-            }
-            Ok(dbs)
-        })
+            Err(_) => 16,
+        };
+
+        Ok((0..db_count).map(|i| format!("db{i}")).collect())
     }
 
     async fn get_tables(
