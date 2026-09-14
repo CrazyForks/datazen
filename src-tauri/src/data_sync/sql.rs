@@ -717,4 +717,13 @@ mod tests {
         assert!(format_literal(&Some(Value::Json(serde_json::json!({"a":1})))).contains('{'));
         assert_eq!(quote_ident_sql("na\"me", '"'), r#""na""me""#);
     }
+    #[test]
+    fn test_tester_binary_preview_never_replaces_bytes_with_unicode() {
+        let bytes = vec![0, 255, 254];
+        let table = TableChangeSet { source_table: "source".into(), target_table: "target".into(), changes: vec![RowChange::insert(vec![Value::Integer(1)], vec![Some(Value::Integer(1)), Some(Value::Bytes(bytes.clone()))], &opts())] };
+        let statements = generate_table_sql(&table, None, &["id".into()], &["id".into(), "payload".into()], &["INT".into(), "BINARY".into()], |name| format!("\"{name}\""), |_, _| "?".into()).unwrap();
+        assert!(matches!(&statements[0].parameters[1], Value::Bytes(actual) if actual == &bytes));
+        assert!(!statements[0].preview_sql.contains('�'), "binary SQL preview is lossy: {:?}", statements[0].preview_sql);
+    }
+
 }

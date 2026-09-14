@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -47,3 +47,21 @@ Coordinator-provisioned isolated DBs available: `dz_mig_0910_sync_src` / `dz_mig
 - Target name/type/PK validation is not a full stale snapshot check. Source/schema-qualified metadata identity and physical self-target protection require shared RelationRef work.
 - Field/key mappings, full persistent profile/run lifecycle, object dependency sequencing and broad driver support remain planned work. Current frontend compare API still uses existing same-name mapping flow; preserve arbitrary mappings in shared prepared plans next wave.
 - Existing DataSyncWindow remains above 800 lines (reduced by fallback removal); full controller decomposition remains subsequent product work.
+
+
+## Independent Tester — 2026-09-14 (rescue completion)
+
+A. Reviewed committed canonical projection, page monotonicity/width/limits, unchanged count, retired apply, preview lifetime, row highlight, and execution/cancel state transitions. No business fixes made. Findings: BUG-001 and BUG-002 in bugs.md.
+
+B. Independent reruns at HEAD4ae9bb32 with retained/new Tester tests:
+- Rust data_sync:100 passed,1 failed (binary preview regression); Coder baseline98 passed. Added3 tests.
+- Rust commands::sync:21 passed (overlap with data_sync filter; do not sum).
+- Vitest:34 passed,1 failed,7 files; Coder baseline29 passed/5 files. Added6 tests.
+- TypeScript noEmit passed with no diagnostics.
+- PostgreSQL/MySQL isolated DB real IPC journey: initial2/2 passed. Canonical id,a,b versus target id,b,a, batch1, two selected changes, excluded id3, exact final values and unchanged count verified.
+
+C. V8 measured changed frontend core modules including DiffDetail/utils: lines82.92%, statements80.95%, branches77.60%, functions85.10%. Per-file lines: DataSyncWindow80.65, DiffDetail81.48, SqlPreview100, mappingView89.15, utils100. Before-Tester percentage unavailable (attempted name filtering did not exclude suite tests; rejected as baseline). Rust percentage not instrumented; no fabricated estimate. Tests cover oversized/null/composite pages, stale preview error/success, option/disabled metadata retention, cancelled unknown execution and binary preview.
+
+D. TEST_FAILED; do not merge. Two reproducible correctness defects remain. Reports /tmp/sync-rescue-{rust,commands,fe,coverage-full,tsc,e2e}.log. Database credentials not printed; only isolated dz_mig_0910_sync_src/tgt and tester_sync_projection used. WebDriver tests use track binary built via required pipeline on Sep11 after Coder commit; no business code changes after that build. Port4476 and e2e/.app-data-sync-rescue isolate application state. No default environment reset scripts run.
+
+Final real DB rerun:2/2 passed including newly added legacy apply rejection and exact unchanged target assertion before selected execution. One intermediate rerun failed to connect because app had exited; restarted the same exact binary and both passed. Final log:/tmp/sync-rescue-e2e-final.log.
