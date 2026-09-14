@@ -51,7 +51,6 @@ vi.mock('../../extensions/generated', () => {
   };
   return {
     DRIVER_DB_ENTRIES: { postgresql, kiwi },
-    DRIVER_DB_ENTRIES: { postgresql, kiwi },
     DRIVER_SQL_DIALECTS: {},
   };
 });

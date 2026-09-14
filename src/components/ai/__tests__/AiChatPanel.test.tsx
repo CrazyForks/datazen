@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { AiChatPanel, QuestionBlock } from '../AiChatPanel';
@@ -25,29 +26,30 @@ vi.mock('../../SqlCodeBlock', () => ({
 }));
 
 vi.mock('../AiInput', () => ({
-  AiInput: ({
-    value,
-    onChange,
-    onSubmit,
-    disabled,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    onSubmit: () => void;
-    disabled?: boolean;
-  }) => (
-    <div>
-      <textarea
-        data-testid="chat-input"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <button type="button" data-testid="chat-send" onClick={onSubmit}>
-        send
-      </button>
-    </div>
-  ),
+  AiInput: forwardRef<
+    HTMLTextAreaElement,
+    {
+      value: string;
+      onChange: (v: string) => void;
+      onSubmit: () => void;
+      disabled?: boolean;
+    }
+  >(function AiInput({ value, onChange, onSubmit, disabled }, ref) {
+    return (
+      <div>
+        <textarea
+          ref={ref}
+          data-testid="chat-input"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button type="button" data-testid="chat-send" onClick={onSubmit}>
+          send
+        </button>
+      </div>
+    );
+  }),
 }));
 
 const aiState = vi.hoisted(() => ({
