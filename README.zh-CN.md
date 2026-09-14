@@ -53,6 +53,26 @@ AI 不是必需品：普通数据库浏览和查询不需要 API Key。
 
 ![查询结果与图表](site/assets/screenshots/02-query-chart.png)
 
+### Editor Pro — 更智能的 SQL 编辑器
+
+DataZen 内置 **SQL Editor Pro**，提供基于实时 Schema 元数据的深度编辑辅助功能，远超基础语法高亮。
+
+| 功能 | 说明 |
+|---|---|
+| **语句 Gutter** | 从多语句脚本中独立运行任意单条语句 |
+| **智能补全** | 基于实时 Schema 的表名、列名和关键字补全 |
+| **Hover 悬浮卡** | 悬停查看列类型、注释和表结构 |
+| **函数签名提示** | 输入函数参数时显示内联参数提示 |
+| **SQL Linter** | 实时语法和语义错误反馈 |
+| **意图菜单 (Alt+Enter)** | 上下文感知的快速修复和重构建议 |
+| **事务控制** | 工具栏中切换 Auto-Commit，手动 Commit / Rollback |
+| **智能粘贴 IN** | 自动将粘贴的 CSV 值转换为 `IN (...)` 表达式 |
+| **格式化 SQL** | 一键统一代码格式 |
+
+![Editor Pro — 语句 Gutter 和智能补全](site/assets/screenshots/pro-01-statement-gutter.png)
+![Editor Pro — Hover 悬浮卡和函数签名](site/assets/screenshots/pro-03-hover-tooltip.png)
+![Editor Pro — SQL Linter 和意图菜单](site/assets/screenshots/pro-05-linter.png)
+
 ### AI 辅助数据库开发
 
 DataZen 将 AI 放在数据库旁边，而不是让开发者不断复制 Schema 和错误信息到另一个应用中。
