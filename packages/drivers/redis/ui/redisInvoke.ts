@@ -41,15 +41,28 @@ export type ScanKeysOptions = {
   withMemory?: boolean;
 };
 
+/**
+ * Scan keys. The 6th argument may be either `ScanKeysOptions` or a test `invoke`
+ * function (backward compatible with older call sites).
+ */
 export async function invokeScanKeys(
   dbSessionId: string,
   dbIndex: number,
   pattern: string,
   cursor: number,
   count: number,
-  options: ScanKeysOptions = {},
-  invoke: RedisInvokeFn = redisCommandInvoke,
+  optionsOrInvoke: ScanKeysOptions | RedisInvokeFn = {},
+  maybeInvoke?: RedisInvokeFn,
 ): Promise<KeyScanResult> {
+  let options: ScanKeysOptions = {};
+  let invoke: RedisInvokeFn = redisCommandInvoke;
+  if (typeof optionsOrInvoke === 'function') {
+    invoke = optionsOrInvoke;
+  } else {
+    options = optionsOrInvoke ?? {};
+    if (maybeInvoke) invoke = maybeInvoke;
+  }
+
   const args: Record<string, unknown> = {
     dbSessionId,
     dbIndex,
