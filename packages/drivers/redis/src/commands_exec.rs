@@ -106,8 +106,19 @@ pub async fn execute_redis_command(
     let id = handle.pool_id.as_str();
     let db = db_index(&input);
 
+    // Arms live in sibling files; include as one token stream so the match parses.
     match command {
-include!("commands_exec_mutate.rs")
-include!("commands_exec_ops.rs")
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands_exec_all_arms.rs"))
     }
+}
+
+/// Host `DatabaseDriver::execute_command` entry point.
+pub async fn execute_command(
+    driver: &RedisDriver,
+    handle: &ConnectionHandle,
+    command_id: &str,
+    input: JsonValue,
+) -> Result<serde_json::Value, DriverError> {
+    let result = execute_redis_command(driver, handle, command_id, input).await?;
+    Ok(result.data)
 }
