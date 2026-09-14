@@ -6,11 +6,17 @@
 
 ## 功能总览表
 
-*暂无活跃开发轨道*
+| Track | 任务 | 状态 | 编码 Commit | 测试 Commit | 合并 Commit |
+|-------|------|------|------------|------------|------------|
+| migration-navicat | — | 未开始 | — | — | — |
+| migration-schema-core | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
-*暂无写锁占用*
+| Track | 写锁代理 | Worktree | Branch | Phase | 最后心跳 |
+|-------|----------|----------|--------|-------|----------|
+| migration-navicat | — | — | feature/migration-navicat | 未开始 | — |
+| migration-schema-core | — | 63 passed, 0 failed. Initial build required the ignored empty Community resource directory `src-tauri/resources/builtin-ep`; created it, reran successfully. Wrapper restored Cargo injections. | feature/migration-schema-core | 未开始 | — |
 
 ## 波次记录
 
