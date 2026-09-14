@@ -4,12 +4,9 @@ use datazen_driver_api::*;
 use redis::AsyncCommands;
 use std::time::Instant;
 
-use redis::FromRedisValue;
+use crate::redis_value::{parse_scan_result, preview_value_to_string, truncate_preview};
 
-use crate::redis_value::{
-    parse_scan_result, preview_value_to_string, redis_flat_pairs_to_map, redis_zset_to_json,
-    stream_entry_to_json, truncate_preview,
-};
+const PREVIEW_MAX: usize = 120;
 
 pub(crate) async fn select_db_on<C>(conn: &mut C, db_index: u32) -> Result<(), String>
 where
@@ -64,9 +61,8 @@ where
         tables.push(TableInfo {
             name: key,
             schema: Some(format!("db{db_index}")),
-            table_type: None,
-            estimated_rows: None,
-            comment: None,
+            table_type: TableType::Table,
+            row_count: None,
         });
     }
     Ok(tables)
@@ -115,9 +111,10 @@ where
             .await
             .unwrap_or(-2);
         let size = if with_memory {
-            memory_usage_on(conn, key)
-                .await
-                .unwrap_or_else(|_| value_len_on(conn, key, &ty).await.unwrap_or(0))
+            match memory_usage_on(conn, key).await {
+                Ok(n) => n,
+                Err(_) => value_len_on(conn, key, &ty).await.unwrap_or(0),
+            }
         } else {
             value_len_on(conn, key, &ty).await.unwrap_or(0)
         };
@@ -215,7 +212,10 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(truncate_preview(&preview_value_to_string(&v)))
+            Ok(truncate_preview(
+                &preview_value_to_string(&v, "string"),
+                PREVIEW_MAX,
+            ))
         }
         "list" => {
             let vals: Vec<String> = redis::cmd("LRANGE")
@@ -225,7 +225,7 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(truncate_preview(&format!("{vals:?}")))
+            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
         }
         "hash" => {
             let vals: Vec<String> = redis::cmd("HGETALL")
@@ -233,7 +233,7 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(truncate_preview(&format!("{vals:?}")))
+            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
         }
         "set" => {
             let vals: Vec<String> = redis::cmd("SRANDMEMBER")
@@ -242,7 +242,7 @@ where
                 .query_async(conn)
                 .await
                 .unwrap_or_default();
-            Ok(truncate_preview(&format!("{vals:?}")))
+            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
         }
         "zset" => {
             let vals: Vec<String> = redis::cmd("ZRANGE")
@@ -253,7 +253,7 @@ where
                 .query_async(conn)
                 .await
                 .unwrap_or_default();
-            Ok(truncate_preview(&format!("{vals:?}")))
+            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
         }
         "stream" => Ok("(stream)".into()),
         _ => Ok(String::new()),
@@ -305,7 +305,16 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(serde_json::json!(redis_flat_pairs_to_map(&pairs)))
+            let mut obj = serde_json::Map::new();
+            for chunk in pairs.chunks(2) {
+                if chunk.len() == 2 {
+                    obj.insert(
+                        chunk[0].clone(),
+                        serde_json::Value::String(chunk[1].clone()),
+                    );
+                }
+            }
+            Ok(serde_json::Value::Object(obj))
         }
         "list" => {
             let vals: Vec<String> = redis::cmd("LRANGE")
@@ -334,7 +343,14 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(serde_json::json!(redis_zset_to_json(&vals)))
+            let mut members = Vec::new();
+            for chunk in vals.chunks(2) {
+                if chunk.len() == 2 {
+                    let score: f64 = chunk[1].parse().unwrap_or(0.0);
+                    members.push(serde_json::json!({ "member": chunk[0], "score": score }));
+                }
+            }
+            Ok(serde_json::json!(members))
         }
         "stream" => {
             let raw: redis::Value = redis::cmd("XRANGE")
@@ -346,7 +362,10 @@ where
                 .query_async(conn)
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(stream_entry_to_json(&raw))
+            match crate::redis_value::stream_entry_to_json(&raw) {
+                Ok(v) => Ok(v),
+                Err(()) => Ok(serde_json::json!([])),
+            }
         }
         other => Ok(serde_json::json!({ "type": other })),
     }
