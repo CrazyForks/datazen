@@ -47,6 +47,12 @@ if [[ -f "$ROOT/e2e/.env" ]]; then
 fi
 
 BIN="$ROOT/target/debug/bundle/macos/DataZen.app/Contents/MacOS/datazen"
+PRO_BIN="$ROOT/target/debug/bundle/macos/DataZen Pro.app/Contents/MacOS/datazen"
+# Prefer the Pro bundle when editor-pro is enabled (DATAZEN_EDITION=pro) or the
+# Pro app artifact already exists.
+if [[ "${DATAZEN_EDITION:-}" == "pro" ]] && [[ -x "$PRO_BIN" ]]; then
+  BIN="$PRO_BIN"
+fi
 if [[ "$(uname)" != "Darwin" || ! -x "$BIN" ]]; then
   BIN="$ROOT/target/debug/datazen"
 fi

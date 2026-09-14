@@ -12,6 +12,21 @@ BATCH_SIZE="${1:-10}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Load e2e/.env (PG/MySQL/Redis endpoints & superuser) — same source as run-group.sh.
+if [[ -f "$ROOT/e2e/.env" ]]; then
+  while IFS= read -r line; do
+    line="$(echo "$line" | sed 's/#.*//' | xargs)"
+    [[ -z "$line" ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    if [[ -z "${!key:-}" ]]; then export "$key"="$val"; fi
+  done < "$ROOT/e2e/.env"
+fi
+
+PGSUPER="${E2E_PG_SUPER:-${E2E_PG_USER:-postgres}}"
+PGADMIN_ARGS=(-h "${E2E_PG_HOST:-127.0.0.1}" -p "${E2E_PG_PORT:-5432}" -U "$PGSUPER" -d postgres)
+pgadmin() { psql "${PGADMIN_ARGS[@]}" "$@"; }
+
 # Collect all spec files, excluding helpers and known excluded files
 EXCLUDE_PATTERN="connectionJourneyHelpers|dataSyncJourneyHelpers|zz-screenshots|demo-recording|zz-diag"
 
@@ -21,7 +36,7 @@ TOTAL=$(wc -l < "$SPECS_FILE" | tr -d ' ')
 echo "=== Full E2E Run: $TOTAL specs, batch size $BATCH_SIZE ==="
 echo ""
 
-BEFORE_COUNT=$(psql -U wuxiaolong -d postgres -t -c "SELECT count(*) FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ')
+BEFORE_COUNT=$(pgadmin -t -c "SELECT count(*) FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ')
 echo "Existing e2e_w databases before run: ${BEFORE_COUNT:-0}"
 echo ""
 
@@ -89,16 +104,16 @@ echo "── Post-run checks ──"
 RESIDUAL_PROCS=$(pgrep -c datazen 2>/dev/null || echo "0")
 echo "Residual datazen processes: $RESIDUAL_PROCS"
 
-RESIDUAL_DBS=$(psql -U wuxiaolong -d postgres -t -c "SELECT count(*) FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ')
+RESIDUAL_DBS=$(pgadmin -t -c "SELECT count(*) FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ')
 echo "Residual e2e_w databases: ${RESIDUAL_DBS:-0}"
 
 if [[ "${RESIDUAL_DBS:-0}" -gt 0 ]]; then
   echo ""
   echo "Cleaning up residual databases..."
-  psql -U wuxiaolong -d postgres -t -c "SELECT datname FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ' | while IFS= read -r db; do
+  pgadmin -t -c "SELECT datname FROM pg_database WHERE datname LIKE 'e2e_w%'" 2>/dev/null | tr -d ' ' | while IFS= read -r db; do
     [[ -z "$db" ]] && continue
-    psql -U wuxiaolong -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid()" 2>/dev/null || true
-    psql -U wuxiaolong -d postgres -c "DROP DATABASE IF EXISTS \"$db\"" 2>/dev/null || true
+    pgadmin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid()" 2>/dev/null || true
+    pgadmin -c "DROP DATABASE IF EXISTS \"$db\"" 2>/dev/null || true
     echo "  dropped: $db"
   done
 fi
