@@ -952,11 +952,13 @@ export function DataTransferWindow() {
               data-testid="data-transfer-result"
               className="space-y-3 rounded-lg border border-edge bg-surface-alt p-6 text-sm"
             >
-              <p className="text-base font-medium">
-                {t('transfer.rowsInserted')}: {result.rowsInserted}
+              <p className="text-base font-medium" role="status">
+                {result.cancelled ? t('transfer.runCancelled') : result.partial ? t('transfer.runPartial') : t('transfer.success')}
               </p>
+              <p>{t('transfer.rowsInserted')}: {result.rowsInserted}</p>
+              {(result.cancelled || result.partial) && <p className="text-fg-muted">{t('transfer.partialExplanation')}</p>}
               {result.tables.map((tbl) => (
-                <div key={tbl.sourceTable} className="rounded-lg border border-edge bg-surface p-3">
+                <div key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}`} className="rounded-lg border border-edge bg-surface p-3">
                   <div className="font-medium">
                     {tbl.sourceTable}: {tbl.success ? t('transfer.success') : t('transfer.error')}
                   </div>

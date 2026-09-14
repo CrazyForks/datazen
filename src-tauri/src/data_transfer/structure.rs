@@ -8,17 +8,51 @@ use datazen_driver_api::TableSchema;
 
 use crate::db::{ConnectionHandle, DatabaseDriver};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::full_types::fetch_full_column_types;
 use crate::transfer::ir::{IRTable, IRType};
 
 use super::error::TransferError;
 use super::model::{
     TableExecutionResult, TableInspectResult, TableMappingStatus, TransferJob, TransferMode,
 };
-use super::preview::build_create_ddl;
 
 pub fn build_drop_table_sql(table: &str, tgt_adapter: &dyn SyncTargetAdapter) -> String {
     format!("DROP TABLE IF EXISTS {}", tgt_adapter.quote_ident(table))
+}
+
+pub fn target_relation_ref(
+    job: &TransferJob,
+    table: &str,
+    adapter: &dyn SyncTargetAdapter,
+) -> String {
+    match job.target.normalized_schema() {
+        Some(schema) => format!(
+            "{}.{}",
+            adapter.quote_ident(schema),
+            adapter.quote_ident(table)
+        ),
+        None => adapter.quote_ident(table),
+    }
+}
+
+/// Read precision-bearing metadata for the same renderer used by both commands.
+pub async fn enrich_source_types(
+    adapter: &dyn SyncSourceAdapter,
+    driver: &dyn DatabaseDriver,
+    handle: &ConnectionHandle,
+    schemas: &mut HashMap<String, TableSchema>,
+) -> Result<(), TransferError> {
+    for (table, schema) in schemas {
+        let full =
+            crate::transfer::full_types::fetch_full_column_types(adapter, driver, handle, table)
+                .await
+                .map_err(TransferError::validation)?;
+        for column in &mut schema.columns {
+            if let Some(native) = full.get(&column.name) {
+                column.data_type = native.clone();
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn source_schema_to_target_ir(
@@ -86,39 +120,108 @@ pub fn enrich_create_new_target_types(
     }
 }
 
+/// Apply the exact active projection to CREATE, including key renames. An empty
+/// mapping means automatic identity mapping; an explicit all-skipped mapping fails.
 pub fn apply_column_type_overrides(
     ir: &mut IRTable,
     mapping: &super::model::TableMapping,
     tgt_adapter: &dyn SyncTargetAdapter,
-) {
-    for col_map in &mapping.column_mappings {
-        let Some(native) = col_map
+) -> Result<(), TransferError> {
+    if mapping.column_mappings.is_empty() {
+        return Ok(());
+    }
+    let original = ir.columns.clone();
+    let mut projected = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    let mut renamed_keys = HashMap::new();
+    for binding in mapping.column_mappings.iter().filter(|c| !c.skip) {
+        if binding.target_column.trim().is_empty() || !names.insert(binding.target_column.clone()) {
+            return Err(TransferError::validation(
+                "target columns must be nonempty and unique",
+            ));
+        }
+        let mut column = original
+            .iter()
+            .find(|c| c.name == binding.source_column)
+            .cloned()
+            .ok_or_else(|| {
+                TransferError::validation(format!(
+                    "source column '{}' not found",
+                    binding.source_column
+                ))
+            })?;
+        if let Some(native) = binding
             .target_native_type
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        if let Some(col) = ir
-            .columns
-            .iter_mut()
-            .find(|c| c.name == col_map.source_column)
         {
-            let natural = tgt_adapter.ir_type_to_native(&col.ir_type);
-            if !native.eq_ignore_ascii_case(natural.trim()) {
-                col.ir_type = IRType::Other(native.to_string());
+            if !native.eq_ignore_ascii_case(tgt_adapter.ir_type_to_native(&column.ir_type).trim()) {
+                column.ir_type = IRType::Other(native.to_string());
             }
         }
+        renamed_keys.insert(column.name.clone(), binding.target_column.clone());
+        column.name = binding.target_column.clone();
+        projected.push(column);
     }
+    if projected.is_empty() {
+        return Err(TransferError::validation(
+            "CREATE requires at least one active column",
+        ));
+    }
+    // A subset of a composite primary key is not a primary key.
+    let complete_key = ir
+        .primary_keys
+        .iter()
+        .all(|key| renamed_keys.contains_key(key));
+    ir.primary_keys = if complete_key {
+        ir.primary_keys
+            .iter()
+            .filter_map(|key| renamed_keys.get(key).cloned())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for column in &mut projected {
+        column.is_primary_key = ir.primary_keys.contains(&column.name);
+    }
+    ir.columns = projected;
+    Ok(())
+}
+
+/// The sole CREATE renderer used by preview, create-new, and drop/recreate.
+pub fn mapped_create_ddl(
+    src_adapter: &dyn SyncSourceAdapter,
+    tgt_adapter: &dyn SyncTargetAdapter,
+    schema: &TableSchema,
+    table: &TableInspectResult,
+    job: &TransferJob,
+) -> Result<String, TransferError> {
+    let mapping = table_mapping_for(job, &table.source_table);
+    if let Some(ddl) = mapping
+        .and_then(|m| m.ddl_override.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(ddl.to_string());
+    }
+    let mut ir = source_schema_to_target_ir(src_adapter, schema, None, &table.target_table);
+    if let Some(mapping) = mapping {
+        apply_column_type_overrides(&mut ir, mapping, tgt_adapter)?;
+    }
+    Ok(crate::transfer::ddl::build_create_table_ddl_ref(
+        &ir,
+        tgt_adapter,
+        &target_relation_ref(job, &table.target_table, tgt_adapter),
+    ))
 }
 
 /// CREATE tables marked `CreateNew` when mode includes structure.
 pub async fn create_target_tables(
     src_adapter: &dyn SyncSourceAdapter,
     tgt_adapter: &dyn SyncTargetAdapter,
-    src_driver: &dyn DatabaseDriver,
-    src_handle: &ConnectionHandle,
+    _src_driver: &dyn DatabaseDriver,
+    _src_handle: &ConnectionHandle,
     tgt_driver: &dyn DatabaseDriver,
     tgt_handle: &ConnectionHandle,
     job: &TransferJob,
@@ -133,6 +236,11 @@ pub async fn create_target_tables(
         return Ok(Vec::new());
     }
 
+    if job.write_mode == super::model::WriteMode::DropCreateInsert
+        && job.mode == TransferMode::StructureAndData
+    {
+        return Ok(Vec::new());
+    }
     let mut results = Vec::new();
 
     for table in inspected
@@ -141,9 +249,16 @@ pub async fn create_target_tables(
     {
         if let Some(flag) = &cancelled {
             if flag.load(Ordering::SeqCst) {
-                return Err(TransferError::cancelled(
-                    "transfer cancelled during structure",
-                ));
+                results.push(TableExecutionResult {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    rows_inserted: 0,
+                    success: false,
+                    error: Some(
+                        "transfer cancelled during structure; completed DDL remains applied".into(),
+                    ),
+                });
+                break;
             }
         }
 
@@ -161,47 +276,7 @@ pub async fn create_target_tables(
             continue;
         };
 
-        let table_mapping = table_mapping_for(job, &table.source_table);
-
-        if let Some(ddl) = table_mapping
-            .and_then(|m| m.ddl_override.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match tgt_driver.execute(tgt_handle, ddl).await {
-                Ok(_) => results.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => {
-                    results.push(TableExecutionResult {
-                        source_table: table.source_table.clone(),
-                        target_table: table.target_table.clone(),
-                        rows_inserted: 0,
-                        success: false,
-                        error: Some(format!("CREATE failed: {e}")),
-                    });
-                    if job.options.stop_on_error {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-
-        let full_types =
-            fetch_full_column_types(src_adapter, src_driver, src_handle, &table.source_table)
-                .await
-                .unwrap_or_default();
-        let mut ir =
-            source_schema_to_target_ir(src_adapter, schema, Some(&full_types), &table.target_table);
-        if let Some(mapping) = table_mapping {
-            apply_column_type_overrides(&mut ir, mapping, tgt_adapter);
-        }
-        let ddl = build_create_ddl(&ir, tgt_adapter);
+        let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)?;
 
         match tgt_driver.execute(tgt_handle, &ddl).await {
             Ok(_) => results.push(TableExecutionResult {
@@ -233,31 +308,27 @@ pub async fn create_target_tables(
 pub async fn drop_and_recreate_table(
     src_adapter: &dyn SyncSourceAdapter,
     tgt_adapter: &dyn SyncTargetAdapter,
-    src_driver: &dyn DatabaseDriver,
-    src_handle: &ConnectionHandle,
+    _src_driver: &dyn DatabaseDriver,
+    _src_handle: &ConnectionHandle,
     tgt_driver: &dyn DatabaseDriver,
     tgt_handle: &ConnectionHandle,
-    source_table: &str,
-    target_table: &str,
+    table: &TableInspectResult,
+    job: &TransferJob,
     source_schemas: &HashMap<String, TableSchema>,
 ) -> Result<(), TransferError> {
-    let drop_sql = build_drop_table_sql(target_table, tgt_adapter);
+    let schema = source_schemas
+        .get(&table.source_table)
+        .ok_or_else(|| TransferError::validation("source schema not loaded"))?;
+    // Validate/render everything before the destructive first statement.
+    let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)?;
+    let drop_sql = format!(
+        "DROP TABLE IF EXISTS {}",
+        target_relation_ref(job, &table.target_table, tgt_adapter)
+    );
     tgt_driver
         .execute(tgt_handle, &drop_sql)
         .await
         .map_err(|e| TransferError::validation(format!("DROP failed: {e}")))?;
-
-    let Some(schema) = source_schemas.get(source_table) else {
-        return Err(TransferError::validation(format!(
-            "source schema not loaded for '{source_table}'"
-        )));
-    };
-
-    let full_types = fetch_full_column_types(src_adapter, src_driver, src_handle, source_table)
-        .await
-        .unwrap_or_default();
-    let ir = source_schema_to_target_ir(src_adapter, schema, Some(&full_types), target_table);
-    let ddl = build_create_ddl(&ir, tgt_adapter);
     tgt_driver
         .execute(tgt_handle, &ddl)
         .await
@@ -493,7 +564,7 @@ mod tests {
             }],
             ddl_override: None,
         };
-        apply_column_type_overrides(&mut ir, &mapping, &DummyTarget);
+        apply_column_type_overrides(&mut ir, &mapping, &DummyTarget).unwrap();
         assert_eq!(ir.columns[0].ir_type, IRType::Other("BIGINT".into()));
     }
 
@@ -551,7 +622,7 @@ mod tests {
             }
         }
 
-        apply_column_type_overrides(&mut ir, &mapping, &TgtAdapter);
+        apply_column_type_overrides(&mut ir, &mapping, &TgtAdapter).unwrap();
         assert!(matches!(
             ir.columns[0].ir_type,
             IRType::Timestamp {
@@ -593,5 +664,65 @@ mod tests {
             options: super::super::model::TransferOptions::default(),
         };
         assert!(table_eligible_for_data(&table, &job));
+    }
+    #[test]
+    fn mapped_create_projects_renames_and_does_not_invent_partial_primary_key() {
+        let mut ir = IRTable {
+            name: "copy".into(),
+            columns: ["id", "tenant", "payload"]
+                .iter()
+                .map(|name| IRColumn {
+                    name: (*name).into(),
+                    ir_type: IRType::Int32,
+                    nullable: false,
+                    default_expr: None,
+                    is_primary_key: *name != "payload",
+                    is_auto_increment: false,
+                    comment: None,
+                })
+                .collect(),
+            primary_keys: vec!["id".into(), "tenant".into()],
+            table_options: None,
+        };
+        let mut mapping = super::super::model::TableMapping::auto("source");
+        mapping.column_mappings = vec![
+            super::super::model::ColumnMapping {
+                source_column: "payload".into(),
+                target_column: "renamed".into(),
+                skip: false,
+                target_native_type: None,
+            },
+            super::super::model::ColumnMapping {
+                source_column: "id".into(),
+                target_column: "new_id".into(),
+                skip: false,
+                target_native_type: None,
+            },
+            super::super::model::ColumnMapping {
+                source_column: "tenant".into(),
+                target_column: "tenant".into(),
+                skip: true,
+                target_native_type: None,
+            },
+        ];
+        apply_column_type_overrides(&mut ir, &mapping, &DummyTarget).unwrap();
+        assert_eq!(
+            ir.columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["renamed", "new_id"]
+        );
+        assert!(ir.primary_keys.is_empty());
+        let sql = crate::transfer::ddl::build_create_table_ddl_ref(
+            &ir,
+            &DummyTarget,
+            "\"dest\".\"copy\"",
+        );
+        assert!(sql.starts_with("CREATE TABLE \"dest\".\"copy\""));
+        assert!(!sql.contains("tenant"));
+        assert!(!sql.contains("PRIMARY KEY"));
+        mapping.column_mappings[1].target_column = "renamed".into();
+        assert!(apply_column_type_overrides(&mut ir, &mapping, &DummyTarget).is_err());
     }
 }

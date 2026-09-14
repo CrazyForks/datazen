@@ -276,6 +276,30 @@ pub trait DatabaseDriver: Send + Sync {
         params: &[Value],
     ) -> Result<QueryResult, DriverError>;
 
+    /// Render a parameter for this dialect. Unsupported drivers must fail before writes.
+    /// `data_type` comes from the inspected target column metadata.
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Err(DriverError::Unsupported(
+            "parameterized migration writes are not supported".into(),
+        ))
+    }
+
+    /// Execute bound DML and report actual affected rows; never serialize values as SQL.
+    async fn execute_with_params(
+        &self,
+        _handle: &ConnectionHandle,
+        _sql: &str,
+        _params: &[Value],
+    ) -> Result<u64, DriverError> {
+        Err(DriverError::Unsupported(
+            "parameterized migration writes are not supported".into(),
+        ))
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError>;
 
     /// Return commands supported by this driver.

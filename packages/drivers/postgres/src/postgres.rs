@@ -193,6 +193,46 @@ impl DatabaseDriver for PostgresDriver {
         Self::query_with_params_impl(self, handle, sql, params).await
     }
 
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        let normalized = data_type.unwrap_or("").trim().to_ascii_lowercase();
+        let base = normalized.split('(').next().unwrap_or("").trim();
+        let cast = match base {
+            "uuid" => Some("uuid"),
+            "numeric" | "decimal" => Some("numeric"),
+            "bigint" | "int8" | "bigserial" => Some("bigint"),
+            "integer" | "int" | "int4" | "serial" => Some("integer"),
+            "smallint" | "int2" | "smallserial" => Some("smallint"),
+            "timestamp with time zone" | "timestamptz" => Some("timestamptz"),
+            "timestamp without time zone" | "timestamp" => Some("timestamp"),
+            "time with time zone" | "timetz" => Some("timetz"),
+            "time without time zone" | "time" => Some("time"),
+            "date" => Some("date"),
+            "json" => Some("json"),
+            "jsonb" => Some("jsonb"),
+            "interval" => Some("interval"),
+            "inet" => Some("inet"),
+            "cidr" => Some("cidr"),
+            _ => None,
+        };
+        Ok(match cast {
+            Some(cast) => format!("${index}::{cast}"),
+            None => format!("${index}"),
+        })
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        Self::execute_params_impl(self, handle, sql, params).await
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
         Self::execute_impl(self, handle, sql).await
     }

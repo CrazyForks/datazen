@@ -9,6 +9,7 @@ mod catalog;
 mod connection;
 mod execution;
 mod migration;
+mod numeric;
 mod postgres;
 mod schema;
 mod sql;

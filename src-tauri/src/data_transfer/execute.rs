@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use datazen_driver_api::TableSchema;
 
-use crate::data_sync::sql::{format_literal, qualify_relation_sql, quote_ident_sql};
+use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, DatabaseDriver, Value};
 use crate::transfer::adapter::SyncTargetAdapter;
 use crate::transfer::ir::IRType;
@@ -29,12 +29,10 @@ pub struct DropCreateContext<'a> {
 }
 
 pub enum ValueFormatter<'a> {
-    SameFamily {
-        quote: char,
-    },
+    SameFamily,
     Ir {
         tgt_adapter: &'a dyn SyncTargetAdapter,
-        source_column_ir_types: &'a HashMap<String, IRType>,
+        source_column_ir_types: &'a HashMap<String, HashMap<String, IRType>>,
     },
 }
 
@@ -53,115 +51,6 @@ pub fn active_column_mappings(mappings: &[ColumnMapping]) -> Vec<&ColumnMapping>
     mappings.iter().filter(|m| !m.skip).collect()
 }
 
-#[allow(dead_code)]
-pub fn build_insert_sql(
-    table: &str,
-    columns: &[&ColumnMapping],
-    values: &[Option<Value>],
-    quote: char,
-) -> String {
-    let q = |name: &str| quote_ident_sql(name, quote);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let val_list: Vec<String> = values.iter().map(format_literal).collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        q(table),
-        col_list.join(", "),
-        val_list.join(", ")
-    )
-}
-
-#[allow(dead_code)] // tested; thin wrapper over build_batch_insert_sql_ref
-pub fn build_batch_insert_sql(
-    table: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    quote: char,
-) -> String {
-    build_batch_insert_sql_ref(&quote_ident_sql(table, quote), columns, rows, quote)
-}
-
-pub fn build_batch_insert_sql_ref(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    quote: char,
-) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let q = |name: &str| quote_ident_sql(name, quote);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let value_groups: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = row.iter().map(format_literal).collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES {}",
-        table_ref,
-        col_list.join(", "),
-        value_groups.join(", ")
-    )
-}
-
-#[allow(dead_code)] // tested; thin wrapper over build_batch_insert_sql_ir_ref
-pub fn build_batch_insert_sql_ir(
-    table: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    tgt_adapter: &dyn SyncTargetAdapter,
-    source_column_ir_types: &HashMap<String, IRType>,
-) -> String {
-    build_batch_insert_sql_ir_ref(
-        &tgt_adapter.quote_ident(table),
-        columns,
-        rows,
-        tgt_adapter,
-        source_column_ir_types,
-    )
-}
-
-pub fn build_batch_insert_sql_ir_ref(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    tgt_adapter: &dyn SyncTargetAdapter,
-    source_column_ir_types: &HashMap<String, IRType>,
-) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let q = |name: &str| tgt_adapter.quote_ident(name);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let value_groups: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = columns
-                .iter()
-                .zip(row.iter())
-                .map(|(col, value)| {
-                    let ir_type = source_column_ir_types
-                        .get(col.source_column.as_str())
-                        .cloned()
-                        .unwrap_or(IRType::Text);
-                    let transformed = tgt_adapter.transform_value(value, &ir_type);
-                    tgt_adapter.format_literal(&transformed, &ir_type)
-                })
-                .collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES {}",
-        table_ref,
-        col_list.join(", "),
-        value_groups.join(", ")
-    )
-}
-
 #[allow(dead_code)] // tested; thin wrapper over build_truncate_sql_ref
 pub fn build_truncate_sql(table: &str, quote: char) -> String {
     build_truncate_sql_ref(&quote_ident_sql(table, quote))
@@ -176,49 +65,27 @@ pub fn map_row_values(
     source_schema: &TableSchema,
     columns: &[&ColumnMapping],
 ) -> Result<Vec<Option<Value>>, TransferError> {
-    let index: HashMap<&str, usize> = source_schema
-        .columns
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.name.as_str(), i))
-        .collect();
-    let mut out = Vec::with_capacity(columns.len());
+    if source_row.len() != columns.len() {
+        return Err(TransferError::validation(format!(
+            "projected row has {} values, expected {}",
+            source_row.len(),
+            columns.len()
+        )));
+    }
     for col in columns {
-        let idx = index
-            .get(col.source_column.as_str())
-            .copied()
-            .ok_or_else(|| {
-                TransferError::validation(format!(
-                    "source column '{}' not found",
-                    col.source_column
-                ))
-            })?;
-        out.push(source_row.get(idx).cloned().unwrap_or(None));
-    }
-    Ok(out)
-}
-
-fn build_insert_for_rows(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    formatter: &ValueFormatter<'_>,
-) -> String {
-    match formatter {
-        ValueFormatter::SameFamily { quote } => {
-            build_batch_insert_sql_ref(table_ref, columns, rows, *quote)
+        if !source_schema
+            .columns
+            .iter()
+            .any(|c| c.name == col.source_column)
+        {
+            return Err(TransferError::validation(format!(
+                "source column '{}' not found",
+                col.source_column
+            )));
         }
-        ValueFormatter::Ir {
-            tgt_adapter,
-            source_column_ir_types,
-        } => build_batch_insert_sql_ir_ref(
-            table_ref,
-            columns,
-            rows,
-            *tgt_adapter,
-            source_column_ir_types,
-        ),
     }
+    // SELECT already follows active mappings, including reordered/subset columns.
+    Ok(source_row.to_vec())
 }
 
 pub async fn execute_transfer_data(
@@ -304,8 +171,8 @@ pub async fn execute_transfer_data(
                 success: false,
                 error: Some("no column mappings".into()),
             });
+            partial = true;
             if job.options.stop_on_error {
-                partial = true;
                 break;
             }
             continue;
@@ -319,11 +186,70 @@ pub async fn execute_transfer_data(
                 success: false,
                 error: Some("source schema not loaded".into()),
             });
+            partial = true;
             if job.options.stop_on_error {
-                partial = true;
                 break;
             }
             continue;
+        };
+
+        let src_table_ref = qualify_relation_sql(
+            &src_family,
+            Some(&job.source.database),
+            job.source.schema.as_deref(),
+            &table.source_table,
+            src_quote,
+        );
+        let tgt_table_ref = qualify_relation_sql(
+            &tgt_family,
+            Some(&job.target.database),
+            job.target.schema.as_deref(),
+            &table.target_table,
+            tgt_quote,
+        );
+
+        let select_cols: Vec<String> = columns
+            .iter()
+            .map(|c| quote_ident_sql(&c.source_column, src_quote))
+            .collect();
+        let base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
+
+        // Resolve capability and scan once before any destructive target operation.
+        tgt_driver
+            .parameter_placeholder(1, None)
+            .map_err(|e| TransferError::validation(e.to_string()))?;
+        let mut scan = match super::scan::scan_rows(
+            src_driver,
+            src_handle,
+            &base_sql,
+            columns.iter().map(|c| c.source_column.clone()).collect(),
+            cancelled.clone(),
+        )
+        .await
+        {
+            Ok(scan) => scan,
+            Err(error) => {
+                tables_out.push(TableExecutionResult {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    rows_inserted: 0,
+                    success: false,
+                    error: Some(error.to_string()),
+                });
+                partial = true;
+                if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                    return Ok(TransferExecutionResult {
+                        tables: tables_out,
+                        rows_inserted: total_rows,
+                        cancelled: true,
+                        partial,
+                    });
+                }
+                if job.options.stop_on_error {
+                    break;
+                }
+                continue;
+            }
         };
 
         if job.write_mode == WriteMode::DropCreateInsert {
@@ -339,8 +265,8 @@ pub async fn execute_transfer_data(
                 ctx.src_handle,
                 ctx.tgt_driver,
                 ctx.tgt_handle,
-                &table.source_table,
-                &table.target_table,
+                table,
+                job,
                 ctx.source_schemas,
             )
             .await
@@ -352,8 +278,8 @@ pub async fn execute_transfer_data(
                     success: false,
                     error: Some(e.to_string()),
                 });
+                partial = true;
                 if job.options.stop_on_error {
-                    partial = true;
                     break;
                 }
                 continue;
@@ -379,113 +305,127 @@ pub async fn execute_transfer_data(
                     success: false,
                     error: Some(format!("truncate failed: {e}")),
                 });
+                partial = true;
                 if job.options.stop_on_error {
-                    partial = true;
                     break;
                 }
                 continue;
             }
         }
 
-        let src_table_ref = qualify_relation_sql(
-            &src_family,
-            Some(&job.source.database),
-            job.source.schema.as_deref(),
-            &table.source_table,
-            src_quote,
-        );
-        let tgt_table_ref = qualify_relation_sql(
-            &tgt_family,
-            Some(&job.target.database),
-            job.target.schema.as_deref(),
-            &table.target_table,
-            tgt_quote,
-        );
-
-        let select_cols: Vec<String> = columns
-            .iter()
-            .map(|c| quote_ident_sql(&c.source_column, src_quote))
-            .collect();
-        let base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
-
-        let mut offset = 0usize;
-        let mut table_rows = 0u64;
-        let mut table_error: Option<String> = None;
-
-        loop {
-            if let Some(flag) = &cancelled {
-                if flag.load(Ordering::SeqCst) {
-                    return Ok(TransferExecutionResult {
-                        tables: tables_out,
-                        rows_inserted: total_rows,
-                        cancelled: true,
-                        partial: true,
-                    });
-                }
-            }
-
-            let sql = if src_driver.supports_offset() {
-                format!("{base_sql} LIMIT {batch} OFFSET {offset}")
-            } else if offset == 0 {
-                base_sql.clone()
-            } else {
-                break;
-            };
-
-            let result = src_driver
-                .query(src_handle, &sql)
-                .await
-                .map_err(|e| TransferError::validation(e.to_string()))?;
-
-            if result.rows.is_empty() {
-                break;
-            }
-
-            let mapped_rows: Result<Vec<Vec<Option<Value>>>, TransferError> = result
-                .rows
-                .iter()
-                .map(|row| map_row_values(row, src_schema, &columns))
-                .collect();
-
-            match mapped_rows {
-                Ok(rows) => {
-                    let insert_sql =
-                        build_insert_for_rows(&tgt_table_ref, &columns, &rows, formatter);
-                    if insert_sql.is_empty() {
-                        break;
-                    }
-                    if let Err(e) = tgt_driver
-                        .execute(tgt_handle, &insert_sql)
-                        .await
-                        .map_err(|e| TransferError::validation(e.to_string()))
-                    {
-                        table_error = Some(e.to_string());
-                        if job.options.stop_on_error {
-                            partial = true;
-                        }
-                        break;
-                    }
-                    let n = rows.len() as u64;
-                    table_rows += n;
-                    total_rows += n;
-                }
-                Err(e) => {
-                    table_error = Some(e.to_string());
-                    if job.options.stop_on_error {
-                        partial = true;
-                    }
+        let target_schema = match tgt_driver
+            .get_table_schema(tgt_handle, &table.target_table)
+            .await
+        {
+            Ok(schema) => schema,
+            Err(error) => {
+                tables_out.push(TableExecutionResult {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    rows_inserted: 0,
+                    success: false,
+                    error: Some(error.to_string()),
+                });
+                partial = true;
+                if job.options.stop_on_error {
                     break;
                 }
+                continue;
             }
-
-            if !src_driver.supports_offset() {
+        };
+        let tx = match tgt_driver.begin_transaction(tgt_handle).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tables_out.push(TableExecutionResult {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    rows_inserted: 0,
+                    success: false,
+                    error: Some(format!("cannot start data transaction: {error}")),
+                });
+                partial = true;
+                if job.options.stop_on_error {
+                    break;
+                }
+                continue;
+            }
+        };
+        let mut table_rows = 0u64;
+        let mut table_error: Option<String> = None;
+        let mut was_cancelled = false;
+        'batches: loop {
+            if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                was_cancelled = true;
+                table_error =
+                    Some("transfer cancelled; current data transaction rolled back".into());
                 break;
             }
-            if result.rows.len() < batch {
+            let rows = match scan.next_batch(batch) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    table_error = Some(error.to_string());
+                    break;
+                }
+            };
+            if rows.is_empty() {
                 break;
             }
-            offset += batch;
+            for row in rows {
+                if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                    was_cancelled = true;
+                    table_error =
+                        Some("transfer cancelled; current data transaction rolled back".into());
+                    break 'batches;
+                }
+                let statement = map_row_values(&row, src_schema, &columns).and_then(|row| {
+                    super::writer::bound_insert(
+                        tgt_driver,
+                        &table.source_table,
+                        &tgt_table_ref,
+                        &columns,
+                        &target_schema,
+                        &row,
+                        formatter,
+                    )
+                });
+                let (sql, parameters) = match statement {
+                    Ok(statement) => statement,
+                    Err(error) => {
+                        table_error = Some(error.to_string());
+                        break 'batches;
+                    }
+                };
+                match tgt_driver
+                    .execute_with_params(tgt_handle, &sql, &parameters)
+                    .await
+                {
+                    Ok(affected) => table_rows += affected,
+                    Err(error) => {
+                        table_error = Some(error.to_string());
+                        break 'batches;
+                    }
+                }
+            }
         }
+        if table_error.is_none() && cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+            was_cancelled = true;
+            table_error = Some("transfer cancelled; current data transaction rolled back".into());
+        }
+        if table_error.is_some() {
+            if let Err(error) = tgt_driver.rollback(tx).await {
+                table_error = Some(format!(
+                    "{}; rollback failed, outcome UNKNOWN: {error}",
+                    table_error.as_deref().unwrap_or("write failed")
+                ));
+            }
+            table_rows = 0;
+            partial = true;
+        } else if let Err(error) = tgt_driver.commit(tx).await {
+            table_error = Some(format!("commit failed, outcome UNKNOWN: {error}"));
+            table_rows = 0;
+            partial = true;
+        }
+        total_rows += table_rows;
 
         tables_out.push(TableExecutionResult {
             source_table: table.source_table.clone(),
@@ -495,7 +435,15 @@ pub async fn execute_transfer_data(
             error: table_error,
         });
 
-        if partial {
+        if was_cancelled {
+            return Ok(TransferExecutionResult {
+                tables: tables_out,
+                rows_inserted: total_rows,
+                cancelled: true,
+                partial: true,
+            });
+        }
+        if partial && job.options.stop_on_error {
             break;
         }
     }
@@ -521,8 +469,7 @@ pub async fn execute_same_family_data(
     target_read_only: bool,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<TransferExecutionResult, TransferError> {
-    let quote = tgt_driver.quote_char();
-    let formatter = ValueFormatter::SameFamily { quote };
+    let formatter = ValueFormatter::SameFamily;
     execute_transfer_data(
         src_driver,
         src_handle,
@@ -542,7 +489,6 @@ pub async fn execute_same_family_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Value;
 
     #[test]
     fn self_overwrite_detected() {
@@ -552,25 +498,6 @@ mod tests {
         assert!(!is_self_table_overwrite(
             "c1", "db", "c1", "db", "users", "clients"
         ));
-    }
-
-    #[test]
-    fn batch_insert_sql() {
-        let cols = vec![ColumnMapping {
-            source_column: "id".into(),
-            target_column: "id".into(),
-            skip: false,
-            target_native_type: None,
-        }];
-        let refs: Vec<&ColumnMapping> = cols.iter().collect();
-        let sql = build_batch_insert_sql(
-            "users",
-            &refs,
-            &[vec![Some(Value::Integer(1))], vec![Some(Value::Integer(2))]],
-            '"',
-        );
-        assert!(sql.contains("INSERT INTO"));
-        assert!(sql.contains("VALUES"));
     }
 
     #[test]
@@ -609,43 +536,5 @@ mod tests {
             build_truncate_sql_ref(&tgt_ref),
             "TRUNCATE TABLE `tgtdb`.`users`"
         );
-    }
-
-    #[test]
-    fn ir_batch_insert_uses_adapter_literals() {
-        struct LitTarget;
-        impl SyncTargetAdapter for LitTarget {
-            fn ir_type_to_native(&self, _ir: &IRType) -> String {
-                "INT".into()
-            }
-            fn format_default(&self, _d: &crate::transfer::ir::IRDefault) -> Option<String> {
-                None
-            }
-            fn format_literal(&self, value: &Option<Value>, _ir: &IRType) -> String {
-                match value {
-                    Some(Value::Integer(n)) => n.to_string(),
-                    _ => "NULL".into(),
-                }
-            }
-        }
-
-        let cols = vec![ColumnMapping {
-            source_column: "id".into(),
-            target_column: "id".into(),
-            skip: false,
-            target_native_type: None,
-        }];
-        let refs: Vec<&ColumnMapping> = cols.iter().collect();
-        let mut ir_types = HashMap::new();
-        ir_types.insert("id".into(), IRType::Int32);
-        let sql = build_batch_insert_sql_ir(
-            "users",
-            &refs,
-            &[vec![Some(Value::Integer(42))]],
-            &LitTarget,
-            &ir_types,
-        );
-        assert!(sql.contains("INSERT INTO \"users\""));
-        assert!(sql.contains("(42)"));
     }
 }

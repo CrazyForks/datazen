@@ -82,11 +82,7 @@ impl SqliteDriver {
                                         row.try_get::<i32, _>(i).ok().map(|v| Value::Bool(v != 0))
                                     })
                                 }
-                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(|bytes| {
-                                    let hex: String =
-                                        bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                                    Value::String(format!("\\x{}", hex))
-                                }),
+                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(Value::Bytes),
                                 _ => row
                                     .try_get::<String, _>(i)
                                     .ok()
@@ -551,6 +547,31 @@ impl DatabaseDriver for SqliteDriver {
         Ok(result.rows_affected())
     }
 
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Ok("?".into())
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+
+        let result = Self::bind_values(sqlx::query(sql), params)
+            .execute(pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+
     async fn begin_transaction(
         &self,
         handle: &ConnectionHandle,
@@ -979,5 +1000,67 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[tokio::test]
+    async fn execute_params_preserves_all_bytes_and_actual_affected_rows() {
+        let directory =
+            std::env::temp_dir().join(format!("datazen-bound-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("bound.db");
+        std::fs::File::create(&path).unwrap();
+        let driver = SqliteDriver::new();
+        let handle = driver
+            .connect(&test_config(path.to_str().unwrap()))
+            .await
+            .unwrap();
+        driver
+            .execute(
+                &handle,
+                "CREATE TABLE t (id INTEGER, payload BLOB, label TEXT)",
+            )
+            .await
+            .unwrap();
+        let bytes = (0..=255).collect::<Vec<u8>>();
+        let label = "'\\\n雪";
+        assert_eq!(
+            driver
+                .execute_with_params(
+                    &handle,
+                    "INSERT INTO t VALUES (?, ?, ?)",
+                    &[
+                        Value::Integer(1),
+                        Value::Bytes(bytes.clone()),
+                        Value::String(label.into())
+                    ]
+                )
+                .await
+                .unwrap(),
+            1
+        );
+        let result = driver
+            .query(&handle, "SELECT payload, label FROM t")
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&result.rows[0]).unwrap(),
+            serde_json::to_value(vec![
+                Some(Value::Bytes(bytes)),
+                Some(Value::String(label.into()))
+            ])
+            .unwrap()
+        );
+        assert_eq!(
+            driver
+                .execute_with_params(
+                    &handle,
+                    "UPDATE t SET label = ? WHERE id = ?",
+                    &[Value::String("missing".into()), Value::Integer(2)]
+                )
+                .await
+                .unwrap(),
+            0
+        );
+        driver.disconnect(handle).await.unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -80,6 +80,17 @@ pub(crate) async fn preview_data_transfer_impl(
         None
     };
 
+    if let Some((source, _)) = &adapter_handles {
+        crate::data_transfer::structure::enrich_source_types(
+            source.as_ref(),
+            src_driver.as_ref(),
+            &src_handle,
+            &mut source_schemas,
+        )
+        .await
+        .map_err(CommandError::from)?;
+    }
+
     let adapters = adapter_handles
         .as_ref()
         .map(|(src, tgt)| TransferPreviewAdapters {
@@ -96,6 +107,22 @@ pub(crate) async fn preview_data_transfer_impl(
         adapters,
     )
     .map_err(CommandError::from)?;
+
+    if matches!(
+        job.mode,
+        crate::data_transfer::TransferMode::Data
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        let (target_driver, _) = state
+            .connection_manager
+            .get_session(&job.target.db_session_id)
+            .await
+            .cmd_err("preview_data_transfer")?;
+        if let Err(error) = target_driver.parameter_placeholder(1, None) {
+            preview.can_execute = false;
+            preview.block_reason = Some(error.to_string());
+        }
+    }
 
     if tgt_config.read_only {
         preview.can_execute = false;
