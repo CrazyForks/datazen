@@ -34,21 +34,36 @@ export async function redisCommandInvoke<T = unknown>(
   return unwrapData(result.data) as T;
 }
 
+export type ScanKeysOptions = {
+  /** Redis TYPE filter (string / hash / list / set / zset / stream). Empty = all. */
+  keyType?: string;
+  /** When true, size column uses MEMORY USAGE (bytes). */
+  withMemory?: boolean;
+};
+
 export async function invokeScanKeys(
   dbSessionId: string,
   dbIndex: number,
   pattern: string,
   cursor: number,
   count: number,
+  options: ScanKeysOptions = {},
   invoke: RedisInvokeFn = redisCommandInvoke,
 ): Promise<KeyScanResult> {
-  return (await invoke('redis', 'scan_keys', {
+  const args: Record<string, unknown> = {
     dbSessionId,
     dbIndex,
     pattern,
     cursor,
     count,
-  })) as KeyScanResult;
+  };
+  if (options.keyType && options.keyType !== 'all' && options.keyType !== '*') {
+    args.keyType = options.keyType;
+  }
+  if (options.withMemory) {
+    args.withMemory = true;
+  }
+  return (await invoke('redis', 'scan_keys', args)) as KeyScanResult;
 }
 
 export async function invokeGetKey(
