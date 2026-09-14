@@ -103,7 +103,8 @@ export async function tryDecompressString(raw: string): Promise<DecompressResult
 
   for (const { codec, format } of attempts) {
     try {
-      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+      const abCopy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const stream = new Blob([abCopy]).stream().pipeThrough(new DecompressionStream(format));
       const ab = await new Response(stream).arrayBuffer();
       if (ab.byteLength > DECOMPRESS_MAX_BYTES) {
         return {
