@@ -28,6 +28,9 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
     match (before, after) {
         (CreateTable { .. }, _) => true,
         (DropPrimaryKey { .. }, AddPrimaryKey { .. }) => true,
+        (DropPrimaryKey { columns, .. }, SetNullable { column, nullable: true, .. }) => {
+            columns.contains(column)
+        }
         (DropIndex { index: old, .. }, CreateIndex { index: new, .. }) => old.name == new.name,
         (DropPrimaryKey { columns, .. }, DropColumn { .. } | AlterColumnType { .. }) => match after
         {
@@ -276,6 +279,29 @@ mod replacement_tests {
             );
         }
     }
+    #[test]
+    fn replacing_key_relaxes_old_column_and_tightens_new_without_cycles() {
+        let relax = MigrationOperation::SetNullable {
+            table: "t".into(), column: "old".into(), nullable: true,
+        };
+        let tighten = MigrationOperation::SetNullable {
+            table: "t".into(), column: "new".into(), nullable: false,
+        };
+        let unrelated = MigrationOperation::SetNullable {
+            table: "t".into(), column: "other".into(), nullable: true,
+        };
+        let all = vec![pk(true), relax.clone(), tighten.clone(), unrelated.clone(), pk(false)];
+        let sorted = resolve_dependencies(all.clone());
+        assert_eq!(sorted.len(), all.len());
+        let position = |op: &MigrationOperation| sorted.iter().position(|item| item == op).unwrap();
+        assert!(position(&pk(false)) < position(&relax));
+        assert!(position(&pk(false)) < position(&pk(true)));
+        assert!(position(&tighten) < position(&pk(true)));
+        let mut selected = vec![relax, tighten.clone(), unrelated.clone(), pk(true)];
+        retain_dependency_closed(&all, &mut selected);
+        assert_eq!(selected, vec![tighten, unrelated]);
+    }
+
     #[test]
     fn filtering_either_half_removes_the_entire_replacement() {
         for all in [vec![pk(true), pk(false)], vec![idx(true), idx(false)]] {

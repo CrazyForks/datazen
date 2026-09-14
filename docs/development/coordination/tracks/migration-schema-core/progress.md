@@ -1,6 +1,6 @@
 # migration-schema-core
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 Branch: codex/migration-schema-core
 Worktree: /Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-core
@@ -64,3 +64,16 @@ Real database confirmation: isolated PostgreSQL transaction reproduces exact gen
 D. TEST_FAILED; BUG-001 and BUG-002 require correction and fresh tester. No business code changed by tester; reviewed.rs edits are test-only.
 
 Final Rust rerun with all new regressions: 65 passed, 2 failed (both BUG-001 reproductions), 0 ignored. Final frontend typecheck passed; `git diff --check` passed.
+
+
+## Repair round 1 — 2026-09-14
+
+Phase: READY_FOR_TEST
+
+- Rescuer startup: assigned worktree and codex/migration-schema-core confirmed; clean at 731a2adb. No prior uncommitted edits overwritten.
+- BUG-001 corrected via DropPrimaryKey → SetNullable(true) edge restricted to the old primary-key columns. Existing two failing tester regressions pass; additional old/new key replacement test protects acyclicity, tightening and unrelated columns.
+- BUG-002 corrected with nine full production-window journeys plus command requirement/cancellation branches. Wizard stays real, including objects, comparison, plan, deployment panel and footer; only endpoint and external I/O boundaries mocked.
+- Final self-validation: injected basic-driver Host Rust schema_diff 68/68; Vitest 49/49 in 7 files; tsc --noEmit pass; git diff --check pass.
+- Exact V8 command remains tester command: three included production files, no exclusions or reduced gates. Lines 93.30%, statements 89.80%, branches 84.95%, functions 85.36%; Window lines 92.27%, DeployPanel 100%, commands 100%.
+- No main checkout, shared driver API, locale or generated source committed. No dependency installation. Driver injection restored.
+- Fresh tester must rerun all phases and execute registered exact-binary PG desktop E2E. This self-validation is not TEST_DONE; no Rust percentage or desktop pass claimed.
