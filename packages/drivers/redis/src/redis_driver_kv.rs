@@ -19,7 +19,12 @@ impl KeyValueDriver for RedisDriver {
         cursor: u64,
         count: u32,
     ) -> Result<(u64, Vec<KeyEntry>, u64), DriverError> {
-        RedisDriver::scan_keys_with_info(self, handle, db_index, pattern, cursor, count).await
+        // Trait path: no type filter, logical size (not MEMORY USAGE).
+        // Full options (keyType / withMemory) are available via the scan_keys command.
+        RedisDriver::scan_keys_with_info(
+            self, handle, db_index, pattern, cursor, count, None, false,
+        )
+        .await
     }
 
     async fn get_key_detail(
