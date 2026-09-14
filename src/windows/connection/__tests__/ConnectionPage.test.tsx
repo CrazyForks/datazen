@@ -407,10 +407,11 @@ describe('ConnectionPage', () => {
     });
 
     render(<ConnectionPage />);
-    await waitFor(() => expect(screen.getByTestId('mock-content-view')).toBeInTheDocument(), {
+    await waitFor(() => expect(screen.getByText('conn.connecting')).toBeInTheDocument(), {
       timeout: 2000,
     });
-    expect(screen.getByText('conn.connecting')).toBeInTheDocument();
+    // ContentView is hidden while connecting to avoid duplicate loading indicators
+    expect(screen.queryByTestId('mock-content-view')).not.toBeInTheDocument();
     resolveConnect('conn-slow');
     await waitFor(() => expect(screen.getByTestId('mock-content-view')).toBeInTheDocument());
   });

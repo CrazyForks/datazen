@@ -899,21 +899,21 @@ describe('site screenshots', () => {
     await deleteConnectionsByIds(['conn_e2e_pg']);
     await browser.pause(400);
 
-    // ── 00-welcome: first-run page with zero connections ──
+    // ── 00-empty-workspace: zero-connection workspace home ──
     try {
       await browser.url('tauri://localhost');
       await browser.waitUntil(
         async () =>
           browser.execute(
             () =>
-              !!document.querySelector('[data-testid="welcome-page"]') &&
+              !!document.querySelector('[data-testid="connection-workspace-home"]') &&
               document.querySelectorAll('[data-conn-item]').length === 0,
           ),
-        { timeout: 15000, timeoutMsg: 'welcome page not shown with zero connections' },
+        { timeout: 15000, timeoutMsg: 'empty workspace home not shown with zero connections' },
       );
-      await softShot('00-welcome.png', 900);
+      await softShot('00-empty-workspace.png', 900);
     } catch (e) {
-      console.warn(`[warn] 00-welcome capture skipped: ${e}`);
+      console.warn(`[warn] 00-empty-workspace capture skipped: ${e}`);
     }
 
     const demoPgUser = process.env.E2E_DEMO_PG_USER || 'datazen_demo';

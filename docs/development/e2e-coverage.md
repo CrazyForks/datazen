@@ -42,7 +42,8 @@
 | 用户路径 | Spec | 状态 |
 |----------|------|------|
 | 主页操作面板、搜索、分组 | `main-window.ts`, `homepage-features.ts` | Covered |
-| 首次安装 → Welcome → 取消/重新建连 → 查看连接 → 首条查询 | `journeys/welcome-query-journey.ts` | Covered（当前已实现的 PostgreSQL 首激活路径；示例 SQLite 向导仍待产品实现） |
+| 向导完成后零连接空状态 → 取消/重新建连 → 查看连接 → 首条查询 | `journeys/zero-state-query-journey.ts` | Covered（当前已实现的 PostgreSQL 首激活路径） |
+| 零连接工作区空状态（空状态文案/CTA → 首个连接保存 → 删除最后连接返回空状态） | `connection-zero-state.ts` (ZERO-001~005) | Covered |
 | 已有工作区 → 填写/测试/保存连接 → 重载持久化 | `journeys/connection-create-journey.ts` | Covered |
 | 连接列表 → 连接首页 → Schema 树 → 表数据/结构 → 返回数据 | `journeys/connection-browse-journey.ts` | Covered（具体子标签内容由 `connection-window.ts` 覆盖） |
 | 新建连接 → 打开连接 → 新建查询 → 执行 SQL | `journeys/connection-query-journey.ts` | Covered |
@@ -87,7 +88,7 @@
 
 | 状态边界 | Spec | 状态 |
 |----------|------|------|
-| 必填校验 → 连接失败 → 修正成功 → 保存 → 删除最后连接返回 Welcome | `journeys/first-run-edge-journey.ts` | Covered |
+| 必填校验 → 连接失败 → 修正成功 → 保存 → 删除最后连接返回空状态 | `journeys/first-run-edge-journey.ts` | Covered |
 | 错误 SQL → 复制错误 → 修正并重新执行 | `journeys/query-recovery-journey.ts` | Covered |
 | 查询运行中取消 → 编辑器恢复可执行 → 新 Tab 隔离 → 切回结果保留 | `journeys/query-edge-journey.ts` | Covered |
 | 慢连接 pending → 成功后精确展开；切换连接仅保留一个展开项 | `connection-navigator-expansion.ts` | Covered（主 Journey） |

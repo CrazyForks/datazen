@@ -742,19 +742,23 @@ export function ConnectionPage() {
             </div>
           )}
 
+          {/* Hide ContentView while connecting to avoid duplicate loading indicators.
+              ConnectionPage already shows its own connecting UI above. */}
+          {!(activeTab?.status === 'connecting' && !activePanel) && (
+            <ContentView
+              selectTableRef={selectTableRef}
+              nodeContextMenuRef={nodeContextMenuRef}
+              actionsRef={actionsRef}
+              onSelectConnection={handleSelectConnection}
+            />
+          )}
+
           {activeTab?.status === 'connecting' && !activePanel && (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
               <div className="text-sm text-fg-muted">{t('conn.connecting')}</div>
             </div>
           )}
-
-          <ContentView
-            selectTableRef={selectTableRef}
-            nodeContextMenuRef={nodeContextMenuRef}
-            actionsRef={actionsRef}
-            onSelectConnection={handleSelectConnection}
-          />
         </div>
       </div>
     </div>

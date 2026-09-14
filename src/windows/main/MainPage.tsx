@@ -13,7 +13,6 @@ import { Button } from '../../components/ui/Button';
 import { ConnectionEditorDialogHost } from '../../components/connection/NewConnectionDialog';
 import { ConnectionShareDialogHost } from '../../components/connection/ConnectionShareDialogHost';
 import { ConnectionPage } from '../connection/ConnectionPage';
-import { WelcomePage } from '../welcome/WelcomePage';
 
 /**
  * Main window entry.
@@ -21,6 +20,11 @@ import { WelcomePage } from '../welcome/WelcomePage';
  * This window is created by Rust **after** the onboarding wizard has finished
  * (or immediately on an upgrade/normal launch).  It never renders the wizard
  * itself — that lives in a separate Tauri window.
+ *
+ * The zero-connection empty state is owned by `ConnectionPage` (via
+ * `ConnectionWorkspaceHome` state 1): no separate welcome page exists, so a
+ * user who skips the wizard or deletes every connection lands straight in the
+ * workspace with create/import CTAs.
  */
 export function MainPage() {
   const { t } = useI18n();
@@ -111,26 +115,16 @@ export function MainPage() {
         />
         <div
           className="flex flex-1 flex-col items-center justify-center gap-4 px-6"
-          data-testid="welcome-load-error"
+          data-testid="main-load-error"
         >
           <p className="select-text text-center text-sm text-danger">{loadError}</p>
-          <Button data-testid="welcome-load-retry" onClick={() => void fetchConnections()}>
+          <Button data-testid="main-load-retry" onClick={() => void fetchConnections()}>
             {t('common.retry')}
           </Button>
         </div>
         <ConnectionEditorDialogHost />
         <ConnectionShareDialogHost />
       </div>
-    );
-  }
-
-  if (connections.length === 0) {
-    return (
-      <>
-        <WelcomePage />
-        <ConnectionEditorDialogHost />
-        <ConnectionShareDialogHost />
-      </>
     );
   }
 

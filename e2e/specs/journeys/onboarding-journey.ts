@@ -170,7 +170,7 @@ describe('首次安装引导旅程 (ONBOARDING-JOURNEY)', () => {
     await $('[data-testid="onboarding-entry-import"]').waitForDisplayed({ timeout: 10000 });
     await $('[data-testid="onboarding-entry-manual"]').waitForDisplayed();
     await $('[data-testid="onboarding-entry-sample"]').waitForDisplayed();
-    await expect(await $('[data-testid="welcome-page"]')).not.toBeExisting();
+    await expect(await $('[data-testid="connection-workspace-home"]')).not.toBeExisting();
     expect(await $$('[role="dialog"]')).toHaveLength(0);
     await captureJourneyStep('onboarding-s0');
 

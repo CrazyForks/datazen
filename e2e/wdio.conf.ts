@@ -42,7 +42,7 @@ const capabilities: WebdriverIO.Capabilities[] = [{}];
 async function runSessionBootstrap() {
   await browser.url('tauri://localhost');
   await browser.pause(2000);
-  // Ensure we're on the main page — the app may start on welcome/settings
+  // Ensure we're on the main page — the app may start on settings
   try {
     await $('[data-testid="workspace-nav-databases"]').waitForDisplayed({ timeout: 10000 });
   } catch {
@@ -169,7 +169,7 @@ export const config: WebdriverIO.Config = {
       './specs/i18n-menu.ts',
       './specs/homepage-features.ts',
       './specs/connection-empty-state.ts',
-      './specs/welcome.ts',
+      './specs/connection-zero-state.ts',
       './specs/drag-drop-groups.ts',
       './specs/backup-database.ts',
       './specs/backup-window.ts',
@@ -272,7 +272,7 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/data-transfer-mysql-pg-journey.ts',
       './specs/journeys/data-transfer-type-mapping-journey.ts',
       './specs/connection-navigator-expansion.ts',
-      './specs/journeys/welcome-query-journey.ts',
+      './specs/journeys/zero-state-query-journey.ts',
       './specs/journeys/connection-create-journey.ts',
       './specs/journeys/connection-browse-journey.ts',
       './specs/journeys/connection-query-journey.ts',

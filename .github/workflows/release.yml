@@ -510,7 +510,7 @@ jobs:
           Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $archive -CompressionLevel Optimal -Force
           Write-Host "Created portable archive: $archive"
 
-      # ── Canonical artifact naming: DataZen-{Version}-{Platform}-{Arch}[-{Variant}]-{Type}.{ext} ──
+      # ── Canonical artifact naming: DataZen-{Version}-{Platform}-{Arch}[-{Variant}].{ext} ──
       - name: Rename artifacts with canonical names
         shell: bash
         run: |
@@ -553,7 +553,7 @@ jobs:
           }
 
           canonical_name() {
-            local ext="$2"
+            local ext="$1"
             if [ -n "$VARIANT" ]; then
               echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
             else

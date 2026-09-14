@@ -8,9 +8,8 @@
 
 | 类型 | 组件 / 窗口 | 说明 |
 |------|-------------|------|
-| **main** | `MainPage` | 路由壳：首次启动 → `OnboardingWizard`；无连接 → `WelcomePage`；有连接 → `ConnectionPage` |
-| Page | `OnboardingWizard` | 首次启动旅程（S0 入口 → S1 第一步 → S2 AI → S3 Done），见 §1.1 |
-| Page | `WelcomePage` | 首次安装 / 无保存连接时的功能介绍与「创建第一个连接」引导 |
+| **main** | `MainPage` | 路由壳：首次启动 → 独立 `onboarding` OS 窗口（`OnboardingWizard`）；完成后主窗直进 `ConnectionPage`（零连接时由 `ConnectionWorkspaceHome` 空状态承接） |
+| Page | `OnboardingWizard` | 首次启动旅程（S0 入口 → S1 第一步 → S2 AI → S3 Done），独立 Tauri 窗口（`?window=onboarding`），见 §1.1 |
 | Page | `ConnectionPage` | 统一工作区：`ConnectionNavigatorTree`、连接 Tab、Workflow / Dashboard 内嵌导航 |
 | Page | `SettingsPage` | 设置（含返回主界面）；sidebar 底部入口或 `openSettingsWindow(section?)` |
 | Page | `WorkflowPage` / `DashboardPanel` | 由 `ConnectionPage` 内嵌渲染，非独立 OS 窗口 |
@@ -37,14 +36,15 @@
 
 ### 1.1 首次启动旅程（OnboardingWizard）
 
-`src/windows/onboarding/`，只在首次安装时替换 `MainPage`（子窗口无关）。
+`src/windows/onboarding/`，只在首次安装时由 Rust 创建独立 `onboarding` OS 窗口
+（`?window=onboarding`，见 `bootstrap.rs` + `commands/window.rs`）；此时主窗口尚未创建，
+两者永不共存。完成后端 `onboarding_complete` 关闭向导窗并创建主窗口。
 
 ```
-MainPage:
+MainPage（主窗口，Rust 在向导完成后或升级/正常启动时创建）:
   connectionsLoaded ?
-    onboarding?.completed !== true  → OnboardingWizard   // 仅全新安装
-    : connections.length === 0      → WelcomePage
-    : ConnectionPage
+    connections.length === 0 + loadError → 加载失败页（重试）
+    : ConnectionPage                         // 零连接空状态由 ConnectionWorkspaceHome state 1 承接
 ```
 
 **全新安装 vs 升级（`store/mod.rs::load_all`）**：数据目录从未落盘 `settings.json` = 全新安装 →

@@ -73,7 +73,7 @@ const mapping = [
   },
   {
     key: 'windows-x86_64',
-    file: pick((f) => f.endsWith('-windows-x64-nsis.exe')),
+    file: pick((f) => f.endsWith('-windows-x64.exe')),
   },
   {
     key: 'linux-x86_64',
