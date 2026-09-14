@@ -9,6 +9,20 @@ use crate::redis_driver::{RedisConn, RedisDriver, TEST_CONNECTION_TLS_GRACE};
 use crate::redis_driver_on::{get_tables_on, info_server_on, query_cmd_on};
 use crate::with_redis_conn;
 
+fn value_to_string(v: &redis::Value) -> String {
+    match v {
+        redis::Value::BulkString(b) => String::from_utf8_lossy(b).into_owned(),
+        redis::Value::SimpleString(s) => s.clone(),
+        redis::Value::Int(i) => i.to_string(),
+        redis::Value::Array(items) => items
+            .iter()
+            .map(value_to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
 #[async_trait]
 impl DatabaseDriver for RedisDriver {
     fn driver_type(&self) -> DatabaseType {
@@ -20,7 +34,7 @@ impl DatabaseDriver for RedisDriver {
     }
 
     fn quote_char(&self) -> char {
-        '\0' // Redis doesn't quote identifiers
+        '\0'
     }
 
     fn quote_ident(&self, name: &str) -> String {
@@ -51,7 +65,6 @@ impl DatabaseDriver for RedisDriver {
         Ok(ConnectionHandle {
             id: pool_id.clone(),
             pool_id,
-            driver_type: "redis".to_string(),
         })
     }
 
@@ -65,7 +78,6 @@ impl DatabaseDriver for RedisDriver {
         let mut conns = self.connections.write().await;
         let rc = Self::get_conn(&mut conns, handle)?;
 
-        // Prefer CONFIG GET databases; fall back to 16.
         let db_count: u32 = match with_redis_conn!(&mut rc.live, |conn| {
             redis::cmd("CONFIG")
                 .arg("GET")
@@ -73,13 +85,11 @@ impl DatabaseDriver for RedisDriver {
                 .query_async::<redis::Value>(conn)
                 .await
         }) {
-            Ok(val) => {
-                let s = crate::redis_value::value_to_string(&val);
-                s.lines()
-                    .filter_map(|l| l.trim().parse::<u32>().ok())
-                    .next()
-                    .unwrap_or(16)
-            }
+            Ok(val) => value_to_string(&val)
+                .lines()
+                .filter_map(|l| l.trim().parse::<u32>().ok())
+                .next()
+                .unwrap_or(16),
             Err(_) => 16,
         };
 
@@ -158,8 +168,8 @@ impl DatabaseDriver for RedisDriver {
         handle: &ConnectionHandle,
         command_id: &str,
         input: serde_json::Value,
-    ) -> Result<serde_json::Value, DriverError> {
-        crate::commands_exec::execute_command(self, handle, command_id, input).await
+    ) -> Result<CommandResult, DriverError> {
+        crate::commands_exec::execute_redis_command(self, handle, command_id, input).await
     }
 
     async fn cancel_query(&self, _handle: &ConnectionHandle) -> Result<(), DriverError> {
