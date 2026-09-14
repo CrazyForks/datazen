@@ -1,5 +1,4 @@
 <div align="center">
-
 <img src="site/assets/logo.png" width="96" alt="DataZen" />
 
 # DataZen
@@ -13,7 +12,6 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square)](#安装)
 
 [下载](https://flyxl.github.io/datazen/zh/download.html) · [官网](https://flyxl.github.io/datazen/zh/) · [English](README.md) · [贡献指南](CONTRIBUTING.md)
-
 </div>
 
 ![DataZen 演示 — 引导、查询、图表、AI](site/assets/video/demo-poster.png)

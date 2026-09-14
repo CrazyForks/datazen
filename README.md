@@ -1,5 +1,4 @@
 <div align="center">
-
 <img src="site/assets/logo.png" width="96" alt="DataZen" />
 
 # DataZen
@@ -13,7 +12,6 @@ Query · Diagnose · Visualize · Migrate · Automate · MCP
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square)](#installation)
 
 [Download](https://flyxl.github.io/datazen/download.html) · [Website](https://flyxl.github.io/datazen/) · [中文](README.zh-CN.md) · [Contributing](CONTRIBUTING.md)
-
 </div>
 
 ![DataZen demo — onboarding, query, chart, AI](site/assets/video/demo-poster.png)
