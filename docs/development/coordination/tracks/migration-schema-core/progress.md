@@ -1,6 +1,6 @@
 # migration-schema-core
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 Branch: codex/migration-schema-core
 Worktree: /Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-core
@@ -77,3 +77,13 @@ Phase: READY_FOR_TEST
 - Exact V8 command remains tester command: three included production files, no exclusions or reduced gates. Lines 93.30%, statements 89.80%, branches 84.95%, functions 85.36%; Window lines 92.27%, DeployPanel 100%, commands 100%.
 - No main checkout, shared driver API, locale or generated source committed. No dependency installation. Driver injection restored.
 - Fresh tester must rerun all phases and execute registered exact-binary PG desktop E2E. This self-validation is not TEST_DONE; no Rust percentage or desktop pass claimed.
+
+## Independent tester 2 — 2026-09-14
+
+Phase: PASSED
+
+- A. Independently reviewed the complete `2c0270ec..b0458072` production diff against F06/F07/F09. The old-PK-column-only edge orders `DropPrimaryKey` before nullable relaxation without creating the replacement cycle; dependency closure removes the affected relaxation when destructive PK removal is excluded and preserves unrelated operations. Reviewed-plan equality, one-shot atomic consumption, session/pool/effective-config binding, persisted/runtime readonly checks, target snapshot revalidation, backend rollback requirements, and matching production/test deploy status classification are present. Physical server identity, DDL locking and full-object metadata remain the documented later shared contracts rather than claims in this wave.
+- B. Independently reran the injected basic-driver Host Rust schema-diff suite: 68 passed, 0 failed, 0 ignored. Independently reran the seven selected frontend files: 49 passed, 0 failed. `npx --no-install tsc --noEmit` and `git diff --check 2c0270ec..HEAD` passed. Driver injection restored cleanly.
+- C. Independently measured the exact three-file V8 scope with unchanged thresholds: lines 93.30% (265/284), statements 89.80% (282/314), branches 84.95% (209/246), functions 85.36% (70/82). Per file: `SchemaDiffWindow.tsx` lines 92.27%, branches 83.25%, functions 80.64%; `SchemaDiffDeployPanel.tsx` lines 100%, branches 96.15%, functions 100%; `schemaDiff.ts` lines 100%, branches 88.23%, functions 100%. Existing tester journeys meaningfully cover the identified branches, so no redundant test was added in this round. Rust percentages are not fabricated; branch/path review and the 68-test suite were used for Rust verification.
+- D. Built the exact track application through `pnpm tauri:build:webdriver` with basic drivers and this track's isolated Cargo target. Ran `packages/drivers/postgres/e2e/schema-primary-key-nullability.ts` against that exact `.app`, port 4477 and `e2e/.app-data-schema-retest2`, using only loopback PostgreSQL and `dz_mig_0910_schema_src/tgt`: 1 passed. The journey created the desired/current PK-nullability mismatch, prepared and deployed the reviewed plan, confirmed committed status, rejected replay, and confirmed an empty post-deploy diff. Both unique tables were removed; post-run checks found zero matching fixtures in both databases and the WebDriver port was closed.
+- Final result: TEST_DONE. BUG-001 and BUG-002 are independently verified fixed; this track is ready to merge.
