@@ -86,7 +86,7 @@
                     id,
                     db,
                     req_str(&input, "key")?,
-                    opt_str(&input, "path").unwrap_or("$$"),
+                    opt_str(&input, "path").unwrap_or("$"),
                 )
                 .await?,
         ),
