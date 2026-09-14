@@ -76,6 +76,13 @@ export function valueLooksCompressed(raw: string): boolean {
   return false;
 }
 
+/** Copy Uint8Array into a real ArrayBuffer suitable for Blob. */
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
+
 /**
  * Attempt gzip / zlib / raw-deflate decompression in the browser via DecompressionStream.
  * Returns null when the payload is not compressed or decompression fails.
@@ -103,8 +110,9 @@ export async function tryDecompressString(raw: string): Promise<DecompressResult
 
   for (const { codec, format } of attempts) {
     try {
-      const abCopy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-      const stream = new Blob([abCopy]).stream().pipeThrough(new DecompressionStream(format));
+      const stream = new Blob([toArrayBuffer(bytes)])
+        .stream()
+        .pipeThrough(new DecompressionStream(format));
       const ab = await new Response(stream).arrayBuffer();
       if (ab.byteLength > DECOMPRESS_MAX_BYTES) {
         return {
