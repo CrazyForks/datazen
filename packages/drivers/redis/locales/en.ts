@@ -32,6 +32,7 @@ const locale = {
   'redis.errorsCount': '{count} errors',
   'redis.expireAt': 'Expire at',
   'redis.expireAtInvalid': 'Invalid expire datetime',
+  'redis.setExpireAt': 'Set expire at',
   'redis.field': 'Field',
   'redis.flushAll': 'Flush all',
   'redis.flushConfirm': 'Flush',
