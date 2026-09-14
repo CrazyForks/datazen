@@ -84,7 +84,7 @@ macro_rules! plugin_on_db {
 }
 
 pub struct RedisDriver {
-    connections: RwLock<HashMap<String, RedisConn>>,
+    pub(crate) connections: RwLock<HashMap<String, RedisConn>>,
 }
 
 pub(crate) const TEST_CONNECTION_TLS_GRACE: Duration = Duration::from_secs(5);
@@ -214,7 +214,7 @@ impl RedisDriver {
             .await)
     }
 
-    async fn test_connection_inner(
+    pub(crate) async fn test_connection_inner(
         &self,
         config: &ConnectionConfig,
     ) -> Result<ServerInfo, DriverError> {
