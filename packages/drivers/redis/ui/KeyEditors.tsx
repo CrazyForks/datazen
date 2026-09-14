@@ -58,98 +58,160 @@ export function KeyDetailEditor({
   dbSessionId,
   dbIndex,
   detail,
-  modules,
+  modules = null,
   onRefresh,
   onRenamed,
 }: KeyDetailEditorProps) {
   const { t } = useI18n();
-  const [renaming, setRenaming] = useState(false);
-  const [newName, setNewName] = useState(detail.key);
-  const [ttlInput, setTtlInput] = useState('');
+  const [ttlInput, setTtlInput] = useState(detail.ttl < 0 ? '' : String(detail.ttl));
+  const [expireAtLocal, setExpireAtLocal] = useState(() => {
+    if (detail.ttl < 0) return '';
+    const d = new Date(Date.now() + detail.ttl * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [renameInput, setRenameInput] = useState(detail.key);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleRename = useCallback(async () => {
-    if (!newName.trim() || newName === detail.key) {
-      setRenaming(false);
-      return;
-    }
-    setBusy(true);
-    try {
-      await invokeRename(dbSessionId, dbIndex, detail.key, newName.trim());
-      onRenamed?.(newName.trim());
-      setRenaming(false);
-      await onRefresh();
-    } finally {
-      setBusy(false);
-    }
-  }, [dbSessionId, dbIndex, detail.key, newName, onRenamed, onRefresh]);
+  const run = useCallback(
+    async (fn: () => Promise<void>) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await fn();
+        await onRefresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onRefresh],
+  );
 
-  const handleSetTtl = useCallback(async () => {
-    const sec = parseInt(ttlInput, 10);
-    if (Number.isNaN(sec)) return;
-    setBusy(true);
-    try {
-      await invokeSetTtl(dbSessionId, dbIndex, detail.key, sec);
-      setTtlInput('');
-      await onRefresh();
-    } finally {
-      setBusy(false);
-    }
-  }, [dbSessionId, dbIndex, detail.key, ttlInput, onRefresh]);
+  const ttlText = detail.ttl < 0 ? t('redis.noExpiry') : `${detail.ttl} ${t('redis.seconds')}`;
 
-  const keyType = detail.type;
+  const showJsonEditor =
+    isJsonKeyType(detail.keyType) ||
+    (modules !== null && hasRedisJson(modules) && looksLikeJsonModuleDetail(detail));
 
   return (
-    <div className="flex flex-col gap-3 p-3">
+    <div className="space-y-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        {renaming ? (
-          <>
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              className="h-8 font-mono text-sm"
-              autoFocus
-            />
-            <Button size="sm" disabled={busy} onClick={() => void handleRename()}>
-              {t('common.save')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
-              {t('common.cancel')}
-            </Button>
-          </>
-        ) : (
-          <>
-            <span className="font-mono text-sm font-medium">{detail.key}</span>
-            <span className="rounded bg-surface-alt px-1.5 py-0.5 text-xs text-fg-muted">
-              {keyType}
-            </span>
-            <Button size="sm" variant="ghost" onClick={() => setRenaming(true)}>
-              {t('redis.rename')}
-            </Button>
-          </>
-        )}
-        <div className="ml-auto flex items-center gap-1">
+        <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
+        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">{detail.keyType}</span>
+        <span className="font-medium text-fg-muted">TTL:</span>
+        <span className="text-fg-secondary">{ttlText}</span>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
+        <div className="flex min-w-[120px] flex-1 flex-col gap-1">
+          <label className="text-fg-muted">{t('redis.setTtl')}</label>
           <Input
             value={ttlInput}
             onChange={(e) => setTtlInput(e.target.value)}
-            placeholder="TTL s"
-            className="h-7 w-20 text-xs"
+            placeholder={t('redis.ttlSeconds')}
+            className="h-7 text-xs"
           />
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void handleSetTtl()}>
-            {t('redis.setTtl')}
-          </Button>
         </div>
+        <Button
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              const secs = parseInt(ttlInput, 10);
+              if (Number.isNaN(secs) || secs < 0) {
+                throw new Error(t('redis.ttlSeconds'));
+              }
+              await invokeSetTtl(dbSessionId, dbIndex, detail.key, secs);
+            })
+          }
+        >
+          {t('redis.setTtl')}
+        </Button>
+        <div className="flex min-w-[180px] flex-1 flex-col gap-1">
+          <label className="text-fg-muted">{t('redis.expireAt')}</label>
+          <Input
+            type="datetime-local"
+            value={expireAtLocal}
+            onChange={(e) => setExpireAtLocal(e.target.value)}
+            className="h-7 text-xs"
+          />
+        </div>
+        <Button
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          disabled={busy || !expireAtLocal}
+          onClick={() =>
+            void run(async () => {
+              const ms = Date.parse(expireAtLocal);
+              if (Number.isNaN(ms)) {
+                throw new Error(t('redis.expireAtInvalid'));
+              }
+              const unix = Math.floor(ms / 1000);
+              await invokeSetExpireAt(dbSessionId, dbIndex, detail.key, unix);
+            })
+          }
+        >
+          {t('redis.setExpireAt')}
+        </Button>
+        <Button
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await invokeSetTtl(dbSessionId, dbIndex, detail.key, -1);
+              setTtlInput('');
+              setExpireAtLocal('');
+            })
+          }
+        >
+          {t('redis.persist')}
+        </Button>
       </div>
 
-      {keyType === 'string' && (
+      <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
+        <div className="flex min-w-[120px] flex-1 flex-col gap-1">
+          <label className="text-fg-muted">{t('redis.renameKey')}</label>
+          <Input
+            value={renameInput}
+            onChange={(e) => setRenameInput(e.target.value)}
+            className="h-7 font-mono text-xs"
+          />
+        </div>
+        <Button
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          disabled={busy || !renameInput.trim() || renameInput === detail.key}
+          onClick={() =>
+            void run(async () => {
+              await invokeRename(dbSessionId, dbIndex, detail.key, renameInput.trim());
+              onRenamed?.(renameInput.trim());
+            })
+          }
+        >
+          {t('redis.renameKey')}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
+          {error}
+        </div>
+      )}
+
+      {detail.keyType === 'string' && (
         <StringEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
           detail={detail}
-          onChanged={() => void onRefresh()}
+          onSaved={() => void onRefresh()}
         />
       )}
-      {keyType === 'hash' && (
+      {detail.keyType === 'hash' && (
         <HashEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
@@ -157,7 +219,7 @@ export function KeyDetailEditor({
           onChanged={() => void onRefresh()}
         />
       )}
-      {keyType === 'list' && (
+      {detail.keyType === 'list' && (
         <ListEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
@@ -165,7 +227,7 @@ export function KeyDetailEditor({
           onChanged={() => void onRefresh()}
         />
       )}
-      {keyType === 'set' && (
+      {detail.keyType === 'set' && (
         <SetEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
@@ -173,7 +235,7 @@ export function KeyDetailEditor({
           onChanged={() => void onRefresh()}
         />
       )}
-      {keyType === 'zset' && (
+      {detail.keyType === 'zset' && (
         <ZsetEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
@@ -181,16 +243,15 @@ export function KeyDetailEditor({
           onChanged={() => void onRefresh()}
         />
       )}
-      {(keyType === 'ReJSON' || isJsonKeyType(keyType) || looksLikeJsonModuleDetail(detail)) &&
-        hasRedisJson(modules) && (
-          <JsonEditor
-            dbSessionId={dbSessionId}
-            dbIndex={dbIndex}
-            detail={detail}
-            onChanged={() => void onRefresh()}
-          />
-        )}
-      {keyType === 'stream' && (
+      {showJsonEditor && (
+        <JsonEditor
+          dbSessionId={dbSessionId}
+          dbIndex={dbIndex}
+          detail={detail}
+          onChanged={() => void onRefresh()}
+        />
+      )}
+      {detail.keyType === 'stream' && (
         <StreamEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
@@ -206,104 +267,114 @@ function StringEditor({
   dbSessionId,
   dbIndex,
   detail,
-  onChanged,
+  onSaved,
 }: {
   dbSessionId: string;
   dbIndex: number;
   detail: KeyDetail;
-  onChanged: () => void;
+  onSaved: () => void;
 }) {
   const { t } = useI18n();
   const [value, setValue] = useState(() => initialStringEditorValue(detail.value));
-  const [keepTtl, setKeepTtl] = useState(false);
-  const [expireAt, setExpireAt] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [keepTtl, setKeepTtl] = useState(detail.ttl >= 0);
   const [decomp, setDecomp] = useState<DecompressResult | null>(null);
+  const [decompBusy, setDecompBusy] = useState(false);
   const [decompError, setDecompError] = useState<string | null>(null);
+  const jsonMode = looksLikeJsonText(value);
+  const maybeCompressed = valueLooksCompressed(unwrapRaw(detail.value));
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl);
-      if (expireAt && !keepTtl) {
-        const ts = Math.floor(new Date(expireAt).getTime() / 1000);
-        if (!Number.isNaN(ts)) {
-          await invokeSetExpireAt(dbSessionId, dbIndex, detail.key, ts);
-        }
+  const save = () => {
+    if (jsonMode) {
+      try {
+        JSON.parse(value);
+      } catch {
+        setJsonError(t('redis.invalidJson'));
+        return;
       }
-      onChanged();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
+      setJsonError(null);
     }
-  }, [dbSessionId, dbIndex, detail.key, value, keepTtl, expireAt, onChanged]);
+    setSaving(true);
+    void invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl)
+      .then(onSaved)
+      .finally(() => setSaving(false));
+  };
 
-  const handleDecompress = useCallback(() => {
+  const runDecompress = () => {
+    setDecompBusy(true);
     setDecompError(null);
-    const result = tryDecompressString(value);
-    if (result) {
-      setDecomp(result);
-    } else {
-      setDecompError(t('redis.decompressFailed'));
-      setDecomp(null);
-    }
-  }, [value, t]);
-
-  const canDecompress = valueLooksCompressed(value);
+    void tryDecompressString(unwrapRaw(detail.value))
+      .then((r) => {
+        if (!r) {
+          setDecompError(t('redis.decompressFailed'));
+          setDecomp(null);
+        } else {
+          setDecomp(r);
+        }
+      })
+      .catch((e) => {
+        setDecompError(e instanceof Error ? e.message : String(e));
+        setDecomp(null);
+      })
+      .finally(() => setDecompBusy(false));
+  };
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <label className="flex items-center gap-1.5">
+      <textarea
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setJsonError(null);
+        }}
+        className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
+        spellCheck={false}
+      />
+      {jsonError && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
+          {jsonError}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-fg-secondary">
           <input
             type="checkbox"
             checked={keepTtl}
             onChange={(e) => setKeepTtl(e.target.checked)}
+            className="rounded border-edge"
           />
           {t('redis.keepTtl')}
         </label>
-        <label className="flex items-center gap-1.5">
-          {t('redis.expireAt')}
-          <input
-            type="datetime-local"
-            value={expireAt}
-            onChange={(e) => setExpireAt(e.target.value)}
-            className="h-7 rounded border border-edge bg-surface px-2 text-xs"
-            disabled={keepTtl}
-          />
-        </label>
-        {canDecompress && (
-          <Button variant="outline" className="h-7 px-2 text-xs" onClick={handleDecompress}>
-            {t('redis.decompress')}
-          </Button>
-        )}
-        {looksLikeJsonText(value) && (
+        <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
+        {jsonMode && (
           <Button
-            variant="outline"
+            variant="secondary"
             className="h-7 px-2 text-xs"
-            onClick={() => setValue(tryPrettyJson(value) ?? value)}
+            onClick={() => {
+              const pretty = tryPrettyJson(value);
+              if (!pretty) {
+                setJsonError(t('redis.invalidJson'));
+                return;
+              }
+              setJsonError(null);
+              setValue(pretty);
+            }}
           >
-            {t('redis.jsonPretty')}
+            {t('redis.formatJson')}
           </Button>
         )}
-      </div>
-      <textarea
-        className="min-h-[200px] w-full rounded border border-edge bg-surface p-2 font-mono text-sm"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        spellCheck={false}
-      />
-      {error && (
-        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-          {error}
-        </div>
-      )}
-      <div className="flex gap-2">
-        <Button disabled={saving} onClick={() => void handleSave()}>
-          {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+        {(maybeCompressed || decomp) && (
+          <Button
+            variant="secondary"
+            className="h-7 px-2 text-xs"
+            disabled={decompBusy}
+            onClick={runDecompress}
+          >
+            {t('redis.decompressView')}
+          </Button>
+        )}
+        <Button variant="primary" className="h-7 px-2 text-xs" disabled={saving} onClick={save}>
           {t('common.save')}
         </Button>
       </div>
