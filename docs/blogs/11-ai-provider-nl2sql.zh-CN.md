@@ -22,7 +22,7 @@ pub trait AiProvider: Send + Sync {
 }
 ```
 
-`AiProviderRegistry` 通过 inventory 发现实现，内置 OpenAI、Anthropic、DeepSeek 和 Custom Provider。
+`AiProviderRegistry` 通过 inventory 发现实现，内置 OpenAI、Anthropic、DeepSeek、Ollama 和 Custom Provider。
 
 ## 协议层复用
 

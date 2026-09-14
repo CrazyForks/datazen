@@ -61,7 +61,19 @@
 
 ## 主题应用
 
-Settings「外观」仅列出已启用应用的 themes 贡献（packId 形如 `wapp:{wappId}:{themeId}`）。`themePackApply.applyPluginTheme` 经 `read_wapp_file` 读 tokens.css 并 blob 重写 `url()` 相对资产；icons/editor/charts 三类可选资产随后应用，失败只降级对应切片。切换/清除由 `resetPackState()` 统一回收。旧 `{appData}/themes/` 运行时入口已移除。
+Settings「外观」仅列出已启用应用的 themes 贡献（packId 形如 `wapp:{wappId}:{themeId}`）。`themePackApply.applyThemePack` 经 `read_wapp_file` 读 tokens.css 并 blob 重写 `url()` 相对资产；icons/editor/charts 三类可选资产随后应用，失败只降级对应切片。切换/清除由 `resetPackState()` 统一回收。旧 `{appData}/themes/` 运行时入口已移除。
+
+## 首屏背景缓存（surface-bg）
+
+Wapp 主题在 IPC 之后才注入 CSS，首屏无法读取 pack token。`syncWebviewBackgroundFromTokens` 把当前 `--c-surface` 经 `set_surface_background` 写入 `{appData}/surface-bg.json`，子窗口 native `backgroundColor` 同样读这份缓存。缺失时回退 `#0f172a`。
+
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| 缓存 | `src-tauri/src/theme/surface_bg.rs` | 读写 `{appData}/surface-bg.json` |
+| IPC | `src-tauri/src/commands/theme.rs` | `set_surface_background` |
+| 前端 | `src/lib/surfaceBgCache.ts` | 解析 `--c-surface` 并 invoke IPC |
+
+详见 [持久化存储](store.md)。
 
 ## 事件广播
 

@@ -30,19 +30,19 @@ SchemaCache 缓存的是表结构、列类型、主键和相关元数据，不�
 
 ## 路径与文件安全
 
-文件导入、导出和 Extension 资源访问都必须在 Rust 端做路径遍历防护、扩展名白名单、大小限制和符号链接策略。生产 IPC 不接受任意路径覆盖；只有 webdriver/E2E 构建允许专用 override path。
+文件导入、导出和 Wapp 资源访问都必须在 Rust 端做路径遍历防护、扩展名白名单、大小限制和符号链接策略。生产 IPC 不接受任意路径覆盖；只有 webdriver/E2E 构建允许专用 override path。
 
-Extension 使用自己的 `{appData}/wapps/{id}/.storage.json`，大小和请求次数受限，不能读取其他插件或宿主配置。
+Wapp 使用自己的 `{appData}/wapps/{id}/.storage.json`，大小和请求次数受限，不能读取其他 Wapp 或宿主配置。
 
 ## CSP 与主题/资源
 
-主窗口和 Extension 资源遵循 CSP、nosniff 和 MIME 白名单。`datazen://` 资产服务会先验证插件启用状态，再解析安全相对路径；Windows WebView2 与 macOS WebKit 的 scheme 匹配不同，因此 CSP 需要按双源策略设计。
+主窗口和 Wapp 资源遵循 CSP、nosniff 和 MIME 白名单。`datazen://` 资产服务会先验证 Wapp 启用状态，再解析安全相对路径；Windows WebView2 与 macOS WebKit 的 scheme 匹配不同，因此 CSP 需要按双源策略设计。
 
-主题资源、图标和编辑器配置加载失败时只降级对应功能，不应阻塞主应用启动。旧的 `{appData}/themes/` 运行时入口已经由 Extension themes 取代。
+主题资源、图标和编辑器配置加载失败时只降级对应功能，不应阻塞主应用启动。旧的 `{appData}/themes/` 运行时入口已经由 Wapp themes 取代。
 
 ## 日志脱敏
 
-`CmdExt` 在记录错误前调用日志脱敏，查询日志记录长度和摘要时也应避免完整 SQL、密码或 Token。Extension 审计只记录插件 ID、命令名和连接 ID，不写命令参数。
+`CmdExt` 在记录错误前调用日志脱敏，查询日志记录长度和摘要时也应避免完整 SQL、密码或 Token。Wapp 审计只记录 Wapp ID、命令名和连接 ID，不写命令参数。
 
 ## 结语
 

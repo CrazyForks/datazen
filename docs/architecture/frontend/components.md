@@ -155,7 +155,7 @@ const CellRenderer = memo(function CellRenderer({ value, type, isEditing }: Prop
 
 #### 主工作区连接视图 (main → ConnectionPage)
 
-连接 / Workflow / Dashboard 在同一 OS 窗口内切换；左侧 `ConnectionNavigatorTree`，右侧连接 Tab（结构 / 数据 / 查询等）。查询编辑器内联在 ContentView，**不再**使用独立 `query-window` OS 窗口。独立子窗口仅保留新建连接、设置、备份、同步、Schema Diff、文档等。详见 [窗口管理](../windows.md)。
+连接 / Workflow / Dashboard 在同一 OS 窗口内切换；左侧 `ConnectionNavigatorTree`，右侧连接 Tab（结构 / 数据 / 查询等）。查询编辑器内联在 ContentView，**不再**使用独立 `query-window` OS 窗口。独立子窗口仅保留 `backup` / `data-sync` / `schema-diff` / `data-transfer` 四个；新建连接与设置为 main 内嵌，Docs 跳转官网。详见 [窗口管理](../windows.md)。
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -328,10 +328,10 @@ export async function applyThemeLocally(mode: ThemeMode) {
 
 ### 7.4 扩展主题
 
-Settings「外观」列出已启用扩展的 `contributes.themes[]`；选择后 `settings.theme.packId` 为 `plugin:{extensionId}:{themeId}`，由 `themePackApply.ts` 经 `read_extension_file` 加载：
+Settings「外观」列出已启用 Wapp 的 `contributes.themes[]`；选择后 `settings.theme.packId` 为 `wapp:{wappId}:{themeId}`，由 `themePackApply.ts` 经 `read_wapp_file` 加载：
 
 ```
-settings.theme.packId  →  read_extension_file (IPC)
+settings.theme.packId  →  read_wapp_file (IPC)
                       →  injectThemePackCss (<style id="datazen-theme-pack">)
                       →  register icon blob URLs + font faces
                       →  optional editor.json / charts.json overlays
@@ -355,7 +355,7 @@ settings.theme.packId  →  read_extension_file (IPC)
 - Host 定义 `--font-sans`、`--font-mono`、`--font-editor`（`themes.css`）。
 - 主题包可通过 `fonts.css` 覆盖；用户显式设置的 `editorFontFamily` **优先于** 主题 `--font-editor`。
 
-后端安装与校验见 [运行时主题包](../backend/theme.md)。
+后端安装与校验见 [运行时工作区应用](../backend/wapps.md)。
 
 **DataTable 单元格类型色**
 

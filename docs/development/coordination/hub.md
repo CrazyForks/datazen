@@ -6,24 +6,20 @@
 
 ## 功能总览表
 
-| Track | 任务 | 状态 | 编码 Commit | 测试 Commit | 合并 Commit |
-|-------|------|------|------------|------------|------------|
-| landing-page-opt | Database 落地页（State 3）重构：home/ 五组件拆分、动态 Hero、连接卡过滤与显式 Connect/Open、相对时间 i18n、MCP promo bar、keymap 快捷键 footer | MERGED | — | — | — |
+*暂无活跃开发轨道*
 
 ## 写锁台账
 
-| Track | 写锁代理 | Worktree | Branch | Phase | 最后心跳 |
-|-------|----------|----------|--------|-------|----------|
-| landing-page-opt | — | `.worktrees/datazen-landing-page-opt`（分支 `feature/landing-page-opt`，基于 `main@0fef9fdd`） | feature/landing-page-opt | MERGED | — |
+*暂无写锁占用*
 
 ## 波次记录
 
-（待补充）
+- 所有历史波次均已闭环并合入主集成分支。
 
 ## 跨轨风险
 
-- 无明显跨轨冲突
+- 无活跃跨轨冲突。
 
 ## R 阶段清单
 
-- [ ] 全量回归测试
+- [x] 全量回归与构建健全性验证通过

@@ -11,7 +11,7 @@ AI 模块采用与数据库驱动相同的 **Provider 抽象 + Registry** 模式
 ```
 packages/ai-api/                    # 公共 AI Provider API crate
 ├── src/
-│   ├── lib.rs                      # AI_PROTOCOL_VERSION + re-exports
+│   ├── lib.rs                      # AI_PROTOCOL_VERSION（当前 1，最低兼容 1）+ re-exports
 │   ├── traits.rs                   # AiProvider trait (async_trait, Send+Sync)
 │   ├── types.rs                    # AiProviderConfig, ChatMessage, StreamChunk, AiError,
 │   │                               # ToolDefinition, ToolCall, ToolResult, ModelInfo

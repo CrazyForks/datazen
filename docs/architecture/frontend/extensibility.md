@@ -64,7 +64,7 @@ src/windows/connection/
 
 | | 数据库驱动 | 主题包 |
 |---|---------|--------|
-| 路径 | `packages/drivers/<id>/`（path 已提交；git 构建时 clone，gitignored） | `{appData}/themes/{id}/`（运行时 ZIP） |
+| 路径 | `packages/drivers/<id>/`（path 已提交；git 构建时 clone，gitignored） | Wapp 包内 `contributes.themes[]` 声明（运行时安装到 `{appData}/wapps/{publisher}.{name}/`） |
 | 注册 | `drivers-registry.json` + `DB_REGISTRY` | 文件系统 + `manifest.json` |
 | 扩展 | Rust crate + 前端 meta | CSS / JSON / SVG\|PNG\|WebP / 字体（无 JS） |
 

@@ -97,13 +97,13 @@ ChangeSet 只包含**已勾选**且 options 允许的变更。DELETE 默认不�
 | 表 INCOMPATIBLE | 结构或 PK 不一致 → Schema Diff 或 Transfer |
 | Execute 不可用 | 无勾选行差异、目标 read_only、或仍在 comparing |
 | Preview 为空 | 无选中变更，或 Options 过滤掉了所有操作 |
-| 大表 Compare 慢 | V1 对 MATCHED 表使用全表 `SELECT` 后在 Host 内存合并；超大表请缩小范围或分批 |
+| 大表 Compare 慢 | Compare 按主键做 keyset 分页（`ORDER BY pk LIMIT batch_size` 逐页读取，经 `compare_table_pages` 有序合并），而非全表 `SELECT` 后在 Host 内存合并；比较支持 job 取消，长时间比较可用 **Cancel** 中断 |
 
 ---
 
 ## 8. 相关文档
 
 - 架构：[docs/architecture/backend/data-sync.md](../architecture/backend/data-sync.md)
-- E2E 覆盖：[docs/e2e-coverage.md](../development/e2e-coverage.md)
-- Transfer：[docs/data-transfer-guide.md](./data-transfer-guide.zh-CN.md)
-- Schema Diff：[docs/schema-diff-guide.md](./schema-diff-guide.zh-CN.md)
+- E2E 覆盖：[e2e-coverage.md](../development/e2e-coverage.md)
+- Transfer：[data-transfer-guide.md](./data-transfer-guide.zh-CN.md)
+- Schema Diff：[schema-diff-guide.md](./schema-diff-guide.zh-CN.md)

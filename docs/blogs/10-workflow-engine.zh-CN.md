@@ -7,17 +7,19 @@
 Workflow Definition 是可保存、可检查和可重复运行的模型。它描述默认连接、步骤、输入、变量和错误策略，不保存运行时连接池或窗口状态。
 
 ```yaml
-name: daily-check
-connection: mysql-prod
+id: daily-check
+name: 每日检查
+description: 统计今日订单，数量为正时调用 AI 分析
 steps:
-  - type: command
-    command: query
-    input:
-      sql: SELECT count(*) AS total FROM orders
+  - type: query
+    id: count_orders
+    sql: SELECT count(*) AS total FROM orders
   - type: condition
-    expression: "steps[0].rows[0].total > 0"
-    then:
+    id: has_orders
+    if: "{{steps.count_orders.rows.0.total}} > 0"
+    then_steps:
       - type: ai
+        id: analyze
         prompt: "分析今天订单数量"
 ```
 

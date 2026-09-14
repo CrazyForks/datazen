@@ -114,6 +114,8 @@ Default retention is about **200 runs / 30 days** per widget (Settings → Monit
 
 ### 3.4 Minimal SQL example
 
+A portable demo that works on PostgreSQL / most databases:
+
 ```sql
 SELECT 'Alpha' AS category, 100 AS amount
 UNION ALL SELECT 'Beta', 200
@@ -121,6 +123,16 @@ UNION ALL SELECT 'Gamma', 150
 ```
 
 Chart: bar, `xAxis = category`, `yAxes = [amount]`.
+
+Single-value trend:
+
+```sql
+SELECT NOW() AS ts, COUNT(*)::float AS qps
+FROM pg_stat_activity
+WHERE state = 'active'
+```
+
+(System views differ per database; replace it with the metric SQL for your environment.)
 
 ---
 
@@ -135,7 +147,7 @@ Chart: bar, `xAxis = category`, `yAxes = [amount]`.
 | Add widget | Open editor for a new widget |
 | Import / export | Single-file definition (see §8) |
 
-Closing the dashboard window does **not** stop monitoring by itself.
+Closing the dashboard window does **not** stop monitoring by itself. Pause state persists and can also be toggled from the tray.
 
 ### 4.2 Tiles
 
@@ -165,12 +177,27 @@ Closing the dashboard window does **not** stop monitoring by itself.
 
 ## 6. Alerts
 
-1. Edit the widget → configure metric, operator, threshold, cooldown, channels.  
-2. **Desktop**: OS notification.  
-3. **Webhook**: POST JSON (falls back to Settings → Monitor default URL when unset).  
-4. **Email**: reserved; not sent in the current release.
+### 6.1 Setup steps
 
-Cooldown and cooldown apply only after successful evaluation.
+1. Edit the widget → configure the alert (if the alert section is collapsed, save the basic config first, then edit again).  
+2. Pick the metric column + aggregation, comparison operator, and threshold.  
+3. Set the cooldown (seconds).  
+4. Check the channels:  
+   - **Desktop**: OS notification on this machine.  
+   - **Webhook**: POST JSON to the URL (falls back to the Settings → Monitor default webhook when unset).  
+   - **Email**: reserved; not sent in the current release.
+
+### 6.2 Trigger and cooldown
+
+- Evaluated only after a **successful** run with a computable metric.  
+- After firing, the rule enters cooldown; the same rule will not spam during the cooldown window.  
+- Failed / timed-out runs are written to history but do not clear alert state as a false “recovery”.
+
+### 6.3 Webhook notes
+
+- The URL must be reachable from this machine; mind intranet vs. HTTPS.  
+- The payload is an app-defined JSON (dashboard / widget / metric info); parse it by field on the receiving side.  
+- The default webhook lives in **Settings → Monitor**; a widget may override it per its editor (as implemented).
 
 ---
 
@@ -182,13 +209,15 @@ On app start the engine schedules enabled widgets by `refreshSec`, limits concur
 
 ### 7.2 Tray (Settings → Monitor)
 
+In **Settings → Monitor**:
+
 | Setting | Meaning |
 |---------|---------|
-| Show tray icon | Tray when monitoring is active |
-| Close to tray | Closing the **main** window hides to tray instead of quitting (when tray + monitoring allow it) |
-| Default webhook URL | Fallback for alerts |
-| Max concurrent monitor queries | Global parallelism |
-| Run history count / days | Per-widget retention |
+| Show tray icon | Tray when there are active Monitor widgets |
+| Close to tray | Closing the **main** window hides to tray instead of quitting (only when monitoring + tray allow it) |
+| Default webhook URL | Fallback for alerts without their own URL |
+| Max concurrent monitor queries | Global parallelism cap |
+| Run history count / days | Per-widget retention policy |
 | Include run history in app-data export | When off, ZIP skips `dashboard-runs/` |
 
 Tray actions typically include open dashboards, pause/resume, quit.

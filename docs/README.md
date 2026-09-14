@@ -14,7 +14,7 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 ## 功能文档
 
 - [Workflow](features/workflow-guide.zh-CN.md) / [English](features/workflow-guide.en.md)
-- [Schema Diff](features/schema-diff-guide.zh-CN.md) / [English](features/schema-diff-guide.en.md)
+- [Schema Diff](features/schema-diff-guide.zh-CN.md) / [English](features/schema-diff-guide.en.md)（[Deploy 索引](features/schema-diff-deploy.md)）
 - [Data Sync](features/data-sync-guide.zh-CN.md)
 - [Data Transfer](features/data-transfer-guide.zh-CN.md)
 - [Ops Dashboard](features/ops-dashboard-guide.zh-CN.md) / [English](features/ops-dashboard-guide.en.md)
@@ -38,8 +38,7 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 - [Dashboard](architecture/backend/dashboard.md)
 - [Data Sync](architecture/backend/data-sync.md)
 - [Schema Diff](architecture/backend/schema-diff.md)
-- [Theme](architecture/backend/theme.md)
-- [Wapps](architecture/backend/wapps.md)
+- [Wapps](architecture/backend/wapps.md)（含主题应用；旧 `theme.md` 已合并至此）
 
 ### 前端
 
@@ -59,13 +58,25 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 
 - [E2E Testing](development/e2e-testing.md)
 - [E2E Coverage](development/e2e-coverage.md)
-- [CI Private Plugins](development/ci-private-drivers.md)
+- [E2E IPC Migration](development/e2e-ipc-migration-guide.md)
+- [CI Test Matrix](development/ci-test-matrix.md)
+- [CI Private Drivers](development/ci-private-drivers.md)
 - [Independent Driver Development](development/independent-driver-development.en.md) / [中文](development/independent-driver-development.zh-CN.md)
 - [Driver API Dependency Boundary](development/driver-api-dependency-boundary.md)
 - [Optional Drivers](development/optional-drivers.md)
+- [External Contract Policy](development/external-contract-policy.md)
+- [Panic Policy](development/panic-policy.md)
+- [Interaction & Testing Principles](development/interaction-and-testing-principles.md)
+- [Wapp Development](development/wapp-development.zh-CN.md)（中文）
+- [SQL Editor Pro Development](development/sql-editor-pro-development.zh-CN.md)（中文）
 - [Packaging](development/packaging.md)
 - [Updater](development/updater.md)
 - [GitHub Pages](development/github-pages.md)
+- [Subagent Dev Playbook](development/subagent-dev-playbook.md)（角色规程见 [subagent/](development/subagent/)）
+
+## 发布说明
+
+- [v0.2.0](release-notes/v0.2.0.md) / [GitHub](release-notes/v0.2.0-github.md) / [V2EX](release-notes/v0.2.0-v2ex.md)
 
 ## 公开架构文章
 

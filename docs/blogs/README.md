@@ -4,6 +4,8 @@
 
 本系列不按照源码目录逐一介绍模块，而是沿着“全景认知 → 核心抽象 → 前端工作区 → 智能与自动化 → 高级数据库能力 → 工程保障”的路径，解释 DataZen 在真实开发过程中遇到的问题、采用的设计以及相应的取舍。
 
+前置总览：[DataZen 系列文章（一）：是什么？为什么做？](00-datazen-overview.zh-CN.md)（产品背景与动机，系列正文从第 1 篇开始）。
+
 每篇文章可以独立阅读，按顺序阅读则可以逐步建立完整的 DataZen 架构地图。
 
 ## 配套架构图
@@ -23,7 +25,7 @@
 - 为什么选择 Tauri v2、Rust 与 React
 - GUI 桌面应用与无头 MCP Server 双运行模式
 - 前端、IPC、服务层、驱动层和数据库之间的关系
-- AI、Workflow、插件系统在整体架构中的位置
+- AI、Workflow、Wapp/EP 扩展体系在整体架构中的位置
 - 一条 SQL 从界面到数据库再返回表格的完整链路
 
 已完成：[DataZen 架构设计（一）：一个现代桌面数据库工具是如何构建的](01-datazen-architecture-overview.zh-CN.md)
@@ -90,21 +92,21 @@
 
 已完成：[从 Driver Trait 到 Driver Command API](05-driver-command-api.zh-CN.md)
 
-### 第 6 篇：编译时 Driver 与运行时 Extension 为什么并存
+### 第 6 篇：编译时 Driver 与运行时 Wapp 为什么并存
 
-**核心问题：DataZen 为什么有两种插件机制？**
+**核心问题：DataZen 为什么有两种扩展机制？**
 
 - 编译时数据库 Driver 解决什么问题
-- 运行时 Extension 解决什么问题
-- Extension Manifest v2
+- 运行时 Wapp 解决什么问题
+- Wapp Manifest v2
 - 工作区页面与主题贡献
 - `datazen://` 自定义协议
 - 沙箱 iframe 与 `postMessage` 桥
 - 权限声明与 deny-by-default
-- 插件安装、校验、备份和卸载
-- 为什么运行时 Extension 暂不承载数据库 Driver
+- Wapp 安装、校验、备份和卸载
+- 为什么运行时 Wapp 暂不承载数据库 Driver
 
-已完成：[编译时 Driver 与运行时 Extension 为什么并存](06-driver-and-runtime-extension.zh-CN.md)
+已完成：[编译时 Driver 与运行时 Wapp 为什么并存](06-driver-and-runtime-extension.zh-CN.md)
 
 ## 第三部分：前端工作区设计
 
@@ -230,7 +232,7 @@
 - AES-256-GCM 加密
 - 系统 Keychain 与 `.key` 后备方案
 - CSP、路径遍历防护与扩展名白名单
-- Extension 资源访问隔离
+- Wapp 资源访问隔离
 - 日志脱敏
 - AI Key 和数据库密码的安全边界
 

@@ -2,6 +2,43 @@
 
 > 本文档描述 **main 分支当前实现**，不是未来版本规划。具体实现以 `src-tauri/`、`packages/driver-api/` 和 `src/` 为准。
 
+## 架构文档索引
+
+后端、前端与横切文档一览（入口为本文）：
+
+### 后端
+
+- [Drivers](backend/drivers.md)
+- [Services](backend/services.md)
+- [Commands](backend/commands.md)
+- [Cache](backend/cache.md)
+- [Store](backend/store.md)
+- [AI](backend/ai.md)
+- [MCP](backend/mcp.md)
+- [Workflow](backend/workflow.md)
+- [Dashboard](backend/dashboard.md)
+- [Data Sync](backend/data-sync.md)
+- [Schema Diff](backend/schema-diff.md)
+- [Wapps](backend/wapps.md)（含主题应用与首屏背景缓存；旧 `theme.md` 已合并至此）
+
+### 前端
+
+- [State](frontend/state.md)
+- [Components](frontend/components.md)
+- [AI](frontend/ai.md)
+- [Extensibility](frontend/extensibility.md)
+
+### 横切
+
+- [Naming](naming.md)
+- [Security](security.md)
+- [Windows](windows.md)
+- [Testing](testing.md)
+
+### RFC（演进方向，非已实现）
+
+- [Web 平台化实现方案](rfc/web-platform-implementation.zh-CN.md)（Proposed）
+
 ## 1. 总体结构
 
 DataZen 当前是一个基于 Tauri v2 的桌面数据库客户端，同时支持 GUI 模式和 headless MCP stdio 模式。
@@ -140,9 +177,9 @@ Data Transfer 使用 Endpoints → Setup → Objects → Mapping → Preview →
 DataZen 采用四维扩展体系：
 
 - **数据库驱动（Driver）**：编译时注入，基于 `@datazen/driver-sdk` 与 `packages/driver-api`，通过 inventory 注册。承载数据库连接、SQL 方言、DDL 和 Driver Command。
-- **沙箱工作区应用（Wapp）**：基于 `manifest.json`、`datazen://` 协议与沙箱 `<iframe>`，向用户暴露独立工作区页面与外观主题，通过受控 postMessage 桥通信。详见 [wapps.md](backend/wapps.md)。
-- **特权扩展点（Host Extension Points）**：宿主基于 `ExtensionPoint<T>` 契约与 CodeMirror Compartment 实现进程内（In-Process）接入，专用于 SQLEditor 增强等高性能、深交互核心模块。受根目录 **DataZen Plugin, Driver & Extension Linking Exception** 保护，支持独立许可与分发。
-- **外观主题（Theme）**：纯静态资源包，零代码执行，通过 `manifest.json` + CSS/JSON/SVG 声明，运行时安装到 `{appData}/themes/`。详见 [theme.md](backend/theme.md)。
+- **沙箱工作区应用（Wapp）**：基于 `@datazen/wapp-sdk`、`manifest.json`、`datazen://` 协议与沙箱 `<iframe>`，运行目录 `{appData}/wapps/{publisher}.{name}/`，向用户暴露独立工作区页面与外观主题，通过受控 postMessage 桥通信；取数一律走 `execute_driver_command`。详见 [wapps.md](backend/wapps.md)。
+- **特权扩展点（Host Extension Points）**：基于 `@datazen/extension-points` 的 `ExtensionPoint<T>` 契约与 CodeMirror Compartment，宿主进程内（In-Process）接入，专用于 SQLEditor 增强等高性能、深交互核心模块。受根目录 **DataZen Plugin, Driver & Extension Linking Exception** 保护，支持独立许可与分发。
+- **外观主题（Theme）**：由 Wapp 以 `contributes.themes[]` 贡献的纯静态资源包（`tokens.css` / `editor.json` / `charts.json` / `icons/`），零代码执行。旧 v1 ThemePack（`packages/themes/`）已存档，`{appData}/themes/` 运行时入口已移除。详见 [wapps.md](backend/wapps.md)「主题应用」与「首屏背景缓存」。
 
 ## 9. 持久化与安全
 
@@ -160,7 +197,7 @@ React 前端使用 Zustand。主要 Store 位于 `src/stores/`：
 - `tableDataStore)：表数据、筛选、分页和编辑状态。
 - `panelStore)：统一工作区 Panel 与查询结果。
 - `workspaceTabsStore)：工作区 Tab。
-- `aiStore)、`dashboardStore)、`extensionStore)、`settingsStore)、`uiStore)：对应领域状态。
+- `aiStore)、`dashboardStore)、`wappStore)、`settingsStore)、`uiStore)：对应领域状态。
 
 跨窗口不共享 React/Zustand 内存状态，通过 Tauri Event 进行同步。
 

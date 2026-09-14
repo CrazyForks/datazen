@@ -8,20 +8,20 @@
 
 ## 1. Overview
 
-A Workflow is a reusable automation: chain **SQL queries, AI analysis, condition branches, and loops** in YAML, with variable substitution and **cross-database** support (each step can bind a different connection).
+A Workflow is a reusable automation: chain **SQL queries, AI analysis, condition branches, loops, and data integration** in YAML, with variable substitution and **cross-database** support (each step can bind a different connection).
 
 | Capability | Description |
 |------------|-------------|
-| Step types | `query` / `ai` / `condition` / `foreach` |
+| Step types | `query` / `command` / `ai` / `condition` / `foreach` / `merge` / `transform` |
 | Variables | `string` / `number` / `connection`, optional defaults |
 | Templates | `{{...}}` in SQL, prompts, connections, output, etc. |
-| Cross-DB | Per-step `connection` / `database` |
+| Cross-DB | Per-step `connection` / `database`; `merge` combines multi-DB results into one table |
 | Error strategy | Global or per-step: `abort` / `skip` / `fallback` |
 | Entry points | Connection AI sidebar, dedicated Workflow window, MCP `run_workflow`, AI chat generation |
 
 **Current limitations**
 
-- No dedicated “script / HTTP” step type  
+- No dedicated “script / HTTP” step type; `merge` / `transform` are **pure data transforms** with no arbitrary code support  
 - The right-hand side of a `condition` comparison is **not** resolved as a step path (see [§7](#7-condition-expressions))  
 - `foreach` defaults to at most 100 iterations  
 - MCP `run_workflow` usually returns only the final text output, not per-step details  
@@ -32,23 +32,24 @@ A Workflow is a reusable automation: chain **SQL queries, AI analysis, condition
 
 ### 2.1 Storage
 
-- Workflow files: `{app data dir}/workflows/{id}.yaml`  
-- Run history: `{app data dir}/workflow_history/*.json` (about 100 entries retained)  
+- **Primary store**: `{app data dir}/datazen.sqlite` table `workflows` (shared with the Dashboard database)
+- **Visibility**: `user` (shown in the Workflow list) or `dashboardHidden` (used as a Dashboard SQL source, excluded from the Workflow list)
+- Run history: `workflow_history` table (only for `user`-visible workflows; Dashboard refresh writes to `widget_runs`)
 
-In the UI, use the “workflow directory” affordances to see the path (IPC: `workflow_get_dir`).
+The editor offers both a **visual** and a **YAML** view; the YAML still uses snake_case fields.
 
 ### 2.2 Loading
 
-- First list/get lazily loads `.yaml` / `.yml` from the directory  
-- After external edits, **Refresh / `workflow_reload`** is required to rescan  
-- Prefer filename matching `id`; the YAML `id` field is the registry key  
+- The list returns only `visibility = user` workflows by default
+- The Dashboard engine can load hidden definitions by id
+- After external changes, **Refresh / re-open the editor** is required to rescan
 
 ### 2.3 Validation
 
 On save/parse, at least:
 
-- Non-empty `id`, `name`, `description`  
-- Non-empty `steps` array  
+- Non-empty `id`, `name`, `description`
+- Non-empty `steps` array
 
 `variables` may be omitted (defaults to `[]`).
 
@@ -463,6 +464,108 @@ If a sub-step fails with `abort`, the whole workflow fails.
 
 ---
 
+### 8.5 `merge` — cross-DB / multi-result merge
+
+Concatenates multiple row sets **row-by-row** into one table. Commonly used to combine similar results from different databases (PG / MySQL / Redis etc.) for display, charts, or a downstream `transform`.
+
+```yaml
+- type: merge
+  id: merged
+  sources:
+    - source: "steps.pg_orders.rows"     # path or JSON array
+      columns:                            # optional: project/rename (omit = keep all)
+        customer: customer
+        amount: amount
+      add: { src: "PG" }                 # inject constant column
+    - source: "steps.my_orders.rows"
+      add: { src: "MY" }
+  columns:                                # optional: global output column order
+    - customer
+    - amount
+    - src
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | yes | — | Step ID |
+| `sources` | yes | — | Ordered list of merge source groups |
+| `sources[].source` | yes | — | Value expression (`steps.<id>.rows` or JSON array literal) |
+| `sources[].columns` | no | original columns | Project/rename: `output_col -> source_field_path`; when set, only listed columns are kept |
+| `sources[].add` | no | — | Inject constant columns into every row of that group |
+| `columns` | no | first-encountered order | Global output column order (extra columns appended automatically) |
+| `on_error` / `timeout_secs` | no | same as query | See [§10](#10-timeouts-and-error-handling) |
+
+**Result shape**: same as query — `{ "rows": [{...}], "columns": [...], "rows_count": N }` — directly consumable by Dashboard `output`.
+
+### 8.6 `transform` — row-level compute / filter / sort / truncate
+
+Transforms a single row set **row by row**: computed columns, filtering, sorting, offset/limit. Expression evaluation is a **non-Turing declarative subset** (fields / numbers / arithmetic / comparisons / `&& || !` / parentheses) — no embedded script engine.
+
+```yaml
+- type: transform
+  id: enriched
+  from: "steps.merged.rows"            # value expression
+  addColumns:                            # row-level computed columns
+    - name: profit
+      expr: "amount - cost"
+    - name: ratio
+      expr: "amount / total * 100"
+  filter: "profit > 0 && src == 'PG'"   # row-level filter
+  sortBy: "-profit"                      # sort; leading `-` = descending
+  offset: 0                              # skip first N rows
+  limit: 100                             # max output rows
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | yes | — | Step ID |
+| `from` | yes | — | Value expression (`steps.<id>.rows` or JSON array literal) |
+| `addColumns` | no | — | Computed columns: `name` (new col) + `expr` (expression) |
+| `filter` | no | — | Row-level filter expression (truthy = keep) |
+| `sortBy` | no | — | Sort column; leading `-` = descending |
+| `offset` | no | 0 | Number of leading rows to skip |
+| `limit` | no | — | Max number of output rows |
+| `on_error` / `timeout_secs` | no | same as query | See [§10](#10-timeouts-and-error-handling) |
+
+**Expression support**:
+
+| Form | Example | Result |
+|------|---------|--------|
+| Field reference | `amount`, `order.tax` | Value for the current row |
+| String | `'PG'` | Literal |
+| Number / arithmetic | `amount - cost`, `net / total * 100` | Numeric (division by zero errors) |
+| String concatenation | `name + '!'` | Concatenation when either side is a string |
+| Comparison | `amount > 10`, `src == 'PG'` | Boolean; numeric vs numeric, otherwise string comparison |
+| Logical | `&&` `||` `!` | Boolean composition |
+| Parentheses | `(a + b) * 2` | Grouping |
+
+Unknown fields resolve to `null` (numeric context: `0`, string concatenation: empty string) without halting execution.
+
+**Relation to Dashboard**: `merge` / `transform` output is still `{ rows, columns }`. The recommended pattern for converging multi-DB multi-step results into **one table** for Dashboard consumption:
+
+```yaml
+steps:
+  - type: query
+    id: pg_orders
+    connection: "{{pg_conn}}"
+    sql: "SELECT customer, amount FROM orders"
+  - type: query
+    id: my_orders
+    connection: "{{mysql_conn}}"
+    sql: "SELECT customer, amount FROM orders"
+  - type: merge
+    id: combined
+    sources:
+      - source: "steps.pg_orders.rows"
+        add: { src: "PG" }
+      - source: "steps.my_orders.rows"
+        add: { src: "MY" }
+  - type: transform
+    id: top
+    from: "steps.combined.rows"
+
+---
+
 ## 9. Connections and cross-database
 
 ### 9.1 Three binding layers
@@ -778,6 +881,8 @@ output:
 | ai | `result` (string) |
 | condition | Record includes boolean `condition`; rarely templated |
 | foreach | `iterations_completed`, `iterations` |
+| merge | `rows`, `columns`, `rows_count` (merged table) |
+| transform | `rows`, `columns`, `rows_count` (transformed row set) |
 
 ### 15.3 Defaults cheat sheet
 
