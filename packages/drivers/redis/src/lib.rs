@@ -15,6 +15,8 @@ mod ops_json;
 mod ops_observe;
 mod ops_pubsub;
 mod ops_stream;
+mod redis_value_preview;
+mod redis_value_rows;
 mod redis_value;
 mod redis_driver_on;
 mod redis_driver;
