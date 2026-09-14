@@ -204,3 +204,58 @@ export async function invokeSetTtl(
     ttlSeconds,
   });
 }
+
+export async function invokeCreateKey(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  keyType: string,
+  initialValue: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+) {
+  switch (keyType) {
+    case 'string':
+      await invokeSetString(dbSessionId, dbIndex, key, initialValue, false, invoke);
+      break;
+    case 'hash':
+      await invokeHashSet(dbSessionId, dbIndex, key, 'field', initialValue || '', invoke);
+      break;
+    case 'list':
+      await invokeListPush(dbSessionId, dbIndex, key, 'right', [initialValue || ''], invoke);
+      break;
+    case 'set':
+      await invokeSetAdd(dbSessionId, dbIndex, key, [initialValue || 'member'], invoke);
+      break;
+    case 'zset':
+      await invokeZsetAdd(
+        dbSessionId,
+        dbIndex,
+        key,
+        [{ member: initialValue || 'member', score: 0 }],
+        invoke,
+      );
+      break;
+    case 'ReJSON': {
+      const trimmed = initialValue.trim();
+      let jsonValue = '{}';
+      if (trimmed) {
+        try {
+          JSON.parse(trimmed);
+          jsonValue = trimmed;
+        } catch {
+          jsonValue = JSON.stringify(trimmed);
+        }
+      }
+      await invoke('redis', 'json_set', {
+        dbSessionId: dbSessionId,
+        dbIndex: dbIndex,
+        key,
+        path: '$',
+        value: jsonValue,
+      });
+      break;
+    }
+    default:
+      throw new Error(`Unsupported key type: ${keyType}`);
+  }
+}
