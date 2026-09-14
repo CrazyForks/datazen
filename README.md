@@ -53,6 +53,26 @@ Write and run SQL in a modern editor, inspect results, browse tables, and move b
 
 ![Query results and charts](site/assets/screenshots/02-query-chart.png)
 
+### Editor Pro — a smarter SQL editor
+
+DataZen ships a built-in **SQL Editor Pro** with deep database-aware editing features that go beyond basic syntax highlighting.
+
+| Feature | What it does |
+|---|---|
+| **Statement gutter** | Run any single statement from a multi-statement script independently |
+| **Smart autocomplete** | Table, column, and keyword completions driven by live schema metadata |
+| **Hover tooltips** | See column types, comments, and table structure on hover |
+| **Signature help** | Inline function parameter hints while typing |
+| **SQL linter** | Real-time syntax and semantic error feedback |
+| **Intentions (Alt+Enter)** | Context-aware quick fixes and refactoring suggestions |
+| **Transaction controls** | Auto-commit toggle and manual commit / rollback in the toolbar |
+| **Paste as IN clause** | Automatically convert pasted CSV values into `IN (...)` expressions |
+| **Format SQL** | One-click consistent code formatting |
+
+![Editor Pro — statement gutter and autocomplete](site/assets/screenshots/pro-01-statement-gutter.png)
+![Editor Pro — hover tooltip and signature help](site/assets/screenshots/pro-03-hover-tooltip.png)
+![Editor Pro — SQL linter and intentions](site/assets/screenshots/pro-05-linter.png)
+
 ### AI-assisted database work
 
 DataZen puts AI next to the database instead of making you copy schema and errors into another application.
