@@ -107,64 +107,7 @@ pub async fn execute_redis_command(
     let db = db_index(&input);
 
     match command {
-        "scan_keys" => {
-            let pattern = opt_str(&input, "pattern").unwrap_or("*");
-            let cursor = input.get("cursor").and_then(JsonValue::as_u64).unwrap_or(0);
-            let count = input
-                .get("count")
-                .and_then(JsonValue::as_u64)
-                .unwrap_or(100) as u32;
-            let (next, keys, db_size) = driver
-                .scan_keys_with_info(handle, db, pattern, cursor, count)
-                .await?;
-            json_ok(serde_json::json!({ "cursor": next, "keys": keys, "dbSize": db_size }))
-        }
-        "get_key" => json_ok(
-            driver
-                .get_key_detail(handle, db, req_str(&input, "key")?)
-                .await?,
-        ),
-        "set_string" => {
-            let keep_ttl = input
-                .get("keepTtl")
-                .or_else(|| input.get("keep_ttl"))
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(false);
-            driver
-                .plugin_set_string(
-                    id,
-                    db,
-                    req_str(&input, "key")?,
-                    req_str(&input, "value")?,
-                    keep_ttl,
-                )
-                .await?;
-            Ok(ok())
-        }
-        "set_ttl" => {
-            let key = req_str(&input, "key")?;
-            let expire_at = input
-                .get("expireAt")
-                .or_else(|| input.get("expire_at"))
-                .and_then(JsonValue::as_i64);
-            if let Some(ts) = expire_at {
-                driver.plugin_set_expire_at(id, db, key, ts).await?;
-            } else {
-                let ttl = input
-                    .get("ttlSeconds")
-                    .or_else(|| input.get("ttl_seconds"))
-                    .and_then(JsonValue::as_i64)
-                    .ok_or_else(|| {
-                        DriverError::InvalidConfig(
-                            "command input requires 'ttlSeconds' or 'expireAt'".into(),
-                        )
-                    })?;
-                driver.plugin_set_ttl(id, db, key, ttl).await?;
-            }
-            Ok(ok())
-        }
-        other => Err(DriverError::Unsupported(format!(
-            "redis command '{other}' — full dispatch in progress; set_string/set_ttl ready"
-        ))),
+        include!("commands_exec_arms_a.rs")
+        include!("commands_exec_arms_b.rs")
     }
 }
