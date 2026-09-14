@@ -16,7 +16,7 @@ Query · Diagnose · Visualize · Migrate · Automate · MCP
 
 </div>
 
-![DataZen natural-language SQL with database schema context](site/assets/screenshots/03-ai-nl2sql.png)
+https://github.com/flyxl/datazen/assets/video/demo-recording.mp4
 
 ## Why DataZen?
 

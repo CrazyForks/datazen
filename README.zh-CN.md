@@ -16,7 +16,7 @@
 
 </div>
 
-![DataZen 主界面](site/assets/screenshots/01-main-window.png)
+https://github.com/flyxl/datazen/assets/video/demo-recording.mp4
 
 ## 为什么选择 DataZen？
 
