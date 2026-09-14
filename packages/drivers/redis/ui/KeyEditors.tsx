@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
@@ -16,7 +15,6 @@ import {
   type DecompressResult,
 } from './stringKeyValue';
 import {
-  invokeCreateKey,
   invokeRename,
   invokeSetExpireAt,
   invokeSetString,
@@ -247,16 +245,14 @@ export function KeyDetailEditor({
         <JsonEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
-          detail={detail}
-          onChanged={() => void onRefresh()}
+          redisKey={detail.key}
         />
       )}
       {detail.keyType === 'stream' && (
         <StreamEditor
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
-          detail={detail}
-          onChanged={() => void onRefresh()}
+          redisKey={detail.key}
         />
       )}
     </div>
