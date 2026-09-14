@@ -7,9 +7,8 @@ use std::time::Instant;
 use redis::FromRedisValue;
 
 use crate::redis_value::{
-    parse_scan_result, preview_value_to_string, redis_array_to_json_strings,
-    redis_flat_pairs_to_map, redis_zset_to_json, stream_entry_to_json, truncate_preview,
-    value_to_string, value_to_type_string, value_to_u64,
+    parse_scan_result, preview_value_to_string, redis_flat_pairs_to_map, redis_zset_to_json,
+    stream_entry_to_json, truncate_preview,
 };
 
 pub(crate) async fn select_db_on<C>(conn: &mut C, db_index: u32) -> Result<(), String>
@@ -73,12 +72,20 @@ where
     Ok(tables)
 }
 
+/// One SCAN page with per-key TYPE / TTL / size / preview.
+///
+/// - `key_type`: optional Redis type filter (`string`, `hash`, …) via `SCAN … TYPE`
+///   (Redis ≥ 6.0). Empty / "*" / "all" means no filter.
+/// - `with_memory`: when true, prefer `MEMORY USAGE` for the size column (bytes);
+///   otherwise use logical length (STRLEN / LLEN / …).
 pub(crate) async fn scan_keys_with_info_on<C>(
     conn: &mut C,
     _db_index: u32,
     pattern: &str,
     cursor: u64,
     count: u32,
+    key_type: Option<&str>,
+    with_memory: bool,
     t0: Instant,
 ) -> Result<(u64, Vec<KeyEntry>, u64), DriverError>
 where
@@ -88,6 +95,9 @@ where
     cmd.arg(cursor).arg("COUNT").arg(count.max(1));
     if !pattern.is_empty() && pattern != "*" {
         cmd.arg("MATCH").arg(pattern);
+    }
+    if let Some(ty) = normalize_type_filter(key_type) {
+        cmd.arg("TYPE").arg(ty);
     }
     let raw: redis::Value = cmd
         .query_async(conn)
@@ -104,14 +114,20 @@ where
             .query_async(conn)
             .await
             .unwrap_or(-2);
-        let size = value_len_on(conn, key, &ty).await.unwrap_or(0);
+        let size = if with_memory {
+            memory_usage_on(conn, key)
+                .await
+                .unwrap_or_else(|_| value_len_on(conn, key, &ty).await.unwrap_or(0))
+        } else {
+            value_len_on(conn, key, &ty).await.unwrap_or(0)
+        };
         let preview = preview_on(conn, key, &ty).await.unwrap_or_default();
         entries.push(KeyEntry {
             key: key.clone(),
             key_type: ty,
             ttl,
-            size: Some(size as u64),
-            preview: Some(preview),
+            size: size as u64,
+            preview,
         });
     }
     let db_size: i64 = redis::cmd("DBSIZE")
@@ -121,9 +137,29 @@ where
     tracing::info!(
         elapsed_ms = t0.elapsed().as_millis() as u64,
         keys = entries.len(),
+        with_memory,
         "redis scan_keys_with_info_on done"
     );
     Ok((next, entries, db_size.max(0) as u64))
+}
+
+/// Normalize UI/command type filter to a Redis TYPE token, or None for no filter.
+pub(crate) fn normalize_type_filter(key_type: Option<&str>) -> Option<&'static str> {
+    let raw = key_type?.trim();
+    if raw.is_empty() || raw == "*" || raw.eq_ignore_ascii_case("all") {
+        return None;
+    }
+    let lower = raw.to_ascii_lowercase();
+    match lower.as_str() {
+        "string" => Some("string"),
+        "list" => Some("list"),
+        "set" => Some("set"),
+        "zset" | "sortedset" | "sorted_set" => Some("zset"),
+        "hash" => Some("hash"),
+        "stream" => Some("stream"),
+        "rejson" | "json" | "rejson-rl" => Some("ReJSON-RL"),
+        _ => None,
+    }
 }
 
 async fn type_of_key_on<C>(conn: &mut C, key: &str) -> Result<String, String>
@@ -136,6 +172,19 @@ where
         .await
         .map_err(|e| e.to_string())?;
     Ok(ty)
+}
+
+async fn memory_usage_on<C>(conn: &mut C, key: &str) -> Result<usize, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let n: Option<i64> = redis::cmd("MEMORY")
+        .arg("USAGE")
+        .arg(key)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(n.unwrap_or(0).max(0) as usize)
 }
 
 async fn value_len_on<C>(conn: &mut C, key: &str, ty: &str) -> Result<usize, String>
@@ -226,9 +275,6 @@ where
         .query_async(conn)
         .await
         .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-    let size = value_len_on(conn, key, &ty)
-        .await
-        .map_err(DriverError::QueryFailed)?;
     let value = key_value_json(conn, key, &ty)
         .await
         .map_err(DriverError::QueryFailed)?;
@@ -236,7 +282,6 @@ where
         key: key.to_string(),
         key_type: ty,
         ttl,
-        size: Some(size as u64),
         value,
     })
 }
@@ -304,5 +349,33 @@ where
             Ok(stream_entry_to_json(&raw))
         }
         other => Ok(serde_json::json!({ "type": other })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_type_filter;
+
+    #[test]
+    fn type_filter_none_for_empty_or_all() {
+        assert_eq!(normalize_type_filter(None), None);
+        assert_eq!(normalize_type_filter(Some("")), None);
+        assert_eq!(normalize_type_filter(Some("*")), None);
+        assert_eq!(normalize_type_filter(Some("all")), None);
+        assert_eq!(normalize_type_filter(Some("ALL")), None);
+    }
+
+    #[test]
+    fn type_filter_maps_common_aliases() {
+        assert_eq!(normalize_type_filter(Some("string")), Some("string"));
+        assert_eq!(normalize_type_filter(Some("HASH")), Some("hash"));
+        assert_eq!(normalize_type_filter(Some("zset")), Some("zset"));
+        assert_eq!(normalize_type_filter(Some("sortedSet")), Some("zset"));
+        assert_eq!(normalize_type_filter(Some("json")), Some("ReJSON-RL"));
+    }
+
+    #[test]
+    fn type_filter_rejects_unknown() {
+        assert_eq!(normalize_type_filter(Some("foo")), None);
     }
 }
