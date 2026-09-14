@@ -26,6 +26,7 @@ import { useResizable } from '../../hooks/useResizable';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { openDocsWindow } from '../../lib/windowManager';
 import { cn } from '../../lib/cn';
+import { canRunDeploy } from '../../lib/schemaDiffConfirm';
 import { MigrationEndpointsBar } from '../../components/migration/MigrationEndpointsBar';
 import type { TableSchemaDiff } from '../../types';
 import {
@@ -278,8 +279,14 @@ export function SchemaDiffWindow() {
     void buildPlan();
   }, [step, plan, loading, buildPlan]);
 
+  const deployAllowed = Boolean(plan && !deployResult && !plan.requirements?.length
+    && (!requireRollback || (useTransaction && dialectSupportsTransactionalDdl(plan.targetDialect)))
+    && canRunDeploy({ hasDestructive: planHasDestructive(plan), confirmText,
+      requireRollback, rollbackComplete: plan.rollbackCompleteness.complete,
+      statementCount: plan.statements.length }));
+
   const handleDeploy = useCallback(async () => {
-    if (!plan) return;
+    if (!plan || !deployAllowed) return;
     setError('');
     setLoading(true);
     try {
@@ -289,6 +296,7 @@ export function SchemaDiffWindow() {
         targetDbSessionId: tgtConnId,
         plan,
         useTransaction,
+        requireRollback,
         confirmDestructive: planHasDestructive(plan) ? confirmText.trim() : undefined,
       });
       setDeployResult(result);
@@ -297,7 +305,7 @@ export function SchemaDiffWindow() {
     } finally {
       setLoading(false);
     }
-  }, [confirmText, endpoints, plan, useTransaction]);
+  }, [confirmText, endpoints, plan, useTransaction, requireRollback, deployAllowed]);
 
   const canNext = useMemo(() => {
     switch (step) {
@@ -722,7 +730,7 @@ export function SchemaDiffWindow() {
             <Button
               variant="run"
               data-testid="schema-diff-deploy"
-              disabled={!plan || loading}
+              disabled={!deployAllowed || loading}
               onClick={() => void handleDeploy()}
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('schemaDiff.deploy')}

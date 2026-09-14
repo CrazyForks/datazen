@@ -255,3 +255,38 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 });
+
+it('keeps the immutable plan identity and forwards required rollback to the backend', async () => {
+  const plan = samplePlan({ planId: 'reviewed-plan-42' });
+  invokeMock.mockResolvedValueOnce({ status: 'unknown' });
+  await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'target', plan, requireRollback: true, useTransaction: true });
+  expect(invokeMock).toHaveBeenLastCalledWith('execute_schema_diff_deploy', expect.objectContaining({
+    plan: expect.objectContaining({ planId: 'reviewed-plan-42' }), requireRollback: true,
+  }));
+});
+
+it('round-trips all requirement tags without losing table or column identity', async () => {
+  invokeMock.mockReset();
+  const requirements = [
+    { backfill: { table: 'users', column: 'status', reason: 'populate first' } },
+    { unsupported: { operation: 'users', reason: 'table unavailable' } },
+    { unsupported: { operation: 'users.id', reason: 'column unavailable' } },
+  ];
+  invokeMock.mockResolvedValueOnce({ ...samplePlan(), requirements });
+  const prepared = await schemaDiffCommands.preparePlan({ sourceDbSessionId: 'src', targetDbSessionId: 'tgt', tableNames: ['users'], allowDestructive: false });
+  expect(prepared.requirements).toEqual([
+    { kind: 'Backfill', table: 'users', column: 'status', reason: 'populate first' },
+    { kind: 'Unsupported', table: 'users', column: '', reason: 'table unavailable' },
+    { kind: 'Unsupported', table: 'users', column: 'id', reason: 'column unavailable' },
+  ]);
+  await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'tgt', plan: prepared });
+  expect(invokeMock).toHaveBeenLastCalledWith('execute_schema_diff_deploy', expect.objectContaining({ plan: expect.objectContaining({ requirements }) }));
+});
+
+it('cancels only the requested job and propagates cancellation failures', async () => {
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('job not found'));
+  await expect(schemaDiffCommands.cancelDeploy('job-42')).resolves.toBe(true);
+  expect(invokeMock).toHaveBeenCalledWith('cancel_schema_diff_deploy', { jobId: 'job-42' });
+  await expect(schemaDiffCommands.cancelDeploy('missing')).rejects.toThrow('job not found');
+});

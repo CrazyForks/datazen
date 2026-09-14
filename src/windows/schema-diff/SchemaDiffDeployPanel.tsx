@@ -39,7 +39,7 @@ export function SchemaDiffDeployPanel({
   const { t } = useI18n();
   const hasDestructive = planHasDestructive(plan);
   const txSupported = dialectSupportsTransactionalDdl(plan.targetDialect);
-  const canRun = canRunDeploy({
+  const canRun = !result && !(plan.requirements?.length) && (!requireRollback || (txSupported && useTransaction)) && canRunDeploy({
     hasDestructive,
     confirmText,
     requireRollback,

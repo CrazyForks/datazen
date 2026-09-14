@@ -19,49 +19,95 @@ fn op_table(op: &MigrationOperation) -> &str {
     }
 }
 
-fn sort_bucket(bucket: &mut [MigrationOperation]) {
-    bucket.sort_by(|a, b| {
-        op_table(a)
-            .cmp(op_table(b))
-            .then_with(|| a.key().cmp(&b.key()))
-    });
+/// A directed edge means `before` must complete before `after`.
+fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
+    use MigrationOperation::*;
+    if op_table(before) != op_table(after) {
+        return false;
+    }
+    match (before, after) {
+        (CreateTable { .. }, _) => true,
+        (DropPrimaryKey { .. }, AddPrimaryKey { .. }) => true,
+        (DropPrimaryKey { columns, .. }, SetNullable { column, nullable: true, .. }) => {
+            columns.contains(column)
+        }
+        (DropIndex { index: old, .. }, CreateIndex { index: new, .. }) => old.name == new.name,
+        (DropPrimaryKey { columns, .. }, DropColumn { .. } | AlterColumnType { .. }) => match after
+        {
+            DropColumn { column, .. } => columns.contains(&column.name),
+            AlterColumnType { column, .. } => columns.contains(column),
+            _ => false,
+        },
+        (DropIndex { index, .. }, DropColumn { column, .. }) => {
+            index.columns.contains(&column.name)
+        }
+        (DropIndex { index, .. }, AlterColumnType { column, .. }) => index.columns.contains(column),
+        (AddColumn { column, .. }, AddPrimaryKey { columns, .. }) => columns.contains(&column.name),
+        (AddColumn { column, .. }, CreateIndex { index, .. }) => {
+            index.columns.contains(&column.name)
+        }
+        (
+            AlterColumnType { column, .. } | SetNullable { column, .. },
+            AddPrimaryKey { columns, .. },
+        ) => columns.contains(column),
+        (AlterColumnType { column, .. }, CreateIndex { index, .. }) => {
+            index.columns.contains(column)
+        }
+        _ => false,
+    }
 }
 
-pub fn resolve_dependencies(ops: Vec<MigrationOperation>) -> Vec<MigrationOperation> {
-    let mut create_tables = Vec::new();
-    let mut adds = Vec::new();
-    let mut alters = Vec::new();
-    let mut drops = Vec::new();
-    let mut indexes = Vec::new();
-    for op in ops {
-        match op {
-            MigrationOperation::CreateTable { .. } => create_tables.push(op),
-            MigrationOperation::AddColumn { .. } | MigrationOperation::AddPrimaryKey { .. } => {
-                adds.push(op)
-            }
-            MigrationOperation::AlterColumnType { .. }
-            | MigrationOperation::SetNullable { .. }
-            | MigrationOperation::SetDefault { .. }
-            | MigrationOperation::SetComment { .. }
-            | MigrationOperation::SetAutoIncrement { .. } => alters.push(op),
-            MigrationOperation::CreateIndex { .. } => indexes.push(op),
-            MigrationOperation::DropIndex { .. }
-            | MigrationOperation::DropPrimaryKey { .. }
-            | MigrationOperation::DropColumn { .. } => drops.push(op),
+/// Removing a prerequisite also removes its dependents. Replacements are indivisible
+/// for selection, while their execution edges remain directional.
+pub fn retain_dependency_closed(
+    all: &[MigrationOperation],
+    selected: &mut Vec<MigrationOperation>,
+) {
+    loop {
+        let previous = selected.clone();
+        selected.retain(|op| all.iter().all(|dependency| {
+            let replacement = matches!((op, dependency),
+                (MigrationOperation::DropPrimaryKey { .. }, MigrationOperation::AddPrimaryKey { .. }))
+                && op_table(op) == op_table(dependency)
+                || matches!((op, dependency),
+                    (MigrationOperation::DropIndex { index: a, .. }, MigrationOperation::CreateIndex { index: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
+            !(precedes(dependency, op) || replacement) || previous.iter().any(|present| std::mem::discriminant(present) == std::mem::discriminant(dependency) && present.key() == dependency.key())
+        }));
+        if selected.len() == previous.len() {
+            break;
         }
     }
-    sort_bucket(&mut create_tables);
-    sort_bucket(&mut adds);
-    sort_bucket(&mut alters);
-    sort_bucket(&mut indexes);
-    sort_bucket(&mut drops);
-    create_tables
-        .into_iter()
-        .chain(adds)
-        .chain(alters)
-        .chain(indexes)
-        .chain(drops)
-        .collect()
+}
+
+pub fn resolve_dependencies(mut ops: Vec<MigrationOperation>) -> Vec<MigrationOperation> {
+    let mut ordered = Vec::with_capacity(ops.len());
+    while !ops.is_empty() {
+        let candidate = (0..ops.len())
+            .filter(|&i| !(0..ops.len()).any(|j| j != i && precedes(&ops[j], &ops[i])))
+            .min_by_key(|&i| {
+                (
+                    op_table(&ops[i]).to_owned(),
+                    priority(&ops[i]),
+                    ops[i].key(),
+                )
+            });
+        let Some(index) = candidate else {
+            return Vec::new();
+        }; // Fail closed on a cyclic graph.
+        ordered.push(ops.remove(index));
+    }
+    ordered
+}
+
+fn priority(op: &MigrationOperation) -> u8 {
+    use MigrationOperation::*;
+    match op {
+        CreateTable { .. } => 0,
+        AddColumn { .. } | AddPrimaryKey { .. } => 1,
+        CreateIndex { .. } => 3,
+        DropColumn { .. } | DropIndex { .. } | DropPrimaryKey { .. } => 4,
+        _ => 2,
+    }
 }
 
 #[cfg(test)]
@@ -113,7 +159,7 @@ mod tests {
         assert!(matches!(sorted[2], MigrationOperation::DropColumn { .. }));
     }
 
-    fn snap(name: &str) -> crate::schema_diff::types::ColumnSnapshot {
+    pub(super) fn snap(name: &str) -> crate::schema_diff::types::ColumnSnapshot {
         crate::schema_diff::types::ColumnSnapshot {
             name: name.into(),
             data_type: "int".into(),
@@ -180,5 +226,104 @@ mod tests {
         assert!(
             matches!(&sorted[1], MigrationOperation::DropColumn { column, .. } if column.name == "z")
         );
+    }
+}
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+    use crate::db::IndexInfo;
+    fn pk(add: bool) -> MigrationOperation {
+        if add {
+            MigrationOperation::AddPrimaryKey {
+                table: "t".into(),
+                columns: vec!["new".into()],
+            }
+        } else {
+            MigrationOperation::DropPrimaryKey {
+                table: "t".into(),
+                columns: vec!["old".into()],
+            }
+        }
+    }
+    fn idx(create: bool) -> MigrationOperation {
+        let index = IndexInfo {
+            name: "same_name".into(),
+            columns: vec![if create { "new".into() } else { "old".into() }],
+            is_unique: create,
+            is_primary: false,
+            index_type: "btree".into(),
+        };
+        if create {
+            MigrationOperation::CreateIndex {
+                table: "t".into(),
+                index,
+            }
+        } else {
+            MigrationOperation::DropIndex {
+                table: "t".into(),
+                index,
+            }
+        }
+    }
+    #[test]
+    fn replacement_order_is_drop_before_create_regardless_of_input() {
+        for (add, drop) in [(pk(true), pk(false)), (idx(true), idx(false))] {
+            assert_eq!(
+                resolve_dependencies(vec![add.clone(), drop.clone()]),
+                vec![drop.clone(), add.clone()]
+            );
+            assert_eq!(
+                resolve_dependencies(vec![drop.clone(), add.clone()]),
+                vec![drop, add]
+            );
+        }
+    }
+    #[test]
+    fn replacing_key_relaxes_old_column_and_tightens_new_without_cycles() {
+        let relax = MigrationOperation::SetNullable {
+            table: "t".into(), column: "old".into(), nullable: true,
+        };
+        let tighten = MigrationOperation::SetNullable {
+            table: "t".into(), column: "new".into(), nullable: false,
+        };
+        let unrelated = MigrationOperation::SetNullable {
+            table: "t".into(), column: "other".into(), nullable: true,
+        };
+        let all = vec![pk(true), relax.clone(), tighten.clone(), unrelated.clone(), pk(false)];
+        let sorted = resolve_dependencies(all.clone());
+        assert_eq!(sorted.len(), all.len());
+        let position = |op: &MigrationOperation| sorted.iter().position(|item| item == op).unwrap();
+        assert!(position(&pk(false)) < position(&relax));
+        assert!(position(&pk(false)) < position(&pk(true)));
+        assert!(position(&tighten) < position(&pk(true)));
+        let mut selected = vec![relax, tighten.clone(), unrelated.clone(), pk(true)];
+        retain_dependency_closed(&all, &mut selected);
+        assert_eq!(selected, vec![tighten, unrelated]);
+    }
+
+    #[test]
+    fn filtering_either_half_removes_the_entire_replacement() {
+        for all in [vec![pk(true), pk(false)], vec![idx(true), idx(false)]] {
+            for half in &all {
+                let mut selected = vec![half.clone()];
+                retain_dependency_closed(&all, &mut selected);
+                assert!(selected.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn column_drop_requires_removing_its_index_and_key() {
+        let column = super::tests::snap("old");
+        let drop = MigrationOperation::DropColumn {
+            table: "t".into(),
+            column,
+        };
+        let all = vec![drop.clone(), pk(false), idx(false)];
+        let sorted = resolve_dependencies(all.clone());
+        assert_eq!(sorted.last(), Some(&drop));
+        let mut selected = vec![drop];
+        retain_dependency_closed(&all, &mut selected);
+        assert!(selected.is_empty());
     }
 }
