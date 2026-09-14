@@ -16,7 +16,9 @@ Query · Diagnose · Visualize · Migrate · Automate · MCP
 
 </div>
 
-https://github.com/flyxl/datazen/assets/video/demo-recording.mp4
+![DataZen demo — onboarding, query, chart, AI](site/assets/video/demo-poster.png)
+
+[▶ Watch the full demo video](https://github.com/flyxl/datazen/releases/download/v0.2.0/demo-recording.mp4)
 
 ## Why DataZen?
 

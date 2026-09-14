@@ -16,7 +16,9 @@
 
 </div>
 
-https://github.com/flyxl/datazen/assets/video/demo-recording.mp4
+![DataZen 演示 — 引导、查询、图表、AI](site/assets/video/demo-poster.png)
+
+[▶ 观看完整演示视频](https://github.com/flyxl/datazen/releases/download/v0.2.0/demo-recording.mp4)
 
 ## 为什么选择 DataZen？
 
