@@ -14,9 +14,7 @@
 [下载](https://flyxl.github.io/datazen/zh/download.html) · [官网](https://flyxl.github.io/datazen/zh/) · [English](README.md) · [贡献指南](CONTRIBUTING.md)
 </div>
 
-![DataZen 演示 — 引导、查询、图表、AI](site/assets/video/demo-poster.png)
-
-[▶ 观看完整演示视频](https://github.com/flyxl/datazen/releases/download/v0.2.0/demo-recording.mp4)
+<video src="site/assets/video/demo-recording.mp4" controls width="100%" poster="site/assets/video/demo-poster.png"></video>
 
 ## 为什么选择 DataZen？
 
