@@ -16,16 +16,23 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self' asset: http://asset.localhost",
+        "script-src": "'self' blob: asset: http://asset.localhost",
+        "worker-src": "'self' blob:",
         "frame-src": "'self' datazen:",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self' data: asset: tauri: blob: datazen:",
         "font-src": "'self' blob: data:",
-        "connect-src": "'self' https: http: ipc: http://ipc.localhost asset://localhost"
+        "connect-src": "'self' https: http: ipc: http://ipc.localhost asset://localhost blob:"
       },
       "dangerousDisableAssetCspModification": [
         "style-src"
       ],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$RESOURCE/builtin-ep/**/*"
+        ]
+      },
       "capabilities": [
         "default"
       ]

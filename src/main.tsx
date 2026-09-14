@@ -24,12 +24,32 @@ import { bootstrapDefaultIconResolver } from './lib/bootstrapIconResolver';
 import { maybeCheckOnStartup } from './lib/updater';
 import { getWindowKind } from './lib/windowKind';
 import { initProExtensions } from './extensions/generated-pro';
-import { setHostLocaleBridge, setTableSchemaProvider } from '@datazen/extension-points';
+import * as extensionPoints from '@datazen/extension-points';
+import * as jsxRuntime from 'react/jsx-runtime';
+import * as reactAll from 'react';
+import * as reactDomAll from 'react-dom';
+import * as ui from '@datazen/ui';
+import * as cmView from '@codemirror/view';
+import * as cmState from '@codemirror/state';
 import { useSettingsStore } from './stores/settingsStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 import { t } from './locales/t';
 
-setHostLocaleBridge({
+// Expose host shared modules so the dynamically-loaded PRO extension can
+// resolve bare specifiers (e.g. `@datazen/extension-points`) from blob URLs.
+// The Vite plugin in the PRO extension rewrites these imports to reference
+// this global namespace at build time.
+(globalThis as any).__DATAZEN_HOST__ = {
+  '@datazen/extension-points': extensionPoints,
+  '@datazen/ui': ui,
+  react: reactAll,
+  'react-dom': reactDomAll,
+  'react/jsx-runtime': jsxRuntime,
+  '@codemirror/view': cmView,
+  '@codemirror/state': cmState,
+};
+
+extensionPoints.setHostLocaleBridge({
   getLocale: () => useSettingsStore.getState().settings.language ?? 'en',
   subscribe: (listener) =>
     useSettingsStore.subscribe((state, prevState) => {
@@ -39,7 +59,7 @@ setHostLocaleBridge({
     }),
   translate: (key, params) => t(key, params),
 });
-setTableSchemaProvider(getCachedTableSchema);
+extensionPoints.setTableSchemaProvider(getCachedTableSchema);
 
 bootstrapDefaultIconResolver();
 initProExtensions();
