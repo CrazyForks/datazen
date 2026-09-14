@@ -95,7 +95,8 @@ describe('dashboardCommands wrappers', () => {
   });
 
   it('createWidgetFromSql forwards the params envelope verbatim', async () => {
-    invokeMock.mockResolvedValueOnce({ widgetId: 'w4', dashboardId: 'd9' });
+    const dashboard = sampleDashboard('d9');
+    invokeMock.mockResolvedValueOnce({ widgetId: 'w4', dashboardId: 'd9', dashboard });
     const params = {
       dashboardId: 'd9',
       connectionId: 'c1',
@@ -110,7 +111,8 @@ describe('dashboardCommands wrappers', () => {
   });
 
   it('createWidgetFromWorkflow forwards the params envelope verbatim', async () => {
-    invokeMock.mockResolvedValueOnce({ widgetId: 'w5', dashboardId: 'd10' });
+    const dashboard = sampleDashboard('d10');
+    invokeMock.mockResolvedValueOnce({ widgetId: 'w5', dashboardId: 'd10', dashboard });
     const params = {
       dashboardId: 'd10',
       workflowId: 'wf-2',

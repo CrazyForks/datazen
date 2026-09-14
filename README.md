@@ -225,6 +225,10 @@ Optional drivers (MongoDB, ClickHouse, DuckDB, SQL Server, …) are compile-time
 - Rust >= 1.77
 - Tauri v2 system dependencies
 
+CI currently uses **Node.js 24**, **pnpm 11**, and **Rust stable**.
+
+CI toolchain: Node **24**, pnpm **11**, Rust stable. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CI & test matrix](docs/development/ci-test-matrix.md) for the full development and CI toolchain.
+
 ```bash
 pnpm install
 pnpm tauri dev
