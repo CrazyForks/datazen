@@ -118,6 +118,7 @@ export function DataSyncWindow() {
   const jobIdRef = useRef<string | null>(null);
   const jobKindRef = useRef<'compare' | 'execute' | null>(null);
   const cancelRequestedJobRef = useRef<string | null>(null);
+  const cancellingStatusJobRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
   const writeInFlightRef = useRef(false);
   const syncStateRef = useRef(syncState);
@@ -730,6 +731,7 @@ export function DataSyncWindow() {
     if (jobId) cancelRequestedJobRef.current = jobId;
 
     if (jobKind === 'execute' && writeInFlightRef.current) {
+      cancellingStatusJobRef.current = jobId;
       setStatusMsg(t('sync.cancellingExecution'));
     } else {
       setSyncState(
@@ -832,6 +834,7 @@ export function DataSyncWindow() {
     jobIdRef.current = jobId;
     jobKindRef.current = 'execute';
     cancelRequestedJobRef.current = null;
+    cancellingStatusJobRef.current = null;
 
     let writeStarted = false;
     try {
@@ -902,6 +905,12 @@ export function DataSyncWindow() {
       setExecuteProgress('');
     } finally {
       writeInFlightRef.current = false;
+      if (cancellingStatusJobRef.current === jobId) {
+        cancellingStatusJobRef.current = null;
+        setStatusMsg((current) =>
+          current === t('sync.cancellingExecution') ? '' : current,
+        );
+      }
       if (jobIdRef.current === jobId && jobKindRef.current === 'execute') {
         jobIdRef.current = null;
         jobKindRef.current = null;
