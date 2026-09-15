@@ -16,7 +16,7 @@ export async function invokeMonitorStart(
   dbSessionId: string,
   bufferSize?: number,
 ): Promise<string> {
-  const result = await redisCommandInvoke('monitor_start', {
+  const result = await redisCommandInvoke<{ monitorId: string }>('redis', 'monitor_start', {
     dbSessionId,
     bufferSize: bufferSize ?? 1000,
   });
@@ -24,16 +24,20 @@ export async function invokeMonitorStart(
 }
 
 export async function invokeMonitorStop(dbSessionId: string, monitorId: string): Promise<void> {
-  await redisCommandInvoke('monitor_stop', { dbSessionId, monitorId });
+  await redisCommandInvoke('redis', 'monitor_stop', { dbSessionId, monitorId });
 }
 
 export async function invokeMonitorGetBuffer(
   dbSessionId: string,
   monitorId: string,
 ): Promise<MonitorEvent[]> {
-  const result = await redisCommandInvoke('monitor_get_buffer', {
-    dbSessionId,
-    monitorId,
-  });
+  const result = await redisCommandInvoke<{ events?: MonitorEvent[] }>(
+    'redis',
+    'monitor_get_buffer',
+    {
+      dbSessionId,
+      monitorId,
+    },
+  );
   return result.events ?? [];
 }

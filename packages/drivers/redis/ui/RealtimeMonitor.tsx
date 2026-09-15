@@ -3,7 +3,7 @@
  * and streams them to the UI with a circular buffer and auto-scroll.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../../src/hooks/useI18n';
 import {
   invokeMonitorStart,
