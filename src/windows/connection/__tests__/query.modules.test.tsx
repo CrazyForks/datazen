@@ -1394,4 +1394,81 @@ describe('[tester] query/useQueryContextPath', () => {
     });
     expect(switchDatabase).toHaveBeenCalled();
   });
+
+  it('syncs the panel-bound database when switching database at level 0 (non-path)', async () => {
+    const updatePanel = vi.fn();
+    const switchDatabase = vi.fn().mockResolvedValue(undefined);
+    const ensureNamespacePath = vi.fn().mockResolvedValue(undefined);
+
+    usePanelStore.setState({ updatePanel } as Partial<ReturnType<typeof usePanelStore.getState>>);
+    schemaStoreState.switchDatabase = switchDatabase;
+    schemaStoreState.ensureNamespacePath = ensureNamespacePath;
+    schemaStoreState.databases = ['app', 'other'];
+    schemaStoreState.currentDatabase = 'app';
+
+    const { result } = renderHook(() =>
+      useQueryContextPath({
+        panelId: 'p1',
+        dbSessionId: 'sess-1',
+        isPathHierarchy: false,
+        selectedDatabase: 'app',
+        namespaceTree: [],
+        pathAliases: {},
+        databases: ['app', 'other'],
+        currentDatabase: 'app',
+      }),
+    );
+
+    await act(async () => {
+      result.current.handleSelectContextLevel(0, 'other');
+    });
+
+    // Switching the database inside the panel writes the new DB back onto the
+    // panel's bound `database`.
+    expect(updatePanel).toHaveBeenCalledWith('p1', { database: 'other' });
+  });
+
+  it('binds the full path hierarchy when switching levels inside a path-hierarchy panel', async () => {
+    const updatePanel = vi.fn();
+    const switchDatabase = vi.fn().mockResolvedValue(undefined);
+    const ensureNamespacePath = vi.fn().mockResolvedValue(undefined);
+
+    usePanelStore.setState({ updatePanel } as Partial<ReturnType<typeof usePanelStore.getState>>);
+    schemaStoreState.switchDatabase = switchDatabase;
+    schemaStoreState.ensureNamespacePath = ensureNamespacePath;
+    schemaStoreState.databases = ['hive', 'prod'];
+    schemaStoreState.currentDatabase = null;
+
+    const { result } = renderHook(() =>
+      useQueryContextPath({
+        panelId: 'p1',
+        dbSessionId: 'sess-1',
+        isPathHierarchy: true,
+        selectedDatabase: 'hive',
+        namespaceTree: [],
+        pathAliases: {},
+        databases: ['hive', 'prod'],
+        currentDatabase: null,
+      }),
+    );
+
+    await act(async () => {
+      // User picks a new root (catalog level) at level 0.
+      result.current.handleSelectContextLevel(0, 'hive');
+    });
+
+    // Level 0 writes the root onto the panel's bound database…
+    expect(updatePanel).toHaveBeenCalledWith('p1', { database: 'hive' });
+    // …and the whole selected path (root-first) is written onto the panel's
+    // bound namespacePath.
+    expect(updatePanel).toHaveBeenCalledWith('p1', { namespacePath: ['hive'] });
+
+    // Then the user drills into a nested catalog/schema level — the full path
+    // (root + deeper levels) stays bound together.
+    updatePanel.mockClear();
+    await act(async () => {
+      result.current.handleSelectContextLevel(1, 'snap');
+    });
+    expect(updatePanel).toHaveBeenCalledWith('p1', { namespacePath: ['hive', 'snap'] });
+  });
 });

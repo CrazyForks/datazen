@@ -126,6 +126,31 @@ describe('panelStore', () => {
     );
   });
 
+  it('executeQuery uses the panel-bound database even when the store currentDatabase reverted to the first db', async () => {
+    // Settings round-trip scenario: the session-wide store currentDatabase was
+    // reset back to the first database (channeling_dock_db), but this query tab
+    // is bound to tradingdb. Execution must honor the tab binding.
+    seedCurrentDatabase('sess-1', 'channeling_dock_db');
+    const panel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: 'tradingdb',
+    };
+    usePanelStore.getState().addPanel(panel);
+    usePanelStore.getState().updateSql(panel.id, 'SELECT * FROM t_afi_installment_payment');
+
+    await usePanelStore.getState().executeQuery(panel.id);
+
+    expect(mockExecuteQueryStream).toHaveBeenCalledWith(
+      'sess-1',
+      'SELECT * FROM t_afi_installment_payment',
+      expect.any(Function),
+      { database: 'tradingdb', schema: null },
+    );
+  });
+
   it('executeQuery falls back to null when no schema entry exists', async () => {
     seedCurrentDatabase(null, null);
     const panel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };

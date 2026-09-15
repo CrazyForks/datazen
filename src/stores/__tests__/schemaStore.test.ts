@@ -150,6 +150,34 @@ describe('schemaStore.loadForConnection isMultiDatabase', () => {
     expect(useSchemaStore.getState().isMultiDatabase).toBe(true);
   });
 
+  it('keeps a user-selected non-first database across reload instead of reverting to the first', async () => {
+    vi.mocked(databaseCommands.getDatabases).mockResolvedValueOnce(['db_a', 'db_b', 'db_c']);
+
+    await useSchemaStore.getState().loadForConnection('conn-1', {
+      databaseType: 'mysql',
+      skipLoadTables: true,
+    });
+
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
+
+    // User selects a non-first database from the multi-db dropdown.
+    vi.mocked(databaseCommands.getTables).mockResolvedValueOnce([]);
+    await useSchemaStore.getState().switchDatabase('db_b');
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_b');
+
+    // Re-mounting ContentView (e.g. switching to Settings and back) re-runs
+    // loadForConnection. It must keep db_b instead of reverting to db_a.
+    vi.mocked(databaseCommands.getDatabases).mockResolvedValueOnce(['db_a', 'db_b', 'db_c']);
+
+    await useSchemaStore.getState().loadForConnection('conn-1', {
+      databaseType: 'mysql',
+      skipLoadTables: true,
+    });
+
+    expect(useSchemaStore.getState().databases).toEqual(['db_a', 'db_b', 'db_c']);
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_b');
+  });
+
   it('refresh after creating a new DB preserves locked database when preferred is passed', async () => {
     vi.mocked(databaseCommands.getDatabases).mockResolvedValueOnce(['db_a', 'db_b']);
 
@@ -310,6 +338,52 @@ describe('schemaStore.switchDatabase', () => {
     await useSchemaStore.getState().switchDatabase('otherdb');
     // Identical to loadTables except for the invalidation bump — epoch stays flat.
     expect(useSchemaStore.getState().schemaEpoch).toBe(0);
+  });
+});
+
+describe('schemaStore.setCurrentDatabase', () => {
+  let useSchemaStore: typeof import('../../stores/schemaStore').useSchemaStore;
+  let createEmptyConnectionSchema: typeof import('../../stores/schemaStoreState').createEmptyConnectionSchema;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const storeMod = await import('../../stores/schemaStore');
+    useSchemaStore = storeMod.useSchemaStore;
+    const stateMod = await import('../../stores/schemaStoreState');
+    createEmptyConnectionSchema = stateMod.createEmptyConnectionSchema;
+    useSchemaStore.setState({ dbSessionId: 'test-conn' });
+  });
+
+  it('adopts the panel database as the session currentDatabase', () => {
+    useSchemaStore.getState().setCurrentDatabase('tradingdb', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('tradingdb');
+  });
+
+  it('follows a bound non-first database even when current is the first one', () => {
+    const schemas = new Map();
+    schemas.set('test-conn', {
+      ...createEmptyConnectionSchema(),
+      databases: ['channeling_dock_db', 'tradingdb'],
+      currentDatabase: 'channeling_dock_db',
+    });
+    useSchemaStore.setState({ schemas });
+
+    // The active query tab is bound to tradingdb — currentDatabase must follow.
+    useSchemaStore.getState().setCurrentDatabase('tradingdb', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('tradingdb');
+  });
+
+  it('ignores a database the session does not know about', () => {
+    const schemas = new Map();
+    schemas.set('test-conn', {
+      ...createEmptyConnectionSchema(),
+      databases: ['channeling_dock_db', 'tradingdb'],
+      currentDatabase: 'channeling_dock_db',
+    });
+    useSchemaStore.setState({ schemas });
+
+    useSchemaStore.getState().setCurrentDatabase('ghost_db', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('channeling_dock_db');
   });
 });
 

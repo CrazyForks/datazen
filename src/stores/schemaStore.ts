@@ -67,6 +67,10 @@ interface SchemaStore extends ConnectionSchemaState {
   /** F7: pin/clear the PG-family current schema (local UI state; sent as the
    * `schema` envelope field on query executions). */
   setCurrentSchema: (schema: string | null, dbSessionId?: string) => void;
+  /** Sync the session `currentDatabase` to the ACTIVE panel's bound database so
+   * the store reflects the tab the user is on (prevents drift to the first
+   * database after a reload, e.g. Settings round-trip). */
+  setCurrentDatabase: (database: string | null, dbSessionId?: string) => void;
   setLoadedTables: (database: string, all: TableInfo[], dbSessionId?: string) => void;
   removeRelation: (name: string, dbSessionId?: string) => void;
   mergeNamespace: (
@@ -240,9 +244,21 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
 
         const isMultiDatabase =
           !lockedToConfigured && computeIsMultiDatabase(meta?.hasMultiDatabase, databases.length);
+
+        // Preserve the user-selected database across component remounts (e.g.
+        // opening Settings and navigating back re-triggers loadForConnection).
+        // Without this the session's currentDatabase reverts to the first
+        // database in the dropdown, so a query pinned to a non-first database
+        // would then fail with "table does not exist". Only fall back to the
+        // configured/preferred database when the previous selection is no
+        // longer present in the freshly listed databases.
+        const previousDatabase = get().schemas.get(dbSessionId)?.currentDatabase ?? null;
+        const currentDatabase =
+          previousDatabase && databases.includes(previousDatabase) ? previousDatabase : preferred;
+
         commitConnectionPatch(
           dbSessionId,
-          { databases, isMultiDatabase, loading: false, currentDatabase: preferred },
+          { databases, isMultiDatabase, loading: false, currentDatabase },
           { activate: true },
         );
         if (usesPluginDbList) {
@@ -252,9 +268,9 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           get().mergeNamespace([], 'branch', databases, dbSessionId);
         }
         if (options?.skipLoadTables) return;
-        if (preferred) {
-          await get().loadTables(preferred, dbSessionId);
-          get().setSelected(`db:${preferred}`, dbSessionId);
+        if (currentDatabase) {
+          await get().loadTables(currentDatabase, dbSessionId);
+          get().setSelected(`db:${currentDatabase}`, dbSessionId);
         }
       } catch (e) {
         commitConnectionPatch(
@@ -318,6 +334,25 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       if (!dbSessionId) return;
       const normalized = schema?.trim() ? schema.trim() : null;
       commitConnectionPatch(dbSessionId, { currentSchema: normalized });
+    },
+
+    // Session-local database pointer. When the active (query/table) panel is
+    // switched or brought back into focus, the host drives this from the
+    // panel's bound database so `currentDatabase` always reflects the tab the
+    // user is on — otherwise loadForConnection/schema-tree defaults can
+    // re-pin it to the first database after a reload (e.g. Settings round-trip)
+    // even though the panel is still targeting `tradingdb`.
+    setCurrentDatabase: (database, dbSessionIdOverride) => {
+      const dbSessionId = resolveTargetConnectionId(get(), dbSessionIdOverride);
+      if (!dbSessionId) return;
+      const normalized = database?.trim() || null;
+      if (!normalized) return;
+      const session = get().schemas.get(dbSessionId);
+      const databases = session?.databases ?? [];
+      // Only adopt a database the session actually knows about; before the
+      // database list is loaded (empty) we still allow the panel pointer.
+      if (databases.length > 0 && !databases.includes(normalized)) return;
+      commitConnectionPatch(dbSessionId, { currentDatabase: normalized }, { activate: true });
     },
 
     mergeNamespace: (segments, kind, names, dbSessionIdOverride) => {

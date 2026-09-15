@@ -157,6 +157,18 @@ export function ContentView({
     });
   }, [schemaTreeDbSessionId, schemaTreeDatabaseType, initialDatabase, loadForConnection]);
 
+  // Keep the session-level `currentDatabase` aligned with the ACTIVE panel's
+  // bound database. Without this, loadForConnection/schema-tree defaults can
+  // re-pin it to the first database on a reload (e.g. Settings round-trip)
+  // while the active query tab is still targeting another database — the store
+  // drifts even though the panel itself is correct. Driving it from the panel
+  // also makes switching tabs instantly reflect the selected tab's database.
+  const activePanelBoundDatabase = (activePanel as { database?: string } | null)?.database;
+  useEffect(() => {
+    if (!activePanel?.dbSessionId || !activePanelBoundDatabase?.trim()) return;
+    useSchemaStore.getState().setCurrentDatabase(activePanelBoundDatabase, activePanel.dbSessionId);
+  }, [activePanel?.id, activePanel?.dbSessionId, activePanelBoundDatabase]);
+
   const handlers = usePanelHandlers({
     connCtx: sidebarConnCtx,
     showStructureEditor,

@@ -26,6 +26,7 @@ const { getConnectionViewMock, schemaState, tableDataState, MockRedisView } = vi
       loadForConnection: vi.fn(),
       loadTables: vi.fn(),
       removeRelation: vi.fn(),
+      setCurrentDatabase: vi.fn(),
     },
     tableDataState: {
       columns: [] as { name: string; dataType: string }[],
@@ -316,6 +317,23 @@ describe('ContentView', () => {
 
     render(<ContentView />);
     expect(screen.queryByRole('button', { name: /common.newQuery/ })).not.toBeInTheDocument();
+  });
+
+  it('syncs session currentDatabase to the active panel bound database', () => {
+    schemaState.setCurrentDatabase.mockClear();
+    const panel = {
+      connectionId: 'cfg-1',
+      dbSessionId: 'conn-1',
+      connectionName: 'TestDB',
+      databaseType: 'postgresql' as const,
+      type: 'query' as const,
+      id: 'panel-q-1',
+      database: 'tradingdb',
+    };
+    panelStore.usePanelStore.setState({ panels: [panel], activePanelId: panel.id });
+
+    render(<ContentView />);
+    expect(schemaState.setCurrentDatabase).toHaveBeenCalledWith('tradingdb', 'conn-1');
   });
 
   it('renders redis panel via getConnectionView', () => {

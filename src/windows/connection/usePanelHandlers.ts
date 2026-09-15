@@ -408,15 +408,30 @@ export function usePanelHandlers({
     ): boolean => {
       if (!sidebarConnCtx) return false;
       const panelId = nextPanelId('qry');
-      let panelDatabase = target?.database?.trim() || undefined;
-      let namespacePath: string[] | undefined;
       const meta = DB_REGISTRY[sidebarConnCtx.databaseType];
-      if (meta?.namespaceEnsure === 'path-hierarchy' && panelDatabase?.includes('/')) {
-        const split = splitPathHierarchyDatabasePin(panelDatabase);
-        panelDatabase = split.root || undefined;
-        namespacePath = split.namespacePath.length > 0 ? split.namespacePath : undefined;
+      const isPathHierarchy = meta?.namespaceEnsure === 'path-hierarchy';
+
+      // Bind the database to this query tab *at creation time*. The tab then
+      // carries its own immutable database target (what the user picks in this
+      // tab's database dropdown) so re-execution and tab restoration use that
+      // bound database rather than the session-wide, shared `currentDatabase`,
+      // which other tabs or a Settings round-trip can change out from under it.
+      const rawDatabase = target?.database?.trim() || currentDatabase || undefined;
+      let boundDatabase = rawDatabase;
+      let namespacePath: string[] | undefined;
+      if (isPathHierarchy && rawDatabase) {
+        const split = splitPathHierarchyDatabasePin(rawDatabase);
+        boundDatabase = split.root || undefined;
+        // Bind the *whole* path hierarchy (root + catalog/schema) to the tab.
+        // The panel's `namespacePath` mirrors the selector path exactly — root
+        // first — so restoration reuses the complete selection, not just the
+        // first level.
+        namespacePath = [split.root, ...split.namespacePath].filter(
+          (segment): segment is string => !!segment,
+        );
       }
-      const db = panelDatabase ?? currentDatabase ?? initialDatabase ?? '';
+
+      const db = rawDatabase ?? initialDatabase ?? '';
       const panel: QueryPanel = {
         ...sidebarConnCtx,
         type: 'query',
@@ -424,7 +439,7 @@ export function usePanelHandlers({
         title:
           title?.trim() ||
           (db ? `${sidebarConnCtx.connectionName}@${db}` : sidebarConnCtx.connectionName),
-        database: panelDatabase || undefined,
+        database: boundDatabase,
         schema: target?.schema?.trim() || undefined,
         namespacePath,
       };

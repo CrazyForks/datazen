@@ -112,10 +112,14 @@ export function useQueryContextPath({
   const handleSelectContextLevel = useCallback(
     (index: number, value: string) => {
       if (!value) return;
-      if (!isPathHierarchy) {
-        if (index === 0) updatePanel(panelId, { database: value });
-        if (index === 1) updatePanel(panelId, { schema: value });
-      }
+      // Level 0 is always the database/catalog root. Sync it to the panel's
+      // bound `database` (for both plain and path-hierarchy drivers) so that
+      // re-execution and tab restoration keep using the tab's own database.
+      if (index === 0) updatePanel(panelId, { database: value });
+      // Level 1 is the PG-family schema envelope only for non-path-hierarchy
+      // drivers; in path-hierarchy trees it is a namespace level carried by
+      // `namespacePath`, not the panel schema.
+      if (!isPathHierarchy && index === 1) updatePanel(panelId, { schema: value });
       void applyContextPath([...contextPath.slice(0, index), value]);
     },
     [applyContextPath, contextPath, panelId, updatePanel, isPathHierarchy],

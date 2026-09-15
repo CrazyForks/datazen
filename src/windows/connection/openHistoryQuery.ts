@@ -55,7 +55,11 @@ export function openHistoryQuery(
     if (meta?.namespaceEnsure === 'path-hierarchy' && panelDatabase?.includes('/')) {
       const split = splitPathHierarchyDatabasePin(panelDatabase);
       panelDatabase = split.root || undefined;
-      namespacePath = split.namespacePath.length > 0 ? split.namespacePath : undefined;
+      // Bind the whole path hierarchy (root + catalog/schema) to the tab so
+      // re-execution/restoration reuse the full selection, not just the root.
+      namespacePath = [split.root, ...split.namespacePath].filter(
+        (segment): segment is string => !!segment,
+      );
     }
     const db = panelDatabase || '';
     const panel: QueryPanel = {
