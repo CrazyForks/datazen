@@ -30,8 +30,8 @@
 ## 自验结果
 
 - QueryEditorSection.tsx: WandSparkles import + useQueryBuilderStore hooks + ToolbarButton + QueryBuilderPanel rendering ✅
-- en/query.ts: 29 visualBuilder keys added ✅
-- zh-CN/query.ts: 29 visualBuilder keys added ✅
+- en/query.ts: 28 visualBuilder keys added ✅
+- zh-CN/query.ts: 28 visualBuilder keys added ✅
 - docs/features/query-builder.md: Feature documentation created ✅
 - Note: tsc cannot pass until qb-ui creates QueryBuilderPanel component
 
