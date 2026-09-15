@@ -375,6 +375,7 @@ const pack = {
   'query.visualBuilder.preview': 'SQL Preview',
   'query.visualBuilder.applySql': 'Apply SQL',
   'query.visualBuilder.reset': 'Reset',
+  'query.visualBuilder.close': 'Close',
   'query.visualBuilder.noTablesSelected': 'Select at least one table to start building a query.',
   'query.visualBuilder.noColumnsSelected': 'Select columns to include in the query.',
 } as const;

@@ -368,6 +368,7 @@ const pack = {
   'query.visualBuilder.preview': 'SQL 预览',
   'query.visualBuilder.applySql': '应用 SQL',
   'query.visualBuilder.reset': '重置',
+  'query.visualBuilder.close': '关闭',
   'query.visualBuilder.noTablesSelected': '请至少选择一张表来开始构建查询。',
   'query.visualBuilder.noColumnsSelected': '请选择要包含在查询中的列。',
 } as const;
