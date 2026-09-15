@@ -97,7 +97,7 @@ export function KeyDetailEditor({
 
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
         <div className="flex min-w-[120px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.renameKey')}</label>
+          <label className="text-fg-muted">{t('redis.name')}</label>
           <Input
             value={renameInput}
             onChange={(e) => setRenameInput(e.target.value)}
@@ -166,18 +166,10 @@ export function KeyDetailEditor({
         />
       )}
       {showJsonEditor && (
-        <JsonEditor
-          dbSessionId={dbSessionId}
-          dbIndex={dbIndex}
-          redisKey={detail.key}
-        />
+        <JsonEditor dbSessionId={dbSessionId} dbIndex={dbIndex} redisKey={detail.key} />
       )}
       {detail.keyType === 'stream' && (
-        <StreamEditor
-          dbSessionId={dbSessionId}
-          dbIndex={dbIndex}
-          redisKey={detail.key}
-        />
+        <StreamEditor dbSessionId={dbSessionId} dbIndex={dbIndex} redisKey={detail.key} />
       )}
     </div>
   );

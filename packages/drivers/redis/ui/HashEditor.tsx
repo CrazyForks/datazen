@@ -38,6 +38,7 @@ export function HashEditor({
   const [newField, setNewField] = useState('');
   const [newValue, setNewValue] = useState('');
   const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [editField, setEditField] = useState<string | null>(null);
 
   const loadPage = useCallback(
     async (nextCursor: number, pattern: string) => {
@@ -83,6 +84,7 @@ export function HashEditor({
     setEntries([]);
     setCursor(0);
     setHasMore(true);
+    setEditField(null);
     void loadPage(0, searchPattern);
   };
 
@@ -125,34 +127,52 @@ export function HashEditor({
             <tr key={entry.field} className="border-b border-edge">
               <td className="px-2 py-1.5 font-mono text-fg-secondary">{entry.field}</td>
               <td className="px-2 py-1.5">
-                <Input
-                  value={getValue(entry.field, entry.value)}
-                  onChange={(e) =>
-                    setEditValues((prev) => ({ ...prev, [entry.field]: e.target.value }))
-                  }
-                  className="h-7 font-mono text-xs"
-                />
+                {editField === entry.field ? (
+                  <Input
+                    value={getValue(entry.field, entry.value)}
+                    onChange={(e) =>
+                      setEditValues((prev) => ({ ...prev, [entry.field]: e.target.value }))
+                    }
+                    className="h-7 font-mono text-xs"
+                  />
+                ) : (
+                  <span className="font-mono text-fg-secondary text-xs">{String(entry.value)}</span>
+                )}
               </td>
               <td className="px-2 py-1.5">
                 <div className="flex gap-1">
-                  <Button
-                    variant="secondary"
-                    className="h-6 px-1.5 text-[10px]"
-                    onClick={() =>
-                      void invokeHashSet(
-                        dbSessionId,
-                        dbIndex,
-                        detail.key,
-                        entry.field,
-                        getValue(entry.field, entry.value),
-                      ).then(() => {
-                        handleRefresh();
-                        onChanged();
-                      })
-                    }
-                  >
-                    {t('common.save')}
-                  </Button>
+                  {editField === entry.field ? (
+                    <Button
+                      variant="secondary"
+                      className="h-6 px-1.5 text-[10px]"
+                      onClick={() =>
+                        void invokeHashSet(
+                          dbSessionId,
+                          dbIndex,
+                          detail.key,
+                          entry.field,
+                          getValue(entry.field, entry.value),
+                        ).then(() => {
+                          setEditField(null);
+                          handleRefresh();
+                          onChanged();
+                        })
+                      }
+                    >
+                      {t('common.save')}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="h-6 px-1.5 text-[10px] text-accent"
+                      onClick={() => {
+                        setEditField(entry.field);
+                        setEditValues((prev) => ({ ...prev, [entry.field]: String(entry.value) }));
+                      }}
+                    >
+                      {t('redis.edit')}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     className="h-6 px-1.5 text-[10px] text-danger"

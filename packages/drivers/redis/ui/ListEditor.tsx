@@ -38,6 +38,7 @@ export function ListEditor({
   // Editing state
   const [newValue, setNewValue] = useState('');
   const [editValues, setEditValues] = useState<Record<number, string>>({});
+  const [editIndex, setEditIndex] = useState<number | null>(null);
 
   const offset = (page - 1) * PAGE_SIZE;
 
@@ -64,12 +65,14 @@ export function ListEditor({
 
   const handleRefresh = () => {
     setEditValues({});
+    setEditIndex(null);
     void loadPage(page);
   };
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
     setEditValues({});
+    setEditIndex(null);
   };
 
   const getValue = (index: number, original: string) =>
@@ -100,34 +103,52 @@ export function ListEditor({
             <tr key={offset + index} className="border-b border-edge">
               <td className="px-2 py-1.5 font-mono text-fg-muted">{offset + index}</td>
               <td className="px-2 py-1.5">
-                <Input
-                  value={getValue(index, item)}
-                  onChange={(e) =>
-                    setEditValues((prev) => ({ ...prev, [offset + index]: e.target.value }))
-                  }
-                  className="h-7 font-mono text-xs"
-                />
+                {editIndex === index ? (
+                  <Input
+                    value={getValue(index, item)}
+                    onChange={(e) =>
+                      setEditValues((prev) => ({ ...prev, [offset + index]: e.target.value }))
+                    }
+                    className="h-7 font-mono text-xs"
+                  />
+                ) : (
+                  <span className="font-mono text-fg-secondary text-xs">{String(item)}</span>
+                )}
               </td>
               <td className="px-2 py-1.5">
                 <div className="flex gap-1">
-                  <Button
-                    variant="secondary"
-                    className="h-6 px-1.5 text-[10px]"
-                    onClick={() =>
-                      void invokeListSet(
-                        dbSessionId,
-                        dbIndex,
-                        detail.key,
-                        offset + index,
-                        getValue(index, item),
-                      ).then(() => {
-                        handleRefresh();
-                        onChanged();
-                      })
-                    }
-                  >
-                    {t('common.save')}
-                  </Button>
+                  {editIndex === index ? (
+                    <Button
+                      variant="secondary"
+                      className="h-6 px-1.5 text-[10px]"
+                      onClick={() =>
+                        void invokeListSet(
+                          dbSessionId,
+                          dbIndex,
+                          detail.key,
+                          offset + index,
+                          getValue(index, item),
+                        ).then(() => {
+                          setEditIndex(null);
+                          handleRefresh();
+                          onChanged();
+                        })
+                      }
+                    >
+                      {t('common.save')}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="h-6 px-1.5 text-[10px] text-accent"
+                      onClick={() => {
+                        setEditIndex(index);
+                        setEditValues((prev) => ({ ...prev, [offset + index]: String(item) }));
+                      }}
+                    >
+                      {t('redis.edit')}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     className="h-6 px-1.5 text-[10px] text-danger"
