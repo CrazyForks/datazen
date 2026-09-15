@@ -363,6 +363,19 @@ match command {
                 .map_err(DriverError::QueryFailed)?;
             Ok(ok())
         }
+        "pubsub_list_subscriptions" => {
+            let conn_id = &handle.pool_id;
+            let subs = crate::ops_pubsub::list_active_subscriptions(conn_id).await;
+            json_ok(serde_json::json!({ "subscriptions": subs }))
+        }
+        "pubsub_stats" => {
+            let conn_id = &handle.pool_id;
+            let stats = crate::ops_pubsub::pubsub_stats(conn_id).await;
+            json_ok(serde_json::json!({
+                "totalMessages": stats.total_messages,
+                "byChannel": stats.by_channel,
+            }))
+        }
         "json_get" => json_ok(
             driver
                 .plugin_json_get(
