@@ -318,6 +318,39 @@ impl RedisDriver {
         })
     }
 
+    pub async fn plugin_memory_usage_key(
+        &self,
+        connection_id: &str,
+        key: &str,
+    ) -> Result<crate::ops_observe::MemoryUsageResult, DriverError> {
+        with_live_any_op!(self, connection_id, |conn| {
+            crate::ops_observe::memory_usage_key(conn, key).await
+        })
+    }
+
+    pub async fn plugin_info_filtered(
+        &self,
+        connection_id: &str,
+        section: Option<String>,
+        search: Option<String>,
+        node_addr: Option<String>,
+    ) -> Result<crate::ops_observe::InfoFilteredResult, DriverError> {
+        if let Some(addr) = node_addr.filter(|s| !s.trim().is_empty()) {
+            let plan = self.connection_plan(connection_id).await?;
+            let mut conn = open_pinned_node_conn(&plan, addr.trim()).await?;
+            return crate::ops_observe::info_filtered(
+                &mut conn,
+                section.as_deref(),
+                search.as_deref(),
+            )
+            .await
+            .map_err(DriverError::QueryFailed);
+        }
+        with_live_any_op!(self, connection_id, |conn| {
+            crate::ops_observe::info_filtered(conn, section.as_deref(), search.as_deref()).await
+        })
+    }
+
     pub async fn plugin_exec(
         &self,
         connection_id: &str,
