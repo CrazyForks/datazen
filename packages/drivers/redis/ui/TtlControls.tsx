@@ -2,7 +2,12 @@ import { useState, useCallback } from 'react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
-import { invokeSetTtl, invokeSetExpireAt } from './keyEditorsInvokes';
+import {
+  invokeSetTtl,
+  invokeSetExpireAt,
+  type PluginInvokeFn,
+} from './keyEditorsInvokes';
+import { redisCommandInvoke } from './redisInvoke';
 
 /**
  * Reusable TTL controls component for Redis key editors.
@@ -14,12 +19,15 @@ export function TtlControls({
   keyName,
   ttl,
   onChanged,
+  invoke,
 }: {
   dbSessionId: string;
   dbIndex: number;
   keyName: string;
   ttl: number;
   onChanged: () => void;
+  /** Optional override for testing (defaults to redisCommandInvoke). */
+  invoke?: PluginInvokeFn;
 }) {
   const { t } = useI18n();
   const [ttlInput, setTtlInput] = useState(ttl < 0 ? '' : String(ttl));
@@ -31,6 +39,9 @@ export function TtlControls({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Resolve caller: prefer injected invoke (for testing), fall back to default IPC.
+  const caller = invoke ?? redisCommandInvoke;
 
   const run = useCallback(
     async (fn: () => Promise<void>) => {
@@ -76,7 +87,7 @@ export function TtlControls({
               if (Number.isNaN(secs) || secs < 0) {
                 throw new Error(t('redis.ttlSeconds'));
               }
-              await invokeSetTtl(dbSessionId, dbIndex, keyName, secs);
+              await invokeSetTtl(dbSessionId, dbIndex, keyName, secs, caller);
             })
           }
         >
@@ -103,7 +114,7 @@ export function TtlControls({
                 throw new Error(t('redis.expireAtInvalid'));
               }
               const unix = Math.floor(ms / 1000);
-              await invokeSetExpireAt(dbSessionId, dbIndex, keyName, unix);
+              await invokeSetExpireAt(dbSessionId, dbIndex, keyName, unix, caller);
             })
           }
         >
@@ -117,7 +128,7 @@ export function TtlControls({
           disabled={busy}
           onClick={() =>
             void run(async () => {
-              await invokeSetTtl(dbSessionId, dbIndex, keyName, -1);
+              await invokeSetTtl(dbSessionId, dbIndex, keyName, -1, caller);
               setTtlInput('');
               setExpireAtLocal('');
             })
