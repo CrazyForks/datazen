@@ -1,16 +1,24 @@
 import { useMemo } from 'react';
-import { getQbDialectAdapter } from '../../../lib/sqlDialects/queryBuilder';
-import type { QbConditionGroup, QbCondition, QbSortItem, QbColumnSelection, QbGroupByItem } from '../types';
+import {
+  getQbDialectAdapter,
+  generateJoinClause,
+  generateLimitOffset,
+} from '../../../lib/sqlDialects/queryBuilder';
+import type { QbConditionGroup, QbCondition, QbSortItem, QbColumnSelection, QbGroupByItem, QbJoin } from '../types';
 
 // ── Public types ──────────────────────────────────────────────
 
 export interface GenerateSqlInput {
   selectedTables: string[];
   selectedColumns: QbColumnSelection[];
+  joins: QbJoin[];
+  tableAliases: Record<string, string>;
   where: QbConditionGroup;
   orderBy: QbSortItem[];
   groupBy: QbGroupByItem[];
   distinct: boolean;
+  limit: number | null;
+  offset: number | null;
   databaseType?: string;
 }
 
@@ -119,25 +127,34 @@ function generateSql(input: GenerateSqlInput): string {
   const distinct = input.distinct ? 'DISTINCT ' : '';
   const selectClause = `SELECT ${distinct}${selectItems.join(', ')}`;
 
-  // 2. FROM
-  const fromClause = ` FROM ${q(input.selectedTables[0])}`;
+  // 2. FROM — use alias when available
+  const firstTable = input.selectedTables[0];
+  const firstAlias = input.tableAliases[firstTable];
+  const fromTable = firstAlias ? `${q(firstTable)} ${q(firstAlias)}` : q(firstTable);
+  const fromClause = ` FROM ${fromTable}`;
 
-  // 3. WHERE
+  // 3. JOIN
+  const joinClause = generateJoinClause(input.joins, input.tableAliases, adapter);
+
+  // 4. WHERE
   const whereClause = buildWhereClause(input.where, q, adapter);
 
-  // 4. GROUP BY
+  // 5. GROUP BY
   const groupByClause =
     input.groupBy.length > 0
       ? ` GROUP BY ${input.groupBy.map((g) => `${q(g.table)}.${q(g.column)}`).join(', ')}`
       : '';
 
-  // 5. ORDER BY
+  // 6. ORDER BY
   const orderByClause =
     input.orderBy.length > 0
       ? ` ORDER BY ${input.orderBy.map((o) => `${q(o.table)}.${q(o.column)} ${o.direction}`).join(', ')}`
       : '';
 
-  return `${selectClause}${fromClause}${whereClause}${groupByClause}${orderByClause};`;
+  // 7. LIMIT / OFFSET
+  const limitOffsetClause = generateLimitOffset(input.limit, input.offset, adapter);
+
+  return `${selectClause}${fromClause}${joinClause}${whereClause}${groupByClause}${orderByClause}${limitOffsetClause};`;
 }
 
 // ── Public hook ───────────────────────────────────────────────
@@ -156,10 +173,14 @@ export function useSqlGenerator(input: GenerateSqlInput): string {
     [
       input.selectedTables,
       input.selectedColumns,
+      input.joins,
+      input.tableAliases,
       input.where,
       input.orderBy,
       input.groupBy,
       input.distinct,
+      input.limit,
+      input.offset,
       input.databaseType,
     ],
   );

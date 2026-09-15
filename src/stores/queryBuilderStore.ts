@@ -6,6 +6,8 @@ import type {
   QbSortItem,
   QbColumnSelection,
   QbGroupByItem,
+  QbJoin,
+  QbJoinType,
 } from '../components/query-builder/types';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -14,7 +16,7 @@ import type {
 export interface QueryBuilderState {
   /** Currently selected table names. */
   selectedTables: string[];
-  /** Currently selected columns (with optional alias / aggregate). */
+  /** Currently selected columns (with optional alias / aggregate / sort / groupBy / where). */
   selectedColumns: QbColumnSelection[];
   /** WHERE clause root group. */
   where: QbConditionGroup;
@@ -26,6 +28,30 @@ export interface QueryBuilderState {
   distinct: boolean;
   /** Whether the builder panel is open. */
   isOpen: boolean;
+
+  // ── JOIN state ──
+  /** Manually confirmed JOINs. */
+  joins: QbJoin[];
+  /** Auto-detected FK relationship JOINs (dashed lines in UI). */
+  autoJoins: QbJoin[];
+
+  // ── Table metadata ──
+  /** Table alias mapping (tableName → alias). */
+  tableAliases: Record<string, string>;
+  /** Canvas position of each table card. */
+  tablePositions: Record<string, { x: number; y: number }>;
+
+  // ── Canvas state ──
+  /** Canvas pan offset. */
+  canvasOffset: { x: number; y: number };
+  /** Canvas zoom level. */
+  zoom: number;
+
+  // ── Pagination ──
+  /** LIMIT clause value (null = no limit). */
+  limit: number | null;
+  /** OFFSET clause value (null = no offset). */
+  offset: number | null;
 }
 
 /** Actions mutating the query builder state. */
@@ -34,6 +60,8 @@ export interface QueryBuilderActions {
   toggleColumn: (table: string, column: string) => void;
   setColumnAlias: (table: string, column: string, alias: string) => void;
   setColumnAggregate: (table: string, column: string, agg: QbAggregate | undefined) => void;
+  /** Generic patch for any QbColumnSelection fields (alias, aggregate, sort, groupBy, where). */
+  updateColumnConfig: (table: string, column: string, patch: Partial<QbColumnSelection>) => void;
   addCondition: (groupId: string, condition: Omit<QbCondition, 'id'>) => void;
   updateCondition: (id: string, patch: Partial<QbCondition>) => void;
   removeCondition: (id: string) => void;
@@ -44,6 +72,24 @@ export interface QueryBuilderActions {
   removeGroupBy: (index: number) => void;
   setDistinct: (v: boolean) => void;
   toggleOpen: () => void;
+
+  // ── JOIN actions ──
+  addJoin: (join: Omit<QbJoin, 'id'>) => void;
+  removeJoin: (id: string) => void;
+  updateJoinType: (id: string, type: QbJoinType) => void;
+
+  // ── Table metadata actions ──
+  setTableAlias: (tableName: string, alias: string) => void;
+  updateTablePosition: (table: string, pos: { x: number; y: number }) => void;
+
+  // ── Canvas actions ──
+  setZoom: (zoom: number) => void;
+  setCanvasOffset: (offset: { x: number; y: number }) => void;
+
+  // ── Pagination actions ──
+  setLimit: (limit: number | null) => void;
+  setOffset: (offset: number | null) => void;
+
   reset: () => void;
 }
 
@@ -103,6 +149,14 @@ const INITIAL_STATE: QueryBuilderState = {
   groupBy: [],
   distinct: false,
   isOpen: false,
+  joins: [],
+  autoJoins: [],
+  tableAliases: {},
+  tablePositions: {},
+  canvasOffset: { x: 0, y: 0 },
+  zoom: 1,
+  limit: null,
+  offset: null,
 };
 
 // ── Store ─────────────────────────────────────────────────────
@@ -145,6 +199,17 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
         selectedColumns: s.selectedColumns.map((c) =>
           c.table === table && c.column === column ? { ...c, aggregate: agg } : c,
         ),
+      })),
+
+    updateColumnConfig: (table, column, patch) =>
+      set((s) => ({
+        selectedColumns: s.selectedColumns.map((c) => {
+          if (c.table !== table || c.column !== column) return c;
+          const updated = { ...c, ...patch };
+          // Normalise: empty alias → undefined, empty string where → remove
+          if (updated.alias === '') updated.alias = undefined;
+          return updated;
+        }),
       })),
 
     addCondition: (groupId, condition) =>
@@ -196,6 +261,51 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
 
     toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
 
-    reset: () => set(() => ({ ...INITIAL_STATE, where: emptyConditionGroup() })),
+    // ── JOIN actions ──
+
+    addJoin: (join) =>
+      set((s) => ({
+        joins: [...s.joins, { ...join, id: uid() }],
+      })),
+
+    removeJoin: (id) =>
+      set((s) => ({
+        joins: s.joins.filter((j) => j.id !== id),
+      })),
+
+    updateJoinType: (id, type) =>
+      set((s) => ({
+        joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
+      })),
+
+    // ── Table metadata actions ──
+
+    setTableAlias: (tableName, alias) =>
+      set((s) => ({
+        tableAliases: { ...s.tableAliases, [tableName]: alias },
+      })),
+
+    updateTablePosition: (table, pos) =>
+      set((s) => ({
+        tablePositions: { ...s.tablePositions, [table]: pos },
+      })),
+
+    // ── Canvas actions ──
+
+    setZoom: (zoom) => set(() => ({ zoom })),
+
+    setCanvasOffset: (offset) => set(() => ({ canvasOffset: offset })),
+
+    // ── Pagination actions ──
+
+    setLimit: (limit) => set(() => ({ limit })),
+
+    setOffset: (offset) => set(() => ({ offset })),
+
+    reset: () =>
+      set(() => ({
+        ...INITIAL_STATE,
+        where: emptyConditionGroup(),
+      })),
   }),
 );
