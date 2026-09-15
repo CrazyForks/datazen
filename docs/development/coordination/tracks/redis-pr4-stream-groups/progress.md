@@ -59,4 +59,4 @@ Enhanced Stream editor with Consumer Groups table, Pending message viewing, Lag 
 
 ## Commit
 
-- Hash: TBD (will be filled after commit)
+- Hash: 78ac6d22f
