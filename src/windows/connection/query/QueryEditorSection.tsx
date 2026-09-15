@@ -1,5 +1,15 @@
 import { useCallback, useState, type MutableRefObject, type Ref } from 'react';
-import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
+import {
+  Bookmark,
+  Check,
+  Clock,
+  Loader2,
+  Play,
+  Save,
+  Sparkles,
+  Undo2,
+  WandSparkles,
+} from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
 import { SqlEditor } from '../../../components/SqlEditor';
@@ -14,6 +24,8 @@ import { useSchemaStore } from '../../../stores/schemaStore';
 import { QueryContextSelectors } from '../../../components/query/QueryContextSelectors';
 import { QueryExecutionStatus } from '../../../components/query/QueryExecutionStatus';
 import { Nl2SqlPanel } from '../../../components/ai/Nl2SqlPanel';
+import { QueryBuilderPanel } from '../../../components/query-builder/QueryBuilderPanel';
+import { useQueryBuilderStore } from '../../../stores/queryBuilderStore';
 import { sqlEditorEnhancedEP, useExtension } from '@datazen/extension-points';
 import { useI18n } from '../../../hooks/useI18n';
 import { usePlatform } from '../../../hooks/usePlatform';
@@ -192,6 +204,10 @@ export function QueryEditorSection({
   const bindParamPanelEnabled = editorExtensionSettings?.bindParamPanel !== false;
   const [isRefreshingCompletion, setIsRefreshingCompletion] = useState(false);
 
+  // ── Query Builder state ──────────────────────────────────────
+  const qbOpen = useQueryBuilderStore((s) => s.isOpen);
+  const toggleQb = useQueryBuilderStore((s) => s.toggleOpen);
+
   /**
    * Prefer the editor's own selection-aware formatter (§4.2); `onFormat` stays
    * as the fallback for the rare case the editor has not mounted yet.
@@ -311,6 +327,13 @@ export function QueryEditorSection({
           label={t('nl2sql.title')}
           icon={<Sparkles className="h-3.5 w-3.5" />}
           onClick={handleToggleNl2sql}
+        />
+        <ToolbarButton
+          compact={compactToolbar}
+          variant={qbOpen ? 'secondary' : 'ghost'}
+          label={t('query.visualBuilder.title')}
+          icon={<WandSparkles className="h-3.5 w-3.5" />}
+          onClick={toggleQb}
         />
         <QueryToolbarMoreMenu
           compact={compactToolbar}
@@ -434,6 +457,17 @@ export function QueryEditorSection({
             dbSessionId={dbSessionId}
             database={selectedDatabase ?? ''}
             onSqlChange={onApplyAiSql}
+          />
+        )}
+
+        {qbOpen && (
+          <QueryBuilderPanel
+            dbSessionId={dbSessionId}
+            databaseType={databaseType}
+            onApplySql={(newSql) => {
+              onUpdateSql(newSql);
+              toggleQb();
+            }}
           />
         )}
 
