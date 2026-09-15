@@ -19,6 +19,12 @@ export default defineConfig({
     strictPort: true,
   },
   resolve: {
+    // Force @codemirror's state/view to a single instance for BOTH the host
+    // editor and @codemirror/lint, so the linter's ViewPlugin attaches to the
+    // editor's own state/view. Without this, @codemirror/lint's nested copy of
+    // @codemirror/view silently becomes a different instance and the linter is
+    // never scheduled (no diagnostics, no squiggle).
+    dedupe: ['@codemirror/state', '@codemirror/view'],
     alias: {
       '@datazen/driver-sdk': resolve(__dirname, 'packages/driver-sdk/src/index.ts'),
       '@datazen/extension-points': resolve(__dirname, 'packages/extension-points/src/index.ts'),
