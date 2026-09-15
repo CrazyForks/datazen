@@ -5,20 +5,21 @@
  *   Toggle open → select tables → select columns → add WHERE condition
  *   → add ORDER BY → toggle DISTINCT → preview SQL → apply SQL → execute → verify results
  *   → reset → close panel.
+ *
+ * Test data is created in the worker database via connectBackend IPC;
+ * the journey assumes nothing about pre-existing tables.
  */
 import { expect, browser, $ } from '@wdio/globals';
 import {
   captureJourneyStep,
-  closeExtraWindows,
   closeDataExportDialogIfOpen,
+  closeExtraWindows,
   connectBackend,
   disconnectBackend,
   executeQuery,
   openConnectionWindow,
   openQueryTab,
-  executeSQL,
 } from '../../helpers.js';
-import { t } from '../../i18n.js';
 
 const TABLE_NAME = `e2e_qb_journey_${Date.now().toString(36)}`;
 
@@ -26,14 +27,14 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   let mainWindow: string;
 
   before(async () => {
-    // Seed a test table via backend IPC
+    // Create test table and seed data via backend IPC (no UI dependency)
     const dbSessionId = await connectBackend('conn_e2e_pg');
     try {
+      await executeQuery(dbSessionId, `DROP TABLE IF EXISTS ${TABLE_NAME}`);
       await executeQuery(
         dbSessionId,
-        `CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
+        `CREATE TABLE ${TABLE_NAME} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
       );
-      await executeQuery(dbSessionId, `DELETE FROM ${TABLE_NAME} WHERE TRUE`);
       await executeQuery(
         dbSessionId,
         `INSERT INTO ${TABLE_NAME} (id, name, category, score) VALUES (1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), (3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
@@ -58,7 +59,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
         await disconnectBackend(dbSessionId);
       }
     } catch {
-      /* best effort */
+      /* best effort; the shared E2E teardown also removes journey tables */
     }
     await closeExtraWindows(mainWindow);
   });
@@ -74,24 +75,23 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await captureJourneyStep('qb-panel-open');
 
     // ── Step 2: Select a table ──
-    // Wait for the table list to populate with at least one table
     const tableList = await $('[data-testid="qb-table-list"]');
     await tableList.waitForDisplayed({ timeout: 5000 });
 
-    // Find and click the test table checkbox
-    const tableCheckbox = await browser.execute((name: string) => {
+    // The worker DB has a seeded `product` table and our journey table.
+    // Click the journey table checkbox.
+    const tableClicked = await browser.execute((name: string) => {
       const items = Array.from(document.querySelectorAll('[data-testid^="qb-table-item-"]'));
-      const target = items.find((el) => el.textContent?.includes(name));
-      if (!target) return false;
-      const checkbox = target.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-      if (checkbox) {
-        checkbox.click();
-        return true;
+      for (const item of items) {
+        const checkbox = item.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+        if (checkbox && item.textContent?.includes(name)) {
+          checkbox.click();
+          return true;
+        }
       }
-      target.click();
-      return true;
+      return false;
     }, TABLE_NAME);
-    expect(tableCheckbox).toBe(true);
+    expect(tableClicked).toBe(true);
     await browser.pause(500);
     await captureJourneyStep('qb-table-selected');
 
@@ -99,8 +99,8 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     const columnSelector = await $('[data-testid="qb-column-selector"]');
     await columnSelector.waitForDisplayed({ timeout: 5000 });
 
-    // Select the 'name' column
-    const nameCheck = await browser.execute((tbl: string) => {
+    // Select 'name' column
+    const nameChecked = await browser.execute((tbl: string) => {
       const check = document.querySelector(
         `[data-testid="qb-column-check-${tbl}.name"]`,
       ) as HTMLInputElement | null;
@@ -110,11 +110,11 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       }
       return false;
     }, TABLE_NAME);
-    expect(nameCheck).toBe(true);
+    expect(nameChecked).toBe(true);
     await browser.pause(200);
 
-    // Select the 'score' column
-    const scoreCheck = await browser.execute((tbl: string) => {
+    // Select 'score' column
+    const scoreChecked = await browser.execute((tbl: string) => {
       const check = document.querySelector(
         `[data-testid="qb-column-check-${tbl}.score"]`,
       ) as HTMLInputElement | null;
@@ -124,7 +124,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       }
       return false;
     }, TABLE_NAME);
-    expect(scoreCheck).toBe(true);
+    expect(scoreChecked).toBe(true);
     await browser.pause(300);
     await captureJourneyStep('qb-columns-selected');
 
@@ -201,16 +201,20 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     const resultTable = await $('[data-testid="result-workspace-table"]');
     await resultTable.waitForDisplayed({ timeout: 15000 });
     const resultText = await resultTable.getText();
+    // The WHERE clause filters for Alice, so only her row should appear
     expect(resultText).toContain('Alice');
+    // DISTINCT is on, so no duplicates expected
     await captureJourneyStep('qb-result-after-apply');
 
     // ── Step 10: Re-open the panel, verify Reset works ──
     await qbToggle.click();
     await qbPanel.waitForDisplayed({ timeout: 5000 });
 
-    // Click Reset
-    const resetBtn = await browser.execute(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
+    // Click Reset via the panel header button
+    const resetDone = await browser.execute(() => {
+      const panel = document.querySelector('[data-testid="qb-panel"]');
+      if (!panel) return false;
+      const buttons = Array.from(panel.querySelectorAll('button'));
       const reset = buttons.find(
         (b) => b.textContent?.includes('重置') || b.textContent?.includes('Reset'),
       );
@@ -220,22 +224,20 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       }
       return false;
     });
-    expect(resetBtn).toBe(true);
+    expect(resetDone).toBe(true);
     await browser.pause(500);
 
-    // After reset, SQL preview should be empty or absent
+    // After reset, SQL preview should be absent (no columns selected)
     const previewAfterReset = await $('[data-testid="qb-sql-preview"]');
     const previewExists = await previewAfterReset.isExisting().catch(() => false);
     if (previewExists) {
       const resetPreviewText = await previewAfterReset.getText();
-      // After reset, preview should be empty or very minimal (no columns selected)
       expect(resetPreviewText).not.toContain('name');
     }
     await captureJourneyStep('qb-reset');
 
-    // ── Step 11: Close the panel ──
-    const closeBtn = await browser.execute(() => {
-      // Find the X close button inside the QB panel header
+    // ── Step 11: Close the panel via the X button ──
+    const closed = await browser.execute(() => {
       const panel = document.querySelector('[data-testid="qb-panel"]');
       if (!panel) return false;
       const buttons = Array.from(panel.querySelectorAll('button'));
@@ -251,7 +253,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       }
       return false;
     });
-    expect(closeBtn).toBe(true);
+    expect(closed).toBe(true);
 
     await browser.waitUntil(
       async () =>
