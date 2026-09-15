@@ -116,8 +116,12 @@ export function DataSyncWindow() {
   const [explainText, setExplainText] = useState('');
   const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
   const jobIdRef = useRef<string | null>(null);
+  const jobKindRef = useRef<'compare' | 'execute' | null>(null);
+  const cancelRequestedJobRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
   const writeInFlightRef = useRef(false);
+  const syncStateRef = useRef(syncState);
+  syncStateRef.current = syncState;
 
   useEffect(() => {
     void loadSettings();
@@ -647,6 +651,8 @@ export function DataSyncWindow() {
     setStatusMsg('');
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'compare';
+    cancelRequestedJobRef.current = null;
 
     try {
       const { source, target } = await refreshEndpointSessions();
@@ -672,6 +678,10 @@ export function DataSyncWindow() {
       );
 
       if (generation !== compareGenerationRef.current) return false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       const merged = mergeCompareIntoMappings(mappingResults, compared).map((row) => {
         if (row.status !== 'MATCHED' || !row.rows) return row;
         return {
@@ -687,6 +697,10 @@ export function DataSyncWindow() {
       return true;
     } catch (e) {
       if (generation !== compareGenerationRef.current) return false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
       setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
@@ -711,20 +725,33 @@ export function DataSyncWindow() {
     // Reassert the fence before yielding so a comparison completion queued in the same tick cannot win.
     if (writeOutcomeUncertain) setWriteOutcomeUncertain(true);
     const jobId = jobIdRef.current;
+    const jobKind = jobKindRef.current;
+    const cancelledPhase = syncStateRef.current;
+    if (jobId) cancelRequestedJobRef.current = jobId;
+
+    if (jobKind === 'execute' && writeInFlightRef.current) {
+      setStatusMsg(t('sync.cancellingExecution'));
+    } else {
+      setSyncState(
+        writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
+      );
+      setExecuteProgress('');
+      setStatusMsg(t('sync.compareCancelled'));
+    }
+
     if (jobId) {
       await syncCommands.cancelDataSync(jobId);
-      if (cancellationGeneration !== compareGenerationRef.current) return;
-      if (jobIdRef.current === jobId) jobIdRef.current = null;
     }
-    if (cancellationGeneration !== compareGenerationRef.current) return;
-    if (writeInFlightRef.current) {
-      setStatusMsg(t('sync.cancellingExecution'));
-      return;
-    }
-    setSyncState(
-      writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
-    );
-    setStatusMsg(t('sync.compareCancelled'));
+    if (
+      cancellationGeneration !== compareGenerationRef.current ||
+      jobIdRef.current !== jobId ||
+      jobKindRef.current !== jobKind
+    ) return;
+    if (jobKind === 'execute' && syncStateRef.current !== cancelledPhase) return;
+    if (jobKind === 'execute' && writeInFlightRef.current) return;
+    jobIdRef.current = null;
+    jobKindRef.current = null;
+    if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
   }, [mappingResults.length, t, writeOutcomeUncertain]);
 
   const toggleDisabledTable = useCallback((sourceTable: string) => {
@@ -803,6 +830,8 @@ export function DataSyncWindow() {
     setExecuteProgress(t('sync.executing'));
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'execute';
+    cancelRequestedJobRef.current = null;
 
     let writeStarted = false;
     try {
@@ -822,7 +851,7 @@ export function DataSyncWindow() {
         srcConnId, tgtConnId, tablesWithSelection, syncOptions,
         sourceDatabase, targetDatabase, sourceSchema || undefined, targetSchema || undefined,
       );
-      if (jobIdRef.current !== jobId) return;
+      if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
       const selected = stmts.filter((statement) => operationAllowed(statement.operation, syncOptions));
       if (selected.length === 0) {
         setSyncState('compared');
@@ -873,6 +902,11 @@ export function DataSyncWindow() {
       setExecuteProgress('');
     } finally {
       writeInFlightRef.current = false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'execute') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
+      if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
     }
   }, [
     sourceId,

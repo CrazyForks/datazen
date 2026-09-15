@@ -963,9 +963,12 @@ describe('DataSyncWindow wizard', () => {
       'false',
     );
     fireEvent.click(screen.getByTestId('data-sync-next'));
+    const generateCallsBeforeExecute = generateDataSyncSqlMock.mock.calls.length;
     fireEvent.click(await screen.findByTestId('data-sync-start'));
-    await waitFor(() => expect(generateDataSyncSqlMock).toHaveBeenCalledTimes(2));
-    expect(generateDataSyncSqlMock.mock.calls[1][2][0].rows[0].key).toEqual([9]);
+    await waitFor(() =>
+      expect(generateDataSyncSqlMock).toHaveBeenCalledTimes(generateCallsBeforeExecute + 1),
+    );
+    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[2][0].rows[0].key).toEqual([9]);
   });
 
   it('[tester] a stale cancel response never clears the newer comparison job id', async () => {
