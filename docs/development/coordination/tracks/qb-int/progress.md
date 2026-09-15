@@ -5,7 +5,7 @@
 | Phase | 状态 | 说明 |
 |-------|------|------|
 | CODING | DONE | QueryEditorSection 集成、i18n、文档完成 |
-| TEST | PENDING | 等待 Tester |
+| TEST | READY_FOR_TEST | 等待 Tester 验收 |
 
 ## 编码范围
 
@@ -30,8 +30,8 @@
 ## 自验结果
 
 - QueryEditorSection.tsx: WandSparkles import + useQueryBuilderStore hooks + ToolbarButton + QueryBuilderPanel rendering ✅
-- en/query.ts: 28 visualBuilder keys added ✅
-- zh-CN/query.ts: 28 visualBuilder keys added ✅
+- en/query.ts: 29 visualBuilder keys added ✅
+- zh-CN/query.ts: 29 visualBuilder keys added ✅
 - docs/features/query-builder.md: Feature documentation created ✅
 - Note: tsc cannot pass until qb-ui creates QueryBuilderPanel component
 
