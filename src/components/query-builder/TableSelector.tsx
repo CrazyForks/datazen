@@ -19,7 +19,7 @@ export function TableSelector({ tables, selectedTables, onToggle }: TableSelecto
   }, [tables, search]);
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-testid="qb-table-selector">
       <span className="text-[11px] font-medium text-fg-secondary">
         {t('query.visualBuilder.tables')}
       </span>
@@ -28,8 +28,9 @@ export function TableSelector({ tables, selectedTables, onToggle }: TableSelecto
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('query.visualBuilder.searchTables')}
         className="h-7 text-xs"
+        data-testid="qb-table-search"
       />
-      <div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
+      <div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto" data-testid="qb-table-list">
         {filtered.length === 0 && (
           <span className="py-1 text-center text-[11px] text-fg-muted">
             {t('select.noMatches')}
@@ -39,6 +40,7 @@ export function TableSelector({ tables, selectedTables, onToggle }: TableSelecto
           <label
             key={name}
             className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12px] text-fg hover:bg-surface-raised"
+            data-testid={`qb-table-item-${name}`}
           >
             <input
               type="checkbox"

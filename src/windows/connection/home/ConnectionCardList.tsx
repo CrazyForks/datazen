@@ -104,11 +104,6 @@ export function ConnectionCardList({
           )}
         </div>
 
-        <Button size="sm" onClick={onNewConnection} data-testid="empty-new-connection-button">
-          <ThemedIcon id="common.newConnection" className="h-3.5 w-3.5" fallback={Plus} />
-          {t('common.newConnection')}
-        </Button>
-
         {onImportConnections && (
           <Button
             variant="ghost"
@@ -120,6 +115,11 @@ export function ConnectionCardList({
             {t('common.importConnections')}
           </Button>
         )}
+
+        <Button size="sm" onClick={onNewConnection} data-testid="empty-new-connection-button">
+          <ThemedIcon id="common.newConnection" className="h-3.5 w-3.5" fallback={Plus} />
+          {t('common.newConnection')}
+        </Button>
       </div>
 
       <div className="flex flex-col overflow-hidden rounded-xl border border-edge bg-surface-alt divide-y divide-edge/60">
@@ -227,9 +227,7 @@ export function ConnectionCardList({
               {t('connWin.home.connections.noMatch', { query: filter.trim() })}
             </p>
             {onImportConnections && (
-              <p className="text-[11px] text-fg-muted/80">
-                {t('common.importConnections')}
-              </p>
+              <p className="text-[11px] text-fg-muted/80">{t('common.importConnections')}</p>
             )}
           </div>
         )}

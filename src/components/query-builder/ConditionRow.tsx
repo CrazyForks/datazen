@@ -56,7 +56,7 @@ export function ConditionRow({
   }));
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5" data-testid="qb-condition-row">
       {/* Table selector */}
       <Select
         value={condition.table}
@@ -110,6 +110,7 @@ export function ConditionRow({
               : t('query.visualBuilder.valuePlaceholder')
           }
           className="h-7 min-w-0 flex-1 text-[11px]"
+          data-testid="qb-condition-value"
         />
       )}
 

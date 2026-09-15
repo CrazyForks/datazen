@@ -334,6 +334,7 @@ export function QueryEditorSection({
           label={t('query.visualBuilder.title')}
           icon={<WandSparkles className="h-3.5 w-3.5" />}
           onClick={toggleQb}
+          data-testid="qb-toggle-button"
         />
         <QueryToolbarMoreMenu
           compact={compactToolbar}

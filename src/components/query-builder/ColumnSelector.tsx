@@ -34,9 +34,7 @@ export function ColumnSelector({
 }: ColumnSelectorProps) {
   const { t } = useI18n();
   const [search, setSearch] = useState('');
-  const [expandedTables, setExpandedTables] = useState<Set<string>>(
-    () => new Set(selectedTables),
-  );
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set(selectedTables));
 
   // Keep expanded tables in sync with selected tables
   const expandedSet = useMemo(() => {
@@ -89,7 +87,7 @@ export function ColumnSelector({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-testid="qb-column-selector">
       <span className="text-[11px] font-medium text-fg-secondary">
         {t('query.visualBuilder.columns')}
       </span>
@@ -98,6 +96,7 @@ export function ColumnSelector({
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('query.visualBuilder.searchColumns')}
         className="h-7 text-xs"
+        data-testid="qb-column-search"
       />
       <div className="flex max-h-60 flex-col gap-0.5 overflow-y-auto">
         {filteredTables.length === 0 && (
@@ -144,12 +143,16 @@ export function ColumnSelector({
                           selected && 'bg-accent/5',
                         )}
                       >
-                        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-fg hover:bg-surface-raised">
+                        <label
+                          className="flex cursor-pointer items-center gap-2 text-[12px] text-fg hover:bg-surface-raised"
+                          data-testid={`qb-column-item-${table}.${col}`}
+                        >
                           <input
                             type="checkbox"
                             checked={selected}
                             onChange={() => onToggle(table, col)}
                             className="accent-accent"
+                            data-testid={`qb-column-check-${table}.${col}`}
                           />
                           <span className="min-w-0 truncate">{col}</span>
                         </label>

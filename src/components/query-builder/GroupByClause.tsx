@@ -25,7 +25,7 @@ export function GroupByClause({ groupBy, selectedColumns, onAdd, onRemove }: Gro
   };
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-testid="qb-groupby-clause">
       <span className="text-[11px] font-medium text-fg-secondary">
         {t('query.visualBuilder.groupBy')}
       </span>
@@ -64,6 +64,7 @@ export function GroupByClause({ groupBy, selectedColumns, onAdd, onRemove }: Gro
         onClick={handleAdd}
         disabled={selectedColumns.length === 0}
         className="inline-flex w-fit items-center gap-1 self-start rounded bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent hover:bg-accent/20 disabled:opacity-40"
+        data-testid="qb-add-groupby"
       >
         <Plus className="h-3 w-3" />
         {t('query.visualBuilder.addGroupBy')}

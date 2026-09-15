@@ -75,7 +75,7 @@ export function QueryBuilderPanel({
   };
 
   return (
-    <div className="flex flex-col gap-3 border-b border-edge bg-surface p-3">
+    <div className="flex flex-col gap-3 border-b border-edge bg-surface p-3" data-testid="qb-panel">
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-semibold text-fg">{t('query.visualBuilder.title')}</span>
@@ -86,6 +86,7 @@ export function QueryBuilderPanel({
               checked={distinct}
               onChange={(e) => setDistinct(e.target.checked)}
               className="accent-accent"
+              data-testid="qb-distinct-checkbox"
             />
             {t('query.visualBuilder.distinct')}
           </label>
@@ -155,7 +156,13 @@ export function QueryBuilderPanel({
       {/* SQL Preview + Apply */}
       <SqlPreview sql={sql} />
       <div className="flex justify-end">
-        <Button variant="primary" size="sm" onClick={handleApply} disabled={!sql}>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleApply}
+          disabled={!sql}
+          data-testid="qb-apply-sql"
+        >
           {t('query.visualBuilder.applySql')}
         </Button>
       </div>

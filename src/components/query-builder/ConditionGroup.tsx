@@ -46,6 +46,7 @@ export function ConditionGroup({
     <div
       className="flex flex-col gap-1.5 rounded border border-edge p-2"
       style={{ marginLeft: depth > 0 ? 12 : 0 }}
+      data-testid={depth === 0 ? 'qb-condition-group' : `qb-condition-group-nested-${depth}`}
     >
       {/* Group logic indicator */}
       <div className="flex items-center gap-2">
@@ -54,11 +55,7 @@ export function ConditionGroup({
             ? t('query.visualBuilder.logicAnd')
             : t('query.visualBuilder.logicOr')}
         </span>
-        {depth > 0 && (
-          <span className="text-[10px] text-fg-muted">
-            (group)
-          </span>
-        )}
+        {depth > 0 && <span className="text-[10px] text-fg-muted">(group)</span>}
       </div>
 
       {/* Conditions */}
@@ -115,6 +112,7 @@ export function ConditionGroup({
           type="button"
           onClick={handleAddCondition}
           className="inline-flex items-center gap-1 rounded bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent hover:bg-accent/20"
+          data-testid="qb-add-condition"
         >
           <Plus className="h-3 w-3" />
           {t('query.visualBuilder.addCondition')}
@@ -123,6 +121,7 @@ export function ConditionGroup({
           type="button"
           onClick={() => onAddGroup(group.id, 'AND')}
           className="inline-flex items-center gap-1 rounded bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent hover:bg-accent/20"
+          data-testid="qb-add-group"
         >
           <Plus className="h-3 w-3" />
           {t('query.visualBuilder.addGroup')}

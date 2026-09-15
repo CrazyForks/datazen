@@ -14,7 +14,10 @@ export function SqlPreview({ sql }: SqlPreviewProps) {
       <span className="text-[11px] font-medium text-fg-secondary">
         {t('query.visualBuilder.preview')}
       </span>
-      <pre className="overflow-auto rounded-lg border border-edge bg-surface-alt p-3 font-mono text-[12px] leading-relaxed text-fg select-all">
+      <pre
+        className="overflow-auto rounded-lg border border-edge bg-surface-alt p-3 font-mono text-[12px] leading-relaxed text-fg select-all"
+        data-testid="qb-sql-preview"
+      >
         <code>{sql}</code>
       </pre>
     </div>

@@ -24,7 +24,7 @@ export function WhereClause({
   const { t } = useI18n();
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-testid="qb-where-clause">
       <span className="text-[11px] font-medium text-fg-secondary">
         {t('query.visualBuilder.where')}
       </span>
