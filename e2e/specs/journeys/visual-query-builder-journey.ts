@@ -290,15 +290,12 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     }
     await captureJourneyStep('qb-reset');
 
-    // ── Step 11: Close the panel via the toggle button ──
+    // ── Step 11: Close the panel by clicking the X button inside the panel ──
+    // The X button has data-testid="qb-close" inside the panel header.
     await browser.execute(() => {
-      const btn = document.querySelector('[data-testid="qb-toggle-button"]');
-      if (btn) (btn as HTMLElement).scrollIntoView({ block: 'center' });
+      const closeBtn = document.querySelector('[data-testid="qb-close"]') as HTMLElement | null;
+      if (closeBtn) closeBtn.click();
     });
-    await browser.pause(200);
-    const toggleBtn = await $('[data-testid="qb-toggle-button"]');
-    await toggleBtn.waitForClickable({ timeout: 5000 });
-    await toggleBtn.click();
 
     await browser.waitUntil(
       async () =>
