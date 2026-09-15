@@ -3,7 +3,7 @@
 > **Status**: FAILED (1 bug — BUG-001)
 > **Branch**: feat/redis-pr3-collection-editors
 > **Coder**: coding subagent (auto)
-> **Tester**: test subagent (auto)
+> **Tester**: test subagent (auto) — Round 2 re-verification by fresh tester
 
 ## Deliverables
 
@@ -48,6 +48,19 @@
 ### i18n Audit
 - en.ts: 7 new keys ✓
 - zh-CN.ts: 7 new keys (matching) ✓
+
+## Round 2 Independent Re-verification (Fresh Tester)
+
+| Check | Round 1 (Tester 1) | Round 2 (Tester 2) | Match? |
+|-------|--------------------|--------------------|--------|
+| `cargo test -p datazen-driver-redis --lib` | 96 passed, 0 failed, 1 ignored | **96 passed**, 0 failed, 1 ignored | ✅ |
+| `npx tsc --noEmit` | No new errors | No new errors | ✅ |
+| `npx vitest run --config vitest.drivers.config.ts` | 21 passed; 4 pre-existing | **21 passed**; 4 pre-existing | ✅ |
+
+- **BUG-001 re-confirmed**: `ListEditor.tsx` line 133 always calls `invokeListPop(..., 'left')` — deletes the first element regardless of which row's button was clicked.
+- **Coverage**: No new gaps identified. All testable parse helpers (33 tests) and invoke functions (10 tests) already covered by Round 1.
+- **i18n**: All 7 new keys confirmed present in both `en.ts` and `zh-CN.ts`.
+- **Code Review**: No additional bugs found beyond BUG-001.
 
 ## Known Bugs
 
