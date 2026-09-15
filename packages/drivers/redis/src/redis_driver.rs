@@ -219,7 +219,8 @@ impl RedisDriver {
     }
 
     pub async fn plugin_flush_all(&self, connection_id: &str) -> Result<(), DriverError> {
-        with_live_any_op!(self, connection_id, |conn| crate::ops::flush_all(conn).await)
+        with_live_any_op!(self, connection_id, |conn| crate::ops::flush_all(conn)
+            .await)
     }
 
     pub(crate) async fn test_connection_inner(
@@ -416,6 +417,34 @@ impl RedisDriver {
         |conn| crate::ops_stream::xinfo_groups(conn, key)
     );
 
+    pub async fn plugin_xinfo_consumers(
+        &self,
+        connection_id: &str,
+        db_index: u32,
+        key: &str,
+        group: &str,
+    ) -> Result<Vec<crate::ops_stream::ConsumerInfo>, DriverError> {
+        let key = key.to_string();
+        let group = group.to_string();
+        with_live_op!(self, connection_id, db_index, |conn| {
+            crate::ops_stream::xinfo_consumers(conn, &key, &group).await
+        })
+    }
+
+    pub async fn plugin_stream_lag(
+        &self,
+        connection_id: &str,
+        db_index: u32,
+        key: &str,
+        group: &str,
+    ) -> Result<crate::ops_stream::StreamLagResult, DriverError> {
+        let key = key.to_string();
+        let group = group.to_string();
+        with_live_op!(self, connection_id, db_index, |conn| {
+            crate::ops_stream::stream_lag(conn, &key, &group).await
+        })
+    }
+
     pub async fn plugin_xpending(
         &self,
         connection_id: &str,
@@ -496,4 +525,4 @@ impl RedisDriver {
     }
 }
 
-pub(crate) use crate::redis_value::{parse_scan_result, parse_redis_command_args};
+pub(crate) use crate::redis_value::{parse_redis_command_args, parse_scan_result};

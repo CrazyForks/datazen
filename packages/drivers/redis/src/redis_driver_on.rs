@@ -127,10 +127,7 @@ where
             preview,
         });
     }
-    let db_size: i64 = redis::cmd("DBSIZE")
-        .query_async(conn)
-        .await
-        .unwrap_or(0);
+    let db_size: i64 = redis::cmd("DBSIZE").query_async(conn).await.unwrap_or(0);
     tracing::info!(
         elapsed_ms = t0.elapsed().as_millis() as u64,
         keys = entries.len(),

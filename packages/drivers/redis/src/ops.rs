@@ -28,7 +28,9 @@ pub fn resolve_ttl(ttl_seconds: i64) -> Result<TtlCommand, String> {
 /// Resolve absolute expire-at unix timestamp (must be > 0).
 pub fn resolve_expire_at(expire_at: i64) -> Result<TtlCommand, String> {
     if expire_at <= 0 {
-        return Err(format!("invalid expire_at: {expire_at} (expected unix timestamp > 0)"));
+        return Err(format!(
+            "invalid expire_at: {expire_at} (expected unix timestamp > 0)"
+        ));
     }
     Ok(TtlCommand::ExpireAt(expire_at))
 }
@@ -203,9 +205,7 @@ where
         .map_err(|e| e.to_string())
 }
 
-pub async fn list_push<
-    C,
->(
+pub async fn list_push<C>(
     conn: &mut C,
     key: &str,
     side: &str,
@@ -795,7 +795,10 @@ mod tests {
 
     #[test]
     fn ttl_large_value() {
-        assert_eq!(resolve_ttl(i64::from(u32::MAX)).unwrap(), TtlCommand::Expire(u32::MAX as u64));
+        assert_eq!(
+            resolve_ttl(i64::from(u32::MAX)).unwrap(),
+            TtlCommand::Expire(u32::MAX as u64)
+        );
     }
 
     #[test]

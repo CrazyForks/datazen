@@ -128,9 +128,7 @@ impl DatabaseDriver for RedisDriver {
 
         let table_name = table.to_string();
         let key_type: String = with_redis_conn!(&mut rc.live, |conn| {
-            conn.key_type(&table_name)
-                .await
-                .map_err(|e| e.to_string())
+            conn.key_type(&table_name).await.map_err(|e| e.to_string())
         })
         .map_err(DriverError::QueryFailed)?;
 
@@ -308,8 +306,9 @@ impl DatabaseDriver for RedisDriver {
     async fn get_server_info(&self, handle: &ConnectionHandle) -> Result<ServerInfo, DriverError> {
         let mut conns = self.connections.write().await;
         let redis_conn = Self::get_conn(&mut conns, handle)?;
-        let info: String = with_redis_conn!(&mut redis_conn.live, |conn| info_server_on(conn).await)
-            .map_err(DriverError::QueryFailed)?;
+        let info: String = with_redis_conn!(&mut redis_conn.live, |conn| info_server_on(conn)
+            .await)
+        .map_err(DriverError::QueryFailed)?;
         let version = info
             .lines()
             .find(|l| l.starts_with("redis_version:"))
