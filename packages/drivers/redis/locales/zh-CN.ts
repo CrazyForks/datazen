@@ -229,6 +229,12 @@ const locale = {
   'redis.wizard.topologySentinelHint': 'Sentinel 托管的主节点',
   'redis.wizard.topologyStandalone': '单机',
   'redis.wizard.topologyStandaloneHint': '单个 Redis 服务器',
+  // Console danger classification
+  'redis.console.dangerSafe': '安全',
+  'redis.console.dangerWrite': '写入',
+  'redis.console.dangerDanger': '危险',
+  'redis.console.dangerUltra': '破坏性',
+  'redis.console.dangerWarning': '⚠ 此命令可能具有破坏性，请谨慎执行。',
 } as const;
 
 export default locale;

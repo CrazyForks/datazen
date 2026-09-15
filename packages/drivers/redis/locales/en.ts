@@ -229,6 +229,12 @@ const locale = {
   'redis.wizard.topologySentinelHint': 'Sentinel-managed master',
   'redis.wizard.topologyStandalone': 'Standalone',
   'redis.wizard.topologyStandaloneHint': 'Single Redis server',
+  // Console danger classification
+  'redis.console.dangerSafe': 'Safe',
+  'redis.console.dangerWrite': 'Write',
+  'redis.console.dangerDanger': 'Dangerous',
+  'redis.console.dangerUltra': 'Destructive',
+  'redis.console.dangerWarning': '⚠ This command may be destructive. Execute with caution.',
 } as const;
 
 export default locale;
