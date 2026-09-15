@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, PanelLeftOpen } from 'lucide-react';
 import { TitleBar } from '../../components/TitleBar';
 import { MenuBar } from '../../components/MenuBar';
@@ -48,6 +48,26 @@ import { SettingsContent } from '../settings/SettingsContent';
 import { WorkspaceView } from '../workspace/WorkspaceView';
 import { WappManagementPage } from '../wapps/WappManagementPage';
 import { WorkspaceModeSidebar } from './WorkspaceModeSidebar';
+
+/**
+ * Keeps a workspace-mode panel mounted after its first activation so that
+ * component-local state (workflow drafts/panels, dashboard widgets, extension
+ * search/filters, …) survives switching to another workspace mode and back.
+ * Renders nothing until first activated; once shown it stays in the DOM
+ * (hidden while inactive) to preserve state.
+ */
+function ModeKeepAlive({ active, children }: { active: boolean; children: ReactNode }) {
+  const [mounted, setMounted] = useState(active);
+  useEffect(() => {
+    if (active) setMounted(true);
+  }, [active]);
+  if (!mounted) return null;
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-1" hidden={!active}>
+      {children}
+    </div>
+  );
+}
 
 export function ConnectionPage() {
   useSettings();
@@ -805,21 +825,23 @@ export function ConnectionPage() {
           />
 
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-            {workspaceMode === 'connections' ? (
-              connectionWorkspace
-            ) : workspaceMode === 'workflow' ? (
+            {workspaceMode === 'connections' && connectionWorkspace}
+            <ModeKeepAlive active={workspaceMode === 'workflow'}>
               <WorkflowPage embedded onOpenDashboardInShell={handleOpenDashboardById} />
-            ) : workspaceMode === 'workspace' ? (
+            </ModeKeepAlive>
+            <ModeKeepAlive active={workspaceMode === 'workspace'}>
               <WorkspaceView onOpenExtensions={() => setWorkspaceMode('extension')} />
-            ) : workspaceMode === 'extension' ? (
+            </ModeKeepAlive>
+            <ModeKeepAlive active={workspaceMode === 'extension'}>
               <WappManagementPage onOpenInWorkspace={() => setWorkspaceMode('workspace')} />
-            ) : (
+            </ModeKeepAlive>
+            <ModeKeepAlive active={workspaceMode === 'dashboard'}>
               <DashboardPanel
                 initialDashboardId={embeddedDashboardId}
                 onDashboardChange={(_id, name) => setDashboardTitle(name)}
                 onOpenWorkflowEditor={handleOpenWorkflow}
               />
-            )}
+            </ModeKeepAlive>
           </div>
         </div>
       )}

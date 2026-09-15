@@ -446,6 +446,21 @@ describe('ConnectionPage', () => {
     await waitFor(() => expect(screen.getByTestId('workflow-window')).toBeInTheDocument());
   });
 
+  it('keeps workflow panel mounted across mode switches so its state survives', () => {
+    render(<ConnectionPage />);
+
+    fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
+    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+
+    // Switching away must NOT unmount the panel (it is kept alive, hidden).
+    fireEvent.click(screen.getByTestId('workspace-nav-dashboard'));
+    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+
+    // Switching back shows the still-mounted panel again.
+    fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
+    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+  });
+
   it('TC-window: menu:open-settings shows SettingsPage with section', async () => {
     render(<ConnectionPage />);
 
