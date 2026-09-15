@@ -1,11 +1,12 @@
 # migration-sync-core
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
 Coding commit: `a0919eeb` (`feat(data-sync): preserve reviewed selection and canonical comparison values`).
 Rescue coding commit: `1ce25cbe` (`fix(data-sync): fence unknown outcomes and render binary previews`).
+Round 2 rescue commit: `44980cc0` (`fix(data-sync): invalidate compare before cancellation`).
 
 ## Wave 1 implementation
 
@@ -102,3 +103,17 @@ B. Independent reruns at `c64466cc` before adding the new failing regression:
 C. V8 coverage for the five changed frontend business modules remains above the gate: statements **82.84%** (652/787), branches **80.33%** (429/534), functions **85.63%** (161/188), lines **84.84%** (599/706). Rust percentage was not instrumented; the exact passing path counts above are reported instead. The new `[tester] invalidates a comparison before awaiting the cancel response` journey deterministically covers the previously untested race where compare completes while cancel IPC is still pending.
 
 D. **TEST_FAILED**. BUG-003 is a reproducible P1 duplicate-write risk. The comparison generation is invalidated only after awaiting the cancel command, so an in-flight comparison can clear `writeOutcomeUncertain` before cancellation completes. The UI then reports `unknown` while the independent fence is false; both the Execute button and execution handler can accept the stale mapping. Do not merge this track until a fresh Tester completes another full pass.
+
+## Coder rescue round 2 — 2026-09-15
+
+- BUG-003 repaired at the cancellation boundary. `handleCancel` invalidates the active inspection/comparison generation and preserves an existing unknown-write fence before awaiting IPC. After IPC it verifies generation ownership and only clears the matching job id, preventing stale comparison or cancellation completions from changing current state.
+- The retained deterministic journey that resolves comparison while cancellation IPC is delayed now passes.
+
+### Round 2 validation
+
+- Frontend sync suites: **7 files, 40 tests passed**.
+- TypeScript `noEmit`: passed with no diagnostics.
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
+- Updated V8 coverage for the five changed frontend business modules: statements **82.74%** (657/794), branches **80.07%** (434/542), functions **85.63%** (161/188), lines **84.90%** (602/709).
+- The required WebDriver build and isolated PostgreSQL/MySQL matrix from independent round 2 remain valid because the post-build Tester commit added only the failing frontend regression, and this rescue changes only the frontend cancellation ordering exercised by that test. Fresh independent testing remains required before merge.

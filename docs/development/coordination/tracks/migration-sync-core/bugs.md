@@ -29,17 +29,19 @@
 
 ## Validation gates after rescue
 
-- Frontend five changed business modules: lines 84.84%, statements 82.84%, branches 80.33%, functions 85.63%. The required branch gate is now satisfied with continuous state-machine and mapping journeys.
+- Frontend five changed business modules after the BUG-003 repair: lines 84.90%, statements 82.74%, branches 80.07%, functions 85.63%. The required branch gate remains satisfied with continuous state-machine and mapping journeys.
 - Rust instrumented percentage was not measured; 101 passing sync tests plus 22 passing command tests and actual PostgreSQL/MySQL journeys provide path evidence, not a numerical coverage claim.
 - Required real-database canonical projection/selection journeys pass 2/2 on PostgreSQL and MySQL after the rescue build.
 - Integer-only keys and 10k-diff/32MiB table/64MiB result limits remain wave1 guardrails, not Navicat parity. Shared immutable plans, normalized ordering, bounded ComparisonStore, conflict checks remain later wave work.
 
 ## migration-sync-core-BUG-003 — Cancel IPC race clears the unknown-write fence (P1)
 
-- 状态：待修复
+- 状态：待验证（修复后）
 - Reproduction: enter Unknown after losing the execute/commit response; go back and start a fresh comparison; click Cancel; hold the `cancel_data_sync` response pending; let the comparison resolve successfully before the cancel response; then resolve cancellation.
 - Actual: `handleCancel` increments `compareGenerationRef` only after `await cancelDataSync(jobId)`. The comparison therefore remains current long enough to run `setWriteOutcomeUncertain(false)`. When cancellation finishes, the visible state returns to `unknown`, but `data-write-outcome-uncertain` is false. Preview can expose Execute for the stale mapping, and `runExecute` sees the same false fence, allowing a duplicate write after an unknown commit result.
 - Evidence: `[tester] invalidates a comparison before awaiting the cancel response` fails at `DataSyncWindow.test.tsx:900`: expected `data-write-outcome-uncertain="true"`, received `"false"`. Full frontend result is 7 files, 39 passed and 1 failed.
 - Impact: every supported sync driver when cancellation IPC and comparison completion interleave. The database cancel flag is set quickly in normal local runs, but the frontend correctness contract must not depend on IPC latency or event-loop ordering.
 - Required fix: synchronously invalidate the active compare generation and preserve/set the independent unknown-write fence before awaiting cancellation. Completion and cancellation handlers must verify the active generation before clearing or transitioning state. Keep both the Execute button and `runExecute` gated by the fence.
 - Required regression: retain the delayed-cancel continuous journey, then rerun the complete Rust, frontend, coverage, required WebDriver build and isolated PostgreSQL/MySQL matrix with a fresh Tester.
+- Fix: `handleCancel` now increments `compareGenerationRef` and preserves the unknown-write fence synchronously, before the cancellation IPC begins. On return it verifies that the cancellation still owns the active generation, and clears `jobIdRef` only when it still refers to the cancelled job. Existing inspection/comparison completion handlers already reject stale generations, so a superseded async completion cannot clear the fence or transition current UI state.
+- Regression evidence: the deterministic delayed-cancel journey passes; the complete frontend suite is 40/40, TypeScript passes, injected Rust remains 101/101 plus 22/22, and the frontend branch gate remains above 80%.
