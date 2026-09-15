@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
 import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
@@ -27,6 +28,7 @@ export function QueryBuilderPanel({
   // Schema data
   const tables = useSchemaStore((s) => s.tables);
   const columnMap = useSchemaStore((s) => s.columnMap);
+  const ensureColumns = useSchemaStore((s) => s.ensureColumns);
 
   // Query builder state
   const selectedTables = useQueryBuilderStore((s) => s.selectedTables);
@@ -52,6 +54,12 @@ export function QueryBuilderPanel({
   const setDistinct = useQueryBuilderStore((s) => s.setDistinct);
   const reset = useQueryBuilderStore((s) => s.reset);
   const toggleOpen = useQueryBuilderStore((s) => s.toggleOpen);
+
+  // Ensure columns are loaded for selected tables
+  useEffect(() => {
+    if (selectedTables.length === 0) return;
+    void ensureColumns(selectedTables);
+  }, [selectedTables, ensureColumns]);
 
   // Generate SQL preview
   const sql = useSqlGenerator({
