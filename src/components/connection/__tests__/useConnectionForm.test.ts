@@ -44,6 +44,7 @@ function previewConfig(form: ConnectionFormState, editId?: string | null) {
     host: form.host,
     port: form.port,
     database: form.database,
+    domain: form.domain,
     schema: form.schema,
     username: form.username,
     password: form.password,
@@ -208,6 +209,36 @@ describe('useConnectionForm', () => {
     expect(result.current.username).toBe('postgres');
     expect(result.current.port).toBe('5432');
     expect(result.current.name).toBe('My PG Name');
+  });
+
+  it('round-trips the driver domain field into the built config', () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.setDomain('pe-xxx.rwlb.rds.aliyuncs.com'));
+    const config = previewConfig(result.current);
+    expect(config.domain).toBe('pe-xxx.rwlb.rds.aliyuncs.com');
+    // The dedicated domain must not leak into the logical database field.
+    expect(config.database).toBe('postgres');
+  });
+
+  it('restores the driver domain field when editing a connection', () => {
+    if (!DB_REGISTRY.kiwi) return;
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'kiwi-1',
+        existingConnections: [
+          {
+            id: 'kiwi-1',
+            name: 'Kiwi Dev',
+            databaseType: 'kiwi',
+            host: 'https://kiwi.akusre.com',
+            port: 4,
+            domain: 'pe-xxx.rwlb.rds.aliyuncs.com',
+            sslMode: 'prefer',
+          },
+        ],
+      }),
+    );
+    expect(result.current.domain).toBe('pe-xxx.rwlb.rds.aliyuncs.com');
   });
 
   it('normalizes legacy redis prefer SSL to disabled when TLS is unchecked', () => {

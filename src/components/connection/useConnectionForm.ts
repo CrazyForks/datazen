@@ -39,6 +39,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
   const [host, setHost] = useState('127.0.0.1');
   const [port, setPort] = useState('5432');
   const [database, setDatabase] = useState('postgres');
+  const [domain, setDomain] = useState('');
   const [schema, setSchema] = useState('default');
   const [username, setUsername] = useState('postgres');
   const [password, setPassword] = useState('');
@@ -115,6 +116,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     setHost(existing.host ?? '127.0.0.1');
     setPort(String(existing.port ?? (DB_REGISTRY[existing.databaseType].defaultPort || '')));
     setDatabase(existing.database ?? '');
+    setDomain(existing.domain ?? '');
     setSchema(existing.schema ?? 'default');
     setUsername(existing.username ?? '');
     setPassword(existing.password ?? '');
@@ -165,6 +167,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
       host,
       port,
       database,
+      domain,
       schema,
       username,
       password,
@@ -228,6 +231,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     setHost(snapshot.host);
     setPort(snapshot.port);
     setDatabase(snapshot.database);
+    setDomain(snapshot.domain);
     setSchema(snapshot.schema);
     setUsername(snapshot.username);
     setPassword(snapshot.password);
@@ -408,7 +412,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     const driverValidator = getDriverValidator(formVariant);
     if (driverValidator) {
       const errors = driverValidator(
-        { host, port, database, username, password, schema, options: connectionOptions },
+        { host, port, database, domain, username, password, schema, options: connectionOptions },
         t as (key: string) => string,
       );
       setValidationErrors(errors);
@@ -429,6 +433,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
   }, [
     connectionOptions,
     database,
+    domain,
     formVariant,
     host,
     isDriverForm,
@@ -450,6 +455,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
       host,
       port,
       database,
+      domain,
       schema,
       username,
       password,
@@ -465,6 +471,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     connectionOptions,
     database,
     databaseType,
+    domain,
     editId,
     group,
     host,
@@ -526,6 +533,8 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     setPort,
     database,
     setDatabase,
+    domain,
+    setDomain,
     schema,
     setSchema,
     username,
