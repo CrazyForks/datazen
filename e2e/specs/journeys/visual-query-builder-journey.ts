@@ -107,9 +107,26 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await browser.pause(500);
     await captureJourneyStep('qb-table-selected');
 
-    // ── Step 3: Select columns ──
+    // ── Step 3: Expand column group and select columns ──
     const columnSelector = await $('[data-testid="qb-column-selector"]');
     await columnSelector.waitForDisplayed({ timeout: 5000 });
+
+    // Column groups are collapsed by default — expand the table group first
+    const groupExpanded = await browser.execute((tbl: string) => {
+      // Find the expand/collapse button that contains the table name
+      const buttons = Array.from(
+        document.querySelector('[data-testid="qb-column-selector"]')?.querySelectorAll('button') ??
+          [],
+      );
+      const btn = buttons.find((b) => b.textContent?.trim().includes(tbl));
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return false;
+    }, TABLE_NAME);
+    expect(groupExpanded).toBe(true);
+    await browser.pause(300);
 
     // Select 'name' column
     const nameChecked = await browser.execute((tbl: string) => {
