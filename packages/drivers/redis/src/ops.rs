@@ -462,7 +462,9 @@ fn parse_cursor_from_value(v: &redis::Value) -> Result<u64, String> {
         redis::Value::Int(n) => Ok(*n as u64),
         redis::Value::BulkString(b) => {
             let s = String::from_utf8_lossy(b);
-            s.trim().parse::<u64>().map_err(|e| format!("bad cursor: {e}"))
+            s.trim()
+                .parse::<u64>()
+                .map_err(|e| format!("bad cursor: {e}"))
         }
         redis::Value::SimpleString(s) => s
             .trim()
@@ -904,10 +906,7 @@ mod tests {
 
     #[test]
     fn test_tester_cursor_from_int() {
-        assert_eq!(
-            parse_cursor_from_value(&redis::Value::Int(0)).unwrap(),
-            0
-        );
+        assert_eq!(parse_cursor_from_value(&redis::Value::Int(0)).unwrap(), 0);
         assert_eq!(
             parse_cursor_from_value(&redis::Value::Int(12345)).unwrap(),
             12345
@@ -1052,10 +1051,7 @@ mod tests {
 
     #[test]
     fn test_tester_scan_generic_cursor_zero() {
-        let v = redis::Value::Array(vec![
-            redis::Value::Int(0),
-            redis::Value::Array(vec![]),
-        ]);
+        let v = redis::Value::Array(vec![redis::Value::Int(0), redis::Value::Array(vec![])]);
         let (cursor, members) = parse_scan_result_generic(&v).unwrap();
         assert_eq!(cursor, 0);
         assert!(members.is_empty());
@@ -1140,7 +1136,10 @@ mod tests {
             redis::Value::Nil,
         ]);
         let arr = parse_string_array(&v).unwrap();
-        assert_eq!(arr, vec!["item1".to_string(), "42".to_string(), "".to_string()]);
+        assert_eq!(
+            arr,
+            vec!["item1".to_string(), "42".to_string(), "".to_string()]
+        );
     }
 
     #[test]
