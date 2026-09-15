@@ -13,10 +13,14 @@ function baseInput(overrides: Partial<GenerateSqlInput> = {}): GenerateSqlInput 
   return {
     selectedTables: [],
     selectedColumns: [],
+    joins: [],
+    tableAliases: {},
     where: emptyGroup(),
     orderBy: [],
     groupBy: [],
     distinct: false,
+    limit: null,
+    offset: null,
     ...overrides,
   };
 }
@@ -524,5 +528,223 @@ describe('generateSql', () => {
       }),
     );
     expect(sql).toBe('SELECT "users"."name" FROM "users";');
+  });
+
+  // ── JOIN generation ──────────────────────────────────────────
+
+  it('generates INNER JOIN', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+        ],
+        joins: [{
+          id: 'j1',
+          type: 'INNER',
+          leftTable: 'users',
+          leftColumn: 'id',
+          rightTable: 'orders',
+          rightColumn: 'user_id',
+          isManual: true,
+        }],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", "orders"."total" FROM "users"\nINNER JOIN "orders" ON "users"."id" = "orders"."user_id";',
+    );
+  });
+
+  it('generates LEFT JOIN', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+        ],
+        joins: [{
+          id: 'j1',
+          type: 'LEFT',
+          leftTable: 'users',
+          leftColumn: 'id',
+          rightTable: 'orders',
+          rightColumn: 'user_id',
+          isManual: false,
+        }],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", "orders"."total" FROM "users"\nLEFT JOIN "orders" ON "users"."id" = "orders"."user_id";',
+    );
+  });
+
+  it('generates multiple JOINs', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders', 'items'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+          { table: 'items', column: 'product' },
+        ],
+        joins: [
+          {
+            id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+            rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+          },
+          {
+            id: 'j2', type: 'LEFT', leftTable: 'orders', leftColumn: 'id',
+            rightTable: 'items', rightColumn: 'order_id', isManual: false,
+          },
+        ],
+      }),
+    );
+    expect(sql).toContain('INNER JOIN "orders"');
+    expect(sql).toContain('LEFT JOIN "items"');
+  });
+
+  it('generates JOIN with table alias', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name', alias: 'user_name' },
+          { table: 'orders', column: 'total' },
+        ],
+        tableAliases: { users: 'u' },
+        joins: [{
+          id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+          rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+        }],
+      }),
+    );
+    // FROM should use alias
+    expect(sql).toContain('FROM "users" "u"');
+    // JOIN ON should use alias for left table
+    expect(sql).toContain('INNER JOIN "orders" ON "u"."id" = "orders"."user_id"');
+    // SELECT should still use original table name
+    expect(sql).toContain('"users"."name" AS "user_name"');
+  });
+
+  it('generates no JOIN clause when joins is empty', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        joins: [],
+      }),
+    );
+    expect(sql).not.toContain('JOIN');
+  });
+
+  // ── LIMIT / OFFSET generation ───────────────────────────────
+
+  it('generates LIMIT only', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 50,
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" LIMIT 50;');
+  });
+
+  it('generates LIMIT and OFFSET', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 10,
+        offset: 20,
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" LIMIT 10 OFFSET 20;');
+  });
+
+  it('generates no LIMIT/OFFSET when both are null', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: null,
+        offset: null,
+      }),
+    );
+    expect(sql).not.toContain('LIMIT');
+    expect(sql).not.toContain('OFFSET');
+  });
+
+  it('generates MySQL LIMIT/OFFSET with reversed syntax', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 10,
+        offset: 20,
+        databaseType: 'mysql',
+      }),
+    );
+    expect(sql).toBe('SELECT `users`.`name` FROM `users` LIMIT 20, 10;');
+  });
+
+  // ── Table alias in FROM ─────────────────────────────────────
+
+  it('generates FROM with table alias', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        tableAliases: { users: 'u' },
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" "u";');
+  });
+
+  // ── Complete complex query with JOIN + LIMIT ────────────────
+
+  it('generates a complete query with JOIN, WHERE, GROUP BY, ORDER BY, LIMIT', () => {
+    const subGroup: QbConditionGroup = {
+      id: 'sub',
+      logic: 'OR',
+      conditions: [
+        { id: '3', table: 'users', column: 'role', operator: '=', value: 'admin', conjunction: 'OR' },
+      ],
+      groups: [],
+    };
+    const where = emptyGroup('root');
+    where.conditions = [
+      { id: '1', table: 'users', column: 'active', operator: '=', value: '1', conjunction: 'AND' },
+    ];
+    where.groups = [subGroup];
+
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total', aggregate: 'SUM', alias: 'sum_total' },
+        ],
+        joins: [{
+          id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+          rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+        }],
+        where,
+        orderBy: [{ table: 'users', column: 'name', direction: 'ASC' }],
+        groupBy: [{ table: 'users', column: 'name' }],
+        distinct: false,
+        limit: 100,
+        offset: 0,
+        databaseType: 'postgresql',
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", SUM("orders"."total") AS "sum_total" FROM "users"\n' +
+      'INNER JOIN "orders" ON "users"."id" = "orders"."user_id"' +
+      ' WHERE "users"."active" = 1 AND ("users"."role" = \'admin\')' +
+      ' GROUP BY "users"."name" ORDER BY "users"."name" ASC LIMIT 100;',
+    );
   });
 });

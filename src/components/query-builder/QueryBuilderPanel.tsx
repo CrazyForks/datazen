@@ -33,10 +33,14 @@ export function QueryBuilderPanel({
   // Query builder state
   const selectedTables = useQueryBuilderStore((s) => s.selectedTables);
   const selectedColumns = useQueryBuilderStore((s) => s.selectedColumns);
+  const joins = useQueryBuilderStore((s) => s.joins);
+  const tableAliases = useQueryBuilderStore((s) => s.tableAliases);
   const where = useQueryBuilderStore((s) => s.where);
   const orderBy = useQueryBuilderStore((s) => s.orderBy);
   const groupBy = useQueryBuilderStore((s) => s.groupBy);
   const distinct = useQueryBuilderStore((s) => s.distinct);
+  const limit = useQueryBuilderStore((s) => s.limit);
+  const offset = useQueryBuilderStore((s) => s.offset);
 
   // Query builder actions
   const toggleTable = useQueryBuilderStore((s) => s.toggleTable);
@@ -65,10 +69,14 @@ export function QueryBuilderPanel({
   const sql = useSqlGenerator({
     selectedTables,
     selectedColumns,
+    joins,
+    tableAliases,
     where,
     orderBy,
     groupBy,
     distinct,
+    limit,
+    offset,
     databaseType,
   });
 

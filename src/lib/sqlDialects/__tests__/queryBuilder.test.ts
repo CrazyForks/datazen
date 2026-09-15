@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { getQbDialectAdapter } from '../queryBuilder';
+import { getQbDialectAdapter, generateJoinClause, generateLimitOffset } from '../queryBuilder';
 import type { QbDialectAdapter } from '../queryBuilder';
+import type { QbJoin } from '../../../components/query-builder/types';
 
 // ── Tests ─────────────────────────────────────────────────────
 
@@ -240,5 +241,107 @@ describe('getQbDialectAdapter', () => {
     it('formats NOT IN list', () => {
       expect(adapter.formatInList('"c"', ['x', 'y'], true)).toBe('"c" NOT IN (x, y)');
     });
+  });
+});
+
+// ── generateJoinClause ────────────────────────────────────────
+
+describe('generateJoinClause', () => {
+  const pg = getQbDialectAdapter('postgresql');
+  const mysql = getQbDialectAdapter('mysql');
+
+  it('returns empty string for empty joins', () => {
+    expect(generateJoinClause([], {}, pg)).toBe('');
+  });
+
+  it('generates INNER JOIN with no aliases', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+      rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+    }];
+    const result = generateJoinClause(joins, {}, pg);
+    expect(result).toBe('\nINNER JOIN "orders" ON "users"."id" = "orders"."user_id"');
+  });
+
+  it('generates LEFT JOIN', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'LEFT', leftTable: 'users', leftColumn: 'id',
+      rightTable: 'orders', rightColumn: 'user_id', isManual: false,
+    }];
+    const result = generateJoinClause(joins, {}, pg);
+    expect(result).toBe('\nLEFT JOIN "orders" ON "users"."id" = "orders"."user_id"');
+  });
+
+  it('generates RIGHT JOIN', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'RIGHT', leftTable: 'a', leftColumn: 'id',
+      rightTable: 'b', rightColumn: 'a_id', isManual: true,
+    }];
+    const result = generateJoinClause(joins, {}, pg);
+    expect(result).toBe('\nRIGHT JOIN "b" ON "a"."id" = "b"."a_id"');
+  });
+
+  it('generates FULL JOIN', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'FULL', leftTable: 'a', leftColumn: 'id',
+      rightTable: 'b', rightColumn: 'a_id', isManual: true,
+    }];
+    const result = generateJoinClause(joins, {}, pg);
+    expect(result).toBe('\nFULL JOIN "b" ON "a"."id" = "b"."a_id"');
+  });
+
+  it('uses alias for left table when provided', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+      rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+    }];
+    const result = generateJoinClause(joins, { users: 'u' }, pg);
+    expect(result).toBe('\nINNER JOIN "orders" ON "u"."id" = "orders"."user_id"');
+  });
+
+  it('generates multiple JOINs', () => {
+    const joins: QbJoin[] = [
+      { id: 'j1', type: 'INNER', leftTable: 'a', leftColumn: 'id', rightTable: 'b', rightColumn: 'a_id', isManual: true },
+      { id: 'j2', type: 'LEFT', leftTable: 'b', leftColumn: 'id', rightTable: 'c', rightColumn: 'b_id', isManual: false },
+    ];
+    const result = generateJoinClause(joins, {}, pg);
+    expect(result).toContain('INNER JOIN "b"');
+    expect(result).toContain('LEFT JOIN "c"');
+  });
+
+  it('uses MySQL backtick quoting', () => {
+    const joins: QbJoin[] = [{
+      id: 'j1', type: 'INNER', leftTable: 'users', leftColumn: 'id',
+      rightTable: 'orders', rightColumn: 'user_id', isManual: true,
+    }];
+    const result = generateJoinClause(joins, {}, mysql);
+    expect(result).toBe('\nINNER JOIN `orders` ON `users`.`id` = `orders`.`user_id`');
+  });
+});
+
+// ── generateLimitOffset ───────────────────────────────────────
+
+describe('generateLimitOffset', () => {
+  const pg = getQbDialectAdapter('postgresql');
+  const mysql = getQbDialectAdapter('mysql');
+
+  it('returns empty string when both are null', () => {
+    expect(generateLimitOffset(null, null, pg)).toBe('');
+  });
+
+  it('generates LIMIT only (PostgreSQL)', () => {
+    expect(generateLimitOffset(50, null, pg)).toBe(' LIMIT 50');
+  });
+
+  it('generates LIMIT and OFFSET (PostgreSQL)', () => {
+    expect(generateLimitOffset(10, 20, pg)).toBe(' LIMIT 10 OFFSET 20');
+  });
+
+  it('generates LIMIT only (MySQL)', () => {
+    expect(generateLimitOffset(50, null, mysql)).toBe(' LIMIT 50');
+  });
+
+  it('generates LIMIT and OFFSET (MySQL) with reversed syntax', () => {
+    expect(generateLimitOffset(10, 20, mysql)).toBe(' LIMIT 20, 10');
   });
 });
