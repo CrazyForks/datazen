@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
 import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
@@ -78,7 +79,7 @@ export function QueryBuilderPanel({
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-semibold text-fg">
-          {t('query.visualBuilder.panelTitle')}
+          {t('query.visualBuilder.title')}
         </span>
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-1.5 text-[11px] text-fg-secondary">
@@ -88,7 +89,7 @@ export function QueryBuilderPanel({
               onChange={(e) => setDistinct(e.target.checked)}
               className="accent-accent"
             />
-            DISTINCT
+            {t('query.visualBuilder.distinct')}
           </label>
           <button
             type="button"
@@ -100,9 +101,10 @@ export function QueryBuilderPanel({
           <button
             type="button"
             onClick={handleClose}
-            className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised hover:text-fg"
+            title={t('query.visualBuilder.close')}
+            className="flex items-center justify-center rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised hover:text-fg"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -112,7 +114,7 @@ export function QueryBuilderPanel({
         {/* Left: Tables + Columns */}
         <div className="flex w-64 shrink-0 flex-col gap-3">
           <TableSelector
-            tables={tables.map((t) => t.name)}
+            tables={tables.map((tbl) => tbl.name)}
             selectedTables={selectedTables}
             onToggle={toggleTable}
           />

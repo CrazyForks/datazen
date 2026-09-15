@@ -377,5 +377,7 @@ const pack = {
   'query.visualBuilder.applySql': '应用 SQL',
   'query.visualBuilder.noTables': '请选择表以开始构建查询',
   'query.visualBuilder.noColumnsSelected': '请选择列以构建查询',
+  'query.visualBuilder.reset': '重置',
+  'query.visualBuilder.close': '关闭',
 } as const;
 export default pack;

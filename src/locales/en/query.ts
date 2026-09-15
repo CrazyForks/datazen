@@ -384,5 +384,7 @@ const pack = {
   'query.visualBuilder.applySql': 'Apply SQL',
   'query.visualBuilder.noTables': 'Select tables to start building a query',
   'query.visualBuilder.noColumnsSelected': 'Select columns to build a query',
+  'query.visualBuilder.reset': 'Reset',
+  'query.visualBuilder.close': 'Close',
 } as const;
 export default pack;
