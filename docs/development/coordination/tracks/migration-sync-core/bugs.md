@@ -48,7 +48,7 @@
 
 ## migration-sync-core-BUG-004 — Compare cancellation remains busy until IPC returns (P1 liveness)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: after an unknown write outcome, start a fresh comparison, click Cancel, hold `cancel_data_sync` pending, then let the invalidated comparison request return. The workflow returns to the Objects step, but the cancel response remains pending.
 - Actual: the stale comparison correctly fails its generation check, but `handleCancel` does not leave `comparing` until after the cancellation IPC resolves. The Objects step therefore has a disabled Next button and disabled Back button. A delayed or lost cancel response permanently blocks the wizard, so no fresh comparison can clear the unknown-write fence. The same state prevents verifying that the stale cancellation preserves the newer comparison job id because a newer comparison cannot start.
 - Evidence: `[tester] lets a fresh comparison win while an older cancel response is delayed` times out at `DataSyncWindow.test.tsx:949` waiting for `data-sync-summary`; `[tester] a stale cancel response never clears the newer comparison job id` times out at line 995 waiting for the new comparison cancel control. At both failures the DOM reports `data-sync-step="objects"`, `data-sync-state="comparing"`, and disabled navigation. Full frontend result: 7 files, 40 passed and 3 failed.
@@ -60,7 +60,7 @@
 
 ## migration-sync-core-BUG-005 — Late execution-cancel response overwrites success (P1 state correctness)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: start execution, click Cancel while `execute_data_sync` is pending, hold the cancel response, then let execution and its verification comparison complete successfully before resolving cancellation.
 - Actual: execution reaches the Result step with `done`, but the old `handleCancel` resumes after `writeInFlightRef` becomes false and changes the current state to `compared` plus `sync.compareCancelled`. This replaces a confirmed successful outcome with a false cancellation result.
 - Evidence: `[tester] a delayed execution-cancel response cannot overwrite a successful result` fails at `DataSyncWindow.test.tsx:1102`: expected `data-sync-state="done"`, received `data-sync-state="compared"`. The status bar is also overwritten with `sync.compareCancelled`.
@@ -69,3 +69,13 @@
 - Required regression: retain the delayed execution-cancel journey and prove the terminal Result/done state and success status survive the late response.
 - Fix: execution cancellation keeps the in-flight transaction state authoritative. Its eventual IPC response verifies the captured generation, job id, operation kind and phase, and never writes user-visible state. Execution completion owns the terminal `done`, rollback or Unknown transition and conditionally releases its own job.
 - Regression evidence: the delayed execution-cancel journey reaches Result/done and retains its success status after the old cancellation response resolves. Complete frontend result is 43/43.
+
+## migration-sync-core-BUG-006 — Rollback and Unknown retain a stale cancelling status (P2 terminal UI correctness)
+
+- 状态：待修复
+- Reproduction: start execution, click Cancel while `execute_data_sync` is pending, hold the `cancel_data_sync` response, then either resolve execution with `rolledBack: true` or reject it after the write started. Finally resolve the delayed cancel response.
+- Actual: the execution pipeline correctly reaches `compared` with `sync.rolledBack`, or `unknown` with `sync.executionUnknown`, and the late cancel response no longer overwrites either state. However, both terminal paths leave the status bar permanently at `sync.cancellingExecution` because only the success path clears `statusMsg`.
+- Evidence: the existing delayed-cancel `done` journey passes and retains `done` with no cancellation status. The two cases in `[tester] a delayed execution-cancel response cannot leave $outcome in a cancelling phase` fail at `DataSyncWindow.test.tsx:1163`: rollback retains the correct `compared` state and `sync.rolledBack` error, while Unknown retains the correct `unknown` state and `sync.executionUnknown` error, but both still display `sync.cancellingExecution` after the delayed cancellation response resolves. Full frontend result is **7 files, 43 passed and 2 failed**.
+- Impact: all supported drivers when a cancellation races with a confirmed rollback or an execution whose commit outcome is unknown. The write safety state is preserved, but the persistent phase indicator contradicts the terminal error and makes the operation appear still active.
+- Required fix: every terminal execution exit must own and clear its transient cancellation/progress status when it still belongs to that execution. Preserve the generation/job/kind ownership checks so an old execution cannot clear a newer operation's status.
+- Required regression: retain both rollback and Unknown delayed-cancel journeys, prove their terminal state/error/status remain coherent after the late response, then rerun the complete frontend, Rust, coverage and required integration gates with a fresh Tester.

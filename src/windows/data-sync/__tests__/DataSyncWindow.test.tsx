@@ -1106,6 +1106,65 @@ describe('DataSyncWindow wizard', () => {
     expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.compareCancelled');
   });
 
+  it.each([
+    {
+      outcome: 'rollback',
+      expectedState: 'compared',
+      expectedError: 'sync.rolledBack',
+    },
+    {
+      outcome: 'unknown',
+      expectedState: 'unknown',
+      expectedError: 'sync.executionUnknown',
+    },
+  ] as const)(
+    '[tester] a delayed execution-cancel response cannot leave $outcome in a cancelling phase',
+    async ({ outcome, expectedState, expectedError }) => {
+      inspectDataSyncMock.mockResolvedValue([
+        { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+      ]);
+      compareDataSyncMock.mockResolvedValue([
+        { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+      ]);
+      let resolveWrite!: (result: { applied: number; rolledBack: boolean }) => void;
+      let rejectWrite!: (error: Error) => void;
+      executeDataSyncMock.mockImplementationOnce(
+        () => new Promise((resolve, reject) => {
+          resolveWrite = resolve;
+          rejectWrite = reject;
+        }),
+      );
+      let resolveCancel!: (cancelled: boolean) => void;
+      cancelDataSyncMock.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveCancel = resolve; }),
+      );
+      render(<DataSyncWindow />);
+      await advanceToPreview();
+      fireEvent.click(screen.getByTestId('data-sync-start'));
+      await waitFor(() => expect(resolveWrite).toBeDefined());
+      fireEvent.click(screen.getByTestId('data-sync-cancel'));
+      await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+
+      if (outcome === 'rollback') resolveWrite({ applied: 0, rolledBack: true });
+      else rejectWrite(new Error('commit response lost'));
+
+      expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(expectedError);
+      expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+        'data-sync-state',
+        expectedState,
+      );
+
+      await act(async () => { resolveCancel(true); });
+      expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+        'data-sync-state',
+        expectedState,
+      );
+      expect(screen.getByTestId('data-sync-error')).toHaveTextContent(expectedError);
+      expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.cancellingExecution');
+      expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.compareCancelled');
+    },
+  );
+
   it('[tester] rollback preserves review and cancellation during generation never writes', async () => {
     inspectDataSyncMock.mockResolvedValue([{ sourceTable: 'users', targetTable: 'users', status: 'MATCHED' }]);
     compareDataSyncMock.mockResolvedValue([{ sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] }]);

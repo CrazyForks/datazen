@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -150,3 +150,18 @@ D. **TEST_FAILED**. BUG-004 can leave the comparison wizard indefinitely busy wh
 - Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
 - Updated V8 coverage for the five changed frontend business modules: statements **83.55%** (686/821), branches **80.73%** (461/571), functions **85.63%** (161/188), lines **85.42%** (627/734).
 - Independent round 3's required WebDriver build and isolated PostgreSQL/MySQL canonical matrix remain 2/2 passed. Fresh independent testing is still required before merge.
+
+## Independent Tester round 4 — 2026-09-15
+
+A. Reviewed the complete track diff and the `bca83e07` cancellation lifecycle repair. Compare cancellation now exits the busy state synchronously; stale compare/cancel responses are fenced by generation, job id and operation kind; execution completion remains authoritative over `done`, rollback and Unknown states. The fresh-result journey still requires exactly one additional execution-time `generateDataSyncSql` call after `SqlPreview` and verifies that the submitted row is the fresh key `[9]`. BUG-001 through BUG-005 are independently fixed. A terminal status cleanup defect is recorded as BUG-006; no business code was changed.
+
+B. Independent reruns at `847ef4a4` plus the new Tester terminal-outcome regressions:
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap with the preceding run and are not summed.
+- Frontend sync suites before the new regression: **7 files, 43 passed**. After adding rollback and Unknown terminal journeys: **7 files, 43 passed, 2 failed**.
+- TypeScript `noEmit` and `git diff --check`: passed before the test-only change; the added test also type-checks.
+- The packaged desktop cancellation race was not rerun: the changed code is solely the frontend async state machine, and WebDriver has no deterministic seam to delay `cancel_data_sync` while independently resolving execution. Round 3's exact-binary PostgreSQL/MySQL canonical matrix remains valid for the unchanged database path and is not represented as cancellation-race evidence.
+
+C. V8 coverage for the five changed frontend business modules, measured from all **43 passing** sync tests before adding the expected-failing terminal journeys: statements **83.55%** (686/821), branches **80.73%** (461/571), functions **85.63%** (161/188), lines **85.42%** (627/734). Coverage collection with the two new regressions aborts after their expected failures. Rust percentage was not instrumented; the exact passing path counts above are reported instead.
+
+D. **TEST_FAILED**. The delayed-cancel `done` journey passes and keeps a clean success status. BUG-006 leaves the status bar permanently at `sync.cancellingExecution` after an execution has definitively rolled back or entered Unknown. Those terminal states and errors remain correct even after the late cancel response, but the operation phase is not fully exited and the user receives a contradictory persistent status. Do not merge until the terminal execution paths clear the cancellation status and a fresh Tester completes another full pass.
