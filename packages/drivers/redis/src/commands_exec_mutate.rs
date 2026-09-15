@@ -38,6 +38,52 @@
                 .await?;
             Ok(ok())
         }
+        "hash_scan" => {
+            let cursor = input.get("cursor").and_then(JsonValue::as_u64).unwrap_or(0);
+            let count = input.get("count").and_then(JsonValue::as_u64).unwrap_or(100) as u32;
+            let match_pattern = opt_str(&input, "matchPattern")
+                .or_else(|| opt_str(&input, "match_pattern"));
+            let (next, entries) = driver
+                .plugin_hash_scan(id, db, req_str(&input, "key")?, cursor, count, match_pattern)
+                .await?;
+            let fields: Vec<serde_json::Value> = entries
+                .into_iter()
+                .map(|(f, v)| serde_json::json!({ "field": f, "value": v }))
+                .collect();
+            json_ok(serde_json::json!({ "cursor": next, "entries": fields }))
+        }
+        "list_range" => {
+            let start = input.get("start").and_then(JsonValue::as_i64).unwrap_or(0);
+            let stop = input.get("stop").and_then(JsonValue::as_i64).unwrap_or(-1);
+            let items = driver
+                .plugin_list_range(id, db, req_str(&input, "key")?, start, stop)
+                .await?;
+            json_ok(serde_json::json!({ "items": items }))
+        }
+        "set_scan" => {
+            let cursor = input.get("cursor").and_then(JsonValue::as_u64).unwrap_or(0);
+            let count = input.get("count").and_then(JsonValue::as_u64).unwrap_or(100) as u32;
+            let match_pattern = opt_str(&input, "matchPattern")
+                .or_else(|| opt_str(&input, "match_pattern"));
+            let (next, members) = driver
+                .plugin_set_scan(id, db, req_str(&input, "key")?, cursor, count, match_pattern)
+                .await?;
+            json_ok(serde_json::json!({ "cursor": next, "members": members }))
+        }
+        "zset_scan" => {
+            let cursor = input.get("cursor").and_then(JsonValue::as_u64).unwrap_or(0);
+            let count = input.get("count").and_then(JsonValue::as_u64).unwrap_or(100) as u32;
+            let match_pattern = opt_str(&input, "matchPattern")
+                .or_else(|| opt_str(&input, "match_pattern"));
+            let (next, members) = driver
+                .plugin_zset_scan(id, db, req_str(&input, "key")?, cursor, count, match_pattern)
+                .await?;
+            let scored: Vec<serde_json::Value> = members
+                .into_iter()
+                .map(|(m, s)| serde_json::json!({ "member": m, "score": s }))
+                .collect();
+            json_ok(serde_json::json!({ "cursor": next, "members": scored }))
+        }
         "hash_set" => {
             driver
                 .plugin_hash_set(

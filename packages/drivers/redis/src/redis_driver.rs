@@ -189,6 +189,10 @@ impl RedisDriver {
     plugin_on_db!(plugin_set_remove, (key: &str, members: &[String]) -> (), |conn| crate::ops::set_remove(conn, key, members));
     plugin_on_db!(plugin_zset_add, (key: &str, members: &[crate::ops::ZsetMember]) -> (), |conn| crate::ops::zset_add(conn, key, members));
     plugin_on_db!(plugin_zset_remove, (key: &str, members: &[String]) -> (), |conn| crate::ops::zset_remove(conn, key, members));
+    plugin_on_db!(plugin_hash_scan, (key: &str, cursor: u64, count: u32, match_pattern: Option<&str>) -> (u64, Vec<(String, String)>), |conn| crate::ops::hash_scan(conn, key, cursor, count, match_pattern));
+    plugin_on_db!(plugin_list_range, (key: &str, start: i64, stop: i64) -> Vec<String>, |conn| crate::ops::list_range(conn, key, start, stop));
+    plugin_on_db!(plugin_set_scan, (key: &str, cursor: u64, count: u32, match_pattern: Option<&str>) -> (u64, Vec<String>), |conn| crate::ops::set_scan(conn, key, cursor, count, match_pattern));
+    plugin_on_db!(plugin_zset_scan, (key: &str, cursor: u64, count: u32, match_pattern: Option<&str>) -> (u64, Vec<(String, f64)>), |conn| crate::ops::zset_scan(conn, key, cursor, count, match_pattern));
     plugin_on_db!(plugin_delete_keys, (keys: &[String]) -> u64, |conn| crate::ops::delete_keys(conn, keys));
     plugin_on_db!(plugin_rename_key, (key: &str, new_key: &str) -> (), |conn| crate::ops::rename_key(conn, key, new_key));
     plugin_on_db!(plugin_set_ttl, (key: &str, ttl_seconds: i64) -> (), |conn| crate::ops::set_ttl(conn, key, ttl_seconds));

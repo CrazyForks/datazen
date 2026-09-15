@@ -330,6 +330,186 @@ where
         .map_err(|e| e.to_string())
 }
 
+// ── Collection scan / range operations (PR-3) ──────────────────────────
+
+/// HSCAN wrapper: returns (next_cursor, Vec<(field, value)>).
+pub async fn hash_scan<C>(
+    conn: &mut C,
+    key: &str,
+    cursor: u64,
+    count: u32,
+    match_pattern: Option<&str>,
+) -> Result<(u64, Vec<(String, String)>), String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let mut cmd = redis::cmd("HSCAN");
+    cmd.arg(key).arg(cursor).arg("COUNT").arg(count);
+    if let Some(pat) = match_pattern {
+        cmd.arg("MATCH").arg(pat);
+    }
+    let raw: redis::Value = cmd.query_async(conn).await.map_err(|e| e.to_string())?;
+    parse_hash_scan_result(&raw)
+}
+
+fn parse_hash_scan_result(raw: &redis::Value) -> Result<(u64, Vec<(String, String)>), String> {
+    match raw {
+        redis::Value::Array(items) if items.len() == 2 => {
+            let next_cursor = parse_cursor_from_value(&items[0])?;
+            let pairs = parse_flat_string_pairs(&items[1])?;
+            Ok((next_cursor, pairs))
+        }
+        _ => Err(format!("unexpected HSCAN response: {raw:?}")),
+    }
+}
+
+/// LRANGE wrapper: returns elements from start to stop (inclusive).
+pub async fn list_range<C>(
+    conn: &mut C,
+    key: &str,
+    start: i64,
+    stop: i64,
+) -> Result<Vec<String>, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let raw: redis::Value = redis::cmd("LRANGE")
+        .arg(key)
+        .arg(start)
+        .arg(stop)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_string_array(&raw)
+}
+
+/// SSCAN wrapper: returns (next_cursor, Vec<member>).
+pub async fn set_scan<C>(
+    conn: &mut C,
+    key: &str,
+    cursor: u64,
+    count: u32,
+    match_pattern: Option<&str>,
+) -> Result<(u64, Vec<String>), String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let mut cmd = redis::cmd("SSCAN");
+    cmd.arg(key).arg(cursor).arg("COUNT").arg(count);
+    if let Some(pat) = match_pattern {
+        cmd.arg("MATCH").arg(pat);
+    }
+    let raw: redis::Value = cmd.query_async(conn).await.map_err(|e| e.to_string())?;
+    parse_scan_result_generic(&raw)
+}
+
+/// ZSCAN wrapper: returns (next_cursor, Vec<(member, score)>).
+pub async fn zset_scan<C>(
+    conn: &mut C,
+    key: &str,
+    cursor: u64,
+    count: u32,
+    match_pattern: Option<&str>,
+) -> Result<(u64, Vec<(String, f64)>), String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let mut cmd = redis::cmd("ZSCAN");
+    cmd.arg(key).arg(cursor).arg("COUNT").arg(count);
+    if let Some(pat) = match_pattern {
+        cmd.arg("MATCH").arg(pat);
+    }
+    let raw: redis::Value = cmd.query_async(conn).await.map_err(|e| e.to_string())?;
+    parse_zscan_result(&raw)
+}
+
+fn parse_cursor_from_value(v: &redis::Value) -> Result<u64, String> {
+    match v {
+        redis::Value::Int(n) => Ok(*n as u64),
+        redis::Value::BulkString(b) => {
+            let s = String::from_utf8_lossy(b);
+            s.trim().parse::<u64>().map_err(|e| format!("bad cursor: {e}"))
+        }
+        redis::Value::SimpleString(s) => s
+            .trim()
+            .parse::<u64>()
+            .map_err(|e| format!("bad cursor: {e}")),
+        other => Err(format!("unexpected cursor value: {other:?}")),
+    }
+}
+
+fn parse_flat_string_pairs(v: &redis::Value) -> Result<Vec<(String, String)>, String> {
+    let items = match v {
+        redis::Value::Array(items) => items,
+        _ => return Err(format!("expected bulk array for scan pairs, got {v:?}")),
+    };
+    let mut pairs = Vec::with_capacity(items.len() / 2);
+    for chunk in items.chunks(2) {
+        if chunk.len() == 2 {
+            let field = value_to_string(&chunk[0]);
+            let value = value_to_string(&chunk[1]);
+            pairs.push((field, value));
+        }
+    }
+    Ok(pairs)
+}
+
+fn parse_flat_string_array(v: &redis::Value) -> Result<Vec<String>, String> {
+    let items = match v {
+        redis::Value::Array(items) => items,
+        _ => return Err(format!("expected bulk array, got {v:?}")),
+    };
+    Ok(items.iter().map(value_to_string).collect())
+}
+
+fn parse_zscan_result(raw: &redis::Value) -> Result<(u64, Vec<(String, f64)>), String> {
+    match raw {
+        redis::Value::Array(items) if items.len() == 2 => {
+            let next_cursor = parse_cursor_from_value(&items[0])?;
+            let flat = parse_flat_string_array(&items[1])?;
+            let mut members = Vec::with_capacity(flat.len() / 2);
+            for chunk in flat.chunks(2) {
+                if chunk.len() == 2 {
+                    let member = chunk[0].clone();
+                    let score = chunk[1].parse::<f64>().unwrap_or(0.0);
+                    members.push((member, score));
+                }
+            }
+            Ok((next_cursor, members))
+        }
+        _ => Err(format!("unexpected ZSCAN response: {raw:?}")),
+    }
+}
+
+fn parse_scan_result_generic(raw: &redis::Value) -> Result<(u64, Vec<String>), String> {
+    match raw {
+        redis::Value::Array(items) if items.len() == 2 => {
+            let next_cursor = parse_cursor_from_value(&items[0])?;
+            let members = parse_flat_string_array(&items[1])?;
+            Ok((next_cursor, members))
+        }
+        _ => Err(format!("unexpected SSCAN response: {raw:?}")),
+    }
+}
+
+fn parse_string_array(raw: &redis::Value) -> Result<Vec<String>, String> {
+    match raw {
+        redis::Value::Array(items) => Ok(items.iter().map(value_to_string).collect()),
+        _ => Err(format!("expected array for LRANGE, got {raw:?}")),
+    }
+}
+
+fn value_to_string(v: &redis::Value) -> String {
+    match v {
+        redis::Value::Nil => String::new(),
+        redis::Value::Int(n) => n.to_string(),
+        redis::Value::BulkString(b) => String::from_utf8_lossy(b).into(),
+        redis::Value::SimpleString(s) => s.clone(),
+        redis::Value::Okay => "OK".into(),
+        other => format!("{other:?}"),
+    }
+}
+
 pub async fn delete_keys<C>(conn: &mut C, keys: &[String]) -> Result<u64, String>
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,

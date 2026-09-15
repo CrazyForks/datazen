@@ -175,6 +175,93 @@ export async function invokeZsetRemove(
   });
 }
 
+export type HashScanEntry = { field: string; value: string };
+export type HashScanResult = { cursor: number; entries: HashScanEntry[] };
+
+export async function invokeHashScan(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  cursor: number,
+  count: number,
+  matchPattern?: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<HashScanResult> {
+  const args: Record<string, unknown> = {
+    dbSessionId,
+    dbIndex,
+    key,
+    cursor,
+    count,
+  };
+  if (matchPattern) args.matchPattern = matchPattern;
+  return (await invoke('redis', 'hash_scan', args)) as HashScanResult;
+}
+
+export type ListRangeResult = { items: string[] };
+
+export async function invokeListRange(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  start: number,
+  stop: number,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<ListRangeResult> {
+  return (await invoke('redis', 'list_range', {
+    dbSessionId,
+    dbIndex,
+    key,
+    start,
+    stop,
+  })) as ListRangeResult;
+}
+
+export type SetScanResult = { cursor: number; members: string[] };
+
+export async function invokeSetScan(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  cursor: number,
+  count: number,
+  matchPattern?: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<SetScanResult> {
+  const args: Record<string, unknown> = {
+    dbSessionId,
+    dbIndex,
+    key,
+    cursor,
+    count,
+  };
+  if (matchPattern) args.matchPattern = matchPattern;
+  return (await invoke('redis', 'set_scan', args)) as SetScanResult;
+}
+
+export type ZsetScanMember = { member: string; score: number };
+export type ZsetScanResult = { cursor: number; members: ZsetScanMember[] };
+
+export async function invokeZsetScan(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  cursor: number,
+  count: number,
+  matchPattern?: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<ZsetScanResult> {
+  const args: Record<string, unknown> = {
+    dbSessionId,
+    dbIndex,
+    key,
+    cursor,
+    count,
+  };
+  if (matchPattern) args.matchPattern = matchPattern;
+  return (await invoke('redis', 'zset_scan', args)) as ZsetScanResult;
+}
+
 export async function invokeRename(
   dbSessionId: string,
   dbIndex: number,

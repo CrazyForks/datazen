@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Plus, Trash2, Search, RefreshCw } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
@@ -7,7 +7,11 @@ import type { KeyDetail } from '../../../../src/types';
 import {
   invokeHashDel,
   invokeHashSet,
+  invokeHashScan,
+  type HashScanEntry,
 } from './keyEditorsInvokes';
+
+const PAGE_SIZE = 100;
 
 export function HashEditor({
   dbSessionId,
@@ -21,20 +25,93 @@ export function HashEditor({
   onChanged: () => void;
 }) {
   const { t } = useI18n();
-  const raw =
-    typeof detail.value === 'object' && detail.value !== null
-      ? ((detail.value as Record<string, Record<string, string>>).fields ??
-        (detail.value as Record<string, string>))
-      : {};
-  const fields = Object.entries(raw);
+
+  // Cursor-based pagination state
+  const [entries, setEntries] = useState<HashScanEntry[]>([]);
+  const [cursor, setCursor] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [searchPattern, setSearchPattern] = useState('');
+
+  // Editing state
   const [newField, setNewField] = useState('');
   const [newValue, setNewValue] = useState('');
   const [editValues, setEditValues] = useState<Record<string, string>>({});
+
+  const loadPage = useCallback(
+    async (nextCursor: number, pattern: string) => {
+      setLoading(true);
+      try {
+        const result = await invokeHashScan(
+          dbSessionId,
+          dbIndex,
+          detail.key,
+          nextCursor,
+          PAGE_SIZE,
+          pattern || undefined,
+        );
+        if (nextCursor === 0) {
+          setEntries(result.entries);
+        } else {
+          setEntries((prev) => [...prev, ...result.entries]);
+        }
+        setCursor(result.cursor);
+        setHasMore(result.cursor !== 0);
+        if (nextCursor === 0) setPage(1);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [dbSessionId, dbIndex, detail.key],
+  );
+
+  // Initial load
+  useEffect(() => {
+    void loadPage(0, '');
+  }, [loadPage]);
+
+  const handleSearch = () => {
+    void loadPage(0, searchPattern);
+  };
+
+  const handleLoadMore = () => {
+    void loadPage(cursor, searchPattern);
+  };
+
+  const handleRefresh = () => {
+    setEntries([]);
+    setCursor(0);
+    setHasMore(true);
+    void loadPage(0, searchPattern);
+  };
 
   const getValue = (field: string, original: string) => editValues[field] ?? original;
 
   return (
     <div className="space-y-2">
+      {/* Search + refresh toolbar */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-muted" />
+          <Input
+            value={searchPattern}
+            onChange={(e) => setSearchPattern(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSearch();
+            }}
+            placeholder={t('redis.search')}
+            className="h-7 pl-7 font-mono text-xs"
+          />
+        </div>
+        <Button variant="secondary" className="h-7 px-2 text-xs" onClick={handleSearch}>
+          {t('redis.search')}
+        </Button>
+        <Button variant="ghost" className="h-7 px-2 text-xs" onClick={handleRefresh}>
+          <RefreshCw className="h-3 w-3" />
+        </Button>
+      </div>
+
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-edge bg-surface-alt text-left">
@@ -44,13 +121,15 @@ export function HashEditor({
           </tr>
         </thead>
         <tbody>
-          {fields.map(([field, val]) => (
-            <tr key={field} className="border-b border-edge">
-              <td className="px-2 py-1.5 font-mono text-fg-secondary">{field}</td>
+          {entries.map((entry) => (
+            <tr key={entry.field} className="border-b border-edge">
+              <td className="px-2 py-1.5 font-mono text-fg-secondary">{entry.field}</td>
               <td className="px-2 py-1.5">
                 <Input
-                  value={getValue(field, String(val))}
-                  onChange={(e) => setEditValues((prev) => ({ ...prev, [field]: e.target.value }))}
+                  value={getValue(entry.field, entry.value)}
+                  onChange={(e) =>
+                    setEditValues((prev) => ({ ...prev, [entry.field]: e.target.value }))
+                  }
                   className="h-7 font-mono text-xs"
                 />
               </td>
@@ -64,9 +143,12 @@ export function HashEditor({
                         dbSessionId,
                         dbIndex,
                         detail.key,
-                        field,
-                        getValue(field, String(val)),
-                      ).then(onChanged)
+                        entry.field,
+                        getValue(entry.field, entry.value),
+                      ).then(() => {
+                        handleRefresh();
+                        onChanged();
+                      })
                     }
                   >
                     {t('common.save')}
@@ -75,7 +157,12 @@ export function HashEditor({
                     variant="ghost"
                     className="h-6 px-1.5 text-[10px] text-danger"
                     onClick={() =>
-                      void invokeHashDel(dbSessionId, dbIndex, detail.key, [field]).then(onChanged)
+                      void invokeHashDel(dbSessionId, dbIndex, detail.key, [entry.field]).then(
+                        () => {
+                          handleRefresh();
+                          onChanged();
+                        },
+                      )
                     }
                   >
                     <Trash2 className="h-3 w-3" />
@@ -84,8 +171,32 @@ export function HashEditor({
               </td>
             </tr>
           ))}
+          {entries.length === 0 && !loading && (
+            <tr>
+              <td colSpan={3} className="px-2 py-4 text-center text-fg-muted">
+                {t('redis.noKeys')}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
+
+      {/* Load more */}
+      {hasMore && (
+        <div className="flex items-center justify-between text-xs text-fg-muted">
+          <span>{t('redis.totalItems', { count: String(entries.length) })}</span>
+          <Button
+            variant="secondary"
+            className="h-7 gap-1 px-2 text-xs"
+            disabled={loading}
+            onClick={handleLoadMore}
+          >
+            {loading ? '…' : t('redis.loadMore')}
+          </Button>
+        </div>
+      )}
+
+      {/* Add new field */}
       <div className="flex flex-wrap items-end gap-2">
         <Input
           value={newField}
@@ -108,6 +219,7 @@ export function HashEditor({
               () => {
                 setNewField('');
                 setNewValue('');
+                handleRefresh();
                 onChanged();
               },
             )
