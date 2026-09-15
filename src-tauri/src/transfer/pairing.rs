@@ -146,11 +146,18 @@ mod tests {
     }
 
     #[test]
-    fn other_category_is_unsupported() {
-        assert!(matches!(
-            resolve_sync_pairing("kiwi", "postgresql"),
-            SyncPairing::Unsupported { .. }
-        ));
+    fn kiwi_reclassified_as_sql_is_supported() {
+        // Kiwi was re-classified as a SQL driver, so pairing it with another
+        // SQL driver is supported (IR for a different dialect family) rather
+        // than rejected as a cross-category / "other" pairing.
+        assert!(
+            matches!(
+                resolve_sync_pairing("kiwi", "postgresql"),
+                SyncPairing::Ir | SyncPairing::Direct { .. }
+            ),
+            "kiwi is SQL-category now; got {:?}",
+            resolve_sync_pairing("kiwi", "postgresql")
+        );
     }
 
     #[test]

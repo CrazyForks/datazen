@@ -155,6 +155,7 @@ mod connection_config_tests {
             host: Some("127.0.0.1".into()),
             port: Some(6379),
             database: Some("0".into()),
+            domain: None,
             schema: None,
             username: None,
             password: None,

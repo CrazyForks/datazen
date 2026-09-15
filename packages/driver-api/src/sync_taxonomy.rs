@@ -35,7 +35,6 @@ fn sync_category_unregistered(id: &str) -> SyncCategory {
     match id {
         "redis" => SyncCategory::Kv,
         "mongodb" => SyncCategory::Document,
-        "kiwi" | "superset" => SyncCategory::Other,
         _ => SyncCategory::Sql,
     }
 }
@@ -53,8 +52,9 @@ mod tests {
     }
 
     #[test]
-    fn unregistered_kiwi_is_other() {
-        assert_eq!(sync_category_of("kiwi"), SyncCategory::Other);
+    fn unregistered_kiwi_is_sql() {
+        // Kiwi was re-classified as a SQL driver (category: 'sql').
+        assert_eq!(sync_category_of("kiwi"), SyncCategory::Sql);
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod tests {
     fn test_tester_unregistered_sync_categories() {
         assert_eq!(sync_category_of("redis"), SyncCategory::Kv);
         assert_eq!(sync_category_of("mongodb"), SyncCategory::Document);
-        assert_eq!(sync_category_of("superset"), SyncCategory::Other);
+        assert_eq!(sync_category_of("superset"), SyncCategory::Sql);
         assert_eq!(sync_category_of("unknown_engine"), SyncCategory::Sql);
     }
 
