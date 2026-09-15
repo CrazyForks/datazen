@@ -50,6 +50,11 @@ const pack = {
   'settings.autoChartOnQuery': 'Auto-switch to chart',
   'settings.autoChartOnQueryHint':
     'After a query, open the Chart tab when the result looks chartable.',
+  'settings.workflowStepResultOrder': 'Workflow step result order',
+  'settings.workflowStepResultOrderHint':
+    'Order of the step result tabs shown after a workflow run.',
+  'settings.workflowStepOrder.asc': 'Step ascending (first step first)',
+  'settings.workflowStepOrder.desc': 'Step descending (last step first)',
   'settings.maxRows': 'Max Returned Rows',
   'settings.editor': 'Editor',
   'settings.editorCompletionQuotePolicy': 'Autocomplete Identifier Quoting',

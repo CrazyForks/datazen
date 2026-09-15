@@ -97,6 +97,10 @@ pub struct ConnectionConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub database: Option<String>,
+    /// Driver-level instance identifier (e.g. Kiwi instance domain). Some
+    /// drivers keep their domain here instead of overloading `database`.
+    #[serde(default)]
+    pub domain: Option<String>,
     pub schema: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,

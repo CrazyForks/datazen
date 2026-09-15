@@ -60,6 +60,7 @@ async fn migrates_dot_key_into_keyring_and_deletes_file() {
 
 fn sample_connection_with_ssh() -> ConnectionConfig {
     ConnectionConfig {
+        domain: None,
         id: "test-ssh-1".into(),
         name: "SSH Test".into(),
         database_type: "postgresql".into(),

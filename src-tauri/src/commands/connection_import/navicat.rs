@@ -539,6 +539,7 @@ pub fn parse(xml: &str) -> Result<ParsedImport, CommandError> {
         }
 
         connections.push(ConnectionConfig {
+            domain: None,
             id: uuid::Uuid::new_v4().to_string(),
             name,
             database_type: db_type.into(),

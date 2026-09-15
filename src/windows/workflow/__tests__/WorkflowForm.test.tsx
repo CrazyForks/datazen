@@ -1,8 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
-import { render, cleanup, fireEvent, screen } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { WorkflowForm, emptyDraft } from '../WorkflowForm';
 import type { WorkflowDraft } from '../WorkflowForm';
+import { listDatabasesDedicated } from '../../../lib/dedicatedDbSession';
+import { DB_REGISTRY } from '../../../lib/databaseTypes';
+
+vi.mock('../../../lib/dedicatedDbSession', () => ({
+  listDatabasesDedicated: vi.fn(),
+}));
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -127,6 +133,7 @@ function renderForm(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(listDatabasesDedicated).mockResolvedValue({ databases: [], dbSessionId: null });
 });
 
 afterEach(cleanup);
@@ -284,5 +291,105 @@ describe('WorkflowForm', () => {
     });
     fireEvent.change(screen.getByDisplayValue('3600'), { target: { value: '90' } });
     expect(onChange2.mock.calls.at(-1)?.[0].scheduleIntervalSecs).toBe(90);
+  });
+
+  it('shows a required database select for multi-db connections', async () => {
+    vi.mocked(listDatabasesDedicated).mockResolvedValue({
+      databases: ['app', 'admin'],
+      dbSessionId: null,
+    });
+    const draft = { ...emptyDraft(), name: 'WF', connection: 'c1' };
+    render(<StatefulForm initialDraft={draft} conns={connections} />);
+
+    await waitFor(() => expect(listDatabasesDedicated).toHaveBeenCalledWith('c1'));
+
+    // A database select with the connection's databases should appear.
+    let dbSelect: HTMLSelectElement | undefined;
+    await waitFor(() => {
+      dbSelect = screen
+        .getAllByTestId('mock-select')
+        .find((s) =>
+          Array.from((s as HTMLSelectElement).options).some((o) => o.value === 'app'),
+        ) as HTMLSelectElement | undefined;
+      expect(dbSelect).toBeTruthy();
+    });
+
+    fireEvent.change(dbSelect!, { target: { value: 'admin' } });
+    await waitFor(() => expect(dbSelect!.value).toBe('admin'));
+  });
+
+  it('auto-fills the single database for a multi-db connection', async () => {
+    vi.mocked(listDatabasesDedicated).mockResolvedValue({
+      databases: ['only'],
+      dbSessionId: null,
+    });
+    const draft = { ...emptyDraft(), name: 'WF', connection: 'c1' };
+    render(<StatefulForm initialDraft={draft} conns={connections} />);
+
+    await waitFor(() => expect(listDatabasesDedicated).toHaveBeenCalledWith('c1'));
+    await waitFor(() => {
+      const selects = screen.getAllByTestId('mock-select');
+      expect(selects.some((s) => (s as HTMLSelectElement).value === 'only')).toBe(true);
+    });
+  });
+
+  it('does not require a database when locked to a configured database', async () => {
+    const conns = [{ id: 'c1', name: 'PG', databaseType: 'postgresql', database: 'fixed_db' }];
+    const draft = { ...emptyDraft(), name: 'WF', connection: 'c1' };
+    const { rerender } = render(<StatefulForm initialDraft={draft} conns={conns} />);
+
+    await new Promise((r) => setTimeout(r, 20));
+    // No databases should be fetched and no database select rendered.
+    expect(listDatabasesDedicated).not.toHaveBeenCalled();
+    rerender(<StatefulForm initialDraft={draft} conns={conns} />);
+    const selects = screen.getAllByTestId('mock-select');
+    expect(
+      selects.some((s) =>
+        Array.from((s as HTMLSelectElement).options).some((o) => o.textContent?.includes('admin')),
+      ),
+    ).toBe(false);
+  });
+
+  it('shows two database picker layers when the workflow connection is multi-db', async () => {
+    vi.mocked(listDatabasesDedicated).mockResolvedValue({
+      databases: ['app', 'admin'],
+      dbSessionId: null,
+    });
+    const draft = { ...emptyDraft(), name: 'WF', connection: 'c1' };
+    render(<StatefulForm initialDraft={draft} conns={connections} />);
+
+    await waitFor(() => expect(listDatabasesDedicated).toHaveBeenCalledWith('c1'));
+    await waitFor(() => {
+      const dbSelects = screen
+        .getAllByTestId('mock-select')
+        .filter((s) => Array.from((s as HTMLSelectElement).options).some((o) => o.value === 'app'));
+      // workflow-level picker + the query step's per-step picker.
+      expect(dbSelects.length).toBe(2);
+    });
+  });
+
+  it('keeps domain-type connections multi-db even with a configured database', async () => {
+    if (!DB_REGISTRY.kiwi) return;
+    vi.mocked(listDatabasesDedicated).mockResolvedValue({
+      databases: ['biz_a', 'biz_b'],
+      dbSessionId: null,
+    });
+    // Kiwi stores an instance domain (here as its configured database, the
+    // legacy representation) and must still be treated as multi-db.
+    const conns = [
+      { id: 'k1', name: 'Kiwi', databaseType: 'kiwi', database: 'pe-xxx.rwlb.rds.aliyuncs.com' },
+    ];
+    const draft = { ...emptyDraft(), name: 'WF', connection: 'k1' };
+    render(<StatefulForm initialDraft={draft} conns={conns} />);
+
+    await waitFor(() => expect(listDatabasesDedicated).toHaveBeenCalledWith('k1'));
+    await waitFor(() => {
+      const dbSelects = screen
+        .getAllByTestId('mock-select')
+        .filter((s) =>
+          Array.from((s as HTMLSelectElement).options).some((o) => o.value === 'biz_a'),
+        );
+      expect(dbSelects.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });

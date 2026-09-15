@@ -376,6 +376,7 @@ pub fn parse(xml: &str) -> Result<ParsedImport, CommandError> {
         }
 
         connections.push(ConnectionConfig {
+            domain: None,
             id: uuid,
             name,
             database_type: profile.db_type.into(),

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { SqlEditor, type SqlEditorHandle } from '../../components/SqlEditor';
 import { useI18n } from '../../hooks/useI18n';
@@ -8,9 +7,12 @@ import { driverCommands } from '../../commands/driver';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { aiCommands } from '../../commands/ai';
 import { rememberWorkflowDraft } from './draftBridge';
+import { WorkflowEditorActionBar } from './WorkflowEditorActionBar';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { buildSqlEditorContextMenuItems } from '../../lib/sqlEditorContextMenu';
 import { formatSql } from '../../lib/sqlFormat';
+import { listDatabasesDedicated } from '../../lib/dedicatedDbSession';
+import { DB_REGISTRY } from '../../lib/databaseTypes';
 import type { DriverCommandDefinition, WorkflowStepType } from '../../types';
 
 function WorkflowSqlEditor({
@@ -79,6 +81,8 @@ export interface WorkflowDraft {
   name: string;
   description: string;
   connection?: string;
+  /** Default database inherited by data-operation steps (multi-db connections). */
+  database?: string;
   variables: { name: string; varType: string; description: string; required: boolean }[];
   steps: WorkflowStepDraft[];
   scheduleEnabled?: boolean;
@@ -101,12 +105,18 @@ export function emptyDraft(): WorkflowDraft {
 interface WorkflowFormProps {
   draft: WorkflowDraft;
   editingId: string | null;
-  connections: { id: string; name: string; databaseType: string }[];
+  connections: { id: string; name: string; databaseType: string; database?: string }[];
   onDraftChange: (d: WorkflowDraft) => void;
   onSave: () => void;
   onCancel: () => void;
   /** `compact` fits AI panel sidebar; `page` is the full workflow window editor. */
   variant?: 'page' | 'compact';
+  /**
+   * When false, the page-level shared `<WorkflowEditorActionBar>` is used instead
+   * (kept as a sibling of the tab content). Defaults to true so standalone usage
+   * (e.g. the AI panel) still renders its own footer.
+   */
+  showActionBar?: boolean;
 }
 
 function commandOptionLabel(definition: DriverCommandDefinition) {
@@ -284,6 +294,7 @@ export function WorkflowForm({
   onSave,
   onCancel,
   variant = 'page',
+  showActionBar = true,
 }: WorkflowFormProps) {
   const { t } = useI18n();
   const inputClass =
@@ -335,6 +346,92 @@ export function WorkflowForm({
 
   const effectiveConnection = (step: WorkflowStepDraft) =>
     step.connection || draft.connection || '';
+
+  /**
+   * A connection offers a database picker when its driver has multi-db
+   * capability and is not locked to a single real database. A configured
+   * `database` only acts as that lock for non-domain drivers — domain-type
+   * drivers (e.g. Kiwi) store an instance domain separately and always stay
+   * multi-db.
+   */
+  const connectionAllowsMultiDb = useCallback(
+    (connId: string | undefined) => {
+      if (!connId) return false;
+      const conn = connections.find((c) => c.id === connId);
+      if (!conn) return false;
+      const meta = DB_REGISTRY[conn.databaseType as keyof typeof DB_REGISTRY];
+      if (!meta?.hasMultiDatabase) return false;
+      return !conn.database || meta.databaseFieldType === 'domain';
+    },
+    [connections],
+  );
+
+  /** Databases loaded lazily per multi-db connection (via a short-lived session). */
+  const [databasesByConn, setDatabasesByConn] = useState<Record<string, string[]>>({});
+  const [loadingDatabases, setLoadingDatabases] = useState<Record<string, boolean>>({});
+
+  /** Multi-db-capable connections used at workflow level or by query/command steps. */
+  const multiDbConnections = useMemo(() => {
+    const candidates = [
+      draft.connection,
+      ...draft.steps
+        .filter((s) => s.type === 'query' || s.type === 'command')
+        .map(effectiveConnection),
+    ];
+    return Array.from(
+      new Set(candidates.filter((id): id is string => connectionAllowsMultiDb(id))),
+    );
+  }, [draft.connection, draft.steps, connections, connectionAllowsMultiDb]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const connectionId of multiDbConnections) {
+      if (databasesByConn[connectionId]) continue;
+      setLoadingDatabases((prev) => ({ ...prev, [connectionId]: true }));
+      void listDatabasesDedicated(connectionId)
+        .then(({ databases }) => {
+          if (!cancelled) setDatabasesByConn((prev) => ({ ...prev, [connectionId]: databases }));
+        })
+        .catch(() => {
+          if (!cancelled) setDatabasesByConn((prev) => ({ ...prev, [connectionId]: [] }));
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingDatabases((prev) => ({ ...prev, [connectionId]: false }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // loadingDatabases is intentionally excluded: toggling it must not cancel
+    // the in-flight fetch (that would discard the resolved database list).
+  }, [multiDbConnections, databasesByConn]);
+
+  /** Auto-fill the (single) database for multi-db connections with exactly one. */
+  useEffect(() => {
+    let changed = false;
+    let nextDatabase = draft.database;
+    if (draft.connection && !draft.database) {
+      const dbs = databasesByConn[draft.connection];
+      if (dbs?.length === 1 && nextDatabase !== dbs[0]) {
+        changed = true;
+        nextDatabase = dbs[0];
+      }
+    }
+    const next = draft.steps.map((s) => {
+      if (s.type !== 'query' && s.type !== 'command') return s;
+      const connId = s.connection || draft.connection;
+      if (!connId) return s;
+      const dbs = databasesByConn[connId];
+      if (dbs?.length === 1 && s.database !== dbs[0]) {
+        changed = true;
+        return { ...s, database: dbs[0] };
+      }
+      return s;
+    });
+    if (changed) onDraftChange({ ...draft, database: nextDatabase, steps: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [databasesByConn, draft, onDraftChange]);
+
   const commandConnections = useMemo(
     () =>
       Array.from(
@@ -398,7 +495,7 @@ export function WorkflowForm({
       className={
         compact
           ? 'space-y-2 border border-edge rounded-md p-3 bg-surface w-full'
-          : 'w-full max-w-3xl mx-auto p-6 space-y-4'
+          : 'w-full max-w-3xl mx-auto px-6 pt-6 space-y-4'
       }
     >
       {compact && (
@@ -460,6 +557,40 @@ export function WorkflowForm({
               Data-operation steps inherit this connection unless they override it.
             </div>
           </div>
+
+          {(() => {
+            const wfNeedsDatabase = connectionAllowsMultiDb(draft.connection);
+            if (!wfNeedsDatabase) return null;
+            const wfDatabases = draft.connection ? (databasesByConn[draft.connection] ?? []) : [];
+            const wfLoading = draft.connection
+              ? Boolean(loadingDatabases[draft.connection])
+              : false;
+            return (
+              <div>
+                <label className="text-xs text-fg-muted block mb-1">
+                  {t('workflows.form.database')}
+                </label>
+                {wfDatabases.length > 0 ? (
+                  <Select
+                    value={draft.database ?? ''}
+                    options={[
+                      { value: '', label: t('workflows.form.databaseRequired') },
+                      ...wfDatabases.map((d) => ({ value: d, label: d })),
+                    ]}
+                    onChange={(value) => onDraftChange({ ...draft, database: value || undefined })}
+                    className="!h-8 !text-xs w-full"
+                  />
+                ) : wfLoading ? (
+                  <span className="text-[11px] text-fg-muted">
+                    {t('workflows.form.databaseLoading')}
+                  </span>
+                ) : null}
+                <div className="text-[11px] text-fg-muted mt-1">
+                  Data-operation steps inherit this database unless they override it.
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="rounded-lg border border-edge p-3 space-y-2">
             <label className="flex items-center gap-2 text-xs text-fg">
@@ -630,22 +761,59 @@ export function WorkflowForm({
                   }
                   className="!h-7 !text-xs w-32"
                 />
-                {(step.type === 'query' || step.type === 'command') && connections.length > 0 && (
-                  <Select
-                    value={step.connection ?? ''}
-                    options={[
-                      { value: '', label: draft.connection ? 'Inherited' : 'Select connection' },
-                      ...connections.map((c) => ({ value: c.id, label: c.name })),
-                    ]}
-                    onChange={(v) =>
-                      setStep(i, {
-                        connection: v || undefined,
-                        command: v ? undefined : step.command,
-                      })
-                    }
-                    className="!h-7 !text-xs flex-1"
-                  />
-                )}
+                {(() => {
+                  if (step.type !== 'query' && step.type !== 'command') return null;
+                  if (connections.length === 0) return null;
+                  const connId = step.connection || draft.connection || '';
+                  const needsDatabase = connectionAllowsMultiDb(connId);
+                  const databases = connId ? (databasesByConn[connId] ?? []) : [];
+                  const loadingDb = connId ? Boolean(loadingDatabases[connId]) : false;
+                  return (
+                    <>
+                      <Select
+                        value={step.connection ?? ''}
+                        options={[
+                          {
+                            value: '',
+                            label: draft.connection ? 'Inherited' : 'Select connection',
+                          },
+                          ...connections.map((c) => ({ value: c.id, label: c.name })),
+                        ]}
+                        onChange={(v) =>
+                          setStep(i, {
+                            connection: v || undefined,
+                            command: v ? undefined : step.command,
+                          })
+                        }
+                        className="!h-7 !text-xs flex-1"
+                      />
+                      {needsDatabase && (
+                        <>
+                          {databases.length > 0 ? (
+                            <Select
+                              value={step.database ?? ''}
+                              options={[
+                                {
+                                  value: '',
+                                  label: draft.database
+                                    ? t('workflows.form.databaseInherit')
+                                    : t('workflows.form.databaseRequired'),
+                                },
+                                ...databases.map((d) => ({ value: d, label: d })),
+                              ]}
+                              onChange={(v) => setStep(i, { database: v || undefined })}
+                              className="!h-7 !text-xs flex-1"
+                            />
+                          ) : loadingDb ? (
+                            <span className="w-full flex-1 text-[11px] text-fg-muted leading-7">
+                              {t('workflows.form.databaseLoading')}
+                            </span>
+                          ) : null}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
                 {draft.steps.length > 1 && (
                   <button
                     type="button"
@@ -728,38 +896,29 @@ export function WorkflowForm({
         })}
       </div>
 
-      <div className={compact ? 'flex gap-2 pt-1' : 'flex gap-3 pt-2'}>
-        {compact ? (
-          <>
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              className="px-3 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-              onClick={onSave}
-              disabled={!draft.id.trim() || !draft.name.trim() || draft.steps.length === 0}
-            >
-              {t('common.save')}
-            </button>
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              className="px-3 py-1 text-xs text-fg-secondary border border-edge rounded hover:bg-surface-raised transition-colors"
-              onClick={onCancel}
-            >
-              {t('common.cancel')}
-            </button>
-          </>
-        ) : (
-          <>
-            <Button onClick={onSave} className="px-6">
-              {t('common.save')}
-            </Button>
-            <Button variant="secondary" onClick={onCancel} className="px-6">
-              {t('common.cancel')}
-            </Button>
-          </>
-        )}
-      </div>
+      {compact ? (
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            className="px-3 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+            onClick={onSave}
+            disabled={!draft.id.trim() || !draft.name.trim() || draft.steps.length === 0}
+          >
+            {t('common.save')}
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            className="px-3 py-1 text-xs text-fg-secondary border border-edge rounded hover:bg-surface-raised transition-colors"
+            onClick={onCancel}
+          >
+            {t('common.cancel')}
+          </button>
+        </div>
+      ) : showActionBar ? (
+        <WorkflowEditorActionBar onSave={onSave} onCancel={onCancel} />
+      ) : null}
     </div>
   );
 }

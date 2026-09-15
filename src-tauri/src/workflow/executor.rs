@@ -107,11 +107,13 @@ impl WorkflowExecutor {
         }
 
         let workflow_connection = workflow.connection.as_deref().or(connection_id);
+        let workflow_database = workflow.database.as_deref();
         let mut step_results = Vec::new();
         let outcome = Self::execute_steps(
             &workflow.steps,
             app_state,
             workflow_connection,
+            workflow_database,
             &mut context,
             &mut step_results,
             &default_strategy,
@@ -154,6 +156,7 @@ impl WorkflowExecutor {
         steps: &'a [WorkflowStep],
         app_state: &'a AppState,
         connection_id: Option<&'a str>,
+        workflow_database: Option<&'a str>,
         context: &'a mut WorkflowContext,
         step_results: &'a mut Vec<StepExecutionResult>,
         default_strategy: &'a ErrorStrategy,
@@ -196,6 +199,7 @@ impl WorkflowExecutor {
                             branch,
                             app_state,
                             connection_id,
+                            workflow_database,
                             context,
                             step_results,
                             default_strategy,
@@ -245,6 +249,7 @@ impl WorkflowExecutor {
                                 loop_steps,
                                 app_state,
                                 connection_id,
+                                workflow_database,
                                 context,
                                 &mut iteration_steps,
                                 default_strategy,
@@ -280,6 +285,7 @@ impl WorkflowExecutor {
                                 step,
                                 app_state,
                                 connection_id,
+                                workflow_database,
                                 context,
                                 options,
                             ),
@@ -298,6 +304,7 @@ impl WorkflowExecutor {
                                     elapsed,
                                     app_state,
                                     connection_id,
+                                    workflow_database,
                                     context,
                                     step_results,
                                     default_strategy,
@@ -319,6 +326,7 @@ impl WorkflowExecutor {
                                     elapsed,
                                     app_state,
                                     connection_id,
+                                    workflow_database,
                                     context,
                                     step_results,
                                     default_strategy,
@@ -343,6 +351,7 @@ impl WorkflowExecutor {
         elapsed: u64,
         app_state: &AppState,
         connection_id: Option<&str>,
+        workflow_database: Option<&str>,
         context: &mut WorkflowContext,
         step_results: &mut Vec<StepExecutionResult>,
         default_strategy: &ErrorStrategy,
@@ -387,6 +396,7 @@ impl WorkflowExecutor {
                     &steps,
                     app_state,
                     connection_id,
+                    workflow_database,
                     context,
                     step_results,
                     default_strategy,
@@ -403,6 +413,7 @@ impl WorkflowExecutor {
         step: &WorkflowStep,
         app_state: &AppState,
         workflow_connection: Option<&str>,
+        workflow_database: Option<&str>,
         context: &mut WorkflowContext,
         options: &WorkflowExecuteOptions,
     ) -> Result<StepExecutionResult, WorkflowError> {
@@ -415,6 +426,14 @@ impl WorkflowExecutor {
                 timeout_secs,
                 on_error,
             } => {
+                let step_database = database
+                    .as_deref()
+                    .map(|s| context.resolve_template(s))
+                    .transpose()?;
+                let inherited_database = workflow_database
+                    .map(|s| context.resolve_template(s))
+                    .transpose()?;
+                let resolved_database = step_database.or(inherited_database);
                 let command = WorkflowCommandStep::from_legacy_query(
                     id.clone(),
                     context.resolve_template(sql)?,
@@ -422,10 +441,7 @@ impl WorkflowExecutor {
                         .as_deref()
                         .map(|s| context.resolve_template(s))
                         .transpose()?,
-                    database
-                        .as_deref()
-                        .map(|s| context.resolve_template(s))
-                        .transpose()?,
+                    resolved_database,
                     *timeout_secs,
                     on_error.clone(),
                 );
@@ -782,6 +798,7 @@ mod tests {
         let test = crate::testing::app_state::TestAppState::new().await;
         test.save_connection("wf-default").await;
         let workflow = WorkflowDefinition {
+            database: None,
             id: "inherit".into(),
             name: "Inherit".into(),
             description: String::new(),
@@ -818,6 +835,7 @@ mod tests {
         test.save_connection("wf-default").await;
         test.save_connection("wf-override").await;
         let workflow = WorkflowDefinition {
+            database: None,
             id: "override".into(),
             name: "Override".into(),
             description: String::new(),
@@ -851,6 +869,7 @@ mod tests {
     async fn merge_and_transform_steps_execute_without_db() {
         let test = crate::testing::app_state::TestAppState::new().await;
         let workflow = WorkflowDefinition {
+            database: None,
             id: "data-step".into(),
             name: "DataStep".into(),
             description: String::new(),

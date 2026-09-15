@@ -22,6 +22,9 @@ pub struct WorkflowDefinition {
     /// Default Connection inherited by Data-operation Steps.
     #[serde(default)]
     pub connection: Option<String>,
+    /// Default Database inherited by Data-operation Steps (for multi-db connections).
+    #[serde(default)]
+    pub database: Option<String>,
     pub steps: Vec<WorkflowStep>,
     pub output: Option<WorkflowOutput>,
     pub timeout_secs: Option<u64>,

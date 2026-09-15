@@ -7,6 +7,7 @@ import {
 } from 'react';
 import {
   AlertTriangle,
+  ArrowDownUp,
   BarChart3,
   BookOpen,
   Clock,
@@ -30,6 +31,7 @@ import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { ChartView } from '../../components/chart/ChartView';
 import { WorkflowChatPanel } from '../../components/ai/WorkflowChatPanel';
 import { isChartableResult } from '../../lib/chart/fieldInference';
+import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
@@ -54,6 +56,7 @@ import { AddToDashboardDialog } from '../dashboard/AddToDashboardDialog';
 import { WorkflowForm, emptyDraft } from './WorkflowForm';
 import type { WorkflowDraft } from './WorkflowForm';
 import { WorkflowYamlEditor } from './WorkflowYamlEditor';
+import { WorkflowEditorActionBar } from './WorkflowEditorActionBar';
 import { WorkflowHistoryList } from './WorkflowHistorySection';
 import {
   StepStatusIcon,
@@ -97,6 +100,37 @@ function nextPanelId(prefix: string) {
   return `${prefix}-${panelCounter}`;
 }
 
+/** Index of the step that lands in the first result tab for the given order. */
+function firstShownIndex(count: number, order: 'asc' | 'desc'): number {
+  return order === 'desc' ? Math.max(0, count - 1) : 0;
+}
+
+/**
+ * True when any query/command step's effective database (its own, or the
+ * inherited workflow default) is still missing for a multi-db connection.
+ */
+function stepNeedsDatabase(
+  steps: { type: string; connection?: string; database?: string }[],
+  draftConnection: string | undefined,
+  draftDatabase: string | undefined,
+  connections: { id: string; databaseType: string; database?: string }[],
+): boolean {
+  return steps.some((s) => {
+    if (s.type !== 'query' && s.type !== 'command') return false;
+    const connId = s.connection || draftConnection;
+    const conn = connId ? connections.find((c) => c.id === connId) : undefined;
+    if (!conn) return false;
+    const meta = DB_REGISTRY[conn.databaseType as keyof typeof DB_REGISTRY];
+    if (!meta?.hasMultiDatabase) return false;
+    // Domain-type drivers (e.g. Kiwi) keep a configured instance domain
+    // separate and never lock the connection to a single database.
+    const lockedToSingle = Boolean(conn.database) && meta.databaseFieldType !== 'domain';
+    if (lockedToSingle) return false;
+    const effectiveDatabase = s.database || draftDatabase;
+    return !effectiveDatabase;
+  });
+}
+
 // (WorkflowDraft types and emptyDraft moved to ./WorkflowForm.tsx)
 
 // ── Main Component ──────────────────────────────────────────────────
@@ -119,6 +153,16 @@ export function WorkflowPage({
   const clearWorkflowResult = useAiStore((s) => s.clearWorkflowResult);
   const setupAiListeners = useAiStore((s) => s.setupEventListeners);
   const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const appSettings = useSettingsStore((s) => s.settings);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
+
+  // ── Workflow step result ordering (declared early: callbacks reference it) ──
+  const stepResultOrder: 'asc' | 'desc' = appSettings.workflowStepResultOrder ?? 'desc';
+  const toggleStepOrder = useCallback(() => {
+    void updateSettings({
+      workflowStepResultOrder: stepResultOrder === 'desc' ? 'asc' : 'desc',
+    });
+  }, [stepResultOrder, updateSettings]);
 
   const [panels, setPanels] = useState<Panel[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
@@ -217,7 +261,9 @@ export function WorkflowPage({
       if (existing) {
         setActivePanelId(existing.id);
         setActiveStepIndex(
-          isHistoryDetailPanel(existing) && existing.result.steps.length > 0 ? 0 : null,
+          isHistoryDetailPanel(existing) && existing.result.steps.length > 0
+            ? firstShownIndex(existing.result.steps.length, stepResultOrder)
+            : null,
         );
         return;
       }
@@ -233,12 +279,16 @@ export function WorkflowPage({
         };
         setPanels((prev) => [...prev, panel]);
         setActivePanelId(panel.id);
-        setActiveStepIndex(entry.result.steps.length > 0 ? 0 : null);
+        setActiveStepIndex(
+          entry.result.steps.length > 0
+            ? firstShownIndex(entry.result.steps.length, stepResultOrder)
+            : null,
+        );
       } catch (e) {
         setFeedback(String(e));
       }
     },
-    [panels],
+    [panels, stepResultOrder],
   );
 
   const closePanel = useCallback((panelId: string) => {
@@ -345,7 +395,7 @@ export function WorkflowPage({
           }),
         );
         if (result && result.steps.length > 0) {
-          setActiveStepIndex(0);
+          setActiveStepIndex(firstShownIndex(result.steps.length, stepResultOrder));
         }
       } catch {
         setPanels((prev) =>
@@ -357,7 +407,7 @@ export function WorkflowPage({
       }
       void loadHistory();
     },
-    [executeWorkflow, loadHistory],
+    [executeWorkflow, loadHistory, stepResultOrder],
   );
 
   const handleExecute = useCallback(async () => {
@@ -525,6 +575,14 @@ export function WorkflowPage({
   }, [activePanel, workflows]);
   const isExecuting =
     activePanel && isWorkflowRunPanel(activePanel) ? activePanel.isExecuting : false;
+
+  const stepIndices = useMemo(() => {
+    const steps = currentResult?.steps;
+    if (!steps || steps.length === 0) return [] as number[];
+    const idx = Array.from({ length: steps.length }, (_, i) => i);
+    if (stepResultOrder === 'desc') idx.reverse(); // last step first
+    return idx;
+  }, [currentResult, stepResultOrder]);
 
   const handleAddToDashboardConfirm = useCallback(
     async (dashboardId: string | 'new', newName?: string) => {
@@ -771,7 +829,9 @@ export function WorkflowPage({
                           setActivePanelId(panel.id);
                           const panelResult = panelExecutionResult(panel);
                           setActiveStepIndex(
-                            panelResult && panelResult.steps.length > 0 ? 0 : null,
+                            panelResult && panelResult.steps.length > 0
+                              ? firstShownIndex(panelResult.steps.length, stepResultOrder)
+                              : null,
                           );
                         }}
                       >
@@ -873,35 +933,57 @@ export function WorkflowPage({
             </div>
           )}
 
-          {/* Steps sub-tab bar (when result exists) */}
+          {/* Execution status / time + step-result order toggle */}
           {currentResult && (
-            <div className="flex shrink-0 items-center gap-1 border-b border-edge bg-surface-alt px-3 py-1 overflow-x-auto">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge bg-surface-alt px-3 py-1">
               <span
                 className={cn(
-                  'text-xs font-medium mr-2',
+                  'text-xs font-medium whitespace-nowrap',
                   currentResult.success ? 'text-green-500' : 'text-red-400',
                 )}
               >
                 {currentResult.success ? '✓' : '✗'} {currentResult.totalTimeMs}ms
               </span>
-              {currentResult.steps.map((step, i) => (
-                <button
-                  key={step.stepId}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setActiveStepIndex(i)}
-                  className={cn(
-                    'relative flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors whitespace-nowrap',
-                    activeStepIndex === i
-                      ? 'bg-accent/10 text-accent'
-                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50',
-                  )}
-                >
-                  <StepStatusIcon status={step.status} />
-                  {step.stepId}
-                  <span className="text-fg-muted">[{step.stepType}]</span>
-                </button>
-              ))}
+              <button
+                type="button"
+                data-testid="workflow-step-order-toggle"
+                title={t('workflows.stepOrder.toggle')}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={toggleStepOrder}
+                className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:text-fg hover:bg-surface-raised/50 whitespace-nowrap"
+              >
+                <ArrowDownUp className="h-3 w-3" />
+                {stepResultOrder === 'desc'
+                  ? t('workflows.stepOrder.desc')
+                  : t('workflows.stepOrder.asc')}
+              </button>
+            </div>
+          )}
+
+          {/* Steps sub-tab bar (when result exists) */}
+          {currentResult && (
+            <div className="flex shrink-0 items-center gap-1 border-b border-edge bg-surface-alt px-3 py-1 overflow-x-auto">
+              {stepIndices.map((i) => {
+                const step = currentResult.steps[i];
+                return (
+                  <button
+                    key={step.stepId}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setActiveStepIndex(i)}
+                    className={cn(
+                      'relative flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors whitespace-nowrap',
+                      activeStepIndex === i
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50',
+                    )}
+                  >
+                    <StepStatusIcon status={step.status} />
+                    {step.stepId}
+                    <span className="text-fg-muted">[{step.stepType}]</span>
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -950,7 +1032,7 @@ export function WorkflowPage({
                 </button>
               </div>
               {activePanel.editorMode === 'visual' ? (
-                <div className="flex flex-1 min-h-0 overflow-y-auto">
+                <div className="flex-1 min-h-0 overflow-y-auto">
                   <WorkflowForm
                     draft={activePanel.draft}
                     editingId={activePanel.editingId}
@@ -958,35 +1040,41 @@ export function WorkflowPage({
                     onDraftChange={(d) => updateEditDraft(activePanel.id, d)}
                     onSave={() => void handleSave(activePanel.id, activePanel.draft)}
                     onCancel={() => closePanel(activePanel.id)}
+                    showActionBar={false}
                   />
                 </div>
               ) : (
-                <div className="flex flex-1 min-h-0 flex-col gap-2 p-3">
-                  <div className="min-h-0 flex-1">
-                    <WorkflowYamlEditor
-                      value={activePanel.yamlText}
-                      onChange={(yaml) => updateEditYaml(activePanel.id, yaml)}
-                    />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      className="rounded-md px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-raised"
-                      onClick={() => closePanel(activePanel.id)}
-                    >
-                      {t('common.cancel')}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="workflow-yaml-save"
-                      className="rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent hover:opacity-90"
-                      onClick={() => void handleSaveYaml(activePanel.id, activePanel.yamlText)}
-                    >
-                      {t('common.save')}
-                    </button>
-                  </div>
+                <div className="min-h-0 flex-1 p-3">
+                  <WorkflowYamlEditor
+                    value={activePanel.yamlText}
+                    onChange={(yaml) => updateEditYaml(activePanel.id, yaml)}
+                  />
                 </div>
               )}
+              {/* Shared bottom action bar (sibling of the tab content) */}
+              <WorkflowEditorActionBar
+                onSave={() => {
+                  if (activePanel.editorMode === 'visual') {
+                    void handleSave(activePanel.id, activePanel.draft);
+                  } else {
+                    void handleSaveYaml(activePanel.id, activePanel.yamlText);
+                  }
+                }}
+                onCancel={() => closePanel(activePanel.id)}
+                saveTestId="workflow-yaml-save"
+                saveDisabled={
+                  activePanel.editorMode === 'visual' &&
+                  (!activePanel.draft.id.trim() ||
+                    !activePanel.draft.name.trim() ||
+                    activePanel.draft.steps.length === 0 ||
+                    stepNeedsDatabase(
+                      activePanel.draft.steps,
+                      activePanel.draft.connection,
+                      activePanel.draft.database,
+                      savedConnections,
+                    ))
+                }
+              />
             </div>
           ) : currentStep ? (
             <StepDetailView step={currentStep} t={t} />
@@ -1139,7 +1227,7 @@ function StepDetailView({
           </div>
         </>
       ) : hasData ? (
-        <div className="flex flex-1 min-h-0">
+        <div className="flex flex-1 min-h-0 pr-1">
           <DataTable
             columns={columns}
             rows={tableRows}

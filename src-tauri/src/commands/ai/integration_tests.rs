@@ -349,6 +349,7 @@ async fn workflow_save_list_get_delete() {
     let test = TestAppState::new().await;
     test.state.workflow_registry.load_all().await.unwrap();
     let wf = WorkflowDefinition {
+        database: None,
         id: "test-wf".into(),
         name: "Test Workflow".into(),
         description: "desc".into(),
@@ -898,6 +899,7 @@ async fn workflow_execute_ai_step_with_wiremock() {
     mock.mount_chat_completion_text("workflow output").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "exec-wf".into(),
         name: "Exec".into(),
         description: String::new(),
@@ -1030,6 +1032,7 @@ async fn workflow_history_clear_after_execute() {
     mock.mount_chat_completion_text("done").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "hist-wf".into(),
         name: "Hist".into(),
         description: String::new(),
@@ -1075,6 +1078,7 @@ async fn dashboard_hidden_workflow_execute_skips_history() {
     mock.mount_chat_completion_text("done").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "hidden-hist".into(),
         name: "Hidden Hist".into(),
         description: String::new(),

@@ -57,6 +57,7 @@ fn hidden_sql_workflow(
     sql: &str,
 ) -> WorkflowDefinition {
     WorkflowDefinition {
+        database: None,
         id: workflow_id.to_string(),
         name: title.to_string(),
         description: "Dashboard hidden query".into(),

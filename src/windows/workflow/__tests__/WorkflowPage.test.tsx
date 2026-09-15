@@ -102,9 +102,20 @@ vi.mock('../../../hooks/useResizable', () => ({
   useResizable: () => ({ size: 256, handleRef: { current: null } }),
 }));
 
+const workflowSettingsState = vi.hoisted(() => ({
+  workflowStepResultOrder: 'desc' as 'asc' | 'desc',
+}));
+const updateSettingsMock = vi.hoisted(() =>
+  vi.fn(async (p: Record<string, unknown>) => Object.assign(workflowSettingsState, p)),
+);
+
 vi.mock('../../../stores/settingsStore', () => ({
-  useSettingsStore: (sel: (s: { loadSettings: () => Promise<void> }) => unknown) =>
-    sel({ loadSettings: loadSettingsMock }),
+  useSettingsStore: (sel: (s: unknown) => unknown) =>
+    sel({
+      loadSettings: loadSettingsMock,
+      updateSettings: updateSettingsMock,
+      settings: workflowSettingsState,
+    }),
 }));
 
 vi.mock('../../../stores/aiStore', () => {
@@ -296,6 +307,7 @@ function clickStepTab(stepId: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  workflowSettingsState.workflowStepResultOrder = 'desc';
   confirmDialogFn.mockResolvedValue(true);
   aiStoreState.workflowsLoading = false;
   aiStoreState.workflowError = null;
@@ -489,6 +501,50 @@ describe('WorkflowPage', () => {
     fireEvent.click(screen.getByText('workflows.viewChart'));
     fireEvent.click(screen.getByText('chart-config'));
     fireEvent.click(screen.getByText('workflows.viewTable'));
+  });
+
+  it('shows step results last-step-first by default and toggles the order setting', async () => {
+    await renderAndLoad();
+    await selectWorkflow('Demo Workflow');
+    const mk = (id: string) => ({ ...chartableStep, stepId: id });
+    await executeWithResult(makeResult([mk('s0'), mk('s1')]));
+
+    const tabOrder = () =>
+      Array.from(screen.getAllByRole('button'))
+        .filter((b) => b.textContent?.includes('[') && /s[01]/.test(b.textContent ?? ''))
+        .map((b) => b.textContent);
+
+    // Default order: descending → last step (s1) first.
+    expect(tabOrder()[0]).toContain('s1');
+    expect(tabOrder()[1]).toContain('s0');
+
+    // The first shown tab (s1) is selected by default → active accent class.
+    const activeTab = Array.from(screen.getAllByRole('button')).find(
+      (b) => b.textContent?.includes('s1') && b.textContent?.includes('['),
+    );
+    expect(activeTab?.className).toContain('bg-accent/10');
+
+    // Toggling flips the persisted setting to ascending.
+    fireEvent.click(screen.getByTestId('workflow-step-order-toggle'));
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({
+        workflowStepResultOrder: 'asc',
+      }),
+    );
+  });
+
+  it('respects an ascending step order setting (first step first)', async () => {
+    workflowSettingsState.workflowStepResultOrder = 'asc';
+    await renderAndLoad();
+    await selectWorkflow('Demo Workflow');
+    const mk = (id: string) => ({ ...chartableStep, stepId: id });
+    await executeWithResult(makeResult([mk('s0'), mk('s1')]));
+
+    const tabOrder = Array.from(screen.getAllByRole('button'))
+      .filter((b) => b.textContent?.includes('[') && /s[01]/.test(b.textContent ?? ''))
+      .map((b) => b.textContent);
+    expect(tabOrder[0]).toContain('s0');
+    expect(tabOrder[1]).toContain('s1');
   });
 
   it('reuses run panel and closes panels via tab X', async () => {

@@ -445,6 +445,7 @@ mod tests {
     fn sample_conn(id: &str) -> crate::db::ConnectionConfig {
         use crate::db::{ConnectionConfig, SslMode};
         ConnectionConfig {
+            domain: None,
             id: id.into(),
             name: "Demo".into(),
             database_type: "postgresql".into(),

@@ -2,13 +2,50 @@ import { useEffect, useRef } from 'react';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { lintGutter } from '@codemirror/lint';
+import { langYaml } from './yamlMode';
+import { yamlParamLint } from './yamlLint';
 
 interface WorkflowYamlEditorProps {
   value: string;
   onChange: (yaml: string) => void;
   readOnly?: boolean;
 }
+
+/**
+ * Editor chrome for the workflow YAML editor, driven by the app's `--cm-*` tokens
+ * (`:root` = light, `.dark` = dark). Because they are CSS variables, the editor
+ * re-colors instantly whenever the app/OS theme changes — no JS reconfigure needed.
+ */
+const yamlEditorTheme = EditorView.theme(
+  {
+    '&': {
+      height: '100%',
+      fontSize: '12px',
+      color: 'var(--cm-foreground)',
+      backgroundColor: 'var(--cm-background)',
+    },
+    '.cm-scroller': {
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      overflow: 'auto',
+      color: 'var(--cm-foreground)',
+    },
+    '.cm-content': { caretColor: 'var(--cm-cursor)' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--cm-cursor)' },
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+      backgroundColor: 'var(--cm-selection)',
+    },
+    '.cm-gutters': {
+      backgroundColor: 'var(--cm-background)',
+      color: 'var(--cm-comment)',
+      border: 'none',
+      borderRight: '1px solid var(--cm-punctuation)',
+    },
+    '.cm-activeLine': { backgroundColor: 'transparent' },
+    '.cm-activeLineGutter': { backgroundColor: 'transparent' },
+  },
+  { dark: false },
+);
 
 /** Plain CodeMirror editor for workflow YAML dual-mode editing. */
 export function WorkflowYamlEditor({ value, onChange, readOnly = false }: WorkflowYamlEditorProps) {
@@ -28,19 +65,15 @@ export function WorkflowYamlEditor({ value, onChange, readOnly = false }: Workfl
       doc: value,
       extensions: [
         lineNumbers(),
+        lintGutter(),
         history(),
+        langYaml(),
+        yamlParamLint(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        oneDark,
+        yamlEditorTheme,
         EditorView.lineWrapping,
         updateListener,
         EditorState.readOnly.of(readOnly),
-        EditorView.theme({
-          '&': { height: '100%', fontSize: '12px' },
-          '.cm-scroller': {
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            overflow: 'auto',
-          },
-        }),
       ],
     });
     const view = new EditorView({ state, parent: hostRef.current });
@@ -67,7 +100,7 @@ export function WorkflowYamlEditor({ value, onChange, readOnly = false }: Workfl
     <div
       ref={hostRef}
       data-testid="workflow-yaml-editor"
-      className="h-full min-h-[320px] overflow-hidden rounded-md border border-edge"
+      className="h-full min-h-0 w-full flex-1 overflow-hidden rounded-md border border-edge"
     />
   );
 }

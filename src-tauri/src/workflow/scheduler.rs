@@ -221,6 +221,7 @@ mod tests {
 
     fn wf(enabled: bool, interval: Option<u64>) -> WorkflowDefinition {
         WorkflowDefinition {
+            database: None,
             id: "job".into(),
             name: "Job".into(),
             description: String::new(),

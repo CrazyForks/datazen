@@ -42,6 +42,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sqlFormatOptions: DEFAULT_SQL_FORMAT_OPTIONS,
   sqlExecutionStrategy: 'entire_script',
   sqlSnippets: [],
+  workflowStepResultOrder: 'desc',
 };
 
 const THEME_STORAGE_KEY = 'datazen-theme';

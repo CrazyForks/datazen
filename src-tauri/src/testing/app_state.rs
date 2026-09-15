@@ -79,6 +79,7 @@ impl TestAppState {
 
 pub fn sample_postgres_config(id: &str) -> ConnectionConfig {
     ConnectionConfig {
+        domain: None,
         id: id.into(),
         name: format!("Test {id}"),
         database_type: "postgres".into(),

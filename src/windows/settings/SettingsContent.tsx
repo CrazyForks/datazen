@@ -413,6 +413,22 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
               />
               <p className="text-xs text-fg-muted -mt-2">{t('settings.autoChartOnQueryHint')}</p>
 
+              <SettingRow label={t('settings.workflowStepResultOrder')}>
+                <Select
+                  value={settings.workflowStepResultOrder ?? 'desc'}
+                  options={[
+                    { value: 'desc', label: t('settings.workflowStepOrder.desc') },
+                    { value: 'asc', label: t('settings.workflowStepOrder.asc') },
+                  ]}
+                  onChange={(v) =>
+                    updateField('workflowStepResultOrder', v === 'asc' ? 'asc' : 'desc')
+                  }
+                />
+              </SettingRow>
+              <p className="text-xs text-fg-muted -mt-2">
+                {t('settings.workflowStepResultOrderHint')}
+              </p>
+
               {renderSectionContributions('general')}
             </>
           )}

@@ -68,8 +68,15 @@ pub(crate) async fn execute_query_impl(
             db_session_id: Some(db_session_id),
             driver_type: None,
             command: "query".into(),
-            // Session was already pinned by ensure_session_database above.
-            database: None,
+            // F7: hand the pin to the driver command too, so rewrite-capable
+            // drivers qualify unqualified relations inline (`db`.`t`) instead of
+            // relying only on the session-level `USE` switch. Session switches can
+            // go stale on pooled connections (a recycled connection can still sit
+            // on the default database), which made a query bound to a non-first
+            // database run against the first database after navigating away and
+            // back. `ensure_session_database` above stays as the pool-switch
+            // fallback for drivers without the rewrite capability.
+            database,
             schema: None,
             input: serde_json::json!({ "sql": sql }),
         },
@@ -113,8 +120,12 @@ pub(crate) async fn execute_query_stream_impl(
         ExecuteDriverCommandStreamRequest {
             db_session_id: Some(db_session_id),
             command: "query_stream".into(),
-            // Session was already pinned by ensure_session_database above.
-            database: None,
+            // F7: hand the pin to the driver command so rewrite-capable drivers
+            // qualify unqualified relations inline (`db`.`t`), independent of the
+            // sometimes-stale session `USE` state on pooled connections. The
+            // `ensure_session_database` call above remains the pool-switch
+            // fallback for drivers without the rewrite capability.
+            database,
             schema: None,
             input: serde_json::json!({ "sql": sql }),
             apply_result_limit: Some(opts.apply_result_limit),

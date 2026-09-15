@@ -26,6 +26,9 @@ export interface ConnectionConfig {
   host?: string;
   port?: number;
   database?: string;
+  /** Driver-level instance identifier (e.g. Kiwi instance domain). Overloaded
+   *  onto `database` for some drivers; stored here by drivers that use it. */
+  domain?: string;
   /** Presto/Trino schema within catalog */
   schema?: string;
   username?: string;
@@ -304,6 +307,8 @@ export interface AppSettings {
   sqlSnippets?: Array<{ id: string; prefix: string; descriptionKey: string; template: string }>;
   /** SQL syntax highlighting color preset ('default' follows the active theme pack). */
   sqlSyntaxTheme?: string;
+  /** Workflow result step tabs order: 'desc' = last step first (default), 'asc' = first step first. */
+  workflowStepResultOrder?: 'asc' | 'desc';
   /** Onboarding wizard state. `undefined` or `version < 1` → show wizard. */
   onboarding?: { completed: boolean; version: number };
 }
@@ -624,6 +629,8 @@ export interface WorkflowDefinition {
   variables: WorkflowVariable[];
   /** Default connection inherited by data-operation steps. */
   connection?: string;
+  /** Default database inherited by data-operation steps (multi-db connections). */
+  database?: string;
   steps: WorkflowStep[];
   output?: WorkflowOutput;
   timeoutSecs?: number;
