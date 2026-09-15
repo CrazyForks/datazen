@@ -16,9 +16,10 @@ import {
   closeExtraWindows,
   connectBackend,
   disconnectBackend,
-  executeQuery,
+  invokeBackend,
   openConnectionWindow,
   openQueryTab,
+  withSafeModeOff,
 } from '../../helpers.js';
 
 const TABLE_NAME = `e2e_qb_journey_${Date.now().toString(36)}`;
@@ -27,18 +28,24 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   let mainWindow: string;
 
   before(async () => {
-    // Create test table and seed data via backend IPC (no UI dependency)
+    // Create test table and seed data via backend IPC (no UI dependency).
+    // Safe Mode blocks DROP, so wrap DDL in withSafeModeOff.
     const dbSessionId = await connectBackend('conn_e2e_pg');
     try {
-      await executeQuery(dbSessionId, `DROP TABLE IF EXISTS ${TABLE_NAME}`);
-      await executeQuery(
-        dbSessionId,
-        `CREATE TABLE ${TABLE_NAME} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
-      );
-      await executeQuery(
-        dbSessionId,
-        `INSERT INTO ${TABLE_NAME} (id, name, category, score) VALUES (1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), (3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
-      );
+      await withSafeModeOff(async () => {
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `DROP TABLE IF EXISTS ${TABLE_NAME}`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `CREATE TABLE ${TABLE_NAME} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `INSERT INTO ${TABLE_NAME} (id, name, category, score) VALUES (1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), (3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
+        });
+      });
     } finally {
       await disconnectBackend(dbSessionId);
     }
@@ -54,7 +61,12 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       await closeDataExportDialogIfOpen();
       const dbSessionId = await connectBackend('conn_e2e_pg');
       try {
-        await executeQuery(dbSessionId, `DROP TABLE IF EXISTS ${TABLE_NAME}`);
+        await withSafeModeOff(async () => {
+          await invokeBackend('execute_query', {
+            dbSessionId,
+            sql: `DROP TABLE IF EXISTS ${TABLE_NAME}`,
+          });
+        });
       } finally {
         await disconnectBackend(dbSessionId);
       }
