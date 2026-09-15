@@ -72,7 +72,7 @@
 
 ## migration-sync-core-BUG-006 — Rollback and Unknown retain a stale cancelling status (P2 terminal UI correctness)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: start execution, click Cancel while `execute_data_sync` is pending, hold the `cancel_data_sync` response, then either resolve execution with `rolledBack: true` or reject it after the write started. Finally resolve the delayed cancel response.
 - Actual: the execution pipeline correctly reaches `compared` with `sync.rolledBack`, or `unknown` with `sync.executionUnknown`, and the late cancel response no longer overwrites either state. However, both terminal paths leave the status bar permanently at `sync.cancellingExecution` because only the success path clears `statusMsg`.
 - Evidence: the existing delayed-cancel `done` journey passes and retains `done` with no cancellation status. The two cases in `[tester] a delayed execution-cancel response cannot leave $outcome in a cancelling phase` fail at `DataSyncWindow.test.tsx:1163`: rollback retains the correct `compared` state and `sync.rolledBack` error, while Unknown retains the correct `unknown` state and `sync.executionUnknown` error, but both still display `sync.cancellingExecution` after the delayed cancellation response resolves. Full frontend result is **7 files, 43 passed and 2 failed**.
@@ -81,3 +81,4 @@
 - Required regression: retain both rollback and Unknown delayed-cancel journeys, prove their terminal state/error/status remain coherent after the late response, then rerun the complete frontend, Rust, coverage and required integration gates with a fresh Tester.
 - Fix: cancellation records which execution job owns `sync.cancellingExecution`. The execution pipeline's `finally` clears that text only when the same job still owns it and only when the current text is the transient cancellation message. A newer operation's status and every real terminal error remain untouched.
 - Regression evidence: both delayed-cancel rollback and Unknown journeys pass with their original state and error intact and no lingering cancellation phase. Complete frontend result is 45/45; injected Rust remains 101/101 plus 22/22.
+- Round 5 independent evidence: the full frontend suite passes 45/45, injected Rust passes 101/101 plus the overlapping 22/22 command filter, and V8 statements/branches/functions/lines all remain above 80%. The focused ownership review confirms cleanup requires both the same execution job id and the unchanged transient cancellation text.

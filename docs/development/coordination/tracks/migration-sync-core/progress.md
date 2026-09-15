@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -181,3 +181,18 @@ D. **TEST_FAILED**. The delayed-cancel `done` journey passes and keeps a clean s
 - Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
 - Updated V8 coverage for the five changed frontend business modules: statements **83.69%** (693/828), branches **80.86%** (465/575), functions **85.71%** (162/189), lines **85.54%** (633/740).
 - The real database path is unchanged; the latest required packaged PostgreSQL/MySQL canonical matrix remains **2/2 passed**. Round 5 independent testing is required before merge.
+
+## Independent Tester round 5 — 2026-09-15
+
+A. Reviewed the full track diff and the focused `ad771f79` terminal-status repair. `cancellingStatusJobRef` is reset when a new execution starts, assigned only to the active execution whose cancellation message it owns, and cleared in that execution's `finally` only when both the job id and current transient message still match. The cleanup cannot clear a later job's status or replace the real rollback/Unknown error and state. The retained continuous race journeys independently confirm BUG-001 through BUG-006.
+
+B. Independent reruns at `d7cb1fe1`:
+- Frontend sync suites: **7 files, 45 passed, 0 failed**.
+- TypeScript `noEmit`: passed with no diagnostics.
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; this filter overlaps the preceding Rust run and is not summed.
+- `git diff --check`: passed; the worktree was clean before Tester documentation.
+
+C. V8 coverage for the five changed frontend business modules: statements **83.69%** (693/828), branches **80.86%** (465/575), functions **85.71%** (162/189), lines **85.56%** (634/741). All required measures remain above 80%, so this round retained the meaningful race tests instead of adding redundant coverage-only cases. Rust percentage was not instrumented; exact passing path counts are reported above.
+
+D. **TEST_DONE / PASSED**. BUG-001 through BUG-006 are independently fixed. The delayed cancellation journeys preserve `done`, confirmed rollback and Unknown terminal outcomes; rollback/Unknown no longer retain `sync.cancellingExecution`; and stale completions cannot clear a newer job or unlock an uncertain write. The packaged database path and E2E files did not change in the seven-line UI cleanup, so the earlier exact-binary PostgreSQL/MySQL canonical matrix **2/2 passed** was not rerun and is not presented as round-5 cancellation-race evidence. The known shared `Value::Bytes` driver dependency remains an integration release gate.
