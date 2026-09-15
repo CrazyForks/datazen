@@ -529,7 +529,6 @@ fn from_items(items: Vec<TablePlusConnection>) -> Result<ParsedImport, CommandEr
         };
 
         connections.push(ConnectionConfig {
-            domain: None,
             id,
             name,
             database_type: db_type.clone(),
@@ -632,7 +631,6 @@ mod tests {
     #[test]
     fn export_roundtrip_preserves_password_and_group() {
         let conn = ConnectionConfig {
-            domain: None,
             id: "c1".into(),
             name: "Demo".into(),
             database_type: "postgresql".into(),
@@ -668,7 +666,6 @@ mod tests {
     #[test]
     fn export_roundtrip_keeps_datazen_only_driver() {
         let conn = ConnectionConfig {
-            domain: None,
             id: "k1".into(),
             name: "Kiwi".into(),
             database_type: "kiwi".into(),

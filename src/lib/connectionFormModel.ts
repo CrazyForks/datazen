@@ -33,7 +33,6 @@ export type ConnectionFormSnapshot = {
   host: string;
   port: string;
   database: string;
-  domain: string;
   schema: string;
   username: string;
   password: string;
@@ -70,7 +69,6 @@ export interface BuildConnectionConfigInput {
   host: string;
   port: string;
   database: string;
-  domain?: string;
   schema: string;
   username: string;
   password: string;
@@ -119,7 +117,6 @@ export function buildConnectionConfig(input: BuildConnectionConfigInput): Connec
       meta.databaseFieldType === 'index'
         ? normalizeIndexDatabaseField(input.database, meta.maxDatabaseIndex ?? 15)
         : input.database || undefined,
-    domain: input.domain || undefined,
     password: input.password || undefined,
   };
 

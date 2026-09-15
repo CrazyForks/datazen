@@ -845,7 +845,6 @@ mod tests {
 
         fn conn(id: &str) -> ConnectionConfig {
             ConnectionConfig {
-                domain: None,
                 id: id.into(),
                 name: id.into(),
                 database_type: "postgresql".into(),
@@ -935,7 +934,6 @@ mod tests {
         use crate::db::{ConnectionConfig, SslMode};
 
         let conn = ConnectionConfig {
-            domain: None,
             id: "c1".into(),
             name: "Demo".into(),
             database_type: "postgresql".into(),
@@ -1059,7 +1057,6 @@ mod tests {
 
         fn conn(id: &str, group: Option<&str>) -> ConnectionConfig {
             ConnectionConfig {
-                domain: None,
                 id: id.into(),
                 name: id.into(),
                 database_type: "postgresql".into(),

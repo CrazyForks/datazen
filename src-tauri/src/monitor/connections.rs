@@ -214,7 +214,6 @@ impl MonitorConnectionRegistry {
                 driver: Arc::new(StubDriver(database_type.to_string())),
                 handle,
                 config: ConnectionConfig {
-                    domain: None,
                     id: connection_id.to_string(),
                     name: "test".into(),
                     database_type: database_type.into(),

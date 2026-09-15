@@ -37,7 +37,6 @@ export type DriverFormValidator = (
     host: string;
     port: string;
     database: string;
-    domain: string;
     username: string;
     password: string;
     schema: string;

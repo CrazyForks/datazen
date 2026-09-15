@@ -53,7 +53,6 @@ pub fn base_connection(
     ssh_tunnel: Option<SshTunnelConfig>,
 ) -> ConnectionConfig {
     ConnectionConfig {
-        domain: None,
         id: id.filter(|s| !s.is_empty()).unwrap_or_else(new_id),
         name,
         database_type: database_type.to_string(),

@@ -26,9 +26,6 @@ export interface ConnectionConfig {
   host?: string;
   port?: number;
   database?: string;
-  /** Driver-level instance identifier (e.g. Kiwi instance domain). Overloaded
-   *  onto `database` for some drivers; stored here by drivers that use it. */
-  domain?: string;
   /** Presto/Trino schema within catalog */
   schema?: string;
   username?: string;

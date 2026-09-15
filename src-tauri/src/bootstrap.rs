@@ -776,7 +776,6 @@ mod tests {
 
         fn conn(id: &str, db_type: &str) -> ConnectionConfig {
             ConnectionConfig {
-                domain: None,
                 id: id.into(),
                 name: id.into(),
                 database_type: db_type.into(),

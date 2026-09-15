@@ -241,7 +241,6 @@ mod tests {
 
     fn sample_config(id: &str) -> ConnectionConfig {
         ConnectionConfig {
-            domain: None,
             id: id.into(),
             name: "Test DB".into(),
             database_type: "postgres".into(),

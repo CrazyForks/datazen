@@ -742,7 +742,6 @@ mod tests {
     /// A persisted connection config whose id (`connection_id`) is `connection_id`.
     fn test_config(connection_id: &str) -> ConnectionConfig {
         ConnectionConfig {
-            domain: None,
             id: connection_id.to_string(),
             name: "test".into(),
             database_type: "postgresql".into(),
@@ -810,7 +809,6 @@ mod tests {
 
     fn sample_config(id: &str) -> ConnectionConfig {
         ConnectionConfig {
-            domain: None,
             id: id.into(),
             name: "Test".into(),
             database_type: "postgres".into(),

@@ -380,7 +380,6 @@ fn build_from_entry(
 
     Some((
         ConnectionConfig {
-            domain: None,
             id: if id.is_empty() {
                 uuid::Uuid::new_v4().to_string()
             } else {
@@ -576,7 +575,6 @@ pub fn parse_xml(xml: &str) -> Result<ParsedImport, CommandError> {
             let (url_host, url_port, url_db) = parse_jdbc_bits(&url);
             let is_file = db_type == "sqlite";
             connections.push(ConnectionConfig {
-                domain: None,
                 id: uuid::Uuid::new_v4().to_string(),
                 name: if name.is_empty() {
                     "DBeaver".into()
@@ -667,7 +665,6 @@ pub fn parse_xml(xml: &str) -> Result<ParsedImport, CommandError> {
             )
         };
         connections.push(ConnectionConfig {
-            domain: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: if name.is_empty() {
                 "DBeaver".into()
