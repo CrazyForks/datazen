@@ -707,16 +707,20 @@ export function DataSyncWindow() {
   ]);
 
   const handleCancel = useCallback(async () => {
+    const cancellationGeneration = ++compareGenerationRef.current;
+    // Reassert the fence before yielding so a comparison completion queued in the same tick cannot win.
+    if (writeOutcomeUncertain) setWriteOutcomeUncertain(true);
     const jobId = jobIdRef.current;
     if (jobId) {
       await syncCommands.cancelDataSync(jobId);
-      jobIdRef.current = null;
+      if (cancellationGeneration !== compareGenerationRef.current) return;
+      if (jobIdRef.current === jobId) jobIdRef.current = null;
     }
+    if (cancellationGeneration !== compareGenerationRef.current) return;
     if (writeInFlightRef.current) {
       setStatusMsg(t('sync.cancellingExecution'));
       return;
     }
-    compareGenerationRef.current += 1;
     setSyncState(
       writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
     );
