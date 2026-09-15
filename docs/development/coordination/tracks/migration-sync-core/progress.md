@@ -1,12 +1,13 @@
 # migration-sync-core
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
 Coding commit: `a0919eeb` (`feat(data-sync): preserve reviewed selection and canonical comparison values`).
 Rescue coding commit: `1ce25cbe` (`fix(data-sync): fence unknown outcomes and render binary previews`).
 Round 2 rescue commit: `44980cc0` (`fix(data-sync): invalidate compare before cancellation`).
+Round 3 rescue commit: `bca83e07` (`fix(data-sync): isolate cancellation lifecycles`).
 
 ## Wave 1 implementation
 
@@ -133,3 +134,19 @@ B. Independent reruns at `14d17c7a` plus the new Tester regressions:
 C. V8 coverage for the five changed frontend business modules, measured from all **40 passing** sync tests while the three known failing regressions were excluded, remains above the gate: statements **82.74%** (657/794), branches **80.07%** (434/542), functions **85.63%** (161/188), lines **84.90%** (602/709). Rust percentage was not instrumented; the exact passing path counts above are reported instead. The delayed IPC ordering cannot be deterministically injected into the packaged desktop backend without a test seam; the component journeys control the actual async handler promises and state transitions. The binary run validates the unchanged real database path and is not represented as cancellation-race coverage.
 
 D. **TEST_FAILED**. BUG-004 can leave the comparison wizard indefinitely busy while cancellation IPC is delayed or lost, preventing the required fresh comparison and newer job-id journey. BUG-005 lets a late cancel response overwrite a successful execution result. Do not merge until both are fixed and a fresh Tester completes the full pass.
+
+## Coder rescue round 3 — 2026-09-15
+
+- BUG-004 repaired by separating active operation ownership into job id, operation kind and cancellation request state. Comparison cancellation now invalidates its generation and leaves the busy UI before awaiting IPC. A fresh comparison can start while the old cancellation is pending, and the late response cannot clear its job.
+- BUG-005 repaired by leaving execution outcome transitions exclusively to the execution pipeline. Cancellation captures the current phase and performs only ownership-checked cleanup after IPC; it cannot overwrite a terminal success, rollback, Unknown outcome or newer operation.
+- The newly reachable fresh-key assertion originally assumed only two total `generateDataSyncSql` calls, but `SqlPreview` and actual execution each generate independently. The retained journey now records the count immediately before execution, requires exactly one additional call, and verifies that call submits only fresh key `[9]`.
+
+### Round 3 validation
+
+- All three new cancellation-race journeys pass.
+- Frontend sync suites: **7 files, 43 tests passed**.
+- TypeScript `noEmit`: passed with no diagnostics.
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
+- Updated V8 coverage for the five changed frontend business modules: statements **83.55%** (686/821), branches **80.73%** (461/571), functions **85.63%** (161/188), lines **85.42%** (627/734).
+- Independent round 3's required WebDriver build and isolated PostgreSQL/MySQL canonical matrix remain 2/2 passed. Fresh independent testing is still required before merge.
