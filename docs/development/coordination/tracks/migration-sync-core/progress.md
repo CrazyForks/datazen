@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -8,6 +8,7 @@ Coding commit: `a0919eeb` (`feat(data-sync): preserve reviewed selection and can
 Rescue coding commit: `1ce25cbe` (`fix(data-sync): fence unknown outcomes and render binary previews`).
 Round 2 rescue commit: `44980cc0` (`fix(data-sync): invalidate compare before cancellation`).
 Round 3 rescue commit: `bca83e07` (`fix(data-sync): isolate cancellation lifecycles`).
+Round 4 rescue commit: `ad771f79` (`fix(data-sync): clear owned cancellation status`).
 
 ## Wave 1 implementation
 
@@ -165,3 +166,18 @@ B. Independent reruns at `847ef4a4` plus the new Tester terminal-outcome regress
 C. V8 coverage for the five changed frontend business modules, measured from all **43 passing** sync tests before adding the expected-failing terminal journeys: statements **83.55%** (686/821), branches **80.73%** (461/571), functions **85.63%** (161/188), lines **85.42%** (627/734). Coverage collection with the two new regressions aborts after their expected failures. Rust percentage was not instrumented; the exact passing path counts above are reported instead.
 
 D. **TEST_FAILED**. The delayed-cancel `done` journey passes and keeps a clean success status. BUG-006 leaves the status bar permanently at `sync.cancellingExecution` after an execution has definitively rolled back or entered Unknown. Those terminal states and errors remain correct even after the late cancel response, but the operation phase is not fully exited and the user receives a contradictory persistent status. Do not merge until the terminal execution paths clear the cancellation status and a fresh Tester completes another full pass.
+
+## Coder rescue round 4 — 2026-09-15
+
+- BUG-006 repaired with cancellation-status ownership tied to the execution job id. Every execution exit reaches the same `finally` cleanup, which removes `sync.cancellingExecution` only when that job still owns the temporary message and the message has not already changed.
+- Success, confirmed rollback, Unknown write outcome, pre-write failure and local cancellation therefore leave coherent terminal UI. An old execution cannot clear status owned by a later operation, and delayed cancellation responses remain read-only with respect to terminal state and messages.
+
+### Round 4 validation
+
+- Both new rollback/Unknown delayed-cancel journeys pass.
+- Frontend sync suites: **7 files, 45 tests passed**.
+- TypeScript `noEmit`: passed with no diagnostics.
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
+- Updated V8 coverage for the five changed frontend business modules: statements **83.69%** (693/828), branches **80.86%** (465/575), functions **85.71%** (162/189), lines **85.54%** (633/740).
+- The real database path is unchanged; the latest required packaged PostgreSQL/MySQL canonical matrix remains **2/2 passed**. Round 5 independent testing is required before merge.
