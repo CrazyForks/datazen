@@ -189,14 +189,15 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       { timeout: 3000, timeoutMsg: '条件列下拉菜单未打开' },
     );
 
-    // Pick the "name" option from the portaled listbox
+    // Pick the "name" option from the portaled listbox.
+    // Select uses onMouseDown (not onClick), so dispatch mousedown event.
     const colOptionPicked = await browser.execute((colName: string) => {
       const listbox = document.querySelector('[data-testid="select-listbox"]');
       if (!listbox) return false;
       const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
       const nameOpt = options.find((o) => o.textContent?.trim() === colName);
       if (nameOpt) {
-        nameOpt.click();
+        nameOpt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
         return true;
       }
       return false;
