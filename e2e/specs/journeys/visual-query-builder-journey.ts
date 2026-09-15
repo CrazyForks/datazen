@@ -167,6 +167,34 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await addCondBtn.click();
     await browser.pause(300);
 
+    // The condition row has 3 Selects: table (auto-selected), column, operator.
+    // Select the column in the condition by clicking the second Select in the condition row.
+    const condRow = await $('[data-testid="qb-condition-row"]');
+    await condRow.waitForDisplayed({ timeout: 3000 });
+
+    // Click the column Select (second Select inside the condition row)
+    await browser.execute(() => {
+      const row = document.querySelector('[data-testid="qb-condition-row"]');
+      if (!row) return;
+      const selects = row.querySelectorAll('[data-testid="select-listbox"]');
+      const columnSelect = selects[1] as HTMLElement | undefined;
+      if (columnSelect) columnSelect.click();
+    });
+    await browser.pause(300);
+
+    // Pick the "name" option from the dropdown
+    const colOptionPicked = await browser.execute((colName: string) => {
+      const options = Array.from(document.querySelectorAll('[data-testid="select-option"]'));
+      const nameOpt = options.find((o) => o.textContent?.trim() === colName);
+      if (nameOpt) {
+        nameOpt.click();
+        return true;
+      }
+      return false;
+    }, 'name');
+    expect(colOptionPicked).toBe(true);
+    await browser.pause(300);
+
     // Type a value into the condition value input
     const condValueInput = await $('[data-testid="qb-condition-value"]');
     await condValueInput.waitForDisplayed({ timeout: 3000 });
