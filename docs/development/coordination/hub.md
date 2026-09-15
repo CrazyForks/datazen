@@ -10,6 +10,7 @@
 |-------|------|------|------------|------------|------------|
 | migration-navicat | — | 未开始 | — | — | — |
 | migration-schema-core | — | 未开始 | — | — | — |
+| migration-sync-core | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -17,6 +18,7 @@
 |-------|----------|----------|--------|-------|----------|
 | migration-navicat | — | — | feature/migration-navicat | 未开始 | — |
 | migration-schema-core | — | 63 passed, 0 failed. Initial build required the ignored empty Community resource directory `src-tauri/resources/builtin-ep`; created it, reran successfully. Wrapper restored Cargo injections. | feature/migration-schema-core | 未开始 | — |
+| migration-sync-core | — | **98 passed**. | feature/migration-sync-core | 未开始 | — |
 
 ## 波次记录
 
