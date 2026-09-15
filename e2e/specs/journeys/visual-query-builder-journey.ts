@@ -269,7 +269,9 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
 
     // ── Step 10: Re-open the panel, verify Reset works ──
     await qbToggle.click();
-    await qbPanel.waitForDisplayed({ timeout: 5000 });
+    // Panel is conditionally rendered — re-query after toggle since old reference is stale
+    const reopenedPanel = await $('[data-testid="qb-panel"]');
+    await reopenedPanel.waitForDisplayed({ timeout: 5000 });
 
     // Click Reset via the panel header button
     const resetDone = await browser.execute(() => {
