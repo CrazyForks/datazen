@@ -58,7 +58,7 @@ export function DiagramCanvas({
   autoJoins,
   columnMap,
   columnInfoMap,
-  selectedColumns: _selectedColumns,
+  selectedColumns,
   tableAliases,
   primaryKeyMap = {},
   foreignKeyMap = {},
@@ -214,9 +214,10 @@ export function DiagramCanvas({
               ? columns
               : columnNames.map((name) => ({ name, dataType: '', nullable: true }));
 
-          // Determine which columns are selected
-          const tableSelectedCols: string[] = [];
-          // This is derived from the store's selectedColumns, passed through props
+          // Determine which columns are selected for this table
+          const tableSelectedCols = selectedColumns
+            .filter(sc => sc.table === table)
+            .map(sc => sc.column);
 
           return (
             <TableCard
