@@ -229,6 +229,22 @@ const locale = {
   'redis.wizard.topologySentinelHint': 'Sentinel 托管的主节点',
   'redis.wizard.topologyStandalone': '单机',
   'redis.wizard.topologyStandaloneHint': '单个 Redis 服务器',
+  // Real-time MONITOR
+  'redis.monitor': '监控',
+  'redis.monitorStart': '开始监控',
+  'redis.monitorStop': '停止监控',
+  'redis.monitorPause': '暂停',
+  'redis.monitorResume': '恢复',
+  'redis.monitorBufferSize': '缓冲区大小',
+  'redis.monitorEventCount': '条事件',
+  'redis.monitorClient': '客户端',
+  'redis.monitorCommand': '命令',
+  'redis.monitorDb': '数据库',
+  'redis.monitorTimestamp': '时间',
+  'redis.monitorEmpty': '点击"开始监控"捕获 Redis 命令',
+  'redis.monitorWaiting': '等待事件...',
+  'redis.monitorRunning': 'MONITOR 运行中',
+  'redis.monitorStopped': 'MONITOR 已停止',
 } as const;
 
 export default locale;

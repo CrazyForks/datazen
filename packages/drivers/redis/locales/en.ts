@@ -229,6 +229,22 @@ const locale = {
   'redis.wizard.topologySentinelHint': 'Sentinel-managed master',
   'redis.wizard.topologyStandalone': 'Standalone',
   'redis.wizard.topologyStandaloneHint': 'Single Redis server',
+  // Real-time MONITOR
+  'redis.monitor': 'Monitor',
+  'redis.monitorStart': 'Start Monitor',
+  'redis.monitorStop': 'Stop Monitor',
+  'redis.monitorPause': 'Pause',
+  'redis.monitorResume': 'Resume',
+  'redis.monitorBufferSize': 'Buffer Size',
+  'redis.monitorEventCount': 'events',
+  'redis.monitorClient': 'Client',
+  'redis.monitorCommand': 'Command',
+  'redis.monitorDb': 'DB',
+  'redis.monitorTimestamp': 'Time',
+  'redis.monitorEmpty': 'Click "Start Monitor" to begin capturing Redis commands',
+  'redis.monitorWaiting': 'Waiting for events...',
+  'redis.monitorRunning': 'MONITOR active',
+  'redis.monitorStopped': 'MONITOR stopped',
 } as const;
 
 export default locale;

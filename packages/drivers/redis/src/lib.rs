@@ -12,6 +12,7 @@ mod ops_cluster;
 mod ops_exec;
 mod ops_io;
 mod ops_json;
+mod ops_monitor;
 mod ops_observe;
 mod ops_pubsub;
 mod ops_stream;
