@@ -410,6 +410,34 @@ impl RedisDriver {
         |conn| crate::ops_stream::xinfo_groups(conn, key)
     );
 
+    pub async fn plugin_xinfo_consumers(
+        &self,
+        connection_id: &str,
+        db_index: u32,
+        key: &str,
+        group: &str,
+    ) -> Result<Vec<crate::ops_stream::ConsumerInfo>, DriverError> {
+        let key = key.to_string();
+        let group = group.to_string();
+        with_live_op!(self, connection_id, db_index, |conn| {
+            crate::ops_stream::xinfo_consumers(conn, &key, &group).await
+        })
+    }
+
+    pub async fn plugin_stream_lag(
+        &self,
+        connection_id: &str,
+        db_index: u32,
+        key: &str,
+        group: &str,
+    ) -> Result<crate::ops_stream::StreamLagResult, DriverError> {
+        let key = key.to_string();
+        let group = group.to_string();
+        with_live_op!(self, connection_id, db_index, |conn| {
+            crate::ops_stream::stream_lag(conn, &key, &group).await
+        })
+    }
+
     pub async fn plugin_xpending(
         &self,
         connection_id: &str,

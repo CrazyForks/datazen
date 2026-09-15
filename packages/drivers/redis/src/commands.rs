@@ -13,8 +13,10 @@ use serde_json::Value as JsonValue;
 fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
     let category = match id {
         id if id.starts_with("pubsub_") => CommandCategory::PubSub,
-        "xrange" | "xadd" | "xgroup_create" | "xgroup_destroy" | "xinfo_groups" | "xpending"
-        | "xack" | "stream_overview" => CommandCategory::Stream,
+        "xrange" | "xadd" | "xgroup_create" | "xgroup_destroy" | "xinfo_groups"
+        | "xinfo_consumers" | "xpending" | "xack" | "stream_lag" | "stream_overview" => {
+            CommandCategory::Stream
+        }
         "dump_keys" | "restore_keys" => CommandCategory::Io,
         "flush_db" | "flush_all" | "slowlog_reset" => CommandCategory::Admin,
         "scan_keys" | "get_key" | "info" | "memory_sample" | "slowlog_get" | "modules_list"
@@ -458,6 +460,26 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "List stream consumer groups",
             "redis:allow-xinfo-groups",
             object_schema(serde_json::json!({ "dbIndex": db, "key": key }), &["key"]),
+        ),
+        cmd(
+            "xinfo_consumers",
+            "XINFO CONSUMERS",
+            "List consumers in a group",
+            "redis:allow-xinfo-consumers",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key, "group": { "type": "string" } }),
+                &["key", "group"],
+            ),
+        ),
+        cmd(
+            "stream_lag",
+            "Stream lag",
+            "Compute lag for a consumer group",
+            "redis:allow-stream-lag",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key, "group": { "type": "string" } }),
+                &["key", "group"],
+            ),
         ),
         cmd(
             "xpending",

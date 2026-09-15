@@ -163,6 +163,26 @@
                 .plugin_xinfo_groups(id, db, req_str(&input, "key")?)
                 .await?,
         ),
+        "xinfo_consumers" => json_ok(
+            driver
+                .plugin_xinfo_consumers(
+                    id,
+                    db,
+                    req_str(&input, "key")?,
+                    req_str(&input, "group")?,
+                )
+                .await?,
+        ),
+        "stream_lag" => json_ok(
+            driver
+                .plugin_stream_lag(
+                    id,
+                    db,
+                    req_str(&input, "key")?,
+                    req_str(&input, "group")?,
+                )
+                .await?,
+        ),
         "xpending" => json_ok(
             driver
                 .plugin_xpending(
