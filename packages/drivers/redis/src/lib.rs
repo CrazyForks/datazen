@@ -15,13 +15,13 @@ mod ops_json;
 mod ops_observe;
 mod ops_pubsub;
 mod ops_stream;
-mod redis_value_preview;
-mod redis_value_rows;
-mod redis_value;
-mod redis_driver_on;
 mod redis_driver;
 mod redis_driver_db;
 mod redis_driver_kv;
+mod redis_driver_on;
+mod redis_value;
+mod redis_value_preview;
+mod redis_value_rows;
 pub use connect::{build_connection_plan, ConnectionPlan, RedisLiveConn, TlsPlan, Topology};
 pub use ops::{set_settings_allow_flush, settings_allow_flush};
 

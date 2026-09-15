@@ -51,7 +51,9 @@ pub(crate) fn parse_redis_command_args(s: &str) -> Result<Vec<String>, DriverErr
     Ok(out)
 }
 
-pub(crate) fn redis_value_to_rows(value: &redis::Value) -> (Vec<ColumnInfo>, Vec<Vec<Option<Value>>>) {
+pub(crate) fn redis_value_to_rows(
+    value: &redis::Value,
+) -> (Vec<ColumnInfo>, Vec<Vec<Option<Value>>>) {
     match value {
         redis::Value::Nil => (
             vec![ColumnInfo {

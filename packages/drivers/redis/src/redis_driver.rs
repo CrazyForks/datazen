@@ -213,7 +213,8 @@ impl RedisDriver {
     }
 
     pub async fn plugin_flush_all(&self, connection_id: &str) -> Result<(), DriverError> {
-        with_live_any_op!(self, connection_id, |conn| crate::ops::flush_all(conn).await)
+        with_live_any_op!(self, connection_id, |conn| crate::ops::flush_all(conn)
+            .await)
     }
 
     pub(crate) async fn test_connection_inner(
@@ -518,4 +519,4 @@ impl RedisDriver {
     }
 }
 
-pub(crate) use crate::redis_value::{parse_scan_result, parse_redis_command_args};
+pub(crate) use crate::redis_value::{parse_redis_command_args, parse_scan_result};

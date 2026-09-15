@@ -342,11 +342,7 @@ where
     parse_xinfo_consumers(&raw)
 }
 
-pub async fn stream_lag<C>(
-    conn: &mut C,
-    key: &str,
-    group: &str,
-) -> Result<StreamLagResult, String>
+pub async fn stream_lag<C>(conn: &mut C, key: &str, group: &str) -> Result<StreamLagResult, String>
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,
 {
@@ -407,10 +403,15 @@ where
         _ => return Ok(StreamLagResult { lag: None }),
     };
 
-    let (max_ms, max_seq) = parse_stream_id(&max_id_str)
-        .ok_or_else(|| format!("invalid stream ID: {}", max_id_str))?;
-    let (delivered_ms, delivered_seq) = parse_stream_id(&group_info.last_delivered_id)
-        .ok_or_else(|| format!("invalid last-delivered-id: {}", group_info.last_delivered_id))?;
+    let (max_ms, max_seq) =
+        parse_stream_id(&max_id_str).ok_or_else(|| format!("invalid stream ID: {}", max_id_str))?;
+    let (delivered_ms, delivered_seq) =
+        parse_stream_id(&group_info.last_delivered_id).ok_or_else(|| {
+            format!(
+                "invalid last-delivered-id: {}",
+                group_info.last_delivered_id
+            )
+        })?;
 
     // lag = max_id - last_delivered_id (approximate, using milliseconds-level comparison)
     let lag = if max_ms > delivered_ms {
@@ -829,5 +830,146 @@ mod tests {
         let raw = redis::Value::Array(vec![]);
         let consumers = parse_xinfo_consumers(&raw).unwrap();
         assert!(consumers.is_empty());
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_from_map_variant() {
+        // XINFO CONSUMERS can return Map entries in some Redis versions
+        let raw = redis::Value::Array(vec![redis::Value::Map(vec![
+            (
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"consumer-a".to_vec()),
+            ),
+            (
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(10),
+            ),
+            (
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(2500),
+            ),
+            (
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(7),
+            ),
+        ])]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "consumer-a");
+        assert_eq!(consumers[0].pending, 10);
+        assert_eq!(consumers[0].idle_ms, 2500);
+        assert_eq!(consumers[0].delivery_count, 7);
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_skips_entry_without_name() {
+        let raw = redis::Value::Array(vec![
+            // Entry with name - should be kept
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"good".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(1),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(0),
+            ]),
+            // Entry without name - should be skipped
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(5),
+            ]),
+        ]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "good");
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_skips_non_array_non_map() {
+        let raw = redis::Value::Array(vec![
+            redis::Value::BulkString(b"not a structured entry".to_vec()),
+            redis::Value::Int(42),
+            redis::Value::Nil,
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"valid".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(0),
+            ]),
+        ]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "valid");
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_non_array_outer_returns_empty() {
+        // When Redis returns a non-Array top-level value (e.g., error string)
+        let raw = redis::Value::BulkString(b"ERR key does not exist".to_vec());
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert!(consumers.is_empty());
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_odd_field_count() {
+        // Odd number of fields in array - last field has no pair
+        let raw = redis::Value::Array(vec![redis::Value::Array(vec![
+            redis::Value::BulkString(b"name".to_vec()),
+            redis::Value::BulkString(b"orphan".to_vec()),
+            redis::Value::BulkString(b"pending".to_vec()),
+            redis::Value::Int(3),
+            redis::Value::BulkString(b"idle".to_vec()),
+            // missing value for idle - odd chunk len
+        ])]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "orphan");
+        assert_eq!(consumers[0].pending, 3);
+        // idle was not set because chunk had len 1
+        assert_eq!(consumers[0].idle_ms, 0);
+    }
+
+    #[test]
+    fn test_tester_parse_stream_id_multiple_dashes() {
+        // Stream IDs like "1000-0-extra" should return None (invalid)
+        assert_eq!(parse_stream_id("1000-0-extra"), None);
+        assert_eq!(parse_stream_id("1-2-3"), None);
+    }
+
+    #[test]
+    fn test_tester_parse_stream_id_zero_zero() {
+        assert_eq!(parse_stream_id("0-0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn test_tester_consumer_info_serde_roundtrip() {
+        let info = ConsumerInfo {
+            name: "w1".to_string(),
+            pending: 42,
+            idle_ms: 1500,
+            delivery_count: 8,
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["name"], "w1");
+        assert_eq!(json["pending"], 42);
+        assert_eq!(json["idleMs"], 1500);
+        assert_eq!(json["deliveryCount"], 8);
+    }
+
+    #[test]
+    fn test_tester_stream_lag_result_serde() {
+        let with_lag = StreamLagResult { lag: Some(42) };
+        let json = serde_json::to_value(&with_lag).unwrap();
+        assert_eq!(json["lag"], 42);
+
+        let no_lag = StreamLagResult { lag: None };
+        let json = serde_json::to_value(&no_lag).unwrap();
+        assert!(json["lag"].is_null());
     }
 }

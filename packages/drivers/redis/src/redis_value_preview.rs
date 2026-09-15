@@ -163,7 +163,9 @@ pub(crate) fn value_field_for_preview(v: &redis::Value) -> String {
 }
 
 /// Convert a flat Redis array `[field, val, field, val, ...]` or Map to a JSON object.
-pub(crate) fn redis_flat_pairs_to_map(v: &redis::Value) -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn redis_flat_pairs_to_map(
+    v: &redis::Value,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut obj = serde_json::Map::new();
     match v {
         redis::Value::Array(items) => {
