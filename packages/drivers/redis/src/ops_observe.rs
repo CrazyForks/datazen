@@ -464,7 +464,9 @@ mod tests {
                 .iter()
                 .filter(|(k, v)| {
                     let m = k.to_lowercase().contains(&q) || v.to_lowercase().contains(&q);
-                    if m { matched += 1; }
+                    if m {
+                        matched += 1;
+                    }
                     m
                 })
                 .cloned()
@@ -481,7 +483,8 @@ mod tests {
 
     #[test]
     fn parse_info_sections_search_by_value() {
-        let raw = "# Server\r\nredis_version:7.0.0\r\nos:Linux\r\n# Clients\r\nconnected_clients:5\r\n";
+        let raw =
+            "# Server\r\nredis_version:7.0.0\r\nos:Linux\r\n# Clients\r\nconnected_clients:5\r\n";
         let sections = parse_info_sections(raw);
         let q = "linux".to_lowercase();
         let mut matched = 0;

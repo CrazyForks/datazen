@@ -207,30 +207,36 @@ pub async fn start_subscription(
     let patterns_for_loop = patterns.clone();
     let conn_id_for_stats = connection_id.clone();
     let handle = tokio::spawn(async move {
-        let result = run_subscribe_loop(&plan, &channels_for_loop, &patterns_for_loop, move |channel, payload| {
-            // Increment per-connection stats
-            {
-                let conn_lock = tokio::runtime::Handle::current();
-                // Stats are updated synchronously via blocking task
-                let channel_clone = channel.clone();
-                let conn_clone = conn_id_for_stats.clone();
-                tokio::spawn(async move {
-                    let mut reg = registry().lock().await;
-                    let entry = reg.stats.entry(conn_clone).or_insert_with(|| {
-                        (0, HashMap::new())
+        let result = run_subscribe_loop(
+            &plan,
+            &channels_for_loop,
+            &patterns_for_loop,
+            move |channel, payload| {
+                // Increment per-connection stats
+                {
+                    let conn_lock = tokio::runtime::Handle::current();
+                    // Stats are updated synchronously via blocking task
+                    let channel_clone = channel.clone();
+                    let conn_clone = conn_id_for_stats.clone();
+                    tokio::spawn(async move {
+                        let mut reg = registry().lock().await;
+                        let entry = reg
+                            .stats
+                            .entry(conn_clone)
+                            .or_insert_with(|| (0, HashMap::new()));
+                        entry.0 += 1;
+                        *entry.1.entry(channel_clone).or_insert(0) += 1;
                     });
-                    entry.0 += 1;
-                    *entry.1.entry(channel_clone).or_insert(0) += 1;
+                }
+                emit_pubsub_message(RedisPubSubMessageEvent {
+                    connection_id: conn_id_for_task.clone(),
+                    subscription_id: sub_id_for_task.clone(),
+                    channel,
+                    payload,
+                    ts: now_millis(),
                 });
-            }
-            emit_pubsub_message(RedisPubSubMessageEvent {
-                connection_id: conn_id_for_task.clone(),
-                subscription_id: sub_id_for_task.clone(),
-                channel,
-                payload,
-                ts: now_millis(),
-            });
-        })
+            },
+        )
         .await;
         if let Err(e) = result {
             tracing::warn!(

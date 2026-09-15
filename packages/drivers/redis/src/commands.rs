@@ -346,10 +346,7 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "Memory usage (single key)",
             "MEMORY USAGE for a specific key",
             "redis:allow-memory-sample",
-            object_schema(
-                serde_json::json!({ "key": { "type": "string" } }),
-                &["key"],
-            ),
+            object_schema(serde_json::json!({ "key": { "type": "string" } }), &["key"]),
         ),
         cmd(
             "info_filtered",
