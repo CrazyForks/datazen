@@ -1,10 +1,11 @@
 # migration-sync-core
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
 Coding commit: `a0919eeb` (`feat(data-sync): preserve reviewed selection and canonical comparison values`).
+Rescue coding commit: `1ce25cbe` (`fix(data-sync): fence unknown outcomes and render binary previews`).
 
 ## Wave 1 implementation
 
@@ -65,3 +66,23 @@ C. V8 measured changed frontend core modules including DiffDetail/utils: lines82
 D. TEST_FAILED; do not merge. Two reproducible correctness defects remain. Reports /tmp/sync-rescue-{rust,commands,fe,coverage-full,tsc,e2e}.log. Database credentials not printed; only isolated dz_mig_0910_sync_src/tgt and tester_sync_projection used. WebDriver tests use track binary built via required pipeline on Sep11 after Coder commit; no business code changes after that build. Port4476 and e2e/.app-data-sync-rescue isolate application state. No default environment reset scripts run.
 
 Final real DB rerun:2/2 passed including newly added legacy apply rejection and exact unchanged target assertion before selected execution. One intermediate rerun failed to connect because app had exited; restarted the same exact binary and both passed. Final log:/tmp/sync-rescue-e2e-final.log.
+
+## Coder rescue — 2026-09-15
+
+- BUG-001 repaired with an independent uncertain-write fence. Once a write may have committed, stale mappings cannot become executable through back navigation, a new comparison followed by cancellation, failed inspection/comparison, or preview navigation. Only a successful fresh comparison clears the fence. Cancellation during an in-flight write continues to wait for the transaction outcome.
+- BUG-002 repaired without a Host database-family SQL switch. Generic byte preview now fails closed with an explicit driver-literal-required marker. The normal command path asks the registered target `SyncTargetAdapter` to render the literal, giving PostgreSQL `bytea` and MySQL binary syntax while preserving exact typed parameters.
+- Added meaningful frontend journeys for uncertain execution transitions, cancellation while writing, failed inspection/comparison, no-change comparison, malformed operation data, target-only keys, selection counts and serialization fallback.
+
+### Rescue validation
+
+- Injected Rust `data_sync` suite: **101 passed, 0 failed**.
+- Injected Rust `commands::sync` suite: **22 passed, 0 failed**. Filters overlap; do not sum as unique tests.
+- Frontend sync suites: **7 files, 39 tests passed**.
+- TypeScript `noEmit`: passed with no diagnostics.
+- V8 coverage for the five changed frontend business modules: statements **82.84%** (652/787), branches **80.33%** (429/534), functions **85.63%** (161/188), lines **84.84%** (599/706).
+- Required WebDriver build pipeline completed successfully with basic driver injection.
+- Isolated real-database canonical projection/selection journeys: PostgreSQL **1/1**, MySQL **1/1**, total **2/2 passed**. They verify reordered physical columns, selected-only execution, exact final values and post-write comparison.
+
+### Preserved integration dependency
+
+An exploratory binary real-database extension exposed two shared driver issues outside this track: PostgreSQL binds `Value::Bytes` as text (`column "payload" is of type bytea but expression is of type text`), while MySQL currently decodes the source BLOB as `NULL` and generates `... payload) VALUES (2, 30, 40, NULL)`. The extension was removed from this track's runnable E2E to avoid changing shared driver files owned by the pending Transfer work. After that work merges, integration testing must restore PostgreSQL/MySQL binary round-trip coverage. The target-driver preview test remains in this track and passes.
