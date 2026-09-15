@@ -4,6 +4,10 @@ import {
   invokeSetExpireAt,
   invokeSetString,
   invokeSetTtl,
+  invokeHashScan,
+  invokeListRange,
+  invokeSetScan,
+  invokeZsetScan,
   type PluginInvokeFn,
 } from '../keyEditorsInvokes';
 
@@ -133,5 +137,139 @@ describe('invokeCreateKey', () => {
     await expect(invokeCreateKey('s', 0, 'x', 'stream', '', invoke)).rejects.toThrow(
       /Unsupported key type/,
     );
+  });
+});
+
+// ---- PR-3: Collection editors invoke functions (tester) ----
+
+describe('invokeHashScan (PR-3)', () => {
+  it('sends hash_scan command with cursor and count', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({
+      cursor: 0,
+      entries: [{ field: 'f1', value: 'v1' }],
+    });
+    const result = await invokeHashScan('sess-1', 0, 'myhash', 0, 100, undefined, invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'hash_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'myhash',
+      cursor: 0,
+      count: 100,
+    });
+    expect(result.cursor).toBe(0);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toEqual({ field: 'f1', value: 'v1' });
+  });
+
+  it('includes matchPattern when provided', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ cursor: 0, entries: [] });
+    await invokeHashScan('sess-1', 0, 'h', 10, 50, 'f*', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'hash_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'h',
+      cursor: 10,
+      count: 50,
+      matchPattern: 'f*',
+    });
+  });
+
+  it('omits matchPattern when undefined', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ cursor: 0, entries: [] });
+    await invokeHashScan('sess-1', 0, 'h', 0, 100, undefined, invoke);
+    const args = invoke.mock.calls[0][2] as Record<string, unknown>;
+    expect(args).not.toHaveProperty('matchPattern');
+  });
+});
+
+describe('invokeListRange (PR-3)', () => {
+  it('sends list_range with start and stop', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ items: ['a', 'b', 'c'] });
+    const result = await invokeListRange('sess-1', 2, 'mylist', 0, 99, invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'list_range', {
+      dbSessionId: 'sess-1',
+      dbIndex: 2,
+      key: 'mylist',
+      start: 0,
+      stop: 99,
+    });
+    expect(result.items).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns empty items for empty range', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ items: [] });
+    const result = await invokeListRange('sess-1', 0, 'empty-list', 0, -1, invoke);
+    expect(result.items).toEqual([]);
+  });
+});
+
+describe('invokeSetScan (PR-3)', () => {
+  it('sends set_scan command with cursor and count', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({
+      cursor: 42,
+      members: ['m1', 'm2'],
+    });
+    const result = await invokeSetScan('sess-1', 0, 'myset', 0, 100, undefined, invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'set_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'myset',
+      cursor: 0,
+      count: 100,
+    });
+    expect(result.cursor).toBe(42);
+    expect(result.members).toEqual(['m1', 'm2']);
+  });
+
+  it('includes matchPattern when provided', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ cursor: 0, members: [] });
+    await invokeSetScan('sess-1', 0, 's', 5, 25, 'abc*', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'set_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 's',
+      cursor: 5,
+      count: 25,
+      matchPattern: 'abc*',
+    });
+  });
+});
+
+describe('invokeZsetScan (PR-3)', () => {
+  it('sends zset_scan command with cursor and count', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({
+      cursor: 0,
+      members: [{ member: 'm1', score: 1.5 }],
+    });
+    const result = await invokeZsetScan('sess-1', 0, 'myzset', 0, 100, undefined, invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'zset_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'myzset',
+      cursor: 0,
+      count: 100,
+    });
+    expect(result.members).toHaveLength(1);
+    expect(result.members[0]).toEqual({ member: 'm1', score: 1.5 });
+  });
+
+  it('includes matchPattern when provided', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ cursor: 0, members: [] });
+    await invokeZsetScan('sess-1', 0, 'z', 0, 100, 'prefix:*', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'zset_scan', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'z',
+      cursor: 0,
+      count: 100,
+      matchPattern: 'prefix:*',
+    });
+  });
+
+  it('omits matchPattern when undefined', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue({ cursor: 0, members: [] });
+    await invokeZsetScan('sess-1', 0, 'z', 0, 100, undefined, invoke);
+    const args = invoke.mock.calls[0][2] as Record<string, unknown>;
+    expect(args).not.toHaveProperty('matchPattern');
   });
 });
