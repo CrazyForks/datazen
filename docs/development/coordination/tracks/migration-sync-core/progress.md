@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -86,3 +86,19 @@ Final real DB rerun:2/2 passed including newly added legacy apply rejection and 
 ### Preserved integration dependency
 
 An exploratory binary real-database extension exposed two shared driver issues outside this track: PostgreSQL binds `Value::Bytes` as text (`column "payload" is of type bytea but expression is of type text`), while MySQL currently decodes the source BLOB as `NULL` and generates `... payload) VALUES (2, 30, 40, NULL)`. The extension was removed from this track's runnable E2E to avoid changing shared driver files owned by the pending Transfer work. After that work merges, integration testing must restore PostgreSQL/MySQL binary round-trip coverage. The target-driver preview test remains in this track and passes.
+
+## Independent Tester round 2 — 2026-09-15
+
+A. Reviewed the complete rescue diff at `1ce25cbe`, including the independent unknown-write fence, inspection/compare/cancel transitions, execute handler and button gates, generic binary fail-closed preview, target adapter dispatch and exact typed parameters. BUG-001 and BUG-002 are independently fixed. A new cancellation race is recorded as BUG-003; no business code was changed.
+
+B. Independent reruns at `c64466cc` before adding the new failing regression:
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap with the preceding run and are not summed.
+- Frontend sync suites: **7 files, 39 passed**. After adding the delayed-cancel Tester journey: **7 files, 39 passed, 1 failed**.
+- TypeScript `noEmit` and `git diff --check`: passed.
+- The required `pnpm tauri:build:webdriver` pipeline completed successfully with basic driver injection and an isolated track `CARGO_TARGET_DIR`.
+- The exact newly built track app ran the isolated PostgreSQL and MySQL canonical projection/selection journeys: **2/2 passed**. Each checked reordered physical columns, selected-only execution, exact target values, legacy-apply rejection and post-write comparison. Port 4476 and a dedicated app-data directory were used; default database reset scripts were not run.
+
+C. V8 coverage for the five changed frontend business modules remains above the gate: statements **82.84%** (652/787), branches **80.33%** (429/534), functions **85.63%** (161/188), lines **84.84%** (599/706). Rust percentage was not instrumented; the exact passing path counts above are reported instead. The new `[tester] invalidates a comparison before awaiting the cancel response` journey deterministically covers the previously untested race where compare completes while cancel IPC is still pending.
+
+D. **TEST_FAILED**. BUG-003 is a reproducible P1 duplicate-write risk. The comparison generation is invalidated only after awaiting the cancel command, so an in-flight comparison can clear `writeOutcomeUncertain` before cancellation completes. The UI then reports `unknown` while the independent fence is false; both the Execute button and execution handler can accept the stale mapping. Do not merge this track until a fresh Tester completes another full pass.

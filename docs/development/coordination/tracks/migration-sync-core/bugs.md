@@ -2,7 +2,7 @@
 
 ## migration-sync-core-BUG-001 — Unknown outcome unlocked by cancelled comparison (P1)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: execute selected changes; lose commit response; return from preview to comparison; start a new comparison; cancel it; advance to preview.
 - Actual: `handleCompare` replaces unknown with comparing; `handleCancel` sees retained mappingResults and sets compared. The stale reviewed changes become executable without a successful fresh comparison. The next write may repeat an already committed transaction.
 - Evidence: `[tester] cancelling a fresh comparison must not unlock an unknown write outcome` fails at DataSyncWindow.test.tsx:823: expected no data-sync-start, received enabled Execute button. Existing execute call count remains 1 before retry.
@@ -12,7 +12,7 @@
 
 ## migration-sync-core-BUG-002 — Binary SQL preview corrupts bytes (P1 export correctness)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: generate INSERT preview with Value::Bytes([0,255,254]).
 - Actual: sql.rs format_literal converts with from_utf8_lossy, producing replacement characters and a literal NUL. Copied SQL cannot round-trip original bytes.
 - Evidence: `test_tester_binary_preview_never_replaces_bytes_with_unicode` fails: `binary SQL preview is lossy: INSERT INTO "target" ("id", "payload") VALUES (1, '<NUL>��')`.
@@ -33,3 +33,13 @@
 - Rust instrumented percentage was not measured; 101 passing sync tests plus 22 passing command tests and actual PostgreSQL/MySQL journeys provide path evidence, not a numerical coverage claim.
 - Required real-database canonical projection/selection journeys pass 2/2 on PostgreSQL and MySQL after the rescue build.
 - Integer-only keys and 10k-diff/32MiB table/64MiB result limits remain wave1 guardrails, not Navicat parity. Shared immutable plans, normalized ordering, bounded ComparisonStore, conflict checks remain later wave work.
+
+## migration-sync-core-BUG-003 — Cancel IPC race clears the unknown-write fence (P1)
+
+- 状态：待修复
+- Reproduction: enter Unknown after losing the execute/commit response; go back and start a fresh comparison; click Cancel; hold the `cancel_data_sync` response pending; let the comparison resolve successfully before the cancel response; then resolve cancellation.
+- Actual: `handleCancel` increments `compareGenerationRef` only after `await cancelDataSync(jobId)`. The comparison therefore remains current long enough to run `setWriteOutcomeUncertain(false)`. When cancellation finishes, the visible state returns to `unknown`, but `data-write-outcome-uncertain` is false. Preview can expose Execute for the stale mapping, and `runExecute` sees the same false fence, allowing a duplicate write after an unknown commit result.
+- Evidence: `[tester] invalidates a comparison before awaiting the cancel response` fails at `DataSyncWindow.test.tsx:900`: expected `data-write-outcome-uncertain="true"`, received `"false"`. Full frontend result is 7 files, 39 passed and 1 failed.
+- Impact: every supported sync driver when cancellation IPC and comparison completion interleave. The database cancel flag is set quickly in normal local runs, but the frontend correctness contract must not depend on IPC latency or event-loop ordering.
+- Required fix: synchronously invalidate the active compare generation and preserve/set the independent unknown-write fence before awaiting cancellation. Completion and cancellation handlers must verify the active generation before clearing or transitioning state. Keep both the Execute button and `runExecute` gated by the fence.
+- Required regression: retain the delayed-cancel continuous journey, then rerun the complete Rust, frontend, coverage, required WebDriver build and isolated PostgreSQL/MySQL matrix with a fresh Tester.

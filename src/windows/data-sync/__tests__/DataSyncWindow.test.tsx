@@ -271,6 +271,8 @@ describe('DataSyncWindow wizard', () => {
     compareDataSyncMock.mockReset();
     applyDataSyncMock.mockReset();
     executeDataSyncMock.mockReset();
+    cancelDataSyncMock.mockReset();
+    cancelDataSyncMock.mockResolvedValue(true);
     generateDataSyncSqlMock.mockReset();
     generateDataSyncSqlMock.mockImplementation(async (_source, _target, tables, options) =>
       tables.flatMap((table: { targetTable: string; rows?: DataSyncRowChange[] }) =>
@@ -857,6 +859,48 @@ describe('DataSyncWindow wizard', () => {
     );
     fireEvent.click(screen.getByTestId('data-sync-next'));
     await screen.findByTestId('data-sync-start');
+  });
+
+  it('[tester] invalidates a comparison before awaiting the cancel response', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    executeDataSyncMock.mockRejectedValue(new Error('commit response lost'));
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+    await screen.findByTestId('data-sync-error');
+    fireEvent.click(screen.getByText('common.ok'));
+
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    let resolveCompare!: (rows: Array<Record<string, unknown>>) => void;
+    compareDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCompare = resolve; }),
+    );
+    let resolveCancel!: (cancelled: boolean) => void;
+    cancelDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCancel = resolve; }),
+    );
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    fireEvent.click(await screen.findByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+
+    resolveCompare([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    await waitFor(() => expect(screen.queryByTestId('data-sync-cancel')).toBeNull());
+    resolveCancel(true);
+    await waitFor(() =>
+      expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'unknown'),
+    );
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
   });
 
   it('keeps an unknown write fenced across failed comparison and inspection attempts', async () => {
