@@ -436,6 +436,20 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             ),
         ),
         cmd(
+            "pubsub_list_subscriptions",
+            "List subscriptions",
+            "List active Pub/Sub subscriptions for a connection",
+            "redis:allow-pubsub-subscribe",
+            object_schema(serde_json::json!({}), &[]),
+        ),
+        cmd(
+            "pubsub_stats",
+            "Pub/Sub stats",
+            "Get aggregated Pub/Sub message statistics",
+            "redis:allow-pubsub-subscribe",
+            object_schema(serde_json::json!({}), &[]),
+        ),
+        cmd(
             "json_get",
             "JSON get",
             "JSON.GET",

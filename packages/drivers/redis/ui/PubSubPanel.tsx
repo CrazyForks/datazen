@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Radio, Send, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Radio, Search, Send, X } from 'lucide-react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Button } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
@@ -57,6 +57,7 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastReceivers, setLastReceivers] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSeq = useRef(0);
   const subscriptionsRef = useRef(subscriptions);
@@ -187,6 +188,25 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
     setLastReceivers(null);
   }, []);
 
+  const filteredMessages = useMemo(() => {
+    if (!searchText.trim()) return messages;
+    const query = searchText.toLowerCase();
+    return messages.filter(
+      (msg) =>
+        msg.channel.toLowerCase().includes(query) || msg.payload.toLowerCase().includes(query),
+    );
+  }, [messages, searchText]);
+
+  const channelStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const msg of messages) {
+      counts[msg.channel] = (counts[msg.channel] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  }, [messages]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <div className="flex min-h-0 w-full shrink-0 flex-col border-b border-edge lg:w-[360px] lg:border-b-0 lg:border-r">
@@ -284,13 +304,19 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 font-mono text-fg-secondary">
                       {sub.channels.length > 0 && (
-                        <div>
-                          {t('redis.pubsubChannels')}: {sub.channels.join(', ')}
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex shrink-0 items-center rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                            {t('redis.pubsubTypeChannel')}
+                          </span>
+                          <span className="truncate">{sub.channels.join(', ')}</span>
                         </div>
                       )}
                       {sub.patterns.length > 0 && (
-                        <div>
-                          {t('redis.pubsubPatterns')}: {sub.patterns.join(', ')}
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="inline-flex shrink-0 items-center rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                            {t('redis.pubsubTypePattern')}
+                          </span>
+                          <span className="truncate">{sub.patterns.join(', ')}</span>
                         </div>
                       )}
                     </div>
@@ -313,8 +339,19 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4 py-2">
           <span className="text-sm font-medium text-fg">{t('redis.pubsubMessages')}</span>
-          <span className="text-xs text-fg-muted">({messages.length})</span>
+          <span className="text-xs text-fg-muted">
+            {t('redis.pubsubMessageCount', { count: messages.length })}
+          </span>
           <div className="flex-1" />
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-fg-muted" />
+            <input
+              className="h-7 w-40 rounded-md border border-edge bg-surface pl-7 pr-2 text-xs text-fg outline-none focus:border-accent"
+              placeholder={t('redis.pubsubSearchPlaceholder')}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
           <Button
             variant="secondary"
             className="h-7 px-2 text-xs"
@@ -332,9 +369,11 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
         )}
 
         <div className="min-h-0 flex-1 overflow-auto">
-          {messages.length === 0 ? (
+          {filteredMessages.length === 0 ? (
             <div className="flex h-full items-center justify-center p-8 text-sm text-fg-muted">
-              {t('redis.pubsubEmpty')}
+              {messages.length === 0
+                ? t('redis.pubsubEmpty')
+                : t('redis.pubsubSearchPlaceholder')}
             </div>
           ) : (
             <table className="w-full border-collapse text-[13px]">
@@ -346,7 +385,7 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
                 </tr>
               </thead>
               <tbody>
-                {messages.map((msg) => (
+                {filteredMessages.map((msg) => (
                   <tr key={msg.id} className="border-b border-edge/60 align-top">
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-fg-muted">
                       {formatTime(msg.ts)}
@@ -364,6 +403,17 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
           )}
           <div ref={messagesEndRef} />
         </div>
+
+        {channelStats.length > 0 && (
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-edge bg-surface-alt px-4 py-1.5 text-[11px] text-fg-muted">
+            <span className="font-medium text-fg-secondary">{t('redis.pubsubTopChannels')}</span>
+            {channelStats.map(([ch, count]) => (
+              <span key={ch} className="font-mono">
+                {ch}: {count}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
