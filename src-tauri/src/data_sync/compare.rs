@@ -157,17 +157,47 @@ pub fn compare_sorted_rows(
     Ok(changes)
 }
 
-fn page_starts_after_key(
+// Fail closed before exposing partial comparisons. Driver ordering must match the merge order.
+fn validate_page(
     page: &[Row],
     pk_indexes: &[usize],
-    after_key: &[Value],
-) -> Result<bool, DataSyncError> {
-    let Some(first) = page.first() else {
-        return Ok(true);
-    };
-    let key = extract_key(first, pk_indexes)?;
-    Ok(cmp_keys(&key, after_key) == Ordering::Greater)
+    columns: &[String],
+    after: Option<&[Value]>,
+) -> Result<(), DataSyncError> {
+    if page.len() > 1000
+        || serde_json::to_vec(page)
+            .map_err(|e| DataSyncError::validation(e.to_string()))?
+            .len()
+            > 8 * 1024 * 1024
+    {
+        return Err(DataSyncError::validation(
+            "comparison page exceeds 1000 rows / 8 MiB; reduce batch size or large column values",
+        ));
+    }
+    let mut previous = after.map(<[Value]>::to_vec);
+    for row in page {
+        if row.len() != columns.len() {
+            return Err(DataSyncError::validation("row width differs from canonical projection; compare again after checking the driver"));
+        }
+        let key = extract_key(row, pk_indexes)?;
+        if key.is_empty() || key.iter().any(|v| matches!(v, Value::Null)) {
+            return Err(DataSyncError::validation(
+                "comparison requires non-null primary keys",
+            ));
+        }
+        if previous
+            .as_ref()
+            .is_some_and(|p| cmp_keys(&key, p) != Ordering::Greater)
+        {
+            return Err(DataSyncError::validation("primary key stream is not strictly increasing; check key collation and driver ordering, then compare again"));
+        }
+        previous = Some(key);
+    }
+    Ok(())
 }
+
+const MAX_DIFF_ROWS: usize = 10_000;
+const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 pub async fn compare_table_pages<S, T>(
     source_table: &str,
@@ -183,13 +213,28 @@ where
     S: RowPageSource,
     T: RowPageSource,
 {
+    options.validate()?;
     let mut src_page = source.next_page(None, options.batch_size).await?;
     let mut tgt_page = target.next_page(None, options.batch_size).await?;
+    validate_page(&src_page, pk_indexes, column_names, None)?;
+    validate_page(&tgt_page, pk_indexes, column_names, None)?;
+    let mut unchanged_count = 0;
+    let mut result_bytes = 0;
+    let mut accounted = 0;
     let mut i = 0usize;
     let mut j = 0usize;
     let mut changes = Vec::new();
 
     loop {
+        for change in &changes[accounted..] {
+            result_bytes += serde_json::to_vec(change)
+                .map_err(|e| DataSyncError::validation(e.to_string()))?
+                .len();
+        }
+        accounted = changes.len();
+        if changes.len() > MAX_DIFF_ROWS || result_bytes > MAX_RESULT_BYTES {
+            return Err(DataSyncError::validation("comparison exceeds the current 10,000 difference / 32 MiB review limit; select fewer tables or a smaller dataset"));
+        }
         if cancelled
             .as_ref()
             .is_some_and(|c| c.load(AtomicOrdering::SeqCst))
@@ -197,19 +242,15 @@ where
             return Err(DataSyncError::cancelled("compare cancelled"));
         }
         if i >= src_page.len() && !src_page.is_empty() {
-            let after = extract_key(src_page.last().unwrap(), pk_indexes)?;
+            let after = extract_key(&src_page[src_page.len() - 1], pk_indexes)?;
             src_page = source.next_page(Some(&after), options.batch_size).await?;
-            if !page_starts_after_key(&src_page, pk_indexes, &after)? {
-                src_page.clear();
-            }
+            validate_page(&src_page, pk_indexes, column_names, Some(&after))?;
             i = 0;
         }
         if j >= tgt_page.len() && !tgt_page.is_empty() {
-            let after = extract_key(tgt_page.last().unwrap(), pk_indexes)?;
+            let after = extract_key(&tgt_page[tgt_page.len() - 1], pk_indexes)?;
             tgt_page = target.next_page(Some(&after), options.batch_size).await?;
-            if !page_starts_after_key(&tgt_page, pk_indexes, &after)? {
-                tgt_page.clear();
-            }
+            validate_page(&tgt_page, pk_indexes, column_names, Some(&after))?;
             j = 0;
         }
         if src_page.is_empty() && tgt_page.is_empty() {
@@ -242,11 +283,7 @@ where
                 let changed_columns =
                     diff_changed_columns(&src_page[i], &tgt_page[j], column_names, pk_indexes);
                 if changed_columns.is_empty() {
-                    changes.push(RowChange::unchanged(
-                        src_key,
-                        src_page[i].clone(),
-                        tgt_page[j].clone(),
-                    ));
+                    unchanged_count += 1;
                 } else {
                     changes.push(RowChange::update(
                         src_key,
@@ -262,7 +299,14 @@ where
         }
     }
 
-    Ok(TableResult::matched(source_table, target_table, changes))
+    let mut result = TableResult::matched(source_table, target_table, changes);
+    result.columns = column_names.to_vec();
+    result.primary_keys = pk_indexes
+        .iter()
+        .map(|&i| column_names[i].clone())
+        .collect();
+    result.unchanged_count = unchanged_count;
+    Ok(result)
 }
 
 /// In-memory sorted page source for tests and small fixtures.
@@ -502,5 +546,151 @@ mod tests {
         .unwrap();
         assert!(!table.has_row_differences());
         assert!(table.rows.is_empty());
+    }
+    #[tokio::test]
+    async fn unchanged_rows_are_counted_without_retaining_values() {
+        let rows = (0..5000)
+            .map(|n| vec![i(n), s("unchanged")])
+            .collect::<Vec<_>>();
+        let mut src = SliceRowSource::new(rows.clone(), vec![0]).unwrap();
+        let mut tgt = SliceRowSource::new(rows, vec![0]).unwrap();
+        let table = compare_table_pages(
+            "t",
+            "t",
+            &[0],
+            &["id".into(), "name".into()],
+            &SyncOptions::default(),
+            &mut src,
+            &mut tgt,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(table.unchanged_row_count(), 5000);
+        assert!(table.rows.is_empty());
+        assert_eq!(table.columns, vec!["id", "name"]);
+    }
+
+    #[tokio::test]
+    async fn difference_limit_returns_error_instead_of_partial_approval() {
+        let rows = (0..=MAX_DIFF_ROWS as i64).map(|n| vec![i(n)]).collect();
+        let mut src = SliceRowSource::new(rows, vec![0]).unwrap();
+        let mut tgt = SliceRowSource::new(vec![], vec![0]).unwrap();
+        let err = compare_table_pages(
+            "t",
+            "t",
+            &[0],
+            &["id".into()],
+            &SyncOptions::default(),
+            &mut src,
+            &mut tgt,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("review limit"));
+    }
+
+    #[test]
+    fn malformed_and_non_monotone_pages_are_rejected() {
+        let columns = vec!["id".into()];
+        assert!(validate_page(&[vec![i(1), i(2)]], &[0], &columns, None).is_err());
+        assert!(validate_page(&[vec![None]], &[0], &columns, None).is_err());
+        assert!(validate_page(&[vec![i(1)], vec![i(1)]], &[0], &columns, None).is_err());
+        assert!(validate_page(&[vec![i(2)], vec![i(1)]], &[0], &columns, None).is_err());
+        assert!(validate_page(
+            &[vec![s("B")]],
+            &[0],
+            &columns,
+            Some(&[Value::String("a".into())])
+        )
+        .is_err());
+    }
+
+    struct RepeatedPage;
+    #[async_trait]
+    impl RowPageSource for RepeatedPage {
+        async fn next_page(
+            &mut self,
+            _: Option<&[Value]>,
+            _: u32,
+        ) -> Result<Vec<Row>, DataSyncError> {
+            Ok(vec![vec![i(1)]])
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_page_is_not_silently_treated_as_eof() {
+        let mut src = RepeatedPage;
+        let mut tgt = SliceRowSource::new(vec![], vec![0]).unwrap();
+        let err = compare_table_pages(
+            "t",
+            "t",
+            &[0],
+            &["id".into()],
+            &SyncOptions::default(),
+            &mut src,
+            &mut tgt,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("not strictly increasing"));
+    }
+    #[tokio::test]
+    async fn test_tester_composite_integer_keys_across_single_row_pages() {
+        let rows = vec![
+            vec![i(-1), i(99), s("a")],
+            vec![i(0), i(-1), s("b")],
+            vec![i(0), i(0), s("c")],
+        ];
+        let mut source = SliceRowSource::new(rows.clone(), vec![0, 1]).unwrap();
+        let mut target =
+            SliceRowSource::new(vec![rows[0].clone(), rows[2].clone()], vec![0, 1]).unwrap();
+        let options = SyncOptions {
+            batch_size: 1,
+            ..SyncOptions::default()
+        };
+        let result = compare_table_pages(
+            "source",
+            "target",
+            &[0, 1],
+            &["k1".into(), "k2".into(), "value".into()],
+            &options,
+            &mut source,
+            &mut target,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.unchanged_count, 2);
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&result.rows[0].key).unwrap(),
+            serde_json::json!([0, -1])
+        );
+        assert_eq!(result.primary_keys, vec!["k1", "k2"]);
+    }
+
+    #[test]
+    fn test_tester_review_page_byte_limit_and_explicit_null_are_rejected() {
+        let columns = vec!["id".into(), "payload".into()];
+        let oversized = vec![vec![i(1), Some(Value::String("x".repeat(8 * 1024 * 1024)))]];
+        assert!(validate_page(&oversized, &[0], &columns, None)
+            .unwrap_err()
+            .to_string()
+            .contains("8 MiB"));
+        assert!(
+            validate_page(&[vec![Some(Value::Null), s("v")]], &[0], &columns, None)
+                .unwrap_err()
+                .to_string()
+                .contains("non-null")
+        );
+        assert!(
+            validate_page(&vec![vec![i(1), s("v")]; 1001], &[0], &columns, None)
+                .unwrap_err()
+                .to_string()
+                .contains("1000 rows")
+        );
     }
 }

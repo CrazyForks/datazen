@@ -45,6 +45,10 @@ export interface DataSyncTableResult {
   status: DataSyncMappingStatus;
   incompatibleReason?: string | null;
   warnings?: string[];
+  columns?: string[];
+  columnTypes?: string[];
+  primaryKeys?: string[];
+  unchangedCount?: number;
   rows?: DataSyncRowChange[];
 }
 
@@ -182,7 +186,7 @@ export const syncCommands = {
       targetSchema: targetSchema ?? null,
     }),
 
-  /** Expects backend `generate_data_sync_sql` (Phase A); falls back client-side in UI. */
+  /** Generate only the selected rows; failures never trigger another write path. */
   generateDataSyncSql: (
     sourceDbSessionId: string,
     targetDbSessionId: string,

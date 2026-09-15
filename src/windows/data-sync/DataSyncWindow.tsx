@@ -114,8 +114,15 @@ export function DataSyncWindow() {
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
+  const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
   const jobIdRef = useRef<string | null>(null);
+  const jobKindRef = useRef<'compare' | 'execute' | null>(null);
+  const cancelRequestedJobRef = useRef<string | null>(null);
+  const cancellingStatusJobRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
+  const writeInFlightRef = useRef(false);
+  const syncStateRef = useRef(syncState);
+  syncStateRef.current = syncState;
 
   useEffect(() => {
     void loadSettings();
@@ -594,7 +601,7 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
@@ -616,7 +623,7 @@ export function DataSyncWindow() {
       if (generation !== compareGenerationRef.current) return false;
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -629,6 +636,7 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     disabledTables,
+    writeOutcomeUncertain,
   ]);
 
   const handleCompare = useCallback(async (): Promise<boolean> => {
@@ -644,6 +652,8 @@ export function DataSyncWindow() {
     setStatusMsg('');
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'compare';
+    cancelRequestedJobRef.current = null;
 
     try {
       const { source, target } = await refreshEndpointSessions();
@@ -651,7 +661,7 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
@@ -669,6 +679,10 @@ export function DataSyncWindow() {
       );
 
       if (generation !== compareGenerationRef.current) return false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       const merged = mergeCompareIntoMappings(mappingResults, compared).map((row) => {
         if (row.status !== 'MATCHED' || !row.rows) return row;
         return {
@@ -677,15 +691,20 @@ export function DataSyncWindow() {
         };
       });
       setMappingResults(merged);
+      setWriteOutcomeUncertain(false);
       const firstDiff = merged.find((r) => r.status === 'MATCHED' && tableHasRowDiffs(r));
       if (firstDiff) setSelectedTableKey(tableKey(firstDiff));
       setSyncState('compared');
       return true;
     } catch (e) {
       if (generation !== compareGenerationRef.current) return false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -699,18 +718,43 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     syncOptions,
+    writeOutcomeUncertain,
   ]);
 
   const handleCancel = useCallback(async () => {
+    const cancellationGeneration = ++compareGenerationRef.current;
+    // Reassert the fence before yielding so a comparison completion queued in the same tick cannot win.
+    if (writeOutcomeUncertain) setWriteOutcomeUncertain(true);
     const jobId = jobIdRef.current;
+    const jobKind = jobKindRef.current;
+    const cancelledPhase = syncStateRef.current;
+    if (jobId) cancelRequestedJobRef.current = jobId;
+
+    if (jobKind === 'execute' && writeInFlightRef.current) {
+      cancellingStatusJobRef.current = jobId;
+      setStatusMsg(t('sync.cancellingExecution'));
+    } else {
+      setSyncState(
+        writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
+      );
+      setExecuteProgress('');
+      setStatusMsg(t('sync.compareCancelled'));
+    }
+
     if (jobId) {
       await syncCommands.cancelDataSync(jobId);
-      jobIdRef.current = null;
     }
-    compareGenerationRef.current += 1;
-    setSyncState(mappingResults.length > 0 ? 'compared' : 'idle');
-    setStatusMsg(t('sync.compareCancelled'));
-  }, [mappingResults.length, t]);
+    if (
+      cancellationGeneration !== compareGenerationRef.current ||
+      jobIdRef.current !== jobId ||
+      jobKindRef.current !== jobKind
+    ) return;
+    if (jobKind === 'execute' && syncStateRef.current !== cancelledPhase) return;
+    if (jobKind === 'execute' && writeInFlightRef.current) return;
+    jobIdRef.current = null;
+    jobKindRef.current = null;
+    if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
+  }, [mappingResults.length, t, writeOutcomeUncertain]);
 
   const toggleDisabledTable = useCallback((sourceTable: string) => {
     setSyncState('idle');
@@ -773,6 +817,12 @@ export function DataSyncWindow() {
 
   const runExecute = useCallback(async () => {
     if (!sourceId || !targetId) return;
+    if (writeOutcomeUncertain) {
+      setErrorMsg(t('sync.executionUnknown'));
+      setErrorOpen(true);
+      setSyncState('unknown');
+      return;
+    }
     if (targetReadOnly) {
       setErrorMsg(t('sync.targetReadOnly'));
       setErrorOpen(true);
@@ -782,7 +832,11 @@ export function DataSyncWindow() {
     setExecuteProgress(t('sync.executing'));
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'execute';
+    cancelRequestedJobRef.current = null;
+    cancellingStatusJobRef.current = null;
 
+    let writeStarted = false;
     try {
       const { source, target } = await refreshEndpointSessions();
       const srcConnId = source?.dbSessionId;
@@ -796,61 +850,27 @@ export function DataSyncWindow() {
         (r) => r.status === 'MATCHED' && selectedRowCount(r, syncOptions) > 0,
       );
 
-      let executed = false;
-      let usedApplyFallback = false;
-      try {
-        const stmts = await syncCommands.generateDataSyncSql(
-          srcConnId,
-          tgtConnId,
-          tablesWithSelection,
-          syncOptions,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-        );
-        const selected = stmts.filter((s) => operationAllowed(s.operation, syncOptions));
-        if (selected.length > 0) {
-          setExecuteProgress(t('sync.executingSql', { count: selected.length }));
-          const result = await syncCommands.executeDataSync(
-            tgtConnId,
-            selected,
-            jobId,
-            targetDatabase,
-          );
-          if (result.rolledBack) {
-            setErrorMsg(t('sync.rolledBack'));
-            setErrorOpen(true);
-            setSyncState('compared');
-            return;
-          }
-          executed = true;
-        }
-      } catch {
-        /* backend generate not available */
+      const stmts = await syncCommands.generateDataSyncSql(
+        srcConnId, tgtConnId, tablesWithSelection, syncOptions,
+        sourceDatabase, targetDatabase, sourceSchema || undefined, targetSchema || undefined,
+      );
+      if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
+      const selected = stmts.filter((statement) => operationAllowed(statement.operation, syncOptions));
+      if (selected.length === 0) {
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
       }
-
-      if (!executed) {
-        usedApplyFallback = true;
-        const tableNames = tablesWithSelection.map((r) => r.sourceTable);
-        setExecuteProgress(t('sync.executingTables', { count: tableNames.length }));
-        const result = await syncCommands.applyDataSync(
-          srcConnId,
-          tgtConnId,
-          tableNames,
-          jobId,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-          syncOptions,
-        );
-        if (result.rolledBack) {
-          setErrorMsg(t('sync.rolledBack'));
-          setErrorOpen(true);
-          setSyncState('compared');
-          return;
-        }
+      setExecuteProgress(t('sync.executingSql', { count: selected.length }));
+      writeStarted = true;
+      writeInFlightRef.current = true;
+      const result = await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      if (result.rolledBack) {
+        setErrorMsg(t('sync.rolledBack'));
+        setErrorOpen(true);
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
       }
 
       setExecuteProgress(t('sync.recomparing'));
@@ -872,19 +892,30 @@ export function DataSyncWindow() {
           return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
         });
       });
+      setWriteOutcomeUncertain(false);
       setSyncState('done');
       setStep('result');
       setExecuteProgress('');
-      if (usedApplyFallback) {
-        setStatusMsg(t('sync.applyFallbackUsed'));
-      } else {
-        setStatusMsg('');
-      }
+      setStatusMsg('');
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorMsg(`${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`);
       setErrorOpen(true);
-      setSyncState('compared');
+      if (writeStarted) setWriteOutcomeUncertain(true);
+      setSyncState(writeStarted ? 'unknown' : 'compared');
       setExecuteProgress('');
+    } finally {
+      writeInFlightRef.current = false;
+      if (cancellingStatusJobRef.current === jobId) {
+        cancellingStatusJobRef.current = null;
+        setStatusMsg((current) =>
+          current === t('sync.cancellingExecution') ? '' : current,
+        );
+      }
+      if (jobIdRef.current === jobId && jobKindRef.current === 'execute') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
+      if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
     }
   }, [
     sourceId,
@@ -898,6 +929,7 @@ export function DataSyncWindow() {
     targetSchema,
     targetReadOnly,
     t,
+    writeOutcomeUncertain,
   ]);
 
   const handleExecute = useCallback(() => {
@@ -917,7 +949,7 @@ export function DataSyncWindow() {
     setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
   }, []);
 
-  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'done';
+  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'unknown' || syncState === 'done';
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
   const compareDisabled = Boolean(sourceSessionError || targetSessionError);
   const stepIndex = WIZARD_STEPS.indexOf(step);
@@ -1046,6 +1078,7 @@ export function DataSyncWindow() {
       data-testid="data-sync-window"
       data-sync-state={syncState}
       data-sync-step={step}
+      data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
       <TitleBar title={t('common.dataSyncTitle')} />
@@ -1289,7 +1322,7 @@ export function DataSyncWindow() {
           hasDeletes={hasSelectedDeletes}
           targetReadOnly={targetReadOnly}
           executing={syncState === 'executing'}
-          canExecute={mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
+          canExecute={!writeOutcomeUncertain && mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
           onExecute={() => void handleExecute()}
           onCancel={() => void handleCancel()}
         />

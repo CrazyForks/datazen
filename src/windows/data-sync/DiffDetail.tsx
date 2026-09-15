@@ -132,9 +132,9 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                 <th
                   key={i}
                   className="border-b border-edge p-2 text-left"
-                  title={t('sync.colIndexHint', { n: i + 1 })}
+                  title={table.columns?.[i] ?? t('sync.colIndexHint', { n: i + 1 })}
                 >
-                  {t('sync.colN', { n: i + 1 })}
+                  {table.columns?.[i] ?? t('sync.colN', { n: i + 1 })}
                 </th>
               ))}
             </tr>
@@ -181,9 +181,9 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                     const tg = tgt[colIdx] ?? null;
                     const isChanged =
                       row.operation === 'UPDATE' &&
-                      (changed.size === 0 ? s !== tg : changed.has(`col${colIdx}`));
+                      changed.has(table.columns?.[colIdx] ?? '');
                     return (
-                      <td key={colIdx} className="p-2 align-top">
+                      <td key={colIdx} data-column={table.columns?.[colIdx]} data-changed={isChanged} className="p-2 align-top">
                         {row.operation === 'INSERT' && (
                           <span className="font-mono text-green-700 dark:text-green-400">
                             {formatCell(s)}
@@ -196,10 +196,10 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                         )}
                         {row.operation === 'UPDATE' && (
                           <div className="space-y-0.5 font-mono">
-                            <div className={cn(isChanged && 'text-fg-muted line-through')}>
+                            <div className={cn(isChanged && 'text-accent')}>
                               {t('sync.sourceShort')}: {formatCell(s)}
                             </div>
-                            <div className={cn(isChanged && 'text-accent')}>
+                            <div className={cn(isChanged && 'text-fg-muted line-through')}>
                               {t('sync.targetShort')}: {formatCell(tg)}
                             </div>
                           </div>

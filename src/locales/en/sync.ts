@@ -1,6 +1,8 @@
 /** Auto-split domain: sync (en) — unified sync / transfer / schemaDiff */
 const pack = {
   // --- Data Sync ---
+  'sync.executionUnknown': 'The write outcome could not be confirmed. Compare again before retrying.',
+  'sync.cancellingExecution': 'Cancellation requested. Waiting for the transaction outcome…',
   'sync.source': 'Source',
   'sync.target': 'Target',
   'sync.selectSource': 'Select source',

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
 import type { DataSyncOperation, DataSyncSqlStatement, SyncOptions } from '../../commands/sync';
 import { syncCommands } from '../../commands/sync';
 import {
-  buildClientSqlPreview,
   filterStatementsByOp,
   statementsToPreviewText,
 } from './clientSqlPreview';
@@ -37,12 +36,16 @@ export function SqlPreview({
   const { t } = useI18n();
   const [opFilter, setOpFilter] = useState<OpFilter>('all');
   const [statements, setStatements] = useState<DataSyncSqlStatement[] | null>(null);
-  const [clientText, setClientText] = useState('');
+  const [previewError, setPreviewError] = useState('');
+  const generation = useRef(0);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const loadPreview = useCallback(async () => {
+    const revision = ++generation.current;
     setLoading(true);
+    setStatements(null);
+    setPreviewError('');
     try {
       const stmts = await syncCommands.generateDataSyncSql(
         sourceConnId,
@@ -54,13 +57,14 @@ export function SqlPreview({
         sourceSchema || undefined,
         targetSchema || undefined,
       );
+      if (revision !== generation.current) return;
       setStatements(stmts);
-      setClientText('');
-    } catch {
+    } catch (error) {
+      if (revision !== generation.current) return;
       setStatements(null);
-      setClientText(buildClientSqlPreview(tables, options));
+      setPreviewError(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoading(false);
+      if (revision === generation.current) setLoading(false);
     }
   }, [
     sourceConnId,
@@ -75,11 +79,12 @@ export function SqlPreview({
 
   useEffect(() => {
     void loadPreview();
+    return () => { generation.current += 1; };
   }, [loadPreview]);
 
   const previewText = statements
     ? statementsToPreviewText(filterStatementsByOp(statements, opFilter), opFilter)
-    : clientText;
+    : '';
 
   const handleCopy = async () => {
     try {
@@ -122,6 +127,7 @@ export function SqlPreview({
           {copied ? t('common.copied') : t('common.copy')}
         </Button>
       </div>
+      {previewError && <div role="alert" className="p-3 text-sm text-red-500">{previewError}</div>}
       <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-fg-secondary">
         {previewText}
       </pre>
