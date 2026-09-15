@@ -172,19 +172,27 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     const condRow = await $('[data-testid="qb-condition-row"]');
     await condRow.waitForDisplayed({ timeout: 3000 });
 
-    // Click the column Select (second Select inside the condition row)
+    // Click the column Select button (second <button> inside condition row).
+    // The Select trigger is a <button> with aria-label matching the placeholder.
+    // The listbox is portaled to document.body when open.
     await browser.execute(() => {
       const row = document.querySelector('[data-testid="qb-condition-row"]');
       if (!row) return;
-      const selects = row.querySelectorAll('[data-testid="select-listbox"]');
-      const columnSelect = selects[1] as HTMLElement | undefined;
-      if (columnSelect) columnSelect.click();
+      const buttons = Array.from(row.querySelectorAll('button'));
+      // buttons[0]=table select, [1]=column select, [2]=operator select, [3]=remove
+      const columnBtn = buttons[1] as HTMLElement | undefined;
+      if (columnBtn) columnBtn.click();
     });
-    await browser.pause(300);
+    await browser.waitForFunction(
+      () => document.querySelector('[data-testid="select-listbox"]') !== null,
+      { timeout: 3000 },
+    );
 
-    // Pick the "name" option from the dropdown
+    // Pick the "name" option from the portaled listbox
     const colOptionPicked = await browser.execute((colName: string) => {
-      const options = Array.from(document.querySelectorAll('[data-testid="select-option"]'));
+      const listbox = document.querySelector('[data-testid="select-listbox"]');
+      if (!listbox) return false;
+      const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
       const nameOpt = options.find((o) => o.textContent?.trim() === colName);
       if (nameOpt) {
         nameOpt.click();
