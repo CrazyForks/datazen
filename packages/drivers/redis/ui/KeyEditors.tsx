@@ -295,7 +295,7 @@ export function KeyDetailEditor({
 
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
         <div className="flex min-w-[120px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.renameKey')}</label>
+          <label className="text-fg-muted">{t('redis.name')}</label>
           <Input
             value={renameInput}
             onChange={(e) => setRenameInput(e.target.value)}
@@ -687,7 +687,7 @@ function ListEditor({
                       setEditValue(String(item));
                     }}
                   >
-                    {t('common.save')}
+                    {t('redis.edit')}
                   </button>
                 )}
               </td>
