@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Button } from '@datazen/ui';
-import { Input } from '@datazen/ui';
+import { Button, Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
 import type { KeyDetail } from '../../../../src/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
@@ -14,16 +13,12 @@ import {
   valueLooksCompressed,
   type DecompressResult,
 } from './stringKeyValue';
-import {
-  invokeRename,
-  invokeSetExpireAt,
-  invokeSetString,
-  invokeSetTtl,
-} from './keyEditorsInvokes';
+import { invokeRename, invokeSetString } from './keyEditorsInvokes';
 import { HashEditor } from './HashEditor';
 import { ListEditor } from './ListEditor';
 import { SetEditor } from './SetEditor';
 import { ZsetEditor } from './ZsetEditor';
+import { TtlControls } from './TtlControls';
 
 export type { PluginInvokeFn } from './keyEditorsInvokes';
 export {
@@ -61,13 +56,6 @@ export function KeyDetailEditor({
   onRenamed,
 }: KeyDetailEditorProps) {
   const { t } = useI18n();
-  const [ttlInput, setTtlInput] = useState(detail.ttl < 0 ? '' : String(detail.ttl));
-  const [expireAtLocal, setExpireAtLocal] = useState(() => {
-    if (detail.ttl < 0) return '';
-    const d = new Date(Date.now() + detail.ttl * 1000);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  });
   const [renameInput, setRenameInput] = useState(detail.key);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,8 +76,6 @@ export function KeyDetailEditor({
     [onRefresh],
   );
 
-  const ttlText = detail.ttl < 0 ? t('redis.noExpiry') : `${detail.ttl} ${t('redis.seconds')}`;
-
   const showJsonEditor =
     isJsonKeyType(detail.keyType) ||
     (modules !== null && hasRedisJson(modules) && looksLikeJsonModuleDetail(detail));
@@ -99,77 +85,15 @@ export function KeyDetailEditor({
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
         <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">{detail.keyType}</span>
-        <span className="font-medium text-fg-muted">TTL:</span>
-        <span className="text-fg-secondary">{ttlText}</span>
       </div>
 
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
-        <div className="flex min-w-[120px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.setTtl')}</label>
-          <Input
-            value={ttlInput}
-            onChange={(e) => setTtlInput(e.target.value)}
-            placeholder={t('redis.ttlSeconds')}
-            className="h-7 text-xs"
-          />
-        </div>
-        <Button
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              const secs = parseInt(ttlInput, 10);
-              if (Number.isNaN(secs) || secs < 0) {
-                throw new Error(t('redis.ttlSeconds'));
-              }
-              await invokeSetTtl(dbSessionId, dbIndex, detail.key, secs);
-            })
-          }
-        >
-          {t('redis.setTtl')}
-        </Button>
-        <div className="flex min-w-[180px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.expireAt')}</label>
-          <Input
-            type="datetime-local"
-            value={expireAtLocal}
-            onChange={(e) => setExpireAtLocal(e.target.value)}
-            className="h-7 text-xs"
-          />
-        </div>
-        <Button
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          disabled={busy || !expireAtLocal}
-          onClick={() =>
-            void run(async () => {
-              const ms = Date.parse(expireAtLocal);
-              if (Number.isNaN(ms)) {
-                throw new Error(t('redis.expireAtInvalid'));
-              }
-              const unix = Math.floor(ms / 1000);
-              await invokeSetExpireAt(dbSessionId, dbIndex, detail.key, unix);
-            })
-          }
-        >
-          {t('redis.setExpireAt')}
-        </Button>
-        <Button
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              await invokeSetTtl(dbSessionId, dbIndex, detail.key, -1);
-              setTtlInput('');
-              setExpireAtLocal('');
-            })
-          }
-        >
-          {t('redis.persist')}
-        </Button>
-      </div>
+      <TtlControls
+        dbSessionId={dbSessionId}
+        dbIndex={dbIndex}
+        keyName={detail.key}
+        ttl={detail.ttl}
+        onChanged={() => void onRefresh()}
+      />
 
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
         <div className="flex min-w-[120px] flex-1 flex-col gap-1">
