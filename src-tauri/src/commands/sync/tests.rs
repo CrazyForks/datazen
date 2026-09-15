@@ -515,6 +515,73 @@ async fn compare_rejects_mock_driver_that_repeats_keyset_pages() {
 }
 
 #[tokio::test]
+async fn generated_binary_preview_uses_the_target_driver_literal_renderer() {
+    use crate::data_sync::{RowChange, SyncOptions, TableResult};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+    use crate::testing::mock_driver::MockDriverOptions;
+
+    let schema = table(
+        "binary_rows",
+        vec![
+            col("id", "INT", false, true),
+            col("payload", "BINARY", true, false),
+        ],
+        vec!["id".into()],
+    );
+    let test = TestAppState::with_options(MockDriverOptions {
+        table_schema: Some(schema),
+        ..MockDriverOptions::default()
+    })
+    .await;
+    let bytes = vec![0, 255, 254];
+
+    for (database_type, expected_literal) in [("postgresql", "'\\x00fffe'"), ("mysql", "X'00fffe'")]
+    {
+        test.registry
+            .register_test_driver(database_type, test.mock.clone())
+            .await;
+        let connection_id = format!("binary-{database_type}");
+        let mut config = sample_postgres_config(&connection_id);
+        config.database_type = database_type.into();
+        test.store.save_connection(config).await.unwrap();
+        let target_db_session_id = test.connect_config(&connection_id).await;
+
+        let options = SyncOptions::default();
+        let mut result = TableResult::matched(
+            "binary_rows",
+            "binary_rows",
+            vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1)), Some(Value::Bytes(bytes.clone()))],
+                &options,
+            )],
+        );
+        result.columns = vec!["id".into(), "payload".into()];
+        result.column_types = vec!["INT".into(), "BINARY".into()];
+        result.primary_keys = vec!["id".into()];
+
+        let statements = super::generate_data_sync_sql_impl(
+            &test.state,
+            target_db_session_id,
+            vec![result],
+            options.clone(),
+            Some("app".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(statements.len(), 1);
+        assert!(statements[0].preview_sql.contains(expected_literal));
+        assert!(!statements[0].preview_sql.contains('\u{fffd}'));
+        assert!(!statements[0].preview_sql.contains('\0'));
+        assert!(matches!(
+            &statements[0].parameters[1],
+            Value::Bytes(actual) if actual == &bytes
+        ));
+    }
+}
+
+#[tokio::test]
 async fn legacy_apply_rejects_unreviewed_recomparison() {
     use crate::testing::app_state::TestAppState;
 

@@ -26,5 +26,14 @@ describe('[tester] canonical projection and summary merge', () => {
     expect(merged[0]).toMatchObject({ columns: ['id', 'name'], unchangedCount: 55, warnings: ['existing'] });
     expect(tablesForCompare(merged)).toEqual(['orders']);
     expect(mergeCompareIntoMappings([table], [])).toEqual([table]);
+
+    const targetOnly: DataSyncTableResult = {
+      sourceTable: '',
+      targetTable: 'orphan_archive',
+      status: 'UNMAPPED_TARGET',
+    };
+    expect(
+      mergeCompareIntoMappings([targetOnly], [{ ...targetOnly, warnings: ['target only'] }]),
+    ).toEqual([{ ...targetOnly, warnings: ['target only'] }]);
   });
 });

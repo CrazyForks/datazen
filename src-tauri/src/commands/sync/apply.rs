@@ -5,9 +5,9 @@ use super::super::AppState;
 use super::inspect::inspect_data_sync_impl;
 use super::keyset_source::DriverKeysetSource;
 use crate::data_sync::{
-    compare_table_pages, generate_table_sql, mysql_placeholder, postgres_typed_placeholder,
-    quote_ident_sql, ChangeSet, ComparisonResult, SyncOptions, TableMapping, TableMappingStatus,
-    TableResult,
+    compare_table_pages, generate_table_sql_with_preview_formatter, mysql_placeholder,
+    postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult, DataSyncError,
+    SyncOptions, TableMapping, TableMappingStatus, TableResult,
 };
 
 fn ident_quote(family: &str) -> char {
@@ -245,6 +245,22 @@ pub(crate) async fn generate_data_sync_sql_impl(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("generate_data_sync_sql")?;
+    state
+        .sync_adapters
+        .ensure_type(&tgt_config.database_type)
+        .map_err(CommandError::Validation)?;
+    let preview_source = state
+        .sync_adapters
+        .get_source(&tgt_config.database_type)
+        .ok_or_else(|| {
+            CommandError::Validation("target driver has no SQL preview type adapter".into())
+        })?;
+    let preview_target = state
+        .sync_adapters
+        .get_target(&tgt_config.database_type)
+        .ok_or_else(|| {
+            CommandError::Validation("target driver has no SQL preview literal renderer".into())
+        })?;
 
     let mut statements = Vec::new();
     for table in &set.tables {
@@ -262,8 +278,27 @@ pub(crate) async fn generate_data_sync_sql_impl(
         let column_names = &projection.columns;
         let column_types = resolve_projection_types(projection, &schema, &family)?;
         let pk = &projection.primary_keys;
+        let preview_types = schema
+            .columns
+            .iter()
+            .map(|column| {
+                let ir = preview_source.column_to_ir(column, Some(&column.data_type));
+                (column.name.clone(), ir.ir_type)
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let preview_literal = |column: &str,
+                               value: &Option<datazen_driver_api::Value>,
+                               _data_type: Option<&str>|
+         -> Result<String, DataSyncError> {
+            let ir_type = preview_types.get(column).ok_or_else(|| {
+                DataSyncError::validation(format!(
+                    "target preview metadata for column '{column}' is missing; compare again"
+                ))
+            })?;
+            Ok(preview_target.format_literal(value, ir_type))
+        };
         let stmts = if family == "mysql" {
-            generate_table_sql(
+            generate_table_sql_with_preview_formatter(
                 table,
                 target_database.as_deref(),
                 &pk,
@@ -271,9 +306,10 @@ pub(crate) async fn generate_data_sync_sql_impl(
                 &column_types,
                 |n| quote_ident_sql(n, quote),
                 |idx, _| mysql_placeholder(idx),
+                preview_literal,
             )
         } else {
-            generate_table_sql(
+            generate_table_sql_with_preview_formatter(
                 table,
                 target_schema.as_deref(),
                 &pk,
@@ -281,6 +317,7 @@ pub(crate) async fn generate_data_sync_sql_impl(
                 &column_types,
                 |n| quote_ident_sql(n, quote),
                 postgres_typed_placeholder,
+                preview_literal,
             )
         }
         .map_err(CommandError::from)?;

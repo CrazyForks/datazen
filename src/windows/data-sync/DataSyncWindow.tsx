@@ -114,6 +114,7 @@ export function DataSyncWindow() {
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
+  const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
   const jobIdRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
   const writeInFlightRef = useRef(false);
@@ -595,7 +596,7 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
@@ -617,7 +618,7 @@ export function DataSyncWindow() {
       if (generation !== compareGenerationRef.current) return false;
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -630,6 +631,7 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     disabledTables,
+    writeOutcomeUncertain,
   ]);
 
   const handleCompare = useCallback(async (): Promise<boolean> => {
@@ -652,7 +654,7 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
@@ -678,6 +680,7 @@ export function DataSyncWindow() {
         };
       });
       setMappingResults(merged);
+      setWriteOutcomeUncertain(false);
       const firstDiff = merged.find((r) => r.status === 'MATCHED' && tableHasRowDiffs(r));
       if (firstDiff) setSelectedTableKey(tableKey(firstDiff));
       setSyncState('compared');
@@ -686,7 +689,7 @@ export function DataSyncWindow() {
       if (generation !== compareGenerationRef.current) return false;
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -700,6 +703,7 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     syncOptions,
+    writeOutcomeUncertain,
   ]);
 
   const handleCancel = useCallback(async () => {
@@ -713,9 +717,11 @@ export function DataSyncWindow() {
       return;
     }
     compareGenerationRef.current += 1;
-    setSyncState(mappingResults.length > 0 ? 'compared' : 'idle');
+    setSyncState(
+      writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
+    );
     setStatusMsg(t('sync.compareCancelled'));
-  }, [mappingResults.length, t]);
+  }, [mappingResults.length, t, writeOutcomeUncertain]);
 
   const toggleDisabledTable = useCallback((sourceTable: string) => {
     setSyncState('idle');
@@ -778,6 +784,12 @@ export function DataSyncWindow() {
 
   const runExecute = useCallback(async () => {
     if (!sourceId || !targetId) return;
+    if (writeOutcomeUncertain) {
+      setErrorMsg(t('sync.executionUnknown'));
+      setErrorOpen(true);
+      setSyncState('unknown');
+      return;
+    }
     if (targetReadOnly) {
       setErrorMsg(t('sync.targetReadOnly'));
       setErrorOpen(true);
@@ -844,6 +856,7 @@ export function DataSyncWindow() {
           return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
         });
       });
+      setWriteOutcomeUncertain(false);
       setSyncState('done');
       setStep('result');
       setExecuteProgress('');
@@ -851,6 +864,7 @@ export function DataSyncWindow() {
     } catch (e) {
       setErrorMsg(`${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`);
       setErrorOpen(true);
+      if (writeStarted) setWriteOutcomeUncertain(true);
       setSyncState(writeStarted ? 'unknown' : 'compared');
       setExecuteProgress('');
     } finally {
@@ -868,6 +882,7 @@ export function DataSyncWindow() {
     targetSchema,
     targetReadOnly,
     t,
+    writeOutcomeUncertain,
   ]);
 
   const handleExecute = useCallback(() => {
@@ -1016,6 +1031,7 @@ export function DataSyncWindow() {
       data-testid="data-sync-window"
       data-sync-state={syncState}
       data-sync-step={step}
+      data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
       <TitleBar title={t('common.dataSyncTitle')} />
@@ -1259,7 +1275,7 @@ export function DataSyncWindow() {
           hasDeletes={hasSelectedDeletes}
           targetReadOnly={targetReadOnly}
           executing={syncState === 'executing'}
-          canExecute={syncState !== 'unknown' && mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
+          canExecute={!writeOutcomeUncertain && mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
           onExecute={() => void handleExecute()}
           onCancel={() => void handleCancel()}
         />

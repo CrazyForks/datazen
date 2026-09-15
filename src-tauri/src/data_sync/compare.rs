@@ -639,14 +639,36 @@ mod tests {
     }
     #[tokio::test]
     async fn test_tester_composite_integer_keys_across_single_row_pages() {
-        let rows = vec![vec![i(-1), i(99), s("a")], vec![i(0), i(-1), s("b")], vec![i(0), i(0), s("c")]];
+        let rows = vec![
+            vec![i(-1), i(99), s("a")],
+            vec![i(0), i(-1), s("b")],
+            vec![i(0), i(0), s("c")],
+        ];
         let mut source = SliceRowSource::new(rows.clone(), vec![0, 1]).unwrap();
-        let mut target = SliceRowSource::new(vec![rows[0].clone(), rows[2].clone()], vec![0, 1]).unwrap();
-        let options = SyncOptions { batch_size: 1, ..SyncOptions::default() };
-        let result = compare_table_pages("source", "target", &[0, 1], &["k1".into(), "k2".into(), "value".into()], &options, &mut source, &mut target, None).await.unwrap();
+        let mut target =
+            SliceRowSource::new(vec![rows[0].clone(), rows[2].clone()], vec![0, 1]).unwrap();
+        let options = SyncOptions {
+            batch_size: 1,
+            ..SyncOptions::default()
+        };
+        let result = compare_table_pages(
+            "source",
+            "target",
+            &[0, 1],
+            &["k1".into(), "k2".into(), "value".into()],
+            &options,
+            &mut source,
+            &mut target,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.unchanged_count, 2);
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(serde_json::to_value(&result.rows[0].key).unwrap(), serde_json::json!([0, -1]));
+        assert_eq!(
+            serde_json::to_value(&result.rows[0].key).unwrap(),
+            serde_json::json!([0, -1])
+        );
         assert_eq!(result.primary_keys, vec!["k1", "k2"]);
     }
 
@@ -654,9 +676,21 @@ mod tests {
     fn test_tester_review_page_byte_limit_and_explicit_null_are_rejected() {
         let columns = vec!["id".into(), "payload".into()];
         let oversized = vec![vec![i(1), Some(Value::String("x".repeat(8 * 1024 * 1024)))]];
-        assert!(validate_page(&oversized, &[0], &columns, None).unwrap_err().to_string().contains("8 MiB"));
-        assert!(validate_page(&[vec![Some(Value::Null), s("v")]], &[0], &columns, None).unwrap_err().to_string().contains("non-null"));
-        assert!(validate_page(&vec![vec![i(1), s("v")]; 1001], &[0], &columns, None).unwrap_err().to_string().contains("1000 rows"));
+        assert!(validate_page(&oversized, &[0], &columns, None)
+            .unwrap_err()
+            .to_string()
+            .contains("8 MiB"));
+        assert!(
+            validate_page(&[vec![Some(Value::Null), s("v")]], &[0], &columns, None)
+                .unwrap_err()
+                .to_string()
+                .contains("non-null")
+        );
+        assert!(
+            validate_page(&vec![vec![i(1), s("v")]; 1001], &[0], &columns, None)
+                .unwrap_err()
+                .to_string()
+                .contains("1000 rows")
+        );
     }
-
 }

@@ -124,6 +124,16 @@ fn column_type<'a>(
         .and_then(|i| column_types.get(i).map(|s| s.as_str()))
 }
 
+fn binary_literal_placeholder(bytes: &[u8]) -> String {
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "/* binary 0x{hex}; target driver literal required */ __DATAZEN_BINARY_LITERAL_REQUIRED__"
+    )
+}
+
 pub fn format_literal(value: &Option<Value>) -> String {
     match value {
         None | Some(Value::Null) => "NULL".into(),
@@ -132,7 +142,7 @@ pub fn format_literal(value: &Option<Value>) -> String {
         Some(Value::Integer(n)) => n.to_string(),
         Some(Value::Float(n)) => n.to_string(),
         Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
-        Some(Value::Bytes(b)) => format!("'{}'", String::from_utf8_lossy(b).replace('\'', "''")),
+        Some(Value::Bytes(bytes)) => binary_literal_placeholder(bytes),
         Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
         Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
     }
@@ -162,6 +172,33 @@ where
     Q: Fn(&str) -> String + Copy,
     P: Fn(usize, Option<&str>) -> String,
 {
+    generate_table_sql_with_preview_formatter(
+        table,
+        target_schema,
+        pk_columns,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        |_, value, data_type| Ok(format_typed_literal(value, data_type)),
+    )
+}
+
+pub fn generate_table_sql_with_preview_formatter<Q, P, L>(
+    table: &TableChangeSet,
+    target_schema: Option<&str>,
+    pk_columns: &[String],
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: Q,
+    placeholder: P,
+    preview_literal: L,
+) -> Result<Vec<SqlStatement>, DataSyncError>
+where
+    Q: Fn(&str) -> String + Copy,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
     if pk_columns.is_empty() {
         return Err(DataSyncError::validation(
             "cannot generate SQL without primary key columns",
@@ -178,12 +215,13 @@ where
             column_types,
             &quote_ident,
             &placeholder,
+            &preview_literal,
         )?);
     }
     Ok(out)
 }
 
-fn statement_for_change<Q, P>(
+fn statement_for_change<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -192,10 +230,12 @@ fn statement_for_change<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     match change.operation {
         ChangeOperation::Insert => insert_sql(
@@ -206,6 +246,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            preview_literal,
         ),
         ChangeOperation::Update => update_sql(
             table,
@@ -216,6 +257,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            preview_literal,
         ),
         ChangeOperation::Delete => delete_sql(
             table,
@@ -226,6 +268,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            preview_literal,
         ),
         ChangeOperation::Unchanged => Err(DataSyncError::validation(
             "unchanged rows must not generate SQL",
@@ -241,7 +284,7 @@ fn sql_table_ref<Q: Fn(&str) -> String>(
     qualify_table_ident(schema, table, quote_ident)
 }
 
-fn insert_sql<Q, P>(
+fn insert_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -249,10 +292,12 @@ fn insert_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     let row = change
         .source_row
@@ -275,7 +320,7 @@ where
         let col_type = column_types.get(i).map(|s| s.as_str());
         placeholders.push(placeholder(i + 1, col_type));
         params.push(cell.clone().unwrap_or(Value::Null));
-        preview_vals.push(format_typed_literal(cell, col_type));
+        preview_vals.push(preview_literal(&column_names[i], cell, col_type)?);
     }
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
@@ -294,7 +339,7 @@ where
     })
 }
 
-fn update_sql<Q, P>(
+fn update_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -303,10 +348,12 @@ fn update_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     let row = change
         .source_row
@@ -335,7 +382,7 @@ where
         set_lit.push(format!(
             "{} = {}",
             quote_ident(col),
-            format_typed_literal(&cell, col_type)
+            preview_literal(col, &cell, col_type)?
         ));
         params.push(cell.unwrap_or(Value::Null));
         idx += 1;
@@ -348,6 +395,7 @@ where
         column_types,
         quote_ident,
         placeholder,
+        preview_literal,
     )?;
     params.extend(where_params);
     let qtable = sql_table_ref(table, schema, quote_ident);
@@ -369,7 +417,7 @@ where
     })
 }
 
-fn delete_sql<Q, P>(
+fn delete_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -378,10 +426,12 @@ fn delete_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     let (where_ph, where_lit, params) = where_pk(
         pk_columns,
@@ -391,6 +441,7 @@ where
         column_types,
         quote_ident,
         placeholder,
+        preview_literal,
     )?;
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
@@ -403,7 +454,7 @@ where
     })
 }
 
-fn where_pk<Q, P>(
+fn where_pk<Q, P, L>(
     pk_columns: &[String],
     key: &[Value],
     start_index: usize,
@@ -411,10 +462,12 @@ fn where_pk<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<(String, String, Vec<Value>), DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     if pk_columns.len() != key.len() {
         return Err(DataSyncError::validation(
@@ -438,7 +491,7 @@ where
                 lit.push(format!(
                     "{} = {}",
                     ident,
-                    format_typed_literal(&Some(v.clone()), col_type)
+                    preview_literal(col, &Some(v.clone()), col_type)?
                 ));
                 params.push(v.clone());
                 index += 1;
@@ -712,7 +765,8 @@ mod tests {
             format_literal(&Some(Value::String("o'reilly".into()))),
             "'o''reilly'"
         );
-        assert!(format_literal(&Some(Value::Bytes(vec![65]))).contains('A'));
+        assert!(format_literal(&Some(Value::Bytes(vec![0, 255, 254])))
+            .contains("__DATAZEN_BINARY_LITERAL_REQUIRED__"));
         assert!(format_literal(&Some(Value::Timestamp("t".into()))).contains("'t'"));
         assert!(format_literal(&Some(Value::Json(serde_json::json!({"a":1})))).contains('{'));
         assert_eq!(quote_ident_sql("na\"me", '"'), r#""na""me""#);
@@ -720,10 +774,30 @@ mod tests {
     #[test]
     fn test_tester_binary_preview_never_replaces_bytes_with_unicode() {
         let bytes = vec![0, 255, 254];
-        let table = TableChangeSet { source_table: "source".into(), target_table: "target".into(), changes: vec![RowChange::insert(vec![Value::Integer(1)], vec![Some(Value::Integer(1)), Some(Value::Bytes(bytes.clone()))], &opts())] };
-        let statements = generate_table_sql(&table, None, &["id".into()], &["id".into(), "payload".into()], &["INT".into(), "BINARY".into()], |name| format!("\"{name}\""), |_, _| "?".into()).unwrap();
+        let table = TableChangeSet {
+            source_table: "source".into(),
+            target_table: "target".into(),
+            changes: vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1)), Some(Value::Bytes(bytes.clone()))],
+                &opts(),
+            )],
+        };
+        let statements = generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "payload".into()],
+            &["INT".into(), "BINARY".into()],
+            |name| format!("\"{name}\""),
+            |_, _| "?".into(),
+        )
+        .unwrap();
         assert!(matches!(&statements[0].parameters[1], Value::Bytes(actual) if actual == &bytes));
-        assert!(!statements[0].preview_sql.contains('�'), "binary SQL preview is lossy: {:?}", statements[0].preview_sql);
+        assert!(
+            !statements[0].preview_sql.contains('�'),
+            "binary SQL preview is lossy: {:?}",
+            statements[0].preview_sql
+        );
     }
-
 }

@@ -489,7 +489,7 @@ describe('DataSyncWindow wizard', () => {
     await selectEndpoints();
     fireEvent.click(screen.getByTestId('data-sync-next'));
     await waitFor(() => expect(screen.getByTestId('data-sync-step-setup')).toBeTruthy());
-    inspectDataSyncMock.mockRejectedValue(new Error('gate failed'));
+    inspectDataSyncMock.mockRejectedValue('gate failed');
     fireEvent.click(screen.getByTestId('data-sync-next'));
     expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('gate failed');
   });
@@ -545,6 +545,22 @@ describe('DataSyncWindow wizard', () => {
     expect(cancelDataSyncMock).toHaveBeenCalled();
     expect(screen.getByTestId('data-sync-next')).not.toBeDisabled();
     resolveCompare?.([]);
+  });
+
+  it('keeps a completed no-change comparison reviewable without selecting a phantom row', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [] },
+    ]);
+    render(<DataSyncWindow />);
+    await advanceToCompare();
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'compared');
+    expect(screen.queryByTestId('data-sync-row-diff')).toBeNull();
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-preview');
+    expect(screen.getByTestId('data-sync-start-disabled')).toBeTruthy();
   });
 
   it('disables Execute and shows targetReadOnly for read-only target', async () => {
@@ -774,7 +790,7 @@ describe('DataSyncWindow wizard', () => {
     expect(choices[1]).not.toBeChecked();
     fireEvent.click(screen.getByTestId('data-sync-next'));
     await screen.findByTestId('data-sync-preview');
-    if (phase === 'generate') generateDataSyncSqlMock.mockRejectedValue(new Error('generation failed'));
+    if (phase === 'generate') generateDataSyncSqlMock.mockRejectedValue('generation failed');
     else executeDataSyncMock.mockRejectedValue(new Error('commit response lost'));
     fireEvent.click(screen.getByTestId('data-sync-start'));
     await screen.findByTestId('data-sync-error');
@@ -821,6 +837,93 @@ describe('DataSyncWindow wizard', () => {
     fireEvent.click(screen.getByTestId('data-sync-next'));
     await screen.findByTestId('data-sync-preview');
     expect(screen.queryByTestId('data-sync-start')).toBeNull();
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+    expect(executeDataSyncMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    compareDataSyncMock.mockReset();
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-summary');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
+    );
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-start');
+  });
+
+  it('keeps an unknown write fenced across failed comparison and inspection attempts', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    executeDataSyncMock.mockRejectedValue(new Error('commit response lost'));
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+    await screen.findByTestId('data-sync-error');
+    fireEvent.click(screen.getByText('common.ok'));
+
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    compareDataSyncMock.mockRejectedValueOnce('fresh compare failed');
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('fresh compare failed');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+
+    fireEvent.click(screen.getByText('common.ok'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    await pickSelect('data-sync-source', 'PG Src');
+    inspectDataSyncMock.mockRejectedValueOnce(new Error('fresh inspect failed'));
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    fireEvent.click(await screen.findByTestId('data-sync-next'));
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('fresh inspect failed');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+  });
+
+  it('keeps cancellation fenced while a database write still has no outcome', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    let rejectWrite!: (error: Error) => void;
+    executeDataSyncMock.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { rejectWrite = reject; }),
+    );
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+    await waitFor(() => expect(rejectWrite).toBeDefined());
+    fireEvent.click(screen.getByTestId('data-sync-cancel'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status-bar')).toHaveTextContent('sync.cancellingExecution'),
+    );
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'executing');
+    rejectWrite(new Error('commit response lost'));
+    await screen.findByTestId('data-sync-error');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
     expect(executeDataSyncMock).toHaveBeenCalledTimes(1);
   });
 
