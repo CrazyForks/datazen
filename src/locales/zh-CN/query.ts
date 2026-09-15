@@ -371,5 +371,46 @@ const pack = {
   'query.visualBuilder.close': '关闭',
   'query.visualBuilder.noTablesSelected': '请至少选择一张表来开始构建查询。',
   'query.visualBuilder.noColumnsSelected': '请选择要包含在查询中的列。',
+  // ── Visual Builder v2 (qb-int) ────────────────────────────────
+  'query.visualBuilder.tooltip': '打开可视化查询构建器',
+  'query.visualBuilder.distinct': 'DISTINCT',
+  'query.visualBuilder.limit': '限制',
+  'query.visualBuilder.offset': '偏移',
+  'query.visualBuilder.noTables': '未找到表',
+  'query.visualBuilder.noColumns': '无列',
+  // ── Object tree ──────────────────────────────────────────────
+  'query.objectTree.title': '数据库对象',
+  'query.objectTree.schema': 'schema',
+  'query.objectTree.tables': '表',
+  'query.objectTree.views': '视图',
+  'query.objectTree.noObjects': '无对象',
+  // ── Canvas ────────────────────────────────────────────────────
+  'query.canvas.dragHint': '将表拖拽到此处构建查询',
+  'query.canvas.autoJoin': '自动检测的外键关系',
+  'query.canvas.tableAlias': '别名',
+  // ── JOIN ──────────────────────────────────────────────────────
+  'query.join.primaryKey': '主键',
+  'query.join.foreignKey': '外键',
+  'query.join.type': '连接类型',
+  'query.join.inner': '内连接',
+  'query.join.left': '左连接',
+  'query.join.right': '右连接',
+  'query.join.full': '全连接',
+  'query.join.on': '连接条件',
+  'query.join.remove': '移除连接',
+  // ── Criteria Grid ────────────────────────────────────────────
+  'query.criteria.field': '字段',
+  'query.criteria.table': '表',
+  'query.criteria.alias': '别名',
+  'query.criteria.sort': '排序',
+  'query.criteria.func': '函数',
+  'query.criteria.where': '条件',
+  'query.criteria.group': '分组',
+  'query.criteria.none': '无',
+  'query.criteria.ascending': '升序',
+  'query.criteria.descending': '降序',
+  // ── Sort directions ──────────────────────────────────────────
+  'query.sort.asc': '升序',
+  'query.sort.desc': '降序',
 } as const;
 export default pack;

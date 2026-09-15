@@ -378,5 +378,46 @@ const pack = {
   'query.visualBuilder.close': 'Close',
   'query.visualBuilder.noTablesSelected': 'Select at least one table to start building a query.',
   'query.visualBuilder.noColumnsSelected': 'Select columns to include in the query.',
+  // ── Visual Builder v2 (qb-int) ────────────────────────────────
+  'query.visualBuilder.tooltip': 'Open Visual Query Builder',
+  'query.visualBuilder.distinct': 'DISTINCT',
+  'query.visualBuilder.limit': 'Limit',
+  'query.visualBuilder.offset': 'Offset',
+  'query.visualBuilder.noTables': 'No tables found',
+  'query.visualBuilder.noColumns': 'No columns',
+  // ── Object tree ──────────────────────────────────────────────
+  'query.objectTree.title': 'Database Objects',
+  'query.objectTree.schema': 'schema',
+  'query.objectTree.tables': 'Tables',
+  'query.objectTree.views': 'Views',
+  'query.objectTree.noObjects': 'No objects',
+  // ── Canvas ────────────────────────────────────────────────────
+  'query.canvas.dragHint': 'Drag tables here to build your query',
+  'query.canvas.autoJoin': 'Auto-detected FK relationship',
+  'query.canvas.tableAlias': 'Alias',
+  // ── JOIN ──────────────────────────────────────────────────────
+  'query.join.primaryKey': 'PK',
+  'query.join.foreignKey': 'FK',
+  'query.join.type': 'Join Type',
+  'query.join.inner': 'INNER JOIN',
+  'query.join.left': 'LEFT JOIN',
+  'query.join.right': 'RIGHT JOIN',
+  'query.join.full': 'FULL JOIN',
+  'query.join.on': 'ON',
+  'query.join.remove': 'Remove Join',
+  // ── Criteria Grid ────────────────────────────────────────────
+  'query.criteria.field': 'Field',
+  'query.criteria.table': 'Table',
+  'query.criteria.alias': 'Alias',
+  'query.criteria.sort': 'Sort',
+  'query.criteria.func': 'Func',
+  'query.criteria.where': 'Where',
+  'query.criteria.group': 'Group',
+  'query.criteria.none': 'None',
+  'query.criteria.ascending': 'ASC',
+  'query.criteria.descending': 'DESC',
+  // ── Sort directions ──────────────────────────────────────────
+  'query.sort.asc': 'Ascending',
+  'query.sort.desc': 'Descending',
 } as const;
 export default pack;
