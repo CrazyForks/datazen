@@ -341,6 +341,30 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             ),
         ),
         cmd(
+            "memory_usage_key",
+            "Memory usage (single key)",
+            "MEMORY USAGE for a specific key",
+            "redis:allow-memory-sample",
+            object_schema(
+                serde_json::json!({ "key": { "type": "string" } }),
+                &["key"],
+            ),
+        ),
+        cmd(
+            "info_filtered",
+            "Info (filtered)",
+            "INFO with section and keyword search",
+            "redis:allow-info",
+            object_schema(
+                serde_json::json!({
+                    "section": { "type": "string" },
+                    "search": { "type": "string" },
+                    "nodeAddr": { "type": "string" }
+                }),
+                &[],
+            ),
+        ),
+        cmd(
             "slowlog_get",
             "Slowlog get",
             "SLOWLOG GET",

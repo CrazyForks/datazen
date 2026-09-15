@@ -318,6 +318,23 @@ match command {
             driver.plugin_slowlog_reset(id).await?;
             Ok(ok())
         }
+        "memory_usage_key" => json_ok(
+            driver
+                .plugin_memory_usage_key(id, req_str(&input, "key")?)
+                .await?,
+        ),
+        "info_filtered" => json_ok(
+            driver
+                .plugin_info_filtered(
+                    id,
+                    opt_str(&input, "section").map(str::to_string),
+                    opt_str(&input, "search").map(str::to_string),
+                    opt_str(&input, "nodeAddr")
+                        .or_else(|| opt_str(&input, "node_addr"))
+                        .map(str::to_string),
+                )
+                .await?,
+        ),
         "modules_list" => json_ok(driver.plugin_modules_list(id).await?),
         "exec" => json_ok(
             driver
