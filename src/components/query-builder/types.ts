@@ -22,6 +22,9 @@ export type QbOperator =
 /** SQL aggregate functions. */
 export type QbAggregate = 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
 
+/** JOIN type. */
+export type QbJoinType = 'INNER' | 'LEFT' | 'RIGHT' | 'FULL';
+
 /** A single condition row in a WHERE clause. */
 export interface QbCondition {
   id: string;
@@ -52,12 +55,36 @@ export interface QbSortItem {
   direction: 'ASC' | 'DESC';
 }
 
-/** A column selection entry with optional alias and aggregate. */
+/** A column selection entry with optional alias, aggregate, sort, group-by, and where. */
 export interface QbColumnSelection {
   table: string;
   column: string;
   alias?: string;
   aggregate?: QbAggregate;
+  /** Sort direction (ASC/DESC). Undefined means no sort. */
+  sort?: 'ASC' | 'DESC';
+  /** Whether this column participates in GROUP BY. */
+  groupBy?: boolean;
+  /** Optional per-column WHERE condition. */
+  where?: QbCondition;
+}
+
+/** A JOIN relationship between two tables. */
+export interface QbJoin {
+  /** Unique identifier (nanoid). */
+  id: string;
+  /** JOIN type. */
+  type: QbJoinType;
+  /** Left (source) table name. */
+  leftTable: string;
+  /** Left (source) column name. */
+  leftColumn: string;
+  /** Right (target) table name. */
+  rightTable: string;
+  /** Right (target) column name. */
+  rightColumn: string;
+  /** true = manually created, false = auto-detected FK. */
+  isManual: boolean;
 }
 
 /** A group-by entry. */

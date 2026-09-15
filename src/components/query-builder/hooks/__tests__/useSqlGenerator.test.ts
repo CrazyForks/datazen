@@ -13,10 +13,14 @@ function baseInput(overrides: Partial<GenerateSqlInput> = {}): GenerateSqlInput 
   return {
     selectedTables: [],
     selectedColumns: [],
+    joins: [],
+    tableAliases: {},
     where: emptyGroup(),
     orderBy: [],
     groupBy: [],
     distinct: false,
+    limit: null,
+    offset: null,
     ...overrides,
   };
 }
@@ -42,7 +46,10 @@ describe('generateSql', () => {
     const sql = generateSql(
       baseInput({
         selectedTables: ['users'],
-        selectedColumns: [{ table: 'users', column: 'id' }, { table: 'users', column: 'name' }],
+        selectedColumns: [
+          { table: 'users', column: 'id' },
+          { table: 'users', column: 'name' },
+        ],
       }),
     );
     expect(sql).toBe('SELECT "users"."id", "users"."name" FROM "users";');
@@ -66,7 +73,9 @@ describe('generateSql', () => {
     const sql = generateSql(
       baseInput({
         selectedTables: ['orders'],
-        selectedColumns: [{ table: 'orders', column: 'id', aggregate: 'COUNT', alias: 'order_count' }],
+        selectedColumns: [
+          { table: 'orders', column: 'id', aggregate: 'COUNT', alias: 'order_count' },
+        ],
       }),
     );
     expect(sql).toBe('SELECT COUNT("orders"."id") AS "order_count" FROM "orders";');
@@ -76,7 +85,9 @@ describe('generateSql', () => {
     const sql = generateSql(
       baseInput({
         selectedTables: ['orders'],
-        selectedColumns: [{ table: 'orders', column: 'total', aggregate: 'SUM', alias: 'sum_total' }],
+        selectedColumns: [
+          { table: 'orders', column: 'total', aggregate: 'SUM', alias: 'sum_total' },
+        ],
       }),
     );
     expect(sql).toBe('SELECT SUM("orders"."total") AS "sum_total" FROM "orders";');
@@ -97,7 +108,14 @@ describe('generateSql', () => {
   it('generates WHERE with equals condition', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'name', operator: '=', value: 'Alice', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'name',
+        operator: '=',
+        value: 'Alice',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -112,7 +130,14 @@ describe('generateSql', () => {
   it('generates WHERE with not-equals condition', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'status', operator: '!=', value: 'inactive', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'status',
+        operator: '!=',
+        value: 'inactive',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -157,7 +182,14 @@ describe('generateSql', () => {
   it('generates WHERE with LIKE condition', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'name', operator: 'LIKE', value: '%test%', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'name',
+        operator: 'LIKE',
+        value: '%test%',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -172,7 +204,14 @@ describe('generateSql', () => {
   it('generates WHERE with IN condition', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'id', operator: 'IN', value: '1, 2, 3', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'id',
+        operator: 'IN',
+        value: '1, 2, 3',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -187,7 +226,14 @@ describe('generateSql', () => {
   it('generates WHERE with IS NULL condition', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'email', operator: 'IS NULL', value: null, conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'email',
+        operator: 'IS NULL',
+        value: null,
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -205,7 +251,14 @@ describe('generateSql', () => {
     const where = emptyGroup();
     where.conditions = [
       { id: '1', table: 'users', column: 'age', operator: '>', value: '18', conjunction: 'AND' },
-      { id: '2', table: 'users', column: 'status', operator: '=', value: 'active', conjunction: 'AND' },
+      {
+        id: '2',
+        table: 'users',
+        column: 'status',
+        operator: '=',
+        value: 'active',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -215,7 +268,7 @@ describe('generateSql', () => {
       }),
     );
     expect(sql).toBe(
-      "SELECT \"users\".\"name\" FROM \"users\" WHERE \"users\".\"age\" > 18 AND \"users\".\"status\" = 'active';",
+      'SELECT "users"."name" FROM "users" WHERE "users"."age" > 18 AND "users"."status" = \'active\';',
     );
   });
 
@@ -224,7 +277,14 @@ describe('generateSql', () => {
     where.logic = 'OR';
     where.conditions = [
       { id: '1', table: 'users', column: 'role', operator: '=', value: 'admin', conjunction: 'OR' },
-      { id: '2', table: 'users', column: 'role', operator: '=', value: 'superadmin', conjunction: 'OR' },
+      {
+        id: '2',
+        table: 'users',
+        column: 'role',
+        operator: '=',
+        value: 'superadmin',
+        conjunction: 'OR',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -234,7 +294,7 @@ describe('generateSql', () => {
       }),
     );
     expect(sql).toBe(
-      "SELECT \"users\".\"name\" FROM \"users\" WHERE \"users\".\"role\" = 'admin' OR \"users\".\"role\" = 'superadmin';",
+      'SELECT "users"."name" FROM "users" WHERE "users"."role" = \'admin\' OR "users"."role" = \'superadmin\';',
     );
   });
 
@@ -245,8 +305,22 @@ describe('generateSql', () => {
       id: 'sub',
       logic: 'OR',
       conditions: [
-        { id: '3', table: 'users', column: 'role', operator: '=', value: 'admin', conjunction: 'OR' },
-        { id: '4', table: 'users', column: 'role', operator: '=', value: 'editor', conjunction: 'OR' },
+        {
+          id: '3',
+          table: 'users',
+          column: 'role',
+          operator: '=',
+          value: 'admin',
+          conjunction: 'OR',
+        },
+        {
+          id: '4',
+          table: 'users',
+          column: 'role',
+          operator: '=',
+          value: 'editor',
+          conjunction: 'OR',
+        },
       ],
       groups: [],
     };
@@ -264,7 +338,7 @@ describe('generateSql', () => {
       }),
     );
     expect(sql).toBe(
-      "SELECT \"users\".\"name\" FROM \"users\" WHERE \"users\".\"active\" = 1 AND (\"users\".\"role\" = 'admin' OR \"users\".\"role\" = 'editor');",
+      'SELECT "users"."name" FROM "users" WHERE "users"."active" = 1 AND ("users"."role" = \'admin\' OR "users"."role" = \'editor\');',
     );
   });
 
@@ -292,7 +366,9 @@ describe('generateSql', () => {
         ],
       }),
     );
-    expect(sql).toBe('SELECT "users"."name" FROM "users" ORDER BY "users"."name" ASC, "users"."age" DESC;');
+    expect(sql).toBe(
+      'SELECT "users"."name" FROM "users" ORDER BY "users"."name" ASC, "users"."age" DESC;',
+    );
   });
 
   // ── GROUP BY ───────────────────────────────────────────────
@@ -377,7 +453,14 @@ describe('generateSql', () => {
   it('escapes single quotes in values', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'name', operator: '=', value: "O'Brien", conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'name',
+        operator: '=',
+        value: "O'Brien",
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -386,7 +469,7 @@ describe('generateSql', () => {
         where,
       }),
     );
-    expect(sql).toBe("SELECT \"users\".\"name\" FROM \"users\" WHERE \"users\".\"name\" = 'O''Brien';");
+    expect(sql).toBe('SELECT "users"."name" FROM "users" WHERE "users"."name" = \'O\'\'Brien\';');
   });
 
   // ── Full complex query ─────────────────────────────────────
@@ -396,7 +479,14 @@ describe('generateSql', () => {
       id: 'sub',
       logic: 'OR',
       conditions: [
-        { id: '3', table: 'users', column: 'role', operator: '=', value: 'admin', conjunction: 'OR' },
+        {
+          id: '3',
+          table: 'users',
+          column: 'role',
+          operator: '=',
+          value: 'admin',
+          conjunction: 'OR',
+        },
       ],
       groups: [],
     };
@@ -450,7 +540,14 @@ describe('generateSql', () => {
   it('generates WHERE with NOT LIKE', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'name', operator: 'NOT LIKE', value: '%admin%', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'name',
+        operator: 'NOT LIKE',
+        value: '%admin%',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -459,7 +556,9 @@ describe('generateSql', () => {
         where,
       }),
     );
-    expect(sql).toBe("SELECT \"users\".\"name\" FROM \"users\" WHERE \"users\".\"name\" NOT LIKE '%admin%';");
+    expect(sql).toBe(
+      'SELECT "users"."name" FROM "users" WHERE "users"."name" NOT LIKE \'%admin%\';',
+    );
   });
 
   // ── NOT IN operator ────────────────────────────────────────
@@ -467,7 +566,14 @@ describe('generateSql', () => {
   it('generates WHERE with NOT IN', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'id', operator: 'NOT IN', value: '1, 2', conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'id',
+        operator: 'NOT IN',
+        value: '1, 2',
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -484,7 +590,14 @@ describe('generateSql', () => {
   it('generates WHERE with IS NOT NULL', () => {
     const where = emptyGroup();
     where.conditions = [
-      { id: '1', table: 'users', column: 'email', operator: 'IS NOT NULL', value: null, conjunction: 'AND' },
+      {
+        id: '1',
+        table: 'users',
+        column: 'email',
+        operator: 'IS NOT NULL',
+        value: null,
+        conjunction: 'AND',
+      },
     ];
     const sql = generateSql(
       baseInput({
@@ -524,5 +637,258 @@ describe('generateSql', () => {
       }),
     );
     expect(sql).toBe('SELECT "users"."name" FROM "users";');
+  });
+
+  // ── JOIN generation ──────────────────────────────────────────
+
+  it('generates INNER JOIN', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+        ],
+        joins: [
+          {
+            id: 'j1',
+            type: 'INNER',
+            leftTable: 'users',
+            leftColumn: 'id',
+            rightTable: 'orders',
+            rightColumn: 'user_id',
+            isManual: true,
+          },
+        ],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", "orders"."total" FROM "users"\nINNER JOIN "orders" ON "users"."id" = "orders"."user_id";',
+    );
+  });
+
+  it('generates LEFT JOIN', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+        ],
+        joins: [
+          {
+            id: 'j1',
+            type: 'LEFT',
+            leftTable: 'users',
+            leftColumn: 'id',
+            rightTable: 'orders',
+            rightColumn: 'user_id',
+            isManual: false,
+          },
+        ],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", "orders"."total" FROM "users"\nLEFT JOIN "orders" ON "users"."id" = "orders"."user_id";',
+    );
+  });
+
+  it('generates multiple JOINs', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders', 'items'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total' },
+          { table: 'items', column: 'product' },
+        ],
+        joins: [
+          {
+            id: 'j1',
+            type: 'INNER',
+            leftTable: 'users',
+            leftColumn: 'id',
+            rightTable: 'orders',
+            rightColumn: 'user_id',
+            isManual: true,
+          },
+          {
+            id: 'j2',
+            type: 'LEFT',
+            leftTable: 'orders',
+            leftColumn: 'id',
+            rightTable: 'items',
+            rightColumn: 'order_id',
+            isManual: false,
+          },
+        ],
+      }),
+    );
+    expect(sql).toContain('INNER JOIN "orders"');
+    expect(sql).toContain('LEFT JOIN "items"');
+  });
+
+  it('generates JOIN with table alias', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name', alias: 'user_name' },
+          { table: 'orders', column: 'total' },
+        ],
+        tableAliases: { users: 'u' },
+        joins: [
+          {
+            id: 'j1',
+            type: 'INNER',
+            leftTable: 'users',
+            leftColumn: 'id',
+            rightTable: 'orders',
+            rightColumn: 'user_id',
+            isManual: true,
+          },
+        ],
+      }),
+    );
+    // FROM should use alias
+    expect(sql).toContain('FROM "users" "u"');
+    // JOIN ON should use alias for left table
+    expect(sql).toContain('INNER JOIN "orders" ON "u"."id" = "orders"."user_id"');
+    // SELECT should still use original table name
+    expect(sql).toContain('"users"."name" AS "user_name"');
+  });
+
+  it('generates no JOIN clause when joins is empty', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        joins: [],
+      }),
+    );
+    expect(sql).not.toContain('JOIN');
+  });
+
+  // ── LIMIT / OFFSET generation ───────────────────────────────
+
+  it('generates LIMIT only', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 50,
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" LIMIT 50;');
+  });
+
+  it('generates LIMIT and OFFSET', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 10,
+        offset: 20,
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" LIMIT 10 OFFSET 20;');
+  });
+
+  it('generates no LIMIT/OFFSET when both are null', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: null,
+        offset: null,
+      }),
+    );
+    expect(sql).not.toContain('LIMIT');
+    expect(sql).not.toContain('OFFSET');
+  });
+
+  it('generates MySQL LIMIT/OFFSET with reversed syntax', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        limit: 10,
+        offset: 20,
+        databaseType: 'mysql',
+      }),
+    );
+    expect(sql).toBe('SELECT `users`.`name` FROM `users` LIMIT 20, 10;');
+  });
+
+  // ── Table alias in FROM ─────────────────────────────────────
+
+  it('generates FROM with table alias', () => {
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users'],
+        selectedColumns: [{ table: 'users', column: 'name' }],
+        tableAliases: { users: 'u' },
+      }),
+    );
+    expect(sql).toBe('SELECT "users"."name" FROM "users" "u";');
+  });
+
+  // ── Complete complex query with JOIN + LIMIT ────────────────
+
+  it('generates a complete query with JOIN, WHERE, GROUP BY, ORDER BY, LIMIT', () => {
+    const subGroup: QbConditionGroup = {
+      id: 'sub',
+      logic: 'OR',
+      conditions: [
+        {
+          id: '3',
+          table: 'users',
+          column: 'role',
+          operator: '=',
+          value: 'admin',
+          conjunction: 'OR',
+        },
+      ],
+      groups: [],
+    };
+    const where = emptyGroup('root');
+    where.conditions = [
+      { id: '1', table: 'users', column: 'active', operator: '=', value: '1', conjunction: 'AND' },
+    ];
+    where.groups = [subGroup];
+
+    const sql = generateSql(
+      baseInput({
+        selectedTables: ['users', 'orders'],
+        selectedColumns: [
+          { table: 'users', column: 'name' },
+          { table: 'orders', column: 'total', aggregate: 'SUM', alias: 'sum_total' },
+        ],
+        joins: [
+          {
+            id: 'j1',
+            type: 'INNER',
+            leftTable: 'users',
+            leftColumn: 'id',
+            rightTable: 'orders',
+            rightColumn: 'user_id',
+            isManual: true,
+          },
+        ],
+        where,
+        orderBy: [{ table: 'users', column: 'name', direction: 'ASC' }],
+        groupBy: [{ table: 'users', column: 'name' }],
+        distinct: false,
+        limit: 100,
+        offset: 0,
+        databaseType: 'postgresql',
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "users"."name", SUM("orders"."total") AS "sum_total" FROM "users"\n' +
+        'INNER JOIN "orders" ON "users"."id" = "orders"."user_id"' +
+        ' WHERE "users"."active" = 1 AND ("users"."role" = \'admin\')' +
+        ' GROUP BY "users"."name" ORDER BY "users"."name" ASC LIMIT 100;',
+    );
   });
 });

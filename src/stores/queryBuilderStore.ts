@@ -6,6 +6,8 @@ import type {
   QbSortItem,
   QbColumnSelection,
   QbGroupByItem,
+  QbJoin,
+  QbJoinType,
 } from '../components/query-builder/types';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -14,7 +16,7 @@ import type {
 export interface QueryBuilderState {
   /** Currently selected table names. */
   selectedTables: string[];
-  /** Currently selected columns (with optional alias / aggregate). */
+  /** Currently selected columns (with optional alias / aggregate / sort / groupBy / where). */
   selectedColumns: QbColumnSelection[];
   /** WHERE clause root group. */
   where: QbConditionGroup;
@@ -26,6 +28,30 @@ export interface QueryBuilderState {
   distinct: boolean;
   /** Whether the builder panel is open. */
   isOpen: boolean;
+
+  // ── JOIN state ──
+  /** Manually confirmed JOINs. */
+  joins: QbJoin[];
+  /** Auto-detected FK relationship JOINs (dashed lines in UI). */
+  autoJoins: QbJoin[];
+
+  // ── Table metadata ──
+  /** Table alias mapping (tableName → alias). */
+  tableAliases: Record<string, string>;
+  /** Canvas position of each table card. */
+  tablePositions: Record<string, { x: number; y: number }>;
+
+  // ── Canvas state ──
+  /** Canvas pan offset. */
+  canvasOffset: { x: number; y: number };
+  /** Canvas zoom level. */
+  zoom: number;
+
+  // ── Pagination ──
+  /** LIMIT clause value (null = no limit). */
+  limit: number | null;
+  /** OFFSET clause value (null = no offset). */
+  offset: number | null;
 }
 
 /** Actions mutating the query builder state. */
@@ -34,6 +60,8 @@ export interface QueryBuilderActions {
   toggleColumn: (table: string, column: string) => void;
   setColumnAlias: (table: string, column: string, alias: string) => void;
   setColumnAggregate: (table: string, column: string, agg: QbAggregate | undefined) => void;
+  /** Generic patch for any QbColumnSelection fields (alias, aggregate, sort, groupBy, where). */
+  updateColumnConfig: (table: string, column: string, patch: Partial<QbColumnSelection>) => void;
   addCondition: (groupId: string, condition: Omit<QbCondition, 'id'>) => void;
   updateCondition: (id: string, patch: Partial<QbCondition>) => void;
   removeCondition: (id: string) => void;
@@ -44,6 +72,24 @@ export interface QueryBuilderActions {
   removeGroupBy: (index: number) => void;
   setDistinct: (v: boolean) => void;
   toggleOpen: () => void;
+
+  // ── JOIN actions ──
+  addJoin: (join: Omit<QbJoin, 'id'>) => void;
+  removeJoin: (id: string) => void;
+  updateJoinType: (id: string, type: QbJoinType) => void;
+
+  // ── Table metadata actions ──
+  setTableAlias: (tableName: string, alias: string) => void;
+  updateTablePosition: (table: string, pos: { x: number; y: number }) => void;
+
+  // ── Canvas actions ──
+  setZoom: (zoom: number) => void;
+  setCanvasOffset: (offset: { x: number; y: number }) => void;
+
+  // ── Pagination actions ──
+  setLimit: (limit: number | null) => void;
+  setOffset: (offset: number | null) => void;
+
   reset: () => void;
 }
 
@@ -61,7 +107,11 @@ function removeConditionById(group: QbConditionGroup, id: string): QbConditionGr
   };
 }
 
-function updateConditionById(group: QbConditionGroup, id: string, patch: Partial<QbCondition>): QbConditionGroup {
+function updateConditionById(
+  group: QbConditionGroup,
+  id: string,
+  patch: Partial<QbCondition>,
+): QbConditionGroup {
   return {
     ...group,
     conditions: group.conditions.map((c) => (c.id === id ? { ...c, ...patch } : c)),
@@ -69,7 +119,11 @@ function updateConditionById(group: QbConditionGroup, id: string, patch: Partial
   };
 }
 
-function addConditionToGroup(group: QbConditionGroup, groupId: string, condition: QbCondition): QbConditionGroup {
+function addConditionToGroup(
+  group: QbConditionGroup,
+  groupId: string,
+  condition: QbCondition,
+): QbConditionGroup {
   if (group.id === groupId) {
     return { ...group, conditions: [...group.conditions, condition] };
   }
@@ -79,7 +133,11 @@ function addConditionToGroup(group: QbConditionGroup, groupId: string, condition
   };
 }
 
-function addSubGroup(group: QbConditionGroup, parentId: string, newGroup: QbConditionGroup): QbConditionGroup {
+function addSubGroup(
+  group: QbConditionGroup,
+  parentId: string,
+  newGroup: QbConditionGroup,
+): QbConditionGroup {
   if (group.id === parentId) {
     return { ...group, groups: [...group.groups, newGroup] };
   }
@@ -103,99 +161,165 @@ const INITIAL_STATE: QueryBuilderState = {
   groupBy: [],
   distinct: false,
   isOpen: false,
+  joins: [],
+  autoJoins: [],
+  tableAliases: {},
+  tablePositions: {},
+  canvasOffset: { x: 0, y: 0 },
+  zoom: 1,
+  limit: null,
+  offset: null,
 };
 
 // ── Store ─────────────────────────────────────────────────────
 
-export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActions>()(
-  (set) => ({
-    ...INITIAL_STATE,
+export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActions>()((set) => ({
+  ...INITIAL_STATE,
 
-    toggleTable: (tableName) =>
-      set((s) => {
-        const tables = s.selectedTables.includes(tableName)
-          ? s.selectedTables.filter((t) => t !== tableName)
-          : [...s.selectedTables, tableName];
-        // When removing a table, also remove its columns and condition references.
-        if (s.selectedTables.includes(tableName)) {
-          const cols = s.selectedColumns.filter((c) => c.table !== tableName);
-          return { selectedTables: tables, selectedColumns: cols };
-        }
-        return { selectedTables: tables };
+  toggleTable: (tableName) =>
+    set((s) => {
+      const tables = s.selectedTables.includes(tableName)
+        ? s.selectedTables.filter((t) => t !== tableName)
+        : [...s.selectedTables, tableName];
+      // When removing a table, also remove its columns and condition references.
+      if (s.selectedTables.includes(tableName)) {
+        const cols = s.selectedColumns.filter((c) => c.table !== tableName);
+        return { selectedTables: tables, selectedColumns: cols };
+      }
+      return { selectedTables: tables };
+    }),
+
+  toggleColumn: (table, column) =>
+    set((s) => {
+      const exists = s.selectedColumns.some((c) => c.table === table && c.column === column);
+      if (exists) {
+        return {
+          selectedColumns: s.selectedColumns.filter(
+            (c) => !(c.table === table && c.column === column),
+          ),
+        };
+      }
+      return { selectedColumns: [...s.selectedColumns, { table, column }] };
+    }),
+
+  setColumnAlias: (table, column, alias) =>
+    set((s) => ({
+      selectedColumns: s.selectedColumns.map((c) =>
+        c.table === table && c.column === column ? { ...c, alias: alias || undefined } : c,
+      ),
+    })),
+
+  setColumnAggregate: (table, column, agg) =>
+    set((s) => ({
+      selectedColumns: s.selectedColumns.map((c) =>
+        c.table === table && c.column === column ? { ...c, aggregate: agg } : c,
+      ),
+    })),
+
+  updateColumnConfig: (table, column, patch) =>
+    set((s) => ({
+      selectedColumns: s.selectedColumns.map((c) => {
+        if (c.table !== table || c.column !== column) return c;
+        const updated = { ...c, ...patch };
+        // Normalise: empty alias → undefined, empty string where → remove
+        if (updated.alias === '') updated.alias = undefined;
+        return updated;
       }),
+    })),
 
-    toggleColumn: (table, column) =>
-      set((s) => {
-        const exists = s.selectedColumns.some((c) => c.table === table && c.column === column);
-        if (exists) {
-          return { selectedColumns: s.selectedColumns.filter((c) => !(c.table === table && c.column === column)) };
-        }
-        return { selectedColumns: [...s.selectedColumns, { table, column }] };
+  addCondition: (groupId, condition) =>
+    set((s) => ({
+      where: addConditionToGroup(s.where, groupId, { ...condition, id: uid() }),
+    })),
+
+  updateCondition: (id, patch) =>
+    set((s) => ({
+      where: updateConditionById(s.where, id, patch),
+    })),
+
+  removeCondition: (id) =>
+    set((s) => ({
+      where: removeConditionById(s.where, id),
+    })),
+
+  addConditionGroup: (parentId, logic) =>
+    set((s) => ({
+      where: addSubGroup(s.where, parentId, {
+        id: uid(),
+        logic,
+        conditions: [],
+        groups: [],
       }),
+    })),
 
-    setColumnAlias: (table, column, alias) =>
-      set((s) => ({
-        selectedColumns: s.selectedColumns.map((c) =>
-          c.table === table && c.column === column ? { ...c, alias: alias || undefined } : c,
-        ),
-      })),
+  addSort: (item) =>
+    set((s) => ({
+      orderBy: [...s.orderBy, item],
+    })),
 
-    setColumnAggregate: (table, column, agg) =>
-      set((s) => ({
-        selectedColumns: s.selectedColumns.map((c) =>
-          c.table === table && c.column === column ? { ...c, aggregate: agg } : c,
-        ),
-      })),
+  removeSort: (index) =>
+    set((s) => ({
+      orderBy: s.orderBy.filter((_, i) => i !== index),
+    })),
 
-    addCondition: (groupId, condition) =>
-      set((s) => ({
-        where: addConditionToGroup(s.where, groupId, { ...condition, id: uid() }),
-      })),
+  addGroupBy: (item) =>
+    set((s) => ({
+      groupBy: [...s.groupBy, item],
+    })),
 
-    updateCondition: (id, patch) =>
-      set((s) => ({
-        where: updateConditionById(s.where, id, patch),
-      })),
+  removeGroupBy: (index) =>
+    set((s) => ({
+      groupBy: s.groupBy.filter((_, i) => i !== index),
+    })),
 
-    removeCondition: (id) =>
-      set((s) => ({
-        where: removeConditionById(s.where, id),
-      })),
+  setDistinct: (v) => set(() => ({ distinct: v })),
 
-    addConditionGroup: (parentId, logic) =>
-      set((s) => ({
-        where: addSubGroup(s.where, parentId, {
-          id: uid(),
-          logic,
-          conditions: [],
-          groups: [],
-        }),
-      })),
+  toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
 
-    addSort: (item) =>
-      set((s) => ({
-        orderBy: [...s.orderBy, item],
-      })),
+  // ── JOIN actions ──
 
-    removeSort: (index) =>
-      set((s) => ({
-        orderBy: s.orderBy.filter((_, i) => i !== index),
-      })),
+  addJoin: (join) =>
+    set((s) => ({
+      joins: [...s.joins, { ...join, id: uid() }],
+    })),
 
-    addGroupBy: (item) =>
-      set((s) => ({
-        groupBy: [...s.groupBy, item],
-      })),
+  removeJoin: (id) =>
+    set((s) => ({
+      joins: s.joins.filter((j) => j.id !== id),
+    })),
 
-    removeGroupBy: (index) =>
-      set((s) => ({
-        groupBy: s.groupBy.filter((_, i) => i !== index),
-      })),
+  updateJoinType: (id, type) =>
+    set((s) => ({
+      joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
+    })),
 
-    setDistinct: (v) => set(() => ({ distinct: v })),
+  // ── Table metadata actions ──
 
-    toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
+  setTableAlias: (tableName, alias) =>
+    set((s) => ({
+      tableAliases: { ...s.tableAliases, [tableName]: alias },
+    })),
 
-    reset: () => set(() => ({ ...INITIAL_STATE, where: emptyConditionGroup() })),
-  }),
-);
+  updateTablePosition: (table, pos) =>
+    set((s) => ({
+      tablePositions: { ...s.tablePositions, [table]: pos },
+    })),
+
+  // ── Canvas actions ──
+
+  setZoom: (zoom) => set(() => ({ zoom })),
+
+  setCanvasOffset: (offset) => set(() => ({ canvasOffset: offset })),
+
+  // ── Pagination actions ──
+
+  setLimit: (limit) => set(() => ({ limit })),
+
+  setOffset: (offset) => set(() => ({ offset })),
+
+  reset: () =>
+    set(() => ({
+      ...INITIAL_STATE,
+      where: emptyConditionGroup(),
+    })),
+}));
