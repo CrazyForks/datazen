@@ -183,9 +183,10 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       const columnBtn = buttons[1] as HTMLElement | undefined;
       if (columnBtn) columnBtn.click();
     });
-    await browser.waitForFunction(
-      () => document.querySelector('[data-testid="select-listbox"]') !== null,
-      { timeout: 3000 },
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
+      { timeout: 3000, timeoutMsg: '条件列下拉菜单未打开' },
     );
 
     // Pick the "name" option from the portaled listbox
