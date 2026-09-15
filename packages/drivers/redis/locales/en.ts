@@ -14,7 +14,8 @@ const locale = {
   'redis.confirmFlushAll': 'Confirm flush all databases',
   'redis.confirmFlushDb': 'Confirm flush database',
   'redis.confirmResetSlowlog': 'Reset slowlog?',
-  'redis.confirmResetSlowlogMessage': 'This clears all slowlog entries on the server. This cannot be undone.',
+  'redis.confirmResetSlowlogMessage':
+    'This clears all slowlog entries on the server. This cannot be undone.',
   'redis.console': 'Console',
   'redis.console.empty': 'Enter Redis commands and press ⌘+Enter to execute',
   'redis.console.failed': 'Failed',
@@ -63,7 +64,8 @@ const locale = {
   'redis.importExportNoKeys': 'No keys matched for export',
   'redis.importExportPattern': 'By pattern',
   'redis.importExportReplace': 'Replace existing keys',
-  'redis.importExportReplaceHint': 'When unchecked, existing keys are skipped and reported as errors.',
+  'redis.importExportReplaceHint':
+    'When unchecked, existing keys are skipped and reported as errors.',
   'redis.importExportRestored': 'Restored {count} key(s)',
   'redis.importExportSelected': 'Selected keys',
   'redis.importExportTitle': 'Import / Export',
@@ -120,7 +122,8 @@ const locale = {
   'redis.pubsubChannels': 'Channels',
   'redis.pubsubChannelsPlaceholder': 'news\nalerts',
   'redis.pubsubClearMessages': 'Clear',
-  'redis.pubsubClusterNote': 'On Redis Cluster, subscriptions use a dedicated connection to the first seed node. Messages published to other nodes may not appear here.',
+  'redis.pubsubClusterNote':
+    'On Redis Cluster, subscriptions use a dedicated connection to the first seed node. Messages published to other nodes may not appear here.',
   'redis.pubsubEmpty': 'Subscribe to channels or patterns to see live messages',
   'redis.pubsubMessages': 'Live messages',
   'redis.pubsubNeedTarget': 'Enter at least one channel or pattern',
@@ -211,7 +214,8 @@ const locale = {
   'redis.wizard.pastedFromClipboard': 'Filled from clipboard',
   'redis.wizard.sentinelMasterName': 'Master name',
   'redis.wizard.sentinelMasterRequired': 'Sentinel master name is required',
-  'redis.wizard.sentinelMtlsLimitation': 'Custom CA or client certificates cannot be applied to Sentinel connections in redis-rs 0.27. Sentinel uses the system trust store when TLS is enabled; master/replica mTLS PEM paths are ignored.',
+  'redis.wizard.sentinelMtlsLimitation':
+    'Custom CA or client certificates cannot be applied to Sentinel connections in redis-rs 0.27. Sentinel uses the system trust store when TLS is enabled; master/replica mTLS PEM paths are ignored.',
   'redis.wizard.sentinelNodePassword': 'Sentinel password',
   'redis.wizard.sentinelNodes': 'Sentinel nodes',
   'redis.wizard.sentinelNodesRequired': 'At least one sentinel node is required',
@@ -235,6 +239,22 @@ const locale = {
   'redis.console.dangerDanger': 'Dangerous',
   'redis.console.dangerUltra': 'Destructive',
   'redis.console.dangerWarning': '⚠ This command may be destructive. Execute with caution.',
+  // Real-time MONITOR
+  'redis.monitor': 'Monitor',
+  'redis.monitorStart': 'Start Monitor',
+  'redis.monitorStop': 'Stop Monitor',
+  'redis.monitorPause': 'Pause',
+  'redis.monitorResume': 'Resume',
+  'redis.monitorBufferSize': 'Buffer Size',
+  'redis.monitorEventCount': 'events',
+  'redis.monitorClient': 'Client',
+  'redis.monitorCommand': 'Command',
+  'redis.monitorDb': 'DB',
+  'redis.monitorTimestamp': 'Time',
+  'redis.monitorEmpty': 'Click "Start Monitor" to begin capturing Redis commands',
+  'redis.monitorWaiting': 'Waiting for events...',
+  'redis.monitorRunning': 'MONITOR active',
+  'redis.monitorStopped': 'MONITOR stopped',
 } as const;
 
 export default locale;

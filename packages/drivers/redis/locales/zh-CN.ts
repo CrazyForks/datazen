@@ -120,7 +120,8 @@ const locale = {
   'redis.pubsubChannels': '频道',
   'redis.pubsubChannelsPlaceholder': 'news\nalerts',
   'redis.pubsubClearMessages': '清空',
-  'redis.pubsubClusterNote': 'Redis Cluster 下订阅使用首个 seed 节点的专用连接；发布到其他节点的消息可能不会出现在此处。',
+  'redis.pubsubClusterNote':
+    'Redis Cluster 下订阅使用首个 seed 节点的专用连接；发布到其他节点的消息可能不会出现在此处。',
   'redis.pubsubEmpty': '订阅频道或模式以查看实时消息',
   'redis.pubsubMessages': '实时消息',
   'redis.pubsubNeedTarget': '请至少输入一个频道或模式',
@@ -211,7 +212,8 @@ const locale = {
   'redis.wizard.pastedFromClipboard': '已从剪贴板填充',
   'redis.wizard.sentinelMasterName': '主节点名称',
   'redis.wizard.sentinelMasterRequired': '必须填写 Sentinel 主节点名称',
-  'redis.wizard.sentinelMtlsLimitation': 'redis-rs 0.27 无法将自定义 CA 或客户端证书用于 Sentinel 连接。启用 TLS 时 Sentinel 仅使用系统信任库；主从 mTLS 的 PEM 路径会被忽略。',
+  'redis.wizard.sentinelMtlsLimitation':
+    'redis-rs 0.27 无法将自定义 CA 或客户端证书用于 Sentinel 连接。启用 TLS 时 Sentinel 仅使用系统信任库；主从 mTLS 的 PEM 路径会被忽略。',
   'redis.wizard.sentinelNodePassword': 'Sentinel 密码',
   'redis.wizard.sentinelNodes': 'Sentinel 节点',
   'redis.wizard.sentinelNodesRequired': '至少需要一个 Sentinel 节点',
@@ -235,6 +237,22 @@ const locale = {
   'redis.console.dangerDanger': '危险',
   'redis.console.dangerUltra': '破坏性',
   'redis.console.dangerWarning': '⚠ 此命令可能具有破坏性，请谨慎执行。',
+  // Real-time MONITOR
+  'redis.monitor': '监控',
+  'redis.monitorStart': '开始监控',
+  'redis.monitorStop': '停止监控',
+  'redis.monitorPause': '暂停',
+  'redis.monitorResume': '恢复',
+  'redis.monitorBufferSize': '缓冲区大小',
+  'redis.monitorEventCount': '条事件',
+  'redis.monitorClient': '客户端',
+  'redis.monitorCommand': '命令',
+  'redis.monitorDb': '数据库',
+  'redis.monitorTimestamp': '时间',
+  'redis.monitorEmpty': '点击"开始监控"捕获 Redis 命令',
+  'redis.monitorWaiting': '等待事件...',
+  'redis.monitorRunning': 'MONITOR 运行中',
+  'redis.monitorStopped': 'MONITOR 已停止',
 } as const;
 
 export default locale;

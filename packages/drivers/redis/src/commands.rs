@@ -20,7 +20,8 @@ fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
         "dump_keys" | "restore_keys" => CommandCategory::Io,
         "flush_db" | "flush_all" | "slowlog_reset" => CommandCategory::Admin,
         "scan_keys" | "get_key" | "info" | "memory_sample" | "slowlog_get" | "modules_list"
-        | "cluster_nodes" | "count_matching" => CommandCategory::Observe,
+        | "cluster_nodes" | "count_matching" | "monitor_start" | "monitor_stop"
+        | "monitor_get_buffer" => CommandCategory::Observe,
         _ => CommandCategory::Mutate,
     };
     let mut metadata = DriverCommandMetadata {
@@ -363,6 +364,36 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "List loaded Redis modules",
             "redis:allow-modules-list",
             object_schema(serde_json::json!({}), &[]),
+        ),
+        cmd(
+            "monitor_start",
+            "Start MONITOR",
+            "Start a real-time MONITOR session on a dedicated connection",
+            "redis:allow-monitor",
+            object_schema(
+                serde_json::json!({ "dbSessionId": { "type": "string" }, "bufferSize": { "type": "integer" } }),
+                &["dbSessionId"],
+            ),
+        ),
+        cmd(
+            "monitor_stop",
+            "Stop MONITOR",
+            "Stop an active MONITOR session",
+            "redis:allow-monitor",
+            object_schema(
+                serde_json::json!({ "dbSessionId": { "type": "string" }, "monitorId": { "type": "string" } }),
+                &["dbSessionId", "monitorId"],
+            ),
+        ),
+        cmd(
+            "monitor_get_buffer",
+            "MONITOR Buffer",
+            "Retrieve buffered MONITOR events",
+            "redis:allow-monitor",
+            object_schema(
+                serde_json::json!({ "dbSessionId": { "type": "string" }, "monitorId": { "type": "string" } }),
+                &["dbSessionId", "monitorId"],
+            ),
         ),
         cmd(
             "exec",

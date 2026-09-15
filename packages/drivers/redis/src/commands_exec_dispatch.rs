@@ -319,6 +319,28 @@ match command {
             Ok(ok())
         }
         "modules_list" => json_ok(driver.plugin_modules_list(id).await?),
+        "monitor_start" => {
+            let buffer_size = input.get("bufferSize").and_then(JsonValue::as_u64).map(|n| n as usize);
+            let plan = driver.connection_plan(&handle.pool_id).await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            let monitor_id = crate::ops_monitor::start_monitor(&plan, buffer_size).await
+                .map_err(|e| DriverError::QueryFailed(e))?;
+            json_ok(serde_json::json!({ "monitorId": monitor_id }))
+        }
+        "monitor_stop" => {
+            let monitor_id = req_str(&input, "monitorId")?;
+            crate::ops_monitor::stop_monitor(monitor_id)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e))?;
+            Ok(ok())
+        }
+        "monitor_get_buffer" => {
+            let monitor_id = req_str(&input, "monitorId")?;
+            let events = crate::ops_monitor::get_monitor_buffer(monitor_id)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e))?;
+            json_ok(serde_json::json!({ "events": events }))
+        }
         "exec" => json_ok(
             driver
                 .plugin_exec(
