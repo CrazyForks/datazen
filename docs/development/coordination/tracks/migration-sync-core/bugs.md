@@ -36,7 +36,7 @@
 
 ## migration-sync-core-BUG-003 — Cancel IPC race clears the unknown-write fence (P1)
 
-- 状态：待验证（修复后）
+- 状态：已修复（独立复测通过）
 - Reproduction: enter Unknown after losing the execute/commit response; go back and start a fresh comparison; click Cancel; hold the `cancel_data_sync` response pending; let the comparison resolve successfully before the cancel response; then resolve cancellation.
 - Actual: `handleCancel` increments `compareGenerationRef` only after `await cancelDataSync(jobId)`. The comparison therefore remains current long enough to run `setWriteOutcomeUncertain(false)`. When cancellation finishes, the visible state returns to `unknown`, but `data-write-outcome-uncertain` is false. Preview can expose Execute for the stale mapping, and `runExecute` sees the same false fence, allowing a duplicate write after an unknown commit result.
 - Evidence: `[tester] invalidates a comparison before awaiting the cancel response` fails at `DataSyncWindow.test.tsx:900`: expected `data-write-outcome-uncertain="true"`, received `"false"`. Full frontend result is 7 files, 39 passed and 1 failed.
@@ -45,3 +45,23 @@
 - Required regression: retain the delayed-cancel continuous journey, then rerun the complete Rust, frontend, coverage, required WebDriver build and isolated PostgreSQL/MySQL matrix with a fresh Tester.
 - Fix: `handleCancel` now increments `compareGenerationRef` and preserves the unknown-write fence synchronously, before the cancellation IPC begins. On return it verifies that the cancellation still owns the active generation, and clears `jobIdRef` only when it still refers to the cancelled job. Existing inspection/comparison completion handlers already reject stale generations, so a superseded async completion cannot clear the fence or transition current UI state.
 - Regression evidence: the deterministic delayed-cancel journey passes; the complete frontend suite is 40/40, TypeScript passes, injected Rust remains 101/101 plus 22/22, and the frontend branch gate remains above 80%.
+
+## migration-sync-core-BUG-004 — Compare cancellation remains busy until IPC returns (P1 liveness)
+
+- 状态：待修复
+- Reproduction: after an unknown write outcome, start a fresh comparison, click Cancel, hold `cancel_data_sync` pending, then let the invalidated comparison request return. The workflow returns to the Objects step, but the cancel response remains pending.
+- Actual: the stale comparison correctly fails its generation check, but `handleCancel` does not leave `comparing` until after the cancellation IPC resolves. The Objects step therefore has a disabled Next button and disabled Back button. A delayed or lost cancel response permanently blocks the wizard, so no fresh comparison can clear the unknown-write fence. The same state prevents verifying that the stale cancellation preserves the newer comparison job id because a newer comparison cannot start.
+- Evidence: `[tester] lets a fresh comparison win while an older cancel response is delayed` times out at `DataSyncWindow.test.tsx:949` waiting for `data-sync-summary`; `[tester] a stale cancel response never clears the newer comparison job id` times out at line 995 waiting for the new comparison cancel control. At both failures the DOM reports `data-sync-step="objects"`, `data-sync-state="comparing"`, and disabled navigation. Full frontend result: 7 files, 40 passed and 3 failed.
+- Impact: every supported sync driver when cancellation IPC is slow, blocked, or its response is lost. The user cannot recover inside the wizard and cannot perform the mandatory fresh comparison after an uncertain write.
+- Required fix: for comparison/inspection cancellation, invalidate the generation and transition to the stable fenced state synchronously before awaiting IPC. Treat the captured job id as the cancellation target, and let the eventual response perform only ownership-checked cleanup; it must not overwrite a newer comparison state or clear its job id. Preserve the separate wait-for-transaction behavior for an in-flight write.
+- Required regression: retain both Tester journeys. Prove a fresh comparison can succeed while the older cancellation response is pending, its fresh mapping is the only executable mapping, and a pending newer comparison can still cancel using its own job id after the older response arrives.
+
+## migration-sync-core-BUG-005 — Late execution-cancel response overwrites success (P1 state correctness)
+
+- 状态：待修复
+- Reproduction: start execution, click Cancel while `execute_data_sync` is pending, hold the cancel response, then let execution and its verification comparison complete successfully before resolving cancellation.
+- Actual: execution reaches the Result step with `done`, but the old `handleCancel` resumes after `writeInFlightRef` becomes false and changes the current state to `compared` plus `sync.compareCancelled`. This replaces a confirmed successful outcome with a false cancellation result.
+- Evidence: `[tester] a delayed execution-cancel response cannot overwrite a successful result` fails at `DataSyncWindow.test.tsx:1102`: expected `data-sync-state="done"`, received `data-sync-state="compared"`. The status bar is also overwritten with `sync.compareCancelled`.
+- Impact: every supported sync driver when cancellation loses the race with a successful transaction and post-write comparison. Users receive a contradictory outcome and may repeat or distrust a completed migration.
+- Required fix: bind cancellation completion to the operation and phase it cancelled. A response for an execution that has already reached a terminal result must not mutate the result state or status. Cleanup must remain conditional on the matching job id and must not affect later work.
+- Required regression: retain the delayed execution-cancel journey and prove the terminal Result/done state and success status survive the late response.

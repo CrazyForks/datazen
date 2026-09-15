@@ -1,6 +1,6 @@
 # migration-sync-core
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sync-core`
 Branch: `codex/migration-sync-core`
@@ -117,3 +117,19 @@ D. **TEST_FAILED**. BUG-003 is a reproducible P1 duplicate-write risk. The compa
 - Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
 - Updated V8 coverage for the five changed frontend business modules: statements **82.74%** (657/794), branches **80.07%** (434/542), functions **85.63%** (161/188), lines **84.90%** (602/709).
 - The required WebDriver build and isolated PostgreSQL/MySQL matrix from independent round 2 remain valid because the post-build Tester commit added only the failing frontend regression, and this rescue changes only the frontend cancellation ordering exercised by that test. Fresh independent testing remains required before merge.
+
+## Independent Tester round 3 — 2026-09-15
+
+A. Reviewed the full track diff and the BUG-003 repair at `44980cc0`. The original delayed-cancel regression now proves that cancellation increments the comparison generation before yielding, preserves the unknown-write fence, rejects the stale comparison completion, and clears a job id only when it still matches. BUG-001, BUG-002 and BUG-003 remain fixed. Two further reachable cancellation lifecycle defects are recorded as BUG-004 and BUG-005; no business code was changed.
+
+B. Independent reruns at `14d17c7a` plus the new Tester regressions:
+- Injected Rust `data_sync`: **101 passed, 0 failed**.
+- Injected Rust `commands::sync`: **22 passed, 0 failed**; filters overlap and are not summed.
+- Frontend sync suites: **7 files, 40 passed, 3 failed**. Two failures cover the same compare-cancel liveness defect from separate fresh-result and matching-job-id journeys; the third covers a stale execution-cancel completion.
+- TypeScript `noEmit` and `git diff --check`: passed.
+- The required `pnpm tauri:build:webdriver` pipeline completed successfully from this exact HEAD with basic driver injection and the isolated track Cargo target.
+- The exact new application binary passed the isolated PostgreSQL and MySQL canonical projection/selection matrix: **2/2 passed** on port 4476 with fresh temporary app data. Default database setup/reset scripts were not run.
+
+C. V8 coverage for the five changed frontend business modules, measured from all **40 passing** sync tests while the three known failing regressions were excluded, remains above the gate: statements **82.74%** (657/794), branches **80.07%** (434/542), functions **85.63%** (161/188), lines **84.90%** (602/709). Rust percentage was not instrumented; the exact passing path counts above are reported instead. The delayed IPC ordering cannot be deterministically injected into the packaged desktop backend without a test seam; the component journeys control the actual async handler promises and state transitions. The binary run validates the unchanged real database path and is not represented as cancellation-race coverage.
+
+D. **TEST_FAILED**. BUG-004 can leave the comparison wizard indefinitely busy while cancellation IPC is delayed or lost, preventing the required fresh comparison and newer job-id journey. BUG-005 lets a late cancel response overwrite a successful execution result. Do not merge until both are fixed and a fresh Tester completes the full pass.

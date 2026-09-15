@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ConnectionConfig } from '../../../types';
 import type { DataSyncRowChange } from '../../../commands/sync';
 
@@ -903,6 +903,108 @@ describe('DataSyncWindow wizard', () => {
     );
   });
 
+  it('[tester] lets a fresh comparison win while an older cancel response is delayed', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    executeDataSyncMock.mockRejectedValueOnce(new Error('commit response lost'));
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+    await screen.findByTestId('data-sync-error');
+    fireEvent.click(screen.getByText('common.ok'));
+
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    fireEvent.click(screen.getByTestId('data-sync-back'));
+    let resolveOldCompare!: (rows: Array<Record<string, unknown>>) => void;
+    compareDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveOldCompare = resolve; }),
+    );
+    compareDataSyncMock.mockResolvedValue([
+      {
+        sourceTable: 'users',
+        targetTable: 'users',
+        status: 'MATCHED',
+        rows: [{ ...insertRow(), key: [9], sourceRow: [[9, 'fresh']] }],
+      },
+    ]);
+    let resolveOldCancel!: (cancelled: boolean) => void;
+    cancelDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveOldCancel = resolve; }),
+    );
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    fireEvent.click(await screen.findByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+
+    const oldCompareJob = compareDataSyncMock.mock.calls[1][3];
+    expect(cancelDataSyncMock.mock.calls[0][0]).toBe(oldCompareJob);
+    resolveOldCompare([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    await screen.findByTestId('data-sync-objects-step');
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-summary');
+    const freshCompareJob = compareDataSyncMock.mock.calls[2][3];
+    expect(freshCompareJob).not.toBe(oldCompareJob);
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
+    );
+
+    resolveOldCancel(true);
+    await waitFor(() =>
+      expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'compared'),
+    );
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
+    );
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    fireEvent.click(await screen.findByTestId('data-sync-start'));
+    await waitFor(() => expect(generateDataSyncSqlMock).toHaveBeenCalledTimes(2));
+    expect(generateDataSyncSqlMock.mock.calls[1][2][0].rows[0].key).toEqual([9]);
+  });
+
+  it('[tester] a stale cancel response never clears the newer comparison job id', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    let resolveOldCompare!: (rows: Array<Record<string, unknown>>) => void;
+    let resolveFreshCompare!: (rows: Array<Record<string, unknown>>) => void;
+    compareDataSyncMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOldCompare = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFreshCompare = resolve; }));
+    let resolveOldCancel!: (cancelled: boolean) => void;
+    cancelDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveOldCancel = resolve; }),
+    );
+    render(<DataSyncWindow />);
+    await advanceToObjects();
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    fireEvent.click(await screen.findByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+    const oldJob = compareDataSyncMock.mock.calls[0][3];
+    expect(cancelDataSyncMock.mock.calls[0][0]).toBe(oldJob);
+
+    resolveOldCompare([]);
+    await screen.findByTestId('data-sync-objects-step');
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-cancel');
+    const freshJob = compareDataSyncMock.mock.calls[1][3];
+    expect(freshJob).not.toBe(oldJob);
+
+    resolveOldCancel(true);
+    await waitFor(() => expect(screen.getByTestId('data-sync-cancel')).toBeTruthy());
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'comparing');
+    fireEvent.click(screen.getByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(2));
+    expect(cancelDataSyncMock.mock.calls[1][0]).toBe(freshJob);
+    resolveFreshCompare([]);
+  });
+
   it('keeps an unknown write fenced across failed comparison and inspection attempts', async () => {
     inspectDataSyncMock.mockResolvedValue([
       { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
@@ -969,6 +1071,36 @@ describe('DataSyncWindow wizard', () => {
       'true',
     );
     expect(executeDataSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('[tester] a delayed execution-cancel response cannot overwrite a successful result', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    let resolveWrite!: (result: { applied: number; rolledBack: boolean }) => void;
+    executeDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveWrite = resolve; }),
+    );
+    let resolveCancel!: (cancelled: boolean) => void;
+    cancelDataSyncMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCancel = resolve; }),
+    );
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+    await waitFor(() => expect(resolveWrite).toBeDefined());
+    fireEvent.click(screen.getByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+
+    resolveWrite({ applied: 1, rolledBack: false });
+    await screen.findByTestId('data-sync-result');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'done');
+    await act(async () => { resolveCancel(true); });
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'done');
+    expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.compareCancelled');
   });
 
   it('[tester] rollback preserves review and cancellation during generation never writes', async () => {
