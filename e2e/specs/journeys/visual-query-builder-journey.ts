@@ -107,26 +107,20 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await browser.pause(500);
     await captureJourneyStep('qb-table-selected');
 
-    // ── Step 3: Expand column group and select columns ──
+    // ── Step 3: Select columns ──
     const columnSelector = await $('[data-testid="qb-column-selector"]');
     await columnSelector.waitForDisplayed({ timeout: 5000 });
 
-    // Column groups are collapsed by default — expand the table group first
-    const groupExpanded = await browser.execute((tbl: string) => {
-      // Find the expand/collapse button that contains the table name
-      const buttons = Array.from(
-        document.querySelector('[data-testid="qb-column-selector"]')?.querySelectorAll('button') ??
-          [],
-      );
-      const btn = buttons.find((b) => b.textContent?.trim().includes(tbl));
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(groupExpanded).toBe(true);
-    await browser.pause(300);
+    // Column groups auto-expand when their table is selected (see ColumnSelector state init).
+    // Wait for the column checkboxes to appear.
+    await browser.waitUntil(
+      async () => {
+        return await browser.execute((tbl: string) => {
+          return !!document.querySelector(`[data-testid="qb-column-check-${tbl}.name"]`);
+        }, TABLE_NAME);
+      },
+      { timeout: 5000, timeoutMsg: 'Column checkboxes not rendered after table selection' },
+    );
 
     // Select 'name' column
     const nameChecked = await browser.execute((tbl: string) => {
