@@ -4,7 +4,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useI18n } from '../../src/hooks/useI18n';
+import { useI18n } from '../../../../src/hooks/useI18n';
 import {
   invokeMonitorStart,
   invokeMonitorStop,
