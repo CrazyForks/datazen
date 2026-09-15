@@ -102,6 +102,7 @@ export function QueryBuilderPanel({
             type="button"
             onClick={reset}
             className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised hover:text-fg"
+            data-testid="qb-reset"
           >
             {t('query.visualBuilder.reset')}
           </button>
@@ -110,6 +111,7 @@ export function QueryBuilderPanel({
             onClick={handleClose}
             title={t('query.visualBuilder.close')}
             className="flex items-center justify-center rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised hover:text-fg"
+            data-testid="qb-close"
           >
             <X className="h-4 w-4" />
           </button>

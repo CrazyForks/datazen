@@ -274,19 +274,10 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await reopenedPanel.waitForDisplayed({ timeout: 5000 });
 
     // Click Reset via the panel header button
-    const resetDone = await browser.execute(() => {
-      const panel = document.querySelector('[data-testid="qb-panel"]');
-      if (!panel) return false;
-      const buttons = Array.from(panel.querySelectorAll('button'));
-      const reset = buttons.find(
-        (b) => b.textContent?.includes('重置') || b.textContent?.includes('Reset'),
-      );
-      if (reset) {
-        reset.click();
-        return true;
-      }
-      return false;
-    });
+    const resetBtn = await $('[data-testid="qb-reset"]');
+    await resetBtn.waitForClickable({ timeout: 5000 });
+    await resetBtn.click();
+    const resetDone = true;
     expect(resetDone).toBe(true);
     await browser.pause(500);
 
@@ -300,23 +291,9 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await captureJourneyStep('qb-reset');
 
     // ── Step 11: Close the panel via the X button ──
-    const closed = await browser.execute(() => {
-      const panel = document.querySelector('[data-testid="qb-panel"]');
-      if (!panel) return false;
-      const buttons = Array.from(panel.querySelectorAll('button'));
-      const close = buttons.find(
-        (b) =>
-          b.querySelector('.lucide-x') ||
-          b.getAttribute('title')?.includes('Close') ||
-          b.getAttribute('title')?.includes('关闭'),
-      );
-      if (close) {
-        close.click();
-        return true;
-      }
-      return false;
-    });
-    expect(closed).toBe(true);
+    const closeBtn = await $('[data-testid="qb-close"]');
+    await closeBtn.waitForClickable({ timeout: 5000 });
+    await closeBtn.click();
 
     await browser.waitUntil(
       async () =>
