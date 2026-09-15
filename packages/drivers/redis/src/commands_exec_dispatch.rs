@@ -129,6 +129,19 @@ match command {
                 .plugin_list_pop(id, db, req_str(&input, "key")?, req_str(&input, "side")?)
                 .await?,
         ),
+        "list_index" => json_ok(
+            driver
+                .plugin_list_index(id, db, req_str(&input, "key")?, req_i64(&input, "index")?)
+                .await?,
+        ),
+        "list_rem" => {
+            let count = input.get("count").and_then(JsonValue::as_i64).unwrap_or(1);
+            json_ok(
+                driver
+                    .plugin_list_rem(id, db, req_str(&input, "key")?, count, req_str(&input, "value")?)
+                    .await?,
+            )
+        }
         "set_add" => {
             let members = string_vec(&input, "members")?;
             driver

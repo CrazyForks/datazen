@@ -157,6 +157,26 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             ),
         ),
         cmd(
+            "list_index",
+            "List index",
+            "LINDEX get element at index",
+            "redis:allow-list-index",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key, "index": { "type": "integer" } }),
+                &["key", "index"],
+            ),
+        ),
+        cmd(
+            "list_rem",
+            "List remove",
+            "LREM remove occurrences of value",
+            "redis:allow-list-rem",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key, "count": { "type": "integer" }, "value": { "type": "string" } }),
+                &["key", "count", "value"],
+            ),
+        ),
+        cmd(
             "set_add",
             "Set add",
             "SADD members",

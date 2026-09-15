@@ -115,6 +115,38 @@ export async function invokeListPop(
   });
 }
 
+export async function invokeListIndex(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  index: number,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<string | null> {
+  return (await invoke('redis', 'list_index', {
+    dbSessionId,
+    dbIndex,
+    key,
+    index,
+  })) as string | null;
+}
+
+export async function invokeListRem(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  count: number,
+  value: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+): Promise<number> {
+  return (await invoke('redis', 'list_rem', {
+    dbSessionId,
+    dbIndex,
+    key,
+    count,
+    value,
+  })) as number;
+}
+
 export async function invokeSetAdd(
   dbSessionId: string,
   dbIndex: number,

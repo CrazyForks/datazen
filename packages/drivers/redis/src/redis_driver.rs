@@ -185,6 +185,8 @@ impl RedisDriver {
     plugin_on_db!(plugin_list_push, (key: &str, side: &str, values: &[String]) -> (), |conn| crate::ops::list_push(conn, key, side, values));
     plugin_on_db!(plugin_list_set, (key: &str, index: i64, value: &str) -> (), |conn| crate::ops::list_set(conn, key, index, value));
     plugin_on_db!(plugin_list_pop, (key: &str, side: &str) -> Option<String>, |conn| crate::ops::list_pop(conn, key, side));
+    plugin_on_db!(plugin_list_index, (key: &str, index: i64) -> Option<String>, |conn| crate::ops::list_index(conn, key, index));
+    plugin_on_db!(plugin_list_rem, (key: &str, count: i64, value: &str) -> i64, |conn| crate::ops::list_rem(conn, key, count, value));
     plugin_on_db!(plugin_set_add, (key: &str, members: &[String]) -> (), |conn| crate::ops::set_add(conn, key, members));
     plugin_on_db!(plugin_set_remove, (key: &str, members: &[String]) -> (), |conn| crate::ops::set_remove(conn, key, members));
     plugin_on_db!(plugin_zset_add, (key: &str, members: &[crate::ops::ZsetMember]) -> (), |conn| crate::ops::zset_add(conn, key, members));

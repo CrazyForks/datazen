@@ -269,6 +269,40 @@ where
     })
 }
 
+/// LINDEX: get the element at `index` in the list stored at `key`.
+pub async fn list_index<C>(conn: &mut C, key: &str, index: i64) -> Result<Option<String>, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let raw: redis::Value = redis::cmd("LINDEX")
+        .arg(key)
+        .arg(index)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(match raw {
+        redis::Value::Nil => None,
+        redis::Value::BulkString(b) => Some(String::from_utf8_lossy(&b).into()),
+        redis::Value::SimpleString(s) => Some(s),
+        other => Some(format!("{other:?}")),
+    })
+}
+
+/// LREM: remove `count` occurrences of `value` from the list stored at `key`.
+/// count > 0: remove first `count` occurrences; count < 0: remove last `count`; count = 0: remove all.
+pub async fn list_rem<C>(conn: &mut C, key: &str, count: i64, value: &str) -> Result<i64, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    redis::cmd("LREM")
+        .arg(key)
+        .arg(count)
+        .arg(value)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn set_add<C>(conn: &mut C, key: &str, members: &[String]) -> Result<(), String>
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,

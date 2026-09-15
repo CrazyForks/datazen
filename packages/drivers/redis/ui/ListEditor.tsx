@@ -9,6 +9,8 @@ import {
   invokeListPush,
   invokeListSet,
   invokeListRange,
+  invokeListIndex,
+  invokeListRem,
 } from './keyEditorsInvokes';
 
 const PAGE_SIZE = 100;
@@ -130,10 +132,17 @@ export function ListEditor({
                     variant="ghost"
                     className="h-6 px-1.5 text-[10px] text-danger"
                     onClick={() =>
-                      void invokeListPop(dbSessionId, dbIndex, detail.key, 'left').then(() => {
-                        handleRefresh();
-                        onChanged();
-                      })
+                      void invokeListIndex(dbSessionId, dbIndex, detail.key, offset + index)
+                        .then((val) => {
+                          if (val !== null) {
+                            return invokeListRem(dbSessionId, dbIndex, detail.key, 1, val);
+                          }
+                          return undefined;
+                        })
+                        .then(() => {
+                          handleRefresh();
+                          onChanged();
+                        })
                     }
                   >
                     <Trash2 className="h-3 w-3" />
