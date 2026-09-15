@@ -126,7 +126,7 @@ export function ZsetEditor({
           {t('redis.search')}
         </Button>
         <Button
-          variant={sortDirection !== 'none' ? 'default' : 'ghost'}
+          variant={sortDirection !== 'none' ? 'primary' : 'ghost'}
           className="h-7 px-2 text-xs"
           onClick={toggleSort}
           title={
@@ -172,24 +172,25 @@ export function ZsetEditor({
               <td className="px-2 py-1.5 font-mono text-fg-secondary">{item.member}</td>
               <td className="px-2 py-1.5">
                 <div className="flex gap-1">
-                  {editScores[item.member] !== undefined && editScores[item.member] !== item.score && (
-                    <Button
-                      variant="secondary"
-                      className="h-6 px-1.5 text-[10px]"
-                      onClick={() =>
-                        void (async () => {
-                          await invokeZsetRemove(dbSessionId, dbIndex, detail.key, [item.member]);
-                          await invokeZsetAdd(dbSessionId, dbIndex, detail.key, [
-                            { member: item.member, score: editScores[item.member] },
-                          ]);
-                          handleRefresh();
-                          onChanged();
-                        })()
-                      }
-                    >
-                      {t('common.save')}
-                    </Button>
-                  )}
+                  {editScores[item.member] !== undefined &&
+                    editScores[item.member] !== item.score && (
+                      <Button
+                        variant="secondary"
+                        className="h-6 px-1.5 text-[10px]"
+                        onClick={() =>
+                          void (async () => {
+                            await invokeZsetRemove(dbSessionId, dbIndex, detail.key, [item.member]);
+                            await invokeZsetAdd(dbSessionId, dbIndex, detail.key, [
+                              { member: item.member, score: editScores[item.member] },
+                            ]);
+                            handleRefresh();
+                            onChanged();
+                          })()
+                        }
+                      >
+                        {t('common.save')}
+                      </Button>
+                    )}
                   <Button
                     variant="ghost"
                     className="h-6 px-1.5 text-[10px] text-danger"

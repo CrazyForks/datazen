@@ -31,7 +31,7 @@ export function HashEditor({
   const [cursor, setCursor] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
+  const [, setPage] = useState(1);
   const [searchPattern, setSearchPattern] = useState('');
 
   // Editing state
