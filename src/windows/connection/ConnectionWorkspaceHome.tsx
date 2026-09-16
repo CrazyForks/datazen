@@ -189,10 +189,6 @@ export function ConnectionWorkspaceHome({
           <p className="text-sm font-medium text-fg">{t('main.noConnections')}</p>
           <p className="mt-1.5 text-xs text-fg-muted">{t('connWin.home.emptyNoConnectionsHint')}</p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <Button className="mt-0" onClick={onNewConnection} data-testid="new-connection-button">
-              <ThemedIcon id="common.newConnection" className="h-4 w-4" fallback={Plus} />
-              {t('main.createFirst')}
-            </Button>
             {onImportConnections && (
               <Button
                 variant="ghost"
@@ -203,6 +199,10 @@ export function ConnectionWorkspaceHome({
                 {t('common.importConnections')}
               </Button>
             )}
+            <Button className="mt-0" onClick={onNewConnection} data-testid="new-connection-button">
+              <ThemedIcon id="common.newConnection" className="h-4 w-4" fallback={Plus} />
+              {t('main.createFirst')}
+            </Button>
           </div>
         </div>
       </div>
