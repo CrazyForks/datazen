@@ -39,13 +39,16 @@ pub async fn enrich_source_types(
     adapter: &dyn SyncSourceAdapter,
     driver: &dyn DatabaseDriver,
     handle: &ConnectionHandle,
+    endpoint: &super::model::Endpoint,
     schemas: &mut HashMap<String, TableSchema>,
 ) -> Result<(), TransferError> {
     for (table, schema) in schemas {
-        let full =
-            crate::transfer::full_types::fetch_full_column_types(adapter, driver, handle, table)
-                .await
-                .map_err(TransferError::validation)?;
+        let relation = super::metadata::metadata_relation_ref(endpoint, table)?;
+        let full = crate::transfer::full_types::fetch_full_column_types(
+            adapter, driver, handle, &relation,
+        )
+        .await
+        .map_err(TransferError::validation)?;
         for column in &mut schema.columns {
             if let Some(native) = full.get(&column.name) {
                 column.data_type = native.clone();

@@ -313,9 +313,13 @@ pub async fn execute_transfer_data(
             }
         }
 
-        let target_schema = match tgt_driver
-            .get_table_schema(tgt_handle, &table.target_table)
-            .await
+        let target_schema = match super::metadata::load_table_schema(
+            tgt_driver,
+            tgt_handle,
+            &job.target,
+            &table.target_table,
+        )
+        .await
         {
             Ok(schema) => schema,
             Err(error) => {

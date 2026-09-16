@@ -18,6 +18,8 @@ pub(crate) async fn inspect_data_transfer_impl(
     target_db_session_id: String,
     source_database: Option<String>,
     target_database: Option<String>,
+    source_schema: Option<&str>,
+    target_schema: Option<&str>,
     mode: TransferMode,
     mappings: &[TableMapping],
 ) -> Result<Vec<TableInspectResult>, CommandError> {
@@ -38,13 +40,30 @@ pub(crate) async fn inspect_data_transfer_impl(
     let src_db = resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
     let tgt_db = resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
 
+    let source = crate::data_transfer::model::Endpoint {
+        db_session_id: source_db_session_id.clone(),
+        database: src_db.clone(),
+        schema: source_schema
+            .map(str::to_string)
+            .or(src_config.schema.clone()),
+    };
+    let target = crate::data_transfer::model::Endpoint {
+        db_session_id: target_db_session_id.clone(),
+        database: tgt_db.clone(),
+        schema: target_schema
+            .map(str::to_string)
+            .or(tgt_config.schema.clone()),
+    };
+    crate::data_transfer::metadata::metadata_relation_ref(&source, "")?;
+    crate::data_transfer::metadata::metadata_relation_ref(&target, "")?;
+
     if is_self_database(
         &source_db_session_id,
         &target_db_session_id,
         &src_db,
         &tgt_db,
-        None,
-        None,
+        source.normalized_schema(),
+        target.normalized_schema(),
     ) {
         return Err(CommandError::Validation(
             "source and target are the same database; pick different databases or connections"
@@ -72,12 +91,28 @@ pub(crate) async fn inspect_data_transfer_impl(
         .await
         .cmd_err("inspect_data_transfer")?;
 
+    let src_tables: Vec<_> = src_tables
+        .into_iter()
+        .filter(|table| crate::data_transfer::metadata::table_in_endpoint_schema(&source, table))
+        .collect();
+    let tgt_tables: Vec<_> = tgt_tables
+        .into_iter()
+        .filter(|table| crate::data_transfer::metadata::table_in_endpoint_schema(&target, table))
+        .collect();
+
     let mut source_schemas = HashMap::new();
     for table in src_tables
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = src_driver.get_table_schema(&src_handle, &table.name).await {
+        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+            src_driver.as_ref(),
+            &src_handle,
+            &source,
+            &table.name,
+        )
+        .await
+        {
             source_schemas.insert(table.name.clone(), schema);
         }
     }
@@ -86,7 +121,14 @@ pub(crate) async fn inspect_data_transfer_impl(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = tgt_driver.get_table_schema(&tgt_handle, &table.name).await {
+        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+            tgt_driver.as_ref(),
+            &tgt_handle,
+            &target,
+            &table.name,
+        )
+        .await
+        {
             target_schemas.insert(table.name.clone(), schema);
         }
     }
@@ -101,7 +143,7 @@ pub(crate) async fn inspect_data_transfer_impl(
             &src_handle,
             &src_config.database_type,
             Some(&src_db),
-            None,
+            source.normalized_schema(),
             &table.name,
         )
         .await

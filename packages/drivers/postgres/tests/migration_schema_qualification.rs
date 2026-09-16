@@ -1,7 +1,7 @@
 //! Regression probe for schema-qualified migration metadata.
 
 use datazen_driver_api::*;
-use datazen_driver_postgres::PostgresDriver;
+use datazen_driver_postgres::{PgSyncAdapter, PostgresDriver};
 
 fn config(database: String, schema: String) -> ConnectionConfig {
     ConnectionConfig {
@@ -35,35 +35,50 @@ fn config(database: String, schema: String) -> ConnectionConfig {
 
 #[tokio::test]
 #[ignore = "requires isolated MIGRATION_TEST_DATABASE and explicit credentials"]
-async fn test_tester_bare_table_metadata_respects_connection_schema() {
+async fn test_transfer_qualified_metadata_isolates_selected_schema() {
     let database = std::env::var("MIGRATION_TEST_DATABASE").expect("isolated database required");
-    assert!(database.starts_with("dz_mig_"), "refuse shared fixture database");
+    assert!(
+        database.starts_with("dz_mig_"),
+        "refuse shared fixture database"
+    );
     let suffix = uuid::Uuid::new_v4().simple().to_string();
-    let selected_schema = format!("dt_selected_{suffix}");
+    let selected_schema = format!("DtSelected_{suffix}");
     let other_schema = format!("dt_other_{suffix}");
-    let table = format!("same_name_{suffix}");
+    let table = format!("same_name_{suffix}.part");
     let driver = PostgresDriver::new();
     let handle = driver
         .connect(&config(database, selected_schema.clone()))
         .await
         .unwrap();
 
+    let selected_sql = driver.quote_ident(&selected_schema);
+    let other_sql = driver.quote_ident(&other_schema);
+    let table_sql = driver.quote_ident(&table);
     for sql in [
-        format!("CREATE SCHEMA {selected_schema}"),
-        format!("CREATE SCHEMA {other_schema}"),
-        format!("CREATE TABLE {selected_schema}.{table} (selected_id integer)"),
-        format!("CREATE TABLE {other_schema}.{table} (other_payload text)"),
+        format!("CREATE SCHEMA {selected_sql}"),
+        format!("CREATE SCHEMA {other_sql}"),
+        format!("CREATE TABLE {selected_sql}.{table_sql} (selected_id integer)"),
+        format!("CREATE TABLE {other_sql}.{table_sql} (other_payload text)"),
     ] {
         driver.execute(&handle, &sql).await.unwrap();
     }
 
-    let schema = driver.get_table_schema(&handle, &table).await.unwrap();
+    let schema = driver
+        .get_table_schema(&handle, &format!("{selected_schema}.{table}"))
+        .await
+        .unwrap();
+    let full_sql = PgSyncAdapter
+        .full_column_types_query(&format!("{selected_schema}.{table}"))
+        .unwrap();
+    let full_types = driver.query(&handle, &full_sql).await.unwrap();
+    assert_eq!(full_types.rows.len(), 1);
+    assert!(matches!(&full_types.rows[0][0], Some(Value::String(name)) if name == "selected_id"));
     driver
-        .execute(&handle, &format!("DROP SCHEMA {selected_schema} CASCADE"))
+        .execute(&handle, &format!("DROP SCHEMA {selected_sql} CASCADE"))
         .await
         .unwrap();
     driver
-        .execute(&handle, &format!("DROP SCHEMA {other_schema} CASCADE"))
+        .execute(&handle, &format!("DROP SCHEMA {other_sql} CASCADE"))
         .await
         .unwrap();
     driver.disconnect(handle).await.unwrap();

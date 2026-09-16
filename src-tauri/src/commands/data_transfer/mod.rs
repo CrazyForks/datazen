@@ -48,6 +48,8 @@ pub async fn inspect_data_transfer(
         target_db_session_id,
         source_database,
         target_database,
+        None,
+        None,
         mode,
         &tables.unwrap_or_default(),
     )

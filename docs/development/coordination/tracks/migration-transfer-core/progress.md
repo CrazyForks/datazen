@@ -1,6 +1,6 @@
 # migration-transfer-core
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 - Branch: codex/migration-transfer-core
 - Worktree: .worktrees/datazen-migration-transfer-core
 - Implementation commit: see commit containing this progress record; final hash supplied in coordinator handoff.
@@ -51,3 +51,10 @@ This is wave 1, not Navicat parity. Materializing query_stream fallback is not b
 ### D. Verdict
 - `TEST_FAILED` due to `migration-transfer-core-BUG-001`.
 - Test additions are committed with the bug/progress record. A fresh tester must rerun the full suite after the coder fixes schema-qualified metadata resolution.
+
+## BUG001 repair handoff (2026-09-16)
+- Scope limited to schema-qualified Transfer metadata resolution and its PostgreSQL full-type query.
+- All production Transfer table-schema reads now use one generic logical relation helper; source/target connection schema is propagated to metadata, source counts, preview, and execution.
+- Latest self-checks: injected Host data_transfer 36 passed; driver libs MySQL 86 / PostgreSQL 101 / SQLite 46 passed; real PG schema regression 1 passed (mixed case + literal table dot); real PG/MySQL bound write journeys 1 each passed; SQLite journey 1 passed; Vitest 3 files / 18 passed; tsc and diff whitespace checks passed.
+- BUG001 moved 修复中 → 待复测. No fresh desktop binary/E2E claim; independent Tester must rebuild and rerun.
+- Intentional limit: dotted schema names fail closed pending structured relation IDs. Bare get_table_schema does not newly inherit a PG connection schema; Transfer now always supplies its explicit logical schema.table reference.

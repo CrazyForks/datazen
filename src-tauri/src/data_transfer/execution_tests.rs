@@ -14,6 +14,7 @@ struct State {
     pending: Vec<Vec<Value>>,
     calls: usize,
     rollback: usize,
+    metadata_refs: Vec<String>,
 }
 struct Driver {
     rows: Rows,
@@ -59,8 +60,13 @@ impl DatabaseDriver for Driver {
     async fn get_table_schema(
         &self,
         _: &ConnectionHandle,
-        _: &str,
+        relation: &str,
     ) -> Result<TableSchema, DriverError> {
+        self.state
+            .lock()
+            .unwrap()
+            .metadata_refs
+            .push(relation.to_string());
         Ok(self.schema.clone())
     }
     async fn query(&self, _: &ConnectionHandle, _: &str) -> Result<QueryResult, DriverError> {
@@ -460,4 +466,49 @@ async fn invalid_or_truncated_stream_never_reaches_target_writes() {
         assert!(!result.tables[0].success);
         assert_eq!(target.state.lock().unwrap().calls, 0);
     }
+}
+
+#[tokio::test]
+async fn source_metadata_and_bound_writer_target_use_endpoint_schema() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut job = job();
+    job.source.schema = Some("source_scope".into());
+    job.target.schema = Some("target_scope".into());
+    let source_handle = ConnectionHandle {
+        id: "source".into(),
+        pool_id: "source".into(),
+    };
+    let target_handle = ConnectionHandle {
+        id: "target".into(),
+        pool_id: "target".into(),
+    };
+    let loaded =
+        super::metadata::load_table_schema(&source, &source_handle, &job.source, "same_table")
+            .await
+            .unwrap();
+    let tables = vec![inspected("same_table", vec![mapping("id", "id")])];
+    let schemas = HashMap::from([("same_table".into(), loaded)]);
+    let result = execute_same_family_data(
+        &source,
+        &source_handle,
+        &target,
+        &target_handle,
+        &job,
+        &tables,
+        &schemas,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!result.partial);
+    assert_eq!(
+        source.state.lock().unwrap().metadata_refs,
+        vec!["source_scope.same_table"]
+    );
+    assert_eq!(
+        target.state.lock().unwrap().metadata_refs,
+        vec!["target_scope.same_table"]
+    );
 }

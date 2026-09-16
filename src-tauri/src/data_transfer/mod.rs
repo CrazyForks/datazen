@@ -4,6 +4,7 @@ pub mod error;
 pub mod execute;
 pub mod mapping;
 pub mod model;
+pub mod metadata;
 pub mod pairing;
 pub mod preview;
 mod scan;
