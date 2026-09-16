@@ -86,7 +86,7 @@ export function DiagramCanvas({
     isPanning,
   } = useCanvasInteraction(storeZoom, storeOffset, onZoomChange, onOffsetChange);
 
-  // Handle drop from object tree
+  // Handle drop from object tree / app schema tree
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -95,9 +95,47 @@ export function DiagramCanvas({
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      const tableName = e.dataTransfer.getData('table');
-      if (!tableName || !containerRef.current || !onDropTable) return;
+      if (!containerRef.current || !onDropTable) return;
 
+      // Try versioned schema object payload first (app schema tree)
+      const schemaObjRaw = e.dataTransfer.getData('application/datazen-schema-object');
+      if (schemaObjRaw) {
+        try {
+          const payload = JSON.parse(schemaObjRaw) as { namespace?: { table?: string } };
+          const tableName = payload.namespace?.table;
+          if (tableName) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = (e.clientX - rect.left - canvasOffset.x) / zoom;
+            const y = (e.clientY - rect.top - canvasOffset.y) / zoom;
+            onDropTable(tableName, { x, y });
+            return;
+          }
+        } catch {
+          // fall through
+        }
+      }
+
+      // Legacy: 'application/datazen-table' MIME
+      const legacyRaw = e.dataTransfer.getData('application/datazen-table');
+      if (legacyRaw) {
+        try {
+          const payload = JSON.parse(legacyRaw) as { tables?: Array<{ tableName?: string }> };
+          const tableName = payload.tables?.[0]?.tableName;
+          if (tableName) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = (e.clientX - rect.left - canvasOffset.x) / zoom;
+            const y = (e.clientY - rect.top - canvasOffset.y) / zoom;
+            onDropTable(tableName, { x, y });
+            return;
+          }
+        } catch {
+          // fall through
+        }
+      }
+
+      // Fallback: simple 'table' MIME (internal ObjectTreePanel)
+      const tableName = e.dataTransfer.getData('table');
+      if (!tableName) return;
       const rect = containerRef.current.getBoundingClientRect();
       const x = (e.clientX - rect.left - canvasOffset.x) / zoom;
       const y = (e.clientY - rect.top - canvasOffset.y) / zoom;
