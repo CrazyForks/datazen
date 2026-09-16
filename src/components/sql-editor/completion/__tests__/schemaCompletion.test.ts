@@ -859,6 +859,65 @@ describe('schemaCompletion', () => {
       expect(completions.length).toBe(1);
       expect(completions.map((c) => c.label)).toContain('id');
     });
+
+    it('truncates the schema fallback for short prefixes (deletion fast-path)', () => {
+      const snapshot = makeSnapshot([]);
+      const model = makeModel([], {
+        kind: 'projection',
+        prefix: 'na',
+        replacementRange: { from: 7, to: 9 },
+        qualifierParts: [],
+      });
+
+      // 400 non-matching columns + a few matching ones.
+      const filler = Array.from({ length: 400 }, (_, i) => `zzz_col_${i}`);
+      const schema: Record<string, string[]> = {
+        big: [...filler, 'other'],
+        users: ['id', 'name', 'email', 'nationality'],
+      };
+
+      const completions = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter,
+        schema,
+        prefixHint: 'na',
+      });
+      // Only pre-filtered matches are built — far below the 404-column total.
+      expect(completions.length).toBeLessThan(50);
+      const labels = completions.map((c) => c.label);
+      expect(labels).toContain('name');
+      expect(labels).toContain('nationality');
+      expect(labels).not.toContain('zzz_col_0');
+      expect(labels).not.toContain('other');
+    });
+
+    it('keeps full schema fallback without a short prefix hint', () => {
+      const snapshot = makeSnapshot([]);
+      const model = makeModel([], {
+        kind: 'projection',
+        prefix: 'nam',
+        replacementRange: { from: 7, to: 10 },
+        qualifierParts: [],
+      });
+
+      const schema: Record<string, string[]> = {
+        users: ['id', 'name', 'email'],
+        orders: ['id', 'total', 'user_id'],
+      };
+
+      // 3-char prefix / no hint → no truncation.
+      const full = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter,
+        schema,
+        prefixHint: 'nam',
+      });
+      expect(full.length).toBe(6);
+      const noHint = produceSchemaCompletions({ model, snapshot, adapter, schema });
+      expect(noHint.length).toBe(6);
+    });
   });
 
   describe('FROM hint (relation with SELECT columns)', () => {

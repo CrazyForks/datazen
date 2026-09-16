@@ -5,6 +5,7 @@ import { buildEditorSchema } from '../../lib/buildEditorSchema';
 import {
   inferDefaultSchema,
   inferDefaultTable,
+  tableClauseFingerprint,
   tablesReferencedInSql,
 } from '../../lib/sqlEditorDefaults';
 import { usePanelStore } from '../../stores/panelStore';
@@ -240,7 +241,45 @@ export function QueryPanel({
     [namespaceTree, tables, views, columnMap, selectedDatabase, contextPathState.contextPath],
   );
   const editorDefaultSchema = useMemo(() => inferDefaultSchema(tables, views), [tables, views]);
-  const editorDefaultTable = useMemo(() => inferDefaultTable(exec.sql), [exec.sql]);
+  // Table-clause fingerprint of the live SQL: stable while only column names
+  // change (e.g. deleting a column), changes when tables/clauses change.
+  // Drives two keystroke-cost optimizations below (defaultTable + workflowSql).
+  const tableFingerprint = useMemo(() => tableClauseFingerprint(exec.sql), [exec.sql]);
+  // `defaultTable` feeds the CodeMirror SQL compartment: a new reference
+  // reconfigures lang-sql (schema reindex, O(tables)). Only recompute when
+  // the table fingerprint changes, and only publish when the table changes.
+  const defaultTableRef = useRef<string | undefined>(undefined);
+  const defaultTableFpRef = useRef('');
+  const defaultTableInit = useRef(false);
+  if (!defaultTableInit.current || tableFingerprint !== defaultTableFpRef.current) {
+    defaultTableInit.current = true;
+    defaultTableFpRef.current = tableFingerprint;
+    const next = inferDefaultTable(exec.sql);
+    if (next !== defaultTableRef.current) {
+      defaultTableRef.current = next;
+    }
+  }
+  const editorDefaultTable = defaultTableRef.current;
+  // Snapshot of the SQL for diagnosis/retry/explain workflows. These only
+  // need the SQL at error/execution time; keeping a stable reference across
+  // column-name keystrokes skips the whole workflow memo chain
+  // (diagnosis context build + retry action) per keystroke. Refreshes when
+  // the table fingerprint changes, on error change, or after an execution.
+  const workflowSqlRef = useRef(exec.sql);
+  const workflowFpRef = useRef(tableFingerprint);
+  const workflowErrRef = useRef(exec.error);
+  const workflowSeqRef = useRef(executionSeq);
+  if (
+    tableFingerprint !== workflowFpRef.current ||
+    exec.error !== workflowErrRef.current ||
+    executionSeq !== workflowSeqRef.current
+  ) {
+    workflowFpRef.current = tableFingerprint;
+    workflowErrRef.current = exec.error;
+    workflowSeqRef.current = executionSeq;
+    workflowSqlRef.current = exec.sql;
+  }
+  const workflowSql = workflowSqlRef.current;
   const boundPayload = useMemo(
     () => (sqlParams.length > 0 ? paramsToPayload(sqlParams, paramValues) : undefined),
     [sqlParams, paramValues],
@@ -281,7 +320,13 @@ export function QueryPanel({
     connectionName,
     database,
     schema,
-    sql: exec.sql,
+    // NOTE: workflows (diagnosis/retry/explain) only need the SQL snapshot at
+    // error/execution time. Passing live `exec.sql` re-runs the whole workflow
+    // memo chain (diagnosis context build + retry action) on every keystroke
+    // including column-name deletions. `workflowSql` below stays referentially
+    // stable while only column names change (see tableClauseFingerprint) and
+    // refreshes on table changes, errors, or executions.
+    sql: workflowSql,
     error: exec.error,
     chartConfig: exec.chartConfig,
     resultViewMode,

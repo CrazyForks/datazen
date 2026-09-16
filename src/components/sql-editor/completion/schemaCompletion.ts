@@ -42,6 +42,33 @@ export interface SchemaCompletionOptions {
   schema?: SQLNamespace;
   /** Identifier quoting policy ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   quotePolicy?: CompletionQuotePolicy;
+  /**
+   * Current identifier prefix being typed (lowercased, without quotes).
+   * When short (≤2 chars) the all-columns fallback pre-filters + truncates so
+   * deleting down to a short prefix doesn't build Completion objects for the
+   * whole database. Empty/undefined = no truncation. The caller keeps `from`
+   * stable and relies on CM-internal filtering for the rest.
+   */
+  prefixHint?: string;
+}
+
+/**
+ * Max Completion items built by the all-columns fallback for a short prefix.
+ * CM renders at most `maxRenderedOptions` (50); 300 gives the fuzzy matcher
+ * headroom while bounding object construction + quote/dialect work.
+ */
+export const SHORT_PREFIX_COLUMN_CAP = 300;
+/** Prefix length at/below which the cap applies (implicit typing only). */
+export const SHORT_PREFIX_LEN = 2;
+
+/**
+ * Whether a column name is a plausible match for a short typed prefix.
+ * Cheap pre-filter (prefix/substring, case-insensitive) — the precise fuzzy
+ * ranking still happens inside CM on the truncated set.
+ */
+function matchesShortPrefix(colName: string, prefix: string): boolean {
+  const lower = colName.toLowerCase();
+  return lower.startsWith(prefix) || lower.includes(prefix);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -304,8 +331,15 @@ function allColumnsFromEditorSchema(
   schema: SQLNamespace,
   adapter: SqlDialectAdapter,
   quotePolicy: CompletionQuotePolicy = 'unquoted',
+  prefixHint?: string,
 ): SchemaCompletionItem[] {
   const results: SchemaCompletionItem[] = [];
+  // Short-prefix cap: only pre-filter when the caller passes a short implicit
+  // prefix. Long prefixes and explicit invocations keep full results.
+  const prefix =
+    prefixHint && prefixHint.length > 0 && prefixHint.length <= SHORT_PREFIX_LEN
+      ? prefixHint.toLowerCase()
+      : null;
 
   const walk = (node: SQLNamespace, tableName: string | null) => {
     if (Array.isArray(node)) {
@@ -313,6 +347,8 @@ function allColumnsFromEditorSchema(
       if (tableName && node.length > 0) {
         const quotedTable = adapter.quoteIdentifier(tableName);
         for (const colName of node) {
+          if (prefix && !matchesShortPrefix(colName, prefix)) continue;
+          if (prefix && results.length >= SHORT_PREFIX_COLUMN_CAP) return;
           const quotedLabel = adapter.quoteIdentifier(colName);
           const unquotedLabel = colName;
           const mustQuote = adapter.shouldQuoteIdentifier(colName);
@@ -768,7 +804,13 @@ export function resolveAliasDotCompletions(
  * 4. Fallback → relation completions.
  */
 export function produceSchemaCompletions(options: SchemaCompletionOptions): SchemaCompletionItem[] {
-  const { model, snapshot, adapter: adapterOverride, quotePolicy = 'unquoted' } = options;
+  const {
+    model,
+    snapshot,
+    adapter: adapterOverride,
+    quotePolicy = 'unquoted',
+    prefixHint,
+  } = options;
   const adapter = adapterOverride ?? getDialectAdapter('standard');
   const intent = model.cursorIntent;
 
@@ -914,7 +956,7 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
       // with no FROM clause, where the snapshot is empty but the schema tree
       // contains all tables and columns.
       if (options.schema) {
-        return allColumnsFromEditorSchema(options.schema, adapter, quotePolicy);
+        return allColumnsFromEditorSchema(options.schema, adapter, quotePolicy, prefixHint);
       }
 
       return [];
