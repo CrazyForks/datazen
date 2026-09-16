@@ -196,6 +196,28 @@ function isOperatorOrPunctuation(text: string): boolean {
   );
 }
 
+/**
+ * Strip a bind-parameter prefix from a token that the scanner glued into a
+ * single `Other` token (e.g. `order_id=:orderId` or `amount>=:min_amount`).
+ *
+ * Returns the column/qualifier portion, or `null` when the entire token is
+ * a standalone bind param with no column prefix (e.g. just `:uid`).
+ */
+function stripBindParamPrefix(text: string): string | null {
+  // Standalone bind params — skip entirely
+  if (/^:\w+$/.test(text)) return null; // :name
+  if (/^@\w+$/.test(text)) return null; // @name
+  if (/^\$\{?\w+\}?$/.test(text)) return null; // ${name} or $1
+  if (text === '?') return null; // ?
+
+  // Embedded forms: column=:param, column>=:param, etc.
+  // The bind param starts at the first :/@/$/? that is followed by an identifier.
+  const m = text.match(/^(.*?)([:@]\w+|\$\{?\w+\}?|\?)$/);
+  if (m) return m[1]!.trim() || null;
+
+  return text;
+}
+
 function extractReferences(
   tokens: readonly SqlToken[],
   scopes: readonly SqlScope[],
@@ -230,11 +252,19 @@ function extractReferences(
     const text = t.text.trim();
     if (!text || isOperatorOrPunctuation(text)) continue;
 
-    if (/^\d+(?:\.\d+)?$/.test(text)) continue;
+    // Strip bind parameter prefixes — all five SqlParamSyntax forms where the
+    // param marker is embedded in the same Other token as the column name
+    // (e.g. `order_id=:orderId` from scanner, or standalone `:orderId`).
+    // If the ENTIRE token is just a bind param (no column prefix), skip it.
+    const stripped = stripBindParamPrefix(text);
+    if (stripped === null) continue;
+    const cleanText = stripped;
+
+    if (/^\d+(?:\.\d+)?$/.test(cleanText)) continue;
 
     // If current token is just a trailing dot prefix (e.g. `o.` or `"o".`) and next token is an identifier,
     // skip it here — it will be captured as the qualifier of the next token.
-    if (text.endsWith('.') && idx + 1 < meaningful.length) {
+    if (cleanText.endsWith('.') && idx + 1 < meaningful.length) {
       const next = meaningful[idx + 1]!;
       if (
         next.kind === SqlTokenKind.Other ||
@@ -275,7 +305,7 @@ function extractReferences(
     }
 
     if (leadingQualifier) {
-      const colName = text.replace(/^["`[]|["`\]]$/g, '').trim();
+      const colName = cleanText.replace(/^["`[]|["`\]]$/g, '').trim();
       if (colName && !NON_COLUMN_KEYWORDS.has(colName.toLowerCase())) {
         references.push({
           kind: 'column',
@@ -286,13 +316,13 @@ function extractReferences(
           resolved: true,
         });
       }
-    } else if (text.includes('.')) {
-      const dotIdx = text.lastIndexOf('.');
-      const qualifier = text
+    } else if (cleanText.includes('.')) {
+      const dotIdx = cleanText.lastIndexOf('.');
+      const qualifier = cleanText
         .slice(0, dotIdx)
         .replace(/^["`[]|["`\]]$/g, '')
         .trim();
-      const colName = text
+      const colName = cleanText
         .slice(dotIdx + 1)
         .replace(/^["`[]|["`\]]$/g, '')
         .trim();
@@ -307,11 +337,11 @@ function extractReferences(
         });
       }
     } else {
-      const lower = text.toLowerCase();
+      const lower = cleanText.toLowerCase();
       if (!NON_COLUMN_KEYWORDS.has(lower)) {
         references.push({
           kind: 'column',
-          text: text.replace(/^["`[]|["`\]]$/g, ''),
+          text: cleanText.replace(/^["`[]|["`\]]$/g, ''),
           range: { from: t.from, to: t.to },
           scopeId,
           resolved: true,
