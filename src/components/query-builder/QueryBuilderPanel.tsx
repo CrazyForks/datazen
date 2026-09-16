@@ -5,7 +5,6 @@ import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
 import type { ForeignKeyRelation } from './hooks/useAutoJoin';
-import { ObjectTreePanel } from './ObjectTreePanel';
 import { DiagramCanvas } from './DiagramCanvas/DiagramCanvas';
 import { CriteriaGrid } from './CriteriaGrid/CriteriaGrid';
 import { SqlPreview } from './SqlPreview';
@@ -23,19 +22,19 @@ export interface QueryBuilderPanelProps {
 /**
  * Main visual query builder panel.
  *
- * Three-region layout:
+ * Two-region layout:
  * ┌──────────────────────────────────────────────────────┐
  * │ Header: [📊 Visual Builder] [DISTINCT ☐] [Reset] [×]│
- * ├──────────┬───────────────────────────────────────────┤
- * │ Object   │           DiagramCanvas (画布)              │
- * │ Tree     │  ┌─────────┐  JOIN连线  ┌─────────┐      │
- * │ (200px)  │  │TableCard│══════════│TableCard│      │
- * │          │  └─────────┘          └─────────┘      │
- * ├──────────┼───────────────────────────────────────────┤
- * │          │        CriteriaGrid (配置区)                │
- * ├──────────┼───────────────────────────────────────────┤
- * │          │        SQL Preview + Apply SQL             │
- * └──────────┴───────────────────────────────────────────┘
+ * ├──────────────────────────────────────────────────────┤
+ * │           DiagramCanvas (画布)                        │
+ * │  ┌─────────┐  JOIN连线  ┌─────────┐                 │
+ * │  │TableCard│══════════│TableCard│                 │
+ * │  └─────────┘          └─────────┘                 │
+ * ├──────────────────────────────────────────────────────┤
+ * │           CriteriaGrid (配置区)                       │
+ * ├──────────────────────────────────────────────────────┤
+ * │           SQL Preview + Apply SQL                    │
+ * └──────────────────────────────────────────────────────┘
  */
 export function QueryBuilderPanel({
   dbSessionId,
@@ -45,7 +44,6 @@ export function QueryBuilderPanel({
   const { t } = useI18n();
 
   // ── Schema data ────────────────────────────────────────
-  const tables = useSchemaStore((s) => s.tables);
   const columnMap = useSchemaStore((s) => s.columnMap);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
 
@@ -166,16 +164,6 @@ export function QueryBuilderPanel({
     databaseType,
   });
 
-  // ── Table items for ObjectTreePanel ────────────────────
-  const tableItems = useMemo(
-    () =>
-      tables.map((tbl) => ({
-        name: tbl.name,
-        type: (tbl.tableType === 'view' ? 'view' : 'table') as 'table' | 'view',
-      })),
-    [tables],
-  );
-
   // ── Handlers ───────────────────────────────────────────
   const handleApply = useCallback(() => {
     if (sql) {
@@ -255,17 +243,9 @@ export function QueryBuilderPanel({
         </div>
       </div>
 
-      {/* ── Main content: sidebar + canvas/grid/preview ── */}
+      {/* ── Main content: canvas + grid/preview ─────────── */}
       <div className="flex min-h-[400px]">
-        {/* Left: Object Tree Panel */}
-        <ObjectTreePanel
-          dbSessionId={dbSessionId}
-          tables={tableItems}
-          selectedTables={selectedTables}
-          onAddTable={toggleTable}
-        />
-
-        {/* Right: Canvas + CriteriaGrid + SQL Preview */}
+        {/* Canvas + CriteriaGrid + SQL Preview */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Canvas area */}
           <div className="flex-1 overflow-hidden">

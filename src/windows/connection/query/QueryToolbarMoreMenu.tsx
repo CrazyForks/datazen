@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   FileSearch,
   Wand2,
+  WandSparkles,
   RefreshCw,
   CirclePlay,
   Check,
@@ -38,6 +39,7 @@ export interface QueryToolbarMoreMenuProps {
   onRollbackTx: () => void;
   onRefreshCompletion?: () => void;
   renderSnippetButton?: () => ReactNode;
+  onToggleQb?: () => void;
 }
 
 interface MenuItemProps {
@@ -84,6 +86,7 @@ export function QueryToolbarMoreMenu({
   onRollbackTx,
   onRefreshCompletion,
   renderSnippetButton,
+  onToggleQb,
 }: QueryToolbarMoreMenuProps) {
   const { t } = useI18n();
   const keymapPreset = useSettingsStore((s) => s.settings.keymapPreset);
@@ -199,6 +202,15 @@ export function QueryToolbarMoreMenu({
                 icon={<RefreshCw className="h-3.5 w-3.5" />}
                 disabled={refreshCompletionDisabled}
                 onClick={() => runAction(onRefreshCompletion)}
+              />
+            )}
+
+            {onToggleQb && (
+              <MenuItem
+                testId="more-menu-visual-builder"
+                label={t('query.visualBuilder.title')}
+                icon={<WandSparkles className="h-3.5 w-3.5" />}
+                onClick={() => runAction(onToggleQb)}
               />
             )}
 

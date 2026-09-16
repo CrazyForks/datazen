@@ -1,7 +1,6 @@
 //! Redis driver core — see redis_driver_on / redis_driver_traits / redis_value for the rest.
 
 use datazen_driver_api::*;
-use redis::AsyncCommands;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;

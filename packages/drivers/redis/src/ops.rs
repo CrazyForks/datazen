@@ -152,13 +152,6 @@ where
     Ok(total)
 }
 
-pub async fn set_string<C>(conn: &mut C, key: &str, value: &str) -> Result<(), String>
-where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
-{
-    set_string_with_options(conn, key, value, false).await
-}
-
 /// SET a string value. When `keep_ttl` is true, uses Redis `SET … KEEPTTL`
 /// so an existing expiry is preserved (Redis ≥ 6.0).
 pub async fn set_string_with_options<C>(

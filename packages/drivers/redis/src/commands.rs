@@ -621,5 +621,3 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
     cmds.extend(schema_catalog_command_definitions());
     cmds
 }
-
-pub use crate::commands_exec::execute_redis_command;

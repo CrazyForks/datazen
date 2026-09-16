@@ -1,6 +1,5 @@
 //! Redis value parsing and preview helpers shared by the driver and query UI.
 
-use datazen_driver_api::{ColumnInfo, DriverError, Value};
 use redis::FromRedisValue;
 
 /// Safely extract a string from a redis::Value, handling non-UTF-8 bytes via lossy conversion.

@@ -1,15 +1,5 @@
 import { useCallback, useState, type MutableRefObject, type Ref } from 'react';
-import {
-  Bookmark,
-  Check,
-  Clock,
-  Loader2,
-  Play,
-  Save,
-  Sparkles,
-  Undo2,
-  WandSparkles,
-} from 'lucide-react';
+import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
 import { SqlEditor } from '../../../components/SqlEditor';
@@ -328,14 +318,6 @@ export function QueryEditorSection({
           icon={<Sparkles className="h-3.5 w-3.5" />}
           onClick={handleToggleNl2sql}
         />
-        <ToolbarButton
-          compact={compactToolbar}
-          variant={qbOpen ? 'secondary' : 'ghost'}
-          label={t('query.visualBuilder.title')}
-          icon={<WandSparkles className="h-3.5 w-3.5" />}
-          onClick={toggleQb}
-          data-testid="qb-toggle-button"
-        />
         <QueryToolbarMoreMenu
           compact={compactToolbar}
           disabled={running}
@@ -351,6 +333,7 @@ export function QueryEditorSection({
           onCommitTx={() => void onCommitTx()}
           onRollbackTx={() => void onRollbackTx()}
           onRefreshCompletion={() => void handleRefreshCompletion()}
+          onToggleQb={toggleQb}
           renderSnippetButton={() => (
             <SnippetMenuButton editorRef={editorRef} compact={compactToolbar} disabled={running} />
           )}

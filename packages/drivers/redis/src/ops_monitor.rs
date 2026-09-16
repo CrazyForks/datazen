@@ -3,7 +3,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 
-use redis::aio::ConnectionLike;
 use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -34,6 +33,7 @@ pub struct MonitorEvent {
 
 /// Handle returned by `start_monitor` — caller stores this to poll or stop.
 pub struct MonitorHandle {
+    #[allow(dead_code)]
     pub monitor_id: String,
     buffer: Arc<Mutex<VecDeque<MonitorEvent>>>,
     handle: JoinHandle<()>,

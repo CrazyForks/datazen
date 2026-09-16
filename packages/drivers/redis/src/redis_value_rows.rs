@@ -2,8 +2,6 @@
 
 use datazen_driver_api::{ColumnInfo, DriverError, Value};
 
-use crate::redis_value_preview::value_to_string;
-
 /// Split a Redis command line, respecting double-quoted arguments (spaces inside quotes).
 pub(crate) fn parse_redis_command_args(s: &str) -> Result<Vec<String>, DriverError> {
     let s = s.trim();
