@@ -591,3 +591,30 @@ async fn test_tester_same_session_same_catalog_different_schemas_can_transfer_sa
     assert_eq!(result.rows_inserted, 1);
     assert_eq!(target.state.lock().unwrap().committed.len(), 1);
 }
+
+#[tokio::test]
+async fn same_session_catalog_and_normalized_schema_rejects_before_any_write() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut transfer = job();
+    transfer.target = transfer.source.clone();
+    transfer.source.schema = Some(" selected ".into());
+    transfer.target.schema = Some("selected".into());
+    let handle = ConnectionHandle {
+        id: "shared".into(),
+        pool_id: "shared".into(),
+    };
+    let tables = [inspected("same_table", vec![mapping("id", "id")])];
+    let schemas = HashMap::from([("same_table".into(), source.schema.clone())]);
+    let result = execute_same_family_data(
+        &source, &handle, &target, &handle, &transfer, &tables, &schemas, false, None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(super::TransferError::Validation(message)) if message.contains("self-overwrite"))
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.calls, 0);
+    assert!(state.metadata_refs.is_empty());
+    assert!(state.committed.is_empty());
+}

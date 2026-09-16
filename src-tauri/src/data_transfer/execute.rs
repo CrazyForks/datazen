@@ -36,15 +36,18 @@ pub enum ValueFormatter<'a> {
     },
 }
 
+/// Logical relation identity keeps catalog/database and schema separate. Schema
+/// defaults are resolved at the command boundary before execution reaches here.
 pub fn is_self_table_overwrite(
-    source_conn: &str,
-    source_db: &str,
-    target_conn: &str,
-    target_db: &str,
+    source: &super::model::Endpoint,
+    target: &super::model::Endpoint,
     source_table: &str,
     target_table: &str,
 ) -> bool {
-    source_conn == target_conn && source_db == target_db && source_table == target_table
+    source.db_session_id == target.db_session_id
+        && source.database == target.database
+        && source.normalized_schema() == target.normalized_schema()
+        && source_table == target_table
 }
 
 pub fn active_column_mappings(mappings: &[ColumnMapping]) -> Vec<&ColumnMapping> {
@@ -149,10 +152,8 @@ pub async fn execute_transfer_data(
         }
 
         if is_self_table_overwrite(
-            &job.source.db_session_id,
-            &job.source.database,
-            &job.target.db_session_id,
-            &job.target.database,
+            &job.source,
+            &job.target,
             &table.source_table,
             &table.target_table,
         ) {
@@ -495,13 +496,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn self_overwrite_detected() {
-        assert!(is_self_table_overwrite(
-            "c1", "db", "c1", "db", "users", "users"
-        ));
+    fn self_overwrite_detected_by_complete_logical_relation() {
+        let mut source = super::super::model::Endpoint {
+            db_session_id: "session".into(),
+            database: "catalog".into(),
+            schema: None,
+        };
+        let mut target = source.clone();
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
         assert!(!is_self_table_overwrite(
-            "c1", "db", "c1", "db", "users", "clients"
+            &source, &target, "users", "clients"
         ));
+        target.schema = Some("  ".into());
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
+        source.schema = Some(" selected ".into());
+        target.schema = Some("selected".into());
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
+        target.schema = Some("other".into());
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
+        target.schema = source.schema.clone();
+        target.database = "other_catalog".into();
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
+        target.database = source.database.clone();
+        target.db_session_id = "other_session".into();
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
     }
 
     #[test]

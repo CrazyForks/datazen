@@ -1,6 +1,6 @@
 # migration-transfer-core
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 - Branch: codex/migration-transfer-core
 - Worktree: .worktrees/datazen-migration-transfer-core
 - Implementation commit: see commit containing this progress record; final hash supplied in coordinator handoff.
@@ -83,3 +83,9 @@ This is wave 1, not Navicat parity. Materializing query_stream fallback is not b
 - `migration-transfer-core-BUG-001` is independently verified and closed.
 - `TEST_FAILED` due to `migration-transfer-core-BUG-002`; the failing test is committed as the repair acceptance criterion. No business implementation was changed by the Tester.
 - Temporary app data, WebDriver process, isolated PostgreSQL fixture databases, transient MySQL tables and Cargo/codegen side effects were cleaned.
+
+## BUG002 repair handoff (2026-09-16)
+- Phase: READY_FOR_TEST. BUG002 state: 待复测.
+- Fixed only Transfer self-overwrite logical relation identity to include normalized schema, keeping catalog/database separate. Tester failing journey retained unchanged.
+- Validation: Host transfer 39 passed; MySQL/PostgreSQL/SQLite libraries 86/101/46 passed; SQLite transfer journey 1 passed; frontend 3 files / 24 passed; tsc and whitespace checks passed.
+- Fresh independent tester must rebuild and verify the cross-schema execution journey. No shared Driver API, Schema/Sync/export code changed.

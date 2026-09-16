@@ -29,7 +29,7 @@
 ## migration-transfer-core-BUG-002
 
 - 描述：同一 `dbSessionId`、同一 database/catalog、不同 schema 的同名表被执行层误判为同一物理表。Inspect 的数据库自目标检查会区分 schema，因此该作业能进入预览/执行；但 `is_self_table_overwrite` 只比较 session、database 和表名，忽略 source/target schema，最终以 `self-overwrite ... is not allowed` 错误拒绝合法的跨 schema 传输。
-- 状态：待修复
+- 状态：待复测
 - 量级：阻断；PostgreSQL 等支持 schema 的数据库无法在同一连接/数据库内把 `source_schema.same_table` 传到 `target_schema.same_table`，与本轮 schema-qualified 元数据契约不一致。
 - 重现步骤：
   1. 构造同一 session、同一 catalog，source schema=`source_schema`、target schema=`target_schema`，source/target 表名均为 `same_table` 的 Data Transfer 作业。
@@ -44,3 +44,9 @@
 - PostgreSQL 真实资格测试 1/1：大小写 schema、两个 schema 同名但异构的表、表名含字面点、full-column-types 仅返回选中 schema 的 `selected_id`。
 - MySQL 的 catalog/database 不作为 schema：Host 元数据契约测试通过，并由真实 MySQL 两数据库 WebDriver 传输验证。
 - BUG001 通过独立复测并关闭；Round 2 最终仍因新发现 BUG002 判定失败。
+
+## BUG002 coder repair (2026-09-16)
+- Self-overwrite now compares the complete logical relation: dbSessionId, database/catalog, normalized schema, and table name. Database/catalog never substitutes for schema; no driver-family branch added.
+- Kept the Tester regression unchanged. Added same-relation rejection before metadata/writes, schema whitespace/empty normalization, distinct catalog, distinct session, and renamed-table checks.
+- Self-validation: Host transfer 39/39 (including Tester regression), driver libraries MySQL 86 / PostgreSQL 101 / SQLite 46, SQLite transfer journey 1/1, frontend 24/24, tsc and diff checks passed.
+- Pending independent retest; no new desktop E2E claim. Physical identity across connection aliases remains outside BUG002 scope.
