@@ -781,11 +781,17 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             const dialect = getSqlDialect(conn?.databaseType ?? 'postgresql');
             if (dialect) {
               const { sql, extractColumnIndex } = dialect.ddl.getTableDdlQuery(name);
-              ddl = await getCachedDDL(dbSessionId, name, sql, (rows) => {
-                const row = rows[0];
-                const val = row?.[extractColumnIndex];
-                return typeof val === 'string' ? val : val != null ? String(val) : '';
-              });
+              ddl = await getCachedDDL(
+                dbSessionId,
+                name,
+                sql,
+                (rows) => {
+                  const row = rows[0];
+                  const val = row?.[extractColumnIndex];
+                  return typeof val === 'string' ? val : val != null ? String(val) : '';
+                },
+                dbName,
+              );
             }
           }
           viewActions?.newQuery?.(ddl || `/* No DDL found for ${name} */`, {
@@ -829,10 +835,10 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                   const ddl = await fetchRelationDdl(
                     dbSessionId,
                     name,
+                    dbName,
                     conn?.databaseType ?? 'postgresql',
                     isView,
                     schema,
-                    dbName,
                   );
                   if (ddl) {
                     await copyToClipboard(ddl);

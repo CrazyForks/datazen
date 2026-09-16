@@ -97,9 +97,11 @@ export function useConnectionContextMenu({
       const copyDdl = () => {
         void (async () => {
           try {
+            const database = currentDatabase ?? initialDatabase ?? '';
             const ddl = await fetchRelationDdl(
               ctx.dbSessionId,
               name,
+              database,
               ctxDbType,
               kind === 'view',
               schema,
@@ -145,7 +147,7 @@ export function useConnectionContextMenu({
         for (const p of toClose) removePanel(p.id);
       };
 
-      const database = currentDatabase ?? initialDatabase ?? undefined;
+      const database = currentDatabase ?? initialDatabase ?? '';
 
       const handleGenerateTableSql = (type: GeneratedSqlType) => {
         void (async () => {

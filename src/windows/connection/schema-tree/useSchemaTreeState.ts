@@ -123,11 +123,19 @@ export function useSchemaTreeState({
 
   // Load column map for search
   useEffect(() => {
-    if (!isSingleDbMode) return;
+    if (!isSingleDbMode || !currentDatabase) return;
     if (trimmedQuery.length >= 2 && (tables.length > 0 || views.length > 0)) {
-      void loadColumnMap(connectionId);
+      void loadColumnMap(connectionId, currentDatabase);
     }
-  }, [isSingleDbMode, trimmedQuery, tables.length, views.length, loadColumnMap, connectionId]);
+  }, [
+    isSingleDbMode,
+    currentDatabase,
+    trimmedQuery,
+    tables.length,
+    views.length,
+    loadColumnMap,
+    connectionId,
+  ]);
 
   // Sync tables for multi-db mode
   useEffect(() => {

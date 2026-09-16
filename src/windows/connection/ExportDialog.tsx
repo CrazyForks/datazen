@@ -28,6 +28,8 @@ interface ExportDialogProps {
   selectedRows: Set<number>;
   databaseType?: string;
   dbSessionId?: string;
+  /** Panel-bound database — the schema prefetch for entire-table export runs against it. */
+  database?: string;
   totalRows?: number;
   /** Prefer entire-table when opened from the schema tree (no page loaded). */
   defaultScope?: ExportScope;
@@ -48,6 +50,7 @@ export function ExportDialog({
   selectedRows,
   databaseType,
   dbSessionId,
+  database,
   totalRows,
   defaultScope,
   dataExportCapability = 'full_table',
@@ -74,9 +77,9 @@ export function ExportDialog({
     if (!open) return;
     setStatus('form');
     setError(null);
-    if (!dbSessionId) return;
+    if (!dbSessionId || !database) return;
     let cancelled = false;
-    void getCachedTableSchema(dbSessionId, tableName)
+    void getCachedTableSchema(dbSessionId, tableName, database)
       .then((schema) => {
         if (cancelled || schema.columns.length === 0) return;
         setLoadedColumns(schema.columns);
@@ -86,7 +89,7 @@ export function ExportDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, dbSessionId, tableName, columns]);
+  }, [open, dbSessionId, database, tableName, columns]);
 
   const toggleColumn = useCallback((col: string) => {
     setSelectedCols((prev) => {

@@ -48,14 +48,14 @@ pub(crate) async fn get_columns_impl(
     state: &AppState,
     db_session_id: String,
     table: String,
-    database: Option<String>,
+    database: String,
 ) -> Result<Vec<String>, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, %table, "get_columns");
     super::query::ensure_session_database(
         state,
         &db_session_id,
-        database.as_deref(),
+        Some(database.as_str()),
         "get_columns",
     )
     .await?;
@@ -65,15 +65,7 @@ pub(crate) async fn get_columns_impl(
         .await
         .cmd_err("get_columns")?;
 
-    let config = state
-        .connection_manager
-        .get_session_config(&db_session_id)
-        .await
-        .cmd_err("get_columns")?;
-    let db = database
-        .as_deref()
-        .or(config.database.as_deref())
-        .unwrap_or("default");
+    let db = database.as_str();
 
     let cached = state
         .schema_cache
@@ -88,9 +80,20 @@ pub(crate) async fn get_columns_impl(
 pub(crate) async fn get_all_columns_impl(
     state: &AppState,
     db_session_id: String,
+    database: String,
 ) -> Result<HashMap<String, Vec<String>>, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, "get_all_columns");
+    // Pin the session to the caller's target database first (same mechanism
+    // as get_columns/get_table_schema) so batch column reads never resolve
+    // against a stale session database when the panel targets another db.
+    super::query::ensure_session_database(
+        state,
+        &db_session_id,
+        Some(database.as_str()),
+        "get_all_columns",
+    )
+    .await?;
 
     let (driver, handle) = state
         .connection_manager
@@ -98,12 +101,7 @@ pub(crate) async fn get_all_columns_impl(
         .await
         .cmd_err("get_all_columns")?;
 
-    let config = state
-        .connection_manager
-        .get_session_config(&db_session_id)
-        .await
-        .cmd_err("get_all_columns")?;
-    let database = config.database.as_deref().unwrap_or("default");
+    let database = database.as_str();
 
     let raw = driver
         .get_all_columns(&handle, database)
@@ -123,24 +121,19 @@ pub(crate) async fn get_table_schema_impl(
     state: &AppState,
     db_session_id: String,
     table: String,
-    database_pin: Option<String>,
+    database_pin: String,
 ) -> Result<TableSchema, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, %table, "get_table_schema");
     super::query::ensure_session_database(
         state,
         &db_session_id,
-        database_pin.as_deref(),
+        Some(database_pin.as_str()),
         "get_table_schema",
     )
     .await?;
 
-    let config = state
-        .connection_manager
-        .get_session_config(&db_session_id)
-        .await
-        .cmd_err("get_table_schema")?;
-    let database = config.database.as_deref().unwrap_or("default");
+    let database = database_pin.as_str();
 
     if let Some(schema) = state
         .schema_cache
@@ -462,7 +455,7 @@ pub async fn get_columns(
     state: State<'_, AppState>,
     db_session_id: String,
     table: String,
-    database: Option<String>,
+    database: String,
 ) -> Result<Vec<String>, CommandError> {
     get_columns_impl(&state, db_session_id, table, database).await
 }
@@ -471,8 +464,9 @@ pub async fn get_columns(
 pub async fn get_all_columns(
     state: State<'_, AppState>,
     db_session_id: String,
+    database: String,
 ) -> Result<HashMap<String, Vec<String>>, CommandError> {
-    get_all_columns_impl(&state, db_session_id).await
+    get_all_columns_impl(&state, db_session_id, database).await
 }
 
 #[tauri::command]
@@ -480,7 +474,7 @@ pub async fn get_table_schema(
     state: State<'_, AppState>,
     db_session_id: String,
     table: String,
-    database: Option<String>,
+    database: String,
 ) -> Result<TableSchema, CommandError> {
     get_table_schema_impl(&state, db_session_id, table, database).await
 }
@@ -546,15 +540,16 @@ mod tests {
         assert_eq!(tables.len(), 1);
         assert_eq!(tables[0].name, "users");
 
-        let cols = get_columns_impl(&test.state, conn_id.clone(), "users".into(), None)
+        let cols = get_columns_impl(&test.state, conn_id.clone(), "users".into(), "app".into())
             .await
             .unwrap();
         assert!(cols.contains(&"id".to_string()));
         assert!(cols.contains(&"name".to_string()));
 
-        let schema = get_table_schema_impl(&test.state, conn_id.clone(), "users".into(), None)
-            .await
-            .unwrap();
+        let schema =
+            get_table_schema_impl(&test.state, conn_id.clone(), "users".into(), "app".into())
+                .await
+                .unwrap();
         assert_eq!(schema.table_name, "users");
         assert_eq!(schema.columns.len(), 2);
 

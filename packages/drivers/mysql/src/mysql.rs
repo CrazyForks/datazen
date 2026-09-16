@@ -587,14 +587,31 @@ impl DatabaseDriver for MysqlDriver {
     async fn get_all_columns(
         &self,
         handle: &ConnectionHandle,
-        _database: &str,
+        database: &str,
     ) -> Result<HashMap<String, (Vec<ColumnSchema>, Vec<String>)>, DriverError> {
-        let pools = self.pools.read().await;
-        let pool = Self::get_pool(&pools, handle)?;
+        // Clone the pool (cheap Arc) so no lock is held across the query.
+        let pool = {
+            let pools = self.pools.read().await;
+            Self::get_pool(&pools, handle)?.clone()
+        };
         let mut conn = pool
             .acquire()
             .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        // Explicit per-call database wins: the host passes the tab-bound
+        // database so batch reads never depend on a stale session default.
+        // Only fall back to the tracked session db / SELECT DATABASE() when
+        // the caller passes nothing.
+        let pinned = database.trim();
+        if !pinned.is_empty() {
+            let sql = Self::build_use_database_sql(pinned)?;
+            Self::execute_use_on_conn(&mut conn, &sql, pinned).await?;
+            self.active_databases
+                .write()
+                .await
+                .insert(handle.pool_id.clone(), pinned.to_string());
+            return Self::fetch_all_columns_with_db(&mut *conn, pinned).await;
+        }
         self.apply_active_database(handle, &mut conn).await?;
 
         let current_db = {

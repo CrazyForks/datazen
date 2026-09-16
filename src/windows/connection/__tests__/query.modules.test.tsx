@@ -346,11 +346,12 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
     await handler({ tables: [{ tableName: 'users', schema: 'public' }] }, 10);
-    expect(getTableSchema).toHaveBeenCalledWith('sess-1', 'public.users', undefined);
+    expect(getTableSchema).toHaveBeenCalledWith('sess-1', 'public.users', 'app');
     expect(insertAt).toHaveBeenCalled();
   });
 
@@ -364,6 +365,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 
@@ -381,6 +383,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: '',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 
@@ -405,6 +408,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -433,6 +437,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -467,6 +472,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -495,6 +501,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 

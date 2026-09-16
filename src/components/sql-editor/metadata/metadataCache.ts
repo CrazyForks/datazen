@@ -32,7 +32,7 @@ interface PendingRequest {
 interface SessionState {
   dbSessionId: string;
   dialectId: string;
-  database?: string;
+  database: string;
   schema?: string;
   epoch: number;
   relations: Map<EditorRelationKey, EditorRelationMetadata>;
@@ -46,11 +46,7 @@ interface SessionState {
 
 export interface MetadataCacheDeps {
   /** IPC-layer schema fetch; defaults to `getCachedTableSchema` (had already inflight/TTL/freeze). */
-  loadTableSchema?: (
-    dbSessionId: string,
-    table: string,
-    database?: string | null,
-  ) => Promise<TableSchema>;
+  loadTableSchema?: (dbSessionId: string, table: string, database: string) => Promise<TableSchema>;
   debounceMs?: number;
   errorTtlMs?: number;
   /** If false, cross-namespace relations are not requested (driver can't resolve qualified). */
@@ -138,6 +134,7 @@ const EMPTY_RELATIONS: ReadonlyMap<EditorRelationKey, EditorRelationMetadata> = 
 function emptySnapshot(dbSessionId: string): EditorMetadataSnapshot {
   return Object.freeze({
     dbSessionId,
+    database: '',
     epoch: 0,
     relations: EMPTY_RELATIONS,
   });
@@ -201,12 +198,15 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
     notify();
   }
 
-  function getOrCreateSession(dbSessionId: string): SessionState {
+  function getOrCreateSession(dbSessionId: string, database?: string): SessionState {
     let session = sessions.get(dbSessionId);
     if (session == null) {
       session = {
         dbSessionId,
         dialectId: 'standard',
+        // Empty until the first switchContext/ensureRelations pins the tab's
+        // database; loadOne guards and re-queues instead of querying empty.
+        database: database ?? '',
         epoch: 0,
         relations: new Map(),
         errors: new Map(),
@@ -254,6 +254,12 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
     key: EditorRelationKey,
     request: PendingRequest,
   ): Promise<void> {
+    // Database is mandatory: never query without the tab-bound database.
+    // If the context hasn't arrived yet, re-queue for the next flush.
+    if (!session.database) {
+      session.pending.set(key, request);
+      return;
+    }
     const table = qualifiedNameText(request.identity, session.dialectId);
     try {
       const schema = await loadTableSchema(session.dbSessionId, table, session.database);
@@ -290,9 +296,9 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
     requests: readonly EditorRelationRequest[],
     ctx: EditorMetadataContext,
   ): void {
-    const session = getOrCreateSession(dbSessionId);
+    const session = getOrCreateSession(dbSessionId, ctx.database);
     if (ctx.dialectId) session.dialectId = ctx.dialectId;
-    session.database = ctx.database ?? session.database;
+    session.database = ctx.database;
     session.schema = ctx.schema ?? session.schema;
     for (const request of requests) enqueue(session, request);
     scheduleFlush(session);
@@ -388,7 +394,7 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
     },
 
     switchContext: (dbSessionId: string, ctx: EditorMetadataContext) => {
-      const session = getOrCreateSession(dbSessionId);
+      const session = getOrCreateSession(dbSessionId, ctx.database);
       cancelTimer(session);
       session.database = ctx.database;
       session.schema = ctx.schema;

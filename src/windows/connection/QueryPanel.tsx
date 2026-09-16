@@ -29,6 +29,7 @@ import {
   ensureMetadataRelations,
   resolveEditorDialectId,
 } from '../../stores/schemaStoreSelectors';
+import { metadataCache } from '../../components/sql-editor/metadata/metadataCache';
 import type { QueryPanelProps } from './query/contracts';
 import { QuerySidebarSection, useQueryContextPath } from './query/QuerySidebarSection';
 import { QueryEditorSection } from './query/QueryEditorSection';
@@ -135,7 +136,9 @@ export function QueryPanel({
   const currentSchema = useSchemaStore((s) => s.currentSchema);
   const isMultiDb = useSchemaStore((s) => s.isMultiDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
+  const loadColumnMap = useSchemaStore((s) => s.loadColumnMap);
   const namespaceLoading = useSchemaStore((s) => s.ensuringCount > 0);
+  const schemaEpoch = useSchemaStore((s) => s.schemaEpoch);
 
   const metadataSnapshot = useMetadataSnapshot(dbSessionId);
 
@@ -296,8 +299,15 @@ export function QueryPanel({
   });
 
   const handleDropTable = useMemo(
-    () => createQueryDropHandler({ connectionId, dbSessionId, databaseType, editorRef }),
-    [connectionId, dbSessionId, databaseType],
+    () =>
+      createQueryDropHandler({
+        connectionId,
+        dbSessionId,
+        databaseType,
+        database: selectedDatabase ?? '',
+        editorRef,
+      }),
+    [connectionId, dbSessionId, databaseType, selectedDatabase],
   );
 
   // S6-A: Build sanitized error context and send as AI chat draft.
@@ -354,12 +364,62 @@ export function QueryPanel({
     void loadFavorites(connectionId);
   }, [connectionId, loadHistory, loadFavorites]);
 
+  // Eagerly load column metadata so SQL autocomplete can suggest columns
+  // even without a FROM clause (e.g. typing "SELECT na" shows matching columns).
+  //
+  // Phase 1: For multi-DB / path-hierarchy drivers, loadForConnection skips
+  // loadTables, so `tables` stays empty. Trigger loadTables for the current
+  // database so that namespaceTree gets table entries and columnMap can be built.
+  const loadTablesFn = useSchemaStore((s) => s.loadTables);
+  useEffect(() => {
+    if (!dbSessionId || !isMultiDb || !currentDatabase) return;
+    if (tables.length > 0) return; // already loaded
+    void loadTablesFn(currentDatabase, dbSessionId);
+  }, [dbSessionId, loadTablesFn, isMultiDb, currentDatabase, tables.length]);
+
+  // Phase 2: Once tables are available (or for non-multi-DB), load columns.
+  // Trigger on schemaEpoch (bumped by loadTables) and namespaceTree structural
+  // changes (bumped via namespaceFingerprint). Also depends on tables.length so
+  // it re-fires after Phase 1 populates tables.
+  const namespaceFingerprint = useSchemaStore((s) => {
+    const tree = s.namespaceTree;
+    if (Array.isArray(tree)) return String(tree.length);
+    return Object.keys(tree).sort().join(',');
+  });
+  useEffect(() => {
+    if (!dbSessionId || !selectedDatabase) return;
+    void loadColumnMap(dbSessionId, selectedDatabase);
+  }, [
+    dbSessionId,
+    loadColumnMap,
+    selectedDatabase,
+    schemaEpoch,
+    namespaceFingerprint,
+    tables.length,
+  ]);
+
+  // Keep the editor metadata cache pinned to the tab's database. Only
+  // switch when the bound database actually changes — switchContext drops
+  // all loaded relations, so calling it per keystroke would thrash the cache.
+  useEffect(() => {
+    if (!dbSessionId || !selectedDatabase) return;
+    const snapshot = metadataCache.getSnapshot(dbSessionId);
+    if (snapshot.database !== selectedDatabase) {
+      metadataCache.switchContext(dbSessionId, {
+        database: selectedDatabase,
+        schema: selectedSchema ?? undefined,
+        dialectId: resolveEditorDialectId(databaseType),
+      });
+    }
+  }, [dbSessionId, selectedDatabase, selectedSchema, databaseType]);
+
   useEffect(() => {
     const names = tablesReferencedInSql(exec.sql);
     if (names.length === 0) return;
     const timer = setTimeout(() => {
-      void ensureColumns(names);
-      if (dbSessionId) {
+      if (!dbSessionId || !selectedDatabase) return;
+      void ensureColumns(names, dbSessionId, selectedDatabase);
+      {
         const dialectId = resolveEditorDialectId(databaseType);
         const requests = names.map((name) => ({
           identity: {
@@ -369,7 +429,7 @@ export function QueryPanel({
           kind: 'table' as const,
         }));
         ensureMetadataRelations(dbSessionId, requests, {
-          database: selectedDatabase ?? undefined,
+          database: selectedDatabase,
           schema: selectedSchema ?? undefined,
           dialectId,
         });

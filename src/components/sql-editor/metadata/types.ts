@@ -40,8 +40,8 @@ export interface EditorRelationMetadata {
  */
 export interface EditorMetadataSnapshot {
   dbSessionId: string;
-  /** Stable database context the relations were resolved against (if any). */
-  database?: string;
+  /** Tab-bound database the relations were resolved against. */
+  database: string;
   /** Stable schema context the relations were resolved against (if any). */
   schema?: string;
   /** Monotonic generation counter; bumps on any relations/context change. */
@@ -61,7 +61,8 @@ export interface EditorRelationRequest {
 
 /** Context needed to resolve/normalize a relation for a session. */
 export interface EditorMetadataContext {
-  database?: string;
+  /** Tab/panel-bound database — every relation lookup runs against it. */
+  database: string;
   schema?: string;
   /** Dialect id (e.g. `postgresql`, `mysql`) — drives identifier folding/quoting. */
   dialectId: string;

@@ -10,12 +10,12 @@ import type { DatabaseType } from '../types';
 export async function fetchRelationDdl(
   dbSessionId: string,
   tableName: string,
+  database: string,
   databaseType?: string,
   isView?: boolean,
   schema?: string,
-  database?: string,
 ): Promise<string> {
-  if (!dbSessionId || !tableName) return '';
+  if (!dbSessionId || !tableName || !database) return '';
 
   const dialect = databaseType ? getSqlDialect(databaseType as DatabaseType) : null;
   if (dialect?.ddl) {
@@ -34,8 +34,8 @@ export async function fetchRelationDdl(
           const val = row?.[extractColumnIndex];
           return typeof val === 'string' ? val : val != null ? String(val) : '';
         },
-        database ? { namespacePath: [database] } : undefined,
         database,
+        { namespacePath: [database] },
       );
       if (ddl && ddl.trim()) return ddl;
     } catch {

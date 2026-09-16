@@ -41,7 +41,7 @@ interface TableStructureEditorProps {
   dbSessionId: string;
   databaseType: DatabaseType;
   /** Logical database for multi-db drivers; ensures session before plan/execute. */
-  database?: string | null;
+  database: string;
   /** SQL schema namespace for plan IPC (PG schema, MySQL database, etc.). */
   schema?: string | null;
   mode: 'create' | 'alter';
@@ -396,6 +396,7 @@ export function TableStructureEditor({
       const result = await exportTableStructureToFile({
         dbSessionId,
         tableName: initialTableName,
+        database: database ?? '',
         databaseType,
       });
       if (result === 'unsupported') {

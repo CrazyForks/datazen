@@ -110,6 +110,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'sqlite',
       pageSize: 2,
       deps: makeDeps({ getTableData }),
@@ -167,6 +168,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       pageSize: 2,
       deps: makeDeps({ getTableData }),
     });
@@ -201,6 +203,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       pageSize: 3,
       maxRows: 4,
       deps: makeDeps({ getTableData }),
@@ -232,6 +235,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       pageSize: 3,
       maxRows: 3,
       deps: makeDeps({ getTableData }),
@@ -247,6 +251,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       deps: makeDeps({ getDdl, getDialect }),
     });
 
@@ -262,6 +267,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'redis',
       deps: makeDeps({ getDdl, getDialect }),
     });
@@ -276,6 +282,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'sqlite',
       deps: makeDeps({ getDdl }),
     });
@@ -292,6 +299,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mysql',
       deps: makeDeps({ getDdl }),
     });
@@ -312,6 +320,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mysql',
       deps: makeDeps({
         getDdl,
@@ -325,6 +334,7 @@ describe('loadBatchExportTableData', () => {
       'users',
       expect.stringContaining('users'),
       expect.any(Function),
+      'app',
     );
   });
 
@@ -341,6 +351,7 @@ describe('loadBatchExportTableData', () => {
     const result = await loadBatchExportTableData({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'sqlite',
       deps: makeDeps({ getDdl, getDialect: () => fakeDialect(0) }),
     });

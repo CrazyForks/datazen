@@ -82,8 +82,8 @@ interface SchemaStore extends ConnectionSchemaState {
   cachePathItems: (fetchPath: string, items: TableInfo[], dbSessionId?: string) => void;
   registerPathAliases: (entries: { name: string; id: string }[], dbSessionId?: string) => void;
   ensureNamespacePath: (segments: string[], dbSessionId?: string) => Promise<void>;
-  ensureColumns: (tableNames: string[], dbSessionId?: string) => Promise<void>;
-  loadColumnMap: (dbSessionId?: string) => Promise<void>;
+  ensureColumns: (tableNames: string[], dbSessionId: string, database: string) => Promise<void>;
+  loadColumnMap: (dbSessionId: string, database: string) => Promise<void>;
   toggleExpand: (id: string, dbSessionId?: string) => void;
   setSelected: (id: string | null, dbSessionId?: string) => void;
   reset: () => void;
@@ -500,9 +500,8 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       });
     },
 
-    ensureColumns: async (tableNames, dbSessionIdOverride) => {
-      const dbSessionId = resolveRealConnectionId(get(), dbSessionIdOverride);
-      if (!dbSessionId) return;
+    ensureColumns: async (tableNames, dbSessionId, database) => {
+      if (!dbSessionId || !database?.trim()) return;
       const schema = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
       const { columnMap, namespaceTree, tables, views, pathItems, columnInflight } = schema;
       const known = knownTableNames(namespaceTree, tables, views, pathItems);
@@ -517,9 +516,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       const missing = wanted.filter((name) => !(name in columnMap) && !columnInflight.has(name));
       if (missing.length === 0) return;
 
-      // Try batch loading first
+      // Try batch loading first. Only satisfied tables are recorded; any table
+      // missing from the batch result falls through to per-table loading below
+      // (e.g. batch hit another database, or the driver returned a subset).
+      let stillMissing = missing;
       try {
-        const batchResult = await databaseCommands.getAllColumns(dbSessionId);
+        const batchResult = await databaseCommands.getAllColumns(dbSessionId, database);
         if (batchResult && Object.keys(batchResult).length > 0) {
           const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
           const nextColumnMap = { ...latest.columnMap };
@@ -533,23 +535,24 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           if (changed) {
             commitConnectionPatch(dbSessionId, { columnMap: nextColumnMap });
           }
-          return;
+          stillMissing = missing.filter((name) => !(name in batchResult));
         }
       } catch {
         // Batch not supported or failed — fall through to per-table
       }
+      if (stillMissing.length === 0) return;
 
       // Fallback: per-table loading
       const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
       const nextInflight = new Set(latest.columnInflight);
-      for (const name of missing) nextInflight.add(name);
+      for (const name of stillMissing) nextInflight.add(name);
       commitConnectionPatch(dbSessionId, { columnInflight: nextInflight });
 
       try {
         const settled = await Promise.all(
-          missing.map(async (name) => {
+          stillMissing.map(async (name) => {
             try {
-              return { name, cols: await databaseCommands.getColumns(dbSessionId, name) };
+              return { name, cols: await databaseCommands.getColumns(dbSessionId, name, database) };
             } catch {
               return { name, cols: null };
             }
@@ -564,7 +567,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           changed = true;
         }
         const clearedInflight = new Set(latest.columnInflight);
-        for (const name of missing) clearedInflight.delete(name);
+        for (const name of stillMissing) clearedInflight.delete(name);
         if (changed) {
           commitConnectionPatch(dbSessionId, {
             columnMap: nextColumnMap,
@@ -576,17 +579,20 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       } catch {
         const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
         const clearedInflight = new Set(latest.columnInflight);
-        for (const name of missing) clearedInflight.delete(name);
+        for (const name of stillMissing) clearedInflight.delete(name);
         commitConnectionPatch(dbSessionId, { columnInflight: clearedInflight });
       }
     },
 
-    loadColumnMap: async (dbSessionIdOverride) => {
-      const dbSessionId = resolveRealConnectionId(get(), dbSessionIdOverride);
-      if (!dbSessionId) return;
+    loadColumnMap: async (dbSessionId, database) => {
+      if (!dbSessionId || !database?.trim()) return;
       const schema = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
-      const allNames = [...schema.tables, ...schema.views].map((item) => item.name);
-      await get().ensureColumns(allNames, dbSessionId);
+      // Collect table names from ALL sources: tables array (normal drivers),
+      // namespaceTree (path-hierarchy / multi-db), and pathItems.
+      const allNames = [
+        ...knownTableNames(schema.namespaceTree, schema.tables, schema.views, schema.pathItems),
+      ];
+      await get().ensureColumns(allNames, dbSessionId, database);
     },
 
     toggleExpand: (id, dbSessionIdOverride) => {

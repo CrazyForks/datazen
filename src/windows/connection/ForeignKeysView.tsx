@@ -8,9 +8,10 @@ import { CopyableError } from '../../components/ui/CopyableError';
 interface ForeignKeysViewProps {
   dbSessionId: string;
   tableName: string;
+  database: string;
 }
 
-export function ForeignKeysView({ dbSessionId, tableName }: ForeignKeysViewProps) {
+export function ForeignKeysView({ dbSessionId, tableName, database }: ForeignKeysViewProps) {
   const { t } = useI18n();
   const [foreignKeys, setForeignKeys] = useState<ForeignKeyInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -21,7 +22,7 @@ export function ForeignKeysView({ dbSessionId, tableName }: ForeignKeysViewProps
     setLoading(true);
     setError(null);
 
-    getCachedTableSchema(dbSessionId, tableName)
+    getCachedTableSchema(dbSessionId, tableName, database)
       .then((schema: TableSchema) => {
         if (!cancelled) {
           setForeignKeys(schema.foreignKeys);
@@ -38,7 +39,7 @@ export function ForeignKeysView({ dbSessionId, tableName }: ForeignKeysViewProps
     return () => {
       cancelled = true;
     };
-  }, [dbSessionId, tableName, t]);
+  }, [dbSessionId, tableName, database, t]);
 
   if (loading) {
     return (

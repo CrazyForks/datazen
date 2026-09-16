@@ -23,8 +23,8 @@ describe('fetchRelationDdl', () => {
   });
 
   it('returns empty string if dbSessionId or tableName is missing', async () => {
-    expect(await fetchRelationDdl('', 'users', 'mysql')).toBe('');
-    expect(await fetchRelationDdl('sess-1', '', 'mysql')).toBe('');
+    expect(await fetchRelationDdl('', 'users', '', 'mysql')).toBe('');
+    expect(await fetchRelationDdl('sess-1', '', 'app', 'mysql')).toBe('');
   });
 
   it('calls getCachedDDL with mysql SHOW CREATE TABLE query', async () => {
@@ -32,15 +32,15 @@ describe('fetchRelationDdl', () => {
       return extractor([['users', 'CREATE TABLE users (id INT)']]);
     });
 
-    const res = await fetchRelationDdl('sess-1', 'users', 'mysql');
+    const res = await fetchRelationDdl('sess-1', 'users', 'app', 'mysql');
     expect(res).toBe('CREATE TABLE users (id INT)');
     expect(schemaCache.getCachedDDL).toHaveBeenCalledWith(
       'sess-1',
       'users',
       expect.stringContaining('SHOW CREATE TABLE `users`'),
       expect.any(Function),
-      undefined,
-      undefined,
+      'app',
+      { namespacePath: ['app'] },
     );
   });
 
@@ -49,15 +49,15 @@ describe('fetchRelationDdl', () => {
       return extractor([['CREATE TABLE sqlite_users (id INT)']]);
     });
 
-    const res = await fetchRelationDdl('sess-1', 'sqlite_users', 'sqlite');
+    const res = await fetchRelationDdl('sess-1', 'sqlite_users', 'main', 'sqlite');
     expect(res).toBe('CREATE TABLE sqlite_users (id INT)');
     expect(schemaCache.getCachedDDL).toHaveBeenCalledWith(
       'sess-1',
       'sqlite_users',
       expect.stringContaining("WHERE type='table' AND name='sqlite_users'"),
       expect.any(Function),
-      undefined,
-      undefined,
+      'main',
+      { namespacePath: ['main'] },
     );
   });
 
@@ -65,28 +65,33 @@ describe('fetchRelationDdl', () => {
     vi.mocked(schemaCache.getCachedDDL).mockRejectedValue(new Error('Dialect query failed'));
     vi.mocked(databaseCommands.getObjectDdl).mockResolvedValue('CREATE TABLE fallback (id INT)');
 
-    const res = await fetchRelationDdl('sess-1', 'fallback', 'custom-db');
+    const res = await fetchRelationDdl('sess-1', 'fallback', 'app', 'custom-db');
     expect(res).toBe('CREATE TABLE fallback (id INT)');
-    expect(databaseCommands.getObjectDdl).toHaveBeenCalledWith('sess-1', 'table', 'fallback', null);
+    expect(databaseCommands.getObjectDdl).toHaveBeenCalledWith(
+      'sess-1',
+      'table',
+      'fallback',
+      'app',
+    );
   });
   it('passes database to getCachedDDL namespacePath and getObjectDdl schema fallback', async () => {
     vi.mocked(schemaCache.getCachedDDL).mockImplementation(async (_sid, _name, _sql, extractor) => {
       return extractor([['users', 'CREATE TABLE users (id INT)']]);
     });
 
-    await fetchRelationDdl('sess-1', 'users', 'mysql', false, undefined, 'tenant_db');
+    await fetchRelationDdl('sess-1', 'users', 'tenant_db', 'mysql');
     expect(schemaCache.getCachedDDL).toHaveBeenCalledWith(
       'sess-1',
       'users',
       expect.any(String),
       expect.any(Function),
-      { namespacePath: ['tenant_db'] },
       'tenant_db',
+      { namespacePath: ['tenant_db'] },
     );
 
     vi.mocked(schemaCache.getCachedDDL).mockRejectedValueOnce(new Error('fail'));
     vi.mocked(databaseCommands.getObjectDdl).mockResolvedValueOnce('CREATE TABLE users (id INT)');
-    await fetchRelationDdl('sess-1', 'users', 'custom', false, undefined, 'tenant_db');
+    await fetchRelationDdl('sess-1', 'users', 'tenant_db', 'custom');
     expect(databaseCommands.getObjectDdl).toHaveBeenCalledWith(
       'sess-1',
       'table',

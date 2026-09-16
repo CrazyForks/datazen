@@ -8,6 +8,7 @@ export type ExportTableStructureResult = 'saved' | 'cancelled' | 'unsupported';
 export interface ExportTableStructureOptions {
   dbSessionId: string;
   tableName: string;
+  database: string;
   databaseType: DatabaseType;
   /** Injectable for tests */
   getDdl?: (
@@ -15,6 +16,7 @@ export interface ExportTableStructureOptions {
     tableName: string,
     sql: string,
     extract: (rows: unknown[][]) => string,
+    database: string,
   ) => Promise<string>;
   saveText?: (
     contents: string,
@@ -34,6 +36,7 @@ export async function exportTableStructureToFile(
   const {
     dbSessionId,
     tableName,
+    database,
     databaseType,
     getDdl = getCachedDDL,
     saveText = fileCommands.saveTextWithDialog,
@@ -45,11 +48,17 @@ export async function exportTableStructureToFile(
   }
 
   const { sql, extractColumnIndex } = dialect.ddl.getTableDdlQuery(tableName);
-  const ddl = await getDdl(dbSessionId, tableName, sql, (rows) => {
-    const row = rows[0] as unknown[] | undefined;
-    const val = row?.[extractColumnIndex];
-    return typeof val === 'string' ? val : val != null ? String(val) : '';
-  });
+  const ddl = await getDdl(
+    dbSessionId,
+    tableName,
+    sql,
+    (rows) => {
+      const row = rows[0] as unknown[] | undefined;
+      const val = row?.[extractColumnIndex];
+      return typeof val === 'string' ? val : val != null ? String(val) : '';
+    },
+    database,
+  );
 
   const content = ddl.trim() ? ddl : `-- DDL unavailable for ${tableName}`;
   const safeName = tableName.replace(/[^\w.-]+/g, '_') || 'table';

@@ -38,8 +38,8 @@ function notifyInvalidation(dbSessionId: string, tableName?: string): void {
   for (const listener of [...invalidationListeners]) listener(dbSessionId, tableName);
 }
 
-function cacheKey(dbSessionId: string, tableName: string, database?: string | null): string {
-  return database ? `${dbSessionId}::${database}::${tableName}` : `${dbSessionId}::${tableName}`;
+function cacheKey(dbSessionId: string, tableName: string, database: string): string {
+  return `${dbSessionId}::${database}::${tableName}`;
 }
 
 /** Optional DDL cache identity. When supplied, the key discriminates object
@@ -49,10 +49,15 @@ export interface DdlCacheIdentity {
   namespacePath?: readonly string[];
 }
 
-function ddlCacheKey(dbSessionId: string, tableName: string, identity?: DdlCacheIdentity): string {
+function ddlCacheKey(
+  dbSessionId: string,
+  tableName: string,
+  database: string,
+  identity?: DdlCacheIdentity,
+): string {
   const kind = identity?.objectKind ?? 'table';
   const ns = identity?.namespacePath?.length ? `${identity.namespacePath.join('.')}.` : '';
-  return `${dbSessionId}::${kind}::${ns}${tableName}`;
+  return `${dbSessionId}::${database}::${kind}::${ns}${tableName}`;
 }
 
 function isValid<T>(entry: CacheEntry<T> | undefined): entry is CacheEntry<T> {
@@ -84,7 +89,7 @@ function deepFreeze<T>(value: T): T {
 export async function getCachedTableSchema(
   dbSessionId: string,
   tableName: string,
-  database?: string | null,
+  database: string,
 ): Promise<TableSchema> {
   const key = cacheKey(dbSessionId, tableName, database);
 
@@ -129,10 +134,10 @@ export async function getCachedDDL(
   tableName: string,
   sql: string,
   resultExtractor: (rows: unknown[][]) => string,
+  database: string,
   identity?: DdlCacheIdentity,
-  database?: string | null,
 ): Promise<string> {
-  const key = ddlCacheKey(dbSessionId, tableName, identity);
+  const key = ddlCacheKey(dbSessionId, tableName, database, identity);
 
   const cached = ddlCache.get(key);
   if (isValid(cached)) return cached.data;
@@ -148,13 +153,7 @@ export async function getCachedDDL(
       // Pin the session to `database` before running (mirrors query pinning in
       // queryCommands.executeQuery's F1 path) so a copy-DDL call never resolves
       // against a stale/active database that may not own the relation.
-      const multi = await queryCommands.executeQuery(
-        dbSessionId,
-        sql,
-        undefined,
-        database ?? null,
-        null,
-      );
+      const multi = await queryCommands.executeQuery(dbSessionId, sql, undefined, database, null);
       const row = multi.results[0]?.rows[0];
       const data = resultExtractor(row ? [row] : []);
       ddlCache.set(key, { data, timestamp: Date.now() });
@@ -182,6 +181,7 @@ export function invalidateSchemaCache(
   dbSessionId?: string,
   tableName?: string,
   identity?: DdlCacheInvalidateScope,
+  database?: string,
 ): void {
   if (!dbSessionId) {
     schemaCache.clear();
@@ -191,22 +191,37 @@ export function invalidateSchemaCache(
     return;
   }
   if (tableName) {
-    const key = cacheKey(dbSessionId, tableName);
-    const dkey = ddlCacheKey(dbSessionId, tableName, identity);
-    schemaCache.delete(key);
-    schemaErrors.delete(key);
+    // Cache keys are `${dbSessionId}::${database}::...`. When the caller knows
+    // the database, drop that cell precisely; otherwise fall back to the
+    // prefix/suffix scan so stale entries can never survive.
+    if (database) {
+      const key = cacheKey(dbSessionId, tableName, database);
+      schemaCache.delete(key);
+      schemaErrors.delete(key);
+      const dkey = ddlCacheKey(dbSessionId, tableName, database, identity);
+      ddlCache.delete(dkey);
+      ddlErrors.delete(dkey);
+    }
     for (const k of [...schemaCache.keys()]) {
-      if (k.startsWith(`${dbSessionId}::`) && (k.endsWith(`::${tableName}`) || k === key)) {
+      if (k.startsWith(`${dbSessionId}::`) && (k.endsWith(`::${tableName}`) || k === tableName)) {
         schemaCache.delete(k);
       }
     }
     for (const k of [...schemaErrors.keys()]) {
-      if (k.startsWith(`${dbSessionId}::`) && (k.endsWith(`::${tableName}`) || k === key)) {
+      if (k.startsWith(`${dbSessionId}::`) && (k.endsWith(`::${tableName}`) || k === tableName)) {
         schemaErrors.delete(k);
       }
     }
-    ddlCache.delete(dkey);
-    ddlErrors.delete(dkey);
+    for (const k of [...ddlCache.keys()]) {
+      if (k.startsWith(`${dbSessionId}::`) && k.endsWith(tableName)) {
+        ddlCache.delete(k);
+      }
+    }
+    for (const k of [...ddlErrors.keys()]) {
+      if (k.startsWith(`${dbSessionId}::`) && k.endsWith(tableName)) {
+        ddlErrors.delete(k);
+      }
+    }
   } else {
     for (const k of [...schemaCache.keys()]) {
       if (k.startsWith(`${dbSessionId}::`)) schemaCache.delete(k);

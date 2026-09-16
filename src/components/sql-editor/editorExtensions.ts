@@ -458,12 +458,14 @@ export function createCompletionExtensions(
     if (model && model.cursorIntent) {
       const completions = produceSchemaCompletions({
         model,
-        snapshot: snapshot ?? { dbSessionId: '', epoch: 0, relations: new Map() },
+        snapshot: snapshot ?? { dbSessionId: '', database: '', epoch: 0, relations: new Map() },
         schema: opts.schema,
         adapter: getDialectAdapter(opts.databaseType ?? 'standard'),
         quotePolicy: opts.completionQuotePolicy,
       });
-      if (completions.length === 0) return null;
+      if (completions.length === 0) {
+        return null;
+      }
       return {
         from: match?.from ?? pos,
         options: completions,

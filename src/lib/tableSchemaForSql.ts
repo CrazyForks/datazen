@@ -40,7 +40,7 @@ export async function fetchTableSchemaForSqlGeneration(args: {
   dbSessionId: string;
   tableName: string;
   schema?: string;
-  database?: string;
+  database: string;
   databaseType: string;
   columnMap?: Record<string, string[]>;
 }): Promise<TableSchema | null> {

@@ -11,7 +11,7 @@ import { CopyableError } from '../../components/ui/CopyableError';
 interface StructureViewProps {
   dbSessionId: string;
   tableName: string;
-  database?: string;
+  database: string;
   targetColumn?: string;
   onEditStructure?: (tableName: string) => void;
 }

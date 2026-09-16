@@ -16,12 +16,13 @@ const DEFAULT_MAX_ROWS = 100_000;
 const DEFAULT_PAGE_SIZE = 500;
 
 export interface LoadBatchExportTableDeps {
-  getSchema: (dbSessionId: string, tableName: string) => Promise<TableSchema>;
+  getSchema: (dbSessionId: string, tableName: string, database: string) => Promise<TableSchema>;
   getDdl: (
     dbSessionId: string,
     tableName: string,
     sql: string,
     resultExtractor: (rows: unknown[][]) => string,
+    database: string,
   ) => Promise<string>;
   getTableData: (params: {
     dbSessionId: string;
@@ -67,6 +68,7 @@ function extractDdlString(rows: unknown[][], extractColumnIndex: number): string
 async function loadDdl(
   dbSessionId: string,
   tableName: string,
+  database: string,
   databaseType: string | undefined,
   getDdl: LoadBatchExportTableDeps['getDdl'],
   getDialect: LoadBatchExportTableDeps['getDialect'],
@@ -78,8 +80,12 @@ async function loadDdl(
 
   try {
     const { sql, extractColumnIndex } = dialect.ddl.getTableDdlQuery(tableName);
-    const ddl = await getDdl(dbSessionId, tableName, sql, (rows) =>
-      extractDdlString(rows, extractColumnIndex),
+    const ddl = await getDdl(
+      dbSessionId,
+      tableName,
+      sql,
+      (rows) => extractDdlString(rows, extractColumnIndex),
+      database,
     );
     return ddl.trim() !== '' ? ddl : null;
   } catch {
@@ -133,6 +139,7 @@ async function loadAllRows(
 export async function loadBatchExportTableData(params: {
   dbSessionId: string;
   tableName: string;
+  database: string;
   databaseType?: string;
   /** max rows to pull (default 100_000); stop early if hit */
   maxRows?: number;
@@ -144,6 +151,7 @@ export async function loadBatchExportTableData(params: {
   const {
     dbSessionId,
     tableName,
+    database,
     databaseType,
     maxRows = DEFAULT_MAX_ROWS,
     pageSize = DEFAULT_PAGE_SIZE,
@@ -156,8 +164,15 @@ export async function loadBatchExportTableData(params: {
     ...depsOverride,
   };
 
-  const schema = await deps.getSchema(dbSessionId, tableName);
-  const ddl = await loadDdl(dbSessionId, tableName, databaseType, deps.getDdl, deps.getDialect);
+  const schema = await deps.getSchema(dbSessionId, tableName, database);
+  const ddl = await loadDdl(
+    dbSessionId,
+    tableName,
+    database,
+    databaseType,
+    deps.getDdl,
+    deps.getDialect,
+  );
   const rows = includeRows
     ? await loadAllRows(dbSessionId, tableName, pageSize, maxRows, deps.getTableData)
     : [];

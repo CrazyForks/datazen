@@ -48,14 +48,14 @@ export const databaseCommands = {
   getTables: (dbSessionId: string, database: string) =>
     invoke<TableInfo[]>('get_tables', { dbSessionId, database }),
 
-  getColumns: (dbSessionId: string, table: string, database?: string | null) =>
-    invoke<string[]>('get_columns', { dbSessionId, table, database: database ?? null }),
+  getColumns: (dbSessionId: string, table: string, database: string) =>
+    invoke<string[]>('get_columns', { dbSessionId, table, database }),
 
-  getAllColumns: (dbSessionId: string) =>
-    invoke<Record<string, string[]>>('get_all_columns', { dbSessionId }),
+  getAllColumns: (dbSessionId: string, database: string) =>
+    invoke<Record<string, string[]>>('get_all_columns', { dbSessionId, database }),
 
-  getTableSchema: (dbSessionId: string, table: string, database?: string | null) =>
-    invoke<TableSchema>('get_table_schema', { dbSessionId, table, database: database ?? null }),
+  getTableSchema: (dbSessionId: string, table: string, database: string) =>
+    invoke<TableSchema>('get_table_schema', { dbSessionId, table, database }),
 
   getErData: (dbSessionId: string, database: string) =>
     invoke<TableSchema[]>('get_er_data', { dbSessionId, database }),

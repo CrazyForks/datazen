@@ -28,6 +28,8 @@ export interface QueryDropHandlerOptions {
   connectionId: string;
   dbSessionId: string;
   databaseType?: string;
+  /** Tab-bound database — column lookups for generated SELECTs run against it. */
+  database: string;
   editorRef: MutableRefObject<SqlEditorHandle | null>;
 }
 
@@ -86,6 +88,7 @@ export function createQueryDropHandler({
   connectionId,
   dbSessionId,
   databaseType,
+  database,
   editorRef,
 }: QueryDropHandlerOptions) {
   return async (payload: DroppedTablePayload, pos: number | null) => {
@@ -113,21 +116,37 @@ export function createQueryDropHandler({
     // §S6-D step 4: empty editor → generate SELECT statement (existing behavior)
     const generatedSqls: string[] = [];
 
-    for (const t of payload.tables) {
-      const tableSchema = await fetchTableSchemaForSqlGeneration({
-        dbSessionId: targetSessionId,
-        tableName: t.tableName,
-        schema: t.schema,
-        databaseType: dbType,
-      });
-      const tableRef = t.schema ? `${t.schema}.${t.tableName}` : t.tableName;
-      generatedSqls.push(
-        generateTableSqlWithFallbacks(tableSchema, 'select', dbType, {
-          schemaPrefix: t.schema,
+    // Database is mandatory: without the tab-bound database we cannot resolve
+    // columns — fall back to a bare SELECT * instead of querying the wrong db.
+    if (!database) {
+      for (const t of payload.tables) {
+        const tableRef = t.schema ? `${t.schema}.${t.tableName}` : t.tableName;
+        generatedSqls.push(
+          generateTableSqlWithFallbacks(null, 'select', dbType, {
+            schemaPrefix: t.schema,
+            tableName: t.tableName,
+            tableRefLabel: tableRef,
+          }),
+        );
+      }
+    } else {
+      for (const t of payload.tables) {
+        const tableSchema = await fetchTableSchemaForSqlGeneration({
+          dbSessionId: targetSessionId,
           tableName: t.tableName,
-          tableRefLabel: tableRef,
-        }),
-      );
+          schema: t.schema,
+          database,
+          databaseType: dbType,
+        });
+        const tableRef = t.schema ? `${t.schema}.${t.tableName}` : t.tableName;
+        generatedSqls.push(
+          generateTableSqlWithFallbacks(tableSchema, 'select', dbType, {
+            schemaPrefix: t.schema,
+            tableName: t.tableName,
+            tableRefLabel: tableRef,
+          }),
+        );
+      }
     }
 
     const combinedGenerated = generatedSqls.join('\n\n');
