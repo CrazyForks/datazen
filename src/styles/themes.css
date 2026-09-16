@@ -22,14 +22,14 @@
   --c-fg-secondary: #58708d;
   --c-fg-muted: #8498af;
 
-  /* Accent & status — unified with dark theme */
-  --c-accent: #4fc3f7;
-  --c-accent-2: #6fd0fa;
-  --c-accent-deep: #2f7fa6;
-  --c-accent-dim: rgba(79, 195, 247, 0.12);
-  --c-accent-ring: rgba(79, 195, 247, 0.09);
-  /* Text on accent-filled surfaces (primary button: accent bg + dark text) */
-  --c-on-accent: #04121b;
+  /* Accent & status — white button, dark text */
+  --c-accent: #ffffff;
+  --c-accent-2: #f6f8fb;
+  --c-accent-deep: #e1e8f1;
+  --c-accent-dim: rgba(38, 54, 77, 0.06);
+  --c-accent-ring: rgba(38, 54, 77, 0.12);
+  /* Text on accent-filled surfaces (primary button: white bg + dark text) */
+  --c-on-accent: #26364d;
   --c-success: #18b77a;
   --c-warning: #e39a27;
   --c-danger: #e05252;
