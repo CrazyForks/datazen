@@ -92,7 +92,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
 
     // ── Step 2: Add a table to the canvas via simulated drop ──
     // The canvas accepts `application/datazen-schema-object` MIME drops.
-    // We simulate a drop event with the correct payload.
+    // WebKit requires Object.defineProperty to override dataTransfer.
     const canvasAdded = await browser.execute((tableName: string) => {
       const canvas = document.querySelector('[data-testid="qb-diagram-canvas"]');
       if (!canvas) return false;
@@ -105,13 +105,22 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
         databaseType: 'postgresql',
       });
 
-      const dragEvent = new DragEvent('drop', {
+      const dropEvent = new DragEvent('drop', {
         bubbles: true,
         cancelable: true,
         dataTransfer: new DataTransfer(),
       });
-      dragEvent.dataTransfer!.setData('application/datazen-schema-object', payload);
-      canvas.dispatchEvent(dragEvent);
+      Object.defineProperty(dropEvent, 'dataTransfer', {
+        value: {
+          getData(type: string) {
+            if (type === 'application/datazen-schema-object') return payload;
+            return '';
+          },
+          types: ['application/datazen-schema-object'],
+          dropEffect: 'copy',
+        },
+      });
+      canvas.dispatchEvent(dropEvent);
       return true;
     }, TABLE_NAME);
     expect(canvasAdded).toBe(true);
