@@ -456,4 +456,43 @@ describe('DataTransferWindow', () => {
     expect(within(errorPanel).getByText('mapping preview failed')).toBeTruthy();
     expect(screen.queryByTestId('data-transfer-preview')).toBeNull();
   });
+
+  it('[tester] renders partial execution as incomplete with recovery guidance', async () => {
+    vi.mocked(transferCommands.execute).mockResolvedValueOnce({
+      rowsInserted: 0,
+      partial: true,
+      cancelled: false,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          rowsInserted: 0,
+          success: false,
+          error: 'injected write failure',
+        },
+      ],
+    });
+    await advanceToPreviewStep('insert');
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+    expect(screen.getByRole('status')).toHaveTextContent('transfer.runPartial');
+    expect(screen.getByText('transfer.partialExplanation')).toBeTruthy();
+    expect(screen.getByText('injected write failure')).toBeTruthy();
+  });
+
+  it('[tester] renders a cancelled execution distinctly from success', async () => {
+    vi.mocked(transferCommands.execute).mockResolvedValueOnce({
+      rowsInserted: 0,
+      partial: true,
+      cancelled: true,
+      tables: [],
+    });
+    await advanceToPreviewStep('insert');
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+    expect(screen.getByRole('status')).toHaveTextContent('transfer.runCancelled');
+    expect(screen.getByText('transfer.partialExplanation')).toBeTruthy();
+  });
 });
