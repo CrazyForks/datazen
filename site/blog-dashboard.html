@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Turn SQL Query Results into a Dashboard with One Click — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen lets you generate visual dashboards directly from SQL query results. Supports line charts, bar charts, pie charts, tables, and more — with drag-and-drop layout, scheduled refresh, and multiple query charts in a single dashboard."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog-dashboard.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-dashboard.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-dashboard.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-dashboard.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Turn SQL Query Results into a Dashboard with One Click" />
+    <meta
+      property="og:description"
+      content="DataZen lets you generate visual dashboards directly from SQL query results. Supports line charts, bar charts, pie charts, tables, and more — with drag-and-drop layout, scheduled refresh, and multiple query charts in a single dashboard."
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/blog-dashboard.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Turn SQL Query Results into a Dashboard with One Click" />
+    <meta
+      name="twitter:description"
+      content="DataZen lets you generate visual dashboards directly from SQL query results. Supports line charts, bar charts, pie charts, tables, and more — with drag-and-drop layout, scheduled refresh, and multiple query charts in a single dashboard."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Turn SQL Query Results into a Dashboard with One Click",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-12",
+        "description": "DataZen lets you generate visual dashboards directly from SQL query results. Supports line charts, bar charts, pie charts, tables, and more — with drag-and-drop layout, scheduled refresh, and multiple query charts in a single dashboard.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-dashboard.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>Turn SQL Query Results into a Dashboard with One Click</h1>
+        <p>
+          DataZen lets you generate visual dashboards directly from SQL query results. Supports line
+          charts, bar charts, pie charts, tables, and more — with drag-and-drop layout, scheduled
+          refresh, and multiple query charts in a single dashboard.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">October 12, 2026</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>Turn SQL Query Results into a Dashboard with One Click</h1>
+        <p>
+          Have you been there? A colleague from operations walks over and asks, &quot;Can you pull
+          up this week&#39;s daily active users for me?&quot; You open the terminal, run a SQL
+          query, and paste the results into the team chat. Then they say, &quot;Can you make it into
+          a chart?&quot; — so you copy the data into Excel, tweak the formatting, insert a chart,
+          export a screenshot, and send it back.
+        </p>
+        <p>
+          That process might take 15 minutes, and every time the data updates, you do it all over
+          again.
+        </p>
+        <p>DataZen&#39;s Dashboard feature compresses that entire workflow into a few clicks.</p>
+        <h2>From SQL to Dashboard in Three Steps</h2>
+        <p>
+          DataZen&#39;s Dashboard doesn&#39;t require you to leave the app or export data to another
+          tool. It generates visual charts directly from your SQL query results.
+        </p>
+        <p>
+          <strong>Step 1</strong>: Write your query in the SQL editor, execute it, and you&#39;ll
+          see an &quot;Add to Dashboard&quot; button next to the results table.
+        </p>
+        <p>
+          <strong>Step 2</strong>: Click the button and choose a chart type — line chart, bar chart,
+          pie chart, area chart, table, or number card.
+        </p>
+        <p>
+          <strong>Step 3</strong>: The chart appears in your Dashboard immediately. Drag to
+          reposition, drag the border to resize — a professional data dashboard is born.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/10-dashboard-overview.png"
+            alt="Dashboard Overview"
+          />
+        </p>
+        <p>
+          No data exports, no format conversions, no extra BI tools. Your data stays inside DataZen
+          from database to visualization.
+        </p>
+        <h2>Rich Chart Types</h2>
+        <p>DataZen includes a variety of chart types covering common data visualization needs:</p>
+        <ul>
+          <li>
+            <strong>Line charts</strong> — ideal for time-series data: daily active user trends,
+            traffic changes, system load fluctuations.
+          </li>
+          <li>
+            <strong>Bar charts</strong> — ideal for comparisons: conversion rates across channels,
+            sales by product, headcount across departments.
+          </li>
+          <li>
+            <strong>Pie charts</strong> — ideal for proportions: traffic source distribution,
+            database type breakdown, user geographic distribution.
+          </li>
+          <li>
+            <strong>Area charts</strong> — ideal for stacked displays: overlapping trends for
+            multiple metrics.
+          </li>
+          <li>
+            <strong>Tables</strong> — ideal when you need detail: pending ticket lists, recent order
+            records.
+          </li>
+          <li>
+            <strong>Number cards</strong> — ideal for at-a-glance KPIs: total users, today&#39;s
+            order count, servers online.
+          </li>
+        </ul>
+        <p>
+          Each chart supports custom titles, color schemes, and data formatting. No visualization
+          library or CSS knowledge required — everything is configured with mouse clicks.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/10-dashboard-chart-config.png"
+            alt="Chart Configuration Interface"
+          />
+        </p>
+        <h2>Drag-and-Drop Layout, Free Composition</h2>
+        <p>The Dashboard layout is entirely under your control. You can:</p>
+        <ul>
+          <li>
+            <strong>Drag to reposition</strong>: Move the &quot;Today&#39;s Orders&quot; card to the
+            most prominent spot.
+          </li>
+          <li><strong>Drag borders to resize</strong>: Give your key charts more real estate.</li>
+          <li>
+            <strong>Arrange freely</strong>: No rigid grid constraints — arrange it however looks
+            best.
+          </li>
+        </ul>
+        <p>
+          A single dashboard can include charts from different SQL queries. For example, you can
+          simultaneously display:
+        </p>
+        <ul>
+          <li>User growth data from PostgreSQL (line chart)</li>
+          <li>Order statistics from MySQL (bar chart)</li>
+          <li>Online user count from Redis (number card)</li>
+        </ul>
+        <p>
+          Different databases, different queries, different data types — all unified in a single
+          dashboard.
+        </p>
+        <h2>Scheduled Refresh for Real-Time Data</h2>
+        <p>
+          Dashboards aren&#39;t static screenshots. DataZen supports setting refresh intervals for
+          dashboard charts — every 5 seconds, 30 seconds, 1 minute, 5 minutes, or a custom interval.
+        </p>
+        <p>
+          When auto-refresh is enabled, DataZen re-executes the corresponding SQL queries at the set
+          intervals and updates the chart data. Open a Dashboard and you always see the latest data.
+        </p>
+        <p>This is especially useful for:</p>
+        <ul>
+          <li>
+            <strong>Operations monitoring dashboards</strong>: Real-time display of server CPU
+            usage, memory consumption, connection counts, and other key metrics.
+          </li>
+          <li>
+            <strong>Business dashboards</strong>: Scheduled refresh of today&#39;s registrations,
+            active users, and order volume.
+          </li>
+          <li>
+            <strong>Sales dashboards</strong>: Large-screen display of today&#39;s real-time sales
+            data — perfect for an office TV screen.
+          </li>
+        </ul>
+        <h2>Real-World Scenarios: Three Dashboard Examples</h2>
+        <h3>Operations Dashboard</h3>
+        <p>A typical operations dashboard includes:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Chart</th>
+              <th>Data Source</th>
+              <th>Refresh Interval</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>New users today (number card)</td>
+              <td><code>SELECT COUNT(*) FROM users WHERE created_at &gt;= CURRENT_DATE</code></td>
+              <td>30 seconds</td>
+            </tr>
+            <tr>
+              <td>7-day DAU trend (line chart)</td>
+              <td><code>SELECT DATE(login_at), COUNT(DISTINCT user_id) FROM logins ...</code></td>
+              <td>5 minutes</td>
+            </tr>
+            <tr>
+              <td>Traffic source distribution (pie chart)</td>
+              <td><code>SELECT source, COUNT(*) FROM users GROUP BY source</code></td>
+              <td>1 hour</td>
+            </tr>
+            <tr>
+              <td>Latest 10 orders (table)</td>
+              <td><code>SELECT * FROM orders ORDER BY created_at DESC LIMIT 10</code></td>
+              <td>1 minute</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Sales Dashboard</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Chart</th>
+              <th>Data Source</th>
+              <th>Refresh Interval</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Monthly sales (number card)</td>
+              <td><code>SELECT SUM(amount) FROM orders WHERE ...</code></td>
+              <td>1 minute</td>
+            </tr>
+            <tr>
+              <td>Monthly sales trend (line chart)</td>
+              <td><code>SELECT DATE_TRUNC(&#39;month&#39;, created_at), SUM(amount) ...</code></td>
+              <td>1 hour</td>
+            </tr>
+            <tr>
+              <td>Top 10 products (bar chart)</td>
+              <td><code>SELECT product_name, SUM(amount) ... GROUP BY product_name</code></td>
+              <td>1 hour</td>
+            </tr>
+            <tr>
+              <td>Regional distribution (pie chart)</td>
+              <td><code>SELECT region, COUNT(*) ... GROUP BY region</code></td>
+              <td>1 day</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Technical Monitoring Dashboard</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Chart</th>
+              <th>Data Source</th>
+              <th>Refresh Interval</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Active connections (number card)</td>
+              <td><code>SELECT COUNT(*) FROM pg_stat_activity</code></td>
+              <td>5 seconds</td>
+            </tr>
+            <tr>
+              <td>Slow query count (bar chart)</td>
+              <td>
+                <code>SELECT COUNT(*) FROM pg_stat_statements WHERE mean_time &gt; 1000</code>
+              </td>
+              <td>30 seconds</td>
+            </tr>
+            <tr>
+              <td>Database size (line chart)</td>
+              <td><code>SELECT pg_database_size(current_database())</code></td>
+              <td>5 minutes</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>Lightweight vs. Full-Featured: Why Choose DataZen Dashboard</h2>
+        <p>
+          There are many dedicated BI tools out there — Metabase, Grafana, Superset, Tableau.
+          They&#39;re powerful but come with a clear learning curve:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Comparison</th>
+              <th>DataZen Dashboard</th>
+              <th>Dedicated BI Tools</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Deployment cost</td>
+              <td>Built-in feature, zero deployment</td>
+              <td>Requires separate installation and setup</td>
+            </tr>
+            <tr>
+              <td>Data preparation</td>
+              <td>Use SQL query results directly</td>
+              <td>Usually requires importing data sources first</td>
+            </tr>
+            <tr>
+              <td>Learning curve</td>
+              <td>Up and running in minutes</td>
+              <td>Hours to days</td>
+            </tr>
+            <tr>
+              <td>Use case</td>
+              <td>Individual / small teams, quick data lookups</td>
+              <td>Enterprise-level analytics platform</td>
+            </tr>
+            <tr>
+              <td>Collaboration</td>
+              <td>Export screenshots to share</td>
+              <td>Multi-user collaboration, permission management</td>
+            </tr>
+            <tr>
+              <td>Extensibility</td>
+              <td>Covers 80% of daily needs</td>
+              <td>Unlimited extensibility</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          DataZen Dashboard isn&#39;t meant to replace dedicated BI tools — it solves a
+          lighter-weight need:
+          <strong
+            >when you just want to quickly look at data, you don&#39;t need to spin up an entire BI
+            platform</strong
+          >.
+        </p>
+        <p>
+          It&#39;s your &quot;quick dashboard&quot; at hand — connect to a database, write a few
+          queries, and charts appear.
+        </p>
+        <h2>Wrapping Up</h2>
+        <p>
+          Data visualization shouldn&#39;t be a skill reserved for BI engineers. DataZen lets anyone
+          generate dashboards from SQL query results, letting charts do the talking instead of
+          screenshots.
+        </p>
+        <p>
+          Next time a colleague asks &quot;can you check the data for me?&quot;, just open a
+          pre-configured Dashboard — real-time data, instant clarity.
+        </p>
+        <p>Try it now — completely free, no registration required.</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html"
+              >Download DataZen Now</a
+            ></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub Source</a>
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-dashboard.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

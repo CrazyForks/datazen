@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>博客 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 官方博客：数据库管理工具的新功能、技术深度解析和使用指南。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog.html" />
+    <link rel="alternate" hreflang="en" href="https://flyxl.github.io/datazen/blog.html" />
+    <link rel="alternate" hreflang="zh-CN" href="https://flyxl.github.io/datazen/zh/blog.html" />
+    <link rel="alternate" hreflang="x-default" href="https://flyxl.github.io/datazen/blog.html" />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": "博客",
+        "description": "DataZen 官方博客",
+        "url": "https://flyxl.github.io/datazen/zh/blog.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb"><a href="index.html">首页</a> / 博客</p>
+        <h1>博客</h1>
+        <p>DataZen 官方博客：新功能发布、技术深度解析和使用指南。</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <ul style="list-style: none; padding: 0; margin: 0">
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-mcp-server.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >MCP Server：让 AI Agent 安全访问你的数据库</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent
+            可调用的 Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过
+            --mcp-stdio 启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 10 月 16 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-workflow.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >微服务跨库查询：用 Workflow 一键追踪业务全链路数据</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML
+            串联多库查询，一键追踪业务全链路数据。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 10 月 14 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-dashboard.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >SQL 查询结果一键生成 Dashboard 数据看板</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard
+            数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 10 月 12 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-ai-nl2sql.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 内置 AI Chat 面板，支持自然语言转 SQL
+            查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持
+            OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 10 月 10 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-smart-paste.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >智能粘贴与拖拽：从 Schema 树到编辑器的无缝衔接</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 的 SQL 编辑器支持智能粘贴（Paste-as-IN）、拖拽插入、参数绑定面板和 SQL Guard
+            安全拦截，让数据库操作更高效、更安全。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 9 月 22 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-realtime-diagnostics.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >实时 SQL 诊断：写错即刻提示，不用等执行报错</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 的 SQL 编辑器在你输入时自动分析 SQL
+            语义，通过波浪线实时标记未知表名、类型不匹配、潜在性能问题和语法错误，帮你避免低级失误。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 9 月 21 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-database-tool-comparison-2026.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >DataZen vs Navicat vs DBeaver：2026 年数据库管理工具深度对比</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            从价格、性能、AI 功能、数据库支持到用户体验，全面对比 DataZen、Navicat、DBeaver
+            三款主流数据库管理工具，帮你找到最适合自己的那一个。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 9 月 20 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-alt-enter-intentions.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >INSERT 语句秒写完：Alt+Enter 智能意图操作</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT
+            模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 9 月 20 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-getting-started.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >DataZen 入门指南：5 分钟连接你的第一个数据库</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis
+            等主流数据库，内置 AI 辅助功能。本文手把手教你 5
+            分钟内完成下载、安装并连接第一个数据库。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2026 年 9 月 18 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-statement-level-execution.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >告别全选再执行：SQL 编辑器的语句级运行</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen SQL 编辑器支持语句边界自动检测，每条 SQL
+            左侧独立运行按钮，告别全选再执行的低效操作模式。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2025 年 9 月 16 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-hover-tooltip.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema
+            信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2025 年 9 月 16 日</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-fk-aware-completion.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >写 JOIN 不用查文档：外键感知的智能 SQL 补全</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen SQL 编辑器支持外键感知的 JOIN 自动补全，基于 Schema
+            外键定义推荐关联表和连接条件，智能列补全支持别名推断和多表消歧。
+          </p>
+          <time style="color: var(--muted); font-size: 13px">2025 年 9 月 16 日</time>
+        </li>
+      </ul>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

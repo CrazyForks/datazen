@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow — DataZen
+    </title>
+    <meta
+      name="description"
+      content="In a microservice architecture, tracking a single order means querying 5 different databases. DataZen Workflow supports cross-database operations, using YAML to chain multi-database queries and trace your entire business flow in one shot."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog-workflow.html" />
+    <link rel="alternate" hreflang="en" href="https://flyxl.github.io/datazen/blog-workflow.html" />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-workflow.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-workflow.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta
+      property="og:title"
+      content="Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow"
+    />
+    <meta
+      property="og:description"
+      content="In a microservice architecture, tracking a single order means querying 5 different databases. DataZen Workflow supports cross-database operations, using YAML to chain multi-database queries and trace your entire business flow in one shot."
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/blog-workflow.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow"
+    />
+    <meta
+      name="twitter:description"
+      content="In a microservice architecture, tracking a single order means querying 5 different databases. DataZen Workflow supports cross-database operations, using YAML to chain multi-database queries and trace your entire business flow in one shot."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-14",
+        "description": "In a microservice architecture, tracking a single order means querying 5 different databases. DataZen Workflow supports cross-database operations, using YAML to chain multi-database queries and trace your entire business flow in one shot.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-workflow.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow</h1>
+        <p>
+          In a microservice architecture, tracking a single order means querying 5 different
+          databases. DataZen Workflow supports cross-database operations, using YAML to chain
+          multi-database queries and trace your entire business flow in one shot.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">October 14, 2026</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow</h1>
+        <p>
+          Ever had this happen? A user complains — &quot;My order status is wrong&quot; — and you
+          need to investigate.
+        </p>
+        <p>
+          You open the order service database and find the record: status is &quot;Paid.&quot; But
+          the customer says they never received the goods. So you check the inventory service for
+          stock deduction records, then the logistics service for shipping status, then the payment
+          service to confirm whether the payment callback succeeded, and finally the notification
+          service to see if a shipping notification was sent.
+        </p>
+        <p><strong>5 microservices, 5 databases, 5 logins, 5 manual SQL executions.</strong></p>
+        <p>
+          Just switching between databases eats up half an hour. Worse, you have to mentally stitch
+          together results from each — orders in PostgreSQL, inventory in MySQL, logistics in
+          MongoDB, payments in another PostgreSQL instance.
+        </p>
+        <p>
+          This isn&#39;t an isolated case. In a microservice architecture,
+          <strong>business data is spread across multiple independent databases</strong>, and
+          tracing a complete business flow is one of the most painful daily tasks.
+        </p>
+        <h2>Workflow: Turn Cross-Database Queries into a Single File</h2>
+        <p>
+          DataZen&#39;s YAML Workflow is built to solve exactly this problem. You define
+          cross-database query steps in a single YAML file, DataZen executes them sequentially, and
+          the results are presented in a unified view.
+        </p>
+        <p>A typical microservice trace workflow looks like this:</p>
+        <pre><code class="language-yaml">name: 订单全链路追踪
+description: 追踪订单从支付到发货的完整状态
+
+parameters:
+  - name: order_id
+    type: string
+    description: 订单号
+
+steps:
+  - name: 查询订单状态
+    connection: order-service
+    sql: &quot;SELECT id, status, user_id, amount, created_at FROM orders WHERE id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询支付记录
+    connection: payment-service
+    sql: &quot;SELECT order_id, payment_status, paid_at, transaction_id FROM payments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询库存扣减
+    connection: inventory-service
+    sql: &quot;SELECT order_id, product_id, quantity, deducted_at FROM inventory_deductions WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询物流状态
+    connection: logistics-service
+    sql: &quot;SELECT order_id, tracking_no, status AS logistics_status, shipped_at FROM shipments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询通知记录
+    connection: notification-service
+    sql: &quot;SELECT order_id, channel, sent_at, status AS notify_status FROM notifications WHERE order_id = &#39;{{order_id}}&#39; AND type = &#39;shipping&#39;&quot;
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-cross-db.png"
+            alt="Cross-Database Operation Diagram"
+          />
+        </p>
+        <p>
+          One command, all five databases queried. No logging into five different clients, no
+          mentally stitching results — the Workflow engine handles connection management, execution
+          scheduling, and result aggregation for you.
+        </p>
+        <h2>Core Capability: Cross-Database Operations</h2>
+        <p>
+          The core of Workflow is the <code>connection</code> field — each step can target a
+          different database connection.
+        </p>
+        <pre><code class="language-yaml">steps:
+  - name: 从 PostgreSQL 查订单
+    connection: order-db
+    sql: &quot;SELECT * FROM orders WHERE id = 123&quot;
+
+  - name: 从 MySQL 查库存
+    connection: inventory-db
+    sql: &quot;SELECT * FROM stock WHERE product_id = 456&quot;
+
+  - name: 从 MongoDB 查日志
+    connection: log-db
+    sql: &quot;SELECT * FROM access_logs WHERE order_id = 123&quot;
+</code></pre>
+        <p>
+          DataZen&#39;s Workflow engine manages all connection lifecycles behind the scenes —
+          connection pools, timeouts, reconnections, teardowns — you don&#39;t need to worry about
+          any of it. SQL dialect differences across databases are also handled by the engine; you
+          just write correct SQL.
+        </p>
+        <p>
+          <strong>A single Workflow can operate on any number of database connections</strong>, with
+          no limit on count or type. PostgreSQL, MySQL, SQLite, Redis, ClickHouse — if DataZen can
+          connect to it, Workflow can operate on it.
+        </p>
+        <h2>Variables and Parameterization: Reusable Workflows</h2>
+        <p>
+          Hard-coded workflows have limited utility. DataZen supports variables in SQL, turning
+          workflows into reusable templates:
+        </p>
+        <pre><code class="language-yaml">name: 跨库数据校验
+
+parameters:
+  - name: order_id
+    type: string
+    description: 要校验的订单号
+
+steps:
+  - name: 订单表：查询订单
+    connection: order-service
+    sql: &quot;SELECT id, status, amount FROM orders WHERE id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 支付表：查询支付状态
+    connection: payment-service
+    sql: &quot;SELECT payment_status, amount AS paid_amount FROM payments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 校验金额一致性
+    sql: |
+      SELECT 
+        &#39;{{order_id}}&#39; AS order_id,
+        o.amount AS order_amount,
+        p.paid_amount,
+        CASE WHEN o.amount = p.paid_amount THEN &#39;一致&#39; ELSE &#39;不一致&#39; END AS check_result
+      FROM (SELECT {{steps.0.result.amount}} AS amount) o
+      CROSS JOIN (SELECT {{steps.1.result.paid_amount}} AS paid_amount) p
+</code></pre>
+        <p>
+          When executed, DataZen presents a parameter input dialog — enter the order number and the
+          cross-database validation runs in one click. The same workflow can be reused repeatedly;
+          just change the parameter when investigating a different order.
+        </p>
+        <h2>Real-World Scenarios</h2>
+        <h3>Scenario 1: Microservice Data Consistency Check</h3>
+        <p>Periodically verify that data across services is consistent:</p>
+        <pre><code class="language-yaml">name: 每日数据一致性巡检
+description: 每天检查订单、支付、库存三方数据一致性
+
+parameters:
+  - name: check_date
+    type: string
+    default: &quot;{{date}}&quot;
+    description: 巡检日期
+
+steps:
+  - name: 查询当日订单
+    connection: order-service
+    id: orders
+    sql: |
+      SELECT id, status, amount 
+      FROM orders 
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 查询当日支付
+    connection: payment-service
+    id: payments
+    sql: |
+      SELECT order_id, payment_status, amount
+      FROM payments
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 查询当日库存变动
+    connection: inventory-service
+    id: inventory
+    sql: |
+      SELECT order_id, product_id, quantity
+      FROM inventory_deductions
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 汇总巡检结果
+    sql: |
+      SELECT 
+        (SELECT COUNT(*) FROM {{steps.0.result}}) AS total_orders,
+        (SELECT COUNT(*) FROM {{steps.1.result}} WHERE payment_status = &#39;paid&#39;) AS paid_orders,
+        (SELECT COUNT(*) FROM {{steps.2.result}}) AS deducted_count
+</code></pre>
+        <h3>Scenario 2: Cross-Database Data Migration</h3>
+        <p>
+          After a microservice split, migrate data from a monolithic database to each service&#39;s
+          independent database:
+        </p>
+        <pre><code class="language-yaml">name: 用户数据拆分迁移
+description: 从单体用户库迁移到独立的用户服务库
+
+steps:
+  - name: 从单体库导出用户数据
+    connection: monolith-db
+    sql: &quot;SELECT id, username, email, phone, created_at FROM users WHERE id &gt; 0&quot;
+
+  - name: 清空用户服务库
+    connection: user-service-db
+    sql: &quot;TRUNCATE TABLE users&quot;
+
+  - name: 插入到用户服务库
+    connection: user-service-db
+    sql: |
+      INSERT INTO users (id, username, email, phone, created_at)
+      SELECT id, username, email, phone, created_at
+      FROM dblink(&#39;monolith connection&#39;, &#39;SELECT id, username, email, phone, created_at FROM users&#39;)
+      AS t(id INT, username TEXT, email TEXT, phone TEXT, created_at TIMESTAMP)
+
+  - name: 验证迁移结果
+    connection: user-service-db
+    sql: &quot;SELECT COUNT(*) AS migrated_count FROM users&quot;
+</code></pre>
+        <h3>Scenario 3: Alert Data Aggregation</h3>
+        <p>Aggregate alert information from multiple monitoring databases:</p>
+        <pre><code class="language-yaml">name: 告警聚合查询
+description: 从多个监控系统聚合告警数据
+
+parameters:
+  - name: hours
+    type: number
+    default: 24
+    description: 查询最近多少小时
+
+steps:
+  - name: 应用错误日志
+    connection: app-monitor
+    sql: |
+      SELECT &#39;app-error&#39; AS source, error_type, COUNT(*) AS count
+      FROM error_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY error_type
+
+  - name: 数据库慢查询
+    connection: db-monitor
+    sql: |
+      SELECT &#39;slow-query&#39; AS source, query_type, COUNT(*) AS count
+      FROM slow_query_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY query_type
+
+  - name: API 超时
+    connection: api-monitor
+    sql: |
+      SELECT &#39;api-timeout&#39; AS source, endpoint, COUNT(*) AS count
+      FROM timeout_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY endpoint
+
+  - name: 汇总告警
+    sql: |
+      SELECT * FROM {{steps.0.result}}
+      UNION ALL
+      SELECT * FROM {{steps.1.result}}
+      UNION ALL
+      SELECT * FROM {{steps.2.result}}
+</code></pre>
+        <h2>Conditional Execution: Give Your Workflow &quot;Decision-Making&quot;</h2>
+        <p>
+          Not every step should run unconditionally. DataZen supports conditional execution — decide
+          whether to run the next step based on the previous step&#39;s result:
+        </p>
+        <pre><code class="language-yaml">name: 智能数据清理
+
+steps:
+  - name: 检查待清理数据量
+    id: check_count
+    sql: &quot;SELECT COUNT(*) AS cnt FROM expired_data&quot;
+
+  - name: 数据量超过阈值，执行清理
+    when: &quot;{{check_count.result.cnt}} &gt; 10000&quot;
+    sql: &quot;DELETE FROM expired_data WHERE created_at &lt; NOW() - INTERVAL &#39;90 days&#39;&quot;
+
+  - name: 数据量不足，跳过清理
+    when: &quot;{{check_count.result.cnt}} &lt;= 10000&quot;
+    sql: &quot;SELECT &#39;数据量不足，跳过清理&#39; AS message&quot;
+</code></pre>
+        <p>
+          The <code>when</code> condition supports comparison and logical operators, allowing you to
+          build complex decision logic.
+        </p>
+        <h2>GUI Editor: Build Workflows Visually</h2>
+        <p>
+          Don&#39;t like writing YAML? DataZen provides a visual Workflow editor so you can build
+          workflows with drag-and-drop.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-editor.png"
+            alt="Workflow Editor"
+          />
+        </p>
+        <p>In the editor:</p>
+        <ul>
+          <li>Drag steps from the left panel onto the canvas.</li>
+          <li>Click a step to fill in SQL and configure parameters.</li>
+          <li>Use connectors to define execution order between steps.</li>
+          <li>Set up conditional branches and error handling strategies.</li>
+        </ul>
+        <p>
+          The editor auto-generates the corresponding YAML file. You can switch between YAML and the
+          visual editor — choose whichever feels most comfortable.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-execution.png"
+            alt="Workflow Execution Interface"
+          />
+        </p>
+        <p>
+          When executing a workflow, the GUI shows real-time execution status, duration, and results
+          for each step. Which step errored, which step took unusually long — it&#39;s all at a
+          glance.
+        </p>
+        <h2>Wrapping Up</h2>
+        <p>
+          Microservice architectures bring better scalability and maintainability, but also an
+          unintended side effect:
+          <strong>business data is scattered across multiple databases</strong>. Tracing a complete
+          business flow means switching back and forth between databases.
+        </p>
+        <p>
+          DataZen&#39;s Workflow turns that process into a YAML file — define it once, run it
+          repeatedly. Cross-database queries, parameterized templates, conditional branches, error
+          handling — all in one place.
+        </p>
+        <p>No scripts to write, no multiple clients to log into, no mental stitching of results.</p>
+        <p>Try it now — completely free, no registration required.</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html"
+              >Download DataZen Now</a
+            ></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub Source</a>
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-workflow.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

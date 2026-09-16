@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>INSERT 语句秒写完：Alt+Enter 智能意图操作 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT 模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。"
+    />
+    <link
+      rel="canonical"
+      href="https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="INSERT 语句秒写完：Alt+Enter 智能意图操作" />
+    <meta
+      property="og:description"
+      content="DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT 模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。"
+    />
+    <meta
+      property="og:url"
+      content="https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+    />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="INSERT 语句秒写完：Alt+Enter 智能意图操作" />
+    <meta
+      name="twitter:description"
+      content="DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT 模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "INSERT 语句秒写完：Alt+Enter 智能意图操作",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-09-20",
+        "description": "DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT 模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "INSERT 语句秒写完：Alt+Enter 智能意图操作",
+            "item": "https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>INSERT 语句秒写完：Alt+Enter 智能意图操作</h1>
+        <p>
+          DataZen 的 SQL 智能编辑器通过 Alt+Enter 触发上下文意图菜单，支持星号展开、INSERT
+          模板生成、限定符添加、子查询包裹等操作，大幅提升 SQL 编写效率。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 9 月 20 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>INSERT 语句秒写完：Alt+Enter 智能意图操作</h1>
+        <p>
+          写 SQL 的时候，你有没有遇到过这种情况：想写一条
+          <code>INSERT INTO</code>
+          语句，但表里有十几个字段，你得一个一个敲字段名，再一个一个填值，稍不留神就拼错了列名或者漏掉了逗号。
+        </p>
+        <p>
+          这种重复性操作不仅枯燥，还特别容易出错。尤其是在表结构经常变化的场景下，手动维护 INSERT
+          语句简直是一种折磨。
+        </p>
+        <p>
+          DataZen 的 SQL 编辑器内置了一套&quot;智能意图&quot;系统，通过一个快捷键
+          <code>Alt+Enter</code
+          >，就能让你在光标所在位置触发上下文相关的操作建议。不是简单的代码补全，而是真正理解你在写什么，然后帮你完成最繁琐的那部分工作。
+        </p>
+        <h2>Alt+Enter 触发意图菜单</h2>
+        <p>
+          在 DataZen 的 SQL 编辑器中，你不需要选中任何文本——光标停在任意位置，按下
+          <code>Alt+Enter</code>，编辑器会分析当前上下文，弹出一个上下文相关的操作建议菜单。
+        </p>
+        <p>
+          这个菜单会根据你的光标位置、当前正在编辑的 SQL 语句、以及数据库的 Schema
+          信息，智能判断你可能需要的操作。
+        </p>
+        <h2>星号展开：SELECT * 不再是坏习惯</h2>
+        <p>
+          写
+          <code>SELECT * FROM _blog_employee</code>
+          很爽，但实际开发中你很少真的需要所有字段。问题是，手动把
+          <code>*</code> 替换成一长串列名实在太麻烦了。
+        </p>
+        <p>
+          在 DataZen 中，把光标放在 <code>SELECT *</code> 的星号上，按下
+          <code>Alt+Enter</code>，编辑器会自动展开为所有列名：
+        </p>
+        <pre><code class="language-sql">-- 展开前
+SELECT * FROM _blog_employee
+
+-- 展开后
+SELECT id, name, email, salary, dept_id, is_active, hire_date, created_at, updated_at FROM _blog_employee
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-star-expand.png"
+            alt="星号展开"
+          />
+        </p>
+        <p>
+          展开后，你可以按需删除不需要的列，比手动敲快了十倍不止。而且列名是从数据库 Schema
+          实时获取的，不用担心拼写错误。
+        </p>
+        <h2>INSERT 模板：告别字段名拼写地狱</h2>
+        <p>这大概是 <code>Alt+Enter</code> 最实用的场景了。</p>
+        <p>
+          通常写一条 INSERT
+          语句，你需要先查表结构，记下所有字段名和类型，然后手动拼出完整的语句。如果表有十几个字段，光敲字段名就要花好几分钟。
+        </p>
+        <p>
+          在 DataZen 中，只需要输入 <code>INSERT INTO _blog_employee ()</code>，把光标放在括号里，按
+          <code>Alt+Enter</code>，编辑器会自动展开为完整的 INSERT 模板：
+        </p>
+        <pre><code class="language-sql">-- 展开前
+INSERT INTO _blog_employee ()
+
+-- 展开后
+INSERT INTO _blog_employee (
+    id,
+    name,
+    email,
+    salary,
+    dept_id,
+    is_active,
+    hire_date,
+    created_at,
+    updated_at
+) VALUES (
+    /* id */ NULL,
+    /* name */ &#39;&#39;,
+    /* email */ &#39;&#39;,
+    /* salary */ 0,
+    /* dept_id */ NULL,
+    /* is_active */ TRUE,
+    /* hire_date */ NOW(),
+    /* created_at */ NOW(),
+    /* updated_at */ NOW()
+);
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-insert-template.png"
+            alt="INSERT 模板展开"
+          />
+        </p>
+        <p>
+          每个值前面都有列名注释，类型也做了智能推断：字符串用空字符串占位，数字用 0，时间字段用
+          <code>NOW()</code>。你只需要把占位值替换成实际数据就行了。
+        </p>
+        <p>
+          更贴心的是，如果你只想插入部分字段，展开后直接删除不需要的列和对应的值，比从零开始写要高效得多。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-insert-columns.png"
+            alt="INSERT 列选择"
+          />
+        </p>
+        <h2>限定符添加与移除</h2>
+        <p>
+          写复杂查询时，经常需要给列名加上表别名前缀，比如 <code>e.name</code> 而不是
+          <code>name</code>。如果要批量添加或者移除这些前缀，手动改又累又容易漏。
+        </p>
+        <p>
+          在 DataZen 中，光标放在列名上按 <code>Alt+Enter</code>，可以快速添加或移除表别名前缀：
+        </p>
+        <ul>
+          <li>添加：<code>name</code> → <code>e.name</code></li>
+          <li>移除：<code>e.name</code> → <code>name</code></li>
+        </ul>
+        <p>
+          在多表 JOIN 的查询中，这个功能特别有用——快速给所有列加上限定符，避免&quot;ambiguous
+          column&quot;错误。
+        </p>
+        <h2>子查询包裹</h2>
+        <p>
+          有时候你想把一个普通的表达式包裹成子查询，比如把
+          <code>SELECT id FROM _blog_employee WHERE is_active = 1</code> 包裹成
+          <code>SELECT * FROM (SELECT id FROM _blog_employee WHERE is_active = 1) AS subquery</code
+          >。
+        </p>
+        <p>
+          在 DataZen 中，选中你想要包裹的 SQL 片段，按
+          <code>Alt+Enter</code>，选择&quot;包裹为子查询&quot;，编辑器会自动帮你加上外层的
+          <code>SELECT * FROM (...) AS subquery</code> 结构。
+        </p>
+        <h2>函数签名提示</h2>
+        <p>
+          写 SQL 函数时，你是否经常忘记某个函数的参数顺序？比如 <code>SUBSTRING</code> 是
+          <code>(str, start, length)</code> 还是 <code>(str, length, start)</code>？
+        </p>
+        <p>
+          在 DataZen 中，输入函数名并按下左括号
+          <code>(</code> 后，编辑器会自动弹出函数签名提示，显示参数名称和类型：
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-signature-help.png"
+            alt="函数签名提示"
+          />
+        </p>
+        <p>
+          对于不熟悉的函数，这个功能可以帮你省去查阅文档的时间。对于熟悉的函数，它也能帮你确认参数顺序，避免低级错误。
+        </p>
+        <h2>实际场景演示</h2>
+        <p>让我们把上面的功能串起来，看一个实际的开发场景。</p>
+        <p>假设你正在为一个员工管理系统编写批量导入脚本：</p>
+        <p>
+          <strong>第一步</strong>：输入表名，用 <code>Alt+Enter</code> 展开 INSERT
+          模板——不用查字段名了。
+        </p>
+        <p><strong>第二步</strong>：删除不需要自动填充的字段（比如自增的 <code>id</code>）。</p>
+        <p>
+          <strong>第三步</strong>：输入 <code>SELECT *</code> 查询部门表，用
+          <code>Alt+Enter</code> 展开字段，快速选择需要的列。
+        </p>
+        <p><strong>第四步</strong>：给列名加上 <code>d.</code> 前缀，避免多表 JOIN 时的歧义。</p>
+        <p>
+          整个过程，从&quot;我记得员工表大概有十几个字段&quot;到&quot;一条完整的 INSERT...SELECT
+          语句&quot;，可能只需要两三分钟。
+        </p>
+        <p>
+          这就是智能意图的价值——它不是帮你写
+          SQL，而是帮你跳过那些重复、无聊、容易出错的机械操作，让你把精力集中在业务逻辑上。
+        </p>
+        <h2>写在最后</h2>
+        <p>
+          SQL 编辑器的智能程度，直接影响你的工作效率。DataZen 的
+          <code>Alt+Enter</code> 意图系统，从星号展开到 INSERT
+          模板，从限定符管理到子查询包裹，覆盖了日常 SQL 编写中最常见的痛点。
+        </p>
+        <p>
+          配合函数签名提示和实时补全，你可以把更多的精力放在思考业务逻辑上，而不是和编辑器较劲。
+        </p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

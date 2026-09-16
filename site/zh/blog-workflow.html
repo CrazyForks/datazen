@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>微服务跨库查询：用 Workflow 一键追踪业务全链路数据 — DataZen</title>
+    <meta
+      name="description"
+      content="微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML 串联多库查询，一键追踪业务全链路数据。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-workflow.html" />
+    <link rel="alternate" hreflang="en" href="https://flyxl.github.io/datazen/blog-workflow.html" />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-workflow.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-workflow.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="微服务跨库查询：用 Workflow 一键追踪业务全链路数据" />
+    <meta
+      property="og:description"
+      content="微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML 串联多库查询，一键追踪业务全链路数据。"
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/zh/blog-workflow.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="微服务跨库查询：用 Workflow 一键追踪业务全链路数据" />
+    <meta
+      name="twitter:description"
+      content="微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML 串联多库查询，一键追踪业务全链路数据。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "微服务跨库查询：用 Workflow 一键追踪业务全链路数据",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-14",
+        "description": "微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML 串联多库查询，一键追踪业务全链路数据。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-workflow.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "微服务跨库查询：用 Workflow 一键追踪业务全链路数据",
+            "item": "https://flyxl.github.io/datazen/zh/blog-workflow.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>微服务跨库查询：用 Workflow 一键追踪业务全链路数据</h1>
+        <p>
+          微服务架构下追踪一笔订单需要查 5 个不同数据库？DataZen Workflow 支持跨库操作，用 YAML
+          串联多库查询，一键追踪业务全链路数据。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 10 月 14 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>微服务跨库查询：用 Workflow 一键追踪业务全链路数据</h1>
+        <p>
+          你有没有遇到过这种情况：线上一个用户投诉&quot;我的订单状态不对&quot;，你需要排查这个问题。
+        </p>
+        <p>
+          打开订单服务的数据库，查到订单记录——状态是&quot;已支付&quot;。但用户说没收到货，你需要去库存服务查一下库存扣减记录，再去物流服务查一下发货状态，再去支付服务确认支付回调是否成功，最后去通知服务看有没有发出发货通知。
+        </p>
+        <p><strong>5 个微服务，5 个数据库，5 次登录，5 次手动执行 SQL。</strong></p>
+        <p>
+          一个问题排查下来，光是在不同数据库之间切换就花了半小时。更糟糕的是，你得在脑子里把这几个数据库的结果拼在一起——订单在
+          PostgreSQL 里，库存在 MySQL 里，物流在 MongoDB 里，支付在另一个 PostgreSQL 实例里。
+        </p>
+        <p>
+          这不是个例。微服务架构下，<strong>业务数据被分散到多个独立数据库中</strong>，追踪一笔业务的完整链路成了日常最痛苦的事情之一。
+        </p>
+        <h2>Workflow：把跨库查询变成一个文件</h2>
+        <p>
+          DataZen 的 YAML Workflow 正是为解决这个问题而生的。你用一个 YAML
+          文件定义跨多个数据库的查询步骤，DataZen 按顺序执行，结果统一展示。
+        </p>
+        <p>一个典型的微服务链路追踪 Workflow 长这样：</p>
+        <pre><code class="language-yaml">name: 订单全链路追踪
+description: 追踪订单从支付到发货的完整状态
+
+parameters:
+  - name: order_id
+    type: string
+    description: 订单号
+
+steps:
+  - name: 查询订单状态
+    connection: order-service
+    sql: &quot;SELECT id, status, user_id, amount, created_at FROM orders WHERE id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询支付记录
+    connection: payment-service
+    sql: &quot;SELECT order_id, payment_status, paid_at, transaction_id FROM payments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询库存扣减
+    connection: inventory-service
+    sql: &quot;SELECT order_id, product_id, quantity, deducted_at FROM inventory_deductions WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询物流状态
+    connection: logistics-service
+    sql: &quot;SELECT order_id, tracking_no, status AS logistics_status, shipped_at FROM shipments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 查询通知记录
+    connection: notification-service
+    sql: &quot;SELECT order_id, channel, sent_at, status AS notify_status FROM notifications WHERE order_id = &#39;{{order_id}}&#39; AND type = &#39;shipping&#39;&quot;
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-cross-db.png"
+            alt="跨库操作示意"
+          />
+        </p>
+        <p>
+          一个命令，五个数据库的结果全部拿到。你不需要登录五个不同的数据库客户端，不需要在脑子里拼凑结果——Workflow
+          引擎替你搞定连接管理、执行调度、结果汇总。
+        </p>
+        <h2>核心能力：跨库操作</h2>
+        <p>Workflow 的核心是 <code>connection</code> 字段——每个 Step 可以指定不同的数据库连接。</p>
+        <pre><code class="language-yaml">steps:
+  - name: 从 PostgreSQL 查订单
+    connection: order-db
+    sql: &quot;SELECT * FROM orders WHERE id = 123&quot;
+
+  - name: 从 MySQL 查库存
+    connection: inventory-db
+    sql: &quot;SELECT * FROM stock WHERE product_id = 456&quot;
+
+  - name: 从 MongoDB 查日志
+    connection: log-db
+    sql: &quot;SELECT * FROM access_logs WHERE order_id = 123&quot;
+</code></pre>
+        <p>
+          DataZen 的 Workflow
+          引擎会在后台管理所有连接的生命周期——连接池、超时、重连、断开，你不需要操心。不同数据库的
+          SQL 方言差异也被引擎处理，你只需要写正确的 SQL。
+        </p>
+        <p>
+          <strong>一个 Workflow 可以操作任意多个数据库连接</strong
+          >，不限数量、不限类型。PostgreSQL、MySQL、SQLite、Redis、ClickHouse——只要 DataZen
+          能连上的数据库，Workflow 都能操作。
+        </p>
+        <h2>变量与参数化：让 Workflow 可复用</h2>
+        <p>
+          硬编码的 Workflow 用处有限。DataZen 支持在 SQL 中使用变量，让 Workflow 变成可复用的模板：
+        </p>
+        <pre><code class="language-yaml">name: 跨库数据校验
+
+parameters:
+  - name: order_id
+    type: string
+    description: 要校验的订单号
+
+steps:
+  - name: 订单表：查询订单
+    connection: order-service
+    sql: &quot;SELECT id, status, amount FROM orders WHERE id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 支付表：查询支付状态
+    connection: payment-service
+    sql: &quot;SELECT payment_status, amount AS paid_amount FROM payments WHERE order_id = &#39;{{order_id}}&#39;&quot;
+
+  - name: 校验金额一致性
+    sql: |
+      SELECT 
+        &#39;{{order_id}}&#39; AS order_id,
+        o.amount AS order_amount,
+        p.paid_amount,
+        CASE WHEN o.amount = p.paid_amount THEN &#39;一致&#39; ELSE &#39;不一致&#39; END AS check_result
+      FROM (SELECT {{steps.0.result.amount}} AS amount) o
+      CROSS JOIN (SELECT {{steps.1.result.paid_amount}} AS paid_amount) p
+</code></pre>
+        <p>
+          执行时，DataZen 弹出参数输入框，你输入订单号就能一键完成跨库校验。同一个 Workflow
+          可以反复使用，排查不同订单时只需要改一个参数。
+        </p>
+        <h2>实际场景</h2>
+        <h3>场景一：微服务数据一致性巡检</h3>
+        <p>定期检查各服务之间的数据是否一致：</p>
+        <pre><code class="language-yaml">name: 每日数据一致性巡检
+description: 每天检查订单、支付、库存三方数据一致性
+
+parameters:
+  - name: check_date
+    type: string
+    default: &quot;{{date}}&quot;
+    description: 巡检日期
+
+steps:
+  - name: 查询当日订单
+    connection: order-service
+    id: orders
+    sql: |
+      SELECT id, status, amount 
+      FROM orders 
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 查询当日支付
+    connection: payment-service
+    id: payments
+    sql: |
+      SELECT order_id, payment_status, amount
+      FROM payments
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 查询当日库存变动
+    connection: inventory-service
+    id: inventory
+    sql: |
+      SELECT order_id, product_id, quantity
+      FROM inventory_deductions
+      WHERE DATE(created_at) = &#39;{{check_date}}&#39;
+
+  - name: 汇总巡检结果
+    sql: |
+      SELECT 
+        (SELECT COUNT(*) FROM {{steps.0.result}}) AS total_orders,
+        (SELECT COUNT(*) FROM {{steps.1.result}} WHERE payment_status = &#39;paid&#39;) AS paid_orders,
+        (SELECT COUNT(*) FROM {{steps.2.result}}) AS deducted_count
+</code></pre>
+        <h3>场景二：跨库数据迁移</h3>
+        <p>微服务拆分后，需要把数据从单体库迁移到各个微服务的独立库：</p>
+        <pre><code class="language-yaml">name: 用户数据拆分迁移
+description: 从单体用户库迁移到独立的用户服务库
+
+steps:
+  - name: 从单体库导出用户数据
+    connection: monolith-db
+    sql: &quot;SELECT id, username, email, phone, created_at FROM users WHERE id &gt; 0&quot;
+
+  - name: 清空用户服务库
+    connection: user-service-db
+    sql: &quot;TRUNCATE TABLE users&quot;
+
+  - name: 插入到用户服务库
+    connection: user-service-db
+    sql: |
+      INSERT INTO users (id, username, email, phone, created_at)
+      SELECT id, username, email, phone, created_at
+      FROM dblink(&#39;monolith connection&#39;, &#39;SELECT id, username, email, phone, created_at FROM users&#39;)
+      AS t(id INT, username TEXT, email TEXT, phone TEXT, created_at TIMESTAMP)
+
+  - name: 验证迁移结果
+    connection: user-service-db
+    sql: &quot;SELECT COUNT(*) AS migrated_count FROM users&quot;
+</code></pre>
+        <h3>场景三：告警数据聚合</h3>
+        <p>从多个监控数据库中聚合告警信息：</p>
+        <pre><code class="language-yaml">name: 告警聚合查询
+description: 从多个监控系统聚合告警数据
+
+parameters:
+  - name: hours
+    type: number
+    default: 24
+    description: 查询最近多少小时
+
+steps:
+  - name: 应用错误日志
+    connection: app-monitor
+    sql: |
+      SELECT &#39;app-error&#39; AS source, error_type, COUNT(*) AS count
+      FROM error_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY error_type
+
+  - name: 数据库慢查询
+    connection: db-monitor
+    sql: |
+      SELECT &#39;slow-query&#39; AS source, query_type, COUNT(*) AS count
+      FROM slow_query_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY query_type
+
+  - name: API 超时
+    connection: api-monitor
+    sql: |
+      SELECT &#39;api-timeout&#39; AS source, endpoint, COUNT(*) AS count
+      FROM timeout_logs
+      WHERE created_at &gt; NOW() - INTERVAL &#39;{{hours}} hours&#39;
+      GROUP BY endpoint
+
+  - name: 汇总告警
+    sql: |
+      SELECT * FROM {{steps.0.result}}
+      UNION ALL
+      SELECT * FROM {{steps.1.result}}
+      UNION ALL
+      SELECT * FROM {{steps.2.result}}
+</code></pre>
+        <h2>条件执行：让 Workflow 有&quot;判断力&quot;</h2>
+        <p>
+          不是所有步骤都应该无条件执行。DataZen 支持条件执行——根据上一步的结果决定是否执行下一步：
+        </p>
+        <pre><code class="language-yaml">name: 智能数据清理
+
+steps:
+  - name: 检查待清理数据量
+    id: check_count
+    sql: &quot;SELECT COUNT(*) AS cnt FROM expired_data&quot;
+
+  - name: 数据量超过阈值，执行清理
+    when: &quot;{{check_count.result.cnt}} &gt; 10000&quot;
+    sql: &quot;DELETE FROM expired_data WHERE created_at &lt; NOW() - INTERVAL &#39;90 days&#39;&quot;
+
+  - name: 数据量不足，跳过清理
+    when: &quot;{{check_count.result.cnt}} &lt;= 10000&quot;
+    sql: &quot;SELECT &#39;数据量不足，跳过清理&#39; AS message&quot;
+</code></pre>
+        <p><code>when</code> 条件支持比较运算和逻辑运算，可以组合出复杂的判断逻辑。</p>
+        <h2>GUI 编辑器：可视化构建 Workflow</h2>
+        <p>不习惯写 YAML？DataZen 提供了可视化 Workflow 编辑器，让你用拖拽的方式构建工作流。</p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-editor.png"
+            alt="Workflow 编辑器"
+          />
+        </p>
+        <p>在编辑器中：</p>
+        <ul>
+          <li>从左侧面板拖拽 Step 到画布上。</li>
+          <li>点击 Step 填写 SQL 和配置参数。</li>
+          <li>用连线表示步骤之间的执行顺序。</li>
+          <li>配置条件分支和错误处理策略。</li>
+        </ul>
+        <p>
+          编辑器会自动生成对应的 YAML 文件，你也可以在 YAML 和可视化之间切换——选择你最舒服的方式。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/11-workflow-execution.png"
+            alt="Workflow 执行界面"
+          />
+        </p>
+        <p>
+          执行 Workflow 时，GUI
+          会实时展示每个步骤的执行状态、耗时和结果。哪一步出错了、哪一步耗时异常，一目了然。
+        </p>
+        <h2>写在最后</h2>
+        <p>
+          微服务架构带来了更好的可扩展性和可维护性，但也带来了一个副作用：<strong>业务数据被分散到多个数据库中</strong>。追踪一笔业务的完整链路，需要在多个数据库之间来回切换。
+        </p>
+        <p>
+          DataZen 的 Workflow 把这个过程变成了一个 YAML
+          文件——定义一次，反复执行。跨库查询、参数化模板、条件分支、错误处理，全在一个地方搞定。
+        </p>
+        <p>不需要写脚本，不需要登录多个客户端，不需要在脑子里拼凑结果。</p>
+        <p>现在就试试吧——完全免费，无需注册。</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

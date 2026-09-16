@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SQL 查询结果一键生成 Dashboard 数据看板 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard 数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-dashboard.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-dashboard.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-dashboard.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-dashboard.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="SQL 查询结果一键生成 Dashboard 数据看板" />
+    <meta
+      property="og:description"
+      content="DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard 数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。"
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/zh/blog-dashboard.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SQL 查询结果一键生成 Dashboard 数据看板" />
+    <meta
+      name="twitter:description"
+      content="DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard 数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "SQL 查询结果一键生成 Dashboard 数据看板",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-12",
+        "description": "DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard 数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-dashboard.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "SQL 查询结果一键生成 Dashboard 数据看板",
+            "item": "https://flyxl.github.io/datazen/zh/blog-dashboard.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>SQL 查询结果一键生成 Dashboard 数据看板</h1>
+        <p>
+          DataZen 支持将 SQL 查询结果直接生成可视化 Dashboard
+          数据看板。支持折线图、柱状图、饼图、表格等多种图表类型，拖拽式布局，定时刷新，一个看板包含多个查询图表。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 10 月 12 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>SQL 查询结果一键生成 Dashboard 数据看板</h1>
+        <p>
+          你有没有过这样的经历：运营同事跑来问你&quot;能不能帮我看一下这周的日活数据&quot;，你打开终端执行了一条
+          SQL，把结果贴到微信群里，然后对方说&quot;能不能做成图表？&quot;——于是你把数据复制到
+          Excel，调整格式，插入图表，导出截图，再发回群里。
+        </p>
+        <p>这个流程可能要花 15 分钟，而且每次数据更新都要重来一遍。</p>
+        <p>DataZen 的 Dashboard 功能，把这个流程压缩到了几次点击。</p>
+        <h2>从 SQL 到看板，只需三步</h2>
+        <p>
+          DataZen 的 Dashboard 不需要你离开应用，也不需要导出数据到其他工具。它直接基于你的 SQL
+          查询结果生成可视化图表。
+        </p>
+        <p>
+          <strong>第一步</strong>：在 SQL
+          编辑器中写好查询，执行后你会看到结果表格旁边有一个&quot;添加到 Dashboard&quot;的按钮。
+        </p>
+        <p>
+          <strong>第二步</strong
+          >：点击按钮，选择图表类型——折线图、柱状图、饼图、面积图、表格，或者数字卡片。
+        </p>
+        <p>
+          <strong>第三步</strong>：图表立即呈现在 Dashboard
+          中。拖拽调整位置，拖动边框调整大小，一个专业的数据看板就这样诞生了。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/10-dashboard-overview.png"
+            alt="Dashboard 总览"
+          />
+        </p>
+        <p>
+          没有数据导出，没有格式转换，没有额外的 BI 工具。你的数据从数据库到可视化，全程留在 DataZen
+          里。
+        </p>
+        <h2>丰富的图表类型</h2>
+        <p>DataZen 内置多种图表类型，覆盖常见的数据可视化需求：</p>
+        <ul>
+          <li>
+            <strong>折线图</strong> — 适合展示时间序列数据：日活趋势、访问量变化、系统负载波动。
+          </li>
+          <li>
+            <strong>柱状图</strong> — 适合对比：各渠道转化率、不同产品的销售额、部门间的人数对比。
+          </li>
+          <li><strong>饼图</strong> — 适合占比：流量来源分布、数据库类型占比、用户地域分布。</li>
+          <li><strong>面积图</strong> — 适合堆叠展示：多指标的趋势叠加。</li>
+          <li>
+            <strong>表格</strong> — 适合需要查看明细数据的场景：待处理工单列表、最近的订单记录。
+          </li>
+          <li>
+            <strong>数字卡片</strong> — 适合一目了然的关键指标：总用户数、今日订单量、服务器在线数。
+          </li>
+        </ul>
+        <p>
+          每种图表都支持自定义标题、颜色方案和数据格式。你不需要学任何可视化库或
+          CSS，全靠鼠标点击配置。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/10-dashboard-chart-config.png"
+            alt="图表配置界面"
+          />
+        </p>
+        <h2>拖拽式布局，自由组合</h2>
+        <p>Dashboard 的布局完全由你掌控。你可以：</p>
+        <ul>
+          <li><strong>拖拽调整位置</strong>：把&quot;今日订单数&quot;卡片拖到看板最显眼的位置。</li>
+          <li><strong>拖动边框调整大小</strong>：让关键图表占据更大的面积。</li>
+          <li><strong>自由排列组合</strong>：没有固定的网格约束，你觉得怎么好看就怎么摆。</li>
+        </ul>
+        <p>一个看板可以包含来自不同 SQL 查询的图表。比如，你可以同时展示：</p>
+        <ul>
+          <li>来自 PostgreSQL 的用户增长数据（折线图）</li>
+          <li>来自 MySQL 的订单统计（柱状图）</li>
+          <li>来自 Redis 的在线用户数（数字卡片）</li>
+        </ul>
+        <p>不同数据库、不同查询、不同类型的数据，统一呈现在同一个看板中。</p>
+        <h2>定时刷新，数据实时更新</h2>
+        <p>
+          看板不是静态的截图。DataZen 支持为 Dashboard 中的图表设置定时刷新间隔——每 5 秒、30 秒、1
+          分钟、5 分钟，或者自定义间隔。
+        </p>
+        <p>
+          启用自动刷新后，DataZen 会按设定的间隔重新执行对应的 SQL
+          查询，并更新图表数据。这意味着你打开一个 Dashboard，看到的永远是最新的数据。
+        </p>
+        <p>这个功能特别适合以下场景：</p>
+        <ul>
+          <li>
+            <strong>运维监控看板</strong>：实时展示服务器 CPU 使用率、内存占用、连接数等关键指标。
+          </li>
+          <li><strong>运营数据看板</strong>：定时刷新今日注册数、活跃用户数、订单量。</li>
+          <li>
+            <strong>销售看板</strong>：大屏展示当天的实时销售数据，放在办公室的大屏幕上一目了然。
+          </li>
+        </ul>
+        <h2>实际场景：三种看板示例</h2>
+        <h3>运营数据看板</h3>
+        <p>一个典型的运营看板包含：</p>
+        <table>
+          <thead>
+            <tr>
+              <th>图表</th>
+              <th>数据来源</th>
+              <th>刷新间隔</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>今日新增用户（数字卡片）</td>
+              <td><code>SELECT COUNT(*) FROM users WHERE created_at &gt;= CURRENT_DATE</code></td>
+              <td>30 秒</td>
+            </tr>
+            <tr>
+              <td>7 日日活趋势（折线图）</td>
+              <td><code>SELECT DATE(login_at), COUNT(DISTINCT user_id) FROM logins ...</code></td>
+              <td>5 分钟</td>
+            </tr>
+            <tr>
+              <td>渠道来源分布（饼图）</td>
+              <td><code>SELECT source, COUNT(*) FROM users GROUP BY source</code></td>
+              <td>1 小时</td>
+            </tr>
+            <tr>
+              <td>最近 10 笔订单（表格）</td>
+              <td><code>SELECT * FROM orders ORDER BY created_at DESC LIMIT 10</code></td>
+              <td>1 分钟</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>销售看板</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>图表</th>
+              <th>数据来源</th>
+              <th>刷新间隔</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>本月销售额（数字卡片）</td>
+              <td><code>SELECT SUM(amount) FROM orders WHERE ...</code></td>
+              <td>1 分钟</td>
+            </tr>
+            <tr>
+              <td>月度销售趋势（折线图）</td>
+              <td><code>SELECT DATE_TRUNC(&#39;month&#39;, created_at), SUM(amount) ...</code></td>
+              <td>1 小时</td>
+            </tr>
+            <tr>
+              <td>Top 10 产品（柱状图）</td>
+              <td><code>SELECT product_name, SUM(amount) ... GROUP BY product_name</code></td>
+              <td>1 小时</td>
+            </tr>
+            <tr>
+              <td>区域分布（饼图）</td>
+              <td><code>SELECT region, COUNT(*) ... GROUP BY region</code></td>
+              <td>1 天</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>技术监控看板</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>图表</th>
+              <th>数据来源</th>
+              <th>刷新间隔</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>在线连接数（数字卡片）</td>
+              <td><code>SELECT COUNT(*) FROM pg_stat_activity</code></td>
+              <td>5 秒</td>
+            </tr>
+            <tr>
+              <td>慢查询数量（柱状图）</td>
+              <td>
+                <code>SELECT COUNT(*) FROM pg_stat_statements WHERE mean_time &gt; 1000</code>
+              </td>
+              <td>30 秒</td>
+            </tr>
+            <tr>
+              <td>数据库大小（折线图）</td>
+              <td><code>SELECT pg_database_size(current_database())</code></td>
+              <td>5 分钟</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>轻量 vs 重量级：为什么选择 DataZen Dashboard</h2>
+        <p>
+          市面上有不少专业的 BI
+          工具——Metabase、Grafana、Superset、Tableau。它们功能强大，但也有明显的门槛：
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>对比维度</th>
+              <th>DataZen Dashboard</th>
+              <th>专业 BI 工具</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>部署成本</td>
+              <td>内置功能，零部署</td>
+              <td>需要单独安装和配置</td>
+            </tr>
+            <tr>
+              <td>数据准备</td>
+              <td>直接用 SQL 查询结果</td>
+              <td>通常需要先导入数据源</td>
+            </tr>
+            <tr>
+              <td>学习曲线</td>
+              <td>几分钟上手</td>
+              <td>几小时到几天</td>
+            </tr>
+            <tr>
+              <td>适用场景</td>
+              <td>个人/小团队快速看数据</td>
+              <td>企业级数据分析平台</td>
+            </tr>
+            <tr>
+              <td>协作能力</td>
+              <td>导出截图分享</td>
+              <td>多人协作、权限管理</td>
+            </tr>
+            <tr>
+              <td>扩展性</td>
+              <td>满足 80% 的日常需求</td>
+              <td>无限扩展</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          DataZen Dashboard 的定位不是取代专业 BI 工具，而是解决一个更轻量的需求：<strong
+            >当你只想快速看看数据的时候，不需要启动一个完整的 BI 平台</strong
+          >。
+        </p>
+        <p>它是你手边的&quot;快速看板&quot;——连接数据库，写几条 SQL，图表就出来了。</p>
+        <h2>写在最后</h2>
+        <p>
+          数据可视化不应该是 BI 工程师的专属技能。DataZen 让每个人都能用 SQL
+          查询结果生成看板，用图表说话，而不是用截图和截图。
+        </p>
+        <p>
+          下次运营同事再问你&quot;能不能帮我看一下数据&quot;，你可以直接打开一个已经配好的
+          Dashboard——数据实时更新，图表一目了然。
+        </p>
+        <p>现在就试试吧——完全免费，无需注册。</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>
