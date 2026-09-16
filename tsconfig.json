@@ -20,11 +20,7 @@
       "@datazen/extension-points": ["./packages/extension-points/src/index.ts"],
       "@datazen/wapp-sdk": ["./packages/wapp-sdk/src/index.ts"],
       "@datazen/extension-sdk": ["./packages/wapp-sdk/src/index.ts"],
-      "@datazen/ui": ["./packages/ui/src/index.ts"],
-      "@datazen/extension-sql-editor-pro": [
-        "./packages/pro-extensions/sql-editor-pro/src/index.ts",
-        "/tmp/datazen-extension-sql-editor-pro/src/index.ts"
-      ]
+      "@datazen/ui": ["./packages/ui/src/index.ts"]
     }
   },
   "include": ["src", "packages/driver-sdk", "packages/extension-points", "packages/wapp-sdk", "packages/ui"],

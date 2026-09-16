@@ -2,12 +2,11 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
-import { existsSync } from 'fs';
 
-const proLocalPkg = resolve(__dirname, 'packages/pro-extensions/sql-editor-pro/src/index.ts');
-const proTmpFallback = resolve('/tmp/datazen-extension-sql-editor-pro/src/index.ts');
-const proPath = existsSync(proLocalPkg) ? proLocalPkg : proTmpFallback;
-
+// Track B: the Pro extension is NOT statically bundled. PROD loads the staged
+// builtin-ep bundle at runtime; DEV serves the extension source from disk via
+// /@fs (see generated-pro.ts). No alias to the extension source here — a
+// static alias would bundle a second copy of Pro and double-register it.
 export default defineConfig({
   // Tauri serves the webview from a custom protocol; absolute `/assets/...`
   // URLs can miss the asset handler and hit ipc:// (GET → "only POST and OPTIONS are allowed").
@@ -31,7 +30,6 @@ export default defineConfig({
       '@datazen/wapp-sdk': resolve(__dirname, 'packages/wapp-sdk/src/index.ts'),
       '@datazen/extension-sdk': resolve(__dirname, 'packages/wapp-sdk/src/index.ts'),
       '@datazen/ui': resolve(__dirname, 'packages/ui/src/index.ts'),
-      '@datazen/extension-sql-editor-pro': proPath,
     },
   },
   // Main window: index.html (with splash). Sub-windows: window.html (no splash).

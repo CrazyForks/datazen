@@ -8,11 +8,15 @@ import {
   assertPackageLayout,
   createDzxArchive,
   dzxFileName,
+  HOST_GLOBAL_NAME,
+  HOST_SHARED_MODULES,
   listZipEntries,
   packEp,
   parsePackArgs,
   readManifestVersion,
   REQUIRED_PACKAGE_PATHS,
+  rewriteEpBundleFile,
+  rewriteEpImportsToHostGlobals,
   stagePackageTree,
   syncLocales,
 } from '../pack-ep.mjs';
@@ -288,5 +292,107 @@ describe('[tester] sign-ep helpers and error paths', () => {
     expect(() => parsePrivateKeyMaterial(Buffer.from('short').toString('base64'))).toThrow(
       /32-byte Ed25519 seed/,
     );
+  });
+});
+
+describe('rewriteEpImportsToHostGlobals (track B blob loading)', () => {
+  const SAMPLE = [
+    'import { a as b, c } from "@datazen/extension-points";',
+    'import D, { x } from "react";',
+    'import * as ns from "@codemirror/view";',
+    'import "@datazen/ui";',
+    'export { p as q } from "@codemirror/state";',
+    'const m = await import("@codemirror/lint");',
+    'import rel from "./relative.js";',
+    'import abs from "/abs/path.js";',
+  ].join('\n');
+
+  it('rewrites every bare import form to the host singleton table', () => {
+    const { code, rewritten } = rewriteEpImportsToHostGlobals(SAMPLE);
+    expect(rewritten.sort()).toEqual(
+      [
+        '@codemirror/lint',
+        '@codemirror/state',
+        '@codemirror/view',
+        '@datazen/extension-points',
+        '@datazen/ui',
+        'react',
+      ].sort(),
+    );
+    // No bare shared-specifier import/export remains.
+    for (const spec of HOST_SHARED_MODULES) {
+      expect(code).not.toMatch(
+        new RegExp(`from\\s*["']${spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`),
+      );
+    }
+    // Relative + absolute specifiers pass through untouched.
+    expect(code).toContain('import rel from "./relative.js";');
+    expect(code).toContain('import abs from "/abs/path.js";');
+    // Default-import interop keeps `.default ?? namespace`.
+    expect(code).toContain('.default ?? ');
+    // The host global name is referenced, not a bare module.
+    expect(code).toContain(`globalThis.${HOST_GLOBAL_NAME}["react"]`);
+  });
+
+  it('named default re-export preserves the exported name', () => {
+    const { code } = rewriteEpImportsToHostGlobals('export { default as D, v } from "react";');
+    expect(code).toContain('export {');
+    expect(code).toContain('as D');
+    expect(code).toContain('as v');
+  });
+
+  it('is idempotent — a rewritten bundle has nothing left to rewrite', () => {
+    const once = rewriteEpImportsToHostGlobals(SAMPLE).code;
+    const twice = rewriteEpImportsToHostGlobals(once);
+    expect(twice.rewritten).toEqual([]);
+    expect(twice.code).toBe(once);
+  });
+
+  it('throws on unmapped bare specifiers instead of shipping a crashing bundle', () => {
+    expect(() => rewriteEpImportsToHostGlobals('import x from "@tauri-apps/api/core";')).toThrow(
+      /unmapped bare.*__DATAZEN_HOST__/,
+    );
+    expect(() => rewriteEpImportsToHostGlobals('export * from "react";')).toThrow(
+      /cannot rewrite 'export \* from/,
+    );
+  });
+
+  it('drops stale sourcemap refs invalidated by the rewrite', () => {
+    const { code } = rewriteEpImportsToHostGlobals(
+      'const a = 1;\n//# sourceMappingURL=index.esm.js.map\n',
+    );
+    expect(code).not.toContain('sourceMappingURL');
+  });
+
+  it('rewriteEpBundleFile rewrites a bundle file in place', () => {
+    const dir = join(tmpdir(), `rewrite-file-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'index.esm.js');
+    writeFileSync(file, 'import { a } from "@datazen/extension-points";\nexport const v = a;\n');
+    const { rewritten } = rewriteEpBundleFile(file);
+    expect(rewritten).toEqual(['@datazen/extension-points']);
+    expect(readFileSync(file, 'utf8')).toContain(`globalThis.${HOST_GLOBAL_NAME}`);
+  });
+
+  it('stagePackageTree ships a rewritten bundle (no stale map, signed after rewrite)', () => {
+    const src = join(tmpdir(), `rewrite-stage-src-${Date.now()}`);
+    const staged = join(tmpdir(), `rewrite-stage-staged-${Date.now()}`);
+    writeFixtureExtension(src);
+    writeFileSync(
+      join(src, 'dist/index.esm.js'),
+      'import { a } from "@datazen/extension-points";\nexport const v = a;\n',
+    );
+    writeFileSync(join(src, 'dist/index.esm.js.map'), '{"version":3}');
+    stagePackageTree(src, staged, { log: () => {} });
+    const bundle = readFileSync(join(staged, 'dist/index.esm.js'), 'utf8');
+    expect(bundle).toContain(`globalThis.${HOST_GLOBAL_NAME}`);
+    // The stale map is not staged (rewrite invalidates its mappings).
+    expect(existsSync(join(staged, 'dist/index.esm.js.map'))).toBe(false);
+    // Signature covers the rewritten bytes.
+    const sig = JSON.parse(readFileSync(join(staged, 'signature.sig'), 'utf8'));
+    const { sha256File: sha } = { sha256File };
+    expect(sig.files['dist/index.esm.js'].sha256).toBe(sha(join(staged, 'dist/index.esm.js')));
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
   });
 });

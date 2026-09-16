@@ -31,14 +31,17 @@ import * as reactDomAll from 'react-dom';
 import * as ui from '@datazen/ui';
 import * as cmView from '@codemirror/view';
 import * as cmState from '@codemirror/state';
+import * as cmLint from '@codemirror/lint';
+import * as cmAutocomplete from '@codemirror/autocomplete';
 import { useSettingsStore } from './stores/settingsStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 import { t } from './locales/t';
 
 // Expose host shared modules so the dynamically-loaded PRO extension can
-// resolve bare specifiers (e.g. `@datazen/extension-points`) from blob URLs.
-// The Vite plugin in the PRO extension rewrites these imports to reference
-// this global namespace at build time.
+// resolve bare specifiers from blob URLs. The pack-ep rewrite step
+// (scripts/pack-ep.mjs `rewriteEpImportsToHostGlobals`) redirects every bare
+// import in the staged bundle to this table at package time — keep the key
+// lists in sync or the blob-loaded bundle throws on a missing key.
 (globalThis as any).__DATAZEN_HOST__ = {
   '@datazen/extension-points': extensionPoints,
   '@datazen/ui': ui,
@@ -47,6 +50,8 @@ import { t } from './locales/t';
   'react/jsx-runtime': jsxRuntime,
   '@codemirror/view': cmView,
   '@codemirror/state': cmState,
+  '@codemirror/lint': cmLint,
+  '@codemirror/autocomplete': cmAutocomplete,
 };
 
 extensionPoints.setHostLocaleBridge({

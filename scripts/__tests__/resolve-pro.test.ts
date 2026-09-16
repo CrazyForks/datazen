@@ -81,20 +81,20 @@ describe('resolve-pro codegen output', () => {
     expect(content).not.toContain('@datazen/extension-sql-editor-pro');
   });
 
-  it('writes pro codegen with compile-time static import', () => {
+  it('writes pro codegen with builtin-ep runtime loader', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolve-pro-test-'));
     const file = join(dir, 'generated-pro.ts');
     writeProCodegen(file);
     expect(existsSync(file)).toBe(true);
     const content = readFileSync(file, 'utf-8');
     expect(content).toContain("export const DATAZEN_EDITION = 'pro'");
-    expect(content).toContain('@datazen/extension-sql-editor-pro');
-    expect(content).toContain('activateSqlEditorPro');
-    // Compile-time scheme: no hot-plug `loadFromUrl(...)` invocation and no
-    // `'builtin-ep'` resource literal (the codegen comment may mention the old
-    // scheme by name, so assert on the actual code path, not the prose).
-    expect(content).not.toContain('loadFromUrl(');
-    expect(content).not.toContain("'builtin-ep'");
+    // Track B: dynamic hot-plug through hostExtensionLoader + signature gate,
+    // resolved from the staged `builtin-ep` resource — no static alias import.
+    expect(content).toContain('hostExtensionLoader');
+    expect(content).toContain('loadFromUrl(');
+    expect(content).toContain('verifyExtensionPackage');
+    expect(content).toContain("'builtin-ep'");
+    expect(content).not.toContain('@datazen/extension-sql-editor-pro');
   });
 
   it('preserves existing generated-pro.ts when codegenOnly is run without explicit edition', () => {
@@ -173,7 +173,7 @@ describe('[tester] resolve-pro staging and edition flows', () => {
     expect(existsSync(join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro'))).toBe(false);
   });
 
-  it('test_tester_resolvePro_pro_uses_compile_time_import_when_checkout_available', () => {
+  it('test_tester_resolvePro_pro_stages_builtin_ep_for_runtime_loading', () => {
     const extDir = join(process.cwd(), 'packages/pro-extensions/sql-editor-pro');
     if (!existsSync(join(extDir, 'package.json'))) {
       return;
@@ -181,12 +181,16 @@ describe('[tester] resolve-pro staging and edition flows', () => {
     clearBuiltinEpStaging();
     const res = resolvePro({ edition: 'pro', proPath: extDir });
     expect(res).toMatchObject({ edition: 'pro', active: true, path: extDir });
-    // Compile-time install: no runtime `builtin-ep` asset is staged/bundled —
-    // the Pro source is statically imported into the host Vite graph. So there
-    // is no staging dir and the codegen must reference the static alias.
+    // Track B: the rewritten + signed bundle is staged as a Tauri resource and
+    // the codegen loads it dynamically — no static alias reference.
     const staged = join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro');
-    expect(existsSync(staged)).toBe(false);
-    expect(readFileSync(GENERATED_PRO_TS, 'utf-8')).toContain('@datazen/extension-sql-editor-pro');
+    expect(existsSync(join(staged, 'dist/index.esm.js'))).toBe(true);
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(true);
+    const stagedBundle = readFileSync(join(staged, 'dist/index.esm.js'), 'utf-8');
+    expect(stagedBundle).toContain('__DATAZEN_HOST__');
+    expect(readFileSync(GENERATED_PRO_TS, 'utf-8')).not.toContain(
+      '@datazen/extension-sql-editor-pro',
+    );
     clearBuiltinEpStaging();
   }, 120_000);
 

@@ -13,7 +13,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { buildTauriArgs, spawnTauri } from './ci-tauri-build.mjs';
+import { buildTauriArgs, checkProStagingReady, spawnTauri } from './ci-tauri-build.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -38,6 +38,18 @@ const args = buildTauriArgs({
   features: featureList,
   extraArgs: ['--debug'],
 });
+
+// Track B fail-fast, mirroring ci-tauri-build: a missing staged tree means the
+// debug bundle would ship without the Pro extension.
+if (edition === 'pro') {
+  const missing = checkProStagingReady();
+  if (missing.length > 0) {
+    console.error(
+      `[e2e-tauri-build] pro staging incomplete, missing: ${missing.join(', ')}`,
+    );
+    process.exit(1);
+  }
+}
 
 // Gate vite-gated E2E-only attributes (src/lib/tid.ts): the frontend build run by
 // Tauri's beforeBuildCommand inherits this env, so webdriver builds render
