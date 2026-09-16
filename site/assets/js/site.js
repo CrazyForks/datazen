@@ -98,7 +98,11 @@
 
   function detectLocale() {
     const path = location.pathname;
-    return /\/zh(\/|$)/.test(path) ? 'zh' : 'en';
+    if (/\/zh(\/|$)/.test(path)) return 'zh';
+    // Fallback: check the html lang attribute (generated blog pages set lang="zh-CN")
+    const lang = document.documentElement.lang || '';
+    if (/^zh/i.test(lang)) return 'zh';
+    return 'en';
   }
 
   function assetBase(locale) {
