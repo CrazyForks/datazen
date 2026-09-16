@@ -1,6 +1,6 @@
 # migration-transfer-core
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 - Branch: codex/migration-transfer-core
 - Worktree: .worktrees/datazen-migration-transfer-core
 - Implementation commit: see commit containing this progress record; final hash supplied in coordinator handoff.
@@ -58,3 +58,28 @@ This is wave 1, not Navicat parity. Materializing query_stream fallback is not b
 - Latest self-checks: injected Host data_transfer 36 passed; driver libs MySQL 86 / PostgreSQL 101 / SQLite 46 passed; real PG schema regression 1 passed (mixed case + literal table dot); real PG/MySQL bound write journeys 1 each passed; SQLite journey 1 passed; Vitest 3 files / 18 passed; tsc and diff whitespace checks passed.
 - BUG001 moved 修复中 → 待复测. No fresh desktop binary/E2E claim; independent Tester must rebuild and rerun.
 - Intentional limit: dotted schema names fail closed pending structured relation IDs. Bare get_table_schema does not newly inherit a PG connection schema; Transfer now always supplies its explicit logical schema.table reference.
+
+## Independent tester round 2 (2026-09-16)
+
+### A. Code review
+- Re-reviewed the full Wave 1 implementation plus BUG001 repair, including generic endpoint schema normalization, table-list filtering, inspect/count/preview/execute propagation, target writer metadata, PostgreSQL regclass quoting, driver bound writes, exact value decoders and spool/transaction paths.
+- Confirmed no Host database-family branch was added. Explicit dotted schema fails closed because the current string relation contract cannot represent it; catalog/database remains independent.
+- Found `migration-transfer-core-BUG-002`: the execution self-overwrite guard ignores schema and rejects a legitimate same-session/same-catalog transfer between different schemas when the table names match.
+
+### B. Independent rerun
+- Host implementation baseline: `data_transfer` 36/36 passed before the new regression test; the new dotted-schema no-write test passed 1/1, while the deliberate BUG002 repro failed 1/1 with the recorded validation error.
+- Driver crates: MySQL library 86/86 (94 total non-ignored), PostgreSQL library 101/101 (114 total non-ignored), SQLite library 46/46 (52 total including the transfer journey and schema-object integration tests).
+- Real driver probes: PostgreSQL schema qualification 1/1, PostgreSQL bound writes 1/1, MySQL bound writes 1/1, SQLite projected transfer/rollback journey 1/1.
+- Frontend: 3 files / 24 tests passed; `tsc --noEmit` passed.
+- Formal `pnpm tauri:build:webdriver` passed and produced the tested application bundle in this track's isolated Cargo target.
+
+### C. Coverage and E2E
+- Added meaningful UI journeys for unsupported pair explanation, endpoint-close events, setup inputs, object selection, inspect recovery, editable/copyable DDL, block warnings, cancellable execution and successful terminal status.
+- `DataTransferWindow.tsx`: statements 86.32% (303/351), branches 80.22% (211/263), functions 91.74% (100/109), lines 88.81% (278/313); all thresholds passed.
+- PostgreSQL exact-binary WebDriver journey 1/1 and MySQL journey 1/1 passed using the formal build; both verified skipped/reordered projection, physical target column reordering, binary bytes and exact 65-digit numeric/decimal values.
+- Real PostgreSQL metadata regression passed with mixed-case schema, same-name tables in two schemas and a literal dot in the table name; full native type lookup returned only the selected schema column.
+
+### D. Verdict
+- `migration-transfer-core-BUG-001` is independently verified and closed.
+- `TEST_FAILED` due to `migration-transfer-core-BUG-002`; the failing test is committed as the repair acceptance criterion. No business implementation was changed by the Tester.
+- Temporary app data, WebDriver process, isolated PostgreSQL fixture databases, transient MySQL tables and Cargo/codegen side effects were cleaned.

@@ -512,3 +512,82 @@ async fn source_metadata_and_bound_writer_target_use_endpoint_schema() {
         vec!["target_scope.same_table"]
     );
 }
+
+#[tokio::test]
+async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut transfer = job();
+    transfer.target.schema = Some("ambiguous.schema".into());
+    let tables = vec![inspected("same_table", vec![mapping("id", "id")])];
+    let source_schemas = HashMap::from([("same_table".into(), source.schema.clone())]);
+
+    let result = execute_same_family_data(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer,
+        &tables,
+        &source_schemas,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(result.rows_inserted, 0);
+    assert!(result.tables[0]
+        .error
+        .as_deref()
+        .is_some_and(|message| message.contains("structured relation support")));
+    let target_state = target.state.lock().unwrap();
+    assert_eq!(target_state.calls, 0);
+    assert!(target_state.metadata_refs.is_empty());
+}
+
+#[tokio::test]
+async fn test_tester_same_session_same_catalog_different_schemas_can_transfer_same_table_name() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut transfer = job();
+    transfer.source.db_session_id = "shared".into();
+    transfer.target.db_session_id = "shared".into();
+    transfer.source.database = "catalog".into();
+    transfer.target.database = "catalog".into();
+    transfer.source.schema = Some("source_schema".into());
+    transfer.target.schema = Some("target_schema".into());
+    let tables = vec![inspected("same_table", vec![mapping("id", "id")])];
+    let source_schemas = HashMap::from([("same_table".into(), source.schema.clone())]);
+
+    let result = execute_same_family_data(
+        &source,
+        &ConnectionHandle {
+            id: "shared".into(),
+            pool_id: "shared".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "shared".into(),
+            pool_id: "shared".into(),
+        },
+        &transfer,
+        &tables,
+        &source_schemas,
+        false,
+        None,
+    )
+    .await
+    .expect("different schemas are distinct relations and must not be rejected as self-overwrite");
+
+    assert!(!result.partial);
+    assert_eq!(result.rows_inserted, 1);
+    assert_eq!(target.state.lock().unwrap().committed.len(), 1);
+}
