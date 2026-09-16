@@ -3,6 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { usePanelHandlers } from '../usePanelHandlers';
 import { usePanelStore } from '../../../stores/panelStore';
 import { useActiveConnectionStore } from '../../../stores/activeConnectionStore';
+import { DB_REGISTRY } from '../../../lib/databaseTypes';
 import type { DatabaseType } from '../../../types';
 import type { ConnectionContext } from '../../../stores/panelStore';
 
@@ -94,8 +95,21 @@ describe('usePanelHandlers.handleNewQuery binds a database to the query tab', ()
   });
 
   it('binds the whole path hierarchy (root + catalog/schema) for path-hierarchy drivers', async () => {
-    // Superset is a path-hierarchy driver. The store currentDatabase is a pin
-    // that already encodes the full path: <root>/<catalog>/<schema>.
+    // Superset is a path-hierarchy driver, but it is a git driver that is not
+    // resolved in the basic `test:unit` set, so its meta is absent from
+    // DB_REGISTRY. Register a minimal meta here to keep this assertion
+    // self-contained and independent of the resolved driver set.
+    (
+      DB_REGISTRY as Record<
+        string,
+        {
+          namespaceEnsure?: 'default-sql' | 'postgresql' | 'path-hierarchy';
+        }
+      >
+    ).superset = { namespaceEnsure: 'path-hierarchy' };
+
+    // The store currentDatabase is a pin that already encodes the full path:
+    // <root>/<catalog>/<schema>.
     const { result } = renderHandler('superset', '558:hive/snap');
 
     await act(async () => {
