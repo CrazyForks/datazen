@@ -77,7 +77,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
 
   it('完整旅程：More菜单打开 → 拖入表 → 选列 → WHERE → ORDER BY → DISTINCT → 预览 SQL → 应用并执行 → 重置 → 关闭', async () => {
     // ── Step 1: Open Visual Builder via More menu ──
-    const moreMenu = await $('[data-testid="more-menu-button"]');
+    const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
     await moreMenu.waitForClickable({ timeout: 5000 });
     await moreMenu.click();
     await browser.pause(300);
@@ -307,7 +307,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await captureJourneyStep('qb-result-after-apply');
 
     // ── Step 10: Re-open the panel and Reset ──
-    const moreMenu2 = await $('[data-testid="more-menu-button"]');
+    const moreMenu2 = await $('[data-testid="query-toolbar-more-menu-trigger"]');
     await moreMenu2.waitForClickable({ timeout: 5000 });
     await moreMenu2.click();
     await browser.pause(300);
