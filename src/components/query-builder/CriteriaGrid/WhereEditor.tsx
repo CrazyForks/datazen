@@ -58,6 +58,7 @@ export function WhereEditor({ open, condition, fieldLabel, onClose, onSave }: Wh
       open={open}
       title={`Where — ${fieldLabel}`}
       onClose={onClose}
+      testId="where-editor-dialog"
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -69,7 +70,6 @@ export function WhereEditor({ open, condition, fieldLabel, onClose, onSave }: Wh
         </>
       }
       className="max-w-sm"
-      data-testid="where-editor-dialog"
     >
       <div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
         {/* Operator */}
@@ -79,7 +79,7 @@ export function WhereEditor({ open, condition, fieldLabel, onClose, onSave }: Wh
             value={operator}
             options={OPERATOR_OPTIONS}
             onChange={(v) => setOperator(v as QbOperator)}
-            data-testid="where-operator-select"
+            triggerDataAttrs={{ 'data-testid': 'where-operator-select' }}
           />
         </div>
 

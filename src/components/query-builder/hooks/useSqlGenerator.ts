@@ -155,19 +155,37 @@ function generateSql(input: GenerateSqlInput): string {
   // 3. JOIN
   const joinClause = generateJoinClause(input.joins, input.tableAliases, adapter);
 
-  // 4. WHERE
-  const whereClause = buildWhereClause(input.where, q, adapter);
+  // 4. WHERE — merge per-column where conditions into the root where group
+  const perColumnConditions = input.selectedColumns
+    .filter((c) => c.where)
+    .map((c, i) => ({
+      ...c.where!,
+      conjunction: (i === 0 ? 'AND' : c.where!.conjunction || 'AND') as 'AND' | 'OR',
+    }));
+  const effectiveWhere: QbConditionGroup = {
+    ...input.where,
+    conditions: [...input.where.conditions, ...perColumnConditions],
+  };
+  const whereClause = buildWhereClause(effectiveWhere, q, adapter);
 
-  // 5. GROUP BY
+  // 5. GROUP BY — merge store-level groupBy with per-column groupBy flags
+  const perColumnGroupBy: QbGroupByItem[] = input.selectedColumns
+    .filter((c) => c.groupBy)
+    .map((c) => ({ table: c.table, column: c.column }));
+  const effectiveGroupBy = [...input.groupBy, ...perColumnGroupBy];
   const groupByClause =
-    input.groupBy.length > 0
-      ? ` GROUP BY ${input.groupBy.map((g) => `${q(g.table)}.${q(g.column)}`).join(', ')}`
+    effectiveGroupBy.length > 0
+      ? ` GROUP BY ${effectiveGroupBy.map((g) => `${q(g.table)}.${q(g.column)}`).join(', ')}`
       : '';
 
-  // 6. ORDER BY
+  // 6. ORDER BY — merge store-level orderBy with per-column sort
+  const perColumnSorts: QbSortItem[] = input.selectedColumns
+    .filter((c) => c.sort)
+    .map((c) => ({ table: c.table, column: c.column, direction: c.sort! }));
+  const effectiveOrderBy = [...input.orderBy, ...perColumnSorts];
   const orderByClause =
-    input.orderBy.length > 0
-      ? ` ORDER BY ${input.orderBy.map((o) => `${q(o.table)}.${q(o.column)} ${o.direction}`).join(', ')}`
+    effectiveOrderBy.length > 0
+      ? ` ORDER BY ${effectiveOrderBy.map((o) => `${q(o.table)}.${q(o.column)} ${o.direction}`).join(', ')}`
       : '';
 
   // 7. LIMIT / OFFSET

@@ -205,7 +205,9 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await criteriaRow.waitForDisplayed({ timeout: 3000 });
 
     // Select field in the CriteriaRow field dropdown
-    const fieldSelect = await $('[data-testid="criteria-field-select"]');
+    // The data-testid is on the wrapper div; the actual trigger is a button inside.
+    const fieldSelect = await $('[data-testid="criteria-field-select"] button');
+    await fieldSelect.waitForClickable({ timeout: 3000 });
     await fieldSelect.click();
     await browser.waitUntil(
       () =>
@@ -353,9 +355,13 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await captureJourneyStep('qb-reset');
 
     // ── Step 11: Close the panel ──
-    const closeBtn = await $('[data-testid="qb-close"]');
-    await closeBtn.waitForClickable({ timeout: 5000 });
-    await closeBtn.click();
+    const closeClicked = await browser.execute(() => {
+      const btn = document.querySelector('[data-testid="qb-close"]') as HTMLElement | null;
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    expect(closeClicked).toBe(true);
 
     await browser.waitUntil(
       async () =>

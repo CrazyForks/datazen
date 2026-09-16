@@ -142,14 +142,13 @@ export function CriteriaRow({
     >
       {/* Field (auto-filled from selection) */}
       <td className="px-1 py-1">
-        <div className="min-w-[180px]">
+        <div className="min-w-[180px]" data-testid="criteria-field-select">
           <Select
             value={currentFieldValue}
             options={fieldOptions}
             onChange={handleFieldChange}
             placeholder="table.column"
             searchable
-            data-testid="criteria-field-select"
           />
         </div>
       </td>
@@ -181,7 +180,7 @@ export function CriteriaRow({
           value={selection.sort ?? ''}
           options={SORT_OPTIONS}
           onChange={handleSortChange}
-          data-testid="criteria-sort-select"
+          triggerDataAttrs={{ 'data-testid': 'criteria-sort-select' }}
         />
       </td>
 
@@ -191,7 +190,7 @@ export function CriteriaRow({
           value={selection.aggregate ?? ''}
           options={FUNC_OPTIONS}
           onChange={handleFuncChange}
-          data-testid="criteria-func-select"
+          triggerDataAttrs={{ 'data-testid': 'criteria-func-select' }}
         />
       </td>
 

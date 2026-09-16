@@ -318,8 +318,9 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
   setOffset: (offset) => set(() => ({ offset })),
 
   reset: () =>
-    set(() => ({
+    set((s) => ({
       ...INITIAL_STATE,
+      isOpen: s.isOpen,
       where: emptyConditionGroup(),
     })),
 }));
