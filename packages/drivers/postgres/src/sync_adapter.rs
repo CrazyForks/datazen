@@ -71,7 +71,12 @@ fn parse_pg_default(raw: &str, col: &ColumnSchema) -> Option<IRDefault> {
 
 impl SyncSourceAdapter for PgSyncAdapter {
     fn full_column_types_query(&self, table: &str) -> Option<String> {
-        let escaped = table.replace('\'', "''");
+        let (schema, name) = crate::sql::parse_pg_table_ref(table);
+        let relation = match schema {
+            Some(schema) => format!("{}.{}", self.quote_ident(schema), self.quote_ident(name)),
+            None => self.quote_ident(name),
+        };
+        let escaped = relation.replace('\'', "''");
         Some(format!(
             r#"SELECT a.attname::text AS col_name,
                   format_type(a.atttypid, a.atttypmod) AS full_type
@@ -331,8 +336,16 @@ mod tests {
         let adapter = PgSyncAdapter;
         let sql = adapter.full_column_types_query("public.users").unwrap();
         assert!(sql.contains("format_type"));
-        assert!(sql.contains("public.users"));
+        assert!(sql.contains("\"public\".\"users\""));
         assert!(!sql.contains("database_type"));
+    }
+
+    #[test]
+    fn full_types_preserve_schema_case_and_literal_dot_in_table() {
+        let sql = PgSyncAdapter
+            .full_column_types_query("Selected.literal.table")
+            .unwrap();
+        assert!(sql.contains("'\"Selected\".\"literal.table\"'::regclass"));
     }
 
     #[test]

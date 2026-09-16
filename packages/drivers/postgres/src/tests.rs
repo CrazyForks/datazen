@@ -487,3 +487,28 @@ fn apply_select_limit_is_independent_of_subquery_limit() {
         ("INSERT INTO t VALUES (1)".into(), None)
     );
 }
+
+#[test]
+fn migration_parameters_have_typed_safe_placeholders() {
+    let driver = PostgresDriver::new();
+    assert_eq!(
+        driver
+            .parameter_placeholder(1, Some("numeric(65,30)"))
+            .unwrap(),
+        "$1::numeric"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(2, Some("uuid")).unwrap(),
+        "$2::uuid"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(3, Some("bytea")).unwrap(),
+        "$3"
+    );
+    assert_eq!(
+        driver
+            .parameter_placeholder(4, Some("text); DROP TABLE x;--"))
+            .unwrap(),
+        "$4"
+    );
+}

@@ -46,7 +46,7 @@ async fn resolve_transfer_adapters(
 
 pub(crate) async fn execute_data_transfer_impl(
     state: &AppState,
-    job: TransferJob,
+    mut job: TransferJob,
     job_id: Option<String>,
 ) -> Result<TransferExecutionResult, CommandError> {
     job.options.validate().map_err(CommandError::from)?;
@@ -61,6 +61,19 @@ pub(crate) async fn execute_data_transfer_impl(
         .get_session_config(&job.target.db_session_id)
         .await
         .cmd_err("execute_data_transfer")?;
+
+    job.source.schema = job
+        .source
+        .normalized_schema()
+        .map(str::to_string)
+        .or_else(|| src_config.schema.clone());
+    job.target.schema = job
+        .target
+        .normalized_schema()
+        .map(str::to_string)
+        .or_else(|| tgt_config.schema.clone());
+    crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
+    crate::data_transfer::metadata::metadata_relation_ref(&job.target, "")?;
 
     let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
         .map_err(CommandError::from)?;
@@ -90,12 +103,14 @@ pub(crate) async fn execute_data_transfer_impl(
         }
     }
 
-    let inspected = inspect_data_transfer_impl(
+    let mut inspected = inspect_data_transfer_impl(
         state,
         job.source.db_session_id.clone(),
         job.target.db_session_id.clone(),
         Some(job.source.database.clone()),
         Some(job.target.database.clone()),
+        job.source.normalized_schema(),
+        job.target.normalized_schema(),
         job.mode,
         &job.tables,
     )
@@ -112,17 +127,49 @@ pub(crate) async fn execute_data_transfer_impl(
         .await
         .cmd_err("execute_data_transfer")?;
 
+    if matches!(
+        job.mode,
+        TransferMode::Data | TransferMode::StructureAndData
+    ) {
+        tgt_driver
+            .parameter_placeholder(1, None)
+            .map_err(|error| CommandError::Validation(error.to_string()))?;
+        // Check the target data transaction path before any structure mutation.
+        let probe = tgt_driver
+            .begin_transaction(&tgt_handle)
+            .await
+            .cmd_err("execute_data_transfer")?;
+        tgt_driver
+            .rollback(probe)
+            .await
+            .cmd_err("execute_data_transfer")?;
+    }
+
     let src_tables = src_driver
         .get_tables(&src_handle, &job.source.database)
         .await
         .cmd_err("execute_data_transfer")?;
+
+    let src_tables: Vec<_> = src_tables
+        .into_iter()
+        .filter(|table| {
+            crate::data_transfer::metadata::table_in_endpoint_schema(&job.source, table)
+        })
+        .collect();
 
     let mut source_schemas = HashMap::new();
     for table in src_tables
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = src_driver.get_table_schema(&src_handle, &table.name).await {
+        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+            src_driver.as_ref(),
+            &src_handle,
+            &job.source,
+            &table.name,
+        )
+        .await
+        {
             source_schemas.insert(table.name.clone(), schema);
         }
     }
@@ -142,6 +189,18 @@ pub(crate) async fn execute_data_transfer_impl(
     } else {
         None
     };
+
+    if let Some(adapters) = &adapters {
+        crate::data_transfer::structure::enrich_source_types(
+            adapters.src_source.as_ref(),
+            src_driver.as_ref(),
+            &src_handle,
+            &job.source,
+            &mut source_schemas,
+        )
+        .await
+        .map_err(CommandError::from)?;
+    }
 
     let mut all_tables = Vec::new();
     let mut total_rows = 0u64;
@@ -179,11 +238,18 @@ pub(crate) async fn execute_data_transfer_impl(
         for r in &structure_results {
             if !r.success {
                 partial = true;
+                // Never write data into a table whose structure phase failed.
+                for table in &mut inspected {
+                    if table.source_table == r.source_table {
+                        table.enabled = false;
+                    }
+                }
             }
         }
         all_tables.extend(structure_results);
+        cancelled_flag = cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst));
 
-        if partial && job.options.stop_on_error {
+        if cancelled_flag || (partial && job.options.stop_on_error) {
             if let Some(id) = job_id.as_deref() {
                 jobs::remove_job(id).await;
             }
@@ -200,7 +266,7 @@ pub(crate) async fn execute_data_transfer_impl(
         job.mode,
         TransferMode::Data | TransferMode::StructureAndData
     ) {
-        let merged_ir_types: HashMap<String, crate::transfer::ir::IRType> =
+        let table_ir_types: HashMap<String, HashMap<String, crate::transfer::ir::IRType>> =
             if let Some(a) = &adapters {
                 inspected
                     .iter()
@@ -213,9 +279,8 @@ pub(crate) async fn execute_data_transfer_impl(
                             None,
                             &t.target_table,
                         );
-                        Some(column_ir_types_by_source(&ir))
+                        Some((t.source_table.clone(), column_ir_types_by_source(&ir)))
                     })
-                    .flat_map(|m| m.into_iter())
                     .collect()
             } else {
                 HashMap::new()
@@ -227,12 +292,10 @@ pub(crate) async fn execute_data_transfer_impl(
             })?;
             ValueFormatter::Ir {
                 tgt_adapter: a.tgt_target.as_ref(),
-                source_column_ir_types: &merged_ir_types,
+                source_column_ir_types: &table_ir_types,
             }
         } else {
-            ValueFormatter::SameFamily {
-                quote: tgt_driver.quote_char(),
-            }
+            ValueFormatter::SameFamily
         };
 
         let drop_create = if job.write_mode == crate::data_transfer::WriteMode::DropCreateInsert {

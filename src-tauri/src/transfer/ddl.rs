@@ -41,6 +41,15 @@ fn column_allows_default(ddl_ir_type: &IRType, tgt: &dyn SyncTargetAdapter) -> b
 /// Build a `CREATE TABLE` statement from an `IRTable` using the target adapter
 /// for type rendering, quoting and capability flags.
 pub fn build_create_table_ddl(ir_table: &IRTable, tgt: &dyn SyncTargetAdapter) -> String {
+    build_create_table_ddl_ref(ir_table, tgt, &tgt.quote_ident(&ir_table.name))
+}
+
+/// Render a structured, already-quoted relation reference without string replacement.
+pub fn build_create_table_ddl_ref(
+    ir_table: &IRTable,
+    tgt: &dyn SyncTargetAdapter,
+    table_ref: &str,
+) -> String {
     let q = |name: &str| tgt.quote_ident(name);
 
     let cols: Vec<String> = ir_table
@@ -81,7 +90,7 @@ pub fn build_create_table_ddl(ir_table: &IRTable, tgt: &dyn SyncTargetAdapter) -
         })
         .collect();
 
-    let mut ddl = format!("CREATE TABLE {} (\n{}", q(&ir_table.name), cols.join(",\n"));
+    let mut ddl = format!("CREATE TABLE {} (\n{}", table_ref, cols.join(",\n"));
 
     if tgt.supports_primary_key() && !ir_table.primary_keys.is_empty() {
         let pk_cols: Vec<String> = ir_table.primary_keys.iter().map(|k| q(k)).collect();

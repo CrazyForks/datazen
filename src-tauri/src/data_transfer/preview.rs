@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use datazen_driver_api::TableSchema;
 
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::pairing::SyncPairing;
 
 use super::error::TransferError;
@@ -13,10 +12,7 @@ use super::model::{
     DdlPreviewItem, TableInspectResult, TableMappingStatus, TransferJob, TransferMode,
     TransferPreview, WriteMode, WritePlanItem,
 };
-use super::structure::{
-    apply_column_type_overrides, build_drop_table_sql, source_schema_to_target_ir,
-    table_mapping_for,
-};
+use super::structure::{mapped_create_ddl, table_mapping_for, target_relation_ref};
 
 /// Optional IR adapters for real DDL generation and execute eligibility.
 pub struct TransferPreviewAdapters<'a> {
@@ -34,7 +30,7 @@ pub fn build_preview(
 ) -> Result<TransferPreview, TransferError> {
     job.options.validate()?;
 
-    let mut warnings = Vec::new();
+    let mut warnings = vec!["Data writes use a transaction per table. Completed DDL remains applied on cancellation or data failure; commit/rollback failures have unknown outcomes.".into()];
     let mut ddl = Vec::new();
     let mut write_plans = Vec::new();
     let mut block_reason: Option<String> = None;
@@ -79,20 +75,18 @@ pub fn build_preview(
 
         let table_mapping = table_mapping_for(job, &table.source_table);
 
-        let create_ddl_for_table = |source_table: &str, target_table: &str| -> Option<String> {
-            let schema = source_schemas.get(source_table)?;
-            if let Some(adapters) = &adapters {
-                // Full types are resolved at execute time; preview uses schema types only.
-                let mut ir =
-                    source_schema_to_target_ir(adapters.src_adapter, schema, None, target_table);
-                if let Some(mapping) = table_mapping {
-                    apply_column_type_overrides(&mut ir, mapping, adapters.tgt_adapter);
-                }
-                Some(build_create_table_ddl(&ir, adapters.tgt_adapter))
-            } else {
-                None
-            }
+        // Resolve once, using the same renderer as both execution paths.
+        let create_sql = match (&adapters, source_schemas.get(&table.source_table)) {
+            (Some(adapters), Some(schema)) => Some(mapped_create_ddl(
+                adapters.src_adapter,
+                adapters.tgt_adapter,
+                schema,
+                table,
+                job,
+            )?),
+            _ => None,
         };
+        let create_ddl_for_table = |_source_table: &str, _target_table: &str| create_sql.clone();
 
         if needs_structure && table.create_new {
             if let Some(override_ddl) = table_mapping
@@ -173,7 +167,7 @@ pub fn build_preview(
                     if let Some(adapters) = &adapters {
                         preamble.push(format!(
                             "TRUNCATE TABLE {}",
-                            adapters.tgt_adapter.quote_ident(&table.target_table)
+                            target_relation_ref(job, &table.target_table, adapters.tgt_adapter)
                         ));
                     } else {
                         preamble.push(format!("TRUNCATE TABLE {}", table.target_table));
@@ -181,9 +175,9 @@ pub fn build_preview(
                 }
                 WriteMode::DropCreateInsert => {
                     if let Some(adapters) = &adapters {
-                        preamble.push(build_drop_table_sql(
-                            &table.target_table,
-                            adapters.tgt_adapter,
+                        preamble.push(format!(
+                            "DROP TABLE IF EXISTS {}",
+                            target_relation_ref(job, &table.target_table, adapters.tgt_adapter)
                         ));
                         if let Some(create_sql) =
                             create_ddl_for_table(&table.source_table, &table.target_table)
@@ -231,14 +225,6 @@ pub fn build_preview(
         can_execute,
         block_reason,
     })
-}
-
-/// Build CREATE TABLE DDL when IR adapters are available.
-pub fn build_create_ddl(
-    ir_table: &crate::transfer::ir::IRTable,
-    tgt_adapter: &dyn SyncTargetAdapter,
-) -> String {
-    build_create_table_ddl(ir_table, tgt_adapter)
 }
 
 #[cfg(test)]

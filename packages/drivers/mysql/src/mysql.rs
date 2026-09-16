@@ -1141,6 +1141,47 @@ impl DatabaseDriver for MysqlDriver {
         Ok(result.rows_affected())
     }
 
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Ok("?".into())
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        {
+            let mut txs = self.transactions.lock().await;
+            if let Some(conn) = txs.get_mut(&handle.id) {
+                let result = Self::bind_values(sqlx::query(sql), params)
+                    .execute(&mut **conn)
+                    .await
+                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                return Ok(result.rows_affected());
+            }
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        self.apply_active_database(handle, &mut conn).await?;
+
+        let result = Self::bind_values(sqlx::query(sql), params)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+
     async fn begin_transaction(
         &self,
         handle: &ConnectionHandle,

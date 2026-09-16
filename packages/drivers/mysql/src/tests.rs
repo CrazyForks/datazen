@@ -438,3 +438,18 @@ fn is_table_not_found_error_detects_mysql_1146_and_does_not_exist() {
         "1064 (42000): You have an error in your SQL syntax"
     ));
 }
+
+#[test]
+fn migration_parameters_keep_values_out_of_sql() {
+    let driver = MysqlDriver::new(false);
+    assert_eq!(
+        driver
+            .parameter_placeholder(1, Some("DECIMAL(65,30)"))
+            .unwrap(),
+        "?"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(99, Some("LONGBLOB")).unwrap(),
+        "?"
+    );
+}

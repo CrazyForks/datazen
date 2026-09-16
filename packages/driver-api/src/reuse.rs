@@ -218,6 +218,23 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.query_with_params(handle, sql, params).await
     }
 
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        self.inner.parameter_placeholder(index, data_type)
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        self.inner.execute_with_params(handle, sql, params).await
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
         self.inner.execute(handle, sql).await
     }
