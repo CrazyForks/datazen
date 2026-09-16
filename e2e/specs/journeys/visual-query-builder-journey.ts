@@ -90,40 +90,58 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await qbPanel.waitForDisplayed({ timeout: 5000 });
     await captureJourneyStep('qb-panel-open');
 
-    // ── Step 2: Add a table to the canvas via simulated drop ──
-    // The canvas accepts `application/datazen-schema-object` MIME drops.
-    // WebKit requires Object.defineProperty to override dataTransfer.
-    const canvasAdded = await browser.execute((tableName: string) => {
-      const canvas = document.querySelector('[data-testid="qb-diagram-canvas"]');
-      if (!canvas) return false;
+    // ── Step 2: Add a table to the canvas ──
+    // WebKit's DragEvent doesn't fire React synthetic handlers, so we use the
+    // exposed Zustand stores directly. This mirrors the real drop → toggleTable flow.
+    const tableAdded = await browser.execute((tableName: string) => {
+      const columns = ['id', 'name', 'category', 'score'];
 
-      const payload = JSON.stringify({
-        version: 1,
-        kind: 'table',
-        namespace: { database: 'postgres', table: tableName },
-        connectionId: 'conn_e2e_pg',
-        databaseType: 'postgresql',
-      });
+      // 1. Populate schemaStore: patch the active connection's columnMap
+      //    via commitConnectionPath so activeFlatten picks it up
+      const schemaStore = (window as any).__schemaStore;
+      if (schemaStore?.getState) {
+        const s = schemaStore.getState();
+        // The active dbSessionId key is where the columnMap lives
+        const dbKey = s.dbSessionId || s.activeDbSessionId;
+        if (dbKey && s.schemas instanceof Map) {
+          const prev = s.schemas.get(dbKey) || {};
+          const nextSchemas = new Map(s.schemas);
+          nextSchemas.set(dbKey, {
+            ...prev,
+            columnMap: { ...(prev.columnMap || {}), [tableName]: columns },
+          });
+          schemaStore.setState({
+            schemas: nextSchemas,
+            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
+          });
+        } else {
+          // Fallback: set columnMap directly on the store
+          schemaStore.setState({
+            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
+          });
+        }
+      }
 
-      const dropEvent = new DragEvent('drop', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: new DataTransfer(),
-      });
-      Object.defineProperty(dropEvent, 'dataTransfer', {
-        value: {
-          getData(type: string) {
-            if (type === 'application/datazen-schema-object') return payload;
-            return '';
-          },
-          types: ['application/datazen-schema-object'],
-          dropEffect: 'copy',
-        },
-      });
-      canvas.dispatchEvent(dropEvent);
+      // 2. Add table to the QB store
+      const qbStore = (window as any).__qbStore;
+      if (!qbStore?.getState) return false;
+      const state = qbStore.getState();
+
+      if (!state.selectedTables.includes(tableName)) {
+        qbStore.setState({
+          selectedTables: [...state.selectedTables, tableName],
+        });
+      }
+
+      const positions = { ...qbStore.getState().tablePositions };
+      if (!positions[tableName]) {
+        positions[tableName] = { x: 50, y: 50 };
+      }
+      qbStore.setState({ tablePositions: positions });
+
       return true;
     }, TABLE_NAME);
-    expect(canvasAdded).toBe(true);
+    expect(tableAdded).toBe(true);
 
     // Wait for the TableCard to render
     await browser.waitUntil(

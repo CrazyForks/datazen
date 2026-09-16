@@ -323,3 +323,9 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
       where: emptyConditionGroup(),
     })),
 }));
+
+// Expose store for E2E tests (WebKit DragEvent doesn't fire React synthetic handlers)
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__qbStore = useQueryBuilderStore;
+}
