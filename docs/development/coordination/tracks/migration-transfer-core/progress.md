@@ -1,6 +1,6 @@
 # migration-transfer-core
 
-- Phase: READY_FOR_TEST
+- Phase: PASSED
 - Branch: codex/migration-transfer-core
 - Worktree: .worktrees/datazen-migration-transfer-core
 - Implementation commit: see commit containing this progress record; final hash supplied in coordinator handoff.
@@ -89,3 +89,25 @@ This is wave 1, not Navicat parity. Materializing query_stream fallback is not b
 - Fixed only Transfer self-overwrite logical relation identity to include normalized schema, keeping catalog/database separate. Tester failing journey retained unchanged.
 - Validation: Host transfer 39 passed; MySQL/PostgreSQL/SQLite libraries 86/101/46 passed; SQLite transfer journey 1 passed; frontend 3 files / 24 passed; tsc and whitespace checks passed.
 - Fresh independent tester must rebuild and verify the cross-schema execution journey. No shared Driver API, Schema/Sync/export code changed.
+
+## Independent tester round 3 (2026-09-16)
+
+### A. Code review and BUG002 acceptance
+- Reviewed the BUG002 production delta and its execution ordering. Self-overwrite compares dbSessionId, database/catalog, normalized schema and table before source schema lookup, target metadata or writes.
+- The original Round 2 failing test now transfers one row across different schemas on the same session/catalog. The same normalized relation test rejects before target metadata and bound writes, and helper branches cover whitespace/empty schema, different catalog, different session and renamed table.
+- Command entry points resolve explicit schema or connection-config fallback before inspection/execution; both identities therefore reach the same normalized comparison. Database/catalog remains an independent dimension and no Host driver-family branch was added.
+
+### B. Independent rerun
+- Host `data_transfer`: 39/39 passed, including the unchanged Round 2 repro and the pre-write fail-closed regression.
+- Driver libraries: PostgreSQL 101/101, MySQL 86/86, SQLite 46/46. SQLite projected transfer/rollback journey: 1/1.
+- Real isolated probes: PostgreSQL schema qualification 1/1, PostgreSQL bound writes 1/1, MySQL bound writes 1/1. Temporary databases were dropped after the run.
+- Frontend: 3 files / 24 tests passed; `tsc --noEmit` passed.
+
+### C. Coverage and desktop evidence
+- `DataTransferWindow.tsx`: statements 86.32% (303/351), branches 80.22% (211/263), functions 91.74% (100/109), lines 88.81% (278/313). Existing tests already exceeded all thresholds, so this round added no redundant tests.
+- Rust coverage is assessed by changed-branch evidence: all four identity dimensions, normalized equal/different schemas, legal cross-schema execution and fail-closed timing are exercised; no instrumented Rust percentage is claimed.
+- Round 2's formal `pnpm tauri:build:webdriver` and exact PostgreSQL/MySQL desktop journeys remain the binary evidence. This round did not rebuild because the repair changes only the pure Host relation-identity guard; it independently reran the affected Host path plus real driver probes.
+
+### D. Verdict
+- `migration-transfer-core-BUG-001` remains closed; `migration-transfer-core-BUG-002` is independently verified and closed.
+- `TEST_DONE`; track phase is `PASSED`. Wave 1 limitations listed above remain later-wave scope and are not represented as Navicat parity.
