@@ -184,13 +184,13 @@ const pack = {
   'connWin.tooltipDb': 'Datenbank',
   'connWin.tooltipTable': 'Tabelle',
   'connWin.home.selectConnection': 'Wählen Sie eine Verbindung in der linken Seitenleiste',
-  'connWin.home.selectConnectionTitle': 'Select a connection',
+  'connWin.home.selectConnectionTitle': 'Wählen Sie eine Verbindung',
   'connWin.home.selectConnectionHint':
     'Choose a connection from the left sidebar to browse objects, run queries, or manage schema.',
   'connWin.home.selectConnectionTip':
     'Tip: Double-click a connection to open it quickly. Right-click for edit, duplicate, or delete.',
   'connWin.home.emptyNoConnectionsHint':
-    'Create your first database connection, or import existing ones from other tools.',
+    'Erstellen Sie Ihre erste Datenbankverbindung oder importieren Sie vorhandene Verbindungen aus anderen Tools.',
   'connWin.home.subtitle':
     'Wählen Sie eine Schnellaktion oder öffnen Sie ein kürzliches Panel erneut',
   'connWin.home.quickActions': 'Schnellaktionen',
@@ -213,10 +213,29 @@ const pack = {
   'connWin.home.aiIntegration.copied': 'Kopiert',
   'connWin.home.aiIntegration.copy': 'Kopieren',
   'connWin.home.status.connected': 'Verbunden',
-  'connWin.home.status.offline': 'Offline',
+  'connWin.home.status.offline': 'Nicht verbunden',
   'connWin.home.connectNow': 'Verbinden',
   'connWin.home.viewAll': 'Alle anzeigen',
   'connWin.home.totalCount': 'Insgesamt {count}',
-  'connection.dashboard.title': 'Dashboard',
+  'connection.dashboard.title': 'Übersicht',
+  'connWin.home.hero.subtitleConnections': 'gespeicherte Verbindungen',
+  'connWin.home.hero.subtitleGroups': 'Gruppen',
+  'connWin.home.hero.subtitleTypes': 'Datenbanktypen',
+  'connWin.home.yourConnections': 'Ihre Verbindungen',
+  'connWin.home.connections.filter': 'Verbindungen filtern…',
+  'connWin.home.connections.clearFilter': 'Filter zurücksetzen',
+  'connWin.home.connections.showing': 'Zeige {visible} von {total}',
+  'connWin.home.connections.showAll': 'Alle anzeigen ({count})',
+  'connWin.home.connections.showLess': 'Weniger anzeigen',
+  'connWin.home.connections.noMatch': 'Keine Verbindungen entsprechen „{query}“',
+  'connWin.home.connections.connect': 'Verbinden',
+  'connWin.home.connections.open': 'Öffnen',
+  'connWin.home.queries.rerun': 'Erneut ausführen',
+  'connWin.home.queries.justNow': 'gerade eben',
+  'connWin.home.queries.minutesAgo': 'vor {count} Min.',
+  'connWin.home.queries.hoursAgo': 'vor {count} Std.',
+  'connWin.home.queries.daysAgo': 'vor {count} T.',
+  'connWin.home.mcp.shortDesc':
+    'Lassen Sie Cursor, Claude Code und andere KI-Tools Ihre Datenbanken über MCP abfragen.',
 } as const;
 export default pack;

@@ -4,7 +4,7 @@ const onboarding = {
   'onboarding.sidebar.desc':
     '데이터베이스 클라이언트가 있으신가요? 몇 초 만에 연결을 가져오세요 — 아니면 새로 시작하세요. 모든 데이터는 이 컴퓨터에 저장됩니다.',
   'onboarding.sidebar.importTitle': '원클릭 가져오기',
-  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat, TablePlus.',
+  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat, TablePlus 등을 지원합니다.',
   'onboarding.sidebar.aiTitle': 'AI 네이티브',
   'onboarding.sidebar.aiDesc': '스키마 인식 SQL 어시스턴트.',
   'onboarding.sidebar.dashboardTitle': '대시보드 & 차트',

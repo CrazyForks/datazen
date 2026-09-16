@@ -4,7 +4,7 @@ const onboarding = {
   'onboarding.sidebar.desc':
     '¿Ya tienes un cliente de base de datos? Importa tus conexiones en segundos — o empieza desde cero. Todo se queda en esta máquina.',
   'onboarding.sidebar.importTitle': 'Importación con un clic',
-  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat, TablePlus.',
+  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat y TablePlus.',
   'onboarding.sidebar.aiTitle': 'IA nativa',
   'onboarding.sidebar.aiDesc': 'Asistencia SQL con conocimiento del esquema.',
   'onboarding.sidebar.dashboardTitle': 'Paneles y Gráficos',

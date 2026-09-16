@@ -275,10 +275,10 @@ const pack = {
   'fk.refTable': '참조 테이블',
   'fk.refColumn': '참조 열',
   'schemaTree.generateSql': 'SQL 생성',
-  'schemaTree.generateSelect': 'SELECT',
-  'schemaTree.generateInsert': 'INSERT',
-  'schemaTree.generateUpdate': 'UPDATE',
-  'schemaTree.generateDelete': 'DELETE',
-  'schemaTree.generateDdl': 'DDL',
+  'schemaTree.generateSelect': 'SELECT 생성',
+  'schemaTree.generateInsert': 'INSERT 생성',
+  'schemaTree.generateUpdate': 'UPDATE 생성',
+  'schemaTree.generateDelete': 'DELETE 생성',
+  'schemaTree.generateDdl': 'DDL 생성',
 } as const;
 export default pack;

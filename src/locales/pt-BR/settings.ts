@@ -52,10 +52,18 @@ const pack = {
   'settings.autoChartOnQuery': 'Alternar automaticamente para gráfico',
   'settings.autoChartOnQueryHint':
     'Após uma consulta, abrir a aba de gráfico quando o resultado for visualizável.',
+  'settings.workflowStepResultOrder': 'Ordem dos resultados das etapas do workflow',
+  'settings.workflowStepResultOrderHint':
+    'Ordem das abas de resultados das etapas exibidas após a execução de um workflow.',
+  'settings.workflowStepOrder.asc': 'Etapa crescente (primeira etapa primeiro)',
+  'settings.workflowStepOrder.desc': 'Etapa decrescente (última etapa primeiro)',
   'settings.maxRows': 'Máximo de linhas retornadas',
   'settings.editor': 'Editor',
   'settings.fontSize': 'Tamanho da fonte',
   'settings.fontFamily': 'Família de fontes',
+  'settings.sqlSyntaxTheme': 'Tema de sintaxe SQL',
+  'settings.sqlSyntaxThemeHint':
+    'Esquema de cores para palavras-chave SQL, strings e comentários. "Padrão" segue o tema ativo do aplicativo.',
   'settings.behavior': 'Comportamento',
   'settings.dataCleanup.title': 'Limpeza de histórico',
   'settings.dataCleanup.description':
@@ -103,6 +111,10 @@ const pack = {
   'settings.autoCommitHint': 'Confirmar edições automaticamente nos dados',
   'settings.safeMode': 'Modo seguro',
   'settings.safeModeHint': 'Bloquear UPDATE/DELETE sem cláusula WHERE, e TRUNCATE/DROP',
+  'settings.confirmDangerousExecution':
+    'Confirmar SQL perigoso quando o modo de segurança estiver desativado',
+  'settings.confirmDangerousExecutionHint':
+    'Mostra um diálogo de confirmação antes de executar SQL de alto risco/em produção quando o modo de segurança está desativado. Desligue para executar diretamente.',
   'settings.monitor': 'Monitor',
   'settings.monitor.description':
     'Atualização em segundo plano dos painéis, bandeja do sistema, alertas e retenção do histórico de execução.',
@@ -232,7 +244,7 @@ const pack = {
   'settings.prompts.template': 'Prompt do sistema (Inglês)',
   'settings.prompts.langNotice':
     'Os modelos de prompt são mantidos em inglês para precisão e estabilidade de raciocínio. A saída da IA se ajustará automaticamente ao idioma ativo do aplicativo.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'Servidor MCP',
   'settings.mcpClient.title': 'Servidores MCP externos',
 } as const;
 export default pack;

@@ -54,10 +54,18 @@ const pack = {
   'settings.autoChartOnQuery': 'Basculer automatiquement vers le graphique',
   'settings.autoChartOnQueryHint':
     "Après une requête, ouvrir l'onglet Graphique si le résultat est visualisable.",
+  'settings.workflowStepResultOrder': 'Ordre des résultats des étapes de workflow',
+  'settings.workflowStepResultOrderHint':
+    'Ordre des onglets de résultats des étapes affichés après une exécution de workflow.',
+  'settings.workflowStepOrder.asc': 'Étapes croissantes (première étape d’abord)',
+  'settings.workflowStepOrder.desc': 'Étapes décroissantes (dernière étape d’abord)',
   'settings.maxRows': 'Nombre maximum de lignes renvoyées',
   'settings.editor': 'Éditeur',
   'settings.fontSize': 'Taille de la police',
   'settings.fontFamily': 'Famille de polices',
+  'settings.sqlSyntaxTheme': 'Thème de syntaxe SQL',
+  'settings.sqlSyntaxThemeHint':
+    'Palette de couleurs pour les mots-clés, chaînes et commentaires SQL. « Par défaut » suit le thème actif de l’application.',
   'settings.behavior': 'Comportement',
   'settings.dataCleanup.title': 'Nettoyage de l’historique',
   'settings.dataCleanup.description':
@@ -106,6 +114,10 @@ const pack = {
   'settings.autoCommitHint': 'Valider automatiquement les modifications des données',
   'settings.safeMode': 'Mode sûr',
   'settings.safeModeHint': 'Bloquer UPDATE/DELETE sans clause WHERE, ainsi que TRUNCATE/DROP',
+  'settings.confirmDangerousExecution':
+    'Confirmer le SQL dangereux lorsque le mode sans échec est désactivé',
+  'settings.confirmDangerousExecutionHint':
+    'Afficher une boîte de dialogue de confirmation avant d’exécuter un SQL à haut risque/de production lorsque le mode sans échec est désactivé. Désactivez pour exécuter directement.',
   'settings.monitor': 'Moniteur',
   'settings.monitor.description':
     "Actualisation arrière-plan des tableaux de bord, icône de notification, alertes et conservation de l'historique d'exécution.",
@@ -187,8 +199,8 @@ const pack = {
   'settings.quotePolicy.always': 'Toujours entre guillemets',
   'settings.keymap.preset': 'Profil de raccourcis',
   'settings.keymap.preset.default': 'Par défaut (DataZen)',
-  'settings.keymap.preset.dbeaver': 'DBeaver',
-  'settings.keymap.preset.navicat': 'Navicat',
+  'settings.keymap.preset.dbeaver': 'Raccourcis DBeaver',
+  'settings.keymap.preset.navicat': 'Raccourcis Navicat',
   'settings.keymap.customize': 'Personnaliser les raccourcis',
   'settings.keymap.resetCustom': 'Rétablir les valeurs par défaut',
   'keymap.action.execute': 'Exécuter l’instruction actuelle',
@@ -240,7 +252,7 @@ const pack = {
   'settings.prompts.template': 'Prompt système (Anglais)',
   'settings.prompts.langNotice':
     'Les modèles de prompts sont maintenus en anglais pour la précision et la stabilité du raisonnement. La réponse de l’IA s’adaptera automatiquement à votre langue d’affichage.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'Serveur MCP',
   'settings.mcpClient.title': 'Serveurs MCP externes',
 } as const;
 export default pack;

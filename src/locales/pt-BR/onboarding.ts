@@ -4,7 +4,7 @@ const onboarding = {
   'onboarding.sidebar.desc':
     'Já tem um cliente de banco de dados? Importe suas conexões em segundos — ou comece do zero. Tudo fica nesta máquina.',
   'onboarding.sidebar.importTitle': 'Importação com um clique',
-  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat, TablePlus.',
+  'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat e TablePlus.',
   'onboarding.sidebar.aiTitle': 'IA nativa',
   'onboarding.sidebar.aiDesc': 'Assistência SQL com conhecimento do schema.',
   'onboarding.sidebar.dashboardTitle': 'Painéis e Gráficos',
@@ -29,7 +29,7 @@ const onboarding = {
   'onboarding.s1.subtitle':
     'O mesmo formulário da Nova conexão — a mesma validação, o mesmo teste. <b>Você pode continuar após salvar.</b>',
   'onboarding.s1.stepLabel': 'Passo 1 de 2',
-  'onboarding.s1.driver': 'Driver',
+  'onboarding.s1.driver': 'Controlador',
   'onboarding.s1.testBtn': 'Testar conexão',
   'onboarding.s1.testSuccess': 'Conectado',
   'onboarding.s1.testFail': 'Falha na conexão',

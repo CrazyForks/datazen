@@ -78,6 +78,6 @@ const pack = {
   'chat.draft.replace': 'Заменить',
   'chat.draft.append': 'Добавить',
   'chat.draft.appendSeparator': '\n\n---\n\n',
-  'ai.workflows.tab': 'Workflows',
+  'ai.workflows.tab': 'Рабочие процессы',
 } as const;
 export default pack;

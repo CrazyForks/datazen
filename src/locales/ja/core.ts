@@ -177,8 +177,8 @@ const pack = {
   'extensions.install.description':
     'インストールするローカル プラグインパッケージ (.zip) を選択してください。',
   'extensions.install.pickPrompt': 'Choose how to locate the plugin package on this computer.',
-  'extensions.install.browseZip': 'Select ZIP file…',
-  'extensions.install.browseFolder': 'Select folder…',
+  'extensions.install.browseZip': 'ZIP ファイルを参照…',
+  'extensions.install.browseFolder': 'フォルダーを参照…',
   'extensions.install.back': '戻る',
   'extensions.install.inspecting': '確認中…',
   'extensions.install.permissions': '要求された権限',

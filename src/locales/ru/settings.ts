@@ -57,6 +57,17 @@ const pack = {
   'settings.fontSize': 'Размер шрифта',
   'settings.fontFamily': 'Семейство шрифтов',
   'settings.behavior': 'Поведение',
+  'settings.workflowStepResultOrder': 'Порядок вкладок результатов шагов workflow',
+  'settings.workflowStepResultOrderHint':
+    'Порядок вкладок с результатами шагов, показываемых после выполнения workflow.',
+  'settings.workflowStepOrder.asc': 'По шагу возрастающий (сначала первый шаг)',
+  'settings.workflowStepOrder.desc': 'По шагу убывающий (сначала последний шаг)',
+  'settings.sqlSyntaxTheme': 'Цветовая схема SQL',
+  'settings.sqlSyntaxThemeHint':
+    'Цветовая схема для ключевых слов SQL, строк и комментариев. «По умолчанию» следует активной теме приложения.',
+  'settings.confirmDangerousExecution': 'Подтверждать опасный SQL, когда Безопасный режим выключен',
+  'settings.confirmDangerousExecutionHint':
+    'Показывать диалог подтверждения перед выполнением высокорискованного/рабочего SQL, когда Безопасный режим выключен. Отключите, чтобы выполнять напрямую.',
   'settings.dataCleanup.title': 'Очистка истории',
   'settings.dataCleanup.description':
     'Удалить локальную историю SQL-запросов и записи выполнения workflow.',
@@ -233,7 +244,7 @@ const pack = {
   'settings.prompts.template': 'Системный промпт (Английский)',
   'settings.prompts.langNotice':
     'Шаблоны промптов ведутся на английском языке для точности и стабильности рассуждений. Ответ ИИ автоматически подстроится под язык приложения.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'MCP-сервер',
   'settings.mcpClient.title': 'Внешние серверы MCP',
 } as const;
 export default pack;

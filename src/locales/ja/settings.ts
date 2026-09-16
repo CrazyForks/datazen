@@ -230,7 +230,18 @@ const pack = {
   'settings.prompts.template': 'システムプロンプト（英語）',
   'settings.prompts.langNotice':
     'プロンプトテンプレートは精度と推論の安定性のため英語で管理されています。AIの出力は現在のアプリ言語に自動調整されます。',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'MCP サーバー',
   'settings.mcpClient.title': '外部 MCP サーバー',
+  'settings.workflowStepResultOrder': 'ワークフローのステップ結果の並び順',
+  'settings.workflowStepResultOrderHint':
+    'ワークフロー実行後に表示されるステップ結果タブの並び順です。',
+  'settings.workflowStepOrder.asc': 'ステップ昇順（最初のステップを先頭に）',
+  'settings.workflowStepOrder.desc': 'ステップ降順（最後のステップを先頭に）',
+  'settings.sqlSyntaxTheme': 'SQL 構文テーマ',
+  'settings.sqlSyntaxThemeHint':
+    'SQL キーワード、文字列、コメントの配色です。「デフォルト」は現在のアプリテーマに従います。',
+  'settings.confirmDangerousExecution': 'セーフモードがオフの場合に危険な SQL を確認する',
+  'settings.confirmDangerousExecutionHint':
+    'セーフモードがオフの場合、高リスク/本番 SQL の実行前に確認ダイアログを表示します。オフにすると直接実行します。',
 } as const;
 export default pack;

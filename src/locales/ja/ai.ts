@@ -78,7 +78,7 @@ const pack = {
   'chat.draft.conflict': '入力欄に未送信のテキストがあります。下書きをどのように処理しますか？',
   'chat.draft.replace': '置換',
   'chat.draft.append': '追記',
-  'chat.draft.appendSeparator': '\n\n---\n\n',
+  'chat.draft.appendSeparator': '\n\n――――\n\n',
   'ai.workflows.tab': 'ワークフロー',
 } as const;
 export default pack;

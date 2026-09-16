@@ -276,10 +276,10 @@ const pack = {
   'fk.refTable': 'Справочная таблица',
   'fk.refColumn': 'Ссылочный столбец',
   'schemaTree.generateSql': 'Сгенерировать SQL',
-  'schemaTree.generateSelect': 'SELECT',
-  'schemaTree.generateInsert': 'INSERT',
-  'schemaTree.generateUpdate': 'UPDATE',
-  'schemaTree.generateDelete': 'DELETE',
-  'schemaTree.generateDdl': 'DDL',
+  'schemaTree.generateSelect': 'Сгенерировать SELECT',
+  'schemaTree.generateInsert': 'Сгенерировать INSERT',
+  'schemaTree.generateUpdate': 'Сгенерировать UPDATE',
+  'schemaTree.generateDelete': 'Сгенерировать DELETE',
+  'schemaTree.generateDdl': 'Сгенерировать DDL',
 } as const;
 export default pack;

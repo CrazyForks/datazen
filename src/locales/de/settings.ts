@@ -52,10 +52,18 @@ const pack = {
   'settings.autoChartOnQuery': 'Automatisch zum Diagramm wechseln',
   'settings.autoChartOnQueryHint':
     'Nach einer Abfrage das Diagramm-Tab öffnen, wenn das Ergebnis visualisierbar ist.',
+  'settings.workflowStepResultOrder': 'Reihenfolge der Workflow-Ergebnisse',
+  'settings.workflowStepResultOrderHint':
+    'Reihenfolge der Ergebnis-Registerkarten, die nach einem Workflow-Lauf angezeigt werden.',
+  'settings.workflowStepOrder.asc': 'Schritt aufsteigend (erster Schritt zuerst)',
+  'settings.workflowStepOrder.desc': 'Schritt absteigend (letzter Schritt zuerst)',
   'settings.maxRows': 'Max. zurückgegebene Zeilen',
   'settings.editor': 'Editor',
   'settings.fontSize': 'Schriftgröße',
   'settings.fontFamily': 'Schriftfamilie',
+  'settings.sqlSyntaxTheme': 'SQL-Syntax-Farbschema',
+  'settings.sqlSyntaxThemeHint':
+    'Farbschema für SQL-Schlüsselwörter, Zeichenketten und Kommentare. „Standard“ folgt dem aktiven Anwendungsdesign.',
   'settings.behavior': 'Verhalten',
   'settings.dataCleanup.title': 'Verlauf bereinigen',
   'settings.dataCleanup.description':
@@ -102,6 +110,10 @@ const pack = {
   'settings.autoCommitHint': 'Übernehmen Sie Änderungen an Daten automatisch',
   'settings.safeMode': 'Sicherer Modus',
   'settings.safeModeHint': 'UPDATE/DELETE ohne WHERE-Klausel sowie TRUNCATE/DROP blockieren',
+  'settings.confirmDangerousExecution':
+    'Gefährliches SQL bestätigen, wenn der Sichere Modus aus ist',
+  'settings.confirmDangerousExecutionHint':
+    'Vor der Ausführung riskanten/Produktions-SQL einen Bestätigungsdialog anzeigen, wenn der Sichere Modus aus ist. Deaktivieren, um direkt auszuführen.',
   'settings.monitor': 'Monitor',
   'settings.monitor.description':
     'Hintergrund-Aktualisierung der Dashboards, Systembox, Warnungen und Laufhistorie.',
@@ -183,8 +195,8 @@ const pack = {
   'settings.quotePolicy.always': 'Immer in Anführungszeichen',
   'settings.keymap.preset': 'Tastenbelegungs-Voreinstellung',
   'settings.keymap.preset.default': 'Standard (DataZen)',
-  'settings.keymap.preset.dbeaver': 'DBeaver',
-  'settings.keymap.preset.navicat': 'Navicat',
+  'settings.keymap.preset.dbeaver': 'DBeaver (Voreinstellung)',
+  'settings.keymap.preset.navicat': 'Navicat (Voreinstellung)',
   'settings.keymap.customize': 'Tastenkombinationen anpassen',
   'settings.keymap.resetCustom': 'Auf Voreinstellung zurücksetzen',
   'keymap.action.execute': 'Aktuelle Anweisung ausführen',
@@ -234,7 +246,7 @@ const pack = {
   'settings.prompts.template': 'System-Prompt (Englisch)',
   'settings.prompts.langNotice':
     'Prompt-Vorlagen werden aus Gründen der Genauigkeit und Stabilität auf Englisch gepflegt. Die KI-Ausgabe passt sich automatisch Ihrer aktiven Anzeigesprache an.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'MCP-Server',
   'settings.mcpClient.title': 'Externe MCP-Server',
 } as const;
 export default pack;

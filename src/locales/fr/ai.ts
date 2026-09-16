@@ -81,7 +81,7 @@ const pack = {
     'Vous avez du texte non envoyé dans la zone de saisie. Que souhaitez-vous faire du brouillon ?',
   'chat.draft.replace': 'Remplacer',
   'chat.draft.append': 'Ajouter',
-  'chat.draft.appendSeparator': '\n\n---\n\n',
-  'ai.workflows.tab': 'Workflows',
+  'chat.draft.appendSeparator': '\n\n———\n\n',
+  'ai.workflows.tab': 'Flux de travail',
 } as const;
 export default pack;

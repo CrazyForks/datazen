@@ -47,10 +47,17 @@ const pack = {
   'settings.limitSelect': 'SELECT 결과 제한',
   'settings.autoChartOnQuery': '쿼리 후 자동으로 차트 전환',
   'settings.autoChartOnQueryHint': '쿼리 결과가 차트화 가능해 보이면 차트 탭을 자동으로 엽니다.',
+  'settings.workflowStepResultOrder': '워크플로 단계 결과 순서',
+  'settings.workflowStepResultOrderHint': '워크플로 실행 후 표시되는 단계 결과 탭의 순서입니다.',
+  'settings.workflowStepOrder.asc': '단계 오름차순 (첫 단계 먼저)',
+  'settings.workflowStepOrder.desc': '단계 내림차순 (마지막 단계 먼저)',
   'settings.maxRows': '최대 반환 행',
   'settings.editor': '편집자',
   'settings.fontSize': '글꼴 크기',
   'settings.fontFamily': '글꼴군',
+  'settings.sqlSyntaxTheme': 'SQL 구문 테마',
+  'settings.sqlSyntaxThemeHint':
+    'SQL 키워드, 문자열, 주석의 색 구성표입니다. "기본값"은 활성 애플리케이션 테마를 따릅니다.',
   'settings.behavior': '행동',
   'settings.dataCleanup.title': '기록 정리',
   'settings.dataCleanup.description':
@@ -97,6 +104,9 @@ const pack = {
   'settings.autoCommitHint': '데이터 편집 내용을 자동으로 커밋',
   'settings.safeMode': '안전 모드',
   'settings.safeModeHint': 'WHERE 절 없는 UPDATE/DELETE, TRUNCATE/DROP을 차단합니다',
+  'settings.confirmDangerousExecution': '안전 모드가 꺼져 있을 때 위험한 SQL 확인',
+  'settings.confirmDangerousExecutionHint':
+    '안전 모드가 꺼져 있을 때 고위험/프로덕션 SQL을 실행하기 전에 확인 대화상자를 표시합니다. 끄면 바로 실행합니다.',
   'settings.monitor': '모니터',
   'settings.monitor.description':
     '백그라운드 대시보드 새로고침, 시스템 트레이, 알림, 실행 기록 보존.',
@@ -224,7 +234,7 @@ const pack = {
   'settings.prompts.template': '시스템 프롬프트 (영어)',
   'settings.prompts.langNotice':
     '프롬프트 템플릿은 정확도와 안정성을 위해 영어로 관리됩니다. AI 출력은 현재 애플리케이션 표시 언어에 자동으로 맞춰집니다.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'MCP 서버',
   'settings.mcpClient.title': '외부 MCP 서버',
 } as const;
 export default pack;

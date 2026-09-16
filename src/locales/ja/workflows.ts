@@ -46,6 +46,9 @@ const pack = {
   'workflows.form.defaultConnection': 'デフォルトの接続を使用する',
   'workflows.form.database': 'データベース',
   'workflows.form.databasePlaceholder': 'データベース名を入力してください',
+  'workflows.form.databaseRequired': 'データベースを選択してください（マルチDBの場合は必須）',
+  'workflows.form.databaseLoading': 'データベースを読み込み中…',
+  'workflows.form.databaseInherit': 'ワークフローのデフォルトを継承',
   'workflows.form.addConditionStep': '+ 条件ステップ',
   'workflows.form.addForeachStep': '+各ステップごと',
   'workflows.form.condition': '状態',
@@ -92,5 +95,16 @@ const pack = {
   'workflows.editor.invalidYamlField': '無効な YAML: フィールド "{field}" が無効またはありません',
   'workflows.addToDashboard': 'ダッシュボードに追加',
   'workflows.dashboard.defaultName': '新規ダッシュボード',
+  'workflows.viewTable': 'テーブル',
+  'workflows.viewChart': 'チャート',
+  'workflows.notChartableTooltip': 'この結果はチャート化できません',
+  'workflows.sampledWarning':
+    '大規模なデータセットのため、チャートには最初の {limit} 行のみ表示されます',
+  'workflows.runSelection': '選択範囲を実行',
+  'workflows.format': '整形',
+  'workflows.comment': 'コメント',
+  'workflows.stepOrder.toggle': 'ステップ結果の並び順を切り替え',
+  'workflows.stepOrder.asc': '古い順',
+  'workflows.stepOrder.desc': '新しい順',
 } as const;
 export default pack;
