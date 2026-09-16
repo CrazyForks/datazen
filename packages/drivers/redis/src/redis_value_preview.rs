@@ -34,25 +34,6 @@ pub(crate) fn parse_scan_result(v: &redis::Value) -> (u64, Vec<String>) {
     }
 }
 
-pub(crate) fn value_to_type_string(v: &redis::Value) -> String {
-    match v {
-        redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_lowercase(),
-        redis::Value::VerbatimString { text, .. } => text.to_lowercase(),
-        redis::Value::Int(i) => i.to_string(),
-        redis::Value::SimpleString(s) => s.to_lowercase(),
-        redis::Value::Okay => "ok".into(),
-        _ => "unknown".into(),
-    }
-}
-
-pub(crate) fn value_to_u64(v: &redis::Value) -> u64 {
-    match v {
-        redis::Value::Int(i) => *i as u64,
-        redis::Value::BulkString(b) => String::from_utf8_lossy(b).parse().unwrap_or(0),
-        _ => 0,
-    }
-}
-
 pub(crate) fn preview_value_to_string(v: &redis::Value, key_type: &str) -> String {
     if key_type == "zset" {
         if let Ok(parts) = Vec::<String>::from_redis_value(v) {
@@ -159,59 +140,6 @@ pub(crate) fn value_field_for_preview(v: &redis::Value) -> String {
         redis::Value::Okay => "OK".into(),
         _ => format!("{v:?}"),
     }
-}
-
-/// Convert a flat Redis array `[field, val, field, val, ...]` or Map to a JSON object.
-pub(crate) fn redis_flat_pairs_to_map(
-    v: &redis::Value,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut obj = serde_json::Map::new();
-    match v {
-        redis::Value::Array(items) => {
-            for chunk in items.chunks(2) {
-                if chunk.len() == 2 {
-                    let k = value_to_string(&chunk[0]);
-                    let val = value_to_string(&chunk[1]);
-                    obj.insert(k, serde_json::Value::String(val));
-                }
-            }
-        }
-        redis::Value::Map(pairs) => {
-            for (fk, fv) in pairs {
-                let k = value_to_string(fk);
-                let val = value_to_string(fv);
-                obj.insert(k, serde_json::Value::String(val));
-            }
-        }
-        _ => {}
-    }
-    obj
-}
-
-/// Convert a Redis array to a Vec of JSON strings (lossy UTF-8).
-pub(crate) fn redis_array_to_json_strings(v: &redis::Value) -> Vec<serde_json::Value> {
-    match v {
-        redis::Value::Array(items) => items
-            .iter()
-            .map(|item| serde_json::Value::String(value_to_string(item)))
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// Convert a Redis ZRANGE ... WITHSCORES flat array to `[{"member":..,"score":..}, ...]`.
-pub(crate) fn redis_zset_to_json(v: &redis::Value) -> Vec<serde_json::Value> {
-    let mut members = Vec::new();
-    if let redis::Value::Array(items) = v {
-        for chunk in items.chunks(2) {
-            if chunk.len() == 2 {
-                let mem = value_to_string(&chunk[0]);
-                let sc: f64 = value_to_string(&chunk[1]).parse().unwrap_or(0.0);
-                members.push(serde_json::json!({ "member": mem, "score": sc }));
-            }
-        }
-    }
-    members
 }
 
 /// `XREVRANGE` with COUNT 1: `[[id, [field, val, ...]]]`

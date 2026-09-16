@@ -214,7 +214,6 @@ pub async fn start_subscription(
             move |channel, payload| {
                 // Increment per-connection stats
                 {
-                    let conn_lock = tokio::runtime::Handle::current();
                     // Stats are updated synchronously via blocking task
                     let channel_clone = channel.clone();
                     let conn_clone = conn_id_for_stats.clone();
