@@ -197,23 +197,37 @@ function isOperatorOrPunctuation(text: string): boolean {
 }
 
 /**
- * Strip a bind-parameter prefix from a token that the scanner glued into a
- * single `Other` token (e.g. `order_id=:orderId` or `amount>=:min_amount`).
+ * Strip a bind-parameter suffix from a token that the scanner glued into a
+ * single `Other` token (e.g. `order_id=:orderId` or `col=$1`).
  *
- * Returns the column/qualifier portion, or `null` when the entire token is
- * a standalone bind param with no column prefix (e.g. just `:uid`).
+ * The scanner does not break on `:`, `@`, `$`, `?`, or `=` — these all land
+ * inside the same `Other` run.  This function peels the bind-param portion
+ * (and any preceding `=`/operators) off so the remaining text can be treated
+ * as a column reference.
+ *
+ * Returns the column/qualifier text, or `null` when the entire token is a
+ * standalone bind param with no column prefix (e.g. just `:uid`).
  */
-function stripBindParamPrefix(text: string): string | null {
-  // Standalone bind params — skip entirely
+function stripBindParamSuffix(text: string): string | null {
+  // ── Standalone bind params — skip entirely ──
   if (/^:\w+$/.test(text)) return null; // :name
   if (/^@\w+$/.test(text)) return null; // @name
-  if (/^\$\{?\w+\}?$/.test(text)) return null; // ${name} or $1
+  if (/^\$\d+$/.test(text) || /^\$\{\w+\}$/.test(text)) return null; // $N / ${name}
   if (text === '?') return null; // ?
 
-  // Embedded forms: column=:param, column>=:param, etc.
-  // The bind param starts at the first :/@/$/? that is followed by an identifier.
-  const m = text.match(/^(.*?)([:@]\w+|\$\{?\w+\}?|\?)$/);
-  if (m) return m[1]!.trim() || null;
+  // ── Embedded: column<op>BindParam ──
+  // Capture group 1 = column name (must start with letter/_).
+  // Followed by optional operator chars and a trailing bind param marker.
+  const BIND = /(?::\w+|@\w+|\$\d+|\$\{\w+\}|\?)/;
+  const OP = /[=!<>]*/;
+  const COL = /([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*|\.\"[^\"]+\")*)/;
+  const re = new RegExp(`^${COL.source}${OP.source}${BIND.source}$`);
+  const m = text.match(re);
+  if (m?.[1]) return m[1].trim();
+
+  // Operators-only prefix + bind param (e.g. `=:@p`, `>=:$1`) — no column.
+  const opsAndBind = new RegExp(`^${OP.source}${BIND.source}$`);
+  if (opsAndBind.test(text)) return null;
 
   return text;
 }
@@ -252,13 +266,11 @@ function extractReferences(
     const text = t.text.trim();
     if (!text || isOperatorOrPunctuation(text)) continue;
 
-    // Strip bind parameter prefixes — all five SqlParamSyntax forms where the
-    // param marker is embedded in the same Other token as the column name
-    // (e.g. `order_id=:orderId` from scanner, or standalone `:orderId`).
-    // If the ENTIRE token is just a bind param (no column prefix), skip it.
-    const stripped = stripBindParamPrefix(text);
-    if (stripped === null) continue;
-    const cleanText = stripped;
+    // Strip bind parameter suffix — when the scanner glues a column name and
+    // a bind param into one Other token (e.g. `order_id=:orderId`), extract
+    // just the column part.  Returns null for standalone params → skip.
+    const cleanText = stripBindParamSuffix(text);
+    if (cleanText === null) continue;
 
     if (/^\d+(?:\.\d+)?$/.test(cleanText)) continue;
 
