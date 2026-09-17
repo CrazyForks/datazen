@@ -385,6 +385,64 @@ fn first_run_language_is_supported() {
 }
 
 #[test]
+fn sql_execution_strategy_defaults_to_current_statement() {
+    assert_eq!(
+        AppSettings::default().sql_execution_strategy,
+        "current_statement"
+    );
+    assert_eq!(
+        AppSettings::default_for_first_run().sql_execution_strategy,
+        "current_statement"
+    );
+    let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("sqlExecutionStrategy");
+    let parsed: AppSettings = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.sql_execution_strategy, "current_statement");
+}
+
+#[test]
+fn sql_execution_strategy_preserves_explicit_saved_choices() {
+    for strategy in [
+        "entire_script",
+        "current_statement",
+        "largest_statement",
+        "ask",
+    ] {
+        let settings = AppSettings {
+            sql_execution_strategy: strategy.into(),
+            ..AppSettings::default()
+        };
+        let parsed: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(parsed.sql_execution_strategy, strategy);
+    }
+}
+
+#[test]
+fn intention_actions_roundtrips_in_extension_settings() {
+    for enabled in [true, false] {
+        let mut settings = AppSettings::default();
+        settings.driver_settings.insert(
+            "sql-editor-enhanced".into(),
+            serde_json::json!({ "intentionActions": enabled, "insertValueHints": true }),
+        );
+        let parsed: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(
+            parsed.driver_settings["sql-editor-enhanced"]["intentionActions"],
+            enabled
+        );
+        assert_eq!(
+            parsed.driver_settings["sql-editor-enhanced"]["insertValueHints"],
+            true
+        );
+    }
+}
+
+#[test]
 fn driver_settings_defaults_when_key_missing() {
     let mut value = serde_json::to_value(AppSettings::default()).unwrap();
     value.as_object_mut().unwrap().remove("driverSettings");

@@ -125,6 +125,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const statementGutterEnabled = editorExtensionSettings?.statementGutter !== false;
   const tableHoverEnabled = editorExtensionSettings?.tableHover !== false;
   const insertValueHintsEnabled = editorExtensionSettings?.insertValueHints !== false;
+  const intentionActionsEnabled = editorExtensionSettings?.intentionActions === true;
 
   // §EP hot-plug: re-render when enhanced extension registers/unregisters at runtime
   const isSqlEditorEnhanced = useIsExtensionEnhanced(sqlEditorEnhancedEP);
@@ -333,10 +334,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const linterExts = useMemo(
     () =>
       createLinterExtensions(
-        { databaseType, schema, completionQuotePolicy },
+        { databaseType, schema, completionQuotePolicy, intentionActions: intentionActionsEnabled },
         { modelRef, metadataSnapshotRef },
       ),
-    [databaseType, schema, completionQuotePolicy, isSqlEditorEnhanced],
+    [databaseType, schema, completionQuotePolicy, intentionActionsEnabled, isSqlEditorEnhanced],
   );
 
   // ── Editor mount ─────────────────────────────────────────────────

@@ -81,7 +81,7 @@ export function useQueryExecutionGate({
     (s) => s.settings.confirmDangerousExecution !== false,
   );
   const sqlExecutionStrategy =
-    useSettingsStore((s) => s.settings?.sqlExecutionStrategy) ?? 'entire_script';
+    useSettingsStore((s) => s.settings?.sqlExecutionStrategy) ?? 'current_statement';
   const storeExecuteQuery = usePanelStore((s) => s.executeQuery);
   const storeExecuteSelection = usePanelStore((s) => s.executeSelection);
 

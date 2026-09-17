@@ -41,7 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   keymapPreset: 'default',
   customKeymap: {},
   sqlFormatOptions: DEFAULT_SQL_FORMAT_OPTIONS,
-  sqlExecutionStrategy: 'entire_script',
+  sqlExecutionStrategy: 'current_statement',
   sqlSnippets: [],
   workflowStepResultOrder: 'desc',
 };

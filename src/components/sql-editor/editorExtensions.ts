@@ -638,6 +638,8 @@ export function createHoverExtensions(
 /* -------------------------------------------------------------------------- */
 
 export interface LinterCompartmentOptions {
+  /** Opt-in lightbulb actions; does not disable diagnostics or Alt+Enter intentions. */
+  intentionActions?: boolean;
   databaseType?: string;
   schema?: SqlSchema;
   /** Quote policy used when the linter renders intention Code Actions. */

@@ -155,7 +155,7 @@ pub struct AppSettings {
 }
 
 fn default_sql_execution_strategy() -> String {
-    "entire_script".to_string()
+    "current_statement".to_string()
 }
 
 fn default_completion_quote_policy() -> String {

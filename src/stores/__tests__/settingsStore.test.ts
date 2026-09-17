@@ -149,6 +149,43 @@ describe('settingsStore', () => {
     expect(useSettingsStore.getState().settings.language).toBe('zh-CN');
     expect(useSettingsStore.getState().settings.theme.mode).toBe(DEFAULT_THEME_PREFERENCE.mode);
     expect(useSettingsStore.getState().settings.mcpClientServers).toEqual([]);
+    expect(useSettingsStore.getState().settings.sqlExecutionStrategy).toBe('current_statement');
+  });
+
+  it('defaults to current statement before hydration and for old settings', async () => {
+    expect(useSettingsStore.getState().settings.sqlExecutionStrategy).toBe('current_statement');
+    mockSettingsCommands.getSettings.mockResolvedValueOnce({ language: 'en' });
+    await useSettingsStore.getState().loadSettings();
+    expect(useSettingsStore.getState().settings.sqlExecutionStrategy).toBe('current_statement');
+    expect(mockSettingsCommands.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it.each(['entire_script', 'current_statement', 'largest_statement', 'ask'] as const)(
+    'preserves explicit saved execution strategy %s',
+    async (sqlExecutionStrategy) => {
+      mockSettingsCommands.getSettings.mockResolvedValueOnce({ sqlExecutionStrategy });
+      await useSettingsStore.getState().loadSettings();
+      expect(useSettingsStore.getState().settings.sqlExecutionStrategy).toBe(sqlExecutionStrategy);
+      await useSettingsStore.getState().updateSettings({ editorFontSize: 15 });
+      expect(mockSettingsCommands.saveSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sqlExecutionStrategy }),
+      );
+    },
+  );
+
+  it('persists intention opt-in and opt-out through generic extension settings and reload', async () => {
+    expect(useSettingsStore.getState().settings.driverSettings).toEqual({});
+    for (const intentionActions of [true, false]) {
+      const driverSettings = {
+        'sql-editor-enhanced': { intentionActions, insertValueHints: true },
+      };
+      await useSettingsStore.getState().updateSettings({ driverSettings });
+      const saved = mockSettingsCommands.saveSettings.mock.lastCall?.[0];
+      expect(saved.driverSettings).toEqual(driverSettings);
+      mockSettingsCommands.getSettings.mockResolvedValueOnce(saved);
+      await useSettingsStore.getState().loadSettings();
+      expect(useSettingsStore.getState().settings.driverSettings).toEqual(driverSettings);
+    }
   });
 
   it('updateSettings merges partial and saves', async () => {

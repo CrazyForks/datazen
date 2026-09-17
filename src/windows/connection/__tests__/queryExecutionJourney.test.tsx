@@ -45,116 +45,122 @@ describe('Query Execution & Asset Experience Journeys', () => {
   describe('Journey 1: Execution Strategy Continuous Evolution Journey', () => {
     const multiSql = 'SELECT 1 AS first;\nSELECT 2 AS second;\nSELECT 3 AS third;';
 
-    it('navigates from cursor execution -> selection override -> ask modal choice -> whole script', async () => {
-      const executeQuery = vi.fn().mockResolvedValue(undefined);
-      const executeSelection = vi.fn().mockResolvedValue(undefined);
-      usePanelStore.setState({
-        executeQuery,
-        executeSelection,
-      } as any);
+    it.each(['current_statement', undefined] as const)(
+      'navigates from cursor execution -> selection override -> ask modal choice -> whole script (initial: %s)',
+      async (initialStrategy) => {
+        useSettingsStore.setState((state) => ({
+          settings: { ...state.settings, sqlExecutionStrategy: initialStrategy },
+        }));
+        const executeQuery = vi.fn().mockResolvedValue(undefined);
+        const executeSelection = vi.fn().mockResolvedValue(undefined);
+        usePanelStore.setState({
+          executeQuery,
+          executeSelection,
+        } as any);
 
-      let currentSelection = '';
-      let cursorOffset = multiSql.indexOf('SELECT 2 AS second;');
+        let currentSelection = '';
+        let cursorOffset = multiSql.indexOf('SELECT 2 AS second;');
 
-      const editorRef = {
-        current: {
-          getSelection: () => currentSelection,
-          getCursorOffset: () => cursorOffset,
-          toggleLineComment: vi.fn(),
-          insertAt: vi.fn(),
-        },
-      };
+        const editorRef = {
+          current: {
+            getSelection: () => currentSelection,
+            getCursorOffset: () => cursorOffset,
+            toggleLineComment: vi.fn(),
+            insertAt: vi.fn(),
+          },
+        };
 
-      const showMessageDialog = vi.fn();
-      const { result, rerender } = renderHook(() =>
-        useQueryExecutionGate({
-          panelId: 'p1',
-          dbSessionId: 'sess-1',
-          databaseType: 'postgresql',
-          connectionId: 'conn-1',
-          editorRef: editorRef as any,
-          sql: multiSql,
-          boundPayload: undefined,
-          inTransaction: false,
-          setInTransaction: vi.fn(),
-          refreshTxStatus: vi.fn().mockResolvedValue(undefined),
-          maybeOfferAbortedDialog: vi.fn().mockResolvedValue(undefined),
-          syncContextFromSql: vi.fn().mockResolvedValue(undefined),
-          showMessageDialog,
-          onExecutionComplete: vi.fn(),
-        }),
-      );
+        const showMessageDialog = vi.fn();
+        const { result, rerender } = renderHook(() =>
+          useQueryExecutionGate({
+            panelId: 'p1',
+            dbSessionId: 'sess-1',
+            databaseType: 'postgresql',
+            connectionId: 'conn-1',
+            editorRef: editorRef as any,
+            sql: multiSql,
+            boundPayload: undefined,
+            inTransaction: false,
+            setInTransaction: vi.fn(),
+            refreshTxStatus: vi.fn().mockResolvedValue(undefined),
+            maybeOfferAbortedDialog: vi.fn().mockResolvedValue(undefined),
+            syncContextFromSql: vi.fn().mockResolvedValue(undefined),
+            showMessageDialog,
+            onExecutionComplete: vi.fn(),
+          }),
+        );
 
-      // Step 1: In 'current_statement' mode, execute statement containing cursor (statement 2)
-      await act(async () => {
-        result.current.handleExecute();
-      });
-      expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 2 AS second;', undefined);
-      expect(executeQuery).not.toHaveBeenCalled();
-      executeSelection.mockClear();
+        // Step 1: In 'current_statement' mode, execute statement containing cursor (statement 2)
+        await act(async () => {
+          result.current.handleExecute();
+        });
+        expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 2 AS second;', undefined);
+        expect(executeQuery).not.toHaveBeenCalled();
+        executeSelection.mockClear();
 
-      // Step 2: User makes an active text selection -> selection MUST take absolute precedence
-      currentSelection = 'SELECT 1 AS first;';
-      await act(async () => {
-        result.current.handleExecute();
-      });
-      expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 1 AS first;', undefined);
-      executeSelection.mockClear();
-      currentSelection = ''; // Clear selection
+        // Step 2: User makes an active text selection -> selection MUST take absolute precedence
+        currentSelection = 'SELECT 1 AS first;';
+        await act(async () => {
+          result.current.handleExecute();
+        });
+        expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 1 AS first;', undefined);
+        executeSelection.mockClear();
+        currentSelection = ''; // Clear selection
 
-      // Step 3: User switches execution strategy to 'ask'
-      useSettingsStore.setState({
-        settings: {
-          ...useSettingsStore.getState().settings,
-          sqlExecutionStrategy: 'ask',
-        },
-      });
-      cursorOffset = multiSql.indexOf('SELECT 3 AS third;');
-      rerender();
+        // Step 3: User switches execution strategy to 'ask'
+        useSettingsStore.setState({
+          settings: {
+            ...useSettingsStore.getState().settings,
+            sqlExecutionStrategy: 'ask',
+          },
+        });
+        cursorOffset = multiSql.indexOf('SELECT 3 AS third;');
+        rerender();
 
-      // Trigger execution -> should not execute immediately, must open ask modal
-      await act(async () => {
-        result.current.handleExecute();
-      });
-      expect(executeQuery).not.toHaveBeenCalled();
-      expect(executeSelection).not.toHaveBeenCalled();
-      expect(result.current.executionStrategyAskModal).not.toBeNull();
+        // Trigger execution -> should not execute immediately, must open ask modal
+        await act(async () => {
+          result.current.handleExecute();
+        });
+        expect(executeQuery).not.toHaveBeenCalled();
+        expect(executeSelection).not.toHaveBeenCalled();
+        expect(result.current.executionStrategyAskModal).not.toBeNull();
 
-      // Step 4: In Ask modal, user chooses "Execute Current Statement"
-      const modalProps = (result.current.executionStrategyAskModal as any).props;
-      expect(modalProps.currentStatement.sql).toBe('SELECT 3 AS third;');
-      await act(async () => {
-        modalProps.onExecuteCurrent();
-      });
-      expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 3 AS third;', undefined);
-      executeSelection.mockClear();
+        // Step 4: In Ask modal, user chooses "Execute Current Statement"
+        const modalProps = (result.current.executionStrategyAskModal as any).props;
+        expect(modalProps.currentStatement.sql).toBe('SELECT 3 AS third;');
+        await act(async () => {
+          modalProps.onExecuteCurrent();
+        });
+        expect(executeSelection).toHaveBeenCalledWith('p1', 'SELECT 3 AS third;', undefined);
+        executeSelection.mockClear();
 
-      // Step 5: User triggers execution again in 'ask' mode, this time chooses "Execute Entire Script"
-      await act(async () => {
-        result.current.handleExecute();
-      });
-      const modalProps2 = (result.current.executionStrategyAskModal as any).props;
-      await act(async () => {
-        modalProps2.onExecuteEntire();
-      });
-      expect(executeQuery).toHaveBeenCalledWith('p1', undefined);
-      executeQuery.mockClear();
+        // Step 5: User triggers execution again in 'ask' mode, this time chooses "Execute Entire Script"
+        await act(async () => {
+          result.current.handleExecute();
+        });
+        const modalProps2 = (result.current.executionStrategyAskModal as any).props;
+        await act(async () => {
+          modalProps2.onExecuteEntire();
+        });
+        expect(executeQuery).toHaveBeenCalledWith('p1', undefined);
+        executeQuery.mockClear();
 
-      // Step 6: User switches strategy to 'entire_script' -> executes without modal
-      useSettingsStore.setState({
-        settings: {
-          ...useSettingsStore.getState().settings,
-          sqlExecutionStrategy: 'entire_script',
-        },
-      });
-      rerender();
+        // Step 6: User switches strategy to 'entire_script' -> executes without modal
+        useSettingsStore.setState({
+          settings: {
+            ...useSettingsStore.getState().settings,
+            sqlExecutionStrategy: 'entire_script',
+          },
+        });
+        rerender();
 
-      await act(async () => {
-        result.current.handleExecute();
-      });
-      expect(executeQuery).toHaveBeenCalledWith('p1', undefined);
-      expect(result.current.executionStrategyAskModal).toBeNull();
-    });
+        await act(async () => {
+          result.current.handleExecute();
+        });
+        expect(executeQuery).toHaveBeenCalledWith('p1', undefined);
+        expect(result.current.executionStrategyAskModal).toBeNull();
+      },
+    );
   });
 
   describe('Journey 2: Bind Param Security Gate & Remediation Journey', () => {

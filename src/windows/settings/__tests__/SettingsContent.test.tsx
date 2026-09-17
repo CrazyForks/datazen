@@ -1004,6 +1004,60 @@ describe('SettingsContent', () => {
     expect(screen.queryByTestId('settings-contrib-sql-editor-pro')).not.toBeInTheDocument();
   });
 
+  it('renders generic intentionActions default off and persists off/on/off without changing sibling settings', async () => {
+    const { extensionRegistry, sqlEditorEnhancedEP } = await import('@datazen/extension-points');
+    currentSettings.driverSettings = {
+      other: { preserved: true },
+      'sql-editor-enhanced': { insertValueHints: true },
+    };
+    const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
+      settingsContributions: [
+        {
+          extensionId: 'sql-editor-enhanced',
+          targetSection: 'editor',
+          items: [
+            {
+              key: 'intentionActions',
+              label: 'Intention Actions',
+              hint: 'Show the lightbulb for available quick fixes.',
+              type: 'boolean',
+              defaultValue: false,
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      const { unmount } = render(<SettingsContent initialSection="editor" />);
+      await waitForSettingsLoad();
+      const toggle = screen.getByRole('switch', { name: 'Intention Actions' });
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      fireEvent.mouseEnter(screen.getByRole('button', { name: 'Intention Actions' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Show the lightbulb');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      for (const enabled of [true, false]) {
+        fireEvent.click(toggle);
+        await waitFor(() =>
+          expect(updateSettingsMock).toHaveBeenLastCalledWith({
+            driverSettings: {
+              other: { preserved: true },
+              'sql-editor-enhanced': { insertValueHints: true, intentionActions: enabled },
+            },
+          }),
+        );
+        expect(toggle).toHaveAttribute('aria-checked', String(enabled));
+      }
+      unmount();
+      render(<SettingsContent initialSection="editor" />);
+      expect(screen.getByRole('switch', { name: 'Intention Actions' })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      );
+    } finally {
+      unregister();
+    }
+  });
+
   it('renders extension settings contribution dynamically when registered', async () => {
     const { extensionRegistry, sqlEditorEnhancedEP } = await import('@datazen/extension-points');
     const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
