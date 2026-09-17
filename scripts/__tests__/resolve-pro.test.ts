@@ -1,10 +1,13 @@
 /** @vitest-environment node */
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'fs';
+import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   parseArgs,
+  readProLock,
+  pinProCheckout,
   writeCommunityCodegen,
   writeProCodegen,
   resolvePro,
@@ -66,6 +69,75 @@ describe('resolve-pro parseArgs', () => {
     expect(res.proPath).toBe('/custom/path');
     expect(res.proGit).toBe('git@github.com:custom/repo.git');
     expect(res.codegenOnly).toBe(true);
+  });
+
+  it('parses --pro-ref and defaults it to null', () => {
+    expect(parseArgs([]).proRef).toBeNull();
+    expect(parseArgs(['--pro-ref=abc1234']).proRef).toBe('abc1234');
+  });
+
+  it('reads the pinned Pro ref from the lock file', () => {
+    const lock = readProLock();
+    expect(lock.ref).toMatch(/^[0-9a-f]{40}$/);
+    expect(lock.git).toContain('datazen-extension-sql-editor-pro');
+  });
+
+  it('treats a missing lock file as unpinned rather than throwing', () => {
+    expect(readProLock('/nonexistent/pro-extension.lock.json')).toEqual({
+      git: null,
+      ref: null,
+    });
+  });
+});
+
+describe('resolve-pro checkout pinning', () => {
+  /** Build a throwaway repo with two commits and return both shas. */
+  function makeRepo(): { dir: string; first: string; second: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'pro-pin-'));
+    const run = (cmd: string) => execSync(cmd, { cwd: dir, stdio: 'pipe' });
+    run('git init -q');
+    run('git config user.email t@t.t');
+    run('git config user.name t');
+    writeFileSync(join(dir, 'a.txt'), 'one\n');
+    run('git add . && git commit -qm one');
+    const first = execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim();
+    writeFileSync(join(dir, 'a.txt'), 'two\n');
+    run('git add . && git commit -qm two');
+    const second = execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim();
+    return { dir, first, second };
+  }
+
+  it('checks out the pinned commit and reports the resulting sha', () => {
+    const { dir, first, second } = makeRepo();
+    try {
+      expect(second).not.toBe(first);
+      const head = pinProCheckout(dir, first, { log: () => {} });
+      expect(head).toBe(first);
+      expect(execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim()).toBe(first);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op when no ref is pinned', () => {
+    const { dir, second } = makeRepo();
+    try {
+      expect(pinProCheckout(dir, null, { log: () => {} })).toBeNull();
+      expect(execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim()).toBe(second);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails loudly when the pinned ref does not exist', () => {
+    const { dir } = makeRepo();
+    try {
+      expect(() =>
+        pinProCheckout(dir, '0000000000000000000000000000000000000000', { log: () => {} }),
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

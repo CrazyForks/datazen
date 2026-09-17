@@ -11,18 +11,25 @@
  *   --restore                (restores clean Community state)
  *   --pro-path=<path>        (local path to @datazen/extension-sql-editor-pro)
  *   --pro-git=<url>          (git clone url for @datazen/extension-sql-editor-pro)
+ *   --pro-ref=<ref>          (pin the cloned extension to a commit/tag)
  *   --codegen-only           (only write generated-pro.ts, skip git operations)
  *
  * Environment variables:
  *   DATAZEN_EDITION="pro" | "community"
  *   DATAZEN_PRO_PATH="/path/to/datazen-extension-sql-editor-pro"
  *   DATAZEN_PRO_GIT="https://github.com/flyxl/datazen-extension-sql-editor-pro.git"
+ *   DATAZEN_PRO_REF="<commit sha or tag>"
+ *
+ * A freshly cloned extension is pinned to `pro-extension.lock.json` (or the
+ * --pro-ref / DATAZEN_PRO_REF override) so that building a host tag reproduces
+ * the exact extension revision that tag shipped. An existing local checkout is
+ * left alone, so day-to-day development keeps using working-tree code.
  *
  * Generates:
  *   src/extensions/generated-pro.ts (gitignored)
  */
 
-import { existsSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -34,12 +41,35 @@ export const PRO_EXT_DIR = resolve(ROOT, 'packages/pro-extensions');
 export const DEFAULT_PRO_DEST = resolve(PRO_EXT_DIR, 'sql-editor-pro');
 export const DEFAULT_PRO_GIT = 'https://github.com/flyxl/datazen-extension-sql-editor-pro.git';
 export const GENERATED_PRO_TS = resolve(ROOT, 'src/extensions/generated-pro.ts');
+export const PRO_LOCK_FILE = resolve(ROOT, 'pro-extension.lock.json');
+
+/**
+ * Read the pinned Pro extension revision.
+ *
+ * The lock file is what makes a host tag reproducible: without it the clone
+ * below takes the Pro repo's default-branch HEAD, so re-packaging an old tag
+ * would silently bundle whatever the extension looked like at build time.
+ * Returns `{ git, ref }` with `null` for anything the lock file omits.
+ */
+export function readProLock(lockFile = PRO_LOCK_FILE) {
+  if (!existsSync(lockFile)) return { git: null, ref: null };
+  try {
+    const lock = JSON.parse(readFileSync(lockFile, 'utf-8'));
+    return {
+      git: typeof lock.git === 'string' && lock.git ? lock.git : null,
+      ref: typeof lock.ref === 'string' && lock.ref ? lock.ref : null,
+    };
+  } catch (err) {
+    throw new Error(`[resolve-pro] failed to parse ${lockFile}: ${err.message}`);
+  }
+}
 
 export function parseArgs(argv = process.argv.slice(2)) {
   let explicitEdition = null;
   let edition = process.env.DATAZEN_EDITION || 'community';
   let proPath = process.env.DATAZEN_PRO_PATH || null;
   let proGit = process.env.DATAZEN_PRO_GIT || DEFAULT_PRO_GIT;
+  let proRef = process.env.DATAZEN_PRO_REF || null;
   let restore = false;
   let codegenOnly = false;
   let prebuiltUrl = process.env.DATAZEN_PRO_PREBUILT_URL || null;
@@ -61,12 +91,14 @@ export function parseArgs(argv = process.argv.slice(2)) {
       proPath = arg.slice('--pro-path='.length);
     } else if (arg.startsWith('--pro-git=')) {
       proGit = arg.slice('--pro-git='.length);
+    } else if (arg.startsWith('--pro-ref=')) {
+      proRef = arg.slice('--pro-ref='.length);
     } else if (arg.startsWith('--pro-prebuilt-url=')) {
       prebuiltUrl = arg.slice('--pro-prebuilt-url='.length);
     }
   }
 
-  return { edition, explicitEdition, proPath, proGit, restore, codegenOnly, prebuiltUrl };
+  return { edition, explicitEdition, proPath, proGit, proRef, restore, codegenOnly, prebuiltUrl };
 }
 
 export function writeCommunityCodegen(dest = GENERATED_PRO_TS) {
@@ -309,7 +341,22 @@ export function stageProExtension({
   });
 }
 
-export function ensureProCheckout({ proPath, proGit, codegenOnly } = {}) {
+/**
+ * Detach `dir` at `ref` and return the resulting commit sha.
+ *
+ * A full clone already contains the object, so this works for tags and shas
+ * alike. Throws if the ref cannot be resolved — a pinned build must fail loudly
+ * rather than quietly fall back to the default branch.
+ */
+export function pinProCheckout(dir, ref, { log = console.log } = {}) {
+  if (!ref) return null;
+  execSync(`git -C ${dir} checkout --detach ${ref}`, { stdio: 'inherit' });
+  const head = execSync(`git -C ${dir} rev-parse HEAD`, { encoding: 'utf-8' }).trim();
+  log(`[resolve-pro] Pro extension pinned at ${head}`);
+  return head;
+}
+
+export function ensureProCheckout({ proPath, proGit, proRef, codegenOnly } = {}) {
   if (proPath && existsSync(proPath)) {
     console.log(`[resolve-pro] using explicitly provided pro path: ${proPath}`);
     return proPath;
@@ -348,6 +395,18 @@ export function ensureProCheckout({ proPath, proGit, codegenOnly } = {}) {
   try {
     execSync(`git clone ${proGit} ${DEFAULT_PRO_DEST}`, { stdio: 'inherit' });
     console.log(`[resolve-pro] cloned successfully into ${DEFAULT_PRO_DEST}`);
+
+    if (proRef) {
+      // Detach so the pinned revision is not mistaken for a branch to commit on.
+      pinProCheckout(DEFAULT_PRO_DEST, proRef);
+    } else {
+      console.warn(
+        '[resolve-pro] WARNING: no Pro extension ref pinned ' +
+          '(pro-extension.lock.json / --pro-ref / DATAZEN_PRO_REF). ' +
+          'Building the default-branch HEAD — this release is NOT reproducible.',
+      );
+    }
+
     return DEFAULT_PRO_DEST;
   } catch (err) {
     console.error(`[resolve-pro] failed to clone Pro extension from ${proGit}:`, err.message);
@@ -363,10 +422,20 @@ export function resolvePro(opts = {}) {
     (process.env.DATAZEN_EDITION ? parsed.edition : null);
   const edition = explicitEdition ?? 'community';
   const proPath = opts.proPath ?? parsed.proPath;
-  const proGit = opts.proGit ?? parsed.proGit;
   const restore = opts.restore ?? parsed.restore;
   const codegenOnly = opts.codegenOnly ?? parsed.codegenOnly;
   const prebuiltUrl = opts.prebuiltUrl ?? parsed.prebuiltUrl;
+
+  // Pin precedence: explicit option > CLI/env > lock file. `null` disables the
+  // pin, which is what local development wants.
+  const lock = readProLock();
+  const proRef = opts.proRef !== undefined ? opts.proRef : (parsed.proRef ?? lock.ref);
+  // `parseArgs` already falls back to DEFAULT_PRO_GIT, so an unset URL is
+  // indistinguishable from an explicit one — treat "still the default" as unset
+  // and let the lock file name the repo the pinned ref lives in. Kept truthy so
+  // the "already staged" guard below keeps behaving as before.
+  const requestedGit = opts.proGit ?? parsed.proGit ?? DEFAULT_PRO_GIT;
+  const proGit = requestedGit === DEFAULT_PRO_GIT && lock.git ? lock.git : requestedGit;
 
   // If codegenOnly is requested without an explicit edition, and generated-pro.ts already exists, preserve it!
   if (codegenOnly && !explicitEdition && !restore && existsSync(GENERATED_PRO_TS)) {
@@ -411,7 +480,7 @@ export function resolvePro(opts = {}) {
 
     // Standard path: clone/build from source, then stage the rewritten +
     // signed bundle as a Tauri resource (track B: loaded at runtime).
-    const targetPath = ensureProCheckout({ proPath, proGit, codegenOnly });
+    const targetPath = ensureProCheckout({ proPath, proGit, proRef, codegenOnly });
     writeProCodegen(GENERATED_PRO_TS, { proPath: targetPath || proPath || DEFAULT_PRO_DEST });
     if (!codegenOnly && targetPath) {
       stageProExtension({ extensionDir: targetPath, mode: 'stage' });

@@ -1,0 +1,13 @@
+{
+  "$comment": [
+    "Pins the SQL Editor Pro extension revision that release builds bundle.",
+    "scripts/resolve-pro.mjs checks this ref out after cloning, so building a host",
+    "tag reproduces the exact extension that tag shipped. Without a pin the build",
+    "silently takes the Pro repo's default-branch HEAD, which means re-packaging an",
+    "old tag would ship newer extension code.",
+    "Bump `ref` whenever the Pro extension changes, and re-run",
+    "`node scripts/publish-pro-prebuilt.mjs` if you also maintain the prebuilt release."
+  ],
+  "git": "https://github.com/flyxl/datazen-extension-sql-editor-pro.git",
+  "ref": "7c3fd8cb1a022a1f1c86e480686ff3a361f6e5be"
+}
