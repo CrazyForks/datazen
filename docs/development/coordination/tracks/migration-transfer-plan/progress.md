@@ -1,6 +1,6 @@
 # migration-transfer-plan
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
@@ -67,6 +67,13 @@
 
 - `migration-transfer-plan-BUG-001` is independently verified and should be closed by the coordinator after this commit.
 - This plan contract is correct across all required Host, API, driver and real database checks, but the optional formal Transfer suite exposed two existing Transfer core failures. Per Tester protocol the track remains `FAILED` until the coordinator transfers or resolves BUG-002/003; they are not caused by the latest immutable-plan repair.
+
+## BUG-002 repair
+
+- 修复提交：见本分支最新 `fix(data-transfer): make create-new mappings explicit` 提交。
+- 自动发现的结构 create-new mapping 默认未选中，避免 Mapping 页聚焦到未选择的历史 source table；disabled create-new inspect row 保留完整 source column mappings，用户勾选后由 adapter 填充每列目标类型。
+- 正式 E2E `DT-TYPE-MYSQL-PG-001` 在重建 webdriver bundle 后 1/1 通过，active/created_at 类型输入与 Preview DDL 均通过；Host Transfer 51 passed，前端 Transfer 25 passed，`npx tsc --noEmit` passed。
+- BUG-003 大批量性能问题未修改，仍待后续单独轨道处理。
 
 ## Boundaries for Tester
 
