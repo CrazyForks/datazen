@@ -67,16 +67,23 @@ describe('Windows release packaging', () => {
     expect(releaseWorkflow).toContain('builtin-ep/sql-editor-pro/dist/index.esm.js');
   });
 
-  it('downloads the prebuilt Pro tarball with a dedicated token and emits notices on fallback', () => {
-    expect(releaseWorkflow).toContain('Download prebuilt Pro extension (fast path)');
-    // Dedicated PAT secret: GITHUB_TOKEN cannot read the private Pro repo's releases
-    expect(releaseWorkflow).toContain('PRO_PREBUILT_TOKEN');
-    expect(releaseWorkflow).toContain('Authorization: Bearer');
-    // Private-repo assets must resolve via the API (browser CDN URL 404s with Bearer)
-    expect(releaseWorkflow).toContain('Accept: application/octet-stream');
-    expect(releaseWorkflow).toContain('releases/tags/');
-    // curl failure reason must surface in annotations without admin log access
-    expect(releaseWorkflow).toContain('::notice::Prebuilt download failed');
+  it('builds the Pro extension once and shares it with every variant as an artifact', () => {
+    // One clone/build/sign for the whole matrix instead of one per variant.
+    expect(releaseWorkflow).toContain('prepare-pro-extension');
+    expect(releaseWorkflow).toContain(
+      'Clone, build and sign the Pro extension at the pinned revision',
+    );
+    expect(releaseWorkflow).toContain('node scripts/resolve-pro.mjs --edition=pro');
+    expect(releaseWorkflow).toContain('actions/upload-artifact@v4');
+    expect(releaseWorkflow).toContain('if-no-files-found: error');
+    // Every Pro variant consumes that artifact rather than re-cloning the repo.
+    expect(releaseWorkflow).toContain('actions/download-artifact@v4');
+    expect(releaseWorkflow).toContain('name: pro-extension');
+    expect(releaseWorkflow).toContain('needs: prepare-pro-extension');
+    // No PAT: the private Pro repo is reached with the deploy key, so the
+    // releases API token and its fallback notices are gone.
+    expect(releaseWorkflow).not.toContain('PRO_PREBUILT_TOKEN');
+    expect(releaseWorkflow).not.toContain('Download prebuilt Pro extension (fast path)');
     // Verify step emits notices so the next failure is diagnosable from annotations
     expect(releaseWorkflow).toContain('::notice::[pro-verify]');
   });

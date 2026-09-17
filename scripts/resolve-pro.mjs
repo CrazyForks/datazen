@@ -25,6 +25,10 @@
  * the exact extension revision that tag shipped. An existing local checkout is
  * left alone, so day-to-day development keeps using working-tree code.
  *
+ * When a signed tree is already staged under `builtin-ep/sql-editor-pro` and
+ * nobody asked for a specific source, that tree is used as-is — this is how CI
+ * builds the extension once and shares it with every release variant.
+ *
  * Generates:
  *   src/extensions/generated-pro.ts (gitignored)
  */
@@ -68,7 +72,10 @@ export function parseArgs(argv = process.argv.slice(2)) {
   let explicitEdition = null;
   let edition = process.env.DATAZEN_EDITION || 'community';
   let proPath = process.env.DATAZEN_PRO_PATH || null;
-  let proGit = process.env.DATAZEN_PRO_GIT || DEFAULT_PRO_GIT;
+  // Left null when neither the environment nor the CLI picked a URL, so callers
+  // can tell "a git source was requested" from "no source specified" — the
+  // "already staged" short-circuit depends on that distinction.
+  let proGit = process.env.DATAZEN_PRO_GIT || null;
   let proRef = process.env.DATAZEN_PRO_REF || null;
   let restore = false;
   let codegenOnly = false;
@@ -430,12 +437,12 @@ export function resolvePro(opts = {}) {
   // pin, which is what local development wants.
   const lock = readProLock();
   const proRef = opts.proRef !== undefined ? opts.proRef : (parsed.proRef ?? lock.ref);
-  // `parseArgs` already falls back to DEFAULT_PRO_GIT, so an unset URL is
-  // indistinguishable from an explicit one — treat "still the default" as unset
-  // and let the lock file name the repo the pinned ref lives in. Kept truthy so
-  // the "already staged" guard below keeps behaving as before.
-  const requestedGit = opts.proGit ?? parsed.proGit ?? DEFAULT_PRO_GIT;
-  const proGit = requestedGit === DEFAULT_PRO_GIT && lock.git ? lock.git : requestedGit;
+  // A caller only "requested" a git source via --pro-git / DATAZEN_PRO_GIT. When
+  // nobody did, the lock file names the repo the pinned ref lives in, and a tree
+  // already staged under builtin-ep (e.g. a CI artifact) is used as-is.
+  const requestedGit = opts.proGit ?? parsed.proGit ?? null;
+  const proGitExplicit = requestedGit !== null;
+  const proGit = requestedGit ?? lock.git ?? DEFAULT_PRO_GIT;
 
   // If codegenOnly is requested without an explicit edition, and generated-pro.ts already exists, preserve it!
   if (codegenOnly && !explicitEdition && !restore && existsSync(GENERATED_PRO_TS)) {
@@ -471,8 +478,9 @@ export function resolvePro(opts = {}) {
       }
     }
 
-    // If prebuilt files are already staged (e.g., by CI download step), just codegen
-    if (hasPrebuiltFiles && !proPath && !proGit && !codegenOnly) {
+    // If a signed tree is already staged (CI builds the extension once and
+    // shares it with every variant as an artifact), just write the codegen.
+    if (hasPrebuiltFiles && !proPath && !proGitExplicit && !codegenOnly) {
       console.log('[resolve-pro] pro extension already staged in builtin-ep, writing codegen');
       writeProCodegen(GENERATED_PRO_TS, { proPath: proPath || builtinEpDir });
       return { edition: 'pro', active: true, path: builtinEpDir, prebuilt: true };

@@ -245,6 +245,29 @@ describe('[tester] resolve-pro staging and edition flows', () => {
     expect(existsSync(join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro'))).toBe(false);
   });
 
+  it('test_tester_resolvePro_uses_already_staged_tree_without_cloning', () => {
+    // CI builds the extension once and hands the signed tree to every variant as
+    // an artifact. resolve-pro must use that tree verbatim rather than cloning
+    // the private repo again in each matrix job.
+    const staging = join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro');
+    rmSync(staging, { recursive: true, force: true });
+    writeFixtureExtension(staging);
+    const bundle = join(staging, 'dist/index.esm.js');
+    const staged = readFileSync(bundle, 'utf-8');
+
+    const prevGit = process.env.DATAZEN_PRO_GIT;
+    delete process.env.DATAZEN_PRO_GIT;
+    try {
+      const res = resolvePro({ edition: 'pro' });
+      expect(res).toMatchObject({ edition: 'pro', active: true, prebuilt: true });
+      // A clone would have overwritten the staged bundle.
+      expect(readFileSync(bundle, 'utf-8')).toBe(staged);
+    } finally {
+      if (prevGit !== undefined) process.env.DATAZEN_PRO_GIT = prevGit;
+      rmSync(staging, { recursive: true, force: true });
+    }
+  });
+
   it('test_tester_resolvePro_pro_stages_builtin_ep_for_runtime_loading', () => {
     const extDir = join(process.cwd(), 'packages/pro-extensions/sql-editor-pro');
     if (!existsSync(join(extDir, 'package.json'))) {
