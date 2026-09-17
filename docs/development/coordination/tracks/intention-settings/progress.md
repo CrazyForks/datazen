@@ -23,7 +23,7 @@ Phase: READY_FOR_TEST
 3. Live toggles preserve typing/caret/undo and toolbar mode changes remain immediately reflected.
 
 ## Handoff / limitations
-- Coding commit: recorded in the subsequent handoff entry after commit creation.
+- Coding commit: `728c01dcca1a553e60f83d65920dbf60b6ad52ee` (`feat(editor): opt in to intention actions and default to current statement`).
 - Independent Tester must verify before marking PASSED.
 - Host tests use a small EP implementation to observe the real compartment contract; visual lightbulb/menu behavior and translated Pro contribution require the parent's separate Pro implementation/integration validation.
 - No desktop/WebDriver E2E run; no main checkout, Pro source, generated files or hub.md modified; no pnpm install.
