@@ -469,6 +469,13 @@ describe('DataTransferWindow', () => {
 
     fireEvent.click(screen.getByTestId('data-transfer-execute-confirm-proceed'));
     await waitFor(() => expect(transferCommands.execute).toHaveBeenCalled());
+    expect(transferCommands.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planId: 'plan-test-1',
+        selection: { sourceTables: ['users'] },
+        options: { confirmedDestructive: true },
+      }),
+    );
   });
 
   it('runs execute immediately for insert write mode without confirm dialog', async () => {

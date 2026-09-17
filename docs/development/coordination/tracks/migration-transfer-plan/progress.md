@@ -1,10 +1,21 @@
 # migration-transfer-plan
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
-- Implementation commit: pending final commit
+- Implementation commit: 15b54573
+- Tester commit: pending final commit
+
+## Tester result
+
+- Phase B/C/D completed independently.
+- Host Transfer filter: 47 passed, 1 failed. The failure is recorded as `migration-transfer-plan-BUG-001`.
+- Plan contract AppState tests passed for opaque plan issuance, normal execution, one-shot consumption, changed driver/schema fail-closed, changed read-only fail-closed, execution failure consumption, invalid selection, and unknown plan.
+- Frontend Transfer tests: 25 passed; targeted changed-file coverage is `src/windows/data-transfer/DataTransferWindow.tsx` 85.75% statements / 80.00% branches / 91.89% functions / 88.12% lines and `src/commands/transfer.ts` 100% statements / 66.66% branches / 100% functions / 100% lines.
+- TypeScript check passed.
+- Driver unit tests passed: PostgreSQL 101, MySQL 86, SQLite 46.
+- No WebDriver run: this contract was independently covered through the real Host AppState command path and existing UI journey tests; no separate desktop-only path was needed to reproduce the reported failure.
 
 ## Implemented
 
