@@ -19,7 +19,7 @@
 
 ## migration-transfer-plan-BUG-002
 
-- 状态：待复测
+- 状态：已修复（独立 Tester Round 3）
 - 严重度：P1（跨方言结构映射页面无法完成）
 - 描述：MySQL→PostgreSQL 的 structure/create-new 映射旅程在列映射页没有渲染 `active` 列的目标类型输入，用户无法按预期确认或修改 TINYINT→boolean 映射，后续 Preview DDL 验收无法继续。
 - 重现步骤：
@@ -32,6 +32,7 @@
 - 影响范围：`e2e/specs/data-transfer-type-mapping-mysql-pg.ts` 的 DT-TYPE-MYSQL-PG-001；属于 Transfer mapping UI/inspect 路径。
 - 修复说明：自动发现的 create-new mapping 在结构模式下默认保持未选中，避免把所有 source table 一并带入 Mapping 页；disabled create-new inspect row 仍生成完整 source column mappings，用户勾选后由跨方言 adapter 补齐每列 target native type。这样 `TINYINT(1) active` 与其他可映射源列都会进入 Mapping、Preview DDL 和执行使用的同一 column mapping。
 - 验证记录：正式 `DT-TYPE-MYSQL-PG-001` 在重建 webdriver bundle 后 1/1 通过，包含 active 类型输入、created_at 类型输入及 Preview DDL；Host Transfer 51/51、前端 Transfer 25/25、TypeScript 检查通过。
+- 独立复测（2026-09-17）：`DT-TYPE-MYSQL-PG-001` 1/1 通过；`data-transfer` 桌面套件 7 个 spec 通过、1 个失败，唯一失败为已登记且暂不处理的 BUG-003；新增 mapping view 状态测试 2/2 通过。PostgreSQL 101、MySQL 86、SQLite 46 驱动测试通过；WebDriver 正式构建通过。
 
 ## migration-transfer-plan-BUG-003
 

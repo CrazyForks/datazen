@@ -1,11 +1,11 @@
 # migration-transfer-plan
 
-- Phase: READY_FOR_TEST
+- Phase: READY_TO_MERGE（BUG-002 已关闭；BUG-003 按当前范围暂缓）
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
-- Implementation commit: 15b54573
-- Tester commit: 0fdff186
+- Implementation commit: 7415c5bb
+- Tester commit: 待提交
 
 ## Tester result
 
@@ -74,6 +74,15 @@
 - 自动发现的结构 create-new mapping 默认未选中，避免 Mapping 页聚焦到未选择的历史 source table；disabled create-new inspect row 保留完整 source column mappings，用户勾选后由 adapter 填充每列目标类型。
 - 正式 E2E `DT-TYPE-MYSQL-PG-001` 在重建 webdriver bundle 后 1/1 通过，active/created_at 类型输入与 Preview DDL 均通过；Host Transfer 51 passed，前端 Transfer 25 passed，`npx tsc --noEmit` passed。
 - BUG-003 大批量性能问题未修改，仍待后续单独轨道处理。
+
+## Independent Tester Round 3（BUG-002，2026-09-17）
+
+- 代码审查确认：自动发现的 structure/create-new mapping 保留完整 source column mappings，但保持 disabled，用户勾选后才进入 Preview/执行；跨方言 adapter 为每列填充 target native type，Preview DDL 与执行继续复用同一 mapping。
+- Host `data_transfer`：51/51 通过；前端 Transfer：27/27 通过（包含新增 mapping view 状态测试 2/2）；`npx tsc --noEmit` 通过。
+- 精确前端覆盖率：`DataTransferWindow.tsx` 85.75% statements / 80.00% branches / 91.89% functions / 88.12% lines；`transfer.ts` 100% / 66.66% / 100% / 100%。
+- 驱动测试：PostgreSQL 101/101、MySQL 86/86、SQLite 46/46；SQLite Transfer journey 1/1。
+- 正式 `CI=true pnpm_config_verify_deps_before_run=warn pnpm tauri:build:webdriver` 通过。完整 `pnpm e2e:data-transfer` 为 7 个 spec 通过、1 个失败；`DT-TYPE-MYSQL-PG-001` 1/1 通过并验证 `active` → `BOOLEAN`、`created_at` → timestamp 及 Preview DDL。剩余失败为已登记 BUG-003（PG→MySQL 25,000 行性能/终态问题），本轮未修改。
+- 判定：`migration-transfer-plan-BUG-002` 已修复；本轮未发现新的 BUG-002 回归。
 
 ## Boundaries for Tester
 
