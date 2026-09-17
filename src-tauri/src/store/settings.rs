@@ -134,6 +134,9 @@ pub struct AppSettings {
     /// Identifier quotation policy for SQL completion ('unquoted' | 'always' | 'both'). Default 'unquoted'.
     #[serde(default = "default_completion_quote_policy")]
     pub editor_completion_quote_policy: String,
+    /// Automatically qualify column completions. Default true for older settings.
+    #[serde(default = "default_true")]
+    pub editor_completion_include_table_prefix: bool,
     /// Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat').
     #[serde(default = "default_keymap_preset")]
     pub keymap_preset: String,
@@ -241,6 +244,7 @@ impl Default for AppSettings {
             mcp_client_servers: Vec::new(),
             ai_strict_egress: true,
             editor_completion_quote_policy: default_completion_quote_policy(),
+            editor_completion_include_table_prefix: true,
             keymap_preset: default_keymap_preset(),
             custom_keymap: std::collections::HashMap::new(),
             sql_execution_strategy: default_sql_execution_strategy(),

@@ -8,6 +8,7 @@ import type { AppSettings } from '../../types';
 import type { ThemeMode } from '../../types/theme';
 import type { WappSummary } from '../../types/wapp';
 import { SectionTitle, SettingRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
 
 /** Sentinel option value representing the built-in default theme (packId = null). */
 const BUILTIN_PACK_VALUE = '__builtin__';
@@ -98,8 +99,9 @@ export function AppearanceSection({
 
   return (
     <div data-testid="appearance-section">
-      <SectionTitle>{t('settings.appearance')}</SectionTitle>
-      <p className="text-xs text-fg-muted">{t('settings.appearance.subtitle')}</p>
+      <SectionTitle hint={t('settings.appearance.subtitle')}>
+        {t('settings.appearance')}
+      </SectionTitle>
 
       <div className="mt-4 space-y-4">
         <SettingRow label={t('settings.colorScheme')}>
@@ -141,10 +143,13 @@ export function AppearanceSection({
 
       {/* Reserved for future appearance options (density, font size, …). */}
       <div className="mt-8 border-t border-edge pt-4">
-        <h3 className="text-sm font-medium text-fg-secondary">{t('settings.appearance.more')}</h3>
-        <p className="mt-1 text-xs text-fg-muted" data-testid="appearance-more-placeholder">
-          {t('settings.appearance.morePlaceholder')}
-        </p>
+        <h3 className="text-sm font-medium text-fg-secondary">
+          {t('settings.appearance.more')}
+          <SettingHint
+            label={t('settings.appearance.more')}
+            text={t('settings.appearance.morePlaceholder')}
+          />
+        </h3>
       </div>
     </div>
   );

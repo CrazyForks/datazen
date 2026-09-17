@@ -447,7 +447,9 @@ describe('SettingsContent', () => {
   it('opens section from initialSection prop', async () => {
     render(<SettingsContent initialSection="ai" />);
     await waitForSettingsLoad();
-    expect(screen.getByText('settings.ai.description')).toBeInTheDocument();
+    expect(screen.queryByText('settings.ai.description')).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'settings.ai.modelsTitle' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.ai.description');
     expect(loadProvidersMock).toHaveBeenCalled();
   });
 
@@ -517,8 +519,10 @@ describe('SettingsContent', () => {
     await waitForSettingsLoad();
 
     goToSection('settings.editor');
-    const range = document.querySelector('input[type="range"]') as HTMLInputElement;
-    fireEvent.change(range, { target: { value: '16' } });
+    const slider = screen.getByRole('slider', { name: 'settings.fontSize' });
+    slider.getBoundingClientRect = () => new DOMRect(0, 0, 200, 36);
+    // ratio 0.4286 * (24-10) + 10 = 16
+    fireEvent.pointerDown(slider, { clientX: 86, button: 0, pointerId: 1 });
     expect(screen.getByText('16px')).toBeInTheDocument();
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ editorFontSize: 16 }));
 
@@ -641,7 +645,10 @@ describe('SettingsContent', () => {
     await waitFor(() => expect(promptListMock).toHaveBeenCalled());
 
     expect(screen.getByText('NL to SQL')).toBeInTheDocument();
-    expect(screen.getByText(/settings\.prompts\.variables/)).toBeInTheDocument();
+    expect(screen.queryByText(/settings\.prompts\.variables/)).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'NL to SQL' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.prompts.variables');
+    fireEvent.keyDown(document, { key: 'Escape' });
 
     fireEvent.click(screen.getAllByText('settings.prompts.edit')[0]);
     const textarea = document.querySelector('textarea');
@@ -901,7 +908,10 @@ describe('SettingsContent', () => {
     const expandBtn = screen.getByRole('button', { name: /Other MCP/ });
     fireEvent.click(expandBtn);
     expect(screen.getByText('read_file')).toBeInTheDocument();
-    expect(screen.getByText('Read a file')).toBeInTheDocument();
+    expect(screen.queryByText('Read a file')).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'read_file' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Read a file');
+    fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(expandBtn);
 
     aiState.mcpTools = [];
@@ -1022,9 +1032,15 @@ describe('SettingsContent', () => {
       goToSection('settings.editor');
 
       expect(screen.getByText('SQL Editor Pro 增强设置')).toBeInTheDocument();
-      expect(screen.getByText('高级编辑器特性开关')).toBeInTheDocument();
+      expect(screen.queryByText('高级编辑器特性开关')).not.toBeInTheDocument();
+      fireEvent.mouseEnter(screen.getByRole('button', { name: 'SQL Editor Pro 增强设置' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('高级编辑器特性开关');
+      fireEvent.keyDown(document, { key: 'Escape' });
       expect(screen.getByText('表结构悬浮卡片')).toBeInTheDocument();
-      expect(screen.getByText('鼠标悬浮时展示表列信息')).toBeInTheDocument();
+      expect(screen.queryByText('鼠标悬浮时展示表列信息')).not.toBeInTheDocument();
+      fireEvent.mouseEnter(screen.getByRole('button', { name: '表结构悬浮卡片' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('鼠标悬浮时展示表列信息');
+      fireEvent.keyDown(document, { key: 'Escape' });
 
       const contribContainer = screen.getByTestId('settings-contrib-sql-editor-pro');
       const toggle = within(contribContainer).getByRole('switch');

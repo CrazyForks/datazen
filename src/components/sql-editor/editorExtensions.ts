@@ -378,6 +378,7 @@ export interface CompletionCompartmentOptions {
   databaseType?: string;
   metadataSnapshot?: EditorMetadataSnapshot;
   schema?: SQLNamespace;
+  completionIncludeTablePrefix?: boolean;
   completionQuotePolicy?: CompletionQuotePolicy;
   /** Resolves snippet description i18n keys; omitted in tests and non-UI callers. */
   translate?: (key: string) => string;
@@ -491,6 +492,7 @@ export function createCompletionExtensions(
         schema: opts.schema,
         adapter: getDialectAdapter(opts.databaseType ?? 'standard'),
         quotePolicy: opts.completionQuotePolicy,
+        includeTablePrefix: opts.completionIncludeTablePrefix,
         // Short-prefix hint for the all-columns fallback (implicit typing
         // only — explicit Ctrl+Space keeps full results).
         prefixHint: context.explicit

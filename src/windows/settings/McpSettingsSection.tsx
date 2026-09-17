@@ -15,6 +15,7 @@ import {
 import type { AppSettings, McpPermissionMode } from '../../types';
 import type { TranslationKey } from '../../locales';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
 
 const MCP_PERMISSION_MODES: {
   value: McpPermissionMode;
@@ -205,17 +206,16 @@ export function McpSettingsSection({
 
   return (
     <>
-      <SectionTitle>{t('mcp.title')}</SectionTitle>
-      <p className="text-xs text-fg-muted">{t('mcp.description')}</p>
+      <SectionTitle hint={t('mcp.description')}>{t('mcp.title')}</SectionTitle>
 
       <ToggleRow
         label={t('mcp.enabled')}
+        hint={t('mcp.enabledHint')}
         checked={settings.mcpServerEnabled ?? false}
         onChange={(v) => {
           if (!toggling) void handleToggleEnabled(v);
         }}
       />
-      <p className="text-xs text-fg-muted -mt-1">{t('mcp.enabledHint')}</p>
 
       <SettingRow label={t('mcp.status')}>
         <div className="flex items-center gap-2 pt-2">
@@ -228,39 +228,40 @@ export function McpSettingsSection({
 
       {toggleError && <p className="select-text text-xs text-red-500">{toggleError}</p>}
 
-      <SettingRow label={t('mcp.permission.title')}>
+      <SettingRow label={t('mcp.permission.title')} hint={t('mcp.permission.applyHint')}>
         <div className="space-y-2 pt-1">
           {MCP_PERMISSION_MODES.map(({ value, labelKey, hintKey }) => {
             const selected = (settings.mcpPermissionMode ?? 'safe_write') === value;
             return (
-              <label
+              <div
                 key={value}
-                className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 transition-colors ${
+                className={`flex items-center rounded-md border px-3 py-2 transition-colors ${
                   selected ? 'border-accent bg-accent/5' : 'border-edge bg-surface'
                 }`}
               >
-                <input
-                  type="radio"
-                  name="mcp-permission-mode"
-                  value={value}
-                  checked={selected}
-                  onChange={() => void handlePermissionChange(value)}
-                  className="mt-0.5 accent-accent"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm text-fg">{t(labelKey)}</span>
-                  <span className="block text-xs text-fg-muted">{t(hintKey)}</span>
-                </span>
-              </label>
+                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                  <input
+                    type="radio"
+                    name="mcp-permission-mode"
+                    value={value}
+                    checked={selected}
+                    onChange={() => void handlePermissionChange(value)}
+                    className="accent-accent"
+                  />
+                  <span className="text-sm text-fg">{t(labelKey)}</span>
+                </label>
+                <SettingHint label={t(labelKey)} text={t(hintKey)} />
+              </div>
             );
           })}
         </div>
       </SettingRow>
-      <p className="text-xs text-fg-muted -mt-3">{t('mcp.permission.applyHint')}</p>
 
-      <SettingRow label={t('mcp.allowlist.title')}>
+      <SettingRow
+        label={t('mcp.allowlist.title')}
+        hint={`${t('mcp.allowlist.description')} ${t('mcp.allowlist.applyHint')}`}
+      >
         <div className="space-y-2 pt-1">
-          <p className="text-xs text-fg-muted">{t('mcp.allowlist.description')}</p>
           {connections.length === 0 ? (
             <p className="text-xs text-fg-muted">{t('mcp.allowlist.empty')}</p>
           ) : (
@@ -289,12 +290,10 @@ export function McpSettingsSection({
               })}
             </div>
           )}
-          <p className="text-xs text-fg-muted">{t('mcp.allowlist.applyHint')}</p>
         </div>
       </SettingRow>
 
       <div className="rounded-md border border-edge bg-surface p-3 space-y-2">
-        <p className="text-xs text-fg-muted">{t('mcp.usage')}</p>
         <div className="flex items-center gap-2">
           {(['cursor', 'claude'] as const).map((target) => (
             <button
@@ -311,6 +310,10 @@ export function McpSettingsSection({
               {t(target === 'cursor' ? 'mcp.config.cursor' : 'mcp.config.claude')}
             </button>
           ))}
+          <SettingHint
+            label={t(agentTarget === 'cursor' ? 'mcp.config.cursor' : 'mcp.config.claude')}
+            text={`${t('mcp.usage')} ${t('mcp.config.commandHint')}`}
+          />
           <button
             type="button"
             onClick={() => void handleCopySnippet()}
@@ -325,13 +328,18 @@ export function McpSettingsSection({
         <pre className="text-xs font-mono text-fg-secondary whitespace-pre-wrap break-all">
           {snippet.json}
         </pre>
-        <p className="text-xs text-fg-muted">{t('mcp.config.commandHint')}</p>
       </div>
 
       {allTools.length > 0 && (
         <>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-fg">{t('mcp.tools')}</h3>
+            <h3 className="text-sm font-medium text-fg">
+              {t('mcp.tools')}
+              <SettingHint
+                label={t('mcp.tools')}
+                text={`${t('mcp.tools.description')} ${t('mcp.tools.applyHint')}`}
+              />
+            </h3>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -350,7 +358,6 @@ export function McpSettingsSection({
               </button>
             </div>
           </div>
-          <p className="text-xs text-fg-muted">{t('mcp.tools.description')}</p>
 
           <div className="space-y-1">
             {allTools.map((tool) => {
@@ -380,8 +387,6 @@ export function McpSettingsSection({
               );
             })}
           </div>
-
-          <p className="text-xs text-fg-muted">{t('mcp.tools.applyHint')}</p>
 
           <div className="flex items-center gap-3">
             {!onSettingsChange && saved && (

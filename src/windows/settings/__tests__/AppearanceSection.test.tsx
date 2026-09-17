@@ -254,7 +254,11 @@ describe('AppearanceSection', () => {
     wappState.wapps = [makePlugin({ themes: [] })];
     render(<AppearanceSection />);
 
-    expect(screen.getByTestId('appearance-more-placeholder')).toBeInTheDocument();
-    expect(screen.getByText('settings.appearance.emptyHint')).toBeInTheDocument();
+    expect(screen.queryByText('settings.appearance.emptyHint')).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'settings.theme.pack' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.appearance.emptyHint');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'settings.appearance.more' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.appearance.morePlaceholder');
   });
 });

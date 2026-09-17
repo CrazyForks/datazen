@@ -26,6 +26,8 @@ import {
   normalizeShortcutInput,
 } from '../../lib/keymap';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
+import { Slider } from '../../components/ui/Slider';
 import { DataCleanupSection } from './DataCleanupSection';
 import { AppearanceSection } from './AppearanceSection';
 import { SqlSnippetsCard } from './SqlSnippetsCard';
@@ -197,12 +199,15 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
             >
               {(contrib.groupTitle || contrib.groupDescription) && (
                 <div>
-                  {contrib.groupTitle && (
-                    <h4 className="text-sm font-semibold text-fg">{contrib.groupTitle}</h4>
-                  )}
-                  {contrib.groupDescription && (
-                    <p className="text-xs text-fg-muted mt-0.5">{contrib.groupDescription}</p>
-                  )}
+                  <h4 className="text-sm font-semibold text-fg">
+                    {contrib.groupTitle}
+                    {contrib.groupDescription && (
+                      <SettingHint
+                        label={contrib.groupTitle || contrib.extensionId}
+                        text={contrib.groupDescription}
+                      />
+                    )}
+                  </h4>
                 </div>
               )}
               <div className="space-y-3">
@@ -225,14 +230,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
                   if (item.type === 'boolean') {
                     return (
-                      <div key={item.key} className="space-y-1">
-                        <ToggleRow
-                          label={item.label}
-                          checked={Boolean(currentValue)}
-                          onChange={(v) => updateExtensionSetting(contrib.extensionId, item.key, v)}
-                        />
-                        {item.hint && <p className="text-xs text-fg-muted pl-1">{item.hint}</p>}
-                      </div>
+                      <ToggleRow
+                        key={item.key}
+                        label={item.label}
+                        hint={item.hint}
+                        checked={Boolean(currentValue)}
+                        onChange={(v) => updateExtensionSetting(contrib.extensionId, item.key, v)}
+                      />
                     );
                   }
 
@@ -370,7 +374,10 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 />
               </SettingRow>
 
-              <SettingRow label={t('settings.connectionPoolSize')}>
+              <SettingRow
+                label={t('settings.connectionPoolSize')}
+                hint={t('settings.connectionPoolSizeHint')}
+              >
                 <input
                   type="number"
                   min={1}
@@ -385,7 +392,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   data-testid="settings-connection-pool-size"
                 />
               </SettingRow>
-              <p className="text-xs text-fg-muted -mt-2">{t('settings.connectionPoolSizeHint')}</p>
 
               <ToggleRow
                 label={t('settings.limitSelect')}
@@ -408,12 +414,15 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
               <ToggleRow
                 label={t('settings.autoChartOnQuery')}
+                hint={t('settings.autoChartOnQueryHint')}
                 checked={settings.autoChartOnQuery === true}
                 onChange={(v) => updateField('autoChartOnQuery', v)}
               />
-              <p className="text-xs text-fg-muted -mt-2">{t('settings.autoChartOnQueryHint')}</p>
 
-              <SettingRow label={t('settings.workflowStepResultOrder')}>
+              <SettingRow
+                label={t('settings.workflowStepResultOrder')}
+                hint={t('settings.workflowStepResultOrderHint')}
+              >
                 <Select
                   value={settings.workflowStepResultOrder ?? 'desc'}
                   options={[
@@ -425,9 +434,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   }
                 />
               </SettingRow>
-              <p className="text-xs text-fg-muted -mt-2">
-                {t('settings.workflowStepResultOrderHint')}
-              </p>
 
               {renderSectionContributions('general')}
             </>
@@ -439,14 +445,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
               <SettingRow label={t('settings.fontSize')}>
                 <div className="flex items-center gap-3">
-                  <input
-                    type="range"
+                  <Slider
+                    aria-label={t('settings.fontSize')}
                     min={10}
                     max={24}
                     step={1}
                     value={settings.editorFontSize}
-                    onChange={(e) => updateField('editorFontSize', Number(e.target.value))}
-                    className="flex-1 accent-accent"
+                    onChange={(v) => updateField('editorFontSize', v)}
                   />
                   <span className="w-12 text-right text-sm tabular-nums text-fg-secondary">
                     {settings.editorFontSize}px
@@ -491,6 +496,12 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   }
                 />
               </SettingRow>
+
+              <ToggleRow
+                label={t('settings.editorCompletionIncludeTablePrefix')}
+                checked={settings.editorCompletionIncludeTablePrefix ?? true}
+                onChange={(v) => updateField('editorCompletionIncludeTablePrefix', v)}
+              />
 
               <SettingRow label={t('settings.keymap.preset')}>
                 <Select
@@ -604,7 +615,9 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
           {activeSection === 'logging' && (
             <>
-              <SectionTitle>{t('settings.logging')}</SectionTitle>
+              <SectionTitle hint={t('settings.logRestartNote')}>
+                {t('settings.logging')}
+              </SectionTitle>
 
               <SettingRow label={t('settings.logLevel')}>
                 <Select
@@ -628,8 +641,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   {t('common.viewLogs')}
                 </Button>
               </div>
-
-              <p className="text-xs text-fg-muted">{t('settings.logRestartNote')}</p>
             </>
           )}
 

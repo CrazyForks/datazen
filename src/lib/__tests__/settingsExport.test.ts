@@ -76,6 +76,29 @@ describe('settingsExport', () => {
     expect(imported.sqlSnippets?.[0].prefix).toBe('selc');
   });
 
+  it.each([true, false])('round-trips the table prefix preference: %s', (enabled) => {
+    const exported = exportEditorSettings({
+      ...mockSettings,
+      editorCompletionIncludeTablePrefix: enabled,
+    });
+    expect(JSON.parse(exported).editor.completionIncludeTablePrefix).toBe(enabled);
+    expect(importEditorSettings(exported).editorCompletionIncludeTablePrefix).toBe(enabled);
+  });
+
+  it('leaves the current preference unchanged when importing older settings', () => {
+    const imported = importEditorSettings(exportEditorSettings(mockSettings));
+    expect(imported).not.toHaveProperty('editorCompletionIncludeTablePrefix');
+  });
+
+  it.each(['false', 0, null, {}])('ignores invalid table prefix preferences: %j', (value) => {
+    const imported = importEditorSettings(
+      JSON.stringify({
+        editor: { completionIncludeTablePrefix: value },
+      }),
+    );
+    expect(imported).not.toHaveProperty('editorCompletionIncludeTablePrefix');
+  });
+
   it('rejects invalid json', () => {
     expect(() => importEditorSettings('invalid json')).toThrow('Invalid JSON format');
     expect(() => importEditorSettings('123')).toThrow('Root must be an object');

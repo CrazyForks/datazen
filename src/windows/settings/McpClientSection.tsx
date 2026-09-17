@@ -10,6 +10,7 @@ import { useLocaleDomains } from '../../hooks/useLocaleDomains';
 import type { McpServerConfig } from '../../types';
 import { isValidMcpServerId } from '../../types';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
 
 const EMPTY_DRAFT: McpServerConfig = {
   id: '',
@@ -170,8 +171,7 @@ export function McpClientSection() {
 
   return (
     <>
-      <SectionTitle>{t('mcpClient.title')}</SectionTitle>
-      <p className="text-xs text-fg-muted">{t('mcpClient.description')}</p>
+      <SectionTitle hint={t('mcpClient.description')}>{t('mcpClient.title')}</SectionTitle>
 
       {mcpError && (
         <div className="flex items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5">
@@ -458,10 +458,12 @@ export function McpClientSection() {
                           key={tool.qualifiedName}
                           className="rounded border border-edge/60 bg-surface-alt px-2 py-1.5"
                         >
-                          <div className="text-sm font-medium text-fg">{tool.toolName}</div>
-                          {tool.description && (
-                            <div className="text-xs text-fg-muted">{tool.description}</div>
-                          )}
+                          <div className="text-sm font-medium text-fg">
+                            {tool.toolName}
+                            {tool.description && (
+                              <SettingHint label={tool.toolName} text={tool.description} />
+                            )}
+                          </div>
                           <div className="mt-0.5 font-mono text-xs text-fg-muted">
                             {tool.qualifiedName}
                           </div>

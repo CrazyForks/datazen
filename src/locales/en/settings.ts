@@ -1,5 +1,7 @@
 /** Auto-split domain: settings (en) */
 const pack = {
+  'settings.editorCompletionIncludeTablePrefix':
+    'Include table name or alias in column completions',
   'settings.title': 'Settings',
   'settings.general': 'General',
   'settings.extensions.title': 'Extensions',

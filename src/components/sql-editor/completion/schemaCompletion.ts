@@ -42,6 +42,8 @@ export interface SchemaCompletionOptions {
   schema?: SQLNamespace;
   /** Identifier quoting policy ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   quotePolicy?: CompletionQuotePolicy;
+  /** Whether to insert an automatic table/alias prefix. Explicit prefixes are preserved. */
+  includeTablePrefix?: boolean;
   /**
    * Current identifier prefix being typed (lowercased, without quotes).
    * When short (≤2 chars) the all-columns fallback pre-filters + truncates so
@@ -241,6 +243,7 @@ function relationKeyFromLabel(
  */
 function allColumnsFromSnapshot(
   snapshot: EditorMetadataSnapshot,
+  includeTablePrefix: boolean,
   adapter: SqlDialectAdapter,
   quotePolicy: CompletionQuotePolicy = 'unquoted',
 ): SchemaCompletionItem[] {
@@ -268,7 +271,7 @@ function allColumnsFromSnapshot(
             filterText: col.name,
             type: 'property' as const,
             detail,
-            apply: `${tableName}.${unquotedLabel}`,
+            apply: includeTablePrefix ? `${tableName}.${unquotedLabel}` : unquotedLabel,
             boost: 12,
           });
         }
@@ -283,7 +286,7 @@ function allColumnsFromSnapshot(
             filterText: col.name,
             type: 'property' as const,
             detail,
-            apply: `${tableName}.${quotedLabel}`,
+            apply: includeTablePrefix ? `${tableName}.${quotedLabel}` : quotedLabel,
             boost,
           });
         }
@@ -329,6 +332,7 @@ function allColumnsFromSnapshot(
  */
 function allColumnsFromEditorSchema(
   schema: SQLNamespace,
+  includeTablePrefix: boolean,
   adapter: SqlDialectAdapter,
   quotePolicy: CompletionQuotePolicy = 'unquoted',
   prefixHint?: string,
@@ -359,7 +363,7 @@ function allColumnsFromEditorSchema(
               filterText: colName,
               type: 'property' as const,
               detail: tableName,
-              apply: `${quotedTable}.${unquotedLabel}`,
+              apply: includeTablePrefix ? `${quotedTable}.${unquotedLabel}` : unquotedLabel,
               boost: 12,
             });
           };
@@ -370,7 +374,7 @@ function allColumnsFromEditorSchema(
               filterText: colName,
               type: 'property' as const,
               detail: tableName,
-              apply: `${quotedTable}.${quotedLabel}`,
+              apply: includeTablePrefix ? `${quotedTable}.${quotedLabel}` : quotedLabel,
               boost,
             });
           };
@@ -808,6 +812,7 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
     model,
     snapshot,
     adapter: adapterOverride,
+    includeTablePrefix = true,
     quotePolicy = 'unquoted',
     prefixHint,
   } = options;
@@ -934,7 +939,14 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
           if (seenQualifiers.has(adapter.foldUnquotedIdentifier(qualifier))) continue;
           seenQualifiers.add(adapter.foldUnquotedIdentifier(qualifier));
 
-          results.push(...columnCompletionsFromRelation(relMeta, qualifier, adapter, quotePolicy));
+          results.push(
+            ...columnCompletionsFromRelation(
+              relMeta,
+              includeTablePrefix ? qualifier : '',
+              adapter,
+              quotePolicy,
+            ),
+          );
         }
 
         // Deduplicate completions by label
@@ -948,7 +960,12 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
 
       // FALLBACK: no visible relations — show ALL columns from ALL tables.
       // First try the metadata snapshot (tables referenced in the SQL).
-      const fromSnapshot = allColumnsFromSnapshot(snapshot, adapter, quotePolicy);
+      const fromSnapshot = allColumnsFromSnapshot(
+        snapshot,
+        includeTablePrefix,
+        adapter,
+        quotePolicy,
+      );
       if (fromSnapshot.length > 0) return fromSnapshot;
 
       // Second fallback: the full editor schema tree (all tables loaded at
@@ -956,7 +973,13 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
       // with no FROM clause, where the snapshot is empty but the schema tree
       // contains all tables and columns.
       if (options.schema) {
-        return allColumnsFromEditorSchema(options.schema, adapter, quotePolicy, prefixHint);
+        return allColumnsFromEditorSchema(
+          options.schema,
+          includeTablePrefix,
+          adapter,
+          quotePolicy,
+          prefixHint,
+        );
       }
 
       return [];

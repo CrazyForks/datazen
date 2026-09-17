@@ -1,6 +1,6 @@
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { Badge, Button, Dialog, Input, Label, Select, Tabs } from '../index';
+import { Badge, Button, Dialog, Input, Label, Select, Slider, Tabs } from '../index';
 
 afterEach(cleanup);
 
@@ -55,6 +55,43 @@ describe('@datazen/ui Tabs', () => {
     );
     expect(screen.getByText('Content A')).toBeInTheDocument();
     expect(screen.queryByText('Content B')).not.toBeInTheDocument();
+  });
+});
+
+describe('@datazen/ui Slider', () => {
+  it('renders slider semantics and clamps pointer drags to the range', () => {
+    const onChange = vi.fn();
+    render(<Slider aria-label="Font size" value={13} min={10} max={24} onChange={onChange} />);
+    const slider = screen.getByRole('slider', { name: 'Font size' });
+    expect(slider).toHaveAttribute('aria-valuenow', '13');
+    expect(slider).toHaveAttribute('aria-valuemin', '10');
+    expect(slider).toHaveAttribute('aria-valuemax', '24');
+    // jsdom reports zero-width rects; mock the slider container as the track.
+    slider.getBoundingClientRect = () => new DOMRect(0, 0, 140, 36);
+    fireEvent.pointerDown(slider, { clientX: 500, button: 0, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(24);
+    fireEvent.pointerDown(slider, { clientX: -50, button: 0, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(10);
+    fireEvent.pointerDown(slider, { clientX: 70, button: 0, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(17);
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(onChange).toHaveBeenLastCalledWith(14);
+    fireEvent.keyDown(slider, { key: 'End' });
+    expect(onChange).toHaveBeenLastCalledWith(24);
+    fireEvent.keyDown(slider, { key: 'Home' });
+    expect(onChange).toHaveBeenLastCalledWith(10);
+  });
+
+  it('ignores interaction when disabled and respects step rounding', () => {
+    const onChange = vi.fn();
+    render(
+      <Slider aria-label="Rows" value={5} min={1} max={10} step={3} disabled onChange={onChange} />,
+    );
+    const slider = screen.getByRole('slider');
+    expect(slider).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.pointerDown(slider, { clientX: 70, button: 0, pointerId: 1 });
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

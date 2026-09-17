@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   wappSettings: {},
   mcpClientServers: [],
   aiStrictEgress: true,
+  editorCompletionIncludeTablePrefix: true,
   editorCompletionQuotePolicy: 'unquoted',
   keymapPreset: 'default',
   customKeymap: {},

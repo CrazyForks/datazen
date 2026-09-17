@@ -180,6 +180,9 @@ export function QueryEditorSection({
   const platform = usePlatform();
   const isMac = platform === 'macos';
   const executeShortcutLabel = isMac ? '⌘ Enter' : 'Ctrl+Enter';
+  const completionIncludeTablePrefix = useSettingsStore(
+    (s) => s.settings.editorCompletionIncludeTablePrefix ?? true,
+  );
   const completionQuotePolicy = useSettingsStore(
     (s) => s.settings.editorCompletionQuotePolicy ?? 'unquoted',
   );
@@ -466,6 +469,7 @@ export function QueryEditorSection({
             onNavigateToStructure={onNavigateToStructure}
             onNavigateToDdl={onNavigateToDdl}
             completionQuotePolicy={completionQuotePolicy}
+            completionIncludeTablePrefix={completionIncludeTablePrefix}
           />
         </div>
         <div

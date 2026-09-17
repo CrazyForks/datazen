@@ -290,6 +290,8 @@ export interface AppSettings {
   mcpClientServers?: McpServerConfig[];
   /** Strip query result rows before AI requests leave the device. Default true. */
   aiStrictEgress: boolean;
+  /** Automatically qualify column completions with a table name or alias. Default true. */
+  editorCompletionIncludeTablePrefix?: boolean;
   /** Identifier quotation policy in SQL autocomplete ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   editorCompletionQuotePolicy?: 'unquoted' | 'always' | 'both';
   /** Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat'). Default 'default'. */

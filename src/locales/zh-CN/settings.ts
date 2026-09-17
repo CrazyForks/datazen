@@ -1,5 +1,6 @@
 /** Auto-split domain: settings (zh-CN) */
 const pack = {
+  'settings.editorCompletionIncludeTablePrefix': '列名补全时添加表名或别名前缀',
   'settings.title': '偏好设置',
   'settings.general': '通用',
   'settings.extensions.title': '扩展',
