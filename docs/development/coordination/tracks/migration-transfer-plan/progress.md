@@ -1,11 +1,11 @@
 # migration-transfer-plan
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
 - Implementation commit: 15b54573
-- Tester commit: pending final commit
+- Tester commit: 0fdff186
 
 ## Tester result
 
@@ -32,6 +32,13 @@
 - `npx tsc --noEmit`: passed.
 - `git diff --check`: passed.
 - No formal WebDriver run; this contract changes the execute IPC payload and requires independent Tester coverage before integration.
+
+## BUG-001 repair
+
+- 修复提交：见本分支最新 `fix(data-transfer): align immutable plan fingerprint scope` 提交。
+- Preview 与 execution 现在通过同一 `participating_tables` helper 仅纳入 preview 时 enabled 的 mapping；disabled existing/unmapped relation 不进入任一阶段的 schema fingerprint。
+- 新增业务单测覆盖 disabled relation schema 变化不会改变计划指纹；原失败的 disabled existing target AppState journey 现已通过。
+- 修复后自验：Host Transfer 49 passed；前端 Transfer 25 passed；`npx tsc --noEmit` passed；`git diff --check` passed。
 
 ## Boundaries for Tester
 

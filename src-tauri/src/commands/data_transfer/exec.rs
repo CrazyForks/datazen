@@ -62,8 +62,8 @@ async fn schema_fingerprint_for_side(
     job: &TransferJob,
     source: bool,
 ) -> Result<String, CommandError> {
-    let mut entries = Vec::with_capacity(job.tables.len());
-    for table in &job.tables {
+    let mut entries = Vec::with_capacity(plans::participating_tables(job).size_hint().0);
+    for table in plans::participating_tables(job) {
         let relation = if source {
             &table.source_table
         } else {

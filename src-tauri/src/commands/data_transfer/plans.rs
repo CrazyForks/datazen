@@ -68,6 +68,19 @@ pub(crate) fn fingerprint_schemas(
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+/// Return the relations that are part of the immutable execution snapshot.
+///
+/// Disabled mappings are a UI choice that the preview deliberately does not
+/// inspect or execute. Keeping this scope in one helper is important: both
+/// plan issuance and the preflight revalidation must hash the same relation
+/// set, otherwise an existing disabled target can make an unchanged plan
+/// stale merely because it was readable during execution.
+pub(crate) fn participating_tables(
+    job: &TransferJob,
+) -> impl Iterator<Item = &crate::data_transfer::model::TableMapping> {
+    job.tables.iter().filter(|table| table.enabled)
+}
+
 pub(crate) fn driver_protocol_version(driver: &dyn DatabaseDriver) -> u32 {
     let driver_type = driver.driver_type();
     iter_driver_factories()
@@ -122,13 +135,13 @@ impl TransferPlanStore {
         target_read_only: bool,
         ttl: Duration,
     ) -> Result<String, TransferError> {
-        let source_entries = job.tables.iter().map(|table| {
+        let source_entries = participating_tables(&job).map(|table| {
             (
                 table.source_table.clone(),
                 source_schemas.get(&table.source_table).cloned(),
             )
         });
-        let target_entries = job.tables.iter().map(|table| {
+        let target_entries = participating_tables(&job).map(|table| {
             (
                 table.target_table.clone(),
                 target_schemas.get(&table.target_table).cloned(),
@@ -299,6 +312,71 @@ mod tests {
         ])
         .unwrap();
         assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn disabled_mappings_are_excluded_from_the_plan_fingerprint_scope() {
+        let mut plan_job = job();
+        plan_job
+            .tables
+            .push(crate::data_transfer::model::TableMapping::auto("users"));
+        plan_job.tables.push({
+            let mut mapping = crate::data_transfer::model::TableMapping::auto("archived");
+            mapping.enabled = false;
+            mapping
+        });
+
+        let users_schema = TableSchema {
+            table_name: "users".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let mut schemas: HashMap<String, TableSchema> = HashMap::new();
+        schemas.insert("users".into(), users_schema.clone());
+        schemas.insert(
+            "archived".into(),
+            TableSchema {
+                table_name: "archived".into(),
+                ..users_schema.clone()
+            },
+        );
+
+        let scoped = fingerprint_schemas(participating_tables(&plan_job).map(|table| {
+            (
+                table.source_table.clone(),
+                schemas.get(&table.source_table).cloned(),
+            )
+        }))
+        .unwrap();
+        let enabled_only = fingerprint_schemas(vec![("users".into(), Some(users_schema))]).unwrap();
+        assert_eq!(scoped, enabled_only);
+
+        // A schema change on a disabled relation cannot alter the immutable
+        // snapshot, because that relation is outside the execution scope.
+        schemas.insert(
+            "archived".into(),
+            TableSchema {
+                table_name: "archived-v2".into(),
+                ..TableSchema {
+                    table_name: "archived".into(),
+                    columns: vec![],
+                    primary_keys: vec![],
+                    indexes: vec![],
+                    foreign_keys: vec![],
+                }
+            },
+        );
+        let after_disabled_change =
+            fingerprint_schemas(participating_tables(&plan_job).map(|table| {
+                (
+                    table.source_table.clone(),
+                    schemas.get(&table.source_table).cloned(),
+                )
+            }))
+            .unwrap();
+        assert_eq!(scoped, after_disabled_change);
     }
 
     #[test]
