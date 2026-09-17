@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
@@ -41,6 +42,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useLocaleDomains } from '../../hooks/useLocaleDomains';
 import { useAiStore } from '../../stores/aiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useWorkspacePanelStateStore } from '../../stores/workspacePanelStateStore';
 import { aiCommands } from '../../commands/ai';
 import { dashboardCommands } from '../../commands/dashboard';
 import { connectionCommands } from '../../commands/connection';
@@ -164,9 +166,15 @@ export function WorkflowPage({
     });
   }, [stepResultOrder, updateSettings]);
 
-  const [panels, setPanels] = useState<Panel[]>([]);
-  const [activePanelId, setActivePanelId] = useState<string | null>(null);
-  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null);
+  const savedSnapshot = useWorkspacePanelStateStore((s) => s.workflow);
+
+  const [panels, setPanels] = useState<Panel[]>(() => savedSnapshot?.panels ?? []);
+  const [activePanelId, setActivePanelId] = useState<string | null>(
+    () => savedSnapshot?.activePanelId ?? null,
+  );
+  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(
+    () => savedSnapshot?.activeStepIndex ?? null,
+  );
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const [workflowsDir, setWorkflowsDir] = useState('');
@@ -174,9 +182,27 @@ export function WorkflowPage({
   const [savedConnections, setSavedConnections] = useState<
     { id: string; name: string; databaseType: string; database?: string }[]
   >([]);
-  const [sideTab, setSideTab] = useState<'workflows' | 'history'>('workflows');
+  const [sideTab, setSideTab] = useState<'workflows' | 'history'>(
+    () => savedSnapshot?.sideTab ?? 'workflows',
+  );
   const [historyItems, setHistoryItems] = useState<HistoryListItem[]>([]);
   const [addToDashboardOpen, setAddToDashboardOpen] = useState(false);
+  const [variables, setVariables] = useState<Record<string, string>>(
+    () => savedSnapshot?.variables ?? {},
+  );
+
+  // Conditional render: the mode's DOM tree unmounts when switching away.
+  // Persist the recreatable view state (open panels/drafts, active tab, input
+  // values) so switching back restores it instead of starting over.
+  const viewStateRef = useRef({ panels, activePanelId, activeStepIndex, sideTab, variables });
+  viewStateRef.current = { panels, activePanelId, activeStepIndex, sideTab, variables };
+  useEffect(() => {
+    return () => {
+      useWorkspacePanelStateStore.getState().saveWorkflowSnapshot(viewStateRef.current);
+    };
+    // Mount-only cleanup: snapshot on unmount, not on every state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { size: sidebarWidth, handleRef: sidebarHandleRef } = useResizable({
     direction: 'horizontal',
     initialSize: 256,
@@ -360,8 +386,6 @@ export function WorkflowPage({
   );
 
   // ── Workflow CRUD ─────────────────────────────────────────────────
-
-  const [variables, setVariables] = useState<Record<string, string>>({});
 
   const handleSelectWorkflow = useCallback(
     (workflow: WorkflowListItem) => {

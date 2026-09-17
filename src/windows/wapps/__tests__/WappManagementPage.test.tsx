@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { WappManagementPage, ExtensionManagementPage } from '../WappManagementPage';
 import { WAPP_API_VERSION, type WappSummary } from '../../../types/wapp';
+import { useWorkspacePanelStateStore } from '../../../stores/workspacePanelStateStore';
 
 const {
   wappState,
@@ -105,6 +106,8 @@ beforeEach(() => {
   wappState.wapps = [];
   wappState.loaded = true;
   wappState.error = null;
+  // Search/filter snapshots persist across mounts (real store, not mocked).
+  useWorkspacePanelStateStore.getState().clearWorkspacePanelSnapshots();
   setEnabledMock.mockReset().mockResolvedValue(undefined);
   removeMock.mockReset().mockResolvedValue(undefined);
   fetchMock.mockReset().mockResolvedValue(undefined);

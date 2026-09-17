@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, PackageOpen, Trash2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -8,6 +8,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { wappCommands } from '../../commands/wapps';
 import { useWappStore } from '../../stores/wappStore';
+import { useWorkspacePanelStateStore } from '../../stores/workspacePanelStateStore';
 import { useWorkspaceTabsStore } from '../../stores/workspaceTabsStore';
 import { WAPP_API_VERSION, type WappSummary } from '../../types/wapp';
 import { openWappPage } from '../workspace/workspacePages';
@@ -117,12 +118,25 @@ export function WappManagementPage({ onOpenInWorkspace }: WappManagementPageProp
   const wapps = useWappStore((s) => s.wapps);
   const loaded = useWappStore((s) => s.loaded);
   const storeError = useWappStore((s) => s.error);
-  const [search, setSearch] = useState('');
+  const savedSnapshot = useWorkspacePanelStateStore((s) => s.extension);
+  const [search, setSearch] = useState(() => savedSnapshot?.search ?? '');
   // PRD §4.3: the content body defaults to the Workspace filter.
-  const [filter, setFilter] = useState<PluginFilter>('workspace');
+  const [filter, setFilter] = useState<PluginFilter>(() => savedSnapshot?.filter ?? 'workspace');
   const [installOpen, setInstallOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmRemove, confirmRemoveDialog] = useConfirmDialog();
+
+  // Conditional render: the mode's DOM tree unmounts when switching away.
+  // Persist search/filter so switching back restores them.
+  const viewStateRef = useRef({ search, filter });
+  viewStateRef.current = { search, filter };
+  useEffect(() => {
+    return () => {
+      useWorkspacePanelStateStore.getState().saveExtensionSnapshot(viewStateRef.current);
+    };
+    // Mount-only cleanup: snapshot on unmount, not on every state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!loaded) void useWappStore.getState().fetch();

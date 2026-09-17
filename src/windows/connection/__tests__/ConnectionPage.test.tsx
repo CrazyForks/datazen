@@ -428,8 +428,10 @@ describe('ConnectionPage', () => {
     expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('workspace-nav-dashboard'));
-    await waitFor(() => expect(fetchDashboardsMock).toHaveBeenCalledOnce());
-    expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument();
+    // Sidebar icon is a plain mode switch; the real DashboardPanel fetches on
+    // its own mount (here mocked, so just assert the panel appears).
+    await waitFor(() => expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument());
+    expect(screen.queryByTestId('workflow-window')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('workspace-nav-databases'));
     expect(screen.getByTestId('navigator-tree')).toBeInTheDocument();
@@ -446,19 +448,25 @@ describe('ConnectionPage', () => {
     await waitFor(() => expect(screen.getByTestId('workflow-window')).toBeInTheDocument());
   });
 
-  it('keeps workflow panel mounted across mode switches so its state survives', () => {
+  it('unmounts inactive mode panels (conditional render) and remounts on return', async () => {
+    const { useDashboardStore } = await import('../../../stores/dashboardStore');
+    useDashboardStore.setState({
+      list: [{ id: 'dash-1', name: 'Ops Board' }],
+    });
     render(<ConnectionPage />);
 
     fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
     expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
 
-    // Switching away must NOT unmount the panel (it is kept alive, hidden).
+    // Switching away unmounts the inactive panel: only one mode's DOM exists.
     fireEvent.click(screen.getByTestId('workspace-nav-dashboard'));
-    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument());
+    expect(screen.queryByTestId('workflow-window')).not.toBeInTheDocument();
 
-    // Switching back shows the still-mounted panel again.
+    // Switching back remounts the panel (view state restores from snapshot).
     fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
     expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-panel')).not.toBeInTheDocument();
   });
 
   it('TC-window: menu:open-settings shows SettingsPage with section', async () => {

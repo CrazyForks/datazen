@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { WorkflowPage } from '../WorkflowPage';
+import { useWorkspacePanelStateStore } from '../../../stores/workspacePanelStateStore';
 import type {
   StepExecutionResult,
   WorkflowExecutionResult,
@@ -307,6 +308,9 @@ function clickStepTab(stepId: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // View-state snapshots persist across mounts (real store, not mocked) —
+  // reset so each test starts from a clean panel.
+  useWorkspacePanelStateStore.getState().clearWorkspacePanelSnapshots();
   workflowSettingsState.workflowStepResultOrder = 'desc';
   confirmDialogFn.mockResolvedValue(true);
   aiStoreState.workflowsLoading = false;
