@@ -80,6 +80,15 @@ describe('Windows release packaging', () => {
     expect(releaseWorkflow).toContain('actions/download-artifact@v4');
     expect(releaseWorkflow).toContain('name: pro-extension');
     expect(releaseWorkflow).toContain('needs: prepare-pro-extension');
+    // The .dzx is packed from the Pro source checkout, so it is produced once in
+    // the prepare job too and downloaded by the one variant that ships it.
+    expect(releaseWorkflow).toContain('Pack the signed Pro .dzx');
+    expect(releaseWorkflow).toContain('Upload the signed Pro .dzx');
+    expect(releaseWorkflow).toContain('name: pro-dzx');
+    expect(releaseWorkflow).toContain('Download the signed Pro .dzx (Default Pro, once)');
+    // pack-ep must run exactly once for the whole workflow — the build jobs no
+    // longer hold a Pro checkout to pack from.
+    expect(releaseWorkflow.match(/scripts\/pack-ep\.mjs/g)?.length).toBe(1);
     // No PAT: the private Pro repo is reached with the deploy key, so the
     // releases API token and its fallback notices are gone.
     expect(releaseWorkflow).not.toContain('PRO_PREBUILT_TOKEN');

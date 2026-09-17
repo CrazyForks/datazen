@@ -66,11 +66,35 @@ jobs:
       - name: Clone, build and sign the Pro extension at the pinned revision
         run: node scripts/resolve-pro.mjs --edition=pro
 
+      # The .dzx is a signed, platform-independent package built from the Pro
+      # source checkout, so it is produced here rather than in the one matrix
+      # job that used to clone the repo just to pack it.
+      - name: Pack the signed Pro .dzx
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          node scripts/pack-ep.mjs \
+            --extension=sql-editor-pro \
+            --mode=dzx \
+            --skip-build \
+            --out=artifacts/
+          ls -la artifacts/*.dzx
+        env:
+          DATAZEN_EP_SIGNING_PRIVATE_KEY: ${{ secrets.DATAZEN_EP_SIGNING_PRIVATE_KEY }}
+
       - name: Upload the staged Pro extension
         uses: actions/upload-artifact@v4
         with:
           name: pro-extension
           path: src-tauri/resources/builtin-ep/sql-editor-pro
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload the signed Pro .dzx
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-dzx
+          path: artifacts/*.dzx
           if-no-files-found: error
           retention-days: 1
 
@@ -437,19 +461,12 @@ jobs:
 
           exit $FAIL
 
-      - name: Pack signed SQL Editor Pro .dzx (Default Pro, once)
+      - name: Download the signed Pro .dzx (Default Pro, once)
         if: matrix.needs_pro && matrix.variant_suffix == '' && matrix.os_label == 'linux-x64'
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          node scripts/pack-ep.mjs \
-            --extension=sql-editor-pro \
-            --mode=dzx \
-            --skip-build \
-            --out=artifacts/
-          ls -la artifacts/*.dzx
-        env:
-          DATAZEN_EP_SIGNING_PRIVATE_KEY: ${{ secrets.DATAZEN_EP_SIGNING_PRIVATE_KEY }}
+        uses: actions/download-artifact@v4
+        with:
+          name: pro-dzx
+          path: artifacts/
 
       # ── Windows portable: includes runtime resources (prompts + Pro builtin-ep) ──
       - name: Package Windows portable archive
