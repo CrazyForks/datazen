@@ -150,6 +150,7 @@ const inspectRows: TransferTableResult[] = [
 ];
 
 const previewSuccess = {
+  planId: 'plan-test-1',
   canExecute: true,
   ddl: [],
   writePlans: [

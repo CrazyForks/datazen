@@ -32,4 +32,24 @@ describe('transferCommands.inspect', () => {
       tables: null,
     });
   });
+
+  it('executes only an opaque plan with controlled selection and options', async () => {
+    const { transferCommands } = await import('../transfer');
+
+    await transferCommands.execute({
+      planId: 'opaque-plan-id',
+      selection: { sourceTables: ['users'] },
+      options: { confirmedDestructive: true },
+      jobId: 'cancel-token',
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('execute_data_transfer', {
+      request: {
+        planId: 'opaque-plan-id',
+        selection: { sourceTables: ['users'] },
+        options: { confirmedDestructive: true },
+        jobId: 'cancel-token',
+      },
+    });
+  });
 });

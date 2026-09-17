@@ -216,6 +216,7 @@ pub fn build_preview(
             .any(|t| t.enabled && t.status != TableMappingStatus::Incompatible);
 
     Ok(TransferPreview {
+        plan_id: String::new(),
         pairing_path: pairing.path_label().into(),
         mode: job.mode,
         write_mode: job.write_mode,

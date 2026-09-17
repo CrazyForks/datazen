@@ -3,6 +3,7 @@
 mod exec;
 mod inspect;
 mod jobs;
+mod plans;
 mod preview;
 mod types;
 
@@ -13,7 +14,7 @@ use super::error::CommandError;
 use super::AppState;
 use crate::data_transfer::{
     classify_transfer_pair as classify_transfer_pair_impl, TableInspectResult,
-    TransferExecutionResult, TransferJob, TransferMode, TransferPreview,
+    TransferExecutionResult, TransferJob, TransferMode, TransferPreview, TransferRunRequest,
 };
 pub(crate) use exec::execute_data_transfer_impl;
 pub(crate) use inspect::inspect_data_transfer_impl;
@@ -67,10 +68,9 @@ pub async fn preview_data_transfer(
 #[tauri::command]
 pub async fn execute_data_transfer(
     state: State<'_, AppState>,
-    job: TransferJob,
-    job_id: Option<String>,
+    request: TransferRunRequest,
 ) -> Result<TransferExecutionResult, CommandError> {
-    execute_data_transfer_impl(&state, job, job_id).await
+    execute_data_transfer_impl(&state, request).await
 }
 
 #[tauri::command]
