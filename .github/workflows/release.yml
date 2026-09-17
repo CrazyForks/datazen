@@ -250,6 +250,10 @@ jobs:
         with:
           workspaces: . -> target
           shared-key: ${{ matrix.target }}
+          # Retain workspace driver artifacts alongside dependency artifacts.
+          # Cargo checks fingerprints and rebuilds changed inputs/features.
+          # Parallel variants can only restore caches already saved by earlier jobs.
+          cache-workspace-crates: true
           cache-on-failure: true
 
       # Git-driver & Pro extension SKUs: read-only Deploy Keys for private repos.
