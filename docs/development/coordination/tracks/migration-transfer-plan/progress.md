@@ -1,6 +1,6 @@
 # migration-transfer-plan
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
@@ -39,6 +39,34 @@
 - Preview 与 execution 现在通过同一 `participating_tables` helper 仅纳入 preview 时 enabled 的 mapping；disabled existing/unmapped relation 不进入任一阶段的 schema fingerprint。
 - 新增业务单测覆盖 disabled relation schema 变化不会改变计划指纹；原失败的 disabled existing target AppState journey 现已通过。
 - 修复后自验：Host Transfer 49 passed；前端 Transfer 25 passed；`npx tsc --noEmit` passed；`git diff --check` passed。
+
+## Independent Tester Round 2 (2026-09-17)
+
+### A. Code review
+
+- Reviewed `plans.rs` and `exec.rs` repair delta. Preview and execution now use the same server-side `participating_tables` enabled mapping scope; disabled existing/unmapped relations cannot change the plan fingerprint. Enabled source/target schema changes still invalidate before target writes.
+- Confirmed `TransferRunRequest`, `TransferRunSelection`, and `TransferRunOptions` deny unknown fields. Client replacement fields (`job`, `sql`, `ddl`, `mapping`, `rows`) are rejected during deserialization. No Host database-family branch was introduced.
+- Intentional contract boundary remains: dotted schema names fail closed because the current string relation contract cannot represent them unambiguously.
+
+### B. Independent rerun
+
+- Host `data_transfer`: 50/50 passed, including the original disabled-existing-target BUG-001 journey, enabled schema/driver stale rejection, read-only rejection, unknown/expired/one-shot plan behavior, invalid selection and failed execution consumption.
+- Frontend Transfer tests: 25/25 passed; `npx tsc --noEmit` passed.
+- Targeted changed-file coverage: `DataTransferWindow.tsx` 85.75% statements / 80.00% branches / 91.89% functions / 88.12% lines; `transfer.ts` 100% / 66.66% / 100% / 100%. The added payload rejection test passed 1/1.
+- Driver tests: PostgreSQL 101/101, MySQL 86/86, SQLite 46/46; SQLite transfer journey 1/1.
+- Real driver probes on temporary `dz_mig_transfer_plan_retest_20260917`: PostgreSQL bound writes 1/1, PostgreSQL schema qualification 1/1, MySQL bound writes 1/1. Temporary databases were dropped after the run.
+- Formal `CI=true pnpm_config_verify_deps_before_run=warn pnpm tauri:build:webdriver` passed and produced the tested bundle. The initial no-TTY dependency check was avoided by the repository-approved `CI=true` + `verify_deps_before_run=warn` environment; no `pnpm install` was run explicitly.
+
+### C. Desktop suite
+
+- `pnpm e2e:data-transfer` completed 8 spec files: 6 passed, 2 failed. Passing specs: data-transfer-window 8/8, data-transfer-type-mapping 1/1, data-transfer-mode-paths 10/10, data-transfer-journey 5/5, data-transfer-pg-mysql-journey 6/6, data-transfer-mysql-pg-journey 6/6.
+- Reproduced the MySQL→PG type mapping failure independently with a grep-isolated rerun: DT-TYPE-MYSQL-PG-001 failed again after 15 seconds waiting for `data-transfer-target-type-active`.
+- Reproduced the PG→MySQL 25,000-row failure in the full suite: DT-COMP-001 failed after 120 seconds waiting for `data-transfer-result`; the MySQL→PG 25,000-row case passed. Both failures are recorded in `bugs.md` as scope-adjacent Transfer core defects because the relevant UI/bulk execution code predates this immutable plan delta.
+
+### D. Verdict
+
+- `migration-transfer-plan-BUG-001` is independently verified and should be closed by the coordinator after this commit.
+- This plan contract is correct across all required Host, API, driver and real database checks, but the optional formal Transfer suite exposed two existing Transfer core failures. Per Tester protocol the track remains `FAILED` until the coordinator transfers or resolves BUG-002/003; they are not caused by the latest immutable-plan repair.
 
 ## Boundaries for Tester
 
