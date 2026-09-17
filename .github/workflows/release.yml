@@ -282,13 +282,7 @@ jobs:
           # source — no SSH deploy key needed for the Pro repo itself.
           # The Pro repo is private: pass a fine-grained PAT (releases:read on
           # the Pro repo) as the `PRO_PREBUILT_TOKEN` environment secret.
-          VERSION=$(node -p "require('./package.json').version")
           PRO_REPO="flyxl/datazen-extension-sql-editor-pro"
-          TAG="pro-${VERSION}"
-          TARBALL="sql-editor-pro-${VERSION}.tar.gz"
-          URL="https://github.com/${PRO_REPO}/releases/download/${TAG}/${TARBALL}"
-
-          echo "Trying prebuilt: ${URL}"
 
           # Token precedence: dedicated PRO_PREBUILT_TOKEN > GITHUB_TOKEN.
           # Note: GITHUB_TOKEN belongs to the host repo and cannot read the
@@ -296,11 +290,38 @@ jobs:
           # download is expected to 404 and fall back to source build.
           PREBUILT_TOKEN="${PRO_PREBUILT_TOKEN:-${GITHUB_TOKEN:-}}"
 
-          # Private-repo release assets cannot be fetched via the browser
-          # redirect URL with a Bearer token (CDN returns 404). Resolve the
-          # asset via the API and download with Accept: application/octet-stream.
-          ASSET_URL=""
+          # Query the latest release from the Pro repo.  The extension version
+          # is independent of the host version, so we must not hardcode the
+          # host version into the Pro release tag.
+          TARBALL=""
+          TAG=""
           if [ -n "$PREBUILT_TOKEN" ]; then
+            RELEASE_JSON=$(curl -fsSL -H "Authorization: Bearer ${PREBUILT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${PRO_REPO}/releases?per_page=5" \
+              2>/dev/null || true)
+            if [ -n "$RELEASE_JSON" ]; then
+              TAG=$(echo "$RELEASE_JSON" | node -e "
+                let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+                  try{
+                    const releases=JSON.parse(s);
+                    const r=releases.find(x=>!x.draft&&!x.prerelease&&x.tag_name?.startsWith('pro-'));
+                    if(r)console.log(r.tag_name);
+                  }catch{}
+                });")
+              if [ -n "$TAG" ]; then
+                TARBALL="${TAG#pro-}"
+                TARBALL="sql-editor-pro-${TARBALL}.tar.gz"
+              fi
+            fi
+          fi
+
+          URL=""
+          ASSET_URL=""
+          if [ -n "$TAG" ] && [ -n "$TARBALL" ]; then
+            URL="https://github.com/${PRO_REPO}/releases/download/${TAG}/${TARBALL}"
+            echo "Trying prebuilt: ${URL}"
+
             ASSET_URL=$(curl -fsSL -H "Authorization: Bearer ${PREBUILT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${PRO_REPO}/releases/tags/${TAG}" \
@@ -318,11 +339,13 @@ jobs:
             curl_args=(-fsSL -H "Authorization: Bearer ${PREBUILT_TOKEN}" \
               -H "Accept: application/octet-stream" \
               -o "/tmp/${TARBALL}" "${ASSET_URL}")
-          elif [ -n "$PREBUILT_TOKEN" ]; then
+          elif [ -n "$PREBUILT_TOKEN" ] && [ -n "$URL" ]; then
             # API lookup failed — try the browser URL as a last resort (public repos).
             curl_args=(-fsSL -H "Authorization: Bearer ${PREBUILT_TOKEN}" -o "/tmp/${TARBALL}" "${URL}")
           else
-            curl_args=(-fsSL -o "/tmp/${TARBALL}" "${URL}")
+            echo "::notice::No prebuilt pro release found, falling back to source build"
+            rm -f /tmp/prebuilt-curl.err 2>/dev/null
+            exit 0
           fi
 
           if curl "${curl_args[@]}" 2>/tmp/prebuilt-curl.err; then
