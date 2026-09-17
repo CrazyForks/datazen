@@ -54,7 +54,7 @@ datazen/
 │   ├── drivers/                 # path 驱动 crate（测试严格写在各 crate 内）
 │   │   └── <id>/                # Rust `src/` + `tests/`；UI `ui/__tests__/`；E2E `e2e/`
 │   ├── wapps/                   # Workspace Apps 运行时应用与主题源码包（安装测试见其 README）
-│   ├── pro-extensions/          # Pro 扩展本地存放/挂载目录（gitignored）
+│   ├── pro-extensions/          # Pro 扩展本地存放/挂载目录（gitignored）；每个子包是独立 git 仓库，需独立 commit/pull/push
 │   └── themes/                  # 旧 v1 ThemePack 存档
 ├── e2e/                         # Host WebdriverIO E2E（通用 UI / IPC；非驱动方言）
 ├── test/                        # 手工黑盒测试
