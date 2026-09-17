@@ -640,6 +640,8 @@ export function createHoverExtensions(
 export interface LinterCompartmentOptions {
   databaseType?: string;
   schema?: SqlSchema;
+  /** Quote policy used when the linter renders intention Code Actions. */
+  completionQuotePolicy?: CompletionQuotePolicy;
 }
 
 export function createLinterExtensions(

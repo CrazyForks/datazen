@@ -331,8 +331,12 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   );
 
   const linterExts = useMemo(
-    () => createLinterExtensions({ databaseType, schema }, { modelRef, metadataSnapshotRef }),
-    [databaseType, schema, isSqlEditorEnhanced],
+    () =>
+      createLinterExtensions(
+        { databaseType, schema, completionQuotePolicy },
+        { modelRef, metadataSnapshotRef },
+      ),
+    [databaseType, schema, completionQuotePolicy, isSqlEditorEnhanced],
   );
 
   // ── Editor mount ─────────────────────────────────────────────────

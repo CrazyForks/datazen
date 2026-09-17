@@ -4,7 +4,7 @@
  * Captures marketing-quality screenshots of each SQL Editor Pro feature:
  *   1. Statement gutter (multi-statement with run buttons)
  *   2. Paste-as-IN
- *   3. Alt+Enter intentions (quick-fix menu)
+ *   3. Intentions (lightbulb Code Action menu in the gutter)
  *   4. Transaction controls
  *   5. NL2SQL (AI chat → insert SQL)
  *   6. Autocomplete (table/column completion)
@@ -388,36 +388,45 @@ SELECT * FROM demo_sales LIMIT 5;`,
     await shot('pro-05-linter.png');
 
     // ════════════════════════════════════════════════════════════════
-    // 6. Alt+Enter Intentions — quick fix menu
+    // 6. Intentions — lightbulb Code Action menu in the gutter
     // ════════════════════════════════════════════════════════════════
-    // Position cursor on the error token "FORM"
-    await setCursor(11);
-    await browser.pause(300);
-    await pressKey('Enter', ['alt']);
+    // A valid projection so the intention source has a relation to act on, and
+    // the caret on the `*` so the lightbulb is scoped to this statement.
+    await setEditorContent('SELECT * FROM demo_sales;');
+    await setCursor(7);
+
+    // The lint pass is debounced, so wait for the hint marker to be published.
     await browser
       .waitUntil(
-        async () => {
-          return browser.execute(() => {
-            // Check for intention/code-action menu
-            const menus = document.querySelectorAll(
-              '.cm-panels, .cm-tooltip-autocomplete, [class*="intention"], [class*="code-action"]',
-            );
-            for (const m of menus) {
-              if (
-                (m.textContent || '').includes('修复') ||
-                (m.textContent || '').includes('Fix') ||
-                (m.textContent || '').includes('SELECT')
-              ) {
-                return true;
-              }
-            }
-            return false;
-          });
-        },
-        { timeout: 8000, timeoutMsg: 'Intentions menu did not appear' },
+        async () => browser.execute(() => !!document.querySelector('.cm-lint-marker-hint')),
+        { timeout: 10000, timeoutMsg: 'Intention lightbulb did not appear' },
       )
       .catch(() => {});
-    await browser.pause(800);
+    await browser.pause(400);
+
+    // Hover the gutter lightbulb to open the action menu.
+    await browser.execute(() => {
+      const marker = document.querySelector('.cm-lint-marker-hint');
+      if (!marker) return;
+      const rect = marker.getBoundingClientRect();
+      const opts: MouseEventInit = {
+        bubbles: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      };
+      marker.dispatchEvent(new MouseEvent('mouseover', opts));
+      marker.dispatchEvent(new MouseEvent('mousemove', opts));
+    });
+    await browser
+      .waitUntil(
+        async () =>
+          browser.execute(() => {
+            const tip = document.querySelector('.cm-tooltip-lint');
+            return !!tip && !!tip.querySelector('.cm-diagnosticAction');
+          }),
+        { timeout: 10000, timeoutMsg: 'Intention action menu did not appear' },
+      )
+      .catch(() => {});
     await shot('pro-06-intentions.png');
 
     // Close any open menus
