@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
-import { X, BarChart3 } from 'lucide-react';
+import { X, BarChart3, Link2 } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
 import { useQueryBuilderStore, mergeJoins } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
@@ -66,6 +66,9 @@ export function QueryBuilderPanel({
   const removedAutoJoinIds = useQueryBuilderStore((s) => s.removedAutoJoinIds);
   const autoJoinTypes = useQueryBuilderStore((s) => s.autoJoinTypes);
   const tableAliases = useQueryBuilderStore((s) => s.tableAliases);
+  const joinAnchor = useQueryBuilderStore((s) => s.joinAnchor);
+  const clickJoinColumn = useQueryBuilderStore((s) => s.clickJoinColumn);
+  const setJoinAnchor = useQueryBuilderStore((s) => s.setJoinAnchor);
   const tablePositions = useQueryBuilderStore((s) => s.tablePositions);
   const canvasOffset = useQueryBuilderStore((s) => s.canvasOffset);
   const zoom = useQueryBuilderStore((s) => s.zoom);
@@ -91,6 +94,16 @@ export function QueryBuilderPanel({
   const setDistinct = useQueryBuilderStore((s) => s.setDistinct);
   const reset = useQueryBuilderStore((s) => s.reset);
   const toggleOpen = useQueryBuilderStore((s) => s.toggleOpen);
+
+  // ── Esc cancels an armed JOIN anchor ───────────────────
+  useEffect(() => {
+    if (!joinAnchor) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setJoinAnchor(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [joinAnchor, setJoinAnchor]);
 
   // ── Load columns for selected tables ───────────────────
   useEffect(() => {
@@ -267,6 +280,31 @@ export function QueryBuilderPanel({
       <div className="flex min-h-[400px]">
         {/* Canvas + CriteriaGrid + SQL Preview */}
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* JOIN anchor banner — the only visible trace of the armed state */}
+          {joinAnchor && (
+            <div
+              className="flex items-center gap-2 border-b border-edge bg-accent/10 px-3 py-1 text-[11px] text-fg"
+              data-testid="qb-join-anchor-banner"
+            >
+              <Link2 className="h-3.5 w-3.5 shrink-0 text-accent" />
+              <span className="truncate">
+                {t('query.visualBuilder.joinAnchorHint')}
+                {' — '}
+                <span className="font-semibold">
+                  {joinAnchor.table}.{joinAnchor.column}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setJoinAnchor(null)}
+                className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-raised hover:text-fg"
+                data-testid="qb-join-anchor-cancel"
+              >
+                {t('query.visualBuilder.cancelJoin')}
+              </button>
+            </div>
+          )}
+
           {/* Canvas area */}
           <div className="flex-1 overflow-hidden">
             <DiagramCanvas
@@ -278,6 +316,8 @@ export function QueryBuilderPanel({
               selectedColumns={selectedColumns}
               tableAliases={tableAliases}
               onToggleColumn={toggleColumn}
+              onClickColumn={clickJoinColumn}
+              joinAnchor={joinAnchor}
               onUpdatePosition={updateTablePosition}
               onUpdateJoinType={updateJoinType}
               onRemoveJoin={removeJoin}

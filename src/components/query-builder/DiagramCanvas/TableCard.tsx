@@ -16,6 +16,10 @@ export interface TableCardProps {
   foreignKeyMap?: Record<string, string>;
   position: { x: number; y: number };
   onToggleColumn: (column: string) => void;
+  /** Click a column name to start / complete a manual column-to-column JOIN. */
+  onClickColumn: (column: string) => void;
+  /** Column currently armed as the JOIN anchor, if any. */
+  joinAnchorColumn?: string | null;
   onDragEnd: (pos: { x: number; y: number }) => void;
   onSetAlias: (alias: string) => void;
 }
@@ -29,6 +33,8 @@ export function TableCard({
   foreignKeyMap = {},
   position,
   onToggleColumn,
+  onClickColumn,
+  joinAnchorColumn = null,
   onDragEnd,
   onSetAlias,
 }: TableCardProps) {
@@ -111,20 +117,35 @@ export function TableCard({
         {columns.map((col) => {
           const isPk = primaryKeyColumns.includes(col.name);
           const fkTarget = foreignKeyMap[col.name];
+          const isAnchor = joinAnchorColumn === col.name;
           return (
-            <label
+            <div
               key={col.name}
-              className="flex items-center gap-2 py-[3px] text-[12px] cursor-pointer hover:bg-surface-inset rounded px-1 -mx-1"
+              className={cn(
+                'flex items-center gap-2 py-[3px] text-[12px] rounded px-1 -mx-1',
+                isAnchor && 'bg-accent/15 ring-1 ring-accent',
+              )}
               data-testid={`qb-col-${tableName}-${col.name}`}
             >
               <input
                 type="checkbox"
                 checked={selectedSet.has(col.name)}
                 onChange={() => onToggleColumn(col.name)}
+                aria-label={col.name}
                 className="accent-accent h-3.5 w-3.5 shrink-0"
+                data-testid={`qb-col-check-${tableName}-${col.name}`}
               />
-              <span className="truncate">{col.name}</span>
-              <span className="text-fg-muted text-[10px] ml-auto shrink-0">{col.dataType}</span>
+              <button
+                type="button"
+                onClick={() => onClickColumn(col.name)}
+                title={t('query.visualBuilder.joinColumnHint')}
+                aria-pressed={isAnchor}
+                className="min-w-0 flex-1 truncate text-left cursor-pointer hover:text-accent"
+                data-testid={`qb-col-join-${tableName}-${col.name}`}
+              >
+                {col.name}
+              </button>
+              <span className="text-fg-muted text-[10px] shrink-0">{col.dataType}</span>
               {isPk && (
                 <span className="shrink-0 inline-flex items-center rounded px-1 py-0 text-[9px] font-semibold bg-amber-500/20 text-amber-400">
                   PK
@@ -135,11 +156,13 @@ export function TableCard({
                   FK
                 </span>
               )}
-            </label>
+            </div>
           );
         })}
         {columns.length === 0 && (
-          <div className="py-2 text-[11px] text-fg-muted text-center">No columns loaded</div>
+          <div className="py-2 text-[11px] text-fg-muted text-center">
+            {t('query.visualBuilder.noColumns')}
+          </div>
         )}
       </div>
 

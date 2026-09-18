@@ -13,7 +13,8 @@
  *   7. add a condition in the Conditions panel and flip the group to OR
  *   8. apply the generated SQL, execute it, verify the result rows
  *   9. re-open, drag an FK pair in and confirm the JOIN reaches the SQL
- *  10. reset (panel stays open), close
+ *  10. build a manual JOIN by clicking a column, then a column of another table
+ *  11. reset (panel stays open), close
  *
  * Phases are separate `it()` blocks so a failure localises to one step instead
  * of losing every later assertion. A phase whose predecessor did not complete
@@ -66,6 +67,7 @@ const journey = {
   conditionApplied: false,
   sqlApplied: false,
   autoJoinVerified: false,
+  manualJoinVerified: false,
 };
 
 type DragWindow = Window & { __qbDragTransfer?: DataTransfer };
@@ -267,6 +269,17 @@ async function countByTestId(testId: string): Promise<number> {
   );
 }
 
+/**
+ * Count elements whose testid starts with a prefix. Manual JOIN ids are
+ * nanoids, so they can only be matched by prefix.
+ */
+async function countByTestIdPrefix(prefix: string): Promise<number> {
+  return browser.execute(
+    (p: string) => document.querySelectorAll(`[data-testid^="${p}"]`).length,
+    prefix,
+  );
+}
+
 describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   let mainWindow: string;
 
@@ -389,10 +402,12 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   it('阶段3：勾选列后 SQL 预览包含所选列', async function () {
     if (!journey.tableOnCanvas) this.skip();
 
+    // The column row carries two affordances now: the checkbox selects, and the
+    // column name arms a manual JOIN. Select via the checkbox.
     for (const column of ['name', 'score']) {
-      const cell = await $(`[data-testid="qb-col-${TABLE_NAME}-${column}"]`);
-      await cell.waitForClickable({ timeout: 5000 });
-      await cell.click();
+      const check = await $(`[data-testid="qb-col-check-${TABLE_NAME}-${column}"]`);
+      await check.waitForClickable({ timeout: 5000 });
+      await check.click();
       await browser.pause(200);
     }
 
@@ -682,8 +697,63 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     journey.autoJoinVerified = true;
   });
 
-  it('阶段10：Reset 清空查询但保持面板打开，随后可关闭', async function () {
+  it('阶段10：点击列到列创建手动 JOIN，Esc 可取消', async function () {
     if (!journey.autoJoinVerified) this.skip();
+
+    // ── Exit transition: Esc must disarm an armed anchor ──
+    expectTrue(await clickByTestId(`qb-col-join-${TABLE_NAME}-id`), '未找到第一张表的列');
+    await browser.waitUntil(async () => (await countByTestId('qb-join-anchor-banner')) === 1, {
+      timeout: 5000,
+      timeoutMsg: '点击列后未进入 JOIN 锚点状态',
+    });
+    expectTrue(await sqlPreviewText().then((t) => !t.includes('JOIN')), '仅锚定时不应产生 JOIN');
+
+    await browser.keys(['Escape']);
+    await browser.waitUntil(async () => (await countByTestId('qb-join-anchor-banner')) === 0, {
+      timeout: 5000,
+      timeoutMsg: 'Esc 未能取消 JOIN 锚点',
+    });
+
+    // ── Enter + complete: click a column, then a column of another table ──
+    expectTrue(await clickByTestId(`qb-col-join-${TABLE_NAME}-id`), '未找到第一张表的列');
+    await browser.waitUntil(async () => (await countByTestId('qb-join-anchor-banner')) === 1, {
+      timeout: 5000,
+      timeoutMsg: '点击列后未进入 JOIN 锚点状态',
+    });
+    await captureJourneyStep('qb-join-anchor-armed');
+
+    // No FK links these two tables, so any JOIN here is the manual one.
+    expectTrue(await clickByTestId(`qb-col-join-${PARENT_TABLE}-id`), '未找到第二张表的列');
+    await browser.waitUntil(async () => (await countByTestId('qb-join-anchor-banner')) === 0, {
+      timeout: 5000,
+      timeoutMsg: '创建 JOIN 后锚点状态未退出',
+    });
+    await browser.waitUntil(
+      async () => {
+        const text = await sqlPreviewText();
+        return (
+          text.includes('INNER JOIN') &&
+          text.includes(`"${TABLE_NAME}"."id" = "${PARENT_TABLE}"."id"`)
+        );
+      },
+      { timeout: 10000, timeoutMsg: '手动 JOIN 未进入 SQL 预览' },
+    );
+    await captureJourneyStep('qb-manual-join');
+
+    // The same pair must not be added twice (either click order).
+    expectTrue(await clickByTestId(`qb-col-join-${TABLE_NAME}-id`), '未找到第一张表的列');
+    expectTrue(await clickByTestId(`qb-col-join-${PARENT_TABLE}-id`), '未找到第二张表的列');
+    await browser.pause(300);
+    // Only the manual JOIN exists here (the FK one was dismissed in 阶段9), so
+    // a duplicate would show up as a second line.
+    const joinLines = await countByTestIdPrefix('qb-join-line-');
+    expectTrue(joinLines === 1, `重复点击产生了 ${joinLines} 条 JOIN 连线`);
+
+    journey.manualJoinVerified = true;
+  });
+
+  it('阶段11：Reset 清空查询但保持面板打开，随后可关闭', async function () {
+    if (!journey.manualJoinVerified) this.skip();
 
     const resetBtn = await $('[data-testid="qb-reset"]');
     await resetBtn.waitForClickable({ timeout: 5000 });

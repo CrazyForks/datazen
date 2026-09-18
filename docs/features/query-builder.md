@@ -65,15 +65,22 @@ Two complementary mechanisms:
 
 ### JOINs
 
-- Foreign-key relationships between the selected tables are **detected
-  automatically** and drawn as dashed lines on the canvas.
-- An auto-detected JOIN's type can be changed (`INNER` / `LEFT` / `RIGHT` /
-  `FULL`) and it can be removed; a removal is remembered for the session so the
-  JOIN is not re-detected.
-- Auto-detected JOINs are part of the generated SQL, so the canvas and the SQL
-  preview always agree.
-- **Manually specifying an ON condition between arbitrary columns is not
-  implemented** (see Known Limitations).
+- **Manual JOINs are created column to column.** Click a column name on one
+  table card to arm it, then click a column on a *different* table card. The
+  armed column is highlighted and a banner names it; the second click creates an
+  `INNER JOIN` between exactly those two columns.
+- The armed state always has an exit: clicking the same column again, pressing
+  <kbd>Esc</kbd>, or using the banner's cancel button disarms it. Clicking a
+  second column of the *same* table moves the anchor rather than self-joining.
+  Removing a table from the canvas disarms an anchor on it.
+- Manual JOINs render as solid lines (auto-detected ones are dashed) and take
+  precedence over an auto-detected JOIN covering the same column pair, so the
+  pair never appears twice.
+- Every JOIN's type can be changed (`INNER` / `LEFT` / `RIGHT` / `FULL`) from its
+  label, and it can be removed. Removing an auto-detected JOIN is remembered for
+  the session so it is not re-detected.
+- JOINs — auto and manual alike — are part of the generated SQL, so the canvas
+  and the SQL preview always agree.
 
 ### ORDER BY
 
@@ -143,19 +150,22 @@ Two complementary mechanisms:
 | PostgreSQL | `"column"` | ✅ | `LIMIT n OFFSET m` |
 | MySQL | `` `column` `` | ❌ | `LIMIT m, n` |
 | SQLite | `"column"` | ❌ | `LIMIT n OFFSET m` |
-| SQL Server | `[column]` | ❌ | Not supported (needs `TOP` / `OFFSET … FETCH`) |
+| SQL Server | `[column]` | ❌ | Not supported (`supportsOffset: false`) |
 | Generic | `"column"` | ❌ | `LIMIT n OFFSET m` |
 
 ## Known Limitations
 
-- **No manual JOIN creation.** JOINs come from detected foreign keys only; there
-  is no UI for an arbitrary ON condition between two columns.
 - **One level of condition nesting.** Deeper nesting is representable in the
   store and handled by the generator, but the UI caps the tree at two levels.
 - **No subquery support.**
 - **No HAVING clause support**, so aggregates cannot be filtered after grouping.
 - **No window functions.**
-- **SQL Server row windows are not generated** (`TOP` / `OFFSET … FETCH`).
+- **SQL Server row windows are not generated.** T-SQL spells pagination
+  `OFFSET … FETCH`, which is only legal with an `ORDER BY` the builder cannot
+  guarantee, so the driver declares `supportsOffset: false` and the controls stay
+  disabled rather than emitting a clause the server would reject.
+- **A manual JOIN is always between two columns.** Composite keys must be joined
+  one column pair at a time, and a JOIN cannot be given extra ON predicates.
 
 ## Architecture
 

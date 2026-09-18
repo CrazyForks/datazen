@@ -385,7 +385,7 @@ const pack = {
   'query.visualBuilder.offset': 'Offset',
   'query.visualBuilder.limitUnsupported': 'Row window is not supported for this database',
   'query.visualBuilder.noTables': 'No tables found',
-  'query.visualBuilder.noColumns': 'No columns',
+  'query.visualBuilder.noColumns': 'No columns loaded',
   'query.visualBuilder.table': 'Table',
   'query.visualBuilder.field': 'Field',
   'query.visualBuilder.operator': 'Operator',
@@ -399,6 +399,9 @@ const pack = {
   'query.visualBuilder.removeJoin': 'Remove join',
   'query.visualBuilder.removeGroup': 'Remove group',
   'query.visualBuilder.dragHint': 'Drag tables here to build your query',
+  'query.visualBuilder.joinColumnHint': 'Click to join with a column of another table',
+  'query.visualBuilder.joinAnchorHint': 'Now click a column on another table to create the join',
+  'query.visualBuilder.cancelJoin': 'Cancel',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': 'Database Objects',
   'query.objectTree.schema': 'schema',

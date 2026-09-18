@@ -25,6 +25,10 @@ export interface DiagramCanvasProps {
   /** Map of table → { column → foreignKeyTargetTable }. */
   foreignKeyMap?: Record<string, Record<string, string>>;
   onToggleColumn: (table: string, column: string) => void;
+  /** Click a column name to start / complete a manual column-to-column JOIN. */
+  onClickColumn: (table: string, column: string) => void;
+  /** Column currently armed as the JOIN anchor, if any. */
+  joinAnchor?: { table: string; column: string } | null;
   onUpdatePosition: (table: string, pos: { x: number; y: number }) => void;
   onUpdateJoinType: (id: string, type: QbJoinType) => void;
   onRemoveJoin: (id: string) => void;
@@ -65,6 +69,8 @@ export function DiagramCanvas({
   primaryKeyMap = {},
   foreignKeyMap = {},
   onToggleColumn,
+  onClickColumn,
+  joinAnchor = null,
   onUpdatePosition,
   onUpdateJoinType,
   onRemoveJoin,
@@ -230,6 +236,8 @@ export function DiagramCanvas({
               foreignKeyMap={foreignKeyMap[table]}
               position={pos}
               onToggleColumn={(col) => onToggleColumn(table, col)}
+              onClickColumn={(col) => onClickColumn(table, col)}
+              joinAnchorColumn={joinAnchor?.table === table ? joinAnchor.column : null}
               onDragEnd={(newPos) => onUpdatePosition(table, newPos)}
               onSetAlias={(alias) => onSetTableAlias(table, alias)}
             />

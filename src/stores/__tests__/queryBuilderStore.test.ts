@@ -860,6 +860,97 @@ describe('queryBuilderStore', () => {
     });
   });
 
+  // ── clickJoinColumn (column-to-column manual JOIN) ─────────
+
+  describe('clickJoinColumn', () => {
+    it('arms the anchor on the first click', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      expect(getSnapshot().joinAnchor).toEqual({ table: 'users', column: 'id' });
+      expect(getSnapshot().joins).toEqual([]);
+    });
+
+    it('cancels when the armed column is clicked again', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      expect(getSnapshot().joinAnchor).toBeNull();
+      expect(getSnapshot().joins).toEqual([]);
+    });
+
+    it('moves the anchor instead of self-joining within one table', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'email');
+      expect(getSnapshot().joinAnchor).toEqual({ table: 'users', column: 'email' });
+      expect(getSnapshot().joins).toEqual([]);
+    });
+
+    it('creates a manual INNER join on a column of another table and disarms', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().clickJoinColumn('orders', 'user_id');
+
+      expect(getSnapshot().joinAnchor).toBeNull();
+      const joins = getSnapshot().joins;
+      expect(joins).toHaveLength(1);
+      expect(joins[0]).toMatchObject({
+        type: 'INNER',
+        leftTable: 'users',
+        leftColumn: 'id',
+        rightTable: 'orders',
+        rightColumn: 'user_id',
+        isManual: true,
+      });
+      expect(joins[0].id).toBeTruthy();
+    });
+
+    it('keeps the clicked order so the anchor is always the left side', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('orders', 'user_id');
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      const join = getSnapshot().joins[0];
+      expect(join.leftTable).toBe('orders');
+      expect(join.rightTable).toBe('users');
+    });
+
+    it('does not add a second join for the same column pair (either direction)', () => {
+      const store = useQueryBuilderStore.getState();
+      store.clickJoinColumn('users', 'id');
+      store.clickJoinColumn('orders', 'user_id');
+      store.clickJoinColumn('orders', 'user_id');
+      store.clickJoinColumn('users', 'id');
+
+      expect(getSnapshot().joins).toHaveLength(1);
+      // The second attempt still disarms rather than leaving a dangling anchor.
+      expect(getSnapshot().joinAnchor).toBeNull();
+    });
+
+    it('setJoinAnchor(null) cancels without creating a join', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().setJoinAnchor(null);
+      expect(getSnapshot().joinAnchor).toBeNull();
+      expect(getSnapshot().joins).toEqual([]);
+    });
+
+    it('clears an anchor on a table that leaves the canvas', () => {
+      useQueryBuilderStore.setState({ selectedTables: ['users', 'orders'] });
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().toggleTable('users');
+      expect(getSnapshot().joinAnchor).toBeNull();
+    });
+
+    it('keeps an anchor on a table that stays on the canvas', () => {
+      useQueryBuilderStore.setState({ selectedTables: ['users', 'orders'] });
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().toggleTable('orders');
+      expect(getSnapshot().joinAnchor).toEqual({ table: 'users', column: 'id' });
+    });
+
+    it('reset clears the anchor and the manual joins', () => {
+      useQueryBuilderStore.getState().clickJoinColumn('users', 'id');
+      useQueryBuilderStore.getState().clickJoinColumn('orders', 'user_id');
+      reset();
+      expect(getSnapshot().joinAnchor).toBeNull();
+      expect(getSnapshot().joins).toEqual([]);
+    });
+  });
+
   // ── setTableAlias ───────────────────────────────────────────
 
   describe('setTableAlias', () => {

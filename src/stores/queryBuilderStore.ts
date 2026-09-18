@@ -38,6 +38,11 @@ export interface QueryBuilderState {
   removedAutoJoinIds: string[];
   /** Per-auto-join type overrides keyed by auto-join id. */
   autoJoinTypes: Record<string, QbJoinType>;
+  /**
+   * First half of a column-to-column manual JOIN: the column the user clicked
+   * and is waiting to pair with a column of another table. `null` = idle.
+   */
+  joinAnchor: { table: string; column: string } | null;
 
   // ── Table metadata ──
   /** Table alias mapping (tableName → alias). */
@@ -85,6 +90,21 @@ export interface QueryBuilderActions {
   addJoin: (join: Omit<QbJoin, 'id'>) => void;
   removeJoin: (id: string) => void;
   updateJoinType: (id: string, type: QbJoinType) => void;
+  /** Arm/disarm the column-to-column JOIN anchor (pass null to cancel). */
+  setJoinAnchor: (anchor: { table: string; column: string } | null) => void;
+  /**
+   * Column-to-column manual JOIN, driven by clicking a column on a table card.
+   *
+   * State machine:
+   * - idle + click            → arm the clicked column
+   * - armed + same column     → disarm (a second click cancels)
+   * - armed + same table      → move the anchor (a table cannot join to itself)
+   * - armed + other table     → create the manual JOIN and disarm
+   *
+   * Creating a JOIN for a column pair that already has one is a no-op rather
+   * than a duplicate.
+   */
+  clickJoinColumn: (table: string, column: string) => void;
 
   // ── Table metadata actions ──
   setTableAlias: (tableName: string, alias: string) => void;
@@ -229,6 +249,7 @@ const INITIAL_STATE: QueryBuilderState = {
   autoJoins: [],
   removedAutoJoinIds: [],
   autoJoinTypes: {},
+  joinAnchor: null,
   tableAliases: {},
   tablePositions: {},
   canvasOffset: { x: 0, y: 0 },
@@ -250,7 +271,9 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
       // When removing a table, also remove its columns and condition references.
       if (s.selectedTables.includes(tableName)) {
         const cols = s.selectedColumns.filter((c) => c.table !== tableName);
-        return { selectedTables: tables, selectedColumns: cols };
+        // An anchor on the departing table can never be completed.
+        const joinAnchor = s.joinAnchor?.table === tableName ? null : s.joinAnchor;
+        return { selectedTables: tables, selectedColumns: cols, joinAnchor };
       }
       return { selectedTables: tables };
     }),
@@ -378,6 +401,34 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
       return {
         joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
         autoJoinTypes: isAuto ? { ...s.autoJoinTypes, [id]: type } : s.autoJoinTypes,
+      };
+    }),
+
+  setJoinAnchor: (anchor) => set(() => ({ joinAnchor: anchor })),
+
+  clickJoinColumn: (table, column) =>
+    set((s) => {
+      const anchor = s.joinAnchor;
+
+      // Idle → arm. Re-clicking the armed column → cancel.
+      if (!anchor) return { joinAnchor: { table, column } };
+      if (anchor.table === table && anchor.column === column) return { joinAnchor: null };
+      // A table cannot be joined to itself — move the anchor instead.
+      if (anchor.table === table) return { joinAnchor: { table, column } };
+
+      const candidate: Omit<QbJoin, 'id'> = {
+        type: 'INNER',
+        leftTable: anchor.table,
+        leftColumn: anchor.column,
+        rightTable: table,
+        rightColumn: column,
+        isManual: true,
+      };
+      const key = joinPairKey({ ...candidate, id: '' });
+      const duplicate = s.joins.some((j) => joinPairKey(j) === key);
+      return {
+        joinAnchor: null,
+        joins: duplicate ? s.joins : [...s.joins, { ...candidate, id: uid() }],
       };
     }),
 

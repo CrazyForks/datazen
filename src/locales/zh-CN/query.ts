@@ -378,7 +378,7 @@ const pack = {
   'query.visualBuilder.offset': '偏移',
   'query.visualBuilder.limitUnsupported': '当前数据库不支持行窗口',
   'query.visualBuilder.noTables': '未找到表',
-  'query.visualBuilder.noColumns': '无列',
+  'query.visualBuilder.noColumns': '未加载列',
   'query.visualBuilder.table': '表',
   'query.visualBuilder.field': '字段',
   'query.visualBuilder.operator': '运算符',
@@ -392,6 +392,9 @@ const pack = {
   'query.visualBuilder.removeJoin': '删除连接',
   'query.visualBuilder.removeGroup': '删除条件组',
   'query.visualBuilder.dragHint': '把表拖到这里开始构建查询',
+  'query.visualBuilder.joinColumnHint': '点击可与另一张表的列建立 JOIN',
+  'query.visualBuilder.joinAnchorHint': '现在点击另一张表的列以创建 JOIN',
+  'query.visualBuilder.cancelJoin': '取消',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': '数据库对象',
   'query.objectTree.schema': 'schema',
