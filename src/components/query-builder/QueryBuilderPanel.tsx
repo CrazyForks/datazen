@@ -45,6 +45,7 @@ export function QueryBuilderPanel({
 
   // ── Schema data ────────────────────────────────────────
   const columnMap = useSchemaStore((s) => s.columnMap);
+  const currentDatabase = useSchemaStore((s) => s.currentDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
 
   // ── Query builder state ────────────────────────────────
@@ -81,8 +82,8 @@ export function QueryBuilderPanel({
   // ── Load columns for selected tables ───────────────────
   useEffect(() => {
     if (selectedTables.length === 0) return;
-    void ensureColumns(selectedTables);
-  }, [selectedTables, ensureColumns]);
+    void ensureColumns(selectedTables, dbSessionId, currentDatabase ?? '');
+  }, [selectedTables, ensureColumns, dbSessionId, currentDatabase]);
 
   // ── Foreign key detection ──────────────────────────────
   const [fkRelations, setFkRelations] = useState<ForeignKeyRelation[]>([]);
@@ -99,7 +100,7 @@ export function QueryBuilderPanel({
       const allFks: ForeignKeyRelation[] = [];
       for (const tableName of selectedTables) {
         try {
-          const schema = await getCachedTableSchema(dbSessionId, tableName);
+          const schema = await getCachedTableSchema(dbSessionId, tableName, currentDatabase ?? '');
           for (const fk of schema.foreignKeys) {
             for (let i = 0; i < fk.columns.length; i++) {
               allFks.push({
