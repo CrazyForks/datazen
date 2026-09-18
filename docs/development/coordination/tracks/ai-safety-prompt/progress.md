@@ -1,6 +1,6 @@
 # Track: ai-safety-prompt (Wave 2 — 安全门统一 + JSON 解析器 + Schema 上下文 + Prompt 异步)
 
-## 状态: FAILED（2 个 Bug 待修复）
+## 状态: PASSED ✅
 
 ## 目标
 1. `safety.rs` 删除旧路（`redact_for_egress(strict)`），统一 `redact_for_gate(gate)`
