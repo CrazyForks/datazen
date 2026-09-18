@@ -10,16 +10,16 @@ import type { DatabaseObjectKind } from '../../types';
 interface DatabaseObjectViewProps {
   dbSessionId: string;
   databaseType?: string;
-  database?: string | null;
+  database: string;
   objectKind: DatabaseObjectKind;
   objectName: string;
-  objectSchema?: string;
+  objectSchema: string | null;
 }
 
 export function DatabaseObjectView({
   dbSessionId,
   databaseType,
-  database = null,
+  database,
   objectKind,
   objectName,
   objectSchema,

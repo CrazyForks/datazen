@@ -17,8 +17,8 @@ export interface QueryPanelProps {
   connectionId: string;
   databaseType?: string;
   connectionName?: string;
-  database?: string;
-  schema?: string;
+  database: string;
+  schema: string | null;
   namespacePath?: string[];
   /** S3-B2: optional navigation/AI-draft callbacks threaded from ContentView. */
   callbacks?: ContentViewCallbacks;
@@ -37,8 +37,8 @@ export interface QueryPanelDiagnosisContextInput {
   dbSessionId: string;
   databaseType?: string;
   connectionName?: string;
-  database?: string;
-  schema?: string;
+  database: string;
+  schema: string | null;
   serverVersion?: string;
   schemaState: QueryDiagnosisSchemaState;
 }

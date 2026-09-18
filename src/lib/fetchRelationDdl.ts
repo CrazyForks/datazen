@@ -13,7 +13,7 @@ export async function fetchRelationDdl(
   database: string,
   databaseType?: string,
   isView?: boolean,
-  schema?: string,
+  schema?: string | null,
 ): Promise<string> {
   if (!dbSessionId || !tableName || !database) return '';
 

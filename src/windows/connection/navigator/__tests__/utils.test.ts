@@ -15,6 +15,10 @@ describe('namespaceLeafContext', () => {
   });
 
   it('returns table name only for single-segment leaves', () => {
-    expect(namespaceLeafContext(['users'], {})).toEqual({ tableName: 'users' });
+    expect(namespaceLeafContext(['users'], {})).toEqual({
+      tableName: 'users',
+      schema: null,
+      database: null,
+    });
   });
 });

@@ -103,7 +103,13 @@ export function UnifiedSchemaTree({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          onNodeContextMenu?.({ kind: 'blank', name: '', x: e.clientX, y: e.clientY });
+          onNodeContextMenu?.({
+            kind: 'blank',
+            name: '',
+            x: e.clientX,
+            y: e.clientY,
+            schema: null,
+          });
         }}
       >
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -117,7 +123,7 @@ export function UnifiedSchemaTree({
                         ? 'view'
                         : 'table',
                     database: state.currentDatabase ?? state.databases[0] ?? '',
-                    schema: row.item.schema ?? undefined,
+                    schema: row.item.schema ?? null,
                     table: row.item.name,
                     connectionId,
                     dbSessionId: useSchemaStore.getState().dbSessionId ?? undefined,

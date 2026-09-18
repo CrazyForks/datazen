@@ -162,8 +162,8 @@ export interface UseQueryPanelWorkflowsOptions {
   dbSessionId: string;
   databaseType?: string;
   connectionName?: string;
-  database?: string;
-  schema?: string;
+  database: string;
+  schema: string | null;
   sql: string;
   error: string | null | undefined;
   chartConfig: ChartConfig | undefined;

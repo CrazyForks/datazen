@@ -12,7 +12,7 @@ export type SchemaTreeNodeContextMenuPayload = {
   name: string;
   x: number;
   y: number;
-  schema?: string;
+  schema: string | null;
 };
 
 export interface SchemaTreeProps {
@@ -21,7 +21,7 @@ export interface SchemaTreeProps {
   initialDatabase?: string;
   selectedTable: string | null;
   searchQuery: string;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onNodeContextMenu?: (payload: SchemaTreeNodeContextMenuPayload) => void;
 }
 

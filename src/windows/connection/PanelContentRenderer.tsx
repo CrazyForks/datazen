@@ -44,7 +44,7 @@ export interface PanelContentRendererProps {
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onOpenErDiagram: (focus?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
@@ -119,7 +119,7 @@ interface SqlPanelContentProps {
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onOpenErDiagram: (focus?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
@@ -341,7 +341,7 @@ function SqlPanelContent({
       <ObjectBrowser
         dbSessionId={panel.dbSessionId}
         databaseType={panel.databaseType}
-        database={currentDatabase}
+        database={currentDatabase ?? ''}
       />
     );
   }
@@ -402,7 +402,7 @@ function SqlPanelContent({
       <DatabaseObjectView
         dbSessionId={panel.dbSessionId}
         databaseType={panel.databaseType}
-        database={currentDatabase}
+        database={currentDatabase ?? ''}
         objectKind={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectKind}
         objectName={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectName}
         objectSchema={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectSchema}

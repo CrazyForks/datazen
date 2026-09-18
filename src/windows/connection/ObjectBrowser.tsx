@@ -21,10 +21,10 @@ const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger'];
 interface ObjectBrowserProps {
   dbSessionId: string;
   databaseType?: string;
-  database?: string | null;
+  database: string;
 }
 
-export function ObjectBrowser({ dbSessionId, databaseType, database = null }: ObjectBrowserProps) {
+export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBrowserProps) {
   const { t } = useI18n();
   const [kind, setKind] = useState<DatabaseObjectKind>('function');
   const [objects, setObjects] = useState<DatabaseObject[]>([]);

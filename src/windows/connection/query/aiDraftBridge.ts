@@ -39,8 +39,8 @@ export interface ContentViewCallbacks {
   /** Open a relation (table/view) data or structure tab. */
   openRelation: (
     name: string,
-    schema?: string,
-    database?: string,
+    schema: string | null,
+    database: string,
     subTab?: 'data' | 'structure' | 'ddl',
     targetColumn?: string,
   ) => void;

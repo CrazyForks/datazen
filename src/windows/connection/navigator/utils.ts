@@ -54,7 +54,7 @@ export function extractErrorMessage(error: unknown, fallback: string): string {
 
 export function quoteRelationName(
   name: string,
-  schema: string | undefined,
+  schema: string | null,
   databaseType: string,
 ): string {
   const quote = (part: string) =>
@@ -76,15 +76,15 @@ export function namespaceTreeContains(tree: SqlNamespace, query: string): boolea
 export function namespaceLeafContext(
   segments: string[],
   pathAliases: Record<string, string>,
-): { tableName: string; schema?: string; database?: string } {
-  if (segments.length === 0) return { tableName: '' };
+): { tableName: string; schema: string | null; database: string | null } {
+  if (segments.length === 0) return { tableName: '', schema: null, database: null };
   const tableName = segments[segments.length - 1]!;
   const parentSegments = segments.slice(0, -1);
-  if (parentSegments.length === 0) return { tableName };
+  if (parentSegments.length === 0) return { tableName, schema: null, database: null };
   const rootId = pathAliases[parentSegments[0]!] ?? parentSegments[0]!;
   const fetchPath =
     parentSegments.length === 1 ? rootId : [rootId, ...parentSegments.slice(1)].join('/');
-  const schema = parentSegments.length >= 2 ? parentSegments[parentSegments.length - 1] : undefined;
+  const schema = parentSegments.length >= 2 ? parentSegments[parentSegments.length - 1]! : null;
   return { tableName, schema, database: fetchPath };
 }
 

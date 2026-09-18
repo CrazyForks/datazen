@@ -5,7 +5,7 @@ export type SqlDialectFamily = string;
 export type GeneratedSqlType = 'select' | 'insert' | 'update' | 'delete';
 
 export interface TableSqlDialect {
-  formatTableRef(tableName: string, schemaPrefix?: string): string;
+  formatTableRef(tableName: string, schemaPrefix?: string | null): string;
   generateSelect(tableRef: string, schema: TableSchema): string;
   generateInsert(tableRef: string, schema: TableSchema): string;
   generateUpdate(tableRef: string, schema: TableSchema): string;
@@ -15,9 +15,15 @@ export interface TableSqlDialect {
 
 export interface DdlDialect {
   /** SQL to fetch DDL for a table; returns how to extract DDL string from first result row */
-  getTableDdlQuery(tableName: string, schema?: string): { sql: string; extractColumnIndex: number };
+  getTableDdlQuery(
+    tableName: string,
+    schema?: string | null,
+  ): { sql: string; extractColumnIndex: number };
   /** SQL to fetch DDL for a view; falls back to getTableDdlQuery if not provided */
-  getViewDdlQuery?(viewName: string, schema?: string): { sql: string; extractColumnIndex: number };
+  getViewDdlQuery?(
+    viewName: string,
+    schema?: string | null,
+  ): { sql: string; extractColumnIndex: number };
 }
 
 export interface IndexDialect {

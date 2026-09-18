@@ -628,7 +628,7 @@ describe('ConnectionNavigatorTree multi-db table selection', () => {
       // F1: no use_database IPC — activation only moves the local context.
       expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
     });
-    expect(onSelectTable).toHaveBeenCalledWith('users', undefined, 'db_a');
+    expect(onSelectTable).toHaveBeenCalledWith('users', null, 'db_a');
   });
 
   it('passes postgresql schema when opening a table under a schema node', async () => {
@@ -1737,7 +1737,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
         '/data/app.db',
       );
     });
-    expect(onSelectTable).toHaveBeenCalledWith('settings', undefined, '/data/app.db');
+    expect(onSelectTable).toHaveBeenCalledWith('settings', null, '/data/app.db');
   });
 
   it('refresh paths reload expanded categories and single-db tables', async () => {
@@ -2800,7 +2800,7 @@ describe('ConnectionNavigatorTree path-hierarchy namespace trees', () => {
     // Re-query mv1: the virtual list recreates row nodes on every render.
     fireEvent.click(container.querySelector('[data-item-name="users"]')!);
     await waitFor(() => {
-      expect(onSelectTable).toHaveBeenCalledWith('users', undefined, 'public');
+      expect(onSelectTable).toHaveBeenCalledWith('users', null, 'public');
     });
 
     const mvButton = container.querySelector('[data-item-name="mv1"]')!.closest('button')!;
@@ -2880,7 +2880,7 @@ describe('ConnectionNavigatorTree key-value stores', () => {
     await findByText('db0');
     fireEvent.click(container.querySelector('[data-tree-node="kv-db"]')!);
     expect(baseProps.onSelectConnection).toHaveBeenCalledWith('cfg-kv');
-    expect(onSelectTable).toHaveBeenCalledWith('db0');
+    expect(onSelectTable).toHaveBeenCalledWith('db0', null, 'db0');
   });
 
   it('shows a loading placeholder while the database list is pending', async () => {

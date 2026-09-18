@@ -87,7 +87,7 @@ export function ConnectionPage() {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectTableRef = useRef<
-    ((table: string, schema?: string, database?: string) => void) | undefined
+    ((table: string, schema: string | null, database: string) => void) | undefined
   >();
   const nodeContextMenuRef = useRef<
     | ((payload: { kind: string; name: string; x: number; y: number; schema?: string }) => void)
@@ -411,8 +411,8 @@ export function ConnectionPage() {
 
   const pendingSelectTableRef = useRef<{
     table: string;
-    schema?: string;
-    database?: string;
+    schema: string | null;
+    database: string;
   } | null>(null);
 
   // State counter that increments on each handleSelectTable call, guaranteeing
@@ -429,7 +429,7 @@ export function ConnectionPage() {
   }, []);
 
   const handleSelectTable = useCallback(
-    (tableName: string, schema?: string, database?: string) => {
+    (tableName: string, schema: string | null, database: string) => {
       pendingSelectTableRef.current = { table: tableName, schema, database };
       // Bump state to guarantee a re-render → useEffect fires → flush.
       // Also schedule rAF as a fast path for the common case where ContentView
