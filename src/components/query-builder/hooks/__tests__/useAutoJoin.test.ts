@@ -23,6 +23,7 @@ describe('groupRelationsIntoJoins', () => {
         rightTable: 'users',
         columnPairs: [{ left: 'user_id', right: 'id' }],
         isManual: false,
+        origin: 'declared',
       },
     ]);
   });
@@ -81,6 +82,24 @@ describe('groupRelationsIntoJoins', () => {
     const first = groupRelationsIntoJoins(input);
     const second = groupRelationsIntoJoins([...input]);
     expect(second[0]!.id).toBe(first[0]!.id);
+  });
+
+  it('lets a declared relationship outrank a prediction for the same pair', () => {
+    // One of the two is enforced by the database; the canvas must not label it a
+    // guess.
+    const joins = groupRelationsIntoJoins([
+      { ...rel('orders', 'user_id', 'users', 'id'), origin: 'predicted' },
+      { ...rel('orders', 'user_id', 'users', 'id'), origin: 'declared' },
+    ]);
+    expect(joins).toHaveLength(1);
+    expect(joins[0]!.origin).toBe('declared');
+  });
+
+  it('marks an inferred relationship as predicted', () => {
+    const joins = groupRelationsIntoJoins([
+      { ...rel('orders', 'user_id', 'users', 'id'), origin: 'predicted' },
+    ]);
+    expect(joins[0]!.origin).toBe('predicted');
   });
 
   it('preserves first-appearance order of the table pairs', () => {

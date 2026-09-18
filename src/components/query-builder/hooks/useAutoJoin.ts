@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { QbColumnPair, QbJoin } from '../types';
+import type { QbColumnPair, QbJoin, QbJoinOrigin } from '../types';
 
 /** Foreign key relationship metadata from the schema store. */
 export interface ForeignKeyRelation {
@@ -7,6 +7,12 @@ export interface ForeignKeyRelation {
   fromColumn: string;
   toTable: string;
   toColumn: string;
+  /**
+   * Whether the database declares this relationship or it was inferred.
+   * Defaults to `declared` — the safe reading, since only a declared constraint
+   * is guaranteed to hold.
+   */
+  origin?: QbJoinOrigin;
 }
 
 /**
@@ -24,7 +30,7 @@ export interface ForeignKeyRelation {
 export function groupRelationsIntoJoins(relations: readonly ForeignKeyRelation[]): QbJoin[] {
   const groups = new Map<
     string,
-    { leftTable: string; rightTable: string; pairs: QbColumnPair[] }
+    { leftTable: string; rightTable: string; pairs: QbColumnPair[]; origin: QbJoinOrigin }
   >();
   const order: string[] = [];
 
@@ -32,10 +38,18 @@ export function groupRelationsIntoJoins(relations: readonly ForeignKeyRelation[]
     const key = `${relation.fromTable}\u0000${relation.toTable}`;
     let group = groups.get(key);
     if (!group) {
-      group = { leftTable: relation.fromTable, rightTable: relation.toTable, pairs: [] };
+      group = {
+        leftTable: relation.fromTable,
+        rightTable: relation.toTable,
+        pairs: [],
+        origin: relation.origin ?? 'declared',
+      };
       groups.set(key, group);
       order.push(key);
     }
+    // A declared constraint outranks a prediction for the same relationship: one
+    // of them is enforced by the database.
+    if ((relation.origin ?? 'declared') === 'declared') group.origin = 'declared';
     group.pairs.push({ left: relation.fromColumn, right: relation.toColumn });
   }
 
@@ -51,6 +65,7 @@ export function groupRelationsIntoJoins(relations: readonly ForeignKeyRelation[]
       rightTable: group.rightTable,
       columnPairs: group.pairs,
       isManual: false as const,
+      origin: group.origin,
     };
   });
 }

@@ -46,6 +46,8 @@ export const EVIDENCE_WEIGHTS = {
   targetIsUnique: 0.3,
   nameMatchesTable: 0.4,
   nameMatchesTableStem: 0.4,
+  /** Table names are commonly prefixed (`app_user`), the column is not. */
+  nameMatchesPrefixedTable: 0.25,
   nameSuffixMatchesTable: 0.15,
   nameMatchesKey: 0.3,
   typeExact: 0.1,
@@ -162,6 +164,23 @@ function scoreAgainstKeyColumn(
         'name-suffix-matches-table',
         nameWeight,
         `${column.name} ends with a name for ${targetKey.table.name}.${targetColumnName}`,
+      ),
+    );
+  } else if (
+    // `app_user` referenced by `user_id`: the column names the table's
+    // distinguishing word, while the table carries a prefix the column drops.
+    // Weaker than an exact match, because two prefixed tables can share that word
+    // — which is exactly the case the ambiguity check exists for.
+    sourceName.endsWith(`_${normalizedKeyColumn}`) &&
+    stem.endsWith(`_${sourceName.slice(0, -(normalizedKeyColumn.length + 1))}`) &&
+    sourceName !== normalizedKeyColumn
+  ) {
+    nameWeight = EVIDENCE_WEIGHTS.nameMatchesPrefixedTable;
+    found.push(
+      evidence(
+        'name-matches-table-stem',
+        nameWeight,
+        `${column.name} names the distinguishing word of ${targetKey.table.name}.${targetColumnName}`,
       ),
     );
   } else if (

@@ -70,7 +70,10 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
     <div
       className={cn(
         'flex items-center gap-1 select-none cursor-pointer',
-        'rounded border border-edge bg-surface-alt shadow-sm',
+        'rounded border bg-surface-alt shadow-sm',
+        // A predicted join is inferred, not enforced. Dashed so it never reads as
+        // a constraint the database actually declares.
+        join.origin === 'predicted' ? 'border-dashed border-accent/50' : 'border-solid border-edge',
         'px-1.5 py-0.5 text-[10px]',
         'hover:border-accent hover:shadow-md transition-all',
       )}
@@ -79,6 +82,15 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
       data-testid={`qb-join-label-${join.id}`}
     >
       <span className="font-semibold text-accent">{join.type}</span>
+      {join.origin === 'predicted' && (
+        <span
+          className="rounded bg-accent/10 px-1 text-[9px] text-accent"
+          title={t('query.visualBuilder.predictedBadgeTitle')}
+          data-testid={`qb-join-predicted-${join.id}`}
+        >
+          {t('query.visualBuilder.predictedBadge')}
+        </span>
+      )}
       <span className="text-fg-muted">ON</span>
       <span className="text-fg-secondary">
         {join.leftTable}.{primaryColumnPair(join).left} = {join.rightTable}.

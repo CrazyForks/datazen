@@ -98,7 +98,21 @@ export interface QbJoin {
   columnPairs: readonly QbColumnPair[];
   /** true = manually created, false = auto-detected FK. */
   isManual: boolean;
+  /**
+   * Where an auto-detected join came from.
+   *
+   * `declared` is a real constraint the database enforces; `predicted` is inferred
+   * from structure and naming. The distinction is shown in the UI because the two
+   * carry very different confidence, and a predicted join must always be
+   * distinguishable from one the schema actually states.
+   *
+   * Absent on manual joins.
+   */
+  origin?: QbJoinOrigin;
 }
+
+/** How an auto-detected join was established. */
+export type QbJoinOrigin = 'declared' | 'predicted';
 
 /** The first column pair — what a single-pair join renders as. */
 export function primaryColumnPair(join: QbJoin): QbColumnPair {

@@ -8,7 +8,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { relationIdentityFor, deriveForeignKeyRelations } from '../relationMetadataSource';
+import {
+  relationIdentityFor,
+  deriveForeignKeyRelations,
+  predictTableRelations,
+  partitionPredictedRelations,
+} from '../relationMetadataSource';
 import { buildEditorRelationKey } from '../../../lib/relationMetadata/identity';
 import type {
   EditorMetadataSnapshot,
@@ -169,5 +174,135 @@ describe('deriveForeignKeyRelations', () => {
   it('is a no-op for an empty selection', () => {
     const snapshot = snapshotOf([relation('orders', ORDERS_TO_USERS)]);
     expect(deriveForeignKeyRelations(snapshot, [], 'public', 'postgresql')).toEqual([]);
+  });
+});
+
+/** A relation with full column control, for prediction. */
+function typedRelation(
+  table: string,
+  columns: { name: string; dataType: string; indexed?: boolean }[],
+  over: Partial<EditorRelationMetadata> = {},
+): EditorRelationMetadata {
+  const identity = relationIdentityFor(table, 'public');
+  return {
+    key: buildEditorRelationKey(SESSION, identity, 'postgresql'),
+    identity,
+    kind: 'table',
+    columns: columns.map((c) => ({ name: c.name, dataType: c.dataType, nullable: true })),
+    primaryKey: ['id'],
+    indexes: (columns ?? [])
+      .filter((c) => c.indexed)
+      .map((c) => ({ name: `idx_${c.name}`, columns: [c.name], isUnique: false })),
+    foreignKeys: [],
+    loadedAt: 0,
+    ...over,
+  };
+}
+
+const PREDICTION_CTX = { database: DATABASE, schema: 'public', databaseType: 'postgresql' };
+
+const USERS_TYPED = typedRelation('users', [{ name: 'id', dataType: 'integer' }]);
+const ORDERS_TYPED = typedRelation('orders', [
+  { name: 'id', dataType: 'integer' },
+  { name: 'user_id', dataType: 'integer' },
+]);
+
+describe('predictTableRelations', () => {
+  it('infers a relationship the schema does not declare', () => {
+    const snapshot = snapshotOf([USERS_TYPED, ORDERS_TYPED]);
+    const found = predictTableRelations(snapshot, ['users', 'orders'], PREDICTION_CTX);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      fromTable: 'orders',
+      fromColumn: 'user_id',
+      toTable: 'users',
+      toColumn: 'id',
+      origin: 'predicted',
+      tier: 'high',
+      ambiguous: false,
+    });
+  });
+
+  it('needs at least two tables', () => {
+    const snapshot = snapshotOf([USERS_TYPED]);
+    expect(predictTableRelations(snapshot, ['users'], PREDICTION_CTX)).toEqual([]);
+  });
+
+  it('skips tables that are not in the snapshot yet', () => {
+    const snapshot = snapshotOf([USERS_TYPED]);
+    expect(predictTableRelations(snapshot, ['users', 'orders'], PREDICTION_CTX)).toEqual([]);
+  });
+
+  it('does not restate a declared foreign key', () => {
+    const ordersWithFk = typedRelation(
+      'orders',
+      [
+        { name: 'id', dataType: 'integer' },
+        { name: 'user_id', dataType: 'integer' },
+      ],
+      { foreignKeys: ORDERS_TO_USERS },
+    );
+    const snapshot = snapshotOf([USERS_TYPED, ordersWithFk]);
+    expect(predictTableRelations(snapshot, ['users', 'orders'], PREDICTION_CTX)).toEqual([]);
+  });
+
+  it('carries the evidence so the UI can explain itself', () => {
+    const snapshot = snapshotOf([USERS_TYPED, ORDERS_TYPED]);
+    const found = predictTableRelations(snapshot, ['users', 'orders'], PREDICTION_CTX);
+    expect(found[0]!.evidence.map((e) => e.code)).toContain('target-is-primary-key');
+    expect(found[0]!.score).toBeGreaterThan(0);
+  });
+
+  it('returns an empty list without a snapshot', () => {
+    expect(predictTableRelations(undefined, ['users', 'orders'], PREDICTION_CTX)).toEqual([]);
+  });
+});
+
+describe('partitionPredictedRelations', () => {
+  const relation = (tier: 'high' | 'medium', ambiguous: boolean, candidateId: string) => ({
+    fromTable: 'orders',
+    fromColumn: 'user_id',
+    toTable: 'users',
+    toColumn: 'id',
+    origin: 'predicted' as const,
+    candidateId,
+    tier,
+    score: 0.9,
+    ambiguous,
+    evidence: [],
+  });
+
+  it('applies a confident, unambiguous relationship', () => {
+    const { applicable, suggestions } = partitionPredictedRelations([
+      relation('high', false, 'c1'),
+    ]);
+    expect(applicable).toHaveLength(1);
+    expect(applicable[0]!.origin).toBe('predicted');
+    expect(suggestions).toEqual([]);
+  });
+
+  it('only offers an ambiguous one, however high it scored', () => {
+    const { applicable, suggestions } = partitionPredictedRelations([relation('high', true, 'c1')]);
+    expect(applicable).toEqual([]);
+    expect(suggestions).toHaveLength(1);
+  });
+
+  it('only offers a medium-confidence one', () => {
+    const { applicable, suggestions } = partitionPredictedRelations([
+      relation('medium', false, 'c1'),
+    ]);
+    expect(applicable).toEqual([]);
+    expect(suggestions).toHaveLength(1);
+  });
+
+  it('keeps a composite candidate in one bucket', () => {
+    // Half a composite key would generate an ON clause missing a predicate.
+    const pair = (column: string) => ({
+      ...relation('high', false, 'c1'),
+      fromColumn: column,
+    });
+    const { applicable, suggestions } = partitionPredictedRelations([pair('a_id'), pair('a_no')]);
+    expect(suggestions).toEqual([]);
+    expect(applicable.map((r) => r.fromColumn)).toEqual(['a_id', 'a_no']);
   });
 });

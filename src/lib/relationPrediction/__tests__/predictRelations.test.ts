@@ -85,6 +85,30 @@ describe('predictRelations', () => {
     expect(found.some((c) => c.columnPairs[0]!.left === 'orders_id')).toBe(true);
   });
 
+  it('matches a prefixed table name from an unprefixed column', () => {
+    // `app_user` is referenced by `user_id`; the table carries a prefix the
+    // column drops, which is how most ORM-managed schemas are named.
+    const appUsers = table('app_users', [col('id')]);
+    const sessions = table('sessions', [col('id'), col('user_id')]);
+    const found = predictRelations([appUsers, sessions]);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.evidence.map((e) => e.code)).toContain('name-matches-table-stem');
+    // Weaker than an exact match, so the score stays below the exact-name case.
+    expect(found[0]!.score).toBeLessThan(0.9);
+  });
+
+  it('flags a prefix collision as ambiguous rather than choosing', () => {
+    // `order_status` and `user_status` both end in `status`, so `status_id`
+    // names both equally well.
+    const orderStatus = table('order_status', [col('id')]);
+    const userStatus = table('user_status', [col('id')]);
+    const rows = table('rows', [col('id'), col('status_id')]);
+    const found = predictRelations([orderStatus, userStatus, rows]);
+    expect(found).toHaveLength(2);
+    expect(found.every((c) => c.ambiguous)).toBe(true);
+    expect(found.every((c) => c.tier === 'medium')).toBe(true);
+  });
+
   it('never relates two tables through their generic id column alone', () => {
     // Every table's surrogate key is `id`; matching on it would relate
     // everything to everything. Only a column that *names* the target counts.

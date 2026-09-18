@@ -1,8 +1,13 @@
 import { useEffect, useCallback, useMemo } from 'react';
-import { X, BarChart3, Link2 } from 'lucide-react';
+import { X, BarChart3, Link2, Sparkles } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
 import { useMetadataSnapshot, resolveEditorDialectId } from '../../stores/schemaStoreSelectors';
-import { ensureTableRelations, deriveForeignKeyRelations } from './relationMetadataSource';
+import {
+  deriveForeignKeyRelations,
+  ensureTableRelations,
+  partitionPredictedRelations,
+  predictTableRelations,
+} from './relationMetadataSource';
 import { useQueryBuilderStore, mergeJoins } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
@@ -98,6 +103,7 @@ export function QueryBuilderPanel({
   const updateColumnConfig = useQueryBuilderStore((s) => s.updateColumnConfig);
   const removeJoin = useQueryBuilderStore((s) => s.removeJoin);
   const updateJoinType = useQueryBuilderStore((s) => s.updateJoinType);
+  const addJoin = useQueryBuilderStore((s) => s.addJoin);
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
   const updateTablePosition = useQueryBuilderStore((s) => s.updateTablePosition);
   const setZoom = useQueryBuilderStore((s) => s.setZoom);
@@ -132,9 +138,29 @@ export function QueryBuilderPanel({
 
   // Resolve each selected table through the editor's own snapshot + resolver, so
   // identifier folding and the schema-tree fallback behave identically.
-  const fkRelations = useMemo(
+  const declaredFkRelations = useMemo(
     () => deriveForeignKeyRelations(metadataSnapshot, selectedTables, schema, dialectId),
     [selectedTables, metadataSnapshot, schema, dialectId],
+  );
+
+  // Relationships the schema does not declare, inferred from structure and
+  // naming. Applied only when the engine is confident and unambiguous; the rest
+  // are offered for the user to accept.
+  const predicted = useMemo(
+    () =>
+      predictTableRelations(metadataSnapshot, selectedTables, { database, schema, databaseType }),
+    [metadataSnapshot, selectedTables, database, schema, databaseType],
+  );
+  const { applicable: applicablePredictions, suggestions: predictedSuggestions } = useMemo(
+    () => partitionPredictedRelations(predicted),
+    [predicted],
+  );
+
+  // Declared constraints and confident predictions feed the same auto-join path;
+  // `origin` keeps them distinguishable on the canvas.
+  const fkRelations = useMemo(
+    () => [...declaredFkRelations, ...applicablePredictions],
+    [declaredFkRelations, applicablePredictions],
   );
 
   const detectedAutoJoins = useAutoJoin(selectedTables, fkRelations);
@@ -288,6 +314,43 @@ export function QueryBuilderPanel({
               >
                 {t('query.visualBuilder.cancelJoin')}
               </button>
+            </div>
+          )}
+
+          {/* Predicted-relationship suggestions — offered, never applied.
+              A guess must not change the query silently, so these wait for a
+              click while high-confidence predictions join the canvas directly. */}
+          {predictedSuggestions.length > 0 && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 border-b border-dashed border-edge bg-surface-alt/40 px-3 py-1"
+              data-testid="qb-predicted-suggestions"
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent" />
+              <span className="text-[11px] text-fg-muted">
+                {t('query.visualBuilder.predictedHint')}
+              </span>
+              {predictedSuggestions.map((suggestion) => (
+                <button
+                  key={`${suggestion.candidateId}-${suggestion.fromColumn}`}
+                  type="button"
+                  onClick={() =>
+                    addJoin({
+                      type: 'INNER',
+                      leftTable: suggestion.fromTable,
+                      rightTable: suggestion.toTable,
+                      columnPairs: [{ left: suggestion.fromColumn, right: suggestion.toColumn }],
+                      isManual: true,
+                    })
+                  }
+                  title={suggestion.evidence.map((e) => e.detail).join('\n')}
+                  className="rounded border border-dashed border-accent/50 bg-accent/5 px-1.5 py-0.5 text-[10px] text-fg-secondary hover:border-accent hover:bg-accent/10"
+                  data-testid={`qb-predicted-accept-${suggestion.fromTable}-${suggestion.fromColumn}-${suggestion.toTable}-${suggestion.toColumn}`}
+                >
+                  {suggestion.fromTable}.{suggestion.fromColumn} → {suggestion.toTable}.
+                  {suggestion.toColumn}
+                  {suggestion.ambiguous ? ` (${t('query.visualBuilder.predictedAmbiguous')})` : ''}
+                </button>
+              ))}
             </div>
           )}
 

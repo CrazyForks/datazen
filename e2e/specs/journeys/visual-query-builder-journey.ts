@@ -64,6 +64,19 @@ function autoJoinId(
 const PARENT_TABLE = `${TABLE_NAME}_parent`;
 const CHILD_TABLE = `${TABLE_NAME}_child`;
 
+/**
+ * Owner / member pair with **no** declared constraint.
+ *
+ * The member column spells the owner table out in full, so the naming convention
+ * links them exactly and the builder must infer the relationship from structure
+ * alone. The naming style decides the tier: an exact `{table}_id` scores high and
+ * is applied, while a prefix-dropping `owner_id` scores medium and is only
+ * offered. This phase pins the applied path; the offered path is pinned by the
+ * engine's unit tests.
+ */
+const OWNER_TABLE = `${TABLE_NAME}_owner`;
+const MEMBER_TABLE = `${TABLE_NAME}_member`;
+
 /** Versioned MIME the schema tree writes and the builder canvas consumes. */
 const SCHEMA_OBJECT_MIME = 'application/datazen-schema-object';
 
@@ -82,6 +95,7 @@ const journey = {
   conditionApplied: false,
   sqlApplied: false,
   autoJoinVerified: false,
+  predictedJoinVerified: false,
   manualJoinVerified: false,
 };
 
@@ -332,6 +346,24 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
         await invokeBackend('execute_query', {
           dbSessionId,
           sql: `INSERT INTO ${CHILD_TABLE} (id, parent_id, note) VALUES (1, 1, 'first'), (2, 2, 'second')`,
+        });
+        // Predicted pair: no REFERENCES clause anywhere, so only the naming
+        // convention links them.
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `CREATE TABLE ${OWNER_TABLE} (id INTEGER PRIMARY KEY, label TEXT)`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `INSERT INTO ${OWNER_TABLE} (id, label) VALUES (1, 'acme'), (2, 'globex')`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `CREATE TABLE ${MEMBER_TABLE} (id INTEGER PRIMARY KEY, ${OWNER_TABLE}_id INTEGER, note TEXT)`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId,
+          sql: `INSERT INTO ${MEMBER_TABLE} (id, ${OWNER_TABLE}_id, note) VALUES (1, 1, 'a'), (2, 2, 'b')`,
         });
       });
     } finally {
@@ -795,5 +827,70 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       timeoutMsg: '关闭面板超时',
     });
     await captureJourneyStep('qb-panel-closed');
+  });
+
+  it('阶段9b：无外键约束的两张表也能按命名推测出 JOIN', async function () {
+    if (!journey.manualJoinVerified) this.skip();
+
+    await openBuilderFromMoreMenu();
+    expect(await isQbPanelOpen()).toBe(true);
+
+    // Neither table declares a REFERENCES clause, so anything that appears here
+    // was inferred. The prefix on the table names is dropped by the column name,
+    // which is the naming style most ORM-managed schemas use.
+    await filterNavigatorTo(OWNER_TABLE);
+    expectTrue(await startTableDrag(OWNER_TABLE), 'owner 表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.28, 0.35), 'owner 表未被画布接收');
+    await browser.pause(600);
+
+    await filterNavigatorTo(MEMBER_TABLE);
+    expectTrue(await startTableDrag(MEMBER_TABLE), 'member 表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.72, 0.6), 'member 表未被画布接收');
+    await browser.pause(800);
+
+    // The preview only exists once there is something to select, so pick a column
+    // from each table before asserting on the SQL.
+    for (const table of [OWNER_TABLE, MEMBER_TABLE]) {
+      const check = await $(`[data-testid="qb-col-check-${table}-id"]`);
+      await check.waitForClickable({ timeout: 5000 });
+      await check.click();
+      await browser.pause(200);
+    }
+
+    const joinId = autoJoinId(MEMBER_TABLE, `${OWNER_TABLE}_id`, OWNER_TABLE, 'id');
+
+    // The inference must reach the canvas...
+    await browser.waitUntil(async () => (await countByTestId(`qb-join-line-${joinId}`)) === 1, {
+      timeout: 10000,
+      timeoutMsg: '未渲染推测出的 JOIN 连线',
+    });
+
+    // ...and be labelled as inferred, never as a declared constraint.
+    expectTrue(
+      (await countByTestId(`qb-join-predicted-${joinId}`)) === 1,
+      '推测出的 JOIN 未标注 predicted',
+    );
+    await captureJourneyStep('qb-predicted-join-line');
+
+    // ...and reach the SQL, like any other detected relationship.
+    await browser.waitUntil(
+      async () => {
+        const text = await sqlPreviewText();
+        return text.includes('JOIN') && text.includes(`${OWNER_TABLE}_id`);
+      },
+      { timeout: 10000, timeoutMsg: 'SQL 预览未包含推测出的 JOIN' },
+    );
+    await captureJourneyStep('qb-predicted-join-sql');
+
+    // Removing it must drop it from the SQL and not immediately come back.
+    expectTrue(await clickByTestId(`qb-join-remove-${joinId}`), '未找到推测 JOIN 的移除按钮');
+    await browser.pause(600);
+    await browser.waitUntil(async () => !(await sqlPreviewText()).includes('JOIN'), {
+      timeout: 5000,
+      timeoutMsg: '移除后 SQL 预览仍包含推测的 JOIN',
+    });
+    await captureJourneyStep('qb-predicted-join-removed');
+
+    journey.predictedJoinVerified = true;
   });
 });

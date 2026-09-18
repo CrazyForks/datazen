@@ -169,13 +169,48 @@ Two complementary mechanisms:
   `OFFSET … FETCH`, which is only legal with an `ORDER BY` the builder cannot
   guarantee, so the driver declares `supportsOffset: false` and the controls stay
   disabled rather than emitting a clause the server would reject.
-- **A manual JOIN is always between two columns.** Composite keys must be joined
-  one column pair at a time, and a JOIN cannot be given extra ON predicates.
+- **A manual JOIN is always between two columns.** A composite key is joined as a
+  whole only when the builder detects it; drawing one by hand produces a
+  single-pair JOIN, and the canvas cannot add further ON predicates to it.
+- **Prediction is scoped to one schema.** The builder resolves every table against
+  the tab's schema, so same-named tables from two schemas cannot be told apart.
+  See `docs/todo/002-tech-debt.md` P0-2 — the fix is a cross-cutting change to the
+  column store, not a builder-local one.
+
+## Foreign key prediction
+
+Most real schemas declare no foreign keys, so the builder infers them from
+metadata alone (`src/lib/relationPrediction/`). The same engine backs the SQL
+editor's related-table ranking, so the two can never disagree about a schema.
+
+Two tiers, because confidence varies:
+
+- **Applied automatically** — a high-confidence, unambiguous relationship joins
+  the canvas exactly like a declared one. It is drawn dashed and labelled
+  `predicted` so it is never mistaken for a constraint the database enforces, and
+  removing it is one click (the dismissal is remembered for that relationship).
+- **Offered** — anything less certain appears in the suggestions bar as a chip.
+  Clicking it creates a normal manual JOIN. A guess never changes the query
+  silently.
+
+Declared constraints always win: a column already covered by a real foreign key is
+not predicted at all, and a relationship that is both declared and predicted is
+labelled `declared`.
+
+The engine's rules — a relationship may only target a key, type family is a gate,
+ambiguity abstains, and two references to one table stay two relationships — are
+documented in `src/lib/relationPrediction/predictRelations.ts` and pinned by
+tests. The data-overlap probe is deliberately absent: it needs to query the
+database and is the part that can hurt a production server.
 
 ## Architecture
 
 - **State**: Zustand store (`src/stores/queryBuilderStore.ts`) holds all builder
   state, including the WHERE tree and the detected auto-JOINs.
+- **Relationships**: declared foreign keys and inferred ones both come from the
+  shared `lib/relationMetadata` cache via
+  `src/components/query-builder/relationMetadataSource.ts`; the builder never
+  holds a schema cache of its own.
 - **SQL generation**: pure function in
   `src/components/query-builder/hooks/useSqlGenerator.ts`, exposed through the
   `useSqlGenerator` hook.

@@ -397,6 +397,11 @@ const pack = {
   'query.visualBuilder.group': 'Group',
   'query.visualBuilder.removeCondition': 'Remove condition',
   'query.visualBuilder.removeJoin': 'Remove join',
+  'query.visualBuilder.predictedBadge': 'predicted',
+  'query.visualBuilder.predictedBadgeTitle':
+    'Inferred from structure and naming, not a declared foreign key',
+  'query.visualBuilder.predictedHint': 'Predicted joins:',
+  'query.visualBuilder.predictedAmbiguous': 'ambiguous',
   'query.visualBuilder.andMorePairs': 'and {{count}} more',
   'query.visualBuilder.removeGroup': 'Remove group',
   'query.visualBuilder.dragHint': 'Drag tables here to build your query',
