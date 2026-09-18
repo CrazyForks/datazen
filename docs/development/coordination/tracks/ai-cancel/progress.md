@@ -41,5 +41,46 @@
 - [x] cargo test -p datazen --lib ai — 307 passed, 0 failed
 - [x] cargo check -p datazen --lib — 编译通过，0 warnings
 
-## 编码 Commit: 87706feb3
+## 编码 Commit: d969305c2
 ## 测试 Commit: (pending)
+
+## 测试子代理复验结果
+
+### 独立复验
+- [x] cargo test -p datazen --lib ai — **326 passed**, 0 failed（含19条新增测试）
+- [x] cargo test -p datazen --lib cancel — **16 passed**, 0 failed
+- [x] cargo check -p datazen --lib — 编译通过，0 warnings
+- [x] cargo test -p datazen-ai-api --lib — 0 passed（该 crate 无 lib 测试）
+
+### 新增测试（19条）
+| 测试 | 覆盖路径 |
+|------|----------|
+| test_tester_guard_new_defaults | ToolLoopGuard 默认值 |
+| test_tester_guard_check_round_succeeds_within_limits | 6轮内 check_round 通过 |
+| test_tester_guard_check_round_fails_on_max_rounds | 超6轮拒绝 |
+| test_tester_guard_check_round_fails_on_token_budget | token 超预算拒绝 |
+| test_tester_guard_check_round_fails_on_time_limit | 超时拒绝 |
+| test_tester_guard_accumulate_usage | token 累积 |
+| test_tester_guard_truncate_under_cap | 截断-未超限 |
+| test_tester_guard_truncate_over_cap | 截断-超限含省略号 |
+| test_tester_guard_truncate_exact_cap | 截断-恰好边界 |
+| test_tester_guard_truncate_and_wrap | wrap 为 Tool message |
+| test_tester_guard_truncate_and_wrap_truncates_large | wrap + 截断大内容 |
+| test_tester_classify_tool_ask_questions | classify ask_questions |
+| test_tester_classify_tool_db (5 tools) | classify DB 工具 |
+| test_tester_classify_tool_mcp | classify MCP 工具 |
+| test_tester_classify_tool_unknown | classify 未知/MCP 格式错误 |
+| test_tester_is_readonly_db_tool | readonly DB 工具判定 |
+| test_tester_mcp_needs_confirm_schema_based | schema x-write 判定 |
+| test_tester_mcp_needs_confirm_name_based | 名称关键字判定 |
+| test_tester_mcp_needs_confirm_readonly | 只读工具不需确认 |
+
+### 覆盖率评估
+| 模块 | 新增前估计 | 新增后估计 | 说明 |
+|------|-----------|-----------|------|
+| cancel.rs | ~90% | ~90% | 4单测覆盖 register/cancel/unregister/cancelled-token |
+| ToolLoopGuard | ~30% | **≥85%** | 12条新测试覆盖 check_round 三路失败、truncate、wrap、边界 |
+| Protocol SSE cancel | ~80% | ~80% | 三协议均用 select!+break，逻辑一致 |
+| classify_tool / is_db_tool | ~70% | **≥90%** | 覆盖所有 ToolKind 变体 + 边界 |
+| ai_chat_impl register/unregister | ~80% | ~80% | mock_provider_tests 覆盖正常路径 |
+| ai_generate_sql_impl register/unregister | ~80% | ~80% | wiremock 测试覆盖正常路径 |
