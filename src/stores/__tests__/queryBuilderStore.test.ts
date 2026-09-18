@@ -530,7 +530,8 @@ describe('queryBuilderStore', () => {
       expect(s.selectedTables).toEqual([]);
       expect(s.selectedColumns).toEqual([]);
       expect(s.distinct).toBe(false);
-      expect(s.isOpen).toBe(false);
+      // reset() clears the query but keeps the panel open (close is a separate action).
+      expect(s.isOpen).toBe(true);
       expect(s.orderBy).toEqual([]);
       expect(s.groupBy).toEqual([]);
       expect(s.where.conditions).toEqual([]);
