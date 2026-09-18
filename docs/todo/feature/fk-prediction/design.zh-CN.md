@@ -175,8 +175,14 @@ ER 图（`windows/connection/er/`）与 QB 都需要它。按
 
 - **P0-1（复合外键重复 JOIN）**：预测会产出复合关系，必须先修，否则预测把这个
   缺陷的暴露面放大
-- **P0-2（丢弃 namespace）**：跨 schema 预测需要带 namespace 的表标识，
-  否则「同 schema 才预测」这条门都实现不了
+- **P0-2（丢弃 namespace）**：~~跨 schema 预测需要带 namespace 的表标识~~
+  **已重新评估，不阻塞本功能。** 实现时发现 `getAllColumns(dbSessionId, database)`
+  不接收 schema，`columnMap` 是**库级**而非 schema 级的（`schemaStore.ts:516`
+  以表名为键）。要让 QB 的表标识真正带 namespace，需要同时改 Rust 命令签名、
+  schema store 的列存储与 schema 树/补全的消费方 —— 是跨切面重构，量级远超本功能。
+  因此 **P1 阶段限定在同一 schema 上下文内预测**（这正是 QB 今天解析列与关系所用的
+  上下文），跨 schema 同名表的冲突作为已知限制记录在
+  `docs/todo/002-tech-debt.md` P0-2。
 
 ---
 
@@ -375,7 +381,7 @@ WHERE child.parent_id IS NOT NULL AND NOT EXISTS (...)
 
 | 阶段 | 内容 | 价值 | 风险 |
 | --- | --- | --- | --- |
-| **前置** | 修 P0-1（复合 JOIN）、P0-2（namespace） | 解除阻塞 | 低 |
+| **前置** | 修 P0-1（复合 JOIN） | 解除阻塞 | 低 |
 | **P1** | 结构信号（名字 + PK/唯一索引 + 类型门）+ 打分 + 分档 UI + 可解释明细 | 覆盖大部分真实场景，**零数据访问**，无性能风险 | 低 |
 | **P2** | 数据探针（显式触发、抽样、超时、可取消） | 识破「名字像但无关」；把 Medium 提升为 High | 中（性能/安全） |
 | **P3** | 用户反馈持久化（接受/拒绝/手工 JOIN 记忆） | 越用越准；可跨会话累积 | 低 |

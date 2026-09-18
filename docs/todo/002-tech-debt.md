@@ -58,7 +58,21 @@ const tableName = payload.namespace?.table;
 （多租户、分模块），不是边缘场景。
 
 **建议**：`selectedTables` 的标识改为带 namespace 的稳定 key，UI 显示短名 + schema
-前缀消歧。这与 P0-1 一样是**数据模型**层面的改动，建议合并到同一次重构。
+前缀消歧。
+
+**代价已重新评估（2026-09 实测）**：这**不是** QB 局部改动。`getAllColumns`
+（`src-tauri/src/commands/schema.rs:464`）只接收 `dbSessionId` + `database`，
+`columnMap` 以**表名**为键（`schemaStore.ts:516`），即列存储是**库级而非 schema 级**。
+要让表标识真正带 namespace，必须同时改：
+
+1. Rust `get_all_columns` 命令签名（增加 schema）
+2. `schemaStore` 的 `columnMap` 键结构
+3. schema 树 / 补全 / QB 等所有列消费方
+
+属于跨切面重构，应作为独立任务排期，不要顺手塞进 QB 的改动里。
+
+另注：当前 QB 对「从非当前 schema 拖入的表」会生成**裸表名** SQL，
+可能静默命中 search_path 下的同名表 —— 这与本项同源，一并由上述重构解决。
 
 ### P0-3 `findRelationMetadata` 的裸名回退对「生成 SQL」不安全
 
