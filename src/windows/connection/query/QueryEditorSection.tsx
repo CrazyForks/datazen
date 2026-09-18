@@ -451,6 +451,7 @@ export function QueryEditorSection({
           <QueryBuilderPanel
             dbSessionId={dbSessionId}
             database={selectedDatabase ?? ''}
+            schema={selectedSchema ?? undefined}
             databaseType={databaseType}
             onApplySql={(newSql) => {
               onUpdateSql(newSql);

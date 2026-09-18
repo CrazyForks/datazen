@@ -1,10 +1,11 @@
-import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { X, BarChart3, Link2 } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { useMetadataSnapshot, resolveEditorDialectId } from '../../stores/schemaStoreSelectors';
+import { ensureTableRelations, deriveForeignKeyRelations } from './relationMetadataSource';
 import { useQueryBuilderStore, mergeJoins } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
-import type { ForeignKeyRelation } from './hooks/useAutoJoin';
 import { DiagramCanvas } from './DiagramCanvas/DiagramCanvas';
 import { CriteriaGrid } from './CriteriaGrid/CriteriaGrid';
 import { ConditionBuilder } from './ConditionBuilder/ConditionBuilder';
@@ -12,7 +13,6 @@ import { SqlPreview } from './SqlPreview';
 import { PaginationControls } from './PaginationControls';
 import { Button } from '../ui/Button';
 import { useI18n } from '../../hooks/useI18n';
-import { getCachedTableSchema } from '../../lib/schemaCache';
 import { supportsLimitOffset } from '../../lib/sqlDialects/queryBuilder';
 import type { ColumnInfo } from '../../types';
 
@@ -25,6 +25,8 @@ export interface QueryBuilderPanelProps {
    * literally named "postgresql").
    */
   database: string;
+  /** Schema context of the tab — the same value the editor resolves relations against. */
+  schema?: string;
   databaseType?: string;
   onApplySql: (sql: string) => void;
 }
@@ -49,14 +51,23 @@ export interface QueryBuilderPanelProps {
 export function QueryBuilderPanel({
   dbSessionId,
   database,
+  schema,
   databaseType,
   onApplySql,
 }: QueryBuilderPanelProps) {
   const { t } = useI18n();
 
   // ── Schema data ────────────────────────────────────────
-  const columnMap = useSchemaStore((s) => s.columnMap);
+  // Read the column map of *this* session, not the globally active one: the
+  // store's `columnMap` getter flattens `activeDbSessionId`, which only happens
+  // to match this panel's session while it is the focused tab.
+  const columnMap = useSchemaStore((s) => s.getConnectionSchema(dbSessionId)?.columnMap) ?? {};
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
+
+  // Relation metadata comes from the editor's own cache so both sides share one
+  // entry per relation and one invalidation path (DDL refreshes both).
+  const metadataSnapshot = useMetadataSnapshot(dbSessionId);
+  const dialectId = resolveEditorDialectId(databaseType);
 
   // ── Query builder state ────────────────────────────────
   const selectedTables = useQueryBuilderStore((s) => s.selectedTables);
@@ -112,44 +123,19 @@ export function QueryBuilderPanel({
   }, [selectedTables, ensureColumns, dbSessionId, database]);
 
   // ── Foreign key detection ──────────────────────────────
-  const [fkRelations, setFkRelations] = useState<ForeignKeyRelation[]>([]);
-
-  // Load foreign keys for selected tables from schema cache
+  // Queue the selected tables into the editor's metadata cache. This is the same
+  // call the editor makes for tables referenced in the SQL, so a table loaded by
+  // either side is reused by the other instead of being fetched twice.
   useEffect(() => {
-    if (selectedTables.length === 0 || !database) {
-      setFkRelations([]);
-      return;
-    }
+    ensureTableRelations(dbSessionId, selectedTables, { database, schema, databaseType });
+  }, [selectedTables, dbSessionId, database, schema, databaseType]);
 
-    let cancelled = false;
-    const loadFks = async () => {
-      const allFks: ForeignKeyRelation[] = [];
-      for (const tableName of selectedTables) {
-        try {
-          const schema = await getCachedTableSchema(dbSessionId, tableName, database);
-          for (const fk of schema.foreignKeys) {
-            for (let i = 0; i < fk.columns.length; i++) {
-              allFks.push({
-                fromTable: tableName,
-                fromColumn: fk.columns[i]!,
-                toTable: fk.referencedTable,
-                toColumn: fk.referencedColumns[i]!,
-              });
-            }
-          }
-        } catch {
-          // Schema not available — skip silently
-        }
-      }
-      if (!cancelled) {
-        setFkRelations(allFks);
-      }
-    };
-    void loadFks();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTables, dbSessionId, database]);
+  // Resolve each selected table through the editor's own snapshot + resolver, so
+  // identifier folding and the schema-tree fallback behave identically.
+  const fkRelations = useMemo(
+    () => deriveForeignKeyRelations(metadataSnapshot, selectedTables, schema, dialectId),
+    [selectedTables, metadataSnapshot, schema, dialectId],
+  );
 
   const detectedAutoJoins = useAutoJoin(selectedTables, fkRelations);
 

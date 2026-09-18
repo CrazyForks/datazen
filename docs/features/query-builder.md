@@ -177,8 +177,29 @@ Two complementary mechanisms:
 - **Dialect adaptation**: `src/lib/sqlDialects/queryBuilder.ts` handles
   per-database quoting, `ILIKE`, `IN`, `IS NULL` and `LIMIT`/`OFFSET`.
 - **Types**: `src/components/query-builder/types.ts`.
-- **Integration**: toolbar entry in `QueryToolbarMoreMenu.tsx`; the panel is
-  mounted from `QueryEditorSection.tsx`.
+- **Integration**: entry in `QueryToolbarMoreMenu.tsx`; the panel is mounted from
+  `QueryEditorSection.tsx`.
+- **Schema data source — shared with the editor.** The builder owns no schema
+  cache of its own:
+  - **Columns** come from the schema store's `columnMap`, read for the panel's
+    own `dbSessionId` (not the globally active session). This is the same map the
+    editor's completion namespace is built from, and the panel warms it with the
+    same `ensureColumns` call the editor uses.
+  - **Foreign keys** come from the editor's relation-metadata cache
+    (`components/sql-editor/metadata/metadataCache`) through
+    `useMetadataSnapshot`. The panel queues its selected tables with
+    `ensureTableRelations`, which builds relation identities exactly as
+    `QueryPanel` does, so both sides resolve one physical table to one cache
+    entry.
+  - Sharing that cache is what makes a DDL refresh visible to the builder: the
+    editor's cache subscribes to `subscribeSchemaInvalidation`, so a constraint
+    added by a statement the user just ran reaches the auto-JOIN detection. A
+    private cache would have kept serving stale foreign keys.
+  - Relations are resolved by the exact cache key the editor writes, *not*
+    through the editor's `findRelationMetadata` fuzzy resolver: that resolver's
+    bare-name fallback is right for completion but would let a same-named table
+    in another schema match, generating a JOIN against the wrong table. Missing a
+    relation is recoverable — a manual JOIN can be drawn.
 - **i18n**: user-facing strings use `query.visualBuilder.*` keys from
   `src/locales/<locale>/query.ts`.
 
