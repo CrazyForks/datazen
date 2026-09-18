@@ -429,8 +429,12 @@ describe('supportsLimitOffset', () => {
     expect(supportsLimitOffset('sqlite')).toBe(true);
   });
 
-  it('is false for SQL Server, which needs TOP / OFFSET-FETCH', () => {
-    expect(supportsLimitOffset('sqlserver')).toBe(false);
+  it('is false for SQL Server, which has no LIMIT/OFFSET spelling', () => {
+    // Asserted only when the driver is in this build's generated registry; when
+    // it is absent the type is simply unknown, and an unknown driver defaults to
+    // supported (see the family-independence case below).
+    if (DB_REGISTRY.sqlserver) expect(supportsLimitOffset('sqlserver')).toBe(false);
+    else expect(supportsLimitOffset('sqlserver')).toBe(true);
   });
 
   it('falls back to the generic adapter for an unknown dialect', () => {
@@ -456,9 +460,35 @@ describe('supportsLimitOffset', () => {
     expect(supportsLimitOffset('questdb')).toBe(true);
   });
 
-  it('is opt-out: an undeclared driver keeps its family default', () => {
+  it('is opt-out: LIMIT/OFFSET is standard SQL, so undeclared means supported', () => {
     expect(DB_REGISTRY.postgresql.supportsOffset).toBeUndefined();
+    expect(supportsLimitOffset('postgresql')).toBe(true);
     // Only drivers present in this build's generated registry can be asserted.
     if (DB_REGISTRY.sqlserver) expect(DB_REGISTRY.sqlserver.supportsOffset).toBe(false);
+  });
+
+  it('lets the driver decide, not the dialect family', () => {
+    // A driver on the `sqlserver` family that declares nothing must still be
+    // supported: the family spells syntax, it does not grant or deny features.
+    const key = '__test_undeclared_sqlserver__';
+    (DB_REGISTRY as Record<string, unknown>)[key] = {
+      label: 'Test',
+      sqlDialect: 'sqlserver',
+    };
+    try {
+      expect(supportsLimitOffset(key)).toBe(true);
+      // ...and its syntax is still the T-SQL one.
+      expect(getQbDialectAdapter(key).quoteIdentifier('x')).toBe('[x]');
+    } finally {
+      delete (DB_REGISTRY as Record<string, unknown>)[key];
+    }
+  });
+
+  it('still honours the sqlserver syntax backstop when a driver declares support', () => {
+    // Defense in depth: if a driver ever declares support before the generator
+    // can emit OFFSET…FETCH, the adapter must not fall back to LIMIT.
+    const adapter = { ...getQbDialectAdapter('sqlserver'), supportsLimitOffset: true };
+    expect(adapter.formatLimitOffset(5, 2)).toBeNull();
+    expect(generateLimitOffset(5, 2, adapter)).toBe('');
   });
 });
