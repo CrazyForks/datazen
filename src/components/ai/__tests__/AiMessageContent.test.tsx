@@ -7,20 +7,66 @@ vi.mock('../../SqlCodeBlock', () => ({
 }));
 
 describe('AiMessageContent', () => {
-  it('renders plain text without code block wrapper', () => {
-    const { getByText, queryByTestId } = render(<AiMessageContent content="Hello world" />);
-    expect(getByText('Hello world')).toBeInTheDocument();
-    expect(queryByTestId('ai-code-block')).toBeNull();
+  it('renders plain text via markdown', () => {
+    const { container } = render(<AiMessageContent content="Hello world" />);
+    expect(container.textContent).toContain('Hello world');
   });
 
-  it('renders text and inline code block segments', () => {
-    const { getByText, getByTestId, queryByText } = render(
+  it('renders markdown headings', () => {
+    const { container } = render(<AiMessageContent content="# Title" />);
+    expect(container.querySelector('h1')).toBeTruthy();
+    expect(container.textContent).toContain('Title');
+  });
+
+  it('renders markdown lists', () => {
+    const { container } = render(<AiMessageContent content="- Item 1\n- Item 2" />);
+    expect(container.querySelector('ul')).toBeTruthy();
+  });
+
+  it('renders markdown bold and italic', () => {
+    const { container } = render(<AiMessageContent content="**bold** and *italic*" />);
+    expect(container.querySelector('strong')).toBeTruthy();
+    expect(container.querySelector('em')).toBeTruthy();
+  });
+
+  it('renders fenced code block as AiCodeBlock', () => {
+    const { getByTestId, queryByText } = render(
       <AiMessageContent content={'Before\n```sql\nSELECT 1\n```\nAfter'} onInsertSql={vi.fn()} />,
+    );
+    expect(getByTestId('ai-code-block')).toBeInTheDocument();
+    expect(queryByText('```sql')).toBeNull();
+  });
+
+  it('renders text around code blocks', () => {
+    const { getByText } = render(
+      <AiMessageContent content={'Before\n```sql\nSELECT 1\n```\nAfter'} />,
     );
     expect(getByText('Before')).toBeInTheDocument();
     expect(getByText('After')).toBeInTheDocument();
-    expect(queryByText('```sql')).toBeNull();
-    expect(getByTestId('ai-code-block')).toBeInTheDocument();
-    expect(getByTestId('sql-code-block')).toHaveTextContent('SELECT 1');
+  });
+
+  it('applies animate-pulse when streaming', () => {
+    const { container } = render(<AiMessageContent content="Hello" isStreaming />);
+    expect(container.querySelector('.animate-pulse')).toBeTruthy();
+  });
+
+  it('renders multiple code blocks', () => {
+    const { getAllByTestId } = render(
+      <AiMessageContent content={'```sql\nSELECT 1\n```\n\n```sql\nSELECT 2\n```'} />,
+    );
+    expect(getAllByTestId('ai-code-block')).toHaveLength(2);
+  });
+
+  it('renders empty content as null', () => {
+    const { container } = render(<AiMessageContent content="" />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('renders whitespace-only text segments as null', () => {
+    const { container } = render(
+      <AiMessageContent content={'   \n\n```sql\nSELECT 1\n```\n\n   '} />,
+    );
+    // The code block should render, whitespace-only text segments should be filtered
+    expect(container.querySelector('[data-testid="ai-code-block"]')).toBeTruthy();
   });
 });

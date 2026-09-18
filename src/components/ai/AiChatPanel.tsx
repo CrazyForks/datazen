@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowDown,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -11,11 +12,13 @@ import {
   Trash2,
   Wand2,
   Send,
+  Wrench,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { AiInput } from './AiInput';
 import { AiMessageContent } from './AiMessageContent';
 import { useI18n } from '../../hooks/useI18n';
+import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useAiStore } from '../../stores/aiStore';
 import { cn } from '../../lib/cn';
 import { openDocsWindow, openSettingsWindow } from '../../lib/windowManager';
@@ -83,7 +86,7 @@ export function AiChatPanel({
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'chat' | 'workflows'>('chat');
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { atBottom, unreadCount, jumpToBottom, onScroll, containerRef } = useAutoScroll();
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── S3-B2: AI draft bridge ──────────────────────────────────────────────
@@ -98,9 +101,12 @@ export function AiChatPanel({
     }
   }, [chatSession, initChat]);
 
+  // Auto-scroll to bottom when new messages arrive while already at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatSession?.messages, chatSession?.streamContent]);
+    if (atBottom) {
+      requestAnimationFrame(() => jumpToBottom());
+    }
+  }, [chatSession?.messages, chatSession?.streamContent, atBottom, jumpToBottom]);
 
   // S3-B2: Handle incoming draft requests.
   useEffect(() => {
@@ -287,7 +293,11 @@ export function AiChatPanel({
       ) : (
         <>
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-3 py-2">
+          <div
+            ref={containerRef}
+            onScroll={onScroll}
+            className="relative flex-1 overflow-y-auto px-3 py-2"
+          >
             {chatSession?.messages.length === 0 && !chatSession.isStreaming && (
               <div className="py-8 text-center text-xs text-fg-muted">{t('chat.welcome')}</div>
             )}
@@ -333,8 +343,25 @@ export function AiChatPanel({
               </div>
             )}
 
-            <div ref={messagesEndRef} />
+            {/* Scroll anchor */}
+            <div data-testid="messages-end" />
           </div>
+
+          {/* Jump-to-bottom pill */}
+          {!atBottom && unreadCount > 0 && (
+            <button
+              type="button"
+              className="absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-edge bg-surface/90 px-3 py-1.5 text-[11px] text-fg shadow-lg backdrop-blur-sm transition-colors hover:bg-surface-alt"
+              onClick={jumpToBottom}
+              data-testid="jump-to-bottom"
+            >
+              <ArrowDown className="h-3 w-3" />
+              {t('chat.jumpToBottom')}
+              <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[9px] text-accent">
+                {unreadCount}
+              </span>
+            </button>
+          )}
 
           {/* Input */}
           <div className="shrink-0 border-t border-edge p-2">
@@ -411,9 +438,42 @@ function ChatBubble({
 }) {
   const { t } = useI18n();
   const isUser = message.role === 'user';
+  const isTool = message.role === 'tool';
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [toolCollapsed, setToolCollapsed] = useState(true);
 
   const hasQuestions = !isUser && !isStreaming && message.questions && message.questions.length > 0;
+
+  // Tool role: collapsible, muted styling
+  if (isTool && message.content) {
+    return (
+      <div className="mb-3">
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-[10px] text-fg-muted hover:bg-surface-alt transition-colors"
+          onClick={() => setToolCollapsed((prev) => !prev)}
+          data-testid="tool-role-toggle"
+        >
+          <Wrench className="h-2.5 w-2.5" />
+          {t('chat.toolRole')}
+          {toolCollapsed ? (
+            <ChevronRight className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3" />
+          )}
+          <span className="text-fg-muted/50">
+            {toolCollapsed ? t('chat.collapsed') : t('chat.expanded')}
+          </span>
+        </button>
+        {!toolCollapsed && (
+          <div className="ml-4 mt-1 max-w-[90%] rounded border border-edge/50 bg-surface-alt/50 px-3 py-2 text-[11px] text-fg-muted">
+            <pre className="whitespace-pre-wrap font-sans">{message.content}</pre>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={cn('mb-3', isUser ? 'flex justify-end' : '')}>
@@ -520,10 +580,12 @@ export function QuestionBlock({
           const opt = q.options.find((o) => o.id === aid);
           return opt ? opt.label : aid;
         });
-        lines.push(`${q.prompt}\n${labels.join(', ')}`);
+        // Store question id for traceability
+        lines.push(`[${q.id}] ${q.prompt}\n${labels.join(', ')}`);
       } else if (typeof answer === 'string' && answer.trim()) {
         const opt = q.options.find((o) => o.id === answer);
-        lines.push(`${q.prompt}\n${opt ? opt.label : answer}`);
+        // Store question id for traceability
+        lines.push(`[${q.id}] ${q.prompt}\n${opt ? opt.label : answer}`);
       }
     }
     if (lines.length > 0) {
