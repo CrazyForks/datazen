@@ -2,12 +2,12 @@
 
 use super::chat::{db_tool_definitions, run_streaming_tool_loop};
 use super::util::{
-    inject_language_hint, parse_ai_json, resolve_ai, strip_markdown_fences, window_stream_callback,
-    StreamCallback,
+    inject_language_hint, parse_ai_json, resolve_ai, resolve_safety_gate, strip_markdown_fences,
+    window_stream_callback, StreamCallback,
 };
 use crate::ai::budget;
 use crate::ai::prompt_resolver;
-use crate::ai::safety::redact_for_egress;
+use crate::ai::safety::redact_for_gate;
 use crate::ai::*;
 use crate::commands::error::{CmdExt, CommandError};
 use crate::commands::AppState;
@@ -35,7 +35,7 @@ pub(crate) async fn ai_generate_sql_impl(
     let recent_queries = recent_queries.unwrap_or_default();
     let mut natural_language = natural_language;
     let app_settings = state.store.get_settings().await;
-    let strict_egress = app_settings.ai_strict_egress;
+    let gate = resolve_safety_gate(&state).await;
     tracing::info!(
         %request_id,
         %db_session_id,
@@ -67,7 +67,7 @@ pub(crate) async fn ai_generate_sql_impl(
 
     // Context files and natural language are caller-provided prompt content;
     // sanitize the complete assembled value at the command boundary.
-    let natural_language = redact_for_egress(&natural_language, strict_egress);
+    let natural_language = redact_for_gate(&natural_language, &gate);
 
     let (provider, ai_config) = resolve_ai(&state).await?;
 
@@ -125,7 +125,7 @@ pub(crate) async fn ai_generate_sql_impl(
             "\n\n{label}:\n{}",
             recent_queries
                 .iter()
-                .map(|q| format!("- {}", redact_for_egress(q, strict_egress)))
+                .map(|q| format!("- {}", redact_for_gate(q, &gate)))
                 .collect::<Vec<_>>()
                 .join("\n")
         )
@@ -186,7 +186,7 @@ pub(crate) async fn ai_generate_sql_impl(
             request,
             10,
             "ai_generate_sql",
-            strict_egress,
+            &gate,
         )
         .await;
     }
@@ -246,9 +246,9 @@ pub(crate) async fn ai_diagnose_error_impl(
     sql: String,
     error_message: String,
 ) -> Result<DiagnosisResult, CommandError> {
-    let strict_egress = state.store.get_settings().await.ai_strict_egress;
-    let safe_sql = redact_for_egress(&sql, strict_egress);
-    let safe_error_message = redact_for_egress(&error_message, strict_egress);
+    let gate = resolve_safety_gate(state).await;
+    let safe_sql = redact_for_gate(&sql, &gate);
+    let safe_error_message = redact_for_gate(&error_message, &gate);
     tracing::info!(
         %db_session_id,
         %database,
@@ -277,7 +277,7 @@ pub(crate) async fn ai_diagnose_error_impl(
         .await
         .cmd_err("ai_diagnose_error")?;
 
-    let safe_schema_ddl = redact_for_egress(&context.schema_ddl, strict_egress);
+    let safe_schema_ddl = redact_for_gate(&context.schema_ddl, &gate);
     let mut vars = HashMap::new();
     vars.insert("db_type", context.database_type.as_str());
     vars.insert("schema", safe_schema_ddl.as_str());
@@ -357,9 +357,9 @@ pub(crate) async fn ai_analyze_explain_impl(
     explain_output: String,
     original_sql: String,
 ) -> Result<ExplainAnalysis, CommandError> {
-    let strict_egress = state.store.get_settings().await.ai_strict_egress;
-    let safe_original_sql = redact_for_egress(&original_sql, strict_egress);
-    let safe_explain_output = redact_for_egress(&explain_output, strict_egress);
+    let gate = resolve_safety_gate(state).await;
+    let safe_original_sql = redact_for_gate(&original_sql, &gate);
+    let safe_explain_output = redact_for_gate(&explain_output, &gate);
     tracing::info!(
         %db_session_id,
         sql_len = original_sql.len(),
@@ -467,10 +467,8 @@ pub(crate) async fn ai_parse_filter_impl(
         input_len = natural_language.len(),
         "ai_parse_filter: start"
     );
-    let natural_language = redact_for_egress(
-        &natural_language,
-        state.store.get_settings().await.ai_strict_egress,
-    );
+    let gate = resolve_safety_gate(state).await;
+    let natural_language = redact_for_gate(&natural_language, &gate);
     let (provider, ai_config) = resolve_ai(&state).await?;
 
     let (driver, handle) = state
@@ -773,8 +771,8 @@ pub(crate) async fn ai_diagnose_connection_impl(
     connection_id: String,
     error_message: String,
 ) -> Result<ConnectionDiagnosis, CommandError> {
-    let strict_egress = state.store.get_settings().await.ai_strict_egress;
-    let safe_error_message = redact_for_egress(&error_message, strict_egress);
+    let gate = resolve_safety_gate(state).await;
+    let safe_error_message = redact_for_gate(&error_message, &gate);
     tracing::info!(%connection_id, error_len = error_message.len(), "ai_diagnose_connection: start");
     tracing::debug!(
         %connection_id,
@@ -796,7 +794,7 @@ pub(crate) async fn ai_diagnose_connection_impl(
     } else {
         "disabled"
     };
-    let conn_summary = redact_for_egress(
+    let conn_summary = redact_for_gate(
         &format!(
             "Connection type: {:?}\nHost: {}\nPort: {}\nDatabase: {}\nUsername: {}\nSSL: {}\nSSH Tunnel: {}\nTimeout: {}s",
             conn_info.database_type,
@@ -808,7 +806,7 @@ pub(crate) async fn ai_diagnose_connection_impl(
             ssh_str,
             conn_info.connection_timeout,
         ),
-        strict_egress,
+        &gate,
     );
 
     let lang = state.store.get_settings().await.language;
@@ -884,7 +882,7 @@ pub(crate) async fn ai_analyze_queries_impl(
 ) -> Result<QueryAnalysis, CommandError> {
     tracing::info!(db_session_id = ?db_session_id, "ai_analyze_queries: start");
     let app_settings = state.store.get_settings().await;
-    let strict_egress = app_settings.ai_strict_egress;
+    let gate = resolve_safety_gate(state).await;
     let (provider, ai_config) = resolve_ai(&state).await?;
 
     // The IPC parameter is the runtime dbSessionId; resolve the persisted
@@ -909,7 +907,7 @@ pub(crate) async fn ai_analyze_queries_impl(
     let queries_text = filtered
         .iter()
         .take(100)
-        .map(|h| redact_for_egress(&h.sql, strict_egress))
+        .map(|h| redact_for_gate(&h.sql, &gate))
         .collect::<Vec<_>>()
         .join("\n---\n");
 
