@@ -1,13 +1,29 @@
 /**
  * Visual Query Builder complete user journey.
  *
- * Covers the full lifecycle of the v2 canvas-based builder:
- *   Open via More menu → drag table to canvas → select columns on card
- *   → configure WHERE in CriteriaGrid → configure ORDER BY → toggle DISTINCT
- *   → preview SQL → apply SQL → execute → verify results → reset → close.
+ * Covers the full lifecycle of the v2 canvas-based builder as an ordered
+ * sequence of phases sharing one session:
  *
- * Test data is created in the worker database via connectBackend IPC;
- * the journey assumes nothing about pre-existing tables.
+ *   1. open via the More menu
+ *   2. real HTML5 drag from the sidebar schema tree onto the canvas
+ *   3. select columns on the table card
+ *   4. configure WHERE in the CriteriaGrid
+ *   5. configure ORDER BY and DISTINCT
+ *   6. apply the generated SQL, execute it, verify the result rows
+ *   7. re-open, reset (panel stays open), close
+ *
+ * Phases are separate `it()` blocks so a failure localises to one step instead
+ * of losing every later assertion. A phase whose predecessor did not complete
+ * is skipped rather than cascading into a misleading failure.
+ *
+ * The drag is a genuine drag: the spec dispatches `dragstart` on the product's
+ * own schema-tree row (letting its handler build the payload) and then
+ * `dragover`/`drop` on the builder canvas, so the real drop handler, the
+ * `application/datazen-schema-object` contract and the follow-up column load
+ * are all exercised. No store state is injected.
+ *
+ * Test data is created through backend IPC in `before`, so the journey assumes
+ * nothing about pre-existing tables.
  */
 import { expect, browser, $ } from '@wdio/globals';
 import {
@@ -19,16 +35,177 @@ import {
   invokeBackend,
   openConnectionWindow,
   openQueryTab,
+  waitForTableInSidebar,
   withSafeModeOff,
 } from '../../helpers.js';
 
 const TABLE_NAME = `e2e_qb_journey_${Date.now().toString(36)}`;
 
+/** Versioned MIME the schema tree writes and the builder canvas consumes. */
+const SCHEMA_OBJECT_MIME = 'application/datazen-schema-object';
+
+/**
+ * Shared phase state. Each phase flips its own flag on success; a phase whose
+ * precondition is still false is skipped so one broken step does not produce a
+ * cascade of unrelated failures.
+ */
+const journey = {
+  panelOpen: false,
+  tableOnCanvas: false,
+  columnsSelected: false,
+  whereApplied: false,
+  distinctApplied: false,
+  sqlApplied: false,
+};
+
+type DragWindow = Window & { __qbDragTransfer?: DataTransfer };
+
+/**
+ * Assert a boolean with a message. WDIO's `expect` takes no second argument,
+ * and a bare `toBe(true)` would hide which contract broke.
+ */
+function expectTrue(value: boolean, message: string): void {
+  if (!value) throw new Error(message);
+}
+
+function qbPanel() {
+  return $('[data-testid="qb-panel"]');
+}
+
+async function isQbPanelOpen(): Promise<boolean> {
+  return (
+    (await qbPanel()
+      .isDisplayed()
+      .catch(() => false)) === true
+  );
+}
+
+async function openBuilderFromMoreMenu(): Promise<void> {
+  const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
+  await moreMenu.waitForClickable({ timeout: 10000 });
+  await moreMenu.click();
+  await browser.pause(300);
+
+  const qbMenuItem = await $('[data-testid="more-menu-visual-builder"]');
+  await qbMenuItem.waitForClickable({ timeout: 5000 });
+  await qbMenuItem.click();
+
+  await (await qbPanel()).waitForDisplayed({ timeout: 10000 });
+}
+
+/**
+ * Narrow the navigator search to the table so its row stays mounted at the top
+ * of the virtualized schema tree while we drag it. Uses the native value setter
+ * so React's controlled input sees the change.
+ */
+async function filterNavigatorTo(tableName: string): Promise<void> {
+  await browser.execute((name: string) => {
+    const nav =
+      document.querySelector<HTMLElement>('[data-testid="connection-navigator-aside"]') ??
+      Array.from(document.querySelectorAll('aside')).find((a) =>
+        a.querySelector('[data-conn-item]'),
+      );
+    const input = nav?.querySelector<HTMLInputElement>('input');
+    if (!input) return;
+
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, name);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, tableName);
+  await browser.pause(600);
+}
+
+/**
+ * Dispatch the product's own `dragstart` on the sidebar table row and keep the
+ * resulting DataTransfer for the matching drop.
+ *
+ * Resolves true only when the product handler actually populated the versioned
+ * MIME — a bare synthetic event would otherwise pass silently.
+ */
+async function startTableDrag(tableName: string): Promise<boolean> {
+  return browser.execute(
+    (name: string, mime: string) => {
+      const source = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid="schema-tree-node"][data-tree-node="table"]',
+        ),
+      ).find((node) => node.getAttribute('data-item-name') === name);
+      if (!source) return false;
+
+      const dataTransfer = new DataTransfer();
+      (window as DragWindow).__qbDragTransfer = dataTransfer;
+      source.dispatchEvent(
+        new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }),
+      );
+      return dataTransfer.getData(mime).length > 0;
+    },
+    tableName,
+    SCHEMA_OBJECT_MIME,
+  ) as Promise<boolean>;
+}
+
+/** Drop the retained payload on the centre of the builder canvas. */
+async function dropOnCanvas(): Promise<boolean> {
+  return browser.execute(() => {
+    const canvas = document.querySelector<HTMLElement>('[data-testid="qb-diagram-canvas"]');
+    const dataTransfer = (window as DragWindow).__qbDragTransfer;
+    if (!canvas || !dataTransfer) return false;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = Math.round(rect.left + rect.width / 2);
+    const clientY = Math.round(rect.top + rect.height / 2);
+
+    canvas.dispatchEvent(
+      new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        dataTransfer,
+      }),
+    );
+    const drop = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY,
+      dataTransfer,
+    });
+    canvas.dispatchEvent(drop);
+    return drop.defaultPrevented;
+  }) as Promise<boolean>;
+}
+
+/** Pick an option from an open @datazen/ui Select listbox by visible text. */
+async function pickSelectOption(match: string): Promise<boolean> {
+  return browser.execute((needle: string) => {
+    const listbox = document.querySelector('[data-testid="select-listbox"]');
+    if (!listbox) return false;
+    const option = Array.from(listbox.querySelectorAll('[data-testid="select-option"]')).find((o) =>
+      o.textContent?.includes(needle),
+    );
+    if (!option) return false;
+    option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    return true;
+  }, match) as Promise<boolean>;
+}
+
+async function waitForSelectListbox(): Promise<void> {
+  await browser.waitUntil(
+    () => browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
+    { timeout: 5000, timeoutMsg: '下拉列表未打开' },
+  );
+}
+
+async function sqlPreviewText(): Promise<string> {
+  return (await $('[data-testid="qb-sql-preview"]')).getText();
+}
+
 describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   let mainWindow: string;
 
   before(async () => {
-    // Create test table and seed data via backend IPC (no UI dependency).
+    // Create the test table and seed rows through backend IPC (no UI dependency).
     const dbSessionId = await connectBackend('conn_e2e_pg');
     try {
       await withSafeModeOff(async () => {
@@ -49,7 +226,6 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
       await disconnectBackend(dbSessionId);
     }
 
-    // Open the connection in the UI and open a query tab
     const opened = await openConnectionWindow();
     mainWindow = opened.mainWindow;
     await openQueryTab();
@@ -75,301 +251,217 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await closeExtraWindows(mainWindow);
   });
 
-  it('完整旅程：More菜单打开 → 拖入表 → 选列 → WHERE → ORDER BY → DISTINCT → 预览 SQL → 应用并执行 → 重置 → 关闭', async () => {
-    // ── Step 1: Open Visual Builder via More menu ──
-    const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu.waitForClickable({ timeout: 5000 });
-    await moreMenu.click();
-    await browser.pause(300);
-
-    const qbMenuItem = await $('[data-testid="more-menu-visual-builder"]');
-    await qbMenuItem.waitForClickable({ timeout: 5000 });
-    await qbMenuItem.click();
-
-    const qbPanel = await $('[data-testid="qb-panel"]');
-    await qbPanel.waitForDisplayed({ timeout: 5000 });
+  it('阶段1：More 菜单可打开可视化构建器面板', async () => {
+    await openBuilderFromMoreMenu();
     await captureJourneyStep('qb-panel-open');
+    journey.panelOpen = true;
+  });
 
-    // ── Step 2: Add a table to the canvas ──
-    // WebKit's DragEvent doesn't fire React synthetic handlers, so we use the
-    // exposed Zustand stores directly. This mirrors the real drop → toggleTable flow.
-    const tableAdded = await browser.execute((tableName: string) => {
-      const columns = ['id', 'name', 'category', 'score'];
+  it('阶段2：从侧边栏 schema 树真实拖放表到画布并加载列', async function () {
+    if (!journey.panelOpen) this.skip();
 
-      // 1. Populate schemaStore: patch the active connection's columnMap
-      //    via commitConnectionPath so activeFlatten picks it up
-      const schemaStore = (window as any).__schemaStore;
-      if (schemaStore?.getState) {
-        const s = schemaStore.getState();
-        // The active dbSessionId key is where the columnMap lives
-        const dbKey = s.dbSessionId || s.activeDbSessionId;
-        if (dbKey && s.schemas instanceof Map) {
-          const prev = s.schemas.get(dbKey) || {};
-          const nextSchemas = new Map(s.schemas);
-          nextSchemas.set(dbKey, {
-            ...prev,
-            columnMap: { ...(prev.columnMap || {}), [tableName]: columns },
-          });
-          schemaStore.setState({
-            schemas: nextSchemas,
-            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
-          });
-        } else {
-          // Fallback: set columnMap directly on the store
-          schemaStore.setState({
-            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
-          });
-        }
-      }
+    // Make the freshly created table reachable in the sidebar, then keep it
+    // mounted at the top of the virtualized list for the drag.
+    await waitForTableInSidebar(TABLE_NAME);
+    await filterNavigatorTo(TABLE_NAME);
 
-      // 2. Add table to the QB store
-      const qbStore = (window as any).__qbStore;
-      if (!qbStore?.getState) return false;
-      const state = qbStore.getState();
+    const payloadReady = await startTableDrag(TABLE_NAME);
+    expectTrue(payloadReady, 'dragstart 未写入 application/datazen-schema-object 负载');
 
-      if (!state.selectedTables.includes(tableName)) {
-        qbStore.setState({
-          selectedTables: [...state.selectedTables, tableName],
-        });
-      }
+    const dropped = await dropOnCanvas();
+    expectTrue(dropped, 'canvas 未消费 drop 事件');
 
-      const positions = { ...qbStore.getState().tablePositions };
-      if (!positions[tableName]) {
-        positions[tableName] = { x: 50, y: 50 };
-      }
-      qbStore.setState({ tablePositions: positions });
+    await filterNavigatorTo('');
 
-      return true;
-    }, TABLE_NAME);
-    expect(tableAdded).toBe(true);
-
-    // Wait for the TableCard to render
+    // The card proves the drop handler ran; the column row proves the builder
+    // then fetched columns from the backend for the dropped table.
     await browser.waitUntil(
-      async () => {
-        return await browser.execute((name: string) => {
-          return !!document.querySelector(`[data-testid="qb-drag-${name}"]`);
-        }, TABLE_NAME);
-      },
-      { timeout: 5000, timeoutMsg: 'Table card not rendered after drop' },
+      () =>
+        browser.execute(
+          (name: string) => !!document.querySelector(`[data-testid="qb-drag-${name}"]`),
+          TABLE_NAME,
+        ),
+      { timeout: 10000, timeoutMsg: '拖放后画布未生成表卡片' },
     );
-    await captureJourneyStep('qb-table-on-canvas');
+    await (
+      await $(`[data-testid="qb-col-${TABLE_NAME}-name"]`)
+    ).waitForDisplayed({
+      timeout: 10000,
+    });
+    await captureJourneyStep('qb-table-dropped');
 
-    // ── Step 3: Select columns via TableCard checkboxes ──
-    // Click the checkbox for 'name' column on the table card
-    const nameChecked = await browser.execute((tbl: string) => {
-      const col = document.querySelector(`[data-testid="qb-col-${tbl}-name"]`);
-      if (col) {
-        const checkbox = col.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        if (checkbox) {
-          checkbox.click();
-          return true;
-        }
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(nameChecked).toBe(true);
-    await browser.pause(300);
+    journey.tableOnCanvas = true;
+  });
 
-    // Click the checkbox for 'score' column on the table card
-    const scoreChecked = await browser.execute((tbl: string) => {
-      const col = document.querySelector(`[data-testid="qb-col-${tbl}-score"]`);
-      if (col) {
-        const checkbox = col.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        if (checkbox) {
-          checkbox.click();
-          return true;
-        }
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(scoreChecked).toBe(true);
-    await browser.pause(500);
+  it('阶段3：勾选列后 SQL 预览包含所选列', async function () {
+    if (!journey.tableOnCanvas) this.skip();
+
+    for (const column of ['name', 'score']) {
+      const cell = await $(`[data-testid="qb-col-${TABLE_NAME}-${column}"]`);
+      await cell.waitForClickable({ timeout: 5000 });
+      await cell.click();
+      await browser.pause(200);
+    }
+
+    await browser.waitUntil(async () => (await sqlPreviewText()).includes('name'), {
+      timeout: 5000,
+      timeoutMsg: 'SQL 预览未包含所选列',
+    });
+    const preview = await sqlPreviewText();
+    expect(preview).toContain('SELECT');
+    expect(preview).toContain(TABLE_NAME);
+    expect(preview).toContain('score');
     await captureJourneyStep('qb-columns-selected');
 
-    // ── Step 4: Verify SQL preview shows SELECT ──
-    const preview = await $('[data-testid="qb-sql-preview"]');
-    await preview.waitForDisplayed({ timeout: 5000 });
-    let previewText = await preview.getText();
-    expect(previewText).toContain('SELECT');
-    expect(previewText).toContain(TABLE_NAME);
-    await captureJourneyStep('qb-sql-preview-basic');
+    journey.columnsSelected = true;
+  });
 
-    // ── Step 5: Add a column to CriteriaGrid and configure WHERE ──
+  it('阶段4：CriteriaGrid 配置 WHERE 后 SQL 预览包含条件', async function () {
+    if (!journey.columnsSelected) this.skip();
+
     const addColBtn = await $('[data-testid="criteria-add-column"]');
     await addColBtn.waitForClickable({ timeout: 5000 });
     await addColBtn.click();
     await browser.pause(300);
 
-    // A CriteriaRow should appear
-    const criteriaRow = await $('[data-testid="criteria-row"]');
-    await criteriaRow.waitForDisplayed({ timeout: 3000 });
+    await (await $('[data-testid="criteria-row"]')).waitForDisplayed({ timeout: 3000 });
 
-    // Select field in the CriteriaRow field dropdown
-    // The data-testid is on the wrapper div; the actual trigger is a button inside.
+    // Field dropdown lives inside the row; the testid wraps the trigger button.
     const fieldSelect = await $('[data-testid="criteria-field-select"] button');
-    await fieldSelect.waitForClickable({ timeout: 3000 });
+    await fieldSelect.waitForClickable({ timeout: 5000 });
     await fieldSelect.click();
-    await browser.waitUntil(
-      () =>
-        browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
-      { timeout: 3000, timeoutMsg: 'Field dropdown not opened' },
-    );
-
-    // Pick the table.column option
-    const fieldPicked = await browser.execute((tbl: string) => {
-      const listbox = document.querySelector('[data-testid="select-listbox"]');
-      if (!listbox) return false;
-      const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
-      const field = options.find(
-        (o) => o.textContent?.includes(tbl) && o.textContent?.includes('name'),
-      );
-      if (field) {
-        field.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        return true;
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(fieldPicked).toBe(true);
+    await waitForSelectListbox();
+    // Option labels are `table.column`; match the exact field, not just the table,
+    // or the first column of that table (`id`) would be picked instead.
+    expectTrue(await pickSelectOption(`${TABLE_NAME}.name`), '字段下拉未找到该表的 name 列选项');
     await browser.pause(300);
 
-    // Open WHERE editor for this row
     const whereBtn = await $('[data-testid="criteria-where-button"]');
+    await whereBtn.waitForClickable({ timeout: 5000 });
     await whereBtn.click();
     await browser.pause(500);
 
-    // The WhereEditor dialog should open
     const whereDialog = await $('[data-testid="where-editor-dialog"]');
-    await whereDialog.waitForDisplayed({ timeout: 3000 });
+    await whereDialog.waitForDisplayed({ timeout: 5000 });
 
-    // Type value 'Alice' in the where value input
     const whereValue = await $('[data-testid="where-value-input"]');
     await whereValue.waitForDisplayed({ timeout: 3000 });
     await whereValue.click();
     await whereValue.setValue('Alice');
     await browser.pause(200);
 
-    // Click Save button in the dialog
-    const saveBtn = await browser.execute(() => {
+    const saved = await browser.execute(() => {
       const dialog = document.querySelector('[data-testid="where-editor-dialog"]');
       if (!dialog) return false;
-      const buttons = Array.from(dialog.querySelectorAll('button'));
-      const save = buttons.find(
-        (b) => b.textContent?.includes('Save') || b.textContent?.includes('保存'),
+      const save = Array.from(dialog.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Save'),
       );
-      if (save) {
-        save.click();
-        return true;
-      }
-      return false;
+      if (!save) return false;
+      save.click();
+      return true;
     });
-    expect(saveBtn).toBe(true);
+    expectTrue(saved, 'WHERE 弹窗未找到 Save 按钮');
     await browser.pause(500);
 
-    // Verify SQL preview now includes WHERE
-    previewText = await preview.getText();
-    expect(previewText).toContain('WHERE');
+    await browser.waitUntil(async () => (await sqlPreviewText()).includes('WHERE'), {
+      timeout: 5000,
+      timeoutMsg: 'SQL 预览未包含 WHERE',
+    });
+    expect(await sqlPreviewText()).toContain('Alice');
     await captureJourneyStep('qb-where-added');
 
-    // ── Step 6: Add ORDER BY via CriteriaGrid sort ──
-    const sortSelect = await $('[data-testid="criteria-sort-select"]');
-    await sortSelect.click();
-    await browser.waitUntil(
-      () =>
-        browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
-      { timeout: 3000, timeoutMsg: 'Sort dropdown not opened' },
-    );
+    journey.whereApplied = true;
+  });
 
-    const ascPicked = await browser.execute(() => {
-      const listbox = document.querySelector('[data-testid="select-listbox"]');
-      if (!listbox) return false;
-      const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
-      const asc = options.find((o) => o.textContent?.includes('ASC'));
-      if (asc) {
-        asc.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        return true;
-      }
-      return false;
-    });
-    expect(ascPicked).toBe(true);
+  it('阶段5：配置 ORDER BY 与 DISTINCT 后 SQL 预览同步更新', async function () {
+    if (!journey.whereApplied) this.skip();
+
+    const sortSelect = await $('[data-testid="criteria-sort-select"]');
+    await sortSelect.waitForClickable({ timeout: 5000 });
+    await sortSelect.click();
+    await waitForSelectListbox();
+    expectTrue(await pickSelectOption('ASC'), '排序下拉未找到 ASC 选项');
     await browser.pause(300);
 
-    previewText = await preview.getText();
-    expect(previewText).toContain('ORDER BY');
+    await browser.waitUntil(async () => (await sqlPreviewText()).includes('ORDER BY'), {
+      timeout: 5000,
+      timeoutMsg: 'SQL 预览未包含 ORDER BY',
+    });
     await captureJourneyStep('qb-sort-added');
 
-    // ── Step 7: Toggle DISTINCT ──
     const distinctCheckbox = await $('[data-testid="qb-distinct-checkbox"]');
     await distinctCheckbox.waitForClickable({ timeout: 5000 });
     await distinctCheckbox.click();
     await browser.pause(300);
 
-    previewText = await preview.getText();
-    expect(previewText).toContain('DISTINCT');
+    await browser.waitUntil(async () => (await sqlPreviewText()).includes('DISTINCT'), {
+      timeout: 5000,
+      timeoutMsg: 'SQL 预览未包含 DISTINCT',
+    });
     await captureJourneyStep('qb-distinct-toggled');
 
-    // ── Step 8: Apply SQL ──
+    journey.distinctApplied = true;
+  });
+
+  it('阶段6：应用 SQL 并执行后结果包含筛选行', async function () {
+    if (!journey.distinctApplied) this.skip();
+
     const applyBtn = await $('[data-testid="qb-apply-sql"]');
     await applyBtn.waitForClickable({ timeout: 5000 });
     await applyBtn.click();
 
-    // Panel should close after applying
-    await browser.waitUntil(
-      async () =>
-        !(await $('[data-testid="qb-panel"]')
-          .isDisplayed()
-          .catch(() => false)),
-      { timeout: 5000, timeoutMsg: 'Apply SQL 后面板未关闭' },
-    );
+    await browser.waitUntil(async () => !(await isQbPanelOpen()), {
+      timeout: 10000,
+      timeoutMsg: 'Apply SQL 后面板未关闭',
+    });
     await captureJourneyStep('qb-applied-sql');
 
-    // ── Step 9: Execute the applied SQL and verify results ──
     await browser.pause(500);
     const execBtn = await $('[data-testid="editor-execute-button"]');
-    await execBtn.waitForClickable({ timeout: 5000 });
+    await execBtn.waitForClickable({ timeout: 10000 });
     await execBtn.click();
 
-    // Wait for the result table to appear
     const resultTable = await $('[data-testid="result-workspace-table"]');
-    await resultTable.waitForDisplayed({ timeout: 15000 });
-    const resultText = await resultTable.getText();
-    expect(resultText).toContain('Alice');
+    await resultTable.waitForDisplayed({ timeout: 20000 });
+    await browser.waitUntil(async () => (await resultTable.getText()).includes('Alice'), {
+      timeout: 10000,
+      timeoutMsg: '查询结果未包含 Alice',
+    });
     await captureJourneyStep('qb-result-after-apply');
 
-    // ── Step 10: Re-open the panel and Reset ──
-    const moreMenu2 = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu2.waitForClickable({ timeout: 5000 });
-    await moreMenu2.click();
-    await browser.pause(300);
+    journey.sqlApplied = true;
+  });
 
-    const qbMenuItem2 = await $('[data-testid="more-menu-visual-builder"]');
-    await qbMenuItem2.waitForClickable({ timeout: 5000 });
-    await qbMenuItem2.click();
+  it('阶段7：重新打开后 Reset 清空查询但保持面板打开，随后可关闭', async function () {
+    if (!journey.sqlApplied) this.skip();
 
-    const reopenedPanel = await $('[data-testid="qb-panel"]');
-    await reopenedPanel.waitForDisplayed({ timeout: 5000 });
+    await openBuilderFromMoreMenu();
+    expect(await isQbPanelOpen()).toBe(true);
 
     const resetBtn = await $('[data-testid="qb-reset"]');
     await resetBtn.waitForClickable({ timeout: 5000 });
     await resetBtn.click();
     await browser.pause(500);
+
+    // Reset clears the query but must not dismiss the panel — closing is a
+    // separate, explicit action (qb-close).
+    expectTrue(await isQbPanelOpen(), 'Reset 后构建器面板不应关闭');
+    // The preview unmounts entirely once the generated SQL is empty again.
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => document.querySelector('[data-testid="qb-sql-preview"]') === null),
+      { timeout: 5000, timeoutMsg: 'Reset 后 SQL 预览未清空' },
+    );
     await captureJourneyStep('qb-reset');
 
-    // ── Step 11: Close the panel ──
-    const closeClicked = await browser.execute(() => {
-      const btn = document.querySelector('[data-testid="qb-close"]') as HTMLElement | null;
-      if (!btn) return false;
-      btn.click();
-      return true;
-    });
-    expect(closeClicked).toBe(true);
+    const closeBtn = await $('[data-testid="qb-close"]');
+    await closeBtn.waitForClickable({ timeout: 5000 });
+    await closeBtn.click();
 
-    await browser.waitUntil(
-      async () =>
-        !(await $('[data-testid="qb-panel"]')
-          .isDisplayed()
-          .catch(() => false)),
-      { timeout: 5000, timeoutMsg: '关闭面板超时' },
-    );
+    await browser.waitUntil(async () => !(await isQbPanelOpen()), {
+      timeout: 10000,
+      timeoutMsg: '关闭面板超时',
+    });
     await captureJourneyStep('qb-panel-closed');
   });
 });

@@ -14,6 +14,7 @@
 | Query Recovery | 查询失败 → 复制错误 → 修正 SQL → 成功结果 | `query-recovery-journey.ts` |
 | Query → Chart | 查询 → 表格结果 → 图表 → 返回表格 → 导出对话框 | `query-result-chart-journey.ts` |
 | Query Toolbar | 缩窄窗口 → compact 工具栏 → 查询/历史 → 恢复窗口 | `query-toolbar-responsive-journey.ts` |
+| Visual Query Builder | More 菜单打开 → 拖表入画布 → 选列 → WHERE → ORDER BY → DISTINCT → 预览 SQL → 应用执行 → 重置 → 关闭 | `visual-query-builder-journey.ts` |
 | Schema Diff | PG→PG、PG→MySQL、MySQL→PG | `schema-diff-*-journey.ts` |
 | Data Sync | PG、MySQL 的比较→Review→执行闭环 | `data-sync-journey.ts` |
 | Data Transfer | PG→PG、PG→MySQL、MySQL→PG | `data-transfer-*-journey.ts` |
