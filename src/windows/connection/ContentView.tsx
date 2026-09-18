@@ -34,7 +34,7 @@ import type {
   NodeContextMenuPayload,
 } from '../../lib/connectionViews/types';
 import type { DatabaseType } from '../../types';
-import type { SchemaTreeNodeContextMenuPayload } from './schema-tree/SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { AiChatDraftRequest, ContentViewCallbacks } from './query/aiDraftBridge';
 
 export interface ContentViewProps {

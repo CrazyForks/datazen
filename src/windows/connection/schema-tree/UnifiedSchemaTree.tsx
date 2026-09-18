@@ -4,11 +4,22 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { CopyableError } from '../../../components/ui/CopyableError';
 import { useI18n } from '../../../hooks/useI18n';
 import { useSchemaStore } from '../../../stores/schemaStore';
-import type { SchemaTreeProps } from './SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../../lib/schemaTreeContextMenu';
+import type { DatabaseType } from '../../../types';
 import { useSchemaTreeState } from './useSchemaTreeState';
 import { useSchemaTreeFlatRows } from './useSchemaTreeFlatRows';
 import { SchemaTreeRow } from './SchemaTreeRow';
 import type { DragPayloadOptions } from './schemaTreeDrag';
+
+export interface SchemaTreeProps {
+  connectionId: string;
+  databaseType: DatabaseType;
+  initialDatabase?: string;
+  selectedTable: string | null;
+  searchQuery: string;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
+  onNodeContextMenu?: (payload: SchemaTreeNodeContextMenuPayload) => void;
+}
 
 export interface UnifiedSchemaTreeProps extends SchemaTreeProps {
   isKeyValue?: boolean;

@@ -24,7 +24,7 @@ import {
 import { type GeneratedSqlType } from '../../lib/sqlGenerator';
 import { openBackupWindow } from '../../lib/windowManager';
 import { queryCommands } from '../../commands/query';
-import type { SchemaTreeNodeContextMenuPayload } from './schema-tree/SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { PanelHandlers } from './usePanelHandlers';
 
 export interface ConnectionContextMenuParams {

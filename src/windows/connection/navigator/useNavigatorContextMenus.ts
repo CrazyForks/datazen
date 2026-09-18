@@ -35,7 +35,7 @@ import type { ConnectionOpenTarget } from '../../../lib/connectionViews/types';
 import { databaseCommands } from '../../../commands/database';
 import { driverCommands } from '../../../commands/driver';
 import { queryCommands } from '../../../commands/query';
-import { shouldUseMultiDatabaseTree } from '../schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './utils';
 import type { I18nKey } from '../../../locales';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';

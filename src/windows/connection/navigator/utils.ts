@@ -1,7 +1,24 @@
 import { isLeaf, pathKey, type SqlNamespace } from '../../../lib/sqlNamespace';
 import { escapeIdent } from '../../../lib/databaseTypes';
+import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { UnifiedRow } from './types';
+
+/**
+ * Multi-DB tree when the driver supports it, unless connection.database is a
+ * *logical* DB name that should lock the sidebar.
+ *
+ * Kiwi (`databaseFieldType: 'domain'`) stores the instance domain in
+ * `connection.database` — that must not force StandardSchemaTree.
+ */
+export function shouldUseMultiDatabaseTree(
+  meta: Pick<DatabaseTypeMeta, 'hasMultiDatabase' | 'databaseFieldType'> | undefined,
+  initialDatabase?: string,
+): boolean {
+  if (!meta?.hasMultiDatabase) return false;
+  if (meta.databaseFieldType === 'domain') return true;
+  return !initialDatabase?.trim();
+}
 
 export function depthPadding(depth: number): string {
   return `${0.375 + depth * 1}rem`;

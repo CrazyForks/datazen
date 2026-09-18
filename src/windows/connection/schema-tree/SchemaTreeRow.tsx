@@ -17,7 +17,7 @@ import { OBJECT_KIND_CATEGORIES } from './schemaTreeCategories';
 import { formatRowCount } from './formatRowCount';
 import { setDragPayload, type DragPayloadOptions } from './schemaTreeDrag';
 import { createDragGhost, removeDragGhost } from '../navigator/utils';
-import type { SchemaTreeNodeContextMenuPayload } from './SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../../lib/schemaTreeContextMenu';
 
 export interface FlatRow {
   type: 'db' | 'schema' | 'category' | 'table' | 'object' | 'cat-empty' | 'db-loading' | 'empty';

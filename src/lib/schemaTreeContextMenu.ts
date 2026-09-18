@@ -14,6 +14,14 @@ export type SchemaTreeNodeKind =
   | 'sequence'
   | 'type';
 
+export type SchemaTreeNodeContextMenuPayload = {
+  kind: SchemaTreeNodeKind;
+  name: string;
+  x: number;
+  y: number;
+  schema: string | null;
+};
+
 /** Caller-supplied labels (typically from `t()`). No hardcoded locale strings here. */
 export type SchemaTreeContextMenuLabels = {
   open: string;
