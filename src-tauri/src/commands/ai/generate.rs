@@ -164,6 +164,7 @@ pub(crate) async fn ai_generate_sql_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -311,6 +312,7 @@ pub(crate) async fn ai_diagnose_error_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -419,6 +421,7 @@ pub(crate) async fn ai_analyze_explain_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -532,6 +535,7 @@ pub(crate) async fn ai_parse_filter_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -641,6 +645,7 @@ pub(crate) async fn ai_generate_schema_doc_impl(
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
 
         let select_response = provider
@@ -715,6 +720,7 @@ pub(crate) async fn ai_generate_schema_doc_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -843,6 +849,7 @@ pub(crate) async fn ai_diagnose_connection_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -946,6 +953,7 @@ pub(crate) async fn ai_analyze_queries_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 

@@ -50,6 +50,7 @@ pub trait AiProvider: Send + Sync {
                 content: response.content,
                 reasoning: response.reasoning,
                 done: true,
+                cancelled: false,
                 usage: Some(response.usage),
                 tool_calls: response.tool_calls,
                 response_id: response.response_id,

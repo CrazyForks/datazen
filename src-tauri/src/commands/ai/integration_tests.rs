@@ -1189,6 +1189,7 @@ async fn ai_chat_mcp_tool_roundtrip() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![ToolCall {
             id: "call_mcp".into(),
@@ -1245,6 +1246,7 @@ async fn ai_chat_mcp_and_db_same_round() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![
             ToolCall {
@@ -1334,6 +1336,7 @@ async fn ai_chat_ask_questions_with_executable_runs_tools_then_stops() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![
             ToolCall {

@@ -157,6 +157,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
         let err = provider.complete(&req).await.unwrap_err();
         assert!(matches!(err, AiError::NotConfigured(_)));
@@ -184,6 +185,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
         let err = provider.complete(&req).await.unwrap_err();
         assert!(matches!(err, AiError::NotConfigured(_)));
