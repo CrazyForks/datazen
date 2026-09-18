@@ -233,7 +233,8 @@ pub fn format_compact_ddl(table_name: &str, schema: &TableSchema) -> String {
             if pk_set.contains(c.name.as_str()) {
                 parts.push("PK".into());
             }
-            if !c.nullable || pk_set.contains(c.name.as_str()) {
+            // PK implies NOT NULL; only annotate explicitly when non-PK and non-nullable
+            if !c.nullable && !pk_set.contains(c.name.as_str()) {
                 parts.push("NOT NULL".into());
             }
             if let Some(ref default) = c.default_value {

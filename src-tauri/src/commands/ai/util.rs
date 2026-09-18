@@ -49,18 +49,21 @@ pub(crate) fn window_stream_callback(window: &WebviewWindow) -> StreamCallback {
 
 /// Resolve the active model profile's safety gate configuration.
 ///
-/// Falls back to the default strict gate if no profile is found.
+/// Falls back to a relaxed gate (credentials only) when no profile is found,
+/// matching the previous `ai_strict_egress = false` default behavior.
 pub(crate) async fn resolve_safety_gate(state: &AppState) -> AiSafetyGateConfig {
     let settings = state.store.get_ai_settings_config().await;
-    let gate = settings
+    settings
         .profiles
         .iter()
         .find(|p| p.id == settings.active_profile_id)
         .or_else(|| settings.profiles.iter().find(|p| p.is_default))
         .or_else(|| settings.profiles.first())
         .map(|p| p.safety_gate.clone())
-        .unwrap_or_default();
-    gate
+        .unwrap_or_else(|| AiSafetyGateConfig {
+            data_egress_level: AiDataEgressLevel::Relaxed,
+            ..AiSafetyGateConfig::default()
+        })
 }
 
 pub(crate) async fn resolve_ai(
