@@ -269,10 +269,11 @@ pub struct CompletionRequest {
     /// server-side conversation state instead of re-sending full history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
-    /// Optional cancel token: when the sender is dropped the provider can
-    /// detect cancellation and abort the in-flight request.
+    /// Optional cancellation token for streaming requests. The protocol layer
+    /// checks this before each SSE chunk and breaks the loop if cancelled.
+    /// Not serialized over the wire — runtime only.
     #[serde(skip)]
-    pub cancel_token: Option<tokio::sync::mpsc::Sender<()>>,
+    pub cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

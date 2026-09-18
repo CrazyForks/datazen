@@ -233,7 +233,7 @@ async fn test_mock_provider_complete() {
             stop: None,
             tools: None,
             previous_response_id: None,
-        cancel_token: None,
+            cancel_token: None,
         })
         .await;
     assert!(result.is_err());
@@ -256,7 +256,7 @@ async fn test_mock_provider_complete() {
             stop: None,
             tools: None,
             previous_response_id: None,
-        cancel_token: None,
+            cancel_token: None,
         })
         .await
         .unwrap();
@@ -292,7 +292,7 @@ async fn test_mock_provider_stream_fallback() {
                 stop: None,
                 tools: None,
                 previous_response_id: None,
-        cancel_token: None,
+                cancel_token: None,
             },
             tx,
         )
@@ -406,7 +406,10 @@ fn test_tester_stream_chunk_cancelled_default_serde() {
     let chunk: StreamChunk = serde_json::from_str(json).unwrap();
     assert_eq!(chunk.content, "hello");
     assert!(chunk.done);
-    assert!(!chunk.cancelled, "cancelled should default to false when absent");
+    assert!(
+        !chunk.cancelled,
+        "cancelled should default to false when absent"
+    );
 }
 
 #[test]
@@ -460,8 +463,14 @@ fn test_tester_completion_request_cancel_token_skip() {
     };
     let json = serde_json::to_string(&req).unwrap();
     // cancel_token must NOT appear in serialized JSON (#[serde(skip)])
-    assert!(!json.contains("cancel_token"), "cancel_token should be skipped in serialization");
-    assert!(!json.contains("cancelToken"), "cancelToken should be skipped in serialization");
+    assert!(
+        !json.contains("cancel_token"),
+        "cancel_token should be skipped in serialization"
+    );
+    assert!(
+        !json.contains("cancelToken"),
+        "cancelToken should be skipped in serialization"
+    );
 }
 
 #[test]

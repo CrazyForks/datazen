@@ -226,6 +226,7 @@ pub(crate) fn finish_app_state(
         query_executions: Arc::new(crate::commands::QueryExecutionRegistry::new()),
         workflow_scheduler: workflow::scheduler::WorkflowScheduler::new(),
         wapps: wapp_manager,
+        cancel_registry: crate::ai::CancellationRegistry::default(),
     };
     monitor_engine.attach_app_state(Arc::new(state.clone()));
     state
@@ -567,6 +568,7 @@ pub fn run() {
             crate::commands::ai_diagnose_error,
             crate::commands::ai_analyze_explain,
             crate::commands::ai_chat,
+            crate::commands::ai_cancel,
             crate::commands::ai_parse_filter,
             crate::commands::mcp_get_status,
             crate::commands::mcp_start_stdio,
