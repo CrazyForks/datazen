@@ -44,16 +44,45 @@ export interface BackupOption {
   label: string;
 }
 
+export type SqlDialectQuoteStyle = 'double' | 'backtick' | 'bracket' | 'none';
+
+export type SqlDialectFoldCase = 'lower' | 'upper' | 'preserve';
+
+export type SqlProjectionAliasVisibility = 'select-only' | 'order-group' | 'broad';
+
+/** Placeholder policy a dialect accepts. Resolved form requires every flag. */
+export type SqlParameterPolicy = {
+  atNamed?: boolean;
+  question?: boolean;
+  dollarPositional?: boolean;
+  template?: boolean;
+};
+
+/** Placeholder policy with every flag decided. */
+export type ResolvedSqlParameterPolicy = Required<SqlParameterPolicy>;
+
+/**
+ * A dialect profile a **driver** declares through
+ * {@link DatabaseTypeMeta.sqlDialectProfile}. Every field is optional beyond the
+ * shape, because a driver may override only what differs from its family.
+ */
 export interface SqlDialectProfile {
-  quoteStyle: 'double' | 'backtick' | 'bracket' | 'none';
-  foldCase: 'lower' | 'upper' | 'preserve';
-  projectionAliasVisibility: 'select-only' | 'order-group' | 'broad';
-  parameterPolicy: {
-    atNamed?: boolean;
-    question?: boolean;
-    dollarPositional?: boolean;
-    template?: boolean;
-  };
+  quoteStyle: SqlDialectQuoteStyle;
+  foldCase: SqlDialectFoldCase;
+  projectionAliasVisibility: SqlProjectionAliasVisibility;
+  parameterPolicy: SqlParameterPolicy;
+  reservedKeywords?: readonly string[];
+}
+
+/**
+ * A dialect profile with every field decided: the driver's declaration layered
+ * over its dialect family's defaults, or the standard profile.
+ */
+export interface ResolvedSqlDialectProfile {
+  quoteStyle: SqlDialectQuoteStyle;
+  foldCase: SqlDialectFoldCase;
+  projectionAliasVisibility: SqlProjectionAliasVisibility;
+  parameterPolicy: ResolvedSqlParameterPolicy;
   reservedKeywords?: readonly string[];
 }
 

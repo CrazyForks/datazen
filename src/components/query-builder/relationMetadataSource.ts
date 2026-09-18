@@ -16,15 +16,25 @@
  *   relation with the tab's schema; asking for a bare name would create a second
  *   entry (and a second fetch) for the same physical table.
  *
+ * The builder therefore depends on `lib/relationMetadata` and the store facade,
+ * never on `components/sql-editor`. The editor and the builder are peers that
+ * both sit on that shared layer; neither owns it.
+ *
  * Everything here is a pure function over an injected snapshot so the mapping is
  * testable without rendering the panel.
  */
 
 import type { ForeignKeyRelation } from './hooks/useAutoJoin';
-import { ensureMetadataRelations, resolveEditorDialectId } from '../../stores/schemaStoreSelectors';
-import { buildEditorRelationKey } from '../sql-editor/metadata/relationKey';
-import type { EditorMetadataSnapshot, EditorRelationRequest } from '../sql-editor/metadata/types';
-import type { QualifiedRelationId } from '../sql-editor/semantic/types';
+import {
+  ensureMetadataRelations,
+  relationLookupKey,
+  resolveEditorDialectId,
+} from '../../stores/schemaStoreSelectors';
+import type {
+  EditorMetadataSnapshot,
+  EditorRelationRequest,
+  QualifiedRelationId,
+} from '../../lib/relationMetadata/types';
 
 /** Context a relation lookup resolves against; mirrors the editor's own. */
 export interface RelationLookupContext {
@@ -97,7 +107,7 @@ export function deriveForeignKeyRelations(
   const relations: ForeignKeyRelation[] = [];
 
   for (const table of tables) {
-    const key = buildEditorRelationKey(
+    const key = relationLookupKey(
       snapshot.dbSessionId,
       relationIdentityFor(table, schema),
       dialectId ?? 'standard',

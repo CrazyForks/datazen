@@ -9,11 +9,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { relationIdentityFor, deriveForeignKeyRelations } from '../relationMetadataSource';
-import { buildEditorRelationKey } from '../../sql-editor/metadata/relationKey';
+import { buildEditorRelationKey } from '../../../lib/relationMetadata/identity';
 import type {
   EditorMetadataSnapshot,
   EditorRelationMetadata,
-} from '../../sql-editor/metadata/types';
+} from '../../../lib/relationMetadata/types';
 
 const SESSION = 's1';
 const DATABASE = 'shop';

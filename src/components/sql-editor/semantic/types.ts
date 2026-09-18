@@ -63,19 +63,20 @@ export type StatementIndexSnapshot = {
   sourceLength: number;
 };
 
-/** One segment of a possibly qualified SQL identifier. */
-export type SqlIdentifierSegment = {
-  name: string;
-  quoted: boolean;
-};
+/**
+ * Identifier vocabulary is shared with the relation-metadata layer, so it is
+ * defined once in `lib` and re-exported here for editor code.
+ */
+import type {
+  QualifiedRelationId,
+  SqlRelationSourceKind,
+} from '../../../lib/relationMetadata/identity';
 
-/** Database / schema / relation path without alias. */
-export type QualifiedRelationId = {
-  namespacePath: readonly SqlIdentifierSegment[];
-  name: SqlIdentifierSegment;
-};
-
-export type SqlRelationSourceKind = 'table' | 'view' | 'cte' | 'subquery';
+export type {
+  QualifiedRelationId,
+  SqlIdentifierSegment,
+  SqlRelationSourceKind,
+} from '../../../lib/relationMetadata/identity';
 
 export type SqlRelationBinding = {
   relation: QualifiedRelationId;
