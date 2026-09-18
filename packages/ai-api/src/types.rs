@@ -269,6 +269,10 @@ pub struct CompletionRequest {
     /// server-side conversation state instead of re-sending full history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
+    /// Optional cancel token: when the sender is dropped the provider can
+    /// detect cancellation and abort the in-flight request.
+    #[serde(skip)]
+    pub cancel_token: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +300,9 @@ pub struct StreamChunk {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
     pub done: bool,
+    /// Whether this chunk was produced after the request was cancelled.
+    #[serde(default)]
+    pub cancelled: bool,
     pub usage: Option<TokenUsage>,
     /// Accumulated tool calls (only present in the final chunk when done == true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,8 +348,8 @@ pub enum AiError {
     #[error("Feature not supported: {0}")]
     NotSupported(String),
 
-    #[error("Request cancelled")]
-    Cancelled,
+    #[error("cancelled: {0}")]
+    Cancelled(String),
 
     #[error("Timeout after {0}s")]
     Timeout(u64),

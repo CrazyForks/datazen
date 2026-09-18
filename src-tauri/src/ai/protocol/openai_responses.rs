@@ -476,6 +476,7 @@ pub async fn stream_complete(
                                     content: text,
                                     reasoning: None,
                                     done: false,
+                                    cancelled: false,
                                     usage: None,
                                     tool_calls: None,
                                     response_id: None,
@@ -495,6 +496,7 @@ pub async fn stream_complete(
                                     content: String::new(),
                                     reasoning: Some(text),
                                     done: false,
+                                    cancelled: false,
                                     usage: None,
                                     tool_calls: None,
                                     response_id: None,
@@ -570,6 +572,7 @@ pub async fn stream_complete(
                             content: String::new(),
                             reasoning: None,
                             done: true,
+                            cancelled: false,
                             usage,
                             tool_calls,
                             response_id: response_id.take(),
@@ -596,6 +599,7 @@ pub async fn stream_complete(
             content: String::new(),
             reasoning: None,
             done: true,
+            cancelled: false,
             usage: None,
             tool_calls,
             response_id: response_id.take(),
@@ -773,6 +777,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: Some("resp_prev".into()),
+            cancel_token: None,
         };
         let body = build_request_body(&cfg, &req, false);
         assert_eq!(body["previous_response_id"], "resp_prev");
