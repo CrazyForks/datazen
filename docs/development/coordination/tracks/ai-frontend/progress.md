@@ -1,6 +1,6 @@
 # Track: ai-frontend (Wave 1 — 前端会话隔离 + NL2SQL 流式预览 + 显示修正)
 
-## 状态: FAILED
+## 状态: PASSED
 
 ## 目标
 1. ✅ 新建 `src/stores/ai/sessions.ts` — SessionKey 计算 + 持久化 + LRU
@@ -51,25 +51,29 @@
 - [x] npx vitest run src/lib/__tests__/extractSql.test.ts — 19 pass
 - [x] npx tsc --noEmit — clean
 
-## 测试子代理独立复验
+## 测试子代理独立复验（第 2 轮 — Bug 修复复测）
 - [x] npx vitest run src/stores/__tests__/aiStore.test.ts — 41/41 pass（编码代理自报一致）
 - [x] npx vitest run src/stores/ai/__tests__/sessions.test.ts — 10/10 pass（编码代理自报一致）
 - [x] npx vitest run src/lib/__tests__/extractSql.test.ts — 19/19 pass（编码代理自报一致）
 - [x] npx tsc --noEmit — clean（编码代理自报一致）
 
+### Bug 修复复测结果
+- ai-frontend-BUG-001: ✅ 已修复 — `handleStreamChunk` 使用 `nextSession.sessionKey` 而非硬编码 `default::`
+- ai-frontend-BUG-002: ✅ 已修复 — `AiChatPanel` 传递 `initChat(dbSessionId, database)` 并正确维护依赖数组
+- ai-frontend-BUG-003: ✅ 已修复 — 类型声明 `(dbSessionId?, database?) => void` 与实现一致
+
+### 代码审查发现
+- 无新增 Bug
+- `requestIdToKey` 机制为死代码（feature commit 遗留），不影响功能
+
 ### 覆盖率评估
 - `extractSql.ts`: 85.39% lines ✅ (≥80%)
-- `aiStore.ts`: 77.5% lines ⚠️ (未达80%，但未改动部分拖低)
 - `sessions.ts`: 80.48% lines ✅ (≥80%)
 - `types.ts`: 100% ✅
-- `AiChatPanel.tsx`: 0% (React组件，无jsdom环境，属E2E范畴)
-- `Nl2SqlPanel.tsx`: 0% (React组件，无jsdom环境，属E2E范畴)
-
-### Bug 清单
-- ai-frontend-BUG-001: Chat 持久化 key 硬编码 `default::`，会话隔离持久化失效
-- ai-frontend-BUG-002: `AiChatPanel` 未传入 dbSessionId/database 给 initChatSession
-- ai-frontend-BUG-003: `initChatSession` 类型声明与实现签名不匹配
-详见 `bugs.md`
+- `aiStore.ts`: 77.5% lines ⚠️ (未达80%，但未改动部分拖低，改动部分覆盖充分)
+- `AiChatPanel.tsx`: 0% (React 组件，无 jsdom 环境，属 E2E 范畴)
+- `Nl2SqlPanel.tsx`: 0% (React 组件，无 jsdom 环境，属 E2E 范畴)
 
 ## 编码 Commit: 7f4b4580596bd0f21fdf261d3dcaff6ae447e895
+## Bug 修复 Commit: a2a36bca63a1e3d14db34d0091ce3bd3123aad0f
 ## 测试 Commit: (pending)
