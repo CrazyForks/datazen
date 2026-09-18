@@ -87,4 +87,83 @@ describe('htmlSanitizer', () => {
     expect(result).not.toContain('javascript:');
     expect(result).not.toContain('JAVASCRIPT:');
   });
+
+  it('[tester] strips svg tags', () => {
+    const input = '<svg onload="alert(1)"><circle r="50"/></svg><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<svg');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] strips math tags', () => {
+    const input = '<math><mi>x</mi></math><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<math');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] strips noscript tags', () => {
+    const input = '<noscript><img src=x onerror=alert(1)></noscript><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<noscript');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] strips base tags', () => {
+    const input = '<base href="evil.com"><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<base');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] strips link tags', () => {
+    const input = '<link rel="stylesheet" href="evil.css"><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<link');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] strips meta tags', () => {
+    const input = '<meta http-equiv="refresh" content="0;url=evil.com"><p>Safe</p>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<meta');
+    expect(result).toContain('Safe');
+  });
+
+  it('[tester] handles deeply nested dangerous content', () => {
+    const input = '<div><div><div><script>evil()</script></div></div></div>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<script');
+  });
+
+  it('[tester] preserves safe href links', () => {
+    const input = '<a href="https://example.com">Link</a>';
+    const result = sanitizeHtml(input);
+    expect(result).toContain('href="https://example.com"');
+    expect(result).toContain('target="_blank"');
+  });
+
+  it('[tester] handles empty input', () => {
+    expect(sanitizeHtml('')).toBe('');
+  });
+
+  it('[tester] strips button tags', () => {
+    const input = '<button onclick="alert(1)">Click</button>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<button');
+  });
+
+  it('[tester] strips textarea and select tags', () => {
+    const input = '<textarea>text</textarea><select><option>opt</option></select>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('<textarea');
+    expect(result).not.toContain('<select');
+  });
+
+  it('[tester] handles javascript: with whitespace variations', () => {
+    const input = '<a href="  javascript:alert(1)">XSS</a>';
+    const result = sanitizeHtml(input);
+    expect(result).not.toContain('javascript:');
+    expect(result).toContain('href="#"');
+  });
 });
