@@ -1,14 +1,18 @@
-# Track: ai-timeout (Phase 3.2 超时重试 FR-15)
+# AI Timeout Retry (FR-15 / Phase 3.2) — Track: ai-timeout
 
-## 状态: IN_PROGRESS
+Status: READY_FOR_TEST
+Branch: feature/ai-timeout
+Previous commit: 3672d7608 (feat(timeout-retry): retry logic + config (partial))
 
-## 目标
-1. 超时常量可配 — AI settings 中 max_timeout_secs
-2. 429 退避重试 — 指数退避 + jitter，最多 3 次
-3. 400 错误脱敏透出 — 给用户看友好错误消息
-4. 协议层统一重试逻辑
+## Completed (this work)
+- `map_http_error` in `protocol/mod.rs` updated with 400 desensitization (`sanitize_400_error`) and 429 retry-after (`parse_retry_after`).
+- `RetryConfig`, `retry_with_backoff`, `compute_backoff_delay`, `sanitize_400_error`, `parse_retry_after` verified present in `protocol/mod.rs` (from commit 3672d7608 / restored).
+- Protocol retry usage restored/integrated in `openai_chat.rs`, `openai_responses.rs`, `anthropic.rs`.
+- `packages/ai-api/src/types.rs`: `AiProviderConfig.max_timeout_secs` and `AiModelProfile.max_timeout_secs` present (default 120).
+- `ProtocolConfig.max_request_timeout` present with `DEFAULT_REQUEST_TIMEOUT` = 120s.
+- Production `unwrap()` cleaned (replaced with `.map(...).unwrap_or_default()` in `openai_chat.rs`).
 
-## 文件清单
-- 后端：`src-tauri/src/ai/protocol/mod.rs`（重试逻辑）、`src-tauri/src/ai/protocol/openai_chat.rs`、`src-tauri/src/ai/protocol/anthropic.rs`
-- 配置：`src-tauri/src/ai/` settings 相关
-- 测试：mock provider 429/400 重试单测
+## Remaining (for Tester / next subagent round)
+- Full retry integration verification in `openai_chat`, `openai_responses`, `anthropic` `complete()` paths (retry wrapper applied to HTTP post + error mapping).
+- `CARGO_TARGET_DIR=target/cargo-timeout cargo test -p datazen-ai-api --lib` and `-p datazen --lib ai`.
+- Final commit message: `feat(timeout-retry): FR-15 retry + 400/429 desensitization`.
