@@ -164,8 +164,13 @@ pub(crate) async fn ai_generate_sql_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
+
+    // Register cancel token so `ai_cancel` IPC can interrupt this stream.
+    let cancel_token = state.cancel_registry.register(&request_id).await;
+    request.cancel_token = Some(cancel_token.clone());
 
     tracing::debug!(
         %request_id,
@@ -176,9 +181,9 @@ pub(crate) async fn ai_generate_sql_impl(
         "ai_generate_sql: sending to provider (stream)"
     );
 
-    if seed.attach_db_tools {
+    let result = if seed.attach_db_tools {
         request.tools = Some(db_tool_definitions());
-        return run_streaming_tool_loop(
+        run_streaming_tool_loop(
             provider,
             state,
             on_chunk,
@@ -188,25 +193,29 @@ pub(crate) async fn ai_generate_sql_impl(
             "ai_generate_sql",
             strict_egress,
         )
-        .await;
-    }
-
-    let (tx, mut rx) = mpsc::channel::<Result<StreamChunk, AiError>>(32);
-    let req_id_clone = request_id.clone();
-    let on_chunk_bg = on_chunk.clone();
-
-    tokio::spawn(async move {
-        while let Some(chunk_result) = rx.recv().await {
-            on_chunk_bg(&req_id_clone, chunk_result);
-        }
-    });
-
-    provider
-        .stream_complete(&request, tx)
         .await
-        .cmd_err("ai_generate_sql")?;
+    } else {
+        let (tx, mut rx) = mpsc::channel::<Result<StreamChunk, AiError>>(32);
+        let req_id_clone = request_id.clone();
+        let on_chunk_bg = on_chunk.clone();
 
-    Ok(request_id)
+        tokio::spawn(async move {
+            while let Some(chunk_result) = rx.recv().await {
+                on_chunk_bg(&req_id_clone, chunk_result);
+            }
+        });
+
+        provider
+            .stream_complete(&request, tx)
+            .await
+            .cmd_err("ai_generate_sql")?;
+
+        Ok(request_id.clone())
+    };
+
+    // Always unregister — normal completion or cancellation.
+    state.cancel_registry.unregister(&request_id).await;
+    result
 }
 
 #[tauri::command]
@@ -311,6 +320,7 @@ pub(crate) async fn ai_diagnose_error_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -419,6 +429,7 @@ pub(crate) async fn ai_analyze_explain_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -532,6 +543,7 @@ pub(crate) async fn ai_parse_filter_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -641,6 +653,7 @@ pub(crate) async fn ai_generate_schema_doc_impl(
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
 
         let select_response = provider
@@ -715,6 +728,7 @@ pub(crate) async fn ai_generate_schema_doc_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -843,6 +857,7 @@ pub(crate) async fn ai_diagnose_connection_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 
@@ -946,6 +961,7 @@ pub(crate) async fn ai_analyze_queries_impl(
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
     inject_language_hint(&mut request.messages, &lang);
 

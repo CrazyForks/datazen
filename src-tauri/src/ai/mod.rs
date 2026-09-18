@@ -6,6 +6,7 @@
 pub use datazen_ai_api::*;
 
 pub mod anthropic;
+pub mod cancel;
 pub mod budget;
 pub mod context;
 pub mod ctx_yaml;
@@ -19,6 +20,7 @@ pub mod registry;
 pub mod safety;
 pub mod schema_pipeline;
 
+pub use cancel::CancellationRegistry;
 pub use context::{prompt_db_type, SchemaContextBuilder};
 pub use prompt_resolver::PromptResolver;
 pub use registry::{init_ai_providers, register_ai_providers, AiProviderRegistry};

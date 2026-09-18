@@ -216,6 +216,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
         let body = serde_json::json!({
             "messages": [{"content": http_body_secret}],

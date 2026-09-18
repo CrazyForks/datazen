@@ -46,6 +46,7 @@ pub fn sample_request() -> CompletionRequest {
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     }
 }
 

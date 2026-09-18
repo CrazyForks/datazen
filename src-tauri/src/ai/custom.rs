@@ -382,6 +382,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
         assert!(matches!(
             provider.complete(&req).await.unwrap_err(),
@@ -411,6 +412,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: None,
+            cancel_token: None,
         };
         assert!(matches!(
             provider.complete(&req).await.unwrap_err(),

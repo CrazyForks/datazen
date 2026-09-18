@@ -401,9 +401,28 @@ pub async fn stream_complete(
     let mut tool_calls_acc: HashMap<usize, AccumulatedToolCall> = HashMap::new();
     let mut last_usage: Option<TokenUsage> = None;
     let mut saw_finish = false;
+    let cancel_token = request.cancel_token.clone();
 
     loop {
-        let maybe = match tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()).await {
+        // Check for cancellation before each SSE chunk read.
+        let maybe = if let Some(ref token) = cancel_token {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    tracing::info!(
+                        request_id = %request.request_id,
+                        chunk_count,
+                        "openai_chat: stream cancelled"
+                    );
+                    break;
+                }
+                result = tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()) => result,
+            }
+        } else {
+            tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()).await
+        };
+
+        let maybe = match maybe {
             Ok(m) => m,
             Err(_) => {
                 tracing::error!(chunk_count, "openai_chat: stream timed out");

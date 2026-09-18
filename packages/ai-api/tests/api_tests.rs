@@ -129,6 +129,7 @@ fn test_completion_request_serde() {
         stop: None,
         tools: None,
         previous_response_id: None,
+        cancel_token: None,
     };
 
     let json = serde_json::to_string(&req).unwrap();
@@ -232,6 +233,7 @@ async fn test_mock_provider_complete() {
             stop: None,
             tools: None,
             previous_response_id: None,
+        cancel_token: None,
         })
         .await;
     assert!(result.is_err());
@@ -254,6 +256,7 @@ async fn test_mock_provider_complete() {
             stop: None,
             tools: None,
             previous_response_id: None,
+        cancel_token: None,
         })
         .await
         .unwrap();
@@ -289,6 +292,7 @@ async fn test_mock_provider_stream_fallback() {
                 stop: None,
                 tools: None,
                 previous_response_id: None,
+        cancel_token: None,
             },
             tx,
         )

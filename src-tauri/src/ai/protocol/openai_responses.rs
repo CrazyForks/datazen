@@ -401,9 +401,28 @@ pub async fn stream_complete(
     let mut current_fc_name = String::new();
     let mut current_fc_args = String::new();
     let mut response_id: Option<String> = None;
+    let cancel_token = request.cancel_token.clone();
 
     loop {
-        let maybe = match tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()).await {
+        // Check for cancellation before each SSE chunk read.
+        let maybe = if let Some(ref token) = cancel_token {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    tracing::info!(
+                        request_id = %request.request_id,
+                        chunk_count,
+                        "openai_responses: stream cancelled"
+                    );
+                    break;
+                }
+                result = tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()) => result,
+            }
+        } else {
+            tokio::time::timeout(STREAM_CHUNK_TIMEOUT, stream.next()).await
+        };
+
+        let maybe = match maybe {
             Ok(m) => m,
             Err(_) => {
                 tracing::error!(chunk_count, "openai_responses: stream timed out");
@@ -773,6 +792,7 @@ mod tests {
             stop: None,
             tools: None,
             previous_response_id: Some("resp_prev".into()),
+            cancel_token: None,
         };
         let body = build_request_body(&cfg, &req, false);
         assert_eq!(body["previous_response_id"], "resp_prev");
