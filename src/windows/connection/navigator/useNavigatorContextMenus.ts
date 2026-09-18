@@ -438,7 +438,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -625,7 +625,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -872,7 +872,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                 );
                 viewActions?.newQuery?.(query.initialSql, query);
               } else {
-                viewActions?.newQuery?.();
+                viewActions?.newQuery?.(undefined, { database: dbName });
               }
             },
             onTruncate:

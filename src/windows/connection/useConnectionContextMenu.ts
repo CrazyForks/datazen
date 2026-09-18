@@ -211,7 +211,7 @@ export function useConnectionContextMenu({
           handlers: {
             onOpen:
               kind === 'table' || kind === 'view'
-                ? () => handleSelectTableWithSchema(name, schema)
+                ? () => handleSelectTableWithSchema(name, schema, database || undefined)
                 : undefined,
             onGenerateSelect: kind === 'table' ? () => handleGenerateTableSql('select') : undefined,
             onGenerateInsert: kind === 'table' ? () => handleGenerateTableSql('insert') : undefined,
@@ -250,7 +250,7 @@ export function useConnectionContextMenu({
                   'select',
                 );
               } else {
-                handlers.handleNewQuery();
+                handlers.handleNewQuery(undefined, { database: database || undefined });
               }
             },
             onQueryHistory:
