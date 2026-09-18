@@ -477,6 +477,8 @@ export interface AiToolResult {
 }
 
 export interface AiChatMessage {
+  /** Unique message identifier for stable React keys. */
+  id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   reasoning?: string;
