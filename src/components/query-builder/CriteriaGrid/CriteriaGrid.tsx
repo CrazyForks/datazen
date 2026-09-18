@@ -1,5 +1,6 @@
 import { Plus } from 'lucide-react';
 import type { QbColumnSelection } from '../types';
+import { useI18n } from '../../../hooks/useI18n';
 import { CriteriaRow } from './CriteriaRow';
 
 export interface CriteriaGridProps {
@@ -29,18 +30,30 @@ export function CriteriaGrid({
   onRemoveColumn,
   onAddColumn,
 }: CriteriaGridProps) {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col overflow-auto border-t border-edge" data-testid="criteria-grid">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-surface-raised text-xs text-fg-secondary">
-            <th className="px-2 py-1.5 text-left font-medium">Field</th>
-            <th className="w-[100px] px-2 py-1.5 text-left font-medium">Table</th>
-            <th className="w-[100px] px-2 py-1.5 text-left font-medium">Alias</th>
-            <th className="w-[80px] px-2 py-1.5 text-left font-medium">Sort</th>
-            <th className="w-[100px] px-2 py-1.5 text-left font-medium">Func</th>
-            <th className="px-2 py-1.5 text-left font-medium">Where</th>
-            <th className="w-[50px] px-2 py-1.5 text-center font-medium">Group</th>
+            <th className="px-2 py-1.5 text-left font-medium">{t('query.visualBuilder.field')}</th>
+            <th className="w-[100px] px-2 py-1.5 text-left font-medium">
+              {t('query.visualBuilder.table')}
+            </th>
+            <th className="w-[100px] px-2 py-1.5 text-left font-medium">
+              {t('query.visualBuilder.alias')}
+            </th>
+            <th className="w-[80px] px-2 py-1.5 text-left font-medium">
+              {t('query.visualBuilder.sort')}
+            </th>
+            <th className="w-[100px] px-2 py-1.5 text-left font-medium">
+              {t('query.visualBuilder.func')}
+            </th>
+            <th className="px-2 py-1.5 text-left font-medium">{t('query.visualBuilder.where')}</th>
+            <th className="w-[50px] px-2 py-1.5 text-center font-medium">
+              {t('query.visualBuilder.group')}
+            </th>
             <th className="w-[30px] px-2 py-1.5" />
           </tr>
         </thead>
@@ -66,7 +79,7 @@ export function CriteriaGrid({
         data-testid="criteria-add-column"
       >
         <Plus className="h-3.5 w-3.5" />
-        Add Column
+        {t('query.visualBuilder.addColumn')}
       </button>
     </div>
   );

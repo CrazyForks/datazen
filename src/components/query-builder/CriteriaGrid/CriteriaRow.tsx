@@ -4,16 +4,17 @@ import type { QbColumnSelection, QbAggregate } from '../types';
 import { Select, type SelectOption } from '../../ui/Select';
 import { Input } from '../../ui/Input';
 import { Button } from '../../ui/Button';
+import { useI18n } from '../../../hooks/useI18n';
 import { WhereEditor } from './WhereEditor';
 
-const SORT_OPTIONS: SelectOption[] = [
-  { value: '', label: 'None' },
+/** Sort direction options. `ASC`/`DESC` are SQL keywords and stay untranslated. */
+const SORT_DIRECTIONS: SelectOption[] = [
   { value: 'ASC', label: 'ASC' },
   { value: 'DESC', label: 'DESC' },
 ];
 
-const FUNC_OPTIONS: SelectOption[] = [
-  { value: '', label: 'None' },
+/** Aggregate function options. */
+const AGGREGATE_FUNCTIONS: SelectOption[] = [
   { value: 'COUNT', label: 'COUNT' },
   { value: 'SUM', label: 'SUM' },
   { value: 'AVG', label: 'AVG' },
@@ -45,7 +46,18 @@ export function CriteriaRow({
   onUpdate,
   onRemove,
 }: CriteriaRowProps) {
+  const { t } = useI18n();
   const [whereOpen, setWhereOpen] = useState(false);
+
+  // "None" plus the SQL keywords; only the placeholder label is translated.
+  const sortOptions: SelectOption[] = useMemo(
+    () => [{ value: '', label: t('query.visualBuilder.noSort') }, ...SORT_DIRECTIONS],
+    [t],
+  );
+  const funcOptions: SelectOption[] = useMemo(
+    () => [{ value: '', label: t('query.visualBuilder.noAggregate') }, ...AGGREGATE_FUNCTIONS],
+    [t],
+  );
 
   // Build combined "table.column" options from all selected tables
   const fieldOptions: SelectOption[] = useMemo(() => {
@@ -147,7 +159,7 @@ export function CriteriaRow({
             value={currentFieldValue}
             options={fieldOptions}
             onChange={handleFieldChange}
-            placeholder="table.column"
+            placeholder={`${t('query.visualBuilder.table')}.${t('query.visualBuilder.field')}`}
             searchable
           />
         </div>
@@ -168,7 +180,7 @@ export function CriteriaRow({
         <Input
           value={selection.alias ?? ''}
           onChange={handleAliasChange}
-          placeholder="Alias"
+          placeholder={t('query.visualBuilder.alias')}
           className="h-8 text-xs"
           data-testid="criteria-alias-input"
         />
@@ -178,7 +190,7 @@ export function CriteriaRow({
       <td className="px-1 py-1">
         <Select
           value={selection.sort ?? ''}
-          options={SORT_OPTIONS}
+          options={sortOptions}
           onChange={handleSortChange}
           triggerDataAttrs={{ 'data-testid': 'criteria-sort-select' }}
         />
@@ -188,7 +200,7 @@ export function CriteriaRow({
       <td className="px-1 py-1">
         <Select
           value={selection.aggregate ?? ''}
-          options={FUNC_OPTIONS}
+          options={funcOptions}
           onChange={handleFuncChange}
           triggerDataAttrs={{ 'data-testid': 'criteria-func-select' }}
         />
@@ -204,7 +216,7 @@ export function CriteriaRow({
         >
           {selection.where
             ? `${selection.where.operator} ${selection.where.value ?? ''}`
-            : 'Where…'}
+            : t('query.visualBuilder.where')}
         </button>
         <WhereEditor
           open={whereOpen}

@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { cn } from '@datazen/ui';
 import type { ColumnInfo } from '../../../types';
+import { useI18n } from '../../../hooks/useI18n';
 
 /** A single table card rendered on the diagram canvas. */
 export interface TableCardProps {
@@ -31,6 +32,7 @@ export function TableCard({
   onDragEnd,
   onSetAlias,
 }: TableCardProps) {
+  const { t } = useI18n();
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -94,7 +96,7 @@ export function TableCard({
           type="text"
           value={alias ?? ''}
           onChange={(e) => onSetAlias(e.target.value)}
-          placeholder="Alias"
+          placeholder={t('query.visualBuilder.alias')}
           className={cn(
             'ml-auto w-16 h-5 px-1.5 text-[11px] rounded border border-edge bg-surface-inset',
             'text-fg placeholder:text-fg-muted outline-none',

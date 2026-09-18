@@ -1,67 +1,118 @@
 # Visual Query Builder
 
-> Status: **v1.0** (in development)
+> Point-and-click construction of `SELECT` statements: pick tables, columns,
+> conditions, sorting, grouping and a row window, then apply the generated SQL.
+>
+> Source of truth: `src/components/query-builder/`, `src/stores/queryBuilderStore.ts`,
+> `src/lib/sqlDialects/queryBuilder.ts`. The E2E journey is
+> `e2e/specs/journeys/visual-query-builder-journey.ts`.
 
 ## Overview
 
-The Visual Query Builder is a graphical interface for constructing SQL SELECT queries without writing SQL manually. It provides a point-and-click interface for selecting tables, columns, WHERE conditions, ORDER BY, GROUP BY, and aggregate functions.
+The Visual Query Builder is a graphical interface for constructing SQL `SELECT`
+queries without writing SQL by hand. It covers table selection, column selection
+(aliases, aggregates, sorting, grouping), WHERE conditions with AND/OR grouping,
+JOINs derived from foreign keys, `DISTINCT`, `LIMIT`/`OFFSET`, and a live SQL
+preview.
 
 ## How to Access
 
-1. Open a database connection and navigate to the **Query** tab
-2. Click the **Visual Builder** button (wand icon `WandSparkles`) in the toolbar, located between the NL2SQL and More menus
-3. The Visual Query Builder panel appears above the SQL editor
-
-<!-- TODO: Screenshot — toolbar button highlighted -->
+1. Open a database connection and navigate to the **Query** tab.
+2. Open the **More** menu in the query toolbar and choose **Visual Builder**
+   (wand icon). There is no dedicated toolbar button.
+3. The builder panel appears above the SQL editor.
 
 ## Features
 
 ### Table Selection
-- Browse all available tables from the connected database
-- Search/filter tables by name
-- Select one or more tables for the query
 
-<!-- TODO: Screenshot — tables panel with search and selection -->
+- Tables are added by **dragging them from the connection sidebar's schema tree**
+  onto the builder canvas. Dropping a table loads its columns.
+- There is no table browser inside the panel; use the sidebar's own search to
+  narrow the tree before dragging.
+- Multiple tables can be dropped onto the canvas; each renders as a table card
+  that can be repositioned by dragging.
 
 ### Column Selection
-- View columns for each selected table
-- Toggle individual columns on/off
-- Set column aliases (AS)
-- Apply aggregate functions: COUNT, SUM, AVG, MIN, MAX
 
-<!-- TODO: Screenshot — columns with alias and aggregate options -->
+- Click a column inside a canvas table card to include it in the query.
+- Selected columns also appear in the criteria grid below the canvas, where each
+  row exposes:
+  - **Field** — the `table.column` to project
+  - **Alias** — optional `AS` alias
+  - **Sort** — `ASC` / `DESC`
+  - **Func** — aggregate function: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
+  - **Where** — a per-column quick condition (see below)
+  - **Group** — include this column in `GROUP BY`
+- Table cards also allow setting a table alias, used for the `FROM` and JOIN
+  references.
 
 ### WHERE Conditions
-- Add conditions with comparison operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`
-- Group conditions with AND/OR logic
-- Nest condition groups for complex queries (one level of nesting in v1)
-- Each condition shows table → column → operator → value
 
-<!-- TODO: Screenshot — conditions with nested groups -->
+Two complementary mechanisms:
+
+1. **Per-column quick condition** — the **Where** cell in the criteria grid opens
+   a dialog for a single `column operator value` test.
+2. **Conditions panel** — a condition tree under the criteria grid. It supports:
+   - any number of conditions, each with its own field / operator / value
+   - a per-group **AND** / **OR** toggle
+   - **one level of nested groups**, so a group can be combined with the rest
+     using the opposite operator
+   - adding and removing individual conditions and nested groups
+
+   Per-column quick conditions are merged into the same tree at generation time,
+   so both mechanisms appear in one `WHERE` clause.
+
+### JOINs
+
+- Foreign-key relationships between the selected tables are **detected
+  automatically** and drawn as dashed lines on the canvas.
+- An auto-detected JOIN's type can be changed (`INNER` / `LEFT` / `RIGHT` /
+  `FULL`) and it can be removed; a removal is remembered for the session so the
+  JOIN is not re-detected.
+- Auto-detected JOINs are part of the generated SQL, so the canvas and the SQL
+  preview always agree.
+- **Manually specifying an ON condition between arbitrary columns is not
+  implemented** (see Known Limitations).
 
 ### ORDER BY
-- Sort results by any selected column
-- Toggle ascending (ASC) / descending (DESC)
+
+- Set **Sort** on any selected column in the criteria grid to `ASC` or `DESC`.
 
 ### GROUP BY
-- Group results by selected columns
-- Works with aggregate functions for summary queries
+
+- Tick **Group** on the columns to group by. Combine with **Func** on other
+  columns for aggregate queries.
 
 ### DISTINCT
-- Toggle DISTINCT to eliminate duplicate rows
+
+- The `DISTINCT` checkbox in the panel header toggles duplicate elimination.
+
+### LIMIT / OFFSET
+
+- Row-window inputs sit in the panel footer. Leaving a field blank omits its
+  clause; clearing a field removes it again.
+- For dialects that cannot express `LIMIT`/`OFFSET` (SQL Server) the inputs are
+  disabled, because the generator would otherwise silently drop the value.
 
 ### SQL Preview
-- Live preview of the generated SQL statement
-- Syntax-highlighted code block
 
-<!-- TODO: Screenshot — SQL preview panel -->
+- A live preview of the generated statement. It is hidden while the query is
+  incomplete (no tables or no columns selected).
 
 ### Apply SQL
-- Click "Apply SQL" to insert the generated SQL into the editor
-- The builder panel closes automatically after applying
+
+- Writes the generated SQL into the editor and closes the panel.
 
 ### Reset
-- Click "Reset" to clear all selections and start over
+
+- Clears the query (tables, columns, conditions, joins, sorting, grouping, row
+  window) but **keeps the panel open** so the user can start over in place.
+
+### Close
+
+- The header close button hides the panel. State is retained, so reopening the
+  builder shows the previous query.
 
 ## Supported Operators
 
@@ -87,36 +138,37 @@ The Visual Query Builder is a graphical interface for constructing SQL SELECT qu
 | PostgreSQL | `"column"` | ✅ | `LIMIT n OFFSET m` |
 | MySQL | `` `column` `` | ❌ | `LIMIT m, n` |
 | SQLite | `"column"` | ❌ | `LIMIT n OFFSET m` |
-| SQL Server | `[column]` | ❌ | Not supported in v1 |
+| SQL Server | `[column]` | ❌ | Not supported (needs `TOP` / `OFFSET … FETCH`) |
 | Generic | `"column"` | ❌ | `LIMIT n OFFSET m` |
 
-## Keyboard Shortcuts
+## Known Limitations
 
-| Action | Shortcut |
-|--------|----------|
-| Toggle Visual Builder | Click toolbar button |
-| Apply SQL & Close | Click "Apply SQL" button |
-
-## Screenshots
-
-<!-- TODO: Add screenshots after UI implementation is complete -->
-<!-- ![Query Builder Panel](./screenshots/query-builder-panel.png) -->
-<!-- ![Table Selection](./screenshots/query-builder-tables.png) -->
-<!-- ![WHERE Conditions](./screenshots/query-builder-conditions.png) -->
+- **No manual JOIN creation.** JOINs come from detected foreign keys only; there
+  is no UI for an arbitrary ON condition between two columns.
+- **One level of condition nesting.** Deeper nesting is representable in the
+  store and handled by the generator, but the UI caps the tree at two levels.
+- **No subquery support.**
+- **No HAVING clause support**, so aggregates cannot be filtered after grouping.
+- **No window functions.**
+- **SQL Server row windows are not generated** (`TOP` / `OFFSET … FETCH`).
 
 ## Architecture
 
-- **State**: Zustand store (`queryBuilderStore`) manages all builder state
-- **SQL Generation**: Pure function (`useSqlGenerator` hook) converts state to SQL
-- **Dialect Adaptation**: `QbDialectAdapter` handles per-database SQL differences
-- **Types**: Shared type definitions in `src/components/query-builder/types.ts`
-- **Integration**: Toolbar button and panel render wired in `QueryEditorSection.tsx`
-- **i18n**: All UI text uses `query.visualBuilder.*` keys (source of truth: `en/query.ts`)
+- **State**: Zustand store (`src/stores/queryBuilderStore.ts`) holds all builder
+  state, including the WHERE tree and the detected auto-JOINs.
+- **SQL generation**: pure function in
+  `src/components/query-builder/hooks/useSqlGenerator.ts`, exposed through the
+  `useSqlGenerator` hook.
+- **Dialect adaptation**: `src/lib/sqlDialects/queryBuilder.ts` handles
+  per-database quoting, `ILIKE`, `IN`, `IS NULL` and `LIMIT`/`OFFSET`.
+- **Types**: `src/components/query-builder/types.ts`.
+- **Integration**: toolbar entry in `QueryToolbarMoreMenu.tsx`; the panel is
+  mounted from `QueryEditorSection.tsx`.
+- **i18n**: user-facing strings use `query.visualBuilder.*` keys from
+  `src/locales/<locale>/query.ts`.
 
-## Known Limitations (v1.0)
+## Screenshots
 
-- SQL Server LIMIT/OFFSET not supported (uses TOP/OFFSET-FETCH)
-- No JOIN support (single-table FROM only in v1)
-- No subquery support
-- No HAVING clause support
-- No window functions
+<!-- TODO: Add screenshots -->
+<!-- ![Query Builder Panel](./screenshots/query-builder-panel.png) -->
+<!-- ![Conditions](./screenshots/query-builder-conditions.png) -->

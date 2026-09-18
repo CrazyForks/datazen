@@ -450,6 +450,7 @@ export function QueryEditorSection({
         {qbOpen && (
           <QueryBuilderPanel
             dbSessionId={dbSessionId}
+            database={selectedDatabase ?? ''}
             databaseType={databaseType}
             onApplySql={(newSql) => {
               onUpdateSql(newSql);

@@ -34,6 +34,10 @@ export interface QueryBuilderState {
   joins: QbJoin[];
   /** Auto-detected FK relationship JOINs (dashed lines in UI). */
   autoJoins: QbJoin[];
+  /** Auto-join ids the user removed; suppressed from the effective join set. */
+  removedAutoJoinIds: string[];
+  /** Per-auto-join type overrides keyed by auto-join id. */
+  autoJoinTypes: Record<string, QbJoinType>;
 
   // ── Table metadata ──
   /** Table alias mapping (tableName → alias). */
@@ -66,6 +70,10 @@ export interface QueryBuilderActions {
   updateCondition: (id: string, patch: Partial<QbCondition>) => void;
   removeCondition: (id: string) => void;
   addConditionGroup: (parentId: string, logic: 'AND' | 'OR') => void;
+  /** Change the AND/OR logic of an existing group (root or nested). */
+  updateConditionGroupLogic: (id: string, logic: 'AND' | 'OR') => void;
+  /** Remove a nested condition group (no-op for the root group). */
+  removeConditionGroup: (id: string) => void;
   addSort: (item: QbSortItem) => void;
   removeSort: (index: number) => void;
   addGroupBy: (item: QbGroupByItem) => void;
@@ -151,6 +159,62 @@ function emptyConditionGroup(): QbConditionGroup {
   return { id: uid(), logic: 'AND', conditions: [], groups: [] };
 }
 
+function updateGroupLogicById(
+  group: QbConditionGroup,
+  id: string,
+  logic: 'AND' | 'OR',
+): QbConditionGroup {
+  return {
+    ...group,
+    logic: group.id === id ? logic : group.logic,
+    groups: group.groups.map((g) => updateGroupLogicById(g, id, logic)),
+  };
+}
+
+/**
+ * Drop a nested group by id. The root group is never removed — removing the
+ * whole WHERE clause is what `reset` is for.
+ */
+function removeGroupById(group: QbConditionGroup, id: string): QbConditionGroup {
+  return {
+    ...group,
+    groups: group.groups.filter((g) => g.id !== id).map((g) => removeGroupById(g, id)),
+  };
+}
+
+/** Order-insensitive identity of a join's column pair (ignores id/type/isManual). */
+function joinPairKey(join: QbJoin): string {
+  const left = `${join.leftTable}\u0000${join.leftColumn}`;
+  const right = `${join.rightTable}\u0000${join.rightColumn}`;
+  return left <= right ? `${left}\u0001${right}` : `${right}\u0001${left}`;
+}
+
+/**
+ * The join set actually used for rendering *and* SQL generation.
+ *
+ * Auto-detected FK joins are merged in here so the canvas and the generated SQL
+ * can never disagree. Manual joins win over an auto join covering the same
+ * column pair, dismissed auto joins are dropped, and per-join type overrides are
+ * applied.
+ */
+export function mergeJoins(
+  joins: QbJoin[],
+  autoJoins: QbJoin[],
+  removedAutoJoinIds: string[],
+  autoJoinTypes: Record<string, QbJoinType>,
+): QbJoin[] {
+  const removed = new Set(removedAutoJoinIds);
+  const manualPairs = new Set(joins.map(joinPairKey));
+  const effectiveAuto = autoJoins
+    .filter((join) => !removed.has(join.id) && !manualPairs.has(joinPairKey(join)))
+    .map((join) => {
+      const override = autoJoinTypes[join.id];
+      return override ? { ...join, type: override } : join;
+    });
+  // Auto joins first so manual ones draw on top of them.
+  return [...effectiveAuto, ...joins];
+}
+
 // ── Initial state ─────────────────────────────────────────────
 
 const INITIAL_STATE: QueryBuilderState = {
@@ -163,6 +227,8 @@ const INITIAL_STATE: QueryBuilderState = {
   isOpen: false,
   joins: [],
   autoJoins: [],
+  removedAutoJoinIds: [],
+  autoJoinTypes: {},
   tableAliases: {},
   tablePositions: {},
   canvasOffset: { x: 0, y: 0 },
@@ -252,6 +318,16 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
       }),
     })),
 
+  updateConditionGroupLogic: (id, logic) =>
+    set((s) => ({
+      where: updateGroupLogicById(s.where, id, logic),
+    })),
+
+  removeConditionGroup: (id) =>
+    set((s) => ({
+      where: removeGroupById(s.where, id),
+    })),
+
   addSort: (item) =>
     set((s) => ({
       orderBy: [...s.orderBy, item],
@@ -284,14 +360,26 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
     })),
 
   removeJoin: (id) =>
-    set((s) => ({
-      joins: s.joins.filter((j) => j.id !== id),
-    })),
+    set((s) => {
+      const isAuto = s.autoJoins.some((j) => j.id === id);
+      return {
+        joins: s.joins.filter((j) => j.id !== id),
+        // An auto join cannot be deleted from `autoJoins` — FK detection would
+        // re-add it — so remember the dismissal instead.
+        removedAutoJoinIds: isAuto
+          ? [...new Set([...s.removedAutoJoinIds, id])]
+          : s.removedAutoJoinIds,
+      };
+    }),
 
   updateJoinType: (id, type) =>
-    set((s) => ({
-      joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
-    })),
+    set((s) => {
+      const isAuto = s.autoJoins.some((j) => j.id === id);
+      return {
+        joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
+        autoJoinTypes: isAuto ? { ...s.autoJoinTypes, [id]: type } : s.autoJoinTypes,
+      };
+    }),
 
   // ── Table metadata actions ──
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useQueryBuilderStore } from '../queryBuilderStore';
+import { useQueryBuilderStore, mergeJoins } from '../queryBuilderStore';
 import type {
   QbCondition,
   QbConditionGroup,
@@ -15,6 +15,19 @@ function getSnapshot() {
 
 function reset() {
   useQueryBuilderStore.setState(useQueryBuilderStore.getInitialState());
+}
+
+/** An FK-detected join as `useAutoJoin` would produce it. */
+function makeAutoJoin(): QbJoin {
+  return {
+    id: 'auto-users.id-orders.user_id',
+    type: 'INNER',
+    leftTable: 'users',
+    leftColumn: 'id',
+    rightTable: 'orders',
+    rightColumn: 'user_id',
+    isManual: false,
+  };
 }
 
 // ── Tests ─────────────────────────────────────────────────────
@@ -383,6 +396,83 @@ describe('queryBuilderStore', () => {
     });
   });
 
+  // ── updateConditionGroupLogic ──────────────────────────────
+
+  describe('updateConditionGroupLogic', () => {
+    it('flips the logic of the root group', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().updateConditionGroupLogic(rootId, 'OR');
+      expect(getSnapshot().where.logic).toBe('OR');
+    });
+
+    it('flips the logic of a nested group without touching the root', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'AND');
+      const subGroupId = getSnapshot().where.groups[0].id;
+
+      useQueryBuilderStore.getState().updateConditionGroupLogic(subGroupId, 'OR');
+
+      expect(getSnapshot().where.groups[0].logic).toBe('OR');
+      expect(getSnapshot().where.logic).toBe('AND');
+    });
+
+    it('reaches a group nested below another nested group', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'AND');
+      const subGroupId = getSnapshot().where.groups[0].id;
+      useQueryBuilderStore.getState().addConditionGroup(subGroupId, 'AND');
+      const deepId = getSnapshot().where.groups[0].groups[0].id;
+
+      useQueryBuilderStore.getState().updateConditionGroupLogic(deepId, 'OR');
+
+      expect(getSnapshot().where.groups[0].groups[0].logic).toBe('OR');
+    });
+  });
+
+  // ── removeConditionGroup ───────────────────────────────────
+
+  describe('removeConditionGroup', () => {
+    it('removes a nested group', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'OR');
+      const subGroupId = getSnapshot().where.groups[0].id;
+
+      useQueryBuilderStore.getState().removeConditionGroup(subGroupId);
+
+      expect(getSnapshot().where.groups).toEqual([]);
+    });
+
+    it('keeps sibling groups intact', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'OR');
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'AND');
+      const [first, second] = getSnapshot().where.groups;
+
+      useQueryBuilderStore.getState().removeConditionGroup(first.id);
+
+      expect(getSnapshot().where.groups.map((g) => g.id)).toEqual([second.id]);
+    });
+
+    it('never removes the root group', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().removeConditionGroup(rootId);
+      expect(getSnapshot().where.id).toBe(rootId);
+    });
+
+    it('removes a group nested below another nested group', () => {
+      const rootId = getSnapshot().where.id;
+      useQueryBuilderStore.getState().addConditionGroup(rootId, 'AND');
+      const subGroupId = getSnapshot().where.groups[0].id;
+      useQueryBuilderStore.getState().addConditionGroup(subGroupId, 'OR');
+      const deepId = getSnapshot().where.groups[0].groups[0].id;
+
+      useQueryBuilderStore.getState().removeConditionGroup(deepId);
+
+      expect(getSnapshot().where.groups[0].groups).toEqual([]);
+      expect(getSnapshot().where.groups).toHaveLength(1);
+    });
+  });
+
   // ── addSort / removeSort ───────────────────────────────────
 
   describe('addSort', () => {
@@ -683,6 +773,90 @@ describe('queryBuilderStore', () => {
       });
       useQueryBuilderStore.getState().updateJoinType('nonexistent-id', 'RIGHT');
       expect(getSnapshot().joins[0].type).toBe('INNER');
+    });
+
+    it('overrides the type of an auto-detected join', () => {
+      const auto = makeAutoJoin();
+      useQueryBuilderStore.setState({ autoJoins: [auto] });
+      useQueryBuilderStore.getState().updateJoinType(auto.id, 'LEFT');
+      // The auto join is not in `joins`, so the override must live separately.
+      expect(getSnapshot().joins).toEqual([]);
+      expect(getSnapshot().autoJoinTypes).toEqual({ [auto.id]: 'LEFT' });
+    });
+  });
+
+  // ── auto-join merging ───────────────────────────────────────
+
+  describe('mergeJoins', () => {
+    it('includes auto-detected joins so the canvas and SQL agree', () => {
+      const auto = makeAutoJoin();
+      expect(mergeJoins([], [auto], [], {})).toEqual([auto]);
+    });
+
+    it('drops auto joins the user removed', () => {
+      const auto = makeAutoJoin();
+      expect(mergeJoins([], [auto], [auto.id], {})).toEqual([]);
+    });
+
+    it('applies a type override to an auto join', () => {
+      const auto = makeAutoJoin();
+      const merged = mergeJoins([], [auto], [], { [auto.id]: 'RIGHT' });
+      expect(merged).toHaveLength(1);
+      expect(merged[0].type).toBe('RIGHT');
+    });
+
+    it('lets a manual join win over an auto join for the same column pair', () => {
+      const auto = makeAutoJoin();
+      const manual: QbJoin = { ...auto, id: 'manual-1', type: 'LEFT', isManual: true };
+      const merged = mergeJoins([manual], [auto], [], {});
+      expect(merged).toEqual([manual]);
+    });
+
+    it('treats a reversed manual pair as the same relation', () => {
+      const auto = makeAutoJoin();
+      const reversed: QbJoin = {
+        ...auto,
+        id: 'manual-reversed',
+        leftTable: auto.rightTable,
+        leftColumn: auto.rightColumn,
+        rightTable: auto.leftTable,
+        rightColumn: auto.leftColumn,
+        isManual: true,
+      };
+      expect(mergeJoins([reversed], [auto], [], {})).toEqual([reversed]);
+    });
+
+    it('keeps unrelated manual and auto joins together, auto first', () => {
+      const auto = makeAutoJoin();
+      const manual: QbJoin = {
+        id: 'manual-2',
+        type: 'INNER',
+        leftTable: 'c',
+        leftColumn: 'id',
+        rightTable: 'd',
+        rightColumn: 'c_id',
+        isManual: true,
+      };
+      const merged = mergeJoins([manual], [auto], [], {});
+      expect(merged.map((j) => j.id)).toEqual([auto.id, manual.id]);
+    });
+  });
+
+  describe('removeJoin on an auto join', () => {
+    it('records the dismissal instead of touching `joins`', () => {
+      const auto = makeAutoJoin();
+      useQueryBuilderStore.setState({ autoJoins: [auto] });
+      useQueryBuilderStore.getState().removeJoin(auto.id);
+      expect(getSnapshot().joins).toEqual([]);
+      expect(getSnapshot().removedAutoJoinIds).toEqual([auto.id]);
+    });
+
+    it('does not duplicate a dismissal recorded twice', () => {
+      const auto = makeAutoJoin();
+      useQueryBuilderStore.setState({ autoJoins: [auto] });
+      useQueryBuilderStore.getState().removeJoin(auto.id);
+      useQueryBuilderStore.getState().removeJoin(auto.id);
+      expect(getSnapshot().removedAutoJoinIds).toEqual([auto.id]);
     });
   });
 

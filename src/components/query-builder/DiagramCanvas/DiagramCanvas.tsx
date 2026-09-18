@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { cn } from '@datazen/ui';
 import type { ColumnInfo } from '../../../types';
 import type { QbJoin, QbJoinType, QbColumnSelection } from '../types';
+import { useI18n } from '../../../hooks/useI18n';
 import { useCanvasInteraction } from './useCanvasInteraction';
 import { TableCard } from './TableCard';
 import { JoinLine } from './JoinLine';
@@ -10,8 +11,11 @@ import { JoinLine } from './JoinLine';
 export interface DiagramCanvasProps {
   selectedTables: string[];
   tablePositions: Record<string, { x: number; y: number }>;
+  /**
+   * Effective joins (manual + auto-detected FK) to draw. `join.isManual` picks
+   * the styling: auto joins render dashed.
+   */
   joins: QbJoin[];
-  autoJoins: QbJoin[];
   columnMap: Record<string, string[]>;
   columnInfoMap: Record<string, ColumnInfo[]>;
   selectedColumns: QbColumnSelection[];
@@ -22,7 +26,6 @@ export interface DiagramCanvasProps {
   foreignKeyMap?: Record<string, Record<string, string>>;
   onToggleColumn: (table: string, column: string) => void;
   onUpdatePosition: (table: string, pos: { x: number; y: number }) => void;
-  onAddJoin: (join: Omit<QbJoin, 'id'>) => void;
   onUpdateJoinType: (id: string, type: QbJoinType) => void;
   onRemoveJoin: (id: string) => void;
   onSetTableAlias: (table: string, alias: string) => void;
@@ -55,7 +58,6 @@ export function DiagramCanvas({
   selectedTables,
   tablePositions,
   joins,
-  autoJoins,
   columnMap,
   columnInfoMap,
   selectedColumns,
@@ -64,7 +66,6 @@ export function DiagramCanvas({
   foreignKeyMap = {},
   onToggleColumn,
   onUpdatePosition,
-  onAddJoin: _onAddJoin,
   onUpdateJoinType,
   onRemoveJoin,
   onSetTableAlias,
@@ -74,6 +75,7 @@ export function DiagramCanvas({
   onZoomChange = () => {},
   onOffsetChange = () => {},
 }: DiagramCanvasProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -181,25 +183,8 @@ export function DiagramCanvas({
           style={{ width: '100%', height: '100%', overflow: 'visible' }}
           aria-hidden="true"
         >
-          {/* Render auto-detected JOINs first (behind manual) */}
-          {autoJoins.map((join) => {
-            const from = getCardCenter(join.leftTable);
-            const to = getCardCenter(join.rightTable);
-            if (!selectedSet.has(join.leftTable) || !selectedSet.has(join.rightTable)) return null;
-            return (
-              <JoinLine
-                key={join.id}
-                join={join}
-                fromPos={from}
-                toPos={to}
-                isAuto
-                onUpdateType={(type) => onUpdateJoinType(join.id, type)}
-                onRemove={() => onRemoveJoin(join.id)}
-              />
-            );
-          })}
-
-          {/* Render manual JOINs on top */}
+          {/* Effective joins; `mergeJoins` already ordered auto joins first so
+              manual ones draw on top. */}
           {joins.map((join) => {
             const from = getCardCenter(join.leftTable);
             const to = getCardCenter(join.rightTable);
@@ -210,7 +195,7 @@ export function DiagramCanvas({
                 join={join}
                 fromPos={from}
                 toPos={to}
-                isAuto={false}
+                isAuto={!join.isManual}
                 onUpdateType={(type) => onUpdateJoinType(join.id, type)}
                 onRemove={() => onRemoveJoin(join.id)}
               />
@@ -256,7 +241,7 @@ export function DiagramCanvas({
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center text-fg-muted text-sm">
               <div className="mb-1 text-2xl opacity-30">📊</div>
-              <div>Drag tables here to build your query</div>
+              <div>{t('query.visualBuilder.dragHint')}</div>
             </div>
           </div>
         )}

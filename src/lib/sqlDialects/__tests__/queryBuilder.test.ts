@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { getQbDialectAdapter, generateJoinClause, generateLimitOffset } from '../queryBuilder';
+import {
+  getQbDialectAdapter,
+  generateJoinClause,
+  generateLimitOffset,
+  supportsLimitOffset,
+} from '../queryBuilder';
 import type { QbDialectAdapter } from '../queryBuilder';
 import type { QbJoin } from '../../../components/query-builder/types';
 
@@ -411,5 +416,24 @@ describe('generateLimitOffset', () => {
 
   it('generates LIMIT and OFFSET (MySQL) with reversed syntax', () => {
     expect(generateLimitOffset(10, 20, mysql)).toBe(' LIMIT 20, 10');
+  });
+});
+
+// ── supportsLimitOffset ───────────────────────────────────────
+
+describe('supportsLimitOffset', () => {
+  it('is true for dialects that emit LIMIT/OFFSET', () => {
+    expect(supportsLimitOffset('postgresql')).toBe(true);
+    expect(supportsLimitOffset('mysql')).toBe(true);
+    expect(supportsLimitOffset('sqlite')).toBe(true);
+  });
+
+  it('is false for SQL Server, which needs TOP / OFFSET-FETCH', () => {
+    expect(supportsLimitOffset('sqlserver')).toBe(false);
+  });
+
+  it('falls back to the generic adapter for an unknown dialect', () => {
+    expect(supportsLimitOffset('some-unknown-db')).toBe(true);
+    expect(supportsLimitOffset(undefined)).toBe(true);
   });
 });

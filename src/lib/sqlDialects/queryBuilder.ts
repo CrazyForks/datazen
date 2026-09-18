@@ -150,3 +150,14 @@ export function getQbDialectAdapter(dbType?: string): QbDialectAdapter {
   const family = meta?.sqlDialect ?? (dbType as string);
   return DIALECT_FAMILY_MAP[family] ?? genericAdapter;
 }
+
+/**
+ * Whether the dialect can express a row window as LIMIT/OFFSET.
+ *
+ * SQL Server needs `TOP` / `OFFSET … FETCH`, which the v1 generator does not
+ * emit, so its adapter returns null and the clause is dropped. Callers should
+ * hide or disable row-window controls rather than let a typed value vanish.
+ */
+export function supportsLimitOffset(dbType?: string): boolean {
+  return getQbDialectAdapter(dbType).formatLimitOffset(1, 1) !== null;
+}

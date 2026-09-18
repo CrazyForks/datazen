@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { cn } from '@datazen/ui';
 import type { QbJoin, QbJoinType } from '../types';
+import { useI18n } from '../../../hooks/useI18n';
 
 const JOIN_TYPE_OPTIONS: readonly { value: QbJoinType; label: string }[] = [
   { value: 'INNER', label: 'INNER' },
@@ -17,6 +18,7 @@ export interface JoinLabelProps {
 }
 
 export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
 
   const handleTypeChange = useCallback(
@@ -87,7 +89,7 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
           onRemove();
         }}
         className="ml-0.5 text-fg-muted hover:text-danger transition-colors"
-        title="Remove JOIN"
+        title={t('query.visualBuilder.removeJoin')}
         data-testid={`qb-join-remove-${join.id}`}
       >
         ×

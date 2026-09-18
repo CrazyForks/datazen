@@ -1,20 +1,30 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
 import { X, BarChart3 } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
-import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
+import { useQueryBuilderStore, mergeJoins } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
 import type { ForeignKeyRelation } from './hooks/useAutoJoin';
 import { DiagramCanvas } from './DiagramCanvas/DiagramCanvas';
 import { CriteriaGrid } from './CriteriaGrid/CriteriaGrid';
+import { ConditionBuilder } from './ConditionBuilder/ConditionBuilder';
 import { SqlPreview } from './SqlPreview';
+import { PaginationControls } from './PaginationControls';
 import { Button } from '../ui/Button';
 import { useI18n } from '../../hooks/useI18n';
 import { getCachedTableSchema } from '../../lib/schemaCache';
+import { supportsLimitOffset } from '../../lib/sqlDialects/queryBuilder';
 import type { ColumnInfo } from '../../types';
 
 export interface QueryBuilderPanelProps {
   dbSessionId: string;
+  /**
+   * Name of the database the session is attached to. Required: it is the
+   * namespace the schema/FK lookups resolve against, and it is *not* the same
+   * value as `databaseType` (passing the type here silently queries a database
+   * literally named "postgresql").
+   */
+  database: string;
   databaseType?: string;
   onApplySql: (sql: string) => void;
 }
@@ -38,6 +48,7 @@ export interface QueryBuilderPanelProps {
  */
 export function QueryBuilderPanel({
   dbSessionId,
+  database,
   databaseType,
   onApplySql,
 }: QueryBuilderPanelProps) {
@@ -52,6 +63,8 @@ export function QueryBuilderPanel({
   const selectedColumns = useQueryBuilderStore((s) => s.selectedColumns);
   const joins = useQueryBuilderStore((s) => s.joins);
   const autoJoins = useQueryBuilderStore((s) => s.autoJoins);
+  const removedAutoJoinIds = useQueryBuilderStore((s) => s.removedAutoJoinIds);
+  const autoJoinTypes = useQueryBuilderStore((s) => s.autoJoinTypes);
   const tableAliases = useQueryBuilderStore((s) => s.tableAliases);
   const tablePositions = useQueryBuilderStore((s) => s.tablePositions);
   const canvasOffset = useQueryBuilderStore((s) => s.canvasOffset);
@@ -62,12 +75,13 @@ export function QueryBuilderPanel({
   const distinct = useQueryBuilderStore((s) => s.distinct);
   const limit = useQueryBuilderStore((s) => s.limit);
   const offset = useQueryBuilderStore((s) => s.offset);
+  const setLimit = useQueryBuilderStore((s) => s.setLimit);
+  const setOffset = useQueryBuilderStore((s) => s.setOffset);
 
   // ── Query builder actions ──────────────────────────────
   const toggleTable = useQueryBuilderStore((s) => s.toggleTable);
   const toggleColumn = useQueryBuilderStore((s) => s.toggleColumn);
   const updateColumnConfig = useQueryBuilderStore((s) => s.updateColumnConfig);
-  const addJoin = useQueryBuilderStore((s) => s.addJoin);
   const removeJoin = useQueryBuilderStore((s) => s.removeJoin);
   const updateJoinType = useQueryBuilderStore((s) => s.updateJoinType);
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
@@ -80,16 +94,16 @@ export function QueryBuilderPanel({
 
   // ── Load columns for selected tables ───────────────────
   useEffect(() => {
-    if (selectedTables.length === 0) return;
-    void ensureColumns(selectedTables, dbSessionId, databaseType ?? '');
-  }, [selectedTables, ensureColumns]);
+    if (selectedTables.length === 0 || !database) return;
+    void ensureColumns(selectedTables, dbSessionId, database);
+  }, [selectedTables, ensureColumns, dbSessionId, database]);
 
   // ── Foreign key detection ──────────────────────────────
   const [fkRelations, setFkRelations] = useState<ForeignKeyRelation[]>([]);
 
   // Load foreign keys for selected tables from schema cache
   useEffect(() => {
-    if (selectedTables.length === 0) {
+    if (selectedTables.length === 0 || !database) {
       setFkRelations([]);
       return;
     }
@@ -99,7 +113,7 @@ export function QueryBuilderPanel({
       const allFks: ForeignKeyRelation[] = [];
       for (const tableName of selectedTables) {
         try {
-          const schema = await getCachedTableSchema(dbSessionId, tableName, databaseType ?? '');
+          const schema = await getCachedTableSchema(dbSessionId, tableName, database);
           for (const fk of schema.foreignKeys) {
             for (let i = 0; i < fk.columns.length; i++) {
               allFks.push({
@@ -122,7 +136,7 @@ export function QueryBuilderPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedTables, dbSessionId]);
+  }, [selectedTables, dbSessionId, database]);
 
   const detectedAutoJoins = useAutoJoin(selectedTables, fkRelations);
 
@@ -149,11 +163,17 @@ export function QueryBuilderPanel({
     return map;
   }, [columnMap]);
 
+  // Manual + auto-detected joins, so the canvas and the SQL agree.
+  const effectiveJoins = useMemo(
+    () => mergeJoins(joins, autoJoins, removedAutoJoinIds, autoJoinTypes),
+    [joins, autoJoins, removedAutoJoinIds, autoJoinTypes],
+  );
+
   // ── Generate SQL preview ───────────────────────────────
   const sql = useSqlGenerator({
     selectedTables,
     selectedColumns,
-    joins,
+    joins: effectiveJoins,
     tableAliases,
     where,
     orderBy,
@@ -252,15 +272,13 @@ export function QueryBuilderPanel({
             <DiagramCanvas
               selectedTables={selectedTables}
               tablePositions={tablePositions}
-              joins={joins}
-              autoJoins={autoJoins}
+              joins={effectiveJoins}
               columnMap={columnMap}
               columnInfoMap={columnInfoMap}
               selectedColumns={selectedColumns}
               tableAliases={tableAliases}
               onToggleColumn={toggleColumn}
               onUpdatePosition={updateTablePosition}
-              onAddJoin={addJoin}
               onUpdateJoinType={updateJoinType}
               onRemoveJoin={removeJoin}
               onSetTableAlias={setTableAlias}
@@ -282,10 +300,20 @@ export function QueryBuilderPanel({
             onAddColumn={handleAddColumn}
           />
 
+          {/* WHERE condition tree */}
+          <ConditionBuilder columnMap={columnMap} />
+
           {/* SQL Preview + Apply */}
           <div className="flex flex-col gap-2 border-t border-edge p-3">
             <SqlPreview sql={sql} />
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-3">
+              <PaginationControls
+                limit={limit}
+                offset={offset}
+                supported={supportsLimitOffset(databaseType)}
+                onLimitChange={setLimit}
+                onOffsetChange={setOffset}
+              />
               <Button
                 variant="primary"
                 size="sm"
