@@ -100,6 +100,16 @@ export interface DatabaseTypeMeta {
   readOnly?: boolean;
   /** Whether this driver supports EXPLAIN query plan analysis (opt-in; omit = unsupported). */
   supportsExplain?: boolean;
+  /**
+   * Whether the driver's dialect can be given a `LIMIT`/`OFFSET` row window.
+   *
+   * Mirrors the driver's Rust `supports_offset()`. Omit = supported; declare
+   * `false` when the dialect cannot express a row window (the driver overrides
+   * `supports_offset()` in that case too). The Visual Query Builder reads this
+   * to decide whether to offer row-window controls, and the SQL generator
+   * honours it, so a declared opt-out can never leak a clause into the SQL.
+   */
+  supportsOffset?: boolean;
   /** Whether this driver supports ER diagram (requires FK metadata) */
   supportsErDiagram?: boolean;
   /**

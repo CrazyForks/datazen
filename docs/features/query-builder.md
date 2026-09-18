@@ -92,8 +92,13 @@ Two complementary mechanisms:
 
 - Row-window inputs sit in the panel footer. Leaving a field blank omits its
   clause; clearing a field removes it again.
-- For dialects that cannot express `LIMIT`/`OFFSET` (SQL Server) the inputs are
-  disabled, because the generator would otherwise silently drop the value.
+- Row-window availability is a **driver capability**, not a dialect guess: a
+  driver declares `supportsOffset: false` in its `DatabaseTypeMeta` (mirroring
+  its Rust `supports_offset()`), and the panel disables the inputs for it. The
+  generator honours the same declaration, so a disabled control can never leave
+  a stray clause in the SQL. SQL Server is the one host driver that opts out —
+  T-SQL spells pagination `OFFSET … FETCH`, which is only legal together with an
+  `ORDER BY` the builder cannot guarantee.
 
 ### SQL Preview
 

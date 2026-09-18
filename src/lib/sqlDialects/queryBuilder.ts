@@ -17,6 +17,12 @@ export interface QbDialectAdapter {
   /** Whether this dialect supports ILIKE for case-insensitive LIKE. */
   supportsILike: boolean;
   /**
+   * Whether this dialect family can be given a `LIMIT`/`OFFSET` row window at
+   * all. Drivers may additionally opt out through
+   * {@link DatabaseTypeMeta.supportsOffset}; the generator honours both.
+   */
+  supportsLimitOffset: boolean;
+  /**
    * Format a LIMIT / OFFSET clause.
    * Returns `null` when the dialect cannot express this with LIMIT/OFFSET (e.g. SQL Server TOP).
    */
@@ -32,6 +38,7 @@ export interface QbDialectAdapter {
 const postgresqlAdapter: QbDialectAdapter = {
   quoteIdentifier: (n) => `"${n}"`,
   supportsILike: true,
+  supportsLimitOffset: true,
   formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
@@ -40,6 +47,7 @@ const postgresqlAdapter: QbDialectAdapter = {
 const mysqlAdapter: QbDialectAdapter = {
   quoteIdentifier: (n) => `\`${n}\``,
   supportsILike: false,
+  supportsLimitOffset: true,
   formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${o}, ${l}` : `LIMIT ${l}`),
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
@@ -48,6 +56,7 @@ const mysqlAdapter: QbDialectAdapter = {
 const sqliteAdapter: QbDialectAdapter = {
   quoteIdentifier: (n) => `"${n}"`,
   supportsILike: false,
+  supportsLimitOffset: true,
   formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
@@ -56,7 +65,8 @@ const sqliteAdapter: QbDialectAdapter = {
 const sqlserverAdapter: QbDialectAdapter = {
   quoteIdentifier: (n) => `[${n}]`,
   supportsILike: false,
-  formatLimitOffset: () => null, // SQL Server uses TOP / OFFSET-FETCH; v1 does not handle this.
+  supportsLimitOffset: false,
+  formatLimitOffset: () => null, // T-SQL uses OFFSET…FETCH and needs ORDER BY; v1 does not emit it.
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
@@ -64,6 +74,7 @@ const sqlserverAdapter: QbDialectAdapter = {
 const genericAdapter: QbDialectAdapter = {
   quoteIdentifier: (n) => `"${n}"`,
   supportsILike: false,
+  supportsLimitOffset: true,
   formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
@@ -120,6 +131,9 @@ export function generateLimitOffset(
   adapter: QbDialectAdapter,
 ): string {
   if (limit === null && offset === null) return '';
+  // A driver that declares `supportsOffset: false` must never receive a clause,
+  // even if the UI could not have set one.
+  if (!adapter.supportsLimitOffset) return '';
   // Use adapter for dialect-specific formatting. Fallback: standard SQL.
   const effectiveLimit = limit ?? 0;
   const effectiveOffset = offset ?? 0;
@@ -148,16 +162,22 @@ export function getQbDialectAdapter(dbType?: string): QbDialectAdapter {
 
   const meta = DB_REGISTRY[dbType as DatabaseType];
   const family = meta?.sqlDialect ?? (dbType as string);
-  return DIALECT_FAMILY_MAP[family] ?? genericAdapter;
+  const base = DIALECT_FAMILY_MAP[family] ?? genericAdapter;
+  // The driver's own declaration is authoritative: a driver may opt out even
+  // when its dialect family has a LIMIT/OFFSET spelling. Overriding here keeps
+  // the row-window controls and the generated SQL in agreement.
+  return meta?.supportsOffset === false ? { ...base, supportsLimitOffset: false } : base;
 }
 
 /**
- * Whether the dialect can express a row window as LIMIT/OFFSET.
+ * Whether the driver can be given a `LIMIT`/`OFFSET` row window.
  *
- * SQL Server needs `TOP` / `OFFSET … FETCH`, which the v1 generator does not
- * emit, so its adapter returns null and the clause is dropped. Callers should
- * hide or disable row-window controls rather than let a typed value vanish.
+ * Purely a capability read: the driver declares it via
+ * {@link DatabaseTypeMeta.supportsOffset} (mirroring its Rust
+ * `supports_offset()`), and the dialect family supplies the fallback for
+ * drivers that declare nothing. Callers disable row-window controls when this
+ * is `false` rather than let a typed value vanish from the generated SQL.
  */
 export function supportsLimitOffset(dbType?: string): boolean {
-  return getQbDialectAdapter(dbType).formatLimitOffset(1, 1) !== null;
+  return getQbDialectAdapter(dbType).supportsLimitOffset;
 }

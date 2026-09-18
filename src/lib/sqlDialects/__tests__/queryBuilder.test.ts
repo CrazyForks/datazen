@@ -7,6 +7,7 @@ import {
 } from '../queryBuilder';
 import type { QbDialectAdapter } from '../queryBuilder';
 import type { QbJoin } from '../../../components/query-builder/types';
+import { DB_REGISTRY } from '../../databaseTypes';
 
 // ── Tests ─────────────────────────────────────────────────────
 
@@ -435,5 +436,29 @@ describe('supportsLimitOffset', () => {
   it('falls back to the generic adapter for an unknown dialect', () => {
     expect(supportsLimitOffset('some-unknown-db')).toBe(true);
     expect(supportsLimitOffset(undefined)).toBe(true);
+  });
+
+  it('honours a driver-level opt-out even when its dialect family can paginate', () => {
+    // questdb shares the postgresql dialect family, so only the driver's own
+    // declaration can turn the row window off.
+    const target = DB_REGISTRY.questdb;
+    expect(target.sqlDialect).toBe('postgresql');
+    const prev = target.supportsOffset;
+    try {
+      target.supportsOffset = false;
+      expect(supportsLimitOffset('questdb')).toBe(false);
+      // The generator must drop the clause too, not just the controls.
+      expect(generateLimitOffset(5, 2, getQbDialectAdapter('questdb'))).toBe('');
+    } finally {
+      if (prev === undefined) delete target.supportsOffset;
+      else target.supportsOffset = prev;
+    }
+    expect(supportsLimitOffset('questdb')).toBe(true);
+  });
+
+  it('is opt-out: an undeclared driver keeps its family default', () => {
+    expect(DB_REGISTRY.postgresql.supportsOffset).toBeUndefined();
+    // Only drivers present in this build's generated registry can be asserted.
+    if (DB_REGISTRY.sqlserver) expect(DB_REGISTRY.sqlserver.supportsOffset).toBe(false);
   });
 });
