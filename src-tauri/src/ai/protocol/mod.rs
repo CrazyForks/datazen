@@ -102,19 +102,8 @@ pub(crate) fn map_http_error(status: reqwest::StatusCode, body: &str) -> datazen
 /// envelopes. Falls back to a generic message that never exposes the raw
 /// response body, API key fragments, or internal server details.
 pub(crate) fn sanitize_400_error(body: &str) -> String {
-    // Try to parse standard error envelope: { "error": { "message": "..." } }
+    // BUG-15: Merged duplicate branches — both OpenAI and Anthropic use { "error": { "message": "..." } }.
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(msg) = json
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-        {
-            let msg = msg.trim();
-            if !msg.is_empty() {
-                return truncate_user_message(msg);
-            }
-        }
-        // Anthropic style: { "type": "error", "error": { "type": "...", "message": "..." } }
         if let Some(msg) = json
             .get("error")
             .and_then(|e| e.get("message"))
@@ -137,7 +126,14 @@ fn truncate_user_message(msg: &str) -> String {
     if msg.len() <= MAX_LEN {
         msg.to_string()
     } else {
-        format!("{}…", &msg[..MAX_LEN])
+        // BUG-04: Find the last char boundary at or before MAX_LEN to avoid UTF-8 panic.
+        let end = msg
+            .char_indices()
+            .take_while(|(i, _)| *i < MAX_LEN)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(MAX_LEN);
+        format!("{}…", &msg[..end])
     }
 }
 

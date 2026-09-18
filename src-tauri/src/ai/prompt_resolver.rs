@@ -251,7 +251,18 @@ impl PromptResolver {
         let key = scenario_to_key(scenario);
         let cache = self.template_cache.read().await;
         if let Some(tpl) = cache.get(&key) {
-            return tpl.clone();
+            // BUG-05: Apply dialect_notes even for cached templates (steps 3 & 5 already do this).
+            let mut result = tpl.clone();
+            if let Some(d) = driver {
+                if let Some(notes) = d.dialect_notes() {
+                    result = result.replace("{{dialect_notes}}", &notes);
+                } else {
+                    result = result.replace("{{dialect_notes}}", "");
+                }
+            } else {
+                result = result.replace("{{dialect_notes}}", "");
+            }
+            return result;
         }
         drop(cache);
 
@@ -394,10 +405,28 @@ fn embedded_default(scenario: PromptScenario) -> &'static str {
 }
 
 /// Replace `{{key}}` placeholders in a template.
+///
+/// BUG-11: After rendering, warn about and strip any residual `{{...}}` placeholders
+/// so they are not sent verbatim to the LLM.
 pub fn render_template(template: &str, vars: &HashMap<&str, &str>) -> String {
     let mut result = template.to_string();
     for (&key, &val) in vars {
         result = result.replace(&format!("{{{{{key}}}}}"), val);
+    }
+    // Check for residual placeholders and strip them
+    if result.contains("{{") {
+        tracing::warn!(
+            residual = %result.matches("{{").count(),
+            "render_template: residual {{...}} placeholders found after rendering"
+        );
+        // Remove all remaining {{...}} patterns
+        while let Some(start) = result.find("{{") {
+            if let Some(end) = result[start..].find("}}") {
+                result.replace_range(start..start + end + 2, "");
+            } else {
+                break;
+            }
+        }
     }
     result
 }

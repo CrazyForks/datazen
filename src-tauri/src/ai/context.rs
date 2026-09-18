@@ -239,7 +239,19 @@ pub fn format_compact_ddl(table_name: &str, schema: &TableSchema) -> String {
             }
             if let Some(ref comment) = c.comment {
                 if !comment.is_empty() {
-                    parts.push(format!("COMMENT '{}'", comment.replace('\'', "''")));
+                    // BUG-08: Truncate column comments to 40 chars to avoid blowing up the token budget.
+                    let truncated = if comment.len() > 40 {
+                        let end = comment
+                            .char_indices()
+                            .take_while(|(i, _)| *i < 40)
+                            .last()
+                            .map(|(i, c)| i + c.len_utf8())
+                            .unwrap_or(40);
+                        &comment[..end]
+                    } else {
+                        comment.as_str()
+                    };
+                    parts.push(format!("COMMENT '{}'", truncated.replace('\'', "''")));
                 }
             }
             parts.join(" ")

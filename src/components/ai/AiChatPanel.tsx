@@ -21,6 +21,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useAiStore } from '../../stores/aiStore';
 import { cn } from '../../lib/cn';
+import { aiCommands } from '../../commands/ai';
 import { openDocsWindow, openSettingsWindow } from '../../lib/windowManager';
 import { WorkflowPanel } from './WorkflowPanel';
 import { splitContextItems } from '../../lib/contextItems';
@@ -180,6 +181,13 @@ export function AiChatPanel({
     setInput('');
     setContextItems([]);
   }, [input, chatSession, sendMessage, dbSessionId, database, contextItems]);
+
+  // BUG-01: Provide onStop so users can cancel streaming replies.
+  const handleStop = useCallback(() => {
+    if (chatSession?.requestId) {
+      void aiCommands.cancel(chatSession.requestId);
+    }
+  }, [chatSession?.requestId]);
 
   if (!isConfigured) {
     return (
@@ -414,6 +422,7 @@ export function AiChatPanel({
               value={input}
               onChange={setInput}
               onSubmit={handleSend}
+              onStop={handleStop}
               placeholder={t('chat.placeholder')}
               disabled={chatSession?.isStreaming}
               isLoading={chatSession?.isStreaming}

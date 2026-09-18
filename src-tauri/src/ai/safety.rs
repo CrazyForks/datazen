@@ -150,9 +150,12 @@ fn is_result_key(key: &str) -> bool {
 }
 
 fn consume_assigned_value(value: &str, start: usize) -> usize {
+    // BUG-14: Use safe `.or(0)` instead of `.expect()` on production paths.
     let mut index = start;
     while index < value.len() {
-        let ch = value[index..].chars().next().expect("valid char boundary");
+        let Some(ch) = value[index..].chars().next() else {
+            break;
+        };
         if !ch.is_whitespace() {
             break;
         }
@@ -171,15 +174,15 @@ fn consume_assigned_value(value: &str, start: usize) -> usize {
     if let Some(quote) = quote {
         let mut cursor = quoted_start;
         while cursor < value.len() {
-            let ch = value[cursor..].chars().next().expect("valid char boundary");
+            let Some(ch) = value[cursor..].chars().next() else {
+                break;
+            };
             if ch == '\\' {
                 cursor += ch.len_utf8();
                 if cursor < value.len() {
-                    cursor += value[cursor..]
-                        .chars()
-                        .next()
-                        .expect("valid char boundary")
-                        .len_utf8();
+                    if let Some(escaped) = value[cursor..].chars().next() {
+                        cursor += escaped.len_utf8();
+                    }
                 }
             } else {
                 cursor += ch.len_utf8();
@@ -193,7 +196,9 @@ fn consume_assigned_value(value: &str, start: usize) -> usize {
 
     let mut cursor = quoted_start;
     while cursor < value.len() {
-        let ch = value[cursor..].chars().next().expect("valid char boundary");
+        let Some(ch) = value[cursor..].chars().next() else {
+            break;
+        };
         if ch.is_whitespace() || ",;)]}".contains(ch) {
             break;
         }
