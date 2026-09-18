@@ -94,9 +94,9 @@ export function AiChatPanel({
 
   useEffect(() => {
     if (!chatSession) {
-      initChat();
+      initChat(dbSessionId, database);
     }
-  }, [chatSession, initChat]);
+  }, [chatSession, initChat, dbSessionId, database]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

@@ -400,13 +400,14 @@ export const useAiStore = create<AiStore>((set, get) => ({
 
   // ── Chat ──
 
-  initChatSession: (connectionId?: string, dbSessionId?: string, database?: string) => {
-    const key = computeSessionKey(connectionId, dbSessionId, database);
+  initChatSession: (dbSessionId?: string, database?: string) => {
+    const key = computeSessionKey(undefined, dbSessionId, database);
     const sessions = loadSessions();
     const stored = sessions[key];
 
     const session = {
       id: crypto.randomUUID(),
+      sessionKey: key,
       messages: (stored?.messages ?? []) as AiChatMessage[],
       isStreaming: false,
       streamContent: '',
@@ -527,6 +528,7 @@ export const useAiStore = create<AiStore>((set, get) => ({
     set({
       workflowChat: {
         id: crypto.randomUUID(),
+        sessionKey: 'workflow',
         messages: [],
         isStreaming: false,
         streamContent: '',
@@ -698,7 +700,7 @@ export const useAiStore = create<AiStore>((set, get) => ({
 
         // Persist chat history to localStorage
         if (targetSession === 'chatSession') {
-          const key = computeSessionKey(undefined, undefined, undefined);
+          const key = nextSession.sessionKey;
           const sessions = loadSessions();
           const updated = touchSession(sessions, key);
           updated[key] = {

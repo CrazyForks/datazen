@@ -489,6 +489,8 @@ export interface AiChatMessage {
 
 export interface AiChatSession {
   id: string;
+  /** Session isolation key used for localStorage persistence. */
+  sessionKey: string;
   messages: AiChatMessage[];
   isStreaming: boolean;
   streamContent: string;
