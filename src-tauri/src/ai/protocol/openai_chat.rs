@@ -546,6 +546,7 @@ pub async fn stream_complete(
                                 done: false,
                                 cancelled: false,
                                 response_id: None,
+                                egress_summary: None,
                                 usage: None,
                                 tool_calls: None,
                             }))
@@ -577,6 +578,7 @@ pub async fn stream_complete(
             done: true,
             cancelled: false,
             response_id: None,
+            egress_summary: None,
             usage: last_usage,
             tool_calls,
         }))

@@ -61,6 +61,7 @@ impl CustomProvider {
             api_base: state.endpoint.clone(),
             api_key: state.api_key.clone(),
             max_tokens: state.max_tokens,
+            max_request_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -90,6 +91,7 @@ pub async fn fetch_remote_models(
         api_base: endpoint.into(),
         api_key: api_key.into(),
         max_tokens: 0,
+        max_request_timeout: Duration::from_secs(120),
     };
 
     match protocol {
@@ -150,6 +152,7 @@ impl AiProvider for CustomProvider {
                     api_base: endpoint.into(),
                     api_key: key.into(),
                     max_tokens: config.max_tokens,
+                    max_request_timeout: Duration::from_secs(120),
                 };
                 match proto {
                     CustomProtocol::OpenAiCompatible => {
