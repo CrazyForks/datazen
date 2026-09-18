@@ -433,6 +433,16 @@ pub trait DatabaseDriver: Send + Sync {
         HashMap::new()
     }
 
+    /// Return dialect-specific notes for the AI prompt system.
+    ///
+    /// When non-empty, the prompt resolver replaces `{{dialect_notes}}` in
+    /// system prompts with these notes, helping the LLM generate dialect-correct
+    /// SQL. Drivers should describe key syntax differences (pagination, string
+    /// operations, type quirks, etc.).
+    fn dialect_notes(&self) -> Option<String> {
+        None
+    }
+
     /// Emit `CREATE TABLE` DDL for a single table.
     ///
     /// Default builds DDL from [`Self::get_table_schema`].
