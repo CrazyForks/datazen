@@ -34,6 +34,8 @@ import * as cmState from '@codemirror/state';
 import * as cmLint from '@codemirror/lint';
 import * as cmAutocomplete from '@codemirror/autocomplete';
 import { useSettingsStore } from './stores/settingsStore';
+import { useQueryBuilderStore } from './stores/queryBuilderStore';
+import { useSchemaStore } from './stores/schemaStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 import { t } from './locales/t';
 
@@ -53,6 +55,12 @@ import { t } from './locales/t';
   '@codemirror/lint': cmLint,
   '@codemirror/autocomplete': cmAutocomplete,
 };
+
+// E2E test hooks: expose Zustand stores on globalThis for WebDriver tests.
+// Module-level window assignments in store files get tree-shaken by Vite,
+// so the stores must be registered here in the entry module.
+(globalThis as any).__qbStore = useQueryBuilderStore;
+(globalThis as any).__schemaStore = useSchemaStore;
 
 extensionPoints.setHostLocaleBridge({
   getLocale: () => useSettingsStore.getState().settings.language ?? 'en',

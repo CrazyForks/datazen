@@ -14,6 +14,8 @@ import { useSchemaStore } from '../../../stores/schemaStore';
 import { QueryContextSelectors } from '../../../components/query/QueryContextSelectors';
 import { QueryExecutionStatus } from '../../../components/query/QueryExecutionStatus';
 import { Nl2SqlPanel } from '../../../components/ai/Nl2SqlPanel';
+import { QueryBuilderPanel } from '../../../components/query-builder/QueryBuilderPanel';
+import { useQueryBuilderStore } from '../../../stores/queryBuilderStore';
 import { sqlEditorEnhancedEP, useExtension } from '@datazen/extension-points';
 import { useI18n } from '../../../hooks/useI18n';
 import { usePlatform } from '../../../hooks/usePlatform';
@@ -195,6 +197,10 @@ export function QueryEditorSection({
   const bindParamPanelEnabled = editorExtensionSettings?.bindParamPanel !== false;
   const [isRefreshingCompletion, setIsRefreshingCompletion] = useState(false);
 
+  // ── Query Builder state ──────────────────────────────────────
+  const qbOpen = useQueryBuilderStore((s) => s.isOpen);
+  const toggleQb = useQueryBuilderStore((s) => s.toggleOpen);
+
   /**
    * Prefer the editor's own selection-aware formatter (§4.2); `onFormat` stays
    * as the fallback for the rare case the editor has not mounted yet.
@@ -330,6 +336,7 @@ export function QueryEditorSection({
           onCommitTx={() => void onCommitTx()}
           onRollbackTx={() => void onRollbackTx()}
           onRefreshCompletion={() => void handleRefreshCompletion()}
+          onToggleQb={toggleQb}
           renderSnippetButton={() => (
             <SnippetMenuButton editorRef={editorRef} compact={compactToolbar} disabled={running} />
           )}
@@ -437,6 +444,17 @@ export function QueryEditorSection({
             dbSessionId={dbSessionId}
             database={selectedDatabase ?? ''}
             onSqlChange={onApplyAiSql}
+          />
+        )}
+
+        {qbOpen && (
+          <QueryBuilderPanel
+            dbSessionId={dbSessionId}
+            databaseType={databaseType}
+            onApplySql={(newSql) => {
+              onUpdateSql(newSql);
+              toggleQb();
+            }}
           />
         )}
 

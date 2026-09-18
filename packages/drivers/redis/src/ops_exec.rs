@@ -5,6 +5,65 @@ use serde::Serialize;
 
 use crate::redis_driver::parse_redis_command_args;
 
+/// Classify a Redis command by its danger level.
+///
+/// Returns one of: `"safe"`, `"write"`, `"danger"`, `"ultra-danger"`.
+pub fn danger_classify(command: &str) -> &'static str {
+    let name = command
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    match name.as_str() {
+        // Ultra-danger — destructive / global / admin
+        "FLUSHDB" | "FLUSHALL" | "SHUTDOWN" | "DEBUG" | "KEYS" | "CONFIG" | "ACL"
+        | "MODULE" | "CLUSTER" | "REPLICAOF" | "SLAVEOF" => "ultra-danger",
+
+        // Danger — delete / expire / dangerous mutations
+        "DEL" | "UNLINK" | "RENAME" | "RENAMENX" | "EXPIRE" | "PEXPIRE" | "EXPIREAT"
+        | "PEXPIREAT" | "PERSIST" | "MOVE" | "SORT" | "OBJECT" | "CLIENT" | "WAIT"
+        | "SWAPDB" | "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+        | "DISCARD" | "RESET" => "danger",
+
+        // Write — normal mutations (data-modifying)
+        "SET" | "MSET" | "MSETNX" | "SETEX" | "PSETEX" | "SETNX" | "SETXX"
+        | "APPEND" | "INCR" | "DECR" | "INCRBY" | "DECRBY" | "INCRBYFLOAT"
+        | "GETSET" | "SETRANGE" | "SETBIT" | "GETDEL" | "GETEX"
+        // List
+        | "LPUSH" | "LPUSHX" | "RPUSH" | "RPUSHX" | "LSET" | "LREM" | "LTRIM"
+        | "LINSERT" | "RPOPLPUSH" | "LMOVE" | "LMPOP" | "BLMPOP"
+        // Set
+        | "SADD" | "SREM" | "SINTERSTORE" | "SUNIONSTORE" | "SDIFFSTORE" | "SMISMEMBER"
+        // ZSet
+        | "ZADD" | "ZREM" | "ZINCRBY" | "ZDIFFSTORE" | "ZINTERSTORE" | "ZUNIONSTORE"
+        | "ZRANGEBYSCORE" | "ZREMRANGEBYRANK" | "ZREMRANGEBYSCORE"
+        // Hash
+        | "HSET" | "HMSET" | "HDEL" | "HINCRBY" | "HINCRBYFLOAT"
+        // Stream
+        | "XADD" | "XACK" | "XDEL" | "XTRIM" | "XSETID"
+        // PubSub / transactions
+        | "PUBLISH" | "EXEC" | "MULTI"
+        // Generic key ops
+        | "COPY" | "MIGRATE" | "RESTORE" | "LINK" => "write",
+
+        // Safe — read-only / info / meta
+        _ => "safe",
+    }
+}
+
+/// Determine the result type string from a Redis value.
+pub fn result_type_of(value: &redis::Value) -> &'static str {
+    match value {
+        redis::Value::Nil => "nil",
+        redis::Value::Okay | redis::Value::SimpleString(_) => "ok",
+        redis::Value::Int(_) | redis::Value::Double(_) | redis::Value::BigNumber(_) => "scalar",
+        redis::Value::BulkString(_) | redis::Value::VerbatimString { .. } => "scalar",
+        redis::Value::Array(_) => "array",
+        redis::Value::Map(_) => "map",
+        _ => "ok",
+    }
+}
+
 /// Split a multi-line script into non-empty trimmed command lines.
 pub fn split_redis_commands(commands: &str) -> Vec<String> {
     commands
@@ -24,6 +83,12 @@ pub struct ExecResult {
     pub value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured result type hint for the UI.
+    /// "scalar" | "array" | "map" | "ok" | "nil" | "error"
+    pub result_type: String,
+    /// Danger level classification: "safe" | "write" | "danger" | "ultra-danger"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub danger_level: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +113,7 @@ async fn exec_one<C>(conn: &mut C, line: &str) -> ExecResult
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,
 {
+    let danger = Some(danger_classify(line).to_string());
     match parse_redis_command_args(line) {
         Ok(parts) => {
             let mut cmd = redis::cmd(&parts[0]);
@@ -60,12 +126,16 @@ where
                     ok: true,
                     value: Some(format_redis_value(&value)),
                     error: None,
+                    result_type: result_type_of(&value).to_string(),
+                    danger_level: danger,
                 },
                 Err(error) => ExecResult {
                     command: line.to_string(),
                     ok: false,
                     value: None,
                     error: Some(error.to_string()),
+                    result_type: "error".to_string(),
+                    danger_level: danger,
                 },
             }
         }
@@ -74,6 +144,8 @@ where
             ok: false,
             value: None,
             error: Some(error.to_string()),
+            result_type: "error".to_string(),
+            danger_level: danger,
         },
     }
 }
@@ -123,5 +195,83 @@ mod tests {
     fn split_redis_commands_basic() {
         let lines = split_redis_commands("GET a\n\nSET b 1\n");
         assert_eq!(lines, vec!["GET a", "SET b 1"]);
+    }
+
+    #[test]
+    fn danger_classify_safe_commands() {
+        assert_eq!(danger_classify("GET foo"), "safe");
+        assert_eq!(danger_classify("INFO"), "safe");
+        assert_eq!(danger_classify("PING"), "safe");
+        assert_eq!(danger_classify("TTL key"), "safe");
+        assert_eq!(danger_classify("TYPE key"), "safe");
+        assert_eq!(danger_classify("EXISTS key"), "safe");
+        assert_eq!(danger_classify("SCAN 0"), "safe");
+        assert_eq!(danger_classify("DBSIZE"), "safe");
+    }
+
+    #[test]
+    fn danger_classify_write_commands() {
+        assert_eq!(danger_classify("SET foo bar"), "write");
+        assert_eq!(danger_classify("LPUSH list a"), "write");
+        assert_eq!(danger_classify("HSET h f v"), "write");
+        assert_eq!(danger_classify("ZADD z 1 m"), "write");
+        assert_eq!(danger_classify("SADD s a"), "write");
+        assert_eq!(danger_classify("XADD stream * k v"), "write");
+        assert_eq!(danger_classify("INCR counter"), "write");
+    }
+
+    #[test]
+    fn danger_classify_danger_commands() {
+        assert_eq!(danger_classify("DEL key"), "danger");
+        assert_eq!(danger_classify("EXPIRE key 100"), "danger");
+        assert_eq!(danger_classify("RENAME a b"), "danger");
+        assert_eq!(danger_classify("PERSIST key"), "danger");
+        assert_eq!(danger_classify("SUBSCRIBE ch"), "danger");
+        assert_eq!(danger_classify("CLIENT LIST"), "danger");
+    }
+
+    #[test]
+    fn danger_classify_ultra_danger_commands() {
+        assert_eq!(danger_classify("FLUSHDB"), "ultra-danger");
+        assert_eq!(danger_classify("FLUSHALL"), "ultra-danger");
+        assert_eq!(danger_classify("KEYS *"), "ultra-danger");
+        assert_eq!(danger_classify("CONFIG SET"), "ultra-danger");
+        assert_eq!(danger_classify("SHUTDOWN NOSAVE"), "ultra-danger");
+    }
+
+    #[test]
+    fn danger_classify_case_insensitive() {
+        assert_eq!(danger_classify("get foo"), "safe");
+        assert_eq!(danger_classify("Set foo bar"), "write");
+        assert_eq!(danger_classify("del key"), "danger");
+        assert_eq!(danger_classify("flushdb"), "ultra-danger");
+    }
+
+    #[test]
+    fn danger_classify_empty_command() {
+        assert_eq!(danger_classify(""), "safe");
+    }
+
+    #[test]
+    fn result_type_of_values() {
+        assert_eq!(result_type_of(&redis::Value::Nil), "nil");
+        assert_eq!(result_type_of(&redis::Value::Okay), "ok");
+        assert_eq!(result_type_of(&redis::Value::Int(42)), "scalar");
+        assert_eq!(result_type_of(&redis::Value::Double(3.14)), "scalar");
+        assert_eq!(
+            result_type_of(&redis::Value::BulkString(b"hello".to_vec())),
+            "scalar"
+        );
+        assert_eq!(
+            result_type_of(&redis::Value::Array(vec![redis::Value::Int(1)])),
+            "array"
+        );
+        assert_eq!(
+            result_type_of(&redis::Value::Map(vec![(
+                redis::Value::BulkString(b"k".to_vec()),
+                redis::Value::Int(1)
+            )])),
+            "map"
+        );
     }
 }

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
 import { cn } from '../../../../src/lib/cn';
 import { redisCommandInvoke } from './redisInvoke';
 import { useSettingsStore } from '../../../../src/stores/settingsStore';
-import { parseInfoSections, type InfoSection } from './infoParse';
+import { parseInfoSections, filterInfoSections, type InfoSection } from './infoParse';
 import { StreamOverview } from './StreamOverview';
 import { ClusterNodePicker } from './ClusterNodePicker';
 import { readClusterRouting, resolvePinnedNodeAddr } from './settingsHelpers';
+import { RealtimeMonitor } from './RealtimeMonitor';
 
 export interface MonitorPanelProps {
   dbSessionId: string;
@@ -18,7 +19,7 @@ export interface MonitorPanelProps {
   onPinnedNodeAddrChange?: (addr: string) => void;
 }
 
-type MonitorSubPage = 'info' | 'memory' | 'slowlog' | 'streams';
+type MonitorSubPage = 'info' | 'monitor' | 'memory' | 'slowlog' | 'streams';
 
 interface MemorySample {
   key: string;
@@ -82,6 +83,7 @@ export function MonitorPanel({
     () =>
       [
         { id: 'info' as const, label: t('redis.info') },
+        { id: 'monitor' as const, label: t('redis.monitor') },
         { id: 'memory' as const, label: t('redis.memory') },
         { id: 'slowlog' as const, label: t('redis.slowlog') },
         { id: 'streams' as const, label: t('redis.streamOverview') },
@@ -118,6 +120,8 @@ export function MonitorPanel({
 
       {subPage === 'info' ? (
         <InfoPane dbSessionId={dbSessionId} nodeAddr={nodeAddr} />
+      ) : subPage === 'monitor' ? (
+        <RealtimeMonitor dbSessionId={dbSessionId} />
       ) : subPage === 'memory' ? (
         <MemoryPane dbSessionId={dbSessionId} dbIndex={dbIndex} />
       ) : subPage === 'slowlog' ? (
@@ -135,6 +139,7 @@ function InfoPane({ dbSessionId, nodeAddr }: { dbSessionId: string; nodeAddr: st
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -160,6 +165,11 @@ function InfoPane({ dbSessionId, nodeAddr }: { dbSessionId: string; nodeAddr: st
     void load();
   }, [load]);
 
+  const filtered = useMemo(
+    () => filterInfoSections(sections, search || undefined),
+    [sections, search],
+  );
+
   const toggleSection = useCallback((name: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -180,8 +190,34 @@ function InfoPane({ dbSessionId, nodeAddr }: { dbSessionId: string; nodeAddr: st
       empty={!loading && !error && sections.length === 0}
       emptyMessage={t('redis.infoEmpty')}
     >
-      <div className="divide-y divide-edge">
-        {sections.map((section) => {
+      {sections.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-edge px-4 py-2">
+          <Search className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('redis.monitor.infoSearchPlaceholder')}
+            className="flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-muted"
+          />
+          {search && (
+            <button
+              type="button"
+              className="shrink-0 text-fg-muted hover:text-fg"
+              onClick={() => setSearch('')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {search && (
+            <span className="shrink-0 text-xs text-fg-muted">
+              {filtered.matchedEntries}/{filtered.totalEntries} {t('redis.monitor.infoMatched')}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="divide-y divide-edge overflow-y-auto">
+        {filtered.sections.map((section) => {
           const open = expanded.has(section.name);
           return (
             <div key={section.name}>
@@ -224,6 +260,11 @@ function InfoPane({ dbSessionId, nodeAddr }: { dbSessionId: string; nodeAddr: st
             </div>
           );
         })}
+        {search && filtered.matchedEntries === 0 && (
+          <div className="px-4 py-6 text-center text-sm text-fg-muted">
+            {t('redis.monitor.infoNoMatch')}
+          </div>
+        )}
       </div>
     </MonitorPaneShell>
   );

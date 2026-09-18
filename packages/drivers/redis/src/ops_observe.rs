@@ -176,6 +176,97 @@ where
     parse_module_names(&raw)
 }
 
+/// Get MEMORY USAGE for a single key.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryUsageResult {
+    pub key: String,
+    pub bytes: u64,
+    pub error: Option<String>,
+}
+
+pub async fn memory_usage_key<C>(conn: &mut C, key: &str) -> Result<MemoryUsageResult, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let bytes: Option<u64> = redis::cmd("MEMORY")
+        .arg("USAGE")
+        .arg(key)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(MemoryUsageResult {
+        key: key.to_string(),
+        bytes: bytes.unwrap_or(0),
+        error: if bytes.is_none() {
+            Some("key does not exist".into())
+        } else {
+            None
+        },
+    })
+}
+
+/// Filter INFO sections by section name or keyword search.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoSectionFiltered {
+    pub name: String,
+    pub entries: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoFilteredResult {
+    pub sections: Vec<InfoSectionFiltered>,
+    pub total_entries: usize,
+    pub matched_entries: usize,
+}
+
+pub async fn info_filtered<C>(
+    conn: &mut C,
+    section: Option<&str>,
+    search: Option<&str>,
+) -> Result<InfoFilteredResult, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let raw = fetch_info(conn, section).await?;
+    let sections = parse_info_sections(&raw);
+    let search_lower = search.map(|s| s.to_lowercase());
+
+    let total_entries: usize = sections.iter().map(|s| s.1.len()).sum();
+    let mut matched_count = 0;
+    let mut filtered_sections = Vec::new();
+
+    for (name, entries) in &sections {
+        let mut filtered = Vec::new();
+        for (k, v) in entries {
+            let is_match = match &search_lower {
+                Some(q) => k.to_lowercase().contains(q) || v.to_lowercase().contains(q),
+                None => true,
+            };
+            if is_match {
+                matched_count += 1;
+                filtered.push((k.clone(), v.clone()));
+            }
+        }
+
+        if !filtered.is_empty() {
+            filtered_sections.push(InfoSectionFiltered {
+                name: name.clone(),
+                entries: filtered,
+            });
+        }
+    }
+
+    Ok(InfoFilteredResult {
+        sections: filtered_sections,
+        total_entries,
+        matched_entries: matched_count,
+    })
+}
+
 /// Reject slowlog reset unless the frontend passes `confirm: true`.
 pub fn ensure_slowlog_reset_confirmed(confirm: bool) -> Result<(), String> {
     if !confirm {
@@ -358,5 +449,52 @@ mod tests {
         ])]);
         let names = parse_module_names(&raw).unwrap();
         assert_eq!(names, vec!["ReJSON".to_string()]);
+    }
+
+    #[test]
+    fn parse_info_sections_filter_by_search() {
+        let raw = "# Server\r\nredis_version:7.0.0\r\nos:Linux\r\n# Memory\r\nused_memory:100\r\nused_memory_rss:200\r\n";
+        let sections = parse_info_sections(raw);
+        // Simulate search filter
+        let q = "memory".to_lowercase();
+        let mut matched = 0;
+        let mut result = Vec::new();
+        for (name, entries) in &sections {
+            let filtered: Vec<(String, String)> = entries
+                .iter()
+                .filter(|(k, v)| {
+                    let m = k.to_lowercase().contains(&q) || v.to_lowercase().contains(&q);
+                    if m {
+                        matched += 1;
+                    }
+                    m
+                })
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                result.push((name.clone(), filtered));
+            }
+        }
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "Memory");
+        assert_eq!(result[0].1.len(), 2);
+        assert_eq!(matched, 2);
+    }
+
+    #[test]
+    fn parse_info_sections_search_by_value() {
+        let raw =
+            "# Server\r\nredis_version:7.0.0\r\nos:Linux\r\n# Clients\r\nconnected_clients:5\r\n";
+        let sections = parse_info_sections(raw);
+        let q = "linux".to_lowercase();
+        let mut matched = 0;
+        for (_name, entries) in &sections {
+            for (_k, v) in entries {
+                if v.to_lowercase().contains(&q) {
+                    matched += 1;
+                }
+            }
+        }
+        assert_eq!(matched, 1);
     }
 }

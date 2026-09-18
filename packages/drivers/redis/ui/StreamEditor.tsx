@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckSquare, Loader2, Plus, RefreshCw, Square, Trash2 } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  CheckSquare,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Square,
+  Trash2,
+} from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
@@ -21,7 +30,15 @@ interface StreamGroupInfo {
   name: string;
   consumers: number;
   pending: number;
+  lag: number | null;
   lastDeliveredId: string;
+}
+
+interface ConsumerInfo {
+  name: string;
+  pending: number;
+  idleMs: number;
+  deliveryCount: number;
 }
 
 interface XpendingEntry {
@@ -97,6 +114,34 @@ export async function invokeXgroupCreate(
   });
 }
 
+export async function invokeXinfoConsumers(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  group: string,
+): Promise<ConsumerInfo[]> {
+  return redisCommandInvoke('redis', 'xinfo_consumers', {
+    dbSessionId,
+    dbIndex,
+    key,
+    group,
+  });
+}
+
+export async function invokeStreamLag(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  group: string,
+): Promise<{ lag: number | null }> {
+  return redisCommandInvoke('redis', 'stream_lag', {
+    dbSessionId,
+    dbIndex,
+    key,
+    group,
+  });
+}
+
 export async function invokeXgroupDestroy(
   dbSessionId: string,
   dbIndex: number,
@@ -157,6 +202,8 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
   const [entries, setEntries] = useState<StreamEntry[]>([]);
   const [groups, setGroups] = useState<StreamGroupInfo[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [consumers, setConsumers] = useState<ConsumerInfo[]>([]);
   const [pending, setPending] = useState<XpendingEntry[]>([]);
   const [selectedPending, setSelectedPending] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -195,11 +242,26 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
     setError(null);
     try {
       const result = await invokeXinfoGroups(dbSessionId, dbIndex, redisKey);
-      setGroups(result);
-      if (selectedGroup && !result.some((g) => g.name === selectedGroup)) {
+      // Fetch lag for each group in parallel
+      const withLag = await Promise.all(
+        result.map(async (group) => {
+          try {
+            const lagResult = await invokeStreamLag(dbSessionId, dbIndex, redisKey, group.name);
+            return { ...group, lag: lagResult.lag };
+          } catch {
+            return { ...group, lag: null };
+          }
+        }),
+      );
+      setGroups(withLag);
+      if (selectedGroup && !withLag.some((g) => g.name === selectedGroup)) {
         setSelectedGroup(null);
         setPending([]);
         setSelectedPending(new Set());
+      }
+      if (expandedGroup && !withLag.some((g) => g.name === expandedGroup)) {
+        setExpandedGroup(null);
+        setConsumers([]);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -207,7 +269,7 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
     } finally {
       setLoading(false);
     }
-  }, [dbSessionId, dbIndex, redisKey, selectedGroup]);
+  }, [dbSessionId, dbIndex, redisKey, selectedGroup, expandedGroup]);
 
   const loadPending = useCallback(
     async (group: string) => {
@@ -222,6 +284,19 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
         setPending([]);
       } finally {
         setBusy(false);
+      }
+    },
+    [dbSessionId, dbIndex, redisKey],
+  );
+
+  const loadConsumers = useCallback(
+    async (group: string) => {
+      try {
+        const result = await invokeXinfoConsumers(dbSessionId, dbIndex, redisKey, group);
+        setConsumers(result);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setConsumers([]);
       }
     },
     [dbSessionId, dbIndex, redisKey],
@@ -243,6 +318,14 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
       setSelectedPending(new Set());
     }
   }, [selectedGroup, loadPending]);
+
+  useEffect(() => {
+    if (expandedGroup) {
+      void loadConsumers(expandedGroup);
+    } else {
+      setConsumers([]);
+    }
+  }, [expandedGroup, loadConsumers]);
 
   const runAction = useCallback(async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -374,6 +457,7 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-edge bg-surface-alt text-left">
+                <th className="w-6 px-2 py-1.5" />
                 <th className="px-2 py-1.5 font-medium text-fg-muted">
                   {t('redis.streamGroupName')}
                 </th>
@@ -383,6 +467,7 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
                 <th className="px-2 py-1.5 font-medium text-fg-muted">
                   {t('redis.streamPending')}
                 </th>
+                <th className="px-2 py-1.5 font-medium text-fg-muted">{t('redis.streamLag')}</th>
                 <th className="px-2 py-1.5 font-medium text-fg-muted">
                   {t('redis.streamLastDeliveredId')}
                 </th>
@@ -390,42 +475,125 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey }: StreamEditorPro
               </tr>
             </thead>
             <tbody>
-              {groups.map((group) => (
-                <tr
-                  key={group.name}
-                  className={cn(
-                    'border-b border-edge cursor-pointer',
-                    selectedGroup === group.name && 'bg-accent/5',
-                  )}
-                  onClick={() => setSelectedGroup(group.name)}
-                >
-                  <td className="px-2 py-1.5 font-mono text-fg-secondary">{group.name}</td>
-                  <td className="px-2 py-1.5 text-fg-secondary">{group.consumers}</td>
-                  <td className="px-2 py-1.5 text-fg-secondary">{group.pending}</td>
-                  <td className="px-2 py-1.5 font-mono text-fg-secondary">
-                    {group.lastDeliveredId || '—'}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <button
-                      type="button"
-                      className="rounded p-1 text-danger hover:bg-danger/10"
-                      title={t('redis.streamDestroyGroup')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void runAction(async () => {
-                          await invokeXgroupDestroy(dbSessionId, dbIndex, redisKey, group.name);
-                          if (selectedGroup === group.name) {
-                            setSelectedGroup(null);
-                          }
-                          await loadGroups();
-                        });
-                      }}
+              {groups.map((group) => {
+                const isExpanded = expandedGroup === group.name;
+                return (
+                  <Fragment key={group.name}>
+                    <tr
+                      className={cn(
+                        'border-b border-edge cursor-pointer',
+                        selectedGroup === group.name && 'bg-accent/5',
+                      )}
+                      onClick={() => setSelectedGroup(group.name)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      <td className="px-2 py-1.5">
+                        <button
+                          type="button"
+                          className="text-fg-muted hover:text-fg"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedGroup(isExpanded ? null : group.name);
+                          }}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1.5 font-mono text-fg-secondary">{group.name}</td>
+                      <td className="px-2 py-1.5 text-fg-secondary">{group.consumers}</td>
+                      <td className="px-2 py-1.5 text-fg-secondary">{group.pending}</td>
+                      <td className="px-2 py-1.5 text-fg-secondary">
+                        {group.lag != null ? group.lag : '—'}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono text-fg-secondary">
+                        {group.lastDeliveredId || '—'}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <button
+                          type="button"
+                          className="rounded p-1 text-danger hover:bg-danger/10"
+                          title={t('redis.streamDestroyGroup')}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runAction(async () => {
+                              await invokeXgroupDestroy(
+                                dbSessionId,
+                                dbIndex,
+                                redisKey,
+                                group.name,
+                              );
+                              if (selectedGroup === group.name) {
+                                setSelectedGroup(null);
+                              }
+                              if (expandedGroup === group.name) {
+                                setExpandedGroup(null);
+                              }
+                              await loadGroups();
+                            });
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="border-b border-edge">
+                        <td colSpan={7} className="px-2 py-2">
+                          <div className="ml-6 rounded-md border border-edge bg-surface-alt p-2">
+                            <p className="mb-1 text-xs font-medium text-fg-muted">
+                              {t('redis.streamConsumers')}
+                            </p>
+                            <table className="w-full border-collapse">
+                              <thead>
+                                <tr className="border-b border-edge text-left">
+                                  <th className="px-2 py-1 font-medium text-fg-muted">
+                                    {t('redis.streamConsumerName')}
+                                  </th>
+                                  <th className="px-2 py-1 font-medium text-fg-muted">
+                                    {t('redis.streamPending')}
+                                  </th>
+                                  <th className="px-2 py-1 font-medium text-fg-muted">
+                                    {t('redis.streamIdleMs')}
+                                  </th>
+                                  <th className="px-2 py-1 font-medium text-fg-muted">
+                                    {t('redis.streamDeliveryCount')}
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {consumers.map((consumer) => (
+                                  <tr key={consumer.name} className="border-b border-edge">
+                                    <td className="px-2 py-1 font-mono text-fg-secondary">
+                                      {consumer.name}
+                                    </td>
+                                    <td className="px-2 py-1 text-fg-secondary">
+                                      {consumer.pending}
+                                    </td>
+                                    <td className="px-2 py-1 text-fg-secondary">
+                                      {consumer.idleMs}
+                                    </td>
+                                    <td className="px-2 py-1 text-fg-secondary">
+                                      {consumer.deliveryCount}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {consumers.length === 0 && (
+                              <p className="text-xs text-fg-muted">
+                                {t('redis.streamConsumersEmpty')}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           {!loading && groups.length === 0 && (
