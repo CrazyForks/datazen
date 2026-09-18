@@ -166,6 +166,15 @@ Rust 侧为 `packages/driver-api` 的 `supports_offset()`（默认 `true`，
 
 ---
 
+## P2-5 `e2e/specs/er-diagram.ts` ER-008（PNG 导出）在 HEAD 即失败
+
+**现象**：`Error: ER PNG export did not write <temp>.png`，稳定复现，非抖动。
+
+**已核实与近期改动无关**：在改动前的代码上（`git stash` 后重新构建）跑该 spec 同样
+7 passing / 1 failing，失败项就是 ER-008。
+
+**影响**：ER spec 无法作为「全绿」验收依据；新增的 ER-009（推测关系）不受影响。
+
 ## P2 — 工程体验
 
 ### P2-1 全量 E2E 构建必以 DMG 失败收尾，导致测试被跳过

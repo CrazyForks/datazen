@@ -188,6 +188,14 @@ prediction** (on by default). The switch governs inference only: declared
 constraints are still detected and joined with prediction off, because that is
 what the database states rather than a guess.
 
+The **ER diagram** uses the same engine, and is the cheapest place to: it already
+loads a full schema per table, so it predicts over a whole database with no extra
+IPC. Inferred edges are dashed and amber, never animated, and the stats bar
+reports how many were inferred rather than folding them into the declared total.
+Because the ER diagram runs prediction across every table, the engine's search is
+indexed rather than scanned — see the note in `predictRelations.ts`; the naive
+version measured ~15s on a 500-table schema, the indexed one ~12ms.
+
 Two tiers, because confidence varies:
 
 - **Applied automatically** — a high-confidence, unambiguous relationship joins

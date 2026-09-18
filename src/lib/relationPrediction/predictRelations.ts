@@ -3,8 +3,8 @@
  *
  * Answers "which tables are related?" for schemas that never declared a
  * constraint. It is pure: metadata in, ranked candidates out, no IPC and no data
- * access — so it is cheap enough to run on every selection change and testable
- * without a database.
+ * access — so it is testable without a database and safe to run on a whole
+ * database, which is what the ER diagram asks of it.
  *
  * Design constraints, each one a defence against a wrong JOIN:
  *
@@ -23,18 +23,29 @@
  * The data-overlap probe is deliberately absent: it needs to query the database,
  * and it is the part that can hurt a production server. It belongs behind an
  * explicit user action, layered on top of these structural candidates.
+ *
+ * ## Why names are indexed rather than scanned
+ *
+ * Every naming rule here is "does this column name *spell out* some target key?".
+ * Asking that question by comparing each source column against every target key is
+ * quadratic, and measured at ~15s for a 500-table schema — unusable for an ER
+ * diagram that runs it over a whole database. Instead the question is inverted:
+ * each target key registers the column names that would refer to it, and a source
+ * column is a single hash lookup. The rules are unchanged; only the direction of
+ * the search is.
  */
 
 import {
   isGenericKeyName,
   normalizeDataType,
   normalizeIdentifier,
-  qualifiedKeyNameForms,
   singularize,
   typeFamily,
+  type TypeFamily,
 } from './normalize';
 import type {
   PredictionEvidence,
+  PredictionEvidenceCode,
   PredictionOptions,
   PredictionTable,
   RelationCandidate,
@@ -60,9 +71,25 @@ export const DEFAULT_AMBIGUITY_MARGIN = 0.15;
 
 /** A key a relationship may point at: the primary key or a unique index. */
 interface TargetKey {
-  table: PredictionTable;
   columns: readonly string[];
   isPrimaryKey: boolean;
+}
+
+/** One column of one target key, with everything needed to score against it. */
+interface TargetColumnRef {
+  tableId: string;
+  tableName: string;
+  keyIndex: number;
+  columnName: string;
+  typeFamily: TypeFamily;
+  normalizedDataType: string;
+}
+
+/** A registered way of naming a target column, and what that naming is worth. */
+interface IndexEntry {
+  ref: TargetColumnRef;
+  weight: number;
+  code: PredictionEvidenceCode;
 }
 
 /** One scored column-pair match, before grouping. */
@@ -70,8 +97,8 @@ interface PairMatch {
   source: PredictionTable;
   sourceColumn: string;
   target: PredictionTable;
-  targetColumn: string;
   targetKey: TargetKey;
+  targetColumn: string;
   score: number;
   evidence: PredictionEvidence[];
 }
@@ -90,7 +117,7 @@ function collectTargetKeys(tables: readonly PredictionTable[]): Map<string, Targ
   for (const table of tables) {
     const tableKeys: TargetKey[] = [];
     if (table.primaryKey.length > 0) {
-      tableKeys.push({ table, columns: table.primaryKey, isPrimaryKey: true });
+      tableKeys.push({ columns: table.primaryKey, isPrimaryKey: true });
     }
     for (const set of table.uniqueColumnSets) {
       if (set.length === 0) continue;
@@ -99,11 +126,58 @@ function collectTargetKeys(tables: readonly PredictionTable[]): Map<string, Targ
         set.length === table.primaryKey.length &&
         set.every((column) => table.primaryKey.includes(column));
       if (isSameAsPk) continue;
-      tableKeys.push({ table, columns: set, isPrimaryKey: false });
+      tableKeys.push({ columns: set, isPrimaryKey: false });
     }
     keys.set(table.id, tableKeys);
   }
   return keys;
+}
+
+/** Word-boundary suffixes of a table's stem, longest last: `a_b_c` → `b_c`, `c`. */
+function stemSuffixes(stem: string): string[] {
+  const words = stem.split('_');
+  const suffixes: string[] = [];
+  for (let i = 1; i < words.length; i++) suffixes.push(words.slice(i).join('_'));
+  return suffixes;
+}
+
+/**
+ * Register every column name that would refer to `ref`.
+ *
+ * The rules, in descending strength:
+ *
+ * - `{table}_{key}` — the convention stated in full.
+ * - `{stem}_{key}` — the same, singularized (`users` → `user_id`).
+ * - `{key}` alone — a domain-named key referenced by its own name
+ *   (`users.user_id` ← `user_id`). Generic names are excluded: every table has an
+ *   `id`, so matching on it would relate everything to everything.
+ * - `{stemSuffix}_{key}` — a prefixed table (`app_user`) referenced by the
+ *   unprefixed word (`user_id`). Weaker, because two prefixed tables can share
+ *   that word — which is what the ambiguity check exists for.
+ */
+function registerTargetColumn(index: Map<string, IndexEntry[]>, ref: TargetColumnRef): void {
+  const add = (name: string, weight: number, code: PredictionEvidenceCode) => {
+    if (!name) return;
+    const entry: IndexEntry = { ref, weight, code };
+    const bucket = index.get(name);
+    if (bucket) bucket.push(entry);
+    else index.set(name, [entry]);
+  };
+
+  const table = normalizeIdentifier(ref.tableName);
+  const stem = normalizeIdentifier(singularize(ref.tableName));
+  const key = normalizeIdentifier(ref.columnName);
+
+  add(`${table}_${key}`, EVIDENCE_WEIGHTS.nameMatchesTable, 'name-matches-table');
+  if (stem !== table) {
+    add(`${stem}_${key}`, EVIDENCE_WEIGHTS.nameMatchesTableStem, 'name-matches-table-stem');
+  }
+  if (!isGenericKeyName(ref.columnName)) {
+    add(key, EVIDENCE_WEIGHTS.nameMatchesKey, 'name-matches-key');
+  }
+  for (const suffix of stemSuffixes(stem)) {
+    add(`${suffix}_${key}`, EVIDENCE_WEIGHTS.nameMatchesPrefixedTable, 'name-matches-table-stem');
+  }
 }
 
 /** Columns already covered by a declared foreign key on this table. */
@@ -113,154 +187,6 @@ function declaredForeignKeyColumns(table: PredictionTable): Set<string> {
     for (const column of fk.columns) covered.add(normalizeIdentifier(column));
   }
   return covered;
-}
-
-/**
- * Score one source column against one column of a target key.
- *
- * Returns `null` when no naming pattern applies or the types are incompatible —
- * a relationship must be *named*, not merely typed.
- */
-function scoreAgainstKeyColumn(
-  source: PredictionTable,
-  column: PredictionTable['columns'][number],
-  targetKey: TargetKey,
-  targetColumnName: string,
-): { nameWeight: number; targetColumn: string; evidence: PredictionEvidence[] } | null {
-  const sourceName = normalizeIdentifier(column.name);
-  if (!sourceName) return null;
-
-  const targetColumn = targetKey.table.columns.find(
-    (candidate) => normalizeIdentifier(candidate.name) === normalizeIdentifier(targetColumnName),
-  );
-  if (!targetColumn) return null;
-
-  // ── Type gate: families must agree, or the relationship is impossible ──
-  if (typeFamily(column.dataType) !== typeFamily(targetColumn.dataType)) return null;
-
-  const found: PredictionEvidence[] = [];
-  const normalizedKeyColumn = normalizeIdentifier(targetColumnName);
-
-  // ── Naming evidence ──
-  const forms = qualifiedKeyNameForms(targetKey.table.name, targetColumnName);
-  const stem = normalizeIdentifier(singularize(targetKey.table.name));
-
-  let nameWeight = 0;
-  if (forms.includes(sourceName)) {
-    const isStemForm = sourceName === `${stem}_${normalizedKeyColumn}`;
-    nameWeight = EVIDENCE_WEIGHTS.nameMatchesTable;
-    found.push(
-      evidence(
-        isStemForm ? 'name-matches-table-stem' : 'name-matches-table',
-        nameWeight,
-        `${column.name} names ${targetKey.table.name}.${targetColumnName}`,
-      ),
-    );
-  } else if (forms.some((form) => sourceName.endsWith(`_${form}`))) {
-    // `t_user_id` and friends: a short prefix on an otherwise exact form.
-    nameWeight = EVIDENCE_WEIGHTS.nameSuffixMatchesTable;
-    found.push(
-      evidence(
-        'name-suffix-matches-table',
-        nameWeight,
-        `${column.name} ends with a name for ${targetKey.table.name}.${targetColumnName}`,
-      ),
-    );
-  } else if (
-    // `app_user` referenced by `user_id`: the column names the table's
-    // distinguishing word, while the table carries a prefix the column drops.
-    // Weaker than an exact match, because two prefixed tables can share that word
-    // — which is exactly the case the ambiguity check exists for.
-    sourceName.endsWith(`_${normalizedKeyColumn}`) &&
-    stem.endsWith(`_${sourceName.slice(0, -(normalizedKeyColumn.length + 1))}`) &&
-    sourceName !== normalizedKeyColumn
-  ) {
-    nameWeight = EVIDENCE_WEIGHTS.nameMatchesPrefixedTable;
-    found.push(
-      evidence(
-        'name-matches-table-stem',
-        nameWeight,
-        `${column.name} names the distinguishing word of ${targetKey.table.name}.${targetColumnName}`,
-      ),
-    );
-  } else if (
-    !isGenericKeyName(targetColumnName) &&
-    sourceName === normalizedKeyColumn &&
-    source.id !== targetKey.table.id
-  ) {
-    // A domain-named key referenced by its own name (`user_id` → `users.user_id`).
-    // Generic `id` is excluded: every table has one, so matching on it would
-    // relate everything to everything.
-    nameWeight = EVIDENCE_WEIGHTS.nameMatchesKey;
-    found.push(
-      evidence(
-        'name-matches-key',
-        nameWeight,
-        `${column.name} shares the key name ${targetColumnName}`,
-      ),
-    );
-  }
-
-  if (nameWeight === 0) return null;
-
-  // ── Structural evidence ──
-  const keyWeight = targetKey.isPrimaryKey
-    ? EVIDENCE_WEIGHTS.targetIsPrimaryKey
-    : EVIDENCE_WEIGHTS.targetIsUnique;
-  found.push(
-    evidence(
-      targetKey.isPrimaryKey ? 'target-is-primary-key' : 'target-is-unique',
-      keyWeight,
-      `${targetKey.table.name}.${targetColumnName} is ${
-        targetKey.isPrimaryKey ? 'the primary key' : 'unique'
-      }`,
-    ),
-  );
-
-  if (normalizeDataType(column.dataType) === normalizeDataType(targetColumn.dataType)) {
-    found.push(evidence('type-exact', EVIDENCE_WEIGHTS.typeExact, `type ${column.dataType}`));
-  } else {
-    found.push(
-      evidence(
-        'type-compatible',
-        0,
-        `${column.dataType} is compatible with ${targetColumn.dataType}`,
-      ),
-    );
-  }
-
-  if (column.indexed) {
-    found.push(evidence('source-indexed', EVIDENCE_WEIGHTS.sourceIndexed, 'column is indexed'));
-  }
-
-  return { nameWeight, targetColumn: targetColumnName, evidence: found };
-}
-
-/**
- * Score one source column against a whole target key.
- *
- * A composite key is tried column by column — `parent_no` names the `no` part of
- * `parents(id, no)` — and the strongest naming match wins. The grouping pass then
- * reassembles the pairs that belong to the same key.
- */
-function scoreColumnAgainstKey(
-  source: PredictionTable,
-  column: PredictionTable['columns'][number],
-  targetKey: TargetKey,
-): { score: number; targetColumn: string; evidence: PredictionEvidence[] } | null {
-  let best: ReturnType<typeof scoreAgainstKeyColumn> = null;
-
-  for (const keyColumn of targetKey.columns) {
-    const attempt = scoreAgainstKeyColumn(source, column, targetKey, keyColumn);
-    if (!attempt) continue;
-    if (!best || attempt.nameWeight > best.nameWeight) best = attempt;
-  }
-  if (!best) return null;
-
-  // Recompute the total from the winning attempt's own evidence so the score and
-  // the explanation can never disagree.
-  const score = best.evidence.reduce((total, item) => total + item.weight, 0);
-  return { score, targetColumn: best.targetColumn, evidence: best.evidence };
 }
 
 /** Deterministic candidate id, stable across re-prediction. */
@@ -289,32 +215,140 @@ export function predictRelations(
   const ambiguityMargin = options.ambiguityMargin ?? DEFAULT_AMBIGUITY_MARGIN;
   const allowCrossSchema = options.allowCrossSchema ?? false;
 
+  const tablesById = new Map(tables.map((table) => [table.id, table]));
   const keysByTable = collectTargetKeys(tables);
+  const schemaOf = new Map(tables.map((table) => [table.id, table.schema]));
+
+  // ── Build the reverse index: "column name" → "what it would refer to" ──
+  const index = new Map<string, IndexEntry[]>();
+  for (const table of tables) {
+    const tableKeys = keysByTable.get(table.id) ?? [];
+    tableKeys.forEach((targetKey, keyIndex) => {
+      for (const keyColumn of targetKey.columns) {
+        const normalizedKeyColumn = normalizeIdentifier(keyColumn);
+        const column = table.columns.find(
+          (candidate) => normalizeIdentifier(candidate.name) === normalizedKeyColumn,
+        );
+        // A key naming a column the table does not report cannot be targeted.
+        if (!column) continue;
+        registerTargetColumn(index, {
+          tableId: table.id,
+          tableName: table.name,
+          keyIndex,
+          columnName: keyColumn,
+          typeFamily: typeFamily(column.dataType),
+          normalizedDataType: normalizeDataType(column.dataType),
+        });
+      }
+    });
+  }
+
+  // ── Match each source column against the index ──
   const matches: PairMatch[] = [];
 
   for (const source of tables) {
     const covered = declaredForeignKeyColumns(source);
+
     for (const column of source.columns) {
       // Ground truth first: a declared constraint is not something to predict.
       if (covered.has(normalizeIdentifier(column.name))) continue;
 
-      for (const target of tables) {
-        if (target.id === source.id) continue;
-        if (!allowCrossSchema && target.schema !== source.schema) continue;
+      const sourceName = normalizeIdentifier(column.name);
+      if (!sourceName) continue;
 
-        for (const targetKey of keysByTable.get(target.id) ?? []) {
-          const scored = scoreColumnAgainstKey(source, column, targetKey);
-          if (!scored) continue;
-          matches.push({
-            source,
-            sourceColumn: column.name,
-            target,
-            targetColumn: scored.targetColumn,
-            targetKey,
-            score: scored.score,
-            evidence: scored.evidence,
-          });
+      // An exact hit uses the weight the naming rule earned. Failing that, a
+      // prefix the column carries but the table does not (`t_user_id`) still
+      // names a target, at the weakest weight.
+      let entries = index.get(sourceName);
+      let weightOverride: number | null = null;
+      if (!entries || entries.length === 0) {
+        for (const suffix of stemSuffixes(sourceName)) {
+          const found = index.get(suffix);
+          if (found && found.length > 0) {
+            entries = found;
+            weightOverride = EVIDENCE_WEIGHTS.nameSuffixMatchesTable;
+            break;
+          }
         }
+      }
+      if (!entries || entries.length === 0) continue;
+
+      const sourceFamily = typeFamily(column.dataType);
+      const sourceNormalizedType = normalizeDataType(column.dataType);
+      // The same target key can be reachable by more than one registered name;
+      // only the strongest naming for each key is worth keeping.
+      const bestPerKey = new Map<string, { entry: IndexEntry; weight: number }>();
+
+      for (const entry of entries) {
+        const { ref } = entry;
+        if (ref.tableId === source.id) continue;
+        if (!allowCrossSchema && schemaOf.get(ref.tableId) !== source.schema) continue;
+        // ── Type gate: families must agree, or the relationship is impossible ──
+        if (ref.typeFamily !== sourceFamily) continue;
+
+        const weight =
+          weightOverride === null ? entry.weight : Math.min(entry.weight, weightOverride);
+        const dedupeKey = `${ref.tableId}\u0000${ref.keyIndex}\u0000${normalizeIdentifier(ref.columnName)}`;
+        const existing = bestPerKey.get(dedupeKey);
+        if (!existing || weight > existing.weight) bestPerKey.set(dedupeKey, { entry, weight });
+      }
+
+      for (const { entry, weight } of bestPerKey.values()) {
+        const { ref } = entry;
+        const target = tablesById.get(ref.tableId);
+        const targetKey = keysByTable.get(ref.tableId)?.[ref.keyIndex];
+        if (!target || !targetKey) continue;
+
+        const found: PredictionEvidence[] = [
+          evidence(
+            entry.code,
+            weight,
+            entry.code === 'name-matches-key'
+              ? `${column.name} shares the key name ${ref.columnName}`
+              : entry.code === 'name-matches-table'
+                ? `${column.name} names ${ref.tableName}.${ref.columnName}`
+                : `${column.name} names the distinguishing word of ${ref.tableName}.${ref.columnName}`,
+          ),
+        ];
+
+        found.push(
+          evidence(
+            targetKey.isPrimaryKey ? 'target-is-primary-key' : 'target-is-unique',
+            targetKey.isPrimaryKey
+              ? EVIDENCE_WEIGHTS.targetIsPrimaryKey
+              : EVIDENCE_WEIGHTS.targetIsUnique,
+            `${ref.tableName}.${ref.columnName} is ${
+              targetKey.isPrimaryKey ? 'the primary key' : 'unique'
+            }`,
+          ),
+        );
+
+        if (sourceNormalizedType === ref.normalizedDataType) {
+          found.push(evidence('type-exact', EVIDENCE_WEIGHTS.typeExact, `type ${column.dataType}`));
+        } else {
+          found.push(
+            evidence('type-compatible', 0, `${column.dataType} is compatible with the target key`),
+          );
+        }
+
+        if (column.indexed) {
+          found.push(
+            evidence('source-indexed', EVIDENCE_WEIGHTS.sourceIndexed, 'column is indexed'),
+          );
+        }
+
+        // Recompute the total from the evidence itself so the score and the
+        // explanation can never disagree.
+        const score = found.reduce((total, item) => total + item.weight, 0);
+        matches.push({
+          source,
+          sourceColumn: column.name,
+          target,
+          targetKey,
+          targetColumn: ref.columnName,
+          score,
+          evidence: found,
+        });
       }
     }
   }
@@ -347,8 +381,8 @@ export function predictRelations(
   const grouped = new Map<string, PairMatch[]>();
   const order: string[] = [];
   for (const match of matches) {
-    const compositeKey = match.targetKey.columns.length > 1;
-    const groupId = compositeKey
+    const composite = match.targetKey.columns.length > 1;
+    const groupId = composite
       ? `composite\u0000${match.source.id}\u0000${match.target.id}\u0000${match.targetKey.columns.join(',')}`
       : `pair\u0000${match.source.id}\u0000${match.target.id}\u0000${normalizeIdentifier(match.sourceColumn)}`;
     const bucket = grouped.get(groupId);
@@ -364,8 +398,7 @@ export function predictRelations(
     const group = grouped.get(groupId)!;
     // A composite relationship is only complete when every column of the key is
     // covered; a partial match would generate an ON clause missing a predicate.
-    const isComposite = groupId.startsWith('composite\u0000');
-    if (isComposite) {
+    if (groupId.startsWith('composite\u0000')) {
       const matched = new Set(group.map((m) => normalizeIdentifier(m.targetColumn)));
       const complete = group[0]!.targetKey.columns.every((column) =>
         matched.has(normalizeIdentifier(column)),
