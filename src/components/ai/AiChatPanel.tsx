@@ -35,6 +35,8 @@ interface AiChatPanelProps {
   database?: string;
   sqlDialect?: string;
   onInsertSql?: (sql: string) => void;
+  onRunCode?: (code: string, language: string) => void;
+  onNewQuery?: (code: string) => void;
   /** S3-B2: pending draft request to prefill into the chat input. */
   draftRequest?: AiChatDraftRequest | null;
   /** S3-B2: called after the draft has been written into the textarea. */
@@ -51,6 +53,8 @@ export function AiChatPanel({
   database,
   sqlDialect,
   onInsertSql,
+  onRunCode,
+  onNewQuery,
   draftRequest,
   onDraftConsumed,
 }: AiChatPanelProps) {
@@ -308,6 +312,8 @@ export function AiChatPanel({
                 message={msg}
                 sqlDialect={sqlDialect}
                 onInsertSql={onInsertSql}
+                onRunCode={onRunCode}
+                onNewQuery={onNewQuery}
                 onAnswerQuestions={(answers) => {
                   void sendMessage({ dbSessionId, database, content: answers });
                 }}
@@ -426,6 +432,8 @@ function ChatBubble({
   isStreaming,
   sqlDialect,
   onInsertSql,
+  onRunCode,
+  onNewQuery,
   onAnswerQuestions,
   isLastAssistant,
 }: {
@@ -433,6 +441,8 @@ function ChatBubble({
   isStreaming?: boolean;
   sqlDialect?: string;
   onInsertSql?: (sql: string) => void;
+  onRunCode?: (code: string, language: string) => void;
+  onNewQuery?: (code: string) => void;
   onAnswerQuestions?: (formatted: string) => void;
   isLastAssistant?: boolean;
 }) {
@@ -516,6 +526,8 @@ function ChatBubble({
               content={message.content}
               sqlDialect={sqlDialect}
               onInsertSql={onInsertSql}
+              onRunCode={onRunCode}
+              onNewQuery={onNewQuery}
               isStreaming={isStreaming}
             />
           ))}

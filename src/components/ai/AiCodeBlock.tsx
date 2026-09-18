@@ -1,11 +1,13 @@
 import { useCallback, useState } from 'react';
 import { Check, Copy, Code2, Play, Plus, Maximize2, Minimize2 } from 'lucide-react';
 import { SqlCodeBlock } from '../SqlCodeBlock';
+import { Select } from '../ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { isSqlCodeBlock } from '../../lib/aiMessageBlocks';
+import type { SelectOption } from '../ui/Select';
 
-const SQL_DIALECTS = [
+const SQL_DIALECTS: readonly SelectOption[] = [
   { value: 'postgresql', label: 'PostgreSQL' },
   { value: 'mysql', label: 'MySQL' },
   { value: 'sqlite', label: 'SQLite' },
@@ -13,7 +15,7 @@ const SQL_DIALECTS = [
   { value: 'sqlserver', label: 'SQL Server' },
   { value: 'oracle', label: 'Oracle' },
   { value: 'clickhouse', label: 'ClickHouse' },
-] as const;
+];
 
 interface AiCodeBlockProps {
   language: string;
@@ -61,12 +63,9 @@ export function AiCodeBlock({
     setFullscreen((prev) => !prev);
   }, []);
 
-  const handleDialectChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedDialect(e.target.value);
-    },
-    [],
-  );
+  const handleDialectChange = useCallback((value: string) => {
+    setSelectedDialect(value);
+  }, []);
 
   if (fullscreen) {
     return (
@@ -80,18 +79,14 @@ export function AiCodeBlock({
             <Code2 className="h-3.5 w-3.5 text-fg-muted" />
             <span className="text-xs font-medium uppercase text-fg-muted">{label}</span>
             {isSql && (
-              <select
+              <Select
                 value={selectedDialect}
+                options={SQL_DIALECTS}
                 onChange={handleDialectChange}
-                className="rounded border border-edge bg-surface px-1.5 py-0.5 text-[10px] text-fg-secondary outline-none"
-                data-testid="ai-code-dialect-select"
-              >
-                {SQL_DIALECTS.map((d) => (
-                  <option key={d.value} value={d.value}>
-                    {d.label}
-                  </option>
-                ))}
-              </select>
+                className="h-7 w-32 text-[10px]"
+                title={t('chat.selectDialect')}
+                triggerDataAttrs={{ 'data-testid': 'ai-code-dialect-select' }}
+              />
             )}
           </div>
           <div className="flex items-center gap-1">
@@ -175,19 +170,14 @@ export function AiCodeBlock({
           <Code2 className="h-3 w-3 shrink-0 text-fg-muted" />
           <span className="truncate text-[10px] font-medium uppercase text-fg-muted">{label}</span>
           {isSql && (
-            <select
+            <Select
               value={selectedDialect}
+              options={SQL_DIALECTS}
               onChange={handleDialectChange}
-              className="rounded border border-edge bg-surface px-1 py-0.5 text-[9px] text-fg-secondary outline-none"
-              data-testid="ai-code-dialect-select"
+              className="h-6 w-28 text-[9px]"
               title={t('chat.selectDialect')}
-            >
-              {SQL_DIALECTS.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
+              triggerDataAttrs={{ 'data-testid': 'ai-code-dialect-select' }}
+            />
           )}
         </div>
         {showActions && !isStreaming && (
