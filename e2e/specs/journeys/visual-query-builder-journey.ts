@@ -45,6 +45,21 @@ import {
 
 const TABLE_NAME = `e2e_qb_journey_${Date.now().toString(36)}`;
 
+/**
+ * The id the builder derives for an auto-detected relationship.
+ *
+ * Mirrors `groupRelationsIntoJoins`: one join per table pair, with every column
+ * pair folded into it.
+ */
+function autoJoinId(
+  fromTable: string,
+  fromColumn: string,
+  toTable: string,
+  toColumn: string,
+): string {
+  return `auto-${fromTable}-${toTable}-${fromColumn}=${toColumn}`;
+}
+
 /** Parent / child pair with a real FK, used to exercise auto-detected JOINs. */
 const PARENT_TABLE = `${TABLE_NAME}_parent`;
 const CHILD_TABLE = `${TABLE_NAME}_child`;
@@ -666,7 +681,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await browser.waitUntil(
       async () =>
         (await countByTestId(
-          'qb-join-line-auto-' + CHILD_TABLE + '.parent_id-' + PARENT_TABLE + '.id',
+          `qb-join-line-${autoJoinId(CHILD_TABLE, 'parent_id', PARENT_TABLE, 'id')}`,
         )) === 1,
       { timeout: 10000, timeoutMsg: '未渲染自动检测的 JOIN 连线' },
     );
@@ -684,7 +699,7 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
 
     // Removing the auto JOIN must drop it from the SQL again (and must not be
     // immediately re-detected).
-    const joinId = `auto-${CHILD_TABLE}.parent_id-${PARENT_TABLE}.id`;
+    const joinId = autoJoinId(CHILD_TABLE, 'parent_id', PARENT_TABLE, 'id');
     expectTrue(await clickByTestId(`qb-join-remove-${joinId}`), '未找到自动检测 JOIN 的移除按钮');
     await browser.pause(500);
 

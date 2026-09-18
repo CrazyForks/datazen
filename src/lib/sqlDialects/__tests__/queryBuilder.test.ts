@@ -262,6 +262,97 @@ describe('getQbDialectAdapter', () => {
 
 // ── generateJoinClause ────────────────────────────────────────
 
+describe('generateJoinClause composite handling', () => {
+  const pg = getQbDialectAdapter('postgresql');
+
+  const join = (over: Partial<QbJoin>): QbJoin => ({
+    id: 'j',
+    type: 'INNER',
+    leftTable: 'lines',
+    rightTable: 'orders',
+    columnPairs: [{ left: 'order_id', right: 'id' }],
+    isManual: false,
+    ...over,
+  });
+
+  it('merges several entries for one table pair into a single JOIN', () => {
+    // Emitting one JOIN per entry references `orders` twice, which PostgreSQL and
+    // MySQL reject: 'table name "orders" specified more than once'.
+    const sql = generateJoinClause(
+      [
+        join({ columnPairs: [{ left: 'order_id', right: 'id' }] }),
+        join({ columnPairs: [{ left: 'line_no', right: 'no' }] }),
+      ],
+      {},
+      pg,
+    );
+    expect(sql.match(/JOIN/g)).toHaveLength(1);
+    expect(sql).toContain(
+      'INNER JOIN "orders" ON "lines"."order_id" = "orders"."id" AND "lines"."line_no" = "orders"."no"',
+    );
+  });
+
+  it('ANDs the pairs of one composite join', () => {
+    const sql = generateJoinClause(
+      [
+        join({
+          columnPairs: [
+            { left: 'order_id', right: 'id' },
+            { left: 'line_no', right: 'no' },
+          ],
+        }),
+      ],
+      {},
+      pg,
+    );
+    expect(sql).toContain(
+      'ON "lines"."order_id" = "orders"."id" AND "lines"."line_no" = "orders"."no"',
+    );
+  });
+
+  it('keeps different join types on the same pair separate', () => {
+    // An INNER and a LEFT join are different relationships; merging them would
+    // silently change the result set.
+    const sql = generateJoinClause(
+      [
+        join({ id: 'a', type: 'INNER' }),
+        join({ id: 'b', type: 'LEFT', columnPairs: [{ left: 'line_no', right: 'no' }] }),
+      ],
+      {},
+      pg,
+    );
+    expect(sql.match(/JOIN/g)).toHaveLength(2);
+    expect(sql).toContain('INNER JOIN');
+    expect(sql).toContain('LEFT JOIN');
+  });
+
+  it('keeps different table pairs separate', () => {
+    const sql = generateJoinClause(
+      [join({ id: 'a' }), join({ id: 'b', leftTable: 'lines', rightTable: 'products' })],
+      {},
+      pg,
+    );
+    expect(sql.match(/JOIN/g)).toHaveLength(2);
+  });
+
+  it('applies the left-table alias to every pair of a composite join', () => {
+    const sql = generateJoinClause(
+      [
+        join({
+          columnPairs: [
+            { left: 'order_id', right: 'id' },
+            { left: 'line_no', right: 'no' },
+          ],
+        }),
+      ],
+      { lines: 'l' },
+      pg,
+    );
+    expect(sql).toContain('"l"."order_id" = "orders"."id"');
+    expect(sql).toContain('"l"."line_no" = "orders"."no"');
+  });
+});
+
 describe('generateJoinClause', () => {
   const pg = getQbDialectAdapter('postgresql');
   const mysql = getQbDialectAdapter('mysql');
@@ -276,9 +367,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'INNER',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: true,
       },
     ];
@@ -292,9 +382,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'LEFT',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: false,
       },
     ];
@@ -308,9 +397,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'RIGHT',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       },
     ];
@@ -324,9 +412,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'FULL',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       },
     ];
@@ -340,9 +427,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'INNER',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: true,
       },
     ];
@@ -356,18 +442,16 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       },
       {
         id: 'j2',
         type: 'LEFT',
         leftTable: 'b',
-        leftColumn: 'id',
         rightTable: 'c',
-        rightColumn: 'b_id',
+        columnPairs: [{ left: 'id', right: 'b_id' }],
         isManual: false,
       },
     ];
@@ -382,9 +466,8 @@ describe('generateJoinClause', () => {
         id: 'j1',
         type: 'INNER',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: true,
       },
     ];

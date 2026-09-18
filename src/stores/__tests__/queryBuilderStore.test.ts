@@ -23,9 +23,8 @@ function makeAutoJoin(): QbJoin {
     id: 'auto-users.id-orders.user_id',
     type: 'INNER',
     leftTable: 'users',
-    leftColumn: 'id',
     rightTable: 'orders',
-    rightColumn: 'user_id',
+    columnPairs: [{ left: 'id', right: 'user_id' }],
     isManual: false,
   };
 }
@@ -639,9 +638,8 @@ describe('queryBuilderStore', () => {
       store.addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       store.setTableAlias('users', 'u');
@@ -672,9 +670,8 @@ describe('queryBuilderStore', () => {
       useQueryBuilderStore.getState().addJoin({
         type: 'INNER',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: true,
       });
       const joins = getSnapshot().joins;
@@ -682,9 +679,9 @@ describe('queryBuilderStore', () => {
       expect(joins[0].id).toBeDefined();
       expect(joins[0].type).toBe('INNER');
       expect(joins[0].leftTable).toBe('users');
-      expect(joins[0].leftColumn).toBe('id');
+      expect(joins[0].columnPairs[0]!.left).toBe('id');
       expect(joins[0].rightTable).toBe('orders');
-      expect(joins[0].rightColumn).toBe('user_id');
+      expect(joins[0].columnPairs[0]!.right).toBe('user_id');
       expect(joins[0].isManual).toBe(true);
     });
 
@@ -693,17 +690,15 @@ describe('queryBuilderStore', () => {
       store.addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       store.addJoin({
         type: 'LEFT',
         leftTable: 'b',
-        leftColumn: 'id',
         rightTable: 'c',
-        rightColumn: 'b_id',
+        columnPairs: [{ left: 'id', right: 'b_id' }],
         isManual: false,
       });
       const joins = getSnapshot().joins;
@@ -720,9 +715,8 @@ describe('queryBuilderStore', () => {
       store.addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       const joinId = getSnapshot().joins[0].id;
@@ -734,9 +728,8 @@ describe('queryBuilderStore', () => {
       useQueryBuilderStore.getState().addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       useQueryBuilderStore.getState().removeJoin('nonexistent-id');
@@ -752,9 +745,8 @@ describe('queryBuilderStore', () => {
       store.addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       const joinId = getSnapshot().joins[0].id;
@@ -766,9 +758,8 @@ describe('queryBuilderStore', () => {
       useQueryBuilderStore.getState().addJoin({
         type: 'INNER',
         leftTable: 'a',
-        leftColumn: 'id',
         rightTable: 'b',
-        rightColumn: 'a_id',
+        columnPairs: [{ left: 'id', right: 'a_id' }],
         isManual: true,
       });
       useQueryBuilderStore.getState().updateJoinType('nonexistent-id', 'RIGHT');
@@ -818,9 +809,8 @@ describe('queryBuilderStore', () => {
         ...auto,
         id: 'manual-reversed',
         leftTable: auto.rightTable,
-        leftColumn: auto.rightColumn,
         rightTable: auto.leftTable,
-        rightColumn: auto.leftColumn,
+        columnPairs: auto.columnPairs.map((pair) => ({ left: pair.right, right: pair.left })),
         isManual: true,
       };
       expect(mergeJoins([reversed], [auto], [], {})).toEqual([reversed]);
@@ -832,9 +822,8 @@ describe('queryBuilderStore', () => {
         id: 'manual-2',
         type: 'INNER',
         leftTable: 'c',
-        leftColumn: 'id',
         rightTable: 'd',
-        rightColumn: 'c_id',
+        columnPairs: [{ left: 'id', right: 'c_id' }],
         isManual: true,
       };
       const merged = mergeJoins([manual], [auto], [], {});
@@ -893,9 +882,8 @@ describe('queryBuilderStore', () => {
       expect(joins[0]).toMatchObject({
         type: 'INNER',
         leftTable: 'users',
-        leftColumn: 'id',
         rightTable: 'orders',
-        rightColumn: 'user_id',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
         isManual: true,
       });
       expect(joins[0].id).toBeTruthy();

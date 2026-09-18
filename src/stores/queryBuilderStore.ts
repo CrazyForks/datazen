@@ -6,6 +6,7 @@ import type {
   QbSortItem,
   QbColumnSelection,
   QbGroupByItem,
+  QbColumnPair,
   QbJoin,
   QbJoinType,
 } from '../components/query-builder/types';
@@ -202,10 +203,18 @@ function removeGroupById(group: QbConditionGroup, id: string): QbConditionGroup 
   };
 }
 
-/** Order-insensitive identity of a join's column pair (ignores id/type/isManual). */
+/**
+ * Order-insensitive identity of a join (ignores id/type/isManual).
+ *
+ * Every column pair takes part: two joins between the same tables over different
+ * columns are different relationships, and collapsing them would let a manual
+ * join silently suppress an unrelated auto join.
+ */
 function joinPairKey(join: QbJoin): string {
-  const left = `${join.leftTable}\u0000${join.leftColumn}`;
-  const right = `${join.rightTable}\u0000${join.rightColumn}`;
+  const side = (table: string, pair: (p: QbColumnPair) => string) =>
+    `${table}\u0000${join.columnPairs.map(pair).sort().join('\u0002')}`;
+  const left = side(join.leftTable, (p) => p.left);
+  const right = side(join.rightTable, (p) => p.right);
   return left <= right ? `${left}\u0001${right}` : `${right}\u0001${left}`;
 }
 
@@ -419,9 +428,8 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
       const candidate: Omit<QbJoin, 'id'> = {
         type: 'INNER',
         leftTable: anchor.table,
-        leftColumn: anchor.column,
         rightTable: table,
-        rightColumn: column,
+        columnPairs: [{ left: anchor.column, right: column }],
         isManual: true,
       };
       const key = joinPairKey({ ...candidate, id: '' });

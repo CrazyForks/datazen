@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { cn } from '@datazen/ui';
+import { columnPairCount, primaryColumnPair } from '../types';
 import type { QbJoin, QbJoinType } from '../types';
 import { useI18n } from '../../../hooks/useI18n';
 
@@ -80,7 +81,11 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
       <span className="font-semibold text-accent">{join.type}</span>
       <span className="text-fg-muted">ON</span>
       <span className="text-fg-secondary">
-        {join.leftTable}.{join.leftColumn} = {join.rightTable}.{join.rightColumn}
+        {join.leftTable}.{primaryColumnPair(join).left} = {join.rightTable}.
+        {primaryColumnPair(join).right}
+        {columnPairCount(join) > 1
+          ? ` ${t('query.visualBuilder.andMorePairs', { count: columnPairCount(join) - 1 })}`
+          : ''}
       </span>
       <button
         type="button"

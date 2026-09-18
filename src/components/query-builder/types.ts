@@ -70,6 +70,18 @@ export interface QbColumnSelection {
 }
 
 /** A JOIN relationship between two tables. */
+/**
+ * One column pair in a JOIN predicate: `left = right`.
+ *
+ * A relationship is a *set* of pairs, not a single pair. A composite foreign key
+ * (`lines(order_id, line_no) → orders(id, no)`) needs both pairs in one ON
+ * clause; emitting them as two JOINs would reference the same table twice.
+ */
+export interface QbColumnPair {
+  left: string;
+  right: string;
+}
+
 export interface QbJoin {
   /** Unique identifier (nanoid). */
   id: string;
@@ -77,14 +89,29 @@ export interface QbJoin {
   type: QbJoinType;
   /** Left (source) table name. */
   leftTable: string;
-  /** Left (source) column name. */
-  leftColumn: string;
   /** Right (target) table name. */
   rightTable: string;
-  /** Right (target) column name. */
-  rightColumn: string;
+  /**
+   * The ON predicate's column pairs, ANDed together. Never empty — a join with no
+   * predicate is a cross join, which this model does not express.
+   */
+  columnPairs: readonly QbColumnPair[];
   /** true = manually created, false = auto-detected FK. */
   isManual: boolean;
+}
+
+/** The first column pair — what a single-pair join renders as. */
+export function primaryColumnPair(join: QbJoin): QbColumnPair {
+  const first = join.columnPairs[0];
+  if (first) return first;
+  // Unreachable for joins built through the store, which always sets at least one
+  // pair. Returning a placeholder keeps rendering total instead of throwing.
+  return { left: '', right: '' };
+}
+
+/** Total number of predicate pairs in a join. */
+export function columnPairCount(join: QbJoin): number {
+  return join.columnPairs.length;
 }
 
 /** A group-by entry. */

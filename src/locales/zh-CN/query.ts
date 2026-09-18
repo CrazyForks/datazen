@@ -390,6 +390,7 @@ const pack = {
   'query.visualBuilder.group': '分组',
   'query.visualBuilder.removeCondition': '删除条件',
   'query.visualBuilder.removeJoin': '删除连接',
+  'query.visualBuilder.andMorePairs': '另有 {{count}} 列',
   'query.visualBuilder.removeGroup': '删除条件组',
   'query.visualBuilder.dragHint': '把表拖到这里开始构建查询',
   'query.visualBuilder.joinColumnHint': '点击可与另一张表的列建立 JOIN',

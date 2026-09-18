@@ -397,6 +397,7 @@ const pack = {
   'query.visualBuilder.group': 'Group',
   'query.visualBuilder.removeCondition': 'Remove condition',
   'query.visualBuilder.removeJoin': 'Remove join',
+  'query.visualBuilder.andMorePairs': 'and {{count}} more',
   'query.visualBuilder.removeGroup': 'Remove group',
   'query.visualBuilder.dragHint': 'Drag tables here to build your query',
   'query.visualBuilder.joinColumnHint': 'Click to join with a column of another table',

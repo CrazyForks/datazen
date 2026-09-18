@@ -7,7 +7,7 @@
 
 import { DB_REGISTRY } from '../databaseTypes';
 import type { DatabaseType } from '../../types';
-import type { QbJoin } from '../../components/query-builder/types';
+import type { QbColumnPair, QbJoin } from '../../components/query-builder/types';
 
 // ── Adapter interface ─────────────────────────────────────────
 
@@ -112,20 +112,36 @@ export function generateJoinClause(
 
   const q = (name: string) => adapter.quoteIdentifier(name);
 
-  return (
-    '\n' +
-    joins
-      .map((join) => {
-        const leftTableRef = aliases[join.leftTable]
-          ? q(aliases[join.leftTable])
-          : q(join.leftTable);
-        const rightTableRef = q(join.rightTable);
-        const leftCol = `${leftTableRef}.${q(join.leftColumn)}`;
-        const rightCol = `${rightTableRef}.${q(join.rightColumn)}`;
-        return `${join.type} JOIN ${rightTableRef} ON ${leftCol} = ${rightCol}`;
-      })
-      .join('\n')
-  );
+  // One JOIN per (left table, right table, type), with every column pair ANDed
+  // into its ON clause. Two JOINs on the same table would reference it twice,
+  // which PostgreSQL and MySQL reject outright — a composite foreign key would
+  // hit that on its own if each pair became its own JOIN. Order follows the
+  // first appearance of each group, so the FROM/JOIN ordering stays stable.
+  const groups = new Map<string, { join: QbJoin; pairs: QbColumnPair[] }>();
+  const order: string[] = [];
+
+  for (const join of joins) {
+    const key = `${join.leftTable}\u0000${join.rightTable}\u0000${join.type}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.pairs.push(...join.columnPairs);
+      continue;
+    }
+    groups.set(key, { join, pairs: [...join.columnPairs] });
+    order.push(key);
+  }
+
+  const lines = order.map((key) => {
+    const { join, pairs } = groups.get(key)!;
+    const leftTableRef = aliases[join.leftTable] ? q(aliases[join.leftTable]) : q(join.leftTable);
+    const rightTableRef = q(join.rightTable);
+    const predicates = pairs
+      .map((pair) => `${leftTableRef}.${q(pair.left)} = ${rightTableRef}.${q(pair.right)}`)
+      .join(' AND ');
+    return `${join.type} JOIN ${rightTableRef} ON ${predicates}`;
+  });
+
+  return `\n${lines.join('\n')}`;
 }
 
 // ── LIMIT / OFFSET clause generation ──────────────────────────
