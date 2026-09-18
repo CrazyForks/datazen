@@ -311,6 +311,10 @@ pub struct StreamChunk {
     /// OpenAI Responses API: the server-assigned response ID (only in done chunk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_id: Option<String>,
+    /// Egress summary sent before the AI reply begins (FR-13).
+    /// Contains a brief summary of connections/tables the AI has access to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -280,6 +280,7 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/query-recovery-journey.ts',
       './specs/journeys/query-toolbar-responsive-journey.ts',
       './specs/journeys/query-edge-journey.ts',
+      './specs/journeys/query-row-limit-journey.ts',
       './specs/journeys/first-run-edge-journey.ts',
       // First-run journey (onboarding wizard). Runs last on purpose: its cases
       // rewrite the onboarding gate and restore it in `after`.

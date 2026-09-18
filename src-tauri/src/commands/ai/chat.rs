@@ -1,11 +1,11 @@
 //! AI chat IPC and tool-loop execution.
 
 use super::util::{
-    build_connections_context, inject_language_hint, resolve_ai, window_stream_callback,
-    StreamCallback,
+    build_connections_context, inject_language_hint, resolve_ai, resolve_safety_gate,
+    window_stream_callback, StreamCallback,
 };
 use crate::ai::budget;
-use crate::ai::safety::redact_for_egress;
+use crate::ai::safety::redact_for_gate;
 use crate::ai::*;
 use crate::commands::error::{CmdExt, CommandError};
 use crate::commands::AppState;
@@ -270,6 +270,33 @@ impl Default for ToolLoopGuard {
     }
 }
 
+/// Builds a brief egress summary string describing the connections the AI has
+/// tool-based access to. Sent as the first chunk before the AI reply begins
+/// (FR-13). Does NOT include full connection details — only counts and types.
+async fn build_egress_summary(state: &AppState) -> String {
+    let connections = state.store.get_connections().await;
+    let connection_count = connections.len();
+    if connection_count == 0 {
+        return "No database connections configured.".into();
+    }
+    // Collect distinct database types
+    let mut db_types: Vec<String> = Vec::new();
+    for c in &connections {
+        if !db_types.contains(&c.database_type) {
+            db_types.push(c.database_type.clone());
+        }
+    }
+    let types_str = if db_types.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", db_types.join(", "))
+    };
+    format!(
+        "{connection_count} connection{conn_s}{types_str} accessible via tools.",
+        conn_s = if connection_count == 1 { "" } else { "s" },
+    )
+}
+
 /// Returns `true` if the tool is a read-only DB tool that can run in parallel.
 pub(crate) fn is_readonly_db_tool(name: &str) -> bool {
     matches!(
@@ -381,9 +408,27 @@ pub(crate) async fn run_streaming_tool_loop(
     mut request: CompletionRequest,
     _max_rounds: usize,
     cmd_label: &str,
-    strict_egress: bool,
+    gate: &AiSafetyGateConfig,
 ) -> Result<String, CommandError> {
     let mut guard = ToolLoopGuard::new();
+
+    // ── FR-13: Send egress summary before AI reply begins ──
+    {
+        let summary = build_egress_summary(state).await;
+        on_chunk(
+            request_id,
+            Ok(StreamChunk {
+                content: String::new(),
+                reasoning: None,
+                done: false,
+                cancelled: false,
+                usage: None,
+                tool_calls: None,
+                response_id: None,
+                egress_summary: Some(summary),
+            }),
+        );
+    }
 
     loop {
         // ── Cancel check (Phase C) ──
@@ -400,6 +445,7 @@ pub(crate) async fn run_streaming_tool_loop(
                         usage: None,
                         tool_calls: None,
                         response_id: None,
+                        egress_summary: None,
                     }),
                 );
                 return Ok(request_id.to_string());
@@ -419,6 +465,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: None,
                     tool_calls: None,
                     response_id: None,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());
@@ -461,6 +508,7 @@ pub(crate) async fn run_streaming_tool_loop(
                                         usage: None,
                                         tool_calls: None,
                                         response_id: None,
+                                        egress_summary: None,
                                     }),
                                 );
                             }
@@ -521,6 +569,7 @@ pub(crate) async fn run_streaming_tool_loop(
                         usage: result.usage,
                         tool_calls: result.tool_calls,
                         response_id: result.response_id,
+                        egress_summary: None,
                     }),
                 );
                 return Ok(request_id.to_string());
@@ -558,6 +607,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: result.usage,
                     tool_calls: Some(classified.iter().map(|(tc, _)| tc.clone()).collect()),
                     response_id: result.response_id,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());
@@ -607,6 +657,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: None,
                     tool_calls: Some(mcp_tool_calls),
                     response_id: None,
+                    egress_summary: None,
                 }),
             );
         }
@@ -642,6 +693,7 @@ pub(crate) async fn run_streaming_tool_loop(
                             usage: result.usage,
                             tool_calls: None,
                             response_id: result.response_id,
+                            egress_summary: None,
                         }),
                     );
                     return Ok(request_id.to_string());
@@ -667,7 +719,7 @@ pub(crate) async fn run_streaming_tool_loop(
                 } => execute_mcp_tool(state, server_id, tool_name, &tc.arguments).await,
                 _ => continue,
             };
-            let redacted = redact_for_egress(&tool_result, strict_egress);
+            let redacted = redact_for_gate(&tool_result, gate);
             request.messages.push(guard.truncate_and_wrap(tc, redacted));
         }
 
@@ -687,6 +739,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: result.usage,
                     tool_calls: Some(ask_tool_calls),
                     response_id: result.response_id,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());
@@ -731,7 +784,7 @@ pub(crate) async fn ai_chat_impl(
     let (provider, ai_config) = resolve_ai(&state).await?;
 
     let app_settings = state.store.get_settings().await;
-    let strict_egress = app_settings.ai_strict_egress;
+    let gate = resolve_safety_gate(&state).await;
     let lang = app_settings.language;
     let mut full_messages: Vec<ChatMessage> = Vec::new();
     let mut attach_db_tools = true;
@@ -842,7 +895,7 @@ pub(crate) async fn ai_chat_impl(
     }
 
     full_messages.extend(messages.into_iter().map(|mut message| {
-        message.content = redact_for_egress(&message.content, strict_egress);
+        message.content = redact_for_gate(&message.content, &gate);
         message
     }));
 
@@ -859,7 +912,7 @@ pub(crate) async fn ai_chat_impl(
                 {
                     let sanitized_entries: Vec<(String, String)> = entries
                         .into_iter()
-                        .map(|(path, content)| (path, redact_for_egress(&content, strict_egress)))
+                        .map(|(path, content)| (path, redact_for_gate(&content, &gate)))
                         .collect();
                     let context_block =
                         crate::commands::context::format_context_block(&sanitized_entries);
@@ -936,7 +989,7 @@ pub(crate) async fn ai_chat_impl(
         request,
         10,
         "ai_chat",
-        strict_egress,
+        &gate,
     )
     .await;
 
