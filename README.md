@@ -55,7 +55,7 @@ Write and run SQL in a modern editor, inspect results, browse tables, and move b
 
 ### Editor Pro — a smarter SQL editor
 
-DataZen ships a built-in **SQL Editor Pro** with deep database-aware editing features that go beyond basic syntax highlighting.
+The **Basic** and **All** release packages include **SQL Editor Pro**, which adds deep database-aware editing features beyond basic syntax highlighting. A **Community** source build (see [Build from source](#build-from-source)) uses the built-in basic editor without the Pro extension. Driver selection (Basic / All) and editor edition (Community / Pro) are separate choices.
 
 | Feature | What it does |
 |---|---|
@@ -69,9 +69,9 @@ DataZen ships a built-in **SQL Editor Pro** with deep database-aware editing fea
 | **Paste as IN clause** | Automatically convert pasted CSV values into `IN (...)` expressions |
 | **Format SQL** | One-click consistent code formatting |
 
-![Editor Pro — statement gutter and autocomplete](site/assets/screenshots/pro-01-statement-gutter.png)
-![Editor Pro — hover tooltip and signature help](site/assets/screenshots/pro-03-hover-tooltip.png)
-![Editor Pro — SQL linter and intentions](site/assets/screenshots/pro-05-linter.png)
+![Editor Pro — statement gutter](site/assets/screenshots/pro-01-statement-gutter.png)
+![Editor Pro — hover tooltip](site/assets/screenshots/pro-03-hover-tooltip.png)
+![Editor Pro — SQL linter](site/assets/screenshots/pro-05-linter.png)
 
 ### AI-assisted database work
 
@@ -122,7 +122,7 @@ DataZen keeps data operations explicit and reviewable instead of hiding them beh
 - **Schema Diff** compares database structure and produces a controlled DDL deployment plan.
 - **Ops Dashboards** refresh saved queries, retain run history, and surface threshold alerts.
 
-![Data migration tools](site/assets/screenshots/26-data-sync-en.png)
+![Data Sync — source and target selection (English UI)](site/assets/screenshots/26-data-sync-en.png)
 
 ## Automate database work with Workflows
 
@@ -205,17 +205,18 @@ DataZen ships with a small default set and can be built with additional drivers.
 
 | Database | Default / optional | Notes |
 |---|---|---|
-| PostgreSQL | Default | SQL, schema browser, EXPLAIN, AI context |
-| MySQL / MariaDB | Default | SQL, schema browser, EXPLAIN |
-| SQLite | Default | Embedded database workflow |
-| Redis | Default | Key browser, command console, monitoring, Pub/Sub |
-| MongoDB | Optional | Native driver |
-| ClickHouse | Optional | Native driver |
-| DuckDB | Optional | Native driver |
-| SQL Server | Optional | Native driver |
-| Presto / Trino and other OLAP engines | Plugin | External driver architecture |
+| PostgreSQL | Basic | SQL, schema browser, EXPLAIN, AI context |
+| MySQL / MariaDB | Basic | SQL, schema browser, EXPLAIN |
+| SQLite | Basic | Embedded database workflow |
+| Redis | Basic | Key browser, command console, monitoring, Pub/Sub |
+| MongoDB | `all` | Native driver |
+| ClickHouse | `all` | Native driver |
+| DuckDB | `all` | Native driver |
+| SQL Server | `all` | Native driver |
+| Additional path drivers (e.g. Elasticsearch, Turso, InfluxDB) | `all` | See `drivers-registry.json` for the full list |
+| Kiwi / OLAP / Superset and other Git drivers | Custom list | Not covered by `all`; add explicitly, e.g. `--drivers=basic,kiwi,superset` |
 
-The exact driver set is controlled at build time, so a distribution does not have to ship every database engine.
+`basic` (the four core drivers) and `all` (all registered path drivers, excluding Git drivers) are build presets; the exact driver set is controlled at build time, so a distribution does not have to ship every database engine.
 
 **More external drivers are being planned.** We are exploring support for database drivers implemented and integrated in languages such as Go, C++, Rust, and Java.
 
@@ -240,31 +241,27 @@ Optional drivers (MongoDB, ClickHouse, DuckDB, SQL Server, …) are compile-time
 
 ### Prerequisites
 
-- Node.js >= 20
-- pnpm >= 9
-- Rust >= 1.77
-- Tauri v2 system dependencies
+- **Node.js 24**, **pnpm 11**, and **Rust stable** (the CI-tested toolchain)
+- [Tauri v2 system dependencies](https://v2.tauri.app/start/prerequisites/)
 
-CI currently uses **Node.js 24**, **pnpm 11**, and **Rust stable**.
-
-CI toolchain: Node **24**, pnpm **11**, Rust stable. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CI & test matrix](docs/development/ci-test-matrix.md) for the full development and CI toolchain.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CI & test matrix](docs/development/ci-test-matrix.md) for development details. The commands below explicitly select Community so a public-source build does not require the separate Pro extension.
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev --edition=community --drivers=basic
 ```
 
 Build only the drivers you need:
 
 ```bash
-# Default driver set
-pnpm tauri:build
+# Community with the four core drivers
+pnpm tauri:build:community --drivers=basic
 
-# All supported path drivers
-DATAZEN_DRIVERS=all pnpm tauri:build
+# Community with all registered path drivers (not Git drivers)
+pnpm tauri:build:community --drivers=all
 
-# Custom driver set
-DATAZEN_DRIVERS=postgres,mongodb pnpm tauri:build
+# Community with a custom driver set
+pnpm tauri:build:community --drivers=postgres,mongodb
 ```
 
 ## Security and privacy
@@ -296,7 +293,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Dr
 
 ## License
 
-DataZen is licensed under the **GNU General Public License v3.0**. The `datazen-driver-api` crate under `packages/driver-api` is separately licensed under the **MIT License**. See [LICENSE](LICENSE) and [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT).
+DataZen core is licensed under the **GNU General Public License v3.0 or later**, with a [Plugin, Driver & Extension Linking Exception](LICENSE) that lets independent Drivers, Themes, Extension Points, and Workspace Apps built only against the public SDKs ship under their authors' own terms. The `datazen-driver-api` crate under `packages/driver-api` is separately licensed under the **MIT License**. See [LICENSE](LICENSE) and [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT).
 
 <div align="center">
 

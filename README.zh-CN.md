@@ -55,7 +55,7 @@ AI 不是必需品：普通数据库浏览和查询不需要 API Key。
 
 ### Editor Pro — 更智能的 SQL 编辑器
 
-DataZen 内置 **SQL Editor Pro**，提供基于实时 Schema 元数据的深度编辑辅助功能，远超基础语法高亮。
+发布的 **Basic** 和 **All** 安装包均包含 **SQL Editor Pro**，提供基于实时 Schema 元数据的深度编辑辅助功能，远超基础语法高亮。从源码构建的 **Community 社区版**（见[从源码构建](#从源码构建)）使用内置基础编辑器，不包含 Pro 扩展。驱动集合（Basic / All）与编辑器版本（Community / Pro）是两个独立选项。
 
 | 功能 | 说明 |
 |---|---|
@@ -69,9 +69,9 @@ DataZen 内置 **SQL Editor Pro**，提供基于实时 Schema 元数据的深度
 | **智能粘贴 IN** | 自动将粘贴的 CSV 值转换为 `IN (...)` 表达式 |
 | **格式化 SQL** | 一键统一代码格式 |
 
-![Editor Pro — 语句 Gutter 和智能补全](site/assets/screenshots/pro-01-statement-gutter.png)
-![Editor Pro — Hover 悬浮卡和函数签名](site/assets/screenshots/pro-03-hover-tooltip.png)
-![Editor Pro — SQL Linter 和意图菜单](site/assets/screenshots/pro-05-linter.png)
+![Editor Pro — 语句 Gutter](site/assets/screenshots/pro-01-statement-gutter.png)
+![Editor Pro — Hover 悬浮卡](site/assets/screenshots/pro-03-hover-tooltip.png)
+![Editor Pro — SQL Linter](site/assets/screenshots/pro-05-linter.png)
 
 ### AI 辅助数据库开发
 
@@ -122,7 +122,7 @@ DataZen 不把数据操作包装成不可逆的一键魔法，而是提供清晰
 - **Schema Diff**：比较数据库结构，并生成受控的 DDL 部署计划。
 - **Ops Dashboard**：定时刷新保存的查询，保留运行历史，并触发阈值告警。
 
-![数据迁移工具](site/assets/screenshots/26-data-sync-en.png)
+![Data Sync — 源端与目标端选择（英文界面）](site/assets/screenshots/26-data-sync-en.png)
 
 ## 使用 Workflow 自动化数据库工作
 
@@ -205,17 +205,18 @@ DataZen 默认提供精简的 Driver 集合，也可以在编译时加入更多 
 
 | 数据库 | 类型 | 说明 |
 |---|---|---|
-| PostgreSQL | 默认 | SQL、Schema、EXPLAIN、AI 上下文 |
-| MySQL / MariaDB | 默认 | SQL、Schema、EXPLAIN |
-| SQLite | 默认 | 嵌入式数据库工作流 |
-| Redis | 默认 | Key 浏览、命令台、Monitor、Pub/Sub |
-| MongoDB | 可选 | 原生 Driver |
-| ClickHouse | 可选 | 原生 Driver |
-| DuckDB | 可选 | 原生 Driver |
-| SQL Server | 可选 | 原生 Driver |
-| Presto / Trino 等 OLAP | Plugin | 外部 Driver 架构 |
+| PostgreSQL | Basic | SQL、Schema、EXPLAIN、AI 上下文 |
+| MySQL / MariaDB | Basic | SQL、Schema、EXPLAIN |
+| SQLite | Basic | 嵌入式数据库工作流 |
+| Redis | Basic | Key 浏览、命令台、Monitor、Pub/Sub |
+| MongoDB | `all` | 原生 Driver |
+| ClickHouse | `all` | 原生 Driver |
+| DuckDB | `all` | 原生 Driver |
+| SQL Server | `all` | 原生 Driver |
+| 其他 path 驱动（如 Elasticsearch、Turso、InfluxDB） | `all` | 完整列表见 `drivers-registry.json` |
+| Kiwi / OLAP / Superset 等 Git 驱动 | 自定义列表 | `all` 不包含，需显式添加，如 `--drivers=basic,kiwi,superset` |
 
-Driver 集合由编译期配置决定，因此发行版不需要携带所有数据库引擎。
+`basic`（四个核心驱动）和 `all`（全部已注册的 path 驱动，不含 Git 驱动）是构建预设；Driver 集合由编译期配置决定，因此发行版不需要携带所有数据库引擎。
 
 **更多外部驱动正在规划中。**未来将探索支持使用 Go、C++、Rust、Java 等语言实现和接入数据库 Driver，进一步扩展 DataZen 的数据库生态。
 
@@ -236,27 +237,27 @@ DataZen 免费使用，不需要注册账号。
 
 ### 前置条件
 
-- Node.js >= 20
-- pnpm >= 9
-- Rust >= 1.77
-- Tauri v2 系统依赖
+- **Node.js 24**、**pnpm 11**、**Rust stable**（CI 验证的工具链）
+- [Tauri v2 系统依赖](https://v2.tauri.app/start/prerequisites/)
+
+开发详情见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [CI 与测试矩阵](docs/development/ci-test-matrix.md)。以下命令显式选择 Community，避免公开源码构建依赖独立的 Pro 扩展。
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev --edition=community --drivers=basic
 ```
 
 只构建需要的 Driver：
 
 ```bash
-# 默认 Driver 集合
-pnpm tauri:build
+# Community + 四个核心驱动
+pnpm tauri:build:community --drivers=basic
 
-# 全部 path Driver
-DATAZEN_DRIVERS=all pnpm tauri:build
+# Community + 全部已注册的 path 驱动（不含 Git 驱动）
+pnpm tauri:build:community --drivers=all
 
-# 自定义 Driver 集合
-DATAZEN_DRIVERS=postgres,mongodb pnpm tauri:build
+# Community + 自定义驱动集合
+pnpm tauri:build:community --drivers=postgres,mongodb
 ```
 
 ## 安全与隐私
@@ -288,7 +289,7 @@ DataZen 按照数据库访问场景设计：
 
 ## License
 
-DataZen 使用 **GNU General Public License v3.0** 开源。`packages/driver-api` 下的 `datazen-driver-api` crate 单独采用 **MIT License**。详见 [LICENSE](LICENSE) 和 [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT)。
+DataZen 核心使用 **GNU General Public License v3.0 或更高版本**开源，并附带 [Plugin、Driver 与 Extension 链接例外](LICENSE)：仅通过公开 SDK 与 DataZen 交互的独立 Driver、主题、扩展点和 Workspace App 可以采用作者自选的条款发布。`packages/driver-api` 下的 `datazen-driver-api` crate 单独采用 **MIT License**。详见 [LICENSE](LICENSE) 和 [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT)。
 
 <div align="center">
 
