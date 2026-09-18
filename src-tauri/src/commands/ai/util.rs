@@ -61,7 +61,7 @@ pub(crate) async fn resolve_safety_gate(state: &AppState) -> AiSafetyGateConfig 
         .or_else(|| settings.profiles.first())
         .map(|p| p.safety_gate.clone())
         .unwrap_or_else(|| AiSafetyGateConfig {
-            data_egress_level: AiDataEgressLevel::Relaxed,
+            data_egress_level: AiDataEgressLevel::Unrestricted,
             ..AiSafetyGateConfig::default()
         })
 }

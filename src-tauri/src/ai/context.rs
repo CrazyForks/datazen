@@ -323,7 +323,9 @@ mod tests {
         };
         let ddl = format_compact_ddl("users", &schema);
         assert!(ddl.starts_with("users ("));
-        assert!(ddl.contains("id int PK NOT NULL"));
+        // PK implies NOT NULL; format_compact_ddl no longer repeats NOT NULL for PK
+        assert!(ddl.contains("id int PK"));
+        assert!(!ddl.contains("id int PK NOT NULL"));
         assert!(ddl.contains("name varchar(255)"));
     }
 

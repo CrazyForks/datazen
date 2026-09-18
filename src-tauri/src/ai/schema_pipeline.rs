@@ -168,7 +168,8 @@ mod tests {
         let text = compose_schema_system_suffix(&seed);
         assert!(text.contains("Pinned table schemas"));
         assert!(text.contains("CREATE TABLE users"));
-        assert!(!text.contains("list_tables"));
+        // Small DB with tools: includes tool guidance for additional schema
+        assert!(text.contains("list_tables"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Track: ai-safety-prompt (Wave 2 — 安全门统一 + JSON 解析器 + Schema 上下文 + Prompt 异步)
 
-## 状态: PENDING (等 Wave 1 完成)
+## 状态: FAILED（2 个 Bug 待修复）
 
 ## 目标
 1. `safety.rs` 删除旧路（`redact_for_egress(strict)`），统一 `redact_for_gate(gate)`
@@ -33,6 +33,15 @@
 
 ## 自验结果
 - [ ] cargo test -p datazen --lib ai
+- 328 passed, 2 failed (ai::context::tests::format_compact_ddl_basic + ai_chat_mcp_and_db_same_round pre-existing)
+- cargo check: 1 warning (dead_code: emit_task_progress), 0 errors (with local util.rs fix)
 
-## 编码 Commit: (pending)
+## Bug 清单
+- `ai-safety-prompt-BUG-001`: format_compact_ddl_basic 断言未同步 PK NOT NULL 去重
+- `ai-safety-prompt-BUG-002`: resolve_safety_gate 使用不存在的 AiDataEgressLevel::Relaxed
+
+## 编码 Commit: ca11d711a
+## 本地未提交修复（coder 已发现但未 commit）:
+- `src-tauri/src/commands/ai/util.rs`: Relaxed → Unrestricted (BUG-002 修复)
+- `src-tauri/src/ai/schema_pipeline.rs`: 测试断言修正 (list_tables 应被包含)
 ## 测试 Commit: (pending)
