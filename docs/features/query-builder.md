@@ -183,6 +183,11 @@ Most real schemas declare no foreign keys, so the builder infers them from
 metadata alone (`src/lib/relationPrediction/`). The same engine backs the SQL
 editor's related-table ranking, so the two can never disagree about a schema.
 
+The whole feature can be turned off in **Settings → Editor → Smart foreign key
+prediction** (on by default). The switch governs inference only: declared
+constraints are still detected and joined with prediction off, because that is
+what the database states rather than a guess.
+
 Two tiers, because confidence varies:
 
 - **Applied automatically** — a high-confidence, unambiguous relationship joins

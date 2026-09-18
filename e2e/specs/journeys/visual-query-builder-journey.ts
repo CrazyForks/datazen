@@ -31,6 +31,7 @@
  */
 import { expect, browser, $ } from '@wdio/globals';
 import {
+  backFromSettingsInMainWindow,
   captureJourneyStep,
   closeDataExportDialogIfOpen,
   closeExtraWindows,
@@ -39,6 +40,7 @@ import {
   invokeBackend,
   openConnectionWindow,
   openQueryTab,
+  openSettingsInMainWindow,
   waitForTableInSidebar,
   withSafeModeOff,
 } from '../../helpers.js';
@@ -96,6 +98,7 @@ const journey = {
   sqlApplied: false,
   autoJoinVerified: false,
   predictedJoinVerified: false,
+  fkPredictionToggleVerified: false,
   manualJoinVerified: false,
 };
 
@@ -389,6 +392,14 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
           await invokeBackend('execute_query', {
             dbSessionId,
             sql: `DROP TABLE IF EXISTS ${PARENT_TABLE}`,
+          });
+          await invokeBackend('execute_query', {
+            dbSessionId,
+            sql: `DROP TABLE IF EXISTS ${MEMBER_TABLE}`,
+          });
+          await invokeBackend('execute_query', {
+            dbSessionId,
+            sql: `DROP TABLE IF EXISTS ${OWNER_TABLE}`,
           });
           await invokeBackend('execute_query', {
             dbSessionId,
@@ -892,5 +903,75 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await captureJourneyStep('qb-predicted-join-removed');
 
     journey.predictedJoinVerified = true;
+  });
+
+  it('阶段12：关闭智能外键预测后不再推测 JOIN，已声明外键不受影响', async function () {
+    if (!journey.predictedJoinVerified) this.skip();
+
+    // ── Turn the switch off ──
+    await openSettingsInMainWindow('editor');
+    const toggle = await $('[data-testid="settings-toggle-enableFkPrediction"]');
+    await toggle.waitForClickable({ timeout: 10000 });
+    expectTrue((await toggle.getAttribute('aria-checked')) === 'true', '开关默认应为开启');
+    await toggle.click();
+    await browser.waitUntil(async () => (await toggle.getAttribute('aria-checked')) === 'false', {
+      timeout: 5000,
+      timeoutMsg: '开关未切换到关闭',
+    });
+    await captureJourneyStep('qb-fk-prediction-off');
+    await backFromSettingsInMainWindow();
+    // Settings lives on the workspace root, so the query tab has to be reopened.
+    await openConnectionWindow();
+    await openQueryTab();
+
+    // ── The inference must be gone, but the declared constraint must survive ──
+    await openBuilderFromMoreMenu();
+    expect(await isQbPanelOpen()).toBe(true);
+
+    await filterNavigatorTo(OWNER_TABLE);
+    expectTrue(await startTableDrag(OWNER_TABLE), 'owner 表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.28, 0.35), 'owner 表未被画布接收');
+    await browser.pause(600);
+    await filterNavigatorTo(MEMBER_TABLE);
+    expectTrue(await startTableDrag(MEMBER_TABLE), 'member 表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.72, 0.6), 'member 表未被画布接收');
+    await browser.pause(1200);
+
+    const predictedId = autoJoinId(MEMBER_TABLE, `${OWNER_TABLE}_id`, OWNER_TABLE, 'id');
+    expectTrue(
+      (await countByTestId(`qb-join-line-${predictedId}`)) === 0,
+      '关闭预测后仍渲染了推测的 JOIN',
+    );
+
+    // The FK pair declares a real constraint, so it must still be joined: the
+    // switch governs inference only, never what the database states.
+    await filterNavigatorTo(PARENT_TABLE);
+    expectTrue(await startTableDrag(PARENT_TABLE), '父表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.35, 0.25), '父表未被画布接收');
+    await browser.pause(600);
+    await filterNavigatorTo(CHILD_TABLE);
+    expectTrue(await startTableDrag(CHILD_TABLE), '子表 dragstart 未写入 schema 对象');
+    expectTrue(await dropOnCanvas(0.7, 0.75), '子表未被画布接收');
+    await browser.pause(1200);
+
+    const declaredId = autoJoinId(CHILD_TABLE, 'parent_id', PARENT_TABLE, 'id');
+    await browser.waitUntil(async () => (await countByTestId(`qb-join-line-${declaredId}`)) === 1, {
+      timeout: 10000,
+      timeoutMsg: '关闭预测后已声明外键的 JOIN 消失',
+    });
+    await captureJourneyStep('qb-declared-join-survives');
+
+    // ── Restore the switch so the setting does not leak into other specs ──
+    await openSettingsInMainWindow('editor');
+    const restore = await $('[data-testid="settings-toggle-enableFkPrediction"]');
+    await restore.waitForClickable({ timeout: 10000 });
+    await restore.click();
+    await browser.waitUntil(async () => (await restore.getAttribute('aria-checked')) === 'true', {
+      timeout: 5000,
+      timeoutMsg: '开关未恢复开启',
+    });
+    await backFromSettingsInMainWindow();
+
+    journey.fkPredictionToggleVerified = true;
   });
 });

@@ -519,7 +519,12 @@ export function createCompletionExtensions(
 
     // If we have a valid model, use the full schema-aware completion
     if (model && model.cursorIntent) {
-      const relatedBoosts = snapshot ? relatedTableBoosts(snapshot) : undefined;
+      // Related-table ranking is part of prediction; with it off, completion
+      // falls back to the plain schema order rather than losing any candidate.
+      const relatedBoosts =
+        snapshot && useSettingsStore.getState().settings.enableFkPrediction !== false
+          ? relatedTableBoosts(snapshot)
+          : undefined;
       const completions = produceSchemaCompletions({
         model,
         snapshot: snapshot ?? { dbSessionId: '', database: '', epoch: 0, relations: new Map() },

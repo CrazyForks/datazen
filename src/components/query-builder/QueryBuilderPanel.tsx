@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useMemo } from 'react';
 import { X, BarChart3, Link2, Sparkles } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useMetadataSnapshot, resolveEditorDialectId } from '../../stores/schemaStoreSelectors';
 import {
   deriveForeignKeyRelations,
@@ -104,6 +105,7 @@ export function QueryBuilderPanel({
   const removeJoin = useQueryBuilderStore((s) => s.removeJoin);
   const updateJoinType = useQueryBuilderStore((s) => s.updateJoinType);
   const addJoin = useQueryBuilderStore((s) => s.addJoin);
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? true);
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
   const updateTablePosition = useQueryBuilderStore((s) => s.updateTablePosition);
   const setZoom = useQueryBuilderStore((s) => s.setZoom);
@@ -145,11 +147,18 @@ export function QueryBuilderPanel({
 
   // Relationships the schema does not declare, inferred from structure and
   // naming. Applied only when the engine is confident and unambiguous; the rest
-  // are offered for the user to accept.
+  // are offered for the user to accept. Declared constraints are unaffected by the
+  // setting — turning prediction off must not hide what the database states.
   const predicted = useMemo(
     () =>
-      predictTableRelations(metadataSnapshot, selectedTables, { database, schema, databaseType }),
-    [metadataSnapshot, selectedTables, database, schema, databaseType],
+      fkPredictionEnabled
+        ? predictTableRelations(metadataSnapshot, selectedTables, {
+            database,
+            schema,
+            databaseType,
+          })
+        : [],
+    [fkPredictionEnabled, metadataSnapshot, selectedTables, database, schema, databaseType],
   );
   const { applicable: applicablePredictions, suggestions: predictedSuggestions } = useMemo(
     () => partitionPredictedRelations(predicted),
