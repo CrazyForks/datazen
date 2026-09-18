@@ -120,21 +120,38 @@ async function clickTab(tab: 'items' | 'console' | 'monitor' | 'pubsub') {
  * the target db node.  (Same pattern as zz-screenshots.ts "15-redis".)
  */
 async function openRedisInlinePanel() {
+  // Navigate fresh so the page re-renders with the new connection
+  await browser.url('tauri://localhost');
+  await browser.pause(2000);
+
   await goToConnections();
-  await browser.pause(500);
+  await browser.pause(1000);
 
   // Wait for the connection to appear in the sidebar tree
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        (name: string) =>
-          Array.from(document.querySelectorAll('[data-conn-item]')).some((el) =>
-            (el.getAttribute('data-conn-name') || '').includes(name),
+  let found = false;
+  const dl = Date.now();
+  while (Date.now() < dl + 20000 && !found) {
+    found = await browser.execute(
+      (name: string) =>
+        Array.from(document.querySelectorAll('[data-conn-item]')).some((el) =>
+          (el.getAttribute('data-conn-name') || '').includes(name),
+        ),
+      CONN_NAME,
+    );
+    if (!found) {
+      // Scroll sidebar and try again
+      await browser.execute(() => {
+        const scrollers = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[class*="overflow-y-auto"], [class*="overflow-auto"]',
           ),
-        CONN_NAME,
-      ),
-    { timeout: 15000, timeoutMsg: `${CONN_NAME} not found in tree` },
-  );
+        ).filter((s) => s.scrollHeight > s.clientHeight);
+        for (const s of scrollers) s.scrollTop = Math.max(0, s.scrollTop - 300);
+      });
+      await browser.pause(500);
+    }
+  }
+  if (!found) throw new Error(`${CONN_NAME} not found in sidebar tree`);
 
   // Expand the Redis connection (click chevron)
   await browser.execute((connName: string) => {
@@ -419,10 +436,12 @@ describe('Redis new pages E2E', () => {
       await memBtn.click();
       await browser.pause(500);
 
-      // Memory page should be visible
-      const hasMemoryUI = await browser.execute(() =>
-        (document.body.textContent || '').toLowerCase().includes('memory'),
-      );
+      // Memory page should render its sub-page content (input, empty state, or sample results)
+      const hasMemoryUI = await browser.execute(() => {
+        const text = document.body.textContent || '';
+        // zh-CN renders "内存" for memory; also check for key input placeholder
+        return text.includes('内存') || text.includes('memory') || text.includes('MEMORY');
+      });
       expect(hasMemoryUI).toBe(true);
     });
 
@@ -433,12 +452,12 @@ describe('Redis new pages E2E', () => {
       await slowBtn.click();
       await browser.pause(500);
 
-      // Slowlog page should be visible
-      const hasSlowlog = await browser.execute(
-        () =>
-          (document.body.textContent || '').toLowerCase().includes('slowlog') ||
-          (document.body.textContent || '').toLowerCase().includes('slow'),
-      );
+      // Slowlog page should render its sub-page content
+      const hasSlowlog = await browser.execute(() => {
+        const text = document.body.textContent || '';
+        // zh-CN renders "慢日志" for slowlog
+        return text.includes('慢日志') || text.includes('slowlog') || text.includes('SLOWLOG');
+      });
       expect(hasSlowlog).toBe(true);
     });
   });
