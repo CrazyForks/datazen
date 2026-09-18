@@ -763,12 +763,11 @@ mod tests {
     async fn test_resolve_with_dialect_notes_from_prompt_template() {
         let tmp = tempfile::tempdir().unwrap();
         let resolver = PromptResolver::new(tmp.path(), None);
-        let driver = StubDialectDriver::new(Some("Global notes".into()))
-            .with_prompt_override(
-                PromptScenario::Chat,
-                "Custom prompt with {{dialect_notes}}",
-                Some("Template-level notes".into()),
-            );
+        let driver = StubDialectDriver::new(Some("Global notes".into())).with_prompt_override(
+            PromptScenario::Chat,
+            "Custom prompt with {{dialect_notes}}",
+            Some("Template-level notes".into()),
+        );
         let result = resolver
             .resolve_with_dialect(PromptScenario::Chat, Some(&driver), "en")
             .await;
