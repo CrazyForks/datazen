@@ -1,6 +1,6 @@
 # Track: ai-ui (Wave 2 — Markdown 渲染 + 代码块动作 + ContextPicker + Egress)
 
-## 状态: FAILED (4 bugs found)
+## 状态: PASSED ✅ (4 bugs found, all fixed)
 
 ## 目标
 1. `AiMessageContent` 支持 GFM 子集（marked + DOMPurify sanitize）
