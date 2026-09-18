@@ -1197,6 +1197,7 @@ async fn ai_chat_mcp_tool_roundtrip() {
             arguments: r#"{"message":"hello"}"#.into(),
         }]),
         response_id: None,
+        egress_summary: None,
     }]);
     mock.push_stream_text("done");
 
@@ -1261,6 +1262,7 @@ async fn ai_chat_mcp_and_db_same_round() {
             },
         ]),
         response_id: None,
+        egress_summary: None,
     }]);
     mock.push_stream_text("all done");
 
@@ -1356,6 +1358,7 @@ async fn ai_chat_ask_questions_with_executable_runs_tools_then_stops() {
             },
         ]),
         response_id: None,
+        egress_summary: None,
     }]);
 
     ai_chat_impl(

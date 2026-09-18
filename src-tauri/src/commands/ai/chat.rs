@@ -270,6 +270,33 @@ impl Default for ToolLoopGuard {
     }
 }
 
+/// Builds a brief egress summary string describing the connections the AI has
+/// tool-based access to. Sent as the first chunk before the AI reply begins
+/// (FR-13). Does NOT include full connection details — only counts and types.
+async fn build_egress_summary(state: &AppState) -> String {
+    let connections = state.store.get_connections().await;
+    let connection_count = connections.len();
+    if connection_count == 0 {
+        return "No database connections configured.".into();
+    }
+    // Collect distinct database types
+    let mut db_types: Vec<String> = Vec::new();
+    for c in &connections {
+        if !db_types.contains(&c.database_type) {
+            db_types.push(c.database_type.clone());
+        }
+    }
+    let types_str = if db_types.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", db_types.join(", "))
+    };
+    format!(
+        "{connection_count} connection{conn_s}{types_str} accessible via tools.",
+        conn_s = if connection_count == 1 { "" } else { "s" },
+    )
+}
+
 /// Returns `true` if the tool is a read-only DB tool that can run in parallel.
 pub(crate) fn is_readonly_db_tool(name: &str) -> bool {
     matches!(
@@ -385,6 +412,24 @@ pub(crate) async fn run_streaming_tool_loop(
 ) -> Result<String, CommandError> {
     let mut guard = ToolLoopGuard::new();
 
+    // ── FR-13: Send egress summary before AI reply begins ──
+    {
+        let summary = build_egress_summary(state).await;
+        on_chunk(
+            request_id,
+            Ok(StreamChunk {
+                content: String::new(),
+                reasoning: None,
+                done: false,
+                cancelled: false,
+                usage: None,
+                tool_calls: None,
+                response_id: None,
+                egress_summary: Some(summary),
+            }),
+        );
+    }
+
     loop {
         // ── Cancel check (Phase C) ──
         if let Some(ref token) = request.cancel_token {
@@ -400,6 +445,7 @@ pub(crate) async fn run_streaming_tool_loop(
                         usage: None,
                         tool_calls: None,
                         response_id: None,
+                        egress_summary: None,
                     }),
                 );
                 return Ok(request_id.to_string());
@@ -419,6 +465,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: None,
                     tool_calls: None,
                     response_id: None,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());
@@ -461,6 +508,7 @@ pub(crate) async fn run_streaming_tool_loop(
                                         usage: None,
                                         tool_calls: None,
                                         response_id: None,
+                                        egress_summary: None,
                                     }),
                                 );
                             }
@@ -521,6 +569,7 @@ pub(crate) async fn run_streaming_tool_loop(
                         usage: result.usage,
                         tool_calls: result.tool_calls,
                         response_id: result.response_id,
+                        egress_summary: None,
                     }),
                 );
                 return Ok(request_id.to_string());
@@ -558,6 +607,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: result.usage,
                     tool_calls: Some(classified.iter().map(|(tc, _)| tc.clone()).collect()),
                     response_id: result.response_id,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());
@@ -607,6 +657,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: None,
                     tool_calls: Some(mcp_tool_calls),
                     response_id: None,
+                    egress_summary: None,
                 }),
             );
         }
@@ -642,6 +693,7 @@ pub(crate) async fn run_streaming_tool_loop(
                             usage: result.usage,
                             tool_calls: None,
                             response_id: result.response_id,
+                            egress_summary: None,
                         }),
                     );
                     return Ok(request_id.to_string());
@@ -687,6 +739,7 @@ pub(crate) async fn run_streaming_tool_loop(
                     usage: result.usage,
                     tool_calls: Some(ask_tool_calls),
                     response_id: result.response_id,
+                    egress_summary: None,
                 }),
             );
             return Ok(request_id.to_string());

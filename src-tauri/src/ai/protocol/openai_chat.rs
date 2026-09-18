@@ -528,6 +528,7 @@ pub async fn stream_complete(
                                 response_id: None,
                                 usage: None,
                                 tool_calls: None,
+                                egress_summary: None,
                             }))
                             .await
                             .is_err()
@@ -559,6 +560,7 @@ pub async fn stream_complete(
             response_id: None,
             usage: last_usage,
             tool_calls,
+            egress_summary: None,
         }))
         .await;
 
