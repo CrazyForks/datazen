@@ -477,6 +477,8 @@ export interface AiToolResult {
 }
 
 export interface AiChatMessage {
+  /** Unique message identifier for stable React keys. */
+  id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   reasoning?: string;
@@ -487,6 +489,8 @@ export interface AiChatMessage {
 
 export interface AiChatSession {
   id: string;
+  /** Session isolation key used for localStorage persistence. */
+  sessionKey: string;
   messages: AiChatMessage[];
   isStreaming: boolean;
   streamContent: string;

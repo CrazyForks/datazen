@@ -94,9 +94,9 @@ export function AiChatPanel({
 
   useEffect(() => {
     if (!chatSession) {
-      initChat();
+      initChat(dbSessionId, database);
     }
-  }, [chatSession, initChat]);
+  }, [chatSession, initChat, dbSessionId, database]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -294,7 +294,7 @@ export function AiChatPanel({
 
             {chatSession?.messages.map((msg, i) => (
               <ChatBubble
-                key={i}
+                key={msg.id ?? i}
                 message={msg}
                 sqlDialect={sqlDialect}
                 onInsertSql={onInsertSql}
@@ -322,7 +322,7 @@ export function AiChatPanel({
                 />
               )}
 
-            {chatSession?.isStreaming && !chatSession.streamContent && (
+            {chatSession?.isStreaming && !chatSession.streamContent && !chatSession.streamReasoning && (
               <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {chatSession.streamMcpToolName
