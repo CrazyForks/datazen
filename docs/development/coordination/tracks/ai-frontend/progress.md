@@ -1,6 +1,6 @@
 # Track: ai-frontend (Wave 1 — 前端会话隔离 + NL2SQL 流式预览 + 显示修正)
 
-## 状态: READY_FOR_TEST
+## 状态: FAILED
 
 ## 目标
 1. ✅ 新建 `src/stores/ai/sessions.ts` — SessionKey 计算 + 持久化 + LRU
@@ -51,5 +51,25 @@
 - [x] npx vitest run src/lib/__tests__/extractSql.test.ts — 19 pass
 - [x] npx tsc --noEmit — clean
 
-## 编码 Commit: (pending)
+## 测试子代理独立复验
+- [x] npx vitest run src/stores/__tests__/aiStore.test.ts — 41/41 pass（编码代理自报一致）
+- [x] npx vitest run src/stores/ai/__tests__/sessions.test.ts — 10/10 pass（编码代理自报一致）
+- [x] npx vitest run src/lib/__tests__/extractSql.test.ts — 19/19 pass（编码代理自报一致）
+- [x] npx tsc --noEmit — clean（编码代理自报一致）
+
+### 覆盖率评估
+- `extractSql.ts`: 85.39% lines ✅ (≥80%)
+- `aiStore.ts`: 77.5% lines ⚠️ (未达80%，但未改动部分拖低)
+- `sessions.ts`: 80.48% lines ✅ (≥80%)
+- `types.ts`: 100% ✅
+- `AiChatPanel.tsx`: 0% (React组件，无jsdom环境，属E2E范畴)
+- `Nl2SqlPanel.tsx`: 0% (React组件，无jsdom环境，属E2E范畴)
+
+### Bug 清单
+- ai-frontend-BUG-001: Chat 持久化 key 硬编码 `default::`，会话隔离持久化失效
+- ai-frontend-BUG-002: `AiChatPanel` 未传入 dbSessionId/database 给 initChatSession
+- ai-frontend-BUG-003: `initChatSession` 类型声明与实现签名不匹配
+详见 `bugs.md`
+
+## 编码 Commit: 7f4b4580596bd0f21fdf261d3dcaff6ae447e895
 ## 测试 Commit: (pending)
