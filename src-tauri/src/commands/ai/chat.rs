@@ -1,11 +1,11 @@
 //! AI chat IPC and tool-loop execution.
 
 use super::util::{
-    build_connections_context, inject_language_hint, resolve_ai, window_stream_callback,
-    StreamCallback,
+    build_connections_context, inject_language_hint, resolve_ai, resolve_safety_gate,
+    window_stream_callback, StreamCallback,
 };
 use crate::ai::budget;
-use crate::ai::safety::redact_for_egress;
+use crate::ai::safety::redact_for_gate;
 use crate::ai::*;
 use crate::commands::error::{CmdExt, CommandError};
 use crate::commands::AppState;
@@ -381,7 +381,7 @@ pub(crate) async fn run_streaming_tool_loop(
     mut request: CompletionRequest,
     _max_rounds: usize,
     cmd_label: &str,
-    strict_egress: bool,
+    gate: &AiSafetyGateConfig,
 ) -> Result<String, CommandError> {
     let mut guard = ToolLoopGuard::new();
 
@@ -667,7 +667,7 @@ pub(crate) async fn run_streaming_tool_loop(
                 } => execute_mcp_tool(state, server_id, tool_name, &tc.arguments).await,
                 _ => continue,
             };
-            let redacted = redact_for_egress(&tool_result, strict_egress);
+            let redacted = redact_for_gate(&tool_result, gate);
             request.messages.push(guard.truncate_and_wrap(tc, redacted));
         }
 
@@ -731,7 +731,7 @@ pub(crate) async fn ai_chat_impl(
     let (provider, ai_config) = resolve_ai(&state).await?;
 
     let app_settings = state.store.get_settings().await;
-    let strict_egress = app_settings.ai_strict_egress;
+    let gate = resolve_safety_gate(&state).await;
     let lang = app_settings.language;
     let mut full_messages: Vec<ChatMessage> = Vec::new();
     let mut attach_db_tools = true;
@@ -842,7 +842,7 @@ pub(crate) async fn ai_chat_impl(
     }
 
     full_messages.extend(messages.into_iter().map(|mut message| {
-        message.content = redact_for_egress(&message.content, strict_egress);
+        message.content = redact_for_gate(&message.content, &gate);
         message
     }));
 
@@ -859,7 +859,7 @@ pub(crate) async fn ai_chat_impl(
                 {
                     let sanitized_entries: Vec<(String, String)> = entries
                         .into_iter()
-                        .map(|(path, content)| (path, redact_for_egress(&content, strict_egress)))
+                        .map(|(path, content)| (path, redact_for_gate(&content, &gate)))
                         .collect();
                     let context_block =
                         crate::commands::context::format_context_block(&sanitized_entries);
@@ -936,7 +936,7 @@ pub(crate) async fn ai_chat_impl(
         request,
         10,
         "ai_chat",
-        strict_egress,
+        &gate,
     )
     .await;
 
