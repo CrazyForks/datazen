@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@datazen/ui';
-import { Table2 } from 'lucide-react';
 import type { ColumnInfo } from '../../../types';
 import type { QbJoinType, QbColumnSelection } from '../types';
+import { useI18n } from '../../../hooks/useI18n';
 import { useCanvasInteraction } from './useCanvasInteraction';
 import { TableCard } from './TableCard';
 import { RelationLine } from './RelationLine';
@@ -84,6 +84,8 @@ export function DiagramCanvas({
   zoom: storeZoom = 1,
   onZoomChange = () => {},
 }: DiagramCanvasProps) {
+  const { t } = useI18n();
+
   /** Column names per table in row order — the geometry's index source. */
   const columnOrder = useMemo(() => {
     const order: Record<string, string[]> = {};
@@ -433,8 +435,7 @@ export function DiagramCanvas({
             {selectedTables.length === 0 && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                 <div className="text-center text-sm text-fg-muted">
-                  <Table2 className="mb-1 size-8 opacity-30" />
-                  <div>Drag tables here to build your query</div>
+                  {t('query.canvas.dragHint')}
                 </div>
               </div>
             )}
