@@ -56,18 +56,31 @@ describe('alignDroppedCard', () => {
 });
 
 describe('resolveDragPosition', () => {
-  it('ignores the card being dragged when looking for its row', () => {
-    // Dragging `users` must not align it to its own stale position.
+  it('only snaps to grid, no row alignment', () => {
+    // Dragging `users` at (300, 400): grid-snap only, no row jump.
     const pos = resolveDragPosition({ x: 300, y: 400 }, { users: { x: 48, y: 24 } }, 'users');
     expect(pos).toEqual({ x: 312, y: 408 });
   });
 
-  it('aligns to the other cards while dragging', () => {
+  it('does not force row alignment when y is near another card', () => {
+    // BUG scenario: er_customers at (0,0), er_orders at (264,0).
+    // Dragging er_customers slightly down should NOT jump it to the right of er_orders.
     const pos = resolveDragPosition(
-      { x: 300, y: 40 },
-      { users: { x: 48, y: 24 }, orders: { x: 600, y: 24 } },
-      'orders',
+      { x: 5, y: 5 },
+      { er_customers: { x: 0, y: 0 }, er_orders: { x: 264, y: 0 } },
+      'er_customers',
     );
-    expect(pos.y).toBe(24);
+    // Must NOT be forced to rightMost + CARD_STRIDE
+    expect(pos.x).toBe(0);
+    expect(pos.y).toBe(0);
+  });
+
+  it('preserves user-intended free positioning during drag', () => {
+    const pos = resolveDragPosition(
+      { x: 150, y: 300 },
+      { a: { x: 0, y: 0 }, b: { x: 264, y: 0 } },
+      'a',
+    );
+    expect(pos).toEqual({ x: 144, y: 312 });
   });
 });

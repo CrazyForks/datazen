@@ -114,14 +114,16 @@ export function alignDroppedCard(pos: { x: number; y: number }, existing: CardPo
 }
 
 /**
- * Resolve a manual drag position: the same grid/row rules, but the card is the
- * one being positioned, so it is excluded from the "existing" band lookup.
+ * Resolve a manual drag position: only snap to grid.
+ *
+ * Unlike {@link alignDroppedCard}, this does **not** force row alignment —
+ * the user is freely repositioning an existing card and should not be
+ * surprised by a horizontal jump to the right of another card.
  */
 export function resolveDragPosition(
   pos: { x: number; y: number },
-  others: CardPositions,
-  selfKey: string,
+  _others: CardPositions,
+  _selfKey: string,
 ) {
-  const { [selfKey]: _self, ...rest } = others;
-  return alignDroppedCard(pos, rest);
+  return { x: snapToGrid(pos.x), y: snapToGrid(pos.y) };
 }

@@ -232,6 +232,9 @@ export function QueryBuilderPanel({
     for (const join of state.joins) {
       if (join.constraint === groupId) state.updateJoinType(join.id, type);
     }
+    // Unconfirmed FK candidates live in autoJoins — sync the type there too so
+    // it carries over when the user clicks "Confirm join".
+    state.updateAutoJoinType(groupId, type);
   }, []);
 
   const handleConfirmGroup = useCallback((groupId: string) => {

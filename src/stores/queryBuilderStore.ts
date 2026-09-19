@@ -224,6 +224,8 @@ export interface QueryBuilderActions {
   addJoin: (join: Omit<QbJoin, 'id'>) => void;
   removeJoin: (id: string) => void;
   updateJoinType: (id: string, type: QbJoinType) => void;
+  /** Change the JOIN type of unconfirmed FK candidates (by constraint key). */
+  updateAutoJoinType: (constraintKey: string, type: QbJoinType) => void;
   /**
    * Promote an auto-detected FK candidate into the SQL (PRD F-03.2).
    * Idempotent: an equivalent confirmed join is never duplicated.
@@ -706,6 +708,11 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
     updateJoinType: (id, type) =>
       set((s) => ({
         joins: s.joins.map((j) => (j.id === id ? { ...j, type } : j)),
+      })),
+
+    updateAutoJoinType: (constraintKey, type) =>
+      set((s) => ({
+        autoJoins: s.autoJoins.map((j) => (j.constraint === constraintKey ? { ...j, type } : j)),
       })),
 
     confirmAutoJoin: (id) =>
