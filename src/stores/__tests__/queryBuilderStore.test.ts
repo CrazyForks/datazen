@@ -559,7 +559,6 @@ describe('queryBuilderStore', () => {
       store.setTableAlias('users', 'u');
       store.updateTablePosition('users', { x: 100, y: 200 });
       store.setZoom(1.5);
-      store.setCanvasOffset({ x: 50, y: 75 });
       store.setLimit(100);
       store.setOffset(20);
 
@@ -570,7 +569,6 @@ describe('queryBuilderStore', () => {
       expect(s.autoJoins).toEqual([]);
       expect(s.tableAliases).toEqual({});
       expect(s.tablePositions).toEqual({});
-      expect(s.canvasOffset).toEqual({ x: 0, y: 0 });
       expect(s.zoom).toBe(1);
       expect(s.limit).toBeNull();
       expect(s.offset).toBeNull();
@@ -718,19 +716,12 @@ describe('queryBuilderStore', () => {
     });
   });
 
-  // ── setZoom / setCanvasOffset ───────────────────────────────
+  // ── setZoom ─────────────────────────────────────────────────
 
   describe('setZoom', () => {
     it('sets zoom level', () => {
       useQueryBuilderStore.getState().setZoom(1.5);
       expect(getSnapshot().zoom).toBe(1.5);
-    });
-  });
-
-  describe('setCanvasOffset', () => {
-    it('sets canvas offset', () => {
-      useQueryBuilderStore.getState().setCanvasOffset({ x: 50, y: 75 });
-      expect(getSnapshot().canvasOffset).toEqual({ x: 50, y: 75 });
     });
   });
 

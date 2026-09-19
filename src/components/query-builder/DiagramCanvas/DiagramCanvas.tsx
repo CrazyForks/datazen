@@ -7,7 +7,7 @@ import { useCanvasInteraction } from './useCanvasInteraction';
 import { TableCard } from './TableCard';
 import { RelationLine } from './RelationLine';
 import { JoinPopover } from './JoinPopover';
-import { alignDroppedCard, CARD_WIDTH, rowCenterY } from './cardLayout';
+import { alignDroppedCard, CARD_WIDTH, canvasContentSize, rowCenterY } from './cardLayout';
 import { buildRelationShapes, type RelationGroup } from './fkGeometry';
 
 /** Props for the DiagramCanvas component. */
@@ -44,23 +44,23 @@ export interface DiagramCanvasProps {
   onDropTable?: (tableName: string, pos: { x: number; y: number }) => void;
   /** Current zoom level (from store). */
   zoom?: number;
-  /** Current canvas offset (from store). */
-  canvasOffset?: { x: number; y: number };
   /** Callback when zoom changes. */
   onZoomChange?: (zoom: number) => void;
-  /** Callback when canvas offset changes. */
-  onOffsetChange?: (offset: { x: number; y: number }) => void;
 }
 
 /**
  * DiagramCanvas — the visual builder's canvas.
  *
- * Hybrid SVG + DOM: lines are SVG inside the *same* zoom/pan transform as the
- * cards, so canvas-space coordinates stay valid for both. Column anchors are
- * computed from the shared metrics in `cardLayout`, never measured.
+ * Viewport model (R3): the canvas **scrolls natively** (wheel/trackpad, drag,
+ * or the scrollbars) and zooms with Ctrl/Cmd + wheel around the pointer. The
+ * content is laid out unscaled inside a spacer sized `content × zoom`, so the
+ * scrollbars match the zoomed extent. Cards therefore grow to their full height
+ * instead of scrolling internally — an internally clipped row would put its
+ * column anchor outside the card, which is exactly what the lines must avoid.
  *
- * Relation lines carry **no text**; everything actionable lives in a popover
- * opened at the click point.
+ * Hybrid SVG + DOM: relation lines are SVG inside the same scaled wrapper as the
+ * cards, so canvas-space coordinates stay valid for both. Relation lines carry
+ * **no text**; everything actionable lives in a popover opened at the click.
  */
 export function DiagramCanvas({
   selectedTables,
@@ -82,28 +82,8 @@ export function DiagramCanvas({
   onSetTableAlias,
   onDropTable,
   zoom: storeZoom = 1,
-  canvasOffset: storeOffset = { x: 0, y: 0 },
   onZoomChange = () => {},
-  onOffsetChange = () => {},
 }: DiagramCanvasProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const {
-    zoom,
-    canvasOffset,
-    handleZoom,
-    handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
-    screenToCanvas,
-    isPanning,
-  } = useCanvasInteraction(storeZoom, storeOffset, onZoomChange, onOffsetChange);
-
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
-  const [popover, setPopover] = useState<{ groupId: string; at: { x: number; y: number } } | null>(
-    null,
-  );
-
   /** Column names per table in row order — the geometry's index source. */
   const columnOrder = useMemo(() => {
     const order: Record<string, string[]> = {};
@@ -113,6 +93,43 @@ export function DiagramCanvas({
     }
     return order;
   }, [selectedTables, columnInfoMap, columnMap]);
+
+  const {
+    scrollRef,
+    handleWheel,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    screenToCanvas,
+    isPanning,
+    viewport,
+  } = useCanvasInteraction({ zoom: storeZoom, onZoomChange });
+
+  const zoom = storeZoom;
+
+  /** The scroll element, needed for anchoring the popover in viewport space. */
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
+  const attachScrollRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollElRef.current = el;
+      scrollRef(el);
+    },
+    [scrollRef],
+  );
+
+  /** Scrollable extent: the cards' bounding box, never smaller than the viewport. */
+  const contentSize = useMemo(() => {
+    const cards = selectedTables.map((table) => ({
+      pos: tablePositions[table] ?? { x: 0, y: 0 },
+      columnCount: (columnOrder[table] ?? []).length,
+    }));
+    return canvasContentSize(cards, viewport);
+  }, [selectedTables, tablePositions, columnOrder, viewport]);
+
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [popover, setPopover] = useState<{ groupId: string; at: { x: number; y: number } } | null>(
+    null,
+  );
 
   const shapes = useMemo(
     () => buildRelationShapes({ groups: relationGroups, positions: tablePositions, columnOrder }),
@@ -141,8 +158,8 @@ export function DiagramCanvas({
   // ── Manual join drag ────────────────────────────────────────
   const [manualJoin, setManualJoin] = useState<{
     from: { table: string; column: string };
-    /** Pointer position, viewport-relative. */
-    to: { x: number; y: number };
+    /** Latest pointer position, in client coordinates. */
+    client: { x: number; y: number };
     target: { table: string; column: string } | null;
   } | null>(null);
   const manualJoinRef = useRef(manualJoin);
@@ -150,12 +167,9 @@ export function DiagramCanvas({
 
   const startManualJoin = useCallback(
     (table: string, column: string, origin: { clientX: number; clientY: number }) => {
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
       setManualJoin({
         from: { table, column },
-        to: { x: origin.clientX - rect.left, y: origin.clientY - rect.top },
+        client: { x: origin.clientX, y: origin.clientY },
         target: null,
       });
     },
@@ -172,9 +186,6 @@ export function DiagramCanvas({
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
       const element = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const row = element?.closest<HTMLElement>('[data-qb-col-anchor]') ?? null;
       const key = row?.getAttribute('data-qb-col-anchor') ?? '';
@@ -188,21 +199,14 @@ export function DiagramCanvas({
         row.classList.add('qb-drop-target');
       }
       setManualJoin((prev) =>
-        prev
-          ? { ...prev, to: { x: e.clientX - rect.left, y: e.clientY - rect.top }, target }
-          : prev,
+        prev ? { ...prev, client: { x: e.clientX, y: e.clientY }, target } : prev,
       );
     };
 
     const onPointerUp = () => {
       const drag = manualJoinRef.current;
       clearTargets();
-      if (
-        drag?.target &&
-        onAddManualJoin &&
-        drag.target.table !== drag.from.table &&
-        !(drag.target.table === drag.from.table && drag.target.column === drag.from.column)
-      ) {
+      if (drag?.target && onAddManualJoin && drag.target.table !== drag.from.table) {
         onAddManualJoin(drag.from, drag.target);
       }
       setManualJoin(null);
@@ -226,12 +230,10 @@ export function DiagramCanvas({
     if (!cardPos) return null;
     const index = (columnOrder[manualJoin.from.table] ?? []).indexOf(manualJoin.from.column);
     if (index === -1) return null;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const start = { x: cardPos.x + CARD_WIDTH, y: rowCenterY(cardPos.y, index) };
-    const end = rect
-      ? screenToCanvas(manualJoin.to.x + rect.left, manualJoin.to.y + rect.top, rect)
-      : { x: 0, y: 0 };
-    return { start, end };
+    return {
+      start: { x: cardPos.x + CARD_WIDTH, y: rowCenterY(cardPos.y, index) },
+      end: screenToCanvas(manualJoin.client.x, manualJoin.client.y),
+    };
   }, [manualJoin, tablePositions, columnOrder, screenToCanvas]);
 
   // ── Drop from the schema tree ───────────────────────────────
@@ -243,7 +245,7 @@ export function DiagramCanvas({
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      if (!containerRef.current || !onDropTable) return;
+      if (!onDropTable) return;
 
       const raw = e.dataTransfer.getData('application/datazen-schema-object');
       if (!raw) return;
@@ -251,150 +253,156 @@ export function DiagramCanvas({
         const payload = JSON.parse(raw) as { namespace?: { table?: string } };
         const tableName = payload.namespace?.table;
         if (!tableName) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        const dropped = {
-          x: (e.clientX - rect.left - canvasOffset.x) / zoom,
-          y: (e.clientY - rect.top - canvasOffset.y) / zoom,
-        };
+        const dropped = screenToCanvas(e.clientX, e.clientY);
+        // Snap to the grid and share the top edge of the row being dropped
+        // into, so dragging several tables in does not leave their tops askew.
         onDropTable(tableName, alignDroppedCard(dropped, tablePositions));
       } catch {
         // invalid payload — ignore
       }
     },
-    [canvasOffset, zoom, onDropTable, tablePositions],
+    [onDropTable, screenToCanvas, tablePositions],
   );
 
   const popoverShape = popover ? shapeById.get(popover.groupId) : undefined;
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        'relative h-full w-full overflow-hidden bg-surface',
-        isPanning ? 'cursor-grab' : 'cursor-default',
-      )}
-      onWheel={handleZoom}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-      data-testid="qb-diagram-canvas"
-    >
-      {/* Grid dot pattern background */}
-      <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-        <defs>
-          <pattern
-            id="qb-grid-dots"
-            width="20"
-            height="20"
-            patternUnits="userSpaceOnUse"
-            patternTransform={`translate(${canvasOffset.x % 20} ${canvasOffset.y % 20})`}
-          >
-            <circle cx="10" cy="10" r="0.8" fill="var(--c-fg-muted)" opacity="0.25" />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#qb-grid-dots)" />
-      </svg>
-
-      {/* Zoom + pan transform wrapper */}
+    <div className="relative h-full w-full overflow-hidden">
       <div
-        className="absolute inset-0"
-        style={{
-          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`,
-          transformOrigin: '0 0',
-          willChange: 'transform',
-        }}
-      >
-        {/* Relation lines share the cards' coordinate space */}
-        <svg
-          className="pointer-events-none absolute inset-0"
-          style={{ width: '100%', height: '100%', overflow: 'visible' }}
-          aria-hidden="true"
-        >
-          {shapes.map((shape) => (
-            <RelationLine
-              key={shape.groupId}
-              shape={shape}
-              active={activeGroupId === shape.groupId || popover?.groupId === shape.groupId}
-              dimmed={manualJoin !== null}
-              onHoverChange={setActiveGroupId}
-              onActivate={(groupId, origin) => {
-                const rect = containerRef.current?.getBoundingClientRect();
-                setPopover({
-                  groupId,
-                  at: {
-                    x: origin.clientX - (rect?.left ?? 0),
-                    y: origin.clientY - (rect?.top ?? 0),
-                  },
-                });
-              }}
-            />
-          ))}
-
-          {manualPreview && (
-            <path
-              className="qb-relation-line qb-relation-line--confirmed"
-              d={`M ${manualPreview.start.x} ${manualPreview.start.y} L ${manualPreview.end.x} ${manualPreview.end.y}`}
-              data-testid="qb-manual-join-preview"
-            />
-          )}
-        </svg>
-
-        {/* DOM layer for table cards */}
-        {selectedTables.map((table) => {
-          const pos = tablePositions[table] ?? { x: 0, y: 0 };
-          const columns = columnInfoMap[table] ?? [];
-          const columnNames = columnMap[table] ?? [];
-          const effectiveColumns =
-            columns.length > 0
-              ? columns
-              : columnNames.map((name) => ({ name, dataType: '', nullable: true }));
-
-          const tableSelectedCols = selectedColumns
-            .filter((sc) => sc.table === table)
-            .map((sc) => sc.column);
-
-          const foreignKeyMap: Record<string, string> = {};
-          for (const group of relationGroups) {
-            for (const pair of group.pairs) {
-              if (pair.fromTable === table) foreignKeyMap[pair.fromColumn] = pair.toTable;
-            }
-          }
-
-          return (
-            <TableCard
-              key={table}
-              tableName={table}
-              alias={tableAliases[table]}
-              columns={effectiveColumns}
-              selectedColumns={tableSelectedCols}
-              primaryKeyColumns={primaryKeyMap[table]}
-              foreignKeyMap={foreignKeyMap}
-              position={pos}
-              otherPositions={tablePositions}
-              onToggleColumn={(col) => onToggleColumn(table, col)}
-              onToggleAllColumns={(selected) => onToggleAllColumns?.(table, columnNames, selected)}
-              onRemove={() => onRemoveTable?.(table)}
-              onDragEnd={(newPos) => onUpdatePosition(table, newPos)}
-              onSetAlias={(alias) => onSetTableAlias(table, alias)}
-              onStartManualJoin={startManualJoin}
-            />
-          );
-        })}
-
-        {/* Empty state hint */}
-        {selectedTables.length === 0 && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="text-center text-sm text-fg-muted">
-              <Table2 className="mb-1 size-8 opacity-30" />
-              <div>Drag tables here to build your query</div>
-            </div>
-          </div>
+        ref={attachScrollRef}
+        className={cn(
+          'qb-canvas-scroll h-full w-full overflow-auto bg-surface',
+          isPanning ? 'cursor-grabbing' : 'cursor-default',
         )}
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        data-testid="qb-diagram-canvas"
+      >
+        {/*
+         * The spacer carries the *zoomed* extent so the native scrollbars are
+         * right; the scaled wrapper inside holds the unscaled canvas content.
+         */}
+        <div
+          className="relative"
+          style={{ width: contentSize.width * zoom, height: contentSize.height * zoom }}
+        >
+          <div
+            className="absolute top-0 left-0"
+            style={{
+              width: contentSize.width,
+              height: contentSize.height,
+              transform: `scale(${zoom})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            {/* Grid dot pattern background */}
+            <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+              <defs>
+                <pattern id="qb-grid-dots" width="20" height="20" patternUnits="userSpaceOnUse">
+                  <circle cx="10" cy="10" r="0.8" fill="var(--c-fg-muted)" opacity="0.25" />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#qb-grid-dots)" />
+            </svg>
+
+            {/* Relation lines share the cards' coordinate space */}
+            <svg
+              className="pointer-events-none absolute inset-0"
+              style={{ width: contentSize.width, height: contentSize.height, overflow: 'visible' }}
+              aria-hidden="true"
+            >
+              {shapes.map((shape) => (
+                <RelationLine
+                  key={shape.groupId}
+                  shape={shape}
+                  active={activeGroupId === shape.groupId || popover?.groupId === shape.groupId}
+                  dimmed={manualJoin !== null}
+                  onHoverChange={setActiveGroupId}
+                  onActivate={(groupId, origin) => {
+                    const rect = scrollElRef.current?.getBoundingClientRect();
+                    setPopover({
+                      groupId,
+                      at: {
+                        x: origin.clientX - (rect?.left ?? 0),
+                        y: origin.clientY - (rect?.top ?? 0),
+                      },
+                    });
+                  }}
+                />
+              ))}
+
+              {manualPreview && (
+                <path
+                  className="qb-relation-line qb-relation-line--confirmed"
+                  d={`M ${manualPreview.start.x} ${manualPreview.start.y} L ${manualPreview.end.x} ${manualPreview.end.y}`}
+                  data-testid="qb-manual-join-preview"
+                />
+              )}
+            </svg>
+
+            {/* DOM layer for table cards */}
+            {selectedTables.map((table) => {
+              const pos = tablePositions[table] ?? { x: 0, y: 0 };
+              const columns = columnInfoMap[table] ?? [];
+              const columnNames = columnMap[table] ?? [];
+              const effectiveColumns =
+                columns.length > 0
+                  ? columns
+                  : columnNames.map((name) => ({ name, dataType: '', nullable: true }));
+
+              const tableSelectedCols = selectedColumns
+                .filter((sc) => sc.table === table)
+                .map((sc) => sc.column);
+
+              const foreignKeyMap: Record<string, string> = {};
+              for (const group of relationGroups) {
+                for (const pair of group.pairs) {
+                  if (pair.fromTable === table) foreignKeyMap[pair.fromColumn] = pair.toTable;
+                }
+              }
+
+              return (
+                <TableCard
+                  key={table}
+                  tableName={table}
+                  alias={tableAliases[table]}
+                  columns={effectiveColumns}
+                  selectedColumns={tableSelectedCols}
+                  primaryKeyColumns={primaryKeyMap[table]}
+                  foreignKeyMap={foreignKeyMap}
+                  position={pos}
+                  otherPositions={tablePositions}
+                  onToggleColumn={(col) => onToggleColumn(table, col)}
+                  onToggleAllColumns={(selected) =>
+                    onToggleAllColumns?.(table, columnNames, selected)
+                  }
+                  onRemove={() => onRemoveTable?.(table)}
+                  onDragEnd={(newPos) => onUpdatePosition(table, newPos)}
+                  onSetAlias={(alias) => onSetTableAlias(table, alias)}
+                  onStartManualJoin={startManualJoin}
+                />
+              );
+            })}
+
+            {/* Empty state hint */}
+            {selectedTables.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-sm text-fg-muted">
+                  <Table2 className="mb-1 size-8 opacity-30" />
+                  <div>Drag tables here to build your query</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Actions popover — outside the transform so it is never scaled. */}
+      {/* Actions popover — anchored to the viewport, so it never scrolls away. */}
       {popover && popoverShape && (
         <JoinPopover
           shape={popoverShape}

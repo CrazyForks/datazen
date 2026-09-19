@@ -99,7 +99,6 @@ function renderCanvas(
       onSetTableAlias={noop}
       onDropTable={onDropTable}
       zoom={2}
-      canvasOffset={{ x: 20, y: 10 }}
     />,
   );
 }
@@ -132,8 +131,8 @@ describe('table drop onto the Visual Builder canvas', () => {
 
     fireEvent.drop(canvas, { dataTransfer: dt, clientX: 100, clientY: 60 });
 
-    // Raw canvas coords are (40, 25) for this zoom/offset; the drop resolves to
-    // the card grid so hand-placed cards can line up.
+    // Raw canvas coords are (100 - 0) / 2 = 50 by (60 - 0) / 2 = 30 with no
+    // scroll; the drop resolves onto the card grid so cards line up.
     expect(onDropTable).toHaveBeenCalledWith('users', { x: 48, y: 24 });
   });
 

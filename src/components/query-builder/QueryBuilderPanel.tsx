@@ -84,7 +84,6 @@ export function QueryBuilderPanel({
   const autoJoins = useQueryBuilderStore((s) => s.autoJoins);
   const tableAliases = useQueryBuilderStore((s) => s.tableAliases);
   const tablePositions = useQueryBuilderStore((s) => s.tablePositions);
-  const canvasOffset = useQueryBuilderStore((s) => s.canvasOffset);
   const zoom = useQueryBuilderStore((s) => s.zoom);
   const where = useQueryBuilderStore((s) => s.where);
   const orderBy = useQueryBuilderStore((s) => s.orderBy);
@@ -104,7 +103,6 @@ export function QueryBuilderPanel({
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
   const updateTablePosition = useQueryBuilderStore((s) => s.updateTablePosition);
   const setZoom = useQueryBuilderStore((s) => s.setZoom);
-  const setCanvasOffset = useQueryBuilderStore((s) => s.setCanvasOffset);
   const setDistinct = useQueryBuilderStore((s) => s.setDistinct);
   const reset = useQueryBuilderStore((s) => s.reset);
   const addCondition = useQueryBuilderStore((s) => s.addCondition);
@@ -540,9 +538,7 @@ export function QueryBuilderPanel({
               onSetTableAlias={setTableAlias}
               onDropTable={handleDropTable}
               zoom={zoom}
-              canvasOffset={canvasOffset}
               onZoomChange={setZoom}
-              onOffsetChange={setCanvasOffset}
             />
           </div>
 

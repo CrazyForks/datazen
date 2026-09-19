@@ -146,9 +146,7 @@ export interface QueryBuilderState {
   tablePositions: Record<string, { x: number; y: number }>;
 
   // ── Canvas state ──
-  /** Canvas pan offset. */
-  canvasOffset: { x: number; y: number };
-  /** Canvas zoom level. */
+  /** Canvas zoom level (panning is native scrolling). */
   zoom: number;
 
   // ── Pagination ──
@@ -235,8 +233,8 @@ export interface QueryBuilderActions {
   updateTablePosition: (table: string, pos: { x: number; y: number }) => void;
 
   // ── Canvas actions ──
+  /** Set the canvas zoom (panning is native scrolling). */
   setZoom: (zoom: number) => void;
-  setCanvasOffset: (offset: { x: number; y: number }) => void;
 
   // ── Pagination actions ──
   setLimit: (limit: number | null) => void;
@@ -392,7 +390,6 @@ const INITIAL_STATE: QueryBuilderState = {
   autoJoins: [],
   tableAliases: {},
   tablePositions: {},
-  canvasOffset: { x: 0, y: 0 },
   zoom: 1,
   limit: null,
   offset: null,
@@ -714,8 +711,6 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
     // ── Canvas actions ──
 
     setZoom: (zoom) => set(() => ({ zoom })),
-
-    setCanvasOffset: (offset) => set(() => ({ canvasOffset: offset })),
 
     // ── Pagination actions ──
 
