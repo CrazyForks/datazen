@@ -114,9 +114,9 @@ Each line connects the two specific columns it relates, at that column's row.
 > with an invalid `stroke` — i.e. the lines were invisible.
 
 > Card height follows the column count (no inner scrolling) so a column's anchor
-> is always inside its card. Canvas scrollbars / wheel-to-scroll navigation is
-> still pending: for now a very tall card is reached by panning (space-drag or
-> middle-drag) or zooming out.
+> is always inside its card. The canvas itself scrolls natively (wheel/trackpad or
+> the scrollbars) and zooms with **Ctrl/Cmd + wheel** around the pointer; panning is
+> scrolling (middle-drag or Space + drag).
 
 ### WHERE Conditions
 

@@ -152,17 +152,17 @@ export function QueryBuilderPanel({
         try {
           const schema = await getCachedTableSchema(dbSessionId, tableName, currentDatabase ?? '');
           for (const fk of schema.foreignKeys) {
-            // A composite FK arrives as two independent aggregates over
-            // `key_column_usage` × `constraint_column_usage` (see the driver's
-            // pg schema query). Because those two arrays are not correlated by
-            // position at the SQL level, an N-column FK comes back with N²
-            // entries — [pa, pa, pb, pb] vs [a, b, a, b] for a 2-column key —
-            // and pairing them index-wise yields a cartesian product: four
-            // column pairs, i.e. a JOIN with four predicates.
+            // Composite keys are normalised to their ordered distinct columns
+            // before pairing positionally: `information_schema` reports the two
+            // sides of a key as independent aggregates, so an N-column FK can
+            // arrive with N² entries ([pa, pa, pb, pb] vs [a, b, a, b]) and
+            // pairing those index-wise yields a cartesian product — a JOIN with
+            // four predicates for a two-column key.
             //
-            // Collapse each side to its ordered distinct columns and pair them
-            // positionally, which is what the constraint actually means. If the
-            // two sides still disagree the FK is skipped rather than guessed at.
+            // The Postgres driver now guarantees the collapsed shape, but the
+            // guard stays here: the host must not depend on every driver being
+            // correct. If the sides still disagree the FK is skipped rather than
+            // guessed at.
             const fromColumns = Array.from(new Set(fk.columns));
             const toColumns = Array.from(new Set(fk.referencedColumns));
             if (fromColumns.length === 0 || fromColumns.length !== toColumns.length) continue;

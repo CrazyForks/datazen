@@ -176,8 +176,16 @@ export function DiagramCanvas({
     [],
   );
 
+  /**
+   * Listeners are registered once per drag, keyed on a boolean: depending on the
+   * `manualJoin` object would re-run the effect on every pointermove, and each
+   * re-run's cleanup strips the drop-target highlight that the move just added
+   * (so the highlight would never be visible).
+   */
+  const isDragging = manualJoin !== null;
+
   useEffect(() => {
-    if (!manualJoin) return;
+    if (!isDragging) return;
 
     const clearTargets = () => {
       document
@@ -221,7 +229,7 @@ export function DiagramCanvas({
       window.removeEventListener('pointercancel', onPointerUp);
       clearTargets();
     };
-  }, [manualJoin, onAddManualJoin]);
+  }, [isDragging, onAddManualJoin]);
 
   /** Canvas-space endpoints of the manual-join preview line. */
   const manualPreview = useMemo(() => {

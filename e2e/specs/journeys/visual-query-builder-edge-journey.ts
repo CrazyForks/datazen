@@ -29,6 +29,7 @@ import {
   tableDataViewIsOpen,
   waitForEmptyCanvas,
   qbCall,
+  qbRead,
   readEditorSql,
   selectCardColumn,
   setEditorSql,
@@ -418,6 +419,89 @@ describe('Visual Query Builder 异常旅程 (QB-JOURNEY-B)', () => {
     expect(await existsInDom('[data-testid="qb-diagnostics"]')).toBe(false);
     expect(await $('[data-testid="qb-ok"]').isEnabled()).toBe(true);
     await captureJourneyStep('qbb-b19-alias-collision');
+  });
+
+  it('B20: 从列拖到另一列建立手动 JOIN', async () => {
+    // B18/B19 leave TABLE_A (name selected) and TABLE_B on the canvas. They have
+    // no foreign key between them, so any relation here is a manual join.
+    await switchQbTab('build');
+    const before = (await qbRead(['joins'])).joins as unknown[];
+
+    // The drag has to be driven in steps: React attaches the window listeners in
+    // an effect *after* the pointerdown state update, so a pointermove sent in
+    // the same JS turn would land before anything is listening.
+    const pointer = (
+      selector: string,
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      onWindow: boolean,
+    ) =>
+      browser.execute(
+        (sel: string, kind: string, useWindow: boolean) => {
+          const el = document.querySelector<HTMLElement>(sel);
+          if (!el) return { ok: false, reason: `missing ${sel}` };
+          const rect = el.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const target: EventTarget = useWindow ? window : el;
+          target.dispatchEvent(
+            new PointerEvent(kind, {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 11,
+              isPrimary: true,
+              pointerType: 'mouse',
+              buttons: 1,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+          return { ok: true, x, y };
+        },
+        selector,
+        type,
+        onWindow,
+      );
+
+    const handleSelector = `[data-testid="qb-connect-${TABLE_A}-name"]`;
+    const targetSelector = `[data-testid="qb-col-${TABLE_B}-id"]`;
+
+    expect((await pointer(handleSelector, 'pointerdown', false)).ok).toBe(true);
+    await browser.pause(200);
+    await pointer(targetSelector, 'pointermove', true);
+    await browser.pause(200);
+
+    // During a drag the canvas draws a preview line and highlights the column
+    // under the pointer, so the drop target is unambiguous.
+    expect(await existsInDom('[data-testid="qb-manual-join-preview"]')).toBe(true);
+    const highlighted = await browser.execute(
+      (sel: string) => !!document.querySelector(sel)?.classList.contains('qb-drop-target'),
+      targetSelector,
+    );
+    expect(highlighted).toBe(true);
+    await captureJourneyStep('qbb-b20-drag-preview');
+    await captureJourneyStep('qbb-b20-drag-preview');
+
+    await pointer(targetSelector, 'pointerup', true);
+    await browser.pause(250);
+
+    const after = (await qbRead(['joins'])).joins as Array<Record<string, unknown>>;
+    expect(after.length).toBe(before.length + 1);
+    const manual = after.find((join) => join.isManual === true);
+    expect(manual).toBeTruthy();
+    expect(manual!.leftTable).toBe(TABLE_A);
+    expect(manual!.leftColumn).toBe('name');
+    expect(manual!.rightTable).toBe(TABLE_B);
+    expect(manual!.rightColumn).toBe('id');
+
+    // Drawn as a manual relation (its own style) and still no text anywhere.
+    expect(await existsInDom('[data-relation-kind="manual"]')).toBe(true);
+    expect(await existsInDom('[data-testid^="qb-join-label-"]')).toBe(false);
+
+    // …and it reaches the generated SQL.
+    await switchQbTab('preview');
+    const sql = await previewText();
+    expect((sql.match(/INNER JOIN/gi) ?? []).length).toBe(1);
+    await captureJourneyStep('qbb-b20-manual-join');
   });
 
   it('B-close: × 走取消路径', async () => {
