@@ -14,6 +14,8 @@ export interface JoinLineProps {
   isAuto: boolean;
   onUpdateType: (type: QbJoinType) => void;
   onRemove: () => void;
+  /** Promote an auto-detected candidate into the SQL. */
+  onConfirm?: () => void;
 }
 
 /**
@@ -26,7 +28,15 @@ function bezierPath(from: { x: number; y: number }, to: { x: number; y: number }
   return `M ${from.x} ${from.y} C ${from.x + cp} ${from.y}, ${to.x - cp} ${to.y}, ${to.x} ${to.y}`;
 }
 
-export function JoinLine({ join, fromPos, toPos, isAuto, onUpdateType, onRemove }: JoinLineProps) {
+export function JoinLine({
+  join,
+  fromPos,
+  toPos,
+  isAuto,
+  onUpdateType,
+  onRemove,
+  onConfirm,
+}: JoinLineProps) {
   const pathD = useMemo(() => bezierPath(fromPos, toPos), [fromPos, toPos]);
 
   // Midpoint for the label
@@ -77,7 +87,13 @@ export function JoinLine({ join, fromPos, toPos, isAuto, onUpdateType, onRemove 
         style={{ overflow: 'visible' }}
       >
         <div>
-          <JoinLabel join={join} onUpdateType={onUpdateType} onRemove={onRemove} />
+          <JoinLabel
+            join={join}
+            isAuto={isAuto}
+            onUpdateType={onUpdateType}
+            onRemove={onRemove}
+            onConfirm={onConfirm}
+          />
         </div>
       </foreignObject>
     </g>

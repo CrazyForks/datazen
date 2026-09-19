@@ -1,375 +1,253 @@
 /**
- * Visual Query Builder complete user journey.
+ * QB-JOURNEY-A — Visual Query Builder, normal journey.
  *
- * Covers the full lifecycle of the v2 canvas-based builder:
- *   Open via More menu → drag table to canvas → select columns on card
- *   → configure WHERE in CriteriaGrid → configure ORDER BY → toggle DISTINCT
- *   → preview SQL → apply SQL → execute → verify results → reset → close.
+ * Full closed loop: open from the toolbar → add a table from the navigator →
+ * pick columns on the card → swap to the Preview tab → collapse/resize →
+ * add a WHERE condition → DISTINCT → **OK** writes the SQL back → execute and
+ * see the filtered rows.
  *
- * Test data is created in the worker database via connectBackend IPC;
- * the journey assumes nothing about pre-existing tables.
+ * Covers PRD §13.3.1 (A1–A16). See `visualQueryBuilderHelpers.ts` for the
+ * driving conventions (panel chrome = real DOM; canvas = `__qbStore`).
  */
-import { expect, browser, $ } from '@wdio/globals';
+import { browser, $, expect } from '@wdio/globals';
+import { captureJourneyStep } from '../../helpers.js';
 import {
-  captureJourneyStep,
-  closeDataExportDialogIfOpen,
-  closeExtraWindows,
-  connectBackend,
-  disconnectBackend,
-  invokeBackend,
-  openConnectionWindow,
-  openQueryTab,
-  withSafeModeOff,
-} from '../../helpers.js';
+  addWhereCondition,
+  clickQbClose,
+  clickQbOk,
+  confirmDiscardIfAsked,
+  configureWhereRow,
+  dragCard,
+  dragNavigatorTableToCanvas,
+  dragSplitter,
+  existsInDom,
+  heightOf,
+  openQbViaMenu,
+  previewText,
+  qbRead,
+  readEditorSql,
+  selectCardColumn,
+  toggleAllColumns,
+  setEditorSql,
+  setupQbJourney,
+  switchQbTab,
+  teardownQbJourney,
+  waitQbClosed,
+  waitQbOpen,
+} from './visualQueryBuilderHelpers.js';
+import type { QbJourneySetup } from './visualQueryBuilderHelpers.js';
 
-const TABLE_NAME = `e2e_qb_journey_${Date.now().toString(36)}`;
+const TABLE = `e2e_qb_a_${Date.now().toString(36)}`;
+const COLUMNS = ['id', 'name', 'category', 'score'];
 
-describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
-  let mainWindow: string;
+describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
+  let setup: QbJourneySetup;
 
   before(async () => {
-    // Create test table and seed data via backend IPC (no UI dependency).
-    const dbSessionId = await connectBackend('conn_e2e_pg');
-    try {
-      await withSafeModeOff(async () => {
-        await invokeBackend('execute_query', {
-          dbSessionId,
-          sql: `DROP TABLE IF EXISTS ${TABLE_NAME}`,
-        });
-        await invokeBackend('execute_query', {
-          dbSessionId,
-          sql: `CREATE TABLE ${TABLE_NAME} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
-        });
-        await invokeBackend('execute_query', {
-          dbSessionId,
-          sql: `INSERT INTO ${TABLE_NAME} (id, name, category, score) VALUES (1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), (3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
-        });
-      });
-    } finally {
-      await disconnectBackend(dbSessionId);
-    }
-
-    // Open the connection in the UI and open a query tab
-    const opened = await openConnectionWindow();
-    mainWindow = opened.mainWindow;
-    await openQueryTab();
+    setup = await setupQbJourney({
+      connectionId: 'e2e_qb_a_conn',
+      connectionName: 'E2E-QB-A',
+      captureLabel: 'qba-open-suite',
+      tables: { [TABLE]: COLUMNS },
+      seedStatements: [
+        `DROP TABLE IF EXISTS ${TABLE} CASCADE`,
+        `CREATE TABLE ${TABLE} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
+        `INSERT INTO ${TABLE} (id, name, category, score) VALUES ` +
+          `(1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), ` +
+          `(3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
+      ],
+    });
+    await setEditorSql('');
   });
 
   after(async () => {
-    try {
-      await closeDataExportDialogIfOpen();
-      const dbSessionId = await connectBackend('conn_e2e_pg');
-      try {
-        await withSafeModeOff(async () => {
-          await invokeBackend('execute_query', {
-            dbSessionId,
-            sql: `DROP TABLE IF EXISTS ${TABLE_NAME}`,
-          });
-        });
-      } finally {
-        await disconnectBackend(dbSessionId);
-      }
-    } catch {
-      /* best effort; the shared E2E teardown also removes journey tables */
-    }
-    await closeExtraWindows(mainWindow);
+    await teardownQbJourney(setup);
   });
 
-  it('完整旅程：More菜单打开 → 拖入表 → 选列 → WHERE → ORDER BY → DISTINCT → 预览 SQL → 应用并执行 → 重置 → 关闭', async () => {
-    // ── Step 1: Open Visual Builder via More menu ──
-    const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu.waitForClickable({ timeout: 5000 });
-    await moreMenu.click();
-    await browser.pause(300);
+  it('A1–A16: 完整正常旅程', async () => {
+    // ── A1: open the builder from the toolbar ──
+    await openQbViaMenu('qba-open');
 
-    const qbMenuItem = await $('[data-testid="more-menu-visual-builder"]');
-    await qbMenuItem.waitForClickable({ timeout: 5000 });
-    await qbMenuItem.click();
-
-    const qbPanel = await $('[data-testid="qb-panel"]');
-    await qbPanel.waitForDisplayed({ timeout: 5000 });
-    await captureJourneyStep('qb-panel-open');
-
-    // ── Step 2: Add a table to the canvas ──
-    // WebKit's DragEvent doesn't fire React synthetic handlers, so we use the
-    // exposed Zustand stores directly. This mirrors the real drop → toggleTable flow.
-    const tableAdded = await browser.execute((tableName: string) => {
-      const columns = ['id', 'name', 'category', 'score'];
-
-      // 1. Populate schemaStore: patch the active connection's columnMap
-      //    via commitConnectionPath so activeFlatten picks it up
-      const schemaStore = (window as any).__schemaStore;
-      if (schemaStore?.getState) {
-        const s = schemaStore.getState();
-        // The active dbSessionId key is where the columnMap lives
-        const dbKey = s.dbSessionId || s.activeDbSessionId;
-        if (dbKey && s.schemas instanceof Map) {
-          const prev = s.schemas.get(dbKey) || {};
-          const nextSchemas = new Map(s.schemas);
-          nextSchemas.set(dbKey, {
-            ...prev,
-            columnMap: { ...(prev.columnMap || {}), [tableName]: columns },
-          });
-          schemaStore.setState({
-            schemas: nextSchemas,
-            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
-          });
-        } else {
-          // Fallback: set columnMap directly on the store
-          schemaStore.setState({
-            columnMap: { ...(s.columnMap || {}), [tableName]: columns },
-          });
-        }
-      }
-
-      // 2. Add table to the QB store
-      const qbStore = (window as any).__qbStore;
-      if (!qbStore?.getState) return false;
-      const state = qbStore.getState();
-
-      if (!state.selectedTables.includes(tableName)) {
-        qbStore.setState({
-          selectedTables: [...state.selectedTables, tableName],
-        });
-      }
-
-      const positions = { ...qbStore.getState().tablePositions };
-      if (!positions[tableName]) {
-        positions[tableName] = { x: 50, y: 50 };
-      }
-      qbStore.setState({ tablePositions: positions });
-
-      return true;
-    }, TABLE_NAME);
-    expect(tableAdded).toBe(true);
-
-    // Wait for the TableCard to render
-    await browser.waitUntil(
-      async () => {
-        return await browser.execute((name: string) => {
-          return !!document.querySelector(`[data-testid="qb-drag-${name}"]`);
-        }, TABLE_NAME);
-      },
-      { timeout: 5000, timeoutMsg: 'Table card not rendered after drop' },
-    );
-    await captureJourneyStep('qb-table-on-canvas');
-
-    // ── Step 3: Select columns via TableCard checkboxes ──
-    // Click the checkbox for 'name' column on the table card
-    const nameChecked = await browser.execute((tbl: string) => {
-      const col = document.querySelector(`[data-testid="qb-col-${tbl}-name"]`);
-      if (col) {
-        const checkbox = col.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        if (checkbox) {
-          checkbox.click();
-          return true;
-        }
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(nameChecked).toBe(true);
-    await browser.pause(300);
-
-    // Click the checkbox for 'score' column on the table card
-    const scoreChecked = await browser.execute((tbl: string) => {
-      const col = document.querySelector(`[data-testid="qb-col-${tbl}-score"]`);
-      if (col) {
-        const checkbox = col.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        if (checkbox) {
-          checkbox.click();
-          return true;
-        }
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(scoreChecked).toBe(true);
-    await browser.pause(500);
-    await captureJourneyStep('qb-columns-selected');
-
-    // ── Step 4: Verify SQL preview shows SELECT ──
-    const preview = await $('[data-testid="qb-sql-preview"]');
-    await preview.waitForDisplayed({ timeout: 5000 });
-    let previewText = await preview.getText();
-    expect(previewText).toContain('SELECT');
-    expect(previewText).toContain(TABLE_NAME);
-    await captureJourneyStep('qb-sql-preview-basic');
-
-    // ── Step 5: Add a column to CriteriaGrid and configure WHERE ──
-    const addColBtn = await $('[data-testid="criteria-add-column"]');
-    await addColBtn.waitForClickable({ timeout: 5000 });
-    await addColBtn.click();
-    await browser.pause(300);
-
-    // A CriteriaRow should appear
-    const criteriaRow = await $('[data-testid="criteria-row"]');
-    await criteriaRow.waitForDisplayed({ timeout: 3000 });
-
-    // Select field in the CriteriaRow field dropdown
-    // The data-testid is on the wrapper div; the actual trigger is a button inside.
-    const fieldSelect = await $('[data-testid="criteria-field-select"] button');
-    await fieldSelect.waitForClickable({ timeout: 3000 });
-    await fieldSelect.click();
-    await browser.waitUntil(
+    const panelId = await browser.execute(
       () =>
-        browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
-      { timeout: 3000, timeoutMsg: 'Field dropdown not opened' },
+        document.querySelector('[data-testid="qb-panel"]')?.getAttribute('data-qb-panel-id') ?? '',
     );
+    expect(panelId.length).toBeGreaterThan(0);
 
-    // Pick the table.column option
-    const fieldPicked = await browser.execute((tbl: string) => {
-      const listbox = document.querySelector('[data-testid="select-listbox"]');
-      if (!listbox) return false;
-      const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
-      const field = options.find(
-        (o) => o.textContent?.includes(tbl) && o.textContent?.includes('name'),
-      );
-      if (field) {
-        field.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        return true;
-      }
-      return false;
-    }, TABLE_NAME);
-    expect(fieldPicked).toBe(true);
-    await browser.pause(300);
+    // The host navigator is reused — the builder brings no tree of its own.
+    await expect(await $('[data-testid="connection-navigator-aside"]')).toBeDisplayed();
+    expect(await existsInDom('[data-testid="object-tree-panel"]')).toBe(false);
 
-    // Open WHERE editor for this row
-    const whereBtn = await $('[data-testid="criteria-where-button"]');
-    await whereBtn.click();
-    await browser.pause(500);
+    // ── A2: the builder replaces the editor area ──
+    const [panelHeight, queryHeight] = await Promise.all([
+      heightOf('qb-panel'),
+      heightOf('query-panel'),
+    ]);
+    expect(panelHeight).toBeGreaterThan(queryHeight * 0.6);
 
-    // The WhereEditor dialog should open
-    const whereDialog = await $('[data-testid="where-editor-dialog"]');
-    await whereDialog.waitForDisplayed({ timeout: 3000 });
+    // The editor stays mounted (hidden) so its undo stack survives.
+    expect(await existsInDom('[data-testid="query-editor-host"]')).toBe(true);
+    expect(
+      await $('[data-testid="query-editor-host"]')
+        .isDisplayed()
+        .catch(() => false),
+    ).toBe(false);
 
-    // Type value 'Alice' in the where value input
-    const whereValue = await $('[data-testid="where-value-input"]');
-    await whereValue.waitForDisplayed({ timeout: 3000 });
-    await whereValue.click();
-    await whereValue.setValue('Alice');
-    await browser.pause(200);
+    // ── A3: defaults to the Build tab, preview not mounted ──
+    expect(await existsInDom('[data-testid="criteria-grid"]')).toBe(true);
+    expect(await existsInDom('[data-testid="qb-sql-preview"]')).toBe(false);
 
-    // Click Save button in the dialog
-    const saveBtn = await browser.execute(() => {
-      const dialog = document.querySelector('[data-testid="where-editor-dialog"]');
-      if (!dialog) return false;
-      const buttons = Array.from(dialog.querySelectorAll('button'));
-      const save = buttons.find(
-        (b) => b.textContent?.includes('Save') || b.textContent?.includes('保存'),
-      );
-      if (save) {
-        save.click();
-        return true;
-      }
-      return false;
+    // ── A4: drag the table in from the navigator ──
+    expect(await dragNavigatorTableToCanvas(TABLE)).toBe(true);
+    await browser.waitUntil(() => existsInDom(`[data-testid="qb-drag-${TABLE}"]`), {
+      timeout: 5000,
+      timeoutMsg: '拖动表到画布后未生成卡片',
     });
-    expect(saveBtn).toBe(true);
-    await browser.pause(500);
-
-    // Verify SQL preview now includes WHERE
-    previewText = await preview.getText();
-    expect(previewText).toContain('WHERE');
-    await captureJourneyStep('qb-where-added');
-
-    // ── Step 6: Add ORDER BY via CriteriaGrid sort ──
-    const sortSelect = await $('[data-testid="criteria-sort-select"]');
-    await sortSelect.click();
-    await browser.waitUntil(
-      () =>
-        browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
-      { timeout: 3000, timeoutMsg: 'Sort dropdown not opened' },
+    // The table arrives with a default alias, so the generated SQL is
+    // qualified from the very first column.
+    const alias = await browser.execute(
+      (t: string) => (window as any).__qbStore.getState().tableAliases[t] ?? '',
+      TABLE,
     );
+    expect(alias.length).toBeGreaterThan(0);
+    await captureJourneyStep('qba-table-from-navigator');
 
-    const ascPicked = await browser.execute(() => {
-      const listbox = document.querySelector('[data-testid="select-listbox"]');
-      if (!listbox) return false;
-      const options = Array.from(listbox.querySelectorAll('[data-testid="select-option"]'));
-      const asc = options.find((o) => o.textContent?.includes('ASC'));
-      if (asc) {
-        asc.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        return true;
-      }
-      return false;
-    });
-    expect(ascPicked).toBe(true);
+    // ── A4b: the card can be repositioned by dragging ──
+    const posBefore = (await qbRead(['tablePositions'])).tablePositions as Record<
+      string,
+      { x: number; y: number }
+    >;
+    await dragCard(TABLE, { x: 96, y: 48 });
+    const posAfter = (await qbRead(['tablePositions'])).tablePositions as Record<
+      string,
+      { x: number; y: number }
+    >;
+    expect(posAfter[TABLE]).not.toEqual(posBefore[TABLE]);
+    // Positions stay on the card grid so hand-placed cards line up.
+    expect(posAfter[TABLE]!.x % 24).toBe(0);
+    expect(posAfter[TABLE]!.y % 24).toBe(0);
+
+    // ── A5: pick two columns on the card ──
+    await selectCardColumn(TABLE, 'name');
+    await selectCardColumn(TABLE, 'score');
     await browser.pause(300);
 
-    previewText = await preview.getText();
-    expect(previewText).toContain('ORDER BY');
-    await captureJourneyStep('qb-sort-added');
-
-    // ── Step 7: Toggle DISTINCT ──
-    const distinctCheckbox = await $('[data-testid="qb-distinct-checkbox"]');
-    await distinctCheckbox.waitForClickable({ timeout: 5000 });
-    await distinctCheckbox.click();
+    // ── A5b: select every column at once, then narrow back to two ──
+    await toggleAllColumns(TABLE);
+    let selectedCount = await browser.execute(
+      () => ((window as any).__qbStore.getState().selectedColumns ?? []).length,
+    );
+    expect(selectedCount).toBe(COLUMNS.length);
+    await toggleAllColumns(TABLE);
+    selectedCount = await browser.execute(
+      () => ((window as any).__qbStore.getState().selectedColumns ?? []).length,
+    );
+    expect(selectedCount).toBe(0);
+    await selectCardColumn(TABLE, 'name');
+    await selectCardColumn(TABLE, 'score');
     await browser.pause(300);
 
-    previewText = await preview.getText();
-    expect(previewText).toContain('DISTINCT');
-    await captureJourneyStep('qb-distinct-toggled');
+    // ── A6: switch to Preview ──
+    await switchQbTab('preview');
+    let sql = await previewText();
+    expect(sql).toContain('SELECT');
+    expect(sql).toContain(TABLE);
+    expect(sql).toContain('name');
+    expect(sql).toContain('score');
+    // The default alias is what the column references are qualified with.
+    expect(sql).toContain(`"${alias}"`);
+    // Mutually exclusive tabs: the grid is unmounted while Preview is active.
+    expect(await existsInDom('[data-testid="criteria-grid"]')).toBe(false);
+    await captureJourneyStep('qba-preview');
 
-    // ── Step 8: Apply SQL ──
-    const applyBtn = await $('[data-testid="qb-apply-sql"]');
-    await applyBtn.waitForClickable({ timeout: 5000 });
-    await applyBtn.click();
+    // ── A7: drag the splitter up → the bottom region grows ──
+    const bottomBefore = await heightOf('qb-bottom-region');
+    await dragSplitter(-70);
+    const bottomAfter = await heightOf('qb-bottom-region');
+    expect(bottomAfter).toBeGreaterThan(bottomBefore);
+    expect(bottomAfter).toBeGreaterThanOrEqual(139);
 
-    // Panel should close after applying
-    await browser.waitUntil(
-      async () =>
-        !(await $('[data-testid="qb-panel"]')
-          .isDisplayed()
-          .catch(() => false)),
-      { timeout: 5000, timeoutMsg: 'Apply SQL 后面板未关闭' },
-    );
-    await captureJourneyStep('qb-applied-sql');
+    // ── A8: Ctrl/Cmd+B collapses the canvas, then restores it ──
+    const mod = process.platform === 'darwin' ? '\uE03D' : '\uE009'; // Cmd / Ctrl
+    await browser.keys([mod, 'b']);
+    await browser.pause(400);
+    expect(await existsInDom('[data-testid="qb-diagram-canvas"]')).toBe(false);
+    const collapsedHeight = await heightOf('qb-bottom-region');
+    expect(collapsedHeight).toBeGreaterThan(bottomAfter);
 
-    // ── Step 9: Execute the applied SQL and verify results ──
-    await browser.pause(500);
-    const execBtn = await $('[data-testid="editor-execute-button"]');
-    await execBtn.waitForClickable({ timeout: 5000 });
-    await execBtn.click();
+    await browser.keys([mod, 'b']);
+    await browser.pause(400);
+    expect(await existsInDom('[data-testid="qb-diagram-canvas"]')).toBe(true);
 
-    // Wait for the result table to appear
+    // ── A9/A10: build tab → add a condition row, set score >= 80 ──
+    await switchQbTab('build');
+    await addWhereCondition();
+    await configureWhereRow(0, { field: `${TABLE}.score`, operator: '>=', value: '80' });
+
+    await switchQbTab('preview');
+    sql = await previewText();
+    expect(sql).toContain('WHERE');
+    expect(sql).toContain('>= 80');
+    await captureJourneyStep('qba-where');
+
+    // ── A11: DISTINCT ──
+    await $('[data-testid="qb-distinct-checkbox"]').click();
+    await browser.pause(300);
+    sql = await previewText();
+    expect(sql.toUpperCase()).toContain('SELECT DISTINCT');
+
+    // ── A12: OK writes the SQL back and focuses the editor ──
+    // The editor is already empty here, and it is CSS-hidden while the builder
+    // is up — so it must not be touched through the DOM at this point.
+    await clickQbOk();
+    await waitQbClosed();
+
+    const toast = await $('[data-testid="qb-toast"]');
+    await toast.waitForDisplayed({ timeout: 5000 });
+
+    const editorSql = (await readEditorSql()).replace(/\s+/g, ' ').trim();
+    expect(editorSql).toContain('SELECT');
+    expect(editorSql).toContain(TABLE);
+    expect(editorSql.toUpperCase()).toContain('DISTINCT');
+    expect(editorSql).toContain('>= 80');
+    expect(editorSql.toUpperCase()).toContain('WHERE');
+    await captureJourneyStep('qba-committed');
+
+    // ── A13: execute and verify the filter really applied ──
+    const exec = await $('[data-testid="editor-execute-button"]');
+    await exec.waitForClickable({ timeout: 10000 });
+    await exec.click();
+
     const resultTable = await $('[data-testid="result-workspace-table"]');
-    await resultTable.waitForDisplayed({ timeout: 15000 });
+    await resultTable.waitForDisplayed({ timeout: 20000 });
     const resultText = await resultTable.getText();
     expect(resultText).toContain('Alice');
-    await captureJourneyStep('qb-result-after-apply');
+    expect(resultText).toContain('Diana');
+    expect(resultText).not.toContain('Charlie');
+    await captureJourneyStep('qba-result');
 
-    // ── Step 10: Re-open the panel and Reset ──
-    const moreMenu2 = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu2.waitForClickable({ timeout: 5000 });
-    await moreMenu2.click();
-    await browser.pause(300);
+    // ── A14: reopening keeps the canvas (OK does not clear it) ──
+    await openQbViaMenu('qba-reopen');
+    expect(await existsInDom(`[data-testid="qb-drag-${TABLE}"]`)).toBe(true);
+    // Tab memory (PRD F-07.1): we committed from Preview, so it reopens there
+    // with the same SQL still generated.
+    expect(await existsInDom('[data-testid="qb-sql-preview"]')).toBe(true);
+    expect(await previewText()).toContain(TABLE);
 
-    const qbMenuItem2 = await $('[data-testid="more-menu-visual-builder"]');
-    await qbMenuItem2.waitForClickable({ timeout: 5000 });
-    await qbMenuItem2.click();
+    // ── A15: Reset clears the canvas but keeps the panel open ──
+    await $('[data-testid="qb-reset"]').click();
+    await browser.pause(400);
+    expect(await existsInDom(`[data-testid="qb-drag-${TABLE}"]`)).toBe(false);
+    await waitQbOpen(3000);
 
-    const reopenedPanel = await $('[data-testid="qb-panel"]');
-    await reopenedPanel.waitForDisplayed({ timeout: 5000 });
-
-    const resetBtn = await $('[data-testid="qb-reset"]');
-    await resetBtn.waitForClickable({ timeout: 5000 });
-    await resetBtn.click();
-    await browser.pause(500);
-    await captureJourneyStep('qb-reset');
-
-    // ── Step 11: Close the panel ──
-    const closeClicked = await browser.execute(() => {
-      const btn = document.querySelector('[data-testid="qb-close"]') as HTMLElement | null;
-      if (!btn) return false;
-      btn.click();
-      return true;
-    });
-    expect(closeClicked).toBe(true);
-
-    await browser.waitUntil(
-      async () =>
-        !(await $('[data-testid="qb-panel"]')
-          .isDisplayed()
-          .catch(() => false)),
-      { timeout: 5000, timeoutMsg: '关闭面板超时' },
-    );
-    await captureJourneyStep('qb-panel-closed');
+    // ── A16: closing with × leaves the editor content untouched ──
+    // A15's Reset is itself a canvas change, so × must ask before discarding.
+    const beforeClose = (await readEditorSql()).replace(/\s+/g, ' ').trim();
+    await clickQbClose();
+    expect(await confirmDiscardIfAsked()).toBe(true);
+    await waitQbClosed();
+    const afterClose = (await readEditorSql()).replace(/\s+/g, ' ').trim();
+    expect(afterClose).toBe(beforeClose);
+    await captureJourneyStep('qba-closed');
   });
 });

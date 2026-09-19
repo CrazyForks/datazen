@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { cn } from '@datazen/ui';
+import { useI18n } from '../../../hooks/useI18n';
 import type { QbJoin, QbJoinType } from '../types';
 
 const JOIN_TYPE_OPTIONS: readonly { value: QbJoinType; label: string }[] = [
@@ -14,9 +15,20 @@ export interface JoinLabelProps {
   join: QbJoin;
   onUpdateType: (type: QbJoinType) => void;
   onRemove: () => void;
+  /** True for an auto-detected FK candidate (dashed line, not yet in the SQL). */
+  isAuto?: boolean;
+  /** Promote a candidate into the SQL (PRD F-03.2). */
+  onConfirm?: () => void;
 }
 
-export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
+export function JoinLabel({
+  join,
+  onUpdateType,
+  onRemove,
+  isAuto = false,
+  onConfirm,
+}: JoinLabelProps) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
 
   const handleTypeChange = useCallback(
@@ -34,6 +46,16 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
     },
     [onRemove],
   );
+
+  const handleLabelClick = useCallback(() => {
+    // A candidate is not in the SQL yet, so editing its type is meaningless
+    // until it is confirmed.
+    if (isAuto) {
+      onConfirm?.();
+      return;
+    }
+    setEditing(true);
+  }, [isAuto, onConfirm]);
 
   if (editing) {
     return (
@@ -71,7 +93,7 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
         'px-1.5 py-0.5 text-[10px]',
         'hover:border-accent hover:shadow-md transition-all',
       )}
-      onClick={() => setEditing(true)}
+      onClick={handleLabelClick}
       onContextMenu={handleContextMenu}
       data-testid={`qb-join-label-${join.id}`}
     >
@@ -80,6 +102,20 @@ export function JoinLabel({ join, onUpdateType, onRemove }: JoinLabelProps) {
       <span className="text-fg-secondary">
         {join.leftTable}.{join.leftColumn} = {join.rightTable}.{join.rightColumn}
       </span>
+      {isAuto && onConfirm && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onConfirm();
+          }}
+          className="ml-0.5 rounded bg-accent/15 px-1 text-[10px] font-medium text-accent transition-colors hover:bg-accent/25"
+          title={t('query.visualBuilder.confirmJoin')}
+          data-testid={`qb-join-confirm-${join.id}`}
+        >
+          {t('query.visualBuilder.confirmJoin')}
+        </button>
+      )}
       <button
         type="button"
         onClick={(e) => {

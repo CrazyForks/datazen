@@ -273,6 +273,27 @@ describe('[tester] query/contracts', () => {
     expect(hasSuspiciousPostgresDoubleQuotedLiteral("WHERE name = 'John'")).toBe(false);
   });
 
+  it('does not flag quoted identifiers on the right of a comparison', () => {
+    // Regression: a generated JOIN ON clause is not a mis-quoted literal, and
+    // reporting it blocked execution of the builder's own multi-table SQL.
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral(
+        'SELECT 1 FROM "actor" INNER JOIN "film_actor" ON "actor"."id" = "film_actor"."actor_id"',
+      ),
+    ).toBe(false);
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral('WHERE "t"."a" = "t"."b" AND "t"."c" >= 2000'),
+    ).toBe(false);
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral('WHERE "public"."name" = "public"."other"'),
+    ).toBe(false);
+  });
+
+  it('still flags a bare quoted literal after an operator', () => {
+    expect(hasSuspiciousPostgresDoubleQuotedLiteral('WHERE name LIKE "A%"')).toBe(true);
+    expect(hasSuspiciousPostgresDoubleQuotedLiteral('WHERE a <> "b"')).toBe(true);
+  });
+
   it('builds diagnosis context from panel state', () => {
     const result = buildQueryPanelDiagnosisContext({
       execution: { sql: 'SELECT 1', error: 'syntax error at line 1' },

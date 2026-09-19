@@ -53,6 +53,11 @@ export interface QbSortItem {
   table: string;
   column: string;
   direction: 'ASC' | 'DESC';
+  /**
+   * Aggregate to wrap the sort key in, when the sorted column is aggregated.
+   * Required so `SUM(x) … GROUP BY y ORDER BY SUM(x)` stays valid SQL.
+   */
+  aggregate?: QbAggregate;
 }
 
 /** A column selection entry with optional alias, aggregate, sort, group-by, and where. */

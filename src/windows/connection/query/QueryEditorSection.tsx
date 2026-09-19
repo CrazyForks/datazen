@@ -1,4 +1,4 @@
-import { useCallback, useState, type MutableRefObject, type Ref } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type Ref } from 'react';
 import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
@@ -17,6 +17,7 @@ import { Nl2SqlPanel } from '../../../components/ai/Nl2SqlPanel';
 import { QueryBuilderPanel } from '../../../components/query-builder/QueryBuilderPanel';
 import { useQueryBuilderStore } from '../../../stores/queryBuilderStore';
 import { sqlEditorEnhancedEP, useExtension } from '@datazen/extension-points';
+import { cn } from '../../../lib/cn';
 import { useI18n } from '../../../hooks/useI18n';
 import { usePlatform } from '../../../hooks/usePlatform';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -28,6 +29,8 @@ import type { SqlNamespace } from '../../../lib/sqlNamespace';
 import type { SqlParam } from '../../../lib/sqlBindParams';
 
 export interface QueryEditorSectionProps {
+  /** Owning query panel; scopes the visual builder's open state. */
+  panelId: string;
   dbSessionId: string;
   databaseType?: string;
   editorRef: MutableRefObject<SqlEditorHandle | null>;
@@ -115,6 +118,7 @@ export interface QueryEditorSectionProps {
 }
 
 export function QueryEditorSection({
+  panelId,
   dbSessionId,
   databaseType,
   editorRef,
@@ -198,8 +202,61 @@ export function QueryEditorSection({
   const [isRefreshingCompletion, setIsRefreshingCompletion] = useState(false);
 
   // ── Query Builder state ──────────────────────────────────────
-  const qbOpen = useQueryBuilderStore((s) => s.isOpen);
-  const toggleQb = useQueryBuilderStore((s) => s.toggleOpen);
+  // Panel-scoped: the builder is shown only by the query panel that opened it,
+  // so two query tabs can never mirror each other's canvas (PRD §6.4).
+  const qbOpen = useQueryBuilderStore((s) =>
+    s.openPanelId ? s.openPanelId === panelId : s.isOpen,
+  );
+  const openQbFor = useQueryBuilderStore((s) => s.openFor);
+  const closeQb = useQueryBuilderStore((s) => s.closeFor);
+  const hideQb = useQueryBuilderStore((s) => s.hideFor);
+
+  // Non-blocking confirmation that the SQL landed in the editor.
+  const [qbToast, setQbToast] = useState<string | null>(null);
+  // Focus the editor once it is visible again (after OK / Cancel).
+  const pendingEditorFocusRef = useRef(false);
+
+  useEffect(() => {
+    if (!qbToast) return;
+    const timer = window.setTimeout(() => setQbToast(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [qbToast]);
+
+  useEffect(() => {
+    if (qbOpen || !pendingEditorFocusRef.current) return;
+    pendingEditorFocusRef.current = false;
+    // The editor was kept mounted (CSS-hidden), so this only re-focuses it.
+    editorRef.current?.focus?.();
+  }, [qbOpen, editorRef]);
+
+  const handleToggleQb = useCallback(() => {
+    // The toolbar item is a visibility toggle, not a cancel: the canvas state
+    // survives, so nothing is destroyed by collapsing the builder.
+    if (qbOpen) {
+      hideQb();
+    } else {
+      openQbFor(panelId);
+    }
+  }, [qbOpen, hideQb, openQbFor, panelId]);
+
+  /** OK: write the generated SQL back, close, and focus the editor. */
+  const handleQbCommit = useCallback(
+    (newSql: string | null, mode: 'replace' | 'append') => {
+      if (newSql !== null) {
+        onUpdateSql(mode === 'append' ? `${sql.trimEnd()}\n${newSql}` : newSql);
+      }
+      closeQb('ok');
+      pendingEditorFocusRef.current = true;
+      setQbToast(t('query.visualBuilder.appliedToast'));
+    },
+    [onUpdateSql, sql, closeQb, t],
+  );
+
+  /** Cancel / ×: discard the canvas changes and go back to the editor. */
+  const handleQbCancel = useCallback(() => {
+    closeQb('cancel');
+    pendingEditorFocusRef.current = true;
+  }, [closeQb]);
 
   /**
    * Prefer the editor's own selection-aware formatter (§4.2); `onFormat` stays
@@ -336,7 +393,7 @@ export function QueryEditorSection({
           onCommitTx={() => void onCommitTx()}
           onRollbackTx={() => void onRollbackTx()}
           onRefreshCompletion={() => void handleRefreshCompletion()}
-          onToggleQb={toggleQb}
+          onToggleQb={handleToggleQb}
           renderSnippetButton={() => (
             <SnippetMenuButton editorRef={editorRef} compact={compactToolbar} disabled={running} />
           )}
@@ -438,7 +495,7 @@ export function QueryEditorSection({
         </div>
       )}
 
-      <div className="flex min-w-0 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {nl2sqlVisible && (
           <Nl2SqlPanel
             dbSessionId={dbSessionId}
@@ -447,18 +504,31 @@ export function QueryEditorSection({
           />
         )}
 
+        {/*
+         * The builder replaces the editor area rather than stacking above it,
+         * so the canvas owns the panel height (PRD §6.4 / G2).
+         */}
         {qbOpen && (
           <QueryBuilderPanel
+            panelId={panelId}
             dbSessionId={dbSessionId}
             databaseType={databaseType}
-            onApplySql={(newSql) => {
-              onUpdateSql(newSql);
-              toggleQb();
-            }}
+            currentSql={sql}
+            onCommit={handleQbCommit}
+            onCancel={handleQbCancel}
           />
         )}
 
-        <div className="relative shrink-0 border-b border-edge" style={{ height: editorHeight }}>
+        {/*
+         * Kept mounted while the builder is open (CSS-hidden only): unmounting
+         * would drop the CodeMirror undo stack, the bind-param values (Pro EP)
+         * and the metadata cache.
+         */}
+        <div
+          className={cn('relative shrink-0 border-b border-edge', qbOpen && 'hidden')}
+          style={{ height: editorHeight }}
+          data-testid="query-editor-host"
+        >
           <SqlEditor
             ref={editorRef}
             value={sql}
@@ -492,10 +562,23 @@ export function QueryEditorSection({
         </div>
         <div
           ref={editorResizeRef}
-          className="h-1.5 shrink-0 cursor-row-resize bg-transparent hover:bg-accent/30 active:bg-accent/40"
+          className={cn(
+            'h-1.5 shrink-0 cursor-row-resize bg-transparent hover:bg-accent/30 active:bg-accent/40',
+            qbOpen && 'hidden',
+          )}
           title="Drag to resize editor"
         />
       </div>
+
+      {qbToast && (
+        <div
+          className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-edge bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg"
+          role="status"
+          data-testid="qb-toast"
+        >
+          {qbToast}
+        </div>
+      )}
     </>
   );
 }

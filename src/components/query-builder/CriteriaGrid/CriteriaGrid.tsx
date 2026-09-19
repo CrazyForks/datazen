@@ -8,6 +8,8 @@ export interface CriteriaGridProps {
   allTables: string[];
   /** Map of table → column names for the field dropdowns. */
   allColumns: Record<string, string[]>;
+  /** Table → alias, shown as the column qualifier. */
+  tableAliases?: Record<string, string>;
   onUpdateColumn: (table: string, column: string, patch: Partial<QbColumnSelection>) => void;
   onRemoveColumn: (table: string, column: string) => void;
   /** Called when the user clicks "+ Add Column" — should add an empty row. */
@@ -25,6 +27,7 @@ export function CriteriaGrid({
   selectedColumns,
   allTables,
   allColumns,
+  tableAliases = {},
   onUpdateColumn,
   onRemoveColumn,
   onAddColumn,
@@ -51,6 +54,7 @@ export function CriteriaGrid({
               selection={col}
               allTables={allTables}
               allColumns={allColumns}
+              tableAliases={tableAliases}
               onUpdate={(patch) => onUpdateColumn(col.table, col.column, patch)}
               onRemove={() => onRemoveColumn(col.table, col.column)}
             />

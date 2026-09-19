@@ -3,7 +3,10 @@ import {
   getQbDialectAdapter,
   generateJoinClause,
   generateLimitOffset,
+  tableSourceExpr,
+  columnRef,
 } from '../../../lib/sqlDialects/queryBuilder';
+import { isExactNumericLiteral } from '../validation';
 import type {
   QbConditionGroup,
   QbCondition,
@@ -34,12 +37,17 @@ export interface GenerateSqlInput {
 /**
  * Format a raw value for inclusion in a SQL expression.
  * - `null` / empty → `NULL`
- * - Numeric literals → unquoted
+ * - Exact numeric literals → unquoted
  * - Everything else → single-quoted with escaped single quotes
+ *
+ * Only literals that survive `String(Number(v))` unchanged are emitted unquoted:
+ * `007` is not a valid numeric literal in PostgreSQL, and `1.50` would silently
+ * become `1.5`. Quoting those keeps the value the user typed; the server coerces
+ * them back for numeric columns.
  */
 function formatValue(value: string | null): string {
   if (value === null || value === '') return 'NULL';
-  if (/^-?\d+(\.\d+)?$/.test(value)) return value;
+  if (isExactNumericLiteral(value)) return value;
   return `'${value.replace(/'/g, "''")}'`;
 }
 
@@ -57,10 +65,12 @@ function parseInValues(value: string | null): string[] {
 
 function formatCondition(
   cond: QbCondition,
-  q: (name: string) => string,
+  aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
 ): string {
-  const col = `${q(cond.table)}.${q(cond.column)}`;
+  // Alias-aware: a hand-written alias must change the emitted qualifier, or the
+  // alias would be declared in FROM/JOIN and then never used.
+  const col = columnRef(cond.table, cond.column, aliases, adapter);
 
   switch (cond.operator) {
     case '=':
@@ -99,17 +109,17 @@ function formatCondition(
 /** Build the inner expression of a condition group (without the leading ` WHERE `). */
 function buildGroupExpr(
   group: QbConditionGroup,
-  q: (name: string) => string,
+  aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
 ): string {
   const parts: string[] = [];
 
   for (const cond of group.conditions) {
-    parts.push(formatCondition(cond, q, adapter));
+    parts.push(formatCondition(cond, aliases, adapter));
   }
 
   for (const subGroup of group.groups) {
-    const sub = buildGroupExpr(subGroup, q, adapter);
+    const sub = buildGroupExpr(subGroup, aliases, adapter);
     if (sub) parts.push(`(${sub})`);
   }
 
@@ -119,10 +129,10 @@ function buildGroupExpr(
 
 function buildWhereClause(
   group: QbConditionGroup,
-  q: (name: string) => string,
+  aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
 ): string {
-  const expr = buildGroupExpr(group, q, adapter);
+  const expr = buildGroupExpr(group, aliases, adapter);
   if (!expr) return '';
   return ` WHERE ${expr}`;
 }
@@ -136,24 +146,23 @@ function generateSql(input: GenerateSqlInput): string {
 
   const adapter = getQbDialectAdapter(input.databaseType);
   const q = (name: string) => adapter.quoteIdentifier(name);
+  const aliases = input.tableAliases ?? {};
 
   // 1. SELECT
   const selectItems = input.selectedColumns.map((col) => {
-    const colPath = `${q(col.table)}.${q(col.column)}`;
+    const colPath = columnRef(col.table, col.column, aliases, adapter);
     const expr = col.aggregate ? `${col.aggregate}(${colPath})` : colPath;
     return col.alias ? `${expr} AS ${q(col.alias)}` : expr;
   });
   const distinct = input.distinct ? 'DISTINCT ' : '';
   const selectClause = `SELECT ${distinct}${selectItems.join(', ')}`;
 
-  // 2. FROM — use alias when available
+  // 2. FROM — declare the alias here; every other clause references it.
   const firstTable = input.selectedTables[0];
-  const firstAlias = input.tableAliases[firstTable];
-  const fromTable = firstAlias ? `${q(firstTable)} ${q(firstAlias)}` : q(firstTable);
-  const fromClause = ` FROM ${fromTable}`;
+  const fromClause = ` FROM ${tableSourceExpr(firstTable, aliases, adapter)}`;
 
   // 3. JOIN
-  const joinClause = generateJoinClause(input.joins, input.tableAliases, adapter);
+  const joinClause = generateJoinClause(input.joins, input.tableAliases, adapter, firstTable);
 
   // 4. WHERE — merge per-column where conditions into the root where group
   const perColumnConditions = input.selectedColumns
@@ -166,7 +175,7 @@ function generateSql(input: GenerateSqlInput): string {
     ...input.where,
     conditions: [...input.where.conditions, ...perColumnConditions],
   };
-  const whereClause = buildWhereClause(effectiveWhere, q, adapter);
+  const whereClause = buildWhereClause(effectiveWhere, aliases, adapter);
 
   // 5. GROUP BY — merge store-level groupBy with per-column groupBy flags
   const perColumnGroupBy: QbGroupByItem[] = input.selectedColumns
@@ -175,18 +184,33 @@ function generateSql(input: GenerateSqlInput): string {
   const effectiveGroupBy = [...input.groupBy, ...perColumnGroupBy];
   const groupByClause =
     effectiveGroupBy.length > 0
-      ? ` GROUP BY ${effectiveGroupBy.map((g) => `${q(g.table)}.${q(g.column)}`).join(', ')}`
+      ? ` GROUP BY ${effectiveGroupBy
+          .map((g) => columnRef(g.table, g.column, aliases, adapter))
+          .join(', ')}`
       : '';
 
-  // 6. ORDER BY — merge store-level orderBy with per-column sort
+  // 6. ORDER BY — merge store-level orderBy with per-column sort.
+  //
+  // A per-column sort on an *aggregated* column must order by the aggregate
+  // expression, not the bare column: `ORDER BY x` is rejected by every engine
+  // once `x` is aggregated but not grouped (`SUM(x) … GROUP BY y ORDER BY x`).
   const perColumnSorts: QbSortItem[] = input.selectedColumns
     .filter((c) => c.sort)
-    .map((c) => ({ table: c.table, column: c.column, direction: c.sort! }));
-  const effectiveOrderBy = [...input.orderBy, ...perColumnSorts];
-  const orderByClause =
-    effectiveOrderBy.length > 0
-      ? ` ORDER BY ${effectiveOrderBy.map((o) => `${q(o.table)}.${q(o.column)} ${o.direction}`).join(', ')}`
-      : '';
+    .map((c) => ({
+      table: c.table,
+      column: c.column,
+      direction: c.sort!,
+      aggregate: c.aggregate,
+    }));
+  const orderByItems = [
+    ...input.orderBy.map((o) => `${columnRef(o.table, o.column, aliases, adapter)} ${o.direction}`),
+    ...perColumnSorts.map((o) => {
+      const ref = columnRef(o.table, o.column, aliases, adapter);
+      const expr = o.aggregate ? `${o.aggregate}(${ref})` : ref;
+      return `${expr} ${o.direction}`;
+    }),
+  ];
+  const orderByClause = orderByItems.length > 0 ? ` ORDER BY ${orderByItems.join(', ')}` : '';
 
   // 7. LIMIT / OFFSET
   const limitOffsetClause = generateLimitOffset(input.limit, input.offset, adapter);

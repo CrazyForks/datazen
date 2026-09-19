@@ -12,15 +12,26 @@ import type { QbJoin } from '../../components/query-builder/types';
 // ── Adapter interface ─────────────────────────────────────────
 
 export interface QbDialectAdapter {
-  /** Wrap an identifier (table/column/alias) in the dialect-specific quote characters. */
+  /**
+   * Wrap an identifier (table/column/alias) in the dialect-specific quote
+   * characters, escaping any of those characters inside the name.
+   *
+   * Escaping matters for user-supplied aliases: emitting
+   * `AS "my "alias""` is broken SQL at best, and an identifier-injection
+   * vector at worst.
+   */
   quoteIdentifier(name: string): string;
   /** Whether this dialect supports ILIKE for case-insensitive LIKE. */
   supportsILike: boolean;
   /**
-   * Format a LIMIT / OFFSET clause.
-   * Returns `null` when the dialect cannot express this with LIMIT/OFFSET (e.g. SQL Server TOP).
+   * Format a LIMIT / OFFSET clause (no leading space).
+   * Either bound may be `null`: an offset without a limit is legal on some
+   * dialects and needs a placeholder limit on others (`LIMIT -1` in SQLite).
+   * Returns `null` when the dialect cannot express the requested pagination at
+   * all (SQL Server) — callers must surface that rather than silently returning
+   * an unpaginated query.
    */
-  formatLimitOffset(limit: number, offset: number): string | null;
+  formatLimitOffset(limit: number | null, offset: number | null): string | null;
   /** Format an `IS [NOT] NULL` comparison. */
   formatNullComparison(quotedColumn: string, isNull: boolean): string;
   /** Format an `[NOT] IN (val1, val2, …)` clause. Values are already SQL-escaped. */
@@ -30,78 +41,230 @@ export interface QbDialectAdapter {
 // ── Per-dialect implementations ───────────────────────────────
 
 const postgresqlAdapter: QbDialectAdapter = {
-  quoteIdentifier: (n) => `"${n}"`,
+  quoteIdentifier: (n) => `"${n.replaceAll('"', '""')}"`,
   supportsILike: true,
-  formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
+  formatLimitOffset: (l, o) => {
+    const hasOffset = o !== null && o > 0;
+    if (l === null) return hasOffset ? `OFFSET ${o}` : null;
+    return hasOffset ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`;
+  },
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
 
+/** MySQL cannot express `OFFSET` without a `LIMIT`; this is the documented sentinel. */
+const MYSQL_UNBOUNDED_LIMIT = '18446744073709551615';
+
 const mysqlAdapter: QbDialectAdapter = {
-  quoteIdentifier: (n) => `\`${n}\``,
+  quoteIdentifier: (n) => `\`${n.replaceAll('`', '``')}\``,
   supportsILike: false,
-  formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${o}, ${l}` : `LIMIT ${l}`),
+  formatLimitOffset: (l, o) => {
+    const hasOffset = o !== null && o > 0;
+    if (l === null) {
+      return hasOffset ? `LIMIT ${MYSQL_UNBOUNDED_LIMIT} OFFSET ${o}` : null;
+    }
+    return hasOffset ? `LIMIT ${o}, ${l}` : `LIMIT ${l}`;
+  },
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
 
 const sqliteAdapter: QbDialectAdapter = {
-  quoteIdentifier: (n) => `"${n}"`,
+  quoteIdentifier: (n) => `"${n.replaceAll('"', '""')}"`,
   supportsILike: false,
-  formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
+  formatLimitOffset: (l, o) => {
+    const hasOffset = o !== null && o > 0;
+    // SQLite requires LIMIT before OFFSET; `-1` means "no limit".
+    if (l === null) return hasOffset ? `LIMIT -1 OFFSET ${o}` : null;
+    return hasOffset ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`;
+  },
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
 
 const sqlserverAdapter: QbDialectAdapter = {
-  quoteIdentifier: (n) => `[${n}]`,
+  quoteIdentifier: (n) => `[${n.replaceAll(']', ']]')}]`,
   supportsILike: false,
-  formatLimitOffset: () => null, // SQL Server uses TOP / OFFSET-FETCH; v1 does not handle this.
+  // SQL Server needs ORDER BY + OFFSET/FETCH; v1 does not emit it, and the
+  // validation layer turns that into a visible error instead of a silent
+  // unpaginated query.
+  formatLimitOffset: () => null,
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
 
 const genericAdapter: QbDialectAdapter = {
-  quoteIdentifier: (n) => `"${n}"`,
+  quoteIdentifier: (n) => `"${n.replaceAll('"', '""')}"`,
   supportsILike: false,
-  formatLimitOffset: (l, o) => (o > 0 ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`),
+  formatLimitOffset: (l, o) => {
+    const hasOffset = o !== null && o > 0;
+    if (l === null) return hasOffset ? `OFFSET ${o}` : null;
+    return hasOffset ? `LIMIT ${l} OFFSET ${o}` : `LIMIT ${l}`;
+  },
   formatNullComparison: (c, isNull) => `${c} IS${isNull ? '' : ' NOT'} NULL`,
   formatInList: (c, v, neg) => `${c} ${neg ? 'NOT ' : ''}IN (${v.join(', ')})`,
 };
 
+// ── Table alias resolution ────────────────────────────────────
+
+/** Table name → alias. An empty/missing entry means "use the table name". */
+export type QbTableAliases = Record<string, string>;
+
+/**
+ * The qualifier a column reference must use: the alias when the table has one,
+ * otherwise the table name. Every column position (SELECT, WHERE, GROUP BY,
+ * ORDER BY, JOIN … ON) must agree on this or the statement will not resolve.
+ */
+export function tableQualifier(table: string, aliases: QbTableAliases): string {
+  const alias = aliases[table];
+  return alias && alias !== table ? alias : table;
+}
+
+/**
+ * The alias-declaring form for a FROM/JOIN target: `"orders"` or
+ * `"orders" AS "o"`. Joining a table by its alias without declaring it is a
+ * syntax error, which is why the JOIN clause must not use {@link tableQualifier}
+ * here.
+ */
+export function tableSourceExpr(
+  table: string,
+  aliases: QbTableAliases,
+  adapter: QbDialectAdapter,
+): string {
+  const qualifier = tableQualifier(table, aliases);
+  const quoted = adapter.quoteIdentifier(table);
+  return qualifier === table ? quoted : `${quoted} AS ${adapter.quoteIdentifier(qualifier)}`;
+}
+
+/** Fully qualified, quoted column reference: `"o"."total"`. */
+export function columnRef(
+  table: string,
+  column: string,
+  aliases: QbTableAliases,
+  adapter: QbDialectAdapter,
+): string {
+  return `${adapter.quoteIdentifier(tableQualifier(table, aliases))}.${adapter.quoteIdentifier(column)}`;
+}
+
 // ── JOIN clause generation ────────────────────────────────────
+
+/** One emitted `JOIN <table> ON <predicates>` step. */
+interface JoinStep {
+  type: QbJoin['type'];
+  targetTable: string;
+  /** Each predicate is `sourceTable.sourceColumn = targetTable.targetColumn`. */
+  predicates: Array<{ sourceTable: string; sourceColumn: string; targetColumn: string }>;
+}
 
 /**
  * Generate SQL JOIN clauses from a list of QbJoin entries.
  *
- * @param joins - The JOIN relationships to generate.
- * @param aliases - Table alias mapping (tableName → alias). Used for ON clause column references.
- * @param adapter - Dialect adapter for identifier quoting.
- * @returns The formatted JOIN clause string (including leading newline), or empty string when no joins.
+ * A flat `JOIN rightTable ON left = right` per entry is **not** enough: the
+ * entries arrive in graph order, not query order, so a naive rendering can
+ * re-join the FROM table and reference tables that have not been joined yet
+ * (`FROM a JOIN a ON b.x = a.id JOIN b ON c.y = b.id` — both invalid).
+ *
+ * This walks the join graph outward from the FROM table instead:
+ *  - each step joins a table that is reachable from an already-included table;
+ *  - the predicate is oriented so the included side comes first;
+ *  - repeated pairs (composite keys, duplicated entries) merge into one step
+ *    with an extra `AND` predicate rather than a second `JOIN` of the same
+ *    table;
+ *  - joins not connected to the FROM table are appended verbatim, so the
+ *    preview still reflects what the user drew (the engine will reject it, but
+ *    silently dropping their intent would be worse).
+ *
+ * @param fromTable - Table already present in the FROM clause (the join graph root).
  */
 export function generateJoinClause(
   joins: QbJoin[],
   aliases: Record<string, string>,
   adapter: QbDialectAdapter,
+  fromTable?: string,
 ): string {
   if (joins.length === 0) return '';
 
-  const q = (name: string) => adapter.quoteIdentifier(name);
+  const colRef = (table: string, column: string) => columnRef(table, column, aliases, adapter);
 
-  return (
-    '\n' +
-    joins
-      .map((join) => {
-        const leftTableRef = aliases[join.leftTable]
-          ? q(aliases[join.leftTable])
-          : q(join.leftTable);
-        const rightTableRef = q(join.rightTable);
-        const leftCol = `${leftTableRef}.${q(join.leftColumn)}`;
-        const rightCol = `${rightTableRef}.${q(join.rightColumn)}`;
-        return `${join.type} JOIN ${rightTableRef} ON ${leftCol} = ${rightCol}`;
-      })
-      .join('\n')
-  );
+  const included = new Set<string>();
+  if (fromTable) included.add(fromTable);
+  else if (joins[0]) included.add(joins[0].leftTable);
+
+  const remaining = [...joins];
+  const steps: JoinStep[] = [];
+  const stepByTarget = new Map<string, JoinStep>();
+
+  let progressed = true;
+  while (remaining.length > 0 && progressed) {
+    progressed = false;
+    for (let i = 0; i < remaining.length; i += 1) {
+      const join = remaining[i]!;
+      const leftIncluded = included.has(join.leftTable);
+      const rightIncluded = included.has(join.rightTable);
+      if (!leftIncluded && !rightIncluded) continue;
+
+      // Orient so the already-included side is the source of the predicate.
+      const sourceTable = leftIncluded ? join.leftTable : join.rightTable;
+      const sourceColumn = leftIncluded ? join.leftColumn : join.rightColumn;
+      const targetTable = leftIncluded ? join.rightTable : join.leftTable;
+      const targetColumn = leftIncluded ? join.rightColumn : join.leftColumn;
+
+      remaining.splice(i, 1);
+      i -= 1;
+      progressed = true;
+
+      if (included.has(targetTable)) {
+        // Both sides already in the query: this is an extra predicate between
+        // two joined tables (composite key, or a duplicated entry), not a new
+        // table. Merge it onto whichever existing step owns either side, in the
+        // orientation that step already uses.
+        //
+        // A self-join (same table on both sides) cannot be expressed without
+        // aliases, so it is intentionally dropped rather than emitted invalid.
+        const existing = stepByTarget.get(targetTable) ?? stepByTarget.get(sourceTable);
+        if (existing) {
+          if (existing.targetTable === targetTable) {
+            existing.predicates.push({ sourceTable, sourceColumn, targetColumn });
+          } else {
+            existing.predicates.push({
+              sourceTable: targetTable,
+              sourceColumn: targetColumn,
+              targetColumn: sourceColumn,
+            });
+          }
+        }
+        continue;
+      }
+
+      const step: JoinStep = {
+        type: join.type,
+        targetTable,
+        predicates: [{ sourceTable, sourceColumn, targetColumn }],
+      };
+      steps.push(step);
+      stepByTarget.set(targetTable, step);
+      included.add(targetTable);
+    }
+  }
+
+  const clauses = steps.map((step) => {
+    const on = step.predicates
+      .map(
+        (p) =>
+          `${colRef(p.sourceTable, p.sourceColumn)} = ${colRef(step.targetTable, p.targetColumn)}`,
+      )
+      .join(' AND ');
+    return `${step.type} JOIN ${tableSourceExpr(step.targetTable, aliases, adapter)} ON ${on}`;
+  });
+
+  for (const join of remaining) {
+    clauses.push(
+      `${join.type} JOIN ${tableSourceExpr(join.rightTable, aliases, adapter)} ON ` +
+        `${colRef(join.leftTable, join.leftColumn)} = ${colRef(join.rightTable, join.rightColumn)}`,
+    );
+  }
+
+  return clauses.length > 0 ? `\n${clauses.join('\n')}` : '';
 }
 
 // ── LIMIT / OFFSET clause generation ──────────────────────────
@@ -119,13 +282,9 @@ export function generateLimitOffset(
   offset: number | null,
   adapter: QbDialectAdapter,
 ): string {
-  if (limit === null && offset === null) return '';
-  // Use adapter for dialect-specific formatting. Fallback: standard SQL.
-  const effectiveLimit = limit ?? 0;
-  const effectiveOffset = offset ?? 0;
-  // Only call adapter when both are non-null to avoid confusing defaults.
-  const result = adapter.formatLimitOffset(effectiveLimit, effectiveOffset);
-  return result !== null ? ` ${result}` : '';
+  if (limit === null && (offset === null || offset === 0)) return '';
+  const result = adapter.formatLimitOffset(limit, offset);
+  return result ? ` ${result}` : '';
 }
 
 // ── Factory ───────────────────────────────────────────────────

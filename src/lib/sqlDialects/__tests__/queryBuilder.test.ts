@@ -413,3 +413,110 @@ describe('generateLimitOffset', () => {
     expect(generateLimitOffset(10, 20, mysql)).toBe(' LIMIT 20, 10');
   });
 });
+
+// ── generateJoinClause: graph ordering (regression) ───────────
+
+/**
+ * A flat `JOIN rightTable ON left = right` per entry produced invalid SQL as
+ * soon as three tables were chained: the FK detector returns the graph in
+ * discovery order, which is not a valid join order. These pin the walk that
+ * fixes it.
+ */
+describe('generateJoinClause — join graph ordering', () => {
+  const pg = getQbDialectAdapter('postgresql');
+
+  const join = (over: Partial<QbJoin> & Pick<QbJoin, 'leftTable' | 'rightTable'>): QbJoin => ({
+    id: `${over.leftTable}-${over.rightTable}`,
+    type: 'INNER',
+    leftColumn: 'id',
+    rightColumn: 'ref_id',
+    isManual: false,
+    ...over,
+  });
+
+  it('orients a join whose FROM table is on the right-hand side', () => {
+    // FROM author; the FK was discovered as book.author_id → author.id, so the
+    // FROM table is the *right* side and must not be re-joined.
+    const result = generateJoinClause(
+      [
+        join({
+          leftTable: 'book',
+          leftColumn: 'author_id',
+          rightTable: 'author',
+          rightColumn: 'id',
+        }),
+      ],
+      {},
+      pg,
+      'author',
+    );
+    expect(result).toBe('\nINNER JOIN "book" ON "author"."id" = "book"."author_id"');
+  });
+
+  it('orders a three-table chain from the FROM table outward', () => {
+    // Discovery order (book→author, sale→book) is not a usable join order.
+    const result = generateJoinClause(
+      [
+        join({
+          leftTable: 'book',
+          leftColumn: 'author_id',
+          rightTable: 'author',
+          rightColumn: 'id',
+        }),
+        join({
+          leftTable: 'sale',
+          leftColumn: 'book_id',
+          rightTable: 'book',
+          rightColumn: 'id',
+        }),
+      ],
+      {},
+      pg,
+      'author',
+    );
+    expect(result).toBe(
+      '\nINNER JOIN "book" ON "author"."id" = "book"."author_id"' +
+        '\nINNER JOIN "sale" ON "book"."id" = "sale"."book_id"',
+    );
+  });
+
+  it('merges repeated pairs into one JOIN with AND predicates (composite key)', () => {
+    const result = generateJoinClause(
+      [
+        join({
+          leftTable: 'child',
+          leftColumn: 'a_id',
+          rightTable: 'parent',
+          rightColumn: 'a_id',
+        }),
+        join({
+          leftTable: 'child',
+          leftColumn: 'b_id',
+          rightTable: 'parent',
+          rightColumn: 'b_id',
+        }),
+      ],
+      {},
+      pg,
+      'parent',
+    );
+    expect(result).toBe(
+      '\nINNER JOIN "child" ON "parent"."a_id" = "child"."a_id"' +
+        ' AND "parent"."b_id" = "child"."b_id"',
+    );
+  });
+
+  it('never emits a second JOIN for a table already in the query', () => {
+    const result = generateJoinClause(
+      [
+        join({ leftTable: 'a', leftColumn: 'b_id', rightTable: 'b', rightColumn: 'id' }),
+        join({ leftTable: 'c', leftColumn: 'b_id', rightTable: 'b', rightColumn: 'id' }),
+      ],
+      {},
+      pg,
+      'b',
+    );
+    expect((result.match(/JOIN/g) ?? []).length).toBe(2);
+    expect(result).not.toContain('ON "b"."id" = "b"."id"');
+  });
+});

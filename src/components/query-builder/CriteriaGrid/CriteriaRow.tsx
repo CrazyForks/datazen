@@ -27,6 +27,8 @@ export interface CriteriaRowProps {
   allTables: string[];
   /** Map of table → column names. */
   allColumns: Record<string, string[]>;
+  /** Table → alias, so the dropdown shows the qualifier the SQL will use. */
+  tableAliases?: Record<string, string>;
   onUpdate: (patch: Partial<QbColumnSelection>) => void;
   onRemove: () => void;
 }
@@ -42,22 +44,28 @@ export function CriteriaRow({
   selection,
   allTables,
   allColumns,
+  tableAliases = {},
   onUpdate,
   onRemove,
 }: CriteriaRowProps) {
   const [whereOpen, setWhereOpen] = useState(false);
 
-  // Build combined "table.column" options from all selected tables
+  // Build combined "table.column" options from all selected tables. The value
+  // stays `table.column` (that is what the store keys on) while the label shows
+  // the alias, so what the user reads matches what the SQL emits.
   const fieldOptions: SelectOption[] = useMemo(() => {
     const opts: SelectOption[] = [];
     for (const table of allTables) {
-      const cols = allColumns[table] ?? [];
-      for (const col of cols) {
-        opts.push({ value: `${table}.${col}`, label: `${table}.${col}` });
+      const qualifier = tableAliases[table] || table;
+      for (const col of allColumns[table] ?? []) {
+        opts.push({
+          value: `${table}.${col}`,
+          label: qualifier === table ? `${table}.${col}` : `${qualifier}.${col}`,
+        });
       }
     }
     return opts;
-  }, [allTables, allColumns]);
+  }, [allTables, allColumns, tableAliases]);
 
   const currentFieldValue = `${selection.table}.${selection.column}`;
 
@@ -133,7 +141,9 @@ export function CriteriaRow({
     [selection, onUpdate],
   );
 
-  const fieldLabel = currentFieldValue;
+  const fieldLabel = tableAliases[selection.table]
+    ? `${tableAliases[selection.table]}.${selection.column}`
+    : currentFieldValue;
 
   return (
     <tr

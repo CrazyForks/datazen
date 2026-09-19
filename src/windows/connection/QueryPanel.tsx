@@ -9,6 +9,7 @@ import {
   tablesReferencedInSql,
 } from '../../lib/sqlEditorDefaults';
 import { usePanelStore } from '../../stores/panelStore';
+import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useQueryExec } from '../../hooks/useQueryExec';
 import { useSchemaStore } from '../../stores/schemaStore';
@@ -60,6 +61,14 @@ export function QueryPanel({
   const { t } = useI18n();
   const [confirmRetry, confirmRetryDialog] = useConfirmDialog();
   const exec = useQueryExec(panelId);
+  // While the visual builder is up it replaces the whole query content area,
+  // so the result pane yields its height to the canvas (PRD §6.4 / G2).
+  const qbOpenHere = useQueryBuilderStore((s) =>
+    s.openPanelId ? s.openPanelId === panelId : s.isOpen,
+  );
+  // NOTE: the builder is torn down when the panel *tab* closes, not when this
+  // component unmounts — switching tabs unmounts the inactive panel too, and
+  // that must not throw its builder away. See ContentView's panel-diff effect.
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
   const driverCapabilities = useActiveConnectionStore(
     (s) => s.connections[connectionId]?.capabilities,
@@ -529,6 +538,7 @@ export function QueryPanel({
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <QueryEditorSection
+            panelId={panelId}
             dbSessionId={dbSessionId}
             databaseType={databaseType}
             editorRef={editorRef}
@@ -592,45 +602,47 @@ export function QueryPanel({
             onNavigateToStructure={onNavigateToStructure}
             onNavigateToDdl={onNavigateToDdl}
           />
-          <QueryResultsPane
-            dbSessionId={dbSessionId}
-            databaseType={databaseType}
-            sql={exec.sql}
-            running={exec.running}
-            error={exec.error}
-            results={results}
-            activeResultIdx={activeResultIdx}
-            activeResult={activeResult}
-            resultViewMode={resultViewMode}
-            chartConfig={exec.chartConfig}
-            resultDetailRowIndex={exec.resultDetailRowIndex}
-            queryResultExportCapability={queryResultExportCapability}
-            selectedDatabase={selectedDatabase}
-            showExplain={workflows.showExplain}
-            explainLoading={workflows.explainLoading}
-            explainError={workflows.explainError}
-            explainResult={workflows.explainResult}
-            diagnosisVisible={workflows.diagnosisVisible}
-            diagnosisContext={workflows.diagnosisContext}
-            onExplainError={workflows.handleExplainError}
-            retryActionEnabled={workflows.retryAction.enabled}
-            addToDashboardOpen={workflows.addToDashboardOpen}
-            onApplyAiSql={(v) => updateSql(panelId, v)}
-            onApplyFixSql={workflows.handleApplyFixSql}
-            onRetry={workflows.handleRetry}
-            onSetActiveResult={(idx) => setActiveResult(panelId, idx)}
-            onTogglePinResult={(idx) => usePanelStore.getState().togglePinResult(panelId, idx)}
-            onSetResultViewMode={(mode) => {
-              setResultViewModeStore(panelId, mode);
-            }}
-            onChartConfigChange={(cfg) => setChartConfig(panelId, cfg)}
-            onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex)}
-            onShowExplain={workflows.setShowExplain}
-            onDiagnosisVisible={workflows.setDiagnosisVisible}
-            onAddToDashboardOpen={workflows.setAddToDashboardOpen}
-            onAddToDashboardConfirm={workflows.handleAddToDashboardConfirm}
-            onAskInChat={handleAskInChat}
-          />
+          {!qbOpenHere && (
+            <QueryResultsPane
+              dbSessionId={dbSessionId}
+              databaseType={databaseType}
+              sql={exec.sql}
+              running={exec.running}
+              error={exec.error}
+              results={results}
+              activeResultIdx={activeResultIdx}
+              activeResult={activeResult}
+              resultViewMode={resultViewMode}
+              chartConfig={exec.chartConfig}
+              resultDetailRowIndex={exec.resultDetailRowIndex}
+              queryResultExportCapability={queryResultExportCapability}
+              selectedDatabase={selectedDatabase}
+              showExplain={workflows.showExplain}
+              explainLoading={workflows.explainLoading}
+              explainError={workflows.explainError}
+              explainResult={workflows.explainResult}
+              diagnosisVisible={workflows.diagnosisVisible}
+              diagnosisContext={workflows.diagnosisContext}
+              onExplainError={workflows.handleExplainError}
+              retryActionEnabled={workflows.retryAction.enabled}
+              addToDashboardOpen={workflows.addToDashboardOpen}
+              onApplyAiSql={(v) => updateSql(panelId, v)}
+              onApplyFixSql={workflows.handleApplyFixSql}
+              onRetry={workflows.handleRetry}
+              onSetActiveResult={(idx) => setActiveResult(panelId, idx)}
+              onTogglePinResult={(idx) => usePanelStore.getState().togglePinResult(panelId, idx)}
+              onSetResultViewMode={(mode) => {
+                setResultViewModeStore(panelId, mode);
+              }}
+              onChartConfigChange={(cfg) => setChartConfig(panelId, cfg)}
+              onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex)}
+              onShowExplain={workflows.setShowExplain}
+              onDiagnosisVisible={workflows.setDiagnosisVisible}
+              onAddToDashboardOpen={workflows.setAddToDashboardOpen}
+              onAddToDashboardConfirm={workflows.handleAddToDashboardConfirm}
+              onAskInChat={handleAskInChat}
+            />
+          )}
           <FavoriteNameDialog
             open={workflows.showFavoriteDialog}
             favoriteName={workflows.favoriteName}
