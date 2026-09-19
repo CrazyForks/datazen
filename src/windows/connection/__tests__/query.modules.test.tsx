@@ -882,20 +882,42 @@ describe('[tester] query/QueryEditorSection', () => {
     return render(<QueryEditorSection {...defaults} {...overrides} />);
   }
 
-  it('keeps the editor host shrinkable inside a content-sized column', () => {
+  it('fills the editor column while the height is not pinned', () => {
     renderSection();
 
-    // Regression: the host used to be `shrink-0`, so a persisted `editorHeight`
-    // taller than the column overflowed it and painted over the result pane's
-    // 表格 / 图表 toggle (the host is `relative`).
+    // Regression: the host used to be `shrink-0` with a fixed height, so a
+    // persisted `editorHeight` taller than the column overflowed it and painted
+    // over the result pane's 表格 / 图表 toggle (the host is `relative`).
     const host = screen.getByTestId('query-editor-host');
     expect(host.className).not.toContain('shrink-0');
-    expect(host.className).toContain('shrink');
     expect(host.className).toContain('min-h-0');
+    expect(host.className).toContain('flex-1');
 
-    // With the builder closed the column is sized by the editor, so the result
-    // pane — not dead space — absorbs the remaining height.
+    // The column itself absorbs the leftover height, so before anything has
+    // been executed the editor really owns the whole panel.
+    expect(host.parentElement?.className).toContain('flex-1');
+    expect(host.style.height).toBe('');
+  });
+
+  it('pins the editor to editorHeight once the splitter has been dragged', () => {
+    renderSection({ editorHeightPinned: true });
+
+    const host = screen.getByTestId('query-editor-host');
+    expect(host.style.height).toBe('200px');
+    // Still shrinkable: an explicit height must never overflow the column.
+    expect(host.className).not.toContain('shrink-0');
     expect(host.parentElement?.className).toContain('flex-initial');
+  });
+
+  it('shows the execute hint under the editor while idle', () => {
+    renderSection({ showIdleHint: true });
+    expect(screen.getByTestId('query-idle-hint')).toHaveTextContent('query.shortcutHint');
+  });
+
+  it('hides the splitter while there is nothing to split against', () => {
+    renderSection({ showResizeHandle: false });
+    // The handle is the only `cursor-row-resize` element the editor renders.
+    expect(document.querySelector('.cursor-row-resize')).toHaveClass('hidden');
   });
 
   it('wires toolbar actions and editor context menu', () => {
@@ -1238,9 +1260,12 @@ describe('[tester] query/QueryResultsPane', () => {
     onAddToDashboardConfirm: vi.fn(),
   };
 
-  it('shows shortcut hint when idle with no results', () => {
+  it('keeps no idle placeholder of its own', () => {
+    // The "press ⌘+Enter" hint moved to the bottom of the editor
+    // (QueryEditorSection), so an unexecuted panel no longer reserves height
+    // for the result pane.
     render(<QueryResultsPane {...baseProps} />);
-    expect(screen.getByText('query.shortcutHint')).toBeInTheDocument();
+    expect(screen.queryByText('query.shortcutHint')).toBeNull();
   });
 
   it('renders error panel with retry and diagnosis actions', () => {

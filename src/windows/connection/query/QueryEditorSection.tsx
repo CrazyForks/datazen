@@ -49,6 +49,22 @@ export interface QueryEditorSectionProps {
   onApplyParamHistory?: (stableId: string, value: string) => void;
   editorHeight: number;
   editorResizeRef: Ref<HTMLDivElement>;
+  /**
+   * `true` pins the editor to `editorHeight` because the user dragged the
+   * splitter. `false` (default) lets the editor absorb whatever height the
+   * column has left — before the first execution, and while the result pane
+   * sizes itself to its content.
+   */
+  editorHeightPinned?: boolean;
+  /** Rendered only while nothing has been executed yet. */
+  showIdleHint?: boolean;
+  /** Hidden before the first execution: there is nothing to split against. */
+  showResizeHandle?: boolean;
+  /**
+   * The editor host. The splitter reads its rendered height so taking over
+   * from automatic sizing starts exactly where the user grabbed it.
+   */
+  editorViewportRef?: Ref<HTMLDivElement>;
   editorSchema: SqlNamespace;
   editorDefaultSchema: string | undefined;
   editorDefaultTable: string | undefined;
@@ -137,6 +153,10 @@ export function QueryEditorSection({
   onApplyParamHistory,
   editorHeight,
   editorResizeRef,
+  editorHeightPinned = false,
+  showIdleHint = false,
+  showResizeHandle = true,
+  editorViewportRef,
   editorSchema,
   editorDefaultSchema,
   editorDefaultTable,
@@ -496,16 +516,20 @@ export function QueryEditorSection({
       )}
 
       {/*
-       * Editor column.
+       * Editor column — the region the result pane splits against.
        *
-       * With the builder closed this column is sized by the editor itself
-       * (`flex-initial`), so the results pane — not dead space — absorbs every
-       * remaining pixel and the resize handle always sits exactly on the
-       * editor/results boundary. With the builder open the canvas owns the
-       * column (`flex-1`) because the results pane is unmounted in that mode.
+       * It only shrinks to the editor's own height (`flex-initial`) once the
+       * user has pinned a height by dragging the splitter; otherwise it absorbs
+       * every pixel the result pane does not claim, which is what makes the
+       * editor fill the panel before anything has been executed. With the
+       * builder open the canvas owns the column (`flex-1`) because the result
+       * pane is unmounted in that mode.
        */}
       <div
-        className={cn('relative flex min-h-0 min-w-0 flex-col', qbOpen ? 'flex-1' : 'flex-initial')}
+        className={cn(
+          'relative flex min-h-0 min-w-0 flex-col',
+          editorHeightPinned && !qbOpen ? 'flex-initial' : 'flex-1',
+        )}
       >
         {nl2sqlVisible && (
           <Nl2SqlPanel
@@ -535,15 +559,21 @@ export function QueryEditorSection({
          * would drop the CodeMirror undo stack, the bind-param values (Pro EP)
          * and the metadata cache.
          *
-         * `min-h-0 shrink` (not `shrink-0`) is load-bearing: a persisted
-         * `editorHeight` larger than the space this column actually has must
-         * shrink to fit. While it overflowed, the editor's opaque gutter and
-         * bottom border painted on top of the result pane's toolbar (the editor
-         * host is `relative`) and hid the 表格 / 图表 view toggle.
+         * Unpinned it fills the column (`flex-1`); pinned it takes the user's
+         * height. `min-h-0 shrink` is load-bearing in the pinned case: a
+         * persisted `editorHeight` larger than the space this column actually
+         * has must shrink to fit. While it overflowed, the editor's opaque
+         * gutter and bottom border painted on top of the result pane's toolbar
+         * (the editor host is `relative`) and hid the 表格 / 图表 view toggle.
          */}
         <div
-          className={cn('relative min-h-0 shrink border-b border-edge', qbOpen && 'hidden')}
-          style={{ height: editorHeight }}
+          ref={editorViewportRef}
+          className={cn(
+            'relative min-h-0 border-b border-edge',
+            editorHeightPinned ? 'shrink' : 'flex-1',
+            qbOpen && 'hidden',
+          )}
+          style={editorHeightPinned ? { height: editorHeight } : undefined}
           data-testid="query-editor-host"
         >
           <SqlEditor
@@ -577,11 +607,24 @@ export function QueryEditorSection({
             completionIncludeTablePrefix={completionIncludeTablePrefix}
           />
         </div>
+
+        {/* Idle hint. It used to live in the result pane, which kept a whole
+            half of the panel reserved before anything had been executed; it is
+            a one-line footer now so the editor can own the full height. */}
+        {showIdleHint && !qbOpen && (
+          <div
+            className="flex shrink-0 items-center justify-center px-3 py-1.5 text-xs text-fg-muted"
+            data-testid="query-idle-hint"
+          >
+            {t('query.shortcutHint')}
+          </div>
+        )}
+
         <div
           ref={editorResizeRef}
           className={cn(
             'h-1.5 shrink-0 cursor-row-resize bg-transparent hover:bg-accent/30 active:bg-accent/40',
-            qbOpen && 'hidden',
+            (qbOpen || !showResizeHandle) && 'hidden',
           )}
           title="Drag to resize editor"
         />
