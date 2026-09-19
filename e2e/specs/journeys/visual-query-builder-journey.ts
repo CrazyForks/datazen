@@ -104,7 +104,7 @@ describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
     ).toBe(false);
 
     // ── A3: defaults to the Build tab, preview not mounted ──
-    expect(await existsInDom('[data-testid="criteria-grid"]')).toBe(true);
+    expect(await existsInDom('[data-testid="qb-statement"]')).toBe(true);
     expect(await existsInDom('[data-testid="qb-sql-preview"]')).toBe(false);
 
     // ── A4: drag the table in from the navigator ──
@@ -166,8 +166,8 @@ describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
     expect(sql).toContain('score');
     // The default alias is what the column references are qualified with.
     expect(sql).toContain(`"${alias}"`);
-    // Mutually exclusive tabs: the grid is unmounted while Preview is active.
-    expect(await existsInDom('[data-testid="criteria-grid"]')).toBe(false);
+    // Mutually exclusive tabs: the clause list is unmounted while Preview is active.
+    expect(await existsInDom('[data-testid="qb-statement"]')).toBe(false);
     await captureJourneyStep('qba-preview');
 
     // ── A7: drag the splitter up → the bottom region grows ──
@@ -201,8 +201,12 @@ describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
     await captureJourneyStep('qba-where');
 
     // ── A11: DISTINCT ──
+    // The toggle belongs to the SELECT clause row, so it is only mounted on the
+    // Build tab — the preview we assert on afterwards is the same state.
+    await switchQbTab('build');
     await $('[data-testid="qb-distinct-checkbox"]').click();
     await browser.pause(300);
+    await switchQbTab('preview');
     sql = await previewText();
     expect(sql.toUpperCase()).toContain('SELECT DISTINCT');
 

@@ -4,7 +4,7 @@ import { cn } from '@datazen/ui';
 import { useI18n } from '../../../hooks/useI18n';
 import { Select, type SelectOption } from '../../ui/Select';
 import { Input } from '../../ui/Input';
-import type { QbCondition, QbConditionGroup, QbOperator } from '../types';
+import type { QbAggregate, QbCondition, QbConditionGroup, QbOperator } from '../types';
 
 const OPERATOR_OPTIONS: SelectOption[] = [
   { value: '=', label: '=' },
@@ -21,23 +21,51 @@ const OPERATOR_OPTIONS: SelectOption[] = [
   { value: 'IS NOT NULL', label: 'IS NOT NULL' },
 ];
 
+/** Comparison operators, shared with the per-column criteria editor. */
+export const QB_OPERATOR_OPTIONS = OPERATOR_OPTIONS;
+
 const LOGIC_OPTIONS: SelectOption[] = [
   { value: 'AND', label: 'AND' },
   { value: 'OR', label: 'OR' },
 ];
 
+const AGGREGATES: QbAggregate[] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
+
 const NULL_OPERATORS = new Set<QbOperator>(['IS NULL', 'IS NOT NULL']);
 const LIST_OPERATORS = new Set<QbOperator>(['IN', 'NOT IN']);
 
-export interface WhereClauseEditorProps {
-  /** Root condition group from the store. */
-  where: QbConditionGroup;
+/** AND/OR of the group with `groupId`, or null when it is not in this tree. */
+function findGroupLogic(group: QbConditionGroup, groupId: string): 'AND' | 'OR' | null {
+  if (group.id === groupId) return group.logic;
+  for (const sub of group.groups) {
+    const found = findGroupLogic(sub, groupId);
+    if (found) return found;
+  }
+  return null;
+}
+
+export interface ConditionClauseProps {
+  /** Root condition group (the store's `where` or `having` tree). */
+  group: QbConditionGroup;
+  /**
+   * Test-id namespace — `qb-where` or `qb-having`. Every interactive element
+   * below is addressed as `${testIdPrefix}-row`, `-field`, `-value`, … so the
+   * two clause editors can share one implementation without sharing locators.
+   */
+  testIdPrefix: string;
   /** Tables available for the field picker. */
   allTables: string[];
   /** table → column names. */
   allColumns: Record<string, string[]>;
   /** Table → alias, shown as the column qualifier. */
   tableAliases?: Record<string, string>;
+  /**
+   * Offer a per-condition aggregate, i.e. `SUM(qty) >= 2000`.
+   * HAVING sets this; WHERE must not (`WHERE SUM(x) > 1` is invalid SQL).
+   */
+  allowAggregate?: boolean;
+  /** Shown under the rows while the group is empty. */
+  emptyHint?: string;
   onAddCondition: (groupId: string, condition: Omit<QbCondition, 'id'>) => void;
   onUpdateCondition: (id: string, patch: Partial<QbCondition>) => void;
   onRemoveCondition: (id: string) => void;
@@ -46,24 +74,27 @@ export interface WhereClauseEditorProps {
 }
 
 /**
- * Editing surface for the store's nested `where` tree.
+ * One condition clause (WHERE or HAVING): a nested AND/OR tree plus the
+ * "add condition / add group" affordances.
  *
- * `CriteriaRow` only covers *per-column* conditions; the root group and its
- * sub-groups (PRD F-04.5) had no UI, which made nested `AND (… OR …)` only
- * reachable through the store. This component closes that gap and is what the
- * complex E2E journey drives through real DOM interactions.
+ * The whole tree lives inside a single clause row of the statement list, which
+ * is what gives the Navicat-style layout its vertical budget: a clause only
+ * takes the height of the rows it actually holds.
  */
-export function WhereClauseEditor({
-  where,
+export function ConditionClause({
+  group,
+  testIdPrefix,
   allTables,
   allColumns,
   tableAliases = {},
+  allowAggregate = false,
+  emptyHint,
   onAddCondition,
   onUpdateCondition,
   onRemoveCondition,
   onAddGroup,
   onSetGroupLogic,
-}: WhereClauseEditorProps) {
+}: ConditionClauseProps) {
   const { t } = useI18n();
 
   /** table.column options, in table order, labelled with the effective qualifier. */
@@ -93,46 +124,30 @@ export function WhereClauseEditor({
         column: defaultField.slice(dot + 1),
         operator: '=',
         value: '',
-        conjunction: 'AND',
+        // Seed the conjunction from the group's own logic, so a row added to an
+        // `OR` group starts as `OR` — the generator honours each row's
+        // conjunction, and a hardcoded `AND` here would silently turn
+        // `(a OR b)` into `(a AND b)`.
+        conjunction: findGroupLogic(group, groupId) ?? 'AND',
+        // HAVING rows are only useful with an aggregate; start them there so a
+        // brand-new row cannot emit the invalid `HAVING bare_column = …`.
+        ...(allowAggregate ? { aggregate: 'SUM' as QbAggregate } : {}),
       });
     },
-    [defaultField, onAddCondition],
+    [defaultField, onAddCondition, allowAggregate, group],
   );
 
-  return (
-    <div className="border-t border-edge" data-testid="qb-where-editor">
-      <div className="flex items-center gap-2 px-3 py-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
-          WHERE
-        </span>
-        <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => handleAdd(where.id)}
-          disabled={!defaultField}
-          className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg disabled:opacity-40"
-          data-testid="qb-where-add-condition"
-        >
-          <Plus className="h-3 w-3" />
-          {t('query.visualBuilder.addCondition')}
-        </button>
-        <button
-          type="button"
-          onClick={() => onAddGroup(where.id, 'OR')}
-          disabled={!defaultField}
-          className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg disabled:opacity-40"
-          data-testid="qb-where-add-group"
-        >
-          <Plus className="h-3 w-3" />
-          {t('query.visualBuilder.addGroup')}
-        </button>
-      </div>
+  const isEmpty = group.conditions.length === 0 && group.groups.length === 0;
 
+  return (
+    <div className="flex min-w-0 flex-col gap-1" data-testid={`${testIdPrefix}-editor`}>
       <GroupNode
-        group={where}
+        group={group}
         depth={0}
         isRoot
+        testIdPrefix={testIdPrefix}
         fieldOptions={fieldOptions}
+        allowAggregate={allowAggregate}
         onAdd={handleAdd}
         onUpdateCondition={onUpdateCondition}
         onRemoveCondition={onRemoveCondition}
@@ -140,11 +155,33 @@ export function WhereClauseEditor({
         onSetGroupLogic={onSetGroupLogic}
       />
 
-      {where.conditions.length === 0 && where.groups.length === 0 && (
-        <div className="px-3 pb-2 text-[11px] text-fg-muted" data-testid="qb-where-empty">
-          {t('query.visualBuilder.conditions')}
-        </div>
-      )}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => handleAdd(group.id)}
+          disabled={!defaultField}
+          className="rounded text-[12px] text-fg-muted transition-colors hover:text-accent disabled:opacity-40"
+          data-testid={`${testIdPrefix}-add-condition`}
+        >
+          {isEmpty ? (
+            <span data-testid={`${testIdPrefix}-empty`}>
+              &lt;{emptyHint ?? t('query.visualBuilder.addConditions')}&gt;
+            </span>
+          ) : (
+            <>+ {t('query.visualBuilder.addCondition')}</>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => onAddGroup(group.id, 'OR')}
+          disabled={!defaultField}
+          className="flex items-center gap-1 rounded text-[12px] text-fg-muted transition-colors hover:text-accent disabled:opacity-40"
+          data-testid={`${testIdPrefix}-add-group`}
+        >
+          <Plus className="h-3 w-3" />
+          {t('query.visualBuilder.addGroup')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -153,7 +190,9 @@ interface GroupNodeProps {
   group: QbConditionGroup;
   depth: number;
   isRoot?: boolean;
+  testIdPrefix: string;
   fieldOptions: SelectOption[];
+  allowAggregate: boolean;
   onAdd: (groupId: string) => void;
   onUpdateCondition: (id: string, patch: Partial<QbCondition>) => void;
   onRemoveCondition: (id: string) => void;
@@ -165,7 +204,9 @@ function GroupNode({
   group,
   depth,
   isRoot = false,
+  testIdPrefix,
   fieldOptions,
+  allowAggregate,
   onAdd,
   onUpdateCondition,
   onRemoveCondition,
@@ -174,8 +215,8 @@ function GroupNode({
 }: GroupNodeProps) {
   return (
     <div
-      className={cn('flex flex-col gap-1 px-3 pb-2', !isRoot && 'ml-3 border-l border-edge pl-2')}
-      data-testid={isRoot ? 'qb-where-root' : 'qb-where-group'}
+      className={cn('flex min-w-0 flex-col gap-1', !isRoot && 'ml-3 border-l border-edge pl-2')}
+      data-testid={isRoot ? `${testIdPrefix}-root` : `${testIdPrefix}-group`}
       data-group-id={group.id}
       data-group-logic={group.logic}
       data-depth={depth}
@@ -187,7 +228,7 @@ function GroupNode({
             value={group.logic}
             options={LOGIC_OPTIONS}
             onChange={(v) => onSetGroupLogic(group.id, v as 'AND' | 'OR')}
-            triggerDataAttrs={{ 'data-testid': 'qb-where-group-logic' }}
+            triggerDataAttrs={{ 'data-testid': `${testIdPrefix}-group-logic` }}
           />
           <span className="text-[11px] text-fg-muted">)</span>
         </div>
@@ -198,7 +239,9 @@ function GroupNode({
           key={cond.id}
           condition={cond}
           showConjunction={index > 0}
+          testIdPrefix={testIdPrefix}
           fieldOptions={fieldOptions}
+          allowAggregate={allowAggregate}
           onUpdate={(patch) => onUpdateCondition(cond.id, patch)}
           onRemove={() => onRemoveCondition(cond.id)}
         />
@@ -209,7 +252,9 @@ function GroupNode({
           key={sub.id}
           group={sub}
           depth={depth + 1}
+          testIdPrefix={testIdPrefix}
           fieldOptions={fieldOptions}
+          allowAggregate={allowAggregate}
           onAdd={onAdd}
           onUpdateCondition={onUpdateCondition}
           onRemoveCondition={onRemoveCondition}
@@ -222,8 +267,8 @@ function GroupNode({
         <button
           type="button"
           onClick={() => onAdd(group.id)}
-          className="self-start rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised hover:text-fg"
-          data-testid="qb-where-subgroup-add-condition"
+          className="self-start rounded text-[11px] text-fg-muted hover:text-accent"
+          data-testid={`${testIdPrefix}-subgroup-add-condition`}
         >
           + {group.logic}
         </button>
@@ -235,7 +280,9 @@ function GroupNode({
 interface ConditionRowProps {
   condition: QbCondition;
   showConjunction: boolean;
+  testIdPrefix: string;
   fieldOptions: SelectOption[];
+  allowAggregate: boolean;
   onUpdate: (patch: Partial<QbCondition>) => void;
   onRemove: () => void;
 }
@@ -243,30 +290,50 @@ interface ConditionRowProps {
 function ConditionRow({
   condition,
   showConjunction,
+  testIdPrefix,
   fieldOptions,
+  allowAggregate,
   onUpdate,
   onRemove,
 }: ConditionRowProps) {
+  const { t } = useI18n();
   const isNullOp = NULL_OPERATORS.has(condition.operator);
   const isListOp = LIST_OPERATORS.has(condition.operator);
   const fieldValue = `${condition.table}.${condition.column}`;
 
+  const aggregateOptions: SelectOption[] = [
+    { value: '', label: '—' },
+    ...AGGREGATES.map((a) => ({ value: a, label: a })),
+  ];
+
   return (
-    <div className="flex items-center gap-1.5" data-testid="qb-where-row">
+    <div className="flex min-w-0 items-center gap-1.5" data-testid={`${testIdPrefix}-row`}>
       {showConjunction ? (
-        <div className="w-[74px] shrink-0">
+        <div className="w-[70px] shrink-0">
           <Select
             value={condition.conjunction}
             options={LOGIC_OPTIONS}
             onChange={(v) => onUpdate({ conjunction: v as 'AND' | 'OR' })}
-            triggerDataAttrs={{ 'data-testid': 'qb-where-conjunction' }}
+            triggerDataAttrs={{ 'data-testid': `${testIdPrefix}-conjunction` }}
           />
         </div>
       ) : (
-        <div className="w-[74px] shrink-0" />
+        <div className="w-[70px] shrink-0" />
       )}
 
-      <div className="min-w-[170px] flex-1" data-testid="qb-where-field">
+      {allowAggregate && (
+        <div className="w-[86px] shrink-0">
+          <Select
+            value={condition.aggregate ?? ''}
+            options={aggregateOptions}
+            title={t('query.visualBuilder.aggregate')}
+            onChange={(v) => onUpdate({ aggregate: (v || undefined) as QbAggregate | undefined })}
+            triggerDataAttrs={{ 'data-testid': `${testIdPrefix}-aggregate` }}
+          />
+        </div>
+      )}
+
+      <div className="min-w-[150px] flex-1" data-testid={`${testIdPrefix}-field`}>
         <Select
           value={fieldValue}
           options={fieldOptions}
@@ -280,25 +347,25 @@ function ConditionRow({
         />
       </div>
 
-      <div className="w-[110px] shrink-0">
+      <div className="w-[104px] shrink-0">
         <Select
           value={condition.operator}
           options={OPERATOR_OPTIONS}
           onChange={(v) => onUpdate({ operator: v as QbOperator })}
-          triggerDataAttrs={{ 'data-testid': 'qb-where-operator' }}
+          triggerDataAttrs={{ 'data-testid': `${testIdPrefix}-operator` }}
         />
       </div>
 
       {isNullOp ? (
-        <div className="w-[160px] shrink-0" />
+        <div className="w-[140px] shrink-0" />
       ) : (
-        <div className="w-[160px] shrink-0">
+        <div className="w-[140px] shrink-0">
           <Input
             value={condition.value ?? ''}
             onChange={(e) => onUpdate({ value: e.target.value })}
-            placeholder={isListOp ? 'v1, v2, …' : 'Value'}
+            placeholder={isListOp ? 'v1, v2, …' : t('query.visualBuilder.valuePlaceholder')}
             className="h-8 text-xs"
-            data-testid="qb-where-value"
+            data-testid={`${testIdPrefix}-value`}
           />
         </div>
       )}
@@ -307,8 +374,8 @@ function ConditionRow({
         type="button"
         onClick={onRemove}
         className="shrink-0 rounded p-1 text-fg-muted transition-colors hover:bg-surface-raised hover:text-danger"
-        title="Remove"
-        data-testid="qb-where-remove"
+        title={t('query.visualBuilder.removeJoin')}
+        data-testid={`${testIdPrefix}-remove`}
       >
         <Trash2 className="h-3.5 w-3.5" />
       </button>

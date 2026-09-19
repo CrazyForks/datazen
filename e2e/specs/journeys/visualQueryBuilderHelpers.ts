@@ -751,6 +751,18 @@ export async function setupQbJourney(options: {
   await browser.refresh();
   await browser.pause(1500);
 
+  // The canvas/tab splitter persists its height in localStorage, which survives
+  // the app-data reset — a previous spec's drag would then decide this spec's
+  // layout and make geometry assertions depend on execution order. Drop it so
+  // every journey starts from the shipped default.
+  await browser.execute(() => {
+    try {
+      localStorage.removeItem('resize:qb-split-height');
+    } catch {
+      /* storage unavailable — nothing to clear */
+    }
+  });
+
   await openConnectionsWorkspace();
   await clickCardConnectButton(options.connectionName);
   await waitForConnectionToolbar();
@@ -823,6 +835,152 @@ export function expectNoSqlFragments(sql: string, fragments: string[]): void {
   for (const fragment of fragments) {
     expect(compact).not.toContain(fragment.toUpperCase().replace(/\s+/g, ''));
   }
+}
+
+// ── Statement clause list (Navicat-style Build tab) ────────────────
+
+/** Click a SELECT field chip to open its options dialog. */
+export async function openColumnOptions(table: string, column: string): Promise<void> {
+  const clicked = await browser.execute(
+    (t: string, c: string) => {
+      const chip = document.querySelector<HTMLElement>(`[data-testid="qb-field-chip-${t}-${c}"]`);
+      const trigger = chip?.querySelector('button') ?? chip;
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    },
+    table,
+    column,
+  );
+  if (!clicked) throw new Error(`字段 chip ${table}.${column} 不存在`);
+  await browser.waitUntil(
+    () => browser.execute(() => !!document.querySelector('[data-testid="qb-col-opt-apply"]')),
+    { timeout: 5000, timeoutMsg: '字段选项弹窗未打开' },
+  );
+  await browser.pause(200);
+}
+
+/** Remove a field from SELECT through its chip's × . */
+export async function removeFieldChip(table: string, column: string): Promise<void> {
+  const clicked = await browser.execute(
+    (t: string, c: string) => {
+      const btn = document.querySelector<HTMLElement>(`[data-testid="qb-field-remove-${t}-${c}"]`);
+      if (!btn) return false;
+      btn.click();
+      return true;
+    },
+    table,
+    column,
+  );
+  if (!clicked) throw new Error(`字段 chip ${table}.${column} 的移除按钮不存在`);
+  await browser.pause(250);
+}
+
+/** True while the column options dialog is open. */
+export async function columnOptionsOpen(): Promise<boolean> {
+  return existsInDom('[data-testid="qb-col-opt-apply"]');
+}
+
+/** Apply the column options dialog. */
+export async function applyColumnOptions(): Promise<void> {
+  const btn = await $('[data-testid="qb-col-opt-apply"]');
+  await btn.waitForClickable({ timeout: 5000 });
+  await btn.click();
+  await browser.pause(300);
+}
+
+/** Cancel the column options dialog. */
+export async function cancelColumnOptions(): Promise<void> {
+  const btn = await $('[data-testid="qb-col-opt-cancel"]');
+  await btn.waitForClickable({ timeout: 5000 });
+  await btn.click();
+  await browser.pause(250);
+}
+
+/** Pick an option from one of the clause-level `<Click here to add …>` links. */
+export async function addClauseItem(linkTestId: string, optionText: string): Promise<void> {
+  await pickSelectOption(linkTestId, optionText);
+}
+
+/** Add a HAVING condition through the clause row. */
+export async function addHavingCondition(): Promise<void> {
+  const button = await $('[data-testid="qb-having-add-condition"]');
+  await button.waitForClickable({ timeout: 5000 });
+  await button.click();
+  await browser.pause(250);
+}
+
+/** Add a nested OR group inside HAVING. */
+export async function addHavingGroup(): Promise<void> {
+  const button = await $('[data-testid="qb-having-add-group"]');
+  await button.waitForClickable({ timeout: 5000 });
+  await button.click();
+  await browser.pause(250);
+}
+
+/**
+ * Configure HAVING row `index` (document order). Mirrors `configureWhereRow`.
+ * `aggregate: ''` picks the "no aggregate" option, i.e. a bare grouped column.
+ */
+export async function configureHavingRow(
+  index: number,
+  patch: { aggregate?: string; field?: string; operator?: string; value?: string },
+): Promise<void> {
+  const rowHandle = await browser.execute((i: number) => {
+    const rows = Array.from(document.querySelectorAll('[data-testid="qb-having-row"]'));
+    const row = rows[i] as HTMLElement | undefined;
+    if (!row) return false;
+    row.setAttribute('data-qb-e2e-having-row', String(i));
+    return true;
+  }, index);
+  if (!rowHandle) throw new Error(`HAVING 行 #${index} 不存在`);
+
+  const rowSel = `[data-qb-e2e-having-row="${index}"]`;
+
+  if (patch.aggregate !== undefined) {
+    await pickSelectOptionIn(rowSel, 'qb-having-aggregate', patch.aggregate);
+  }
+  if (patch.field) {
+    await pickSelectOptionIn(rowSel, 'qb-having-field', patch.field);
+  }
+  if (patch.operator) {
+    await pickSelectOptionIn(rowSel, 'qb-having-operator', patch.operator);
+  }
+  if (patch.value !== undefined) {
+    const input = await $(`${rowSel} [data-testid="qb-having-value"]`);
+    await input.waitForDisplayed({ timeout: 5000 });
+    await input.click();
+    await input.setValue(patch.value);
+    await browser.pause(150);
+  }
+}
+
+/**
+ * Is the clause row fully rendered inside the Build tab's scroll viewport?
+ *
+ * This is the regression guard for "after picking columns there is no room left
+ * for WHERE and the clauses below it" — a row that exists but sits below the
+ * fold is exactly the bug being tested.
+ */
+export async function clauseIsVisible(testId: string): Promise<boolean> {
+  return browser.execute((id: string) => {
+    const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    const region = document.querySelector<HTMLElement>('[data-testid="qb-build-scroll"]');
+    if (!el || !region) return false;
+    const a = el.getBoundingClientRect();
+    const b = region.getBoundingClientRect();
+    return a.height > 0 && a.top >= b.top - 1 && a.bottom <= b.bottom + 1;
+  }, testId);
+}
+
+/** Which clause rows exist in the DOM at all. */
+export async function clauseRowsPresent(): Promise<string[]> {
+  return browser.execute(() => {
+    const ids = ['select', 'from', 'where', 'group-by', 'having', 'order-by'];
+    return ids
+      .filter((id) => !!document.querySelector(`[data-testid="qb-clause-${id}"]`))
+      .map((id) => `qb-clause-${id}`);
+  });
 }
 
 // ── Navigator integration ──────────────────────────────────────────

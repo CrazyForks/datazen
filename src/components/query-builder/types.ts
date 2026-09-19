@@ -35,6 +35,14 @@ export interface QbCondition {
   value: string | null;
   /** Conjunction linking this condition to the previous one (ignored for the first condition). */
   conjunction: 'AND' | 'OR';
+  /**
+   * Wrap the left-hand column in an aggregate (`SUM(qty) >= 2000`).
+   *
+   * Only HAVING exposes this in the UI — `WHERE SUM(x) > 1` is invalid SQL —
+   * but the generator honours it wherever it appears so the two clause editors
+   * can share one condition editor.
+   */
+  aggregate?: QbAggregate;
 }
 
 /** A group of conditions joined by a common logic operator. Supports nesting. */

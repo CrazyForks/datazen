@@ -92,11 +92,18 @@ afterEach(() => {
 });
 
 describe('QueryBuilderPanel bottom tabs', () => {
-  it('opens on the Build tab and mounts only the criteria grid', () => {
+  it('opens on the Build tab and mounts only the clause list', () => {
     openEmpty();
     renderPanel();
     expect(screen.getByTestId('qb-tab-build')).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByTestId('criteria-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-statement')).toBeInTheDocument();
+    // Every clause of the statement is present, not just SELECT/WHERE.
+    expect(screen.getByTestId('qb-clause-select')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-clause-from')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-clause-where')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-clause-group-by')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-clause-having')).toBeInTheDocument();
+    expect(screen.getByTestId('qb-clause-order-by')).toBeInTheDocument();
     // Preview is not mounted at the same time — that is what buys the space back.
     expect(screen.queryByTestId('qb-sql-preview')).toBeNull();
   });
@@ -111,7 +118,7 @@ describe('QueryBuilderPanel bottom tabs', () => {
       expect(screen.getByTestId('qb-tab-content')).toHaveAttribute('data-active-tab', 'preview');
     });
     expect(screen.getByTestId('qb-sql-preview')).toBeInTheDocument();
-    expect(screen.queryByTestId('criteria-grid')).toBeNull();
+    expect(screen.queryByTestId('qb-statement')).toBeNull();
     expect(useQueryBuilderStore.getState().bottomTab).toBe('preview');
   });
 

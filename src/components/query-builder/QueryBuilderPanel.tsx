@@ -11,8 +11,8 @@ import type { ForeignKeyRelation } from './hooks/useAutoJoin';
 /** Group-id prefix for a manually created join (see `buildRelationGroups`). */
 const MANUAL_PREFIX = 'manual:';
 import { DiagramCanvas } from './DiagramCanvas/DiagramCanvas';
-import { CriteriaGrid } from './CriteriaGrid/CriteriaGrid';
-import { WhereClauseEditor } from './CriteriaGrid/WhereClauseEditor';
+import { BuildStatement } from './BuildStatement/BuildStatement';
+import type { ClauseEntry } from './BuildStatement/clauseEntries';
 import { SqlPreview } from './SqlPreview';
 import { validateQuery, type QbDiagnostic } from './validation';
 import { QueryBuilderBottomTabs } from './QueryBuilderBottomTabs';
@@ -78,6 +78,8 @@ export function QueryBuilderPanel({
   const columnMap = useSchemaStore((s) => s.columnMap);
   const currentDatabase = useSchemaStore((s) => s.currentDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
+  /** Every table of the connection — the FROM picker's candidate list. */
+  const schemaTables = useSchemaStore((s) => s.tables);
   // The same options the editor's own "Format SQL" uses, so the preview and the
   // committed statement always match what the user configured.
   const formatOptions = useSettingsStore((s) => s.settings.sqlFormatOptions);
@@ -91,6 +93,7 @@ export function QueryBuilderPanel({
   const tablePositions = useQueryBuilderStore((s) => s.tablePositions);
   const zoom = useQueryBuilderStore((s) => s.zoom);
   const where = useQueryBuilderStore((s) => s.where);
+  const having = useQueryBuilderStore((s) => s.having);
   const orderBy = useQueryBuilderStore((s) => s.orderBy);
   const groupBy = useQueryBuilderStore((s) => s.groupBy);
   const distinct = useQueryBuilderStore((s) => s.distinct);
@@ -115,6 +118,16 @@ export function QueryBuilderPanel({
   const removeCondition = useQueryBuilderStore((s) => s.removeCondition);
   const addConditionGroup = useQueryBuilderStore((s) => s.addConditionGroup);
   const setGroupLogic = useQueryBuilderStore((s) => s.setGroupLogic);
+  const addHavingCondition = useQueryBuilderStore((s) => s.addHavingCondition);
+  const updateHavingCondition = useQueryBuilderStore((s) => s.updateHavingCondition);
+  const removeHavingCondition = useQueryBuilderStore((s) => s.removeHavingCondition);
+  const addHavingGroup = useQueryBuilderStore((s) => s.addHavingGroup);
+  const setHavingGroupLogic = useQueryBuilderStore((s) => s.setHavingGroupLogic);
+  const addSort = useQueryBuilderStore((s) => s.addSort);
+  const updateSort = useQueryBuilderStore((s) => s.updateSort);
+  const removeSort = useQueryBuilderStore((s) => s.removeSort);
+  const addGroupBy = useQueryBuilderStore((s) => s.addGroupBy);
+  const removeGroupBy = useQueryBuilderStore((s) => s.removeGroupBy);
   const setLimit = useQueryBuilderStore((s) => s.setLimit);
   const setOffset = useQueryBuilderStore((s) => s.setOffset);
   const setBottomTab = useQueryBuilderStore((s) => s.setBottomTab);
@@ -128,7 +141,7 @@ export function QueryBuilderPanel({
   // Bottom region height (dragging the splitter up grows it → reverse).
   const { size: bottomHeight, handleRef: splitterRef } = useResizable({
     direction: 'vertical',
-    initialSize: 300,
+    initialSize: 360,
     minSize: BOTTOM_MIN,
     maxSize: BOTTOM_MAX,
     storageKey: 'qb-split-height',
@@ -288,6 +301,7 @@ export function QueryBuilderPanel({
       joins,
       tableAliases,
       where,
+      having,
       orderBy,
       groupBy,
       distinct,
@@ -301,6 +315,7 @@ export function QueryBuilderPanel({
       joins,
       tableAliases,
       where,
+      having,
       orderBy,
       groupBy,
       distinct,
@@ -316,6 +331,7 @@ export function QueryBuilderPanel({
     joins,
     tableAliases,
     where,
+    having,
     orderBy,
     groupBy,
     distinct,
@@ -432,19 +448,79 @@ export function QueryBuilderPanel({
     [toggleColumn],
   );
 
-  /** Add the first column of a selected table that is not already in the query. */
-  const handleAddColumn = useCallback(() => {
-    for (const table of selectedTables) {
-      const cols = columnMap[table] ?? [];
-      const next = cols.find(
-        (c) => !selectedColumns.some((s) => s.table === table && s.column === c),
-      );
-      if (next) {
-        toggleColumn(table, next);
+  /** Add a field through the SELECT clause's "add fields" picker. */
+  const handleAddColumn = useCallback(
+    (table: string, column: string) => {
+      const already = useQueryBuilderStore
+        .getState()
+        .selectedColumns.some((c) => c.table === table && c.column === column);
+      if (!already) toggleColumn(table, column);
+    },
+    [toggleColumn],
+  );
+
+  /**
+   * GROUP BY entries come from two store fields, so removal has to clear the
+   * one that actually owns the entry — otherwise the chip reappears.
+   */
+  const handleRemoveGroupBy = useCallback(
+    (entry: ClauseEntry) => {
+      if (entry.source === 'column') {
+        updateColumnConfig(entry.table, entry.column, { groupBy: undefined });
         return;
       }
-    }
-  }, [selectedTables, selectedColumns, columnMap, toggleColumn]);
+      if (entry.index !== undefined) removeGroupBy(entry.index);
+    },
+    [removeGroupBy, updateColumnConfig],
+  );
+
+  const handleAddGroupBy = useCallback(
+    (table: string, column: string) => {
+      addGroupBy({ table, column });
+    },
+    [addGroupBy],
+  );
+
+  const handleAddSort = useCallback(
+    (table: string, column: string) => {
+      addSort({ table, column, direction: 'ASC' });
+    },
+    [addSort],
+  );
+
+  /** Clicking an ORDER BY chip flips its direction, wherever the entry lives. */
+  const handleToggleSort = useCallback(
+    (entry: ClauseEntry) => {
+      const next = (entry.direction ?? 'ASC') === 'ASC' ? 'DESC' : 'ASC';
+      if (entry.source === 'column') {
+        updateColumnConfig(entry.table, entry.column, { sort: next });
+        return;
+      }
+      if (entry.index !== undefined) updateSort(entry.index, { direction: next });
+    },
+    [updateSort, updateColumnConfig],
+  );
+
+  const handleRemoveSort = useCallback(
+    (entry: ClauseEntry) => {
+      if (entry.source === 'column') {
+        updateColumnConfig(entry.table, entry.column, { sort: undefined });
+        return;
+      }
+      if (entry.index !== undefined) removeSort(entry.index);
+    },
+    [removeSort, updateColumnConfig],
+  );
+
+  /** Connection tables that are not in the query yet (the FROM picker's list). */
+  const availableTables = useMemo(
+    () =>
+      (schemaTables ?? [])
+        .map((table) => table.name)
+        .filter((name) => !selectedTables.includes(name))
+        .sort((a, b) => a.localeCompare(b)),
+    [schemaTables, selectedTables],
+  );
 
   const handleDropTable = useCallback(
     (tableName: string, pos: { x: number; y: number }) => {
@@ -480,16 +556,8 @@ export function QueryBuilderPanel({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-[11px] text-fg-secondary">
-            <input
-              type="checkbox"
-              checked={distinct}
-              onChange={(e) => setDistinct(e.target.checked)}
-              className="accent-accent"
-              data-testid="qb-distinct-checkbox"
-            />
-            {t('query.visualBuilder.distinct')}
-          </label>
+          {/* DISTINCT is a SELECT modifier, so it lives in the SELECT clause row
+              rather than twice (see `SelectClause`). */}
           <button
             type="button"
             onClick={reset}
@@ -585,11 +653,11 @@ export function QueryBuilderPanel({
           onTabChange={setBottomTab}
           hasBuildError={hasBuildError}
           buildContent={
-            <div className="flex flex-col" data-testid="qb-build-region">
+            <div className="flex flex-col pb-3" data-testid="qb-build-region">
               {/* LIMIT / OFFSET live in the build tab: they were store-only
                   before, which meant no user could actually reach them. */}
               <div
-                className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-surface px-3 py-2"
+                className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-surface px-3 py-1"
                 data-testid="qb-pagination"
               >
                 <label className="flex items-center gap-1.5 text-[11px] text-fg-secondary">
@@ -601,7 +669,7 @@ export function QueryBuilderPanel({
                     onChange={(e) =>
                       setLimit(e.target.value.trim() === '' ? null : Number(e.target.value))
                     }
-                    className="h-7 w-20 rounded-[9px] border border-edge bg-surface-inset px-2 text-xs text-fg outline-none focus:border-accent"
+                    className="h-6 w-20 rounded-[9px] border border-edge bg-surface-inset px-2 text-xs text-fg outline-none focus:border-accent"
                     data-testid="qb-limit-input"
                   />
                 </label>
@@ -614,31 +682,52 @@ export function QueryBuilderPanel({
                     onChange={(e) =>
                       setOffset(e.target.value.trim() === '' ? null : Number(e.target.value))
                     }
-                    className="h-7 w-20 rounded-[9px] border border-edge bg-surface-inset px-2 text-xs text-fg outline-none focus:border-accent"
+                    className="h-6 w-20 rounded-[9px] border border-edge bg-surface-inset px-2 text-xs text-fg outline-none focus:border-accent"
                     data-testid="qb-offset-input"
                   />
                 </label>
               </div>
 
-              <CriteriaGrid
-                selectedColumns={selectedColumns}
-                allTables={selectedTables}
-                allColumns={columnMap}
-                tableAliases={tableAliases}
-                onUpdateColumn={updateColumnConfig}
-                onRemoveColumn={handleRemoveColumn}
-                onAddColumn={handleAddColumn}
-              />
-              <WhereClauseEditor
-                where={where}
-                allTables={selectedTables}
-                allColumns={columnMap}
-                tableAliases={tableAliases}
-                onAddCondition={addCondition}
-                onUpdateCondition={updateCondition}
-                onRemoveCondition={removeCondition}
-                onAddGroup={addConditionGroup}
-                onSetGroupLogic={setGroupLogic}
+              <BuildStatement
+                schema={{
+                  tables: selectedTables,
+                  columns: columnMap,
+                  aliases: tableAliases,
+                  availableTables,
+                }}
+                state={{
+                  selectedColumns,
+                  distinct,
+                  joins,
+                  where,
+                  having,
+                  groupBy,
+                  orderBy,
+                }}
+                actions={{
+                  setDistinct,
+                  addColumn: handleAddColumn,
+                  removeColumn: handleRemoveColumn,
+                  updateColumn: updateColumnConfig,
+                  setTableAlias,
+                  removeTable,
+                  addTable: toggleTable,
+                  addCondition,
+                  updateCondition,
+                  removeCondition,
+                  addConditionGroup,
+                  setGroupLogic,
+                  addHavingCondition,
+                  updateHavingCondition,
+                  removeHavingCondition,
+                  addHavingGroup,
+                  setHavingGroupLogic,
+                  addGroupBy: handleAddGroupBy,
+                  removeGroupBy: handleRemoveGroupBy,
+                  addSort: handleAddSort,
+                  toggleSort: handleToggleSort,
+                  removeSort: handleRemoveSort,
+                }}
               />
             </div>
           }

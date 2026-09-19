@@ -1,10 +1,10 @@
 # DataZen Query Builder — PRD 产品需求文档
 
-> **文档版本**: v1.7
+> **文档版本**: v1.8
 > **创建日期**: 2026-08-06
 > **作者**: DataZen 产品团队
 > **参考**: Navicat Query Builder (Part 1 & Part 3) + DataZen 代码基线
-> **状态**: **已实现并验收** — 三条 QB E2E journey 全绿（`pnpm e2e:qb`）
+> **状态**: **已实现并验收** — 四条 QB E2E journey 全绿（`pnpm e2e:qb`）
 >
 > **变更记录**
 >
@@ -18,6 +18,7 @@
 > | v1.5 | 测试盲区复盘：补齐异常/边界用例（新增校验层 `validation.ts`）、修复探针发现的 8 个缺陷、补上 LIMIT/OFFSET 缺失的 UI                              |
 > | v1.6 | 外键关系改为**纯连线**（画布零文字，操作移入 Popover）；复合外键按「多列合并主干再分叉」绘制并整组确认；驱动侧修正复合外键 N² 笛卡尔展开；画布改为原生滚动容器 |
 > | v1.7 | 三项形态修正：①卡片**固定高度 + 列表内滚**（Navicat 行为，锚点夹取 + 超出提示）；②连线一律**正交折线且无方向**（去掉箭头与 `marker-*`，两端对称锚点）；③预览 Tab **语法高亮 + 格式化 + 占满高度**（OK 写回同一份格式化文本） |
+> | v1.8 | 构建区参照 Navicat 重做：**一条子句一行**（SELECT / FROM / WHERE / GROUP BY / HAVING / ORDER BY + LIMIT·OFFSET），删除每列 8 控件的宽表 `CriteriaGrid`；字段选项移入**点击 chip 打开的弹窗**；**补齐 HAVING**（条件行可选聚合函数，`having-non-grouped` 仅警告不阻断）；条件行的 AND/OR 现在真正生效（此前被组 logic 覆盖） |
 
 ---
 
@@ -251,7 +252,7 @@ Navicat QB 是独立模态窗口，**两段式**结构：
 
 | Tab      | 对应原有区域   | 内容                                                                           |
 | -------- | -------------- | ------------------------------------------------------------------------------ |
-| **构建** | `CriteriaGrid` | 已选列（别名 / 聚合）、WHERE 条件（AND/OR + 分组）、排序、分组、LIMIT / OFFSET |
+| **构建** | `BuildStatement` | Navicat 式子句列表：SELECT（字段 chip + 字段选项弹窗）/ FROM（表 + JOIN 行）/ WHERE（AND/OR + 分组）/ GROUP BY / HAVING / ORDER BY + LIMIT、OFFSET |
 | **预览** | `SqlPreview`   | 只读的高亮 SQL 全文、方言标识、复制按钮、空态提示                              |
 
 **关键约束**
@@ -314,7 +315,7 @@ Navicat QB 是独立模态窗口，**两段式**结构：
 │        ├──────────────────────────┤       │(复用)  ├──────────────────────────┤
 │        │ 画布（被挤压）            │       │        │ 画布（flex-1，可调）      │
 │        ├──────────────────────────┤       │        ├════ 分隔条 ═══════════════┤
-│        │ CriteriaGrid             │       │        │ [构建 | 预览] 双 Tab     │
+│        │ CriteriaGrid（旧宽表）    │       │        │ [构建 | 预览] 双 Tab     │
 │        ├──────────────────────────┤       │        │                          │
 │        │ SQL 预览 + [应用 SQL]     │       │        ├──────────────────────────┤
 │        ├──────────────────────────┤       │        │         [取消]  [ OK ]   │
@@ -365,20 +366,21 @@ Navicat QB 是独立模态窗口，**两段式**结构：
 | F-03.6 | 无外键提示    | 新增第二张表但未检测到 FK 时，画布顶部内联提示「未检测到关系，可手动连线」                                        |
 | F-03.7 | 连线几何      | 一律为**正交折线**（每段水平或垂直，无斜线），且**不带方向**（无箭头、无 `marker-*`）；每对端点两端对称画锚点，复合外键先合并为主干再分叉 |
 
-#### F-04 底部「构建」Tab
+#### F-04 底部「构建」Tab（Navicat 式子句列表）
 
 | ID      | 需求           | 验收标准                                                                                                           |
 | ------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
-| F-04.1  | 已选列         | 列出 `selectedColumns`：表、列、别名、聚合、排序、分组                                                             |
-| F-04.2  | 列增删         | 支持移除列；支持从下拉添加列                                                                                       |
-| F-04.3  | WHERE 条件行   | 行内 grid：`表.列 \| 运算符 \| 值 \| AND/OR \| 删除`                                                               |
-| F-04.4  | 运算符集合     | `=`、`!=`、`>`、`<`、`>=`、`<=`、`LIKE`、`NOT LIKE`、`IN`、`NOT IN`、`IS NULL`、`IS NOT NULL`（对应 `QbOperator`） |
-| F-04.5  | 条件分组       | 支持嵌套子组（`addConditionGroup`，v1 一层）：子组内 `logic` 可选 AND/OR                                           |
-| F-04.6  | IN 值输入      | 逗号分隔列表；`IS NULL / IS NOT NULL` 时隐藏值输入框                                                               |
-| F-04.7  | 排序           | 排序项增删 + `ASC/DESC`                                                                                            |
-| F-04.8  | 分组           | `GROUP BY` 项增删                                                                                                  |
-| F-04.9  | DISTINCT       | Header 复选框（`setDistinct`）                                                                                     |
-| F-04.10 | LIMIT / OFFSET | 数字输入，`null` 表示不输出该子句                                                                                  |
+| F-04.1  | 一条子句一行   | SELECT / FROM / WHERE / GROUP BY / HAVING / ORDER BY 各占一行，左侧 SQL 关键字槽（不翻译），右侧为该子句内容；每行只占自身内容高度 |
+| F-04.2  | 已选字段       | SELECT 行以 **chip** 展示每个已选字段（含聚合与别名），chip 的 `×` 移除；`<点击此处添加字段>` 打开字段选择器       |
+| F-04.3  | 字段选项弹窗   | 点击 chip 打开弹窗，可编辑别名 / 聚合 / 排序 / 分组 / 单条条件；**取消不写入**，仅 OK 落库；表单按字段只播种一次，不受无关 store 更新影响 |
+| F-04.4  | FROM 与 JOIN   | FROM 行列出驱动表与每条 JOIN（类型 + 目标表 AS 别名 + ON 条件），与应用 `buildJoinSteps` 同源，方向与生成 SQL 一致；未被 JOIN 触及的表标注「尚未关联」 |
+| F-04.5  | WHERE 条件     | 根条件 + 一层嵌套组；行的 AND/OR **必须真正生效**；列级条件以 chip 展示并可移除                                     |
+| F-04.6  | GROUP BY       | 独立子句行 + 选择器；条目为「store 列表 ∪ 列标记」并集，移除时清除真正的归属方                                      |
+| F-04.7  | HAVING         | 独立子句行，位于 GROUP BY 之后；条件行提供**聚合选择器**（默认 SUM），操作数既未聚合也未分组时给出警告但不阻断 OK    |
+| F-04.8  | ORDER BY       | 独立子句行 + 选择器；chip 点击切换 ASC/DESC，`×` 移除；聚合列的排序输出聚合表达式                                   |
+| F-04.9  | DISTINCT       | SELECT 行起始处的复选框（`setDistinct`）                                                                            |
+| F-04.10 | LIMIT / OFFSET | 构建区顶部常驻工具行，数字输入，`null` 表示不输出该子句                                                            |
+| F-04.11 | 垂直空间       | 四个字段已选时 WHERE 与 GROUP BY 仍在可视区内；画布折叠后整条语句无需滚动即可全部可见（E2E D2 断言）                |
 
 #### F-05 底部「预览」Tab
 
@@ -618,7 +620,42 @@ Navicat QB 是独立模态窗口，**两段式**结构：
        └──────────────────────┘
 ```
 
-### 8.7 「构建」Tab 条件区（`CriteriaGrid` / `WhereEditor`）
+### 8.7 「构建」Tab（v1.8 起：Navicat 式子句列表 `BuildStatement`）
+
+```text
+  SELECT   [ ] DISTINCT  SUM(s.qty) AS total_qty   s.price   r.name   <点击此处添加字段>
+  FROM     sale AS s
+           INNER JOIN
+           region AS r  ON s.region_id = r.id
+           <点击此处添加表>
+  WHERE    <点击此处添加条件>            [+ 添加条件组]
+  GROUP BY r.name                       <点击此处添加 GROUP BY>
+  HAVING   [SUM ▼] [s.qty ▼] [>= ▼] [2000]   <点击此处添加条件>   [+ 添加条件组]
+  ORDER BY r.name ASC                   <点击此处添加 ORDER BY>
+           Limit [    ]  Offset [    ]
+```
+
+> 旧的宽表 `CriteriaGrid`（每列一行、行内 8 个控件）已被删除：四列就会占满整个区域，
+> WHERE 及其后的子句全部被挤出可视区，HAVING 更是完全不存在。
+> 每个子句只占自身内容的高度；字段配置移入「点击 chip → 字段选项弹窗」。
+
+### 8.8 字段选项弹窗（`ColumnOptionsDialog`）
+
+```text
+  ┌ 字段选项 ────────────────────────────┐
+  │ 字段      r.name                     │
+  │ 别名      [ total_qty    ]           │
+  │ 聚合      [ SUM ▼ ]                  │
+  │ 排序      [ 降序 ▼ ]                 │
+  │ 分组      [x]                        │
+  │ ──────────────────────────────────── │
+  │ 条件      [ >= ▼ ] [ 2000 ]          │
+  ├──────────────────────────────────────┤
+  │ [从 SELECT 中移除]      [取消] [OK]  │
+  └──────────────────────────────────────┘
+```
+
+### 8.9 WHERE / HAVING 条件区（`ConditionClause`，testid 前缀参数化）
 
 ```text
   WHERE
@@ -1095,8 +1132,9 @@ export interface QbSession {
 > **构建**：必须走 `pnpm tauri:build:webdriver`（或 `pnpm e2e`）。
 > **落点**：`e2e/specs/journeys/visual-query-builder-journey.ts`（正常）、
 > `visual-query-builder-edge-journey.ts`（异常）、
-> `visual-query-builder-complex-journey.ts`（高复杂度）。
-> **验收标准**：三条 journey 全绿即视为本 PRD 功能交付完成。
+> `visual-query-builder-complex-journey.ts`（高复杂度）、
+> `visual-query-builder-clauses-journey.ts`（子句列表 / 字段弹窗 / HAVING）。
+> **验收标准**：四条 journey 全绿即视为本 PRD 功能交付完成。
 
 #### 13.3.0 定位契约（testid）
 
@@ -1108,7 +1146,13 @@ export interface QbSession {
 | 画布提示   | `qb-no-relation-hint`                                                                                                                                                                                                                          | ≥2 表且无关系时出现                       |
 | 分隔条     | `qb-splitter`                                                                                                                                                                                                                                  | 拖拽调整画布 / Tab 高度                   |
 | 底部       | `qb-bottom-tabs` / `qb-tabbar` / `qb-tab-build` / `qb-tab-preview` / `qb-tab-build-badge` / `qb-tab-content`（含 `data-active-tab`）                                                                                                           | 双 Tab                                    |
-| 构建区     | `criteria-grid` / `criteria-row` / `criteria-add-column` / `criteria-field-select` / `criteria-alias-input` / `criteria-sort-select` / `criteria-func-select` / `criteria-where-button` / `criteria-group-checkbox` / `criteria-remove-button` | 承载 `CriteriaGrid`                       |
+| 子句列表   | `qb-statement` / `qb-clause-select` / `qb-clause-from` / `qb-clause-where` / `qb-clause-group-by` / `qb-clause-having` / `qb-clause-order-by`                                                                                                 | v1.8 取代宽表                            |
+| SELECT 行  | `qb-field-chip-<t>-<c>` / `qb-field-remove-<t>-<c>` / `qb-add-fields` / `qb-distinct-checkbox`                                                                                                                                                 | 字段 chip + 选择器                        |
+| FROM 行    | `qb-from-table-<t>` / `qb-from-join-<i>` / `qb-from-unjoined-<t>` / `qb-from-alias-<t>` / `qb-add-tables`                                                                                                                                       | JOIN 行与 SQL 同源（`buildJoinSteps`）    |
+| GROUP/ORDER| `qb-group-chip-<t>-<c>` / `qb-add-group-by` / `qb-order-chip-<t>-<c>` / `qb-add-order-by`                                                                                                                                                      | ORDER BY chip 点击切换 ASC/DESC           |
+| WHERE 条件 | `qb-where-row` / `qb-where-field` / `qb-where-operator` / `qb-where-value` / `qb-where-conjunction` / `qb-where-add-condition` / `qb-where-add-group` / `qb-where-subgroup-add-condition` / `qb-where-empty` / `qb-where-column-chip-<t>-<c>`  | 保留旧 testid（E2E 契约稳定）             |
+| HAVING 条件| `qb-having-row` / `qb-having-aggregate` / `qb-having-field` / `qb-having-operator` / `qb-having-value` / `qb-having-add-condition` / `qb-having-add-group`                                                                                      | 每行可选聚合函数                          |
+| 字段选项弹窗| `qb-col-opt-field` / `qb-col-opt-alias` / `qb-col-opt-aggregate` / `qb-col-opt-sort` / `qb-col-opt-groupby` / `qb-col-opt-operator` / `qb-col-opt-value` / `qb-col-opt-apply` / `qb-col-opt-cancel` / `qb-col-opt-remove`                    | 点击 chip 打开                            |
 | Where 弹窗 | `where-editor-dialog` / `where-operator-select` / `where-value-input`                                                                                                                                                                          |                                           |
 | 预览区     | `qb-sql-preview` / `qb-sql-preview-empty` / `qb-preview-dialect` / `qb-copy-sql`                                                                                                                                                               | 只读                                      |
 | 底栏       | `qb-footer` / `qb-cancel` / `qb-ok`                                                                                                                                                                                                            | OK 禁用时不可点击                         |
@@ -1133,14 +1177,19 @@ export interface QbSession {
 | A8  | `Ctrl/Cmd+B` 折叠画布                     | `qb-diagram-canvas` 离开 DOM；`qb-bottom-region` 变为 `flex-1`（高度明显增大）；再按一次恢复                                 |
 | A9  | 回「构建」→ `+ Add Column`                | 新增一条 `criteria-row`（自动选中一个未选列）                                                                                |
 | A10 | 该行 Where 设为 `score >= 80`             | 预览含 `WHERE` 与 `>= 80`                                                                                                    |
-| A11 | 勾选 DISTINCT                             | 预览含 `SELECT DISTINCT`                                                                                                     |
+| A11 | 勾选 DISTINCT                             | 预览含 `SELECT DISTINCT`（v1.8 起 toggle 位于 SELECT 子句行，用例需先切到「构建」Tab）                                       |
 | A12 | 点 **OK**                                 | QB 关闭；`query-editor-host` 变可见；编辑器文本含生成 SQL；`qb-toast` 出现（文案「已写入 SQL 编辑器」）                      |
 | A13 | 执行                                      | `result-workspace-table` 出现，含 `Alice`(90)、`Diana`(95)，不含 `Charlie`(70)                                               |
 | A14 | 重开 QB                                   | Tab 记忆为「构建」；画布仍保留 A4–A11 的表与列（OK 不清空画布）                                                              |
 | A15 | 点「重置」                                | 画布清空（无 `qb-drag-*`）；**QB 仍打开**（重置不关面板）                                                                    |
 | A16 | 关闭 ×                                    | QB 关闭；编辑器内容与 A12 结果一致（未被改动）                                                                               |
 
-**失败即退回**：A2（编辑器被卸载 → 丢 undo 栈）、A8（折叠后画布仍挤占 Tab）、A11（DISTINCT 未生效）、A15（重置顺手关了面板）。
+| A17 | 16 列表卡片（v1.7）                       | 卡片高度被限制在 `表头 + 200px`，列列表内部滚动，滚动后卡片高度不变；短表不出现假滚动条                                        |
+| A18 | 列表滚动（v1.7）                          | 滚动字段列表不改变卡片高度                                                                                                   |
+| A19 | 预览格式化（v1.7）                        | 生成器单行 SQL 在预览中换行展示，且与 OK 写回的文本一致                                                                       |
+| A20 | 预览高亮与高度（v1.7）                    | 预览由 token `<span>` 组成（关键字用 accent 色），`<pre>` 撑满 Tab 可用高度                                                   |
+
+**失败即退回**：A2（编辑器被卸载 → 丢 undo 栈）、A8（折叠后画布仍挤占 Tab）、A11（DISTINCT 未生效）、A15（重置顺手关了面板）、A17/A18（卡片随列数增长 → 邻居被挤出画布）。
 
 #### 13.3.2 Journey B — 异常旅程（QB-JOURNEY-B）
 
@@ -1206,17 +1255,32 @@ CREATE TABLE e2e_qb_c_sale (
 
 **失败即退回**：C1（候选 JOIN 直接进 SQL → 误连表）、C9（嵌套括号丢失 → 语义错误）、C13（生成 SQL 语法错误）、C15（重置后子句残留）。
 
-#### 13.3.4 运行方式
+#### 13.3.4 Journey D — 子句列表与字段弹窗旅程（QB-JOURNEY-D，v1.8）
+
+| 用例 | 场景                                                                 | 断言                                                                                     |
+| ---- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| D1   | 两表 + 确认 FK JOIN 后读取六个子句行                                 | `qb-clause-*` 六个齐全；FROM 行出现 `qb-from-join-0`（与 `buildJoinSteps` 同源）          |
+| D2   | 选满 4 个字段（旧宽表的最坏情况）                                    | **未折叠画布**时 WHERE 与 GROUP BY 仍在可视区内；折叠画布后六个子句全部可见               |
+| D3   | 点击字段 chip → 字段选项弹窗（先取消、再应用）                       | 取消后 store 无变化；应用后 `alias/aggregate` 落库；chip 文本含 `SUM(` 与 `AS total_qty`   |
+| D4   | GROUP BY 子句选择器加 `region.name`                                  | 出现 `qb-group-chip-*`；SQL 含 GROUP BY                                                   |
+| D5   | ORDER BY 子句选择器加 `region.name`，点击 chip 翻转方向              | chip 文本 `ASC → DESC`；SQL 含 `DESC`                                                     |
+| D6   | HAVING 加条件（默认已聚合 SUM），配置 `SUM(sale.qty) >= 5`           | 新行默认聚合；预览含 `HAVING SUM(`（空白不敏感匹配）                                      |
+| D7   | 用 chip `×` 移除多余字段 → OK → 执行                                  | 预览不再含被移除列；执行**成功**；结果含 EU 且**不含 US**（HAVING 真的过滤掉了小分组）    |
+| D8   | HAVING 操作数既未聚合也未分组（选「—」清空聚合）                     | 出现 `having-non-grouped` 诊断；**OK 仍可用**（warning 不阻断）                            |
+
+**失败即退回**：D2（子句被挤出可视区 → 回到"选完列没有空间"的原始缺陷）、D6（HAVING 未进 SQL / 生成非法 HAVING）、D7（HAVING 进了 SQL 但不生效）。
+
+#### 13.3.5 运行方式
 
 ```bash
-# 仅跑 QB 三条 journey
-node e2e/run.mjs --skip-build -- --suite journeys --mochaOpts.grep 'QB-JOURNEY'
+# 仅跑 QB 四条 journey
+node e2e/run.mjs --skip-build -- --suite query-builder
 
 # 或完整 journeys 套件
 pnpm e2e:journeys
 ```
 
-**完成定义（DoD）**：`QB-JOURNEY-A`、`QB-JOURNEY-B`、`QB-JOURNEY-C` 全部通过，且 `e2e/specs/journeys/` 下既有 query 类 journey 无回归。
+**完成定义（DoD）**：`QB-JOURNEY-A`、`QB-JOURNEY-B`、`QB-JOURNEY-C`、`QB-JOURNEY-D` 全部通过，且 `e2e/specs/journeys/` 下既有 query 类 journey 无回归。
 
 ### 13.4 实现与验收记录
 
@@ -1224,14 +1288,15 @@ pnpm e2e:journeys
 
 ```bash
 pnpm tauri:build:webdriver:minimal   # 构建（basic 驱动）
-pnpm e2e:qb                          # → All tests passed!  (3 specs / 3 journeys)
+pnpm e2e:qb                          # → All tests passed!  (4 specs / 4 journeys)
 ```
 
 | Journey                  | 结果                 | 耗时 |
 | ------------------------ | -------------------- | ---- |
-| QB-JOURNEY-A（正常）     | ✅ 通过              | ~20s |
-| QB-JOURNEY-B（异常）     | ✅ 通过（11 个用例） | ~31s |
-| QB-JOURNEY-C（高复杂度） | ✅ 通过              | ~32s |
+| QB-JOURNEY-A（正常）     | ✅ 通过              | ~25s |
+| QB-JOURNEY-B（异常）     | ✅ 通过（16 个用例） | ~50s |
+| QB-JOURNEY-C（高复杂度） | ✅ 通过（2 个用例）  | ~39s |
+| QB-JOURNEY-D（子句/弹窗/HAVING） | ✅ 通过（2 个用例） | ~27s |
 
 #### 13.4.1 任务完成情况
 
@@ -1248,7 +1313,7 @@ pnpm e2e:qb                          # → All tests passed!  (3 specs / 3 journ
 | T9  | 聚焦与 Toast                         | ✅   | `pendingEditorFocusRef` + `qb-toast`                                                           |
 | T10 | i18n（en + zh-CN）                   | ✅   | `locales/{en,zh-CN}/query.ts`                                                                  |
 | T11 | 单测补齐                             | ✅   | 见 §13.4.3                                                                                     |
-| T12 | E2E                                  | ✅   | 三份 journey spec + `query-builder` / `qb-regression` suite                                    |
+| T12 | E2E                                  | ✅   | 四份 journey spec + `query-builder` / `qb-regression` suite                                    |
 
 #### 13.4.2 Journey 发现并修复的真实缺陷
 
@@ -1412,7 +1477,7 @@ npx vitest run         # 4168 passed / 2 既有失败
 | 表卡片（TableCard） | 画布中表示一张表 / 视图的卡片，承载别名与字段勾选                  |
 | 自动 JOIN / 候选    | 依据 FK 生成的 `autoJoins`，虚线呈现，确认后才进 SQL               |
 | 已确认 JOIN         | `joins`，实线呈现，进入 SQL 的 `INNER/LEFT/... JOIN`               |
-| 构建 Tab            | 底部左 Tab，承载 `CriteriaGrid`（列 / 条件 / 排序 / 分组 / 分页）  |
+| 构建 Tab            | 底部左 Tab，承载 `BuildStatement` 子句列表（字段 / 表 / 条件 / 分组 / HAVING / 排序 / 分页） |
 | 预览 Tab            | 底部右 Tab，只读展示生成的 SQL，对应 `SqlPreview`                  |
 | OK                  | 提交动作：写回 SQL Editor → 关闭 QB → 聚焦编辑器（**不执行查询**） |
 | 取消                | 丢弃画布改动并关闭 QB，SQL Editor 内容不变                         |
@@ -1425,7 +1490,8 @@ npx vitest run         # 4168 passed / 2 既有失败
 | 主面板             | `src/components/query-builder/QueryBuilderPanel.tsx`      |
 | 底部双 Tab（新增） | `src/components/query-builder/QueryBuilderBottomTabs.tsx` |
 | 画布               | `src/components/query-builder/DiagramCanvas/`             |
-| 条件区             | `src/components/query-builder/CriteriaGrid/`              |
+| 子句列表（v1.8）   | `src/components/query-builder/BuildStatement/`           |
+| 条件子句编辑器     | `src/components/query-builder/CriteriaGrid/ConditionClause.tsx` |
 | SQL 预览           | `src/components/query-builder/SqlPreview.tsx`             |
 | SQL 生成           | `src/components/query-builder/hooks/useSqlGenerator.ts`   |
 | 自动 JOIN          | `src/components/query-builder/hooks/useAutoJoin.ts`       |
@@ -1455,6 +1521,7 @@ npx vitest run         # 4168 passed / 2 既有失败
 | v1.5 | 2026-08-06 | 测试盲区复盘：新增 `validation.ts`，补异常/边界用例，修复 8 个缺陷   |
 | v1.6 | 2026-08-06 | 纯连线关系 + Popover 操作；复合外键主干合流；驱动复合外键归一化；画布原生滚动 |
 | v1.7 | 2026-08-06 | 卡片固定高度内滚；正交折线且无方向；预览高亮 + 格式化 + 占满高度     |
+| v1.8 | 2026-08-06 | 构建区改 Navicat 式子句列表；字段选项弹窗；补齐 HAVING；修复条件行 AND/OR 被忽略 |
 
 ---
 

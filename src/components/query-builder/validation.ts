@@ -23,7 +23,8 @@ export type QbDiagnosticCode =
   | 'alias-shadows-table'
   | 'unknown-join-table'
   | 'self-join'
-  | 'composite-join-incomplete';
+  | 'composite-join-incomplete'
+  | 'having-non-grouped';
 
 export interface QbDiagnostic {
   code: QbDiagnosticCode;
@@ -71,6 +72,7 @@ export function validateQuery(input: QueryValidationInput): QbDiagnostic[] {
   }
 
   collectConditionDiagnostics(input, out);
+  collectHavingDiagnostics(input, out);
   collectAliasDiagnostics(input, out);
   collectJoinDiagnostics(input, out);
   collectCompositeJoinDiagnostics(input, out);
@@ -122,6 +124,38 @@ function collectConditionDiagnostics(input: QueryValidationInput, out: QbDiagnos
   for (const col of input.selectedColumns) {
     if (col.where) visit([col.where]);
   }
+}
+
+/**
+ * HAVING filters groups, so every operand must be an aggregate or a grouped
+ * column. `HAVING qty > 5` on a bare column is rejected by PostgreSQL, MySQL
+ * (only_full_group_by) and SQL Server alike — worth saying before OK rather
+ * than after execution. A warning, not an error: some engines do allow it for
+ * grouped-only queries, and the user may still want to run it.
+ */
+function collectHavingDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
+  if (!input.having) return;
+
+  const grouped = new Set<string>();
+  for (const item of input.groupBy ?? []) grouped.add(`${item.table}.${item.column}`);
+  for (const col of input.selectedColumns) {
+    if (col.groupBy) grouped.add(`${col.table}.${col.column}`);
+  }
+
+  const visit = (group: typeof input.having): void => {
+    for (const cond of group.conditions) {
+      if (cond.aggregate) continue;
+      if (grouped.has(`${cond.table}.${cond.column}`)) continue;
+      out.push({
+        code: 'having-non-grouped',
+        severity: 'warning',
+        messageKey: 'havingNonGrouped',
+        detail: `${cond.table}.${cond.column}`,
+      });
+    }
+    for (const sub of group.groups) visit(sub);
+  };
+  visit(input.having);
 }
 
 function collectAliasDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {

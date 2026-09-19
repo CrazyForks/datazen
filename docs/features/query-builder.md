@@ -1,6 +1,8 @@
 # Visual Query Builder
 
-> Status: **v3.3** — canvas + bottom tabs + OK commit, covered by three E2E journeys.
+> Status: **v3.4** — Navicat-style statement list, covered by four E2E journeys.
+> v3.4: the Build tab is one row per clause (SELECT / FROM / WHERE / GROUP BY /
+> HAVING / ORDER BY), per-column options live in a dialog, and **HAVING** exists.
 > v3.3: fixed-height cards that scroll internally, orthogonal direction-less
 > relation lines, and a preview that is highlighted, pretty-printed and full
 > height.
@@ -44,8 +46,34 @@ discarding (the canvas state survives).
 - **Build** and **Preview** are mutually exclusive — only the active tab is
   mounted, which is what keeps the canvas tall enough to work in.
 - The splitter between canvas and tabs is draggable; the height persists under
-  `localStorage["resize:qb-split-height"]`.
+  `localStorage["resize:qb-split-height"]`. The default is 360px (was 300px:
+  at the old default, a four-column statement pushed GROUP BY below the fold on
+  a 960×720 window — measured, see journey D's `clauseIsVisible` assertions).
 - The canvas collapses from the header button or `Ctrl/Cmd + B`.
+
+### The Build tab is a statement list
+
+Navicat-style: **one row per SQL clause**, a keyword gutter on the left and that
+clause's content beside it.
+
+```
+SELECT   [ ] DISTINCT  ⟨chip⟩ ⟨chip⟩ ⟨Click here to add fields⟩
+FROM     sales AS s
+         INNER JOIN regions AS r ON s.region_id = r.id
+         ⟨Click here to add tables⟩
+WHERE    ⟨Click here to add conditions⟩        [+ Add Group]
+GROUP BY ⟨Click here to add GROUP BY⟩
+HAVING   ⟨Click here to add conditions⟩        [+ Add Group]
+ORDER BY ⟨Click here to add ORDER BY⟩
+         Limit [   ]  Offset [   ]            ← pinned toolbar row
+```
+
+This replaced an Excel-like grid (`CriteriaGrid` + `CriteriaRow`) that spent one
+row per selected column on eight inline controls (field, table, alias, sort,
+function, where, group, delete). Four selected columns filled the whole region
+and pushed WHERE — and everything below it — out of sight. A clause now takes
+only the height of the content it actually holds, a field is one chip, and the
+per-field controls moved into a dialog (see *Column Options*).
 
 ## Features
 
@@ -77,14 +105,30 @@ discarding (the canvas state survives).
 
 ### Column Selection
 
-- Toggle individual columns on/off from the table card, or all at once.
-- Set column aliases (`AS`).
-- Apply aggregate functions: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`.
+- Toggle individual columns on/off from the table card, or all at once. A
+  selected column appears as one chip in the SELECT row.
 - Table aliases are **used everywhere**: the alias is declared once in
-  `FROM`/`JOIN` and then qualifies every column in `SELECT`, `WHERE`,
-  `GROUP BY`, `ORDER BY` and `ON`. The condition editors label fields with that
-  same qualifier, so what the builder shows is what the SQL emits. (Previously
-  an alias appeared in `ON` only, which made adding one pointless.)
+  `FROM`/`JOIN` and then qualifies every column in `SELECT`, `WHERE`, `HAVING`,
+  `GROUP BY`, `ORDER BY` and `ON`. The chips and condition editors label fields
+  with that same qualifier, so what the builder shows is what the SQL emits.
+  (Previously an alias appeared in `ON` only, which made adding one pointless.)
+
+### Column Options (dialog)
+
+Clicking a field chip opens **Column options** — the whole per-field surface in
+one popup:
+
+| Option     | Effect                                                              |
+| ---------- | ------------------------------------------------------------------- |
+| Alias      | `AS <alias>` in SELECT                                              |
+| Aggregate  | `COUNT` / `SUM` / `AVG` / `MIN` / `MAX` around the column reference |
+| Sort       | `ASC` / `DESC`, shown in the ORDER BY row                           |
+| Group by   | adds the column to the GROUP BY row                                 |
+| Criteria   | one condition (`>= 2000`), shown as a chip in the WHERE row         |
+
+Editing is **draft-only until OK**: the form is seeded once per opened column and
+cancel writes nothing. Sort/aggregate/group also reach the SQL through the
+clause rows, so the same setting can be removed from either place.
 
 ### Relations (JOINs)
 
@@ -134,24 +178,36 @@ Each line connects the two specific columns it relates, at that column's row.
 
 ### WHERE Conditions
 
-- Two surfaces, both writing the same clause:
-  - **Build → column rows**: a per-column `WHERE` button (`CriteriaGrid`).
-  - **Build → WHERE editor**: root conditions plus nested groups
-    (`qb-where-add-condition` / `qb-where-add-group`), one level of nesting.
+- The WHERE row holds root conditions plus nested groups
+  (`qb-where-add-condition` / `qb-where-add-group`), one level of nesting; the
+  empty state is the Navicat `<Click here to add conditions>` link.
+- Per-column criteria set in a column's options dialog are shown as chips above
+  the tree and removed from the chip — the generator merges them into the same
+  clause, so hiding them would lose the user's own filter.
 - Operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `IN`,
   `NOT IN`, `IS NULL`, `IS NOT NULL`.
 - `IN` / `NOT IN` take a comma-separated list; `IS NULL` / `IS NOT NULL` hide
   the value input.
 - Nested groups are parenthesised in the generated SQL (`a AND (b OR c)`).
+- Each row's own AND/OR links it to the row above it. (It used to be ignored in
+  favour of the group's logic, so a row set to `OR` was emitted as `AND`.)
 
-### ORDER BY / GROUP BY / DISTINCT / LIMIT-OFFSET
+### GROUP BY / HAVING / ORDER BY / DISTINCT / LIMIT-OFFSET
 
-- Sort by any selected column, `ASC` / `DESC`. Sorting an **aggregated** column
-  orders by the aggregate expression (`ORDER BY SUM(x) DESC`), not the bare
-  column — the latter is rejected by every engine once the column is aggregated
-  but not grouped.
-- Group by selected columns; combines with aggregates for summary queries.
-- `DISTINCT` toggles at the top of the panel.
+- **GROUP BY** and **ORDER BY** each have their own row with a picker
+  (`qb-add-group-by` / `qb-add-order-by`). They show the union of the dedicated
+  store list and the per-column flags, and removing a chip clears whichever
+  source owns it. Clicking an ORDER BY chip flips `ASC` / `DESC`.
+- **HAVING** filters aggregated groups and is emitted between GROUP BY and
+  ORDER BY. Its condition rows carry a per-row **aggregate** selector, and a new
+  row starts as `SUM(...)`, so `HAVING SUM(qty) >= 2000` is two clicks.
+  A HAVING operand that is neither aggregated nor grouped raises the
+  `having-non-grouped` **warning** (see Validation) — it is valid to type but
+  rejected by PostgreSQL/MySQL/SQL Server at execution time.
+- Sorting an **aggregated** column orders by the aggregate expression
+  (`ORDER BY SUM(x) DESC`), not the bare column — the latter is rejected by
+  every engine once the column is aggregated but not grouped.
+- `DISTINCT` toggles at the start of the SELECT row.
 - `LIMIT` / `OFFSET` are numeric inputs pinned to the top of the Build tab.
   An offset without a limit emits `OFFSET n` (PostgreSQL/SQLite via `LIMIT -1`;
   MySQL uses its unbounded sentinel) instead of the old `LIMIT 0`, which
@@ -171,6 +227,8 @@ SQL. `validateQuery` (`components/query-builder/validation.ts`) reports:
 | `unsupported-pagination`                  | yes       | SQL Server cannot express LIMIT/OFFSET here; dropping it silently would return a different result set |
 | `alias-duplicate` / `alias-shadows-table` | yes       | Ambiguous identifier references                                                                       |
 | `unknown-join-table` / `self-join`        | yes       | Join cannot be expressed as drawn                                                                     |
+| `composite-join-incomplete`               | yes       | Half of a composite key is a wrong query                                                              |
+| `having-non-grouped`                      | **no**    | HAVING operand is neither aggregated nor grouped — rejected at execution, but still buildable          |
 
 Diagnostics appear above the SQL in the Preview tab, dot the Build tab, and
 disable OK (with the reason in its tooltip).
@@ -246,19 +304,20 @@ Shortcuts are active only while the builder is visible.
 
 ## E2E Coverage
 
-Three journeys, registered in the `query-builder` suite:
+Four journeys, registered in the `query-builder` suite:
 
 ```bash
-pnpm e2e:qb              # run all three (uses the existing debug build)
+pnpm e2e:qb              # run all of them (uses the existing debug build)
 pnpm e2e:qb:build        # build first
 pnpm e2e:qb:regression   # blast-radius guard: query panel / editor / navigator
 ```
 
-| Journey             | Spec                                                         | Covers                                                                                                                                                |
-| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`         | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
-| B — abnormal        | `e2e/specs/journeys/visual-query-builder-edge-journey.ts`    | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                |
-| C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts` | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
+| Journey             | Spec                                                          | Covers                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`          | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
+| B — abnormal        | `e2e/specs/journeys/visual-query-builder-edge-journey.ts`     | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                 |
+| C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts`  | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
+| D — clauses         | `e2e/specs/journeys/visual-query-builder-clauses-journey.ts`  | all six clause rows exist; WHERE/GROUP BY stay on screen with four columns selected and the whole statement fits once the canvas is collapsed; column options dialog (cancel writes nothing, OK applies); GROUP BY + ORDER BY pickers and the ASC→DESC chip; **HAVING `SUM(qty) >= 5` committed and executed, filtering a group out of the result**; `having-non-grouped` warns without blocking OK |
 
 Shared drivers live in `e2e/specs/journeys/visualQueryBuilderHelpers.ts`.
 

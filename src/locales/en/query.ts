@@ -432,6 +432,27 @@ const pack = {
   'query.visualBuilder.manualJoin': 'Manual join',
   'query.visualBuilder.removeJoin': 'Remove from query',
   'query.visualBuilder.okDisabledHint': 'Add a table and select at least one column first',
+  // ── Visual Builder v4 (Navicat-style clause list) ─────────────
+  'query.visualBuilder.addFields': 'Click here to add fields',
+  'query.visualBuilder.addTables': 'Click here to add tables',
+  'query.visualBuilder.addConditions': 'Click here to add conditions',
+  'query.visualBuilder.addGroupByClause': 'Click here to add GROUP BY',
+  'query.visualBuilder.addOrderByClause': 'Click here to add ORDER BY',
+  'query.visualBuilder.fieldLabel': 'Field',
+  'query.visualBuilder.sortLabel': 'Sort',
+  'query.visualBuilder.noSort': 'None',
+  'query.visualBuilder.groupByLabel': 'Group by',
+  'query.visualBuilder.criteriaLabel': 'Criteria',
+  'query.visualBuilder.columnOptionsTitle': 'Column options',
+  'query.visualBuilder.removeColumn': 'Remove from SELECT',
+  'query.visualBuilder.addField': 'Add field',
+  'query.visualBuilder.fieldPickerTitle': 'Add fields',
+  'query.visualBuilder.noFieldsAvailable': 'Every column of the selected tables is already used',
+  'query.visualBuilder.havingHint':
+    'HAVING filters aggregated groups — pick an aggregate (e.g. SUM(qty) >= 2000)',
+  'query.visualBuilder.diag.havingNonGrouped':
+    'HAVING uses a column that is neither aggregated nor grouped',
+  'query.visualBuilder.unjoinedTable': 'Not joined to the query yet',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': 'Database Objects',
   'query.objectTree.schema': 'schema',

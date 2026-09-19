@@ -199,8 +199,11 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
     expect(sql.toUpperCase()).toContain('DESC');
 
     // ── C8: DISTINCT ──
+    // The toggle lives in the SELECT clause row (Build tab only).
+    await switchQbTab('build');
     await $('[data-testid="qb-distinct-checkbox"]').click();
     await browser.pause(300);
+    await switchQbTab('preview');
     sql = await previewText();
     expect(sql.toUpperCase()).toContain('SELECT DISTINCT');
 

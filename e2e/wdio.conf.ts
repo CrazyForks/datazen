@@ -282,22 +282,24 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/query-edge-journey.ts',
       './specs/journeys/query-row-limit-journey.ts',
       './specs/journeys/first-run-edge-journey.ts',
-      // Visual Query Builder journeys (normal / abnormal / high-complexity).
-      // These were previously unregistered, which is how the spec drifted away
-      // from the shipped UI without anyone noticing.
+      // Visual Query Builder journeys (normal / abnormal / high-complexity /
+      // clause list). These were previously unregistered, which is how the spec
+      // drifted away from the shipped UI without anyone noticing.
       './specs/journeys/visual-query-builder-journey.ts',
       './specs/journeys/visual-query-builder-edge-journey.ts',
       './specs/journeys/visual-query-builder-complex-journey.ts',
+      './specs/journeys/visual-query-builder-clauses-journey.ts',
       // First-run journey (onboarding wizard). Runs last on purpose: its cases
       // rewrite the onboarding gate and restore it in `after`.
       './specs/journeys/onboarding-journey.ts',
     ],
-    // Visual Query Builder only (`pnpm e2e:qb`) — normal, abnormal and
-    // high-complexity statement journeys.
+    // Visual Query Builder only (`pnpm e2e:qb`) — normal, abnormal,
+    // high-complexity and clause-list statement journeys.
     'query-builder': [
       './specs/journeys/visual-query-builder-journey.ts',
       './specs/journeys/visual-query-builder-edge-journey.ts',
       './specs/journeys/visual-query-builder-complex-journey.ts',
+      './specs/journeys/visual-query-builder-clauses-journey.ts',
     ],
     // Blast-radius guard for the Query Builder work (`pnpm e2e:qb:regression`).
     // The builder shares the query panel, the SQL editor host and the

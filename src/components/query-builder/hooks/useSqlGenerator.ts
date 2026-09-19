@@ -24,6 +24,8 @@ export interface GenerateSqlInput {
   joins: QbJoin[];
   tableAliases: Record<string, string>;
   where: QbConditionGroup;
+  /** HAVING root group. Optional so existing callers keep compiling. */
+  having?: QbConditionGroup;
   orderBy: QbSortItem[];
   groupBy: QbGroupByItem[];
   distinct: boolean;
@@ -70,7 +72,9 @@ function formatCondition(
 ): string {
   // Alias-aware: a hand-written alias must change the emitted qualifier, or the
   // alias would be declared in FROM/JOIN and then never used.
-  const col = columnRef(cond.table, cond.column, aliases, adapter);
+  const ref = columnRef(cond.table, cond.column, aliases, adapter);
+  // HAVING filters aggregates (`HAVING SUM(qty) >= 2000`).
+  const col = cond.aggregate ? `${cond.aggregate}(${ref})` : ref;
 
   switch (cond.operator) {
     case '=':
@@ -114,17 +118,26 @@ function buildGroupExpr(
 ): string {
   const parts: string[] = [];
 
-  for (const cond of group.conditions) {
-    parts.push(formatCondition(cond, aliases, adapter));
-  }
+  // Each row's own AND/OR links it to the row above it. Joining with
+  // `group.logic` instead (the previous behaviour) silently discarded the
+  // per-row conjunction the user picked in the editor — `a AND b OR c` came out
+  // as `a AND b AND c`. The first row has no row above it, so its conjunction is
+  // unused (the editor hides the control there for exactly that reason).
+  group.conditions.forEach((cond, index) => {
+    const expr = formatCondition(cond, aliases, adapter);
+    if (index === 0) parts.push(expr);
+    else parts.push(`${cond.conjunction} ${expr}`);
+  });
 
   for (const subGroup of group.groups) {
     const sub = buildGroupExpr(subGroup, aliases, adapter);
-    if (sub) parts.push(`(${sub})`);
+    // A sub-group has no per-row conjunction, so it is linked with the group's
+    // own logic.
+    if (sub) parts.push(`${group.logic} (${sub})`);
   }
 
   if (parts.length === 0) return '';
-  return parts.join(` ${group.logic} `);
+  return parts.join(' ');
 }
 
 function buildWhereClause(
@@ -135,6 +148,18 @@ function buildWhereClause(
   const expr = buildGroupExpr(group, aliases, adapter);
   if (!expr) return '';
   return ` WHERE ${expr}`;
+}
+
+/** HAVING — same expression builder, different keyword and position. */
+function buildHavingClause(
+  group: QbConditionGroup | undefined,
+  aliases: Record<string, string>,
+  adapter: ReturnType<typeof getQbDialectAdapter>,
+): string {
+  if (!group) return '';
+  const expr = buildGroupExpr(group, aliases, adapter);
+  if (!expr) return '';
+  return ` HAVING ${expr}`;
 }
 
 // ── Core SQL generator ────────────────────────────────────────
@@ -189,8 +214,10 @@ function generateSql(input: GenerateSqlInput): string {
           .join(', ')}`
       : '';
 
-  // 6. ORDER BY — merge store-level orderBy with per-column sort.
-  //
+  // 6. HAVING — after GROUP BY, before ORDER BY.
+  const havingClause = buildHavingClause(input.having, aliases, adapter);
+
+  // 7. ORDER BY — merge store-level orderBy with per-column sort.  //
   // A per-column sort on an *aggregated* column must order by the aggregate
   // expression, not the bare column: `ORDER BY x` is rejected by every engine
   // once `x` is aggregated but not grouped (`SUM(x) … GROUP BY y ORDER BY x`).
@@ -212,10 +239,10 @@ function generateSql(input: GenerateSqlInput): string {
   ];
   const orderByClause = orderByItems.length > 0 ? ` ORDER BY ${orderByItems.join(', ')}` : '';
 
-  // 7. LIMIT / OFFSET
+  // 8. LIMIT / OFFSET
   const limitOffsetClause = generateLimitOffset(input.limit, input.offset, adapter);
 
-  return `${selectClause}${fromClause}${joinClause}${whereClause}${groupByClause}${orderByClause}${limitOffsetClause};`;
+  return `${selectClause}${fromClause}${joinClause}${whereClause}${groupByClause}${havingClause}${orderByClause}${limitOffsetClause};`;
 }
 
 // ── Public hook ───────────────────────────────────────────────
@@ -237,6 +264,7 @@ export function useSqlGenerator(input: GenerateSqlInput): string {
       input.joins,
       input.tableAliases,
       input.where,
+      input.having,
       input.orderBy,
       input.groupBy,
       input.distinct,

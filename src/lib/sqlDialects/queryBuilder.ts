@@ -149,50 +149,48 @@ export function columnRef(
 // ── JOIN clause generation ────────────────────────────────────
 
 /** One emitted `JOIN <table> ON <predicates>` step. */
-interface JoinStep {
+export interface QbJoinStep {
   type: QbJoin['type'];
   targetTable: string;
   /** Each predicate is `sourceTable.sourceColumn = targetTable.targetColumn`. */
   predicates: Array<{ sourceTable: string; sourceColumn: string; targetColumn: string }>;
+  /** True for a join the walk could not attach to the FROM table's graph. */
+  detached?: boolean;
 }
 
 /**
- * Generate SQL JOIN clauses from a list of QbJoin entries.
+ * Walk the join graph outward from the FROM table and return one step per
+ * joined table.
  *
  * A flat `JOIN rightTable ON left = right` per entry is **not** enough: the
  * entries arrive in graph order, not query order, so a naive rendering can
  * re-join the FROM table and reference tables that have not been joined yet
  * (`FROM a JOIN a ON b.x = a.id JOIN b ON c.y = b.id` — both invalid).
  *
- * This walks the join graph outward from the FROM table instead:
+ * This is the single source of truth for both the generated SQL and the
+ * statement view in the Build tab, so what the user reads in the clause list
+ * cannot drift from what is emitted:
  *  - each step joins a table that is reachable from an already-included table;
  *  - the predicate is oriented so the included side comes first;
  *  - repeated pairs (composite keys, duplicated entries) merge into one step
  *    with an extra `AND` predicate rather than a second `JOIN` of the same
  *    table;
- *  - joins not connected to the FROM table are appended verbatim, so the
- *    preview still reflects what the user drew (the engine will reject it, but
- *    silently dropping their intent would be worse).
+ *  - joins not connected to the FROM table are appended with `detached: true`,
+ *    so the preview still reflects what the user drew (the engine will reject
+ *    it, but silently dropping their intent would be worse).
  *
  * @param fromTable - Table already present in the FROM clause (the join graph root).
  */
-export function generateJoinClause(
-  joins: QbJoin[],
-  aliases: Record<string, string>,
-  adapter: QbDialectAdapter,
-  fromTable?: string,
-): string {
-  if (joins.length === 0) return '';
-
-  const colRef = (table: string, column: string) => columnRef(table, column, aliases, adapter);
+export function buildJoinSteps(joins: QbJoin[], fromTable?: string): QbJoinStep[] {
+  if (joins.length === 0) return [];
 
   const included = new Set<string>();
   if (fromTable) included.add(fromTable);
   else if (joins[0]) included.add(joins[0].leftTable);
 
   const remaining = [...joins];
-  const steps: JoinStep[] = [];
-  const stepByTarget = new Map<string, JoinStep>();
+  const steps: QbJoinStep[] = [];
+  const stepByTarget = new Map<string, QbJoinStep>();
 
   let progressed = true;
   while (remaining.length > 0 && progressed) {
@@ -236,7 +234,7 @@ export function generateJoinClause(
         continue;
       }
 
-      const step: JoinStep = {
+      const step: QbJoinStep = {
         type: join.type,
         targetTable,
         predicates: [{ sourceTable, sourceColumn, targetColumn }],
@@ -246,6 +244,40 @@ export function generateJoinClause(
       included.add(targetTable);
     }
   }
+
+  for (const join of remaining) {
+    steps.push({
+      type: join.type,
+      targetTable: join.rightTable,
+      predicates: [
+        {
+          sourceTable: join.leftTable,
+          sourceColumn: join.leftColumn,
+          targetColumn: join.rightColumn,
+        },
+      ],
+      detached: true,
+    });
+  }
+
+  return steps;
+}
+
+/**
+ * Generate SQL JOIN clauses from a list of QbJoin entries.
+ *
+ * @param fromTable - Table already present in the FROM clause (the join graph root).
+ */
+export function generateJoinClause(
+  joins: QbJoin[],
+  aliases: Record<string, string>,
+  adapter: QbDialectAdapter,
+  fromTable?: string,
+): string {
+  const steps = buildJoinSteps(joins, fromTable);
+  if (steps.length === 0) return '';
+
+  const colRef = (table: string, column: string) => columnRef(table, column, aliases, adapter);
 
   const clauses = steps.map((step) => {
     const on = step.predicates
@@ -257,14 +289,7 @@ export function generateJoinClause(
     return `${step.type} JOIN ${tableSourceExpr(step.targetTable, aliases, adapter)} ON ${on}`;
   });
 
-  for (const join of remaining) {
-    clauses.push(
-      `${join.type} JOIN ${tableSourceExpr(join.rightTable, aliases, adapter)} ON ` +
-        `${colRef(join.leftTable, join.leftColumn)} = ${colRef(join.rightTable, join.rightColumn)}`,
-    );
-  }
-
-  return clauses.length > 0 ? `\n${clauses.join('\n')}` : '';
+  return `\n${clauses.join('\n')}`;
 }
 
 // ── LIMIT / OFFSET clause generation ──────────────────────────

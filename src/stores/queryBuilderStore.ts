@@ -29,6 +29,8 @@ export interface QbCanvasSnapshot {
   tableAliases: Record<string, string>;
   tablePositions: Record<string, { x: number; y: number }>;
   where: QbConditionGroup;
+  /** HAVING clause root group (aggregate filters). */
+  having: QbConditionGroup;
   orderBy: QbSortItem[];
   groupBy: QbGroupByItem[];
   distinct: boolean;
@@ -84,6 +86,7 @@ export function snapshotCanvas(s: QueryBuilderState): QbCanvasSnapshot {
       tableAliases: s.tableAliases,
       tablePositions: s.tablePositions,
       where: s.where,
+      having: s.having,
       orderBy: s.orderBy,
       groupBy: s.groupBy,
       distinct: s.distinct,
@@ -112,6 +115,8 @@ export interface QueryBuilderState {
   selectedColumns: QbColumnSelection[];
   /** WHERE clause root group. */
   where: QbConditionGroup;
+  /** HAVING clause root group — filters on aggregates, emitted after GROUP BY. */
+  having: QbConditionGroup;
   /** ORDER BY items. */
   orderBy: QbSortItem[];
   /** GROUP BY items. */
@@ -174,7 +179,15 @@ export interface QueryBuilderActions {
   addConditionGroup: (parentId: string, logic: 'AND' | 'OR') => void;
   /** Rewrite the AND/OR of an existing group (root or nested). */
   setGroupLogic: (groupId: string, logic: 'AND' | 'OR') => void;
+  /** Same five operations, applied to the HAVING tree instead of WHERE. */
+  addHavingCondition: (groupId: string, condition: Omit<QbCondition, 'id'>) => void;
+  updateHavingCondition: (id: string, patch: Partial<QbCondition>) => void;
+  removeHavingCondition: (id: string) => void;
+  addHavingGroup: (parentId: string, logic: 'AND' | 'OR') => void;
+  setHavingGroupLogic: (groupId: string, logic: 'AND' | 'OR') => void;
   addSort: (item: QbSortItem) => void;
+  /** Patch one ORDER BY entry in place (used to flip ASC/DESC from the clause list). */
+  updateSort: (index: number, patch: Partial<QbSortItem>) => void;
   removeSort: (index: number) => void;
   addGroupBy: (item: QbGroupByItem) => void;
   removeGroupBy: (index: number) => void;
@@ -303,7 +316,16 @@ function setGroupLogicById(
   logic: 'AND' | 'OR',
 ): QbConditionGroup {
   if (group.id === groupId) {
-    return { ...group, logic };
+    return {
+      ...group,
+      logic,
+      // The generated expression joins rows with each row's *own* conjunction
+      // (see `buildGroupExpr`), so switching the group to OR has to move its
+      // rows too — otherwise the control would appear to do nothing.
+      conditions: group.conditions.map((cond, index) =>
+        index === 0 ? cond : { ...cond, conjunction: logic },
+      ),
+    };
   }
   return {
     ...group,
@@ -325,6 +347,7 @@ function removeTableFrom(s: QueryBuilderState, tableName: string): Partial<Query
     selectedTables: s.selectedTables.filter((t) => t !== tableName),
     selectedColumns: s.selectedColumns.filter((c) => c.table !== tableName),
     where: pruneConditions(s.where, removed),
+    having: pruneConditions(s.having, removed),
     joins: s.joins.filter((j) => j.leftTable !== tableName && j.rightTable !== tableName),
     autoJoins: s.autoJoins.filter((j) => j.leftTable !== tableName && j.rightTable !== tableName),
     tableAliases,
@@ -350,6 +373,7 @@ function freshCanvas(): QbCanvasSnapshot {
     tableAliases: {},
     tablePositions: {},
     where: emptyConditionGroup(),
+    having: emptyConditionGroup(),
     orderBy: [],
     groupBy: [],
     distinct: false,
@@ -377,6 +401,7 @@ const INITIAL_STATE: QueryBuilderState = {
   selectedTables: [],
   selectedColumns: [],
   where: emptyConditionGroup(),
+  having: emptyConditionGroup(),
   orderBy: [],
   groupBy: [],
   distinct: false,
@@ -502,9 +527,44 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
         where: setGroupLogicById(s.where, groupId, logic),
       })),
 
+    addHavingCondition: (groupId, condition) =>
+      set((s) => ({
+        having: addConditionToGroup(s.having, groupId, { ...condition, id: uid() }),
+      })),
+
+    updateHavingCondition: (id, patch) =>
+      set((s) => ({
+        having: updateConditionById(s.having, id, patch),
+      })),
+
+    removeHavingCondition: (id) =>
+      set((s) => ({
+        having: removeConditionById(s.having, id),
+      })),
+
+    addHavingGroup: (parentId, logic) =>
+      set((s) => ({
+        having: addSubGroup(s.having, parentId, {
+          id: uid(),
+          logic,
+          conditions: [],
+          groups: [],
+        }),
+      })),
+
+    setHavingGroupLogic: (groupId, logic) =>
+      set((s) => ({
+        having: setGroupLogicById(s.having, groupId, logic),
+      })),
+
     addSort: (item) =>
       set((s) => ({
         orderBy: [...s.orderBy, item],
+      })),
+
+    updateSort: (index, patch) =>
+      set((s) => ({
+        orderBy: s.orderBy.map((item, i) => (i === index ? { ...item, ...patch } : item)),
       })),
 
     removeSort: (index) =>
