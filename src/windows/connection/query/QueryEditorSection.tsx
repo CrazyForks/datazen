@@ -495,7 +495,18 @@ export function QueryEditorSection({
         </div>
       )}
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/*
+       * Editor column.
+       *
+       * With the builder closed this column is sized by the editor itself
+       * (`flex-initial`), so the results pane — not dead space — absorbs every
+       * remaining pixel and the resize handle always sits exactly on the
+       * editor/results boundary. With the builder open the canvas owns the
+       * column (`flex-1`) because the results pane is unmounted in that mode.
+       */}
+      <div
+        className={cn('relative flex min-h-0 min-w-0 flex-col', qbOpen ? 'flex-1' : 'flex-initial')}
+      >
         {nl2sqlVisible && (
           <Nl2SqlPanel
             dbSessionId={dbSessionId}
@@ -523,9 +534,15 @@ export function QueryEditorSection({
          * Kept mounted while the builder is open (CSS-hidden only): unmounting
          * would drop the CodeMirror undo stack, the bind-param values (Pro EP)
          * and the metadata cache.
+         *
+         * `min-h-0 shrink` (not `shrink-0`) is load-bearing: a persisted
+         * `editorHeight` larger than the space this column actually has must
+         * shrink to fit. While it overflowed, the editor's opaque gutter and
+         * bottom border painted on top of the result pane's toolbar (the editor
+         * host is `relative`) and hid the 表格 / 图表 view toggle.
          */}
         <div
-          className={cn('relative shrink-0 border-b border-edge', qbOpen && 'hidden')}
+          className={cn('relative min-h-0 shrink border-b border-edge', qbOpen && 'hidden')}
           style={{ height: editorHeight }}
           data-testid="query-editor-host"
         >

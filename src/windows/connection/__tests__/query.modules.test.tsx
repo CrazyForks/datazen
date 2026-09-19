@@ -882,6 +882,22 @@ describe('[tester] query/QueryEditorSection', () => {
     return render(<QueryEditorSection {...defaults} {...overrides} />);
   }
 
+  it('keeps the editor host shrinkable inside a content-sized column', () => {
+    renderSection();
+
+    // Regression: the host used to be `shrink-0`, so a persisted `editorHeight`
+    // taller than the column overflowed it and painted over the result pane's
+    // 表格 / 图表 toggle (the host is `relative`).
+    const host = screen.getByTestId('query-editor-host');
+    expect(host.className).not.toContain('shrink-0');
+    expect(host.className).toContain('shrink');
+    expect(host.className).toContain('min-h-0');
+
+    // With the builder closed the column is sized by the editor, so the result
+    // pane — not dead space — absorbs the remaining height.
+    expect(host.parentElement?.className).toContain('flex-initial');
+  });
+
   it('wires toolbar actions and editor context menu', () => {
     const onExecute = vi.fn();
     const onExplain = vi.fn();
