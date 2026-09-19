@@ -255,11 +255,11 @@ export function DiagramCanvas({
             if (!fromPos || !toPos) return null;
             if (!selectedSet.has(fk.fromTable) || !selectedSet.has(fk.toTable)) return null;
 
-            // Find column indices
-            const fromColumns = columnMap[fk.fromTable] ?? [];
-            const toColumns = columnMap[fk.toTable] ?? [];
-            const fromIndex = fromColumns.indexOf(fk.fromColumn);
-            const toIndex = toColumns.indexOf(fk.toColumn);
+            // Find column indices from columnInfoMap (more reliable)
+            const fromColInfo = columnInfoMap[fk.fromTable] ?? [];
+            const toColInfo = columnInfoMap[fk.toTable] ?? [];
+            const fromIndex = fromColInfo.findIndex((c) => c.name === fk.fromColumn);
+            const toIndex = toColInfo.findIndex((c) => c.name === fk.toColumn);
             if (fromIndex === -1 || toIndex === -1) return null;
 
             return (
