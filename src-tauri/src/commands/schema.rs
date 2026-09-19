@@ -82,7 +82,7 @@ pub(crate) async fn get_columns_typed_impl(
     db_session_id: String,
     table: String,
     database: String,
-) -> Result<Vec<driver_api::types::ColumnSchema>, CommandError> {
+) -> Result<Vec<crate::db::ColumnSchema>, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, %table, "get_columns_typed");
     super::query::ensure_session_database(
@@ -499,7 +499,7 @@ pub async fn get_columns_typed(
     db_session_id: String,
     table: String,
     database: String,
-) -> Result<Vec<driver_api::types::ColumnSchema>, CommandError> {
+) -> Result<Vec<crate::db::ColumnSchema>, CommandError> {
     get_columns_typed_impl(&state, db_session_id, table, database).await
 }
 

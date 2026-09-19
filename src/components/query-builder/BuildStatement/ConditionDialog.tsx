@@ -7,6 +7,7 @@ import { Select, type SelectOption } from '../../ui/Select';
 import type { QbAggregate, QbCondition, QbOperator } from '../types';
 import { qualifiedRef } from './columnOptions';
 import { getOperatorOptions } from '../operatorFilter';
+import { classifyColumnType, TypeCategory } from '../typeCategory';
 
 const AGGREGATE_VALUES: QbAggregate[] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 const NULL_OPERATORS = new Set<string>(['IS NULL', 'IS NOT NULL']);
@@ -96,6 +97,14 @@ export function ConditionDialog({
   const editing = !!draft?.id;
   const fieldValue = form ? `${form.table}.${form.column}` : '';
   const isNullOp = form ? NULL_OPERATORS.has(form.operator) : false;
+
+  // Derive if the selected column is a temporal type (needs datetime-local picker)
+  const isTemporalColumn = useMemo(() => {
+    if (!form) return false;
+    const colType = allColumnTypes?.[form.table]?.[form.column];
+    if (!colType) return false;
+    return classifyColumnType(colType) === TypeCategory.Temporal;
+  }, [form?.table, form?.column, allColumnTypes]);
 
   // Filter operators based on the selected column's data type
   const operatorOptions: SelectOption[] = useMemo(() => {
@@ -224,6 +233,7 @@ export function ConditionDialog({
             <Input
               value={form.value ?? ''}
               disabled={isNullOp}
+              type={isTemporalColumn ? 'datetime-local' : 'text'}
               onChange={(e) => setForm((f) => (f ? { ...f, value: e.target.value } : f))}
               placeholder={t('query.visualBuilder.valuePlaceholder')}
               className="h-8 w-48 text-xs"
