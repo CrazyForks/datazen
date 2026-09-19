@@ -152,7 +152,10 @@ export function QueryBuilderPanel({
       for (const tableName of selectedTables) {
         try {
           const schema = await getCachedTableSchema(dbSessionId, tableName, currentDatabase ?? '');
+          console.log('Schema for', tableName, ':', schema);
+          console.log('Foreign keys for', tableName, ':', schema.foreignKeys);
           for (const fk of schema.foreignKeys) {
+            console.log('Processing FK:', fk);
             for (let i = 0; i < fk.columns.length; i++) {
               allFks.push({
                 fromTable: tableName,
@@ -162,10 +165,11 @@ export function QueryBuilderPanel({
               });
             }
           }
-        } catch {
-          // Schema not available — skip silently
+        } catch (error) {
+          console.error('Error loading schema for', tableName, ':', error);
         }
       }
+      console.log('All FK relations:', allFks);
       if (!cancelled) {
         setFkRelations(allFks);
       }
