@@ -488,15 +488,14 @@ export function QueryBuilderPanel({
     [addSort],
   );
 
-  /** Clicking an ORDER BY chip flips its direction, wherever the entry lives. */
-  const handleToggleSort = useCallback(
-    (entry: ClauseEntry) => {
-      const next = (entry.direction ?? 'ASC') === 'ASC' ? 'DESC' : 'ASC';
+  /** Set an ORDER BY entry's direction, wherever the entry lives. */
+  const handleSetSort = useCallback(
+    (entry: ClauseEntry, direction: 'ASC' | 'DESC') => {
       if (entry.source === 'column') {
-        updateColumnConfig(entry.table, entry.column, { sort: next });
+        updateColumnConfig(entry.table, entry.column, { sort: direction });
         return;
       }
-      if (entry.index !== undefined) updateSort(entry.index, { direction: next });
+      if (entry.index !== undefined) updateSort(entry.index, { direction });
     },
     [updateSort, updateColumnConfig],
   );
@@ -725,7 +724,7 @@ export function QueryBuilderPanel({
                   addGroupBy: handleAddGroupBy,
                   removeGroupBy: handleRemoveGroupBy,
                   addSort: handleAddSort,
-                  toggleSort: handleToggleSort,
+                  setSort: handleSetSort,
                   removeSort: handleRemoveSort,
                 }}
               />

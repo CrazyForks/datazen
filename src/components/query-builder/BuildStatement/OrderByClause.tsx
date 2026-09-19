@@ -11,14 +11,14 @@ export interface OrderByClauseProps {
   allColumns: Record<string, string[]>;
   tableAliases: Record<string, string>;
   onAdd: (table: string, column: string) => void;
-  /** Click a chip → flip ASC/DESC. */
-  onToggle: (entry: ClauseEntry) => void;
+  /** Click a chip → its options (direction). */
+  onOpen: (entry: ClauseEntry) => void;
   onRemove: (entry: ClauseEntry) => void;
 }
 
 /**
- * ORDER BY row. Each chip shows its direction and clicking it flips that
- * direction — one click instead of a dropdown per row.
+ * ORDER BY row. Each chip shows its direction; clicking it opens the sort
+ * options dialog, like every other chip in the statement.
  */
 export function OrderByClause({
   entries,
@@ -26,7 +26,7 @@ export function OrderByClause({
   allColumns,
   tableAliases,
   onAdd,
-  onToggle,
+  onOpen,
   onRemove,
 }: OrderByClauseProps) {
   const { t } = useI18n();
@@ -45,8 +45,8 @@ export function OrderByClause({
           label={qualifiedRef(entry.table, entry.column, tableAliases)}
           prefix={entry.aggregate ? `${entry.aggregate}(` : ''}
           suffix={`${entry.aggregate ? ')' : ''} ${entry.direction ?? 'ASC'}`}
-          title={`${entry.direction ?? 'ASC'} — ${t('query.visualBuilder.sortLabel')}`}
-          onClick={() => onToggle(entry)}
+          title={t('query.visualBuilder.sortOptionsTitle')}
+          onClick={() => onOpen(entry)}
           onRemove={() => onRemove(entry)}
           testId={`qb-order-chip-${entry.table}-${entry.column}`}
           removeTestId={`qb-order-remove-${entry.table}-${entry.column}`}

@@ -17,6 +17,7 @@ import {
   confirmDiscardIfAsked,
   existsInDom,
   addWhereCondition,
+  applyConditionDialog,
   configureWhereRow,
   isQbOpen,
   openQbViaMenu,
@@ -382,9 +383,11 @@ describe('Visual Query Builder 异常旅程 (QB-JOURNEY-B)', () => {
     await selectCardColumn(TABLE_A, 'name');
     await browser.pause(300);
 
-    // A brand-new condition has an empty value — `col = ` is not buildable.
+    // A condition applied with an empty value — `col = ` is not buildable.
+    // The dialog is a draft, so the empty value has to be confirmed on purpose.
     await switchQbTab('build');
     await addWhereCondition();
+    await applyConditionDialog();
     await switchQbTab('preview');
 
     expect(await existsInDom('[data-testid="qb-diagnostics"]')).toBe(true);

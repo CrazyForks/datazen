@@ -31,6 +31,8 @@ import {
   columnOptionsOpen,
   configureHavingRow,
   confirmAutoJoinsViaUi,
+  openOrderByChip,
+  setSortDirection,
   existsInDom,
   expectSqlFragments,
   isQbOpen,
@@ -168,22 +170,25 @@ describe('Visual Query Builder 子句列表与字段弹窗旅程 (QB-JOURNEY-D)'
     await browser.pause(300);
     expect(await existsInDom(`[data-testid="qb-group-chip-${REGION}-name"]`)).toBe(true);
 
-    // ── D5: ORDER BY through the clause picker, then flip it to DESC ──
+    // ── D5: ORDER BY through the clause picker, then set it to DESC ──
     await addClauseItem('qb-add-order-by', `${REGION}.name`);
     await browser.pause(300);
     const orderChip = await $(`[data-testid="qb-order-chip-${REGION}-name"]`);
     expect(await orderChip.getText()).toContain('ASC');
-    await orderChip.$('button').click();
-    await browser.pause(300);
+    await openOrderByChip(REGION, 'name');
+    await setSortDirection('DESC');
+    expect(await orderChip.getText()).toContain('DESC');
 
     // ── D6: HAVING — the clause that did not exist ──
     await addHavingCondition();
-    expect(await existsInDom('[data-testid="qb-having-row"]')).toBe(true);
-    // A brand-new HAVING row starts aggregated (SUM), so an in-progress row can
-    // never emit `HAVING bare_column = …`.
-    const defaultAggregate = await $('[data-testid="qb-having-aggregate"]').getText();
-    expect(defaultAggregate).toContain('SUM');
+    // Nothing is in the query yet: the new condition exists only as a draft,
+    // so abandoning the dialog cannot leave a half-filled chip behind.
+    expect(await existsInDom('[data-testid^="qb-having-chip-"]')).toBe(false);
+    // …and the draft starts aggregated (SUM), so it can never emit
+    // `HAVING bare_column = …`.
+    expect(await $('[data-testid="qb-cond-aggregate"]').getText()).toContain('SUM');
     await configureHavingRow(0, { field: `${SALE}.qty`, operator: '>=', value: '5' });
+    expect(await existsInDom('[data-testid^="qb-having-chip-"]')).toBe(true);
 
     // The layout case deliberately picked extra columns; only `name` (grouped)
     // and the `SUM(qty)` measure may survive into an executable aggregate
@@ -243,7 +248,9 @@ describe('Visual Query Builder 子句列表与字段弹窗旅程 (QB-JOURNEY-D)'
     // every engine — surfaced as a warning, never as a silent export.
     await addHavingCondition();
     await configureHavingRow(0, {
-      aggregate: '—',
+      // Index 0 = "no aggregate": the option labels are translated, so the
+      // journey addresses them by position.
+      aggregateIndex: 0,
       field: `${SALE}.qty`,
       operator: '>=',
       value: '5',

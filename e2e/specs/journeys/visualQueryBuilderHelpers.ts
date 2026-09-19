@@ -550,60 +550,96 @@ export async function waitForAutoJoins(minCount = 1, timeout = 15000): Promise<n
   return count;
 }
 
-// ── WHERE clause editor ────────────────────────────────────────────
-
-export async function addWhereCondition(): Promise<void> {
-  const button = await $('[data-testid="qb-where-add-condition"]');
-  await button.waitForClickable({ timeout: 5000 });
-  await button.click();
-  await browser.pause(200);
-}
-
-export async function addWhereGroup(): Promise<void> {
-  const button = await $('[data-testid="qb-where-add-group"]');
-  await button.waitForClickable({ timeout: 5000 });
-  await button.click();
-  await browser.pause(200);
-}
-
-/** Add a condition directly inside the first nested group. */
-export async function addSubGroupCondition(): Promise<void> {
-  const button = await $('[data-testid="qb-where-subgroup-add-condition"]');
-  await button.waitForClickable({ timeout: 5000 });
-  await button.click();
-  await browser.pause(200);
-}
+// ── Condition chips + dialog (WHERE / HAVING) ─────────────────────
 
 /**
- * Configure WHERE row `index` (document order across the whole editor).
- * Any field left undefined is not touched.
+ * Every clause item is a chip: clicking it opens that item's dialog. These
+ * helpers drive that dialog, which replaced the old inline per-row controls.
  */
-export async function configureWhereRow(
-  index: number,
-  patch: { field?: string; operator?: string; value?: string; conjunction?: string },
-): Promise<void> {
-  const rowHandle = await browser.execute((i: number) => {
-    const rows = Array.from(document.querySelectorAll('[data-testid="qb-where-row"]'));
-    const row = rows[i] as HTMLElement | undefined;
-    if (!row) return false;
-    row.setAttribute('data-qb-e2e-row', String(i));
-    return true;
-  }, index);
-  if (!rowHandle) throw new Error(`WHERE 行 #${index} 不存在`);
 
-  const rowSel = `[data-qb-e2e-row="${index}"]`;
+/**
+ * Click a control inside the Build tab's scroll container.
+ *
+ * The lower clauses (HAVING, ORDER BY) sit below the fold at the default
+ * splitter height, and WebKit reports a scrolled-out element as not
+ * interactable — so scroll it into view first, then click.
+ */
+export async function clickInBuildTab(testId: string): Promise<void> {
+  await browser.execute((id: string) => {
+    document
+      .querySelector<HTMLElement>(`[data-testid="${id}"]`)
+      ?.scrollIntoView({ block: 'center' });
+  }, testId);
+  await browser.pause(200);
+  const el = await $(`[data-testid="${testId}"]`);
+  await el.waitForClickable({ timeout: 5000 });
+  await el.click();
+  await browser.pause(200);
+}
 
-  if (patch.conjunction) {
-    await pickSelectOptionIn(rowSel, 'qb-where-conjunction', patch.conjunction);
+/** True while a condition dialog is open. */
+export async function conditionDialogOpen(): Promise<boolean> {
+  return existsInDom('[data-testid="qb-cond-apply"]');
+}
+
+async function waitForConditionDialog(): Promise<void> {
+  await browser.waitUntil(() => conditionDialogOpen(), {
+    timeout: 5000,
+    timeoutMsg: '条件弹窗未打开',
+  });
+  await browser.pause(200);
+}
+
+/** Click a condition chip (document order) to edit it. */
+export async function openConditionChip(clause: 'where' | 'having', index: number): Promise<void> {
+  const clicked = await browser.execute(
+    (c: string, i: number) => {
+      const chips = Array.from(
+        document.querySelectorAll<HTMLElement>(`[data-testid^="qb-${c}-chip-"]`),
+      );
+      const chip = chips[i];
+      // The options trigger carries no testid of its own; the × does.
+      const trigger = chip?.querySelector<HTMLElement>('button:not([data-testid])');
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    },
+    clause,
+    index,
+  );
+  if (!clicked) throw new Error(`${clause} 条件 chip #${index} 不存在或不可点击`);
+  await waitForConditionDialog();
+}
+
+/** Patch the open condition dialog. Any field left undefined is not touched. */
+export interface ConditionPatch {
+  /**
+   * Aggregate by position — the option labels are translated, so the index is
+   * the only language-independent handle: 0 = none, 1 = COUNT, 2 = SUM, 3 = AVG,
+   * 4 = MIN, 5 = MAX.
+   */
+  aggregateIndex?: number;
+  field?: string;
+  operator?: string;
+  value?: string;
+  conjunction?: string;
+}
+
+export async function patchConditionDialog(patch: ConditionPatch): Promise<void> {
+  if (patch.aggregateIndex !== undefined) {
+    await pickSelectOptionByIndex('qb-cond-aggregate', patch.aggregateIndex);
   }
-  if (patch.field) {
-    await pickSelectOptionIn(rowSel, 'qb-where-field', patch.field);
+  if (patch.field !== undefined) {
+    await pickSelectOption('qb-cond-field', patch.field);
   }
-  if (patch.operator) {
-    await pickSelectOptionIn(rowSel, 'qb-where-operator', patch.operator);
+  if (patch.operator !== undefined) {
+    await pickSelectOption('qb-cond-operator', patch.operator);
+  }
+  if (patch.conjunction !== undefined) {
+    await pickSelectOption('qb-cond-conjunction', patch.conjunction);
   }
   if (patch.value !== undefined) {
-    const input = await $(`${rowSel} [data-testid="qb-where-value"]`);
+    const input = await $('[data-testid="qb-cond-value"]');
     await input.waitForDisplayed({ timeout: 5000 });
     await input.click();
     await input.setValue(patch.value);
@@ -611,56 +647,72 @@ export async function configureWhereRow(
   }
 }
 
-/** Same as pickSelectOption but scoped to a container selector. */
-async function pickSelectOptionIn(
-  containerSel: string,
-  testId: string,
-  optionText: string,
-): Promise<void> {
-  await browser.execute(
-    (sel: string, id: string) => {
-      const container = document.querySelector(sel);
-      const el =
-        container?.querySelector<HTMLElement>(`[data-testid="${id}"] button`) ??
-        container?.querySelector<HTMLElement>(`[data-testid="${id}"] [role="combobox"]`) ??
-        container?.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-      el?.click();
-    },
-    containerSel,
-    testId,
-  );
+/** Confirm the condition dialog. A new condition only lands here. */
+export async function applyConditionDialog(): Promise<void> {
+  const btn = await $('[data-testid="qb-cond-apply"]');
+  await btn.waitForClickable({ timeout: 5000 });
+  await btn.click();
+  await browser.pause(300);
+}
 
-  await browser.waitUntil(
-    () => browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
-    { timeout: 5000, timeoutMsg: `Select "${testId}" 未打开` },
-  );
-
-  const picked = await browser.execute((text: string) => {
-    const list = document.querySelector('[data-testid="select-listbox"]');
-    if (!list) return false;
-    const options = Array.from(list.querySelectorAll('[data-testid="select-option"]'));
-    const norm = (el: Element) => (el.textContent ?? '').replace(/\u00a0/g, ' ').trim();
-    // Same alias-aware matching as `pickSelectOption`: the field label shows the
-    // effective qualifier (usually the auto-assigned alias).
-    const candidates = [text];
-    const dot = text.indexOf('.');
-    if (dot > 0) {
-      const table = text.slice(0, dot);
-      const column = text.slice(dot + 1);
-      const aliases = (window as any).__qbStore?.getState?.().tableAliases ?? {};
-      if (aliases[table]) candidates.push(`${aliases[table]}.${column}`);
-      candidates.push(column);
-    }
-    const hit =
-      candidates.map((c) => options.find((o) => norm(o) === c)).find(Boolean) ??
-      candidates.map((c) => options.find((o) => norm(o).includes(c))).find(Boolean);
-    if (!hit) return false;
-    hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-    return true;
-  }, optionText);
-
-  if (!picked) throw new Error(`选项 "${optionText}" 未在 ${testId} 中找到`);
+/** Dismiss the condition dialog without writing anything. */
+export async function cancelConditionDialog(): Promise<void> {
+  const btn = await $('[data-testid="qb-cond-cancel"]');
+  await btn.waitForClickable({ timeout: 5000 });
+  await btn.click();
   await browser.pause(250);
+}
+
+/**
+ * Open the WHERE "add condition" affordance.
+ *
+ * This only opens the dialog — nothing is in the query until
+ * `applyConditionDialog()`. A draft cannot leave a half-filled condition behind.
+ */
+export async function addWhereCondition(): Promise<void> {
+  await clickInBuildTab('qb-where-add-condition');
+  await waitForConditionDialog();
+}
+
+/** Same for HAVING. */
+export async function addHavingCondition(): Promise<void> {
+  await clickInBuildTab('qb-having-add-condition');
+  await waitForConditionDialog();
+}
+
+export async function addWhereGroup(): Promise<void> {
+  await clickInBuildTab('qb-where-add-group');
+  await browser.pause(250);
+}
+
+export async function addHavingGroup(): Promise<void> {
+  await clickInBuildTab('qb-having-add-group');
+  await browser.pause(250);
+}
+
+/** Add a condition directly inside the first nested group. */
+export async function addSubGroupCondition(): Promise<void> {
+  await clickInBuildTab('qb-where-subgroup-add-condition');
+  await waitForConditionDialog();
+}
+
+/**
+ * Configure the WHERE condition at `index` (document order) and confirm it.
+ *
+ * If a dialog is already open — the usual case right after `addWhereCondition()`
+ * — that draft is patched instead of opening another one.
+ */
+export async function configureWhereRow(index: number, patch: ConditionPatch): Promise<void> {
+  if (!(await conditionDialogOpen())) await openConditionChip('where', index);
+  await patchConditionDialog(patch);
+  await applyConditionDialog();
+}
+
+/** Same for HAVING. `aggregate: '—'` picks "no aggregate". */
+export async function configureHavingRow(index: number, patch: ConditionPatch): Promise<void> {
+  if (!(await conditionDialogOpen())) await openConditionChip('having', index);
+  await patchConditionDialog(patch);
+  await applyConditionDialog();
 }
 
 // ── SQL editor ─────────────────────────────────────────────────────
@@ -902,57 +954,69 @@ export async function addClauseItem(linkTestId: string, optionText: string): Pro
   await pickSelectOption(linkTestId, optionText);
 }
 
-/** Add a HAVING condition through the clause row. */
-export async function addHavingCondition(): Promise<void> {
-  const button = await $('[data-testid="qb-having-add-condition"]');
-  await button.waitForClickable({ timeout: 5000 });
-  await button.click();
-  await browser.pause(250);
-}
-
-/** Add a nested OR group inside HAVING. */
-export async function addHavingGroup(): Promise<void> {
-  const button = await $('[data-testid="qb-having-add-group"]');
-  await button.waitForClickable({ timeout: 5000 });
-  await button.click();
-  await browser.pause(250);
-}
-
 /**
- * Configure HAVING row `index` (document order). Mirrors `configureWhereRow`.
- * `aggregate: ''` picks the "no aggregate" option, i.e. a bare grouped column.
+ * Pick a Select option by position.
+ *
+ * Used where the option labels are translated (`Ascending` / `降序`): matching
+ * text would make the journey depend on the UI language.
  */
-export async function configureHavingRow(
-  index: number,
-  patch: { aggregate?: string; field?: string; operator?: string; value?: string },
-): Promise<void> {
-  const rowHandle = await browser.execute((i: number) => {
-    const rows = Array.from(document.querySelectorAll('[data-testid="qb-having-row"]'));
-    const row = rows[i] as HTMLElement | undefined;
-    if (!row) return false;
-    row.setAttribute('data-qb-e2e-having-row', String(i));
+export async function pickSelectOptionByIndex(triggerTestId: string, index: number): Promise<void> {
+  await browser.execute((id: string) => {
+    const el =
+      document.querySelector<HTMLElement>(`[data-testid="${id}"] button`) ??
+      document.querySelector<HTMLElement>(`[data-testid="${id}"] [role="combobox"]`) ??
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    el?.click();
+  }, triggerTestId);
+
+  await browser.waitUntil(
+    () => browser.execute(() => document.querySelector('[data-testid="select-listbox"]') !== null),
+    { timeout: 5000, timeoutMsg: `Select "${triggerTestId}" 未打开` },
+  );
+
+  const picked = await browser.execute((i: number) => {
+    const list = document.querySelector('[data-testid="select-listbox"]');
+    if (!list) return false;
+    const options = Array.from(list.querySelectorAll<HTMLElement>('[data-testid="select-option"]'));
+    const hit = options[i];
+    if (!hit) return false;
+    hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
     return true;
   }, index);
-  if (!rowHandle) throw new Error(`HAVING 行 #${index} 不存在`);
 
-  const rowSel = `[data-qb-e2e-having-row="${index}"]`;
+  if (!picked) throw new Error(`Select "${triggerTestId}" 没有第 ${index} 个选项`);
+  await browser.pause(250);
+}
 
-  if (patch.aggregate !== undefined) {
-    await pickSelectOptionIn(rowSel, 'qb-having-aggregate', patch.aggregate);
-  }
-  if (patch.field) {
-    await pickSelectOptionIn(rowSel, 'qb-having-field', patch.field);
-  }
-  if (patch.operator) {
-    await pickSelectOptionIn(rowSel, 'qb-having-operator', patch.operator);
-  }
-  if (patch.value !== undefined) {
-    const input = await $(`${rowSel} [data-testid="qb-having-value"]`);
-    await input.waitForDisplayed({ timeout: 5000 });
-    await input.click();
-    await input.setValue(patch.value);
-    await browser.pause(150);
-  }
+/** Click an ORDER BY chip to open its sort options dialog. */
+export async function openOrderByChip(table: string, column: string): Promise<void> {
+  const clicked = await browser.execute(
+    (t: string, c: string) => {
+      const chip = document.querySelector<HTMLElement>(`[data-testid="qb-order-chip-${t}-${c}"]`);
+      const trigger = chip?.querySelector<HTMLElement>('button:not([data-testid])');
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    },
+    table,
+    column,
+  );
+  if (!clicked) throw new Error(`ORDER BY chip ${table}.${column} 不存在或不可点击`);
+  await browser.waitUntil(() => existsInDom('[data-testid="qb-sort-opt-apply"]'), {
+    timeout: 5000,
+    timeoutMsg: '排序选项弹窗未打开',
+  });
+  await browser.pause(200);
+}
+
+/** Set the direction in the open sort dialog and confirm it. */
+export async function setSortDirection(direction: 'ASC' | 'DESC'): Promise<void> {
+  // 0 = ASC, 1 = DESC — by position, because the labels are translated.
+  await pickSelectOptionByIndex('qb-sort-opt-direction', direction === 'ASC' ? 0 : 1);
+  const btn = await $('[data-testid="qb-sort-opt-apply"]');
+  await btn.waitForClickable({ timeout: 5000 });
+  await btn.click();
+  await browser.pause(300);
 }
 
 /**

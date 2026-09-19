@@ -1,6 +1,9 @@
 # Visual Query Builder
 
-> Status: **v3.4** — Navicat-style statement list, covered by four E2E journeys.
+> Status: **v3.5** — Navicat-style statement list, covered by four E2E journeys.
+> v3.5: **one chip per item in every clause** — clicking a chip (column, table,
+> condition, group-by key, order-by key) opens that item's dialog, its × removes
+> it. FROM tables and WHERE/HAVING conditions became chips too.
 > v3.4: the Build tab is one row per clause (SELECT / FROM / WHERE / GROUP BY /
 > HAVING / ORDER BY), per-column options live in a dialog, and **HAVING** exists.
 > v3.3: fixed-height cards that scroll internally, orthogonal direction-less
@@ -57,16 +60,21 @@ Navicat-style: **one row per SQL clause**, a keyword gutter on the left and that
 clause's content beside it.
 
 ```
-SELECT   [ ] DISTINCT  ⟨chip⟩ ⟨chip⟩ ⟨Click here to add fields⟩
-FROM     sales AS s
-         INNER JOIN regions AS r ON s.region_id = r.id
-         ⟨Click here to add tables⟩
-WHERE    ⟨Click here to add conditions⟩        [+ Add Group]
-GROUP BY ⟨Click here to add GROUP BY⟩
-HAVING   ⟨Click here to add conditions⟩        [+ Add Group]
-ORDER BY ⟨Click here to add ORDER BY⟩
-         Limit [   ]  Offset [   ]            ← pinned toolbar row
+SELECT   [ ] DISTINCT  ⟨SUM(s.qty) AS total_qty⟩ ⟨s.price⟩      <Click here to add fields>
+FROM     ⟨sales AS s⟩ ⟨INNER JOIN regions AS r⟩                 <Click here to add tables>
+WHERE    ⟨s.status = 'paid'⟩ ⟨OR r.name LIKE 'E%'⟩              <Click here to add conditions>  [+ Add Group]
+GROUP BY ⟨r.name⟩                                               <Click here to add GROUP BY>
+HAVING   ⟨SUM(s.qty) >= 2000⟩                                   <Click here to add conditions>
+ORDER BY ⟨r.name ASC⟩                                           <Click here to add ORDER BY>
+         Limit [   ]  Offset [   ]                              ← pinned toolbar row
 ```
+
+> **One rule for every clause.** Each item is a chip: it shows what is in the
+> query, clicking it opens that item's dialog, and its × removes it. A join chip
+> is badged with its `JOIN` type; a condition chip is badged with the `AND`/`OR`
+> that links it to the row above; a table no join reaches is marked
+> "not joined to the query yet". A nested condition group is a bordered box whose
+> own logic selector sits in front of its chips.
 
 This replaced an Excel-like grid (`CriteriaGrid` + `CriteriaRow`) that spent one
 row per selected column on eight inline controls (field, table, alias, sort,
@@ -113,22 +121,26 @@ per-field controls moved into a dialog (see *Column Options*).
   with that same qualifier, so what the builder shows is what the SQL emits.
   (Previously an alias appeared in `ON` only, which made adding one pointless.)
 
-### Column Options (dialog)
+### Item dialogs
 
-Clicking a field chip opens **Column options** — the whole per-field surface in
-one popup:
+Every chip opens a dialog holding that item's options:
 
-| Option     | Effect                                                              |
-| ---------- | ------------------------------------------------------------------- |
-| Alias      | `AS <alias>` in SELECT                                              |
-| Aggregate  | `COUNT` / `SUM` / `AVG` / `MIN` / `MAX` around the column reference |
-| Sort       | `ASC` / `DESC`, shown in the ORDER BY row                           |
-| Group by   | adds the column to the GROUP BY row                                 |
-| Criteria   | one condition (`>= 2000`), shown as a chip in the WHERE row         |
+| Chip           | Dialog                                                                             |
+| -------------- | ---------------------------------------------------------------------------------- |
+| SELECT field   | **Column options**: alias, aggregate, sort, group by, one criteria condition         |
+| FROM table     | **Table options**: alias (editable); join type and `ON` predicate shown read-only   |
+| WHERE / HAVING | **Condition**: field, (HAVING only) aggregate, operator, value, `AND`/`OR`           |
+| GROUP BY key   | opens that column's **Column options** (only when the column is also in SELECT)      |
+| ORDER BY key   | **Sort options**: `ASC` / `DESC`                                                     |
 
-Editing is **draft-only until OK**: the form is seeded once per opened column and
-cancel writes nothing. Sort/aggregate/group also reach the SQL through the
-clause rows, so the same setting can be removed from either place.
+Editing is **draft-only until OK**: the form is seeded once per opened item and
+cancel writes nothing. That matters most for a **new condition** — it exists only
+as a draft, so abandoning the dialog cannot leave a half-filled row behind that
+would both render an empty chip and block OK with `empty-condition-value`.
+
+The join type and its `ON` predicate are deliberately **read-only** in the table
+dialog: they belong to the relation group drawn on the canvas (and to
+`buildJoinSteps`), and two editors of one composite key could disagree.
 
 ### Relations (JOINs)
 
@@ -317,7 +329,7 @@ pnpm e2e:qb:regression   # blast-radius guard: query panel / editor / navigator
 | A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`          | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
 | B — abnormal        | `e2e/specs/journeys/visual-query-builder-edge-journey.ts`     | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                 |
 | C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts`  | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
-| D — clauses         | `e2e/specs/journeys/visual-query-builder-clauses-journey.ts`  | all six clause rows exist; WHERE/GROUP BY stay on screen with four columns selected and the whole statement fits once the canvas is collapsed; column options dialog (cancel writes nothing, OK applies); GROUP BY + ORDER BY pickers and the ASC→DESC chip; **HAVING `SUM(qty) >= 5` committed and executed, filtering a group out of the result**; `having-non-grouped` warns without blocking OK |
+| D — clauses         | `e2e/specs/journeys/visual-query-builder-clauses-journey.ts`  | all six clause rows exist; WHERE/GROUP BY stay on screen with four columns selected and the whole statement fits once the canvas is collapsed; column options dialog (cancel writes nothing, OK applies); GROUP BY + ORDER BY pickers and the sort dialog's ASC/DESC; **HAVING exists only as a draft until OK** and `SUM(qty) >= 5` is committed and executed, filtering a group out of the result; `having-non-grouped` warns without blocking OK |
 
 Shared drivers live in `e2e/specs/journeys/visualQueryBuilderHelpers.ts`.
 

@@ -10,7 +10,11 @@ export interface GroupByClauseProps {
   allTables: string[];
   allColumns: Record<string, string[]>;
   tableAliases: Record<string, string>;
+  /** Columns that are also in SELECT — only those have options to open. */
+  selectedKeys: string[];
   onAdd: (table: string, column: string) => void;
+  /** Click a chip → that column's options (alias / aggregate / criteria). */
+  onOpen: (entry: ClauseEntry) => void;
   onRemove: (entry: ClauseEntry) => void;
 }
 
@@ -25,7 +29,9 @@ export function GroupByClause({
   allTables,
   allColumns,
   tableAliases,
+  selectedKeys,
   onAdd,
+  onOpen,
   onRemove,
 }: GroupByClauseProps) {
   const { t } = useI18n();
@@ -35,18 +41,26 @@ export function GroupByClause({
     [allTables, allColumns, tableAliases],
   );
   const used = new Set(items.map((i) => `${i.table}.${i.column}`));
+  const openable = new Set(selectedKeys);
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-testid="qb-groupby-clause">
-      {items.map((item) => (
-        <Chip
-          key={`${item.table}.${item.column}`}
-          label={qualifiedRef(item.table, item.column, tableAliases)}
-          testId={`qb-group-chip-${item.table}-${item.column}`}
-          removeTestId={`qb-group-remove-${item.table}-${item.column}`}
-          onRemove={() => onRemove(item)}
-        />
-      ))}
+      {items.map((item) => {
+        const key = `${item.table}.${item.column}`;
+        return (
+          <Chip
+            key={key}
+            label={qualifiedRef(item.table, item.column, tableAliases)}
+            testId={`qb-group-chip-${item.table}-${item.column}`}
+            removeTestId={`qb-group-remove-${item.table}-${item.column}`}
+            // A GROUP BY key has no options of its own: clicking it opens the
+            // column's dialog, which exists only when the column is in SELECT.
+            onClick={openable.has(key) ? () => onOpen(item) : undefined}
+            title={openable.has(key) ? t('query.visualBuilder.columnOptionsTitle') : undefined}
+            onRemove={() => onRemove(item)}
+          />
+        );
+      })}
       <LinkSelect
         label={t('query.visualBuilder.addGroupByClause')}
         options={options.filter((o) => !used.has(o.value))}

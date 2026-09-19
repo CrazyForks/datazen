@@ -445,14 +445,19 @@ const pack = {
   'query.visualBuilder.criteriaLabel': 'Criteria',
   'query.visualBuilder.columnOptionsTitle': 'Column options',
   'query.visualBuilder.removeColumn': 'Remove from SELECT',
-  'query.visualBuilder.addField': 'Add field',
-  'query.visualBuilder.fieldPickerTitle': 'Add fields',
-  'query.visualBuilder.noFieldsAvailable': 'Every column of the selected tables is already used',
   'query.visualBuilder.havingHint':
     'HAVING filters aggregated groups — pick an aggregate (e.g. SUM(qty) >= 2000)',
   'query.visualBuilder.diag.havingNonGrouped':
     'HAVING uses a column that is neither aggregated nor grouped',
   'query.visualBuilder.unjoinedTable': 'Not joined to the query yet',
+  'query.visualBuilder.conditionTitle': 'Condition',
+  'query.visualBuilder.operatorLabel': 'Operator',
+  'query.visualBuilder.conjunctionLabel': 'Conjunction',
+  'query.visualBuilder.addConditionTitle': 'Add condition',
+  'query.visualBuilder.tableOptionsTitle': 'Table options',
+  'query.visualBuilder.sortOptionsTitle': 'Sort options',
+  'query.visualBuilder.joinLabel': 'Join',
+  'query.visualBuilder.joinOn': 'ON',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': 'Database Objects',
   'query.objectTree.schema': 'schema',

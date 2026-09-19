@@ -4,7 +4,7 @@ import { Dialog } from '../../ui/Dialog';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Select, type SelectOption } from '../../ui/Select';
-import { QB_OPERATOR_OPTIONS } from '../CriteriaGrid/ConditionClause';
+import { QB_OPERATOR_OPTIONS } from './operatorOptions';
 import type { QbAggregate, QbColumnSelection, QbOperator } from '../types';
 import { qualifiedRef } from './columnOptions';
 

@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
-import { X } from 'lucide-react';
 import { useI18n } from '../../../hooks/useI18n';
 import { buildJoinSteps } from '../../../lib/sqlDialects/queryBuilder';
 import type { QbJoin } from '../types';
+import { Chip } from './Chip';
 import { LinkSelect } from './LinkSelect';
-import { qualifiedRef } from './columnOptions';
+import { joinStepOnText } from './joinText';
 
 export interface FromClauseProps {
   selectedTables: string[];
@@ -12,25 +12,31 @@ export interface FromClauseProps {
   joins: QbJoin[];
   /** Tables of the connection that are not in the query yet. */
   availableTables: string[];
-  onSetAlias: (table: string, alias: string) => void;
+  /** Click a table chip → its options (alias, and how it joins). */
+  onOpenTable: (table: string) => void;
   onRemoveTable: (table: string) => void;
   onAddTable: (table: string) => void;
 }
 
 /**
- * The FROM row: the driving table, one line per JOIN and a link to add tables.
+ * The FROM row: one chip per table, exactly like one chip per column.
  *
- * The join lines are produced by `buildJoinSteps` — the same graph walk the SQL
- * generator uses — so the order, the orientation of each `ON` predicate and the
+ * The driving table and every joined table are the same object — a chip whose
+ * click opens its options and whose × removes it — so the statement has one
+ * interaction rule instead of a special case per clause.
+ *
+ * The join chips come from `buildJoinSteps`, the same graph walk the SQL
+ * generator uses, so the order, the orientation of each `ON` predicate and the
  * merging of composite keys are identical to the emitted statement by
- * construction, not by coincidence.
+ * construction. The `ON` text itself lives in the chip's tooltip and its dialog;
+ * `data-join-on` carries it for tests and E2E.
  */
 export function FromClause({
   selectedTables,
   tableAliases,
   joins,
   availableTables,
-  onSetAlias,
+  onOpenTable,
   onRemoveTable,
   onAddTable,
 }: FromClauseProps) {
@@ -48,84 +54,70 @@ export function FromClause({
 
   const unjoined = selectedTables.filter((table) => table !== fromTable && !included.has(table));
 
-  const aliasInput = (table: string) => (
-    <input
-      type="text"
-      value={tableAliases[table] ?? ''}
-      placeholder={t('query.visualBuilder.alias')}
-      onChange={(e) => onSetAlias(table, e.target.value)}
-      className="h-6 w-16 rounded border border-edge bg-surface-inset px-1.5 text-[12px] text-fg outline-none placeholder:text-fg-muted focus:border-accent"
-      data-testid={`qb-from-alias-${table}`}
-    />
-  );
-
-  const removeButton = (table: string) => (
-    <button
-      type="button"
-      onClick={() => onRemoveTable(table)}
-      title={t('query.visualBuilder.removeTable')}
-      className="rounded p-0.5 text-fg-muted transition-colors hover:text-danger"
-      data-testid={`qb-from-remove-${table}`}
-    >
-      <X className="h-3 w-3" />
-    </button>
-  );
+  const aliasSuffix = (table: string) =>
+    tableAliases[table] && tableAliases[table] !== table ? ` AS ${tableAliases[table]}` : '';
 
   return (
-    <div className="flex min-w-0 flex-col gap-1" data-testid="qb-from-clause">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-testid="qb-from-clause">
       {fromTable && (
-        <div
-          className="flex min-w-0 items-center gap-1.5"
-          data-testid={`qb-from-table-${fromTable}`}
-        >
-          <span className="truncate text-[12px] font-medium text-fg">{fromTable}</span>
-          <span className="text-[11px] text-fg-muted">AS</span>
-          {aliasInput(fromTable)}
-          {removeButton(fromTable)}
-        </div>
+        <Chip
+          label={fromTable}
+          suffix={aliasSuffix(fromTable)}
+          testId={`qb-from-chip-${fromTable}`}
+          title={t('query.visualBuilder.tableOptionsTitle')}
+          onClick={() => onOpenTable(fromTable)}
+          onRemove={() => onRemoveTable(fromTable)}
+          removeTestId={`qb-from-remove-${fromTable}`}
+          removeTitle={t('query.visualBuilder.removeTable')}
+        />
       )}
 
       {steps.map((step, index) => {
-        const on = step.predicates
-          .map(
-            (p) =>
-              `${qualifiedRef(p.sourceTable, p.sourceColumn, tableAliases)} = ` +
-              `${qualifiedRef(step.targetTable, p.targetColumn, tableAliases)}`,
-          )
-          .join(' AND ');
+        const on = joinStepOnText(step, tableAliases);
         return (
-          // One line per join: a clause row only earns its vertical space if it
-          // says something per line, and the JOIN type reads fine inline.
-          <div
+          <span
             key={`${step.targetTable}-${index}`}
-            className="flex min-w-0 flex-wrap items-center gap-1.5"
+            className="inline-flex min-w-0 items-center"
             data-testid={`qb-from-join-${index}`}
             data-join-target={step.targetTable}
+            data-join-type={step.type}
+            data-join-on={on}
             data-join-detached={step.detached ? 'true' : undefined}
           >
-            <span className="shrink-0 text-[11px] font-medium text-fg-muted">{step.type} JOIN</span>
-            <span className="truncate text-[12px] font-medium text-fg">{step.targetTable}</span>
-            <span className="text-[11px] text-fg-muted">AS</span>
-            {aliasInput(step.targetTable)}
-            <span className="text-[11px] text-fg-muted">ON</span>
-            <span className="truncate font-mono text-[12px] text-accent">{on}</span>
-            {removeButton(step.targetTable)}
-          </div>
+            <Chip
+              badge={`${step.type} JOIN`}
+              label={step.targetTable}
+              suffix={aliasSuffix(step.targetTable)}
+              testId={`qb-from-chip-${step.targetTable}`}
+              title={`${t('query.visualBuilder.joinOn')} ${on}`}
+              onClick={() => onOpenTable(step.targetTable)}
+              onRemove={() => onRemoveTable(step.targetTable)}
+              removeTestId={`qb-from-remove-${step.targetTable}`}
+              removeTitle={t('query.visualBuilder.removeTable')}
+            />
+          </span>
         );
       })}
 
       {unjoined.map((table) => (
-        <div
+        <span
           key={table}
-          className="flex min-w-0 items-center gap-1.5"
+          className="inline-flex min-w-0 items-center gap-1.5"
           data-testid={`qb-from-unjoined-${table}`}
         >
-          <span className="truncate text-[12px] text-fg-muted">{table}</span>
-          <span className="text-[11px] text-fg-muted">AS</span>
-          {aliasInput(table)}
+          <Chip
+            label={table}
+            suffix={aliasSuffix(table)}
+            muted
+            testId={`qb-from-chip-${table}`}
+            title={t('query.visualBuilder.unjoinedTable')}
+            onClick={() => onOpenTable(table)}
+            onRemove={() => onRemoveTable(table)}
+            removeTestId={`qb-from-remove-${table}`}
+            removeTitle={t('query.visualBuilder.removeTable')}
+          />
           <span className="text-[11px] text-warning">{t('query.visualBuilder.unjoinedTable')}</span>
-          {removeButton(table)}
-        </div>
+        </span>
       ))}
 
       <LinkSelect
