@@ -4,9 +4,9 @@ import { Dialog } from '../../ui/Dialog';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Select, type SelectOption } from '../../ui/Select';
-import { QB_OPERATOR_OPTIONS } from './operatorOptions';
 import type { QbAggregate, QbCondition, QbOperator } from '../types';
 import { qualifiedRef } from './columnOptions';
+import { getOperatorOptions } from '../operatorFilter';
 
 const AGGREGATE_VALUES: QbAggregate[] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 const NULL_OPERATORS = new Set<string>(['IS NULL', 'IS NOT NULL']);
@@ -31,6 +31,8 @@ export interface ConditionDialogProps {
   allowAggregate: boolean;
   allTables: string[];
   allColumns: Record<string, string[]>;
+  /** Per-table column type map (table → column → raw dataType). */
+  allColumnTypes?: Record<string, Record<string, string>>;
   tableAliases: Record<string, string>;
   onApply: (draft: ConditionDraft) => void;
   onRemove: (id: string) => void;
@@ -50,6 +52,7 @@ export function ConditionDialog({
   allowAggregate,
   allTables,
   allColumns,
+  allColumnTypes,
   tableAliases,
   onApply,
   onRemove,
@@ -93,6 +96,22 @@ export function ConditionDialog({
   const editing = !!draft?.id;
   const fieldValue = form ? `${form.table}.${form.column}` : '';
   const isNullOp = form ? NULL_OPERATORS.has(form.operator) : false;
+
+  // Filter operators based on the selected column's data type
+  const operatorOptions: SelectOption[] = useMemo(() => {
+    if (!form) return [];
+    const colType = allColumnTypes?.[form.table]?.[form.column];
+    return getOperatorOptions(colType);
+  }, [form?.table, form?.column, allColumnTypes]);
+
+  // Auto-reset operator when column changes and current operator is no longer valid
+  useEffect(() => {
+    if (!form) return;
+    const valid = operatorOptions.some((o) => o.value === form.operator);
+    if (!valid && form.operator) {
+      setForm((f) => (f ? { ...f, operator: '=' as QbOperator } : f));
+    }
+  }, [form?.table, form?.column]);
 
   return (
     <Dialog
@@ -191,7 +210,7 @@ export function ConditionDialog({
             <div className="w-48">
               <Select
                 value={form.operator}
-                options={QB_OPERATOR_OPTIONS}
+                options={operatorOptions}
                 onChange={(v) => setForm((f) => (f ? { ...f, operator: v as QbOperator } : f))}
                 triggerDataAttrs={{ 'data-testid': 'qb-cond-operator' }}
               />

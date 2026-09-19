@@ -31,6 +31,8 @@ export interface BuildStatementSchema {
   tables: string[];
   /** table → column names. */
   columns: Record<string, string[]>;
+  /** table → column → raw dataType. */
+  columnTypes?: Record<string, Record<string, string>>;
   /** Table → alias. */
   aliases: Record<string, string>;
   /** Connection tables not in the query yet (FROM picker). */
@@ -309,6 +311,11 @@ export function BuildStatement({ schema, state, actions }: BuildStatementProps) 
 
       <ColumnOptionsDialog
         selection={openSelection}
+        columnType={
+          openSelection
+            ? schema.columnTypes?.[openSelection.table]?.[openSelection.column]
+            : undefined
+        }
         tableAliases={schema.aliases}
         onApply={actions.updateColumn}
         onRemove={actions.removeColumn}
@@ -341,6 +348,7 @@ export function BuildStatement({ schema, state, actions }: BuildStatementProps) 
         allowAggregate={openCondition?.clause === 'having'}
         allTables={schema.tables}
         allColumns={schema.columns}
+        allColumnTypes={schema.columnTypes}
         tableAliases={schema.aliases}
         onApply={applyCondition}
         onRemove={(id) => {

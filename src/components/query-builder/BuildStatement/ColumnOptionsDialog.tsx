@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../hooks/useI18n';
 import { Dialog } from '../../ui/Dialog';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Select, type SelectOption } from '../../ui/Select';
-import { QB_OPERATOR_OPTIONS } from './operatorOptions';
 import type { QbAggregate, QbColumnSelection, QbOperator } from '../types';
 import { qualifiedRef } from './columnOptions';
+import { getOperatorOptions } from '../operatorFilter';
 
 const AGGREGATE_VALUES: QbAggregate[] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 
@@ -34,6 +34,8 @@ const EMPTY_FORM: FormState = {
 export interface ColumnOptionsDialogProps {
   /** The column being edited; `null` keeps the dialog closed. */
   selection: QbColumnSelection | null;
+  /** Raw dataType of the selected column (for operator filtering). */
+  columnType?: string;
   tableAliases: Record<string, string>;
   onApply: (table: string, column: string, patch: Partial<QbColumnSelection>) => void;
   onRemove: (table: string, column: string) => void;
@@ -54,6 +56,7 @@ export interface ColumnOptionsDialogProps {
  */
 export function ColumnOptionsDialog({
   selection,
+  columnType,
   tableAliases,
   onApply,
   onRemove,
@@ -91,7 +94,10 @@ export function ColumnOptionsDialog({
     { value: 'ASC', label: t('query.visualBuilder.asc') },
     { value: 'DESC', label: t('query.visualBuilder.desc') },
   ];
-  const operatorOptions: SelectOption[] = [{ value: '', label: '—' }, ...QB_OPERATOR_OPTIONS];
+  const operatorOptions: SelectOption[] = useMemo(
+    () => [{ value: '', label: '—' }, ...getOperatorOptions(columnType)],
+    [columnType],
+  );
 
   const handleApply = () => {
     if (!selection) return;

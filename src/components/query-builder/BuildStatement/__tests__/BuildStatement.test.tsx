@@ -73,6 +73,7 @@ interface HarnessOptions {
   aliases?: Record<string, string>;
   tables?: string[];
   availableTables?: string[];
+  columnTypes?: Record<string, Record<string, string>>;
   actions?: Partial<BuildStatementActions>;
 }
 
@@ -83,6 +84,7 @@ function renderStatement(options: HarnessOptions = {}) {
       schema={{
         tables: options.tables ?? ['sales'],
         columns: COLUMNS,
+        columnTypes: options.columnTypes,
         aliases: options.aliases ?? {},
         availableTables: options.availableTables ?? [],
       }}
@@ -559,5 +561,76 @@ describe('BuildStatement — dialog isolation', () => {
       />,
     );
     expect(screen.getByTestId('qb-col-opt-alias')).toHaveValue('typing');
+  });
+});
+
+// ── Operator filtering by column type ────────────────────────
+
+describe('BuildStatement — operator filtering', () => {
+  it('filters out LIKE/NOT LIKE for numeric columns in ColumnOptionsDialog', () => {
+    renderStatement({
+      selectedColumns: [{ table: 'sales', column: 'qty' }],
+      columnTypes: { sales: { qty: 'integer' } },
+      actions: {},
+    });
+    // Open the column options dialog
+    fireEvent.click(screen.getByTestId('qb-field-chip-sales-qty').querySelector('button')!);
+    // Open the operator select
+    openSelect('qb-col-opt-operator');
+    // Numeric columns: LIKE/NOT LIKE should not appear
+    const options = screen.getAllByTestId('select-option');
+    const optionTexts = options.map((el) => el.textContent?.trim());
+    expect(optionTexts).not.toContain('LIKE');
+    expect(optionTexts).not.toContain('NOT LIKE');
+    // Comparison operators should be present
+    expect(optionTexts).toContain('=');
+    expect(optionTexts).toContain('>');
+    expect(optionTexts).toContain('IN');
+    expect(optionTexts.length).toBeLessThan(12); // fewer than the full set
+  });
+
+  it('shows LIKE/NOT LIKE for text columns', () => {
+    renderStatement({
+      selectedColumns: [{ table: 'sales', column: 'region' }],
+      columnTypes: { sales: { region: 'varchar' } },
+      actions: {},
+    });
+    fireEvent.click(screen.getByTestId('qb-field-chip-sales-region').querySelector('button')!);
+    openSelect('qb-col-opt-operator');
+    const options = screen.getAllByTestId('select-option');
+    const optionTexts = options.map((el) => el.textContent?.trim());
+    // Text columns should have LIKE
+    expect(optionTexts).toContain('LIKE');
+    expect(optionTexts).toContain('NOT LIKE');
+    expect(optionTexts.length).toBeGreaterThanOrEqual(12); // all operators (+ "—" for col-opt)
+  });
+
+  it('filters out LIKE/NOT LIKE for numeric columns in ConditionDialog', async () => {
+    const whereGroup: QbConditionGroup = {
+      id: 'where',
+      logic: 'AND',
+      conditions: [cond('c1', { table: 'sales', column: 'qty', operator: '=', value: '10' })],
+      groups: [],
+    };
+    renderStatement({
+      where: whereGroup,
+      columnTypes: { sales: { qty: 'integer' } },
+      actions: {},
+    });
+    // Open the condition dialog via chip click
+    fireEvent.click(screen.getByTestId('qb-where-chip-c1').querySelector('button')!);
+    // The value input should be visible (dialog is open, same as existing test)
+    expect(screen.getByTestId('qb-cond-value')).toHaveValue('10');
+    // Open the operator select
+    openSelect('qb-cond-operator');
+    // Get the rendered options
+    const options = screen.getAllByTestId('select-option');
+    expect(options.length).toBeGreaterThan(0);
+    const optionTexts = options.map((el) => el.textContent?.trim());
+    // Numeric column: LIKE should be absent
+    expect(optionTexts).not.toContain('LIKE');
+    expect(optionTexts).not.toContain('NOT LIKE');
+    // Should have fewer than full operator set (LIKE + NOT LIKE filtered)
+    expect(optionTexts.length).toBeLessThan(12);
   });
 });

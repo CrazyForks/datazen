@@ -702,6 +702,7 @@ export function QueryBuilderPanel({
                 schema={{
                   tables: selectedTables,
                   columns: columnMap,
+                  columnTypes: typedColumnMap,
                   aliases: tableAliases,
                   availableTables,
                 }}
