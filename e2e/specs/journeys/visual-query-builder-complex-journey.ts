@@ -29,6 +29,7 @@ import {
   existsInDom,
   expectNoSqlFragments,
   expectSqlFragments,
+  isQbOpen,
   openQbViaMenu,
   previewText,
   qbCall,
@@ -48,6 +49,9 @@ const SUFFIX = Date.now().toString(36);
 const AUTHOR = `e2e_qb_c_author_${SUFFIX}`;
 const BOOK = `e2e_qb_c_book_${SUFFIX}`;
 const SALE = `e2e_qb_c_sale_${SUFFIX}`;
+/** Composite FK pair: the child references (a, b) of the parent. */
+const COMP_PARENT = `e2e_qb_c_wh_${SUFFIX}`;
+const COMP_CHILD = `e2e_qb_c_stock_${SUFFIX}`;
 
 describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', () => {
   let setup: QbJourneySetup;
@@ -61,6 +65,8 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
         [AUTHOR]: ['id', 'name', 'country'],
         [BOOK]: ['id', 'author_id', 'title', 'year', 'price', 'rating'],
         [SALE]: ['id', 'book_id', 'qty', 'channel'],
+        [COMP_PARENT]: ['a', 'b', 'label'],
+        [COMP_CHILD]: ['id', 'pa', 'pb', 'qty'],
       },
       seedStatements: [
         `DROP TABLE IF EXISTS ${SALE} CASCADE`,
@@ -84,6 +90,15 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
         `INSERT INTO ${SALE} (id, book_id, qty, channel) VALUES ` +
           `(1, 1, 3, 'online'), (2, 1, 2, 'store'), ` +
           `(3, 3, 5, 'online'), (4, 4, 1, 'store')`,
+        // Composite foreign key: two columns referenced as one constraint.
+        `DROP TABLE IF EXISTS ${COMP_CHILD} CASCADE`,
+        `DROP TABLE IF EXISTS ${COMP_PARENT} CASCADE`,
+        `CREATE TABLE ${COMP_PARENT} (a INTEGER, b INTEGER, label TEXT, PRIMARY KEY (a, b))`,
+        `CREATE TABLE ${COMP_CHILD} (` +
+          `id INTEGER PRIMARY KEY, pa INTEGER, pb INTEGER, qty INTEGER, ` +
+          `CONSTRAINT fk_stock_wh FOREIGN KEY (pa, pb) REFERENCES ${COMP_PARENT}(a, b))`,
+        `INSERT INTO ${COMP_PARENT} (a, b, label) VALUES (1, 1, 'A1'), (2, 2, 'B2')`,
+        `INSERT INTO ${COMP_CHILD} (id, pa, pb, qty) VALUES (1, 1, 1, 5), (2, 2, 2, 7)`,
       ],
     });
     await setEditorSql('');
@@ -121,6 +136,10 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
     expect(confirmedJoins.length).toBe(2);
     expect(confirmedJoins.every((j) => j.type === 'INNER')).toBe(true);
     expect((await qbRead(['autoJoins'])).autoJoins).toEqual([]);
+
+    // Relations are drawn as lines only — no labels anywhere on the canvas.
+    expect(await existsInDom('[data-testid^="qb-relation-"]')).toBe(true);
+    expect(await existsInDom('[data-testid^="qb-join-label-"]')).toBe(false);
 
     // ── C3: re-type the sale↔book join as LEFT ──
     const joins = (await qbRead(['joins'])).joins as Array<Record<string, string>>;
@@ -318,5 +337,76 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
       'SUM(',
     ]);
     await captureJourneyStep('qbc-reset-minimal');
+  });
+
+  it('C16: 复合外键画成一条主干并整组确认', async () => {
+    // C1–C15 leave the builder open; the toolbar entry is a toggle, so only
+    // open it when it is actually closed.
+    if (!(await isQbOpen())) await openQbViaMenu('qbc-composite');
+    await qbCall('reset');
+    await addTableCard(COMP_PARENT, { x: 20, y: 20 });
+    await addTableCard(COMP_CHILD, { x: 460, y: 20 });
+    await browser.pause(800);
+
+    // One constraint → exactly one relation group …
+    const constraintCount = await browser.execute(() => {
+      const state = (window as any).__qbStore.getState();
+      const constraints = new Set(
+        (state.autoJoins ?? []).map((join: { constraint?: string }) => join.constraint),
+      );
+      return constraints.size;
+    });
+    expect(constraintCount).toBe(1);
+
+    // … drawn as ONE trunk, with one arrow + one origin dot per column pair.
+    const shape = await browser.execute(() => {
+      const groups = Array.from(document.querySelectorAll('g[data-relation-kind]'));
+      const group = groups[0];
+      const state = (window as any).__qbStore.getState();
+      return {
+        groups: groups.length,
+        trunks: group ? group.querySelectorAll('[data-part="trunk"]').length : -1,
+        arrows: group ? group.querySelectorAll('.qb-relation-arrow').length : -1,
+        dots: group ? group.querySelectorAll('.qb-relation-dot').length : -1,
+        pairs: group?.getAttribute('data-relation-pairs') ?? null,
+        detected: (state.autoJoins ?? []).map(
+          (join: { constraint?: string; leftColumn: string; rightColumn: string }) =>
+            `${join.constraint}:${join.leftColumn}->${join.rightColumn}`,
+        ),
+      };
+    });
+    expect(shape).not.toBeNull();
+    // One merged relation (not one line per column pair) …
+    expect(shape!.groups).toBe(1);
+    expect(shape!.trunks).toBe(1);
+    // … carrying exactly one arrow and one dot per pair in the group.
+    expect(shape!.dots).toBe(2);
+    expect(shape!.arrows).toBe(2);
+    expect(shape!.pairs).toBe('0/2');
+    expect(await existsInDom('[data-testid^="qb-join-label-"]')).toBe(false);
+    await captureJourneyStep('qbc-composite-trunk');
+
+    // Confirming the group must add BOTH pairs — half a composite FK is a
+    // wrong query, so it is never confirmable pair by pair.
+    const confirmed = await confirmAutoJoinsViaUi(2);
+    expect(confirmed).toBe(2);
+    const afterConfirm = await browser.execute(() => {
+      const groups = Array.from(document.querySelectorAll('g[data-relation-kind]'));
+      const pairs = groups[0]?.getAttribute('data-relation-pairs') ?? null;
+      const joins = (window as any).__qbStore.getState().joins ?? [];
+      return { pairs, joins: joins.length };
+    });
+    // Every pair of the constraint moved into the SQL in one action.
+    expect(afterConfirm.pairs).toBe('2/2');
+    expect(afterConfirm.joins).toBe(2);
+
+    // … and the generated SQL merges them into a single JOIN with AND.
+    await selectCardColumn(COMP_PARENT, 'label');
+    await selectCardColumn(COMP_CHILD, 'qty');
+    await switchQbTab('preview');
+    const sql = await previewText();
+    expect((sql.match(/INNER JOIN/gi) ?? []).length).toBe(1);
+    expect(sql).toContain(' AND ');
+    await captureJourneyStep('qbc-composite-sql');
   });
 });

@@ -90,6 +90,12 @@ export interface QbJoin {
   rightColumn: string;
   /** true = manually created, false = auto-detected FK. */
   isManual: boolean;
+  /**
+   * Identity of the constraint this pair belongs to (see `constraintKey`).
+   * Composite foreign keys contribute several pairs that must be confirmed,
+   * rendered and removed as one unit, so the linkage has to survive in the join.
+   */
+  constraint?: string;
 }
 
 /** A group-by entry. */

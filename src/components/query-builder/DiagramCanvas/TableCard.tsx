@@ -3,7 +3,14 @@ import { cn } from '@datazen/ui';
 import { X } from 'lucide-react';
 import { useI18n } from '../../../hooks/useI18n';
 import type { ColumnInfo } from '../../../types';
-import { resolveDragPosition, type CardPositions } from './cardLayout';
+import {
+  CARD_HEADER_HEIGHT,
+  CARD_LIST_PADDING_Y,
+  CARD_ROW_HEIGHT,
+  CARD_WIDTH,
+  resolveDragPosition,
+  type CardPositions,
+} from './cardLayout';
 
 /** A single table card rendered on the diagram canvas. */
 export interface TableCardProps {
@@ -14,6 +21,8 @@ export interface TableCardProps {
   selectedColumns: string[];
   /** Primary key column names (optional, derived from schema). */
   primaryKeyColumns?: string[];
+  /** Map of column name → foreign key target table (optional). */
+  foreignKeyMap?: Record<string, string>;
   position: { x: number; y: number };
   /** Positions of every card, used to align this one while dragging. */
   otherPositions?: CardPositions;
@@ -24,6 +33,12 @@ export interface TableCardProps {
   onRemove: () => void;
   onDragEnd: (pos: { x: number; y: number }) => void;
   onSetAlias: (alias: string) => void;
+  /** Begin a manual join by dragging from a column's connector handle. */
+  onStartManualJoin?: (
+    table: string,
+    column: string,
+    origin: { clientX: number; clientY: number; pointerId: number },
+  ) => void;
 }
 
 /** Elements that must keep their own pointer behaviour inside a draggable card. */
@@ -32,12 +47,21 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return !!target.closest('input, button, select, textarea, a, label');
 }
 
+/**
+ * One table on the canvas.
+ *
+ * Sizes come from `cardLayout` constants rather than Tailwind spacing so the SVG
+ * relation layer can compute exact column anchors: **the card height is always
+ * `cardHeight(columns.length)`**, which is why the column list must never scroll
+ * on its own (a clipped row would put its anchor outside the card).
+ */
 export function TableCard({
   tableName,
   alias,
   columns,
   selectedColumns,
   primaryKeyColumns = [],
+  foreignKeyMap = {},
   position,
   otherPositions = {},
   onToggleColumn,
@@ -45,6 +69,7 @@ export function TableCard({
   onRemove,
   onDragEnd,
   onSetAlias,
+  onStartManualJoin,
 }: TableCardProps) {
   const { t } = useI18n();
   const dragRef = useRef<{
@@ -59,11 +84,6 @@ export function TableCard({
   const allSelected = columns.length > 0 && columns.every((c) => selectedSet.has(c.name));
   const someSelected = columns.some((c) => selectedSet.has(c.name));
 
-  /**
-   * Drag the whole card, not just a small grip: users reach for the header.
-   * Pointer capture goes on the card itself so moves keep arriving even when the
-   * cursor outruns the element.
-   */
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.button !== 0 || isInteractiveTarget(e.target)) return;
@@ -113,12 +133,12 @@ export function TableCard({
   return (
     <div
       className={cn(
-        'absolute min-w-[200px] max-w-[280px] select-none',
-        'bg-surface-raised border border-edge rounded-lg shadow-lg',
+        'qb-card absolute select-none rounded-lg border border-edge bg-surface-raised shadow-lg',
         'text-fg cursor-grab active:cursor-grabbing',
       )}
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
+        width: CARD_WIDTH,
         willChange: 'transform',
         touchAction: 'none',
       }}
@@ -129,8 +149,12 @@ export function TableCard({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      {/* Table header */}
-      <div className="flex items-center gap-1.5 px-2 py-2 border-b border-edge">
+      {/* Header — same horizontal rhythm as the rows below, so the select-all
+          checkbox lines up with the per-column checkboxes. */}
+      <div
+        className="flex items-center gap-2 border-b border-edge px-3"
+        style={{ height: CARD_HEADER_HEIGHT }}
+      >
         <input
           type="checkbox"
           checked={allSelected}
@@ -175,18 +199,19 @@ export function TableCard({
         </button>
       </div>
 
-      {/* Column list */}
-      <div className="max-h-[240px] overflow-y-auto px-2 py-1">
-        {columns.map((col, idx) => {
+      {/* Column list — never scrolls: the card grows instead, which is what
+          keeps every column anchor inside the card. */}
+      <div style={{ paddingTop: CARD_LIST_PADDING_Y, paddingBottom: CARD_LIST_PADDING_Y }}>
+        {columns.map((col) => {
           const isPk = primaryKeyColumns.includes(col.name);
+          const fkTarget = foreignKeyMap[col.name];
           return (
-            <label
+            <div
               key={col.name}
-              className="-mx-1 flex cursor-pointer items-center gap-2 rounded px-1 py-[3px] text-[12px] hover:bg-surface-inset"
+              className="qb-col-row group relative flex cursor-pointer items-center gap-2 px-3 text-[12px] hover:bg-surface-inset"
+              style={{ height: CARD_ROW_HEIGHT }}
               data-testid={`qb-col-${tableName}-${col.name}`}
-              data-table={tableName}
-              data-column={col.name}
-              data-column-index={idx}
+              data-qb-col-anchor={`${tableName}.${col.name}`}
             >
               <input
                 type="checkbox"
@@ -201,7 +226,38 @@ export function TableCard({
                   PK
                 </span>
               )}
-            </label>
+              {fkTarget && (
+                <span className="inline-flex shrink-0 items-center rounded bg-blue-500/20 px-1 py-0 text-[9px] font-semibold text-blue-400">
+                  FK
+                </span>
+              )}
+
+              {/* Connector handle: drag from here to another column to create a
+                  manual join. Kept invisible until the row is hovered so the
+                  canvas stays free of chrome. */}
+              {onStartManualJoin && (
+                <button
+                  type="button"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    onStartManualJoin(tableName, col.name, {
+                      clientX: e.clientX,
+                      clientY: e.clientY,
+                      pointerId: e.pointerId,
+                    });
+                  }}
+                  className={cn(
+                    'absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full',
+                    'cursor-crosshair border border-accent/60 bg-surface opacity-0 transition-opacity',
+                    'group-hover:opacity-100 hover:bg-accent',
+                  )}
+                  title={t('query.visualBuilder.connectColumn')}
+                  aria-label={t('query.visualBuilder.connectColumn')}
+                  data-testid={`qb-connect-${tableName}-${col.name}`}
+                />
+              )}
+            </div>
           );
         })}
         {columns.length === 0 && (

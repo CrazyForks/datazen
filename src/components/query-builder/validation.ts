@@ -22,7 +22,8 @@ export type QbDiagnosticCode =
   | 'alias-duplicate'
   | 'alias-shadows-table'
   | 'unknown-join-table'
-  | 'self-join';
+  | 'self-join'
+  | 'composite-join-incomplete';
 
 export interface QbDiagnostic {
   code: QbDiagnosticCode;
@@ -44,8 +45,19 @@ export function isExactNumericLiteral(value: string): boolean {
   return String(Number(value)) === value;
 }
 
+/** The subset of state the validator reads (joins/autoJoins carry the grouping). */
+export type QueryValidationInput = GenerateSqlInput & {
+  autoJoins?: Array<{
+    constraint?: string;
+    leftTable: string;
+    leftColumn: string;
+    rightTable: string;
+    rightColumn: string;
+  }>;
+};
+
 /** Collect every diagnostic for the current builder state. */
-export function validateQuery(input: GenerateSqlInput): QbDiagnostic[] {
+export function validateQuery(input: QueryValidationInput): QbDiagnostic[] {
   const out: QbDiagnostic[] = [];
 
   if (input.selectedTables.length === 0) {
@@ -61,12 +73,13 @@ export function validateQuery(input: GenerateSqlInput): QbDiagnostic[] {
   collectConditionDiagnostics(input, out);
   collectAliasDiagnostics(input, out);
   collectJoinDiagnostics(input, out);
+  collectCompositeJoinDiagnostics(input, out);
   collectPaginationDiagnostics(input, out);
 
   return out;
 }
 
-function collectConditionDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): void {
+function collectConditionDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
   const visit = (conditions: typeof input.where.conditions) => {
     for (const cond of conditions) {
       const isNullOp = cond.operator === 'IS NULL' || cond.operator === 'IS NOT NULL';
@@ -111,7 +124,7 @@ function collectConditionDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[
   }
 }
 
-function collectAliasDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): void {
+function collectAliasDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
   const aliases = input.tableAliases ?? {};
   const seen = new Map<string, string>();
 
@@ -147,7 +160,7 @@ function collectAliasDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): 
   }
 }
 
-function collectJoinDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): void {
+function collectJoinDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
   const tables = new Set(input.selectedTables);
   for (const join of input.joins) {
     if (join.leftTable === join.rightTable) {
@@ -174,7 +187,52 @@ function collectJoinDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): v
   }
 }
 
-function collectPaginationDiagnostics(input: GenerateSqlInput, out: QbDiagnostic[]): void {
+/**
+ * A composite FK contributes one pair per column. Confirming only some of them
+ * emits a JOIN whose ON clause is missing predicates — it parses, and returns
+ * wrong rows. Compare what is in `joins` against the detected candidate groups.
+ */
+function collectCompositeJoinDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
+  const detectedByConstraint = new Map<string, Set<string>>();
+  const pairId = (left: string, leftColumn: string, right: string, rightColumn: string) =>
+    `${left}.${leftColumn}->${right}.${rightColumn}`;
+
+  for (const candidate of input.autoJoins ?? []) {
+    if (!candidate.constraint) continue;
+    const set = detectedByConstraint.get(candidate.constraint) ?? new Set<string>();
+    set.add(
+      pairId(
+        candidate.leftTable,
+        candidate.leftColumn,
+        candidate.rightTable,
+        candidate.rightColumn,
+      ),
+    );
+    detectedByConstraint.set(candidate.constraint, set);
+  }
+
+  const confirmedByConstraint = new Map<string, Set<string>>();
+  for (const join of input.joins) {
+    if (!join.constraint) continue;
+    const set = confirmedByConstraint.get(join.constraint) ?? new Set<string>();
+    set.add(pairId(join.leftTable, join.leftColumn, join.rightTable, join.rightColumn));
+    confirmedByConstraint.set(join.constraint, set);
+  }
+
+  for (const [constraint, detected] of detectedByConstraint) {
+    const confirmed = confirmedByConstraint.get(constraint);
+    if (!confirmed) continue;
+    if (confirmed.size === 0 || confirmed.size >= detected.size) continue;
+    out.push({
+      code: 'composite-join-incomplete',
+      severity: 'error',
+      messageKey: 'compositeJoinIncomplete',
+      detail: `${constraint.split('::')[1] ?? constraint} (${confirmed.size}/${detected.size})`,
+    });
+  }
+}
+
+function collectPaginationDiagnostics(input: QueryValidationInput, out: QbDiagnostic[]): void {
   const { limit, offset } = input;
 
   if (limit !== null && (!Number.isInteger(limit) || limit < 0)) {

@@ -220,6 +220,15 @@ export interface QueryBuilderActions {
   confirmAutoJoin: (id: string) => void;
   /** Drop an auto-detected candidate the user is not interested in. */
   dismissAutoJoin: (id: string) => void;
+  /**
+   * Confirm **every** column pair of one constraint at once.
+   *
+   * A composite FK confirmed pair-by-pair would emit a JOIN missing half of its
+   * predicate, so the group is the smallest safe unit.
+   */
+  confirmConstraintGroup: (constraint: string) => void;
+  /** Remove every join belonging to a constraint. */
+  removeConstraintGroup: (constraint: string) => void;
 
   // ── Table metadata actions ──
   setTableAlias: (tableName: string, alias: string) => void;
@@ -663,6 +672,31 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
     dismissAutoJoin: (id) =>
       set((s) => ({
         autoJoins: s.autoJoins.filter((j) => j.id !== id),
+      })),
+
+    confirmConstraintGroup: (constraint) =>
+      set((s) => {
+        const candidates = s.autoJoins.filter((j) => j.constraint === constraint);
+        if (candidates.length === 0) return {};
+        const pairId = (j: {
+          leftTable: string;
+          leftColumn: string;
+          rightTable: string;
+          rightColumn: string;
+        }) => `${j.leftTable}.${j.leftColumn}->${j.rightTable}.${j.rightColumn}`;
+        const already = new Set(s.joins.map(pairId));
+        const added = candidates
+          .filter((candidate) => !already.has(pairId(candidate)))
+          .map((candidate) => ({ ...candidate, id: uid(), isManual: false as const }));
+        return {
+          joins: [...s.joins, ...added],
+          autoJoins: s.autoJoins.filter((j) => j.constraint !== constraint),
+        };
+      }),
+
+    removeConstraintGroup: (constraint) =>
+      set((s) => ({
+        joins: s.joins.filter((j) => j.constraint !== constraint),
       })),
 
     // ── Table metadata actions ──

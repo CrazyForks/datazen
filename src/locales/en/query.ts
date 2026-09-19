@@ -426,6 +426,11 @@ const pack = {
   'query.visualBuilder.diag.aliasShadowsTable': 'An alias collides with another table name',
   'query.visualBuilder.diag.unknownJoinTable': 'A join references a table that is not in the query',
   'query.visualBuilder.diag.selfJoin': 'A table cannot be joined to itself',
+  'query.visualBuilder.diag.compositeJoinIncomplete':
+    'A composite foreign key is only partly joined',
+  'query.visualBuilder.connectColumn': 'Drag to another column to join',
+  'query.visualBuilder.manualJoin': 'Manual join',
+  'query.visualBuilder.removeJoin': 'Remove from query',
   'query.visualBuilder.okDisabledHint': 'Add a table and select at least one column first',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': 'Database Objects',

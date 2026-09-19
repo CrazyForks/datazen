@@ -418,6 +418,10 @@ const pack = {
   'query.visualBuilder.diag.aliasShadowsTable': '别名与另一张表名冲突',
   'query.visualBuilder.diag.unknownJoinTable': 'JOIN 引用了不在查询中的表',
   'query.visualBuilder.diag.selfJoin': '表不能与自身关联',
+  'query.visualBuilder.diag.compositeJoinIncomplete': '复合外键只关联了其中一部分列',
+  'query.visualBuilder.connectColumn': '拖到另一列建立关联',
+  'query.visualBuilder.manualJoin': '手动关联',
+  'query.visualBuilder.removeJoin': '移出查询',
   'query.visualBuilder.okDisabledHint': '请先添加表并至少选择一个字段',
   // ── Object tree ──────────────────────────────────────────────
   'query.objectTree.title': '数据库对象',

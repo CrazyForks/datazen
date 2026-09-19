@@ -83,17 +83,40 @@ discarding (the canvas state survives).
   same qualifier, so what the builder shows is what the SQL emits. (Previously
   an alias appeared in `ON` only, which made adding one pointless.)
 
-### JOINs
+### Relations (JOINs)
 
-- Foreign keys between the selected tables are detected automatically and shown
-  as **dashed candidates**. Candidates are _not_ in the SQL.
-- Click a candidate's **Confirm join** button to promote it; it then renders as
-  a solid line and enters the SQL.
-- Join types: `INNER`, `LEFT`, `RIGHT`, `FULL`.
-- A candidate is dismissed with its `×`.
-- Joins are emitted by walking the join graph outward from the `FROM` table, so
-  a chained three-table query produces a valid order, repeated pairs merge into
-  one `JOIN … ON a AND b`, and the `FROM` table is never re-joined.
+Foreign keys are drawn as **lines only — the canvas carries no relation text**.
+Each line connects the two specific columns it relates, at that column's row.
+
+- **One constraint = one line object.** A single-column FK is a straight line; a
+  **composite FK** merges its source stubs into one trunk and splits the trunk
+  into one stub per referenced column (`many → one → many`). Two constraints
+  between the same pair of tables get **parallel lanes** 14px apart, ordered by
+  source row index so they never swap while dragging.
+- **State**: dashed + muted = detected but not in the SQL; solid + accent = in
+  the SQL. A half-confirmed composite FK is drawn half-solid and blocks OK via
+  the `composite-join-incomplete` diagnostic.
+- **Hover** brightens the line and highlights every column row it touches, so
+  "which two columns?" is answerable without a label.
+- **Click** opens a small popover at that point: `INNER / LEFT / RIGHT / FULL`
+  plus _add to query_ (candidate) or _remove from query_ (confirmed). A
+  composite group is always confirmed/removed as a whole — half of a composite
+  key is a wrong query.
+- **Manual joins**: hover a column row and drag its connector dot onto another
+  column to create a join by hand. Manual joins are drawn distinctly (dash-dot,
+  secondary tone). Dragging within one table is refused (self joins cannot be
+  expressed).
+- Self-referencing FKs are drawn as a loop and are not confirmable, for the same
+  reason.
+
+> Colour comes from the semantic `--c-*` tokens. An earlier revision referenced
+> a `--color-*` namespace that does not exist, which made every connector render
+> with an invalid `stroke` — i.e. the lines were invisible.
+
+> Card height follows the column count (no inner scrolling) so a column's anchor
+> is always inside its card. Canvas scrollbars / wheel-to-scroll navigation is
+> still pending: for now a very tall card is reached by panning (space-drag or
+> middle-drag) or zooming out.
 
 ### WHERE Conditions
 

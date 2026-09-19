@@ -496,19 +496,39 @@ export async function selectCardColumn(table: string, column: string): Promise<v
 export async function confirmAutoJoinsViaUi(expected: number): Promise<number> {
   await waitForAutoJoins(expected, 25000);
 
-  const autoIds = (await browser.execute(() =>
-    ((window as any).__qbStore.getState().autoJoins ?? []).map((j: { id: string }) => j.id),
+  // One group per constraint: a composite FK is a single line with a single
+  // trunk, so it is confirmed once, not once per column pair.
+  const constraints = (await browser.execute(() =>
+    Array.from(
+      new Set(
+        ((window as any).__qbStore.getState().autoJoins ?? [])
+          .map((join: { constraint?: string }) => join.constraint)
+          .filter(Boolean),
+      ),
+    ),
   )) as string[];
 
-  for (const id of autoIds) {
-    const clicked = await browser.execute((joinId: string) => {
-      const btn = document.querySelector<HTMLElement>(`[data-testid="qb-join-confirm-${joinId}"]`);
-      if (!btn) return false;
-      btn.click();
+  for (const constraint of constraints) {
+    // Open the actions popover by activating the relation line, then confirm.
+    const opened = await browser.execute((id: string) => {
+      const hits = Array.from(
+        document.querySelectorAll<SVGPathElement>('[data-testid^="qb-relation-hit-"]'),
+      );
+      const hit = hits.find((node) => node.getAttribute('data-testid') === `qb-relation-hit-${id}`);
+      if (!hit) return false;
+      hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       return true;
-    }, id);
-    if (!clicked) throw new Error(`候选 JOIN ${id} 的确认按钮不存在`);
-    await browser.pause(250);
+    }, constraint);
+    if (!opened) throw new Error(`关系组 ${constraint} 的连线命中区域不存在`);
+
+    await browser.waitUntil(
+      () => browser.execute(() => !!document.querySelector('[data-testid="qb-join-confirm"]')),
+      { timeout: 5000, timeoutMsg: `关系组 ${constraint} 的浮层未打开` },
+    );
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>('[data-testid="qb-join-confirm"]')?.click();
+    });
+    await browser.pause(200);
   }
 
   return browser.execute(() => ((window as any).__qbStore.getState().joins ?? []).length);

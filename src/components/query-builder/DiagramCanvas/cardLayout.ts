@@ -1,11 +1,14 @@
 /**
- * Canvas card placement rules.
+ * Canvas card placement and geometry.
  *
- * Cards are free-floating, but two behaviours keep the diagram readable:
- *  - every position snaps to a grid, so manual dragging can actually align;
- *  - a dropped card aligns its top with the cards already in that band and
- *    lands to their right, so dragging two tables in does not leave their tops
- *    a few pixels apart.
+ * This module is the **single source of truth for card metrics**. `TableCard`
+ * consumes these constants for its own inline sizes, and the SVG relation layer
+ * computes column anchors from them — so a style tweak can never make the
+ * connecting lines miss the column they point at.
+ *
+ * Cards are a fixed width (their height follows the column count) which makes
+ * the anchor math exact and keeps the DOM and the SVG in agreement without
+ * measuring anything.
  */
 
 /** Grid step for card positions. */
@@ -15,11 +18,60 @@ export const CARD_STRIDE = 264;
 /** Vertical tolerance for "this drop belongs to the same row". */
 export const CARD_ROW_TOLERANCE = 56;
 
+// ── Card metrics (mirrored by TableCard's inline styles) ──────
+
+/** Card width. Fixed so column anchors are deterministic. */
+export const CARD_WIDTH = 240;
+/** Card header height: py-2 (8+8) + 20px content + 1px bottom border. */
+export const CARD_HEADER_HEIGHT = 37;
+/** Column list vertical padding (py-1). */
+export const CARD_LIST_PADDING_Y = 4;
+/** One column row. */
+export const CARD_ROW_HEIGHT = 24;
+/** Horizontal inset of row content (px-3). */
+export const CARD_ROW_INSET_X = 12;
+
+/** Padding kept around the cards inside the scrollable canvas content. */
+export const CANVAS_PADDING = 240;
+
 export type CardPositions = Record<string, { x: number; y: number }>;
 
 /** Round a coordinate to the canvas grid, never negative. */
 export function snapToGrid(value: number, grid: number = CARD_GRID): number {
   return Math.max(0, Math.round(value / grid) * grid);
+}
+
+/** Rendered height of a card with `columnCount` columns (no inner scrolling). */
+export function cardHeight(columnCount: number): number {
+  return CARD_HEADER_HEIGHT + CARD_LIST_PADDING_Y * 2 + columnCount * CARD_ROW_HEIGHT;
+}
+
+/** Vertical center of column row `index` inside a card placed at `cardY`. */
+export function rowCenterY(cardY: number, index: number): number {
+  return (
+    cardY + CARD_HEADER_HEIGHT + CARD_LIST_PADDING_Y + index * CARD_ROW_HEIGHT + CARD_ROW_HEIGHT / 2
+  );
+}
+
+/**
+ * Size of the scrollable canvas content: the bounding box of every card plus
+ * padding, never smaller than the viewport (so the empty canvas still fills the
+ * panel and cannot be scrolled away).
+ */
+export function canvasContentSize(
+  cards: Array<{ pos: { x: number; y: number }; columnCount: number }>,
+  viewport: { width: number; height: number },
+): { width: number; height: number } {
+  let right = 0;
+  let bottom = 0;
+  for (const card of cards) {
+    right = Math.max(right, card.pos.x + CARD_WIDTH + CANVAS_PADDING);
+    bottom = Math.max(bottom, card.pos.y + cardHeight(card.columnCount) + CANVAS_PADDING);
+  }
+  return {
+    width: Math.max(right, viewport.width),
+    height: Math.max(bottom, viewport.height),
+  };
 }
 
 /**

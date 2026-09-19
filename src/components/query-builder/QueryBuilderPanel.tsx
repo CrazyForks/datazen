@@ -4,7 +4,11 @@ import { useSchemaStore } from '../../stores/schemaStore';
 import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
+import { buildRelationGroups } from './relationGroups';
 import type { ForeignKeyRelation } from './hooks/useAutoJoin';
+
+/** Group-id prefix for a manually created join (see `buildRelationGroups`). */
+const MANUAL_PREFIX = 'manual:';
 import { DiagramCanvas } from './DiagramCanvas/DiagramCanvas';
 import { CriteriaGrid } from './CriteriaGrid/CriteriaGrid';
 import { WhereClauseEditor } from './CriteriaGrid/WhereClauseEditor';
@@ -19,6 +23,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { getCachedTableSchema } from '../../lib/schemaCache';
 import { cn } from '../../lib/cn';
 import type { ColumnInfo } from '../../types';
+import type { QbJoinType } from './types';
 
 export interface QueryBuilderPanelProps {
   /** Owning query panel. Scopes the builder's open state. */
@@ -96,10 +101,6 @@ export function QueryBuilderPanel({
   const setAllColumns = useQueryBuilderStore((s) => s.setAllColumns);
   const removeTable = useQueryBuilderStore((s) => s.removeTable);
   const updateColumnConfig = useQueryBuilderStore((s) => s.updateColumnConfig);
-  const addJoin = useQueryBuilderStore((s) => s.addJoin);
-  const removeJoin = useQueryBuilderStore((s) => s.removeJoin);
-  const updateJoinType = useQueryBuilderStore((s) => s.updateJoinType);
-  const confirmAutoJoin = useQueryBuilderStore((s) => s.confirmAutoJoin);
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
   const updateTablePosition = useQueryBuilderStore((s) => s.updateTablePosition);
   const setZoom = useQueryBuilderStore((s) => s.setZoom);
@@ -152,21 +153,38 @@ export function QueryBuilderPanel({
       for (const tableName of selectedTables) {
         try {
           const schema = await getCachedTableSchema(dbSessionId, tableName, currentDatabase ?? '');
-          console.log('Schema for', tableName, ':', schema);
-          console.log('Foreign keys for', tableName, ':', schema.foreignKeys);
           for (const fk of schema.foreignKeys) {
-            console.log('Processing FK:', fk);
-            for (let i = 0; i < fk.columns.length; i++) {
+            // A composite FK arrives as two independent aggregates over
+            // `key_column_usage` × `constraint_column_usage` (see the driver's
+            // pg schema query). Because those two arrays are not correlated by
+            // position at the SQL level, an N-column FK comes back with N²
+            // entries — [pa, pa, pb, pb] vs [a, b, a, b] for a 2-column key —
+            // and pairing them index-wise yields a cartesian product: four
+            // column pairs, i.e. a JOIN with four predicates.
+            //
+            // Collapse each side to its ordered distinct columns and pair them
+            // positionally, which is what the constraint actually means. If the
+            // two sides still disagree the FK is skipped rather than guessed at.
+            const fromColumns = Array.from(new Set(fk.columns));
+            const toColumns = Array.from(new Set(fk.referencedColumns));
+            if (fromColumns.length === 0 || fromColumns.length !== toColumns.length) continue;
+
+            for (let i = 0; i < fromColumns.length; i += 1) {
+              const fromColumn = fromColumns[i]!;
+              const toColumn = toColumns[i]!;
               allFks.push({
                 fromTable: tableName,
-                fromColumn: fk.columns[i]!,
+                fromColumn,
                 toTable: fk.referencedTable,
-                toColumn: fk.referencedColumns[i]!,
+                toColumn,
+                constraint: fk.name,
+                ordinal: i + 1,
+                pairCount: fromColumns.length,
               });
             }
           }
-        } catch (error) {
-          console.error('Error loading schema for', tableName, ':', error);
+        } catch {
+          // Schema unavailable for this table — draw no relation for it.
         }
       }
       console.log('All FK relations:', allFks);
@@ -179,6 +197,62 @@ export function QueryBuilderPanel({
       cancelled = true;
     };
   }, [selectedTables, dbSessionId, currentDatabase]);
+
+  /**
+   * One entry per constraint (or manual join) — the canvas draws exactly this,
+   * so a composite FK becomes one trunk instead of several stray lines.
+   */
+  const relationGroups = useMemo(
+    () => buildRelationGroups({ joins, fkRelations, selectedTables }),
+    [joins, fkRelations, selectedTables],
+  );
+
+  /** Re-type every confirmed pair of a group (or the single manual join). */
+  const handleSetGroupType = useCallback((groupId: string, type: QbJoinType) => {
+    const state = useQueryBuilderStore.getState();
+    if (groupId.startsWith(MANUAL_PREFIX)) {
+      state.updateJoinType(groupId.slice(MANUAL_PREFIX.length), type);
+      return;
+    }
+    for (const join of state.joins) {
+      if (join.constraint === groupId) state.updateJoinType(join.id, type);
+    }
+  }, []);
+
+  const handleConfirmGroup = useCallback((groupId: string) => {
+    useQueryBuilderStore.getState().confirmConstraintGroup(groupId);
+  }, []);
+
+  const handleRemoveGroup = useCallback((groupId: string) => {
+    const state = useQueryBuilderStore.getState();
+    if (groupId.startsWith(MANUAL_PREFIX)) {
+      state.removeJoin(groupId.slice(MANUAL_PREFIX.length));
+      return;
+    }
+    if (groupId.startsWith('join:')) {
+      state.removeJoin(groupId.slice('join:'.length));
+      return;
+    }
+    state.removeConstraintGroup(groupId);
+  }, []);
+
+  /** Manual joins are created by dragging between two columns. */
+  const handleAddManualJoin = useCallback(
+    (from: { table: string; column: string }, to: { table: string; column: string }) => {
+      // A self join cannot be expressed, so it is refused rather than created
+      // only to be reported as a validation error.
+      if (from.table === to.table) return;
+      useQueryBuilderStore.getState().addJoin({
+        type: 'INNER',
+        leftTable: from.table,
+        leftColumn: from.column,
+        rightTable: to.table,
+        rightColumn: to.column,
+        isManual: true,
+      });
+    },
+    [],
+  );
 
   const detectedAutoJoins = useAutoJoin(selectedTables, fkRelations);
 
@@ -450,21 +524,19 @@ export function QueryBuilderPanel({
             <DiagramCanvas
               selectedTables={selectedTables}
               tablePositions={tablePositions}
-              joins={joins}
-              autoJoins={autoJoins}
+              relationGroups={relationGroups}
               columnMap={columnMap}
               columnInfoMap={columnInfoMap}
               selectedColumns={selectedColumns}
               tableAliases={tableAliases}
-              foreignKeyRelations={fkRelations}
               onToggleColumn={toggleColumn}
               onToggleAllColumns={setAllColumns}
               onRemoveTable={removeTable}
               onUpdatePosition={updateTablePosition}
-              onAddJoin={addJoin}
-              onUpdateJoinType={updateJoinType}
-              onRemoveJoin={removeJoin}
-              onConfirmJoin={confirmAutoJoin}
+              onSetGroupType={handleSetGroupType}
+              onConfirmGroup={handleConfirmGroup}
+              onRemoveGroup={handleRemoveGroup}
+              onAddManualJoin={handleAddManualJoin}
               onSetTableAlias={setTableAlias}
               onDropTable={handleDropTable}
               zoom={zoom}

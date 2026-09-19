@@ -90,17 +90,12 @@ function renderCanvas(
     <DiagramCanvas
       selectedTables={Object.keys(tablePositions)}
       tablePositions={tablePositions}
-      joins={[]}
-      autoJoins={[]}
       columnMap={{}}
       columnInfoMap={{}}
       selectedColumns={[]}
       tableAliases={{}}
       onToggleColumn={noop}
       onUpdatePosition={noop}
-      onAddJoin={noop}
-      onUpdateJoinType={noop}
-      onRemoveJoin={noop}
       onSetTableAlias={noop}
       onDropTable={onDropTable}
       zoom={2}
