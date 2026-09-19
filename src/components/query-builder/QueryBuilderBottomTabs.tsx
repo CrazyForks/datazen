@@ -78,13 +78,22 @@ export function QueryBuilderBottomTabs({
       </div>
 
       {/* Mutually exclusive content — only the active tab is mounted. */}
+      {/* The region itself is a flex column so the preview can fill it via
+          flex-1; each tab keeps its own scroll container so the Build tab
+          behaves exactly as before. */}
       <div
-        className="min-h-0 flex-1 overflow-auto"
+        className="flex min-h-0 flex-1 flex-col"
         role="tabpanel"
         data-testid="qb-tab-content"
         data-active-tab={tab}
       >
-        {tab === 'build' ? buildContent : previewContent}
+        {tab === 'build' ? (
+          <div className="min-h-0 flex-1 overflow-auto" data-testid="qb-build-scroll">
+            {buildContent}
+          </div>
+        ) : (
+          previewContent
+        )}
       </div>
     </div>
   );

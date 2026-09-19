@@ -262,18 +262,20 @@ div.text-danger,
 .qb-relation-dot--partial {
   fill: var(--c-accent);
 }
-.qb-relation-arrow {
-  transition:
-    fill 0.15s,
-    opacity 0.15s;
+/* A connection shows a relationship, not a direction — so no arrowheads and no
+   marker-* anywhere. The only special terminal is the hollow ring below. */
+.qb-relation-dot--offscreen {
+  fill: var(--c-surface-raised);
+  stroke: var(--c-fg-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 1.5;
 }
-.qb-relation-arrow--candidate {
-  fill: var(--c-fg-muted);
-  opacity: 0.7;
+.qb-relation-dot--offscreen.qb-relation-dot--confirmed,
+.qb-relation-dot--offscreen.qb-relation-dot--partial {
+  stroke: var(--c-accent);
 }
-.qb-relation-arrow--confirmed,
-.qb-relation-arrow--partial {
-  fill: var(--c-accent);
+.qb-relation.is-active .qb-relation-dot--offscreen {
+  stroke-width: 2;
 }
 /* A 1.75px stroke is far too thin to hit reliably — this transparent wide copy
    is the real click target. */
@@ -294,8 +296,7 @@ div.text-danger,
 .qb-relation.is-active {
   filter: drop-shadow(0 0 3px var(--c-accent-ring));
 }
-.qb-relation.is-active .qb-relation-dot,
-.qb-relation.is-active .qb-relation-arrow {
+.qb-relation.is-active .qb-relation-dot {
   opacity: 1;
 }
 .qb-relation.is-dimmed {
@@ -304,6 +305,13 @@ div.text-danger,
 /* Column rows belonging to the hovered relation. */
 .qb-col-row.is-related {
   background: var(--c-accent-dim);
+}
+/* The card's column window: a fixed-height list that scrolls on its own.
+   `overscroll-behavior: contain` keeps a wheel gesture inside the card instead
+   of chaining out to the canvas scroll container (which would zoom the view
+   away from the card the pointer is on). Scrollbar styling is the global one. */
+.qb-col-list {
+  overscroll-behavior: contain;
 }
 /* Manual-join drag feedback. */
 .qb-drop-target {

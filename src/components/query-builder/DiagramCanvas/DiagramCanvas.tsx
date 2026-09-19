@@ -126,14 +126,28 @@ export function DiagramCanvas({
     return canvasContentSize(cards, viewport);
   }, [selectedTables, tablePositions, columnOrder, viewport]);
 
+  /**
+   * Per-card column-list scroll offsets, so relation anchors follow the rows.
+   */
+  const [scrollTops, setScrollTops] = useState<Record<string, number>>({});
+  const handleListScroll = useCallback((table: string, scrollTop: number) => {
+    setScrollTops((prev) => (prev[table] === scrollTop ? prev : { ...prev, [table]: scrollTop }));
+  }, []);
+
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [popover, setPopover] = useState<{ groupId: string; at: { x: number; y: number } } | null>(
     null,
   );
 
   const shapes = useMemo(
-    () => buildRelationShapes({ groups: relationGroups, positions: tablePositions, columnOrder }),
-    [relationGroups, tablePositions, columnOrder],
+    () =>
+      buildRelationShapes({
+        groups: relationGroups,
+        positions: tablePositions,
+        columnOrder,
+        scrollTops,
+      }),
+    [relationGroups, tablePositions, columnOrder, scrollTops],
   );
 
   const shapeById = useMemo(() => new Map(shapes.map((shape) => [shape.groupId, shape])), [shapes]);
@@ -154,6 +168,23 @@ export function DiagramCanvas({
       node.classList.toggle('is-related', !!key && relatedColumns.has(key));
     });
   }, [relatedColumns]);
+
+  /**
+   * Reveal the columns of the hovered/selected relation. A card's list scrolls
+   * internally, so a column the line points at can be scrolled out; bringing it
+   * into view turns the clamped terminal back into the real row.
+   */
+  useEffect(() => {
+    const groupId = popover?.groupId ?? activeGroupId;
+    if (!groupId) return;
+    const shape = shapeById.get(groupId);
+    if (!shape) return;
+    for (const key of shape.columnKeys) {
+      document
+        .querySelector<HTMLElement>(`[data-qb-col-anchor="${key}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [activeGroupId, popover?.groupId, shapeById]);
 
   // ── Manual join drag ────────────────────────────────────────
   const [manualJoin, setManualJoin] = useState<{
@@ -393,6 +424,7 @@ export function DiagramCanvas({
                   onDragEnd={(newPos) => onUpdatePosition(table, newPos)}
                   onSetAlias={(alias) => onSetTableAlias(table, alias)}
                   onStartManualJoin={startManualJoin}
+                  onListScroll={handleListScroll}
                 />
               );
             })}

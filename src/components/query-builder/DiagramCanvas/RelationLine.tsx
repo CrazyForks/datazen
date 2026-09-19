@@ -19,10 +19,14 @@ export interface RelationLineProps {
 /**
  * One relation, drawn as lines only — no glyphs, no labels.
  *
- * A group renders as a set of polylines: a single straight line for a plain FK
- * or manual join, and `stub → trunk → stub` for a composite FK (see
+ * A group renders as a set of **orthogonal polylines**: one elbow for a plain
+ * FK or manual join, and `stub → trunk → stub` for a composite FK (see
  * `fkGeometry`). Every segment carries its own state so a half-confirmed
  * composite group is visibly half-solid.
+ *
+ * No arrowheads: a connection is a relationship, not a direction. Terminals are
+ * symmetric dots, and a chevron marks an end whose column is scrolled out of the
+ * card's list (the line is clamped to the visible edge in that case).
  *
  * Interaction lives on a wide invisible copy of the path, because a 1.75px
  * stroke is far too thin to hit reliably.
@@ -71,18 +75,17 @@ export function RelationLine({
       {shape.dots.map((dot, index) => (
         <circle
           key={`dot-${index}`}
-          className={`qb-relation-dot qb-relation-dot--${dot.state}`}
+          className={
+            `qb-relation-dot qb-relation-dot--${dot.state}` +
+            // Clamped to the list edge because the column is scrolled out of
+            // view: a hollow ring, so nothing on the canvas can be read as a
+            // direction arrow.
+            (dot.offscreen ? ' qb-relation-dot--offscreen' : '')
+          }
+          data-offscreen={dot.offscreen ?? undefined}
           cx={dot.x}
           cy={dot.y}
           r={3.2}
-        />
-      ))}
-
-      {shape.arrows.map((arrow, index) => (
-        <path
-          key={`arrow-${index}`}
-          className={`qb-relation-arrow qb-relation-arrow--${arrow.state}`}
-          d={arrow.d}
         />
       ))}
 

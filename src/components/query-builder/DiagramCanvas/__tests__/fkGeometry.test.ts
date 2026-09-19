@@ -20,6 +20,8 @@ import {
   CARD_HEADER_HEIGHT,
   CARD_LIST_PADDING_Y,
   CARD_ROW_HEIGHT,
+  cardHeight,
+  cardListScrolls,
   rowCenterY,
 } from '../cardLayout';
 
@@ -138,7 +140,7 @@ describe('assignLanes', () => {
 });
 
 describe('buildRelationShapes — single column FK', () => {
-  it('is one straight line with an arrow, no trunk', () => {
+  it('is one orthogonal elbow with a terminal at each end', () => {
     const shapes = build([
       fkGroup({
         pairs: [
@@ -154,11 +156,39 @@ describe('buildRelationShapes — single column FK', () => {
     ]);
     expect(shapes).toHaveLength(1);
     const shape = shapes[0]!;
+    // No separate trunk for a single constraint — the elbow is the connection.
     expect(shape.segments.filter((s) => s.part === 'trunk')).toHaveLength(0);
-    expect(shape.segments[0]!.d).toMatch(/^M \d+ \d+ L \d+ \d+$/);
-    expect(shape.arrows).toHaveLength(1);
-    expect(shape.dots).toHaveLength(1);
+    // Four points / three segments: out, across, in (never a diagonal).
+    expect(shape.segments[0]!.d.match(/[ML]/g)).toHaveLength(4);
+    // Symmetric terminals, and nothing that implies a direction.
+    expect(shape.dots).toHaveLength(2);
+    expect(shape).not.toHaveProperty('arrows');
     expect(shape.state).toBe('candidate');
+  });
+
+  it('never draws a diagonal between the two columns', () => {
+    const [shape] = build([
+      fkGroup({
+        pairs: [
+          {
+            fromTable: 'shipment',
+            fromColumn: 'id',
+            toTable: 'stock',
+            toColumn: 'wh_id',
+            confirmed: true,
+          },
+        ],
+      }),
+    ]);
+    const points = shape!.segments[0]!.d.split('L').map((part) =>
+      part.replace('M', '').trim().split(/\s+/).map(Number),
+    );
+    // Consecutive points differ on exactly one axis → every segment is axial.
+    for (let i = 1; i < points.length; i += 1) {
+      const [px, py] = points[i - 1]!;
+      const [x, y] = points[i]!;
+      expect(px === x || py === y).toBe(true);
+    }
   });
 
   it('runs edge to edge at the row centre', () => {
@@ -193,9 +223,8 @@ describe('buildRelationShapes — composite FK', () => {
     expect(trunk).toHaveLength(1);
     // Two stubs per pair (source + target) plus the trunk.
     expect(shape.segments.filter((s) => s.part === 'stub')).toHaveLength(4);
-    // One arrow per target column, one origin dot per source column.
-    expect(shape.arrows).toHaveLength(2);
-    expect(shape.dots).toHaveLength(2);
+    // Symmetric terminals at both ends of every pair.
+    expect(shape.dots).toHaveLength(4);
     expect(shape.pairCount).toBe(2);
   });
 
@@ -335,8 +364,8 @@ describe('buildRelationShapes — self reference', () => {
     const loopX = anchorX + SELF_LOOP_OFFSET;
     expect(shape.segments.some((s) => s.part === 'trunk')).toBe(true);
     expect(segments([shape]).some((d) => d.includes(`${loopX}`))).toBe(true);
-    // Arrow points back into the card (leftwards).
-    expect(shape.arrows).toHaveLength(1);
+    // Terminals at both ends, no direction marker.
+    expect(shape.dots).toHaveLength(2);
   });
 });
 
@@ -386,5 +415,68 @@ describe('buildRelationShapes — robustness', () => {
     const trunkX = Number(trunk.d.match(/M (-?\d+)/)![1]);
     // No room between the cards → the trunk routes past both of them.
     expect(trunkX).toBeGreaterThan(overlapped.x + CARD_WIDTH);
+  });
+});
+
+describe('buildRelationShapes — internal list scrolling', () => {
+  // `item_id` sits at index 9, past the capped list's visible window; `a2` is
+  // comfortably inside it.
+  const manyColumns = {
+    shipment: ['id', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'item_id'],
+    stock: ['id', 'item_id'],
+  };
+
+  const shapeFor = (fromColumn: string, scrollTop: number) =>
+    buildRelationShapes({
+      groups: [
+        {
+          id: 'fk:scroll',
+          kind: 'fk',
+          type: 'INNER',
+          pairs: [
+            {
+              fromTable: 'shipment',
+              fromColumn,
+              toTable: 'stock',
+              toColumn: 'item_id',
+              confirmed: false,
+            },
+          ],
+        },
+      ],
+      positions,
+      columnOrder: manyColumns,
+      scrollTops: { shipment: scrollTop },
+    })[0]!;
+
+  it('anchors to the real row when it is inside the visible window', () => {
+    const dot = shapeFor('a2', 0).dots[0]!;
+    expect(dot.offscreen).toBeNull();
+    expect(dot.y).toBe(rowCenterY(positions.shipment.y, 2));
+  });
+
+  it('clamps below the window and flags it', () => {
+    const dot = shapeFor('item_id', 0).dots[0]!;
+    expect(dot.offscreen).toBe('down');
+    expect(dot.y).toBeLessThanOrEqual(
+      positions.shipment.y + cardHeight(manyColumns.shipment.length),
+    );
+  });
+
+  it('follows the scroll offset, then clamps above the window', () => {
+    // Scrolling the list brings the row into view…
+    const scrolledIntoView = shapeFor('item_id', 216).dots[0]!;
+    expect(scrolledIntoView.offscreen).toBeNull();
+    // …and over-scrolling leaves it above the window.
+    const scrolledPast = shapeFor('item_id', 600).dots[0]!;
+    expect(scrolledPast.offscreen).toBe('up');
+    expect(scrolledPast.y).toBeGreaterThanOrEqual(positions.shipment.y);
+  });
+
+  it('keeps the card a fixed height once the list is capped', () => {
+    expect(cardHeight(40)).toBe(cardHeight(200));
+    expect(cardHeight(2)).toBeLessThan(cardHeight(40));
+    expect(cardListScrolls(40)).toBe(true);
+    expect(cardListScrolls(2)).toBe(false);
   });
 });

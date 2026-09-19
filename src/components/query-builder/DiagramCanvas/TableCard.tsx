@@ -5,9 +5,11 @@ import { useI18n } from '../../../hooks/useI18n';
 import type { ColumnInfo } from '../../../types';
 import {
   CARD_HEADER_HEIGHT,
+  CARD_LIST_MAX_HEIGHT,
   CARD_LIST_PADDING_Y,
   CARD_ROW_HEIGHT,
   CARD_WIDTH,
+  cardListScrolls,
   resolveDragPosition,
   type CardPositions,
 } from './cardLayout';
@@ -33,6 +35,12 @@ export interface TableCardProps {
   onRemove: () => void;
   onDragEnd: (pos: { x: number; y: number }) => void;
   onSetAlias: (alias: string) => void;
+  /**
+   * Reports the column list's scroll offset. The list scrolls internally (the
+   * card is a fixed height), and the relation layer needs the offset to know
+   * where each column actually is on screen.
+   */
+  onListScroll?: (table: string, scrollTop: number) => void;
   /** Begin a manual join by dragging from a column's connector handle. */
   onStartManualJoin?: (
     table: string,
@@ -51,9 +59,10 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
  * One table on the canvas.
  *
  * Sizes come from `cardLayout` constants rather than Tailwind spacing so the SVG
- * relation layer can compute exact column anchors: **the card height is always
- * `cardHeight(columns.length)`**, which is why the column list must never scroll
- * on its own (a clipped row would put its anchor outside the card).
+ * relation layer can compute exact column anchors: the card height is
+ * `cardHeight(columns.length)`, fixed once the list reaches its cap. Long tables
+ * scroll **inside** the card (as in Navicat); the relation layer reports a
+ * scrolled-out column by clamping its anchor to the list edge.
  */
 export function TableCard({
   tableName,
@@ -70,6 +79,7 @@ export function TableCard({
   onDragEnd,
   onSetAlias,
   onStartManualJoin,
+  onListScroll,
 }: TableCardProps) {
   const { t } = useI18n();
   const dragRef = useRef<{
@@ -199,9 +209,20 @@ export function TableCard({
         </button>
       </div>
 
-      {/* Column list — never scrolls: the card grows instead, which is what
-          keeps every column anchor inside the card. */}
-      <div style={{ paddingTop: CARD_LIST_PADDING_Y, paddingBottom: CARD_LIST_PADDING_Y }}>
+      {/* Column list — a fixed-height window that scrolls internally, so a card
+          stays a stable object on the canvas no matter how wide its table is.
+          The relation layer clamps any anchor whose column is scrolled out. */}
+      <div
+        className="qb-col-list"
+        style={{
+          maxHeight: CARD_LIST_MAX_HEIGHT,
+          overflowY: cardListScrolls(columns.length) ? 'auto' : 'hidden',
+          paddingTop: CARD_LIST_PADDING_Y,
+          paddingBottom: CARD_LIST_PADDING_Y,
+        }}
+        onScroll={(e) => onListScroll?.(tableName, e.currentTarget.scrollTop)}
+        data-testid={`qb-col-list-${tableName}`}
+      >
         {columns.map((col) => {
           const isPk = primaryKeyColumns.includes(col.name);
           const fkTarget = foreignKeyMap[col.name];

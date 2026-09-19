@@ -12,6 +12,7 @@
 import { browser, $, expect } from '@wdio/globals';
 import { captureJourneyStep } from '../../helpers.js';
 import {
+  addTableCard,
   addWhereCondition,
   clickQbClose,
   clickQbOk,
@@ -22,10 +23,13 @@ import {
   dragSplitter,
   existsInDom,
   heightOf,
+  isQbOpen,
   openQbViaMenu,
   previewText,
+  qbCall,
   qbRead,
   readEditorSql,
+  removeTableCard,
   selectCardColumn,
   toggleAllColumns,
   setEditorSql,
@@ -40,6 +44,10 @@ import type { QbJourneySetup } from './visualQueryBuilderHelpers.js';
 const TABLE = `e2e_qb_a_${Date.now().toString(36)}`;
 const COLUMNS = ['id', 'name', 'category', 'score'];
 
+/** Tall enough (16 rows) that its card must scroll internally — see A17. */
+const WIDE = `e2e_qb_a_wide_${Date.now().toString(36)}`;
+const WIDE_COLUMNS = Array.from({ length: 16 }, (_, i) => `col_${String(i + 1).padStart(2, '0')}`);
+
 describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
   let setup: QbJourneySetup;
 
@@ -48,13 +56,15 @@ describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
       connectionId: 'e2e_qb_a_conn',
       connectionName: 'E2E-QB-A',
       captureLabel: 'qba-open-suite',
-      tables: { [TABLE]: COLUMNS },
+      tables: { [TABLE]: COLUMNS, [WIDE]: WIDE_COLUMNS },
       seedStatements: [
         `DROP TABLE IF EXISTS ${TABLE} CASCADE`,
         `CREATE TABLE ${TABLE} (id INTEGER, name TEXT, category TEXT, score INTEGER)`,
         `INSERT INTO ${TABLE} (id, name, category, score) VALUES ` +
           `(1, 'Alice', 'A', 90), (2, 'Bob', 'B', 80), ` +
           `(3, 'Charlie', 'A', 70), (4, 'Diana', 'B', 95)`,
+        `DROP TABLE IF EXISTS ${WIDE} CASCADE`,
+        `CREATE TABLE ${WIDE} (${WIDE_COLUMNS.map((c) => `${c} INTEGER`).join(', ')})`,
       ],
     });
     await setEditorSql('');
@@ -249,5 +259,98 @@ describe('Visual Query Builder 正常旅程 (QB-JOURNEY-A)', () => {
     const afterClose = (await readEditorSql()).replace(/\s+/g, ' ').trim();
     expect(afterClose).toBe(beforeClose);
     await captureJourneyStep('qba-closed');
+  });
+
+  /**
+   * A17–A20 — the three shape regressions that a "it renders something" test
+   * would miss, each one measured on the real rendered geometry:
+   *   A17 a card is a FIXED height object that scrolls its column list
+   *       internally (Navicat behaviour) instead of growing with the table;
+   *   A18 that height does not change when the list is scrolled;
+   *   A19 the preview is pretty-printed, not the generator's one long line;
+   *   A20 the preview is syntax-highlighted and fills its tab region.
+   */
+  it('A17–A20: 卡片固定高度内滚 + Preview 高亮/格式化/占满高度', async () => {
+    if (!(await isQbOpen())) await openQbViaMenu('qba-shape');
+    await qbCall('reset');
+    await addTableCard(WIDE, { x: 20, y: 20 });
+    await addTableCard(TABLE, { x: 500, y: 20 });
+    await browser.pause(500);
+
+    // ── A17: the 16-column card is capped and scrolls internally ──
+    const metrics = await browser.execute(
+      (wide: string, small: string) => {
+        const card = (t: string) =>
+          document.querySelector<HTMLElement>(`[data-testid="qb-drag-${t}"]`);
+        const list = (t: string) =>
+          document.querySelector<HTMLElement>(`[data-testid="qb-col-list-${t}"]`);
+        const wl = list(wide);
+        const sl = list(small);
+        return {
+          wideHeight: card(wide)?.getBoundingClientRect().height ?? 0,
+          smallHeight: card(small)?.getBoundingClientRect().height ?? 0,
+          wideListClientHeight: wl?.clientHeight ?? 0,
+          wideListScrollHeight: wl?.scrollHeight ?? 0,
+          smallScrolls: sl ? sl.scrollHeight > sl.clientHeight + 1 : true,
+        };
+      },
+      WIDE,
+      TABLE,
+    );
+    // 16 rows × 24px + padding ≈ 392px of content …
+    expect(metrics.wideListScrollHeight).toBeGreaterThan(metrics.wideListClientHeight + 100);
+    // … inside a card capped at header + 200px (≈237px), not 430px.
+    expect(metrics.wideHeight).toBeLessThan(260);
+    expect(metrics.smallHeight).toBeGreaterThan(0);
+    expect(metrics.smallHeight).toBeLessThan(metrics.wideHeight);
+    // A short table has nothing to scroll — its list must not fake a scrollbar.
+    expect(metrics.smallScrolls).toBe(false);
+    await captureJourneyStep('qba-fixed-height-card');
+
+    // ── A18: scrolling the list does not resize the card ──
+    const scrolled = await browser.execute((t: string) => {
+      const list = document.querySelector<HTMLElement>(`[data-testid="qb-col-list-${t}"]`);
+      if (!list) return null;
+      list.scrollTop = 120;
+      const card = document.querySelector<HTMLElement>(`[data-testid="qb-drag-${t}"]`);
+      return { scrollTop: list.scrollTop, height: card?.getBoundingClientRect().height ?? 0 };
+    }, WIDE);
+    expect(scrolled).not.toBeNull();
+    expect(scrolled!.scrollTop).toBeGreaterThan(0);
+    expect(scrolled!.height).toBe(metrics.wideHeight);
+
+    // ── A19–A20: preview formatting, highlighting and height ──
+    await removeTableCard(TABLE);
+    await toggleAllColumns(WIDE);
+    await switchQbTab('preview');
+    await browser.pause(300);
+
+    const sql = await previewText();
+    // The generator's output is a single line; the preview must be formatted.
+    expect(sql).toContain('\n');
+    expect(sql.toUpperCase()).toContain('SELECT');
+
+    const preview = await browser.execute(() => {
+      const pre = document.querySelector<HTMLElement>('[data-testid="qb-sql-preview"]');
+      const tab = document.querySelector<HTMLElement>('[data-testid="qb-tab-content"]');
+      if (!pre || !tab) return null;
+      return {
+        spans: pre.querySelectorAll('span').length,
+        keywords: pre.querySelectorAll('span[class*="text-accent"]').length,
+        height: pre.getBoundingClientRect().height,
+        tabHeight: tab.getBoundingClientRect().height,
+      };
+    });
+    expect(preview).not.toBeNull();
+    // Highlighting is real token spans, and keywords take the accent colour.
+    expect(preview!.spans).toBeGreaterThan(5);
+    expect(preview!.keywords).toBeGreaterThan(0);
+    // The preview fills the region — leaving room only for its own header row.
+    expect(preview!.height).toBeGreaterThan(120);
+    expect(preview!.height).toBeGreaterThan(preview!.tabHeight - 70);
+    await captureJourneyStep('qba-preview-shape');
+
+    // Leave the journey clean for the runner's teardown.
+    await qbCall('reset');
   });
 });

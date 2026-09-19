@@ -1,6 +1,9 @@
 # Visual Query Builder
 
-> Status: **v3.2** — canvas + bottom tabs + OK commit, covered by three E2E journeys.
+> Status: **v3.3** — canvas + bottom tabs + OK commit, covered by three E2E journeys.
+> v3.3: fixed-height cards that scroll internally, orthogonal direction-less
+> relation lines, and a preview that is highlighted, pretty-printed and full
+> height.
 > PRD: [docs/prd/query-builder-prd.md](../prd/query-builder-prd.md)
 
 ## Overview
@@ -88,11 +91,11 @@ discarding (the canvas state survives).
 Foreign keys are drawn as **lines only — the canvas carries no relation text**.
 Each line connects the two specific columns it relates, at that column's row.
 
-- **One constraint = one line object.** A single-column FK is a straight line; a
-  **composite FK** merges its source stubs into one trunk and splits the trunk
-  into one stub per referenced column (`many → one → many`). Two constraints
-  between the same pair of tables get **parallel lanes** 14px apart, ordered by
-  source row index so they never swap while dragging.
+- **One constraint = one line object.** A single-column FK is an orthogonal
+  polyline; a **composite FK** merges its source stubs into one trunk and splits
+  the trunk into one stub per referenced column (`many → one → many`). Two
+  constraints between the same pair of tables get **parallel lanes** 14px apart,
+  ordered by source row index so they never swap while dragging.
 - **State**: dashed + muted = detected but not in the SQL; solid + accent = in
   the SQL. A half-confirmed composite FK is drawn half-solid and blocks OK via
   the `composite-join-incomplete` diagnostic.
@@ -113,10 +116,21 @@ Each line connects the two specific columns it relates, at that column's row.
 > a `--color-*` namespace that does not exist, which made every connector render
 > with an invalid `stroke` — i.e. the lines were invisible.
 
-> Card height follows the column count (no inner scrolling) so a column's anchor
-> is always inside its card. The canvas itself scrolls natively (wheel/trackpad or
-> the scrollbars) and zooms with **Ctrl/Cmd + wheel** around the pointer; panning is
-> scrolling (middle-drag or Space + drag).
+> **Geometry.** Every relation is an **orthogonal polyline** (every segment is
+> horizontal or vertical) and carries **no direction**: there are no arrowheads
+> and no `marker-*` on any path — FK direction is a fact about the DDL, not a
+> question the canvas is answering. Each pair terminates in a symmetric dot at
+> both ends. If a column is scrolled out of its card's list, its anchor is
+> clamped to the list edge and drawn as a **hollow ring** (never a chevron or
+> arrowhead, which would read as a direction) instead of pointing at a row that
+> is not there.
+
+> **Card height is fixed.** A card is `header + min(list, 200px)`; a table with
+> more columns than that **scrolls its own column list** (Navicat behaviour)
+> rather than growing, so a wide table can never push its neighbours off screen.
+> The canvas itself scrolls natively (wheel/trackpad or the scrollbars) and zooms
+> with **Ctrl/Cmd + wheel** around the pointer; panning is scrolling
+> (middle-drag or Space + drag).
 
 ### WHERE Conditions
 
@@ -169,6 +183,18 @@ silently become `1.5`.
 
 - Live SQL for the current canvas, with the active dialect badge and a copy
   button.
+- **Pretty-printed**: the generator emits one long line, the preview runs it
+  through the same formatter (and the same user format options) as the editor's
+  "Format SQL", so `LIMIT 50` reads as a clause rather than a run-on. OK commits
+  exactly the text the preview showed, and the "editor already holds this" check
+  compares against the formatted text too (otherwise every reopen would look
+  like a conflict).
+- **Syntax-highlighted** by a small in-house tokenizer (`sqlHighlight.ts`) that
+  emits one `<span>` per token; it is lossless, so the rendered text is still
+  byte-identical to the generated SQL (the E2E probe reads it back via
+  `textContent`).
+- Fills the tab region (the preview `<pre>` grows to the available height and
+  scrolls internally), instead of collapsing to a short box.
 - Read-only by design: the builder is the single source of truth, so text edits
   belong in the editor after OK.
 - A generation problem (for example a table with no columns selected) shows a
@@ -230,9 +256,9 @@ pnpm e2e:qb:regression   # blast-radius guard: query panel / editor / navigator
 
 | Journey             | Spec                                                         | Covers                                                                                                                                                |
 | ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`         | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close                                          |
+| A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`         | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
 | B — abnormal        | `e2e/specs/journeys/visual-query-builder-edge-journey.ts`    | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                |
-| C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts` | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it |
+| C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts` | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
 
 Shared drivers live in `e2e/specs/journeys/visualQueryBuilderHelpers.ts`.
 

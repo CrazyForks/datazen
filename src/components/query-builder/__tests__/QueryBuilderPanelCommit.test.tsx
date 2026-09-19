@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryBuilderPanel } from '../QueryBuilderPanel';
 import { generateSql } from '../hooks/useSqlGenerator';
+import { formatSql } from '../../../lib/sqlFormat';
 import { useQueryBuilderStore } from '../../../stores/queryBuilderStore';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -140,6 +141,61 @@ describe('QueryBuilderPanel bottom tabs', () => {
   });
 });
 
+describe('QueryBuilderPanel preview tab', () => {
+  it('shows the SQL pretty-printed, not as one long line', () => {
+    openWith();
+    renderPanel();
+    fireEvent.click(screen.getByTestId('qb-tab-preview'));
+
+    const preview = screen.getByTestId('qb-sql-preview');
+    const shown = preview.textContent ?? '';
+    expect(shown).toBe(formatSql(generatedSql(), 'postgresql'));
+    // The generator's own output is single-line; the preview must not be.
+    expect(generatedSql()).not.toContain('\n');
+    expect(shown).toContain('\n');
+  });
+
+  it('highlights tokens instead of rendering plain text', () => {
+    openWith();
+    renderPanel();
+    fireEvent.click(screen.getByTestId('qb-tab-preview'));
+
+    const preview = screen.getByTestId('qb-sql-preview');
+    expect(preview.querySelectorAll('span').length).toBeGreaterThan(5);
+    // Exact text is preserved for the E2E probe, which reads textContent.
+    expect(preview.textContent).toContain('SELECT');
+  });
+
+  it('commits exactly what the preview showed (WYSIWYG)', () => {
+    openWith();
+    const { onCommit } = renderPanel({ currentSql: '' });
+    fireEvent.click(screen.getByTestId('qb-tab-preview'));
+    const shown = screen.getByTestId('qb-sql-preview').textContent ?? '';
+
+    fireEvent.click(screen.getByTestId('qb-ok'));
+
+    expect(onCommit).toHaveBeenCalledWith(shown, 'replace');
+  });
+
+  it('keeps the preview region able to fill the tab height', () => {
+    openWith();
+    renderPanel();
+    fireEvent.click(screen.getByTestId('qb-tab-preview'));
+
+    // flex-1 chain: tab-content → preview-region → preview root → <pre>
+    expect(screen.getByTestId('qb-tab-content')).toHaveClass('flex-col');
+    expect(screen.getByTestId('qb-preview-region')).toHaveClass('flex-1');
+    expect(screen.getByTestId('qb-sql-preview')).toHaveClass('flex-1');
+  });
+
+  it('gives the build tab its own scroll container', () => {
+    openWith();
+    renderPanel();
+    expect(screen.getByTestId('qb-build-scroll')).toHaveClass('overflow-auto');
+    expect(screen.getByTestId('qb-build-scroll')).toHaveClass('flex-1');
+  });
+});
+
 describe('QueryBuilderPanel OK commit', () => {
   it('writes straight through when the editor is empty', () => {
     openWith();
@@ -152,7 +208,9 @@ describe('QueryBuilderPanel OK commit', () => {
 
   it('does not prompt when the editor already holds the identical SQL', () => {
     openWith();
-    const { onCommit } = renderPanel({ currentSql: generatedSql() });
+    // The builder commits the pretty-printed SQL, so the "identical" baseline is
+    // the formatted text — otherwise every reopen would look like a conflict.
+    const { onCommit } = renderPanel({ currentSql: formatSql(generatedSql(), 'postgresql') });
 
     fireEvent.click(screen.getByTestId('qb-ok'));
 

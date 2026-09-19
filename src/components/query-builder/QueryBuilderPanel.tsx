@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Blocks, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useSqlGenerator } from './hooks/useSqlGenerator';
 import { useAutoJoin } from './hooks/useAutoJoin';
@@ -21,6 +22,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useResizable } from '../../hooks/useResizable';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { getCachedTableSchema } from '../../lib/schemaCache';
+import { formatSql } from '../../lib/sqlFormat';
 import { cn } from '../../lib/cn';
 import type { ColumnInfo } from '../../types';
 import type { QbJoinType } from './types';
@@ -76,6 +78,9 @@ export function QueryBuilderPanel({
   const columnMap = useSchemaStore((s) => s.columnMap);
   const currentDatabase = useSchemaStore((s) => s.currentDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
+  // The same options the editor's own "Format SQL" uses, so the preview and the
+  // committed statement always match what the user configured.
+  const formatOptions = useSettingsStore((s) => s.settings.sqlFormatOptions);
 
   // ── Query builder state ────────────────────────────────
   const selectedTables = useQueryBuilderStore((s) => s.selectedTables);
@@ -185,7 +190,6 @@ export function QueryBuilderPanel({
           // Schema unavailable for this table — draw no relation for it.
         }
       }
-      console.log('All FK relations:', allFks);
       if (!cancelled) {
         setFkRelations(allFks);
       }
@@ -321,6 +325,22 @@ export function QueryBuilderPanel({
   });
 
   /**
+   * The generator emits one long line; the preview and the committed statement
+   * both use the pretty-printed form so what you see is what lands in the
+   * editor. Formatting never changes semantics, so diagnostics keep reading the
+   * raw `sql`; a formatter failure falls back to the raw text rather than
+   * blocking the commit.
+   */
+  const formattedSql = useMemo(() => {
+    if (!sql) return '';
+    try {
+      return formatSql(sql, databaseType, formatOptions);
+    } catch {
+      return sql;
+    }
+  }, [sql, databaseType, formatOptions]);
+
+  /**
    * Problems the generator would otherwise paper over with plausible-looking
    * SQL (`col = NULL`, `IN ()`, dropped pagination). Anything with
    * `severity: 'error'` blocks OK and is listed in the Preview tab.
@@ -333,29 +353,29 @@ export function QueryBuilderPanel({
   // ── Commit / cancel ────────────────────────────────────
 
   const handleOk = useCallback(() => {
-    if (!sql) return;
+    if (!formattedSql) return;
     const editorSql = currentSql.trim();
     // Editor empty → write straight through.
     if (!editorSql) {
-      onCommit(sql, 'replace');
+      onCommit(formattedSql, 'replace');
       return;
     }
     // Already identical → nothing to change, just close and focus.
-    if (editorSql === sql.trim()) {
+    if (editorSql === formattedSql.trim()) {
       onCommit(null, 'replace');
       return;
     }
     // Different content → never overwrite silently.
     setConflictOpen(true);
-  }, [sql, currentSql, onCommit]);
+  }, [formattedSql, currentSql, onCommit]);
 
   const handleConflictChoice = useCallback(
     (choice: CommitConflictChoice) => {
       setConflictOpen(false);
       if (choice === 'keep') return;
-      onCommit(sql, choice);
+      onCommit(formattedSql, choice);
     },
-    [sql, onCommit],
+    [formattedSql, onCommit],
   );
 
   const handleCancel = useCallback(async () => {
@@ -637,7 +657,7 @@ export function QueryBuilderPanel({
                   ))}
                 </ul>
               )}
-              <SqlPreview sql={sql} databaseType={databaseType} />
+              <SqlPreview sql={formattedSql} databaseType={databaseType} />
             </div>
           }
         />

@@ -31,6 +31,13 @@ export const CARD_ROW_HEIGHT = 24;
 /** Horizontal inset of row content (px-3). */
 export const CARD_ROW_INSET_X = 12;
 
+/**
+ * Maximum height of a card's column list. Beyond this the list scrolls
+ * internally — a card is a fixed-height object, as in Navicat, rather than
+ * growing with the table's column count.
+ */
+export const CARD_LIST_MAX_HEIGHT = 200;
+
 /** Padding kept around the cards inside the scrollable canvas content. */
 export const CANVAS_PADDING = 240;
 
@@ -41,9 +48,23 @@ export function snapToGrid(value: number, grid: number = CARD_GRID): number {
   return Math.max(0, Math.round(value / grid) * grid);
 }
 
-/** Rendered height of a card with `columnCount` columns (no inner scrolling). */
+/**
+ * Height of the column list box: the columns' natural height, capped at
+ * {@link CARD_LIST_MAX_HEIGHT}. Anything beyond the cap is scrolled internally.
+ */
+export function cardListHeight(columnCount: number): number {
+  const natural = CARD_LIST_PADDING_Y * 2 + columnCount * CARD_ROW_HEIGHT;
+  return Math.min(natural, CARD_LIST_MAX_HEIGHT);
+}
+
+/** True when the card's list needs an internal scrollbar. */
+export function cardListScrolls(columnCount: number): boolean {
+  return CARD_LIST_PADDING_Y * 2 + columnCount * CARD_ROW_HEIGHT > CARD_LIST_MAX_HEIGHT;
+}
+
+/** Rendered height of a card (fixed once the list reaches its cap). */
 export function cardHeight(columnCount: number): number {
-  return CARD_HEADER_HEIGHT + CARD_LIST_PADDING_Y * 2 + columnCount * CARD_ROW_HEIGHT;
+  return CARD_HEADER_HEIGHT + cardListHeight(columnCount);
 }
 
 /** Vertical center of column row `index` inside a card placed at `cardY`. */

@@ -802,17 +802,26 @@ export async function teardownQbJourney(setup: QbJourneySetup): Promise<void> {
 
 // ── Assertions ─────────────────────────────────────────────────────
 
-/** Assert the generated SQL contains every fragment. */
+/**
+ * Assert the generated SQL contains every fragment.
+ *
+ * Fragments are compared with ALL whitespace removed, because the preview and
+ * the committed statement are pretty-printed: `LIMIT 50` is legitimately
+ * rendered as `LIMIT\n  50`. The assertion is about the token sequence, not
+ * about where the formatter chose to break lines.
+ */
 export function expectSqlFragments(sql: string, fragments: string[]): void {
+  const compact = sql.toUpperCase().replace(/\s+/g, '');
   for (const fragment of fragments) {
-    expect(sql.toUpperCase()).toContain(fragment.toUpperCase());
+    expect(compact).toContain(fragment.toUpperCase().replace(/\s+/g, ''));
   }
 }
 
-/** Assert the generated SQL contains none of the fragments. */
+/** Assert the generated SQL contains none of the fragments (whitespace-insensitive). */
 export function expectNoSqlFragments(sql: string, fragments: string[]): void {
+  const compact = sql.toUpperCase().replace(/\s+/g, '');
   for (const fragment of fragments) {
-    expect(sql.toUpperCase()).not.toContain(fragment.toUpperCase());
+    expect(compact).not.toContain(fragment.toUpperCase().replace(/\s+/g, ''));
   }
 }
 

@@ -1,11 +1,12 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
 import { getDbLabel } from '../../lib/databaseTypes';
 import type { DatabaseType } from '../../types';
+import { SQL_TOKEN_CLASS, tokenizeSql } from './sqlHighlight';
 
 export interface SqlPreviewProps {
-  /** Generated SQL. Empty string renders the empty state. */
+  /** Generated SQL, already pretty-printed. Empty string renders the empty state. */
   sql: string;
   /** Active driver, used for the dialect badge. */
   databaseType?: string;
@@ -18,10 +19,16 @@ export interface SqlPreviewProps {
  *
  * Read-only is deliberate: the builder is the single source of truth for this
  * text, so edits belong in the SQL editor after OK (see PRD §6.3).
+ *
+ * Highlighting is done by tokenizing the text ourselves and emitting one span
+ * per token — no editor instance, no dependency, and the concatenated spans
+ * reproduce the generated SQL byte for byte (E2E reads it back via textContent).
  */
 export function SqlPreview({ sql, databaseType, emptyHint }: SqlPreviewProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+
+  const tokens = useMemo(() => (sql ? tokenizeSql(sql) : []), [sql]);
 
   const handleCopy = useCallback(() => {
     if (!sql) return;
@@ -35,7 +42,7 @@ export function SqlPreview({ sql, databaseType, emptyHint }: SqlPreviewProps) {
 
   if (!sql) {
     return (
-      <div className="p-3" data-testid="qb-sql-preview-empty">
+      <div className="flex flex-1 flex-col p-3" data-testid="qb-sql-preview-empty">
         <p className="text-xs text-fg-muted">
           {emptyHint ?? t('query.visualBuilder.previewEmpty')}
         </p>
@@ -72,7 +79,13 @@ export function SqlPreview({ sql, databaseType, emptyHint }: SqlPreviewProps) {
         className="min-h-0 flex-1 select-all overflow-auto rounded-lg border border-edge bg-surface-alt p-3 font-mono text-[12px] leading-relaxed text-fg"
         data-testid="qb-sql-preview"
       >
-        <code>{sql}</code>
+        <code>
+          {tokens.map((token, index) => (
+            <span key={index} className={SQL_TOKEN_CLASS[token.kind]}>
+              {token.text}
+            </span>
+          ))}
+        </code>
       </pre>
     </div>
   );

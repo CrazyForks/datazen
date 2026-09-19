@@ -358,16 +358,35 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
     });
     expect(constraintCount).toBe(1);
 
-    // … drawn as ONE trunk, with one arrow + one origin dot per column pair.
+    // … drawn as ONE trunk of axis-aligned segments, with a terminal dot at
+    // both ends of every pair and no direction marker anywhere.
     const shape = await browser.execute(() => {
       const groups = Array.from(document.querySelectorAll('g[data-relation-kind]'));
-      const group = groups[0];
+      const group = groups[0] as SVGGElement | undefined;
+      const paths = group ? Array.from(group.querySelectorAll('path[data-part]')) : [];
+      const ds = paths.map((p) => p.getAttribute('d') ?? '');
+      // A polyline is a fold line only if consecutive points share an axis —
+      // this is what catches a regression back to a straight diagonal.
+      const axial = ds.every((d) => {
+        const nums = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+        const pts: Array<[number, number]> = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i]!, nums[i + 1]!]);
+        return pts.every((p, i) => {
+          if (i === 0) return true;
+          const q = pts[i - 1]!;
+          return Math.abs(p[0] - q[0]) < 0.01 || Math.abs(p[1] - q[1]) < 0.01;
+        });
+      });
       const state = (window as any).__qbStore.getState();
       return {
         groups: groups.length,
         trunks: group ? group.querySelectorAll('[data-part="trunk"]').length : -1,
         arrows: group ? group.querySelectorAll('.qb-relation-arrow').length : -1,
         dots: group ? group.querySelectorAll('.qb-relation-dot').length : -1,
+        markers: paths.filter((p) => p.getAttribute('marker-end') ?? p.getAttribute('marker-start'))
+          .length,
+        segments: ds.length,
+        axial,
         pairs: group?.getAttribute('data-relation-pairs') ?? null,
         detected: (state.autoJoins ?? []).map(
           (join: { constraint?: string; leftColumn: string; rightColumn: string }) =>
@@ -379,9 +398,14 @@ describe('Visual Query Builder 高复杂度语句构造旅程 (QB-JOURNEY-C)', (
     // One merged relation (not one line per column pair) …
     expect(shape!.groups).toBe(1);
     expect(shape!.trunks).toBe(1);
-    // … carrying exactly one arrow and one dot per pair in the group.
-    expect(shape!.dots).toBe(2);
-    expect(shape!.arrows).toBe(2);
+    // … one trunk + one source stub + one target stub per pair …
+    expect(shape!.segments).toBe(5);
+    // … drawing a fold line (no diagonals) with no direction of any kind.
+    expect(shape!.axial).toBe(true);
+    expect(shape!.arrows).toBe(0);
+    expect(shape!.markers).toBe(0);
+    // … and a symmetric terminal dot at BOTH ends of every pair.
+    expect(shape!.dots).toBe(4);
     expect(shape!.pairs).toBe('0/2');
     expect(await existsInDom('[data-testid^="qb-join-label-"]')).toBe(false);
     await captureJourneyStep('qbc-composite-trunk');
