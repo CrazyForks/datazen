@@ -159,10 +159,12 @@ export function TableCard({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      {/* Header — same horizontal rhythm as the rows below, so the select-all
-          checkbox lines up with the per-column checkboxes. */}
+      {/* Header — accent-tinted (same `bg-accent/15` + `text-accent` recipe as
+          the ER diagram's table node header) so the table name reads as the
+          card's title. Horizontal rhythm matches the rows below, so the
+          select-all checkbox lines up with the per-column checkboxes. */}
       <div
-        className="flex items-center gap-2 border-b border-edge px-3"
+        className="flex items-center gap-2 border-b border-edge bg-accent/15 px-3"
         style={{ height: CARD_HEADER_HEIGHT }}
       >
         <input
@@ -178,7 +180,7 @@ export function TableCard({
           aria-label={t('query.visualBuilder.selectAllColumns')}
           data-testid={`qb-selectall-${tableName}`}
         />
-        <span className="truncate text-[13px] font-semibold" title={tableName}>
+        <span className="truncate text-[13px] font-semibold text-accent" title={tableName}>
           {tableName}
         </span>
         <input
