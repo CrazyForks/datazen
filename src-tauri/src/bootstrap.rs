@@ -467,6 +467,7 @@ pub fn run() {
             crate::commands::get_databases,
             crate::commands::get_tables,
             crate::commands::get_columns,
+            crate::commands::get_columns_typed,
             crate::commands::get_all_columns,
             crate::commands::get_table_schema,
             crate::commands::get_structure_capabilities,

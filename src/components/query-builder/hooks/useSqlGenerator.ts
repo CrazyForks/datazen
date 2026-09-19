@@ -7,6 +7,7 @@ import {
   columnRef,
 } from '../../../lib/sqlDialects/queryBuilder';
 import { isExactNumericLiteral } from '../validation';
+import { classifyColumnType, TypeCategory } from '../typeCategory';
 import type {
   QbConditionGroup,
   QbCondition,
@@ -32,6 +33,12 @@ export interface GenerateSqlInput {
   limit: number | null;
   offset: number | null;
   databaseType?: string;
+  /**
+   * Per-table column type map (table → column → raw dataType string).
+   * Used by {@link formatValue} to decide quoting strategy:
+   * temporal columns always quoted, boolean emits TRUE/FALSE, etc.
+   */
+  columnTypeMap?: Record<string, Record<string, string>>;
 }
 
 // ── Value formatting helpers ──────────────────────────────────
@@ -39,28 +46,49 @@ export interface GenerateSqlInput {
 /**
  * Format a raw value for inclusion in a SQL expression.
  * - `null` / empty → `NULL`
- * - Exact numeric literals → unquoted
+ * - Boolean columns → `TRUE` / `FALSE` keywords
+ * - Temporal columns → always single-quoted (even numeric-looking values like `10`)
+ * - Numeric columns → unquoted for pure numeric literals
  * - Everything else → single-quoted with escaped single quotes
- *
- * Only literals that survive `String(Number(v))` unchanged are emitted unquoted:
- * `007` is not a valid numeric literal in PostgreSQL, and `1.50` would silently
- * become `1.5`. Quoting those keeps the value the user typed; the server coerces
- * them back for numeric columns.
  */
-function formatValue(value: string | null): string {
+function formatValue(value: string | null, columnType?: string): string {
   if (value === null || value === '') return 'NULL';
+
+  if (columnType) {
+    const category = classifyColumnType(columnType);
+
+    // Boolean: emit native TRUE/FALSE keywords
+    if (category === TypeCategory.Boolean) {
+      const lower = value.toLowerCase().trim();
+      if (lower === 'true' || lower === '1' || lower === 'yes') return 'TRUE';
+      if (lower === 'false' || lower === '0' || lower === 'no') return 'FALSE';
+      // Fall through to quoted string for other values
+    }
+
+    // Temporal: always quote — never trust isExactNumericLiteral here
+    if (category === TypeCategory.Temporal) {
+      return `'${value.replace(/'/g, "''")}'`;
+    }
+
+    // Numeric: use the existing heuristic
+    if (category === TypeCategory.Numeric) {
+      if (isExactNumericLiteral(value)) return value;
+    }
+  }
+
+  // Fallback: original behavior (no column type info)
   if (isExactNumericLiteral(value)) return value;
   return `'${value.replace(/'/g, "''")}'`;
 }
 
 /** Parse a comma-separated IN-list value into individual SQL-escaped strings. */
-function parseInValues(value: string | null): string[] {
+function parseInValues(value: string | null, columnType?: string): string[] {
   if (!value) return [];
   return value
     .split(',')
     .map((v) => v.trim())
     .filter(Boolean)
-    .map((v) => formatValue(v));
+    .map((v) => formatValue(v, columnType));
 }
 
 // ── Condition formatting ──────────────────────────────────────
@@ -69,12 +97,16 @@ function formatCondition(
   cond: QbCondition,
   aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
+  columnTypeMap?: Record<string, Record<string, string>>,
 ): string {
   // Alias-aware: a hand-written alias must change the emitted qualifier, or the
   // alias would be declared in FROM/JOIN and then never used.
   const ref = columnRef(cond.table, cond.column, aliases, adapter);
   // HAVING filters aggregates (`HAVING SUM(qty) >= 2000`).
   const col = cond.aggregate ? `${cond.aggregate}(${ref})` : ref;
+
+  // Look up the column's raw dataType for type-aware value formatting.
+  const colType = columnTypeMap?.[cond.table]?.[cond.column];
 
   switch (cond.operator) {
     case '=':
@@ -83,19 +115,19 @@ function formatCondition(
     case '<':
     case '>=':
     case '<=':
-      return `${col} ${cond.operator} ${formatValue(cond.value)}`;
+      return `${col} ${cond.operator} ${formatValue(cond.value, colType)}`;
 
     case 'LIKE':
-      return `${col} LIKE ${formatValue(cond.value)}`;
+      return `${col} LIKE ${formatValue(cond.value, colType)}`;
 
     case 'NOT LIKE':
-      return `${col} NOT LIKE ${formatValue(cond.value)}`;
+      return `${col} NOT LIKE ${formatValue(cond.value, colType)}`;
 
     case 'IN':
-      return adapter.formatInList(col, parseInValues(cond.value), false);
+      return adapter.formatInList(col, parseInValues(cond.value, colType), false);
 
     case 'NOT IN':
-      return adapter.formatInList(col, parseInValues(cond.value), true);
+      return adapter.formatInList(col, parseInValues(cond.value, colType), true);
 
     case 'IS NULL':
       return adapter.formatNullComparison(col, true);
@@ -104,7 +136,7 @@ function formatCondition(
       return adapter.formatNullComparison(col, false);
 
     default:
-      return `${col} = ${formatValue(cond.value)}`;
+      return `${col} = ${formatValue(cond.value, colType)}`;
   }
 }
 
@@ -115,6 +147,7 @@ function buildGroupExpr(
   group: QbConditionGroup,
   aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
+  columnTypeMap?: Record<string, Record<string, string>>,
 ): string {
   const parts: string[] = [];
 
@@ -124,13 +157,13 @@ function buildGroupExpr(
   // as `a AND b AND c`. The first row has no row above it, so its conjunction is
   // unused (the editor hides the control there for exactly that reason).
   group.conditions.forEach((cond, index) => {
-    const expr = formatCondition(cond, aliases, adapter);
+    const expr = formatCondition(cond, aliases, adapter, columnTypeMap);
     if (index === 0) parts.push(expr);
     else parts.push(`${cond.conjunction} ${expr}`);
   });
 
   for (const subGroup of group.groups) {
-    const sub = buildGroupExpr(subGroup, aliases, adapter);
+    const sub = buildGroupExpr(subGroup, aliases, adapter, columnTypeMap);
     // A sub-group has no per-row conjunction, so it is linked with the group's
     // own logic.
     if (sub) parts.push(`${group.logic} (${sub})`);
@@ -144,8 +177,9 @@ function buildWhereClause(
   group: QbConditionGroup,
   aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
+  columnTypeMap?: Record<string, Record<string, string>>,
 ): string {
-  const expr = buildGroupExpr(group, aliases, adapter);
+  const expr = buildGroupExpr(group, aliases, adapter, columnTypeMap);
   if (!expr) return '';
   return ` WHERE ${expr}`;
 }
@@ -155,9 +189,10 @@ function buildHavingClause(
   group: QbConditionGroup | undefined,
   aliases: Record<string, string>,
   adapter: ReturnType<typeof getQbDialectAdapter>,
+  columnTypeMap?: Record<string, Record<string, string>>,
 ): string {
   if (!group) return '';
-  const expr = buildGroupExpr(group, aliases, adapter);
+  const expr = buildGroupExpr(group, aliases, adapter, columnTypeMap);
   if (!expr) return '';
   return ` HAVING ${expr}`;
 }
@@ -172,6 +207,7 @@ function generateSql(input: GenerateSqlInput): string {
   const adapter = getQbDialectAdapter(input.databaseType);
   const q = (name: string) => adapter.quoteIdentifier(name);
   const aliases = input.tableAliases ?? {};
+  const columnTypeMap = input.columnTypeMap;
 
   // 1. SELECT
   const selectItems = input.selectedColumns.map((col) => {
@@ -200,7 +236,7 @@ function generateSql(input: GenerateSqlInput): string {
     ...input.where,
     conditions: [...input.where.conditions, ...perColumnConditions],
   };
-  const whereClause = buildWhereClause(effectiveWhere, aliases, adapter);
+  const whereClause = buildWhereClause(effectiveWhere, aliases, adapter, columnTypeMap);
 
   // 5. GROUP BY — merge store-level groupBy with per-column groupBy flags
   const perColumnGroupBy: QbGroupByItem[] = input.selectedColumns
@@ -215,7 +251,7 @@ function generateSql(input: GenerateSqlInput): string {
       : '';
 
   // 6. HAVING — after GROUP BY, before ORDER BY.
-  const havingClause = buildHavingClause(input.having, aliases, adapter);
+  const havingClause = buildHavingClause(input.having, aliases, adapter, columnTypeMap);
 
   // 7. ORDER BY — merge store-level orderBy with per-column sort.  //
   // A per-column sort on an *aggregated* column must order by the aggregate
@@ -271,6 +307,7 @@ export function useSqlGenerator(input: GenerateSqlInput): string {
       input.limit,
       input.offset,
       input.databaseType,
+      input.columnTypeMap,
     ],
   );
 }

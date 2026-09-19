@@ -76,6 +76,7 @@ export function QueryBuilderPanel({
 
   // ── Schema data ────────────────────────────────────────
   const columnMap = useSchemaStore((s) => s.columnMap);
+  const typedColumnMap = useSchemaStore((s) => s.typedColumnMap);
   const currentDatabase = useSchemaStore((s) => s.currentDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
   /** Every table of the connection — the FROM picker's candidate list. */
@@ -291,10 +292,15 @@ export function QueryBuilderPanel({
   const columnInfoMap: Record<string, ColumnInfo[]> = useMemo(() => {
     const map: Record<string, ColumnInfo[]> = {};
     for (const [table, cols] of Object.entries(columnMap)) {
-      map[table] = cols.map((name) => ({ name, dataType: '', nullable: true }));
+      const typeMap = typedColumnMap[table] ?? {};
+      map[table] = cols.map((name) => ({
+        name,
+        dataType: typeMap[name] ?? '',
+        nullable: true,
+      }));
     }
     return map;
-  }, [columnMap]);
+  }, [columnMap, typedColumnMap]);
 
   // ── Generate SQL preview ───────────────────────────────
   const sqlInput = useMemo(
@@ -311,6 +317,7 @@ export function QueryBuilderPanel({
       limit,
       offset,
       databaseType,
+      columnTypeMap: typedColumnMap,
     }),
     [
       selectedTables,
@@ -325,6 +332,7 @@ export function QueryBuilderPanel({
       limit,
       offset,
       databaseType,
+      typedColumnMap,
     ],
   );
 

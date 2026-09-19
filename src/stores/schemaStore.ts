@@ -542,7 +542,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       }
       if (stillMissing.length === 0) return;
 
-      // Fallback: per-table loading
+      // Fallback: per-table loading (uses typed endpoint for dataType info)
       const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
       const nextInflight = new Set(latest.columnInflight);
       for (const name of stillMissing) nextInflight.add(name);
@@ -552,18 +552,33 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         const settled = await Promise.all(
           stillMissing.map(async (name) => {
             try {
-              return { name, cols: await databaseCommands.getColumns(dbSessionId, name, database) };
+              const typedCols = await databaseCommands.getColumnsTyped(dbSessionId, name, database);
+              return {
+                name,
+                cols: typedCols.map((c) => c.name),
+                typeMap: Object.fromEntries(typedCols.map((c) => [c.name, c.dataType])),
+              };
             } catch {
-              return { name, cols: null };
+              try {
+                // Fallback to untyped endpoint if typed not available
+                const cols = await databaseCommands.getColumns(dbSessionId, name, database);
+                return { name, cols, typeMap: null };
+              } catch {
+                return { name, cols: null, typeMap: null };
+              }
             }
           }),
         );
         const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
         const nextColumnMap = { ...latest.columnMap };
+        const nextTypedColumnMap = { ...latest.typedColumnMap };
         let changed = false;
         for (const row of settled) {
           if (row.cols == null) continue;
           nextColumnMap[row.name] = row.cols;
+          if (row.typeMap) {
+            nextTypedColumnMap[row.name] = row.typeMap;
+          }
           changed = true;
         }
         const clearedInflight = new Set(latest.columnInflight);
@@ -571,6 +586,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         if (changed) {
           commitConnectionPatch(dbSessionId, {
             columnMap: nextColumnMap,
+            typedColumnMap: nextTypedColumnMap,
             columnInflight: clearedInflight,
           });
         } else {
