@@ -136,3 +136,46 @@ describe('buildRelationGroups — safety net', () => {
     expect(groups[0]!.pairs[0]!.confirmed).toBe(true);
   });
 });
+
+describe('buildRelationGroups — candidate type preview', () => {
+  // Regression: choosing LEFT/RIGHT/FULL on an unconfirmed FK wrote the type
+  // into `autoJoins`, but the group still previewed a hardcoded INNER — the
+  // popover radio never moved, so the buttons looked dead.
+  it('previews the type the user picked on the candidate group', () => {
+    const composite = [relation('item_id', 'item_id', 'fk_x', 'shipment', 'stock', 1, 1)];
+    const groups = buildRelationGroups({
+      joins: [],
+      fkRelations: composite,
+      selectedTables: ['shipment', 'stock'],
+      candidateTypes: { [constraintKey('shipment', 'fk_x')]: 'LEFT' },
+    });
+    expect(groups[0]!.type).toBe('LEFT');
+  });
+
+  it('still prefers the confirmed join type over the candidate preview', () => {
+    const composite = [relation('item_id', 'item_id', 'fk_x', 'shipment', 'stock', 1, 1)];
+    const groups = buildRelationGroups({
+      joins: [join({ type: 'FULL' })],
+      fkRelations: composite,
+      selectedTables: ['shipment', 'stock'],
+      candidateTypes: { [constraintKey('shipment', 'fk_x')]: 'LEFT' },
+    });
+    expect(groups[0]!.type).toBe('FULL');
+  });
+
+  it('falls back to INNER when the user has not picked a type', () => {
+    const composite = [relation('item_id', 'item_id', 'fk_x', 'shipment', 'stock', 1, 1)];
+    const groups = buildRelationGroups({
+      joins: [],
+      fkRelations: composite,
+      selectedTables: ['shipment', 'stock'],
+      candidateTypes: {},
+    });
+    expect(groups[0]!.type).toBe('INNER');
+  });
+
+  it('keeps the INNER default when the preview map is omitted', () => {
+    const composite = [relation('item_id', 'item_id', 'fk_x', 'shipment', 'stock', 1, 1)];
+    expect(build([], composite)[0]!.type).toBe('INNER');
+  });
+});

@@ -217,10 +217,18 @@ export function QueryBuilderPanel({
   /**
    * One entry per constraint (or manual join) — the canvas draws exactly this,
    * so a composite FK becomes one trunk instead of several stray lines.
+   * Candidate types come from `autoJoins` so a type picked before confirming
+   * is reflected by the popover radio immediately.
    */
   const relationGroups = useMemo(
-    () => buildRelationGroups({ joins, fkRelations, selectedTables }),
-    [joins, fkRelations, selectedTables],
+    () =>
+      buildRelationGroups({
+        joins,
+        fkRelations,
+        selectedTables,
+        candidateTypes: Object.fromEntries(autoJoins.map((j) => [j.constraint, j.type])),
+      }),
+    [joins, fkRelations, selectedTables, autoJoins],
   );
 
   /** Re-type every confirmed pair of a group (or the single manual join). */

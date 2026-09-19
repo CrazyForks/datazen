@@ -1,6 +1,6 @@
 import { constraintKey, type ForeignKeyRelation } from './hooks/useAutoJoin';
 import type { RelationGroup, RelationPair } from './DiagramCanvas/fkGeometry';
-import type { QbJoin } from './types';
+import type { QbJoin, QbJoinType } from './types';
 
 /**
  * Fold the two data sources of the diagram — confirmed `joins` and detected
@@ -17,6 +17,12 @@ export interface BuildRelationGroupsInput {
   fkRelations: ForeignKeyRelation[];
   /** Tables currently on the canvas. */
   selectedTables: string[];
+  /**
+   * Group id → JOIN type picked on an unconfirmed candidate (from `autoJoins`).
+   * Without it the popover radio never moves when a type is chosen before
+   * confirming, which reads as a dead control.
+   */
+  candidateTypes?: Record<string, QbJoinType>;
 }
 
 const pairId = (left: string, leftColumn: string, right: string, rightColumn: string) =>
@@ -26,6 +32,7 @@ export function buildRelationGroups({
   joins,
   fkRelations,
   selectedTables,
+  candidateTypes = {},
 }: BuildRelationGroupsInput): RelationGroup[] {
   const onCanvas = new Set(selectedTables);
   const groups: RelationGroup[] = [];
@@ -72,7 +79,9 @@ export function buildRelationGroups({
     groups.push({
       id: key,
       kind: 'fk',
-      type: confirmedJoin?.type ?? 'INNER',
+      // Confirmed joins own the type; a candidate previews the user's pick,
+      // defaulting to INNER.
+      type: confirmedJoin?.type ?? candidateTypes[key] ?? 'INNER',
       constraint: relations[0]!.constraint,
       pairs,
     });

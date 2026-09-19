@@ -9,6 +9,10 @@ import type {
   QbJoin,
   QbJoinType,
 } from '../components/query-builder/types';
+import {
+  CARD_STRIDE,
+  alignDroppedCard,
+} from '../components/query-builder/DiagramCanvas/cardLayout';
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -437,11 +441,25 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
         // A fresh table gets a default alias, so every generated reference is
         // qualified from the very first column — an alias the user has to add
         // by hand before it has any effect is a trap.
+        //
+        // It also gets a canvas slot: without a position every added card would
+        // fall back to {0,0} and stack on top of the previous ones.
+        const anchor = s.tablePositions[s.selectedTables[s.selectedTables.length - 1]!] ?? {
+          x: 24,
+          y: 24,
+        };
         return {
           selectedTables: [...s.selectedTables, tableName],
           tableAliases: s.tableAliases[tableName]
             ? s.tableAliases
             : { ...s.tableAliases, [tableName]: uniqueTableAlias(tableName, s.tableAliases) },
+          tablePositions: {
+            ...s.tablePositions,
+            [tableName]: alignDroppedCard(
+              { x: anchor.x + CARD_STRIDE, y: anchor.y },
+              s.tablePositions,
+            ),
+          },
         };
       }),
 
