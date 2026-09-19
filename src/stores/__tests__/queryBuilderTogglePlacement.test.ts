@@ -14,10 +14,9 @@ function resetStore() {
 beforeEach(resetStore);
 
 describe('toggleTable placement', () => {
-  it('gives the first table a position on the canvas', () => {
+  it('places the first table in the top-left corner of the canvas', () => {
     useQueryBuilderStore.getState().toggleTable('er_customers');
-    const pos = useQueryBuilderStore.getState().tablePositions['er_customers'];
-    expect(pos).toBeDefined();
+    expect(useQueryBuilderStore.getState().tablePositions['er_customers']).toEqual({ x: 0, y: 0 });
   });
 
   it('places each additional table to the right, never on top of an existing card', () => {

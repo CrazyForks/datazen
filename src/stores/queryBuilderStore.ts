@@ -443,23 +443,19 @@ export const useQueryBuilderStore = create<QueryBuilderState & QueryBuilderActio
         // by hand before it has any effect is a trap.
         //
         // It also gets a canvas slot: without a position every added card would
-        // fall back to {0,0} and stack on top of the previous ones.
-        const anchor = s.tablePositions[s.selectedTables[s.selectedTables.length - 1]!] ?? {
-          x: 24,
-          y: 24,
-        };
+        // fall back to {0,0} and stack on top of the previous ones. The first
+        // card lands in the canvas' top-left corner; later ones cascade right.
+        const lastTable = s.selectedTables[s.selectedTables.length - 1];
+        const lastPos = lastTable ? s.tablePositions[lastTable] : undefined;
+        const pos = lastPos
+          ? alignDroppedCard({ x: lastPos.x + CARD_STRIDE, y: lastPos.y }, s.tablePositions)
+          : { x: 0, y: 0 };
         return {
           selectedTables: [...s.selectedTables, tableName],
           tableAliases: s.tableAliases[tableName]
             ? s.tableAliases
             : { ...s.tableAliases, [tableName]: uniqueTableAlias(tableName, s.tableAliases) },
-          tablePositions: {
-            ...s.tablePositions,
-            [tableName]: alignDroppedCard(
-              { x: anchor.x + CARD_STRIDE, y: anchor.y },
-              s.tablePositions,
-            ),
-          },
+          tablePositions: { ...s.tablePositions, [tableName]: pos },
         };
       }),
 
