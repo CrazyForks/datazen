@@ -1073,7 +1073,8 @@ data: [DONE]
             .await;
 
         let cfg = protocol_config(&server.uri());
-        let chunks = collect_stream(|tx| stream_complete(&cfg, &sample_request(), tx)).await;
+        let request = sample_request();
+        let chunks = collect_stream(|tx| stream_complete(&cfg, &request, tx)).await;
         let ok: Vec<_> = chunks.into_iter().filter_map(Result::ok).collect();
         assert!(ok.iter().any(|c| c.content == "Hello"));
         assert!(ok.iter().any(|c| c.done));

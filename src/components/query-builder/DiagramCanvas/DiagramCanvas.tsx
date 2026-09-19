@@ -1,10 +1,21 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { cn } from '@datazen/ui';
+import { Table2 } from 'lucide-react';
 import type { ColumnInfo } from '../../../types';
 import type { QbJoin, QbJoinType, QbColumnSelection } from '../types';
 import { useCanvasInteraction } from './useCanvasInteraction';
 import { TableCard } from './TableCard';
 import { JoinLine } from './JoinLine';
+import { FKLine } from './FKLine';
+import { alignDroppedCard } from './cardLayout';
+
+/** Foreign key relationship between two columns. */
+export interface ForeignKeyRelation {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+}
 
 /** Props for the DiagramCanvas component. */
 export interface DiagramCanvasProps {
@@ -18,13 +29,19 @@ export interface DiagramCanvasProps {
   tableAliases: Record<string, string>;
   /** Map of table → column names that are primary keys. */
   primaryKeyMap?: Record<string, string[]>;
-  /** Map of table → { column → foreignKeyTargetTable }. */
-  foreignKeyMap?: Record<string, Record<string, string>>;
+  /** All foreign key relationships between selected tables. */
+  foreignKeyRelations?: ForeignKeyRelation[];
   onToggleColumn: (table: string, column: string) => void;
+  /** Check/uncheck every column of a card. */
+  onToggleAllColumns?: (table: string, columns: string[], selected: boolean) => void;
+  /** Remove a table (and its references) from the query. */
+  onRemoveTable?: (table: string) => void;
   onUpdatePosition: (table: string, pos: { x: number; y: number }) => void;
   onAddJoin: (join: Omit<QbJoin, 'id'>) => void;
   onUpdateJoinType: (id: string, type: QbJoinType) => void;
   onRemoveJoin: (id: string) => void;
+  /** Promote an auto-detected FK candidate into the SQL (PRD F-03.2). */
+  onConfirmJoin?: (id: string) => void;
   onSetTableAlias: (table: string, alias: string) => void;
   /** Called when a table is dropped onto the canvas from the object tree. */
   onDropTable?: (tableName: string, pos: { x: number; y: number }) => void;
@@ -61,12 +78,15 @@ export function DiagramCanvas({
   selectedColumns,
   tableAliases,
   primaryKeyMap = {},
-  foreignKeyMap = {},
+  foreignKeyRelations = [],
   onToggleColumn,
+  onToggleAllColumns,
+  onRemoveTable,
   onUpdatePosition,
   onAddJoin: _onAddJoin,
   onUpdateJoinType,
   onRemoveJoin,
+  onConfirmJoin,
   onSetTableAlias,
   onDropTable,
   zoom: storeZoom = 1,
@@ -104,14 +124,18 @@ export function DiagramCanvas({
         const tableName = payload.namespace?.table;
         if (!tableName) return;
         const rect = containerRef.current.getBoundingClientRect();
-        const x = (e.clientX - rect.left - canvasOffset.x) / zoom;
-        const y = (e.clientY - rect.top - canvasOffset.y) / zoom;
-        onDropTable(tableName, { x, y });
+        const dropped = {
+          x: (e.clientX - rect.left - canvasOffset.x) / zoom,
+          y: (e.clientY - rect.top - canvasOffset.y) / zoom,
+        };
+        // Snap to the grid and share the top edge of the row being dropped
+        // into, so dragging several tables in does not leave their tops askew.
+        onDropTable(tableName, alignDroppedCard(dropped, tablePositions));
       } catch {
         // invalid payload — ignore
       }
     },
-    [canvasOffset, zoom, onDropTable],
+    [canvasOffset, zoom, onDropTable, tablePositions],
   );
 
   // Compute center positions for join lines
@@ -195,6 +219,7 @@ export function DiagramCanvas({
                 isAuto
                 onUpdateType={(type) => onUpdateJoinType(join.id, type)}
                 onRemove={() => onRemoveJoin(join.id)}
+                onConfirm={() => onConfirmJoin?.(join.id)}
               />
             );
           })}
@@ -213,6 +238,41 @@ export function DiagramCanvas({
                 isAuto={false}
                 onUpdateType={(type) => onUpdateJoinType(join.id, type)}
                 onRemove={() => onRemoveJoin(join.id)}
+              />
+            );
+          })}
+        </svg>
+
+        {/* SVG layer for FK connecting lines */}
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          style={{ width: '100%', height: '100%', overflow: 'visible' }}
+          aria-hidden="true"
+        >
+          {foreignKeyRelations.map((fk) => {
+            const fromPos = tablePositions[fk.fromTable];
+            const toPos = tablePositions[fk.toTable];
+            if (!fromPos || !toPos) return null;
+            if (!selectedSet.has(fk.fromTable) || !selectedSet.has(fk.toTable)) return null;
+
+            // Find column indices
+            const fromColumns = columnMap[fk.fromTable] ?? [];
+            const toColumns = columnMap[fk.toTable] ?? [];
+            const fromIndex = fromColumns.indexOf(fk.fromColumn);
+            const toIndex = toColumns.indexOf(fk.toColumn);
+            if (fromIndex === -1 || toIndex === -1) return null;
+
+            return (
+              <FKLine
+                key={`fk-${fk.fromTable}.${fk.fromColumn}-${fk.toTable}.${fk.toColumn}`}
+                fromTable={fk.fromTable}
+                fromColumn={fk.fromColumn}
+                toTable={fk.toTable}
+                toColumn={fk.toColumn}
+                fromCardPos={fromPos}
+                toCardPos={toPos}
+                fromColumnIndex={fromIndex}
+                toColumnIndex={toIndex}
               />
             );
           })}
@@ -242,9 +302,11 @@ export function DiagramCanvas({
               columns={effectiveColumns}
               selectedColumns={tableSelectedCols}
               primaryKeyColumns={primaryKeyMap[table]}
-              foreignKeyMap={foreignKeyMap[table]}
               position={pos}
+              otherPositions={tablePositions}
               onToggleColumn={(col) => onToggleColumn(table, col)}
+              onToggleAllColumns={(selected) => onToggleAllColumns?.(table, columnNames, selected)}
+              onRemove={() => onRemoveTable?.(table)}
               onDragEnd={(newPos) => onUpdatePosition(table, newPos)}
               onSetAlias={(alias) => onSetTableAlias(table, alias)}
             />
@@ -255,7 +317,7 @@ export function DiagramCanvas({
         {selectedTables.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center text-fg-muted text-sm">
-              <div className="mb-1 text-2xl opacity-30">📊</div>
+              <Table2 className="mb-1 size-8 opacity-30" />
               <div>Drag tables here to build your query</div>
             </div>
           </div>

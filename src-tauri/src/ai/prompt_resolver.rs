@@ -434,6 +434,8 @@ pub fn render_template(template: &str, vars: &HashMap<&str, &str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datazen_driver_api::async_trait;
+    use datazen_driver_api::PromptTemplate;
 
     #[test]
     fn test_embedded_defaults_cover_all_scenarios() {
