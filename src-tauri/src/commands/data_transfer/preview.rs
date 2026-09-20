@@ -128,6 +128,32 @@ pub(crate) async fn preview_data_transfer_impl(
     // is not part of the live schema identity revalidated before execution.
     let source_schemas_for_plan = source_schemas.clone();
 
+    // Validate structured source filters against the preview snapshot and
+    // verify the source driver can bind them before issuing a plan.
+    for mapping in job.tables.iter().filter(|mapping| mapping.enabled) {
+        let Some(source_filter) = mapping.source_filter.as_ref() else {
+            continue;
+        };
+        let schema = source_schemas_for_plan
+            .get(&mapping.source_table)
+            .ok_or_else(|| {
+                CommandError::Validation(format!(
+                    "cannot validate source filter for '{}': source schema is unavailable",
+                    mapping.source_table
+                ))
+            })?;
+        source_filter.validate(schema).map_err(CommandError::from)?;
+        if !source_filter.is_empty().map_err(CommandError::from)? {
+            src_driver
+                .parameter_placeholder(1, None)
+                .map_err(|error| {
+                    CommandError::Validation(format!(
+                        "source driver cannot execute parameterized filters: {error}"
+                    ))
+                })?;
+        }
+    }
+
     let adapter_handles = if state
         .sync_adapters
         .ensure_pair(&src_config.database_type, &tgt_config.database_type)

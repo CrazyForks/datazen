@@ -103,9 +103,9 @@ async fn validate_plan_context(
             "target connection was read-only during preview; return to preview".into(),
         ));
     }
-    if plan.filter.is_some() {
+    if plans::filter_fingerprint(&plan.job).map_err(CommandError::from)? != plan.filter {
         return Err(CommandError::Validation(
-            "this Transfer plan contains an unsupported filter; return to preview".into(),
+            "source filter changed since preview; return to comparison".into(),
         ));
     }
     let src_config = state

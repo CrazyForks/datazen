@@ -68,6 +68,26 @@ pub(crate) fn fingerprint_schemas(
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+/// Fingerprint structured source filters so the immutable plan explicitly
+/// binds the reviewed row scope as well as the source schemas.
+pub(crate) fn filter_fingerprint(job: &TransferJob) -> Result<Option<String>, TransferError> {
+    let filters: Vec<_> = participating_tables(job)
+        .filter_map(|table| {
+            table
+                .source_filter
+                .as_ref()
+                .map(|filter| (table.source_table.clone(), filter))
+        })
+        .collect();
+    if filters.is_empty() {
+        return Ok(None);
+    }
+    let bytes = serde_json::to_vec(&filters).map_err(|error| {
+        TransferError::validation(format!("cannot fingerprint source filters: {error}"))
+    })?;
+    Ok(Some(format!("{:x}", Sha256::digest(bytes))))
+}
+
 /// Return the relations that are part of the immutable execution snapshot.
 ///
 /// Disabled mappings are a UI choice that the preview deliberately does not
@@ -149,6 +169,7 @@ impl TransferPlanStore {
         });
         let source_schema_fingerprint = fingerprint_schemas(source_entries)?;
         let target_schema_fingerprint = fingerprint_schemas(target_entries)?;
+        let filter = filter_fingerprint(&job)?;
         let id = Uuid::new_v4().to_string();
         let plan = StoredTransferPlan {
             id: id.clone(),
@@ -160,7 +181,7 @@ impl TransferPlanStore {
             target_driver_protocol: driver_protocol_version(target_driver),
             source_schema_fingerprint,
             target_schema_fingerprint,
-            filter: None,
+            filter,
             target_read_only_at_preview: target_read_only,
             expires_at: Instant::now() + ttl,
             state: PlanState::Available,

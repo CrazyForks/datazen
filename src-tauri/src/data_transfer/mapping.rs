@@ -93,6 +93,7 @@ pub fn effective_table_mappings(
                     enabled: false,
                     column_mappings: Vec::new(),
                     ddl_override: None,
+                    source_filter: None,
                 }
             } else {
                 TableMapping {
@@ -102,6 +103,7 @@ pub fn effective_table_mappings(
                     enabled: false,
                     column_mappings: Vec::new(),
                     ddl_override: None,
+                    source_filter: None,
                 }
             }
         })

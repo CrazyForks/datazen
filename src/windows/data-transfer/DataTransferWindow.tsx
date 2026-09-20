@@ -298,6 +298,7 @@ export function DataTransferWindow() {
           enabled: tbl.enabled,
           columnMappings: normalizeColumnMappings(tbl),
           ddlOverride: tbl.ddlOverride?.trim() ? tbl.ddlOverride.trim() : undefined,
+          sourceFilter: tbl.sourceFilter,
         })),
     [tables],
   );
@@ -952,6 +953,11 @@ export function DataTransferWindow() {
                   <div className="text-fg-muted">
                     {t('transfer.estimatedRows')}: {plan.estimatedRows ?? '—'}
                   </div>
+                  {plan.sourceFilterPreview && (
+                    <div className="mt-1 text-xs text-fg-muted">
+                      {t('transfer.sourceFilterPreview')}: <code>{plan.sourceFilterPreview}</code>
+                    </div>
+                  )}
                 </div>
               ))}
               {preview.warnings.map((w) => (

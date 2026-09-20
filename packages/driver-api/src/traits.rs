@@ -251,6 +251,46 @@ pub trait DatabaseDriver: Send + Sync {
         Ok(())
     }
 
+    /// Stream a parameterized query. Drivers with a wire-level streaming
+    /// implementation may override this; the compatibility default binds the
+    /// values through `query_with_params` and emits the result in chunks.
+    ///
+    /// This is intentionally separate from `query_stream`: callers must never
+    /// interpolate user-controlled filter values into a streaming SELECT.
+    async fn query_stream_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+        limit: Option<u32>,
+        on_event: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        if params.is_empty() {
+            return self.query_stream(handle, sql, limit, on_event).await;
+        }
+        let result = self.query_with_params(handle, sql, params).await?;
+        let mut rows = result.rows;
+        let truncated = limit.is_some_and(|cap| rows.len() > cap as usize);
+        if let Some(cap) = limit {
+            rows.truncate(cap as usize);
+        }
+        emit_multi_query_as_stream(
+            MultiQueryResult {
+                results: vec![StatementResult {
+                    sql: sql.to_string(),
+                    columns: result.columns,
+                    rows,
+                    rows_affected: result.rows_affected,
+                    execution_time_ms: result.execution_time_ms,
+                    truncated,
+                }],
+                total_time_ms: result.execution_time_ms,
+            },
+            &on_event,
+        );
+        Ok(())
+    }
+
     /// Register an opaque execution before the backend target is known.
     ///
     /// The default is a no-op so legacy drivers retain their query behavior;
