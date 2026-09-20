@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Button } from '@datazen/ui';
+import { Button, cn } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
 import { useSettingsStore } from '../../../../../src/stores/settingsStore';
-import { cn } from '../../../../../src/lib/cn';
 import {
   resolveEditorFontFamily,
   HOST_DEFAULT_EDITOR_FONT,

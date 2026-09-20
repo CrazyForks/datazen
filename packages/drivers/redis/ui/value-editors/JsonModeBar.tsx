@@ -1,5 +1,5 @@
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
+import { cn } from '@datazen/ui';
 import type { JsonDisplayMode } from './jsonModes';
 
 export interface JsonModeBarProps {

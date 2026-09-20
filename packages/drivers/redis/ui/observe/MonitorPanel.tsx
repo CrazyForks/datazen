@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
-import { Button } from '@datazen/ui';
+import { Button, cn } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { useSettingsStore } from '../../../../../src/stores/settingsStore';
 import { parseInfoSections, filterInfoSections, type InfoSection } from './infoParse';

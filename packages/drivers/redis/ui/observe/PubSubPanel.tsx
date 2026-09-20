@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Radio, Search, Send, X } from 'lucide-react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { Button } from '@datazen/ui';
+import { Button, cn } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
 
