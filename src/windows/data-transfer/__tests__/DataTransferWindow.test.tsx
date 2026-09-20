@@ -8,6 +8,7 @@ import { clearTransferLimitationsDismissed } from '../../../lib/transferLimitati
 const {
   invokeMock,
   inspectTransferMock,
+  inspectSqlFileTransferMock,
   previewTransferMock,
   getDatabasesMock,
   stableT,
@@ -19,6 +20,7 @@ const {
   return {
     invokeMock: vi.fn(),
     inspectTransferMock: vi.fn(),
+    inspectSqlFileTransferMock: vi.fn(),
     previewTransferMock: vi.fn(),
     getDatabasesMock: vi.fn(),
     stableT,
@@ -74,6 +76,7 @@ vi.mock('../../../commands/transfer', () => ({
   transferCommands: {
     pickSqlFile: vi.fn().mockResolvedValue({ fileToken: 'sql-file-token' }),
     inspect: (...args: unknown[]) => inspectTransferMock(...args),
+    inspectSqlFile: (...args: unknown[]) => inspectSqlFileTransferMock(...args),
     preview: (...args: unknown[]) => previewTransferMock(...args),
     execute: vi.fn().mockResolvedValue({ rowsInserted: 3, tables: [] }),
     cancel: vi.fn(),
@@ -152,6 +155,13 @@ const inspectRows: TransferTableResult[] = [
   },
 ];
 
+const sqlInspectRows: TransferTableResult[] = inspectRows.map((row) => ({
+  ...row,
+  status: 'CREATE_NEW',
+  createNew: true,
+  targetColumns: [],
+}));
+
 const previewSuccess = {
   planId: 'plan-test-1',
   canExecute: true,
@@ -224,7 +234,11 @@ async function pickSelect(testId: string, optionLabel: string) {
   fireEvent.mouseDown(option!);
 }
 
-async function advanceToSqlFilePreview(mode: 'data' | 'structure' = 'data') {
+async function advanceToSqlFilePreview(
+  mode: 'data' | 'structure' = 'data',
+  stopAt: 'objects' | 'mapping' | 'preview' = 'preview',
+  inspectedRows: TransferTableResult[] = sqlInspectRows,
+) {
   const { DataTransferWindow } = await import('../DataTransferWindow');
   render(<DataTransferWindow />);
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('get_connections'));
@@ -245,6 +259,15 @@ async function advanceToSqlFilePreview(mode: 'data' | 'structure' = 'data') {
   if (mode === 'structure') {
     fireEvent.click(screen.getByTestId('data-transfer-mode-structure'));
   }
+  inspectSqlFileTransferMock.mockResolvedValue(inspectedRows);
+  fireEvent.click(screen.getByTestId('data-transfer-next'));
+  await waitFor(() => expect(inspectSqlFileTransferMock).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getAllByTestId('data-transfer-table-row').length).toBeGreaterThan(0));
+  await waitFor(() => expect(screen.getByTestId('data-transfer-next')).not.toBeDisabled());
+  if (stopAt === 'objects') return;
+  fireEvent.click(screen.getByTestId('data-transfer-next'));
+  await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
+  if (stopAt === 'mapping') return;
   fireEvent.click(screen.getByTestId('data-transfer-next'));
   await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
 }
@@ -561,6 +584,11 @@ describe('DataTransferWindow', () => {
 
     fireEvent.click(screen.getByTestId('data-transfer-next'));
     await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
+    inspectSqlFileTransferMock.mockResolvedValue(sqlInspectRows);
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-table-row')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
     fireEvent.click(screen.getByTestId('data-transfer-next'));
     await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
     expect(previewTransferMock).toHaveBeenCalledWith(
@@ -667,16 +695,18 @@ describe('DataTransferWindow', () => {
     fireEvent.click(screen.getByTestId('data-transfer-execute'));
     await waitFor(() => expect(transferCommands.execute).toHaveBeenCalled());
     expect(transferCommands.execute).toHaveBeenCalledWith(
-      expect.objectContaining({ planId: 'plan-test-1', selection: undefined }),
+      expect.objectContaining({
+        planId: 'plan-test-1',
+        selection: { sourceTables: ['users'] },
+      }),
     );
   });
 
-  it('[tester] returns SQL-file preview back to the usable setup step', async () => {
+  it('[tester] returns SQL-file preview back to the mapping step', async () => {
     await advanceToSqlFilePreview();
 
     fireEvent.click(screen.getByRole('button', { name: /transfer.back/i }));
-    await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
-    expect(screen.queryByTestId('data-transfer-mapping-step')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
   });
 
   it('[tester] keeps SQL-file DDL preview read-only', async () => {
@@ -697,6 +727,52 @@ describe('DataTransferWindow', () => {
     );
     expect(screen.queryByTestId('data-transfer-ddl-editor-users')).toBeNull();
     expect(screen.queryByTestId('sql-code-change')).toBeNull();
+  });
+
+  it('keeps SQL-file table and column selection in the reviewed preview job', async () => {
+    const orders = {
+      ...sqlInspectRows[0],
+      sourceTable: 'orders',
+      targetTable: 'orders',
+      sourceColumns: ['id', 'total'],
+      sourcePrimaryKeys: ['id'],
+      sourceColumnTypes: { id: 'INTEGER', total: 'NUMERIC' },
+      columnMappings: [
+        { sourceColumn: 'id', targetColumn: 'id', skip: false },
+        { sourceColumn: 'total', targetColumn: 'total', skip: false },
+      ],
+    } satisfies TransferTableResult;
+    await advanceToSqlFilePreview('data', 'objects', [...sqlInspectRows, orders]);
+
+    const ordersRow = screen
+      .getAllByTestId('data-transfer-table-row')
+      .find((row) => within(row).queryByText('orders'));
+    expect(ordersRow).toBeTruthy();
+    fireEvent.click(within(ordersRow!).getByRole('checkbox'));
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
+
+    fireEvent.change(screen.getByTestId('data-transfer-target-table-input'), {
+      target: { value: 'users_copy' },
+    });
+    expect(screen.getByTestId('data-transfer-skip-extra')).toBeChecked();
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+
+    expect(previewTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tables: [
+          expect.objectContaining({
+            sourceTable: 'users',
+            targetTable: 'users_copy',
+            createNew: true,
+            columnMappings: expect.arrayContaining([
+              expect.objectContaining({ sourceColumn: 'extra', skip: true }),
+            ]),
+          }),
+        ],
+      }),
+    );
   });
 
   it('disables next and shows empty guidance when no tables are detected', async () => {

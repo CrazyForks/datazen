@@ -148,6 +148,33 @@ async fn test_tester_preview_execute_plan_is_opaque_and_one_shot() {
 }
 
 #[tokio::test]
+async fn sql_file_source_inspection_returns_create_new_source_mappings() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let (_config, source) = test.save_and_connect("transfer-sql-file-inspect-src").await;
+    let rows = super::inspect_sql_file_transfer_impl(
+        &test.state,
+        source,
+        Some("app".into()),
+        None,
+        TransferMode::Data,
+        None,
+        &[],
+    )
+    .await
+    .expect("source-only SQL-file inspection should succeed");
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].source_table, "users");
+    assert_eq!(rows[0].target_table, "users");
+    assert!(rows[0].create_new);
+    assert!(rows[0].enabled);
+    assert_eq!(rows[0].source_columns, vec!["id", "name"]);
+    assert!(rows[0].column_mappings.iter().all(|mapping| !mapping.skip));
+}
+
+#[tokio::test]
 async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
     use crate::data_transfer::sql_file::register_path;
     use crate::testing::app_state::TestAppState;
@@ -263,6 +290,90 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
     assert!(output.contains("INSERT INTO"));
     assert!(output.contains("\"users\""));
     assert!(output.contains("\"orders\""));
+}
+
+#[tokio::test]
+async fn sql_file_preview_honors_table_selection_renames_and_skipped_columns() {
+    use crate::data_transfer::sql_file::register_path;
+    use crate::db::{TableInfo, TableType};
+    use crate::testing::app_state::TestAppState;
+
+    let mut options = transfer_plan_test_options();
+    options.tables.push(TableInfo {
+        name: "orders".into(),
+        schema: None,
+        table_type: TableType::Table,
+        row_count: Some(1),
+    });
+    let test = TestAppState::with_options(options).await;
+    let (_config, source) = test.save_and_connect("transfer-sql-file-mapping-src").await;
+    let dir = tempfile::tempdir().expect("temporary SQL output directory");
+    let token = register_path(dir.path().join("mapping.sql")).expect("register SQL destination");
+    let job = TransferJob {
+        source: Endpoint {
+            db_session_id: source,
+            database: "app".into(),
+            schema: None,
+        },
+        target: None,
+        sql_file_target: Some(SqlFileTarget {
+            file_token: token,
+            database_type: None,
+            database: None,
+            schema: None,
+            encoding: None,
+        }),
+        mode: TransferMode::Data,
+        write_mode: WriteMode::Insert,
+        tables: vec![
+            TableMapping {
+                source_table: "users".into(),
+                target_table: "users_copy".into(),
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![
+                    crate::data_transfer::model::ColumnMapping {
+                        source_column: "id".into(),
+                        target_column: "user_id".into(),
+                        skip: false,
+                        target_native_type: None,
+                    },
+                    crate::data_transfer::model::ColumnMapping {
+                        source_column: "name".into(),
+                        target_column: "name".into(),
+                        skip: true,
+                        target_native_type: None,
+                    },
+                ],
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            },
+            TableMapping {
+                source_table: "orders".into(),
+                target_table: "orders_copy".into(),
+                create_new: true,
+                enabled: false,
+                column_mappings: Vec::new(),
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            },
+        ],
+        options: TransferOptions::default(),
+    };
+
+    let preview = super::preview_data_transfer_impl(&test.state, job)
+        .await
+        .expect("SQL-file preview should preserve explicit mappings");
+    assert_eq!(preview.write_plans.len(), 1);
+    assert_eq!(preview.write_plans[0].source_table, "users");
+    assert_eq!(preview.write_plans[0].target_table, "users_copy");
+    assert_eq!(preview.write_plans[0].mapped_columns.len(), 2);
+    assert!(preview.write_plans[0]
+        .mapped_columns
+        .iter()
+        .any(|mapping| mapping.source_column == "name" && mapping.skip));
 }
 
 #[tokio::test]

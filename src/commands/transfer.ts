@@ -205,6 +205,23 @@ export const transferCommands = {
       tables: tables ?? null,
     }),
 
+  inspectSqlFile: (
+    sourceDbSessionId: string,
+    mode: TransferMode,
+    sourceDatabase?: string,
+    sourceSchema?: string,
+    targetDatabaseType?: string,
+    tables?: TransferTableMapping[],
+  ) =>
+    invoke<TransferTableResult[]>('inspect_sql_file_transfer', {
+      sourceDbSessionId,
+      sourceDatabase: sourceDatabase ?? null,
+      sourceSchema: sourceSchema ?? null,
+      targetDatabaseType: targetDatabaseType ?? null,
+      mode,
+      tables: tables ?? null,
+    }),
+
   preview: (job: TransferJob) => invoke<TransferPreview>('preview_data_transfer', { job }),
 
   execute: (request: TransferRunRequest) =>
