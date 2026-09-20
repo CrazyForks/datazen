@@ -299,6 +299,7 @@ export function DataTransferWindow() {
           columnMappings: normalizeColumnMappings(tbl),
           ddlOverride: tbl.ddlOverride?.trim() ? tbl.ddlOverride.trim() : undefined,
           sourceFilter: tbl.sourceFilter,
+          recordset: tbl.recordset,
         })),
     [tables],
   );
@@ -547,6 +548,9 @@ export function DataTransferWindow() {
   };
 
   const updateTable = useCallback((sourceTable: string, patch: Partial<TransferTableResult>) => {
+    // Mapping edits, including a recordset change, invalidate the opaque
+    // server preview immediately. The next preview must review the new scope.
+    setPreview(null);
     setTables((prev) =>
       prev.map((tbl) => {
         if (tbl.sourceTable !== sourceTable) return tbl;
@@ -956,6 +960,11 @@ export function DataTransferWindow() {
                   {plan.sourceFilterPreview && (
                     <div className="mt-1 text-xs text-fg-muted">
                       {t('transfer.sourceFilterPreview')}: <code>{plan.sourceFilterPreview}</code>
+                    </div>
+                  )}
+                  {plan.recordsetPreview && (
+                    <div className="mt-1 text-xs text-fg-muted">
+                      {t('transfer.recordsetPreview')}: <code>{plan.recordsetPreview}</code>
                     </div>
                   )}
                 </div>

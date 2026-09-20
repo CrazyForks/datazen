@@ -276,7 +276,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, TransferError> {
     })
 }
 
-fn json_to_value(value: &serde_json::Value) -> Result<Value, TransferError> {
+pub(crate) fn json_to_value(value: &serde_json::Value) -> Result<Value, TransferError> {
     Ok(match value {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(value) => Value::Bool(*value),

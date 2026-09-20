@@ -214,43 +214,29 @@ pub async fn execute_transfer_data(
             .map(|c| quote_ident_sql(&c.source_column, src_quote))
             .collect();
         let mut base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
-        let mut source_filter_params = Vec::new();
-        if let Some(source_filter) = job
+        let mapping = job
             .tables
             .iter()
-            .find(|mapping| mapping.source_table == table.source_table)
-            .and_then(|mapping| mapping.source_filter.as_ref())
-        {
-            source_filter
-                .validate(src_schema)
-                .map_err(|error| TransferError::validation(error.to_string()))?;
-            let (where_sql, params) = source_filter.build_where_typed(
-                src_quote,
-                1,
-                |column| {
-                    src_schema
-                        .columns
-                        .iter()
-                        .find(|candidate| candidate.name == column)
-                        .map(|candidate| candidate.data_type.clone())
-                },
-                |index, data_type| {
-                    src_driver
-                        .parameter_placeholder(index, data_type)
-                        .map_err(|error| TransferError::unsupported(error.to_string()))
-                },
-            )?;
-            if let Some(where_sql) = where_sql {
-                base_sql.push(' ');
-                base_sql.push_str(&where_sql);
-            }
-            source_filter_params = params;
-            if !source_filter_params.is_empty() {
+            .find(|mapping| mapping.source_table == table.source_table);
+        let source_scope = super::recordset::build_source_scope(
+            src_schema,
+            mapping.and_then(|mapping| mapping.source_filter.as_ref()),
+            mapping.and_then(|mapping| mapping.recordset.as_ref()),
+            src_quote,
+            |index, data_type| {
                 src_driver
-                    .parameter_placeholder(1, None)
-                    .map_err(|error| TransferError::unsupported(error.to_string()))?;
-            }
-        }
+                    .parameter_placeholder(index, data_type)
+                    .map_err(|error| TransferError::unsupported(error.to_string()))
+            },
+            |column| {
+                src_schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        )?;
+        source_scope.append_to(&mut base_sql);
 
         // Resolve capability and scan once before any destructive target operation.
         tgt_driver
@@ -260,7 +246,7 @@ pub async fn execute_transfer_data(
             src_driver,
             src_handle,
             &base_sql,
-            &source_filter_params,
+            &source_scope.params,
             columns.iter().map(|c| c.source_column.clone()).collect(),
             cancelled.clone(),
         )
