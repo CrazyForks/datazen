@@ -21,3 +21,16 @@ selection, or additional Data Sync families.
 - The formal WebDriver build is required before integration; live mutation
   coverage should verify that a multi-page compare cannot observe a committed
   mid-scan change.
+
+## Independent final verification (2026-09-20)
+
+- `cargo test -p datazen --lib commands::sync::tests`: **21 passed**.
+- `cargo test -p datazen-driver-api --lib`: **132 passed**.
+- `cargo test -p datazen-driver-postgres --lib`: **104 passed**.
+- `cargo test -p datazen-driver-mysql --lib`: **89 passed**.
+- Source review confirmed the comparison wrapper rolls both read snapshots back
+  after a successful inner comparison and after an inner error; the host error
+  path asserts that no mock transaction remains open.
+- No formal WebDriver build log was available in this worktree, and this final
+  tester did not start a new long build. The formal build remains a required
+  pre-integration gate.
