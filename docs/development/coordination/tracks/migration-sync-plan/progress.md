@@ -1,6 +1,6 @@
 # migration-sync-plan
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 Branch: codex/migration-sync-plan
 Worktree: `.worktrees/datazen-migration-sync-plan`
 Base: `codex/migration-navicat` @ `4e461391`
@@ -29,6 +29,20 @@ Normalized text/collation/composite-key ordering, bounded stable snapshots, disk
 - `generate_data_sync_sql` and `execute_data_sync` resolve the server-owned comparison by `planId`. Requests carry only a revision, selected operation/key tuples, validated options and an optional cancellation job id. Unknown fields such as replacement SQL, rows, statements or mappings are rejected during deserialization.
 - Execution revalidates sessions, drivers, read-only state and live schema/key fingerprints before atomically consuming the plan. A consumed plan remains unavailable after rollback, cancellation or an unknown transaction result.
 - The frontend keeps its existing reviewed-table UI while translating its local selection to operation/key tuples. The actual IPC payload never forwards generated SQL, source rows or replacement mappings. SQL preview also resolves from the same server plan.
+
+## Independent Tester review（2026-09-20）
+
+- 代码审查：逐文件复核 `apply.rs`、`exec.rs`、`mod.rs`、`plans.rs`、Sync IPC wrapper 和 `DataSyncWindow`。opaque `planId`、deny-unknown-fields、selection membership、revision、driver/protocol/read-only/schema checks、claim one-shot 和 unknown-result fence 均存在；发现 BUG-001 的活动 database identity 缺口，且既有 real E2E 未迁移到新契约（BUG-002）。
+- Host Rust 全量：`CARGO_TARGET_DIR=/tmp/datazen-target-sync-plan cargo test -p datazen --lib` — **1417 passed, 3 ignored, 0 failed**。
+- Sync Rust 专项：`data_sync::` **98 passed**；`commands::sync` **26 passed**。
+- Frontend Sync：8 个相关 Vitest 文件 **46 passed**；TypeScript `noEmit` 通过。
+- Frontend 改动覆盖率（仅 include `sync.ts` / `DataSyncWindow.tsx`）：总 lines **85.13%**，statements **83.18%**，functions **84.18%**，branches **76.31%**；`sync.ts` lines **82.14%**，`DataSyncWindow.tsx` lines **82.77%**。全仓库默认 coverage threshold 因未限定 include 仅为 1.6%，该命令失败属于覆盖率范围配置，不是测试失败。
+- 驱动测试：PostgreSQL **101 passed**、MySQL **86 passed**、SQLite **46 passed**。
+- 正式构建：`CI=true CARGO_TARGET_DIR=/tmp/datazen-target-sync-plan pnpm_config_verify_deps_before_run=warn pnpm tauri:build:webdriver` 通过。
+- 新增独立 immutable-plan binary journeys：`packages/drivers/postgres/e2e/sync-plan.ts` 与 `packages/drivers/mysql/e2e/sync-plan.ts`，精确构建运行 **4/4 passed**；覆盖 selected-only writes 与 stale target schema 在写入前拒绝。
+- 既有 `e2e/specs/data-sync-real.ts` 精确构建运行 **20 passed, 4 failed**，失败原因已登记 BUG-002；运行期间仅出现 demo fixture 的历史字段警告，不影响上述 Sync 断言。
+- 代码质量：正式构建提示 `plans.rs` 的 `RowChange` 生产路径 unused import，属于可清理 warning；未发现调试输出或本轨生成文件残留。
+- 独立判定：**TEST_FAILED**。BUG-001 解决前不能宣称 qualified database identity 已正确绑定；BUG-002 解决前既有 real Sync release gate 不能通过。
 
 ## Self-validation
 
