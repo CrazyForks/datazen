@@ -292,6 +292,12 @@ export interface AppSettings {
   aiStrictEgress: boolean;
   /** Automatically qualify column completions with a table name or alias. Default true. */
   editorCompletionIncludeTablePrefix?: boolean;
+  /**
+   * Infer foreign keys from structure and naming when the schema declares none,
+   * and use them for JOIN suggestions and completion ranking. Default true.
+   * Predictions are always visually distinct from declared constraints.
+   */
+  enableFkPrediction?: boolean;
   /** Identifier quotation policy in SQL autocomplete ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   editorCompletionQuotePolicy?: 'unquoted' | 'always' | 'both';
   /** Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat'). Default 'default'. */
