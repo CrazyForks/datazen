@@ -42,11 +42,30 @@ async fn resolve_task_endpoint(
         )));
     }
 
-    let (db_session_id, driver, handle) = state
-        .connection_manager
-        .resolve_session_for_connection(connection_id)
-        .await
-        .cmd_err("check_sync_conflicts")?;
+    let requested_database = database.filter(|value| !value.trim().is_empty());
+    let (db_session_id, driver, handle) = if let Some(database) = requested_database {
+        // A persisted task may select a catalog other than the connection's
+        // default. Reusing the connection's mutable session would leave
+        // PostgreSQL attached to the wrong database, so always establish a
+        // dedicated session with the saved override for this case.
+        let db_session_id = state
+            .connection_manager
+            .connect_dedicated(connection_id, Some(database))
+            .await
+            .cmd_err("check_sync_conflicts")?;
+        let (driver, handle) = state
+            .connection_manager
+            .get_session(&db_session_id)
+            .await
+            .cmd_err("check_sync_conflicts")?;
+        (db_session_id, driver, handle)
+    } else {
+        state
+            .connection_manager
+            .resolve_session_for_connection(connection_id)
+            .await
+            .cmd_err("check_sync_conflicts")?
+    };
     let config = state
         .connection_manager
         .get_session_config(&db_session_id)
