@@ -2,7 +2,16 @@
 
 ## cap-bridge-BUG-001：新增能力桥模块缺少专属单测（未绑定 throw / bind 转发 / useBoundXxx 订阅路径）
 
-- **状态**: 待修复
+- **状态**: 待复测
+- **修复记录（Coder round 2）**: `packages/driver-sdk/__tests__/` 新增四个专属套件
+  `settingsStoreBridge.test.tsx`（8 tests）/ `connectionStoreBridge.test.tsx`（5）/
+  `confirmDialogBridge.test.tsx`（3）/ `schemaStoreBridge.bound.test.tsx`（13），
+  以 `vi.resetModules()` + 动态 import 隔离未绑定态：覆盖三个 throw 文案、
+  selector/getState/setState（对象与 updater 同引用透传）转发、真实 zustand
+  store 下 `useBoundXxx` 组件内订阅重渲染、confirm 二元组透传，及
+  schemaStoreBridge sync 助手（含 dbSessionId 有/无两分支）与
+  `subscribeSchemaPathItems` 引用相同跳过分支。实测（bugs.md 重现命令）：
+  四个 bridge 行/语句/分支/函数覆盖率均 **100%**。
 - **量级**: 中（不阻断运行时行为，阻断本轨覆盖率验收硬标准）
 - **描述**:
   `packages/driver-sdk/src/` 下四个 bridge 模块为本轨新增/扩展的核心运行时代码，但全仓没有任何针对它们的专属单测。实测行覆盖率（v8，`--coverage.all`，仅统计现有全部相关测试执行结果）：

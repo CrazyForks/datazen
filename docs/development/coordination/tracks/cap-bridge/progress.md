@@ -39,6 +39,8 @@
 
 - [x] Coder 完成 → READY_FOR_TEST
 - [x] Tester 复测 → **FAILED（见 bugs.md，待 Coder 补 bridge 单测后复测）**
+- [x] Coder round 2 修复 cap-bridge-BUG-001 → READY_FOR_TEST（见下方记录）
+- [ ] Tester 复测 BUG-001
 
 ## Tester 复测记录（Round 1，基准 c3058fdd0，待测 92a039383 + baf0bb0e4）
 
@@ -90,3 +92,21 @@ redis ui 11 个运行时代码文件（redisInvoke / ImportExport / RedisConsole
 - 宿主定向 vitest（nativeContextMenu / settingsStore / commands / DataTable / ExecutionStrategySelect / driver-sdk / ConnectionPage×2）全绿；**全量宿主 vitest：4470 passed / 0 failed**。
   - 修复记录：`hideNativeContextMenu` 在 bridge 未绑定时静默失效（menu 必然未打开），避免宿主单测中未加载 contextMenuStore 时的 ConnectionPage mount 崩溃（原实现靠动态 import 隐式加载）。
 - Grep 残留：`packages/drivers/*/ui` 宿主值 import 仅剩 useI18n、PathInput（i18n-core 轨）+ `redisKeyWebContextMenu.test.tsx` 两处宿主集成夹具（WebContextMenuHost 渲染器 + contextMenuStore 断言/store 访问，属宿主侧 web 菜单本体，非本轨下沉清单范围，需 Tester/协调人裁决）。
+
+## Coder round 2 修复记录（cap-bridge-BUG-001 → 待复测）
+
+仅补单测，零运行时代码改动：
+
+- 新增 `packages/driver-sdk/__tests__/settingsStoreBridge.test.tsx`（8）、`connectionStoreBridge.test.tsx`（5）、`confirmDialogBridge.test.tsx`（3）、`schemaStoreBridge.bound.test.tsx`（13），共 29 个用例；`packages/driver-sdk/tsconfig.json` 增补 `"jsx": "react-jsx"`（该包 `__tests__` 新增 .tsx 所需，仅类型配置）。
+- 覆盖路径：三处未绑定 throw 文案断言（`vi.resetModules()` + 动态 import 隔离，与既有顶层 bind 套件互不影响）；bind 后 selector / getState 转发、settingsStore `setState` 对象与 updater 两种入参**同引用透传**断言；真实 zustand store 下 `useBoundSettingsStore` / `useBoundConnectionStore` / `useBoundSchemaStore` 组件内订阅→`act(setState)`→重渲染；`useBoundConfirmDialog` 二元组 `[confirmFn, node]` 转发与 options 原样透传（confirm/cancel 两态）；`syncSchemaTables` / `syncSchemaNamespace` / `registerPathAliases` 的 dbSessionId 有/无分支与 action 委托；`getCachedPathItems` 未绑定 optional-chain；`subscribeSchemaPathItems` 引用相同跳过 + 退订后不再通知。
+- 实测覆盖率（bugs.md 重现命令，v8 + `--coverage.all`，含 nativeContextMenu/file 宿主测试 + driver-sdk 全量 53 tests）：
+
+  | 模块 | 修复前行覆盖 | 修复后（rows / branch / stmts / funcs） |
+  | ---- | ---- | ---- |
+  | `confirmDialogBridge.ts` | 20% | **100% / 100% / 100% / 100%** |
+  | `connectionStoreBridge.ts` | 25% | **100% / 100% / 100% / 100%** |
+  | `settingsStoreBridge.ts` | 33.3% | **100% / 100% / 100% / 100%** |
+  | `schemaStoreBridge.ts` | 42.3% | **100% / 100% / 100% / 100%** |
+
+  （聚合 "All files" 仍受本轨豁免模块拖累：driverSettings 21%（薄封装、Tester 已确认与迁移前持平豁免）、`ipc/driverCommands` 14%（invoke 薄封装，同上口径）——非 BUG-001 验收项。）
+- 回归验证：`npx vitest run packages/driver-sdk` 32/32 绿；`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` **218 pass / 0 fail**（基线保持）；`npx tsc --noEmit -p tsconfig.json` **0 错误**；宿主全量 `npx vitest run` **4499 passed / 437 files**（基线 4470/433 + 本修复 29 tests/4 files，零回归）。
