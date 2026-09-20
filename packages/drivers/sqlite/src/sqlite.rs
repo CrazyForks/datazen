@@ -1001,6 +1001,142 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn binary_text_keyset_cursor_advances_single_and_composite_pages() {
+        let dir = std::env::temp_dir().join(format!(
+            "datazen-sqlite-binary-keyset-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("keyset.db");
+        std::fs::File::create(&path).unwrap();
+
+        let driver = SqliteDriver::new();
+        let handle = driver
+            .connect(&test_config(path.to_str().unwrap()))
+            .await
+            .unwrap();
+        driver
+            .execute(&handle, "CREATE TABLE text_keys (name TEXT PRIMARY KEY)")
+            .await
+            .unwrap();
+        driver
+            .execute(
+                &handle,
+                "INSERT INTO text_keys (name) VALUES ('a'), ('b'), ('c')",
+            )
+            .await
+            .unwrap();
+
+        let adapter = crate::SqliteSyncAdapter;
+        let text_contract = adapter
+            .sync_key_contract(&ColumnSchema {
+                name: "name".into(),
+                data_type: "TEXT".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: false,
+            })
+            .unwrap();
+        let first = driver
+            .query_with_params(
+                &handle,
+                "SELECT name FROM text_keys ORDER BY CAST(name AS BLOB) LIMIT ?",
+                &[Value::Integer(1)],
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &first.rows[0][0],
+            Some(Value::String(name)) if name == "a"
+        ));
+        let cursor = adapter
+            .sync_key_seek_value(
+                first.rows[0][0].as_ref().expect("text cursor"),
+                &text_contract,
+            )
+            .unwrap();
+        assert!(matches!(cursor, Value::Bytes(ref bytes) if bytes == b"a"));
+        let second = driver
+            .query_with_params(
+                &handle,
+                "SELECT name FROM text_keys WHERE CAST(name AS BLOB) > ? ORDER BY CAST(name AS BLOB) LIMIT ?",
+                &[cursor, Value::Integer(2)],
+            )
+            .await
+            .unwrap();
+        let names: Vec<&str> = second
+            .rows
+            .iter()
+            .map(|row| match &row[0] {
+                Some(Value::String(name)) => name.as_str(),
+                other => panic!("expected text key, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, ["b", "c"]);
+
+        driver
+            .execute(
+                &handle,
+                "CREATE TABLE composite_keys (tenant TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (tenant, name))",
+            )
+            .await
+            .unwrap();
+        driver
+            .execute(
+                &handle,
+                "INSERT INTO composite_keys (tenant, name) VALUES ('a', 'a'), ('a', 'b'), ('b', 'a')",
+            )
+            .await
+            .unwrap();
+        let first_composite = driver
+            .query_with_params(
+                &handle,
+                "SELECT tenant, name FROM composite_keys ORDER BY CAST(tenant AS BLOB), CAST(name AS BLOB) LIMIT ?",
+                &[Value::Integer(2)],
+            )
+            .await
+            .unwrap();
+        let composite_cursor: Vec<Value> = first_composite.rows[1]
+            .iter()
+            .map(|value| {
+                adapter
+                    .sync_key_seek_value(value.as_ref().expect("composite cursor"), &text_contract)
+                    .unwrap()
+            })
+            .collect();
+        assert!(composite_cursor
+            .iter()
+            .all(|value| matches!(value, Value::Bytes(_))));
+        let second_composite = driver
+            .query_with_params(
+                &handle,
+                "SELECT tenant, name FROM composite_keys WHERE (CAST(tenant AS BLOB), CAST(name AS BLOB)) > (?, ?) ORDER BY CAST(tenant AS BLOB), CAST(name AS BLOB) LIMIT ?",
+                &[
+                    composite_cursor[0].clone(),
+                    composite_cursor[1].clone(),
+                    Value::Integer(2),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(second_composite.rows.len(), 1);
+        assert!(matches!(
+            &second_composite.rows[0][0],
+            Some(Value::String(tenant)) if tenant == "b"
+        ));
+        assert!(matches!(
+            &second_composite.rows[0][1],
+            Some(Value::String(name)) if name == "a"
+        ));
+
+        driver.disconnect(handle).await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn execute_params_preserves_all_bytes_and_actual_affected_rows() {
         let directory =

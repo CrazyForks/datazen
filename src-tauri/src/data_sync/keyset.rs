@@ -24,6 +24,46 @@ pub fn build_keyset_select_sql<P>(
 where
     P: Fn(usize) -> String,
 {
+    let key_idents = pk_columns
+        .iter()
+        .map(|c| quote_ident_sql(c, quote))
+        .collect::<Vec<_>>();
+    build_keyset_select_sql_with_order(
+        table,
+        database,
+        schema,
+        family,
+        columns,
+        pk_columns,
+        &key_idents,
+        after_key,
+        limit,
+        quote,
+        placeholder,
+    )
+}
+
+/// Build keyset SQL using driver-owned expressions for the key order.
+///
+/// The expressions are used in both the tuple seek predicate and `ORDER BY`.
+/// This is what lets a driver make binary text ordering explicit when the
+/// session's default collation is case-insensitive or otherwise unstable.
+pub fn build_keyset_select_sql_with_order<P>(
+    table: &str,
+    database: Option<&str>,
+    schema: Option<&str>,
+    family: &str,
+    columns: &[String],
+    pk_columns: &[String],
+    key_order_expressions: &[String],
+    after_key: Option<&[Value]>,
+    limit: u32,
+    quote: char,
+    placeholder: P,
+) -> Result<(String, Vec<Value>), DataSyncError>
+where
+    P: Fn(usize) -> String,
+{
     if pk_columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one primary key column",
@@ -32,6 +72,11 @@ where
     if columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one selected column",
+        ));
+    }
+    if key_order_expressions.len() != pk_columns.len() {
+        return Err(DataSyncError::validation(
+            "key order expression count does not match primary key columns",
         ));
     }
     if let Some(key) = after_key {
@@ -49,19 +94,15 @@ where
         .map(|c| quote_ident_sql(c, quote))
         .collect::<Vec<_>>()
         .join(", ");
-    let order_cols = pk_columns
+    let order_cols = key_order_expressions
         .iter()
-        .map(|c| format!("{} ASC", quote_ident_sql(c, quote)))
+        .map(|c| format!("{c} ASC"))
         .collect::<Vec<_>>()
         .join(", ");
 
     let mut params = Vec::new();
     let where_clause = if let Some(key) = after_key {
-        let pk_idents = pk_columns
-            .iter()
-            .map(|c| quote_ident_sql(c, quote))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let pk_idents = key_order_expressions.join(", ");
         let placeholders: Vec<String> = (1..=pk_columns.len()).map(|i| placeholder(i)).collect();
         params.extend_from_slice(key);
         format!(" WHERE ({pk_idents}) > ({})", placeholders.join(", "))
@@ -292,5 +333,26 @@ mod tests {
             sql,
             "SELECT \"id\", \"name\", \"age\" FROM \"public\".\"users\" ORDER BY \"id\" ASC LIMIT 10"
         );
+    }
+
+    #[test]
+    fn driver_order_expression_is_used_for_seek_and_order() {
+        let (sql, params) = build_keyset_select_sql_with_order(
+            "users",
+            None,
+            None,
+            "postgresql",
+            &cols(),
+            &pk1(),
+            &[r#""id" COLLATE "C""#.into()],
+            Some(&[Value::String("a".into())]),
+            10,
+            '"',
+            postgres_placeholder,
+        )
+        .unwrap();
+        assert_eq!(params.len(), 1);
+        assert!(sql.contains(r#"WHERE ("id" COLLATE "C") > ($1)"#));
+        assert!(sql.contains(r#"ORDER BY "id" COLLATE "C" ASC"#));
     }
 }

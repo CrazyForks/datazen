@@ -1,12 +1,52 @@
 //! Sync adapter traits — the bridge between native types and the IR.
 
 use super::ir::{IRColumn, IRDefault, IRTable, IRType};
+use super::key::{contract_from_column, SyncKeyContract, SyncKeyValue};
 use crate::{ColumnSchema, TableSchema, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Converts native column metadata into IR (used for the *source* side of a sync).
 pub trait SyncSourceAdapter: Send + Sync {
+    /// Describe the equality and total-order semantics that Data Sync may use
+    /// for this column.  The default is conservative: an adapter must opt a
+    /// key type in before the host can compare or page it.
+    fn sync_key_contract(&self, column: &ColumnSchema) -> Result<SyncKeyContract, String> {
+        contract_from_column(column)
+    }
+
+    /// Normalize a runtime value using the driver's key contract.  Drivers
+    /// override this when their wire value needs a type-aware conversion.
+    fn normalize_sync_key(
+        &self,
+        value: &Option<Value>,
+        contract: &SyncKeyContract,
+    ) -> Result<SyncKeyValue, String> {
+        contract.normalize(value)
+    }
+
+    /// Convert a raw key value into the parameter representation required by
+    /// the driver's keyset seek expression.  Drivers may need this when their
+    /// order expression changes the SQL storage class (for example, SQLite's
+    /// `CAST(text_key AS BLOB)`).
+    fn sync_key_seek_value(
+        &self,
+        value: &Value,
+        _contract: &SyncKeyContract,
+    ) -> Result<Value, String> {
+        Ok(value.clone())
+    }
+
+    /// SQL expression used by both `ORDER BY` and the seek predicate.  It
+    /// must have the same ordering as [`normalize_sync_key`](Self::normalize_sync_key).
+    fn sync_key_order_expression(
+        &self,
+        quoted_column: &str,
+        _contract: &SyncKeyContract,
+    ) -> String {
+        quoted_column.to_string()
+    }
+
     /// Convert a single column to its IR representation.
     ///
     /// `native_full_type` carries the fully-qualified type string with precision
