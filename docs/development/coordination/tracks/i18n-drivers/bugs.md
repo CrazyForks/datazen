@@ -1,6 +1,9 @@
 # Track: i18n-drivers — Bug 清单
 
 > Tester 独立复测（commit `9d4016295`，基准 `d172476fc`；本轨 7 个 commit / 61 文件）一次性登记。
+> **第 2 轮复测（commit `a61e42f14`，全新 Tester 实例）：BUG-001/002/003 全部闭环，状态置「已修复」；
+> 反证 A/B/C、CLI md5 逐字对比、覆盖率与全套件复跑数字见 progress.md「Tester 第 2 轮复测记录」。
+> 本轮无新增 Bug。**
 > 结论：**运行时行为全部实测为真**（注册链路、bundle、tsc、四套件全绿、Grep 红线全零命中），
 > 但**本轨核心变更「驱动词条自注册链路」在常驻测试与守门脚本里都没有任何拦截能力**，
 > 且本轨新增守门脚本逻辑自身零单测。三项登记如下，均为「只测不修」。
@@ -9,7 +12,7 @@
 
 ## i18n-drivers-BUG-001：驱动词条自注册链路（`ui/**/meta.ts` 副作用挂载点）零常驻测试覆盖，删除该行不会被任何 CI 捕获
 
-- **状态**: 待复测（Coder 第 1 轮已实施：harness 改走 meta + 每驱动常驻注册链路套件；反证 A/B/C 见 progress.md「Coder Bug 修复记录（第 1 轮）」§1）
+- **状态**: 已修复（Tester 第 2 轮复测通过，commit `a61e42f14`：harness 已改走 meta；redis/mongodb 各 4 例常驻注册链路套件经逐例审查为真断言；反证 A/B/C 由本轮 Tester 独立重跑，全部与预期一致——A：`6 failed | 235 passed (241)`（失败恰为两套件各 3 例，文件/用例名见 progress.md「Tester 第 2 轮复测记录」§2）；B：harness 清空后 241 全绿（不再依赖旁路）；C：游离 `locales/xx.ts` 使守门用例转红。另实测：harness 禁用下仅两个注册套件即把两 meta + 两 `locales/index.ts` 推到 100% 四维覆盖。建议 3（脚本层结构断言）取舍判定为**可接受**：常驻用例跑真模块、断真值，A/C 变异均被拦截，脚本字面量扫描无额外拦截力；留待 Wave 4 lint 不判 Bug。）
 - **严重度**: 中（不阻断当前运行时行为——已实测 bundle 内生效；阻断本轨核心链路的回归防护与 tester.md §3「覆盖率硬标准」）
 - **位置**:
   - 被测代码：`packages/drivers/redis/ui/shared/meta.ts:1-4`、`packages/drivers/mongodb/ui/meta.ts:1-4`（`import '../locales'` 副作用行）
@@ -107,7 +110,7 @@
 
 ## i18n-drivers-BUG-002：`scripts/i18n-sync-check.mjs` 新增 ~100 行驱动词条扫描逻辑零单测（脚本无导出，与同目录 guard 脚本惯例不一致）
 
-- **状态**: 待复测（Coder 第 1 轮已实施：扫描逻辑提为 5 个导出纯函数 + main 守卫，新增 `scripts/__tests__/i18n-sync-check.test.mjs` 18 例；CLI 输出 md5 与首轮基线逐字一致，见 progress.md §2）
+- **状态**: 已修复（Tester 第 2 轮复测通过，commit `a61e42f14`：5 个导出纯函数 + main 守卫成立，导入模块不再触发扫描；CLI 输出与首轮交付 `9d4016295` **逐字一致**（本人实测 `node scripts/i18n-sync-check.mjs`：55 行、md5 `c2ffde854c8b1dde7bd6fce1bfa28b44`、exit 1，与 Coder 自报相符；与 `fd23a66a8` 基线 diff 仅为本轨预期的驱动段 +18 行与汇总行措辞，宿主段逐字节一致）；18 例经逐例审查为真实分支断言（缺/多 key、缺 index.ts、漏 import、>10 截断、structural-only 致命、三种退出码组合，无以量补质的同义断言）；覆盖率实测：本轨新增/重构驱动扫描段（L60-209）行覆盖 100%，未覆盖仅剩宿主既有 `extractKeys` 段（L39-59，本轨未触碰代码、行为以 CLI 输出对比佐证）与 `runCli`/git-tag CLI 装配段（L210-329，含 `istanbul ignore` main 守卫）；main 守卫调用方核查：`.github/workflows/ci.yml:68`、`scripts/ci-local.sh:65`、`scripts/run-full-automation-test.sh:79`、i18n-sync skill、AGENTS.md 均为 `node scripts/i18n-sync-check.mjs` 直接调用 → 文件名结尾匹配命中，`package.json` 无脚本调用方，无破坏。）
 - **严重度**: 低-中（脚本本身经 Tester 手工四分支实测正确；缺的是回归防护。该脚本是本轨「不再由宿主 codegen 聚合」后**唯一**的词条完整性守门，若被改坏无人发现）
 - **位置**: `scripts/i18n-sync-check.mjs:56-72`（`extractPackKeys`）、`74-84`（`findDriverLocalePacks`）、`186-243`（驱动包结构 + 缺失/多余扫描、`totalStructural` 退出码）；对照 `scripts/__tests__/`（存在 `check-id-terminology.test.ts` / `check-managed-stubs.test.ts` / `check-module-layers.test.ts` 等同类目测试，**无 `i18n-sync-check` 任何测试文件**）
 - **描述（含量级）**: 本轨为 `i18n-sync-check.mjs` 新增 97 行（含 4 条可判定分支：缺 index.ts / 漏 import / key 缺失 / key 多余），并改变汇总行与退出码语义（`totalStructural` 参与 `exitCode=1`）。实测该逻辑**当前行为正确**（见下日志），但 `scripts` 套件（21 files / 190 tests）里没有一条用例触达它——脚本全部逻辑在模块顶层裸执行、未 `export`，因此**技术上无法被单测导入**（`scripts/__tests__/check-*.test.ts` 的既有写法都是「脚本导出纯函数 + 测试断言」）。
@@ -142,8 +145,7 @@
 
 ## i18n-drivers-BUG-003：三处宿主注释仍声明「`src/locales` 注册 host + driver dictionaries」，本轨后语义失真
 
-- **状态**: 待复测（协调者裁定：授权对 `src/hooks/useI18n.ts` / `src/lib/localeSync.ts` **仅改注释文案**；
-  Coder 第 1 轮已改完三处注释，语句与 import 行为零改动，见 progress.md §3）
+- **状态**: 已修复（Tester 第 2 轮复测通过，commit `a61e42f14`：`git diff -U0 fd23a66a8..HEAD -- src/locales/t.ts src/hooks/useI18n.ts src/lib/localeSync.ts` 逐行核对，改动全为 `//` 注释行（含 localeSync 注释 2 行 → 3 行），import 语句与任何可执行语句零改动；文案与新契约一致。）
 - **严重度**: 低（纯注释，但恰好描述的是本轨推翻的那条契约，误导后续读者）
 - **位置**:
   - `src/locales/t.ts:1` — `import './index'; // side effect: register eager host + driver dictionaries`
