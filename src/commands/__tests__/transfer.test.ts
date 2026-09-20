@@ -21,13 +21,15 @@ describe('transferCommands.inspect', () => {
       'goecoride',
       'public',
       'mysql',
-      [{
-        sourceTable: 'users',
-        targetTable: 'users_copy',
-        createNew: true,
-        enabled: true,
-        columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
-      }],
+      [
+        {
+          sourceTable: 'users',
+          targetTable: 'users_copy',
+          createNew: true,
+          enabled: true,
+          columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
+        },
+      ],
     );
 
     expect(invokeMock).toHaveBeenCalledWith('inspect_sql_file_transfer', {
@@ -36,13 +38,15 @@ describe('transferCommands.inspect', () => {
       sourceSchema: 'public',
       targetDatabaseType: 'mysql',
       mode: 'structureAndData',
-      tables: [{
-        sourceTable: 'users',
-        targetTable: 'users_copy',
-        createNew: true,
-        enabled: true,
-        columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
-      }],
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users_copy',
+          createNew: true,
+          enabled: true,
+          columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
+        },
+      ],
     });
   });
 
@@ -64,6 +68,31 @@ describe('transferCommands.inspect', () => {
       targetDatabase: 'datazen_test',
       mode: 'structureAndData',
       tables: null,
+    });
+  });
+
+  it('persists profiles through dedicated IPC commands', async () => {
+    const { transferCommands } = await import('../transfer');
+    const profile = {
+      version: 1,
+      id: 'profile-1',
+      name: 'nightly',
+      sourceConnectionId: 'src',
+      destinationMode: 'sqlFile',
+      mode: 'data',
+      writeMode: 'insert',
+      tables: [],
+      options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    } as const;
+    await transferCommands.getProfiles();
+    await transferCommands.saveProfile(profile);
+    await transferCommands.deleteProfile('profile-1');
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'get_transfer_profiles');
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'save_transfer_profile', { profile });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'delete_transfer_profile', {
+      profileId: 'profile-1',
     });
   });
 

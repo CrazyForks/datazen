@@ -1,7 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectionConfig } from '../../../types';
-import type { TransferExecutionResult, TransferTableResult } from '../../../commands/transfer';
+import type {
+  TransferExecutionResult,
+  TransferProfile,
+  TransferTableResult,
+} from '../../../commands/transfer';
 import { transferCommands } from '../../../commands/transfer';
 import { clearTransferLimitationsDismissed } from '../../../lib/transferLimitationsPrefs';
 
@@ -74,6 +78,9 @@ vi.mock('../../../commands/database', () => ({
 vi.mock('../../../commands/transfer', () => ({
   DEFAULT_TRANSFER_OPTIONS: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
   transferCommands: {
+    getProfiles: vi.fn().mockResolvedValue([]),
+    saveProfile: vi.fn().mockResolvedValue(undefined),
+    deleteProfile: vi.fn().mockResolvedValue(undefined),
     pickSqlFile: vi.fn().mockResolvedValue({ fileToken: 'sql-file-token' }),
     inspect: (...args: unknown[]) => inspectTransferMock(...args),
     inspectSqlFile: (...args: unknown[]) => inspectSqlFileTransferMock(...args),
@@ -262,7 +269,9 @@ async function advanceToSqlFilePreview(
   inspectSqlFileTransferMock.mockResolvedValue(inspectedRows);
   fireEvent.click(screen.getByTestId('data-transfer-next'));
   await waitFor(() => expect(inspectSqlFileTransferMock).toHaveBeenCalled());
-  await waitFor(() => expect(screen.getAllByTestId('data-transfer-table-row').length).toBeGreaterThan(0));
+  await waitFor(() =>
+    expect(screen.getAllByTestId('data-transfer-table-row').length).toBeGreaterThan(0),
+  );
   await waitFor(() => expect(screen.getByTestId('data-transfer-next')).not.toBeDisabled());
   if (stopAt === 'objects') return;
   fireEvent.click(screen.getByTestId('data-transfer-next'));
@@ -347,6 +356,7 @@ async function advanceToPreviewStep(writeMode: 'insert' | 'truncateInsert' = 'tr
 describe('DataTransferWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(transferCommands.getProfiles).mockResolvedValue([]);
     crossWindowHandlers.clear();
     clearTransferLimitationsDismissed();
     urlParamMock.mockReset();
@@ -445,6 +455,41 @@ describe('DataTransferWindow', () => {
     expect(screen.getByTestId('data-transfer-step-setup')).toBeTruthy();
     expect(screen.getByTestId('data-transfer-source')).toBeTruthy();
     expect(screen.getByTestId('data-transfer-target')).toBeTruthy();
+  });
+
+  it('loads a saved profile without restoring a runtime SQL-file token', async () => {
+    const profile: TransferProfile = {
+      version: 1,
+      id: 'profile-1',
+      name: 'Nightly export',
+      sourceConnectionId: 'pg-src',
+      targetConnectionId: null,
+      sourceDatabase: 'src',
+      targetDatabase: null,
+      sourceSchema: null,
+      targetSchema: null,
+      destinationMode: 'sqlFile',
+      sqlFileDialect: 'mysql',
+      sqlFileEncoding: 'utf8Bom',
+      sqlFileDatabase: 'analytics',
+      sqlFileSchema: null,
+      mode: 'data',
+      writeMode: 'insert',
+      tables: [],
+      options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    vi.mocked(transferCommands.getProfiles).mockResolvedValue([profile]);
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await waitFor(() => expect(screen.getByTestId('data-transfer-profile-select')).toBeTruthy());
+    await pickSelect('data-transfer-profile-select', 'Nightly export');
+    fireEvent.click(screen.getByTestId('data-transfer-profile-load'));
+    await waitFor(() =>
+      expect(screen.getByTestId('data-transfer-sql-file-dialect')).toHaveTextContent(/mysql/i),
+    );
+    expect(screen.getByText('transfer.profile.chooseFile')).toBeTruthy();
   });
 
   it('opens limitations dialog on first visit', async () => {

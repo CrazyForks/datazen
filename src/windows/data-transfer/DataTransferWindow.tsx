@@ -15,6 +15,7 @@ import {
   type TransferJob,
   type TransferMode,
   type TransferPreview,
+  type TransferProfile,
   type TransferTableMapping,
   type TransferTableResult,
   type TransferExecutionResult,
@@ -103,11 +104,26 @@ export function DataTransferWindow() {
   const [limitationsOpen, setLimitationsOpen] = useState(false);
   const [executeConfirmOpen, setExecuteConfirmOpen] = useState(false);
   const [selectedMappingTable, setSelectedMappingTable] = useState('');
+  const [transferProfiles, setTransferProfiles] = useState<TransferProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [profileName, setProfileName] = useState('');
+  const profileMappingsRef = useRef<TransferTableMapping[] | null>(null);
   const jobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  const loadTransferProfiles = useCallback(() => {
+    void transferCommands
+      .getProfiles()
+      .then(setTransferProfiles)
+      .catch(() => setTransferProfiles([]));
+  }, []);
+
+  useEffect(() => {
+    loadTransferProfiles();
+  }, [loadTransferProfiles]);
 
   useEffect(() => {
     if (!isTransferLimitationsDismissed()) {
@@ -326,10 +342,10 @@ export function DataTransferWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect when endpoint or catalog changes
   }, [targetId, targetDatabase]);
 
-  const tablesToMappings = useCallback(
+  const allTablesToMappings = useCallback(
     (): TransferTableMapping[] =>
       tables
-        .filter((tbl) => tbl.enabled && tbl.sourceTable)
+        .filter((tbl) => tbl.sourceTable)
         .map((tbl) => ({
           sourceTable: tbl.sourceTable,
           targetTable: tbl.targetTable,
@@ -342,6 +358,111 @@ export function DataTransferWindow() {
         })),
     [tables],
   );
+
+  const tablesToMappings = useCallback(
+    (): TransferTableMapping[] => allTablesToMappings().filter((table) => table.enabled !== false),
+    [allTablesToMappings],
+  );
+
+  const saveCurrentProfile = useCallback(async () => {
+    const name = profileName.trim();
+    if (!name || !sourceId || !sourceDatabase) {
+      setErrorMsg(t('transfer.profile.missingFields'));
+      setErrorOpen(true);
+      return;
+    }
+    if (destinationMode === 'database' && (!targetId || !targetDatabase)) {
+      setErrorMsg(t('transfer.profile.missingFields'));
+      setErrorOpen(true);
+      return;
+    }
+    const now = new Date().toISOString();
+    const existing = transferProfiles.find((profile) => profile.id === selectedProfileId);
+    const profile: TransferProfile = {
+      version: 1,
+      id: existing?.id ?? crypto.randomUUID(),
+      name,
+      sourceConnectionId: sourceId,
+      targetConnectionId: destinationMode === 'database' ? targetId : null,
+      sourceDatabase,
+      targetDatabase: destinationMode === 'database' ? targetDatabase : null,
+      sourceSchema: sourceConn?.schema ?? null,
+      targetSchema: destinationMode === 'database' ? (targetConn?.schema ?? null) : null,
+      destinationMode,
+      sqlFileDialect: destinationMode === 'sqlFile' ? sqlFileDialect : null,
+      sqlFileEncoding: destinationMode === 'sqlFile' ? sqlFileEncoding : null,
+      sqlFileDatabase: destinationMode === 'sqlFile' ? sqlFileDatabase || null : null,
+      sqlFileSchema: destinationMode === 'sqlFile' ? sqlFileSchema || null : null,
+      mode,
+      writeMode,
+      tables: allTablesToMappings(),
+      options: { batchSize, stopOnError, confirmedDestructive },
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    try {
+      await transferCommands.saveProfile(profile);
+      setSelectedProfileId(profile.id);
+      setProfileName(profile.name);
+      loadTransferProfiles();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : String(error));
+      setErrorOpen(true);
+    }
+  }, [
+    profileName,
+    sourceId,
+    sourceDatabase,
+    destinationMode,
+    targetId,
+    targetDatabase,
+    transferProfiles,
+    selectedProfileId,
+    sourceConn?.schema,
+    targetConn?.schema,
+    sqlFileDialect,
+    sqlFileEncoding,
+    sqlFileDatabase,
+    sqlFileSchema,
+    mode,
+    writeMode,
+    allTablesToMappings,
+    batchSize,
+    stopOnError,
+    confirmedDestructive,
+    loadTransferProfiles,
+    t,
+  ]);
+
+  const loadSelectedProfile = useCallback(() => {
+    const profile = transferProfiles.find((candidate) => candidate.id === selectedProfileId);
+    if (!profile) return;
+    setProfileName(profile.name);
+    setSourceId(profile.sourceConnectionId);
+    setTargetId(profile.targetConnectionId ?? '');
+    setSourceDatabase(profile.sourceDatabase ?? '');
+    setTargetDatabase(profile.targetDatabase ?? '');
+    setMode(profile.mode);
+    setWriteMode(profile.writeMode);
+    setBatchSize(profile.options.batchSize ?? DEFAULT_TRANSFER_OPTIONS.batchSize ?? 500);
+    setStopOnError(profile.options.stopOnError ?? true);
+    setConfirmedDestructive(profile.options.confirmedDestructive ?? false);
+    setDestinationMode(profile.destinationMode);
+    setSqlFileDialect(profile.sqlFileDialect ?? 'source');
+    setSqlFileEncoding(profile.sqlFileEncoding ?? 'utf8');
+    setSqlFileDatabase(profile.sqlFileDatabase ?? '');
+    setSqlFileSchema(profile.sqlFileSchema ?? '');
+    setSqlFileTarget(null);
+    profileMappingsRef.current = profile.tables;
+    setTables([]);
+    setPreview(null);
+    setResult(null);
+    setStep('endpoints');
+    if (profile.destinationMode === 'sqlFile') {
+      setErrorMsg(t('transfer.profile.chooseFile'));
+      setErrorOpen(true);
+    }
+  }, [transferProfiles, selectedProfileId, t]);
 
   const updateTableDdlOverride = useCallback((sourceTable: string, ddl: string) => {
     setTables((prev) =>
@@ -453,6 +574,7 @@ export function DataTransferWindow() {
     }
     setLoading(true);
     try {
+      const savedMappings = profileMappingsRef.current ?? [];
       const rows =
         destinationMode === 'sqlFile'
           ? await transferCommands.inspectSqlFile(
@@ -461,6 +583,7 @@ export function DataTransferWindow() {
               sourceDatabase,
               sourceConn?.schema,
               sqlFileDialect === 'source' ? undefined : sqlFileDialect,
+              savedMappings,
             )
           : await transferCommands.inspect(
               srcConnId,
@@ -468,6 +591,7 @@ export function DataTransferWindow() {
               mode,
               sourceDatabase,
               targetDatabase,
+              savedMappings,
             );
       const enabled = rows
         .filter((r) => r.sourceTable)
@@ -483,6 +607,7 @@ export function DataTransferWindow() {
             : (enabled.find((row) => row.enabled)?.sourceTable ?? enabled[0].sourceTable),
         );
       }
+      profileMappingsRef.current = null;
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
@@ -823,6 +948,48 @@ export function DataTransferWindow() {
         >
           {step === 'endpoints' && (
             <div className="space-y-4">
+              <div className="flex flex-wrap items-end gap-2 rounded-lg border border-edge bg-surface-alt p-3">
+                <label className="min-w-48 flex-1 text-xs">
+                  <span className="mb-1 block text-fg-muted">{t('transfer.profile.name')}</span>
+                  <Input
+                    value={profileName}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    placeholder={t('transfer.profile.namePlaceholder')}
+                    data-testid="data-transfer-profile-name"
+                    className="h-8 text-xs"
+                  />
+                </label>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void saveCurrentProfile()}
+                  data-testid="data-transfer-profile-save"
+                >
+                  {t('transfer.profile.save')}
+                </Button>
+                <label className="min-w-48 text-xs">
+                  <span className="mb-1 block text-fg-muted">{t('transfer.profile.load')}</span>
+                  <Select
+                    value={selectedProfileId}
+                    options={transferProfiles.map((profile) => ({
+                      value: profile.id,
+                      label: profile.name,
+                    }))}
+                    onChange={setSelectedProfileId}
+                    placeholder={t('transfer.profile.select')}
+                    triggerDataAttrs={{ 'data-testid': 'data-transfer-profile-select' }}
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!selectedProfileId}
+                  onClick={loadSelectedProfile}
+                  data-testid="data-transfer-profile-load"
+                >
+                  {t('transfer.profile.load')}
+                </Button>
+              </div>
               <div className="flex gap-2 rounded-lg border border-edge bg-surface-alt p-2">
                 <Button
                   variant={destinationMode === 'database' ? 'primary' : 'secondary'}

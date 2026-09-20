@@ -9,6 +9,7 @@ mod key_store;
 mod models;
 mod settings;
 mod sync_tasks;
+mod transfer_profiles;
 
 #[allow(unused_imports)] // public re-exports for IPC / other modules
 pub use app_db::{

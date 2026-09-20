@@ -168,6 +168,13 @@ const pack = {
   'transfer.destination.sqlFileHint':
     'The SQL file path is held by the host and will be written atomically after preview.',
   'transfer.destination.chooseHint': 'Choose an SQL file to continue.',
+  'transfer.profile.name': 'Profile name',
+  'transfer.profile.namePlaceholder': 'Name this transfer configuration',
+  'transfer.profile.save': 'Save profile',
+  'transfer.profile.load': 'Load profile',
+  'transfer.profile.select': 'Select a saved profile',
+  'transfer.profile.missingFields': 'Choose the required endpoints and enter a profile name.',
+  'transfer.profile.chooseFile': 'Choose a new SQL file destination before continuing.',
   'transfer.preview.backToSetup': 'Back to setup',
   'transfer.selectBoth': 'Select source and target connections and databases.',
   'transfer.connectFailed': 'Connect failed:',

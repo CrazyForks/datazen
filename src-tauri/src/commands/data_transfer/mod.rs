@@ -14,13 +14,64 @@ use super::error::CommandError;
 use super::AppState;
 use crate::data_transfer::{
     classify_transfer_pair as classify_transfer_pair_impl, TableInspectResult,
-    TransferExecutionResult, TransferJob, TransferMode, TransferPreview, TransferRunRequest,
+    TransferExecutionResult, TransferJob, TransferMode, TransferPreview, TransferProfile,
+    TransferRunRequest,
 };
 pub(crate) use exec::execute_data_transfer_impl;
 pub(crate) use inspect::{inspect_data_transfer_impl, inspect_sql_file_transfer_impl};
 pub(crate) use jobs::cancel_job;
 pub(crate) use preview::preview_data_transfer_impl;
 use tauri::{AppHandle, State};
+
+#[tauri::command]
+pub async fn get_transfer_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<TransferProfile>, CommandError> {
+    Ok(state.store.get_transfer_profiles().await)
+}
+
+#[tauri::command]
+pub async fn save_transfer_profile(
+    state: State<'_, AppState>,
+    mut profile: TransferProfile,
+) -> Result<(), CommandError> {
+    profile.validate().map_err(CommandError::Validation)?;
+    if state
+        .store
+        .get_connection(&profile.source_connection_id)
+        .await
+        .is_none()
+    {
+        return Err(CommandError::Validation(
+            "transfer profile source connection no longer exists".into(),
+        ));
+    }
+    if let Some(target) = profile.target_connection_id.as_deref() {
+        if state.store.get_connection(target).await.is_none() {
+            return Err(CommandError::Validation(
+                "transfer profile target connection no longer exists".into(),
+            ));
+        }
+    }
+    profile.updated_at = chrono::Utc::now();
+    state
+        .store
+        .save_transfer_profile(profile)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn delete_transfer_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<(), CommandError> {
+    state
+        .store
+        .delete_transfer_profile(&profile_id)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
 
 #[tauri::command]
 pub fn classify_transfer_pair(

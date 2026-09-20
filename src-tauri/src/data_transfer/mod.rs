@@ -8,6 +8,7 @@ pub mod metadata;
 pub mod model;
 pub mod pairing;
 pub mod preview;
+pub mod profile;
 pub mod recordset;
 pub(crate) mod recordset_bounds;
 mod scan;
@@ -27,6 +28,7 @@ pub use model::{
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
 pub use preview::{build_preview, TransferPreviewAdapters};
+pub use profile::TransferProfile;
 pub use structure::{column_ir_types_by_source, create_target_tables, source_schema_to_target_ir};
 
 #[cfg(test)]

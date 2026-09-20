@@ -5,8 +5,10 @@ use crate::data_transfer::model::{
     Endpoint, SqlFileTarget, TransferOptions, TransferRunOptions, TransferRunSelection,
 };
 use crate::data_transfer::{
-    classify_transfer_pair, TableMapping, TransferJob, TransferMode, TransferRunRequest, WriteMode,
+    classify_transfer_pair, TableMapping, TransferJob, TransferMode, TransferProfile,
+    TransferRunRequest, WriteMode,
 };
+use chrono::Utc;
 use datazen_driver_api::{ColumnSchema, TableSchema};
 
 fn plan_job(source_db_session_id: String, target_db_session_id: String) -> TransferJob {
@@ -94,6 +96,70 @@ fn auto_map_columns_matches_names_only() {
     let maps = auto_map_columns(&src, &tgt);
     assert_eq!(maps.len(), 1);
     assert_eq!(maps[0].source_column, "a");
+}
+
+#[test]
+fn transfer_profile_rejects_runtime_file_token_and_unknown_fields() {
+    let payload = r#"{
+        "version": 1,
+        "id": "profile-1",
+        "name": "nightly",
+        "sourceConnectionId": "src",
+        "destinationMode": "sqlFile",
+        "mode": "data",
+        "writeMode": "insert",
+        "tables": [],
+        "options": {"batchSize": 10, "stopOnError": true, "confirmedDestructive": false},
+        "createdAt": "2026-09-21T00:00:00Z",
+        "updatedAt": "2026-09-21T00:00:00Z",
+        "fileToken": "must-not-persist"
+    }"#;
+    assert!(serde_json::from_str::<TransferProfile>(payload).is_err());
+}
+
+#[tokio::test]
+async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
+    let test = crate::testing::app_state::TestAppState::new().await;
+    test.save_connection("profile-src").await;
+    let now = Utc::now();
+    let profile = TransferProfile {
+        version: TransferProfile::CURRENT_VERSION,
+        id: "profile-1".into(),
+        name: "nightly".into(),
+        source_connection_id: "profile-src".into(),
+        target_connection_id: None,
+        source_database: Some("app".into()),
+        target_database: None,
+        source_schema: None,
+        target_schema: None,
+        destination_mode: "sqlFile".into(),
+        sql_file_dialect: Some("mysql".into()),
+        sql_file_encoding: Some("utf8Bom".into()),
+        sql_file_database: Some("analytics".into()),
+        sql_file_schema: None,
+        mode: TransferMode::Data,
+        write_mode: WriteMode::Insert,
+        tables: vec![TableMapping::auto("users")],
+        options: TransferOptions::default(),
+        created_at: now,
+        updated_at: now,
+    };
+    test.store
+        .save_transfer_profile(profile.clone())
+        .await
+        .unwrap();
+    let stored = test.store.get_transfer_profiles().await;
+    assert_eq!(stored, vec![profile]);
+    let json = tokio::fs::read_to_string(test.store.data_dir().join("transfer_profiles.json"))
+        .await
+        .unwrap();
+    assert!(!json.contains("dbSessionId"));
+    assert!(!json.contains("fileToken"));
+    test.store
+        .delete_transfer_profile("profile-1")
+        .await
+        .unwrap();
+    assert!(test.store.get_transfer_profiles().await.is_empty());
 }
 
 #[test]

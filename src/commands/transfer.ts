@@ -88,6 +88,29 @@ export interface TransferSqlFileTarget {
   schema?: string;
 }
 
+export interface TransferProfile {
+  version: number;
+  id: string;
+  name: string;
+  sourceConnectionId: string;
+  targetConnectionId?: string | null;
+  sourceDatabase?: string | null;
+  targetDatabase?: string | null;
+  sourceSchema?: string | null;
+  targetSchema?: string | null;
+  destinationMode: 'database' | 'sqlFile';
+  sqlFileDialect?: string | null;
+  sqlFileEncoding?: 'utf8' | 'utf8Bom' | null;
+  sqlFileDatabase?: string | null;
+  sqlFileSchema?: string | null;
+  mode: TransferMode;
+  writeMode: WriteMode;
+  tables: TransferTableMapping[];
+  options: TransferOptions;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TransferTableResult {
   sourceTable: string;
   targetTable: string;
@@ -181,6 +204,9 @@ export const DEFAULT_TRANSFER_OPTIONS: TransferOptions = {
 };
 
 export const transferCommands = {
+  getProfiles: () => invoke<TransferProfile[]>('get_transfer_profiles'),
+  saveProfile: (profile: TransferProfile) => invoke<void>('save_transfer_profile', { profile }),
+  deleteProfile: (profileId: string) => invoke<void>('delete_transfer_profile', { profileId }),
   pickSqlFile: () => invoke<TransferSqlFileTarget | null>('pick_data_transfer_sql_file'),
   classifyPair: (sourceDatabaseType: string, targetDatabaseType: string) =>
     invoke<TransferPairingView>('classify_transfer_pair', {

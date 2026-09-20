@@ -168,6 +168,9 @@ pub(crate) struct StoreCache {
     /// Lazy: loaded on first sync / AI access.
     pub(super) sync_tasks: Vec<SyncTask>,
     pub(super) sync_tasks_loaded: bool,
+    /// Lazy: loaded on first Data Transfer profile access.
+    pub(super) transfer_profiles: Vec<crate::data_transfer::TransferProfile>,
+    pub(super) transfer_profiles_loaded: bool,
     pub(super) ai_config: Option<AiProviderConfig>,
     pub(super) ai_settings_config: Option<crate::ai::AiSettingsConfig>,
     pub(super) ai_config_loaded: bool,
