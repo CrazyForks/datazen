@@ -2,7 +2,7 @@
 
 ## migration-transfer-recordsets-BUG-001 — P1 — reversed bounds are accepted
 
-- **Status:** 待复测
+- **Status:** 已修复（独立复测通过）
 - **Description:** `TransferRecordset` accepts a `start` value greater than `end`, builds a valid `WHERE` clause, and allows the transfer to proceed with an empty result. The preview does not fail closed, so a user can mistake a zero-row transfer for a successful bounded migration.
 - **Reproduction:** Use a source table with an integer primary key and submit the UI-shaped payload `start: { value: "20" }`, `end: { value: "10" }`. Call `data_transfer::recordset::build_source_scope`.
 - **Expected:** Validate the typed bounds before SQL generation and return a validation error when the lower bound is greater than the upper bound. Equality should remain valid only when both bounds are inclusive.
@@ -14,7 +14,7 @@
 
 ## migration-transfer-recordsets-BUG-002 — P1 — frontend text overflow is not type validated
 
-- **Status:** 待复测
+- **Status:** 已修复（独立复测通过）
 - **Description:** The UI deliberately sends bound text to preserve precision, but the server keeps it as `Value::String` without validating it against the inspected source column type. An out-of-range integer text value is accepted into the preview and only fails later in a driver or can be coerced differently by a dialect.
 - **Reproduction:** Use a source `INTEGER` column and submit `start: { value: "2147483648" }` from the recordset editor. Call `data_transfer::recordset::build_source_scope` with the inspected schema.
 - **Expected:** Parse the text with the source type contract and reject values outside the source type range before preview/execute. The same validation must be used by preview and execution.

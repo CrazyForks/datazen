@@ -1,6 +1,6 @@
 # Track: migration-transfer-recordsets
 
-- Phase: READY_FOR_TEST
+- Phase: PASSED
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-recordsets`
 - Branch: `codex/migration-transfer-recordsets`
 - Scope: validated per-table stable recordset/range selection for Transfer, shared preview/execute scope construction, immutable-plan binding, and UI editing.
@@ -32,6 +32,15 @@
 - `git diff --check`: passed; generated driver/Cargo noise restored.
 - Formal `CI=true pnpm tauri:build:webdriver` and a live PostgreSQL recordset journey were not run in this coder pass; an independent tester should cover them.
 
+## Independent tester pass (round 2)
+
+- Reviewed the typed bound resolver, shared preview/execute scope builder, filter/range placeholder ordering, SQL identifier quoting, immutable-plan fingerprint, old mapping compatibility, and UI state transitions.
+- Added tester coverage for boolean/non-finite/NULL bounds, legacy mappings without recordsets, empty bound removal, endpoint inclusivity toggles, disabling a recordset, and the no-primary-key explicit-order journey.
+- Focused Rust `data_transfer`: **73 passed, 0 failed**; focused frontend: **25 passed, 0 failed**; `npx tsc --noEmit`: passed.
+- Scoped frontend coverage for `ColumnMappingEditor`, `DataTransferWindow`, and `transferMappingView`: **84.93% statements, 75.38% branches, 85.71% functions, 87.25% lines**.
+- `cargo fmt --all`, `git diff --check`, and the formal `CI=true pnpm tauri:build:webdriver` passed. Generated driver/Cargo files were restored and the worktree was clean apart from the tester commit before handoff.
+- Live PostgreSQL recordset smoke remains skipped because this environment has no `E2E_PG_RO_PASSWORD` or database fixture.
+
 ## Independent tester pass
 
 - Focused Rust suite before tester additions: **65 passed, 0 failed**.
@@ -54,9 +63,9 @@
 
 | Journey | Status |
 | --- | --- |
-| Mapping → enable recordset → select PK → enter inclusive bounds → preview → edit bound → old preview invalidated → re-preview | 【本机可执行】 covered by existing `DataTransferWindow.test.tsx` (23/23) |
-| Start bound greater than end bound is rejected before preview/execute | 【待复测】 |
-| Integer/date/decimal text bound is type checked and overflow fails closed across source drivers | 【待复测】 live DB fixture still required for driver smoke |
+| Mapping → enable recordset → select PK → enter inclusive bounds → preview → edit bound → old preview invalidated → re-preview | 【本机可执行】 covered by `DataTransferWindow.test.tsx` (25/25) |
+| Start bound greater than end bound is rejected before preview/execute | 【本机可执行】 covered by `test_tester_rejects_reversed_bounds_before_query` |
+| Integer/decimal/float/boolean/text bounds are type checked and overflow/non-finite values fail closed | 【本机可执行】 covered by recordset and frontend suites; live driver smoke still requires a fixture |
 
 ## Findings / bugs
 

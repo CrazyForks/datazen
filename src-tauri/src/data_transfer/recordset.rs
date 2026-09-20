@@ -495,4 +495,39 @@ mod tests {
         let resolved = resolve_recordset(&recordset, &schema).unwrap();
         assert!(matches!(resolved.start.unwrap().value, Value::String(value) if value == "b"));
     }
+
+    #[test]
+    fn boolean_and_non_finite_bounds_fail_closed() {
+        let mut schema = schema(&["id"]);
+        schema.columns[0].data_type = "BOOLEAN".into();
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("true");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("false");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+
+        recordset.start.as_mut().unwrap().value = serde_json::json!("false");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("true");
+        let resolved = resolve_recordset(&recordset, &schema).unwrap();
+        assert!(matches!(resolved.start.unwrap().value, Value::Bool(false)));
+
+        schema.columns[0].data_type = "DOUBLE PRECISION".into();
+        recordset.start.as_mut().unwrap().value = serde_json::json!("Infinity");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("Infinity");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+        recordset.start.as_mut().unwrap().value = serde_json::Value::Null;
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+    }
+
+    #[test]
+    fn legacy_table_mapping_without_recordset_deserializes() {
+        let mapping: super::super::model::TableMapping =
+            serde_json::from_value(serde_json::json!({
+                "sourceTable": "users",
+                "targetTable": "users",
+                "enabled": true,
+                "columnMappings": []
+            }))
+            .unwrap();
+        assert!(mapping.recordset.is_none());
+    }
 }

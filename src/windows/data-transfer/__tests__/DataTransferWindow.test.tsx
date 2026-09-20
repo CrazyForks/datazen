@@ -511,6 +511,56 @@ describe('DataTransferWindow', () => {
     expect(previewTransferMock).toHaveBeenCalledTimes(2);
   });
 
+  it('[tester] clears empty bounds, toggles endpoint inclusivity, and disables the recordset', async () => {
+    await advanceToMappingStep();
+
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-enable'));
+    expect(screen.getByTestId('data-transfer-recordset-editor')).toBeTruthy();
+    expect(screen.queryByTestId('data-transfer-recordset-order-error')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-start'), {
+      target: { value: '10' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-start-inclusive'));
+    expect(screen.getByTestId('data-transfer-recordset-start-inclusive')).not.toBeChecked();
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-start'), {
+      target: { value: ' ' },
+    });
+    expect(screen.queryByTestId('data-transfer-recordset-start-inclusive')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-end'), {
+      target: { value: '20' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-end-inclusive'));
+    expect(screen.getByTestId('data-transfer-recordset-end-inclusive')).not.toBeChecked();
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-end'), {
+      target: { value: '' },
+    });
+    expect(screen.queryByTestId('data-transfer-recordset-end-inclusive')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-limit'), {
+      target: { value: '8' },
+    });
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-limit'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-enable'));
+    expect(screen.queryByTestId('data-transfer-recordset-editor')).toBeNull();
+    expect(screen.getByText('transfer.mapping.noRecordset')).toBeTruthy();
+  });
+
+  it('[tester] requires an explicit order column when the source has no primary key', async () => {
+    const previousPrimaryKeys = inspectRows[0].sourcePrimaryKeys;
+    inspectRows[0].sourcePrimaryKeys = [];
+    try {
+      await advanceToMappingStep();
+      fireEvent.click(screen.getByTestId('data-transfer-recordset-enable'));
+      expect(screen.getByTestId('data-transfer-recordset-order-error')).toBeTruthy();
+    } finally {
+      inspectRows[0].sourcePrimaryKeys = previousPrimaryKeys;
+    }
+  });
+
   it('shows execute confirm dialog for destructive write mode before running', async () => {
     await advanceToPreviewStep('truncateInsert');
 
