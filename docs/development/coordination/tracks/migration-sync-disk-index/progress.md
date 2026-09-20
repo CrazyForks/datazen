@@ -1,6 +1,6 @@
 # migration-sync-disk-index
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 ## Scope
 
@@ -38,7 +38,15 @@ Independent testing found that changing a row frame's 8-byte length prefix while
 
 Focused revalidation passed: driver-injected ComparisonStore 7/7, full `commands::sync::` 44/44, focused frontend 50/50 and TypeScript checking. Cargo.lock and generated driver files were restored. Formal packaging was not rerun in this fix loop because the change is confined to indexed row-file validation and the prior formal build remains valid for the unchanged UI/runtime path.
 
-The earlier independent failure is superseded by this fix. The track remains `READY_FOR_TEST` until an independent tester reruns the corruption reproducer and closes BUG-001.
+The earlier independent failure is superseded by this fix; the second independent tester result below closes that review gate.
+
+## Second independent tester result (2026-09-20)
+
+The second independent tester reran the required driver-injected suites on commit `7b64617e`: ComparisonStore 7/7, Sync plans 10/10 and all `commands::sync::` tests 44/44. The directed large-spill corruption path changed the first row frame's 8-byte little-endian length prefix without changing file length; `summaries()`, `load_table_page()` and `load()` all rejected the store with the indexed frame-length error. The same run confirmed the unmodified indexed store summary/page/full-load round trip, private 0700/0600 permissions, multi-table middle-page isolation, offset/limit bounds, zero-limit rejection, TTL/claim cleanup and clone/Drop cleanup through the focused store/plan tests.
+
+The specified frontend regression files passed 39/39 tests and `npx tsc --noEmit` passed. A focused Vitest coverage invocation was not a meaningful changed-file coverage measurement because the project config instruments the entire frontend and enforces the global 80% threshold; it exited on the expected 1.5% global coverage while the same four test files passed. This track changes Rust only, so Rust coverage is represented by the focused unit-path execution and code review rather than a frontend coverage number. The coder's formal WebDriver packaging remains the applicable build evidence because the fix is Rust-only and the UI is unchanged; generated driver files were restored and the worktree is clean.
+
+Phase: PASSED
 
 
 ## Independent tester result (2026-09-20)
