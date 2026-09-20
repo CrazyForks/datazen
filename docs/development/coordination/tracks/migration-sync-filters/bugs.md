@@ -8,3 +8,10 @@
   contract.
 - Filter values remain server-side parameters; preview text uses anonymous
   placeholders and never interpolates user values.
+
+## Independent verification (2026-09-20)
+
+No Sync-filter defect was reproduced. The live PostgreSQL journey confirmed
+that rows outside the symmetric predicate do not become delete candidates or
+receive writes. The unsupported SQLite V1 family gate is an existing product
+boundary, not a regression in this track.
