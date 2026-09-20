@@ -491,6 +491,7 @@ async fn execute_data_sync_rejects_when_target_active_database_changes() {
             selection: super::plans::SyncRunSelection {
                 revision: preview.selection_revision,
                 rows: Vec::new(),
+                scopes: Vec::new(),
             },
             options: crate::data_sync::SyncOptions::default(),
             job_id: None,

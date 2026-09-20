@@ -519,6 +519,86 @@ describe('DataSyncWindow wizard', () => {
     ]);
   });
 
+  it('[tester] restores default selection across every page after clearing a table scope', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue({
+      contractVersion: 1,
+      planId: 'paged-clear-plan',
+      selectionRevision: 1,
+      pageSize: 1,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          columns: ['id', 'name'],
+          insertCount: 2,
+          updateCount: 0,
+          deleteCount: 0,
+          unchangedCount: 0,
+          rowCount: 2,
+          pageSize: 1,
+          firstCursor: 'clear-cursor-0',
+          hasMore: true,
+        },
+      ],
+    });
+    getDataSyncComparisonPageMock.mockImplementation(
+      async (cursor: string | null, sourceTable: string, targetTable: string) => ({
+        contractVersion: 1,
+        planId: 'paged-clear-plan',
+        sourceTable,
+        targetTable,
+        cursor,
+        nextCursor: cursor === 'clear-cursor-0' ? 'clear-cursor-1' : null,
+        hasMore: cursor === 'clear-cursor-0',
+        pageSize: 1,
+        rows: [
+          {
+            ...insertRow(),
+            key: [cursor === 'clear-cursor-0' ? 1 : 2],
+            sourceRow: [[cursor === 'clear-cursor-0' ? 1 : 2, 'user']],
+          },
+        ],
+      }),
+    );
+
+    render(<DataSyncWindow />);
+    await advanceToCompare();
+    const review = await screen.findByTestId('data-sync-row-diff');
+    await waitFor(() =>
+      expect(getDataSyncComparisonPageMock).toHaveBeenCalledWith(
+        'clear-cursor-0',
+        'users',
+        'users',
+        1,
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId('data-sync-select-all-INSERT'));
+    fireEvent.click(screen.getByText('sync.pageNext'));
+    await waitFor(() => expect(within(review).getByRole('checkbox')).toBeChecked());
+    fireEvent.click(screen.getByTestId('data-sync-clear-all-INSERT'));
+
+    fireEvent.click(screen.getByText('sync.pagePrev'));
+    await waitFor(() => expect(within(review).getByRole('checkbox')).toBeChecked());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-preview');
+    await waitFor(() => expect(generateDataSyncSqlMock).toHaveBeenCalled());
+    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[8]).toEqual([]);
+    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[9]).toEqual([
+      {
+        sourceTable: 'users',
+        targetTable: 'users',
+        selectionMode: 'defaults',
+        operations: ['INSERT'],
+        excludedRows: [],
+      },
+    ]);
+  });
+
   it('shows schema pickers for PostgreSQL when get_tables returns schemas', async () => {
     getTablesMock.mockResolvedValue([
       { name: 'users', schema: 'public', tableType: 'table' },

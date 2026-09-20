@@ -210,4 +210,77 @@ describe('Data Sync immutable plan IPC', () => {
       }),
     );
   });
+
+  it('sends a table scope and one exclusion without materializing page keys', async () => {
+    invoke.mockResolvedValueOnce({
+      contractVersion: 1,
+      planId: 'scoped-plan',
+      selectionRevision: 7,
+      pageSize: 100,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          insertCount: 5000,
+          updateCount: 0,
+          deleteCount: 0,
+          unchangedCount: 0,
+          rowCount: 5000,
+          pageSize: 100,
+          firstCursor: null,
+          hasMore: true,
+        },
+      ],
+    });
+    await syncCommands.compareDataSync('source-session', 'target-session', ['users']);
+
+    invoke.mockResolvedValueOnce([]);
+    await syncCommands.generateDataSyncSql(
+      'source-session',
+      'target-session',
+      [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          rowCount: 5000,
+          insertCount: 5000,
+        },
+      ],
+      { insert: true, update: true, delete: false },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          selectionMode: 'all',
+          operations: ['INSERT'],
+          excludedRows: [{ operation: 'INSERT', key: [42] }],
+        },
+      ],
+    );
+    expect(invoke).toHaveBeenLastCalledWith('generate_data_sync_sql', {
+      planId: 'scoped-plan',
+      selection: {
+        revision: 7,
+        rows: [],
+        scopes: [
+          {
+            sourceTable: 'users',
+            targetTable: 'users',
+            selectionMode: 'all',
+            operations: ['INSERT'],
+            excludedRows: [{ operation: 'INSERT', key: [42] }],
+          },
+        ],
+      },
+      options: { insert: true, update: true, delete: false },
+    });
+    expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('5000');
+  });
 });

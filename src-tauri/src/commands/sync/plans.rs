@@ -116,12 +116,45 @@ pub(crate) struct SyncSelectedRow {
     pub key: Vec<datazen_driver_api::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncSelectionExclusion {
+    pub operation: ChangeOperation,
+    pub key: Vec<datazen_driver_api::Value>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SyncSelectionMode {
+    #[default]
+    All,
+    Defaults,
+}
+
+/// A server-owned selection of comparison rows for one table and operation.
+/// `All` selects every row while `Defaults` selects the rows that would be
+/// checked by the normal operation defaults. The client may only add key
+/// exclusions; row payloads and SQL never cross this boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncTableSelection {
+    pub source_table: String,
+    pub target_table: String,
+    #[serde(default)]
+    pub selection_mode: SyncSelectionMode,
+    pub operations: Vec<ChangeOperation>,
+    #[serde(default)]
+    pub excluded_rows: Vec<SyncSelectionExclusion>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SyncRunSelection {
     pub revision: u64,
     #[serde(default)]
     pub rows: Vec<SyncSelectedRow>,
+    #[serde(default)]
+    pub scopes: Vec<SyncTableSelection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -519,22 +552,51 @@ pub(crate) fn apply_selection(
     selection: &SyncRunSelection,
     options: &SyncOptions,
 ) -> Result<ComparisonResult, String> {
-    let mut seen = HashSet::new();
+    validate_selection(comparison, selection, options)?;
     let mut selected = HashSet::new();
+    for scope in &selection.scopes {
+        let excluded: HashSet<String> = scope
+            .excluded_rows
+            .iter()
+            .map(|row| {
+                selection_token(
+                    &scope.source_table,
+                    &scope.target_table,
+                    row.operation,
+                    &row.key,
+                )
+            })
+            .collect::<Result<_, _>>()?;
+        for table in &comparison.tables {
+            if table.source_table != scope.source_table || table.target_table != scope.target_table
+            {
+                continue;
+            }
+            for change in &table.rows {
+                if scope.operations.contains(&change.operation)
+                    && (scope.selection_mode == SyncSelectionMode::All
+                        || change.operation.default_selected(options))
+                {
+                    let token = selection_token(
+                        &table.source_table,
+                        &table.target_table,
+                        change.operation,
+                        &change.key,
+                    )?;
+                    if !excluded.contains(&token) {
+                        selected.insert(token);
+                    }
+                }
+            }
+        }
+    }
     for row in &selection.rows {
-        let token = selection_token(
+        selected.insert(selection_token(
             &row.source_table,
             &row.target_table,
             row.operation,
             &row.key,
-        )?;
-        if !seen.insert(token.clone()) {
-            return Err("selection contains a duplicate row".into());
-        }
-        if !options.allows(row.operation) {
-            return Err("selection contains an operation disabled by the requested options".into());
-        }
-        selected.insert(token);
+        )?);
     }
 
     let mut result = comparison.clone();
@@ -560,10 +622,12 @@ pub(crate) fn validate_selection(
         return Err("selection revision is required".into());
     }
     let mut allowed = HashSet::new();
+    let mut matched_tables = HashSet::new();
     for table in &comparison.tables {
         if table.status != TableMappingStatus::Matched {
             continue;
         }
+        matched_tables.insert((table.source_table.clone(), table.target_table.clone()));
         for change in &table.rows {
             allowed.insert(selection_token(
                 &table.source_table,
@@ -573,17 +637,119 @@ pub(crate) fn validate_selection(
             )?);
         }
     }
+    let mut seen_scopes = HashSet::new();
+    let mut seen_scope_operations: HashMap<(String, String), Vec<ChangeOperation>> = HashMap::new();
+    let mut scoped_rows = HashSet::new();
+    for scope in &selection.scopes {
+        let pair = (scope.source_table.clone(), scope.target_table.clone());
+        if !matched_tables.contains(&pair) {
+            return Err("selection scope does not belong to a matched comparison table".into());
+        }
+        if scope.operations.is_empty() {
+            return Err("selection scope must include at least one operation".into());
+        }
+        let scope_identity = (pair.0.clone(), pair.1.clone(), scope.selection_mode);
+        if !seen_scopes.insert(scope_identity) {
+            return Err("selection contains a duplicate table scope mode".into());
+        }
+        let mut operations = Vec::new();
+        for operation in &scope.operations {
+            if !matches!(
+                operation,
+                ChangeOperation::Insert | ChangeOperation::Update | ChangeOperation::Delete
+            ) {
+                return Err("selection scope contains an invalid operation".into());
+            }
+            if operations.contains(operation) {
+                return Err("selection scope contains a duplicate operation".into());
+            }
+            operations.push(*operation);
+            if !options.allows(*operation) {
+                return Err(
+                    "selection scope contains an operation disabled by the requested options"
+                        .into(),
+                );
+            }
+        }
+        let pair_operations = seen_scope_operations.entry(pair).or_default();
+        if scope
+            .operations
+            .iter()
+            .any(|operation| pair_operations.contains(operation))
+        {
+            return Err("selection contains overlapping table scope operations".into());
+        }
+        pair_operations.extend(scope.operations.iter().copied());
+        let mut exclusions = HashSet::new();
+        for exclusion in &scope.excluded_rows {
+            if !scope.operations.contains(&exclusion.operation) {
+                return Err("selection exclusion is outside its table scope".into());
+            }
+            if !options.allows(exclusion.operation) {
+                return Err(
+                    "selection exclusion contains an operation disabled by the requested options"
+                        .into(),
+                );
+            }
+            let token = selection_token(
+                &scope.source_table,
+                &scope.target_table,
+                exclusion.operation,
+                &exclusion.key,
+            )?;
+            if !allowed.contains(&token) {
+                return Err("selection exclusion was not in the comparison plan".into());
+            }
+            if !exclusions.insert(token.clone()) {
+                return Err("selection contains a duplicate exclusion".into());
+            }
+            scoped_rows.insert(token);
+        }
+        // Populate the complete scope set so explicit rows can be rejected
+        // when they would select the same server-owned row twice.
+        for table in comparison.tables.iter().filter(|table| {
+            table.status == TableMappingStatus::Matched
+                && table.source_table == scope.source_table
+                && table.target_table == scope.target_table
+        }) {
+            for change in &table.rows {
+                if !scope.operations.contains(&change.operation)
+                    || (scope.selection_mode == SyncSelectionMode::Defaults
+                        && !change.operation.default_selected(options))
+                {
+                    continue;
+                }
+                let token = selection_token(
+                    &table.source_table,
+                    &table.target_table,
+                    change.operation,
+                    &change.key,
+                )?;
+                if !exclusions.contains(&token) {
+                    scoped_rows.insert(token);
+                }
+            }
+        }
+    }
+    let mut seen_rows = HashSet::new();
     for row in &selection.rows {
-        if !allowed.contains(&selection_token(
+        let token = selection_token(
             &row.source_table,
             &row.target_table,
             row.operation,
             &row.key,
-        )?) {
+        )?;
+        if !allowed.contains(&token) {
             return Err("selection contains a row that was not in the comparison plan".into());
         }
         if !options.allows(row.operation) {
             return Err("selection contains an operation disabled by the requested options".into());
+        }
+        if !seen_rows.insert(token.clone()) {
+            return Err("selection contains a duplicate row".into());
+        }
+        if scoped_rows.contains(&token) {
+            return Err("selection row duplicates a table scope".into());
         }
     }
     Ok(())
@@ -637,12 +803,185 @@ mod tests {
         ComparisonResult::new(vec![TableResult::matched(
             "users",
             "users",
-            vec![RowChange::insert(
-                vec![Value::Integer(1)],
-                vec![Some(Value::Integer(1))],
-                &options,
-            )],
+            vec![
+                RowChange::insert(
+                    vec![Value::Integer(1)],
+                    vec![Some(Value::Integer(1))],
+                    &options,
+                ),
+                RowChange::insert(
+                    vec![Value::Integer(2)],
+                    vec![Some(Value::Integer(2))],
+                    &options,
+                ),
+            ],
         )])
+    }
+
+    fn table_scope(excluded_rows: Vec<SyncSelectionExclusion>) -> SyncTableSelection {
+        SyncTableSelection {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            selection_mode: SyncSelectionMode::All,
+            operations: vec![ChangeOperation::Insert],
+            excluded_rows,
+        }
+    }
+
+    #[test]
+    fn table_scope_selects_unloaded_rows_and_excludes_one_key() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![table_scope(vec![SyncSelectionExclusion {
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(2)],
+            }])],
+        };
+        validate_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let applied = apply_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let selected: Vec<_> = applied.tables[0]
+            .rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.key.clone())
+            .collect();
+        assert_eq!(selected.len(), 1);
+        assert!(matches!(selected[0].as_slice(), [Value::Integer(1)]));
+    }
+
+    #[test]
+    fn defaults_scope_selects_server_rows_across_pages_and_applies_exclusions() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                selection_mode: SyncSelectionMode::Defaults,
+                excluded_rows: vec![SyncSelectionExclusion {
+                    operation: ChangeOperation::Insert,
+                    key: vec![Value::Integer(2)],
+                }],
+                ..table_scope(Vec::new())
+            }],
+        };
+        validate_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let applied = apply_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let selected: Vec<_> = applied.tables[0]
+            .rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.key.clone())
+            .collect();
+        assert_eq!(selected.len(), 1);
+        assert!(matches!(selected[0].as_slice(), [Value::Integer(1)]));
+    }
+
+    #[test]
+    fn table_scope_rejects_unknown_duplicate_and_disabled_inputs() {
+        let unknown = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                source_table: "missing".into(),
+                target_table: "missing".into(),
+                selection_mode: SyncSelectionMode::All,
+                operations: vec![ChangeOperation::Insert],
+                excluded_rows: Vec::new(),
+            }],
+        };
+        assert!(validate_selection(&comparison(), &unknown, &SyncOptions::default()).is_err());
+
+        let duplicate = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![table_scope(Vec::new()), table_scope(Vec::new())],
+        };
+        assert!(validate_selection(&comparison(), &duplicate, &SyncOptions::default()).is_err());
+
+        let disabled = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                operations: vec![ChangeOperation::Delete],
+                ..table_scope(Vec::new())
+            }],
+        };
+        assert!(validate_selection(&comparison(), &disabled, &SyncOptions::default()).is_err());
+    }
+
+    #[test]
+    fn table_scope_rejects_duplicate_exclusions_and_explicit_scope_rows() {
+        let duplicate_exclusions = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![table_scope(vec![
+                SyncSelectionExclusion {
+                    operation: ChangeOperation::Insert,
+                    key: vec![Value::Integer(2)],
+                },
+                SyncSelectionExclusion {
+                    operation: ChangeOperation::Insert,
+                    key: vec![Value::Integer(2)],
+                },
+            ])],
+        };
+        assert!(validate_selection(
+            &comparison(),
+            &duplicate_exclusions,
+            &SyncOptions::default()
+        )
+        .is_err());
+
+        let duplicate_row = SyncRunSelection {
+            revision: 1,
+            rows: vec![SyncSelectedRow {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(1)],
+            }],
+            scopes: vec![table_scope(Vec::new())],
+        };
+        assert!(
+            validate_selection(&comparison(), &duplicate_row, &SyncOptions::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn table_scope_rejects_explicit_row_that_was_excluded() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: vec![SyncSelectedRow {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(2)],
+            }],
+            scopes: vec![table_scope(vec![SyncSelectionExclusion {
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(2)],
+            }])],
+        };
+        assert!(validate_selection(&comparison(), &selection, &SyncOptions::default()).is_err());
+    }
+
+    #[test]
+    fn table_scope_contract_rejects_client_row_payloads() {
+        let parsed = serde_json::from_value::<SyncRunSelection>(serde_json::json!({
+            "revision": 1,
+            "rows": [],
+            "scopes": [{
+                "sourceTable": "users",
+                "targetTable": "users",
+                "operations": ["INSERT"],
+                "excludedRows": [{
+                    "operation": "INSERT",
+                    "key": [1],
+                    "sourceRow": [1, "attacker supplied payload"]
+                }]
+            }]
+        }));
+        assert!(parsed.is_err());
     }
 
     #[test]
@@ -655,11 +994,12 @@ mod tests {
                 operation: ChangeOperation::Insert,
                 key: vec![Value::Integer(1)],
             }],
+            scopes: Vec::new(),
         };
         validate_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
         let bad = SyncRunSelection {
             rows: vec![SyncSelectedRow {
-                key: vec![Value::Integer(2)],
+                key: vec![Value::Integer(99)],
                 ..selection.rows[0].clone()
             }],
             ..selection
@@ -670,7 +1010,7 @@ mod tests {
     #[test]
     fn selected_rows_have_no_source_values_or_sql() {
         let rows = selected_rows(&comparison(), &SyncOptions::default());
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert!(matches!(rows[0].key.as_slice(), [Value::Integer(1)]));
     }
 

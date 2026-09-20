@@ -13,6 +13,8 @@ import {
   type DataSyncExecutionResult,
   type DataSyncRowChange,
   type DataSyncSelectedRow,
+  type DataSyncSelectionExclusion,
+  type DataSyncTableSelection,
   type DataSyncSourceFilter,
   type DataSyncTableResult,
   type SyncOptions,
@@ -56,6 +58,8 @@ import {
   mergeCompareIntoMappings,
   operationAllowed,
   rowKeyString,
+  defaultRowSelected,
+  rowDiffCounts,
   summarizeCompare,
   tableHasRowDiffs,
   tableKey,
@@ -73,6 +77,31 @@ function selectedRowToken(
   row: Pick<DataSyncSelectedRow, 'sourceTable' | 'targetTable' | 'operation' | 'key'>,
 ): string {
   return `${row.sourceTable}\u0000${row.targetTable}\u0000${row.operation}\u0000${rowKeyString(row.key)}`;
+}
+
+function scopeSelectsOperation(
+  scope: DataSyncTableSelection,
+  operation: DataSyncRowChange['operation'],
+  options: SyncOptions,
+): boolean {
+  return (
+    operation !== 'UNCHANGED' &&
+    scope.operations.includes(operation) &&
+    (scope.selectionMode === 'all' || defaultRowSelected(operation, options))
+  );
+}
+
+function scopeForOperation(
+  scopes: DataSyncTableSelection[],
+  table: Pick<DataSyncTableResult, 'sourceTable' | 'targetTable'>,
+  operation: DataSyncRowChange['operation'],
+): DataSyncTableSelection | undefined {
+  return scopes.find(
+    (scope) =>
+      scope.sourceTable === table.sourceTable &&
+      scope.targetTable === table.targetTable &&
+      scope.operations.includes(operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>),
+  );
 }
 
 export function DataSyncWindow() {
@@ -133,6 +162,7 @@ export function DataSyncWindow() {
     null,
   );
   const [selectedRows, setSelectedRows] = useState<DataSyncSelectedRow[]>([]);
+  const [tableSelections, setTableSelections] = useState<DataSyncTableSelection[]>([]);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageIndex, setPageIndex] = useState<Record<string, number>>({});
   const [pageCursors, setPageCursors] = useState<
@@ -146,12 +176,15 @@ export function DataSyncWindow() {
   const writeInFlightRef = useRef(false);
   const syncStateRef = useRef(syncState);
   const selectedRowsRef = useRef<DataSyncSelectedRow[]>([]);
+  const tableSelectionsRef = useRef<DataSyncTableSelection[]>([]);
   const loadedPageRef = useRef<Set<string>>(new Set());
   selectedRowsRef.current = selectedRows;
+  tableSelectionsRef.current = tableSelections;
   syncStateRef.current = syncState;
 
   useEffect(() => {
     setSelectedRows([]);
+    setTableSelections([]);
     setPageIndex({});
     setPageCursors({});
     loadedPageRef.current.clear();
@@ -684,6 +717,7 @@ export function DataSyncWindow() {
     setLastExecutionResult(null);
     setSelectedTableKey(null);
     setSelectedRows([]);
+    setTableSelections([]);
     setPageIndex({});
     setPageCursors({});
     loadedPageRef.current.clear();
@@ -891,6 +925,15 @@ export function DataSyncWindow() {
           return false;
         }),
       );
+      setTableSelections((scopes) =>
+        scopes
+          .map((scope) => ({
+            ...scope,
+            operations: scope.operations.filter((operation) => operationAllowed(operation, next)),
+            excludedRows: scope.excludedRows.filter((row) => operationAllowed(row.operation, next)),
+          }))
+          .filter((scope) => scope.operations.length > 0),
+      );
     },
     [
       setMappingResults,
@@ -963,19 +1006,29 @@ export function DataSyncWindow() {
             )
             .map(selectedRowToken),
         );
-        const pageRows = page.rows.map((row) => ({
-          ...row,
-          selected: firstLoad
-            ? row.selected
-            : selectedTokenSet.has(
-                selectedRowToken({
-                  sourceTable: table.sourceTable,
-                  targetTable: table.targetTable,
-                  operation: row.operation,
-                  key: row.key,
-                }),
-              ),
-        }));
+        const pageRows = page.rows.map((row) => {
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return {
+            ...row,
+            selected:
+              scope && scopeSelectsOperation(scope, row.operation, syncOptions)
+                ? !scope.excludedRows.some(
+                    (excluded) =>
+                      excluded.operation === row.operation &&
+                      rowKeyString(excluded.key) === rowKeyString(row.key),
+                  )
+                : firstLoad
+                  ? row.selected
+                  : selectedTokenSet.has(
+                      selectedRowToken({
+                        sourceTable: table.sourceTable,
+                        targetTable: table.targetTable,
+                        operation: row.operation,
+                        key: row.key,
+                      }),
+                    ),
+          };
+        });
         if (firstLoad) {
           setSelectedRows((previous) => {
             const known = new Set(previous.map(selectedRowToken));
@@ -1020,7 +1073,7 @@ export function DataSyncWindow() {
         setPageLoading(false);
       }
     },
-    [pageCursors, setMappingResults],
+    [pageCursors, setMappingResults, syncOptions],
   );
 
   useEffect(() => {
@@ -1030,17 +1083,48 @@ export function DataSyncWindow() {
   }, [compared, selectedTableKey, selectedTable, loadTablePage]);
 
   const totalSelectedRows = useMemo(() => {
-    return selectedRows.filter((row) => {
-      if (row.operation === 'INSERT') return syncOptions.insert;
-      if (row.operation === 'UPDATE') return syncOptions.update;
-      if (row.operation === 'DELETE') return syncOptions.delete;
-      return false;
+    const scopedCount = tableSelections.reduce((total, scope) => {
+      const table = mappingResults.find(
+        (row) => row.sourceTable === scope.sourceTable && row.targetTable === scope.targetTable,
+      );
+      if (!table) return total;
+      const counts = rowDiffCounts(table);
+      return (
+        total +
+        scope.operations.reduce((subtotal, operation) => {
+          if (scope.selectionMode === 'defaults' && !defaultRowSelected(operation, syncOptions)) {
+            return subtotal;
+          }
+          const count =
+            operation === 'INSERT'
+              ? counts.inserts
+              : operation === 'UPDATE'
+                ? counts.updates
+                : counts.deletes;
+          const excluded = scope.excludedRows.filter((row) => row.operation === operation).length;
+          return subtotal + Math.max(0, count - excluded);
+        }, 0)
+      );
+    }, 0);
+    const explicitCount = selectedRows.filter((row) => {
+      if (!operationAllowed(row.operation, syncOptions)) return false;
+      return !tableSelections.some(
+        (scope) =>
+          scope.sourceTable === row.sourceTable &&
+          scope.targetTable === row.targetTable &&
+          scopeSelectsOperation(scope, row.operation, syncOptions),
+      );
     }).length;
-  }, [selectedRows, syncOptions]);
+    return scopedCount + explicitCount;
+  }, [mappingResults, selectedRows, syncOptions, tableSelections]);
 
   const hasSelectedDeletes = useMemo(() => {
-    return syncOptions.delete && selectedRows.some((row) => row.operation === 'DELETE');
-  }, [selectedRows, syncOptions.delete]);
+    return (
+      syncOptions.delete &&
+      (selectedRows.some((row) => row.operation === 'DELETE') ||
+        tableSelections.some((scope) => scopeSelectsOperation(scope, 'DELETE', syncOptions)))
+    );
+  }, [selectedRows, syncOptions.delete, tableSelections]);
 
   const runExecute = useCallback(async () => {
     if (!sourceId || !targetId) return;
@@ -1076,10 +1160,13 @@ export function DataSyncWindow() {
       const tablesWithSelection = mappingResults.filter(
         (r) =>
           r.status === 'MATCHED' &&
-          selectedRows.some(
+          (selectedRows.some(
             (selected) =>
               selected.sourceTable === r.sourceTable && selected.targetTable === r.targetTable,
-          ),
+          ) ||
+            tableSelections.some(
+              (scope) => scope.sourceTable === r.sourceTable && scope.targetTable === r.targetTable,
+            )),
       );
 
       const stmts = await syncCommands.generateDataSyncSql(
@@ -1092,6 +1179,7 @@ export function DataSyncWindow() {
         sourceSchema || undefined,
         targetSchema || undefined,
         selectedRows,
+        ...(tableSelections.length ? [tableSelections] : []),
       );
       if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
       const selected = stmts.filter((statement) =>
@@ -1105,7 +1193,16 @@ export function DataSyncWindow() {
       setExecuteProgress(t('sync.executingSql', { count: selected.length }));
       writeStarted = true;
       writeInFlightRef.current = true;
-      const result = await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      const result = tableSelections.length
+        ? await syncCommands.executeDataSync(
+            tgtConnId,
+            selected,
+            jobId,
+            targetDatabase,
+            selectedRows,
+            tableSelections,
+          )
+        : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
       setLastExecutionResult(result);
       if (result.rolledBack) {
         setErrorMsg(t('sync.rolledBack'));
@@ -1152,6 +1249,7 @@ export function DataSyncWindow() {
         !Array.isArray(recomparedResponse) && recomparedResponse.contractVersion != null;
       if (pagedRecompare) {
         setSelectedRows([]);
+        setTableSelections([]);
         setPageIndex({});
         setPageCursors({});
         loadedPageRef.current.clear();
@@ -1208,6 +1306,7 @@ export function DataSyncWindow() {
     targetId,
     mappingResults,
     selectedRows,
+    tableSelections,
     syncOptions,
     refreshEndpointSessions,
     sourceDatabase,
@@ -1236,22 +1335,30 @@ export function DataSyncWindow() {
     (key: string, rows: DataSyncRowChange[]) => {
       const table = mappingResults.find((row) => tableKey(row) === key);
       if (!table) return;
-      const pageTokens = new Set(
-        rows
-          .filter((row) => row.operation !== 'UNCHANGED')
-          .map((row) =>
-            selectedRowToken({
-              sourceTable: table.sourceTable,
-              targetTable: table.targetTable,
-              operation: row.operation,
-              key: row.key,
-            }),
-          ),
-      );
       setSelectedRows((previous) => {
-        const retained = previous.filter((row) => !pageTokens.has(selectedRowToken(row)));
+        const pageTokens = new Set(
+          rows
+            .filter((row) => row.operation !== 'UNCHANGED')
+            .map((row) =>
+              selectedRowToken({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              }),
+            ),
+        );
+        const retained = previous.filter((row) => {
+          if (!pageTokens.has(selectedRowToken(row))) return true;
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return Boolean(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
+        });
         const next = rows
-          .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+          .filter((row) => {
+            if (!row.selected || row.operation === 'UNCHANGED') return false;
+            const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+            return !(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
+          })
           .map((row) => ({
             sourceTable: table.sourceTable,
             targetTable: table.targetTable,
@@ -1261,9 +1368,196 @@ export function DataSyncWindow() {
         const known = new Set(retained.map(selectedRowToken));
         return [...retained, ...next.filter((row) => !known.has(selectedRowToken(row)))];
       });
+      setTableSelections((previous) =>
+        previous.map((candidate) => {
+          if (
+            candidate.sourceTable !== table.sourceTable ||
+            candidate.targetTable !== table.targetTable
+          )
+            return candidate;
+          const candidateRows = rows.filter((row) =>
+            candidate.operations.includes(
+              row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+            ),
+          );
+          const exclusions = candidate.excludedRows.filter(
+            (excluded) =>
+              !candidateRows.some(
+                (row) =>
+                  row.operation === excluded.operation &&
+                  rowKeyString(row.key) === rowKeyString(excluded.key),
+              ),
+          );
+          const additions: DataSyncSelectionExclusion[] = candidateRows
+            .filter(
+              (row) =>
+                scopeSelectsOperation(candidate, row.operation, syncOptions) && !row.selected,
+            )
+            .map((row) => ({
+              operation: row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+              key: row.key,
+            }))
+            .filter(
+              (row) =>
+                !exclusions.some(
+                  (excluded) =>
+                    excluded.operation === row.operation &&
+                    rowKeyString(excluded.key) === rowKeyString(row.key),
+                ),
+            );
+          return { ...candidate, excludedRows: [...exclusions, ...additions] };
+        }),
+      );
       setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
     },
-    [mappingResults],
+    [mappingResults, syncOptions],
+  );
+
+  const setTableOperationScope = useCallback(
+    (
+      table: DataSyncTableResult,
+      operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+    ) => {
+      if (!operationAllowed(operation, syncOptions)) return;
+      setTableSelections((previous) => {
+        const allScope = previous.find(
+          (scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all',
+        );
+        if (allScope?.operations.includes(operation)) return previous;
+        const cleaned = previous
+          .map((scope) =>
+            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
+              ? {
+                  ...scope,
+                  operations: scope.operations.filter((candidate) => candidate !== operation),
+                  excludedRows: scope.excludedRows.filter((row) => row.operation !== operation),
+                }
+              : scope,
+          )
+          .filter((scope) => scope.operations.length > 0);
+        if (allScope) {
+          return cleaned.map((scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all'
+              ? { ...scope, operations: [...scope.operations, operation] }
+              : scope,
+          );
+        }
+        return [
+          ...cleaned,
+          {
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            selectionMode: 'all',
+            operations: [operation],
+            excludedRows: [],
+          },
+        ];
+      });
+      setSelectedRows((previous) =>
+        previous.filter(
+          (row) =>
+            row.sourceTable !== table.sourceTable ||
+            row.targetTable !== table.targetTable ||
+            row.operation !== operation,
+        ),
+      );
+      setMappingResults((previous) =>
+        previous.map((candidate) =>
+          tableKey(candidate) === tableKey(table)
+            ? {
+                ...candidate,
+                rows: candidate.rows?.map((row) =>
+                  row.operation === operation ? { ...row, selected: true } : row,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    },
+    [setMappingResults, syncOptions],
+  );
+
+  const clearTableOperationScope = useCallback(
+    (
+      table: DataSyncTableResult,
+      operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+    ) => {
+      setTableSelections((previous) => {
+        const cleaned = previous
+          .map((scope) =>
+            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
+              ? {
+                  ...scope,
+                  operations: scope.operations.filter((candidate) => candidate !== operation),
+                  excludedRows: scope.excludedRows.filter((row) => row.operation !== operation),
+                }
+              : scope,
+          )
+          .filter((scope) => scope.operations.length > 0);
+        const defaultsScope = cleaned.find(
+          (scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'defaults',
+        );
+        if (defaultsScope) {
+          return cleaned.map((scope) =>
+            scope === defaultsScope
+              ? { ...scope, operations: [...scope.operations, operation] }
+              : scope,
+          );
+        }
+        return [
+          ...cleaned,
+          {
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            selectionMode: 'defaults',
+            operations: [operation],
+            excludedRows: [],
+          },
+        ];
+      });
+      setSelectedRows((previous) =>
+        previous.filter(
+          (row) =>
+            row.sourceTable !== table.sourceTable ||
+            row.targetTable !== table.targetTable ||
+            row.operation !== operation,
+        ),
+      );
+      setMappingResults((previous) =>
+        previous.map((candidate) =>
+          tableKey(candidate) === tableKey(table)
+            ? {
+                ...candidate,
+                rows: candidate.rows?.map((row) =>
+                  row.operation === operation
+                    ? { ...row, selected: defaultRowSelected(row.operation, syncOptions) }
+                    : row,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    },
+    [setMappingResults, syncOptions],
+  );
+
+  const isTableOperationScoped = useCallback(
+    (table: DataSyncTableResult, operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) =>
+      tableSelections.some(
+        (scope) =>
+          scope.sourceTable === table.sourceTable &&
+          scope.targetTable === table.targetTable &&
+          scope.operations.includes(operation),
+      ),
+    [tableSelections],
   );
 
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
@@ -1553,6 +1847,20 @@ export function DataSyncWindow() {
                           table={selectedTable}
                           options={syncOptions}
                           onUpdateRows={(rows) => updateTableRows(tableKey(selectedTable), rows)}
+                          onSelectAllOperation={(operation) =>
+                            setTableOperationScope(selectedTable, operation)
+                          }
+                          onClearAllOperation={(operation) =>
+                            clearTableOperationScope(selectedTable, operation)
+                          }
+                          isOperationSelected={(operation) =>
+                            isTableOperationScoped(selectedTable, operation)
+                          }
+                          hasTableSelection={tableSelections.some(
+                            (scope) =>
+                              scope.sourceTable === selectedTable.sourceTable &&
+                              scope.targetTable === selectedTable.targetTable,
+                          )}
                           pageLoading={pageLoading}
                           pageIndex={
                             pageIndex[
@@ -1609,6 +1917,7 @@ export function DataSyncWindow() {
                   tables={mappingResults}
                   options={syncOptions}
                   selectedRows={selectedRows}
+                  tableSelections={tableSelections}
                 />
               ) : (
                 <div
