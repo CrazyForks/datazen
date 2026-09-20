@@ -389,6 +389,85 @@ mod tests {
     }
 
     #[test]
+    fn decimal_normalization_handles_negative_zero_and_exponent_edges() {
+        assert_eq!(
+            DecimalKey::parse("-0.000").unwrap(),
+            DecimalKey::parse("0").unwrap()
+        );
+        assert!(DecimalKey::parse("-0.01").unwrap() < DecimalKey::parse("0").unwrap());
+        assert!(DecimalKey::parse("0.001").unwrap() < DecimalKey::parse("1e-2").unwrap());
+        assert!(DecimalKey::parse("-1e3").unwrap() < DecimalKey::parse("-999").unwrap());
+        assert!(DecimalKey::parse("1e-3").unwrap() < DecimalKey::parse("0.01").unwrap());
+    }
+
+    #[test]
+    fn timestamp_normalization_is_timezone_aware_and_precision_bounded() {
+        let contract = SyncKeyContract::reject_nulls(SyncKeyKind::Timestamp {
+            with_timezone: true,
+            precision: 3,
+        });
+        assert_eq!(
+            contract
+                .normalize(&Some(Value::String(
+                    "2026-01-01T00:00:00.123987+08:00".into()
+                )))
+                .unwrap(),
+            SyncKeyValue::Timestamp("2025-12-31 16:00:00.123Z".into())
+        );
+        assert_eq!(
+            contract
+                .normalize(&Some(Value::String("2025-12-31T16:00:00.123000Z".into())))
+                .unwrap(),
+            SyncKeyValue::Timestamp("2025-12-31 16:00:00.123Z".into())
+        );
+        assert!(contract
+            .normalize(&Some(Value::String("2026-01-01 00:00:00".into())))
+            .is_err());
+    }
+
+    #[test]
+    fn binary_text_and_unsigned_integer_contracts_reject_ambiguous_values() {
+        let text = SyncKeyContract::reject_nulls(SyncKeyKind::Text {
+            collation: SyncKeyCollation::Binary,
+        });
+        assert_eq!(
+            text.normalize(&Some(Value::Bytes(vec![0x00, 0xff])))
+                .unwrap(),
+            SyncKeyValue::Text(vec![0x00, 0xff])
+        );
+
+        let unsigned = SyncKeyContract::reject_nulls(SyncKeyKind::Integer { unsigned: true });
+        assert!(unsigned
+            .normalize(&Some(Value::String("-1".into())))
+            .is_err());
+        assert!(unsigned.normalize(&Some(Value::Null)).is_err());
+    }
+
+    #[test]
+    fn type_inference_accepts_multiword_text_and_rejects_float_keys() {
+        let column = ColumnSchema {
+            name: "name".into(),
+            data_type: "character varying(80)".into(),
+            nullable: false,
+            default_value: None,
+            comment: None,
+            is_primary_key: true,
+            is_auto_increment: false,
+        };
+        assert!(matches!(
+            contract_from_column(&column).unwrap().kind,
+            SyncKeyKind::Text {
+                collation: SyncKeyCollation::Binary
+            }
+        ));
+        let float_column = ColumnSchema {
+            data_type: "double precision".into(),
+            ..column
+        };
+        assert!(contract_from_column(&float_column).is_err());
+    }
+
+    #[test]
     fn null_is_explicitly_rejected() {
         let contract = SyncKeyContract::reject_nulls(SyncKeyKind::Integer { unsigned: false });
         let err = contract.normalize(&Some(Value::Null)).unwrap_err();

@@ -1,6 +1,6 @@
 # migration-sync-key-contract
 
-Phase: CODER_READY_FOR_TEST
+Phase: FAILED
 Branch: codex/migration-sync-key-contract
 Worktree: `.worktrees/datazen-migration-sync-key-contract`
 Base: `codex/migration-navicat` @ `268ce616`
@@ -40,3 +40,13 @@ Coder self-test: `cargo test -p datazen-driver-api -p datazen-driver-postgres -p
 ## Remaining boundaries
 
 Stable snapshot lifetime, bounded streaming/ComparisonStore and optimistic target conflict detection remain later waves.
+
+## Independent Tester — 2026-09-20
+
+- **Code review**: reviewed the public `SyncKeyContract`, PostgreSQL/MySQL/SQLite adapters, keyset SQL, live `DriverKeysetSource`, comparison merge and immutable-plan revalidation. PG/MySQL contracts are conservative and fail closed for unsupported key types, NULLs, duplicate/non-monotone normalized pages and incompatible source/target domains. Added focused API boundary tests for negative zero/exponents, timezone/precision normalization, binary bytes, unsigned negatives, multiword text and float rejection.
+- **Rust**: Host `cargo test -p datazen --lib` passed **1423/1423** with 3 ignored; focused `data_sync` passed **108/108**; focused `commands::sync` passed **27/27**; Driver API/PG/MySQL/SQLite passed **127/127**, **102/102**, **87/87**, **47/47**. Added API tests passed **7/7**.
+- **Frontend**: Sync suites passed **7 files, 45/45**; `tsc --noEmit` passed.
+- **Formal build**: `CI=true CARGO_TARGET_DIR=/tmp/datazen-target-sync-key-contract pnpm tauri:build:webdriver` passed with basic driver injection.
+- **Real database journeys**: existing Sync real suite passed **25/25** on the exact packaged binary; immutable server-plan journeys passed **2/2** for PostgreSQL and **2/2** for MySQL, including selected-only writes and stale-schema rejection before writes. The setup script emitted two pre-existing demo-fixture warnings (`test_orders.order_id` and `demo_products` join) unrelated to this track.
+- **Finding**: `migration-sync-key-contract-BUG-001` is reproducible in SQLite: the advertised `CAST(key AS BLOB)` seek expression receives a TEXT cursor parameter, so the cursor row is returned again (`a,b,c` after cursor `a`) instead of advancing to `b,c`. SQLite Sync is currently rejected by the V1 pairing gate, so this did not fail the PG/MySQL desktop journeys, but the SQLite contract is not correct until the binding or parameter cast is repaired.
+- **TEST_FAILED**. Do not merge this track until BUG-001 is fixed and a fresh independent Tester reruns the full suite and real journeys.
