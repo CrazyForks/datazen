@@ -1,7 +1,8 @@
 import { setLocale } from '@datazen/ui';
 import { useSettingsStore } from '../stores/settingsStore';
-// Side effect: registers the eager host dictionaries + driver locale packs into
-// the shared @datazen/ui translation registry.
+// Side effect: registers the eager host dictionaries into the shared
+// @datazen/ui translation registry (driver and extension packs register
+// themselves through their own locales entry module).
 import '../locales';
 
 function currentLanguage(): string {
