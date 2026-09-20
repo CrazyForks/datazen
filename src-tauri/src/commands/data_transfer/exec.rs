@@ -8,10 +8,12 @@ use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
 use super::inspect::inspect_data_transfer_impl;
 use super::jobs;
+use super::plans::{self, StoredTransferPlan};
+use crate::data_transfer::model::TransferRunSelection;
 use crate::data_transfer::{
     column_ir_types_by_source, create_target_tables, enforce_transfer_pairing,
     execute_transfer_data, is_same_family, source_schema_to_target_ir, DropCreateContext,
-    TransferExecutionResult, TransferJob, TransferMode, ValueFormatter,
+    TransferExecutionResult, TransferJob, TransferMode, TransferRunRequest, ValueFormatter,
 };
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use datazen_driver_api::TableType;
@@ -44,51 +46,220 @@ async fn resolve_transfer_adapters(
     })
 }
 
-pub(crate) async fn execute_data_transfer_impl(
-    state: &AppState,
-    mut job: TransferJob,
-    job_id: Option<String>,
-) -> Result<TransferExecutionResult, CommandError> {
-    job.options.validate().map_err(CommandError::from)?;
+struct ValidatedTransferContext {
+    src_config: crate::db::ConnectionConfig,
+    tgt_config: crate::db::ConnectionConfig,
+    src_driver: Arc<dyn crate::db::DatabaseDriver>,
+    src_handle: crate::db::ConnectionHandle,
+    tgt_driver: Arc<dyn crate::db::DatabaseDriver>,
+    tgt_handle: crate::db::ConnectionHandle,
+}
 
+async fn schema_fingerprint_for_side(
+    endpoint: &crate::data_transfer::model::Endpoint,
+    driver: &dyn crate::db::DatabaseDriver,
+    handle: &crate::db::ConnectionHandle,
+    job: &TransferJob,
+    source: bool,
+) -> Result<String, CommandError> {
+    let mut entries = Vec::with_capacity(plans::participating_tables(job).size_hint().0);
+    for table in plans::participating_tables(job) {
+        let relation = if source {
+            &table.source_table
+        } else {
+            &table.target_table
+        };
+        // CREATE NEW mappings intentionally have no target schema at preview
+        // time. Preserve that `None` sentinel during revalidation instead of
+        // turning a driver's empty-schema response into `Some(empty)`, which
+        // would make an unchanged immutable plan stale.
+        let schema = if relation.trim().is_empty() || (!source && table.create_new) {
+            None
+        } else {
+            match crate::data_transfer::metadata::load_table_schema(
+                driver, handle, endpoint, relation,
+            )
+            .await
+            {
+                Ok(schema) => Some(schema),
+                // The preview snapshot records missing relations as `None`.
+                // Reusing the same representation makes a newly created table,
+                // a dropped table, or a permission failure change the hash and
+                // fail closed before any target write.
+                Err(_) => None,
+            }
+        };
+        entries.push((relation.clone(), schema));
+    }
+    plans::fingerprint_schemas(entries).map_err(CommandError::from)
+}
+
+async fn validate_plan_context(
+    state: &AppState,
+    plan: &StoredTransferPlan,
+) -> Result<ValidatedTransferContext, CommandError> {
+    if plan.target_read_only_at_preview {
+        return Err(CommandError::Validation(
+            "target connection was read-only during preview; return to preview".into(),
+        ));
+    }
+    if plan.filter.is_some() {
+        return Err(CommandError::Validation(
+            "this Transfer plan contains an unsupported filter; return to preview".into(),
+        ));
+    }
     let src_config = state
         .connection_manager
-        .get_session_config(&job.source.db_session_id)
+        .get_session_config(&plan.job.source.db_session_id)
         .await
         .cmd_err("execute_data_transfer")?;
     let tgt_config = state
         .connection_manager
-        .get_session_config(&job.target.db_session_id)
+        .get_session_config(&plan.job.target.db_session_id)
         .await
         .cmd_err("execute_data_transfer")?;
 
-    job.source.schema = job
-        .source
-        .normalized_schema()
-        .map(str::to_string)
-        .or_else(|| src_config.schema.clone());
-    job.target.schema = job
-        .target
-        .normalized_schema()
-        .map(str::to_string)
-        .or_else(|| tgt_config.schema.clone());
-    crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
-    crate::data_transfer::metadata::metadata_relation_ref(&job.target, "")?;
-
-    let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
-        .map_err(CommandError::from)?;
-
     if tgt_config.read_only {
         return Err(CommandError::Validation(
-            "target connection is read-only; Data Transfer cannot execute".into(),
+            "target connection is now read-only; return to preview".into(),
         ));
     }
 
-    if job.write_mode.is_destructive() && !job.options.confirmed_destructive {
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&plan.job.source.db_session_id)
+        .await
+        .cmd_err("execute_data_transfer")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&plan.job.target.db_session_id)
+        .await
+        .cmd_err("execute_data_transfer")?;
+
+    if src_driver.driver_type() != plan.source_driver_type
+        || tgt_driver.driver_type() != plan.target_driver_type
+        || plans::driver_protocol_version(src_driver.as_ref()) != plan.source_driver_protocol
+        || plans::driver_protocol_version(tgt_driver.as_ref()) != plan.target_driver_protocol
+    {
         return Err(CommandError::Validation(
-            "destructive write mode requires confirmedDestructive".into(),
+            "driver contract changed since preview; return to preview".into(),
         ));
     }
+
+    let src_fingerprint = schema_fingerprint_for_side(
+        &plan.job.source,
+        src_driver.as_ref(),
+        &src_handle,
+        &plan.job,
+        true,
+    )
+    .await?;
+    let tgt_fingerprint = schema_fingerprint_for_side(
+        &plan.job.target,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &plan.job,
+        false,
+    )
+    .await?;
+    let source_schema_changed = src_fingerprint != plan.source_schema_fingerprint;
+    let target_schema_changed = tgt_fingerprint != plan.target_schema_fingerprint;
+    if source_schema_changed || target_schema_changed {
+        return Err(CommandError::Validation(
+            "source or target schema changed since preview; return to comparison".into(),
+        ));
+    }
+
+    Ok(ValidatedTransferContext {
+        src_config,
+        tgt_config,
+        src_driver,
+        src_handle,
+        tgt_driver,
+        tgt_handle,
+    })
+}
+
+fn validate_selection(
+    job: &TransferJob,
+    selection: &TransferRunSelection,
+) -> Result<(), CommandError> {
+    let Some(source_tables) = &selection.source_tables else {
+        return Ok(());
+    };
+    let mut seen = std::collections::HashSet::new();
+    for name in source_tables {
+        if name.trim().is_empty() || !seen.insert(name) {
+            return Err(CommandError::Validation(
+                "transfer selection contains an empty or duplicate source table".into(),
+            ));
+        }
+        let Some(table) = job.tables.iter().find(|table| table.source_table == *name) else {
+            return Err(CommandError::Validation(
+                "transfer selection contains a table that was not in the preview plan".into(),
+            ));
+        };
+        if !table.enabled {
+            return Err(CommandError::Validation(
+                "transfer selection cannot enable a table disabled in the preview plan".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_selection(job: &mut TransferJob, selection: &TransferRunSelection) {
+    let Some(source_tables) = &selection.source_tables else {
+        return;
+    };
+    for table in &mut job.tables {
+        table.enabled = source_tables
+            .iter()
+            .any(|source_table| source_table == &table.source_table);
+    }
+}
+
+pub(crate) async fn execute_data_transfer_impl(
+    state: &AppState,
+    request: TransferRunRequest,
+) -> Result<TransferExecutionResult, CommandError> {
+    if request.plan_id.trim().is_empty() {
+        return Err(CommandError::Validation(
+            "execute_data_transfer requires a preview planId".into(),
+        ));
+    }
+    let plan = plans::peek_plan(&request.plan_id).map_err(CommandError::from)?;
+    if !plan.can_execute {
+        return Err(CommandError::Validation(
+            "transfer preview is blocked; return to comparison".into(),
+        ));
+    }
+    validate_selection(&plan.job, &request.selection)?;
+    if plan.job.write_mode.is_destructive()
+        && !plan.job.options.confirmed_destructive
+        && !request.options.confirmed_destructive
+    {
+        return Err(CommandError::Validation(
+            "destructive write mode requires final confirmation".into(),
+        ));
+    }
+
+    // Context validation happens before the atomic claim. A stale schema or
+    // changed read-only policy sends the user back to comparison without
+    // burning a still-valid plan; once claimed, retries are always refused.
+    let context = validate_plan_context(state, &plan).await?;
+    let claimed = plans::claim_plan(&request.plan_id).map_err(CommandError::from)?;
+    let mut job = claimed.job;
+    apply_selection(&mut job, &request.selection);
+    let src_config = context.src_config;
+    let tgt_config = context.tgt_config;
+    let src_driver = context.src_driver;
+    let src_handle = context.src_handle;
+    let tgt_driver = context.tgt_driver;
+    let tgt_handle = context.tgt_handle;
+    let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
+        .map_err(CommandError::from)?;
+    let job_id = request.job_id;
 
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(jobs::ensure_job(id).await),
@@ -115,17 +286,6 @@ pub(crate) async fn execute_data_transfer_impl(
         &job.tables,
     )
     .await?;
-
-    let (src_driver, src_handle) = state
-        .connection_manager
-        .get_session(&job.source.db_session_id)
-        .await
-        .cmd_err("execute_data_transfer")?;
-    let (tgt_driver, tgt_handle) = state
-        .connection_manager
-        .get_session(&job.target.db_session_id)
-        .await
-        .cmd_err("execute_data_transfer")?;
 
     if matches!(
         job.mode,

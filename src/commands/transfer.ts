@@ -81,6 +81,7 @@ export interface TransferWritePlan {
 }
 
 export interface TransferPreview {
+  planId: string;
   pairingPath: string;
   mode: TransferMode;
   writeMode: WriteMode;
@@ -104,6 +105,21 @@ export interface TransferExecutionResult {
   rowsInserted: number;
   cancelled: boolean;
   partial: boolean;
+}
+
+export interface TransferRunSelection {
+  sourceTables?: string[];
+}
+
+export interface TransferRunOptions {
+  confirmedDestructive?: boolean;
+}
+
+export interface TransferRunRequest {
+  planId: string;
+  selection?: TransferRunSelection;
+  options?: TransferRunOptions;
+  jobId?: string;
 }
 
 export interface TransferPairingView {
@@ -145,10 +161,9 @@ export const transferCommands = {
 
   preview: (job: TransferJob) => invoke<TransferPreview>('preview_data_transfer', { job }),
 
-  execute: (job: TransferJob, jobId?: string) =>
+  execute: (request: TransferRunRequest) =>
     invoke<TransferExecutionResult>('execute_data_transfer', {
-      job,
-      jobId: jobId ?? null,
+      request,
     }),
 
   cancel: (jobId: string) => invoke<boolean>('cancel_data_transfer', { jobId }),

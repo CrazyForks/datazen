@@ -435,6 +435,12 @@ export function DataTransferWindow() {
     const sessions = await refreshEndpointSessions();
     const job = buildJob(sessions);
     if (!job) return;
+    const planId = preview?.planId;
+    if (!planId) {
+      setErrorMsg('Transfer preview is missing its server plan; return to preview and try again.');
+      setErrorOpen(true);
+      return;
+    }
     if (targetReadOnly) {
       setErrorMsg(t('transfer.readOnlyBlock'));
       setErrorOpen(true);
@@ -446,7 +452,16 @@ export function DataTransferWindow() {
     const tableCount = job.tables.filter((tbl) => tbl.enabled).length;
     setExecuteProgress(t('transfer.executingProgress', { count: tableCount }));
     try {
-      const execResult = await transferCommands.execute(job, jobId);
+      const execResult = await transferCommands.execute({
+        planId,
+        selection: {
+          sourceTables: job.tables
+            .filter((table) => table.enabled)
+            .map((table) => table.sourceTable),
+        },
+        options: { confirmedDestructive },
+        jobId,
+      });
       setResult(execResult);
       setStep('result');
     } catch (e) {
@@ -457,7 +472,7 @@ export function DataTransferWindow() {
       setExecuteProgress('');
       jobIdRef.current = null;
     }
-  }, [refreshEndpointSessions, buildJob, targetReadOnly, t]);
+  }, [refreshEndpointSessions, buildJob, preview?.planId, targetReadOnly, confirmedDestructive, t]);
 
   const handleExecuteClick = useCallback(() => {
     if (writeMode !== 'insert') {

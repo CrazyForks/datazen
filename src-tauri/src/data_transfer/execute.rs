@@ -375,40 +375,49 @@ pub async fn execute_transfer_data(
             if rows.is_empty() {
                 break;
             }
-            for row in rows {
-                if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-                    was_cancelled = true;
-                    table_error =
-                        Some("transfer cancelled; current data transaction rolled back".into());
+            let projected_rows = rows
+                .iter()
+                .map(|row| map_row_values(row, src_schema, &columns))
+                .collect::<Result<Vec<_>, _>>();
+            let projected_rows = match projected_rows {
+                Ok(rows) => rows,
+                Err(error) => {
+                    table_error = Some(error.to_string());
                     break 'batches;
                 }
-                let statement = map_row_values(&row, src_schema, &columns).and_then(|row| {
-                    super::writer::bound_insert(
-                        tgt_driver,
-                        &table.source_table,
-                        &tgt_table_ref,
-                        &columns,
-                        &target_schema,
-                        &row,
-                        formatter,
-                    )
-                });
-                let (sql, parameters) = match statement {
-                    Ok(statement) => statement,
-                    Err(error) => {
-                        table_error = Some(error.to_string());
-                        break 'batches;
-                    }
-                };
-                match tgt_driver
-                    .execute_with_params(tgt_handle, &sql, &parameters)
-                    .await
-                {
-                    Ok(affected) => table_rows += affected,
-                    Err(error) => {
-                        table_error = Some(error.to_string());
-                        break 'batches;
-                    }
+            };
+            if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                was_cancelled = true;
+                table_error =
+                    Some("transfer cancelled; current data transaction rolled back".into());
+                break 'batches;
+            }
+            let statement = super::writer::bound_insert_batch(
+                tgt_driver,
+                &table.source_table,
+                &tgt_table_ref,
+                &columns,
+                &target_schema,
+                &projected_rows,
+                formatter,
+            );
+            let (sql, parameters) = match statement {
+                Ok(statement) => statement,
+                Err(error) => {
+                    table_error = Some(error.to_string());
+                    break 'batches;
+                }
+            };
+            match tgt_driver
+                .execute_with_params(tgt_handle, &sql, &parameters)
+                .await
+            {
+                Ok(affected) => {
+                    table_rows += affected;
+                }
+                Err(error) => {
+                    table_error = Some(error.to_string());
+                    break 'batches;
                 }
             }
         }

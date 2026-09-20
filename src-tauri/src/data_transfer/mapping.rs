@@ -85,7 +85,12 @@ pub fn effective_table_mappings(
                     source_table: t.name.clone(),
                     target_table: t.name.clone(),
                     create_new: true,
-                    enabled: true,
+                    // Creating an absent target is an explicit user choice.
+                    // Keep the row in the inspect result so the mapping UI can
+                    // show every source column and its target type, but do not
+                    // make a structure preview create every source table by
+                    // default.
+                    enabled: false,
                     column_mappings: Vec::new(),
                     ddl_override: None,
                 }
@@ -129,14 +134,27 @@ pub fn inspect_tables(
         }
 
         if !mapping.enabled {
+            let source_columns = source_column_names(source_schemas, &mapping.source_table);
             results.push(TableInspectResult {
                 source_table: mapping.source_table.clone(),
                 target_table: mapping.target_table.clone(),
                 status: TableMappingStatus::Disabled,
                 create_new: mapping.create_new,
                 enabled: false,
-                column_mappings: mapping.column_mappings.clone(),
-                source_columns: source_column_names(source_schemas, &mapping.source_table),
+                column_mappings: if mapping.create_new && mapping.column_mappings.is_empty() {
+                    source_columns
+                        .iter()
+                        .map(|name| ColumnMapping {
+                            source_column: name.clone(),
+                            target_column: name.clone(),
+                            skip: false,
+                            target_native_type: None,
+                        })
+                        .collect()
+                } else {
+                    mapping.column_mappings.clone()
+                },
+                source_columns,
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
                 incompatible_reason: None,
@@ -415,5 +433,37 @@ mod tests {
         let maps = effective_table_mappings(&src, &tgt, &[], TransferMode::StructureAndData);
         assert_eq!(maps.len(), 1);
         assert!(maps[0].create_new);
+        assert!(!maps[0].enabled);
+    }
+
+    #[test]
+    fn disabled_create_new_rows_keep_all_source_columns_for_explicit_selection() {
+        let src = vec![table("new_table")];
+        let source_schema = schema(&[("id", "bigint"), ("active", "tinyint(1)")]);
+        let mut source_schemas = HashMap::new();
+        source_schemas.insert("new_table".into(), source_schema);
+
+        let results = inspect_tables(
+            &src,
+            &[],
+            &[],
+            &source_schemas,
+            &HashMap::new(),
+            TransferMode::Structure,
+            &HashMap::new(),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TableMappingStatus::Disabled);
+        assert!(results[0].create_new);
+        assert!(!results[0].enabled);
+        assert_eq!(
+            results[0]
+                .column_mappings
+                .iter()
+                .map(|mapping| mapping.source_column.as_str())
+                .collect::<Vec<_>>(),
+            vec!["id", "active"]
+        );
     }
 }

@@ -41,6 +41,10 @@ pub struct MockDriverOptions {
     /// Rows affected by the generic execute path (zero by default so callers
     /// that do not model mutations retain the old mock behavior).
     pub execute_rows_affected: u64,
+    /// Enable the parameterized DML contract for command integration tests.
+    /// The default remains unsupported so tests that exercise capability
+    /// gating keep their original behavior.
+    pub parameterized_writes: bool,
     /// F7: when true, `qualify_sql_target` rewrites SQL by appending a
     /// marker comment recording the requested target (capability simulation).
     pub rewrite_sql_target: bool,
@@ -71,6 +75,7 @@ impl Default for MockDriverOptions {
             query_error: None,
             cancel_error: None,
             execute_rows_affected: 0,
+            parameterized_writes: false,
             rewrite_sql_target: false,
             ddl_atomicity: None,
         }
@@ -332,6 +337,35 @@ impl DatabaseDriver for MockDriver {
         _params: &[Value],
     ) -> Result<QueryResult, DriverError> {
         self.query(handle, sql).await
+    }
+
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        if self.opts.parameterized_writes {
+            Ok(format!("?{index}"))
+        } else {
+            Err(DriverError::Unsupported(
+                "parameterized migration writes are not supported".into(),
+            ))
+        }
+    }
+
+    async fn execute_with_params(
+        &self,
+        _handle: &ConnectionHandle,
+        _sql: &str,
+        _params: &[Value],
+    ) -> Result<u64, DriverError> {
+        if self.opts.parameterized_writes {
+            Ok(self.opts.execute_rows_affected)
+        } else {
+            Err(DriverError::Unsupported(
+                "parameterized migration writes are not supported".into(),
+            ))
+        }
     }
 
     async fn execute(&self, _handle: &ConnectionHandle, _sql: &str) -> Result<u64, DriverError> {

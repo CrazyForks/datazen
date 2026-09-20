@@ -187,6 +187,10 @@ pub struct WritePlanItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferPreview {
+    /// Opaque server-side plan token. A preview produced by the command layer
+    /// always contains one; pure preview builders leave it empty until the
+    /// command has captured the immutable execution snapshot.
+    pub plan_id: String,
     pub pairing_path: String,
     pub mode: TransferMode,
     pub write_mode: WriteMode,
@@ -195,6 +199,40 @@ pub struct TransferPreview {
     pub warnings: Vec<String>,
     pub can_execute: bool,
     pub block_reason: Option<String>,
+}
+
+/// The only mutable choices accepted after a preview has produced a plan.
+/// Table names refer to source tables already present in the plan; callers
+/// cannot replace mappings, endpoints, DDL or row payloads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRunSelection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_tables: Option<Vec<String>>,
+}
+
+/// Run-time controls that are safe to choose at the final confirmation step.
+/// Batch/error policy is intentionally fixed in the immutable preview plan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRunOptions {
+    #[serde(default)]
+    pub confirmed_destructive: bool,
+}
+
+/// Execute a previously previewed Transfer plan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRunRequest {
+    pub plan_id: String,
+    #[serde(default)]
+    pub selection: TransferRunSelection,
+    #[serde(default)]
+    pub options: TransferRunOptions,
+    /// Optional cancellation token. This is a job registry key, not an
+    /// alternate execution payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

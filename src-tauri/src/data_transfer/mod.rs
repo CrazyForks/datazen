@@ -3,8 +3,8 @@
 pub mod error;
 pub mod execute;
 pub mod mapping;
-pub mod model;
 pub mod metadata;
+pub mod model;
 pub mod pairing;
 pub mod preview;
 mod scan;
@@ -16,7 +16,7 @@ pub use execute::{execute_transfer_data, DropCreateContext, ValueFormatter};
 pub use mapping::inspect_tables;
 pub use model::{
     TableInspectResult, TableMapping, TransferExecutionResult, TransferJob, TransferMode,
-    TransferPairingView, TransferPreview, WriteMode,
+    TransferPairingView, TransferPreview, TransferRunRequest, WriteMode,
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
 pub use preview::{build_preview, TransferPreviewAdapters};
