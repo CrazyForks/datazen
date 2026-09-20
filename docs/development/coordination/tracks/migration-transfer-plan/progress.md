@@ -1,11 +1,11 @@
 # migration-transfer-plan
 
-- Phase: READY_TO_MERGE（BUG-002 已关闭；BUG-003 按当前范围暂缓）
+- Phase: READY_TO_MERGE（BUG-001/002/003 已关闭）
 - Branch: codex/migration-transfer-plan
 - Worktree: `.worktrees/datazen-migration-transfer-plan`
 - Base: `codex/migration-navicat` @ `8da0403c`
-- Implementation commit: 7415c5bb
-- Tester commit: 待提交
+- Implementation commits: 15b54573, d9832366, 7415c5bb；本轮修复待提交
+- Tester commit: 75991109（此前独立轮次）；本轮独立复测待记录
 
 ## Tester result
 
@@ -75,6 +75,16 @@
 - 正式 E2E `DT-TYPE-MYSQL-PG-001` 在重建 webdriver bundle 后 1/1 通过，active/created_at 类型输入与 Preview DDL 均通过；Host Transfer 51 passed，前端 Transfer 25 passed，`npx tsc --noEmit` passed。
 - BUG-003 大批量性能问题未修改，仍待后续单独轨道处理。
 
+## Independent retest after immutable-plan fingerprint repair（2026-09-20）
+
+- 修复内容：Preview 将精度增强前的原始 source schema 用于 plan fingerprint；执行阶段对 `create_new` target 使用与 Preview 一致的 `None` schema sentinel。Transfer executor 按既有 batch_size 生成参数化 multi-row INSERT，并保留每个值的 bound parameter 与跨方言转换。
+- Host：`cargo test -p datazen --lib` 1413 通过、3 ignored。
+- 前端：Transfer 定向套件 30/30；`pnpm exec tsc --noEmit` 通过。完整前端套件 3570/3572，唯一 2 项失败为既有 `packages/wapp-sdk/__tests__/interop.test.ts` 主题 token 契约，与本轨道无关。
+- 驱动：PostgreSQL 101/101、MySQL 86/86、SQLite 46/46。
+- 正式构建：`CI=true CARGO_TARGET_DIR=/tmp/datazen-target-transfer-plan pnpm tauri:build:webdriver` 通过。
+- 桌面 E2E：`data-transfer-diverse-types.ts` 3/3 通过；PG→MySQL 和 MySQL→PG 均迁移 25,000 行宽类型数据，耗时 1 分 5.1 秒。
+- 判定：BUG-003 根因是 preview/execute schema identity 不一致，已修复；本轮未发现新的 Transfer plan 回归。
+
 ## Independent Tester Round 3（BUG-002，2026-09-17）
 
 - 代码审查确认：自动发现的 structure/create-new mapping 保留完整 source column mappings，但保持 disabled，用户勾选后才进入 Preview/执行；跨方言 adapter 为每列填充 target native type，Preview DDL 与执行继续复用同一 mapping。
@@ -91,3 +101,13 @@
 - Verify the second execute attempt is rejected even after cancellation, rollback failure, commit failure, or a normal successful result.
 - Confirm existing UI journey uses the returned `planId` and never sends a replacement job on execute.
 - This wave does not add persistent profiles/run history, bounded snapshot scans, object dependency graphs, SQL-file targets, or parameterized filters.
+
+## Fresh independent Tester Round 4 (2026-09-20)
+
+- Code review rechecked the immutable-plan path: preview fingerprints the raw source schema before precision enrichment; execution revalidates the same identity; `create_new` target mappings keep the preview `None` sentinel; execution accepts only the opaque plan request and claims it once before writes. Bound batch INSERTs preserve bound values and use the configured batch size.
+- Host Rust: `CARGO_TARGET_DIR=/tmp/datazen-target-transfer-plan cargo test -p datazen --lib` — 1413 passed, 3 ignored, 0 failed.
+- Frontend: Transfer suites 25/25 passed; targeted coverage was 86.02% statements, 79.70% branches, 92.24% functions, and 88.37% lines overall. `DataTransferWindow.tsx` was 85.75% statements / 80.00% branches / 91.89% functions / 88.12% lines; `transfer.ts` was 100% / 66.66% / 100% / 100%. `pnpm exec tsc --noEmit` passed.
+- Drivers: PostgreSQL 101/101, MySQL 86/86, SQLite 46/46.
+- Formal build: `CI=true CARGO_TARGET_DIR=/tmp/datazen-target-transfer-plan pnpm_config_verify_deps_before_run=warn pnpm tauri:build:webdriver` passed and the generated app bundle was used for the desktop run.
+- Desktop E2E: `E2E_WD_PORT=4487 node e2e/run.mjs --skip-build --port 4487 --spec ./e2e/specs/data-transfer-diverse-types.ts` passed 3/3. PG→MySQL and MySQL→PG each transferred 25,000 wide-type rows; the limit explanation case also passed. The runner emitted an environment-only setup warning because the worktree has no local `e2e/.env`; the databases were prepared separately and the tested Transfer cases passed.
+- Verdict: no new Transfer plan defect found. BUG-003 remains independently verified as fixed. The track is ready for merge, subject to the coordinator committing only the Transfer changes and preserving unrelated worktree edits.

@@ -36,13 +36,15 @@
 
 ## migration-transfer-plan-BUG-003
 
-- 状态：待修复（范围外，待转交 migration-transfer-core）
-- 严重度：P2（大批量跨方言传输无法在既定超时内完成）
-- 描述：PG→MySQL 25,000 行、19 列宽类型 Data Transfer 旅程在点击执行后 120 秒内没有进入结果页；同一 suite 的 MySQL→PG 25,000 行旅程通过，说明问题集中在 PG→MySQL 执行性能或终态状态推进。
+- 状态：已修复（immutable plan 轨道独立复测）
+- 严重度：P1（合法 Transfer 计划被错误判定为 stale，用户只能等待到超时）
+- 描述：PG→MySQL 25,000 行、19 列宽类型 Data Transfer 旅程在点击执行后 120 秒内没有进入结果页。Preview 为 PostgreSQL 源 schema 做了精度增强后把增强后的 schema 写入计划指纹，但执行阶段重新读取原始 schema，导致未改变的计划在真正 claim 前被拒绝；前端没有把该校验错误推进到结果页，所以表现为超时。
 - 重现步骤：
   1. 准备 `datazen_sync_src` 与 `datazen_sync_mysql_tgt`。
   2. 创建 PG 宽类型表并写入 25,000 行，创建同结构 MySQL 目标表。
   3. 打开 Data Transfer，选择 PG→MySQL，data 模式，选择该表并执行。
   4. 等待结果页最多 120 秒。
-- 实测结果：结果元素未出现；WebDriver 报错：`element ("[data-testid="data-transfer-result"]") still not displayed after 120000ms`。本次运行日志同时记录 MySQL 目标宽表查询返回 25,000 行、耗时 1.629869917 秒。
-- 影响范围：`e2e/specs/data-transfer-diverse-types.ts` 的 DT-COMP-001；大批量 PG→MySQL 用户旅程。immutable plan 本轮未修改批量写入/结果页业务路径。
+- 实测结果：修复后 PG→MySQL 与 MySQL→PG 两条 25,000 行旅程均进入结果页并通过，整段 spec 3/3 通过，总耗时 1 分 5.1 秒。
+- 修复说明：计划指纹改为保存未增强的原始 source schema；执行 revalidation 使用相同的 schema identity。`create_new` target 映射在执行阶段继续保留 preview 的 `None` sentinel，避免空 driver schema 造成伪变化；批量 bound INSERT 保留参数绑定并按既有 batch_size 合并 target round-trip。
+- 影响范围：`e2e/specs/data-transfer-diverse-types.ts` 的 DT-COMP-001/002；现在两条大批量跨方言旅程都覆盖了 immutable plan 的 claim、写入和结果收尾。
+- 验证记录：正式 `tauri:build:webdriver` 通过；Host 1413/1413；Transfer 前端定向测试 30/30；PostgreSQL/MySQL/SQLite 驱动 101/86/46；`data-transfer-diverse-types.ts` 3/3（PG→MySQL 25,000、MySQL→PG 25,000、限制说明）通过。
