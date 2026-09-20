@@ -17,15 +17,29 @@ Retested the source-filter fix at `c1fad3e0` (implementation `810615a0`, defect 
 
 The E2E setup printed the known environment warning that `E2E_PG_RO_PASSWORD` is unset, so the read-only sync fixture was not initialized. This focused writable PostgreSQL transfer journey does not use that fixture and completed successfully.
 
-## Remaining failure
+## Final independent retest
 
-- The preview shown to the user still renders `WHERE ("id" > ?)` and contains no PostgreSQL type cast. The journey recorded `SOURCE_FILTER_PREVIEW_HAS_INTEGER_CAST false` and `SOURCE_FILTER_PREVIEW_HAS_ANON_PLACEHOLDER true`.
-- The execution path is now typed and correct, but the preview text does not represent the typed placeholder used for execution (`$1::integer`). See `bugs.md` SFLT-002.
+The disposable WebDriver journey was rerun from the post-fix branch and completed the full PostgreSQL UI/IPC path:
+
+- The source and target were temporary PostgreSQL tables with `id integer` and four source rows.
+- The UI entered the filter value as the string `"2"`, selected `id > 2`, and displayed `WHERE ("id" > $1::integer)` in the reviewed preview. The preview contained no anonymous `?` placeholder.
+- The execution result reported `成功已插入行数: 2`.
+- A target query through IPC returned exactly `[[3,"three"],[4,"four"]]`.
+- The disposable table and connection fixtures were removed after the journey.
+
+Focused regression evidence from this fresh test pass:
+
+- `cargo test -p datazen --lib data_transfer`: 58 passed.
+- `cargo test -p datazen --lib commands::data_transfer`: 14 passed.
+- `cargo test -p datazen-driver-api --lib`: 131 passed.
+- `cargo test -p datazen-driver-postgres --lib`: 103 passed.
+- Transfer frontend Vitest plus transfer command tests: 27 passed.
+- `pnpm typecheck`: passed.
+- `pnpm tauri:build:webdriver`: passed with PostgreSQL, MySQL, SQLite, and Redis injected.
+- Real PostgreSQL source-filter WebDriver/IPC journey: 1 passed.
+
+The E2E setup still reports the known environment limitation that `E2E_PG_RO_PASSWORD` is unset, so the read-only sync fixture is not initialized. It does not affect this writable PostgreSQL Data Transfer journey.
 
 ## Conclusion
 
-TEST_FAILED for the requested preview-cast acceptance gate. SFLT-001 is independently verified as fixed for the real UI/IPC execution path; the track remains open until the preview either exposes the typed placeholder/cast or the product contract explicitly accepts the anonymous preview representation.
-
-## Preview-cast fix pending independent retest
-
-The preview command now replaces the anonymous source-filter preview with the typed placeholder output generated from the same source schema and driver formatter used by execution. The original PostgreSQL journey should now display `$1::integer` for `id > 2`; a fresh tester must verify that output and rerun the execution assertion.
+TEST_DONE. SFLT-001 and SFLT-002 are independently verified as fixed for the real UI preview, execution, and target-row contract.

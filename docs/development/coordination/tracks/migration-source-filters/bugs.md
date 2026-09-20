@@ -50,7 +50,7 @@ A numeric value entered for an integer or numeric source column is converted or 
 | Field | Value |
 | --- | --- |
 | Severity | S3 (preview and execution contract mismatch) |
-| Status | Fixed; pending independent retest |
+| Status | 已验证 |
 | Found | 2026-09-20 |
 | Scope | Data Transfer source-filter preview, PostgreSQL source |
 | Repro | 100% |
@@ -87,3 +87,9 @@ The same journey confirmed that execution itself is correct: result text was `�
 ### Fix
 
 The preview command now replaces the anonymous filter preview with the same typed placeholder shape produced from the source schema and driver formatter. A PostgreSQL integer filter is therefore shown as `WHERE ("id" > $1::integer)` before execution.
+
+### Verification
+
+| Date | Tester | Method | Result |
+| --- | --- | --- | --- |
+| 2026-09-20 | independent tester | Fresh WebDriver UI journey with PostgreSQL source, editor value `id > 2`, preview assertion, execution, and target IPC query | Verified: preview showed `$1::integer`, execution inserted 2 rows, and the target contained exactly ids 3 and 4 |
