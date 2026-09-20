@@ -1,6 +1,6 @@
 # migration-sync-paged
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 ## Scope
 
@@ -20,3 +20,21 @@ The IPC and frontend memory are page-bounded, but the current private JSON Compa
 - `CARGO_TARGET_DIR=target/cargo-wt node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib commands::sync::plans`: 9 passed, 0 failed.
 
 The implementation is ready for an independent tester. Coder self-validation is not a PASSED verdict.
+
+## Independent tester result (2026-09-20)
+
+The paged review IPC and UI were reviewed against the track scope. The server summary contains no row payload; page requests require an unclaimed, unexpired plan, exact source/target table identity, a bounded limit and a signed plan/table/offset cursor. Execution and SQL generation continue to use the server-owned ComparisonStore and key-only selection. No production defect was found in the reviewed paths.
+
+Independent suites passed:
+
+- `commands::sync::plans`: 9/9.
+- `commands::sync`: 41/41.
+- Focused frontend files (`syncPlan`, `DiffDetail`, `mappingView`, `DataSyncWindow`): 39/39.
+- `npx tsc --noEmit`: passed.
+- Added `[tester]` DataSyncWindow journey: summary → first page → next page → cancel selections on both pages → back/forward → restore one key → SQL preview selection: passed.
+
+Filtered V8 coverage for the changed frontend files was 75.48% statements, 78.21% lines, 75.49% functions and 65.80% branches. `mappingView.ts` reached 86.02% statements / 85.54% lines; the larger `DataSyncWindow.tsx` and command wrapper remain below the requested 80% threshold. The repository coverage command also fails its global threshold because it instruments the full application; this is recorded as a coverage gap rather than a product failure. The coder-recorded formal `CI=true pnpm tauri:build:webdriver` passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS packaging.
+
+E2E status: the new frontend journey is executable in this worktree and covers the review state machine. A real desktop database journey was not rerun by this tester because the track's recorded formal build is sufficient for compilation and the environment lacks `E2E_PG_RO_PASSWORD` for read-only fixtures; this environment limitation is unrelated to paged IPC.
+
+Tester commit: pending until the test-only change and this result are committed.
