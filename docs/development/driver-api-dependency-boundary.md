@@ -292,7 +292,7 @@ useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 
 配套终态（同由 `i18n-drivers` 轨落地，勿提前按旧链路开发）：
 
 - 宿主端 `DRIVER_LOCALES` 聚合链路**整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——不存在「宿主替驱动收集词条」这一步。
-- 语言 code 字面量与宿主保持一致（`zh-CN`、`zh-TW`、`pt-BR` 一律带连字符）。核对时注意**「仓库里有语言文件」≠「宿主已接线该语言」**，两层真值分别取自不同出处：
+- 语言 code 字面量与宿主保持一致（`zh-CN`、`zh-TW`、`pt-BR` 一律带连字符）。核对时注意**「仓库里有语言文件」≠「宿主已接线该语言」**，真值分三层各取不同出处：
   - **宿主实际接线的内置语言只有 `en` 与 `zh-CN`**：`src/locales/builtinLocales.ts:9` 的 `BUILTIN_LOCALES = ['en', 'zh-CN']`（真值源 `src/locales/builtin-locales.json`；`BUILTIN_LOCALE_LABELS` 同文件 :26-29 亦只有这两项；`src/locales/fullLocales.ts` 供测试/工具用，同样只含这两个）。
   - **其余 8 个语言目前只做 parity 校验、未进 `BUILTIN_LOCALES`**：`de`、`es`、`fr`、`ja`、`ko`、`pt-BR`、`ru`、`zh-TW`，以文件形态存在于 `src/locales/`（如 `src/locales/pt-BR.ts` + `src/locales/pt-BR/`），由 `scripts/i18n-sync-check.mjs:23` 的 `LOCALE_FILES` 逐个列表做词条校验；除 `src/locales/` 内部再导出外，生产路径无运行时 import。
   - 因此 **`zh-CN` 的连字符以 `BUILTIN_LOCALES` 为出处，`pt-BR` 的连字符以 `LOCALE_FILES`（`scripts/i18n-sync-check.mjs:23`）与语言文件名（`src/locales/pt-BR.ts`、`packages/drivers/redis/locales/pt-BR.ts`、`packages/drivers/mongodb/locales/pt-BR.ts`）为出处**。驱动包 `locales/` 现覆盖 10 个语言文件（redis、mongodb 各 10），其文件名必须与宿主同名同分隔符；新增语言只加文件，不改宿主 `BUILTIN_LOCALES`（除非该语言确已接线）。
