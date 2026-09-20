@@ -91,10 +91,14 @@ const pack = {
   'sync.selectAllInsert': 'All inserts',
   'sync.selectAllUpdate': 'All updates',
   'sync.selectAllDelete': 'All deletes',
+  'sync.clearAllInsert': 'Clear inserts',
+  'sync.clearAllUpdate': 'Clear updates',
+  'sync.clearAllDelete': 'Clear deletes',
   'sync.pageOf': 'Page {page} / {total}',
   'sync.pagePrev': 'Previous',
   'sync.pageNext': 'Next',
   'sync.pageScope': 'loaded page only',
+  'sync.pageScopeAll': 'all rows in selected table operations',
   'sync.loadingPage': 'Loading…',
   'sync.refreshPreview': 'Refresh',
   'sync.execute': 'Execute',
@@ -199,7 +203,8 @@ const pack = {
   'transfer.mapping.recordset': 'Source recordset range',
   'transfer.mapping.recordsetHint':
     'Select one ordered source column with optional bounds or a limit. This selects rows for this run; it is not a restart checkpoint.',
-  'transfer.mapping.noRecordset': 'No recordset range; all source rows matching the filter are copied.',
+  'transfer.mapping.noRecordset':
+    'No recordset range; all source rows matching the filter are copied.',
   'transfer.mapping.recordsetOrder': 'Order by',
   'transfer.mapping.recordsetOrderRequired':
     'Choose one source column. A table without a single primary key cannot use the automatic order.',

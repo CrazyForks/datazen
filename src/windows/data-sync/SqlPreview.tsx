@@ -5,6 +5,7 @@ import { useI18n } from '../../hooks/useI18n';
 import type {
   DataSyncOperation,
   DataSyncSelectedRow,
+  DataSyncTableSelection,
   DataSyncSqlStatement,
   SyncOptions,
 } from '../../commands/sync';
@@ -24,6 +25,7 @@ interface SqlPreviewProps {
   tables: DataSyncTableResult[];
   options: SyncOptions;
   selectedRows?: DataSyncSelectedRow[];
+  tableSelections?: DataSyncTableSelection[];
 }
 
 export function SqlPreview({
@@ -36,6 +38,7 @@ export function SqlPreview({
   tables,
   options,
   selectedRows,
+  tableSelections,
 }: SqlPreviewProps) {
   const { t } = useI18n();
   const [opFilter, setOpFilter] = useState<OpFilter>('all');
@@ -61,6 +64,7 @@ export function SqlPreview({
         sourceSchema || undefined,
         targetSchema || undefined,
         selectedRows,
+        ...(tableSelections?.length ? [tableSelections] : []),
       );
       if (revision !== generation.current) return;
       setStatements(stmts);
@@ -81,6 +85,7 @@ export function SqlPreview({
     sourceSchema,
     targetSchema,
     selectedRows,
+    tableSelections,
   ]);
 
   useEffect(() => {

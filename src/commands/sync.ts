@@ -117,9 +117,22 @@ export interface DataSyncSelectedRow {
   key: Value[];
 }
 
+export interface DataSyncSelectionExclusion {
+  operation: Exclude<DataSyncOperation, 'UNCHANGED'>;
+  key: Value[];
+}
+
+export interface DataSyncTableSelection {
+  sourceTable: string;
+  targetTable: string;
+  operations: Array<Exclude<DataSyncOperation, 'UNCHANGED'>>;
+  excludedRows: DataSyncSelectionExclusion[];
+}
+
 export interface DataSyncSelection {
   revision: number;
   rows: DataSyncSelectedRow[];
+  scopes?: DataSyncTableSelection[];
 }
 
 export interface DataSyncComparisonPreview {
@@ -175,17 +188,26 @@ function selectionFromTables(
   tables: DataSyncTableResult[],
   options: SyncOptions,
   selectedRows?: DataSyncSelectedRow[],
+  tableSelections?: DataSyncTableSelection[],
 ): DataSyncSelection {
+  // Preserve scope input for server validation. UI state removes disabled
+  // operations before it reaches this helper; a forged or stale caller must
+  // still be rejected by the server instead of silently selecting less data.
+  const activeScopes = tableSelections ?? [];
+  const result = (rows: DataSyncSelectedRow[]): DataSyncSelection => ({
+    revision: plan.selectionRevision,
+    rows,
+    ...(activeScopes.length > 0 ? { scopes: activeScopes } : {}),
+  });
   if (selectedRows) {
-    return {
-      revision: plan.selectionRevision,
-      rows: selectedRows.filter((row) => {
+    return result(
+      selectedRows.filter((row) => {
         if (row.operation === 'INSERT') return options.insert;
         if (row.operation === 'UPDATE') return options.update;
         if (row.operation === 'DELETE') return options.delete;
         return false;
       }),
-    };
+    );
   }
   const requested = new Set(
     tables.flatMap((table) =>
@@ -215,7 +237,7 @@ function selectionFromTables(
         key: row.key,
       })),
   );
-  return { revision: plan.selectionRevision, rows };
+  return result(rows);
 }
 
 function selectionFromStatements(
@@ -278,15 +300,27 @@ export const syncCommands = {
     statements: DataSyncSqlStatement[],
     jobId?: string,
     targetDatabase?: string,
+    selectedRows?: DataSyncSelectedRow[],
+    tableSelections?: DataSyncTableSelection[],
   ) => {
     void targetDbSessionId;
     void targetDatabase;
     if (!activeComparisonPlan) {
       return Promise.reject(new Error('data sync comparison plan is missing; compare again'));
     }
+    const selection =
+      selectedRows || tableSelections
+        ? selectionFromTables(
+            activeComparisonPlan,
+            [],
+            activeExecutionOptions,
+            selectedRows,
+            tableSelections,
+          )
+        : selectionFromStatements(activeComparisonPlan, statements);
     const request = {
       planId: activeComparisonPlan.planId,
-      selection: selectionFromStatements(activeComparisonPlan, statements),
+      selection,
       options: activeExecutionOptions,
       jobId: jobId ?? null,
     };
@@ -395,6 +429,7 @@ export const syncCommands = {
     sourceSchema?: string,
     targetSchema?: string,
     selectedRows?: DataSyncSelectedRow[],
+    tableSelections?: DataSyncTableSelection[],
   ) => {
     void sourceDbSessionId;
     void targetDbSessionId;
@@ -408,7 +443,13 @@ export const syncCommands = {
     activeExecutionOptions = options;
     return invoke<DataSyncSqlStatement[]>('generate_data_sync_sql', {
       planId: activeComparisonPlan.planId,
-      selection: selectionFromTables(activeComparisonPlan, tables, options, selectedRows),
+      selection: selectionFromTables(
+        activeComparisonPlan,
+        tables,
+        options,
+        selectedRows,
+        tableSelections,
+      ),
       options,
     });
   },

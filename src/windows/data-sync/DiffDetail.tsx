@@ -17,6 +17,12 @@ interface DiffDetailProps {
   table: DataSyncTableResult;
   options: SyncOptions;
   onUpdateRows: (rows: DataSyncRowChange[]) => void;
+  onSelectAllOperation?: (operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => void;
+  onClearAllOperation?: (operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => void;
+  isOperationSelected?: (
+    operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+  ) => boolean;
+  hasTableSelection?: boolean;
   pageLoading?: boolean;
   pageIndex?: number;
   hasPreviousPage?: boolean;
@@ -41,6 +47,10 @@ export function DiffDetail({
   table,
   options,
   onUpdateRows,
+  onSelectAllOperation,
+  onClearAllOperation,
+  isOperationSelected,
+  hasTableSelection = false,
   pageLoading = false,
   pageIndex = 0,
   hasPreviousPage = false,
@@ -77,7 +87,7 @@ export function DiffDetail({
     onUpdateRows(next);
   };
 
-  const selectAllOp = (op: DataSyncRowChange['operation']) => {
+  const selectAllOp = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
     const next = (table.rows ?? []).map((r) => {
       if (r.operation !== op) return r;
       if (!operationAllowed(op, options)) return { ...r, selected: false };
@@ -108,34 +118,76 @@ export function DiffDetail({
         <span className="font-mono text-xs font-semibold">{table.sourceTable}</span>
         <div className="flex-1" />
         {options.insert && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('INSERT')}
-          >
-            {t('sync.selectAllInsert')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-INSERT"
+              onClick={() => onSelectAllOperation?.('INSERT') ?? selectAllOp('INSERT')}
+            >
+              {t('sync.selectAllInsert')}
+            </Button>
+            {isOperationSelected?.('INSERT') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-INSERT"
+                onClick={() => onClearAllOperation?.('INSERT')}
+              >
+                {t('sync.clearAllInsert')}
+              </Button>
+            )}
+          </div>
         )}
         {options.update && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('UPDATE')}
-          >
-            {t('sync.selectAllUpdate')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-UPDATE"
+              onClick={() => onSelectAllOperation?.('UPDATE') ?? selectAllOp('UPDATE')}
+            >
+              {t('sync.selectAllUpdate')}
+            </Button>
+            {isOperationSelected?.('UPDATE') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-UPDATE"
+                onClick={() => onClearAllOperation?.('UPDATE')}
+              >
+                {t('sync.clearAllUpdate')}
+              </Button>
+            )}
+          </div>
         )}
         {options.delete && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('DELETE')}
-          >
-            {t('sync.selectAllDelete')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-DELETE"
+              onClick={() => onSelectAllOperation?.('DELETE') ?? selectAllOp('DELETE')}
+            >
+              {t('sync.selectAllDelete')}
+            </Button>
+            {isOperationSelected?.('DELETE') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-DELETE"
+                onClick={() => onClearAllOperation?.('DELETE')}
+              >
+                {t('sync.clearAllDelete')}
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -240,7 +292,7 @@ export function DiffDetail({
         <div className="flex shrink-0 items-center justify-between border-t border-edge px-3 py-2 text-xs text-fg-muted">
           <span>
             {serverPaged
-              ? `${t('sync.pageOf', { page: safePage + 1, total: pageCount })} · ${t('sync.pageScope')}`
+              ? `${t('sync.pageOf', { page: safePage + 1, total: pageCount })} · ${t(hasTableSelection ? 'sync.pageScopeAll' : 'sync.pageScope')}`
               : t('sync.pageOf', { page: safePage + 1, total: pageCount })}
           </span>
           <div className="flex gap-1">
