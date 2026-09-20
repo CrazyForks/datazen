@@ -24,6 +24,7 @@ export {
   setLocale,
   getLocale,
   registerTranslations,
+  getRegisteredTranslations,
   t,
   useI18n,
   type I18nParams,
