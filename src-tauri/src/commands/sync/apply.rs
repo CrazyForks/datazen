@@ -34,6 +34,89 @@ pub(crate) async fn compare_data_sync_impl(
     mappings: &[TableMapping],
     source_filters: &HashMap<String, SyncSourceFilter>,
 ) -> Result<plans::SyncComparisonPreview, CommandError> {
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("compare_data_sync")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("compare_data_sync")?;
+
+    let source_snapshot = src_driver
+        .begin_read_snapshot(&src_handle)
+        .await
+        .cmd_err("compare_data_sync")?;
+    let target_snapshot = match tgt_driver.begin_read_snapshot(&tgt_handle).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if let Err(cleanup_error) = src_driver.rollback(source_snapshot).await {
+                tracing::warn!(
+                    error = %cleanup_error,
+                    "failed to roll back source Data Sync read snapshot after target setup failed"
+                );
+            }
+            return Err(error.into());
+        }
+    };
+
+    let result = compare_data_sync_impl_inner(
+        state,
+        source_db_session_id,
+        target_db_session_id,
+        tables,
+        job_id,
+        source_database,
+        target_database,
+        source_schema,
+        target_schema,
+        options,
+        mappings,
+        source_filters,
+    )
+    .await;
+
+    let source_cleanup = src_driver.rollback(source_snapshot).await;
+    let target_cleanup = tgt_driver.rollback(target_snapshot).await;
+    if let Err(error) = &source_cleanup {
+        tracing::warn!(
+            error = %error,
+            "failed to roll back source Data Sync read snapshot"
+        );
+    }
+    if let Err(error) = &target_cleanup {
+        tracing::warn!(
+            error = %error,
+            "failed to roll back target Data Sync read snapshot"
+        );
+    }
+
+    match result {
+        Err(error) => Err(error),
+        Ok(preview) => {
+            source_cleanup.map_err(CommandError::from)?;
+            target_cleanup.map_err(CommandError::from)?;
+            Ok(preview)
+        }
+    }
+}
+
+async fn compare_data_sync_impl_inner(
+    state: &AppState,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    tables: Vec<String>,
+    job_id: Option<String>,
+    source_database: Option<String>,
+    target_database: Option<String>,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
+    options: SyncOptions,
+    mappings: &[TableMapping],
+    source_filters: &HashMap<String, SyncSourceFilter>,
+) -> Result<plans::SyncComparisonPreview, CommandError> {
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(super::jobs::ensure_job(id).await),
         None => None,

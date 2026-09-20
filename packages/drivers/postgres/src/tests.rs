@@ -169,6 +169,20 @@ async fn begin_transaction_requires_pool() {
 }
 
 #[tokio::test]
+async fn begin_read_snapshot_requires_pool() {
+    let driver = PostgresDriver::new();
+    let handle = ConnectionHandle {
+        id: "conn".into(),
+        pool_id: "missing-pool".into(),
+    };
+    let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
+    assert!(
+        matches!(err, DriverError::ConnectionFailed(_)),
+        "expected ConnectionFailed, got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn commit_and_rollback_without_begin_error() {
     let driver = PostgresDriver::new();
     let tx = TransactionHandle {
