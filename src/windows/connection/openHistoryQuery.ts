@@ -70,8 +70,8 @@ export function openHistoryQuery(
       type: 'query',
       id: panelId,
       title: db ? `${savedConn.name}@${db}` : savedConn.name,
-      database: panelDatabase,
-      schema: entry.schema?.trim() || undefined,
+      database: panelDatabase ?? '',
+      schema: entry.schema?.trim() || null,
       namespacePath,
     };
     usePanelStore.getState().addPanel(panel, true);

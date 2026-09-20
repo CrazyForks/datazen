@@ -4,18 +4,17 @@ import {
   editorRelationKey,
   metadataCache,
   type MetadataCache,
-} from '../components/sql-editor/metadata/metadataCache';
+} from '../lib/relationMetadata/metadataCache';
 import type {
   EditorMetadataContext,
   EditorMetadataSnapshot,
   EditorRelationKey,
   EditorRelationMetadata,
   EditorRelationRequest,
-} from '../components/sql-editor/metadata/types';
-import type {
   QualifiedRelationId,
-  SqlRelationBinding,
-} from '../components/sql-editor/semantic/types';
+  SqlRelationSourceKind,
+} from '../lib/relationMetadata/types';
+
 import { DB_REGISTRY } from '../lib/databaseTypes';
 import type { DatabaseType } from '../types';
 
@@ -60,9 +59,21 @@ export function ensureMetadataRelations(
   cache.ensureRelations(dbSessionId, requests, ctx);
 }
 
-/** Map semantic relation bindings to editor metadata requests (drops CTE/subquery). */
+/**
+ * A relation the SQL semantic model reported.
+ *
+ * Declared structurally rather than imported from the editor's semantic layer:
+ * the store must not depend on a peer that sits above it. `SqlRelationBinding`
+ * satisfies this shape, so editor callers need no cast.
+ */
+export interface RelationBindingLike {
+  relation: QualifiedRelationId;
+  sourceKind?: SqlRelationSourceKind;
+}
+
+/** Map semantic relation bindings to metadata requests (drops CTE/subquery). */
 export function bindingToRelationRequests(
-  bindings: readonly SqlRelationBinding[],
+  bindings: readonly RelationBindingLike[],
 ): EditorRelationRequest[] {
   const requests: EditorRelationRequest[] = [];
   for (const binding of bindings) {
@@ -86,6 +97,21 @@ export function resolveEditorDialectId(databaseType?: string | null): string {
   if (!databaseType) return 'standard';
   const family = DB_REGISTRY[databaseType as DatabaseType]?.sqlDialect;
   return family ?? databaseType;
+}
+
+/**
+ * Map a relation to its metadata-cache key.
+ *
+ * Re-exported so consumers (notably the Visual Query Builder) can key a lookup
+ * without importing the metadata implementation directly — the store is the
+ * shared layer both the editor and the builder sit on.
+ */
+export function relationLookupKey(
+  dbSessionId: string,
+  identity: QualifiedRelationId,
+  dialectId: string,
+): EditorRelationKey {
+  return editorRelationKey(dbSessionId, identity, dialectId);
 }
 
 /** React hook: subscribe to the metadata snapshot for a session (or `null` → empty). */

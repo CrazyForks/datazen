@@ -10,14 +10,13 @@
 ## 编码范围
 
 - `src/windows/connection/query/QueryEditorSection.tsx` — 添加工具栏按钮 + 面板渲染 ✅
-- `src/components/query-builder/QueryBuilderPanel.tsx` — 重写为三区域布局（ObjectTree + Canvas + CriteriaGrid + SQL Preview）✅
+- `src/components/query-builder/QueryBuilderPanel.tsx` — 重写为画布 + CriteriaGrid + SQL Preview 布局 ✅
 - `src/locales/en/query.ts` — 添加 i18n key（含 v2 新增 key）✅
 - `src/locales/zh-CN/query.ts` — 添加中文翻译（含 v2 新增 key）✅
 - `docs/features/query-builder.md` — 用户文档 ✅
 
 ### 已删除旧组件
 
-- `src/components/query-builder/TableSelector.tsx` — 被 ObjectTreePanel 替代 ✅
 - `src/components/query-builder/ColumnSelector.tsx` — 被 DiagramCanvas 表卡片替代 ✅
 - `src/components/query-builder/SortClause.tsx` — 被 CriteriaGrid 替代 ✅
 - `src/components/query-builder/GroupByClause.tsx` — 被 CriteriaGrid 替代 ✅
@@ -27,7 +26,7 @@
 
 ## 依赖
 
-依赖 qb-core 轨道的 Store 和 qb-ui 轨道的子组件（DiagramCanvas, ObjectTreePanel, CriteriaGrid）。
+依赖 qb-core 轨道的 Store 和 qb-ui 轨道的子组件（DiagramCanvas, CriteriaGrid）。
 
 ## 验收标准
 
@@ -45,8 +44,8 @@
 ## 自验结果
 
 - QueryEditorSection.tsx: WandSparkles import + useQueryBuilderStore hooks + ToolbarButton + QueryBuilderPanel rendering ✅
-- QueryBuilderPanel.tsx: 重写为三区域布局，整合 ObjectTreePanel + DiagramCanvas + CriteriaGrid + SqlPreview ✅
-- en/query.ts: 28+ visualBuilder keys + v2 新增 key（qb/join/criteria/objectTree/canvas）✅
+- QueryBuilderPanel.tsx: 重写为画布布局，整合 DiagramCanvas + CriteriaGrid + SqlPreview ✅
+- en/query.ts: 28+ visualBuilder keys + v2 新增 key（qb/join/criteria/canvas）✅
 - zh-CN/query.ts: 对应中文翻译 ✅
 - docs/features/query-builder.md: Feature documentation created ✅
 - npx tsc --noEmit: 0 errors ✅

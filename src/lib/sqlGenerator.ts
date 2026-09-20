@@ -6,13 +6,13 @@ import type { GeneratedSqlType } from './sqlDialects/types';
 export type { GeneratedSqlType };
 
 export interface SqlGeneratorOptions {
-  schemaPrefix?: string;
+  schemaPrefix?: string | null;
 }
 
 export function formatTableIdentifier(
   tableName: string,
   databaseType: string,
-  schemaPrefix?: string,
+  schemaPrefix?: string | null,
 ): string {
   const dbType = databaseType as DatabaseType;
   const dialect = getSqlDialect(dbType);
@@ -34,8 +34,7 @@ export function generateTableSql(
   const dbType = databaseType as DatabaseType;
   const dialect = getSqlDialect(dbType);
   const generator =
-    dialect?.tableSql ??
-    new BaseTableSqlGenerator(DB_REGISTRY[dbType]?.quoteChar ?? '"');
+    dialect?.tableSql ?? new BaseTableSqlGenerator(DB_REGISTRY[dbType]?.quoteChar ?? '"');
   const tableRef = generator.formatTableRef(schema.tableName, options?.schemaPrefix);
   return generator.generateSql(type, tableRef, schema);
 }

@@ -24,19 +24,19 @@ import {
 import { type GeneratedSqlType } from '../../lib/sqlGenerator';
 import { openBackupWindow } from '../../lib/windowManager';
 import { queryCommands } from '../../commands/query';
-import type { SchemaTreeNodeContextMenuPayload } from './schema-tree/SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { PanelHandlers } from './usePanelHandlers';
 
 export interface ConnectionContextMenuParams {
   sidebarConnCtx: ConnectionContext | null;
   currentDatabase: string | null;
   initialDatabase: string | undefined;
-  handleSelectTableWithSchema: (table: string, schema?: string, database?: string) => void;
+  handleSelectTableWithSchema: (table: string, schema: string | null, database: string) => void;
   handlers: PanelHandlers;
   openBatchExport: (initialSelected?: string[]) => void;
   safeMode: boolean;
   /** Open the export dialog for a table/view: set the target name and open it. */
-  requestExport: (name: string, schema?: string) => void;
+  requestExport: (name: string, schema: string | null, database: string) => void;
   /** Open the import dialog; `isTable` selects the table-target vs database import. */
   requestImport: (isTable: boolean, name: string) => void;
 }
@@ -166,7 +166,7 @@ export function useConnectionContextMenu({
             tableName: name,
             tableRefLabel: tableRef,
           });
-          handlers.handleNewQuery(sql, { database, schema });
+          handlers.handleNewQuery(sql, { database, schema: schema ?? null });
         })();
       };
 
@@ -211,7 +211,7 @@ export function useConnectionContextMenu({
           handlers: {
             onOpen:
               kind === 'table' || kind === 'view'
-                ? () => handleSelectTableWithSchema(name, schema)
+                ? () => handleSelectTableWithSchema(name, schema ?? null, database)
                 : undefined,
             onGenerateSelect: kind === 'table' ? () => handleGenerateTableSql('select') : undefined,
             onGenerateInsert: kind === 'table' ? () => handleGenerateTableSql('insert') : undefined,
@@ -223,7 +223,9 @@ export function useConnectionContextMenu({
             onCopyDdl: kind === 'table' || kind === 'view' ? () => copyDdl() : undefined,
             onFocusEr: kind === 'table' ? () => handlers.handleOpenErDiagram(name) : undefined,
             onExport:
-              kind === 'table' || kind === 'view' ? () => requestExport(name, schema) : undefined,
+              kind === 'table' || kind === 'view'
+                ? () => requestExport(name, schema ?? null, database)
+                : undefined,
             onBatchExport: () => {
               if (kind === 'table' || kind === 'view') {
                 openBatchExport([name]);
@@ -243,14 +245,16 @@ export function useConnectionContextMenu({
                     connectionId: ctx.connectionId,
                     dbSessionId: ctx.dbSessionId,
                     databaseType: ctx.databaseType,
-                    database: currentDatabase ?? initialDatabase,
-                    schema,
+                    database: currentDatabase ?? initialDatabase ?? '',
+                    schema: schema ?? null,
                     tableName: name,
+                    tableSchema: schema ?? null,
+                    viewSchema: null,
                   },
                   'select',
                 );
               } else {
-                handlers.handleNewQuery();
+                handlers.handleNewQuery(undefined, { database, schema: schema ?? null });
               }
             },
             onQueryHistory:

@@ -17,7 +17,7 @@ import { OBJECT_KIND_CATEGORIES } from './schemaTreeCategories';
 import { formatRowCount } from './formatRowCount';
 import { setDragPayload, type DragPayloadOptions } from './schemaTreeDrag';
 import { createDragGhost, removeDragGhost } from '../navigator/utils';
-import type { SchemaTreeNodeContextMenuPayload } from './SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../../lib/schemaTreeContextMenu';
 
 export interface FlatRow {
   type: 'db' | 'schema' | 'category' | 'table' | 'object' | 'cat-empty' | 'db-loading' | 'empty';
@@ -39,7 +39,7 @@ interface RowRendererProps {
   depthPadding: (depth: number) => string;
   selectedTable: string | null;
   isSingleDbMode: boolean;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onNodeContextMenu?: (payload: SchemaTreeNodeContextMenuPayload) => void;
   onToggleDb?: (dbName: string) => void;
   onToggleSchema?: (schemaKey: string) => void;
@@ -116,6 +116,7 @@ function DbRow({
           name: row.dbName!,
           x: e.clientX,
           y: e.clientY,
+          schema: null,
         });
       }}
     >
@@ -251,7 +252,7 @@ function TableRow({
         selectedTable === item.name ? 'bg-surface-raised text-fg' : 'text-fg-secondary',
       )}
       style={{ paddingLeft: depthPadding(row.depth) }}
-      onClick={() => onSelectTable(item.name, item.schema)}
+      onClick={() => onSelectTable(item.name, item.schema ?? null, row.dbName ?? '')}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -260,7 +261,7 @@ function TableRow({
           name: item.name,
           x: e.clientX,
           y: e.clientY,
-          schema: item.schema ?? undefined,
+          schema: item.schema ?? null,
         });
       }}
       title={colHits.length > 0 ? colHits.slice(0, 8).join(', ') : undefined}
@@ -312,7 +313,7 @@ function ObjectRow({
           name: obj.name,
           x: e.clientX,
           y: e.clientY,
-          schema: obj.schema ?? undefined,
+          schema: obj.schema ?? null,
         });
       }}
     >

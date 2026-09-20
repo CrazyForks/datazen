@@ -35,7 +35,7 @@ import type { ConnectionOpenTarget } from '../../../lib/connectionViews/types';
 import { databaseCommands } from '../../../commands/database';
 import { driverCommands } from '../../../commands/driver';
 import { queryCommands } from '../../../commands/query';
-import { shouldUseMultiDatabaseTree } from '../schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './utils';
 import type { I18nKey } from '../../../locales';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
@@ -438,7 +438,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -625,7 +625,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -716,7 +716,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
       args: {
         kind: 'table' | 'view';
         name: string;
-        schema?: string;
+        schema: string | null;
         dbName: string;
         connectionId: string;
         dbSessionId: string;
@@ -767,7 +767,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
           tableName: name,
           tableRefLabel: tableRef,
         });
-        viewActions?.newQuery?.(sql, { database: dbName, schema });
+        viewActions?.newQuery?.(sql, { database: dbName, schema: schema ?? null });
       };
 
       const handleGenerateDdl = async () => {
@@ -796,13 +796,13 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
           }
           viewActions?.newQuery?.(ddl || `/* No DDL found for ${name} */`, {
             database: dbName,
-            schema,
+            schema: schema ?? null,
           });
         } catch (err) {
           console.warn('Failed to generate DDL:', err);
           viewActions?.newQuery?.(`/* Failed to get DDL for ${name} */`, {
             database: dbName,
-            schema,
+            schema: schema ?? null,
           });
         }
       };
@@ -865,14 +865,16 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                     dbSessionId,
                     databaseType: conn?.databaseType ?? 'postgresql',
                     database: dbName,
-                    schema,
+                    schema: schema ?? null,
                     tableName: name,
+                    tableSchema: schema ?? null,
+                    viewSchema: null,
                   },
                   { kind: 'select', source: 'table-action' },
                 );
                 viewActions?.newQuery?.(query.initialSql, query);
               } else {
-                viewActions?.newQuery?.();
+                viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
               }
             },
             onTruncate:

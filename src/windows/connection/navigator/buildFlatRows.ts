@@ -20,7 +20,7 @@ import type { I18nKey } from '../../../locales';
 import type { ConnectionConfig, DatabaseObject, TableInfo } from '../../../types';
 import type { ObjectFilterPrefs } from '../../../lib/objectFilter';
 import type { ConnectionSchemaState } from '../../../stores/schemaStore';
-import { shouldUseMultiDatabaseTree } from '../schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './utils';
 import { getCategoriesForDriver } from '../schema-tree/schemaTreeCategories';
 import type { UnifiedRow } from './types';
 import { flattenNamespaceTree, groupBySchema } from './utils';

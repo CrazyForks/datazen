@@ -206,10 +206,6 @@ vi.mock('../../../components/ui/Button', () => ({
   ),
 }));
 
-vi.mock('../schema-tree/SchemaTree', () => ({
-  SchemaTree: mockDiv('mock-schema-tree'),
-}));
-
 vi.mock('../TableView', () => ({ TableView: mockDiv('mock-table-view') }));
 vi.mock('../StructureView', () => ({ StructureView: mockDiv('mock-structure-view') }));
 vi.mock('../IndexesView', () => ({ IndexesView: mockDiv('mock-indexes-view') }));

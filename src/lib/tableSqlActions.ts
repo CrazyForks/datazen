@@ -10,8 +10,8 @@ export interface TableContext {
   connectionId: string;
   dbSessionId: string;
   databaseType: DatabaseType;
-  database?: string;
-  schema?: string;
+  database: string;
+  schema: string | null;
   tableName: string;
 }
 
@@ -20,12 +20,12 @@ export interface TableContextInput {
   connectionId: string;
   dbSessionId: string;
   databaseType: DatabaseType;
-  database?: string | null;
-  schema?: string | null;
+  database: string;
+  schema: string | null;
   tableName?: string;
-  tableSchema?: string | null;
+  tableSchema: string | null;
   viewName?: string;
-  viewSchema?: string | null;
+  viewSchema: string | null;
   objectType?: string;
   name?: string;
 }
@@ -112,17 +112,11 @@ function normalizeOptional(value: string | null | undefined): string | undefined
 
 function readTableName(input: TableContextInput): string {
   const objectType = input.objectType?.trim().toLowerCase();
-  if (
-    objectType &&
-    !['table', 'view', 'column', 'materializedview'].includes(objectType)
-  ) {
+  if (objectType && !['table', 'view', 'column', 'materializedview'].includes(objectType)) {
     throw new Error(`Object type ${input.objectType} cannot produce a table context`);
   }
 
-  return normalizeRequired(
-    input.tableName ?? input.viewName ?? input.name,
-    'tableName',
-  );
+  return normalizeRequired(input.tableName ?? input.viewName ?? input.name, 'tableName');
 }
 
 /**
@@ -134,8 +128,8 @@ export function buildTableContext(input: TableContextInput): TableContext {
     connectionId: normalizeRequired(input.connectionId, 'connectionId'),
     dbSessionId: normalizeRequired(input.dbSessionId, 'dbSessionId'),
     databaseType: input.databaseType,
-    database: normalizeOptional(input.database),
-    schema: normalizeOptional(input.schema ?? input.tableSchema ?? input.viewSchema),
+    database: normalizeOptional(input.database) ?? '',
+    schema: normalizeOptional(input.schema ?? input.tableSchema ?? input.viewSchema) ?? null,
     tableName: readTableName(input),
   };
 }
@@ -172,9 +166,7 @@ export function buildSafeTableSqlTemplate(
   }
 }
 
-function normalizeAction(
-  action: TableSqlActionKind | TableSqlActionSpec,
-): TableSqlActionSpec {
+function normalizeAction(action: TableSqlActionKind | TableSqlActionSpec): TableSqlActionSpec {
   return typeof action === 'string' ? { kind: action } : action;
 }
 
@@ -185,8 +177,7 @@ export function buildQueryOpenContext(
 ): QueryOpenContext {
   const context = buildTableContext(tableContext);
   const spec = normalizeAction(action);
-  const initialSql =
-    spec.initialSql ?? buildSafeTableSqlTemplate(context, spec.kind);
+  const initialSql = spec.initialSql ?? buildSafeTableSqlTemplate(context, spec.kind);
   return {
     ...context,
     source: spec.source ?? 'table-action',

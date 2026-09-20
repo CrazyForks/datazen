@@ -241,7 +241,7 @@ Optional drivers (MongoDB, ClickHouse, DuckDB, SQL Server, …) are compile-time
 
 ### Prerequisites
 
-- **Node.js 24**, **pnpm 11**, and **Rust stable** (the CI-tested toolchain)
+- Node **24**, pnpm **11**, and Rust **stable** (the CI-tested toolchain)
 - [Tauri v2 system dependencies](https://v2.tauri.app/start/prerequisites/)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CI & test matrix](docs/development/ci-test-matrix.md) for development details. The commands below explicitly select Community so a public-source build does not require the separate Pro extension.

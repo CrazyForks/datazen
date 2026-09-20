@@ -14,8 +14,8 @@ interface PanelBase {
 export interface TablePanel extends PanelBase {
   type: 'table';
   tableName: string;
-  database?: string;
-  tableSchema?: string;
+  database: string;
+  tableSchema: string | null;
   subTab: SubTabId;
   structureEditing?: boolean;
   targetColumn?: string;
@@ -24,23 +24,23 @@ export interface TablePanel extends PanelBase {
 export interface ViewPanel extends PanelBase {
   type: 'view';
   viewName: string;
-  database?: string;
-  viewSchema?: string;
+  database: string;
+  viewSchema: string | null;
   subTab: SubTabId;
 }
 
 export interface QueryPanel extends PanelBase {
   type: 'query';
   title: string;
-  database?: string;
-  schema?: string;
+  database: string;
+  schema: string | null;
   namespacePath?: string[];
 }
 
 export interface CreateTablePanel extends PanelBase {
   type: 'create-table';
-  database?: string;
-  tableSchema?: string;
+  database: string;
+  tableSchema: string | null;
 }
 
 export interface ErDiagramPanel extends PanelBase {
@@ -82,7 +82,7 @@ export interface DatabaseObjectPanel extends PanelBase {
   type: 'db-object';
   objectKind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type';
   objectName: string;
-  objectSchema?: string;
+  objectSchema: string | null;
 }
 
 export interface RedisDbPanel extends PanelBase {

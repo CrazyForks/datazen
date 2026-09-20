@@ -17,7 +17,6 @@ ConnectionPage
 │   │   │   ├── 执行/保存/格式化/... 按钮
 │   │   │   └── [新增] 📊 Visual Builder 按钮   ← 入口
 │   │   ├── [新增] QueryBuilderPanel             ← 构建器面板（条件显示）
-│   │   │   ├── ObjectTreePanel                  ← 左侧：数据库对象树
 │   │   │   ├── DiagramCanvas                    ← 中间：画布（表卡片 + JOIN 连线）
 │   │   │   ├── CriteriaGrid                     ← 下方：条件/排序/聚合网格
 │   │   │   └── SqlPreview                       ← 底部：SQL 预览
@@ -186,7 +185,6 @@ type QbJoinType = 'INNER' | 'LEFT' | 'RIGHT' | 'FULL';
 ```
 src/components/query-builder/
 ├── QueryBuilderPanel.tsx              # 主面板（三区域布局控制）
-├── ObjectTreePanel.tsx                # 左侧：数据库对象树
 ├── DiagramCanvas/
 │   ├── DiagramCanvas.tsx              # 画布容器（SVG + 拖拽/缩放）
 │   ├── TableCard.tsx                  # 表卡片（列列表 + PK/FK 徽章）
@@ -214,14 +212,6 @@ interface QueryBuilderPanelProps {
   dbSessionId: string;
   databaseType?: string;
   onApplySql: (sql: string) => void;
-}
-
-// ObjectTreePanel
-interface ObjectTreePanelProps {
-  dbSessionId: string;
-  tables: TableInfo[];
-  selectedTables: string[];
-  onAddTable: (tableName: string) => void;
 }
 
 // DiagramCanvas

@@ -97,7 +97,7 @@ export interface ConnectionNavigatorTreeHandle {
 
 export interface ConnectionNavigatorTreeProps {
   onSelectConnection: (connectionId: string) => void;
-  onSelectTable: (tableName: string, schema?: string, database?: string) => void;
+  onSelectTable: (tableName: string, schema: string | null, database: string) => void;
   onSelectKvDb?: (connectionId: string, dbName: string) => void;
   activeConnectionId: string | null;
   onNewConnection: (defaultGroup?: string) => void;

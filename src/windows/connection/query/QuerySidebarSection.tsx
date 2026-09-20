@@ -87,6 +87,10 @@ export function useQueryContextPath({
       // switchDatabase, which would run get_tables('public') and pin the
       // session's currentDatabase to a non-existent database.
       if (db && databases.includes(db) && db !== currentDatabase) {
+        // Persist the database to the panel so that `selectedDatabase`
+        // (= database ?? currentDatabase) reflects the switch even when the
+        // panel already has a bound database from creation time.
+        updatePanel(panelId, { database: db });
         await switchDatabase(db);
       }
     },

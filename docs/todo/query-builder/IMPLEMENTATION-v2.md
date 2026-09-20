@@ -31,7 +31,6 @@
 
 | 文件 | 说明 |
 |------|------|
-| `src/components/query-builder/ObjectTreePanel.tsx` | 数据库对象树 |
 | `src/components/query-builder/DiagramCanvas/DiagramCanvas.tsx` | 画布容器 |
 | `src/components/query-builder/DiagramCanvas/TableCard.tsx` | 表卡片 |
 | `src/components/query-builder/DiagramCanvas/JoinLine.tsx` | JOIN 连线 |
@@ -203,43 +202,11 @@ function useCanvasInteraction() {
 }
 ```
 
-### Phase 3: 对象树 + Criteria Grid（4d）
+### Phase 3: Criteria Grid（2.5d）
 
-**目标**：左侧面板、条件配置网格
+**目标**：条件配置网格
 
-#### 3.1 对象树 `ObjectTreePanel.tsx`（1.5d）
-
-```tsx
-// 树形结构
-<div className="w-[200px] border-r border-edge overflow-y-auto">
-  <div className="p-2 text-xs text-muted uppercase">Database Objects</div>
-
-  {/* Schema 节点 */}
-  <Collapsible>
-    <CollapsibleTrigger className="flex items-center gap-1 px-2 py-1 text-sm">
-      <ChevronRight /> 📁 {schemaName}
-    </CollapsibleTrigger>
-    <CollapsibleContent>
-      {/* 表节点 */}
-      {tables.map(table => (
-        <div key={table.name}
-             className="flex items-center gap-1 pl-6 pr-2 py-1 text-sm cursor-pointer hover:bg-surface-raised"
-             draggable
-             onDragStart={(e) => e.dataTransfer.setData('table', table.name)}>
-          📋 {table.name}
-        </div>
-      ))}
-    </CollapsibleContent>
-  </Collapsible>
-</div>
-```
-
-**拖拽交互**：
-- 从树节点拖到画布 → 添加表到 `selectedTables`
-- 画布 `onDragOver` 接收数据
-- 画布 `onDrop` 调用 `toggleTable(tableName)` + 初始化位置
-
-#### 3.2 Criteria Grid `CriteriaGrid.tsx`（2.5d）
+#### 3.1 Criteria Grid `CriteriaGrid.tsx`（2.5d）
 
 ```tsx
 // 网格容器
@@ -312,12 +279,8 @@ export function QueryBuilderPanel({ dbSessionId, databaseType, onApplySql }: Que
         </div>
       </div>
 
-      {/* 三区域布局 */}
+      {/* 画布 + 下方 Grid */}
       <div className="flex flex-1 overflow-hidden">
-        {/* 左侧对象树 */}
-        <ObjectTreePanel ... />
-
-        {/* 中间画布 + 下方 Grid */}
         <div className="flex flex-col flex-1">
           {/* 画布区域 (可调高度) */}
           <div className="flex-1 overflow-hidden" style={{ minHeight: 200 }}>
@@ -456,7 +419,6 @@ export function QueryBuilderPanel({ dbSessionId, databaseType, onApplySql }: Que
 | `src/components/query-builder/DiagramCanvas/JoinLine.tsx` | 新增 | P2 |
 | `src/components/query-builder/DiagramCanvas/JoinLabel.tsx` | 新增 | P2 |
 | `src/components/query-builder/DiagramCanvas/useCanvasInteraction.ts` | 新增 | P2 |
-| `src/components/query-builder/ObjectTreePanel.tsx` | 新增 | P3 |
 | `src/components/query-builder/CriteriaGrid/CriteriaGrid.tsx` | 新增 | P3 |
 | `src/components/query-builder/CriteriaGrid/CriteriaRow.tsx` | 新增 | P3 |
 | `src/components/query-builder/CriteriaGrid/WhereEditor.tsx` | 新增 | P3 |

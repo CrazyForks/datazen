@@ -35,12 +35,12 @@ import type {
   NodeContextMenuPayload,
 } from '../../lib/connectionViews/types';
 import type { DatabaseType } from '../../types';
-import type { SchemaTreeNodeContextMenuPayload } from './schema-tree/SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { AiChatDraftRequest, ContentViewCallbacks } from './query/aiDraftBridge';
 
 export interface ContentViewProps {
   selectTableRef?: MutableRefObject<
-    ((table: string, schema?: string, database?: string) => void) | undefined
+    ((table: string, schema: string | null, database: string) => void) | undefined
   >;
   nodeContextMenuRef?: MutableRefObject<((payload: NodeContextMenuPayload) => void) | undefined>;
   actionsRef?: MutableRefObject<ConnectionViewActions | undefined>;
@@ -207,8 +207,8 @@ export function ContentView({
   const handleSelectTableWithSchema = useCallback(
     (
       table: string,
-      schema?: string,
-      database?: string,
+      schema: string | null,
+      database: string,
       subTab?: 'data' | 'structure' | 'ddl',
       targetColumn?: string,
     ) => {
@@ -248,9 +248,9 @@ export function ContentView({
 
   // Dialog-trigger callbacks reused by the node context menu (export/import).
   const requestExport = useCallback(
-    (name: string, schema?: string) => {
+    (name: string, schema: string | null, database: string) => {
       setExportTableName(name);
-      handleSelectTableWithSchema(name, schema);
+      handleSelectTableWithSchema(name, schema, database);
       setExportOpen(true);
     },
     [setExportTableName, handleSelectTableWithSchema, setExportOpen],

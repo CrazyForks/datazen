@@ -187,29 +187,39 @@ export function QueryPanel({
 
   const onNavigateToTable = useCallback(
     (target: { database?: string; schema?: string; name: string }) => {
-      callbacks?.openRelation(target.name, target.schema, target.database, 'data');
+      callbacks?.openRelation(
+        target.name,
+        target.schema ?? null,
+        target.database ?? database,
+        'data',
+      );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const onNavigateToStructure = useCallback(
     (target: { database?: string; schema?: string; name: string; columnName?: string }) => {
       callbacks?.openRelation(
         target.name,
-        target.schema,
-        target.database,
+        target.schema ?? null,
+        target.database ?? database,
         'structure',
         target.columnName,
       );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const onNavigateToDdl = useCallback(
     (target: { database?: string; schema?: string; name: string; kind: 'table' | 'view' }) => {
-      callbacks?.openRelation(target.name, target.schema, target.database, 'ddl');
+      callbacks?.openRelation(
+        target.name,
+        target.schema ?? null,
+        target.database ?? database,
+        'ddl',
+      );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const dbMeta = databaseType ? DB_REGISTRY[databaseType as keyof typeof DB_REGISTRY] : undefined;

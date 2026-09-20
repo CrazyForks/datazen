@@ -87,7 +87,7 @@ export function ConnectionPage() {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectTableRef = useRef<
-    ((table: string, schema?: string, database?: string) => void) | undefined
+    ((table: string, schema: string | null, database: string) => void) | undefined
   >();
   const nodeContextMenuRef = useRef<
     | ((payload: { kind: string; name: string; x: number; y: number; schema?: string }) => void)
@@ -411,8 +411,8 @@ export function ConnectionPage() {
 
   const pendingSelectTableRef = useRef<{
     table: string;
-    schema?: string;
-    database?: string;
+    schema: string | null;
+    database: string;
   } | null>(null);
 
   // State counter that increments on each handleSelectTable call, guaranteeing
@@ -429,7 +429,7 @@ export function ConnectionPage() {
   }, []);
 
   const handleSelectTable = useCallback(
-    (tableName: string, schema?: string, database?: string) => {
+    (tableName: string, schema: string | null, database: string) => {
       // Clicking a table always opens its data view — including while the
       // visual builder is open. Tables enter the builder only by dragging a
       // navigator row onto its canvas, so this path has no builder branch.

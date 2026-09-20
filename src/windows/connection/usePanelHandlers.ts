@@ -30,8 +30,8 @@ import { splitPathHierarchyDatabasePin } from '../../lib/queryContextPath';
 export interface PanelHandlers {
   handleSelectTable: (
     table: string,
-    schema?: string,
-    database?: string,
+    schema: string | null,
+    database: string,
     subTab?: 'data' | 'structure' | 'ddl',
     targetColumn?: string,
   ) => void;
@@ -128,8 +128,8 @@ export function usePanelHandlers({
   const handleSelectTable = useCallback(
     (
       table: string,
-      schema?: string,
-      database?: string,
+      schema: string | null,
+      database: string,
       subTab?: 'data' | 'structure' | 'ddl',
       targetColumn?: string,
     ) => {
@@ -147,10 +147,7 @@ export function usePanelHandlers({
       );
       if (isView) {
         const existing = currentPanels.find(
-          (p) =>
-            p.type === 'view' &&
-            p.viewName === table &&
-            (database == null || p.database === database),
+          (p) => p.type === 'view' && p.viewName === table && p.database === database,
         );
         if (existing) {
           if (subTab) {
@@ -172,10 +169,7 @@ export function usePanelHandlers({
         return;
       }
       const existing = currentPanels.find(
-        (p) =>
-          p.type === 'table' &&
-          p.tableName === table &&
-          (database == null || p.database === database),
+        (p) => p.type === 'table' && p.tableName === table && p.database === database,
       );
       if (existing) {
         if (subTab) {
@@ -213,8 +207,8 @@ export function usePanelHandlers({
       ...sidebarConnCtx,
       type: 'create-table',
       id: nextPanelId('new-tbl'),
-      database: currentDatabase ?? initialDatabase ?? undefined,
-      tableSchema: lastTableSchema ?? undefined,
+      database: currentDatabase ?? initialDatabase ?? '',
+      tableSchema: lastTableSchema ?? null,
     };
     addPanel(panel);
   }, [
@@ -241,6 +235,8 @@ export function usePanelHandlers({
         type: 'table',
         id: nextPanelId('tbl'),
         tableName: name,
+        database: currentDatabase ?? initialDatabase ?? '',
+        tableSchema: null,
         subTab: 'structure',
         structureEditing: true,
       };
@@ -267,6 +263,8 @@ export function usePanelHandlers({
         type: 'table',
         id: nextPanelId('tbl'),
         tableName: name,
+        database: currentDatabase ?? initialDatabase ?? '',
+        tableSchema: null,
         subTab: 'structure',
       };
       addPanel(panel);
@@ -343,7 +341,7 @@ export function usePanelHandlers({
         id: nextPanelId('dbobj'),
         objectKind: kind,
         objectName: name,
-        objectSchema: schema,
+        objectSchema: schema ?? null,
       };
       addPanel(panel);
     },
@@ -439,8 +437,8 @@ export function usePanelHandlers({
         title:
           title?.trim() ||
           (db ? `${sidebarConnCtx.connectionName}@${db}` : sidebarConnCtx.connectionName),
-        database: boundDatabase,
-        schema: target?.schema?.trim() || undefined,
+        database: boundDatabase ?? '',
+        schema: target?.schema?.trim() || null,
         namespacePath,
       };
       addPanel(panel);
@@ -490,8 +488,8 @@ export function usePanelHandlers({
     if (!pending || !sidebarConnCtx || sidebarConnCtx.connectionId !== pending.connectionId) return;
     usePanelStore.getState().setPendingHistoryQuery(null);
     handleNewQuery(pending.sql, {
-      database: pending.database || undefined,
-      schema: pending.schema || undefined,
+      database: pending.database || '',
+      schema: pending.schema ?? null,
     });
   }, [sidebarConnCtx, handleNewQuery]);
 

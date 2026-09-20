@@ -13,7 +13,7 @@ const SCHEMA_QUALIFIED_DIALECTS = new Set(['postgresql', 'sqlserver']);
  */
 export function driverTableRefsToTry(
   tableName: string,
-  schema: string | undefined,
+  schema: string | null,
   databaseType: string,
 ): string[] {
   const dialect = DB_REGISTRY[databaseType as DatabaseType]?.sqlDialect ?? databaseType;
@@ -39,13 +39,13 @@ export function buildPseudoTableSchema(tableName: string, colNames: string[]): T
 export async function fetchTableSchemaForSqlGeneration(args: {
   dbSessionId: string;
   tableName: string;
-  schema?: string;
+  schema?: string | null;
   database: string;
   databaseType: string;
   columnMap?: Record<string, string[]>;
 }): Promise<TableSchema | null> {
   const { dbSessionId, tableName, schema, database, databaseType, columnMap } = args;
-  const refs = driverTableRefsToTry(tableName, schema, databaseType);
+  const refs = driverTableRefsToTry(tableName, schema ?? null, databaseType);
 
   for (const ref of refs) {
     try {
@@ -81,7 +81,7 @@ export function generateTableSqlWithFallbacks(
   tableSchema: TableSchema | null,
   type: GeneratedSqlType,
   databaseType: string,
-  opts: { schemaPrefix?: string; tableName: string; tableRefLabel?: string },
+  opts: { schemaPrefix?: string | null; tableName: string; tableRefLabel?: string },
 ): string {
   if (tableSchema && tableSchema.columns.length > 0) {
     return generateTableSql(tableSchema, type, databaseType, { schemaPrefix: opts.schemaPrefix });
