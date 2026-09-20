@@ -60,3 +60,11 @@ Independent test reports must distinguish measured coverage from code-path estim
 ## Integrated release-gate evidence (2026-09-17)
 
 The final `codex/migration-navicat` WebDriver build passed the restored PostgreSQL and MySQL Sync binary journeys (1/1 each). The merged branch also passed Sync Rust 101/101, Transfer Rust 39/39, PostgreSQL/MySQL/SQLite driver suites, migration frontend tests 65/65, and TypeScript checking. The journey fixture uses the supported `datazen_sync_src`/`datazen_sync_tgt` databases (and MySQL equivalents) and is safe to rerun after the normal fixture setup. The remaining parity work is tracked above; no profile, bounded-scan, object-graph, SQL-file export, or run-history capability is implied by this gate.
+
+## Immutable Transfer plan release gate (2026-09-20)
+
+The immutable Transfer plan wave is integrated in `7d37002a`. Preview now issues a server-owned opaque plan; execution accepts only the plan ID plus validated selections/options, rechecks live sessions, driver contracts, read-only policy and schema identity, and consumes the plan once before writes. PostgreSQL precision enrichment is excluded from the live schema fingerprint, and `create_new` target mappings preserve the preview `None` sentinel during execution revalidation. Bound multi-row INSERTs retain typed parameters while using the configured batch size.
+
+Independent final testing passed Host Rust 1413/1413 (3 ignored), Transfer frontend 25/25, TypeScript, PostgreSQL/MySQL/SQLite driver suites 101/86/46, formal WebDriver build, and `data-transfer-diverse-types.ts` 3/3. The desktop journey transferred 25,000 wide-type rows in both PG→MySQL and MySQL→PG paths and reached the result page. Integration sanity after merge passed Host Rust 1413/1413, Transfer frontend 30/30, and TypeScript.
+
+This gate closes the immutable-plan, create-new mapping, and large-transfer execution defects recorded in the Transfer track. It does not claim completion of bounded comparison scans, normalized composite-key equality, object dependency preservation, source filters, SQL-file targets, profiles/run history, or the remaining lossless export consumers listed above.
