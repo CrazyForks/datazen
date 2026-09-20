@@ -95,6 +95,16 @@ async fn validate_plan_context(
             "target connection is now read-only; return to comparison".into(),
         ));
     }
+    validate_active_database(
+        source_config.database.as_deref(),
+        &plan.source_database,
+        "source",
+    )?;
+    validate_active_database(
+        target_config.database.as_deref(),
+        &plan.target_database,
+        "target",
+    )?;
     let (source_driver, source_handle) = state
         .connection_manager
         .get_session(&plan.source_db_session_id)
@@ -141,13 +151,27 @@ async fn validate_plan_context(
             "source or target schema/key changed since comparison; return to comparison".into(),
         ));
     }
-    // Keep these reads in the validation path so a session whose config was
-    // closed/replaced cannot be mistaken for the original endpoint.
-    let _ = source_config;
     Ok(ValidatedSyncContext {
         target_driver,
         target_handle,
     })
+}
+
+fn validate_active_database(
+    active_database: Option<&str>,
+    planned_database: &str,
+    side: &str,
+) -> Result<(), CommandError> {
+    let active = active_database
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let planned = planned_database.trim();
+    if planned.is_empty() || active != Some(planned) {
+        return Err(CommandError::Validation(format!(
+            "{side} session active database changed or cannot be confirmed; return to comparison"
+        )));
+    }
+    Ok(())
 }
 
 async fn current_schema_fingerprint(

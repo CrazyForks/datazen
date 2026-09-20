@@ -447,6 +447,53 @@ async fn compare_data_sync_returns_an_opaque_server_plan() {
 }
 
 #[tokio::test]
+async fn execute_data_sync_rejects_when_target_active_database_changes() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    test.save_and_connect("src-plan-db").await;
+    test.save_and_connect("tgt-plan-db").await;
+    let source = test.connect_config("src-plan-db").await;
+    let target = test.connect_config("tgt-plan-db").await;
+    let preview = super::compare_data_sync_impl(
+        &test.state,
+        source,
+        target.clone(),
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        crate::data_sync::SyncOptions::default(),
+        &[],
+    )
+    .await
+    .unwrap();
+
+    test.state
+        .connection_manager
+        .set_active_database(&target, "other_database")
+        .await
+        .unwrap();
+    let err = super::execute_data_sync_plan_impl(
+        &test.state,
+        super::plans::SyncRunRequest {
+            plan_id: preview.plan_id,
+            selection: super::plans::SyncRunSelection {
+                revision: preview.selection_revision,
+                rows: Vec::new(),
+            },
+            options: crate::data_sync::SyncOptions::default(),
+            job_id: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("active database"), "{err}");
+}
+
+#[tokio::test]
 async fn execute_data_sync_rejects_read_only_target() {
     use crate::data_sync::{ChangeOperation, SqlStatement};
     use crate::testing::app_state::{sample_postgres_config, TestAppState};

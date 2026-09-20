@@ -14,8 +14,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::data_sync::{
-    ChangeOperation, ComparisonResult, RowChange, SyncOptions, TableMappingStatus, TableResult,
+    ChangeOperation, ComparisonResult, SyncOptions, TableMappingStatus, TableResult,
 };
+#[cfg(test)]
+use crate::data_sync::RowChange;
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
 

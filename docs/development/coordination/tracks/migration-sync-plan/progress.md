@@ -1,10 +1,10 @@
 # migration-sync-plan
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 Branch: codex/migration-sync-plan
 Worktree: `.worktrees/datazen-migration-sync-plan`
 Base: `codex/migration-navicat` @ `4e461391`
-Coding commit: `44b025bc` (`feat(data-sync): add immutable comparison execution plans`)
+Coding commit: `08483057` (`fix(data-sync): close active database and real journey gates`)
 
 ## Scope for this serial wave
 
@@ -43,6 +43,12 @@ Normalized text/collation/composite-key ordering, bounded stable snapshots, disk
 - 既有 `e2e/specs/data-sync-real.ts` 精确构建运行 **20 passed, 4 failed**，失败原因已登记 BUG-002；运行期间仅出现 demo fixture 的历史字段警告，不影响上述 Sync 断言。
 - 代码质量：正式构建提示 `plans.rs` 的 `RowChange` 生产路径 unused import，属于可清理 warning；未发现调试输出或本轨生成文件残留。
 - 独立判定：**TEST_FAILED**。BUG-001 解决前不能宣称 qualified database identity 已正确绑定；BUG-002 解决前既有 real Sync release gate 不能通过。
+
+## Round 1 修复（2026-09-20）
+
+- BUG-001：`validate_plan_context` 在 claim/write 前严格校验 source/target live session 的 active database 与 plan 保存的 resolved database；缺失、切换或无法确认均拒绝。新增 Host command test 覆盖 target active database 改变。
+- BUG-002：`e2e/specs/data-sync-real.ts` 已切换为 `{ planId, selection, options, jobId? }` opaque contract，`execute_data_sync` 是唯一成功执行入口；保留 legacy `apply_data_sync` 拒绝断言，覆盖 selected-only、stale schema 写前拒绝和 one-shot。补充 PostgreSQL numeric typed placeholder，保证 wide-type journey 的参数化写入正确。
+- Round 1 自验：Host Sync command tests **21 passed**；numeric placeholder tests **2 passed**；formal `pnpm tauri:build:webdriver` 通过；PG real Sync 基础组 **11 passed**。完整权限组未运行，因本机缺少 `E2E_PG_RO_PASSWORD` fixture。
 
 ## Self-validation
 

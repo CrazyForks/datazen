@@ -94,6 +94,13 @@ pub fn postgres_type_cast(data_type: &str) -> Option<&'static str> {
     if t == "date" {
         return Some("date");
     }
+    if t == "numeric"
+        || t.starts_with("numeric(")
+        || t == "decimal"
+        || t.starts_with("decimal(")
+    {
+        return Some("numeric");
+    }
     if t == "time without time zone" || t == "time" {
         return Some("time");
     }
@@ -753,6 +760,15 @@ mod tests {
         );
         assert!(stmts[0].preview_sql.contains("::uuid"));
         assert!(stmts[0].preview_sql.contains("::timestamptz"));
+    }
+
+    #[test]
+    fn postgres_typed_placeholder_casts_numeric_text_values() {
+        assert_eq!(
+            postgres_typed_placeholder(1, Some("numeric(10,2)")),
+            "$1::numeric"
+        );
+        assert_eq!(postgres_typed_placeholder(2, Some("decimal")), "$2::numeric");
     }
 
     #[test]

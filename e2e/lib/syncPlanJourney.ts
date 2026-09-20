@@ -53,7 +53,8 @@ function selectionFor(
   key: number,
 ): DataSyncSelection {
   const table = preview.tables.find((candidate) => candidate.sourceTable === tableName);
-  const row = table?.rows?.find((candidate) => candidate.key[0] === key);
+  if (!table) throw new Error(`comparison table ${tableName} is missing`);
+  const row = table.rows?.find((candidate) => candidate.key[0] === key);
   if (!row) throw new Error(`comparison row ${tableName}/${key} is missing`);
   return {
     revision: preview.selectionRevision,
