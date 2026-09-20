@@ -11,8 +11,9 @@ use crate::data_sync::sql::quote_ident_sql;
 use crate::db::Value;
 
 use super::error::TransferError;
-use super::filter::{json_to_value, SourceFilter};
+use super::filter::SourceFilter;
 use super::model::{TransferRecordset, TransferRecordsetBound};
+use super::recordset_bounds::{canonical_bound_value, compare_bound_keys, BoundKey};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRecordset {
@@ -26,6 +27,7 @@ pub struct ResolvedRecordset {
 pub struct ResolvedBound {
     pub value: Value,
     pub inclusive: bool,
+    key: BoundKey,
 }
 
 #[derive(Debug, Clone)]
@@ -87,8 +89,34 @@ pub fn resolve_recordset(
         ));
     }
 
-    let start = resolve_bound(recordset.start.as_ref(), "start")?;
-    let end = resolve_bound(recordset.end.as_ref(), "end")?;
+    let order_type = schema
+        .columns
+        .iter()
+        .find(|column| column.name == order_by)
+        .map(|column| column.data_type.as_str())
+        .ok_or_else(|| {
+            TransferError::validation(format!(
+                "recordset orderBy column '{}' is not present in the source table",
+                order_by
+            ))
+        })?;
+    let start = resolve_bound(recordset.start.as_ref(), "start", order_type)?;
+    let end = resolve_bound(recordset.end.as_ref(), "end", order_type)?;
+    if let (Some(start), Some(end)) = (&start, &end) {
+        match compare_bound_keys(&start.key, &end.key)? {
+            std::cmp::Ordering::Greater => {
+                return Err(TransferError::validation(
+                    "recordset start bound must not be greater than end bound",
+                ));
+            }
+            std::cmp::Ordering::Equal if !(start.inclusive && end.inclusive) => {
+                return Err(TransferError::validation(
+                    "recordset range is empty when equal bounds are exclusive",
+                ));
+            }
+            _ => {}
+        }
+    }
     let limit = recordset
         .limit
         .map(|value| {
@@ -114,23 +142,17 @@ pub fn resolve_recordset(
 fn resolve_bound(
     bound: Option<&TransferRecordsetBound>,
     name: &str,
+    data_type: &str,
 ) -> Result<Option<ResolvedBound>, TransferError> {
     let Some(bound) = bound else {
         return Ok(None);
     };
-    let value = json_to_value(&bound.value)?;
-    match &value {
-        Value::Null => Err(TransferError::validation(format!(
-            "recordset {name} bound cannot be NULL"
-        ))),
-        Value::Float(value) if !value.is_finite() => Err(TransferError::validation(format!(
-            "recordset {name} bound must be a finite number"
-        ))),
-        _ => Ok(Some(ResolvedBound {
-            value,
-            inclusive: bound.inclusive,
-        })),
-    }
+    let (value, key) = canonical_bound_value(&bound.value, data_type, name)?;
+    Ok(Some(ResolvedBound {
+        value,
+        inclusive: bound.inclusive,
+        key,
+    }))
 }
 
 /// Build the exact source scope used by both preview and execution.
@@ -405,5 +427,72 @@ mod tests {
             },
         );
         assert!(result.is_err(), "integer bound overflow must fail closed");
+    }
+
+    #[test]
+    fn equal_bounds_require_both_endpoints_to_be_inclusive() {
+        let schema = schema(&["id"]);
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("10");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("10");
+        recordset.end.as_mut().unwrap().inclusive = true;
+        assert!(resolve_recordset(&recordset, &schema).is_ok());
+
+        recordset.end.as_mut().unwrap().inclusive = false;
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+    }
+
+    #[test]
+    fn typed_bounds_cover_signed_unsigned_and_malformed_integer_text() {
+        let mut schema = schema(&["id"]);
+        schema.columns[0].data_type = "BIGINT UNSIGNED".into();
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("18446744073709551615");
+        recordset.end = None;
+        assert!(resolve_recordset(&recordset, &schema).is_ok());
+
+        recordset.start.as_mut().unwrap().value = serde_json::json!("-1");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+        recordset.start.as_mut().unwrap().value = serde_json::json!("not-an-integer");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+
+        schema.columns[0].data_type = "SMALLINT".into();
+        recordset.start.as_mut().unwrap().value = serde_json::json!("32768");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+    }
+
+    #[test]
+    fn decimal_and_float_bounds_are_validated_before_comparison() {
+        let mut schema = schema(&["id"]);
+        schema.columns[0].data_type = "NUMERIC(12,4)".into();
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("1.20");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("1.2");
+        recordset.end.as_mut().unwrap().inclusive = true;
+        assert!(resolve_recordset(&recordset, &schema).is_ok());
+        recordset.end.as_mut().unwrap().value = serde_json::json!("1.19");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+        recordset.start.as_mut().unwrap().value = serde_json::json!("not-a-decimal");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+
+        schema.columns[0].data_type = "DOUBLE PRECISION".into();
+        recordset.start.as_mut().unwrap().value = serde_json::json!("1.0");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("2.0");
+        assert!(resolve_recordset(&recordset, &schema).is_ok());
+        recordset.end.as_mut().unwrap().value = serde_json::json!("NaN");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+    }
+
+    #[test]
+    fn text_bounds_remain_strings_and_use_lexical_order() {
+        let mut schema = schema(&["id"]);
+        schema.columns[0].data_type = "VARCHAR(32)".into();
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("b");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("a");
+        assert!(resolve_recordset(&recordset, &schema).is_err());
+        recordset.end.as_mut().unwrap().value = serde_json::json!("z");
+        let resolved = resolve_recordset(&recordset, &schema).unwrap();
+        assert!(matches!(resolved.start.unwrap().value, Value::String(value) if value == "b"));
     }
 }

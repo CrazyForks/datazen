@@ -9,6 +9,7 @@ pub mod model;
 pub mod pairing;
 pub mod preview;
 pub mod recordset;
+mod recordset_bounds;
 mod scan;
 pub mod structure;
 mod writer;

@@ -1,6 +1,6 @@
 # Track: migration-transfer-recordsets
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-recordsets`
 - Branch: `codex/migration-transfer-recordsets`
 - Scope: validated per-table stable recordset/range selection for Transfer, shared preview/execute scope construction, immutable-plan binding, and UI editing.
@@ -18,13 +18,14 @@
 
 - Added strict `TransferRecordset`/`TransferRecordsetBound` serde models with backward-compatible omitted recordsets.
 - Added a single `recordset::build_source_scope` path used by preview and execution. It validates source columns, defaults to one effective primary key, rejects missing/composite automatic keys, binds filter values before range bounds and limit, quotes the selected identifier, and rejects NULL/zero/overflow/non-finite bounds.
+- Added canonical source-column typed bound conversion and interval validation. Integer text is checked against signed/unsigned source ranges without lossy number conversion; decimal, float, boolean, and text-like bounds are validated before SQL generation. Reversed intervals and equal intervals with an exclusive endpoint fail closed.
 - Added source primary-key metadata and recordset editing to the mapping UI. The editor supports one ordered column, typed text bounds, inclusive flags, and a positive row limit without raw SQL. Mapping changes clear the opaque preview before another review.
 - Bound recordset configuration into the immutable plan scope fingerprint and exposed parameterized recordset SQL in preview. Unscoped row counts are not shown as exact estimates when a recordset is active.
 - Added Rust model/builder/preview/fingerprint/execution tests and a continuous frontend mapping→preview→edit→re-preview journey.
 
 ## Self-validation
 
-- `CARGO_TARGET_DIR=target/cargo-recordsets node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib data_transfer`: **65 passed, 0 failed**.
+- `CARGO_TARGET_DIR=target/cargo-recordsets node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib data_transfer`: **71 passed, 0 failed**.
 - `npx vitest run src/windows/data-transfer/__tests__/DataTransferWindow.test.tsx src/windows/data-transfer/__tests__/transferMappingView.test.ts`: **23 passed, 0 failed**.
 - `npx tsc --noEmit`: passed.
 - `cargo fmt --all -- --check`: passed.
@@ -38,16 +39,24 @@
 - `npx tsc --noEmit`: passed.
 - Scoped frontend coverage (`DataTransferWindow`, `ColumnMappingEditor`, `transferMappingView`): **84.27% statements, 73.57% branches, 85.09% functions, 86.51% lines**. Branch threshold missed by 1.43 percentage points; `ColumnMappingEditor` lines were 76.56% because the new validation/error branches are not fully exercised.
 - Formal `CI=true pnpm tauri:build:webdriver`: passed; generated driver/Cargo files restored afterward.
-- Tester-added focused boundary tests: **4 passed, 2 failed**, exposing BUG-001 and BUG-002. Full post-test Rust suite is therefore intentionally blocked until the coder fixes both bugs.
+- Tester-added focused boundary tests initially reported **4 passed, 2 failed**, exposing BUG-001 and BUG-002. The fixes and additional typed-bound tests now pass in the full **71-test** Transfer Rust suite.
 - Live PostgreSQL smoke was not run because no E2E database password/fixture was available in this tester environment.
+
+## Fix pass
+
+- Fixed BUG-001 by comparing canonical start/end values before SQL generation, including inclusive/exclusive equality semantics.
+- Fixed BUG-002 by validating frontend text against the inspected source column type, preserving exact unsigned integer text when it cannot fit `i64`.
+- Added focused coverage for equality, signed/unsigned integer range and malformed text, decimal/float validation, and lexical text bounds.
+- Frontend Vitest remains **23 passed, 0 failed**; `npx tsc --noEmit` passed; generated driver/Cargo files were restored after the Rust run.
+- Formal webdriver results remain inherited from the independent tester; live PostgreSQL smoke remains unavailable without a fixture.
 
 ## E2E registration
 
 | Journey | Status |
 | --- | --- |
 | Mapping → enable recordset → select PK → enter inclusive bounds → preview → edit bound → old preview invalidated → re-preview | 【本机可执行】 covered by existing `DataTransferWindow.test.tsx` (23/23) |
-| Start bound greater than end bound is rejected before preview/execute | 【留待 R 回归】 blocked by BUG-001 |
-| Integer/date/decimal text bound is type checked and overflow fails closed across source drivers | 【留待 R 回归】 blocked by BUG-002; live DB fixture required |
+| Start bound greater than end bound is rejected before preview/execute | 【待复测】 |
+| Integer/date/decimal text bound is type checked and overflow fails closed across source drivers | 【待复测】 live DB fixture still required for driver smoke |
 
 ## Findings / bugs
 
