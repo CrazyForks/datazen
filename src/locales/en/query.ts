@@ -413,12 +413,16 @@ const pack = {
   'query.visualBuilder.canvasHint': 'Drag tables here from the navigator on the left',
   'query.visualBuilder.noRelationHint': 'No relation detected — connect columns manually',
   'query.visualBuilder.confirmJoin': 'Confirm join',
+  'query.visualBuilder.temporalFormatError':
+    'Expected a date (YYYY-MM-DD) or datetime (YYYY-MM-DD HH:MM:SS) literal',
   'query.visualBuilder.selectAllColumns': 'Select all columns',
   'query.visualBuilder.removeTable': 'Remove table from query',
   'query.visualBuilder.diag.noTables': 'Add at least one table',
   'query.visualBuilder.diag.noColumns': 'Select at least one column',
   'query.visualBuilder.diag.emptyConditionValue': 'Condition value is empty',
   'query.visualBuilder.diag.emptyInList': 'IN list is empty',
+  'query.visualBuilder.diag.invalidTemporalLiteral':
+    'A date/time condition needs a literal in date or datetime format (e.g. 2026-01-31, 2026-01-31 08:00:00)',
   'query.visualBuilder.diag.invalidLimit': 'LIMIT / OFFSET must be a whole number ≥ 0',
   'query.visualBuilder.diag.unsupportedPagination':
     'This database cannot express LIMIT/OFFSET here',

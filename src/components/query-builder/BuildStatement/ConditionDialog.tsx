@@ -7,7 +7,13 @@ import { Select, type SelectOption } from '../../ui/Select';
 import type { QbAggregate, QbCondition, QbOperator } from '../types';
 import { qualifiedRef } from './columnOptions';
 import { getOperatorOptions } from '../operatorFilter';
-import { classifyColumnType, TypeCategory } from '../typeCategory';
+import { TemporalValueInput } from '@datazen/ui';
+import {
+  isTemporalColumnType,
+  normalizeTemporalValue,
+  temporalInputType,
+  validateTemporalValue,
+} from '../temporalValue';
 
 const AGGREGATE_VALUES: QbAggregate[] = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 const NULL_OPERATORS = new Set<string>(['IS NULL', 'IS NOT NULL']);
@@ -98,20 +104,28 @@ export function ConditionDialog({
   const fieldValue = form ? `${form.table}.${form.column}` : '';
   const isNullOp = form ? NULL_OPERATORS.has(form.operator) : false;
 
-  // Derive if the selected column is a temporal type (needs datetime-local picker)
-  const isTemporalColumn = useMemo(() => {
-    if (!form) return false;
-    const colType = allColumnTypes?.[form.table]?.[form.column];
-    if (!colType) return false;
-    return classifyColumnType(colType) === TypeCategory.Temporal;
-  }, [form?.table, form?.column, allColumnTypes]);
+  // The selected column's raw type drives the picker, the operator list and
+  // the literal validation below.
+  const colType = form ? allColumnTypes?.[form.table]?.[form.column] : undefined;
+  const valueInputType = temporalInputType(colType);
+  const isTemporalValue = isTemporalColumnType(colType);
+
+  // A malformed temporal literal reaches the engine as
+  // `operator does not exist: timestamp > integer` — block OK instead. An
+  // empty temporal value blocks OK too: there is no sensible literal to send.
+  const rawValue = form?.value ?? '';
+  const temporalEmpty = isTemporalValue && !isNullOp && rawValue === '';
+  const temporalInvalid =
+    isTemporalValue &&
+    !isNullOp &&
+    rawValue !== '' &&
+    validateTemporalValue(rawValue, colType) === 'invalid';
 
   // Filter operators based on the selected column's data type
   const operatorOptions: SelectOption[] = useMemo(() => {
     if (!form) return [];
-    const colType = allColumnTypes?.[form.table]?.[form.column];
     return getOperatorOptions(colType);
-  }, [form?.table, form?.column, allColumnTypes]);
+  }, [form, colType]);
 
   // Auto-reset operator when column changes and current operator is no longer valid
   useEffect(() => {
@@ -157,9 +171,13 @@ export function ConditionDialog({
             <Button
               variant="primary"
               size="sm"
-              disabled={!form}
+              disabled={!form || temporalEmpty || temporalInvalid}
               onClick={() => {
-                if (form && draft) onApply({ ...draft, condition: form });
+                if (!form || !draft || temporalEmpty || temporalInvalid) return;
+                const value = isTemporalValue
+                  ? normalizeTemporalValue(form.value ?? '', colType)
+                  : form.value;
+                onApply({ ...draft, condition: { ...form, value } });
                 onClose();
               }}
               data-testid="qb-cond-apply"
@@ -230,16 +248,41 @@ export function ConditionDialog({
             <span className="text-[11px] text-fg-muted">
               {t('query.visualBuilder.valuePlaceholder')}
             </span>
-            <Input
-              value={form.value ?? ''}
-              disabled={isNullOp}
-              type={isTemporalColumn ? 'datetime-local' : 'text'}
-              onChange={(e) => setForm((f) => (f ? { ...f, value: e.target.value } : f))}
-              placeholder={t('query.visualBuilder.valuePlaceholder')}
-              className="h-8 w-48 text-xs"
-              data-testid="qb-cond-value"
-            />
+            {isTemporalValue ? (
+              <div className="w-48">
+                <TemporalValueInput
+                  kind={
+                    valueInputType === 'time'
+                      ? 'time'
+                      : valueInputType === 'date'
+                        ? 'date'
+                        : 'datetime'
+                  }
+                  value={form.value ?? ''}
+                  invalid={temporalInvalid}
+                  disabled={isNullOp}
+                  placeholder={t('query.visualBuilder.valuePlaceholder')}
+                  onChange={(v) => setForm((f) => (f ? { ...f, value: v } : f))}
+                  data-testid="qb-cond-value"
+                />
+              </div>
+            ) : (
+              <Input
+                value={form.value ?? ''}
+                disabled={isNullOp}
+                type="text"
+                onChange={(e) => setForm((f) => (f ? { ...f, value: e.target.value } : f))}
+                placeholder={t('query.visualBuilder.valuePlaceholder')}
+                className="h-8 w-48 text-xs"
+                data-testid="qb-cond-value"
+              />
+            )}
           </label>
+          {temporalInvalid && (
+            <p className="text-right text-[11px] text-danger" data-testid="qb-cond-value-error">
+              {t('query.visualBuilder.temporalFormatError')}
+            </p>
+          )}
 
           {!draft?.isFirstInGroup && (
             <label className="flex items-center justify-between gap-2">

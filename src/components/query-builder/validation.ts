@@ -1,5 +1,6 @@
 import type { GenerateSqlInput } from './hooks/useSqlGenerator';
 import { getQbDialectAdapter } from '../../lib/sqlDialects/queryBuilder';
+import { validateTemporalValue } from './temporalValue';
 
 /**
  * Query builder diagnostics.
@@ -17,6 +18,7 @@ export type QbDiagnosticCode =
   | 'no-columns'
   | 'empty-condition-value'
   | 'empty-in-list'
+  | 'invalid-temporal-literal'
   | 'invalid-limit'
   | 'unsupported-pagination'
   | 'alias-duplicate'
@@ -87,6 +89,8 @@ function collectConditionDiagnostics(input: QueryValidationInput, out: QbDiagnos
       const isNullOp = cond.operator === 'IS NULL' || cond.operator === 'IS NOT NULL';
       if (isNullOp) continue;
 
+      const colType = input.columnTypeMap?.[cond.table]?.[cond.column];
+
       if (IN_OPERATORS.has(cond.operator)) {
         const hasAny = (cond.value ?? '').split(',').some((v) => v.trim().length > 0);
         if (!hasAny) {
@@ -96,6 +100,14 @@ function collectConditionDiagnostics(input: QueryValidationInput, out: QbDiagnos
             severity: 'error',
             messageKey: 'emptyInList',
             detail: `${cond.table}.${cond.column}`,
+          });
+        }
+        if (hasAny && validateTemporalValue(cond.value ?? '', colType) === 'invalid') {
+          out.push({
+            code: 'invalid-temporal-literal',
+            severity: 'error',
+            messageKey: 'invalidTemporalLiteral',
+            detail: `${cond.table}.${cond.column} → ${cond.value}`,
           });
         }
         continue;
@@ -109,6 +121,18 @@ function collectConditionDiagnostics(input: QueryValidationInput, out: QbDiagnos
           severity: 'error',
           messageKey: 'emptyConditionValue',
           detail: `${cond.table}.${cond.column} ${cond.operator}`,
+        });
+        continue;
+      }
+
+      // `WHERE created_at > 10` fails at execution with
+      // `operator does not exist: timestamp > integer` — catch it in preview.
+      if (validateTemporalValue(cond.value ?? '', colType) === 'invalid') {
+        out.push({
+          code: 'invalid-temporal-literal',
+          severity: 'error',
+          messageKey: 'invalidTemporalLiteral',
+          detail: `${cond.table}.${cond.column} → ${cond.value}`,
         });
       }
     }

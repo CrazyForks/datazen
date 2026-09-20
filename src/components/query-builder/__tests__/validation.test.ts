@@ -65,6 +65,42 @@ describe('isExactNumericLiteral', () => {
   });
 });
 
+describe('validateQuery — temporal literals', () => {
+  const temporalInput = (value: string, columnType: string) =>
+    input({
+      columnTypeMap: { t: { c: columnType } },
+      where: { ...emptyGroup(), conditions: [condition({ value, column: 'c' })] },
+    });
+
+  it('flags the `timestamp > integer` bug class as an error', () => {
+    expect(codes(temporalInput('10', 'timestamp without time zone'))).toContain(
+      'invalid-temporal-literal',
+    );
+  });
+
+  it('accepts well-formed date and datetime literals', () => {
+    expect(codes(temporalInput('2026-09-20', 'date'))).not.toContain('invalid-temporal-literal');
+    expect(codes(temporalInput('2026-09-20 01:13:45', 'timestamp'))).not.toContain(
+      'invalid-temporal-literal',
+    );
+  });
+
+  it('does not fire for non-temporal columns or IS NULL operators', () => {
+    expect(codes(temporalInput('10', 'integer'))).toEqual([]);
+    expect(
+      codes(
+        input({
+          columnTypeMap: { t: { c: 'date' } },
+          where: {
+            ...emptyGroup(),
+            conditions: [condition({ operator: 'IS NULL', value: '', column: 'c' })],
+          },
+        }),
+      ),
+    ).not.toContain('invalid-temporal-literal');
+  });
+});
+
 describe('validateQuery — empty / missing state', () => {
   it('reports a missing table and stops there', () => {
     expect(codes(input({ selectedTables: [], selectedColumns: [] }))).toEqual(['no-tables']);
