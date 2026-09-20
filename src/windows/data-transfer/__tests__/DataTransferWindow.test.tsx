@@ -554,6 +554,7 @@ describe('DataTransferWindow', () => {
     await waitFor(() => expect(getDatabasesMock).toHaveBeenCalled());
     await pickSelect('data-transfer-source-database', 'src');
     await pickSelect('data-transfer-sql-file-dialect', 'MySQL');
+    await pickSelect('data-transfer-sql-file-encoding', 'transfer.destination.sqlEncodingUtf8Bom');
     fireEvent.change(screen.getByTestId('data-transfer-sql-file-target-database'), {
       target: { value: 'analytics' },
     });
@@ -567,6 +568,7 @@ describe('DataTransferWindow', () => {
         sqlFileTarget: {
           fileToken: 'sql-file-token',
           databaseType: 'mysql',
+          encoding: 'utf8Bom',
           database: 'analytics',
         },
       }),

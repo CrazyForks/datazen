@@ -112,6 +112,7 @@ pub(crate) fn target_scope_fingerprint(job: &TransferJob) -> Result<Option<Strin
         target.normalized_database_type(),
         target.normalized_database(),
         target.normalized_schema(),
+        target.normalized_encoding(),
     );
     let bytes = serde_json::to_vec(&scope).map_err(|error| {
         TransferError::validation(format!("cannot fingerprint SQL-file target scope: {error}"))
@@ -551,6 +552,7 @@ mod tests {
             database_type: Some("mysql".into()),
             database: None,
             schema: None,
+            encoding: None,
         });
         let id = store
             .issue_with_ttl(

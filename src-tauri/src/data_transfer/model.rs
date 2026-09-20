@@ -18,6 +18,19 @@ pub struct Endpoint {
 /// A destination selected through the native save dialog. The token is an
 /// opaque server-side handle; clients never submit a filesystem path or SQL
 /// text to the transfer commands.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SqlFileEncoding {
+    Utf8,
+    Utf8Bom,
+}
+
+impl Default for SqlFileEncoding {
+    fn default() -> Self {
+        Self::Utf8
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SqlFileTarget {
@@ -36,6 +49,10 @@ pub struct SqlFileTarget {
     /// SQL never falls back to the source endpoint's schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    /// Optional text encoding for the generated artifact. Omitted preserves
+    /// the historical UTF-8 output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<SqlFileEncoding>,
 }
 
 impl SqlFileTarget {
@@ -77,6 +94,10 @@ impl SqlFileTarget {
 
     pub fn has_explicit_scope(&self) -> bool {
         self.normalized_database().is_some() || self.normalized_schema().is_some()
+    }
+
+    pub fn normalized_encoding(&self) -> SqlFileEncoding {
+        self.encoding.unwrap_or_default()
     }
 }
 

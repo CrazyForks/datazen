@@ -87,6 +87,7 @@ pub async fn pick_data_transfer_sql_file(
         database_type: None,
         database: None,
         schema: None,
+        encoding: None,
     }))
 }
 

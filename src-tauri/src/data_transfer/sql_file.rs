@@ -20,8 +20,8 @@ use uuid::Uuid;
 use super::error::TransferError;
 use super::execute::active_column_mappings;
 use super::model::{
-    ColumnMapping, DdlPreviewItem, DdlPreviewKind, TableExecutionResult, TableInspectResult,
-    TransferExecutionResult, TransferJob, TransferMode, WriteMode,
+    ColumnMapping, DdlPreviewItem, DdlPreviewKind, SqlFileEncoding, TableExecutionResult,
+    TableInspectResult, TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, Value};
@@ -231,6 +231,13 @@ fn publish_staged_file(temporary: &Path, destination: &Path) -> std::io::Result<
 
 impl AtomicSqlFile {
     fn create(destination: PathBuf) -> Result<Self, TransferError> {
+        Self::create_with_encoding(destination, SqlFileEncoding::Utf8)
+    }
+
+    fn create_with_encoding(
+        destination: PathBuf,
+        encoding: SqlFileEncoding,
+    ) -> Result<Self, TransferError> {
         validate_path(&destination)?;
         let parent = destination
             .parent()
@@ -253,10 +260,19 @@ impl AtomicSqlFile {
             }
             match options.open(&temporary) {
                 Ok(file) => {
+                    let mut writer = BufWriter::new(file);
+                    if matches!(encoding, SqlFileEncoding::Utf8Bom) {
+                        if let Err(error) = writer.write_all(&[0xEF, 0xBB, 0xBF]) {
+                            let _ = fs::remove_file(&temporary);
+                            return Err(TransferError::validation(format!(
+                                "cannot write SQL file encoding marker: {error}"
+                            )));
+                        }
+                    }
                     return Ok(Self {
                         destination,
                         temporary,
-                        writer: BufWriter::new(file),
+                        writer,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -647,7 +663,12 @@ pub async fn execute_with_target(
         validate_target_scope_for_driver(target_driver, target)?;
     }
     job.options.validate()?;
-    let mut output = AtomicSqlFile::create(destination)?;
+    let encoding = job
+        .sql_file_target
+        .as_ref()
+        .map(|target| target.normalized_encoding())
+        .unwrap_or_default();
+    let mut output = AtomicSqlFile::create_with_encoding(destination, encoding)?;
     output.line("-- DataZen Data Transfer SQL export")?;
     output.line("BEGIN;")?;
     let mut results = Vec::new();
@@ -969,6 +990,7 @@ mod tests {
                 database_type: None,
                 database: None,
                 schema: None,
+                encoding: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -1025,6 +1047,7 @@ mod tests {
                 database_type: Some("mysql".into()),
                 database: None,
                 schema: None,
+                encoding: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1153,6 +1176,7 @@ mod tests {
             database_type: Some("not-a-registered-driver".into()),
             database: None,
             schema: None,
+            encoding: None,
         };
         let result = resolve_target_driver(source, &target);
         assert!(result.is_err(), "unknown dialect must fail");
@@ -1178,6 +1202,7 @@ mod tests {
                 database_type: Some("mysql".into()),
                 database: Some("target_catalog".into()),
                 schema: None,
+                encoding: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -1239,6 +1264,7 @@ mod tests {
                 database_type: Some("postgresql".into()),
                 database: None,
                 schema: Some("target_schema".into()),
+                encoding: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1261,6 +1287,7 @@ mod tests {
             database_type: Some("mysql".into()),
             database: Some("tenant.public".into()),
             schema: None,
+            encoding: None,
         };
         assert!(dotted.validate_qualifiers().is_err());
 
@@ -1269,6 +1296,7 @@ mod tests {
             database_type: Some("mysql".into()),
             database: None,
             schema: Some("public".into()),
+            encoding: None,
         };
         let error = validate_target_scope_for_driver(&driver, &schema).unwrap_err();
         assert!(error.to_string().contains("not a separate schema"));
@@ -1281,6 +1309,7 @@ mod tests {
             database_type: Some("oracle".into()),
             database: Some("catalog".into()),
             schema: None,
+            encoding: None,
         };
         let error = validate_target_scope_for_family("oracle", &target).unwrap_err();
         assert!(error.to_string().contains("does not advertise"));
@@ -1300,6 +1329,7 @@ mod tests {
                 database_type: None,
                 database: None,
                 schema: Some("target".into()),
+                encoding: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1347,6 +1377,20 @@ mod tests {
         output.line("partial").unwrap();
         drop(output);
         assert_eq!(fs::read_to_string(destination).unwrap(), "old");
+    }
+
+    #[test]
+    fn atomic_writer_emits_utf8_bom_when_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("out.sql");
+        let mut output =
+            AtomicSqlFile::create_with_encoding(destination.clone(), SqlFileEncoding::Utf8Bom)
+                .unwrap();
+        output.line("SELECT 1;").unwrap();
+        output.finish().unwrap();
+        let bytes = fs::read(destination).unwrap();
+        assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+        assert!(bytes.ends_with(b"SELECT 1;\n"));
     }
 
     fn structure_table(
@@ -1440,6 +1484,7 @@ mod tests {
                 database_type: Some("mysql".into()),
                 database: None,
                 schema: None,
+                encoding: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1557,6 +1602,7 @@ mod tests {
                 database_type: Some("mysql".into()),
                 database: None,
                 schema: None,
+                encoding: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
