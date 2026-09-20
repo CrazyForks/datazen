@@ -173,11 +173,20 @@ import type { KeyEntry } from '@datazen/driver-sdk';
 
 补充约束：
 
-- **唯一实现原则**：某能力一旦下沉到 `@datazen/ui` / `@datazen/driver-sdk`，宿主原路径（如 `src/lib/cn.ts`、`src/lib/nativeContextMenu.ts`、`src/commands/driver.ts`）只允许保留**薄再导出**（re-export 指向 SDK 单实现），不允许出现第二份实现；驱动永远 import 包名，不 import 宿主薄再导出路径。
+- **唯一实现原则**：某能力一旦下沉到 `@datazen/ui` / `@datazen/driver-sdk`，宿主原路径（如 `src/lib/cn.ts`、`src/lib/nativeContextMenu.ts`、`src/commands/driver.ts`）只允许保留**薄再导出**（re-export 指向 SDK 单实现），不允许出现第二份实现；驱动永远 import 包名，不 import 宿主薄再导出路径。**薄再导出只为存量宿主消费方而留**：下沉时若全仓已无宿主 import 该路径，则宿主文件**直接删除、不留空壳**（`driverSettings` 即此例——`packages/driver-sdk/src/driverSettings.ts` 是唯一实现，宿主旧路径已不存在），消费点一并改为直接 import SDK。
 - **SDK 的宿主防腐层**：`packages/driver-sdk/src/index.ts` 内部仍会以相对路径包装少量宿主模块（如方言与 `src/types` 的部分 type-only 出口）。这是 SDK 作为防腐层的允许行为，但**驱动侧不得效仿**——驱动可见面只有两个包的公开导出。
-- **过渡期例外（截至本文件基准）**：
-  1. `packages/drivers/redis/ui/**` 仍有部分文件经宿主相对路径 import `useI18n`，由并行轨 **`i18n-drivers`** 统一换源为 `@datazen/ui`（见 2.4.5，同期落地）；
-  2. `packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx` 渲染宿主 `WebContextMenuHost` / 断言 `contextMenuStore` 属于宿主集成夹具，协调者已裁决豁免、留待后续里程碑。**除上述两点外不存在任何豁免。**
+- **过渡期例外（截至本文件基准，实测全量清点）**：基线由下列命令得到，`packages/drivers/*/ui/**` 下指向宿主 `src/` 的相对 import 共 **34 处**：
+
+  ```bash
+  grep -rn "from '\.\./.*src/" packages/drivers/*/ui/
+  ```
+
+  1. **宿主 `useI18n` 相对 import：32 处 / 32 个文件**（**跨两个驱动，不止 redis**）——`packages/drivers/redis/ui/**` **31 处**（`connection/`、`value-editors/`、`key-browser/`、`observe/`、`console/`、`shared/` 等）+ `packages/drivers/sqlserver/ui/ConnectionFields.tsx:2` **1 处**。全部由并行轨 **`i18n-drivers`** 统一换源为 `@datazen/ui` 的 `useI18n`（见 2.4.5，同期落地），换源完成前该 32 处是唯一存量豁免，且**不得新增**。
+  2. **宿主集成测试夹具：2 处 / 1 个文件**——`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`（渲染宿主 `WebContextMenuHost`、断言宿主 `contextMenuStore`），协调者已裁决豁免、留待后续里程碑。
+
+  另有 **8 处** `vi.mock` 指向宿主 `src/hooks/useI18n` 的相对路径（`packages/drivers/redis/ui/__tests__/` 下 8 个测试文件各 1 处）：因形态是 `vi.mock(...)` 而非 `from ...`，**不被上面那条命令命中**，但同属 `i18n-drivers` 换源范围。Wave 4 import 护栏若同时扫描 mock 路径，其白名单基线应为 **34 + 8 = 42 处**。
+
+  **除上述登记范围（32 处 `useI18n` import + 2 处测试夹具 import + 8 处 `useI18n` mock）外不存在任何豁免。**
 
 ## 2.2 宿主能力取用模式（落点决策表）
 
@@ -185,7 +194,7 @@ import type { KeyEntry } from '@datazen/driver-sdk';
 
 | # | 问题的答案 | 落点 | 已有先例（可直接对照源码） |
 | --- | --- | --- | --- |
-| 1 | 纯函数 / 纯 IPC 封装，不读宿主 store、不依赖宿主模块状态？ | **下沉 `@datazen/driver-sdk`**（移动实现，宿主原路径改薄再导出） | `src/commands/driver.ts` → `packages/driver-sdk/src/ipc/driverCommands.ts`；`src/lib/driverSettings.ts` → `packages/driver-sdk/src/driverSettings.ts`；`src/lib/nativeContextMenu.ts` → `packages/driver-sdk/src/nativeContextMenu.ts` |
+| 1 | 纯函数 / 纯 IPC 封装，不读宿主 store、不依赖宿主模块状态？ | **下沉 `@datazen/driver-sdk`**（**移动**实现；宿主原路径**有存量消费方时**改薄再导出，**无消费方时直接移走、不留空壳**，见下方规则） | 留薄再导出壳：`src/lib/cn.ts` → `@datazen/ui`（整文件一行 `export { cn } from '@datazen/ui';`）；`src/lib/nativeContextMenu.ts:7-15` → `packages/driver-sdk/src/nativeContextMenu.ts`；`src/commands/driver.ts:6-11` → `packages/driver-sdk/src/ipc/driverCommands.ts`；`src/commands/file.ts:2/9` → 与 SDK `fileCommands` **合并再导出**（宿主另加 host-only 命令）。整体移走不留壳：`packages/driver-sdk/src/driverSettings.ts`（宿主 `src/lib/driverSettings.ts` 已于 `92a039383` 移走且不存在，宿主消费点 `JsonSchemaSettingsForm` / `DriverSettingsSection` 改为直接 import SDK） |
 | 2 | 需要宿主的 zustand store / React hook 的**运行时状态或行为**？ | **建注入桥**：SDK 内新增 `xxxBridge.ts`，导出 `bindX()` + `useBoundX()`；宿主在 store/hook 定义处模块加载时 bind（见 2.3） | `settingsStoreBridge` / `connectionStoreBridge` / `confirmDialogBridge` / `schemaStoreBridge` |
 | 3 | 纯共享**数据类型**（type-only）？ | **下沉 `packages/driver-sdk/src/types/*.ts`** 并从 index 导出；宿主源位置 re-export 兼容存量 | `types/kv.ts`（`KeyEntry` / `KeyScanResult`）、`types/menu.ts`、`types/connection-form.ts`、`types/connection-view.ts` |
 | 4 | 只对宿主壳层有意义（窗口路由、面板布局、Tab 管理…）？ | **留在宿主**。驱动通过 props 回调（如 `ConnectionViewProps` 的 `ConnectionViewActions`）或 Driver Command 与之交互，宿主代码 import 驱动入口由 `generated.ts` codegen 完成 | `src/lib/connectionViews/types.ts`（re-export 自 SDK 类型） |
@@ -283,7 +292,10 @@ useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 
 配套终态（同由 `i18n-drivers` 轨落地，勿提前按旧链路开发）：
 
 - 宿主端 `DRIVER_LOCALES` 聚合链路**整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——不存在「宿主替驱动收集词条」这一步。
-- 语言 code 字面量与宿主保持一致（`zh-CN`、`pt-BR` 带连字符，对照 `src/locales/builtinLocales.ts` 的 `BUILTIN_LOCALES`）。
+- 语言 code 字面量与宿主保持一致（`zh-CN`、`zh-TW`、`pt-BR` 一律带连字符）。核对时注意**「仓库里有语言文件」≠「宿主已接线该语言」**，两层真值分别取自不同出处：
+  - **宿主实际接线的内置语言只有 `en` 与 `zh-CN`**：`src/locales/builtinLocales.ts:9` 的 `BUILTIN_LOCALES = ['en', 'zh-CN']`（真值源 `src/locales/builtin-locales.json`；`BUILTIN_LOCALE_LABELS` 同文件 :26-29 亦只有这两项；`src/locales/fullLocales.ts` 供测试/工具用，同样只含这两个）。
+  - **其余 8 个语言目前只做 parity 校验、未进 `BUILTIN_LOCALES`**：`de`、`es`、`fr`、`ja`、`ko`、`pt-BR`、`ru`、`zh-TW`，以文件形态存在于 `src/locales/`（如 `src/locales/pt-BR.ts` + `src/locales/pt-BR/`），由 `scripts/i18n-sync-check.mjs:23` 的 `LOCALE_FILES` 逐个列表做词条校验；除 `src/locales/` 内部再导出外，生产路径无运行时 import。
+  - 因此 **`zh-CN` 的连字符以 `BUILTIN_LOCALES` 为出处，`pt-BR` 的连字符以 `LOCALE_FILES`（`scripts/i18n-sync-check.mjs:23`）与语言文件名（`src/locales/pt-BR.ts`、`packages/drivers/redis/locales/pt-BR.ts`、`packages/drivers/mongodb/locales/pt-BR.ts`）为出处**。驱动包 `locales/` 现覆盖 10 个语言文件（redis、mongodb 各 10），其文件名必须与宿主同名同分隔符；新增语言只加文件，不改宿主 `BUILTIN_LOCALES`（除非该语言确已接线）。
 
 ### 2.4.4 key 命名与类型
 
@@ -311,7 +323,7 @@ function RedisConsole() {
 ## 2.5 新增宿主依赖时的标准流程
 
 1. 按 2.2 决策表选落点；
-2. 若下沉纯函数/IPC：**移动**实现进 SDK（禁止复制），宿主原路径改薄再导出，全仓保持单实现；
+2. 若下沉纯函数/IPC：**移动**实现进 SDK（禁止复制），宿主原路径**有存量消费方则改薄再导出、无消费方则连文件一并删除**，全仓保持单实现；
 3. 若建注入桥：SDK 新增 `xxxBridge.ts`（`bindX` + 未绑定抛错 + `useBoundX` 收窄类型），宿主在对应 store/hook 定义处 bind，并为桥补 SDK 侧单测（先例：`packages/driver-sdk/__tests__/`）；
 4. 驱动侧只 import 包名并更新本文件 2.3.1 清单表；
 5. 生产代码零 `../../../src/` 新增（Wave 4 护栏将强制，见 2.6）。
@@ -322,7 +334,7 @@ function RedisConsole() {
 
 ## 2.7 契约自查清单（Reviewer / CI 预备）
 
-- [ ] 驱动 UI 无任何 `.../src/` 形态宿主 import（2.1.2 登记的过渡期例外除外）。
+- [ ] 驱动 UI 无任何 `.../src/` 形态宿主 import（2.1.2 登记的过渡期例外除外；现网基线 = `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/` 命中 **34 处**（32 宿主 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径；**命中数超过该基线即为新增违规**，少于基线说明换源有进展应同步更新 2.1.2）。
 - [ ] 驱动 UI 的组件/工具/类型仅来自 `@datazen/ui`、`@datazen/driver-sdk`、`@datazen/extension-points`（仅 EP 类型）、npm 依赖。
 - [ ] 新共享类型为移动而非复制，宿主存量 import 零改动（薄 re-export）。
 - [ ] 新 bridge 具备：宿主模块加载期 bind、未绑定抛错文案、消费侧类型收窄、SDK 侧单测。

@@ -53,6 +53,7 @@
 
 - [x] Coder 完成 → READY_FOR_TEST（commits `da30426b3` / `9a88c7778` / `8ac2705d2` / 本记录 commit）
 - [x] Tester 复测 → **TEST_FAILED**（4 个 Bug 待修复，见 `bugs.md`；结构类验收全部通过，仅事实/引用一致性问题）
+- [x] Coder Bug 修复（第 1 轮）→ READY_FOR_TEST（BUG-001..004 全部修正并实测复核，4 条判定均无反驳；状态见 `bugs.md` 已推进为「待复测」）
 - [ ] Tester 复测 → TEST_DONE
 
 ## Tester 复测记录（commit `6199d9d95`，全新实例独立实测，不采信 Coder 自报）
@@ -147,6 +148,7 @@
 | `9a88c7778` | 开发者指南同步（zh/en 一一对应） | `docs/development/independent-driver-development.zh-CN.md`、`.en.md` |
 | `8ac2705d2` | 架构文档勘误 | `docs/architecture/frontend/components.md`、`extensibility.md` |
 | （本 commit） | 实施记录 + 状态推进 | 本文件 |
+| （Bug 修复第 1 轮 commit） | 修复 `BUG-001..004` | `docs/development/driver-api-dependency-boundary.md`、本文件、`bugs.md` |
 
 ### A. `docs/development/driver-api-dependency-boundary.md`（重写）
 
@@ -174,7 +176,7 @@
 | §2 布局树新增 `locales/` 行（两份对应） | 驱动词条目录现实（`packages/drivers/redis/locales/`、`mongodb/locales/`） |
 | §6 重写：末段接契约 Part 2 链接；新增 6.1（允许/禁止 import 面 + ❌/✅ 示例）、6.2（下沉 + 注入桥 + tsx 示例）、6.3（i18n 单一运行时 + 自注册终态，标注 i18n-drivers 同期落地） | 全部复用 A 表已核实出处；旧文无字面「从宿主 import」代码示例，按任务书以新契约示例替换泛化描述 |
 | §13 总结各加一条前端边界 bullet（两份对应） | 与 6.1-6.3 一致 |
-| 标题结构：zh/en 均 24 个 `#` 级标题、顺序一一对应（见自验 5） | — |
+| 标题结构：zh/en 各 **21** 个 `#` 级标题（`#`×1 + `##`×13 + `###`×7），顺序一一对应（见自验 5；原自报 24 有误，已由 BUG-004 修正） | — |
 
 ### C. `docs/architecture/frontend/components.md` / `extensibility.md`（勘误）
 
@@ -206,18 +208,41 @@
    | 10 | 命令 `node scripts/i18n-sync-check.mjs`、`pnpm test:unit:drivers` | `scripts/i18n-sync-check.mjs` 存在；`package.json:86` |
    | 11 | alias 三处一致（tsconfig/vite/vitest.drivers） | `tsconfig.json:19-23`、`vite.config.ts:28-32`、`vitest.drivers.config.ts:9-15` |
    | 12 | redis 入口 `ui/shared/meta.ts`、mongodb 入口 `ui/meta.ts`（前缀 `redis.*`/`mongo.*`） | `scripts/resolve-drivers.mjs:239/270`、`src/extensions/generated.ts:10-11`、两包 `locales/en.ts` 首行 key 前缀 |
-   | 13 | BUILTIN_LOCALES 字面量（`zh-CN`/`pt-BR` 连字符规则所指） | `src/locales/builtinLocales.ts:9` |
+   | 13 | ~~BUILTIN_LOCALES 字面量（`zh-CN`/`pt-BR` 连字符规则所指）~~ **本条断言有误，见 BUG-002**：`BUILTIN_LOCALES` 只含 `en`/`zh-CN`，`pt-BR` 连字符的真实出处是 `scripts/i18n-sync-check.mjs:23` 的 `LOCALE_FILES` 与各包语言文件名 | `src/locales/builtinLocales.ts:9` |
    | 14 | `sideEffects:false`（bridge 禁顶层副作用依据） | `packages/driver-sdk/package.json` |
 3. 违禁词扫描：新写/改动的 5 份文档 grep `HostLocaleBridge|setHostLocaleBridge|getExtensionTranslation` = 0；`../../../src/` 与 `src/lib/cn` 仅出现在 ❌ 反例块与禁止性表述中（逐条核对于本记录）。
 4. `npx tsc --noEmit -p tsconfig.json` → **exit 0**。`node scripts/aggregate-hub.mjs` 未运行（避免改写禁止触碰的 hub.md）；diff 不含 `scripts/**` 与任何代码，结论等价。
 5. 相对链接校验：5 份文档共 14 条相对 markdown 链接，Node 脚本逐条 exists 检查 → **broken: 0**。
-6. zh/en 标题对照：各 24 个标题、序号与顺序一一对应（1-13 + 6.1/6.2/6.3 + 无编号小节，清单见上方命令输出）。
+6. zh/en 标题对照：各 **21** 个 `#` 级标题（`#`×1 + `##`×13 + `###`×7），序号与顺序一一对应（1-13 + 6.1/6.2/6.3 + 无编号小节）。**计数口径**：以行首 `#` 的 ATX 标题行计（`grep -c '^#'`），含 H1 文档主标题，不含表格内 `#` 列与代码块内注释；原自报「各 24 个」失真，已由 `decouple-docs-BUG-004` 修正（详见下方 Bug 修复记录）。
 
 ### 偏离与说明
 
 - 无范围缩窄。两处主动决策：① 主文档采用「Part 1 原文保留（英文不动）+ Part 2 中文新契约」双部结构，因该文件被 `docs/README.md`、`external-contract-policy.md` 以路径引用且历史引用方均为英文语境；② extensibility.md §1.4 原「手改宿主注册表」清单被判定为任务书「宿主类型出处」类过期描述，一并勘误（改动限于该节与 §1.1 一条注记）。
-- i18n 自注册、`i18n-sync-check` 驱动扫描、`DRIVER_LOCALES` codegen 删除均按任务书终态描述并显式标注「由 i18n-drivers 轨同期落地」；redis UI 现存宿主 useI18n 相对 import 作为过渡期例外登记（含唯一豁免测试文件），与并行轨文件面零冲突（本轨仅 `docs/**`）。
+- i18n 自注册、`i18n-sync-check` 驱动扫描、`DRIVER_LOCALES` codegen 删除均按任务书终态描述并显式标注「由 i18n-drivers 轨同期落地」；redis UI 现存宿主 useI18n 相对 import 作为过渡期例外登记（含唯一豁免测试文件），与并行轨文件面零冲突（本轨仅 `docs/**`）。**注：本条「redis 范围」表述不完整，例外实际跨两驱动，已由 BUG-001 修正（见下方 Bug 修复记录）。**
+
+## Coder Bug 修复记录（第 1 轮）
+
+被修对象：Tester 登记的 `decouple-docs-BUG-001..004`（Tester 基准 commit `6199d9d95`，其 docs commit `006906c6a`）。本轮**只改这 4 处**，未新增章节、未调整文档结构、零生产代码改动。每条修正前均自行 Read/Grep 源码复核 Tester 给的正确事实，**4 条判定全部实测成立，无反驳项**。
+
+| Bug | 改法（文件 → 节 → 具体改动） | 本轮实测到的正确事实（文件:行） |
+| --- | --- | --- |
+| **BUG-001（中）** | `driver-api-dependency-boundary.md` 2.1.2 过渡期例外：删掉「`packages/drivers/redis/ui/**` 仍有部分文件…」的模糊表述与「除上述两点外不存在任何豁免」，改为**带可复现命令 + 精确计数的三段式基线**（32 处宿主 `useI18n` import / 2 处测试夹具 import / 8 处 `vi.mock`），并显式并列 redis 与 sqlserver 两个驱动、指明由 `i18n-drivers` 轨收口；同步 2.7 自查清单加入「命中数超过该基线即为新增违规」的判据 | `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/` → **34 行**；其中 `from '<宿主相对路径>/src/hooks/useI18n'` **32 处**（redis **31** 个文件：`connection/`3 + `console/`1 + `console/consoleCompletion/`1 + `key-browser/`7 + `observe/`4 + `shared/`2 + `value-editors/`11 + `value-editors/valueView/`1 + `value-search/`1 = 31；sqlserver **1** 处 = `packages/drivers/sqlserver/ui/ConnectionFields.tsx:2`）；余 2 处为 `packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`（`WebContextMenuHost` + `contextMenuStore`）。**新发现（Tester 未列，一并登记）**：另有 **8 处** `vi.mock` 指向宿主 `src/hooks/useI18n`（`packages/drivers/redis/ui/__tests__/{ValueViewer,connectionWizard,useRedisGate,PubSubPanel,redisConsoleCompletionJourney,jsonModeBar,ttlControlsJourney,consoleResultRenderer}.test.tsx` 各 1 处，如 `ValueViewer.test.tsx:11`），形态非 `from` 故不被该命令命中，Wave 4 护栏按 mock 路径扫描时基线为 42 处 |
+| **BUG-002（低）** | 同文件 2.4.3 配套终态第 2 条：把「`zh-CN`、``pt-BR` 对照 `BUILTIN_LOCALES`」的错误佐证拆成**分层三小条**——宿主接线层（只有 `en`/`zh-CN`，出处 `builtinLocales.ts:9` + 真值源 json）、parity 校验层（其余 8 语言，出处 `i18n-sync-check.mjs:23` `LOCALE_FILES` 与文件名）、命名约定层（`pt-BR` 连字符以 `LOCALE_FILES`/文件名为出处），明确「有语言文件 ≠ 宿主已接线」 | `src/locales/builtinLocales.ts:9` = `export const BUILTIN_LOCALES = ['en', 'zh-CN'] as const;`（全文件 `grep pt-BR` **0 命中**）；真值源 `src/locales/builtin-locales.json` 只列 en / zh-CN 两项；`BUILTIN_LOCALE_LABELS:26-29` 同仅两项；`src/locales/fullLocales.ts` 亦只含这两个（注释自陈「Import only from tests or tooling」）；`scripts/i18n-sync-check.mjs:23` = `const LOCALE_FILES = ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'ru', 'zh-TW'];`；宿主 `src/locales/` 下 `pt-BR.ts` + `pt-BR/` 目录存在，且 `pt-BR` 在 `src/` 内除 `src/locales/` 自身再导出外**无生产 import**；驱动侧 `packages/drivers/{redis,mongodb}/locales/` 各 **10** 个语言文件（含 `pt-BR.ts`） |
+| **BUG-003（低）** | 同文件 2.2 决策表行 1：先例列**换成实测存在的薄再导出壳** `src/lib/cn.ts`、`src/lib/nativeContextMenu.ts:7-15`、`src/commands/driver.ts:6-11`、`src/commands/file.ts:2/9`（后者标注为「合并再导出」），并把已不存在的宿主 `src/lib/driverSettings.ts` 从「壳先例」改列为「**整体移走不留壳**」反例；同时在 2.1.2「唯一实现原则」与 2.5 流程第 2 步补写真实规则「薄再导出只为存量宿主消费方而留，无消费方则连文件删除」 | `ls src/lib/driverSettings.ts` → No such file；`find src -iname "*driverSettings*"` → 仅 `src/windows/settings/DriverSettingsSection.tsx`；全仓 `lib/driverSettings` 只剩文档命中（本文件与 `tracks/cap-bridge/progress.md:111`，后者本身即记载「**移动**，宿主消费点改为直接 import sdk」，与修正后表述一致）；`git log --oneline -1 -- src/lib/driverSettings.ts` → `92a039383`；SDK 侧 `packages/driver-sdk/src/driverSettings.ts` 存在；`src/lib/cn.ts` **整文件 1 行** `export { cn } from '@datazen/ui';`；`src/commands/file.ts:2` import SDK `fileCommands` 后 `:17` 起 spread 并追加 host-only 命令（故属合并而非纯薄壳） |
+| **BUG-004（低）** | 本文件 B 表末行 + 自验第 6 条：24 → **21**，并写死计数口径（行首 `#` ATX 标题行、含 H1、不含表格 `#` 列与代码块注释）；顺带把自验表第 13 条对 `BUILTIN_LOCALES` 的错误断言就地标注作废（指向 BUG-002） | `grep -c "^#"` → zh **21** / en **21**；层级分布两份完全相同：`# `×1 + `## `×13 + `### `×7（`#### `×0）；`paste` 逐行比对标题序列 → 1:1 对应（1-13 + 6.1/6.2/6.3 + 三个无编号 `###`），验收标准 4 结论不变 |
+
+### 第 1 轮自验（真实输出）
+
+1. **逐条重跑 bugs.md 重现命令**：BUG-001 `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/ | grep -v "^packages/drivers/redis/"` → 仅 `sqlserver/ui/ConnectionFields.tsx:2` 一行，且**该文件现已登记在 2.1.2 基线内**（34 = 32 + 2 与命令命中数逐条一致）；BUG-002 `sed -n '9p'` → `['en','zh-CN']`、`grep -n pt-BR builtinLocales.ts` → 无命中，文档不再以其为 `pt-BR` 佐证；BUG-003 `ls` → No such file，文档已不再引用该宿主路径作先例；BUG-004 → 21 / 21，与 progress.md 新数字一致。
+2. `npx tsc --noEmit -p tsconfig.json` → **exit 0**（0 error）。
+3. 文档守卫三连（脚本名取自 `package.json:91-93` 的 `test:ids` / `test:ci-docs` / `test:layers`）：
+   - `node scripts/check-id-terminology.mjs` → exit 0，「5 allow-listed occurrence(s) skipped / ok（**1714 files scanned**）」
+   - `node scripts/check-ci-docs-consistency.mjs` → exit 0，「drivers ok (**11 ids** in ci-test-matrix.md) / window boundaries ok / toolchain ok (Node 24, pnpm 11, Rust stable)」
+   - `node scripts/check-module-layers.mjs` → exit 0，「ok（**3 rules**）」
+4. 违禁词/反例复扫（验收 3）：5 份文档 `HostLocaleBridge|setHostLocaleBridge|getExtensionTranslation` = **0 命中**；字面 `../../../src/` 形态仍为 **9 处**，与修复前逐处同一（均在 ❌ 反例块或禁止性句内），本轮新增文字未引入该字面量（新写内容用命令正则 `\.\./.*src/` 表述）。
+5. `git diff --name-only 006906c6a..HEAD` → 见下方交付段，全部落在允许清单（本 track `progress.md`/`bugs.md` + `driver-api-dependency-boundary.md`）。
+6. `node scripts/aggregate-hub.mjs` 未运行（避免改写禁止触碰的 `hub.md`）；本轮 diff 不含任何 `src/`、`packages/`、`scripts/` 路径，结论等价。
 
 ## 留待 R 回归
 
-- 本轨无 E2E（纯文档）。后续验证点已由 Tester 登记在上方「阶段 D：留待 R 回归」：Wave 4 import 护栏落地时的 32 处现网基线白名单口径（BUG-001）、驱动侧 `setLocale` 拦截、以及 `i18n-drivers` 合并后回扫 2.4.3 的措辞与模块名。
+- 本轨无 E2E（纯文档）。后续验证点已由 Tester 登记在上方「阶段 D：留待 R 回归」：Wave 4 import 护栏落地时的现网基线白名单口径（BUG-001 修正后为 **34 处宿主相对 import（32 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径 = 42 处**，以 2.1.2 登记为准）、驱动侧 `setLocale` 拦截、以及 `i18n-drivers` 合并后回扫 2.4.3 的措辞与模块名。
