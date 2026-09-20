@@ -57,3 +57,13 @@ Stable snapshot lifetime, bounded streaming/ComparisonStore and optimistic targe
 - Added a SQLite driver regression for single-key `a,b,c` paging and composite binary-text paging. The test confirms the cursor row is not repeated and the composite page advances to `(b,a)`.
 - Targeted verification passed: driver API/PG/MySQL/SQLite suites **131/131**, **102/102**, **87/87**, **49/49**; Host `commands::sync` **21/21**; Host keyset SQL **10/10**. `Cargo.lock` generation noise was restored before commit.
 - Formal WebDriver, frontend and real PG/MySQL journeys remain for the independent Tester.
+
+## Independent Tester Round 1 — 2026-09-20
+
+- Reproduced the fixed SQLite contract directly against a real temporary SQLite database: the single-key `a → b,c` page and composite `(a,b) → (b,a)` page both advance without repeating the cursor row. The focused regression passed **1/1**.
+- Rust driver matrix passed: Driver API **131/131**, PostgreSQL **102/102**, MySQL **87/87**, SQLite **49/49**. Host `cargo test -p datazen --lib` passed **1423/1423** with 3 explicitly ignored tests.
+- Frontend Sync suites passed **10 files, 61/61**; TypeScript passed with `tsc --noEmit`.
+- Formal `pnpm tauri:build:webdriver` passed with the basic driver injection and produced the WebDriver application bundle. Generated driver files and Cargo manifests were restored; the worktree is clean.
+- Live `data-sync-real.ts` passed **25/25** using local PostgreSQL/MySQL. Immutable server-plan journeys passed **4/4**: selected-only writes and stale-schema rejection passed for both PostgreSQL and MySQL.
+- Two supplemental legacy specs remain incompatible with the already-merged opaque plan contract: `packages/drivers/{postgres,mysql}/e2e/sync-wave-one.ts` still treats `compare_data_sync` as an array, and the full UI journey intentionally disables all operations before calling compare while the backend correctly rejects that invalid request. These are stale test-contract issues outside this track; the current opaque-plan real journeys above are the release gate.
+- **TEST_DONE**. BUG-001 is closed and this track is ready to merge.
