@@ -68,6 +68,7 @@ const pack = {
   'erDiagram.noRelations': '未发现外键关系',
   'erDiagram.loading': '正在加载 ER 图…',
   'erDiagram.fitView': '适应窗口',
+  'erDiagram.relayout': '重新布局',
   'erDiagram.zoomIn': '放大',
   'erDiagram.zoomOut': '缩小',
   'erDiagram.focusTable': '聚焦此表',

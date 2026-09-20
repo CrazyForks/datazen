@@ -28,6 +28,12 @@ import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
 import { buildErGraph, defaultCollapsedTables } from './er/buildErGraph';
+import {
+  applyHoverToEdges,
+  applyHoverToNodes,
+  applyPinnedPositions,
+  hoveredNeighbourhood,
+} from './er/interactionState';
 import type { ErPredictedRelation } from './er/buildErGraph';
 import { toPredictionTablesFromSchemas } from '../../lib/relationPrediction/fromTableSchema';
 import { predictRelations } from '../../lib/relationPrediction/predictRelations';
@@ -82,6 +88,18 @@ function ErDiagramInner({
   const [collapsedTables, setCollapsedTables] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
+  /**
+   * Positions the user has dragged a node to.
+   *
+   * A relayout runs on schema load, on collapse and on focus, and it would
+   * otherwise throw away every hand-placed node. Pinned nodes keep their position
+   * and the "re-layout" control clears them.
+   */
+  const [pinnedPositions, setPinnedPositions] = useState<
+    ReadonlyMap<string, { x: number; y: number }>
+  >(() => new Map());
+  /** Table under the cursor, whose relationships are brought forward. */
+  const [hoveredTable, setHoveredTable] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -180,13 +198,14 @@ function ErDiagramInner({
       collapsedTables,
     );
     // Search state is reapplied here because a relayout replaces every node.
-    setNodes(applySearchState(n));
+    setNodes(applySearchState(applyPinnedPositions(n, pinnedPositions)));
     setEdges(e);
   }, [
     schemas,
     activeFocus,
     predictedRelations,
     collapsedTables,
+    pinnedPositions,
     loading,
     error,
     setNodes,
@@ -222,6 +241,36 @@ function ErDiagramInner({
       relationCount: declaredCount + predictedRelations.length,
     };
   }, [schemas, predictedRelations]);
+
+  const handleNodeDragStop = useCallback((_: unknown, node: Node) => {
+    setPinnedPositions((current) => new Map(current).set(node.id, { ...node.position }));
+  }, []);
+
+  const handleRelayout = useCallback(() => {
+    // Dropping the pins is the whole operation: the next build lays the graph out
+    // again from the relationships.
+    setPinnedPositions(new Map());
+  }, []);
+
+  const handleNodeMouseEnter = useCallback((_: unknown, node: Node) => {
+    setHoveredTable(node.id);
+  }, []);
+
+  const handleNodeMouseLeave = useCallback(() => {
+    setHoveredTable(null);
+  }, []);
+
+  // Hover rather than click: clicking a node opens that table in the workspace and
+  // leaves the diagram, so a click-driven highlight would never be seen.
+  const neighbourhood = useMemo(
+    () => hoveredNeighbourhood(edges, hoveredTable),
+    [edges, hoveredTable],
+  );
+  const styledNodes = useMemo(
+    () => applyHoverToNodes(nodes, neighbourhood),
+    [nodes, neighbourhood],
+  );
+  const styledEdges = useMemo(() => applyHoverToEdges(edges, hoveredTable), [edges, hoveredTable]);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -340,11 +389,14 @@ function ErDiagramInner({
   return (
     <div className="h-full w-full" data-testid="er-diagram-view">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={styledNodes}
+        edges={styledEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
         onNodeContextMenu={handleNodeContextMenu}
         nodeTypes={nodeTypes}
         viewport={viewport}
@@ -379,6 +431,14 @@ function ErDiagramInner({
             onClick={() => void zoomOut()}
           >
             −
+          </ControlButton>
+          <ControlButton
+            data-testid="er-diagram-relayout"
+            aria-label={t('erDiagram.relayout')}
+            title={t('erDiagram.relayout')}
+            onClick={handleRelayout}
+          >
+            ⟲
           </ControlButton>
           <ControlButton
             data-testid="er-diagram-fit-view"

@@ -69,6 +69,7 @@ const pack = {
   'erDiagram.noRelations': 'No foreign key relationships found',
   'erDiagram.loading': 'Loading ER diagram…',
   'erDiagram.fitView': 'Fit View',
+  'erDiagram.relayout': 'Re-layout',
   'erDiagram.zoomIn': 'Zoom In',
   'erDiagram.zoomOut': 'Zoom Out',
   'erDiagram.focusTable': 'Focus this table',

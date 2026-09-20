@@ -1,6 +1,7 @@
 import type { Node, Edge } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import type { TableSchema } from '../../../types';
+import { fitEdgeLabel } from './interactionState';
 import { layoutErGraph } from './layoutErGraph';
 import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
 
@@ -137,7 +138,6 @@ export function buildErGraph(
         id: `${schema.tableName}-${fk.name}`,
         source: schema.tableName,
         target: fk.referencedTable,
-        label: fk.columns.join(', '),
         type: 'smoothstep',
         animated: true,
         style: { stroke: DECLARED_COLOR },
@@ -149,6 +149,7 @@ export function buildErGraph(
           kind: 'declared' satisfies ErRelationKind,
           sourceColumn: fk.columns[0],
           targetColumn: fk.referencedColumns[0],
+          columns: [...fk.columns],
         },
       });
     }
@@ -162,7 +163,6 @@ export function buildErGraph(
       id: relation.id,
       source: relation.fromTable,
       target: relation.toTable,
-      label: relation.columnPairs.map((pair) => pair.left).join(', '),
       type: 'smoothstep',
       // Not animated and dashed: this relationship is inferred, and the diagram
       // must not present it with the same certainty as a constraint.
@@ -175,6 +175,7 @@ export function buildErGraph(
         score: relation.score,
         sourceColumn: relation.columnPairs[0]?.left,
         targetColumn: relation.columnPairs[0]?.right,
+        columns: relation.columnPairs.map((pair) => pair.left),
       },
     });
   }
@@ -260,8 +261,18 @@ function withHandles(edges: readonly Edge[], nodes: readonly Node[]): Edge[] {
     }
 
     const forward = target.x >= source.x;
+    const columns = (data as { columns?: string[] } | undefined)?.columns ?? [];
+    // The label is placed between the two nodes, so it can only be as wide as the
+    // gap between them.
+    const gap = forward
+      ? (byId.get(edge.target)?.position.x ?? 0) -
+        ((byId.get(edge.source)?.position.x ?? 0) + (byId.get(edge.source)?.width ?? 0))
+      : (byId.get(edge.source)?.position.x ?? 0) -
+        ((byId.get(edge.target)?.position.x ?? 0) + (byId.get(edge.target)?.width ?? 0));
+
     return {
       ...edge,
+      label: fitEdgeLabel(columns, Math.max(gap, 0)),
       sourceHandle: handleId(data?.sourceColumn, 's', forward ? 'r' : 'l', source.collapsed),
       targetHandle: handleId(data?.targetColumn, 't', forward ? 'l' : 'r', target.collapsed),
     };
