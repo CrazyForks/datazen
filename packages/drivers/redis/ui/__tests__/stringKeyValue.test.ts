@@ -1,5 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CompressionStream as NodeCompressionStream,
+  DecompressionStream as NodeDecompressionStream,
+} from 'node:stream/web';
+
+// jsdom does not implement CompressionStream / DecompressionStream; Node's
+// WHATWG Web Streams polyfill is API-compatible. Install it on globalThis so
+// the production gzip/zlib path in stringKeyValue.ts is actually exercised.
+if (typeof globalThis.DecompressionStream === 'undefined') {
+  globalThis.DecompressionStream =
+    NodeDecompressionStream as unknown as typeof globalThis.DecompressionStream;
+  globalThis.CompressionStream =
+    NodeCompressionStream as unknown as typeof globalThis.CompressionStream;
+}
+
+// jsdom's Blob has no stream() — add a minimal adapter so the
+// Blob.stream().pipeThrough(DecompressionStream) path can run in tests.
+if (typeof Blob !== 'undefined' && !Blob.prototype.stream) {
+  Object.defineProperty(Blob.prototype, 'stream', {
+    configurable: true,
+    writable: true,
+    value: function (this: Blob): ReadableStream<Uint8Array> {
+      const blob = this;
+      return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          const buf = await blob.arrayBuffer();
+          controller.enqueue(new Uint8Array(buf));
+          controller.close();
+        },
+      });
+    },
+  });
+}
+
+import {
   DECOMPRESS_MAX_BYTES,
   initialStringEditorValue,
   looksLikeJsonText,
