@@ -14,14 +14,17 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::comparison_store::ComparisonStore;
-#[cfg(test)]
-use crate::data_sync::RowChange;
 use crate::data_sync::{
-    ChangeOperation, ComparisonResult, ConflictPolicy, SyncOptions, SyncSourceFilter,
+    ChangeOperation, ComparisonResult, ConflictPolicy, RowChange, SyncOptions, SyncSourceFilter,
     TableMappingStatus, TableResult,
 };
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
+/// Bounds one page sent over the review IPC. The server still owns the full
+/// comparison and execution always reloads it from `ComparisonStore`.
+pub(crate) const SYNC_COMPARISON_PAGE_SIZE: u32 = 100;
+pub(crate) const SYNC_COMPARISON_PAGE_MAX_LIMIT: u32 = 500;
+pub(crate) const SYNC_COMPARISON_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize)]
 struct RelationFingerprintEntry {
@@ -132,10 +135,123 @@ pub(crate) struct SyncRunRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SyncComparisonTableSummary {
+    pub source_table: String,
+    pub target_table: String,
+    pub status: TableMappingStatus,
+    pub incompatible_reason: Option<String>,
+    pub columns: Vec<String>,
+    pub column_types: Vec<String>,
+    pub primary_keys: Vec<String>,
+    pub unchanged_count: usize,
+    pub insert_count: usize,
+    pub update_count: usize,
+    pub delete_count: usize,
+    pub row_count: usize,
+    pub page_size: u32,
+    pub first_cursor: Option<String>,
+    pub has_more: bool,
+    pub warnings: Vec<String>,
+    pub source_filter: Option<SyncSourceFilter>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SyncComparisonPreview {
+    pub contract_version: u32,
     pub plan_id: String,
     pub selection_revision: u64,
-    pub tables: Vec<TableResult>,
+    pub page_size: u32,
+    pub tables: Vec<SyncComparisonTableSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SyncComparisonPage {
+    pub contract_version: u32,
+    pub plan_id: String,
+    pub source_table: String,
+    pub target_table: String,
+    pub cursor: Option<String>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub page_size: u32,
+    pub rows: Vec<RowChange>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncComparisonPageRequest {
+    pub plan_id: String,
+    pub source_table: String,
+    pub target_table: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+fn cursor_digest(plan_id: &str, source_table: &str, target_table: &str, offset: usize) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{plan_id}\0{source_table}\0{target_table}\0{offset}").as_bytes())
+    )
+}
+
+fn make_cursor(plan_id: &str, source_table: &str, target_table: &str, offset: usize) -> String {
+    format!(
+        "v{SYNC_COMPARISON_CONTRACT_VERSION}.{offset}.{}",
+        cursor_digest(plan_id, source_table, target_table, offset)
+    )
+}
+
+fn parse_cursor(
+    plan_id: &str,
+    source_table: &str,
+    target_table: &str,
+    cursor: &str,
+    row_count: usize,
+) -> Result<usize, String> {
+    let mut parts = cursor.split('.');
+    let version = parts.next();
+    let offset = parts.next();
+    let digest = parts.next();
+    if parts.next().is_some() || version != Some("v1") {
+        return Err("comparison cursor is invalid or belongs to another contract".into());
+    }
+    let offset = offset
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| "comparison cursor is invalid".to_string())?;
+    let expected = cursor_digest(plan_id, source_table, target_table, offset);
+    if digest != Some(expected.as_str()) {
+        return Err("comparison cursor is invalid or belongs to another table".into());
+    }
+    if offset >= row_count {
+        return Err("comparison cursor is outside the comparison result".into());
+    }
+    Ok(offset)
+}
+
+fn summary_for_table(plan_id: &str, table: &TableResult) -> SyncComparisonTableSummary {
+    let row_count = table.rows.len();
+    SyncComparisonTableSummary {
+        source_table: table.source_table.clone(),
+        target_table: table.target_table.clone(),
+        status: table.status,
+        incompatible_reason: table.incompatible_reason.clone(),
+        columns: table.columns.clone(),
+        column_types: table.column_types.clone(),
+        primary_keys: table.primary_keys.clone(),
+        unchanged_count: table.unchanged_row_count(),
+        insert_count: table.insert_count(),
+        update_count: table.update_count(),
+        delete_count: table.delete_count(),
+        row_count,
+        page_size: SYNC_COMPARISON_PAGE_SIZE,
+        first_cursor: (row_count > 0)
+            .then(|| make_cursor(plan_id, &table.source_table, &table.target_table, 0)),
+        has_more: row_count > SYNC_COMPARISON_PAGE_SIZE as usize,
+        warnings: table.warnings.clone(),
+        source_filter: table.source_filter.clone(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -190,7 +306,11 @@ impl SyncPlanStore {
     ) -> Result<SyncComparisonPreview, String> {
         let id = Uuid::new_v4().to_string();
         let selection_revision = 1;
-        let preview_tables = comparison.tables.clone();
+        let preview_tables = comparison
+            .tables
+            .iter()
+            .map(|table| summary_for_table(&id, table))
+            .collect();
         let comparison = ComparisonStore::from_comparison(comparison)?;
         let conflict_policy_fingerprint = fingerprint_conflict_policy(options.conflict_policy);
         let plan = StoredSyncPlan {
@@ -221,9 +341,11 @@ impl SyncPlanStore {
         plans.retain(|_, existing| existing.expires_at > now);
         plans.insert(id.clone(), plan);
         Ok(SyncComparisonPreview {
+            contract_version: SYNC_COMPARISON_CONTRACT_VERSION,
             plan_id: id,
             selection_revision,
             tables: preview_tables,
+            page_size: SYNC_COMPARISON_PAGE_SIZE,
         })
     }
 
@@ -313,6 +435,69 @@ pub(crate) fn claim_plan(id: &str) -> Result<StoredSyncPlan, String> {
 
 pub(crate) fn load_comparison(plan: &StoredSyncPlan) -> Result<ComparisonResult, String> {
     plan.comparison.load()
+}
+
+/// Read one review page from the server-owned comparison. The temporary JSON
+/// store currently has no row index, so `load()` deserializes the full
+/// comparison before slicing. IPC and UI memory are page-bounded; a future
+/// disk-backed index can remove this remaining server-side allocation.
+pub(crate) fn get_comparison_page(
+    request: SyncComparisonPageRequest,
+) -> Result<SyncComparisonPage, String> {
+    let plan = peek_plan(&request.plan_id)?;
+    if request.limit == Some(0) {
+        return Err("comparison page limit must be greater than zero".into());
+    }
+    if request
+        .limit
+        .is_some_and(|value| value > SYNC_COMPARISON_PAGE_MAX_LIMIT)
+    {
+        return Err(format!(
+            "comparison page limit cannot exceed {SYNC_COMPARISON_PAGE_MAX_LIMIT}"
+        ));
+    }
+    let limit = request
+        .limit
+        .unwrap_or(SYNC_COMPARISON_PAGE_SIZE)
+        .min(SYNC_COMPARISON_PAGE_MAX_LIMIT) as usize;
+    let comparison = load_comparison(&plan)?;
+    let table = comparison
+        .tables
+        .iter()
+        .find(|table| {
+            table.source_table == request.source_table && table.target_table == request.target_table
+        })
+        .ok_or_else(|| "table does not belong to the comparison plan".to_string())?;
+    let offset = match request.cursor.as_deref() {
+        Some(cursor) => parse_cursor(
+            &request.plan_id,
+            &request.source_table,
+            &request.target_table,
+            cursor,
+            table.rows.len(),
+        )?,
+        None => 0,
+    };
+    let end = offset.saturating_add(limit).min(table.rows.len());
+    let next_cursor = (end < table.rows.len()).then(|| {
+        make_cursor(
+            &request.plan_id,
+            &request.source_table,
+            &request.target_table,
+            end,
+        )
+    });
+    Ok(SyncComparisonPage {
+        contract_version: SYNC_COMPARISON_CONTRACT_VERSION,
+        plan_id: request.plan_id,
+        source_table: table.source_table.clone(),
+        target_table: table.target_table.clone(),
+        cursor: request.cursor,
+        next_cursor,
+        has_more: end < table.rows.len(),
+        page_size: limit as u32,
+        rows: table.rows[offset..end].to_vec(),
+    })
 }
 
 pub(crate) fn apply_selection(
@@ -542,6 +727,131 @@ mod tests {
                 "client field {field} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn comparison_preview_is_summary_only_and_pages_are_cursor_bound() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let options = SyncOptions::default();
+        let rows = (0..205)
+            .map(|value| {
+                RowChange::insert(
+                    vec![Value::Integer(value)],
+                    vec![Some(Value::Integer(value))],
+                    &options,
+                )
+            })
+            .collect();
+        let preview = issue_plan(
+            "source-session".into(),
+            "target-session".into(),
+            "source-db".into(),
+            "target-db".into(),
+            None,
+            None,
+            source.as_ref(),
+            target.as_ref(),
+            "source-fingerprint".into(),
+            "target-fingerprint".into(),
+            ComparisonResult::new(vec![TableResult::matched("users", "users", rows)]),
+            options,
+            false,
+        )
+        .unwrap();
+        let summary = &preview.tables[0];
+        assert_eq!(summary.insert_count, 205);
+        assert_eq!(summary.row_count, 205);
+        assert!(summary.first_cursor.is_some());
+
+        let first = get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id.clone(),
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: summary.first_cursor.clone(),
+            limit: Some(2),
+        })
+        .unwrap();
+        assert_eq!(first.rows.len(), 2);
+        assert!(first.has_more);
+        assert_ne!(first.next_cursor, first.cursor);
+        let repeated = get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id.clone(),
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: first.cursor.clone(),
+            limit: Some(2),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&repeated.rows[0].key).unwrap(),
+            serde_json::to_string(&first.rows[0].key).unwrap()
+        );
+
+        let forged = get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id.clone(),
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: Some("v1.999.not-a-valid-signature".into()),
+            limit: Some(2),
+        });
+        assert!(forged.is_err());
+        assert!(get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id.clone(),
+            source_table: "unknown".into(),
+            target_table: "users".into(),
+            cursor: None,
+            limit: Some(2),
+        })
+        .is_err());
+        assert!(get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id,
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: None,
+            limit: Some(0),
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn comparison_page_rejects_claimed_plan_and_overlarge_limit() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let preview = issue_plan(
+            "source-session".into(),
+            "target-session".into(),
+            "source-db".into(),
+            "target-db".into(),
+            None,
+            None,
+            source.as_ref(),
+            target.as_ref(),
+            "source-fingerprint".into(),
+            "target-fingerprint".into(),
+            ComparisonResult::new(vec![comparison().tables[0].clone()]),
+            SyncOptions::default(),
+            false,
+        )
+        .unwrap();
+        assert!(get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id.clone(),
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: None,
+            limit: Some(SYNC_COMPARISON_PAGE_MAX_LIMIT + 1),
+        })
+        .is_err());
+        let claimed = claim_plan(&preview.plan_id).unwrap();
+        drop(claimed);
+        assert!(get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id,
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: None,
+            limit: Some(1),
+        })
+        .is_err());
     }
 
     #[test]

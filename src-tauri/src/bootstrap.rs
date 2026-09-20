@@ -523,6 +523,7 @@ pub fn run() {
             crate::commands::execute_data_sync,
             crate::commands::cancel_data_sync,
             crate::commands::compare_data_sync,
+            crate::commands::get_data_sync_comparison_page,
             crate::commands::apply_data_sync,
             crate::commands::generate_data_sync_sql,
             crate::commands::revalidate_data_sync,

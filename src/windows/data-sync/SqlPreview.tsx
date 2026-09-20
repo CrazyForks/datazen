@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
-import type { DataSyncOperation, DataSyncSqlStatement, SyncOptions } from '../../commands/sync';
+import type {
+  DataSyncOperation,
+  DataSyncSelectedRow,
+  DataSyncSqlStatement,
+  SyncOptions,
+} from '../../commands/sync';
 import { syncCommands } from '../../commands/sync';
-import {
-  filterStatementsByOp,
-  statementsToPreviewText,
-} from './clientSqlPreview';
+import { filterStatementsByOp, statementsToPreviewText } from './clientSqlPreview';
 import type { DataSyncTableResult } from './mappingView';
 
 type OpFilter = 'all' | DataSyncOperation;
@@ -21,6 +23,7 @@ interface SqlPreviewProps {
   targetSchema: string;
   tables: DataSyncTableResult[];
   options: SyncOptions;
+  selectedRows?: DataSyncSelectedRow[];
 }
 
 export function SqlPreview({
@@ -32,6 +35,7 @@ export function SqlPreview({
   targetSchema,
   tables,
   options,
+  selectedRows,
 }: SqlPreviewProps) {
   const { t } = useI18n();
   const [opFilter, setOpFilter] = useState<OpFilter>('all');
@@ -56,6 +60,7 @@ export function SqlPreview({
         targetDatabase,
         sourceSchema || undefined,
         targetSchema || undefined,
+        selectedRows,
       );
       if (revision !== generation.current) return;
       setStatements(stmts);
@@ -75,11 +80,14 @@ export function SqlPreview({
     targetDatabase,
     sourceSchema,
     targetSchema,
+    selectedRows,
   ]);
 
   useEffect(() => {
     void loadPreview();
-    return () => { generation.current += 1; };
+    return () => {
+      generation.current += 1;
+    };
   }, [loadPreview]);
 
   const previewText = statements
@@ -127,7 +135,11 @@ export function SqlPreview({
           {copied ? t('common.copied') : t('common.copy')}
         </Button>
       </div>
-      {previewError && <div role="alert" className="p-3 text-sm text-red-500">{previewError}</div>}
+      {previewError && (
+        <div role="alert" className="p-3 text-sm text-red-500">
+          {previewError}
+        </div>
+      )}
       <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-fg-secondary">
         {previewText}
       </pre>

@@ -14,19 +14,23 @@ describe('Data Sync immutable plan IPC', () => {
     invoke.mockResolvedValueOnce({
       planId: 'opaque-plan',
       selectionRevision: 1,
-      tables: [{
-        sourceTable: 'users',
-        targetTable: 'users',
-        status: 'MATCHED',
-        rows: [{
-          operation: 'INSERT',
-          key: [1],
-          sourceRow: [1, 'alice'],
-          targetRow: null,
-          changedColumns: [],
-          selected: true,
-        }],
-      }],
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          rows: [
+            {
+              operation: 'INSERT',
+              key: [1],
+              sourceRow: [1, 'alice'],
+              targetRow: null,
+              changedColumns: [],
+              selected: true,
+            },
+          ],
+        },
+      ],
     });
     await syncCommands.compareDataSync('source-session', 'target-session', ['users']);
 
@@ -34,19 +38,23 @@ describe('Data Sync immutable plan IPC', () => {
     await syncCommands.generateDataSyncSql(
       'source-session',
       'target-session',
-      [{
-        sourceTable: 'users',
-        targetTable: 'users',
-        status: 'MATCHED',
-        rows: [{
-          operation: 'INSERT',
-          key: [1],
-          sourceRow: [1, 'alice'],
-          targetRow: null,
-          changedColumns: [],
-          selected: true,
-        }],
-      }],
+      [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          rows: [
+            {
+              operation: 'INSERT',
+              key: [1],
+              sourceRow: [1, 'alice'],
+              targetRow: null,
+              changedColumns: [],
+              selected: true,
+            },
+          ],
+        },
+      ],
       { insert: true, update: true, delete: false },
     );
     expect(invoke).toHaveBeenLastCalledWith('generate_data_sync_sql', {
@@ -61,14 +69,16 @@ describe('Data Sync immutable plan IPC', () => {
     invoke.mockResolvedValueOnce({ applied: 1, rolledBack: false });
     await syncCommands.executeDataSync(
       'target-session',
-      [{
-        table: 'users',
-        operation: 'INSERT',
-        sql: 'DROP TABLE users',
-        previewSql: 'DROP TABLE users',
-        parameters: [1, 'attacker supplied row'],
-        rowKey: [1],
-      }],
+      [
+        {
+          table: 'users',
+          operation: 'INSERT',
+          sql: 'DROP TABLE users',
+          previewSql: 'DROP TABLE users',
+          parameters: [1, 'attacker supplied row'],
+          rowKey: [1],
+        },
+      ],
       'job-1',
       'app',
     );
@@ -106,14 +116,98 @@ describe('Data Sync immutable plan IPC', () => {
         },
       },
     );
-    expect(invoke).toHaveBeenCalledWith('compare_data_sync', expect.objectContaining({
-      filters: {
-        users: {
-          filters: [{ column: 'status', operator: 'eq', value: 'active' }],
-          logic: 'and',
+    expect(invoke).toHaveBeenCalledWith(
+      'compare_data_sync',
+      expect.objectContaining({
+        filters: {
+          users: {
+            filters: [{ column: 'status', operator: 'eq', value: 'active' }],
+            logic: 'and',
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('WHERE');
+  });
+
+  it('loads an opaque page and preserves selected keys without row payloads in compare', async () => {
+    invoke.mockResolvedValueOnce({
+      contractVersion: 1,
+      pageSize: 100,
+      planId: 'paged-plan',
+      selectionRevision: 1,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          status: 'MATCHED',
+          insertCount: 2,
+          updateCount: 1,
+          deleteCount: 0,
+          unchangedCount: 40,
+          rowCount: 43,
+          pageSize: 100,
+          firstCursor: 'v1.0.signature',
+          hasMore: false,
+        },
+      ],
+    });
+    const preview = await syncCommands.compareDataSync('source-session', 'target-session', [
+      'users',
+    ]);
+    expect(preview.tables[0].rows).toBeUndefined();
+
+    invoke.mockResolvedValueOnce({
+      contractVersion: 1,
+      planId: 'paged-plan',
+      sourceTable: 'users',
+      targetTable: 'users',
+      cursor: 'v1.0.signature',
+      nextCursor: null,
+      hasMore: false,
+      pageSize: 100,
+      rows: [
+        {
+          operation: 'INSERT',
+          key: [7],
+          sourceRow: [7, 'alice'],
+          targetRow: null,
+          changedColumns: [],
+          selected: true,
+        },
+      ],
+    });
+    await syncCommands.getDataSyncComparisonPage('v1.0.signature', 'users', 'users');
+    expect(invoke).toHaveBeenLastCalledWith('get_data_sync_comparison_page', {
+      request: {
+        planId: 'paged-plan',
+        sourceTable: 'users',
+        targetTable: 'users',
+        cursor: 'v1.0.signature',
+        limit: 100,
+      },
+    });
+
+    invoke.mockResolvedValueOnce([]);
+    await syncCommands.generateDataSyncSql(
+      'source-session',
+      'target-session',
+      [preview.tables[0]],
+      { insert: true, update: true, delete: false },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [{ sourceTable: 'users', targetTable: 'users', operation: 'INSERT', key: [7] }],
+    );
+    expect(invoke).toHaveBeenLastCalledWith(
+      'generate_data_sync_sql',
+      expect.objectContaining({
+        selection: {
+          revision: 1,
+          rows: [{ sourceTable: 'users', targetTable: 'users', operation: 'INSERT', key: [7] }],
+        },
+      }),
+    );
   });
 });

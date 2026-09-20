@@ -58,6 +58,13 @@ export interface DataSyncTableResult {
   columnTypes?: string[];
   primaryKeys?: string[];
   unchangedCount?: number;
+  insertCount?: number;
+  updateCount?: number;
+  deleteCount?: number;
+  rowCount?: number;
+  pageSize?: number;
+  firstCursor?: string | null;
+  hasMore?: boolean;
   rows?: DataSyncRowChange[];
   sourceFilter?: DataSyncSourceFilter;
 }
@@ -116,9 +123,23 @@ export interface DataSyncSelection {
 }
 
 export interface DataSyncComparisonPreview {
+  contractVersion?: number;
   planId: string;
   selectionRevision: number;
+  pageSize?: number;
   tables: DataSyncTableResult[];
+}
+
+export interface DataSyncComparisonPage {
+  contractVersion: number;
+  planId: string;
+  sourceTable: string;
+  targetTable: string;
+  cursor: string | null;
+  nextCursor: string | null;
+  hasMore: boolean;
+  pageSize: number;
+  rows: DataSyncRowChange[];
 }
 
 export interface DataSyncPairingView {
@@ -153,7 +174,19 @@ function selectionFromTables(
   plan: DataSyncComparisonPreview,
   tables: DataSyncTableResult[],
   options: SyncOptions,
+  selectedRows?: DataSyncSelectedRow[],
 ): DataSyncSelection {
+  if (selectedRows) {
+    return {
+      revision: plan.selectionRevision,
+      rows: selectedRows.filter((row) => {
+        if (row.operation === 'INSERT') return options.insert;
+        if (row.operation === 'UPDATE') return options.update;
+        if (row.operation === 'DELETE') return options.delete;
+        return false;
+      }),
+    };
+  }
   const requested = new Set(
     tables.flatMap((table) =>
       (table.rows ?? [])
@@ -207,6 +240,17 @@ function selectionFromStatements(
         });
         break;
       }
+      // Paged comparisons deliberately omit row payloads. The server-owned
+      // plan remains the authority for validating this key and operation.
+      if (!table.rows) {
+        rows.push({
+          sourceTable: table.sourceTable,
+          targetTable: table.targetTable,
+          operation: statement.operation,
+          key: statement.rowKey,
+        });
+        break;
+      }
     }
   }
   return { revision: plan.selectionRevision, rows };
@@ -250,6 +294,26 @@ export const syncCommands = {
   },
 
   cancelDataSync: (jobId: string) => invoke<boolean>('cancel_data_sync', { jobId }),
+
+  getDataSyncComparisonPage: (
+    cursor: string | null,
+    sourceTable: string,
+    targetTable: string,
+    limit?: number,
+  ) => {
+    if (!activeComparisonPlan) {
+      return Promise.reject(new Error('data sync comparison plan is missing; compare again'));
+    }
+    return invoke<DataSyncComparisonPage>('get_data_sync_comparison_page', {
+      request: {
+        planId: activeComparisonPlan.planId,
+        sourceTable,
+        targetTable,
+        cursor,
+        limit: limit ?? activeComparisonPlan.pageSize ?? 100,
+      },
+    });
+  },
 
   compareDataSync: async (
     sourceDbSessionId: string,
@@ -330,6 +394,7 @@ export const syncCommands = {
     targetDatabase?: string,
     sourceSchema?: string,
     targetSchema?: string,
+    selectedRows?: DataSyncSelectedRow[],
   ) => {
     void sourceDbSessionId;
     void targetDbSessionId;
@@ -343,7 +408,7 @@ export const syncCommands = {
     activeExecutionOptions = options;
     return invoke<DataSyncSqlStatement[]>('generate_data_sync_sql', {
       planId: activeComparisonPlan.planId,
-      selection: selectionFromTables(activeComparisonPlan, tables, options),
+      selection: selectionFromTables(activeComparisonPlan, tables, options, selectedRows),
       options,
     });
   },

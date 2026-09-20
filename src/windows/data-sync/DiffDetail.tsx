@@ -17,6 +17,11 @@ interface DiffDetailProps {
   table: DataSyncTableResult;
   options: SyncOptions;
   onUpdateRows: (rows: DataSyncRowChange[]) => void;
+  pageLoading?: boolean;
+  pageIndex?: number;
+  hasPreviousPage?: boolean;
+  hasNextPage?: boolean;
+  onPageChange?: (direction: 'previous' | 'next') => void;
 }
 
 function operationBadgeClass(op: string): string {
@@ -32,7 +37,16 @@ function operationBadgeClass(op: string): string {
   }
 }
 
-export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
+export function DiffDetail({
+  table,
+  options,
+  onUpdateRows,
+  pageLoading = false,
+  pageIndex = 0,
+  hasPreviousPage = false,
+  hasNextPage = false,
+  onPageChange,
+}: DiffDetailProps) {
   const { t } = useI18n();
   const [page, setPage] = useState(0);
 
@@ -40,19 +54,23 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
     setPage(0);
   }, [table.sourceTable]);
 
+  const serverPaged = table.pageSize !== undefined || table.rowCount !== undefined;
   const diffRows = useMemo(
     () => (table.rows ?? []).filter((r) => r.operation !== 'UNCHANGED'),
     [table.rows],
   );
 
-  const pageCount = Math.max(1, Math.ceil(diffRows.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageRows = diffRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const pageCount = serverPaged
+    ? Math.max(1, Math.ceil((table.rowCount ?? diffRows.length) / (table.pageSize ?? PAGE_SIZE)))
+    : Math.max(1, Math.ceil(diffRows.length / PAGE_SIZE));
+  const safePage = serverPaged ? pageIndex : Math.min(page, pageCount - 1);
+  const pageRows = serverPaged
+    ? diffRows
+    : diffRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const toggleRow = (idx: number, checked: boolean) => {
-    const globalIdx = safePage * PAGE_SIZE + idx;
     const next = [...(table.rows ?? [])];
-    const target = diffRows[globalIdx];
+    const target = pageRows[idx];
     const fullIdx = next.findIndex((r) => rowKeyString(r.key) === rowKeyString(target.key));
     if (fullIdx < 0) return;
     next[fullIdx] = { ...next[fullIdx], selected: checked };
@@ -76,7 +94,7 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
     return max;
   }, [pageRows]);
 
-  if (diffRows.length === 0) {
+  if (diffRows.length === 0 && (!serverPaged || !hasNextPage)) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-fg-muted">
         {t('sync.noRowDiffs')}
@@ -180,10 +198,14 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                     const s = src[colIdx] ?? null;
                     const tg = tgt[colIdx] ?? null;
                     const isChanged =
-                      row.operation === 'UPDATE' &&
-                      changed.has(table.columns?.[colIdx] ?? '');
+                      row.operation === 'UPDATE' && changed.has(table.columns?.[colIdx] ?? '');
                     return (
-                      <td key={colIdx} data-column={table.columns?.[colIdx]} data-changed={isChanged} className="p-2 align-top">
+                      <td
+                        key={colIdx}
+                        data-column={table.columns?.[colIdx]}
+                        data-changed={isChanged}
+                        className="p-2 align-top"
+                      >
                         {row.operation === 'INSERT' && (
                           <span className="font-mono text-green-700 dark:text-green-400">
                             {formatCell(s)}
@@ -214,26 +236,37 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
         </table>
       </div>
 
-      {pageCount > 1 && (
+      {(pageCount > 1 || serverPaged) && (
         <div className="flex shrink-0 items-center justify-between border-t border-edge px-3 py-2 text-xs text-fg-muted">
-          <span>{t('sync.pageOf', { page: safePage + 1, total: pageCount })}</span>
+          <span>
+            {serverPaged
+              ? `${t('sync.pageOf', { page: safePage + 1, total: pageCount })} · ${t('sync.pageScope')}`
+              : t('sync.pageOf', { page: safePage + 1, total: pageCount })}
+          </span>
           <div className="flex gap-1">
             <Button
               variant="ghost"
               size="sm"
-              disabled={safePage <= 0}
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={serverPaged ? pageLoading || !hasPreviousPage : safePage <= 0}
+              onClick={() => {
+                if (serverPaged) onPageChange?.('previous');
+                else setPage((p) => Math.max(0, p - 1));
+              }}
             >
               {t('sync.pagePrev')}
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              disabled={safePage >= pageCount - 1}
-              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={serverPaged ? pageLoading || !hasNextPage : safePage >= pageCount - 1}
+              onClick={() => {
+                if (serverPaged) onPageChange?.('next');
+                else setPage((p) => Math.min(pageCount - 1, p + 1));
+              }}
             >
               {t('sync.pageNext')}
             </Button>
+            {pageLoading && <span className="px-1">{t('sync.loadingPage')}</span>}
           </div>
         </div>
       )}
