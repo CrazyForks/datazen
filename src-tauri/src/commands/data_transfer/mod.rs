@@ -85,6 +85,8 @@ pub async fn pick_data_transfer_sql_file(
     Ok(Some(crate::data_transfer::SqlFileTarget {
         file_token: token,
         database_type: None,
+        database: None,
+        schema: None,
     }))
 }
 

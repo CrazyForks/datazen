@@ -92,6 +92,48 @@ pub fn resolve_target_driver(
     Ok(driver)
 }
 
+/// Validate that the requested catalog/schema pair has an unambiguous
+/// meaning in the selected SQL dialect. Silently dropping one qualifier
+/// would produce a file that looks scoped while writing into the session's
+/// default namespace.
+pub(crate) fn validate_target_scope_for_driver(
+    driver: &dyn DatabaseDriver,
+    target: &super::model::SqlFileTarget,
+) -> Result<(), TransferError> {
+    target.validate_qualifiers()?;
+    let family = driver.driver_type().to_ascii_lowercase();
+    let database = target.normalized_database();
+    let schema = target.normalized_schema();
+    match family.as_str() {
+        "mysql" | "mariadb" | "clickhouse" => {
+            if schema.is_some() {
+                return Err(TransferError::validation(format!(
+                    "SQL file target dialect '{}' accepts a database/catalog qualifier but not a separate schema",
+                    driver.driver_type()
+                )));
+            }
+        }
+        "sqlserver" => {}
+        "postgresql" | "sqlite" | "duckdb" => {
+            if database.is_some() {
+                return Err(TransferError::validation(format!(
+                    "SQL file target dialect '{}' cannot qualify a relation with a database/catalog; use schema",
+                    driver.driver_type()
+                )));
+            }
+        }
+        _ => {
+            if database.is_some() && schema.is_some() {
+                return Err(TransferError::validation(format!(
+                    "SQL file target dialect '{}' cannot represent both database/catalog and schema qualifiers",
+                    driver.driver_type()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_path(path: &Path) -> Result<(), TransferError> {
     if !path.is_absolute() {
         return Err(TransferError::validation(
@@ -248,14 +290,23 @@ impl Drop for AtomicSqlFile {
     }
 }
 
-fn table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> String {
-    qualify_relation_sql(
-        &driver.driver_type(),
-        None,
-        job.source.schema.as_deref(),
-        table,
-        driver.quote_char(),
-    )
+fn qualify_target_relation(
+    driver: &dyn DatabaseDriver,
+    database: Option<&str>,
+    schema: Option<&str>,
+    table: &str,
+) -> String {
+    let family = driver.driver_type().to_ascii_lowercase();
+    if family == "sqlserver" {
+        let quote = driver.quote_char();
+        return [database, schema, Some(table)]
+            .into_iter()
+            .flatten()
+            .map(|part| quote_ident_sql(part, quote))
+            .collect::<Vec<_>>()
+            .join(".");
+    }
+    qualify_relation_sql(&family, database, schema, table, driver.quote_char())
 }
 
 pub(crate) fn target_table_ref(
@@ -263,13 +314,17 @@ pub(crate) fn target_table_ref(
     job: &TransferJob,
     table: &str,
 ) -> String {
-    qualify_relation_sql(
-        &driver.driver_type(),
-        None,
-        job.source.schema.as_deref(),
-        table,
-        driver.quote_char(),
-    )
+    let (database, schema) = match job.sql_file_target.as_ref() {
+        Some(target)
+            if target.normalized_database().is_some() || target.normalized_schema().is_some() =>
+        {
+            (target.normalized_database(), target.normalized_schema())
+        }
+        // Preserve the legacy source-schema fallback for old SQL-file plans
+        // that did not carry an explicit target scope.
+        _ => (None, job.source.schema.as_deref()),
+    };
+    qualify_target_relation(driver, database, schema, table)
 }
 
 /// A custom DDL string is an opaque dialect-specific escape hatch. It cannot
@@ -280,6 +335,7 @@ pub(crate) fn validate_target_dialect_job(job: &TransferJob) -> Result<(), Trans
     let Some(target) = job.sql_file_target.as_ref() else {
         return Ok(());
     };
+    target.validate_qualifiers()?;
     if target.normalized_database_type().is_none() {
         return Ok(());
     }
@@ -366,7 +422,7 @@ pub(crate) fn create_table_sql(
     }
     Ok(format!(
         "CREATE TABLE IF NOT EXISTS {} ({})",
-        table_ref(driver, job, &table.target_table),
+        target_table_ref(driver, job, &table.target_table),
         parts.join(", ")
     ))
 }
@@ -456,7 +512,7 @@ fn insert_sql(
         .collect::<Vec<_>>();
     Ok(format!(
         "INSERT INTO {} ({}) VALUES ({})",
-        table_ref(driver, job, &table.target_table),
+        target_table_ref(driver, job, &table.target_table),
         columns.join(", "),
         values.join(", ")
     ))
@@ -563,6 +619,10 @@ pub async fn execute_with_target(
         return Err(TransferError::validation(
             "SQL file target requires both source and target IR adapters",
         ));
+    }
+    validate_target_dialect_job(job)?;
+    if let Some(target) = job.sql_file_target.as_ref() {
+        validate_target_scope_for_driver(target_driver, target)?;
     }
     job.options.validate()?;
     let mut output = AtomicSqlFile::create(destination)?;
@@ -885,6 +945,8 @@ mod tests {
             sql_file_target: Some(super::super::model::SqlFileTarget {
                 file_token: "token".into(),
                 database_type: None,
+                database: None,
+                schema: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -939,6 +1001,8 @@ mod tests {
             sql_file_target: Some(super::super::model::SqlFileTarget {
                 file_token: "token".into(),
                 database_type: Some("mysql".into()),
+                database: None,
+                schema: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1065,6 +1129,8 @@ mod tests {
         let target = super::super::model::SqlFileTarget {
             file_token: "token".into(),
             database_type: Some("not-a-registered-driver".into()),
+            database: None,
+            schema: None,
         };
         let result = resolve_target_driver(source, &target);
         assert!(result.is_err(), "unknown dialect must fail");
@@ -1073,6 +1139,117 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(error.contains("not registered"));
+    }
+
+    #[test]
+    fn target_scope_overrides_source_schema_for_mysql_dml_and_ddl() {
+        let driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let mut job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "s".into(),
+                database: "source_catalog".into(),
+                schema: Some("source_schema".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: Some("mysql".into()),
+                database: Some("target_catalog".into()),
+                schema: None,
+            }),
+            mode: TransferMode::Data,
+            write_mode: WriteMode::Insert,
+            tables: vec![],
+            options: Default::default(),
+        };
+        job.sql_file_target
+            .as_mut()
+            .unwrap()
+            .normalize_qualifiers()
+            .unwrap();
+        validate_target_scope_for_driver(&driver, job.sql_file_target.as_ref().unwrap()).unwrap();
+        let table = TableInspectResult {
+            source_table: "users".into(),
+            target_table: "people".into(),
+            status: super::super::model::TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id".into()],
+            source_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: None,
+            recordset: None,
+        };
+        let mappings = active_column_mappings(&table.column_mappings);
+        let insert =
+            insert_sql(&driver, &job, &table, &mappings, &[Some(Value::Integer(1))]).unwrap();
+        assert!(
+            insert.contains("INSERT INTO `target_catalog`.`people`"),
+            "{insert}"
+        );
+        assert!(!insert.contains("source_schema"), "{insert}");
+        assert_eq!(
+            target_table_ref(&driver, &job, "people"),
+            "`target_catalog`.`people`"
+        );
+    }
+
+    #[test]
+    fn target_scope_overrides_source_catalog_for_postgres_ddl() {
+        let driver = datazen_driver_postgres::PostgresDriver::new();
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "s".into(),
+                database: "source_catalog".into(),
+                schema: Some("source_schema".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: Some("postgresql".into()),
+                database: None,
+                schema: Some("target_schema".into()),
+            }),
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: vec![],
+            options: Default::default(),
+        };
+        validate_target_scope_for_driver(&driver, job.sql_file_target.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            target_table_ref(&driver, &job, "people"),
+            "\"target_schema\".\"people\""
+        );
+        assert!(!target_table_ref(&driver, &job, "people").contains("source_schema"));
+    }
+
+    #[test]
+    fn target_scope_rejects_dotted_or_dialect_ambiguous_qualifiers() {
+        let driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let dotted = super::super::model::SqlFileTarget {
+            file_token: "token".into(),
+            database_type: Some("mysql".into()),
+            database: Some("tenant.public".into()),
+            schema: None,
+        };
+        assert!(dotted.validate_qualifiers().is_err());
+
+        let schema = super::super::model::SqlFileTarget {
+            file_token: "token".into(),
+            database_type: Some("mysql".into()),
+            database: None,
+            schema: Some("public".into()),
+        };
+        let error = validate_target_scope_for_driver(&driver, &schema).unwrap_err();
+        assert!(error.to_string().contains("not a separate schema"));
     }
 
     #[test]
@@ -1187,6 +1364,8 @@ mod tests {
             sql_file_target: Some(super::super::model::SqlFileTarget {
                 file_token: "opaque".into(),
                 database_type: Some("mysql".into()),
+                database: None,
+                schema: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1302,6 +1481,8 @@ mod tests {
             sql_file_target: Some(super::super::model::SqlFileTarget {
                 file_token: "opaque".into(),
                 database_type: Some("mysql".into()),
+                database: None,
+                schema: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,

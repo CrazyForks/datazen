@@ -156,6 +156,12 @@ const pack = {
   'transfer.destination.sqlDialectHint':
     'Choose a registered target dialect. The preview and generated file use its identifiers, types, and literals.',
   'transfer.destination.sourceDatabase': 'Source database',
+  'transfer.destination.targetDatabase': 'Target database/catalog (optional)',
+  'transfer.destination.targetDatabasePlaceholder': 'Leave blank for dialect default',
+  'transfer.destination.targetSchema': 'Target schema (optional)',
+  'transfer.destination.targetSchemaPlaceholder': 'Leave blank for dialect default',
+  'transfer.destination.targetScopeHint':
+    'Use one identifier segment. MySQL and ClickHouse use database/catalog; PostgreSQL uses schema; SQL Server accepts both.',
   'transfer.destination.sqlFileHint':
     'The SQL file path is held by the host and will be written atomically after preview.',
   'transfer.destination.chooseHint': 'Choose an SQL file to continue.',

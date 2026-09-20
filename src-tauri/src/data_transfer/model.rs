@@ -27,6 +27,15 @@ pub struct SqlFileTarget {
     /// compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database_type: Option<String>,
+    /// Optional target catalog/database used when the selected SQL dialect
+    /// supports qualifying relations with a database name (for example
+    /// MySQL, ClickHouse, or SQL Server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    /// Optional target schema. When either qualifier is supplied, the target
+    /// SQL never falls back to the source endpoint's schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
 }
 
 impl SqlFileTarget {
@@ -36,6 +45,64 @@ impl SqlFileTarget {
             .map(str::trim)
             .filter(|value| !value.is_empty())
     }
+
+    pub fn normalized_database(&self) -> Option<&str> {
+        self.database
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn normalized_schema(&self) -> Option<&str> {
+        self.schema
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Validate and canonicalize the optional target relation qualifiers.
+    ///
+    /// Accepting only one identifier segment prevents an IPC caller from
+    /// smuggling an already-qualified relation or SQL fragment into output.
+    pub fn normalize_qualifiers(&mut self) -> Result<(), TransferError> {
+        self.database = normalize_sql_identifier("target database/catalog", self.database.take())?;
+        self.schema = normalize_sql_identifier("target schema", self.schema.take())?;
+        Ok(())
+    }
+
+    pub fn validate_qualifiers(&self) -> Result<(), TransferError> {
+        let mut copy = self.clone();
+        copy.normalize_qualifiers()
+    }
+
+    pub fn has_explicit_scope(&self) -> bool {
+        self.normalized_database().is_some() || self.normalized_schema().is_some()
+    }
+}
+
+fn normalize_sql_identifier(
+    field: &str,
+    value: Option<String>,
+) -> Result<Option<String>, TransferError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Ok(None);
+    };
+    let valid_first = first == '_' || first.is_ascii_alphabetic();
+    let valid_rest = chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+    if !valid_first || !valid_rest {
+        return Err(TransferError::validation(format!(
+            "{field} must be one SQL identifier segment (letters, digits, '_' or '$'); dotted or quoted qualifiers are not allowed"
+        )));
+    }
+    Ok(Some(value.to_string()))
 }
 
 impl Endpoint {

@@ -167,6 +167,8 @@ async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
         sql_file_target: Some(SqlFileTarget {
             file_token: token,
             database_type: None,
+            database: None,
+            schema: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -224,6 +226,8 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
         sql_file_target: Some(SqlFileTarget {
             file_token: token,
             database_type: None,
+            database: None,
+            schema: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -279,6 +283,8 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
         sql_file_target: Some(SqlFileTarget {
             file_token: token,
             database_type: Some("mysql".into()),
+            database: None,
+            schema: None,
         }),
         mode: TransferMode::StructureAndData,
         write_mode: WriteMode::Insert,
@@ -363,6 +369,8 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
         sql_file_target: Some(SqlFileTarget {
             file_token: token,
             database_type: Some("mysql".into()),
+            database: None,
+            schema: None,
         }),
         mode: TransferMode::Structure,
         write_mode: WriteMode::Insert,

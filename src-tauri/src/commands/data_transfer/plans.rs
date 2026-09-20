@@ -40,6 +40,11 @@ pub(crate) struct StoredTransferPlan {
     /// Reserved for the filter contract. Until parameterized filters are
     /// supported by Transfer, all plans explicitly bind `None` here.
     pub(crate) filter: Option<String>,
+    /// Fingerprint of the SQL-file dialect and target namespace qualifiers.
+    /// This keeps catalog/schema scope review-bound alongside the immutable
+    /// structure sequence and prevents later renderer changes from silently
+    /// changing the output namespace.
+    pub(crate) target_scope_fingerprint: Option<String>,
     pub(crate) target_read_only_at_preview: bool,
     /// SQL-file structure statements captured at preview time. The execution
     /// path consumes this immutable sequence instead of re-rendering DDL from
@@ -94,6 +99,22 @@ pub(crate) fn filter_fingerprint(job: &TransferJob) -> Result<Option<String>, Tr
     }
     let bytes = serde_json::to_vec(&filters).map_err(|error| {
         TransferError::validation(format!("cannot fingerprint source filters: {error}"))
+    })?;
+    Ok(Some(format!("{:x}", Sha256::digest(bytes))))
+}
+
+pub(crate) fn target_scope_fingerprint(job: &TransferJob) -> Result<Option<String>, TransferError> {
+    let Some(target) = job.sql_file_target.as_ref() else {
+        return Ok(None);
+    };
+    target.validate_qualifiers()?;
+    let scope = (
+        target.normalized_database_type(),
+        target.normalized_database(),
+        target.normalized_schema(),
+    );
+    let bytes = serde_json::to_vec(&scope).map_err(|error| {
+        TransferError::validation(format!("cannot fingerprint SQL-file target scope: {error}"))
     })?;
     Ok(Some(format!("{:x}", Sha256::digest(bytes))))
 }
@@ -180,6 +201,7 @@ impl TransferPlanStore {
         let source_schema_fingerprint = fingerprint_schemas(source_entries)?;
         let target_schema_fingerprint = fingerprint_schemas(target_entries)?;
         let filter = filter_fingerprint(&job)?;
+        let target_scope_fingerprint = target_scope_fingerprint(&job)?;
         let sql_file_structure = job
             .sql_file_target
             .as_ref()
@@ -197,6 +219,7 @@ impl TransferPlanStore {
             source_schema_fingerprint,
             target_schema_fingerprint,
             filter,
+            target_scope_fingerprint,
             target_read_only_at_preview: target_read_only,
             sql_file_structure,
             expires_at: Instant::now() + ttl,
@@ -526,6 +549,8 @@ mod tests {
         sql_job.sql_file_target = Some(crate::data_transfer::SqlFileTarget {
             file_token: "opaque-file".into(),
             database_type: Some("mysql".into()),
+            database: None,
+            schema: None,
         });
         let id = store
             .issue_with_ttl(
@@ -557,6 +582,16 @@ mod tests {
                 .and_then(|statements| statements.first())
                 .map(|statement| statement.ddl.as_str()),
             Some("CREATE TABLE `users` (`id` INT)")
+        );
+        assert_eq!(
+            stored.target_scope_fingerprint.as_deref(),
+            target_scope_fingerprint(&stored.job).unwrap().as_deref()
+        );
+        let mut changed_scope = stored.job.clone();
+        changed_scope.sql_file_target.as_mut().unwrap().database = Some("other_catalog".into());
+        assert_ne!(
+            stored.target_scope_fingerprint,
+            target_scope_fingerprint(&changed_scope).unwrap()
         );
     }
 

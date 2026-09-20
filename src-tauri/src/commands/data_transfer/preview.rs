@@ -19,10 +19,13 @@ async fn preview_sql_file_target(
 ) -> Result<TransferPreview, CommandError> {
     let destination = job
         .sql_file_target
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?;
-    crate::data_transfer::sql_file::resolve_path(&destination.file_token)
+    destination
+        .normalize_qualifiers()
         .map_err(CommandError::from)?;
+    let file_token = destination.file_token.clone();
+    crate::data_transfer::sql_file::resolve_path(&file_token).map_err(CommandError::from)?;
     job.source.schema = job.source.normalized_schema().map(str::to_string);
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
 
@@ -36,9 +39,18 @@ async fn preview_sql_file_target(
         .get_session(&job.source.db_session_id)
         .await
         .cmd_err("preview_data_transfer")?;
+    let destination = job
+        .sql_file_target
+        .as_ref()
+        .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?;
     let target_driver =
         crate::data_transfer::sql_file::resolve_target_driver(src_driver.clone(), destination)
             .map_err(CommandError::from)?;
+    crate::data_transfer::sql_file::validate_target_scope_for_driver(
+        target_driver.as_ref(),
+        destination,
+    )
+    .map_err(CommandError::from)?;
     let explicit_target_dialect = destination.normalized_database_type().is_some();
     let adapters = if explicit_target_dialect {
         let target_type = destination

@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { Select } from '../../components/ui/Select';
+import { Input } from '../../components/ui/Input';
 import {
   DEFAULT_TRANSFER_OPTIONS,
   transferCommands,
@@ -80,6 +81,8 @@ export function DataTransferWindow() {
   const [destinationMode, setDestinationMode] = useState<'database' | 'sqlFile'>('database');
   const [sqlFileTarget, setSqlFileTarget] = useState<TransferSqlFileTarget | null>(null);
   const [sqlFileDialect, setSqlFileDialect] = useState('source');
+  const [sqlFileDatabase, setSqlFileDatabase] = useState('');
+  const [sqlFileSchema, setSqlFileSchema] = useState('');
   const [availableSqlDialects, setAvailableSqlDialects] = useState<string[]>([]);
   const [mode, setMode] = useState<TransferMode>('data');
   const [writeMode, setWriteMode] = useState<WriteMode>('insert');
@@ -389,6 +392,8 @@ export function DataTransferWindow() {
           sqlFileTarget: {
             ...sqlFileTarget,
             databaseType: sqlFileDialect === 'source' ? undefined : sqlFileDialect,
+            ...(sqlFileDatabase.trim() ? { database: sqlFileDatabase.trim() } : {}),
+            ...(sqlFileSchema.trim() ? { schema: sqlFileSchema.trim() } : {}),
           },
           mode,
           writeMode,
@@ -418,6 +423,8 @@ export function DataTransferWindow() {
       destinationMode,
       sqlFileTarget,
       sqlFileDialect,
+      sqlFileDatabase,
+      sqlFileSchema,
       mode,
       writeMode,
       tables,
@@ -889,6 +896,41 @@ export function DataTransferWindow() {
                   />
                   <p className="text-xs text-fg-muted">
                     {t('transfer.destination.sqlDialectHint')}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 border-t border-edge pt-3">
+                    <label className="block text-sm">
+                      <span className="text-xs font-medium text-fg">
+                        {t('transfer.destination.targetDatabase')}
+                      </span>
+                      <Input
+                        value={sqlFileDatabase}
+                        onChange={(event) => {
+                          setSqlFileDatabase(event.target.value);
+                          setPreview(null);
+                        }}
+                        placeholder={t('transfer.destination.targetDatabasePlaceholder')}
+                        data-testid="data-transfer-sql-file-target-database"
+                        className="mt-1 h-8 text-xs"
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="text-xs font-medium text-fg">
+                        {t('transfer.destination.targetSchema')}
+                      </span>
+                      <Input
+                        value={sqlFileSchema}
+                        onChange={(event) => {
+                          setSqlFileSchema(event.target.value);
+                          setPreview(null);
+                        }}
+                        placeholder={t('transfer.destination.targetSchemaPlaceholder')}
+                        data-testid="data-transfer-sql-file-target-schema"
+                        className="mt-1 h-8 text-xs"
+                      />
+                    </label>
+                  </div>
+                  <p className="text-xs text-fg-muted">
+                    {t('transfer.destination.targetScopeHint')}
                   </p>
                   <p className="text-xs text-fg-muted">
                     {sqlFileTarget
