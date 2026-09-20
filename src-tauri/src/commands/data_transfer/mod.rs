@@ -17,7 +17,7 @@ use crate::data_transfer::{
     TransferExecutionResult, TransferJob, TransferMode, TransferPreview, TransferRunRequest,
 };
 pub(crate) use exec::execute_data_transfer_impl;
-pub(crate) use inspect::inspect_data_transfer_impl;
+pub(crate) use inspect::{inspect_data_transfer_impl, inspect_sql_file_transfer_impl};
 pub(crate) use jobs::cancel_job;
 pub(crate) use preview::preview_data_transfer_impl;
 use tauri::{AppHandle, State};
@@ -52,6 +52,31 @@ pub async fn inspect_data_transfer(
         None,
         None,
         mode,
+        &tables.unwrap_or_default(),
+    )
+    .await
+}
+
+/// Inspect source tables for a SQL-file destination. The file target has no
+/// live database session, so this command deliberately receives only the
+/// source session plus the optional output dialect.
+#[tauri::command]
+pub async fn inspect_sql_file_transfer(
+    state: State<'_, AppState>,
+    source_db_session_id: String,
+    source_database: Option<String>,
+    source_schema: Option<String>,
+    target_database_type: Option<String>,
+    mode: TransferMode,
+    tables: Option<Vec<crate::data_transfer::TableMapping>>,
+) -> Result<Vec<TableInspectResult>, CommandError> {
+    inspect_sql_file_transfer_impl(
+        &state,
+        source_db_session_id,
+        source_database,
+        source_schema,
+        mode,
+        target_database_type,
         &tables.unwrap_or_default(),
     )
     .await

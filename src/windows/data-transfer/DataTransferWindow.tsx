@@ -442,20 +442,33 @@ export function DataTransferWindow() {
     const { source, target } = await refreshEndpointSessions();
     const srcConnId = source?.dbSessionId;
     const tgtConnId = target?.dbSessionId;
-    if (!srcConnId || !tgtConnId || !sourceDatabase || !targetDatabase) {
+    if (
+      !srcConnId ||
+      !sourceDatabase ||
+      (destinationMode === 'database' && (!tgtConnId || !targetDatabase))
+    ) {
       setErrorMsg(t('transfer.selectBoth'));
       setErrorOpen(true);
       return;
     }
     setLoading(true);
     try {
-      const rows = await transferCommands.inspect(
-        srcConnId,
-        tgtConnId,
-        mode,
-        sourceDatabase,
-        targetDatabase,
-      );
+      const rows =
+        destinationMode === 'sqlFile'
+          ? await transferCommands.inspectSqlFile(
+              srcConnId,
+              mode,
+              sourceDatabase,
+              sourceConn?.schema,
+              sqlFileDialect === 'source' ? undefined : sqlFileDialect,
+            )
+          : await transferCommands.inspect(
+              srcConnId,
+              tgtConnId!,
+              mode,
+              sourceDatabase,
+              targetDatabase,
+            );
       const enabled = rows
         .filter((r) => r.sourceTable)
         .map((r) => ({
@@ -476,7 +489,16 @@ export function DataTransferWindow() {
     } finally {
       setLoading(false);
     }
-  }, [refreshEndpointSessions, sourceDatabase, targetDatabase, mode, t]);
+  }, [
+    refreshEndpointSessions,
+    sourceDatabase,
+    targetDatabase,
+    sourceConn?.schema,
+    sqlFileDialect,
+    destinationMode,
+    mode,
+    t,
+  ]);
 
   const runPreview = useCallback(
     async (opts?: { quiet?: boolean }): Promise<boolean> => {
@@ -640,11 +662,6 @@ export function DataTransferWindow() {
       setStep('preview');
       return;
     }
-    if (step === 'setup' && destinationMode === 'sqlFile') {
-      await runPreview({ quiet: true });
-      setStep('preview');
-      return;
-    }
     if (next === 'objects' && tables.length === 0) {
       await runInspect();
     }
@@ -652,10 +669,6 @@ export function DataTransferWindow() {
   }, [step, stepIndex, tables.length, runInspect, runPreview, destinationMode]);
 
   const goBack = () => {
-    if (destinationMode === 'sqlFile' && step === 'preview') {
-      setStep('setup');
-      return;
-    }
     const prev = STEPS[stepIndex - 1];
     if (prev) setStep(prev);
   };
@@ -678,6 +691,7 @@ export function DataTransferWindow() {
 
   const refreshTableMapping = useCallback(
     async (sourceTable: string) => {
+      if (destinationMode === 'sqlFile') return;
       const { source, target } = await refreshEndpointSessions();
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
@@ -716,7 +730,14 @@ export function DataTransferWindow() {
         // Keep local edits if refresh fails.
       }
     },
-    [refreshEndpointSessions, sourceDatabase, targetDatabase, mode, tablesToMappings],
+    [
+      refreshEndpointSessions,
+      sourceDatabase,
+      targetDatabase,
+      mode,
+      tablesToMappings,
+      destinationMode,
+    ],
   );
 
   const toggleTable = (sourceTable: string) => {
@@ -891,6 +912,9 @@ export function DataTransferWindow() {
                     onChange={(value) => {
                       setSqlFileDialect(value);
                       setPreview(null);
+                      // Target-native type overrides are dialect-specific;
+                      // force a fresh source-only inspection before preview.
+                      setTables([]);
                     }}
                     placeholder={t('transfer.destination.sourceDialect', {
                       dialect: sourceConn?.databaseType ?? 'source',
@@ -1130,11 +1154,7 @@ export function DataTransferWindow() {
                   data-testid="data-transfer-preview-back-mapping"
                   onClick={goBack}
                 >
-                  {t(
-                    destinationMode === 'sqlFile'
-                      ? 'transfer.preview.backToSetup'
-                      : 'transfer.preview.backToMapping',
-                  )}
+                  {t('transfer.preview.backToMapping')}
                 </Button>
               </div>
             </div>

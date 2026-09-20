@@ -12,6 +12,40 @@ describe('transferCommands.inspect', () => {
     invokeMock.mockResolvedValue([]);
   });
 
+  it('passes source-only SQL-file inspection to the host', async () => {
+    const { transferCommands } = await import('../transfer');
+
+    await transferCommands.inspectSqlFile(
+      'src-session-uuid',
+      'structureAndData',
+      'goecoride',
+      'public',
+      'mysql',
+      [{
+        sourceTable: 'users',
+        targetTable: 'users_copy',
+        createNew: true,
+        enabled: true,
+        columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
+      }],
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('inspect_sql_file_transfer', {
+      sourceDbSessionId: 'src-session-uuid',
+      sourceDatabase: 'goecoride',
+      sourceSchema: 'public',
+      targetDatabaseType: 'mysql',
+      mode: 'structureAndData',
+      tables: [{
+        sourceTable: 'users',
+        targetTable: 'users_copy',
+        createNew: true,
+        enabled: true,
+        columnMappings: [{ sourceColumn: 'id', targetColumn: 'user_id', skip: false }],
+      }],
+    });
+  });
+
   it('passes db session ids to inspect_data_transfer IPC', async () => {
     const { transferCommands } = await import('../transfer');
 
