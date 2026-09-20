@@ -164,7 +164,10 @@ async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
             schema: None,
         },
         target: None,
-        sql_file_target: Some(SqlFileTarget { file_token: token }),
+        sql_file_target: Some(SqlFileTarget {
+            file_token: token,
+            database_type: None,
+        }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
         tables: vec![TableMapping::auto("users")],
@@ -218,7 +221,10 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
             schema: None,
         },
         target: None,
-        sql_file_target: Some(SqlFileTarget { file_token: token }),
+        sql_file_target: Some(SqlFileTarget {
+            file_token: token,
+            database_type: None,
+        }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
         // Empty means the server preview discovers all source tables.
@@ -251,6 +257,61 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
     assert!(output.contains("INSERT INTO"));
     assert!(output.contains("\"users\""));
     assert!(output.contains("\"orders\""));
+}
+
+#[tokio::test]
+async fn sql_file_target_renders_registered_mysql_dialect() {
+    use crate::data_transfer::sql_file::register_path;
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let (_config, source) = test.save_and_connect("transfer-sql-file-mysql-src").await;
+    let dir = tempfile::tempdir().expect("temporary SQL output directory");
+    let destination = dir.path().join("mysql.sql");
+    let token = register_path(destination.clone()).expect("register SQL destination");
+    let job = TransferJob {
+        source: Endpoint {
+            db_session_id: source,
+            database: "app".into(),
+            schema: None,
+        },
+        target: None,
+        sql_file_target: Some(SqlFileTarget {
+            file_token: token,
+            database_type: Some("mysql".into()),
+        }),
+        mode: TransferMode::StructureAndData,
+        write_mode: WriteMode::Insert,
+        tables: vec![TableMapping::auto("users")],
+        options: TransferOptions::default(),
+    };
+
+    let preview = super::preview_data_transfer_impl(&test.state, job)
+        .await
+        .expect("cross-dialect SQL-file preview should succeed");
+    assert!(preview.can_execute);
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("mysql")));
+    let _result = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            plan_id: preview.plan_id,
+            selection: TransferRunSelection::default(),
+            options: TransferRunOptions::default(),
+            job_id: None,
+        },
+    )
+    .await
+    .expect("cross-dialect SQL-file execution should succeed");
+    let output = std::fs::read_to_string(destination).expect("published SQL output");
+    assert!(output.contains("`users`"), "{output}");
+    assert!(output.contains("INSERT INTO `users`"), "{output}");
+    assert!(
+        !output.contains("`app`.`users`"),
+        "source database must not become an implicit SQL-file target catalog: {output}"
+    );
 }
 
 #[tokio::test]

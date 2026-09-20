@@ -100,6 +100,57 @@ async fn execute_sql_file_target(
             "source driver contract changed since preview; return to preview".into(),
         ));
     }
+    let target_driver = crate::data_transfer::sql_file::resolve_target_driver(
+        driver.clone(),
+        plan.job
+            .sql_file_target
+            .as_ref()
+            .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?,
+    )
+    .map_err(CommandError::from)?;
+    if target_driver.driver_type() != plan.target_driver_type
+        || plans::driver_protocol_version(target_driver.as_ref()) != plan.target_driver_protocol
+    {
+        return Err(CommandError::Validation(
+            "SQL file target dialect contract changed since preview; return to preview".into(),
+        ));
+    }
+    let src_config = state
+        .connection_manager
+        .get_session_config(&plan.job.source.db_session_id)
+        .await
+        .cmd_err("execute_data_transfer")?;
+    let adapters = if let Some(target_type) = plan
+        .job
+        .sql_file_target
+        .as_ref()
+        .and_then(|target| target.normalized_database_type())
+    {
+        state
+            .sync_adapters
+            .ensure_pair(&src_config.database_type, &target_type.to_string())
+            .map_err(CommandError::Validation)?;
+        let src_adapter = state
+            .sync_adapters
+            .get_source(&src_config.database_type)
+            .ok_or_else(|| CommandError::Validation("missing source sync adapter".into()))?;
+        let tgt_adapter = state
+            .sync_adapters
+            .get_target(&target_type.to_string())
+            .ok_or_else(|| CommandError::Validation("missing target sync adapter".into()))?;
+        crate::data_transfer::sql_file::validate_target_ir(
+            src_adapter.as_ref(),
+            driver.as_ref(),
+            target_driver.as_ref(),
+            &_schemas,
+        )
+        .map_err(CommandError::from)?;
+        Some((src_adapter, tgt_adapter))
+    } else {
+        None
+    };
+    crate::data_transfer::sql_file::validate_target_dialect_job(&plan.job)
+        .map_err(CommandError::from)?;
     let fingerprint =
         schema_fingerprint_for_side(&plan.job.source, driver.as_ref(), &handle, &plan.job, true)
             .await?;
@@ -111,13 +162,34 @@ async fn execute_sql_file_target(
     let claimed = plans::claim_plan(&request.plan_id).map_err(CommandError::from)?;
     let mut job = claimed.job;
     apply_selection(&mut job, &request.selection);
-    let (driver, handle, inspected, schemas) = load_sql_source_snapshot(state, &job).await?;
+    let (driver, handle, inspected, mut schemas) = load_sql_source_snapshot(state, &job).await?;
+    if let Some((src_adapter, _)) = &adapters {
+        crate::data_transfer::structure::enrich_source_types(
+            src_adapter.as_ref(),
+            driver.as_ref(),
+            &handle,
+            &job.source,
+            &mut schemas,
+        )
+        .await
+        .map_err(CommandError::from)?;
+        crate::data_transfer::sql_file::validate_target_ir(
+            src_adapter.as_ref(),
+            driver.as_ref(),
+            target_driver.as_ref(),
+            &schemas,
+        )
+        .map_err(CommandError::from)?;
+    }
     let cancelled = match request.job_id.as_deref() {
         Some(id) => Some(jobs::ensure_job(id).await),
         None => None,
     };
-    let result = crate::data_transfer::sql_file::execute(
+    let result = crate::data_transfer::sql_file::execute_with_target(
         driver.as_ref(),
+        target_driver.as_ref(),
+        adapters.as_ref().map(|(src, _)| src.as_ref()),
+        adapters.as_ref().map(|(_, tgt)| tgt.as_ref()),
         &handle,
         &job,
         &inspected,

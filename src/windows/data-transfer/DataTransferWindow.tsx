@@ -24,7 +24,9 @@ import { useI18n } from '../../hooks/useI18n';
 import { useLocaleDomains } from '../../hooks/useLocaleDomains';
 import { useSettings } from '../../hooks/useSettings';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { connectionCommands } from '../../commands/connection';
 import { cn } from '../../lib/cn';
+import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { listenCrossWindow } from '../../lib/crossWindowBus';
 import {
   isTransferLimitationsDismissed,
@@ -77,6 +79,8 @@ export function DataTransferWindow() {
   const [targetDatabase, setTargetDatabase] = useState('');
   const [destinationMode, setDestinationMode] = useState<'database' | 'sqlFile'>('database');
   const [sqlFileTarget, setSqlFileTarget] = useState<TransferSqlFileTarget | null>(null);
+  const [sqlFileDialect, setSqlFileDialect] = useState('source');
+  const [availableSqlDialects, setAvailableSqlDialects] = useState<string[]>([]);
   const [mode, setMode] = useState<TransferMode>('data');
   const [writeMode, setWriteMode] = useState<WriteMode>('insert');
   const [tables, setTables] = useState<TransferTableResult[]>([]);
@@ -116,6 +120,21 @@ export function DataTransferWindow() {
   useEffect(() => {
     loadConnections();
   }, [loadConnections]);
+
+  useEffect(() => {
+    void connectionCommands
+      .getAvailableDrivers()
+      .then((drivers) => {
+        if (!Array.isArray(drivers)) return;
+        setAvailableSqlDialects(
+          drivers.filter((driver) => {
+            const meta = DB_REGISTRY[driver as keyof typeof DB_REGISTRY];
+            return meta?.supportsSQL === true && meta.category === 'sql';
+          }),
+        );
+      })
+      .catch(() => setAvailableSqlDialects([]));
+  }, []);
 
   const migrationPrefillRef = useMigrationEndpointPrefill(connections, setSourceId, setTargetId);
 
@@ -367,7 +386,10 @@ export function DataTransferWindow() {
         if (!sqlFileTarget) return null;
         return {
           source: { dbSessionId: srcConnId, database: sourceDatabase },
-          sqlFileTarget,
+          sqlFileTarget: {
+            ...sqlFileTarget,
+            databaseType: sqlFileDialect === 'source' ? undefined : sqlFileDialect,
+          },
           mode,
           writeMode,
           tables: tablesToMappings(),
@@ -395,6 +417,7 @@ export function DataTransferWindow() {
       targetDatabase,
       destinationMode,
       sqlFileTarget,
+      sqlFileDialect,
       mode,
       writeMode,
       tables,
@@ -836,6 +859,37 @@ export function DataTransferWindow() {
                     placeholder={t('transfer.selectDatabase')}
                     triggerDataAttrs={{ 'data-testid': 'data-transfer-source-database' }}
                   />
+                  <label className="block text-sm font-medium text-fg">
+                    {t('transfer.destination.sqlDialect')}
+                  </label>
+                  <Select
+                    value={sqlFileDialect}
+                    options={[
+                      {
+                        value: 'source',
+                        label: t('transfer.destination.sourceDialect', {
+                          dialect: sourceConn?.databaseType ?? 'source',
+                        }),
+                      },
+                      ...availableSqlDialects
+                        .filter((driver) => driver !== sourceConn?.databaseType)
+                        .map((driver) => ({
+                          value: driver,
+                          label: DB_REGISTRY[driver as keyof typeof DB_REGISTRY]?.label ?? driver,
+                        })),
+                    ]}
+                    onChange={(value) => {
+                      setSqlFileDialect(value);
+                      setPreview(null);
+                    }}
+                    placeholder={t('transfer.destination.sourceDialect', {
+                      dialect: sourceConn?.databaseType ?? 'source',
+                    })}
+                    triggerDataAttrs={{ 'data-testid': 'data-transfer-sql-file-dialect' }}
+                  />
+                  <p className="text-xs text-fg-muted">
+                    {t('transfer.destination.sqlDialectHint')}
+                  </p>
                   <p className="text-xs text-fg-muted">
                     {sqlFileTarget
                       ? t('transfer.destination.sqlFileHint')

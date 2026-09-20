@@ -337,6 +337,7 @@ describe('DataTransferWindow', () => {
     });
     invokeMock.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'get_connections') return [pgSrc, pgTgt];
+      if (cmd === 'get_available_drivers') return ['postgresql', 'mysql', 'redis'];
       if (cmd === 'connect_dedicated') {
         const conn = args?.connectionId as string;
         const db = (args?.database as string | null | undefined) ?? 'default';
@@ -535,6 +536,34 @@ describe('DataTransferWindow', () => {
     fireEvent.click(screen.getByTestId('data-transfer-next'));
     await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
     expect(previewTransferMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends the selected registered SQL file dialect into preview', async () => {
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('get_connections'));
+    await dismissLimitationsDialog();
+
+    fireEvent.click(screen.getByTestId('data-transfer-destination-sql-file'));
+    await waitFor(() =>
+      expect(screen.getByTestId('data-transfer-destination-sql-file')).toHaveTextContent(
+        'transfer.destination.sqlFileSelected',
+      ),
+    );
+    await pickSelect('data-transfer-source', 'PG Src (postgresql)');
+    await waitFor(() => expect(getDatabasesMock).toHaveBeenCalled());
+    await pickSelect('data-transfer-source-database', 'src');
+    await pickSelect('data-transfer-sql-file-dialect', 'MySQL');
+
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+    expect(previewTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sqlFileTarget: { fileToken: 'sql-file-token', databaseType: 'mysql' },
+      }),
+    );
   });
 
   it('[tester] clears empty bounds, toggles endpoint inclusivity, and disables the recordset', async () => {

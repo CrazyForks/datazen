@@ -489,6 +489,53 @@ mod tests {
     }
 
     #[test]
+    fn sql_file_target_dialect_is_bound_to_the_immutable_plan() {
+        let store = TransferPlanStore::new();
+        let source = crate::testing::mock_driver::MockDriver::new("postgresql", Default::default());
+        let target = crate::testing::mock_driver::MockDriver::new("mysql", Default::default());
+        let preview = TransferPreview {
+            plan_id: String::new(),
+            pairing_path: "sqlFile".into(),
+            mode: TransferMode::Data,
+            write_mode: WriteMode::Insert,
+            ddl: vec![],
+            write_plans: vec![],
+            warnings: vec!["mysql".into()],
+            can_execute: true,
+            block_reason: None,
+        };
+        let mut sql_job = job();
+        sql_job.target = None;
+        sql_job.sql_file_target = Some(crate::data_transfer::SqlFileTarget {
+            file_token: "opaque-file".into(),
+            database_type: Some("mysql".into()),
+        });
+        let id = store
+            .issue_with_ttl(
+                sql_job.clone(),
+                &preview,
+                source.as_ref(),
+                target.as_ref(),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+                Duration::from_secs(60),
+            )
+            .unwrap();
+        sql_job.sql_file_target.as_mut().unwrap().database_type = Some("postgresql".into());
+        let stored = store.peek(&id).unwrap();
+        assert_eq!(stored.target_driver_type, "mysql");
+        assert_eq!(
+            stored
+                .job
+                .sql_file_target
+                .as_ref()
+                .and_then(|target| target.database_type.as_deref()),
+            Some("mysql")
+        );
+    }
+
+    #[test]
     fn test_tester_run_request_rejects_all_client_owned_execution_payloads() {
         for field in ["sql", "ddl", "mapping", "rows"] {
             let mut payload = serde_json::Map::new();

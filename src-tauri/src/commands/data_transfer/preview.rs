@@ -36,6 +36,32 @@ async fn preview_sql_file_target(
         .get_session(&job.source.db_session_id)
         .await
         .cmd_err("preview_data_transfer")?;
+    let target_driver =
+        crate::data_transfer::sql_file::resolve_target_driver(src_driver.clone(), destination)
+            .map_err(CommandError::from)?;
+    let explicit_target_dialect = destination.normalized_database_type().is_some();
+    let adapters = if explicit_target_dialect {
+        let target_type = destination
+            .normalized_database_type()
+            .ok_or_else(|| CommandError::Validation("SQL file target dialect is empty".into()))?;
+        state
+            .sync_adapters
+            .ensure_pair(&src_config.database_type, &target_type.to_string())
+            .map_err(CommandError::Validation)?;
+        let src_adapter = state
+            .sync_adapters
+            .get_source(&src_config.database_type)
+            .ok_or_else(|| CommandError::Validation("missing source sync adapter".into()))?;
+        let tgt_adapter = state
+            .sync_adapters
+            .get_target(&target_type.to_string())
+            .ok_or_else(|| CommandError::Validation("missing target sync adapter".into()))?;
+        Some((src_adapter, tgt_adapter))
+    } else {
+        None
+    };
+    crate::data_transfer::sql_file::validate_target_dialect_job(&job)
+        .map_err(CommandError::from)?;
     let source_tables = src_driver
         .get_tables(&src_handle, &job.source.database)
         .await
@@ -61,6 +87,26 @@ async fn preview_sql_file_target(
         {
             source_schemas.insert(table.name.clone(), schema);
         }
+    }
+    if let Some((src_adapter, _)) = &adapters {
+        crate::data_transfer::structure::enrich_source_types(
+            src_adapter.as_ref(),
+            src_driver.as_ref(),
+            &src_handle,
+            &job.source,
+            &mut source_schemas,
+        )
+        .await
+        .map_err(CommandError::from)?;
+    }
+    if let Some((src_adapter, _)) = &adapters {
+        crate::data_transfer::sql_file::validate_target_ir(
+            src_adapter.as_ref(),
+            src_driver.as_ref(),
+            target_driver.as_ref(),
+            &source_schemas,
+        )
+        .map_err(CommandError::from)?;
     }
 
     let mappings = if job.tables.is_empty() {
@@ -130,7 +176,10 @@ async fn preview_sql_file_target(
         write_mode: job.write_mode,
         ddl: Vec::new(),
         write_plans: Vec::new(),
-        warnings: vec!["SQL file uses the source database dialect and is published atomically after all selected tables succeed".into()],
+        warnings: vec![format!(
+            "SQL file uses the '{}' database dialect and is published atomically after all selected tables succeed",
+            target_driver.driver_type()
+        )],
         can_execute: true,
         block_reason: None,
     };
@@ -166,13 +215,26 @@ async fn preview_sql_file_target(
                 .filter(|ddl| !ddl.is_empty())
             {
                 Some(ddl) => ddl.to_string(),
-                None => crate::data_transfer::sql_file::create_table_sql(
-                    src_driver.as_ref(),
-                    &job,
-                    table,
-                    schema,
-                )
-                .map_err(CommandError::from)?,
+                None => match &adapters {
+                    Some((src_adapter, tgt_adapter)) => {
+                        crate::data_transfer::sql_file::create_table_sql_with_target(
+                            src_adapter.as_ref(),
+                            tgt_adapter.as_ref(),
+                            target_driver.as_ref(),
+                            &job,
+                            table,
+                            schema,
+                        )
+                        .map_err(CommandError::from)?
+                    }
+                    None => crate::data_transfer::sql_file::create_table_sql(
+                        src_driver.as_ref(),
+                        &job,
+                        table,
+                        schema,
+                    )
+                    .map_err(CommandError::from)?,
+                },
             };
             preview
                 .ddl
@@ -231,14 +293,13 @@ async fn preview_sql_file_target(
         job,
         &preview,
         src_driver.as_ref(),
-        src_driver.as_ref(),
+        target_driver.as_ref(),
         &source_schemas,
         &target_schemas,
         false,
     )
     .map_err(CommandError::from)?;
     preview.plan_id = plan_id;
-    let _ = src_config;
     Ok(preview)
 }
 

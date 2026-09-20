@@ -198,3 +198,13 @@ The first independent pass found four P1 defects: empty selections disabled ever
 Independent final testing passed Vitest 32/32, injected Data Transfer command tests 17/17, the full `data_transfer` Rust module 79/79, TypeScript checking, and the formal `CI=true pnpm tauri:build:webdriver` App/DMG build. Opaque token/path validation, immutable plan checks, atomic failure preservation and database-target compatibility passed. The earlier 29/29, 16/16 and 3/3 defect-reproduction suites remain recorded in the track log.
 
 This gate closes SQL-file output for the covered source dialects and the four UI/publication defects. Cross-dialect SQL-file target dialect selection, index/foreign-key/dependency ordering, encoding/compression profiles, resumable checkpoints, per-table mapping editing in SQL-file mode, and broader driver coverage remain later parity work.
+
+## Cross-dialect SQL-file target release gate (2026-09-20)
+
+The cross-dialect SQL-file wave adds an optional registered target driver to the opaque `SqlFileTarget`. When omitted, the source driver remains the rendering dialect for backwards compatibility. When selected, preview and execution resolve the target through the server-side driver registry, bind its driver type and protocol into the one-shot immutable plan, and render target identifiers, DDL, and literals through the target adapter while source discovery, filters, recordsets, and scans continue to use the source driver. A source catalog is never copied implicitly into the SQL-file target relation; the target currently uses the selected driver's default catalog and the source schema when that family treats schema as a relation qualifier.
+
+Cross-family preview and execution fail closed when no registered SQL driver or sync adapter exists, when the source IR contains an unsupported native type, or when a custom DDL override would bypass target-dialect rendering. The SQL-file UI exposes only registered SQL dialects and keeps the reviewed DDL read-only. Database destinations retain their existing path.
+
+Focused verification passed the injected Rust Data Transfer suite, the PG-to-MySQL SQL-file rendering and unregistered-driver tests, the immutable-plan test, the SQL-file command preview/execute test, the Data Transfer Vitest suites, and TypeScript checking. A formal WebDriver build remains a release follow-up when shared build disk is available.
+
+This gate closes target-dialect selection and target-dialect rendering for the covered registered SQL drivers. It does not add an explicit target catalog/schema field, dependency-aware ordering, encoding/compression profiles, resumable checkpoints, per-table SQL-file mapping editing, or representation-specific value policies beyond the registered adapter contract.

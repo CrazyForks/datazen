@@ -78,6 +78,8 @@ export interface TransferJob {
 
 export interface TransferSqlFileTarget {
   fileToken: string;
+  /** Registered SQL driver used to render the artifact; omitted means source dialect. */
+  databaseType?: string;
 }
 
 export interface TransferTableResult {
