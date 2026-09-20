@@ -81,6 +81,7 @@ export function DataTransferWindow() {
   const [destinationMode, setDestinationMode] = useState<'database' | 'sqlFile'>('database');
   const [sqlFileTarget, setSqlFileTarget] = useState<TransferSqlFileTarget | null>(null);
   const [sqlFileDialect, setSqlFileDialect] = useState('source');
+  const [sqlFileEncoding, setSqlFileEncoding] = useState<'utf8' | 'utf8Bom'>('utf8');
   const [sqlFileDatabase, setSqlFileDatabase] = useState('');
   const [sqlFileSchema, setSqlFileSchema] = useState('');
   const [availableSqlDialects, setAvailableSqlDialects] = useState<string[]>([]);
@@ -392,6 +393,7 @@ export function DataTransferWindow() {
           sqlFileTarget: {
             ...sqlFileTarget,
             databaseType: sqlFileDialect === 'source' ? undefined : sqlFileDialect,
+            encoding: sqlFileEncoding === 'utf8' ? undefined : sqlFileEncoding,
             ...(sqlFileDatabase.trim() ? { database: sqlFileDatabase.trim() } : {}),
             ...(sqlFileSchema.trim() ? { schema: sqlFileSchema.trim() } : {}),
           },
@@ -423,6 +425,7 @@ export function DataTransferWindow() {
       destinationMode,
       sqlFileTarget,
       sqlFileDialect,
+      sqlFileEncoding,
       sqlFileDatabase,
       sqlFileSchema,
       mode,
@@ -897,6 +900,29 @@ export function DataTransferWindow() {
                   <p className="text-xs text-fg-muted">
                     {t('transfer.destination.sqlDialectHint')}
                   </p>
+                  <label className="block text-sm">
+                    <span className="text-xs font-medium text-fg">
+                      {t('transfer.destination.sqlEncoding')}
+                    </span>
+                    <Select
+                      value={sqlFileEncoding}
+                      options={[
+                        {
+                          value: 'utf8',
+                          label: t('transfer.destination.sqlEncodingUtf8'),
+                        },
+                        {
+                          value: 'utf8Bom',
+                          label: t('transfer.destination.sqlEncodingUtf8Bom'),
+                        },
+                      ]}
+                      onChange={(value) => {
+                        setSqlFileEncoding(value as 'utf8' | 'utf8Bom');
+                        setPreview(null);
+                      }}
+                      triggerDataAttrs={{ 'data-testid': 'data-transfer-sql-file-encoding' }}
+                    />
+                  </label>
                   <div className="grid grid-cols-2 gap-3 border-t border-edge pt-3">
                     <label className="block text-sm">
                       <span className="text-xs font-medium text-fg">

@@ -155,6 +155,9 @@ const pack = {
   'transfer.destination.sourceDialect': 'Source dialect ({dialect})',
   'transfer.destination.sqlDialectHint':
     'Choose a registered target dialect. The preview and generated file use its identifiers, types, and literals.',
+  'transfer.destination.sqlEncoding': 'SQL file encoding',
+  'transfer.destination.sqlEncodingUtf8': 'UTF-8',
+  'transfer.destination.sqlEncodingUtf8Bom': 'UTF-8 with BOM',
   'transfer.destination.sourceDatabase': 'Source database',
   'transfer.destination.targetDatabase': 'Target database/catalog (optional)',
   'transfer.destination.targetDatabasePlaceholder': 'Leave blank for dialect default',
