@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useSettingsStore } from '../../../../../src/stores/settingsStore';
-import { useRedisGate } from '../useRedisGate';
+import { useRedisGate } from '../shared/useRedisGate';
 
 vi.mock('../../../../../src/hooks/useI18n', () => ({
   useI18n: () => ({

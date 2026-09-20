@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildKeyTreeRows, buildServerTreeRows, folderLabel, splitKeyNamespace } from '../keyTree';
-import type { ChildEntry } from '../redisInvoke';
+import {
+  buildKeyTreeRows,
+  buildServerTreeRows,
+  folderLabel,
+  splitKeyNamespace,
+} from '../key-browser/keyTree';
+import type { ChildEntry } from '../shared/redisInvoke';
 import type { KeyEntry } from '../../../../../src/types';
 
 function entry(key: string): KeyEntry {

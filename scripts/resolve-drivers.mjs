@@ -236,10 +236,10 @@ const BASIC_PATH_FRONTEND = {
   },
   redis: {
     dbTypes: [{ id: 'redis', metaExport: 'redisMeta' }],
-    metaPath: '../../packages/drivers/redis/ui/meta',
+    metaPath: '../../packages/drivers/redis/ui/shared/meta',
     connectionForm: {
       component: 'RedisConnectionWizard',
-      path: '../../packages/drivers/redis/ui/ConnectionWizard',
+      path: '../../packages/drivers/redis/ui/connection/ConnectionWizard',
       formVariant: 'redis',
       advanced: 'RedisTlsFields',
       validator: { export: 'redisValidate' },
@@ -248,21 +248,21 @@ const BASIC_PATH_FRONTEND = {
       {
         dbType: 'redis',
         export: 'parseRedisConnectionClipboard',
-        path: '../../packages/drivers/redis/ui/parseRedisClipboard',
+        path: '../../packages/drivers/redis/ui/connection/parseRedisClipboard',
       },
     ],
     connectionView: {
       component: 'RedisConnectionView',
-      path: '../../packages/drivers/redis/ui/RedisConnectionView',
+      path: '../../packages/drivers/redis/ui/connection/RedisConnectionView',
       viewMode: 'keyvalue',
     },
     settings: {
       driverId: 'redis',
       label: 'Redis',
       sectionExport: 'RedisSettingsSection',
-      sectionPath: '../../packages/drivers/redis/ui/settings',
+      sectionPath: '../../packages/drivers/redis/ui/connection/settings',
       schemaExport: 'redisSettingsSchema',
-      schemaPath: '../../packages/drivers/redis/ui/settings',
+      schemaPath: '../../packages/drivers/redis/ui/connection/settings',
     },
   },
   mongodb: {

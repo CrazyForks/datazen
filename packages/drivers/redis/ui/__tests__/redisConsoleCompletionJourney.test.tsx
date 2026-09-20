@@ -15,12 +15,12 @@ vi.mock('../../../../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('../redisInvoke', () => ({
+vi.mock('../shared/redisInvoke', () => ({
   redisCommandInvoke: (...args: unknown[]) => commandInvoke(...args),
   invokeScanKeys: (...args: unknown[]) => scanKeys(...args),
 }));
 
-import { RedisConsole } from '../RedisConsole';
+import { RedisConsole } from '../console/RedisConsole';
 
 afterEach(() => {
   cleanup();

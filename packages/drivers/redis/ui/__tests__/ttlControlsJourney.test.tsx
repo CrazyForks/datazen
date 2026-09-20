@@ -29,8 +29,8 @@ vi.mock('../../../../../src/hooks/useI18n', () => ({
   }),
 }));
 
-import { TtlControls } from '../TtlControls';
-import type { PluginInvokeFn } from '../keyEditorsInvokes';
+import { TtlControls } from '../value-editors/TtlControls';
+import type { PluginInvokeFn } from '../value-editors/keyEditorsInvokes';
 
 afterEach(() => {
   cleanup();
@@ -118,7 +118,9 @@ describe('Journey: Set absolute expiry via EXPIREAT', () => {
 
     // ── 2. Act ───────────────────────────────────────────────────────────
     // Find the datetime-local input specifically by its type attribute
-    const datetimeInput = document.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+    const datetimeInput = document.querySelector(
+      'input[type="datetime-local"]',
+    ) as HTMLInputElement;
     // Use a fixed future time: 2030-01-15T12:00
     fireEvent.change(datetimeInput, { target: { value: '2030-01-15T12:00' } });
 
@@ -138,7 +140,10 @@ describe('Journey: Set absolute expiry via EXPIREAT', () => {
 
     // Verify the unix timestamp is roughly 2030-01-15 (± timezone offset)
     const callArgs = invoke.mock.calls.find(
-      (c) => c[0] === 'redis' && c[1] === 'set_ttl' && typeof (c[2] as Record<string, unknown>).expireAt === 'number',
+      (c) =>
+        c[0] === 'redis' &&
+        c[1] === 'set_ttl' &&
+        typeof (c[2] as Record<string, unknown>).expireAt === 'number',
     );
     expect(callArgs).toBeTruthy();
     const expireAt = (callArgs![2] as { expireAt: number }).expireAt;
@@ -233,7 +238,9 @@ describe('Journey: Error on invalid datetime', () => {
 
     // ── 2. Act ───────────────────────────────────────────────────────────
     // Find the datetime-local input specifically by its type attribute
-    const datetimeInput = document.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+    const datetimeInput = document.querySelector(
+      'input[type="datetime-local"]',
+    ) as HTMLInputElement;
     expect(datetimeInput).toBeTruthy();
     // Set a value that Date.parse cannot parse
     fireEvent.change(datetimeInput, { target: { value: 'not-a-date' } });
@@ -268,7 +275,9 @@ describe('Journey: TTL set → persist → set again cycle', () => {
     const persistBtn = screen.getByRole('button', { name: 'Persist' });
     const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
     // Find datetime-local by type attribute
-    const datetimeInput = document.querySelector('input[type="datetime-local"]') as HTMLInputElement;
+    const datetimeInput = document.querySelector(
+      'input[type="datetime-local"]',
+    ) as HTMLInputElement;
 
     // ── 2. Act: Step A — Set TTL ─────────────────────────────────────────
     fireEvent.change(ttlInput, { target: { value: '7200' } });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { RedisConnectionWizard, RedisTlsFields } from '../ConnectionWizard';
+import { RedisConnectionWizard, RedisTlsFields } from '../connection/ConnectionWizard';
 import type { ConnectionFormState } from '../../../../../src/components/connection/useConnectionForm';
 
 vi.mock('../../../../../src/hooks/useI18n', () => ({
@@ -32,9 +32,7 @@ function stubForm(overrides: Partial<ConnectionFormState> = {}): ConnectionFormS
 
 function mockClipboard(text: string | Promise<string> | Error) {
   const readText =
-    text instanceof Error
-      ? vi.fn().mockRejectedValue(text)
-      : vi.fn().mockResolvedValue(text);
+    text instanceof Error ? vi.fn().mockRejectedValue(text) : vi.fn().mockResolvedValue(text);
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { readText },

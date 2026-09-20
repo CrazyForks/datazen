@@ -13,13 +13,13 @@ vi.mock('../../../../../src/hooks/useI18n', () => ({
 }));
 
 const decodeValue = vi.fn();
-vi.mock('../redisInvoke', () => ({
+vi.mock('../shared/redisInvoke', () => ({
   redisCommandInvoke: vi.fn(),
   invokeDecodeValue: (...a: unknown[]) => decodeValue(...a),
 }));
 
-import { ValueViewer } from '../ValueViewer';
-import { bytesToBase64 } from '../valueView/codecs';
+import { ValueViewer } from '../value-editors/ValueViewer';
+import { bytesToBase64 } from '../value-editors/valueView/codecs';
 
 const HOSTILE_B64 = bytesToBase64(new Uint8Array([0x00, 0x01, 0xff, 0x41]));
 const frame = {

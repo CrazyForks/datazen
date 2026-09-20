@@ -5,7 +5,7 @@ import path from 'node:path';
 import { WebContextMenuHost } from '../../../../../src/components/ui/WebContextMenu';
 import { showNativeContextMenu } from '../../../../../src/lib/nativeContextMenu';
 import { useContextMenuStore } from '../../../../../src/stores/contextMenuStore';
-import { buildRedisKeyContextMenuItems } from '../redisKeyContextMenu';
+import { buildRedisKeyContextMenuItems } from '../key-browser/redisKeyContextMenu';
 
 afterEach(() => {
   useContextMenuStore.getState().hide();
@@ -56,7 +56,7 @@ describe('Redis key web context menu', () => {
 
   it('wires RedisWorkbench key rows to showNativeContextMenu with client coords', () => {
     const src = fs.readFileSync(
-      path.resolve(import.meta.dirname, '../RedisWorkbench.tsx'),
+      path.resolve(import.meta.dirname, '../key-browser/RedisWorkbench.tsx'),
       'utf8',
     );
     expect(src).toContain('showNativeContextMenu');

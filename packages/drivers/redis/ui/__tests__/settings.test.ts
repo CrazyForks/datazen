@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applySchemaDefaults } from '../../../../../src/lib/driverSettings';
-import { redisSettingsSchema } from '../settings';
+import { redisSettingsSchema } from '../connection/settings';
 
 describe('redisSettingsSchema', () => {
   it('defaults clusterRouting to auto', () => {

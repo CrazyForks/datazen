@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { PubSubPanel } from '../PubSubPanel';
+import { PubSubPanel } from '../observe/PubSubPanel';
 
 // jsdom does not implement scrollIntoView
 Element.prototype.scrollIntoView = vi.fn();
@@ -26,11 +26,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 const mockInvoke = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('../redisInvoke', () => ({
+vi.mock('../shared/redisInvoke', () => ({
   redisCommandInvoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-vi.mock('../useRedisGate', () => ({
+vi.mock('../shared/useRedisGate', () => ({
   useRedisGate: () => ({ gateWrite: async () => true, gateDialog: null }),
 }));
 

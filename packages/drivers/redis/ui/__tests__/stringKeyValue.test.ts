@@ -7,13 +7,13 @@ import {
   tryPrettyJson,
   unwrapStringKeyValue,
   valueLooksCompressed,
-} from '../stringKeyValue';
+} from '../value-editors/stringKeyValue';
 
 describe('unwrapStringKeyValue', () => {
   it('unwraps { value } payload from get_key_detail', () => {
-    expect(
-      unwrapStringKeyValue({ value: '{"name":"张三","level":"vip"}' }),
-    ).toBe('{"name":"张三","level":"vip"}');
+    expect(unwrapStringKeyValue({ value: '{"name":"张三","level":"vip"}' })).toBe(
+      '{"name":"张三","level":"vip"}',
+    );
   });
 
   it('passes through raw strings', () => {
@@ -54,9 +54,9 @@ describe('tryPrettyJson / looksLikeJsonText', () => {
 
 describe('initialStringEditorValue', () => {
   it('pretty-prints JSON stored in the string wrapper', () => {
-    expect(
-      initialStringEditorValue({ value: '{"name":"张三","level":"vip"}' }),
-    ).toBe('{\n  "name": "张三",\n  "level": "vip"\n}');
+    expect(initialStringEditorValue({ value: '{"name":"张三","level":"vip"}' })).toBe(
+      '{\n  "name": "张三",\n  "level": "vip"\n}',
+    );
   });
 
   it('keeps non-JSON strings as-is', () => {
@@ -95,8 +95,8 @@ describe('valueLooksCompressed (PR-1 decompress detection)', () => {
 
   it('detects base64-encoded gzip', () => {
     const magicB64 = Buffer.from([
-      0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff, 0x00,
-      0x00, 0x00, 0x00,
+      0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff,
+      0x00, 0x00, 0x00, 0x00,
     ]).toString('base64');
     expect(valueLooksCompressed(magicB64)).toBe(true);
   });

@@ -13,13 +13,18 @@ vi.mock('../../../../../src/hooks/useI18n', () => ({
 }));
 
 const redisInvoke = vi.fn();
-vi.mock('../redisInvoke', () => ({
+vi.mock('../shared/redisInvoke', () => ({
   redisCommandInvoke: (...a: unknown[]) => redisInvoke(...a),
 }));
 
-import { formatJson, isValidJson, JSON_DISPLAY_MODES, JSON_TEXT_MODES } from '../jsonModes';
-import { JsonModeBar } from '../JsonModeBar';
-import { JsonEditor } from '../JsonEditor';
+import {
+  formatJson,
+  isValidJson,
+  JSON_DISPLAY_MODES,
+  JSON_TEXT_MODES,
+} from '../value-editors/jsonModes';
+import { JsonModeBar } from '../value-editors/JsonModeBar';
+import { JsonEditor } from '../value-editors/JsonEditor';
 
 const DOC = { a: 1, b: [2, 3], c: { d: true } };
 const RAW = JSON.stringify(DOC);
