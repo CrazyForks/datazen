@@ -1,11 +1,8 @@
 import type { Node, Edge } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import type { TableSchema } from '../../../types';
-
-const NODE_BASE_HEIGHT = 40;
-const COL_HEIGHT = 24;
-const GAP_X = 300;
-const GAP_Y = 60;
+import { layoutErGraph } from './layoutErGraph';
+import { ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
 
 /** How an edge between two tables was established. */
 export type ErRelationKind = 'declared' | 'predicted';
@@ -25,6 +22,9 @@ export interface ErPredictedRelation {
   score: number;
 }
 
+/** Shared empty set, so the default argument does not allocate per call. */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
+
 const DECLARED_COLOR = 'var(--c-accent, #3b82f6)';
 const PREDICTED_COLOR = 'var(--c-warning, #e39a27)';
 
@@ -41,6 +41,7 @@ export function buildErGraph(
   schemas: TableSchema[],
   focusTable?: string,
   predicted: readonly ErPredictedRelation[] = [],
+  collapsedTables: ReadonlySet<string> = EMPTY_COLLAPSED,
 ): { nodes: Node[]; edges: Edge[] } {
   // Both kinds mark their columns as foreign keys — a predicted one is a foreign
   // key in everything but the constraint.
@@ -81,17 +82,17 @@ export function buildErGraph(
   }
 
   const visibleNames = new Set(visibleSchemas.map((s) => s.tableName));
-  const cols = Math.max(1, Math.ceil(Math.sqrt(visibleSchemas.length)));
 
-  const nodes: Node[] = visibleSchemas.map((schema, i) => {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
-    const nodeHeight = NODE_BASE_HEIGHT + schema.columns.length * COL_HEIGHT;
-
+  // Sizes are declared up front, exactly as `TableNode` renders them, and the
+  // positions come from the layout below — never from the node's index.
+  const nodes: Node[] = visibleSchemas.map((schema) => {
+    const collapsed = collapsedTables.has(schema.tableName);
     return {
       id: schema.tableName,
       type: 'tableNode',
-      position: { x: col * GAP_X, y: row * (nodeHeight + GAP_Y) },
+      position: { x: 0, y: 0 },
+      width: ER_NODE_WIDTH,
+      height: erNodeHeight(schema.columns.length, collapsed),
       data: {
         tableName: schema.tableName,
         columns: schema.columns.map((c) => ({
@@ -101,6 +102,7 @@ export function buildErGraph(
           isFk: fkColumns.has(`${schema.tableName}.${c.name}`),
         })),
         highlighted: schema.tableName === focusTable,
+        collapsed,
       },
     };
   });
@@ -145,5 +147,7 @@ export function buildErGraph(
     });
   }
 
-  return { nodes, edges };
+  // A layered layout keyed on the relationships, not on the order the backend
+  // happened to return the tables in.
+  return { nodes: layoutErGraph(nodes, edges), edges };
 }

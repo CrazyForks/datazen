@@ -3,6 +3,13 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../../lib/cn';
 import { useI18n } from '../../../hooks/useI18n';
+import {
+  ER_COLUMN_ROW_HEIGHT,
+  ER_COLLAPSED_FOOTER_HEIGHT,
+  ER_HEADER_HEIGHT,
+  ER_MAX_BODY_HEIGHT,
+  ER_NODE_WIDTH,
+} from './nodeMetrics';
 
 interface TableNodeData {
   tableName: string;
@@ -21,17 +28,25 @@ export const TableNode = memo(function TableNode({ data }: NodeProps) {
     <div
       data-testid="er-table-node"
       className={cn(
-        'min-w-[180px] max-w-[280px] rounded-lg border shadow-md',
+        // Width is fixed, not fluid: `layoutErGraph` packs nodes by the width it
+        // is told, and a node free to render between 180px and 280px would be
+        // packed against a number that is often wrong.
+        'rounded-lg border shadow-md',
         highlighted ? 'border-accent bg-accent/5' : 'border-edge bg-surface',
         dimmed && 'opacity-30',
       )}
-      style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}
+      style={{
+        width: ER_NODE_WIDTH,
+        WebkitFontSmoothing: 'antialiased',
+        MozOsxFontSmoothing: 'grayscale',
+      }}
     >
       <div
         className={cn(
-          'flex items-center gap-1 rounded-t-lg px-3 py-2 text-xs font-semibold',
+          'flex items-center gap-1 rounded-t-lg px-3 text-xs font-semibold',
           highlighted ? 'bg-accent/15 text-accent' : 'bg-surface-alt text-fg',
         )}
+        style={{ height: ER_HEADER_HEIGHT }}
       >
         <button
           type="button"
@@ -48,15 +63,16 @@ export const TableNode = memo(function TableNode({ data }: NodeProps) {
         <span className="ml-auto text-[10px] font-normal text-fg-muted">{columns.length}</span>
       </div>
       {!collapsed && (
-        <div className="max-h-[300px] overflow-y-auto">
+        <div className="overflow-y-auto" style={{ maxHeight: ER_MAX_BODY_HEIGHT }}>
           {columns.map((col) => (
             <div
               key={col.name}
               className={cn(
-                'flex items-center gap-2 border-t border-edge/50 px-3 py-1 text-[11px]',
+                'flex items-center gap-2 border-t border-edge/50 px-3 text-[11px]',
                 col.isPk && 'bg-yellow-500/5',
                 col.isFk && 'bg-accent/5',
               )}
+              style={{ height: ER_COLUMN_ROW_HEIGHT }}
             >
               {col.isPk && (
                 <span className="shrink-0 rounded bg-yellow-500/20 px-1 text-[9px] font-bold text-yellow-500">
@@ -75,7 +91,10 @@ export const TableNode = memo(function TableNode({ data }: NodeProps) {
         </div>
       )}
       {collapsed && (
-        <div className="border-t border-edge/50 px-3 py-1 text-[10px] text-fg-muted">
+        <div
+          className="flex items-center border-t border-edge/50 px-3 text-[10px] text-fg-muted"
+          style={{ height: ER_COLLAPSED_FOOTER_HEIGHT }}
+        >
           {columns.length} {t('erDiagram.columns')}
         </div>
       )}

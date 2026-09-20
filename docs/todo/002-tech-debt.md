@@ -166,14 +166,17 @@ Rust 侧为 `packages/driver-api` 的 `supports_offset()`（默认 `true`，
 
 ---
 
-## P2-5 `e2e/specs/er-diagram.ts` ER-008（PNG 导出）在 HEAD 即失败
+## P2-5 ~~`e2e/specs/er-diagram.ts` ER-008（PNG 导出）在 HEAD 即失败~~ 已解决
 
 **现象**：`Error: ER PNG export did not write <temp>.png`，稳定复现，非抖动。
 
 **已核实与近期改动无关**：在改动前的代码上（`git stash` 后重新构建）跑该 spec 同样
 7 passing / 1 failing，失败项就是 ER-008。
 
-**影响**：ER spec 无法作为「全绿」验收依据；新增的 ER-009（推测关系）不受影响。
+**已解决**：改为拓扑布局后该 spec **10 passing / 0 failing**，ER-008 通过。原先的
+手写网格把节点铺得极散（宽表预留 1000px、行内 y 跨度 672px），导出整块画布时超时；
+布局收紧后导出在时限内完成。同一轮里 ER-009（推测关系）与新增的 ER-010（真实渲染零
+重叠）也通过。**根因是布局而非导出逻辑**，故不单独立项。
 
 ## P2 — 工程体验
 

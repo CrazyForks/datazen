@@ -300,6 +300,51 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
     expectTrue(/\d/.test(await inferredCount.getText()), '统计面板未显示推测关系数量');
   });
 
+  it('ER-010: 真实渲染的节点之间不得重叠', async () => {
+    // The unit tests check the layout's own arithmetic; this checks that the
+    // arithmetic matches what actually renders. A node whose real height differs
+    // from the height the layout reserved is exactly how the old grid came to
+    // draw a wide table over its neighbour.
+    await browser.switchToWindow(mainWindow);
+    await ensureErDiagramVisible();
+    const search = await $('[data-testid="er-diagram-search"]');
+    if (await search.isExisting()) {
+      await search.clearValue();
+      await browser.pause(400);
+    }
+
+    const result = await browser.execute(() => {
+      const rects = Array.from(document.querySelectorAll('[data-testid="er-table-node"]')).map(
+        (el) => {
+          const r = el.getBoundingClientRect();
+          return { w: r.width, h: r.height, left: r.left, top: r.top };
+        },
+      );
+      const collisions: string[] = [];
+      for (let i = 0; i < rects.length; i++) {
+        for (let j = i + 1; j < rects.length; j++) {
+          const a = rects[i]!;
+          const b = rects[j]!;
+          const overlapX = a.left < b.left + b.w && b.left < a.left + a.w;
+          const overlapY = a.top < b.top + b.h && b.top < a.top + a.h;
+          if (overlapX && overlapY) {
+            collisions.push(
+              `#${i}(${Math.round(a.left)},${Math.round(a.top)} ${Math.round(a.w)}x${Math.round(a.h)}) ` +
+                `#${j}(${Math.round(b.left)},${Math.round(b.top)} ${Math.round(b.w)}x${Math.round(b.h)})`,
+            );
+          }
+        }
+      }
+      return { count: rects.length, collisions };
+    });
+
+    expectTrue(result.count > 0, 'ER 图中没有节点，无法判断重叠');
+    expectTrue(
+      result.collisions.length === 0,
+      `ER 图节点重叠 ${result.collisions.length} 处: ${result.collisions.slice(0, 3).join(' | ')}`,
+    );
+  });
+
   it('ER-007: 搜索框应可过滤表节点', async () => {
     await browser.switchToWindow(mainWindow);
     await ensureErDiagramVisible();

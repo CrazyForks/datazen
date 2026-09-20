@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildErGraph } from '../buildErGraph';
 import type { ErPredictedRelation } from '../buildErGraph';
+import { ER_NODE_WIDTH } from '../nodeMetrics';
+import { ER_LAYOUT_MARGIN } from '../layoutErGraph';
 import type { TableSchema } from '../../../../types';
 
 function makeSchema(
@@ -270,17 +272,70 @@ describe('buildErGraph', () => {
   });
 
   describe('layout', () => {
-    it('uses grid layout with sqrt-based columns', () => {
+    it('places a referenced table to the right of the table referencing it', () => {
+      // `order_items` references `orders`, which references `users`. The layered
+      // layout must run that chain left to right, so an edge leaves the child's
+      // right side and enters the parent's left — the handles TableNode draws.
       const { nodes } = buildErGraph(allSchemas);
-      // 4 tables -> sqrt(4) = 2 columns
-      const xValues = new Set(nodes.map((n) => n.position.x));
-      expect(xValues.size).toBe(2);
+      const x = (id: string) => nodes.find((n) => n.id === id)!.position.x;
+      expect(x('users')).toBeGreaterThan(x('orders'));
+      expect(x('orders')).toBeGreaterThan(x('order_items'));
     });
 
-    it('single table is at origin', () => {
+    it('gives every node a declared size the layout can pack against', () => {
+      const { nodes } = buildErGraph(allSchemas);
+      for (const node of nodes) {
+        expect(node.width).toBe(ER_NODE_WIDTH);
+        expect(node.height).toBeGreaterThan(0);
+      }
+    });
+
+    it('leaves a single table at the canvas margin', () => {
       const { nodes } = buildErGraph([usersSchema]);
-      expect(nodes[0].position.x).toBe(0);
-      expect(nodes[0].position.y).toBe(0);
+      // dagre positions centres and pads by the graph margin; React Flow needs
+      // the top-left corner, so the node must not be centred on itself.
+      expect(nodes[0].position.x).toBe(ER_LAYOUT_MARGIN);
+      expect(nodes[0].position.y).toBe(ER_LAYOUT_MARGIN);
+    });
+
+    it('never overlaps two nodes', () => {
+      // The bug this replaced: a wide table above a narrow one overlapped it by
+      // 192px, because the row's y used the node's own height.
+      const { nodes } = buildErGraph(allSchemas);
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i]!;
+          const b = nodes[j]!;
+          const overlapX =
+            a.position.x < b.position.x + (b.width ?? 0) &&
+            b.position.x < a.position.x + (a.width ?? 0);
+          const overlapY =
+            a.position.y < b.position.y + (b.height ?? 0) &&
+            b.position.y < a.position.y + (a.height ?? 0);
+          expect(overlapX && overlapY).toBe(false);
+        }
+      }
+    });
+
+    it('lays out tables with no relationships instead of dropping them', () => {
+      const orphan = makeSchema('orphan', [{ name: 'id', dataType: 'INT' }], ['id']);
+      const { nodes } = buildErGraph([...allSchemas, orphan]);
+      expect(nodes.map((n) => n.id)).toContain('orphan');
+      expect(nodes.find((n) => n.id === 'orphan')!.position).toBeDefined();
+    });
+
+    it('keeps a wide table from colliding with the next rank', () => {
+      const wide = makeSchema(
+        'wide',
+        Array.from({ length: 40 }, (_, i) => ({ name: `c${i}`, dataType: 'INT' })),
+        ['c0'],
+      );
+      const narrow = makeSchema('narrow', [{ name: 'id', dataType: 'INT' }], ['id']);
+      const { nodes } = buildErGraph([wide, narrow]);
+      for (const node of nodes) {
+        expect(Number.isFinite(node.position.x)).toBe(true);
+        expect(Number.isFinite(node.position.y)).toBe(true);
+      }
     });
   });
 
@@ -521,5 +576,64 @@ describe('buildErGraph with inferred relationships', () => {
     const { edges } = buildErGraph(allSchemas, undefined, predicted);
     const inferred = edges.find((e) => e.data?.kind === 'predicted')!;
     expect(inferred.label).toBe('user_id');
+  });
+});
+
+describe('buildErGraph with collapsed tables', () => {
+  it('marks a collapsed table and shrinks the height it reserves', () => {
+    const expanded = buildErGraph(allSchemas);
+    const collapsed = buildErGraph(allSchemas, undefined, [], new Set(['orders']));
+
+    const heightOf = (laid: ReturnType<typeof buildErGraph>, id: string) =>
+      laid.nodes.find((n) => n.id === id)!.height!;
+    const collapsedFlag = (laid: ReturnType<typeof buildErGraph>, id: string) =>
+      laid.nodes.find((n) => n.id === id)!.data.collapsed;
+
+    expect(collapsedFlag(expanded, 'orders')).toBe(false);
+    expect(collapsedFlag(collapsed, 'orders')).toBe(true);
+    expect(heightOf(collapsed, 'orders')).toBeLessThan(heightOf(expanded, 'orders'));
+  });
+
+  it('leaves other tables expanded', () => {
+    const collapsed = buildErGraph(allSchemas, undefined, [], new Set(['orders']));
+    expect(collapsed.nodes.find((n) => n.id === 'users')!.data.collapsed).toBe(false);
+  });
+
+  it('re-runs the layout so the freed space is reclaimed', () => {
+    // Collapsing must move the remaining nodes, otherwise the diagram keeps the
+    // collapsed node's old footprint and a later expansion can overlap a neighbour.
+    const expanded = buildErGraph(allSchemas);
+    const collapsed = buildErGraph(allSchemas, undefined, [], new Set(['orders']));
+    const positions = (laid: ReturnType<typeof buildErGraph>) =>
+      laid.nodes.map((n) => `${n.id}:${n.position.x},${n.position.y}`).join(' ');
+    expect(positions(collapsed)).not.toBe(positions(expanded));
+  });
+
+  it('still never overlaps once a table is collapsed', () => {
+    const collapsed = buildErGraph(
+      allSchemas,
+      undefined,
+      [],
+      new Set(['orders', 'order_items', 'products']),
+    );
+    for (let i = 0; i < collapsed.nodes.length; i++) {
+      for (let j = i + 1; j < collapsed.nodes.length; j++) {
+        const a = collapsed.nodes[i]!;
+        const b = collapsed.nodes[j]!;
+        const overlapX =
+          a.position.x < b.position.x + (b.width ?? 0) &&
+          b.position.x < a.position.x + (a.width ?? 0);
+        const overlapY =
+          a.position.y < b.position.y + (b.height ?? 0) &&
+          b.position.y < a.position.y + (a.height ?? 0);
+        expect(overlapX && overlapY).toBe(false);
+      }
+    }
+  });
+
+  it('lays out the same way when the collapsed set is empty', () => {
+    expect(buildErGraph(allSchemas, undefined, [], new Set()).nodes.map((n) => n.position)).toEqual(
+      buildErGraph(allSchemas).nodes.map((n) => n.position),
+    );
   });
 });

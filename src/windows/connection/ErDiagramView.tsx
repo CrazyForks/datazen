@@ -71,6 +71,17 @@ function ErDiagramInner({
   const [searchQuery, setSearchQuery] = useState('');
   /** Local focus override; syncs from prop when parent changes focusTable. */
   const [activeFocus, setActiveFocus] = useState<string | undefined>(focusTable);
+  /**
+   * Collapsed tables are view state, not node state.
+   *
+   * Collapsing changes a node's height, so it must re-run the layout — otherwise
+   * the diagram keeps a collapsed node's old footprint and an expanded one can be
+   * drawn over its neighbour. Holding it here (rather than in node data) is what
+   * makes the rebuild happen at all.
+   */
+  const [collapsedTables, setCollapsedTables] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -134,52 +145,69 @@ function ErDiagramInner({
     }));
   }, [fkPredictionEnabled, schemas]);
 
-  useEffect(() => {
-    if (loading || error) return;
-    const { nodes: n, edges: e } = buildErGraph(schemas, activeFocus, predictedRelations);
-    setNodes(n);
-    setEdges(e);
-  }, [schemas, activeFocus, predictedRelations, loading, error, setNodes, setEdges]);
+  /**
+   * Search dims rather than filters — a hard filter would hide the very
+   * neighbours that make a match understandable.
+   */
+  const applySearchState = useCallback(
+    (list: Node[]): Node[] => {
+      const query = searchQuery.trim().toLowerCase();
+      return list.map((node) => {
+        const name = (node.data.tableName as string).toLowerCase();
+        const matches = query.length > 0 && name.includes(query);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            highlighted: query.length > 0 ? matches : node.id === activeFocus,
+            dimmed: query.length > 0 ? !matches : false,
+          },
+        };
+      });
+    },
+    [searchQuery, activeFocus],
+  );
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setNodes((nds) =>
-        nds.map((n) => ({
-          ...n,
-          data: {
-            ...n.data,
-            highlighted: n.id === activeFocus,
-            dimmed: false,
-          },
-        })),
-      );
-      return;
-    }
-    const q = searchQuery.toLowerCase();
-    setNodes((nds) =>
-      nds.map((n) => ({
-        ...n,
-        data: {
-          ...n.data,
-          highlighted: (n.data.tableName as string).toLowerCase().includes(q),
-          dimmed: !(n.data.tableName as string).toLowerCase().includes(q),
-        },
-      })),
+    if (loading || error) return;
+    const { nodes: n, edges: e } = buildErGraph(
+      schemas,
+      activeFocus,
+      predictedRelations,
+      collapsedTables,
     );
-  }, [searchQuery, setNodes, activeFocus]);
+    // Search state is reapplied here because a relayout replaces every node.
+    setNodes(applySearchState(n));
+    setEdges(e);
+  }, [
+    schemas,
+    activeFocus,
+    predictedRelations,
+    collapsedTables,
+    loading,
+    error,
+    setNodes,
+    setEdges,
+    applySearchState,
+  ]);
+
+  useEffect(() => {
+    setNodes((nds) => applySearchState(nds));
+  }, [applySearchState, setNodes]);
 
   useEffect(() => {
     const handler = (e: Event) => {
       const tableName = (e as CustomEvent<string>).detail;
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === tableName ? { ...n, data: { ...n.data, collapsed: !n.data.collapsed } } : n,
-        ),
-      );
+      setCollapsedTables((current) => {
+        const next = new Set(current);
+        if (next.has(tableName)) next.delete(tableName);
+        else next.add(tableName);
+        return next;
+      });
     };
     window.addEventListener('er-toggle-collapse', handler);
     return () => window.removeEventListener('er-toggle-collapse', handler);
-  }, [setNodes]);
+  }, []);
 
   const stats = useMemo(() => {
     const tableCount = schemas.length;
