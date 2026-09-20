@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildErGraph } from '../buildErGraph';
+import { buildErGraph, defaultCollapsedTables } from '../buildErGraph';
 import type { ErPredictedRelation } from '../buildErGraph';
-import { ER_NODE_WIDTH } from '../nodeMetrics';
+import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from '../nodeMetrics';
 import { ER_LAYOUT_MARGIN } from '../layoutErGraph';
 import type { TableSchema } from '../../../../types';
 
@@ -635,5 +635,158 @@ describe('buildErGraph with collapsed tables', () => {
     expect(buildErGraph(allSchemas, undefined, [], new Set()).nodes.map((n) => n.position)).toEqual(
       buildErGraph(allSchemas).nodes.map((n) => n.position),
     );
+  });
+});
+
+describe('buildErGraph edge handle routing', () => {
+  const handleOf = (laid: ReturnType<typeof buildErGraph>, id: string) => {
+    const edge = laid.edges.find((e) => e.id === id)!;
+    return { source: edge.sourceHandle, target: edge.targetHandle };
+  };
+
+  it('points a forward edge at the rows it joins', () => {
+    // `orders.user_id` references `users.id`. The layout puts `users` on the
+    // right, so the edge leaves the child's right and enters the parent's left.
+    const { edges } = buildErGraph(allSchemas);
+    const declared = edges.find((e) => e.id === 'orders-fk_orders_user')!;
+    expect(declared.sourceHandle).toBe('user_id:s-r');
+    expect(declared.targetHandle).toBe('id:t-l');
+  });
+
+  it('mirrors the sides for an edge that points leftwards', () => {
+    // Two tables referencing each other: the layered layout cannot keep both
+    // pointing right, so one must be routed from the left.
+    const a = makeSchema(
+      'a',
+      [
+        { name: 'id', dataType: 'INT' },
+        { name: 'b_id', dataType: 'INT' },
+      ],
+      ['id'],
+      [{ name: 'fk_a_b', columns: ['b_id'], referencedTable: 'b', referencedColumns: ['id'] }],
+    );
+    const b = makeSchema(
+      'b',
+      [
+        { name: 'id', dataType: 'INT' },
+        { name: 'a_id', dataType: 'INT' },
+      ],
+      ['id'],
+      [{ name: 'fk_b_a', columns: ['a_id'], referencedTable: 'a', referencedColumns: ['id'] }],
+    );
+    const laid = buildErGraph([a, b]);
+    const x = (id: string) => laid.nodes.find((n) => n.id === id)!.position.x;
+
+    const fromA = handleOf(laid, 'a-fk_a_b');
+    const fromB = handleOf(laid, 'b-fk_b_a');
+    // Whichever table ended up on the right must route from its left side.
+    if (x('b') > x('a')) {
+      expect(fromA).toEqual({ source: 'b_id:s-r', target: 'id:t-l' });
+      expect(fromB).toEqual({ source: 'a_id:s-l', target: 'id:t-r' });
+    } else {
+      expect(fromA).toEqual({ source: 'b_id:s-l', target: 'id:t-r' });
+      expect(fromB).toEqual({ source: 'a_id:s-r', target: 'id:t-l' });
+    }
+  });
+
+  it('falls back to the node-level handles when a table is collapsed', () => {
+    // A collapsed node renders no rows, so there is no row to point at.
+    const { edges } = buildErGraph(allSchemas, undefined, [], new Set(['orders']));
+    const declared = edges.find((e) => e.id === 'orders-fk_orders_user')!;
+    expect(declared.sourceHandle).toBe('node:s-r');
+    expect(declared.targetHandle).toBe('id:t-l');
+  });
+
+  it('falls back to the node-level handles for a self-reference', () => {
+    const employee = makeSchema(
+      'employee',
+      [
+        { name: 'id', dataType: 'INT' },
+        { name: 'manager_id', dataType: 'INT' },
+      ],
+      ['id'],
+      [
+        {
+          name: 'fk_self',
+          columns: ['manager_id'],
+          referencedTable: 'employee',
+          referencedColumns: ['id'],
+        },
+      ],
+    );
+    const { edges } = buildErGraph([employee]);
+    expect(edges[0].sourceHandle).toBe('node:s-r');
+    expect(edges[0].targetHandle).toBe('node:t-l');
+  });
+
+  it('reports only the columns an edge touches', () => {
+    // A wide table must not carry connection points on every row.
+    const { nodes } = buildErGraph(allSchemas);
+    const orders = nodes.find((n) => n.id === 'orders')!;
+    const handleColumns = orders.data.handleColumns as string[];
+    expect(handleColumns).toContain('user_id');
+    expect(handleColumns).toContain('id');
+    expect(handleColumns).not.toContain('total');
+  });
+
+  it('gives every edge handles it can actually use', () => {
+    const laid = buildErGraph(allSchemas);
+    for (const edge of laid.edges) {
+      expect(typeof edge.sourceHandle).toBe('string');
+      expect(typeof edge.targetHandle).toBe('string');
+      const source = laid.nodes.find((n) => n.id === edge.source)!;
+      const target = laid.nodes.find((n) => n.id === edge.target)!;
+      for (const [node, handle, role] of [
+        [source, edge.sourceHandle, 's'],
+        [target, edge.targetHandle, 't'],
+      ] as const) {
+        // Either a node-level fallback, or a column that is declared on the node.
+        if (String(handle).startsWith('node:')) {
+          expect(String(handle)).toBe(`node:${role}-${String(handle).endsWith('-l') ? 'l' : 'r'}`);
+        } else {
+          const column = String(handle).split(':')[0]!;
+          expect(node.data.handleColumns as string[]).toContain(column);
+          expect((node.data.columns as { name: string }[]).map((c) => c.name)).toContain(column);
+        }
+      }
+    }
+  });
+});
+
+describe('buildErGraph wide tables', () => {
+  const wide = (count: number) =>
+    makeSchema(
+      'wide',
+      Array.from({ length: count }, (_, i) => ({ name: `c${i}`, dataType: 'INT' })),
+      ['c0'],
+    );
+
+  it('seeds a very wide table as collapsed', () => {
+    // Without an internal scroll a 60-column table would be a 1478px node.
+    expect(defaultCollapsedTables([wide(60)])).toEqual(new Set(['wide']));
+  });
+
+  it('leaves a table at or below the threshold expanded', () => {
+    expect(defaultCollapsedTables([wide(ER_AUTO_COLLAPSE_COLUMNS)])).toEqual(new Set());
+    expect(defaultCollapsedTables([wide(ER_AUTO_COLLAPSE_COLUMNS + 1)])).toEqual(new Set(['wide']));
+  });
+
+  it('stays expanded when the user expands a wide table', () => {
+    // The seed is a starting point, not a rule: the chevron must work both ways,
+    // so the graph builder must not re-collapse a wide table behind the user.
+    const { nodes } = buildErGraph([wide(60)], undefined, [], new Set());
+    expect(nodes[0].data.collapsed).toBe(false);
+    expect(nodes[0].height).toBe(erNodeHeight(60));
+  });
+
+  it('collapses a wide table when the seeded set is applied', () => {
+    const schemas = [wide(60)];
+    const { nodes } = buildErGraph(schemas, undefined, [], defaultCollapsedTables(schemas));
+    expect(nodes[0].data.collapsed).toBe(true);
+  });
+
+  it('leaves an ordinary schema untouched', () => {
+    const { nodes } = buildErGraph(allSchemas, undefined, [], defaultCollapsedTables(allSchemas));
+    for (const node of nodes) expect(node.data.collapsed).toBe(false);
   });
 });

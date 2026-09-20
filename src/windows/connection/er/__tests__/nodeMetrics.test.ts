@@ -3,9 +3,9 @@ import {
   ER_COLLAPSED_FOOTER_HEIGHT,
   ER_COLUMN_ROW_HEIGHT,
   ER_HEADER_HEIGHT,
-  ER_MAX_BODY_HEIGHT,
   ER_NODE_BORDER,
   ER_NODE_WIDTH,
+  erColumnRowCenterY,
   erNodeBodyHeight,
   erNodeHeight,
 } from '../nodeMetrics';
@@ -28,18 +28,32 @@ describe('ER node metrics', () => {
     );
   });
 
-  it('stops growing once the column list starts scrolling', () => {
-    const capped = ER_HEADER_HEIGHT + ER_MAX_BODY_HEIGHT + ER_NODE_BORDER * 2;
-    // 40 columns would otherwise reserve 40 * 24 = 960px of body.
-    expect(erNodeBodyHeight(40)).toBe(ER_MAX_BODY_HEIGHT);
-    expect(erNodeHeight(40)).toBe(capped);
-    // And the cap must not bite before it is reached.
-    expect(erNodeHeight(5)).toBeLessThan(capped);
+  it('grows with every column, with no scroll cap', () => {
+    // An internal scroll would move the connection points with `scrollTop`.
+    expect(erNodeBodyHeight(40)).toBe(40 * ER_COLUMN_ROW_HEIGHT);
+    expect(erNodeHeight(40)).toBe(
+      ER_HEADER_HEIGHT + 40 * ER_COLUMN_ROW_HEIGHT + ER_NODE_BORDER * 2,
+    );
   });
 
-  it('matches the body height below the cap', () => {
+  it('matches the body height', () => {
     expect(erNodeBodyHeight(3)).toBe(3 * ER_COLUMN_ROW_HEIGHT);
     expect(erNodeBodyHeight(0)).toBe(0);
+  });
+
+  it('centres each column row inside the node', () => {
+    // The first row starts after the border and the header.
+    expect(erColumnRowCenterY(0)).toBe(
+      ER_NODE_BORDER + ER_HEADER_HEIGHT + ER_COLUMN_ROW_HEIGHT / 2,
+    );
+    // Consecutive rows are exactly one row apart.
+    expect(erColumnRowCenterY(3) - erColumnRowCenterY(2)).toBe(ER_COLUMN_ROW_HEIGHT);
+    // And the centre must land inside the node's own height.
+    expect(erColumnRowCenterY(9)).toBeLessThan(erNodeHeight(10));
+  });
+
+  it('clamps a negative column index to the first row', () => {
+    expect(erColumnRowCenterY(-1)).toBe(erColumnRowCenterY(0));
   });
 
   it('ignores a negative column count rather than going above the header', () => {

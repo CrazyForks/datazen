@@ -27,7 +27,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
-import { buildErGraph } from './er/buildErGraph';
+import { buildErGraph, defaultCollapsedTables } from './er/buildErGraph';
 import type { ErPredictedRelation } from './er/buildErGraph';
 import { toPredictionTablesFromSchemas } from '../../lib/relationPrediction/fromTableSchema';
 import { predictRelations } from '../../lib/relationPrediction/predictRelations';
@@ -117,6 +117,9 @@ function ErDiagramInner({
       .then((data) => {
         if (!cancelled) {
           setSchemas(data);
+          // Wide tables start collapsed, but only as a seed: after this the user
+          // owns the collapse state, so expanding one sticks.
+          setCollapsedTables(defaultCollapsedTables(data));
           setLoading(false);
         }
       })

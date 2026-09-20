@@ -2,7 +2,7 @@ import type { Node, Edge } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import type { TableSchema } from '../../../types';
 import { layoutErGraph } from './layoutErGraph';
-import { ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
+import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
 
 /** How an edge between two tables was established. */
 export type ErRelationKind = 'declared' | 'predicted';
@@ -20,6 +20,23 @@ export interface ErPredictedRelation {
   toTable: string;
   columnPairs: readonly { left: string; right: string }[];
   score: number;
+}
+
+/**
+ * The tables a diagram starts collapsed on.
+ *
+ * The column list has no internal scroll, so a table of sixty columns is a
+ * 1478px node that would space its whole rank that far apart. Seeding the
+ * collapsed set — rather than forcing collapse in the graph builder — keeps the
+ * chevron working in both directions: the user can expand such a table, and it
+ * stays expanded.
+ */
+export function defaultCollapsedTables(schemas: readonly TableSchema[]): Set<string> {
+  return new Set(
+    schemas
+      .filter((schema) => schema.columns.length > ER_AUTO_COLLAPSE_COLUMNS)
+      .map((schema) => schema.tableName),
+  );
 }
 
 /** Shared empty set, so the default argument does not allocate per call. */
@@ -86,6 +103,10 @@ export function buildErGraph(
   // Sizes are declared up front, exactly as `TableNode` renders them, and the
   // positions come from the layout below — never from the node's index.
   const nodes: Node[] = visibleSchemas.map((schema) => {
+    // Collapse is read from the caller's set and nothing else. Folding a
+    // "too wide to show" rule in here would make the chevron one-way: the user
+    // could never expand such a table, because the rule would re-collapse it on
+    // every relayout. The initial set is seeded by `defaultCollapsedTables`.
     const collapsed = collapsedTables.has(schema.tableName);
     return {
       id: schema.tableName,
@@ -122,7 +143,13 @@ export function buildErGraph(
         style: { stroke: DECLARED_COLOR },
         markerEnd: { type: MarkerType.ArrowClosed, color: DECLARED_COLOR },
         labelStyle: { fontSize: 10, fill: 'var(--color-fg-muted, #888)' },
-        data: { kind: 'declared' satisfies ErRelationKind },
+        // A composite foreign key spans several rows; the edge meets the first
+        // one, since a line has only one endpoint.
+        data: {
+          kind: 'declared' satisfies ErRelationKind,
+          sourceColumn: fk.columns[0],
+          targetColumn: fk.referencedColumns[0],
+        },
       });
     }
   }
@@ -143,11 +170,100 @@ export function buildErGraph(
       style: { stroke: PREDICTED_COLOR, strokeDasharray: '4 3' },
       markerEnd: { type: MarkerType.ArrowClosed, color: PREDICTED_COLOR },
       labelStyle: { fontSize: 10, fill: PREDICTED_COLOR },
-      data: { kind: 'predicted' satisfies ErRelationKind, score: relation.score },
+      data: {
+        kind: 'predicted' satisfies ErRelationKind,
+        score: relation.score,
+        sourceColumn: relation.columnPairs[0]?.left,
+        targetColumn: relation.columnPairs[0]?.right,
+      },
     });
   }
 
   // A layered layout keyed on the relationships, not on the order the backend
   // happened to return the tables in.
-  return { nodes: layoutErGraph(nodes, edges), edges };
+  const laidOut = layoutErGraph(nodes, edges);
+
+  return { nodes: withHandleColumns(laidOut, edges), edges: withHandles(edges, laidOut) };
+}
+
+/**
+ * Record, per node, which columns an edge actually touches.
+ *
+ * `TableNode` renders connection points only for these columns rather than for
+ * every column: a wide table would otherwise carry four handles per row, and a
+ * schema of a few hundred tables would carry tens of thousands of them.
+ */
+function withHandleColumns(nodes: readonly Node[], edges: readonly Edge[]): Node[] {
+  const touched = new Map<string, Set<string>>();
+  const touch = (table: string, column: unknown) => {
+    if (typeof column !== 'string' || column.length === 0) return;
+    const set = touched.get(table);
+    if (set) set.add(column);
+    else touched.set(table, new Set([column]));
+  };
+
+  for (const edge of edges) {
+    const data = edge.data as { sourceColumn?: string; targetColumn?: string } | undefined;
+    touch(edge.source, data?.sourceColumn);
+    touch(edge.target, data?.targetColumn);
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      handleColumns: [...(touched.get(node.id) ?? [])],
+    },
+  }));
+}
+
+/** Handle id for a column, or the node-level fallback when there is no column. */
+function handleId(column: unknown, role: 's' | 't', side: 'l' | 'r', collapsed: boolean): string {
+  if (collapsed || typeof column !== 'string' || column.length === 0) return `node:${role}-${side}`;
+  return `${column}:${role}-${side}`;
+}
+
+/**
+ * Point each edge at the rows it actually joins.
+ *
+ * Every edge after a layered `LR` layout runs between two different ranks, so it
+ * is horizontal — measured across acyclic, chained and cyclic shapes, none was
+ * vertical. Which side it leaves and enters therefore depends only on which node
+ * is further right, and a reversed edge (a cycle) simply mirrors the pair.
+ */
+function withHandles(edges: readonly Edge[], nodes: readonly Node[]): Edge[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const centreOf = (id: string) => {
+    const node = byId.get(id);
+    if (!node) return undefined;
+    return {
+      x: node.position.x + (node.width ?? 0) / 2,
+      y: node.position.y + (node.height ?? 0) / 2,
+      collapsed: node.data?.collapsed === true,
+    };
+  };
+
+  return edges.map((edge) => {
+    const source = centreOf(edge.source);
+    const target = centreOf(edge.target);
+    const data = edge.data as { sourceColumn?: string; targetColumn?: string } | undefined;
+    if (!source || !target) return edge;
+
+    // A self-reference has no left/right to speak of; leave it on the node-level
+    // handles and let React Flow draw the loop.
+    if (edge.source === edge.target) {
+      return {
+        ...edge,
+        sourceHandle: handleId(data?.sourceColumn, 's', 'r', true),
+        targetHandle: handleId(data?.targetColumn, 't', 'l', true),
+      };
+    }
+
+    const forward = target.x >= source.x;
+    return {
+      ...edge,
+      sourceHandle: handleId(data?.sourceColumn, 's', forward ? 'r' : 'l', source.collapsed),
+      targetHandle: handleId(data?.targetColumn, 't', forward ? 'l' : 'r', target.collapsed),
+    };
+  });
 }

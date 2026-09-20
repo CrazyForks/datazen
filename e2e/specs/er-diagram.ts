@@ -345,6 +345,75 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
     );
   });
 
+  it('ER-011: 连线应指向 FK 所在的那一列，而不是节点垂直中点', async () => {
+    // The row-level handles are positioned with an inline `top` overriding React
+    // Flow's `top: 50%`. Only a real browser can prove that override lands where
+    // the geometry says it should.
+    //
+    // Everything is compared in React Flow's own coordinate space: the edge path
+    // is already in it, and `.react-flow__node` is positioned with a
+    // `translate()` in it. Mixing in `getBoundingClientRect` would compare flow
+    // units against screen pixels and measure the viewport transform instead.
+    await browser.switchToWindow(mainWindow);
+    await ensureErDiagramVisible();
+
+    const result = await browser.execute(
+      (member: string, owner: string) => {
+        const edge = Array.from(document.querySelectorAll('.react-flow__edge')).find((el) => {
+          const id = el.getAttribute('data-id') ?? '';
+          return id.startsWith('predicted-') && id.includes(member) && id.includes(owner);
+        });
+        if (!edge) return { error: 'predicted edge not found' };
+        const path = edge.querySelector('path');
+        if (!path) return { error: 'edge path not found' };
+
+        const node = document.querySelector(`.react-flow__node[data-id="${member}"]`);
+        if (!node) return { error: 'member node not found' };
+        const transform = (node as HTMLElement).style.transform ?? '';
+        const t = /translate\(\s*(-?[\d.]+)px[,\s]+(-?[\d.]+)px/.exec(transform);
+        if (!t) return { error: `unparsable node transform: ${transform}` };
+        const nodeFlowY = Number(t[2]);
+        const nodeHeight = (node as HTMLElement).getBoundingClientRect().height;
+
+        const d = path.getAttribute('d') ?? '';
+        const m = /^M\s*(-?[\d.]+)[,\s]+(-?[\d.]+)/.exec(d.trim());
+        if (!m) return { error: `unparsable path: ${d.slice(0, 40)}` };
+
+        const handle = node.querySelector(`[data-handleid="er_pred_owner_id:s-r"]`);
+        return {
+          endpointOffsetY: Number(m[2]) - nodeFlowY,
+          nodeHeight,
+          hasColumnHandle: !!handle,
+          hasNodeFallback: !!node.querySelector('[data-handleid="node:s-r"]'),
+        };
+      },
+      PRED_MEMBER,
+      PRED_OWNER,
+    );
+
+    expectTrue(!('error' in result), `无法测量连线端点: ${JSON.stringify(result)}`);
+    const r = result as {
+      endpointOffsetY: number;
+      nodeHeight: number;
+      hasColumnHandle: boolean;
+      hasNodeFallback: boolean;
+    };
+
+    // `er_pred_member` is (id, <owner>_id, note): the FK row is index 1, so its
+    // centre is 1 + 36 + 24 + 12 = 73px below the node's top, while the node's
+    // own centre is at 55px. The two are 18px apart, which is what makes this
+    // assertion able to tell the new behaviour from the old.
+    expectTrue(r.hasColumnHandle, 'FK 列上没有生成句柄');
+    expectTrue(
+      Math.abs(r.endpointOffsetY - 73) < 3,
+      `连线端点距节点顶部 ${r.endpointOffsetY}px，期望落在 FK 列行中心 73px`,
+    );
+    expectTrue(
+      Math.abs(r.endpointOffsetY - r.nodeHeight / 2) > 8,
+      `端点 ${r.endpointOffsetY}px 仍接近节点中点 ${r.nodeHeight / 2}px，说明未按列定位`,
+    );
+  });
+
   it('ER-007: 搜索框应可过滤表节点', async () => {
     await browser.switchToWindow(mainWindow);
     await ensureErDiagramVisible();

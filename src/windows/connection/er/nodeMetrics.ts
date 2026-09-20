@@ -22,14 +22,40 @@ export const ER_COLLAPSED_FOOTER_HEIGHT = 24;
 /** The container border, top and bottom. */
 export const ER_NODE_BORDER = 1;
 /**
- * The column list scrolls past this height. A 60-column table is otherwise a
- * 1500px node that no layout can pack usefully.
+ * Above this many columns a table starts collapsed.
+ *
+ * The column list does not scroll (see below), so a 60-column table would be a
+ * 1478px node and would space its whole rank that far apart. Collapsing is the
+ * release valve, and the node says how many columns it is hiding.
  */
-export const ER_MAX_BODY_HEIGHT = 300;
+export const ER_AUTO_COLLAPSE_COLUMNS = 30;
 
-/** Height of the column list, capped by the scroll limit. */
+/**
+ * Height of the column list.
+ *
+ * The list deliberately does **not** scroll. A connection point has to be at a
+ * predictable offset inside its node, and a row inside a scroll container moves
+ * with `scrollTop` — so a handle on a scrolled-out column would put the edge
+ * endpoint outside the node, on top of whatever is drawn there. Precise per-column
+ * edges and an internal scroll are mutually exclusive; the diagram keeps the edges
+ * and collapses wide tables instead.
+ */
 export function erNodeBodyHeight(columnCount: number): number {
-  return Math.min(Math.max(columnCount, 0) * ER_COLUMN_ROW_HEIGHT, ER_MAX_BODY_HEIGHT);
+  return Math.max(columnCount, 0) * ER_COLUMN_ROW_HEIGHT;
+}
+
+/**
+ * Vertical centre of column `index` inside the node, in node-local coordinates.
+ *
+ * This is where that column's handles sit, so an edge can meet the exact row.
+ */
+export function erColumnRowCenterY(index: number): number {
+  return (
+    ER_NODE_BORDER +
+    ER_HEADER_HEIGHT +
+    Math.max(index, 0) * ER_COLUMN_ROW_HEIGHT +
+    ER_COLUMN_ROW_HEIGHT / 2
+  );
 }
 
 /** Total rendered node height, matching `TableNode` exactly. */
