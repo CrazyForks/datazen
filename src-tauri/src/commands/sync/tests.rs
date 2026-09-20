@@ -419,6 +419,34 @@ async fn inspect_data_sync_returns_matched_tables() {
 }
 
 #[tokio::test]
+async fn compare_data_sync_returns_an_opaque_server_plan() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    test.save_and_connect("src-plan").await;
+    test.save_and_connect("tgt-plan").await;
+    let source = test.connect_config("src-plan").await;
+    let target = test.connect_config("tgt-plan").await;
+    let preview = super::compare_data_sync_impl(
+        &test.state,
+        source,
+        target,
+        Vec::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        crate::data_sync::SyncOptions::default(),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(!preview.plan_id.is_empty());
+    assert_eq!(preview.selection_revision, 1);
+}
+
+#[tokio::test]
 async fn execute_data_sync_rejects_read_only_target() {
     use crate::data_sync::{ChangeOperation, SqlStatement};
     use crate::testing::app_state::{sample_postgres_config, TestAppState};

@@ -75,6 +75,24 @@ export interface DataSyncExecutionResult {
   rolledBack: boolean;
 }
 
+export interface DataSyncSelectedRow {
+  sourceTable: string;
+  targetTable: string;
+  operation: DataSyncOperation;
+  key: Value[];
+}
+
+export interface DataSyncSelection {
+  revision: number;
+  rows: DataSyncSelectedRow[];
+}
+
+export interface DataSyncComparisonPreview {
+  planId: string;
+  selectionRevision: number;
+  tables: DataSyncTableResult[];
+}
+
 export interface DataSyncPairingView {
   path: string;
   supported: boolean;
@@ -90,6 +108,73 @@ export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
   batchSize: 1000,
   largeValueMode: 'full',
 };
+
+let activeComparisonPlan: DataSyncComparisonPreview | null = null;
+let activeExecutionOptions: SyncOptions = DEFAULT_SYNC_OPTIONS;
+
+function valueToken(value: Value[]): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function selectionFromTables(
+  plan: DataSyncComparisonPreview,
+  tables: DataSyncTableResult[],
+  options: SyncOptions,
+): DataSyncSelection {
+  const requested = new Set(
+    tables.flatMap((table) =>
+      (table.rows ?? [])
+        .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+        .map((row) => `${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`),
+    ),
+  );
+  const rows = plan.tables.flatMap((table) =>
+    (table.rows ?? [])
+      .filter((row) => {
+        if (!row.selected || row.operation === 'UNCHANGED') return false;
+        if (row.operation === 'INSERT' && !options.insert) return false;
+        if (row.operation === 'UPDATE' && !options.update) return false;
+        if (row.operation === 'DELETE' && !options.delete) return false;
+        return requested.has(`${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`);
+      })
+      .map((row) => ({
+        sourceTable: table.sourceTable,
+        targetTable: table.targetTable,
+        operation: row.operation,
+        key: row.key,
+      })),
+  );
+  return { revision: plan.selectionRevision, rows };
+}
+
+function selectionFromStatements(
+  plan: DataSyncComparisonPreview,
+  statements: DataSyncSqlStatement[],
+): DataSyncSelection {
+  const rows: DataSyncSelectedRow[] = [];
+  for (const statement of statements) {
+    for (const table of plan.tables) {
+      if (table.targetTable !== statement.table) continue;
+      const match = (table.rows ?? []).find(
+        (row) => row.operation === statement.operation && valueToken(row.key) === valueToken(statement.rowKey),
+      );
+      if (match) {
+        rows.push({
+          sourceTable: table.sourceTable,
+          targetTable: table.targetTable,
+          operation: match.operation,
+          key: match.key,
+        });
+        break;
+      }
+    }
+  }
+  return { revision: plan.selectionRevision, rows };
+}
 
 export const syncCommands = {
   classifyDataSyncPair: (sourceDatabaseType: string, targetDatabaseType: string) =>
@@ -113,17 +198,24 @@ export const syncCommands = {
     statements: DataSyncSqlStatement[],
     jobId?: string,
     targetDatabase?: string,
-  ) =>
-    invoke<DataSyncExecutionResult>('execute_data_sync', {
-      targetDbSessionId,
-      statements,
+  ) => {
+    void targetDbSessionId;
+    void targetDatabase;
+    if (!activeComparisonPlan) {
+      return Promise.reject(new Error('data sync comparison plan is missing; compare again'));
+    }
+    const request = {
+      planId: activeComparisonPlan.planId,
+      selection: selectionFromStatements(activeComparisonPlan, statements),
+      options: activeExecutionOptions,
       jobId: jobId ?? null,
-      targetDatabase: targetDatabase ?? null,
-    }),
+    };
+    return invoke<DataSyncExecutionResult>('execute_data_sync', { request });
+  },
 
   cancelDataSync: (jobId: string) => invoke<boolean>('cancel_data_sync', { jobId }),
 
-  compareDataSync: (
+  compareDataSync: async (
     sourceDbSessionId: string,
     targetDbSessionId: string,
     tables?: string[],
@@ -133,8 +225,9 @@ export const syncCommands = {
     sourceSchema?: string,
     targetSchema?: string,
     options?: SyncOptions,
-  ) =>
-    invoke<DataSyncTableResult[]>('compare_data_sync', {
+  ) => {
+    activeComparisonPlan = null;
+    const response = await invoke<DataSyncComparisonPreview>('compare_data_sync', {
       sourceDbSessionId,
       targetDbSessionId,
       tables: tables ?? null,
@@ -144,7 +237,10 @@ export const syncCommands = {
       sourceSchema: sourceSchema ?? null,
       targetSchema: targetSchema ?? null,
       options: options ?? null,
-    }),
+    });
+    activeComparisonPlan = response;
+    return response;
+  },
 
   applyDataSync: (
     sourceDbSessionId: string,
@@ -196,15 +292,21 @@ export const syncCommands = {
     targetDatabase?: string,
     sourceSchema?: string,
     targetSchema?: string,
-  ) =>
-    invoke<DataSyncSqlStatement[]>('generate_data_sync_sql', {
-      sourceDbSessionId,
-      targetDbSessionId,
-      tables,
+  ) => {
+    void sourceDbSessionId;
+    void targetDbSessionId;
+    void sourceDatabase;
+    void targetDatabase;
+    void sourceSchema;
+    void targetSchema;
+    if (!activeComparisonPlan) {
+      return Promise.reject(new Error('data sync comparison plan is missing; compare again'));
+    }
+    activeExecutionOptions = options;
+    return invoke<DataSyncSqlStatement[]>('generate_data_sync_sql', {
+      planId: activeComparisonPlan.planId,
+      selection: selectionFromTables(activeComparisonPlan, tables, options),
       options,
-      sourceDatabase: sourceDatabase ?? null,
-      targetDatabase: targetDatabase ?? null,
-      sourceSchema: sourceSchema ?? null,
-      targetSchema: targetSchema ?? null,
-    }),
+    });
+  },
 };

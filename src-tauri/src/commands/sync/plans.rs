@@ -1,0 +1,468 @@
+//! Server-owned immutable Data Synchronization comparison plans.
+//!
+//! The comparison response is useful for review, but it is not an execution
+//! authority.  The complete reviewed comparison remains in this registry and
+//! later commands receive only an opaque plan id plus a validated selection.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use datazen_driver_api::{iter_driver_factories, DatabaseDriver, TableSchema, PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+use crate::data_sync::{
+    ChangeOperation, ComparisonResult, RowChange, SyncOptions, TableMappingStatus, TableResult,
+};
+
+pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanState {
+    Available,
+    Consumed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RelationFingerprintEntry {
+    database: String,
+    schema: Option<String>,
+    relation: String,
+    table_schema: Option<TableSchema>,
+}
+
+/// A deterministic identity for the qualified objects participating in a
+/// reviewed comparison.  Endpoint identity is included in the hash so a
+/// client cannot redirect an old plan to another database by changing UI
+/// fields after review.
+pub(crate) fn fingerprint_relations(
+    database: &str,
+    schema: Option<&str>,
+    entries: impl IntoIterator<Item = (String, Option<TableSchema>)>,
+) -> Result<String, String> {
+    let mut entries: Vec<RelationFingerprintEntry> = entries
+        .into_iter()
+        .map(|(relation, table_schema)| RelationFingerprintEntry {
+            database: database.to_string(),
+            schema: schema.map(str::to_string),
+            relation,
+            table_schema,
+        })
+        .collect();
+    entries.sort_by(|left, right| {
+        (&left.database, &left.schema, &left.relation).cmp(&(
+            &right.database,
+            &right.schema,
+            &right.relation,
+        ))
+    });
+    let bytes = serde_json::to_vec(&entries)
+        .map_err(|error| format!("cannot fingerprint sync schema: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub(crate) fn driver_protocol_version(driver: &dyn DatabaseDriver) -> u32 {
+    let driver_type = driver.driver_type();
+    iter_driver_factories()
+        .into_iter()
+        .find(|factory| factory.driver_id() == driver_type)
+        .map(|factory| factory.protocol_version())
+        .unwrap_or(PROTOCOL_VERSION)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncSelectedRow {
+    pub source_table: String,
+    pub target_table: String,
+    pub operation: ChangeOperation,
+    pub key: Vec<datazen_driver_api::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncRunSelection {
+    pub revision: u64,
+    #[serde(default)]
+    pub rows: Vec<SyncSelectedRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SyncRunRequest {
+    pub plan_id: String,
+    pub selection: SyncRunSelection,
+    pub options: SyncOptions,
+    pub job_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SyncComparisonPreview {
+    pub plan_id: String,
+    pub selection_revision: u64,
+    pub tables: Vec<TableResult>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StoredSyncPlan {
+    pub(crate) source_db_session_id: String,
+    pub(crate) target_db_session_id: String,
+    pub(crate) source_database: String,
+    pub(crate) target_database: String,
+    pub(crate) source_schema: Option<String>,
+    pub(crate) target_schema: Option<String>,
+    pub(crate) source_driver_type: String,
+    pub(crate) target_driver_type: String,
+    pub(crate) source_driver_protocol: u32,
+    pub(crate) target_driver_protocol: u32,
+    pub(crate) source_schema_fingerprint: String,
+    pub(crate) target_schema_fingerprint: String,
+    pub(crate) comparison: ComparisonResult,
+    pub(crate) options: SyncOptions,
+    pub(crate) selection_revision: u64,
+    pub(crate) target_read_only_at_preview: bool,
+    expires_at: Instant,
+    state: PlanState,
+}
+
+pub(crate) struct SyncPlanStore {
+    plans: Mutex<HashMap<String, StoredSyncPlan>>,
+}
+
+impl SyncPlanStore {
+    pub(crate) fn new() -> Self {
+        Self {
+            plans: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn issue(
+        &self,
+        source_db_session_id: String,
+        target_db_session_id: String,
+        source_database: String,
+        target_database: String,
+        source_schema: Option<String>,
+        target_schema: Option<String>,
+        source_driver: &dyn DatabaseDriver,
+        target_driver: &dyn DatabaseDriver,
+        source_schema_fingerprint: String,
+        target_schema_fingerprint: String,
+        comparison: ComparisonResult,
+        options: SyncOptions,
+        target_read_only_at_preview: bool,
+    ) -> Result<SyncComparisonPreview, String> {
+        let id = Uuid::new_v4().to_string();
+        let selection_revision = 1;
+        let plan = StoredSyncPlan {
+            source_db_session_id,
+            target_db_session_id,
+            source_database,
+            target_database,
+            source_schema,
+            target_schema,
+            source_driver_type: source_driver.driver_type(),
+            target_driver_type: target_driver.driver_type(),
+            source_driver_protocol: driver_protocol_version(source_driver),
+            target_driver_protocol: driver_protocol_version(target_driver),
+            source_schema_fingerprint,
+            target_schema_fingerprint,
+            comparison: comparison.clone(),
+            options,
+            selection_revision,
+            target_read_only_at_preview,
+            expires_at: Instant::now() + SYNC_PLAN_TTL,
+            state: PlanState::Available,
+        };
+        let mut plans = self
+            .plans
+            .lock()
+            .map_err(|_| "sync plan registry is unavailable".to_string())?;
+        let now = Instant::now();
+        plans.retain(|_, existing| existing.expires_at > now);
+        plans.insert(id.clone(), plan);
+        Ok(SyncComparisonPreview {
+            plan_id: id,
+            selection_revision,
+            tables: comparison.tables,
+        })
+    }
+
+    pub(crate) fn peek(&self, id: &str) -> Result<StoredSyncPlan, String> {
+        let mut plans = self
+            .plans
+            .lock()
+            .map_err(|_| "sync plan registry is unavailable".to_string())?;
+        let Some(plan) = plans.get(id) else {
+            return Err("sync plan is unknown or has expired; return to comparison".into());
+        };
+        if plan.expires_at <= Instant::now() {
+            plans.remove(id);
+            return Err("sync plan has expired; return to comparison".into());
+        }
+        if plan.state != PlanState::Available {
+            return Err("sync plan was already consumed; return to comparison".into());
+        }
+        Ok(plan.clone())
+    }
+
+    /// Claim before a write starts.  A claimed plan remains consumed even if
+    /// the transaction result is unknown, so the UI can never retry blindly.
+    pub(crate) fn claim(&self, id: &str) -> Result<StoredSyncPlan, String> {
+        let mut plans = self
+            .plans
+            .lock()
+            .map_err(|_| "sync plan registry is unavailable".to_string())?;
+        let Some(plan) = plans.get_mut(id) else {
+            return Err("sync plan is unknown or has expired; return to comparison".into());
+        };
+        if plan.expires_at <= Instant::now() {
+            plans.remove(id);
+            return Err("sync plan has expired; return to comparison".into());
+        }
+        if plan.state != PlanState::Available {
+            return Err("sync plan was already consumed; return to comparison".into());
+        }
+        plan.state = PlanState::Consumed;
+        Ok(plan.clone())
+    }
+}
+
+impl Default for SyncPlanStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn global_store() -> &'static SyncPlanStore {
+    static STORE: OnceLock<SyncPlanStore> = OnceLock::new();
+    STORE.get_or_init(SyncPlanStore::new)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn issue_plan(
+    source_db_session_id: String,
+    target_db_session_id: String,
+    source_database: String,
+    target_database: String,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
+    source_driver: &dyn DatabaseDriver,
+    target_driver: &dyn DatabaseDriver,
+    source_schema_fingerprint: String,
+    target_schema_fingerprint: String,
+    comparison: ComparisonResult,
+    options: SyncOptions,
+    target_read_only_at_preview: bool,
+) -> Result<SyncComparisonPreview, String> {
+    global_store().issue(
+        source_db_session_id,
+        target_db_session_id,
+        source_database,
+        target_database,
+        source_schema,
+        target_schema,
+        source_driver,
+        target_driver,
+        source_schema_fingerprint,
+        target_schema_fingerprint,
+        comparison,
+        options,
+        target_read_only_at_preview,
+    )
+}
+
+pub(crate) fn peek_plan(id: &str) -> Result<StoredSyncPlan, String> {
+    global_store().peek(id)
+}
+
+pub(crate) fn claim_plan(id: &str) -> Result<StoredSyncPlan, String> {
+    global_store().claim(id)
+}
+
+pub(crate) fn apply_selection(
+    comparison: &ComparisonResult,
+    selection: &SyncRunSelection,
+    options: &SyncOptions,
+) -> Result<ComparisonResult, String> {
+    let mut seen = HashSet::new();
+    let mut selected = HashSet::new();
+    for row in &selection.rows {
+        let token = selection_token(
+            &row.source_table,
+            &row.target_table,
+            row.operation,
+            &row.key,
+        )?;
+        if !seen.insert(token.clone()) {
+            return Err("selection contains a duplicate row".into());
+        }
+        if !options.allows(row.operation) {
+            return Err("selection contains an operation disabled by the requested options".into());
+        }
+        selected.insert(token);
+    }
+
+    let mut result = comparison.clone();
+    for table in &mut result.tables {
+        for change in &mut table.rows {
+            change.selected = selected.contains(&selection_token(
+                table.source_table.clone(),
+                table.target_table.clone(),
+                change.operation,
+                &change.key,
+            )?);
+        }
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_selection(
+    comparison: &ComparisonResult,
+    selection: &SyncRunSelection,
+    options: &SyncOptions,
+) -> Result<(), String> {
+    if selection.revision == 0 {
+        return Err("selection revision is required".into());
+    }
+    let mut allowed = HashSet::new();
+    for table in &comparison.tables {
+        if table.status != TableMappingStatus::Matched {
+            continue;
+        }
+        for change in &table.rows {
+            allowed.insert(selection_token(
+                &table.source_table,
+                &table.target_table,
+                change.operation,
+                &change.key,
+            )?);
+        }
+    }
+    for row in &selection.rows {
+        if !allowed.contains(&selection_token(
+            &row.source_table,
+            &row.target_table,
+            row.operation,
+            &row.key,
+        )?) {
+            return Err("selection contains a row that was not in the comparison plan".into());
+        }
+        if !options.allows(row.operation) {
+            return Err("selection contains an operation disabled by the requested options".into());
+        }
+    }
+    Ok(())
+}
+
+fn selection_token(
+    source_table: impl AsRef<str>,
+    target_table: impl AsRef<str>,
+    operation: ChangeOperation,
+    key: &[datazen_driver_api::Value],
+) -> Result<String, String> {
+    serde_json::to_string(&(source_table.as_ref(), target_table.as_ref(), operation, key))
+        .map_err(|error| format!("cannot validate sync selection: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn selected_rows(
+    comparison: &ComparisonResult,
+    options: &SyncOptions,
+) -> Vec<SyncSelectedRow> {
+    comparison
+        .tables
+        .iter()
+        .filter(|table| table.status == TableMappingStatus::Matched)
+        .flat_map(|table| {
+            table.rows.iter().filter_map(|change: &RowChange| {
+                if change.selected && change.eligible_for_changeset(options) {
+                    Some(SyncSelectedRow {
+                        source_table: table.source_table.clone(),
+                        target_table: table.target_table.clone(),
+                        operation: change.operation,
+                        key: change.key.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data_sync::{RowChange, TableResult};
+    use datazen_driver_api::Value;
+
+    fn comparison() -> ComparisonResult {
+        let options = SyncOptions::default();
+        ComparisonResult::new(vec![TableResult::matched(
+            "users",
+            "users",
+            vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1))],
+                &options,
+            )],
+        )])
+    }
+
+    #[test]
+    fn selection_accepts_only_rows_from_the_server_comparison() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: vec![SyncSelectedRow {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(1)],
+            }],
+        };
+        validate_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let bad = SyncRunSelection {
+            rows: vec![SyncSelectedRow {
+                key: vec![Value::Integer(2)],
+                ..selection.rows[0].clone()
+            }],
+            ..selection
+        };
+        assert!(validate_selection(&comparison(), &bad, &SyncOptions::default()).is_err());
+    }
+
+    #[test]
+    fn selected_rows_have_no_source_values_or_sql() {
+        let rows = selected_rows(&comparison(), &SyncOptions::default());
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].key.as_slice(), [Value::Integer(1)]));
+    }
+
+    #[test]
+    fn run_request_rejects_client_replacement_sql_rows_or_mapping() {
+        for field in [
+            "statements",
+            "tables",
+            "mapping",
+            "rows",
+            "sourceDbSessionId",
+        ] {
+            let payload = serde_json::json!({
+                "planId": "opaque-plan",
+                "selection": { "revision": 1, "rows": [] },
+                "options": SyncOptions::default(),
+                "jobId": null,
+                field: []
+            });
+            assert!(
+                serde_json::from_value::<SyncRunRequest>(payload).is_err(),
+                "client field {field} must be rejected"
+            );
+        }
+    }
+}
