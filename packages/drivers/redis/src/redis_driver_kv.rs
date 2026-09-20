@@ -26,13 +26,4 @@ impl KeyValueDriver for RedisDriver {
         )
         .await
     }
-
-    async fn get_key_detail(
-        &self,
-        handle: &ConnectionHandle,
-        db_index: u32,
-        key: &str,
-    ) -> Result<KeyDetail, DriverError> {
-        RedisDriver::get_key_detail(self, handle, db_index, key).await
-    }
 }

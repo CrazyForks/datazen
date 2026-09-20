@@ -3,7 +3,7 @@ import { Plus, Trash2, RefreshCw } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
-import type { KeyDetail } from '../../../../src/types';
+import type { KeyDetail } from './types';
 import {
   invokeListPop,
   invokeListPush,

@@ -8,7 +8,7 @@ import { Download, Copy } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { useI18n } from '../../../../src/hooks/useI18n';
 import { cn } from '../../../../src/lib/cn';
-import type { ValueFrame } from '../../../../src/types';
+import type { ValueFrame } from './types';
 import { formatSize } from './formatSize';
 import { invokeDecodeValue, redisCommandInvoke, type RedisInvokeFn } from './redisInvoke';
 import {

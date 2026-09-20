@@ -5,7 +5,9 @@ use datazen_driver_api::*;
 use redis::AsyncCommands;
 use std::time::Instant;
 
-use crate::redis_value::{parse_scan_result, preview_value_to_string, truncate_preview};
+use crate::types::{KeyDetail, ValueFrame};
+
+use crate::redis_value::{preview_value_to_string, truncate_preview};
 
 const PREVIEW_MAX: usize = 120;
 
@@ -89,19 +91,20 @@ pub(crate) async fn scan_keys_with_info_on<C>(
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,
 {
-    let mut cmd = redis::cmd("SCAN");
-    cmd.arg(cursor).arg("COUNT").arg(count.max(1));
-    if !pattern.is_empty() && pattern != "*" {
-        cmd.arg("MATCH").arg(pattern);
-    }
-    if let Some(ty) = normalize_type_filter(key_type) {
-        cmd.arg("TYPE").arg(ty);
-    }
-    let raw: redis::Value = cmd
-        .query_async(conn)
-        .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-    let (next, keys) = parse_scan_result(&raw);
+    let match_pat = if !pattern.is_empty() && pattern != "*" {
+        Some(pattern)
+    } else {
+        None
+    };
+    let (next, keys) = crate::ops::scan_batch(
+        conn,
+        cursor,
+        count,
+        match_pat,
+        normalize_type_filter(key_type),
+    )
+    .await
+    .map_err(DriverError::QueryFailed)?;
     let mut entries = Vec::with_capacity(keys.len());
     for key in &keys {
         let ty = type_of_key_on(conn, key)

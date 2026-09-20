@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::types::{KeyDetail, ValueFrame};
+
 use crate::connect::{
     build_connection_plan, looks_like_connection_loss, open_live_conn, open_pinned_node_conn,
     ConnectionPlan, RedisLiveConn,

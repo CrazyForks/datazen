@@ -17,7 +17,7 @@ import { cn } from '../../../../src/lib/cn';
 import { showNativeContextMenu } from '../../../../src/lib/nativeContextMenu';
 import { readBooleanField } from '../../../../src/lib/driverSettings';
 import { invokeGetKey, invokeDbSizes } from './redisInvoke';
-import type { KeyDetail } from '../../../../src/types';
+import type { KeyDetail } from './types';
 import { BatchBar } from './BatchBar';
 import { hasRedisJson } from './hasRedisJson';
 import { ImportExport } from './ImportExport';

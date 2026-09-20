@@ -1,5 +1,6 @@
 import { driverCommands } from '../../../../src/commands/driver';
-import type { KeyDetail, KeyScanResult, ValueFrame } from '../../../../src/types';
+import type { KeyScanResult } from '../../../../src/types';
+import type { KeyDetail, ValueFrame } from './types';
 
 /** Test-injectable invoke used by Redis UI helpers. */
 export type RedisInvokeFn = (

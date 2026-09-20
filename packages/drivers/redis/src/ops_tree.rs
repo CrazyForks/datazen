@@ -115,21 +115,15 @@ where
     let seps: Vec<&str> = sep_chars.iter().map(|s| s.as_str()).collect();
 
     // SCAN with the pattern; optional TYPE filter (Redis >= 6.0).
-    let mut cmd = redis::cmd("SCAN");
-    cmd.arg(cursor)
-        .arg("MATCH")
-        .arg(&pattern)
-        .arg("COUNT")
-        .arg(count.max(1));
-    if let Some(ty) = crate::redis_driver_on::normalize_type_filter(key_type) {
-        cmd.arg("TYPE").arg(ty);
-    }
-    let raw: redis::Value = cmd
-        .query_async(conn)
-        .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
-    let (next_cursor, keys) = crate::redis_value_preview::parse_scan_result(&raw);
+    let (next_cursor, keys) = crate::ops::scan_batch(
+        conn,
+        cursor,
+        count,
+        Some(&pattern),
+        crate::redis_driver_on::normalize_type_filter(key_type),
+    )
+    .await
+    .map_err(DriverError::QueryFailed)?;
 
     // Split into children (folders + leaf keys).
     let mut children = split_children(&keys, prefix, &seps);

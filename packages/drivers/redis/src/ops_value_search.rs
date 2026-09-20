@@ -192,27 +192,6 @@ fn bulk_bytes(v: &redis::Value) -> Vec<u8> {
     }
 }
 
-fn scan_raw(v: &redis::Value) -> (u64, Vec<String>) {
-    match v {
-        redis::Value::Array(items) if items.len() >= 2 => {
-            let next = match &items[0] {
-                redis::Value::BulkString(b) => String::from_utf8_lossy(b).parse().unwrap_or(0),
-                redis::Value::Int(i) => *i as u64,
-                _ => 0,
-            };
-            let keys = match &items[1] {
-                redis::Value::Array(arr) => arr
-                    .iter()
-                    .map(|k| String::from_utf8_lossy(&bulk_bytes(k)).into_owned())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            (next, keys)
-        }
-        _ => (0, Vec::new()),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Match result types
 // ---------------------------------------------------------------------------
@@ -342,17 +321,10 @@ pub(crate) async fn scan_values_on<C>(
 where
     C: redis::aio::ConnectionLike + Send,
 {
-    let mut cmd = redis::cmd("SCAN");
-    cmd.arg(cursor)
-        .arg("MATCH")
-        .arg(pattern)
-        .arg("COUNT")
-        .arg(guard.count.max(1));
-    let raw: redis::Value = cmd
-        .query_async(conn)
-        .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-    let (next_cursor, keys) = scan_raw(&raw);
+    let (next_cursor, keys) =
+        crate::ops::scan_batch(conn, cursor, guard.count, Some(pattern), None)
+            .await
+            .map_err(DriverError::QueryFailed)?;
 
     let mut matched: Vec<MatchHit> = Vec::new();
     let mut bytes_used: u64 = 0;
