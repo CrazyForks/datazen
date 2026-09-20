@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { invokeScanKeys } from '../shared/redisInvoke';
-import type { KeyEntry } from '../../../../../src/types';
+import type { KeyEntry } from '@datazen/driver-sdk';
 
 const PAGE_SIZE = 200;
 

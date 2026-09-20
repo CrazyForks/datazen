@@ -1,27 +1,12 @@
 import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { NativeMenuItemDef } from '@datazen/driver-sdk';
 
-/** Edit / separator kinds shared by web context menus (legacy name kept for item defs). */
-export type NativeMenuPredefined =
-  | 'Separator'
-  | 'Cut'
-  | 'Copy'
-  | 'Paste'
-  | 'SelectAll'
-  | 'Undo'
-  | 'Redo';
-
-export type NativeMenuItemDef =
-  | {
-      kind: 'item';
-      id: string;
-      label: string;
-      shortcut?: string;
-      enabled?: boolean;
-      action: () => void | Promise<void>;
-    }
-  | { kind: 'separator'; id?: string }
-  | { kind: 'predefined'; item: NativeMenuPredefined; text?: string }
-  | { kind: 'submenu'; id?: string; label: string; items: NativeMenuItemDef[] };
+/**
+ * Menu item type contracts live in @datazen/driver-sdk (types-to-sdk track);
+ * re-exported here so existing host imports keep working unchanged.
+ * The runtime helpers below remain host-only until the cap-bridge track.
+ */
+export type { NativeMenuItemDef, NativeMenuPredefined } from '@datazen/driver-sdk';
 
 export type ContextMenuPosition = { x: number; y: number };
 
