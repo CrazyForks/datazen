@@ -1,27 +1,27 @@
-# Source filter track
+# Source filter track — independent test result
 
-## Scope
+## Scope tested
 
-Add a validated source-row filter to Data Transfer. The filter is part of the table mapping and immutable Transfer plan, is shown in preview, and is applied through bound parameters during the source scan.
+Validated the committed Transfer source-filter implementation at `810615a0` for structured filter serialization, identifier validation, parameterized SQL construction, immutable-plan binding, UI typecheck, real PostgreSQL execution, the existing Transfer E2E suite, and the formal WebDriver build.
 
-## Implemented
+## Passed
 
-- `SourceFilter` supports bounded `AND`/`OR` conditions for equality, comparison, `LIKE`, `IN`, `IS NULL` and `IS NOT NULL`.
-- Filter columns are checked against the inspected source schema; empty values, empty `IN` lists, unknown columns and more than 32 conditions fail before writes.
-- SQL fragments contain only quoted identifiers and driver placeholders. Values never enter SQL text.
-- PostgreSQL-style numbered placeholders and positional placeholders are selected from the source driver family.
-- Transfer plan fingerprints include enabled-table filters and execution rejects a changed filter context.
-- Mapping UI lets users add, edit and remove filters, choose condition logic, and review the parameterized `WHERE` shape in preview.
-- A parameter-aware streaming entry point preserves the existing streaming path for unfiltered transfers and uses typed query parameters for filtered scans.
+- `cargo test -p datazen --lib data_transfer`: 57 passed.
+- `cargo test -p datazen --lib commands::data_transfer`: 14 passed.
+- `cargo test -p datazen-driver-api --lib`: 131 passed.
+- Transfer frontend Vitest (`transfer.test.ts`, `DataTransferWindow.test.tsx`, `transferMappingView.test.ts`): 27 passed.
+- `pnpm typecheck`: passed.
+- `pnpm tauri:build:webdriver`: passed with PostgreSQL, MySQL, SQLite and Redis injected.
+- Existing real database Data Transfer suite: 8 spec files, 40 tests passed, including PG↔MySQL journeys and 25,000-row wide-type transfers.
+- A direct IPC journey using a JSON numeric filter value (`id > 2`) returned `rowsInserted: 2`, `partial: false`; this confirms the bound source scan and writer work when the parameter has a numeric type.
 
-## Validation
+The E2E database setup printed pre-existing nonfatal demo-fixture errors for stale `test_orders` / `product_name` columns; the suite still completed and passed. These are environment-fixture noise, not source-filter failures.
 
-- Host Transfer/data-transfer tests: 55 passed.
-- Source-filter unit tests cover parameterization, frontend JSON arrays, binary marker round-trip, unknown columns and empty values.
-- Transfer frontend tests: 22 passed.
-- Driver API tests: 131 passed.
-- TypeScript check passed.
+## Failed / blocking
 
-## Remaining boundary
+- Real PostgreSQL IPC journey using the value produced by the source-filter editor (`id > "2"`) failed during source scan with `operator does not exist: integer > text`; execution returned `rowsInserted: 0`, `partial: true`, and copied no rows. See `bugs.md` SFLT-001.
+- The current preview reports `canExecute: true` for this case, so the user receives no early type-compatibility warning.
 
-This track covers Transfer source filters. Data Sync still needs its own filter/range contract, and stable snapshots, disk-backed comparison storage, profiles/run history and object dependency graphs remain separate parity work.
+## Conclusion
+
+TEST_FAILED. The source-filter feature is correct for typed JSON numeric values and for text predicates, but the shipped editor path cannot reliably filter PostgreSQL integer/numeric columns until values are typed from source column metadata or the server supplies compatible typed placeholders/bindings. Do not close this track as a complete filtered-transfer gate until SFLT-001 is fixed and independently retested.
