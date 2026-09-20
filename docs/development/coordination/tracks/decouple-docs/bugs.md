@@ -10,9 +10,11 @@
 | `decouple-docs-BUG-002` | 低 | 同上 2.4.3 配套终态第 2 条 | 用 `BUILTIN_LOCALES` 佐证 `pt-BR` 连字符，但该常量不含 `pt-BR` | 已修复（第 2 轮复测通过） |
 | `decouple-docs-BUG-003` | 低 | 同上 2.2 决策表行 1 先例列 | `src/lib/driverSettings.ts` 作为「薄再导出先例」引用，实际文件已不存在 | 已修复（第 2 轮复测通过；残留同类问题另立 BUG-005） |
 | `decouple-docs-BUG-004` | 低 | 本 track `progress.md` Coder 自验第 6 条 / B 表 | 自报 zh/en 各 24 个标题，实测各 21 个（结构对应本身通过） | 已修复（第 2 轮复测通过） |
-| `decouple-docs-BUG-005` | 低 | `independent-driver-development.zh-CN.md:196` / `.en.md:211`（§6.2） | 仍无条件声称「宿主原路径仅剩薄再导出」并把 `driverSettings`、`resolveEditorFontFamily` 列为该形态先例，实际二者宿主文件均已不存在，与修复后的契约 2.2/2.5 三分规则互相矛盾 | 待修复（第 2 轮复测新发现） |
+| `decouple-docs-BUG-005` | 低 | `independent-driver-development.zh-CN.md:196` / `.en.md:211`（§6.2） | 仍无条件声称「宿主原路径仅剩薄再导出」并把 `driverSettings`、`resolveEditorFontFamily` 列为该形态先例，实际二者宿主文件均已不存在，与修复后的契约 2.2/2.5 三分规则互相矛盾 | 待复测（第 2 轮修复完成） |
 
 > **Coder 第 1 轮修复说明（状态推进：待修复 → 待复测）**：4 条判定经本轮独立实测**全部成立，无反驳项**，已按建议方向修正。改法与实测事实逐条见 `progress.md`「Coder Bug 修复记录（第 1 轮）」。BUG-001 额外登记了 Tester 未列的 **8 处 `vi.mock` 宿主 `useI18n` 路径**（非 `from` 形态、不被重现命令命中），供 Wave 4 护栏白名单口径复核。状态由复测 Tester 推进为「已修复」，Coder 不自行判定。
+>
+> **Coder 第 2 轮修复说明（BUG-005，状态推进：待修复 → 待复测）**：判定经本轮独立实测**成立，无反驳项**（`src/lib/driverSettings.ts`、`src/lib/resolveEditorFontFamily.ts` 实测均不存在，SDK 侧两文件均在，宿主两个消费点均直连 `@datazen/driver-sdk`）。已把两份指南 §6.2 该条改为与契约 2.2/2.5 同一套三分规则，并换用实测存在的薄壳先例；改法与自验输出见 `progress.md`「Coder Bug 修复记录（第 2 轮）」。状态由第 3 轮复测 Tester 推进为「已修复」，Coder 不自行判定。
 
 ---
 
@@ -109,6 +111,7 @@
 - **影响范围**：指南是 git 驱动作者的第一入口文档；按该句照做的作者会为「无宿主消费方」的下沉能力徒留空壳文件（与 2.5 流程第 2 步相反），或按先例反查宿主壳而不得、连带怀疑契约 2.2 的可信度——正是 BUG-003 登记的失效模式。
 - **建议修复方向（供 Coder 参考，非 Tester 实施）**：将 zh:196 / en:211 该括注改为与契约 2.2 一致的三分表述（「有存量消费方→薄再导出；无消费方→整体移走不留壳，如 `driverSettings` / `resolveEditorFontFamily`」），**zh/en 两份必须同步**（维持验收 4 的 21:21 结构，不新增标题）。
 - **Tester 判定依据（实测日志摘录）**：`find src -iname "*driverSettings*"` 仅剩 `src/windows/settings/DriverSettingsSection.tsx`；`find src -name "resolveEditorFontFamily*"` 0 命中；`grep -n "薄再导出" docs/**` 全量清点确认其余文档（契约 2.1.2/2.2/2.5、components.md:575）均已带限定语，唯指南 6.2 两处（zh/en）为无条件句式。
+- **Coder 处理（第 2 轮修复完成 → 待复测）**：zh:196 / en:211 两处已改写为与契约 2.2 行 1、2.1.2「唯一实现原则」、2.5 第 2 步同一套三分规则（「**有存量消费方时**只保留薄再导出 / **无消费方时**整体移走、不留空壳，消费点改为直接 import SDK」，并在句内指向「契约文档 2.2 / 2.5」）；先例拆成两组——**留壳**：`src/lib/cn.ts`（整文件 1 行）、`src/lib/nativeContextMenu.ts:7-15`、`src/commands/driver.ts:6-11`、`src/commands/file.ts:2/9`（合并再导出，另留 host-only 命令），**不留壳**：`driverSettings`、`resolveEditorFontFamily`（并写明 SDK 唯一实现路径、`92a039383` 移走、宿主消费点 `DriverSettingsSection.tsx:3` 与 `editorExtensions.ts:36-38` 直连 SDK）。两份 1:1 同步（20 个 code span 逐项相同、`#` 级标题仍为 21 : 21，未新增/删除标题）；契约主文档经全量 grep 复核无同类无条件句式残留，**未改动**。详见 `progress.md`「Coder Bug 修复记录（第 2 轮）」。
 
 ---
 

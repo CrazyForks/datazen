@@ -55,7 +55,7 @@
 - [x] Tester 复测 → **TEST_FAILED**（4 个 Bug 待修复，见 `bugs.md`；结构类验收全部通过，仅事实/引用一致性问题）
 - [x] Coder Bug 修复（第 1 轮）→ READY_FOR_TEST（BUG-001..004 全部修正并实测复核，4 条判定均无反驳；状态见 `bugs.md` 已推进为「待复测」）
 - [x] Tester 复测（第 2 轮，commit `9bf1c6600`）→ **TEST_FAILED**（BUG-001..004 **全部判定「已修复」**；新发现 1 条低级残留缺陷 `decouple-docs-BUG-005`（指南 §6.2 zh/en 未同步 BUG-003 三分规则），状态「待修复」；全局不回归 7 项全部通过。详见下方「Tester 第 2 轮复测记录」）
-- [ ] Coder Bug 修复（第 2 轮，仅 BUG-005）→ READY_FOR_TEST
+- [x] Coder Bug 修复（第 2 轮，仅 BUG-005）→ READY_FOR_TEST（zh/en 两份 §6.2 已同步改写为三分规则并换用实测存在的先例；判定成立、无反驳项；状态由复测 Tester 推进）
 - [ ] Tester 复测（第 3 轮）→ TEST_DONE
 
 ## Tester 复测记录（commit `6199d9d95`，全新实例独立实测，不采信 Coder 自报）
@@ -214,6 +214,7 @@
 | `8ac2705d2` | 架构文档勘误 | `docs/architecture/frontend/components.md`、`extensibility.md` |
 | （本 commit） | 实施记录 + 状态推进 | 本文件 |
 | （Bug 修复第 1 轮 commit） | 修复 `BUG-001..004` | `docs/development/driver-api-dependency-boundary.md`、本文件、`bugs.md` |
+| （Bug 修复第 2 轮 commit） | 修复 `BUG-005`（仅指南 §6.2 zh/en 两处） | `docs/development/independent-driver-development.zh-CN.md`、`.en.md`、本文件、`bugs.md` |
 
 ### A. `docs/development/driver-api-dependency-boundary.md`（重写）
 
@@ -307,6 +308,42 @@
 4. 违禁词/反例复扫（验收 3）：5 份文档 `HostLocaleBridge|setHostLocaleBridge|getExtensionTranslation` = **0 命中**；字面 `../../../src/` 形态仍为 **9 处**，与修复前逐处同一（均在 ❌ 反例块或禁止性句内），本轮新增文字未引入该字面量（新写内容用命令正则 `\.\./.*src/` 表述）。
 5. `git diff --name-only 006906c6a..HEAD` → 见下方交付段，全部落在允许清单（本 track `progress.md`/`bugs.md` + `driver-api-dependency-boundary.md`）。
 6. `node scripts/aggregate-hub.mjs` 未运行（避免改写禁止触碰的 `hub.md`）；本轮 diff 不含任何 `src/`、`packages/`、`scripts/` 路径，结论等价。
+
+## Coder Bug 修复记录（第 2 轮）
+
+被修对象：Tester 第 2 轮新登记的 `decouple-docs-BUG-005`（Tester 被复测 commit `9bf1c6600`，本轮基准 HEAD `88715c03b`）。本轮**只改指南 §6.2 的两处无条件句式**（`docs/development/independent-driver-development.zh-CN.md:196` / `.en.md:211`）＋本 track 两份记录；未新增/删除任何标题、未改契约主文档（复核确无同类残留）、零生产代码改动。落笔前逐条独立复核 Tester 事实，**判定成立，无反驳项**。
+
+### 事实复核（本轮亲自执行 → 真实输出）
+
+| # | Tester 主张 | 本轮命令与输出 | 结论 |
+| --- | --- | --- | --- |
+| 1 | 两个宿主壳不存在 | `test -f` 逐项：`src/lib/cn.ts` **EXISTS**（1 行）/ `src/lib/nativeContextMenu.ts` **EXISTS**（15 行）/ `src/commands/driver.ts` **EXISTS**（11 行）/ `src/commands/file.ts` **EXISTS**（92 行）/ `src/lib/driverSettings.ts` **ABSENT** / `src/lib/resolveEditorFontFamily.ts` **ABSENT** | 成立 |
+| 2 | 宿主仅剩同名组件文件 | `find src -iname "*driverSettings*"` → 仅 `src/windows/settings/DriverSettingsSection.tsx`；`find src -name "resolveEditorFontFamily*"` → **0 命中** | 成立 |
+| 3 | 两模块随同一 commit 整体移走 | `git log --oneline -1 -- src/lib/driverSettings.ts` → `92a039383 refactor(driver-sdk): sink pure/IPC modules and add capability bridges`；`git log --oneline -1 -- src/lib/resolveEditorFontFamily.ts` → **同一** `92a039383` | 成立 |
+| 4 | SDK 侧为唯一实现 | `ls packages/driver-sdk/src/{driverSettings.ts,resolveEditorFontFamily.ts,nativeContextMenu.ts}`、`ls packages/driver-sdk/src/ipc/` → `driverCommands.ts`、`fileCommands.ts` 全部存在 | 成立 |
+| 5 | 宿主消费点直连 SDK（无壳） | `src/windows/settings/DriverSettingsSection.tsx:3` = `import { mergeDriverSettings } from '@datazen/driver-sdk';`；`src/components/sql-editor/editorExtensions.ts:36-38` = `import { resolveEditorFontFamily, HOST_DEFAULT_EDITOR_FONT } from '@datazen/driver-sdk';`（`:215` 消费该函数） | 成立 |
+| 6 | 新引用的薄壳行号 | `grep -n` 带行号复核：`src/lib/nativeContextMenu.ts:7-15` 为 `export { showNativeContextMenu, … } from '@datazen/driver-sdk';` 值+类型再导出块；`src/commands/driver.ts:6-11` 为 `driverCommands` + 类型再导出；`src/commands/file.ts:2` import SDK `fileCommands as dialogFileCommands`、`:9` 类型再导出、`:17-18` `export const fileCommands = { ...dialogFileCommands,` ＋ host-only 命令（故本轮沿用契约口径标注为**合并再导出**，不称纯薄壳）；`src/lib/cn.ts` 整文件 1 行 | 成立 |
+| 7 | 同类残留是否只此两处 | `grep -n "re-export\|再导出\|仅剩\|keeps only"` 三份文档 → 指南命中即 zh:196 / en:211 两行；契约 `:176`（唯一实现原则）、`:197`（2.2 行 1）、`:326`（2.5 第 2 步）、`:339` 均已带限定语 ⇒ 契约主文档**不需改动**，未越界扩写 | 成立 |
+
+### 改法
+
+| 文件 → 位置 | 改动 | 依据（实测出处） |
+| --- | --- | --- |
+| `independent-driver-development.zh-CN.md` §6.2 第 1 个 bullet（原 :196） | 删除「宿主原路径仅剩薄再导出」的无条件括注，改为与契约同一套**三分规则**：「实现**移动**下沉（禁止复制）→ 宿主原路径**有存量消费方时**只保留薄再导出（不允许第二份实现）/ **无消费方时**整体移走、不留空壳，消费点一并改为直接 import SDK」，并句内指向「契约文档 2.2 / 2.5」；先例拆两组——**留壳**：`src/lib/cn.ts`、`src/lib/nativeContextMenu.ts:7-15` → SDK `nativeContextMenu`、`src/commands/driver.ts:6-11` → SDK `ipc/driverCommands`、`src/commands/file.ts:2/9` → 与 SDK `ipc/fileCommands` 合并再导出（宿主另留 host-only 命令）；**不留壳**：`driverSettings`、`resolveEditorFontFamily`，并写明 SDK 唯一实现路径、`92a039383` 移走与宿主直连 SDK 的两个消费点 | 上表 #1-#6；规则文本对齐 `driver-api-dependency-boundary.md:176/:197/:326` |
+| `independent-driver-development.en.md` §6.2 同位 bullet（原 :211） | 与中文**逐句直译同步**，术语一致（thin re-export / moved away entirely, leaving no empty shell / merged re-export / three-way rule） | 本轮以 `paste` 比对两份该行全部 code span：**20 : 20 逐项完全相同**，反引号计数各 40 |
+| 本文件 + `bugs.md` | BUG-005 状态推进为「待复测」，补写 Coder 处理段与本轮记录 | — |
+
+### 第 2 轮自验（真实输出）
+
+1. `grep -rn "宿主原路径仅剩\|thin re-export\|薄再导出" docs/development/independent-driver-development.*.md` → 命中 **2 行**（zh:196、en:211），**逐处判定**：两处均已带「有存量消费方时…薄再导出 / 无消费方时整体移走、不留空壳」限定语并指向契约 2.2/2.5，与三分规则一致；旧无条件句式「宿主原路径仅剩薄再导出」在两份指南中已 **0 命中**。
+2. 文档点名的宿主路径存在性逐个验证（命令与输出见上表 #1）：4 个留壳路径 EXISTS、2 个移走路径 ABSENT，与文档表述逐字对应。
+3. `grep -c "^#"` → `independent-driver-development.zh-CN.md` **21** / `independent-driver-development.en.md` **21**；层级分布两份完全相同：`# `×1 + `## `×13 + `### `×7；`diff <(grep -o "^#\+" zh) <(grep -o "^#\+" en)` → **空输出**（标题层级序列 1:1，未新增/删除标题，验收 4 保持）。
+4. `npx tsc --noEmit -p tsconfig.json` → **exit 0**（0 error）。
+   - `node scripts/check-id-terminology.mjs` → exit 0，「5 allow-listed occurrence(s) skipped / ok（1714 files scanned）」
+   - `node scripts/check-ci-docs-consistency.mjs` → exit 0，「drivers ok (11 ids in ci-test-matrix.md) / window boundaries ok / toolchain ok (Node 24, pnpm 11, Rust stable)」
+   - `node scripts/check-module-layers.mjs` → exit 0，「ok（3 rules）」
+5. `git diff --name-only 88715c03b..HEAD` → 4 个文件（`docs/development/independent-driver-development.zh-CN.md`、`.en.md`、本 track `progress.md`、`bugs.md`），全在允许清单内；`git diff --stat 88715c03b..HEAD -- src packages scripts src-tauri e2e AGENTS.md` → **空**；提交后 `git status --porcelain` 空（工作区 clean）。
+6. 未运行 `node scripts/aggregate-hub.mjs`（避免改写禁止触碰的 `hub.md`）；本轮 diff 不含任何代码/脚本路径，结论与第 1 轮等价。
 
 ## 留待 R 回归
 
