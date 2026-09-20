@@ -3,8 +3,8 @@ import { FolderOpen } from 'lucide-react';
 import { open, type OpenDialogOptions } from '@tauri-apps/plugin-dialog';
 import { Input } from './Input';
 import { Button } from './Button';
-import { cn } from '../../lib/cn';
-import { useI18n } from '../../hooks/useI18n';
+import { cn } from './cn';
+import { useI18n } from './i18n';
 
 export interface PathInputProps {
   value: string;

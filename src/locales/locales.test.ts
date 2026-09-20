@@ -198,6 +198,7 @@ describe('locales', () => {
   describe('extension locale registration', () => {
     afterEach(() => {
       unregisterLocale('test-lang');
+      unregisterLocale('test-lang-empty');
     });
 
     it('registers and uses an extension locale', () => {
@@ -207,8 +208,10 @@ describe('locales', () => {
     });
 
     it('falls back to en for missing keys in extension locale', () => {
-      registerLocale('test-lang', 'Test Language', {});
-      expect(getTranslation('test-lang', 'common.ok')).toBe(en['common.ok']);
+      // Fresh locale code: the shared @datazen/ui registry is append-only per
+      // key, so this must not reuse 'test-lang' from the previous case.
+      registerLocale('test-lang-empty', 'Test Empty', {});
+      expect(getTranslation('test-lang-empty', 'common.ok')).toBe(en['common.ok']);
     });
 
     it('lists extension locales with labels', () => {
