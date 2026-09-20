@@ -2,7 +2,7 @@
 
 ## migration-sync-plan-BUG-001 — plan does not bind the live active database identity (P1)
 
-- 状态：已修复候选，待独立 Tester 复测
+- 状态：已验证（2026-09-20 Round 2）
 - 描述：`validate_plan_context` 读取了 source/target session config，但没有把当前 session 的 active database 与 plan 中的 qualified database 比较。`current_schema_fingerprint` 使用 plan 保存的 database 名称参与哈希，同时从当前 session 的 active database 读取 schema；如果另一个 database 恰好有同名同结构表，指纹仍可相等。PostgreSQL 的 Sync SQL 只按 schema 限定关系，因此执行会把 reviewed plan 写入被切换后的 database。
 - 重现步骤：
   1. 在 PostgreSQL database A 和 database B 建立同名、同结构且存在差异的表，并用 session 连接 database A。
@@ -13,10 +13,11 @@
 - 影响范围：绕过了本 wave 要求的 qualified database identity 绑定，在同库名表存在时可能把 reviewed Sync 写入错误 database；这是执行前必须阻断的 P1 数据完整性问题。
 - 修复要求：执行前对 source/target live session 的 active database 与 plan 保存的 resolved database 做严格比较；数据库切换、session 替换或无法确认当前 identity 时均在 claim/write 前拒绝，并补充 PostgreSQL 同结构跨 database 回归旅程。
 - 修复：`validate_plan_context` 现在在 schema fingerprint 和 claim/write 前严格比较两端 live session 的 active database；空值、切库、session 不可确认均 fail-closed。新增 Host command test 覆盖 target 切换 active database 后拒绝执行。
+- Round 2 验证：Host command test `execute_data_sync_rejects_when_target_active_database_changes` 通过；`validate_plan_context` 在 schema fingerprint、SQL 生成和 claim 前执行 active database 校验，真实 PG/MySQL immutable-plan journeys 的 selected-only 与 stale-schema 检查均在目标写入前通过。未发现切库后 claim 或写入的路径。
 
 ## migration-sync-plan-BUG-002 — 既有 real Sync E2E 仍发送已移除的旧 API 契约（P1 release gate）
 
-- 状态：已修复候选，待独立 Tester 复测
+- 状态：已验证（2026-09-20 Round 2）
 - 描述：immutable plan 变更后，既有 `e2e/specs/data-sync-real.ts` 仍把 `compare_data_sync` 当作数组，把 `generate_data_sync_sql` 当作接收 source/target/tables，并调用已经明确拒绝未审核重比对的 `apply_data_sync`。这使正式应用上的既有 real Sync 套件无法通过，且没有覆盖新的 planId/selection execution contract。
 - 重现步骤：
   1. 使用 `CI=true CARGO_TARGET_DIR=/tmp/datazen-target-sync-plan pnpm tauri:build:webdriver` 构建本轨应用。
@@ -26,3 +27,4 @@
 - 影响范围：`pnpm e2e:data-sync` 的 real Sync release gate 失败；回归套件不能证明新的 opaque plan、selection revision、selected-only writes 和 stale-plan rejection。
 - 修复候选：real Sync tests 已迁移到 preview → key-only selection → `generate_data_sync_sql` / `execute_data_sync`；旧 `apply_data_sync` 保留拒绝断言，并新增 selected-only、stale-schema-before-write、one-shot retry 断言。PostgreSQL numeric placeholder 同步补 `::numeric`，使 wide-type journey 可正确执行。
 - 修复要求：迁移该套 real Sync tests 到 `{ planId, selection, options }` 请求，并以 `execute_data_sync` 为唯一执行入口；保留旧 `apply_data_sync` 的拒绝断言作为独立兼容性测试。新测试必须断言 selected-only writes、stale schema 在 target write 前拒绝以及一次性 claim。
+- Round 2 验证：`e2e/specs/data-sync-real.ts` 精确构建运行 **25 passing, 0 failing**；覆盖 opaque plan、参数化 SQL、旧 `apply_data_sync` 拒绝、selected-only、stale schema 写前拒绝和 one-shot retry。权限组使用 `.env` 中已配置的 PG/MySQL read-only credentials，相关用例通过。
