@@ -211,7 +211,7 @@ const [confirm, dialog] = useBoundConfirmDialog(); // dialog 渲染一次，conf
 
 - `@datazen/ui` 是**全应用唯一** i18n 实现（查表 / `{param}` 插值 / `en` 回落），无 bridge、无第二套引擎；Driver 侧统一 `import { useI18n } from '@datazen/ui'`（非 React 路径如表单校验器，由 SDK 契约把 `t` 作为参数注入，见 `DriverFormValidator`）。
 - **只有宿主调用 `setLocale`**（语言偏好由宿主 settingsStore 持久化并同步）；Driver 生产代码出现 `setLocale` 调用即违规。
-- **词条由 Driver 包自己提供并自注册**：词条放 `locales/`（各语言一个文件，key 带 Driver 自有前缀如 `redis.*` / `mongo.*`），由纯副作用模块 `locales/index.ts` 调用 `registerTranslations` 注册；挂载点在 Driver UI 入口模块（即 `generated.ts` 实际 import 的首个 UI 模块，如 `ui/shared/meta.ts`）加一行 `import '../locales';`。**此自注册链路由 `i18n-drivers` 轨同期落地**（宿主端 `DRIVER_LOCALES` 聚合 codegen 同期删除），落地前请勿依赖旧的宿主聚合方式新增词条。
+- **词条由 Driver 包自己提供并自注册**：词条放 `locales/`（各语言一个文件，key 带 Driver 自有前缀如 `redis.*` / `mongo.*`），由纯副作用模块 `locales/index.ts` 静态 import 本目录**全部**语言字典后调用一次 `registerTranslations` 注册（注册集合不随宿主接线的可选语言集合收缩，两者不对称是有意终态，见契约文档 2.4.3）；挂载点在 Driver UI 入口模块（即 `generated.ts` 实际 import 的首个 UI 模块）加一行指向本包 `locales/` 的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts` 写 `import '../locales';`，入口在 `ui/shared/meta.ts`（如 redis）写 `import '../../locales';`。**此自注册链路由 `i18n-drivers` 轨同期落地**（宿主端 `DRIVER_LOCALES` 聚合 codegen 同期删除），落地前请勿依赖旧的宿主聚合方式新增词条。
 - Driver 侧 `t()` 的 key 是普通 `string`，没有编译期 `I18nKey` 校验；词条完整性由 `node scripts/i18n-sync-check.mjs` 扫描各包 `locales/` 保证（驱动目录扫描同由 `i18n-drivers` 轨加入）。开发期间只改本包 `en.ts`（唯一 source of truth）。
 
 ## 7. 迭代开发循环

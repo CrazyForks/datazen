@@ -57,7 +57,7 @@
 - [x] Tester 复测（第 2 轮，commit `9bf1c6600`）→ **TEST_FAILED**（BUG-001..004 **全部判定「已修复」**；新发现 1 条低级残留缺陷 `decouple-docs-BUG-005`（指南 §6.2 zh/en 未同步 BUG-003 三分规则），状态「待修复」；全局不回归 7 项全部通过。详见下方「Tester 第 2 轮复测记录」）
 - [x] Coder Bug 修复（第 2 轮，仅 BUG-005）→ READY_FOR_TEST（zh/en 两份 §6.2 已同步改写为三分规则并换用实测存在的先例；判定成立、无反驳项；状态由复测 Tester 推进）
 - [x] Tester 复测（第 3 轮，commit `595f106dd`）→ **TEST_FAILED**（BUG-005 判定**已修复**，全局不回归 7 项全过，抽验 28 项命中 27；新登记 2 条低级一致性缺陷 `BUG-006`（2.4.3 三层语言真值未对表 O-1 裁定的驱动侧 10 语言运行时集合）与 `BUG-007`（副作用示例 `import '../locales';` 与点名的嵌套入口深度不匹配）。详见文末「Tester 第 3 轮复测记录」）
-- [ ] Coder Bug 修复（第 3 轮，BUG-006 / BUG-007）→ READY_FOR_TEST
+- [x] Coder Bug 修复（第 3 轮，BUG-006 / BUG-007）→ **READY_FOR_TEST**（第 3 轮由接管 Coder 完成：现场遗留改动经逐行复核后大部分保留、1 处事实不精确已纠正；详见文末「Coder Bug 修复记录（第 3 轮 · 接管）」）
 - [ ] Tester 复测（第 4 轮）→ TEST_DONE
 
 ## Tester 复测记录（commit `6199d9d95`，全新实例独立实测，不采信 Coder 自报）
@@ -431,3 +431,67 @@
 - 本轨无 E2E（纯文档）。后续验证点已由 Tester 登记在上方「阶段 D：留待 R 回归」：Wave 4 import 护栏落地时的现网基线白名单口径（BUG-001 修正后为 **34 处宿主相对 import（32 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径 = 42 处**，以 2.1.2 登记为准）、驱动侧 `setLocale` 拦截、以及 `i18n-drivers` 合并后回扫 2.4.3 的措辞与模块名。
 - **Tester 第 2 轮补登**（详见「阶段 D」小节）：① `i18n-drivers` 合并后 **2.1.2 / 2.7 的过渡期基线数字（32 / 2 / 8 / 42）必然失效**——换源归零时须同步删除该清单或改注为「历史基线」，否则「少于基线应更新 2.1.2」的判据会反向悬空；② **Wave 4 护栏脚本落地后**须回扫 2.6 / 2.1.2 / 2.7，把「待 Wave 4 落地」措辞替换为实际脚本文件名与 CI 位置，并核对护栏白名单与本档口径一致；③ BUG-005（指南 §6.2 两层文档矛盾）修复时 **zh/en 两份必须同步改写**，保持标题结构 21:21 不变（**第 3 轮复测已闭环**：20 : 20 code span 相同、21 : 21 标题）。
 - **Tester 第 3 轮补登**：④ **BUG-006 / BUG-007 均落在 2.4.3（及其指南 §6.3 引用面）**，修复属纯文本改动、不得新增标题；两条与 ① 的 `i18n-drivers` 合并回扫同属一次改动，建议协调者让 Coder 一并改清，避免第三次往返；⑤ `i18n-drivers` 合并后须**用本仓库实际实现复核** 2.4.3 的驱动词条行与「三层真值」表述（本轮证据取自并行轨检出只读版：`packages/drivers/redis/locales/index.ts:18-41` 静态 import 10 语言 + `ui/shared/meta.ts:4 import '../../locales';`；O-1 裁定与包体量级见 `.worktrees/datazen-i18n-drivers/docs/development/coordination/tracks/i18n-drivers/bugs.md:170-182`），若合并时语言集合或入口挂载方式变更，2.4.3 需同步改写。
+
+## Coder Bug 修复记录（第 3 轮 · 接管）
+
+被修对象：`decouple-docs-BUG-006` / `decouple-docs-BUG-007`（Tester 第 3 轮登记，被复测 commit `595f106dd`，本轮基准 HEAD `8b7338190`）。
+
+**接管背景**：第 3 轮原 Coder 在修复过程中异常中断，留下 4 个文件的未提交工作区改动。本节先记录**现场取舍**，再记录本轮**新增的纠正**与自验输出。改动仅落在 `driver-api-dependency-boundary.md` 2.4.3、两份指南 §6.3、本 track `progress.md`/`bugs.md`；零生产代码改动、未新增/删除任何标题。
+
+### 一、接管现场盘点（`git diff` 逐行复核 → 保留 / 纠正判定）
+
+| # | 现场遗留改动 | 复核动作（本轮亲自执行） | 判定 |
+| --- | --- | --- | --- |
+| 1 | `driver-api-dependency-boundary.md:289`（2.4.3「驱动词条」行）：删去单一通用串 `import '../locales';`，改为「相对层级随入口目录深度而定」+ 按 mongodb / redis 两类入口分别举例 | Read 并行轨两个入口实测说明符（见下方对照表） | **保留**（事实正确、BUG-007 契约侧已修清） |
+| 2 | 同文件 `:297`（第 ② 层末句）：加入「**就宿主 `src/locales/` 的这 8 个语言文件而言**」限定语 + 「此限定只描述宿主词条，不适用于驱动包，见下条不对称说明」 | 与 `bugs.md` BUG-006 建议修复方向逐字对表（该方向即要求「显式限定为宿主 8 个语言文件」） | **保留** |
+| 3 | 同文件新增 `:299` 不对称说明 bullet 的**主体**：三层均为宿主口径、驱动侧注册集合有意不对称、驱动一经装载即全量进 main chunk、O-1 三档实测数字与净增、以及「不存在驱动跟着宿主只注册 2 语言这一形态」 | O-1 数字逐个 grep 复核（见「二、事实复核」）| **保留主体**；**其末句存在事实不精确，已纠正 → 见下方「三」** |
+| 4 | 两份指南 §6.3（zh:214 / en:229）：补「全部语言字典静态 import + 注册集合不随宿主收缩（不对称是有意终态，指向契约 2.4.3）」＋入口深度分例 | 与 `bugs.md` BUG-006 建议方向中「§6.3 若同步补须 zh/en 两份同改」一致；本轮以 node 脚本比对两份该行 code span → **13 : 13、集合完全相同**、反引号各 26 | **保留** |
+| 5 | `bugs.md`：BUG-006/007 状态 `待修复` → **`待复测（第 3 轮修复完成）`**，并补「Coder 第 3 轮修复说明」段 | 核对纪律要求：**未自标「已修复」**，状态推进权限留给复测 Tester | **保留**（合规，无需回退） |
+
+**结论**：现场无越界改动、无半成品假结构、无自我判定违规；除下述 1 处事实不精确外全部保留，未盲目重做，也未无脑保留。
+
+### 二、事实复核（本轮亲自执行，全部只读并行轨检出，未向对方写入任何内容）
+
+| # | 主张 | 实测命令/动作 → 输出 | 结论 |
+| --- | --- | --- | --- |
+| 1 | redis 入口挂的是两级串 | `Read .worktrees/datazen-i18n-drivers/packages/drivers/redis/ui/shared/meta.ts` → `:4 import '../../locales';` | 成立 |
+| 2 | mongodb 入口挂的是一级串 | `Read .worktrees/datazen-i18n-drivers/packages/drivers/mongodb/ui/meta.ts` → `:4 import '../locales';` | 成立 |
+| 3 | 驱动侧确为「全量 10 语言静态 import + 一次性注册」 | `Read .worktrees/datazen-i18n-drivers/packages/drivers/redis/locales/index.ts` → `:18` import `registerTranslations` from `@datazen/ui`；`:19-28` 逐个 import `de/en/es/fr/ja/ko/pt-BR/ru/zh-CN/zh-TW`（**10 个**）；`:30-41` 单次 `registerTranslations({ … })`；文件头注释自陈「Side-effect module… imported from `ui/shared/meta.ts`」「registered as soon as the driver UI is loaded」 | 成立 |
+| 4 | O-1 裁定与三档量级 | `.worktrees/datazen-i18n-drivers/docs/development/coordination/tracks/i18n-drivers/bugs.md:170-182` → 「维持 10 语言全量自注册…+76.57 kB min / +6.59 kB gzip 的代价由用户明确认可；本轨禁止改回 en+zh-CN、**禁止引入惰性/按需注册机制**」；三档表 = 1,501.93 / 1,528.55 / 1,605.12 kB（gzip 452.27 / 460.56 / 467.15）；`progress.md:226-227` 同记净增与「确在 **main chunk**（启动即加载，非按需）」 | 成立（文档内四个数字与裁定文本逐项吻合） |
+| 5 | 宿主接线集合 | `sed -n '9p' src/locales/builtinLocales.ts` → `export const BUILTIN_LOCALES = ['en', 'zh-CN'] as const;`；`grep -c "pt-BR" src/locales/builtinLocales.ts` → **0** | 成立（第 ① 层为真） |
+
+### 三、本轮纠正：`:299` 末句「运行时可达性判据」写错了机制
+
+现场把「某语言在运行时是否可达」归给「宿主 `BUILTIN_LOCALES` **与 `src/locales/lazyPacks.ts` 的接线集合**」。本 worktree 实测两处不精确：
+
+1. **`lazyPacks.ts` 不是驱动词条的可达性闸门**：该模块 `:16-17` 的 `registry` / `inflight` 与 `:21` 的 `loaders` 类型为 `Record<BuiltinLocale, Record<LazyDomain, …>>`，键域只有 `en` / `zh-CN`（`:22-33`），值是宿主 4 个惰性域包（`src/locales/domains.ts:21` `LAZY_DOMAINS = ['sync','workflows','dashboard','mcp']`），`:36-38 isBuiltin()` 对其余语言直接早退。驱动词条是 eager 进共享注册表的，**根本不经过该机制**——把它列为判据还与同句「不做惰性 / 按需注册」自相矛盾。
+2. **遗漏真实的第三语言接入路径**：`src/locales/index.ts:34` 维护 `extensionLocales`，`:42-45 registerLocale()` 注册新语言并灌入字典，`:51-56 getExtensionLocales()` 供设置页拼接语言下拉（实测消费点 `src/windows/settings/SettingsContent.tsx:91-100` = `BUILTIN_LOCALES.map(…)` + `…getExtensionLocales()`），`:36-38 getAvailableLocales()` 同样返回两者并集。O-1 收益侧的原始表述正是「为未来某扩展经 `registerLocale()` 引入第 3 语言预付」。
+
+改法：可达性判据改写为「`BUILTIN_LOCALES` 并上宿主扩展经 `registerLocale()` 注册的语言」（带 `index.ts:42-45` 与 `SettingsContent.tsx:91-100` 实测出处），并单列一句说明 `lazyPacks.ts` 只服务宿主词条、驱动词条不经它装载；同时补写「驱动多出的 8 个语言在当前宿主集合下运行时不可达、其字典常驻注册表」这一 O-1 已承认的事实，避免读者反向推成「注册即可用」。
+
+同段另两处小改：① 「也不做惰性 / 按需注册」→「本契约同样**不要求、不建议**驱动改走惰性 / 按需注册——O-1 裁定明令禁止引入该机制，全量 eager 注册即终态」（消除被读成建议的空间，与裁定原文同向）；② 「同轨 `bugs.md` 观察项 O-1」→ 写明完整路径 `docs/development/coordination/tracks/i18n-drivers/bugs.md`，便于后续复测定位。
+
+### 四、文档 import 串 ↔ 实际入口 ↔ 正确相对串 对照表（自验第 1 项）
+
+| 文档写的串 | 文档点名的入口 | 实际入口文件（绝对路径） | 该入口内实测串 | 判定 |
+| --- | --- | --- | --- | --- |
+| `入口在 ui/meta.ts（如 mongodb）写 import '../locales';` | mongodb | `/Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-i18n-drivers/packages/drivers/mongodb/ui/meta.ts` | `:4` `import '../locales';` | ✅ 一致 |
+| `入口在 ui/shared/meta.ts（如 redis，嵌套两层）写 import '../../locales';` | redis | `/Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-i18n-drivers/packages/drivers/redis/ui/shared/meta.ts` | `:4` `import '../../locales';` | ✅ 一致 |
+
+两串均已在 `:289`（契约）与 `zh:214` / `en:229`（指南）三处按同一口径写明；`grep -rn "\.\./locales" docs/` 全量清点确认：三份正文文档中该串**只出现在上述按深度分例的句内**，无残留「单一通用串」写法（其余命中均为 `bugs.md`/`progress.md` 的缺陷举证与历史记录，属引用旧文，不改）。
+
+### 五、第 3 轮自验（真实输出）
+
+1. **对照表**：见上节「四」，redis / mongodb 各一行，均由 Read 实际文件证实。
+2. `grep -n "locales" docs/development/driver-api-dependency-boundary.md docs/development/independent-driver-development.*.md` → 命中 `boundary:154/288/289/290/294/296/297/298/299/305/342`、`zh:41/181/214/215`、`en:41/196/229/230/389`；逐处判定：`:289` 与 `zh:214`/`en:229` 已按两类入口分别给串且深度正确；`:288/290` 为宿主 eager-lazy 与 EP 行，不含驱动入口示例；`:342`（2.7 自查项）只写「经本包 `locales/index.ts` 自注册」，无相对说明符 ⇒ **无残留错误深度**。
+3. **2.4.3 新表述自检**：`grep -n "只注册" boundary.md` → 仅 `:299` 1 处，且位于「不存在『驱动跟着宿主只注册 2 语言』这一形态」的**否定引用**内，无「宿主只接线 2 语言 ⇒ 驱动也应如此」暗示；`grep -n "惰性\|按需注册" boundary.md` → `:288`（宿主 lazy 域包既有描述）与 `:299`（「不要求、不建议驱动改走惰性 / 按需注册——O-1 裁定明令禁止引入该机制」＋「宿主惰性域包…驱动词条不经它装载」）⇒ **均为禁止性/澄清性表述，无建议语气**；`grep -n "76.57\|6.59\|1,501.93\|1,528.55\|1,605.12"` → `:299` 命中，O-1 三档与净增数字**全部在文**。
+4. **标题结构**：`grep -c "^#"` → zh **21** / en **21**；层级分布两份完全相同 `#`×1 + `##`×13 + `###`×7（`####` 0）；`diff <(grep -o '^#\+' zh) <(grep -o '^#\+' en)` → **空输出**（本轮纯文本改写，未新增/删除标题，验收 4 保持）。
+5. **编译与守卫**：`npx tsc --noEmit -p tsconfig.json` → **exit 0**；`node scripts/check-id-terminology.mjs` → exit 0（5 allow-listed occurrence(s) skipped / ok, 1714 files scanned）；`node scripts/check-ci-docs-consistency.mjs` → exit 0（drivers ok 11 ids / window boundaries ok / toolchain ok Node 24, pnpm 11, Rust stable）；`node scripts/check-module-layers.mjs` → exit 0（ok, 3 rules）。
+6. **范围纪律**：`git status --short` 提交后为空；`git diff --name-only 8b7338190..HEAD` → 4 个文件，全部在允许清单内（`driver-api-dependency-boundary.md`、`independent-driver-development.zh-CN.md`、`.en.md`、本 track `progress.md`/`bugs.md`）；`git diff --stat 8b7338190..HEAD -- src packages scripts src-tauri e2e AGENTS.md` → **空**，零生产代码改动，未触碰 `hub.md`、`AGENTS.md`、契约 Part 1。
+7. **未污染并行轨**：`.worktrees/datazen-i18n-drivers` 仅执行 Read / grep / sed 只读动作，未运行任何写入命令，对方工作区文件清单未因本轮改变。
+8. `node scripts/aggregate-hub.mjs` 未运行（避免改写禁止触碰的 `hub.md`），与前两轮口径一致；本轮 diff 不含任何代码/脚本路径，结论等价。
+
+### 六、每条 Bug 的一句话修法
+
+- **BUG-006**：在 2.4.3「三层真值」后补一条独立 bullet，写明三层全为宿主口径、驱动侧注册集合**有意不对称**（全量 eager、启动即进 main chunk、O-1 三档实测 +76.57 kB min / +6.59 kB gzip 已获认可），并把「运行时可达语言集合」的判据钉回宿主 `BUILTIN_LOCALES` ∪ `registerLocale()` 扩展语言；第 ② 层「无运行时 import」显式限定为宿主 `src/locales/` 的 8 个语言文件，两份指南 §6.3 同步该不对称结论并指向契约。
+- **BUG-007**：把「挂一行 `import '../locales';`」的单一通用串改为「相对层级随入口目录深度而定」，并按实测分别举例——入口 `ui/meta.ts`（mongodb）→ `'../locales'`、入口 `ui/shared/meta.ts`（redis）→ `'../../locales'`；契约 `:289` 与指南 `zh:214` / `en:229` 三处同改。

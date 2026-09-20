@@ -11,12 +11,16 @@
 | `decouple-docs-BUG-003` | 低 | 同上 2.2 决策表行 1 先例列 | `src/lib/driverSettings.ts` 作为「薄再导出先例」引用，实际文件已不存在 | 已修复（第 2 轮复测通过；残留同类问题另立 BUG-005） |
 | `decouple-docs-BUG-004` | 低 | 本 track `progress.md` Coder 自验第 6 条 / B 表 | 自报 zh/en 各 24 个标题，实测各 21 个（结构对应本身通过） | 已修复（第 2 轮复测通过） |
 | `decouple-docs-BUG-005` | 低 | `independent-driver-development.zh-CN.md:196` / `.en.md:211`（§6.2） | 仍无条件声称「宿主原路径仅剩薄再导出」并把 `driverSettings`、`resolveEditorFontFamily` 列为该形态先例，实际二者宿主文件均已不存在，与修复后的契约 2.2/2.5 三分规则互相矛盾 | 已修复（第 3 轮复测通过） |
-| `decouple-docs-BUG-006` | 低 | `driver-api-dependency-boundary.md:295-298`（2.4.3「真值分三层」） | 三层只描述宿主侧接线集（en/zh-CN）与「其余 8 语言生产路径无运行时 import」，未对表 O-1 裁定下「驱动自注册把全部 10 语言灌入共享注册表、启动即进 main chunk」的运行时集合，读者会误判全仓只有 2 语言进 bundle 或以为驱动应只注册 2 语言 | 待修复 |
-| `decouple-docs-BUG-007` | 低 | 同上 2.4.3 词条归属表「驱动词条」行 + 指南 §6.3（zh:213 / en:228） | 副作用行示例字面写 `import '../locales';`，却同时点名 redis 入口为 `ui/shared/meta.ts`（嵌套两层），该目录下正确写法只能是 `import '../../locales';` | 待修复 |
+| `decouple-docs-BUG-006` | 低 | `driver-api-dependency-boundary.md:295-298`（2.4.3「真值分三层」） | 三层只描述宿主侧接线集（en/zh-CN）与「其余 8 语言生产路径无运行时 import」，未对表 O-1 裁定下「驱动自注册把全部 10 语言灌入共享注册表、启动即进 main chunk」的运行时集合，读者会误判全仓只有 2 语言进 bundle 或以为驱动应只注册 2 语言 | 待复测（第 3 轮修复完成） |
+| `decouple-docs-BUG-007` | 低 | 同上 2.4.3 词条归属表「驱动词条」行 + 指南 §6.3（zh:213 / en:228） | 副作用行示例字面写 `import '../locales';`，却同时点名 redis 入口为 `ui/shared/meta.ts`（嵌套两层），该目录下正确写法只能是 `import '../../locales';` | 待复测（第 3 轮修复完成） |
 
 > **Coder 第 1 轮修复说明（状态推进：待修复 → 待复测）**：4 条判定经本轮独立实测**全部成立，无反驳项**，已按建议方向修正。改法与实测事实逐条见 `progress.md`「Coder Bug 修复记录（第 1 轮）」。BUG-001 额外登记了 Tester 未列的 **8 处 `vi.mock` 宿主 `useI18n` 路径**（非 `from` 形态、不被重现命令命中），供 Wave 4 护栏白名单口径复核。状态由复测 Tester 推进为「已修复」，Coder 不自行判定。
 >
 > **Coder 第 2 轮修复说明（BUG-005，状态推进：待修复 → 待复测）**：判定经本轮独立实测**成立，无反驳项**（`src/lib/driverSettings.ts`、`src/lib/resolveEditorFontFamily.ts` 实测均不存在，SDK 侧两文件均在，宿主两个消费点均直连 `@datazen/driver-sdk`）。已把两份指南 §6.2 该条改为与契约 2.2/2.5 同一套三分规则，并换用实测存在的薄壳先例；改法与自验输出见 `progress.md`「Coder Bug 修复记录（第 2 轮）」。状态由第 3 轮复测 Tester 推进为「已修复」，Coder 不自行判定。
+>
+> **Coder 第 3 轮修复说明（BUG-006 / BUG-007，状态推进：待修复 → 待复测）**：两条判定经本轮独立实测**全部成立，无反驳项**。BUG-006 按用户 2026-09-21 裁定（驱动全量 10 语言自注册、接受包体代价）在 2.4.3 补写「宿主接线集 vs 驱动注册集」的不对称对表句并显式限定第 ② 层的适用范围，未提出任何惰性/按需注册建议；BUG-007 按并行轨实测 import 串改正为「相对层级随入口深度而定」并分别举例（`ui/meta.ts` → `'../locales'`、`ui/shared/meta.ts` → `'../../locales'`），契约与两份指南 §6.3 三处同改。改法、对照表与实测出处见 `progress.md`「Coder Bug 修复记录（第 3 轮）」。状态由第 4 轮复测 Tester 推进，Coder 不自行判定。
+>
+> **接管更正（同轮，第 3 轮原 Coder 中断后由新实例复核）**：现场遗留改动经逐行实测复核，`:289` / `:297` 分例与限定语、`:299` 不对称主体与 O-1 数字、两份指南 §6.3 同步、`bugs.md` 状态推进均**复核为真并保留**；但 `:299` 末句把「某语言运行时是否可达」的判据写成「宿主 `BUILTIN_LOCALES` **与 `src/locales/lazyPacks.ts` 的接线集合**」不精确——`lazyPacks.ts:21-34` 的类型键域只有 `en` / `zh-CN`、值只有宿主 4 个惰性域包（`src/locales/domains.ts:21`），驱动 eager 词条不经它装载，且该写法与同段「不做惰性/按需注册」自相矛盾；同时遗漏真实接入路径 `src/locales/index.ts:42-45 registerLocale()` → `:51-56 getExtensionLocales()` → 设置页 `src/windows/settings/SettingsContent.tsx:91-100`。已改为「`BUILTIN_LOCALES` 并上 `registerLocale()` 注册语言」并把 lazyPacks 单列为「只服务宿主词条」；另把「也不做惰性 / 按需注册」强化为「本契约不要求、不建议…O-1 裁定明令禁止引入该机制」，消除被反向读成建议的空间。全部改动仍在 2.4.3 纯文本范围内，未新增标题。取舍明细与自验输出见 `progress.md`「Coder Bug 修复记录（第 3 轮 · 接管）」§一/§三。
 
 ---
 
