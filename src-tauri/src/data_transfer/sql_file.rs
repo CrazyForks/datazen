@@ -100,8 +100,16 @@ pub(crate) fn validate_target_scope_for_driver(
     driver: &dyn DatabaseDriver,
     target: &super::model::SqlFileTarget,
 ) -> Result<(), TransferError> {
+    let driver_type = driver.driver_type();
+    validate_target_scope_for_family(&driver_type, target)
+}
+
+fn validate_target_scope_for_family(
+    driver_type: &str,
+    target: &super::model::SqlFileTarget,
+) -> Result<(), TransferError> {
     target.validate_qualifiers()?;
-    let family = driver.driver_type().to_ascii_lowercase();
+    let family = driver_type.to_ascii_lowercase();
     let database = target.normalized_database();
     let schema = target.normalized_schema();
     match family.as_str() {
@@ -109,7 +117,7 @@ pub(crate) fn validate_target_scope_for_driver(
             if schema.is_some() {
                 return Err(TransferError::validation(format!(
                     "SQL file target dialect '{}' accepts a database/catalog qualifier but not a separate schema",
-                    driver.driver_type()
+                    driver_type
                 )));
             }
         }
@@ -118,15 +126,15 @@ pub(crate) fn validate_target_scope_for_driver(
             if database.is_some() {
                 return Err(TransferError::validation(format!(
                     "SQL file target dialect '{}' cannot qualify a relation with a database/catalog; use schema",
-                    driver.driver_type()
+                    driver_type
                 )));
             }
         }
         _ => {
-            if database.is_some() && schema.is_some() {
+            if database.is_some() || schema.is_some() {
                 return Err(TransferError::validation(format!(
-                    "SQL file target dialect '{}' cannot represent both database/catalog and schema qualifiers",
-                    driver.driver_type()
+                    "SQL file target dialect '{}' does not advertise database/catalog or schema qualification",
+                    driver_type
                 )));
             }
         }
@@ -336,6 +344,20 @@ pub(crate) fn validate_target_dialect_job(job: &TransferJob) -> Result<(), Trans
         return Ok(());
     };
     target.validate_qualifiers()?;
+    if target.has_explicit_scope()
+        && job.tables.iter().any(|mapping| {
+            mapping.enabled
+                && mapping
+                    .ddl_override
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|ddl| !ddl.is_empty())
+        })
+    {
+        return Err(TransferError::validation(
+            "custom SQL-file DDL cannot be combined with an explicit target database/schema; clear the DDL override and preview again",
+        ));
+    }
     if target.normalized_database_type().is_none() {
         return Ok(());
     }
@@ -1250,6 +1272,58 @@ mod tests {
         };
         let error = validate_target_scope_for_driver(&driver, &schema).unwrap_err();
         assert!(error.to_string().contains("not a separate schema"));
+    }
+
+    #[test]
+    fn target_scope_rejects_unknown_driver_qualifiers_instead_of_dropping_them() {
+        let target = super::super::model::SqlFileTarget {
+            file_token: "token".into(),
+            database_type: Some("oracle".into()),
+            database: Some("catalog".into()),
+            schema: None,
+        };
+        let error = validate_target_scope_for_family("oracle", &target).unwrap_err();
+        assert!(error.to_string().contains("does not advertise"));
+    }
+
+    #[test]
+    fn explicit_target_scope_rejects_custom_ddl_overrides() {
+        let mut job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "s".into(),
+                database: "source".into(),
+                schema: Some("public".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: None,
+                database: None,
+                schema: Some("target".into()),
+            }),
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: vec![TableMapping {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                create_new: true,
+                enabled: true,
+                column_mappings: Vec::new(),
+                ddl_override: Some("CREATE TABLE users (id INTEGER)".into()),
+                source_filter: None,
+                recordset: None,
+            }],
+            options: Default::default(),
+        };
+        job.sql_file_target
+            .as_mut()
+            .unwrap()
+            .normalize_qualifiers()
+            .unwrap();
+        let error = validate_target_dialect_job(&job).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("explicit target database/schema"));
     }
 
     #[test]
