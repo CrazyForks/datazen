@@ -298,6 +298,14 @@ fn validate_selection(
     let Some(source_tables) = &selection.source_tables else {
         return Ok(());
     };
+    // SQL-file previews may discover their default source table set on the
+    // server because the UI has no target snapshot to inspect. Treat an
+    // empty client selection as “use that immutable server selection” rather
+    // than silently disabling every table. Database targets retain their
+    // existing explicit-selection semantics.
+    if job.sql_file_target.is_some() && source_tables.is_empty() {
+        return Ok(());
+    }
     let mut seen = std::collections::HashSet::new();
     for name in source_tables {
         if name.trim().is_empty() || !seen.insert(name) {
@@ -323,6 +331,9 @@ fn apply_selection(job: &mut TransferJob, selection: &TransferRunSelection) {
     let Some(source_tables) = &selection.source_tables else {
         return;
     };
+    if job.sql_file_target.is_some() && source_tables.is_empty() {
+        return;
+    }
     for table in &mut job.tables {
         table.enabled = source_tables
             .iter()

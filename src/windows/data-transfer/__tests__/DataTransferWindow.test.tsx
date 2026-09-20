@@ -72,6 +72,7 @@ vi.mock('../../../commands/database', () => ({
 vi.mock('../../../commands/transfer', () => ({
   DEFAULT_TRANSFER_OPTIONS: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
   transferCommands: {
+    pickSqlFile: vi.fn().mockResolvedValue({ fileToken: 'sql-file-token' }),
     inspect: (...args: unknown[]) => inspectTransferMock(...args),
     preview: (...args: unknown[]) => previewTransferMock(...args),
     execute: vi.fn().mockResolvedValue({ rowsInserted: 3, tables: [] }),
@@ -211,7 +212,7 @@ async function advanceToSetupStep() {
 
 async function pickSelect(testId: string, optionLabel: string) {
   const wrap = screen.getByTestId(testId);
-  const trigger = within(wrap).getAllByRole('button')[0];
+  const trigger = wrap.matches('button') ? wrap : within(wrap).getAllByRole('button')[0];
   fireEvent.click(trigger);
   const list = await waitFor(() => {
     return screen.getByRole('listbox');
@@ -221,6 +222,31 @@ async function pickSelect(testId: string, optionLabel: string) {
   );
   expect(option, `option ${optionLabel}`).toBeTruthy();
   fireEvent.mouseDown(option!);
+}
+
+async function advanceToSqlFilePreview(mode: 'data' | 'structure' = 'data') {
+  const { DataTransferWindow } = await import('../DataTransferWindow');
+  render(<DataTransferWindow />);
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('get_connections'));
+  await dismissLimitationsDialog();
+
+  fireEvent.click(screen.getByTestId('data-transfer-destination-sql-file'));
+  await waitFor(() =>
+    expect(screen.getByTestId('data-transfer-destination-sql-file')).toHaveTextContent(
+      'transfer.destination.sqlFileSelected',
+    ),
+  );
+  await pickSelect('data-transfer-source', 'PG Src (postgresql)');
+  await waitFor(() => expect(getDatabasesMock).toHaveBeenCalled());
+  await pickSelect('data-transfer-source-database', 'src');
+
+  fireEvent.click(screen.getByTestId('data-transfer-next'));
+  await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
+  if (mode === 'structure') {
+    fireEvent.click(screen.getByTestId('data-transfer-mode-structure'));
+  }
+  fireEvent.click(screen.getByTestId('data-transfer-next'));
+  await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
 }
 
 async function dismissLimitationsDialog() {
@@ -588,6 +614,51 @@ describe('DataTransferWindow', () => {
     fireEvent.click(screen.getByTestId('data-transfer-execute'));
     await waitFor(() => expect(transferCommands.execute).toHaveBeenCalled());
     expect(screen.queryByTestId('data-transfer-execute-confirm')).toBeNull();
+  });
+
+  it('[tester] lets a SQL-file preview export the server-selected multi-table scope', async () => {
+    previewTransferMock.mockResolvedValueOnce({
+      ...previewSuccess,
+      writePlans: [
+        previewSuccess.writePlans[0],
+        { ...previewSuccess.writePlans[0], sourceTable: 'orders', targetTable: 'orders' },
+      ],
+    });
+    await advanceToSqlFilePreview();
+
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+    await waitFor(() => expect(transferCommands.execute).toHaveBeenCalled());
+    expect(transferCommands.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'plan-test-1', selection: undefined }),
+    );
+  });
+
+  it('[tester] returns SQL-file preview back to the usable setup step', async () => {
+    await advanceToSqlFilePreview();
+
+    fireEvent.click(screen.getByRole('button', { name: /transfer.back/i }));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
+    expect(screen.queryByTestId('data-transfer-mapping-step')).toBeNull();
+  });
+
+  it('[tester] keeps SQL-file DDL preview read-only', async () => {
+    previewTransferMock.mockResolvedValueOnce({
+      ...previewSuccess,
+      ddl: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          ddl: 'CREATE TABLE users (id integer)',
+        },
+      ],
+    });
+    await advanceToSqlFilePreview('structure');
+
+    expect(screen.getByTestId('data-transfer-ddl-preview-users')).toHaveTextContent(
+      'CREATE TABLE users (id integer)',
+    );
+    expect(screen.queryByTestId('data-transfer-ddl-editor-users')).toBeNull();
+    expect(screen.queryByTestId('sql-code-change')).toBeNull();
   });
 
   it('disables next and shows empty guidance when no tables are detected', async () => {

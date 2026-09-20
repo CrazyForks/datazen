@@ -98,6 +98,51 @@ struct AtomicSqlFile {
     writer: BufWriter<File>,
 }
 
+#[cfg(not(windows))]
+fn publish_staged_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    // POSIX rename replaces an existing destination as one atomic operation.
+    fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+fn publish_staged_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    // Windows' std::fs::rename does not replace an existing file. MoveFileExW
+    // with REPLACE_EXISTING keeps the sibling staging file and destination on
+    // the same volume while providing the corresponding atomic replacement.
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+    let temporary: Vec<u16> = temporary.as_os_str().encode_wide().chain(once(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect();
+    let replaced = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 impl AtomicSqlFile {
     fn create(destination: PathBuf) -> Result<Self, TransferError> {
         validate_path(&destination)?;
@@ -156,7 +201,7 @@ impl AtomicSqlFile {
             .get_ref()
             .sync_all()
             .map_err(|error| TransferError::validation(format!("cannot sync SQL file: {error}")))?;
-        fs::rename(&self.temporary, &self.destination)
+        publish_staged_file(&self.temporary, &self.destination)
             .map_err(|error| TransferError::validation(format!("cannot publish SQL file: {error}")))
     }
 }
@@ -560,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn atomic_writer_keeps_destination_unchanged_until_publish() {
+    fn atomic_writer_replaces_existing_destination_on_supported_platforms() {
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("out.sql");
         fs::write(&destination, "old").unwrap();
@@ -569,5 +614,16 @@ mod tests {
         assert_eq!(fs::read_to_string(&destination).unwrap(), "old");
         output.finish().unwrap();
         assert_eq!(fs::read_to_string(destination).unwrap(), "new\n");
+    }
+
+    #[test]
+    fn atomic_writer_drops_staging_without_touching_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("out.sql");
+        fs::write(&destination, "old").unwrap();
+        let mut output = AtomicSqlFile::create(destination.clone()).unwrap();
+        output.line("partial").unwrap();
+        drop(output);
+        assert_eq!(fs::read_to_string(destination).unwrap(), "old");
     }
 }

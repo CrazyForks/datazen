@@ -24,11 +24,21 @@
 - `cargo fmt --all` and `git diff --check`: passed after generated files were restored.
 - `CI=true pnpm tauri:build:webdriver`: frontend build passed and Rust compilation was in progress; the long build was interrupted after the coder timeout. It initially required a temporary empty `src-tauri/resources/builtin-ep` directory because the community worktree has no Pro resource directory.
 
+## Tester fix pass
+
+- SQL-file execution now omits an empty UI selection and the server treats a stale empty selection as unchanged, preserving the server-discovered multi-table scope. Progress counts use the immutable preview when no client table snapshot exists.
+- SQL-file preview back navigation returns directly to setup, and structure DDL is rendered read-only so the displayed SQL cannot diverge from the immutable plan.
+- Atomic publication uses POSIX rename replacement and Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)`; staging drops leave an existing destination untouched on failure/cancel.
+- Follow-up Vitest: **32 passed, 0 failed**; Rust SQL-file: **4 passed, 0 failed**; Rust data-transfer commands: **17 passed, 0 failed**; `npx tsc --noEmit`, `cargo fmt --all`, and `git diff --check`: passed.
+- Formal `CI=true pnpm tauri:build:webdriver`: passed; debug app and DMG produced, then generated driver/Cargo files were restored.
+
 ## E2E registration
 
 | Journey | Status |
 | --- | --- |
 | Native SQL path picker → source-only destination → preview → execute by plan id → atomic SQL output | 【本机可执行】 covered by the Rust command test and UI command IPC test |
+| SQL-file default preview → execute with no client table snapshot → all server-selected tables retained | 【本机可执行】 covered by `sql_file_empty_selection_keeps_server_discovered_tables` and the UI multi-table journey |
+| SQL-file preview → Back → setup, and structure preview shows immutable read-only DDL | 【本机可执行】 covered by `DataTransferWindow.test.tsx` |
 | Existing SQL destination is unchanged until successful publication | 【本机可执行】 covered by the atomic writer test |
 | SQL output uses mapped columns and escaped driver literals | 【本机可执行】 covered by the renderer test |
 

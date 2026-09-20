@@ -135,6 +135,7 @@ const pack = {
   'transfer.destination.sourceDatabase': '源数据库',
   'transfer.destination.sqlFileHint': 'SQL 文件路径由宿主安全持有，预览后将以原子方式写入。',
   'transfer.destination.chooseHint': '请选择 SQL 文件后继续。',
+  'transfer.preview.backToSetup': '返回设置',
   'transfer.selectBoth': '请选择源/目标连接及数据库。',
   'transfer.connectFailed': '连接失败：',
   'transfer.path.direct': '同方言族（直连）',

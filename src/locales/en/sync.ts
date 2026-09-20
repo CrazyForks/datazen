@@ -143,6 +143,7 @@ const pack = {
   'transfer.destination.sqlFileHint':
     'The SQL file path is held by the host and will be written atomically after preview.',
   'transfer.destination.chooseHint': 'Choose an SQL file to continue.',
+  'transfer.preview.backToSetup': 'Back to setup',
   'transfer.selectBoth': 'Select source and target connections and databases.',
   'transfer.connectFailed': 'Connect failed:',
   'transfer.path.direct': 'Same dialect family (direct)',

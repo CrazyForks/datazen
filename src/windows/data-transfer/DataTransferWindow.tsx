@@ -494,16 +494,26 @@ export function DataTransferWindow() {
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
     setExecuting(true);
-    const tableCount = job.tables.filter((tbl) => tbl.enabled).length;
+    const tableCount =
+      tables.length > 0
+        ? job.tables.filter((tbl) => tbl.enabled).length
+        : Math.max(preview?.writePlans.length ?? 0, preview?.ddl.length ?? 0);
     setExecuteProgress(t('transfer.executingProgress', { count: tableCount }));
+    // SQL-file preview discovers the source table set on the server when
+    // the UI has not inspected a target database. An explicit empty list
+    // would otherwise disable every table in the immutable plan.
+    const selection =
+      destinationMode === 'sqlFile' && tables.length === 0
+        ? undefined
+        : {
+            sourceTables: job.tables
+              .filter((table) => table.enabled)
+              .map((table) => table.sourceTable),
+          };
     try {
       const execResult = await transferCommands.execute({
         planId,
-        selection: {
-          sourceTables: job.tables
-            .filter((table) => table.enabled)
-            .map((table) => table.sourceTable),
-        },
+        selection,
         options: { confirmedDestructive },
         jobId,
       });
@@ -520,9 +530,10 @@ export function DataTransferWindow() {
   }, [
     refreshEndpointSessions,
     buildJob,
-    preview?.planId,
+    preview,
     targetReadOnly,
     destinationMode,
+    tables.length,
     confirmedDestructive,
     t,
   ]);
@@ -608,6 +619,10 @@ export function DataTransferWindow() {
   }, [step, stepIndex, tables.length, runInspect, runPreview, destinationMode]);
 
   const goBack = () => {
+    if (destinationMode === 'sqlFile' && step === 'preview') {
+      setStep('setup');
+      return;
+    }
     const prev = STEPS[stepIndex - 1];
     if (prev) setStep(prev);
   };
@@ -812,12 +827,14 @@ export function DataTransferWindow() {
                     options={connOptions}
                     onChange={setSourceId}
                     placeholder={t('transfer.selectSource')}
+                    triggerDataAttrs={{ 'data-testid': 'data-transfer-source' }}
                   />
                   <Select
                     value={sourceDatabase}
                     options={sourceDatabases.map((db) => ({ value: db, label: db }))}
                     onChange={setSourceDatabase}
                     placeholder={t('transfer.selectDatabase')}
+                    triggerDataAttrs={{ 'data-testid': 'data-transfer-source-database' }}
                   />
                   <p className="text-xs text-fg-muted">
                     {sqlFileTarget
@@ -991,7 +1008,11 @@ export function DataTransferWindow() {
                   data-testid="data-transfer-preview-back-mapping"
                   onClick={goBack}
                 >
-                  {t('transfer.preview.backToMapping')}
+                  {t(
+                    destinationMode === 'sqlFile'
+                      ? 'transfer.preview.backToSetup'
+                      : 'transfer.preview.backToMapping',
+                  )}
                 </Button>
               </div>
             </div>
@@ -1021,7 +1042,8 @@ export function DataTransferWindow() {
               )}
               {preview.ddl.map((item) => {
                 const table = tables.find((row) => row.sourceTable === item.sourceTable);
-                const ddlValue = table?.ddlOverride ?? item.ddl;
+                const ddlValue =
+                  destinationMode === 'sqlFile' ? item.ddl : (table?.ddlOverride ?? item.ddl);
                 return (
                   <div
                     key={item.sourceTable}
@@ -1040,19 +1062,30 @@ export function DataTransferWindow() {
                         {t('common.copyDdl')}
                       </Button>
                     </div>
-                    <div
-                      className="h-48 min-h-[12rem] bg-surface"
-                      data-testid={`data-transfer-ddl-editor-${item.sourceTable}`}
-                    >
-                      <SqlCodeBlock
-                        code={ddlValue}
-                        dialect={targetConn?.databaseType ?? 'mysql'}
-                        onChange={(next) => updateTableDdlOverride(item.sourceTable, next)}
-                      />
-                    </div>
-                    <p className="border-t border-edge px-3 py-1.5 text-[11px] text-fg-muted">
-                      {t('transfer.ddlOverrideHint')}
-                    </p>
+                    {destinationMode === 'sqlFile' ? (
+                      <pre
+                        className="max-h-64 min-h-[12rem] overflow-auto whitespace-pre-wrap bg-surface p-3 font-mono text-xs"
+                        data-testid={`data-transfer-ddl-preview-${item.sourceTable}`}
+                      >
+                        {ddlValue}
+                      </pre>
+                    ) : (
+                      <>
+                        <div
+                          className="h-48 min-h-[12rem] bg-surface"
+                          data-testid={`data-transfer-ddl-editor-${item.sourceTable}`}
+                        >
+                          <SqlCodeBlock
+                            code={ddlValue}
+                            dialect={targetConn?.databaseType ?? 'mysql'}
+                            onChange={(next) => updateTableDdlOverride(item.sourceTable, next)}
+                          />
+                        </div>
+                        <p className="border-t border-edge px-3 py-1.5 text-[11px] text-fg-muted">
+                          {t('transfer.ddlOverrideHint')}
+                        </p>
+                      </>
+                    )}
                   </div>
                 );
               })}
