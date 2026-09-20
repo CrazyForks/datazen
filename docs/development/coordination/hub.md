@@ -6,11 +6,33 @@
 
 ## 功能总览表
 
-*暂无活跃开发轨道*
+| Track | 任务 | 状态 | 编码 Commit | 测试 Commit | 合并 Commit |
+|-------|------|------|------------|------------|------------|
+| ai-api-base | — | 未开始 | — | — | — |
+| ai-frontend | — | 未开始 | — | — | — |
+| ai-safety-prompt | — | 未开始 | — | — | — |
+| ai-ui | — | 未开始 | — | — | — |
+| cn-to-ui | — | 未开始 | — | — | — |
+| fix-redis-tests | — | 未开始 | — | — | — |
+| redis-pr3-collection-editors | — | 未开始 | — | — | — |
+| types-to-sdk | — | 未开始 | — | — | — |
+| i18n-core | — | 未开始 | — | — | — |
+| cap-bridge | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
-*暂无写锁占用*
+| Track | 写锁代理 | Worktree | Branch | Phase | 最后心跳 |
+|-------|----------|----------|--------|-------|----------|
+| ai-api-base | — | — | feature/ai-api-base | 未开始 | — |
+| ai-frontend | — | — | feature/ai-frontend | 未开始 | — |
+| ai-safety-prompt | — | — | feature/ai-safety-prompt | 未开始 | — |
+| ai-ui | — | — | feature/ai-ui | 未开始 | — |
+| cn-to-ui | — | — | `feature/cn-to-ui`（基准 `feat/driver-decoupling` @ 040e15bde） | 未开始 | — |
+| fix-redis-tests | — | — | `feature/fix-redis-tests`（基准 `feat/driver-decoupling` @ 040e15bde） | 未开始 | — |
+| redis-pr3-collection-editors | — | — | feature/redis-pr3-collection-editors | 未开始 | — |
+| types-to-sdk | — | — | `feature/types-to-sdk`（基准 `feat/driver-decoupling` @ 040e15bde） | 未开始 | — |
+| i18n-core | — | — | `feature/i18n-core`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
+| cap-bridge | — | — | `feature/cap-bridge`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
 
 ## 波次记录
 
