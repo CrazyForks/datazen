@@ -238,3 +238,13 @@ The explicit scope is applied consistently to destructive preambles, table DDL, 
 Independent final verification passed the hardened `data_transfer::sql_file` suite (13/13), `commands::data_transfer` (20/20), focused `data_transfer` (91/91), full Host Rust (1510 passed, 3 ignored), Data Transfer frontend tests (35/35), TypeScript checking, Rust formatting and diff checks. The integration branch reproduced 91/91 Rust tests. The final formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. Windows replacement behavior remains statically reviewed because this host has no Windows runtime; live PostgreSQL/MySQL transfer fixtures are unavailable in this environment.
 
 This gate closes explicit target namespace selection for the covered SQL-file dialects. It does not add target profiles/history, schema/database creation, dialect-specific namespace translation beyond the registered family contract, resumable checkpoints or broader driver coverage.
+
+## SQL-file encoding release gate (2026-09-21)
+
+The encoding wave is integrated in merge commit `916648df` after implementation `6e38af76` and independent final verification. SQL-file targets now expose UTF-8 and UTF-8-with-BOM output choices; omitted or default selection preserves the historical UTF-8 bytes. The encoding is part of the server-owned target fingerprint, so changing it after preview invalidates the plan rather than silently changing the published artifact. The atomic writer emits the BOM before the reviewed header and retains the existing flush, sync and replace guarantees.
+
+The Data Transfer UI exposes the encoding selector beside the target dialect and clears a stale preview when it changes. The IPC model accepts the new optional field while old payloads without it deserialize as UTF-8, and the generated SQL text, target scope and structure/dependency behavior remain unchanged.
+
+Independent final verification passed Rust `data_transfer` focused tests (92/92), Host Rust (1511 passed, 3 ignored), DataTransferWindow tests (29/29), TypeScript and diff checks. The integration branch reproduced `data_transfer` 92/92 and frontend 27/27. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. This environment has no Windows runtime or live transfer fixtures, so those checks remain deferred.
+
+This gate closes selectable UTF-8 output variants for SQL-file transfer. It does not add legacy code-page encodings, UTF-16/GBK conversion, compression, target profiles/history, resumable checkpoints or broader driver coverage.
