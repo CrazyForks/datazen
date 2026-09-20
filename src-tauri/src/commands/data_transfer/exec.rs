@@ -183,6 +183,7 @@ async fn execute_sql_file_target(
         ));
     }
     let claimed = plans::claim_plan(&request.plan_id).map_err(CommandError::from)?;
+    let immutable_structure = claimed.sql_file_structure.clone();
     let mut job = claimed.job;
     apply_selection(&mut job, &request.selection);
     let (driver, handle, inspected, mut schemas) = load_sql_source_snapshot(state, &job).await?;
@@ -219,6 +220,7 @@ async fn execute_sql_file_target(
         &schemas,
         destination,
         cancelled,
+        immutable_structure.as_deref(),
     )
     .await
     .map_err(CommandError::from);

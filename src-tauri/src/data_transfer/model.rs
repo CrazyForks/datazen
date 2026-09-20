@@ -256,12 +256,28 @@ pub struct TableInspectResult {
     pub recordset: Option<TransferRecordset>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DdlPreviewKind {
+    #[default]
+    Table,
+    Index,
+    ForeignKey,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DdlPreviewItem {
     pub source_table: String,
     pub target_table: String,
     pub ddl: String,
+    /// The immutable SQL-file structure plan uses this to keep table DDL
+    /// ahead of secondary objects and constraints during execution.
+    #[serde(default)]
+    pub kind: DdlPreviewKind,
+    /// Source tables that must be present before this object can be emitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

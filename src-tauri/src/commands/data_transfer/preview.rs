@@ -60,6 +60,27 @@ async fn preview_sql_file_target(
     } else {
         None
     };
+    // The source-dialect SQL-file path still needs the source adapter for
+    // indexes and foreign keys. Keep this separate from the explicit
+    // cross-dialect adapter pair so the legacy direct renderer remains the
+    // fallback when a build has no registered source adapter.
+    let structure_adapters = if let Some(pair) = adapters.as_ref() {
+        Some(pair.clone())
+    } else if state
+        .sync_adapters
+        .ensure_type(&src_config.database_type)
+        .is_ok()
+    {
+        match (
+            state.sync_adapters.get_source(&src_config.database_type),
+            state.sync_adapters.get_target(&src_config.database_type),
+        ) {
+            (Some(source), Some(target)) => Some((source, target)),
+            _ => None,
+        }
+    } else {
+        None
+    };
     crate::data_transfer::sql_file::validate_target_dialect_job(&job)
         .map_err(CommandError::from)?;
     let source_tables = src_driver
@@ -183,6 +204,25 @@ async fn preview_sql_file_target(
         can_execute: true,
         block_reason: None,
     };
+    if matches!(
+        job.mode,
+        crate::data_transfer::TransferMode::Structure
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        preview.ddl = crate::data_transfer::sql_file::build_structure_plan(
+            structure_adapters
+                .as_ref()
+                .map(|(source, _)| source.as_ref()),
+            structure_adapters
+                .as_ref()
+                .map(|(_, target)| target.as_ref()),
+            target_driver.as_ref(),
+            &job,
+            &inspected,
+            &source_schemas,
+        )
+        .map_err(CommandError::from)?;
+    }
     for table in inspected.iter().filter(|table| table.enabled) {
         let Some(schema) = source_schemas.get(&table.source_table) else {
             preview.can_execute = false;
@@ -199,50 +239,6 @@ async fn preview_sql_file_target(
                 table.source_table
             ));
             continue;
-        }
-        if matches!(
-            job.mode,
-            crate::data_transfer::TransferMode::Structure
-                | crate::data_transfer::TransferMode::StructureAndData
-        ) {
-            let mapping = job
-                .tables
-                .iter()
-                .find(|mapping| mapping.source_table == table.source_table);
-            let ddl = match mapping
-                .and_then(|mapping| mapping.ddl_override.as_deref())
-                .map(str::trim)
-                .filter(|ddl| !ddl.is_empty())
-            {
-                Some(ddl) => ddl.to_string(),
-                None => match &adapters {
-                    Some((src_adapter, tgt_adapter)) => {
-                        crate::data_transfer::sql_file::create_table_sql_with_target(
-                            src_adapter.as_ref(),
-                            tgt_adapter.as_ref(),
-                            target_driver.as_ref(),
-                            &job,
-                            table,
-                            schema,
-                        )
-                        .map_err(CommandError::from)?
-                    }
-                    None => crate::data_transfer::sql_file::create_table_sql(
-                        src_driver.as_ref(),
-                        &job,
-                        table,
-                        schema,
-                    )
-                    .map_err(CommandError::from)?,
-                },
-            };
-            preview
-                .ddl
-                .push(crate::data_transfer::model::DdlPreviewItem {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    ddl,
-                });
         }
         if matches!(
             job.mode,
