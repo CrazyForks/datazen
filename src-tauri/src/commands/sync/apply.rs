@@ -4,6 +4,7 @@ use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
 use super::inspect::inspect_data_sync_impl;
 use super::keyset_source::DriverKeysetSource;
+use super::plans;
 use crate::data_sync::{
     compare_table_pages, generate_table_sql_with_preview_formatter, mysql_placeholder,
     postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult, DataSyncError,
@@ -30,7 +31,7 @@ pub(crate) async fn compare_data_sync_impl(
     target_schema: Option<String>,
     options: SyncOptions,
     mappings: &[TableMapping],
-) -> Result<Vec<TableResult>, CommandError> {
+) -> Result<plans::SyncComparisonPreview, CommandError> {
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(super::jobs::ensure_job(id).await),
         None => None,
@@ -172,7 +173,69 @@ pub(crate) async fn compare_data_sync_impl(
         }
         out.push(table_result);
     }
-    Ok(out)
+    let comparison = ComparisonResult::new(out);
+    let source_database_name =
+        super::types::resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
+    let target_database_name =
+        super::types::resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
+    let source_schema_name = source_schema
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| src_config.schema.clone());
+    let target_schema_name = target_schema
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| tgt_config.schema.clone());
+    let mut source_entries = Vec::new();
+    let mut target_entries = Vec::new();
+    for table in comparison
+        .tables
+        .iter()
+        .filter(|table| table.status == TableMappingStatus::Matched)
+    {
+        let source_schema_snapshot = src_driver
+            .get_table_schema(&src_handle, &table.source_table)
+            .await
+            .cmd_err("compare_data_sync")?;
+        let target_schema_snapshot = tgt_driver
+            .get_table_schema(&tgt_handle, &table.target_table)
+            .await
+            .cmd_err("compare_data_sync")?;
+        source_entries.push((table.source_table.clone(), Some(source_schema_snapshot)));
+        target_entries.push((table.target_table.clone(), Some(target_schema_snapshot)));
+    }
+    let source_schema_fingerprint = plans::fingerprint_relations(
+        &source_database_name,
+        source_schema_name.as_deref(),
+        source_entries,
+    )
+    .map_err(CommandError::Validation)?;
+    let target_schema_fingerprint = plans::fingerprint_relations(
+        &target_database_name,
+        target_schema_name.as_deref(),
+        target_entries,
+    )
+    .map_err(CommandError::Validation)?;
+    plans::issue_plan(
+        source_db_session_id,
+        target_db_session_id,
+        source_database_name,
+        target_database_name,
+        source_schema_name,
+        target_schema_name,
+        src_driver.as_ref(),
+        tgt_driver.as_ref(),
+        source_schema_fingerprint,
+        target_schema_fingerprint,
+        comparison,
+        options,
+        tgt_config.read_only,
+    )
+    .map_err(CommandError::Validation)
 }
 
 fn resolve_projection_types(

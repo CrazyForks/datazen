@@ -666,7 +666,7 @@ export function DataSyncWindow() {
       }
 
       const toCompare = tablesForCompare(mappingResults);
-      const compared = await syncCommands.compareDataSync(
+      const comparedResponse = await syncCommands.compareDataSync(
         srcConnId,
         tgtConnId,
         toCompare,
@@ -679,6 +679,7 @@ export function DataSyncWindow() {
       );
 
       if (generation !== compareGenerationRef.current) return false;
+      const compared = Array.isArray(comparedResponse) ? comparedResponse : comparedResponse.tables;
       if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
         jobIdRef.current = null;
         jobKindRef.current = null;
@@ -874,7 +875,7 @@ export function DataSyncWindow() {
       }
 
       setExecuteProgress(t('sync.recomparing'));
-      const recompared = await syncCommands.compareDataSync(
+      const recomparedResponse = await syncCommands.compareDataSync(
         srcConnId,
         tgtConnId,
         tablesWithSelection.map((r) => r.sourceTable),
@@ -885,6 +886,7 @@ export function DataSyncWindow() {
         targetSchema || undefined,
         syncOptions,
       );
+      const recompared = Array.isArray(recomparedResponse) ? recomparedResponse : recomparedResponse.tables;
       setMappingResults((prev) => {
         const merged = mergeCompareIntoMappings(prev, recompared);
         return merged.map((row) => {

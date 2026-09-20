@@ -6,6 +6,7 @@ mod exec;
 mod inspect;
 mod jobs;
 mod keyset_source;
+mod plans;
 mod tasks;
 pub(crate) mod types;
 
@@ -19,12 +20,16 @@ use crate::data_sync::{
 };
 use crate::store::SyncTask;
 pub(crate) use apply::{
-    apply_data_sync_impl, compare_data_sync_impl, generate_data_sync_sql_impl,
-    revalidate_data_sync_impl,
+    apply_data_sync_impl, compare_data_sync_impl, revalidate_data_sync_impl,
 };
+#[cfg(test)]
+pub(crate) use apply::generate_data_sync_sql_impl;
+#[cfg(test)]
 pub(crate) use exec::execute_data_sync_impl;
+pub(crate) use exec::{execute_data_sync_plan_impl, generate_data_sync_sql_for_plan_impl};
 pub(crate) use inspect::inspect_data_sync_impl;
 pub(crate) use jobs::cancel_job;
+use plans::{SyncRunRequest, SyncRunSelection};
 pub(crate) use tasks::{
     check_sync_conflicts_impl, delete_sync_task_impl, get_sync_tasks_impl,
     save_sync_task_direct_impl,
@@ -90,19 +95,9 @@ pub async fn inspect_data_sync(
 #[tauri::command]
 pub async fn execute_data_sync(
     state: State<'_, AppState>,
-    target_db_session_id: String,
-    statements: Vec<crate::data_sync::SqlStatement>,
-    job_id: Option<String>,
-    target_database: Option<String>,
+    request: SyncRunRequest,
 ) -> Result<crate::data_sync::ExecutionResult, CommandError> {
-    execute_data_sync_impl(
-        &state,
-        target_db_session_id,
-        statements,
-        job_id,
-        target_database,
-    )
-    .await
+    execute_data_sync_plan_impl(&state, request).await
 }
 
 #[tauri::command]
@@ -122,7 +117,7 @@ pub async fn compare_data_sync(
     source_schema: Option<String>,
     target_schema: Option<String>,
     options: Option<SyncOptionsInput>,
-) -> Result<Vec<crate::data_sync::TableResult>, CommandError> {
+) -> Result<plans::SyncComparisonPreview, CommandError> {
     compare_data_sync_impl(
         &state,
         source_db_session_id,
@@ -170,23 +165,15 @@ pub async fn apply_data_sync(
 #[tauri::command]
 pub async fn generate_data_sync_sql(
     state: State<'_, AppState>,
-    source_db_session_id: String,
-    target_db_session_id: String,
-    tables: Vec<crate::data_sync::TableResult>,
+    plan_id: String,
+    selection: Option<SyncRunSelection>,
     options: SyncOptionsInput,
-    source_database: Option<String>,
-    target_database: Option<String>,
-    source_schema: Option<String>,
-    target_schema: Option<String>,
 ) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
-    let _ = (source_db_session_id, source_database, source_schema);
-    generate_data_sync_sql_impl(
+    generate_data_sync_sql_for_plan_impl(
         &state,
-        target_db_session_id,
-        tables,
+        plan_id,
+        selection.unwrap_or_default(),
         resolve_options(Some(options)),
-        target_database,
-        target_schema,
     )
     .await
 }

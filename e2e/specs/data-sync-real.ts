@@ -2,7 +2,7 @@
  * Host IPC contract E2E for Data Sync.
  *
  * Covers: `inspect_data_sync`, `compare_data_sync`, `generate_data_sync_sql`,
- * `apply_data_sync`, `revalidate_data_sync`. Uses live PostgreSQL / MySQL fixtures;
+ * `execute_data_sync`, `apply_data_sync`, `revalidate_data_sync`. Uses live PostgreSQL / MySQL fixtures;
  * asserts Host-level IPC only — driver dialect tests belong in `packages/drivers/<id>/`.
  *
  * Prerequisites: run `e2e/setup-sync-dbs.sh` for `datazen_sync_src` / `datazen_sync_tgt`
@@ -131,8 +131,33 @@ interface CompareDataSyncResult {
   sourceTable: string;
   targetTable: string;
   status: string;
-  rows?: Array<{ operation: string; selected?: boolean }>;
+  rows?: Array<{ operation: string; key: unknown[]; selected?: boolean }>;
 }
+
+interface CompareDataSyncPreview {
+  planId: string;
+  selectionRevision: number;
+  tables: CompareDataSyncResult[];
+}
+
+interface DataSyncSelection {
+  revision: number;
+  rows: Array<{
+    sourceTable: string;
+    targetTable: string;
+    operation: string;
+    key: unknown[];
+  }>;
+}
+
+const SYNC_EXEC_OPTIONS = {
+  insert: true,
+  update: true,
+  delete: false,
+  matchingStrategy: 'primaryKey',
+  batchSize: 1000,
+  largeValueMode: 'full',
+};
 
 interface ExecutionResult {
   applied: number;
@@ -143,6 +168,39 @@ interface SqlStatement {
   table: string;
   operation: string;
   sql: string;
+}
+
+function selectionFor(
+  preview: CompareDataSyncPreview,
+  tableName: string,
+  operation?: string,
+): DataSyncSelection {
+  const table = preview.tables.find((candidate) => candidate.sourceTable === tableName);
+  if (!table) throw new Error(`comparison table ${tableName} is missing`);
+  const rows = (table.rows ?? []).filter(
+    (row) => row.operation !== 'UNCHANGED' && (!operation || row.operation === operation),
+  );
+  if (rows.length === 0) throw new Error(`comparison rows ${tableName}/${operation ?? 'changes'} are missing`);
+  return {
+    revision: preview.selectionRevision,
+    rows: rows.map((row) => ({
+      sourceTable: table.sourceTable,
+      targetTable: table.targetTable,
+      operation: row.operation,
+      key: row.key,
+    })),
+  };
+}
+
+async function expectCommandError(invoke: () => Promise<unknown>): Promise<string> {
+  let message = '';
+  try {
+    await invoke();
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e);
+  }
+  expect(message).not.toBe('');
+  return message;
 }
 
 // ── Live connection IDs (filled by before hook) ─────────────────────
@@ -301,13 +359,13 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
     `,
     );
 
-    const results = await invokeBackend<CompareDataSyncResult[]>('compare_data_sync', {
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_users'],
     });
 
-    const users = results.find((r) => r.sourceTable === 'sync_users');
+    const users = preview.tables.find((r) => r.sourceTable === 'sync_users');
     expect(users).toBeDefined();
     expect(users!.status).toBe('MATCHED');
     expect(users!.rows?.some((r) => r.operation === 'INSERT')).toBe(true);
@@ -400,21 +458,21 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
     `,
     );
 
-    const compared = await invokeBackend<CompareDataSyncResult[]>('compare_data_sync', {
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_apply_exec'],
-      options: { insert: true, update: true, delete: false },
+      options: SYNC_EXEC_OPTIONS,
     });
-    const table = compared.find((r) => r.sourceTable === 'sync_apply_exec');
+    const table = preview.tables.find((r) => r.sourceTable === 'sync_apply_exec');
     expect(table).toBeDefined();
     expect(table!.rows?.some((r) => r.operation === 'INSERT')).toBe(true);
+    const selection = selectionFor(preview, 'sync_apply_exec', 'INSERT');
 
     const stmts = await invokeBackend<SqlStatement[]>('generate_data_sync_sql', {
-      sourceDbSessionId: srcSessionId,
-      targetDbSessionId: tgtSessionId,
-      tables: compared.filter((r) => r.sourceTable === 'sync_apply_exec'),
-      options: { insert: true, update: true, delete: false },
+      planId: preview.planId,
+      selection,
+      options: SYNC_EXEC_OPTIONS,
     });
     expect(stmts.length).toBeGreaterThan(0);
     expect(stmts.some((s) => s.operation === 'INSERT')).toBe(true);
@@ -433,27 +491,89 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
     expect(revalidate.ok).toBe(true);
     expect(revalidate.staleTables.length).toBe(0);
 
-    const applyResult = await invokeBackend<ExecutionResult>('apply_data_sync', {
+    const legacyError = await expectCommandError(() => invokeBackend('apply_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_apply_exec'],
-      options: { insert: true, update: true, delete: false },
+      options: SYNC_EXEC_OPTIONS,
+    }));
+    expect(legacyError).toMatch(/reviewed row selection|comparison plan/i);
+
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
+      sourceDbSessionId: srcSessionId,
+      targetDbSessionId: tgtSessionId,
+      tables: ['sync_apply_exec'],
+      options: SYNC_EXEC_OPTIONS,
+    });
+    const selection = selectionFor(preview, 'sync_apply_exec', 'INSERT');
+    const applyResult = await invokeBackend<ExecutionResult>('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options: SYNC_EXEC_OPTIONS,
+        jobId: null,
+      },
     });
     expect(applyResult.applied).toBeGreaterThan(0);
     expect(applyResult.rolledBack).toBe(false);
 
-    const after = await invokeBackend<CompareDataSyncResult[]>('compare_data_sync', {
+    const oneShotError = await expectCommandError(() => invokeBackend('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options: SYNC_EXEC_OPTIONS,
+        jobId: null,
+      },
+    }));
+    expect(oneShotError).toMatch(/consumed|already|comparison/i);
+
+    const after = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_apply_exec'],
-      options: { insert: true, update: true, delete: false },
+      options: SYNC_EXEC_OPTIONS,
     });
-    const table = after.find((r) => r.sourceTable === 'sync_apply_exec');
+    const table = after.tables.find((r) => r.sourceTable === 'sync_apply_exec');
     expect(table).toBeDefined();
     const pending = (table!.rows ?? []).filter(
       (r) => r.operation === 'INSERT' || r.operation === 'UPDATE' || r.operation === 'DELETE',
     );
     expect(pending.length).toBe(0);
+  });
+
+  it('SYNC-REAL-010: stale target schema rejects before write', async () => {
+    await runSQL(
+      srcSessionId,
+      "UPDATE sync_apply_exec SET val = 'changed-after-review' WHERE id = 1",
+    );
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
+      sourceDbSessionId: srcSessionId,
+      targetDbSessionId: tgtSessionId,
+      tables: ['sync_apply_exec'],
+      options: SYNC_EXEC_OPTIONS,
+    });
+    const selection = selectionFor(preview, 'sync_apply_exec', 'UPDATE');
+    const before = await invokeBackend<{ results: { rows: unknown[][] }[] }>(
+      'execute_query',
+      { dbSessionId: tgtSessionId, sql: 'SELECT id, val FROM sync_apply_exec ORDER BY id' },
+    );
+    await runSQL(tgtSessionId, 'ALTER TABLE sync_apply_exec ADD COLUMN stale_guard INT NULL');
+
+    const error = await expectCommandError(() => invokeBackend('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options: SYNC_EXEC_OPTIONS,
+        jobId: null,
+      },
+    }));
+    expect(error).toMatch(/schema|changed|comparison/i);
+
+    const after = await invokeBackend<{ results: { rows: unknown[][] }[] }>(
+      'execute_query',
+      { dbSessionId: tgtSessionId, sql: 'SELECT id, val FROM sync_apply_exec ORDER BY id' },
+    );
+    expect(after.results[0].rows).toEqual(before.results[0].rows);
   });
 
   it('SYNC-REAL-024: compare + apply on PG wide-type table (numeric, bool, double, uuid, timestamptz)', async () => {
@@ -495,32 +615,35 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
     `,
     );
 
-    const compared = await invokeBackend<CompareDataSyncResult[]>('compare_data_sync', {
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_pg_types'],
-      options: { insert: true, update: true, delete: false },
+      options: SYNC_EXEC_OPTIONS,
     });
-    const table = compared.find((r) => r.sourceTable === 'sync_pg_types');
+    const table = preview.tables.find((r) => r.sourceTable === 'sync_pg_types');
     expect(table).toBeDefined();
     expect(table!.rows?.some((r) => r.operation === 'INSERT')).toBe(true);
+    const selection = selectionFor(preview, 'sync_pg_types', 'INSERT');
 
-    const applyResult = await invokeBackend<ExecutionResult>('apply_data_sync', {
-      sourceDbSessionId: srcSessionId,
-      targetDbSessionId: tgtSessionId,
-      tables: ['sync_pg_types'],
-      options: { insert: true, update: true, delete: false },
+    const applyResult = await invokeBackend<ExecutionResult>('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options: SYNC_EXEC_OPTIONS,
+        jobId: null,
+      },
     });
     expect(applyResult.applied).toBeGreaterThan(0);
     expect(applyResult.rolledBack).toBe(false);
 
-    const after = await invokeBackend<CompareDataSyncResult[]>('compare_data_sync', {
+    const after = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
       targetDbSessionId: tgtSessionId,
       tables: ['sync_pg_types'],
-      options: { insert: true, update: true, delete: false },
+      options: SYNC_EXEC_OPTIONS,
     });
-    const synced = after.find((r) => r.sourceTable === 'sync_pg_types');
+    const synced = after.tables.find((r) => r.sourceTable === 'sync_pg_types');
     expect(synced).toBeDefined();
     const pending = (synced!.rows ?? []).filter(
       (r) => r.operation === 'INSERT' || r.operation === 'UPDATE' || r.operation === 'DELETE',
