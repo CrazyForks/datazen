@@ -140,6 +140,8 @@ const inspectRows: TransferTableResult[] = [
     createNew: false,
     enabled: true,
     sourceColumns: ['id', 'name', 'extra'],
+    sourcePrimaryKeys: ['id'],
+    sourceColumnTypes: { id: 'INTEGER', name: 'TEXT', extra: 'TEXT' },
     targetColumns: ['id', 'name', 'email'],
     columnMappings: [
       { sourceColumn: 'id', targetColumn: 'id', skip: false },
@@ -455,6 +457,58 @@ describe('DataTransferWindow', () => {
 
     expect(screen.getByTestId('data-transfer-skip-extra')).not.toBeChecked();
     expect(screen.queryByTestId('data-transfer-unmapped-target-warning')).toBeNull();
+  });
+
+  it('keeps recordset editing parameterized and invalidates the old preview before re-preview', async () => {
+    await advanceToMappingStep();
+
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-enable'));
+    expect(screen.queryByTestId('data-transfer-recordset-order-error')).toBeNull();
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-start'), {
+      target: { value: '10' },
+    });
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-end'), {
+      target: { value: '20' },
+    });
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-limit'), {
+      target: { value: '5' },
+    });
+
+    previewTransferMock.mockResolvedValueOnce({
+      ...previewSuccess,
+      writePlans: [
+        {
+          ...previewSuccess.writePlans[0],
+          recordsetPreview: 'ORDER BY "id" ASC LIMIT $3',
+        },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+    expect(previewTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tables: [
+          expect.objectContaining({
+            recordset: {
+              orderBy: 'id',
+              start: { value: '10', inclusive: true },
+              end: { value: '20', inclusive: true },
+              limit: 5,
+            },
+          }),
+        ],
+      }),
+    );
+    expect(screen.getByText('ORDER BY "id" ASC LIMIT $3')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /transfer.back/i }));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-start'), {
+      target: { value: '11' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+    expect(previewTransferMock).toHaveBeenCalledTimes(2);
   });
 
   it('shows execute confirm dialog for destructive write mode before running', async () => {

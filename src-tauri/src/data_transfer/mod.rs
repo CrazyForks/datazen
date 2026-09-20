@@ -8,6 +8,7 @@ pub mod metadata;
 pub mod model;
 pub mod pairing;
 pub mod preview;
+pub mod recordset;
 mod scan;
 pub mod structure;
 mod writer;
@@ -18,7 +19,8 @@ pub use filter::{FilterLogic, SourceFilter};
 pub use mapping::inspect_tables;
 pub use model::{
     TableInspectResult, TableMapping, TransferExecutionResult, TransferJob, TransferMode,
-    TransferPairingView, TransferPreview, TransferRunRequest, WriteMode,
+    TransferPairingView, TransferPreview, TransferRecordset, TransferRecordsetBound,
+    TransferRunRequest, WriteMode,
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
 pub use preview::{build_preview, TransferPreviewAdapters};

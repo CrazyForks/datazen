@@ -105,7 +105,7 @@ async fn validate_plan_context(
     }
     if plans::filter_fingerprint(&plan.job).map_err(CommandError::from)? != plan.filter {
         return Err(CommandError::Validation(
-            "source filter changed since preview; return to comparison".into(),
+            "source filter or recordset changed since preview; return to comparison".into(),
         ));
     }
     let src_config = state

@@ -501,10 +501,12 @@ mod tests {
                 },
             ],
             source_columns: vec!["id".into(), "rating".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         struct TgtAdapter;
@@ -567,6 +569,7 @@ mod tests {
             }],
             ddl_override: None,
             source_filter: None,
+            recordset: None,
         };
         apply_column_type_overrides(&mut ir, &mapping, &DummyTarget).unwrap();
         assert_eq!(ir.columns[0].ir_type, IRType::Other("BIGINT".into()));
@@ -603,6 +606,7 @@ mod tests {
             }],
             ddl_override: None,
             source_filter: None,
+            recordset: None,
         };
 
         struct TgtAdapter;
@@ -647,10 +651,12 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec![],
+            source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         };
         let job = TransferJob {
             source: super::super::model::Endpoint {

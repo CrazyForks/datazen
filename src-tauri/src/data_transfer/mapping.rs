@@ -94,6 +94,7 @@ pub fn effective_table_mappings(
                     column_mappings: Vec::new(),
                     ddl_override: None,
                     source_filter: None,
+                    recordset: None,
                 }
             } else {
                 TableMapping {
@@ -104,6 +105,7 @@ pub fn effective_table_mappings(
                     column_mappings: Vec::new(),
                     ddl_override: None,
                     source_filter: None,
+                    recordset: None,
                 }
             }
         })
@@ -156,11 +158,16 @@ pub fn inspect_tables(
                 } else {
                     mapping.column_mappings.clone()
                 },
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns,
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+                recordset: mapping.recordset.clone(),
             });
             continue;
         }
@@ -173,6 +180,10 @@ pub fn inspect_tables(
                 create_new: mapping.create_new,
                 enabled: true,
                 column_mappings: mapping.column_mappings.clone(),
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
@@ -181,6 +192,7 @@ pub fn inspect_tables(
                     mapping.source_table
                 )),
                 source_row_count: None,
+                recordset: mapping.recordset.clone(),
             });
             continue;
         };
@@ -193,6 +205,10 @@ pub fn inspect_tables(
                 create_new: mapping.create_new,
                 enabled: true,
                 column_mappings: mapping.column_mappings.clone(),
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
@@ -201,6 +217,7 @@ pub fn inspect_tables(
                     mapping.source_table
                 )),
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+                recordset: mapping.recordset.clone(),
             });
             continue;
         }
@@ -226,11 +243,16 @@ pub fn inspect_tables(
                 } else {
                     mapping.column_mappings.clone()
                 },
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns,
                 target_columns: Vec::new(),
                 source_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+                recordset: mapping.recordset.clone(),
             });
             continue;
         }
@@ -251,11 +273,16 @@ pub fn inspect_tables(
                 create_new: false,
                 enabled: true,
                 column_mappings: mapping.column_mappings.clone(),
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
                 incompatible_reason: Some(reason),
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+                recordset: mapping.recordset.clone(),
             });
             continue;
         };
@@ -268,6 +295,10 @@ pub fn inspect_tables(
                 create_new: false,
                 enabled: true,
                 column_mappings: mapping.column_mappings.clone(),
+                source_primary_keys: source_schemas
+                    .get(&mapping.source_table)
+                    .map(TableSchema::effective_primary_keys)
+                    .unwrap_or_default(),
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
@@ -276,6 +307,7 @@ pub fn inspect_tables(
                     mapping.target_table
                 )),
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+                recordset: mapping.recordset.clone(),
             });
             continue;
         }
@@ -299,11 +331,16 @@ pub fn inspect_tables(
             create_new: false,
             enabled: true,
             column_mappings,
+            source_primary_keys: source_schemas
+                .get(&mapping.source_table)
+                .map(TableSchema::effective_primary_keys)
+                .unwrap_or_default(),
             source_columns: source_column_names(source_schemas, &mapping.source_table),
             target_columns: target_column_names(target_schemas, &mapping.target_table),
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: source_row_counts.get(&mapping.source_table).copied(),
+            recordset: mapping.recordset.clone(),
         });
     }
 
@@ -321,11 +358,16 @@ pub fn inspect_tables(
             create_new: false,
             enabled: false,
             column_mappings: Vec::new(),
+            source_primary_keys: source_schemas
+                .get(&table.name)
+                .map(TableSchema::effective_primary_keys)
+                .unwrap_or_default(),
             source_columns: source_column_names(source_schemas, &table.name),
             target_columns: Vec::new(),
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: source_row_counts.get(&table.name).copied(),
+            recordset: None,
         });
     }
 
@@ -343,11 +385,13 @@ pub fn inspect_tables(
             create_new: false,
             enabled: false,
             column_mappings: Vec::new(),
+            source_primary_keys: Vec::new(),
             source_columns: Vec::new(),
             target_columns: target_column_names(target_schemas, &table.name),
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         });
     }
 

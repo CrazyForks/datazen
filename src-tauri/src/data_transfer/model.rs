@@ -61,6 +61,35 @@ pub struct ColumnMapping {
     pub target_native_type: Option<String>,
 }
 
+/// A bounded source recordset selected by a deterministic single-column order.
+///
+/// `order_by` may be omitted only when the inspected source schema has exactly
+/// one effective primary-key column. Bounds are JSON on the IPC boundary so the
+/// server can convert them using the inspected source column type before
+/// binding them. This is a selection scope, never a resumable checkpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRecordsetBound {
+    pub value: serde_json::Value,
+    #[serde(default = "default_true")]
+    pub inclusive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRecordset {
+    /// One source column. Composite ordering is deliberately rejected in this
+    /// wave because a scalar bound cannot express an unambiguous tuple range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<TransferRecordsetBound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<TransferRecordsetBound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TableMapping {
@@ -78,6 +107,10 @@ pub struct TableMapping {
     /// Optional structured predicate applied to source rows during data copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_filter: Option<SourceFilter>,
+    /// Optional deterministic source recordset selection. This does not
+    /// represent a restart checkpoint or persisted OFFSET.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recordset: Option<TransferRecordset>,
 }
 
 fn default_true() -> bool {
@@ -95,6 +128,7 @@ impl TableMapping {
             column_mappings: Vec::new(),
             ddl_override: None,
             source_filter: None,
+            recordset: None,
         }
     }
 }
@@ -163,11 +197,15 @@ pub struct TableInspectResult {
     #[serde(default)]
     pub source_columns: Vec<String>,
     #[serde(default)]
+    pub source_primary_keys: Vec<String>,
+    #[serde(default)]
     pub target_columns: Vec<String>,
     #[serde(default)]
     pub source_column_types: HashMap<String, String>,
     pub incompatible_reason: Option<String>,
     pub source_row_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recordset: Option<TransferRecordset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -190,6 +228,9 @@ pub struct WritePlanItem {
     /// Parameterized source WHERE preview. Values remain bound server-side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_filter_preview: Option<String>,
+    /// Parameterized ORDER BY/bounds/LIMIT reviewed for this source table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recordset_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

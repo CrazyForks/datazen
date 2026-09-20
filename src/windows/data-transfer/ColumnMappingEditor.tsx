@@ -3,7 +3,12 @@ import { Select } from '../../components/ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { SourceFilterEditor } from './SourceFilterEditor';
-import type { TransferColumnMapping, TransferTableResult } from '../../commands/transfer';
+import type {
+  TransferColumnMapping,
+  TransferRecordset,
+  TransferRecordsetBound,
+  TransferTableResult,
+} from '../../commands/transfer';
 import {
   autoMatchColumnMappings,
   clearUnmappedColumnMappings,
@@ -145,11 +150,147 @@ export function ColumnMappingEditor({
           />
         ))}
       </div>
+      <RecordsetEditor table={table} onChange={(recordset) => onChange({ recordset })} />
       <SourceFilterEditor
         columns={table.sourceColumns ?? mappings.map((mapping) => mapping.sourceColumn)}
         filter={table.sourceFilter}
         onChange={(sourceFilter) => onChange({ sourceFilter })}
       />
+    </div>
+  );
+}
+
+function RecordsetEditor({
+  table,
+  onChange,
+}: {
+  table: TransferTableResult;
+  onChange: (recordset: TransferRecordset | undefined) => void;
+}) {
+  const { t } = useI18n();
+  const recordset = table.recordset;
+  const columns = table.sourceColumns ?? [];
+  const primaryKeys = table.sourcePrimaryKeys ?? [];
+  const defaultOrder = primaryKeys.length === 1 ? primaryKeys[0] : undefined;
+  const orderBy = recordset?.orderBy ?? defaultOrder ?? '';
+  const orderOptions = [
+    { value: '', label: t('transfer.mapping.recordset.orderRequired') },
+    ...columns.map((column) => ({
+      value: column,
+      label: table.sourceColumnTypes?.[column]
+        ? `${column} (${table.sourceColumnTypes[column]})`
+        : column,
+    })),
+  ];
+
+  const update = (patch: Partial<TransferRecordset>) => {
+    onChange({
+      ...(recordset ?? {}),
+      ...patch,
+    });
+  };
+
+  const updateBound = (name: 'start' | 'end', patch: Partial<TransferRecordsetBound>) => {
+    const current = recordset?.[name];
+    const next = { ...(current ?? { value: '', inclusive: true }), ...patch };
+    if (!next.value.trim()) {
+      onChange({
+        ...(recordset ?? {}),
+        [name]: undefined,
+      });
+      return;
+    }
+    update({ [name]: next });
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-edge bg-surface-alt p-3" data-testid="data-transfer-recordset">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium">{t('transfer.mapping.recordset')}</div>
+          <div className="text-xs text-fg-muted">{t('transfer.mapping.recordsetHint')}</div>
+        </div>
+        <input
+          type="checkbox"
+          checked={Boolean(recordset)}
+          data-testid="data-transfer-recordset-enable"
+          onChange={(event) => {
+            onChange(event.target.checked ? { orderBy: defaultOrder } : undefined);
+          }}
+        />
+      </div>
+      {!recordset ? (
+        <p className="text-xs text-fg-muted">{t('transfer.mapping.noRecordset')}</p>
+      ) : (
+        <div className="space-y-2" data-testid="data-transfer-recordset-editor">
+          <label className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-fg-muted">{t('transfer.mapping.recordsetOrder')}</span>
+            <Select
+              value={orderBy}
+              options={orderOptions}
+              onChange={(value) => update({ orderBy: value || undefined })}
+              className="!h-7 min-w-48 !text-xs"
+              triggerDataAttrs={{ 'data-testid': 'data-transfer-recordset-order' }}
+            />
+          </label>
+          {!orderBy && (
+            <p className="text-xs text-warning" data-testid="data-transfer-recordset-order-error">
+              {t('transfer.mapping.recordsetOrderRequired')}
+            </p>
+          )}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(['start', 'end'] as const).map((name) => {
+              const bound = recordset[name];
+              return (
+                <label key={name} className="flex flex-col gap-1 text-xs">
+                  <span className="text-fg-muted">
+                    {name === 'start'
+                      ? t('transfer.mapping.recordsetStart')
+                      : t('transfer.mapping.recordsetEnd')}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={bound?.value ?? ''}
+                      placeholder={t('transfer.mapping.recordsetUnbounded')}
+                      data-testid={`data-transfer-recordset-${name}`}
+                      onChange={(event) => updateBound(name, { value: event.target.value })}
+                      className="h-7 min-w-0 flex-1 rounded border border-edge bg-surface px-2 text-xs"
+                    />
+                    {bound && (
+                      <label className="flex shrink-0 items-center gap-1 text-fg-muted">
+                        <input
+                          type="checkbox"
+                          checked={bound.inclusive ?? true}
+                          data-testid={`data-transfer-recordset-${name}-inclusive`}
+                          onChange={(event) =>
+                            updateBound(name, { inclusive: event.target.checked })
+                          }
+                        />
+                        {t('transfer.mapping.recordsetInclusive')}
+                      </label>
+                    )}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <label className="flex items-center gap-2 text-xs">
+            <span className="text-fg-muted">{t('transfer.mapping.recordsetLimit')}</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={recordset.limit ?? ''}
+              data-testid="data-transfer-recordset-limit"
+              onChange={(event) => {
+                const value = event.target.value.trim();
+                update({ limit: value ? Number(value) : undefined });
+              }}
+              className="h-7 w-32 rounded border border-edge bg-surface px-2 text-xs"
+            />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

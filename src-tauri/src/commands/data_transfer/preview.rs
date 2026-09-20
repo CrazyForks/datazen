@@ -128,47 +128,43 @@ pub(crate) async fn preview_data_transfer_impl(
     // is not part of the live schema identity revalidated before execution.
     let source_schemas_for_plan = source_schemas.clone();
 
-    // Validate structured source filters against the preview snapshot and
-    // verify the source driver can bind them before issuing a plan.
+    // Validate the complete source scope against the preview snapshot and
+    // verify the source driver can bind filters, bounds and limits before
+    // issuing a plan. The same builder is used by execution below.
     for mapping in job.tables.iter().filter(|mapping| mapping.enabled) {
-        let Some(source_filter) = mapping.source_filter.as_ref() else {
-            continue;
-        };
         let schema = source_schemas_for_plan
             .get(&mapping.source_table)
             .ok_or_else(|| {
                 CommandError::Validation(format!(
-                    "cannot validate source filter for '{}': source schema is unavailable",
+                    "cannot validate source scope for '{}': source schema is unavailable",
                     mapping.source_table
                 ))
             })?;
-        source_filter.validate(schema).map_err(CommandError::from)?;
-        if !source_filter.is_empty().map_err(CommandError::from)? {
-            source_filter
-                .build_where_typed(
-                    src_driver.quote_char(),
-                    1,
-                    |column| {
-                        schema
-                            .columns
-                            .iter()
-                            .find(|candidate| candidate.name == column)
-                            .map(|candidate| candidate.data_type.clone())
-                    },
-                    |index, data_type| {
-                        src_driver
-                            .parameter_placeholder(index, data_type)
-                            .map_err(|error| {
-                                crate::data_transfer::TransferError::unsupported(error.to_string())
-                            })
-                    },
-                )
-                .map_err(|error| {
-                    CommandError::Validation(format!(
-                        "source driver cannot execute parameterized filters: {error}"
-                    ))
-                })?;
-        }
+        crate::data_transfer::recordset::build_source_scope(
+            schema,
+            mapping.source_filter.as_ref(),
+            mapping.recordset.as_ref(),
+            src_driver.quote_char(),
+            |index, data_type| {
+                src_driver
+                    .parameter_placeholder(index, data_type)
+                    .map_err(|error| {
+                        crate::data_transfer::TransferError::unsupported(error.to_string())
+                    })
+            },
+            |column| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        )
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "source driver cannot execute the selected source scope: {error}"
+            ))
+        })?;
     }
 
     let adapter_handles = if state
@@ -221,42 +217,41 @@ pub(crate) async fn preview_data_transfer_impl(
     // cast such as `$1::integer` and make the reviewed SQL differ from the
     // actual source predicate.
     for write_plan in &mut preview.write_plans {
-        let Some(source_filter) = job
+        let Some(mapping) = job
             .tables
             .iter()
             .find(|mapping| mapping.source_table == write_plan.source_table)
-            .and_then(|mapping| mapping.source_filter.as_ref())
         else {
             continue;
         };
         let Some(schema) = source_schemas_for_plan.get(&write_plan.source_table) else {
             continue;
         };
-        let (where_sql, _) = source_filter
-            .build_where_typed(
-                src_driver.quote_char(),
-                1,
-                |column| {
-                    schema
-                        .columns
-                        .iter()
-                        .find(|candidate| candidate.name == column)
-                        .map(|candidate| candidate.data_type.clone())
-                },
-                |index, data_type| {
-                    src_driver
-                        .parameter_placeholder(index, data_type)
-                        .map_err(|error| {
-                            crate::data_transfer::TransferError::unsupported(error.to_string())
-                        })
-                },
-            )
-            .map_err(|error| {
-                CommandError::Validation(format!(
-                    "cannot render typed source filter preview: {error}"
-                ))
-            })?;
-        write_plan.source_filter_preview = where_sql;
+        let scope = crate::data_transfer::recordset::build_source_scope(
+            schema,
+            mapping.source_filter.as_ref(),
+            mapping.recordset.as_ref(),
+            src_driver.quote_char(),
+            |index, data_type| {
+                src_driver
+                    .parameter_placeholder(index, data_type)
+                    .map_err(|error| {
+                        crate::data_transfer::TransferError::unsupported(error.to_string())
+                    })
+            },
+            |column| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        )
+        .map_err(|error| {
+            CommandError::Validation(format!("cannot render typed source scope preview: {error}"))
+        })?;
+        write_plan.source_filter_preview = scope.where_sql;
+        write_plan.recordset_preview = scope.recordset_sql;
     }
 
     if matches!(

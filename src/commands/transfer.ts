@@ -36,11 +36,27 @@ export interface TransferTableMapping {
   ddlOverride?: string;
   /** Structured, parameterized source row filter. */
   sourceFilter?: TransferSourceFilter;
+  /** Stable source recordset selection; never a restart checkpoint. */
+  recordset?: TransferRecordset;
 }
 
 export interface TransferSourceFilter {
   filters: FilterCondition[];
   logic?: 'and' | 'or';
+}
+
+export interface TransferRecordsetBound {
+  /** Text stays lossless on the IPC boundary; the source driver binds it using the inspected column type. */
+  value: string;
+  inclusive?: boolean;
+}
+
+export interface TransferRecordset {
+  /** One source column. Composite order/ranges are rejected by the server in this wave. */
+  orderBy?: string;
+  start?: TransferRecordsetBound;
+  end?: TransferRecordsetBound;
+  limit?: number;
 }
 
 export interface TransferOptions {
@@ -66,12 +82,14 @@ export interface TransferTableResult {
   enabled: boolean;
   columnMappings: TransferColumnMapping[];
   sourceColumns?: string[];
+  sourcePrimaryKeys?: string[];
   targetColumns?: string[];
   sourceColumnTypes?: Record<string, string>;
   ddlOverride?: string;
   incompatibleReason?: string | null;
   sourceRowCount?: number | null;
   sourceFilter?: TransferSourceFilter;
+  recordset?: TransferRecordset;
 }
 
 export interface TransferDdlPreview {
@@ -88,6 +106,7 @@ export interface TransferWritePlan {
   estimatedRows?: number | null;
   preamble: string[];
   sourceFilterPreview?: string | null;
+  recordsetPreview?: string | null;
 }
 
 export interface TransferPreview {

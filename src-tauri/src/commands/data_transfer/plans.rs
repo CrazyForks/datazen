@@ -68,15 +68,20 @@ pub(crate) fn fingerprint_schemas(
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-/// Fingerprint structured source filters so the immutable plan explicitly
-/// binds the reviewed row scope as well as the source schemas.
+/// Fingerprint the complete structured source scope so the immutable plan
+/// binds the reviewed filters and recordset bounds as well as the source
+/// schemas.
 pub(crate) fn filter_fingerprint(job: &TransferJob) -> Result<Option<String>, TransferError> {
     let filters: Vec<_> = participating_tables(job)
         .filter_map(|table| {
-            table
-                .source_filter
-                .as_ref()
-                .map(|filter| (table.source_table.clone(), filter))
+            if table.source_filter.is_none() && table.recordset.is_none() {
+                return None;
+            }
+            Some((
+                table.source_table.clone(),
+                table.source_filter.as_ref(),
+                table.recordset.as_ref(),
+            ))
         })
         .collect();
     if filters.is_empty() {
@@ -455,6 +460,31 @@ mod tests {
             "job": { "source": {}, "target": {}, "tables": [] },
         }));
         assert!(request.is_err());
+    }
+
+    #[test]
+    fn source_scope_fingerprint_changes_when_recordset_changes() {
+        let mut first = job();
+        first.tables.push({
+            let mut mapping = crate::data_transfer::model::TableMapping::auto("users");
+            mapping.recordset = Some(crate::data_transfer::model::TransferRecordset {
+                order_by: Some("id".into()),
+                start: None,
+                end: None,
+                limit: Some(10),
+            });
+            mapping
+        });
+        let first_fingerprint = filter_fingerprint(&first).unwrap();
+        first.tables[0].recordset.as_mut().unwrap().limit = Some(20);
+        assert_ne!(first_fingerprint, filter_fingerprint(&first).unwrap());
+        first.tables[0].recordset.as_mut().unwrap().limit = Some(10);
+        first.tables[0].recordset.as_mut().unwrap().start =
+            Some(crate::data_transfer::model::TransferRecordsetBound {
+                value: serde_json::json!(2),
+                inclusive: true,
+            });
+        assert_ne!(first_fingerprint, filter_fingerprint(&first).unwrap());
     }
 
     #[test]

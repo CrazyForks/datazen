@@ -1,5 +1,6 @@
 //! Generic execution journeys: bound values, projection, rollback and cancellation.
 use super::execute::{execute_same_family_data, map_row_values};
+use super::filter::SourceFilter;
 use super::model::*;
 use async_trait::async_trait;
 use datazen_driver_api::*;
@@ -15,6 +16,7 @@ struct State {
     calls: usize,
     rollback: usize,
     metadata_refs: Vec<String>,
+    source_queries: Vec<(String, Vec<Value>)>,
 }
 struct Driver {
     rows: Rows,
@@ -146,6 +148,21 @@ impl DatabaseDriver for Driver {
         }
         Ok(())
     }
+    async fn query_stream_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+        limit: Option<u32>,
+        callback: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        self.state
+            .lock()
+            .unwrap()
+            .source_queries
+            .push((sql.to_string(), params.to_vec()));
+        self.query_stream(handle, sql, limit, callback).await
+    }
     async fn begin_transaction(
         &self,
         _: &ConnectionHandle,
@@ -261,11 +278,13 @@ fn inspected(name: &str, mappings: Vec<ColumnMapping>) -> TableInspectResult {
         create_new: false,
         enabled: true,
         column_mappings: mappings,
+        source_primary_keys: vec![],
         source_columns: vec![],
         target_columns: vec![],
         source_column_types: HashMap::new(),
         incompatible_reason: None,
         source_row_count: None,
+        recordset: None,
     }
 }
 async fn run(
@@ -379,6 +398,72 @@ async fn bytes_and_strings_survive_bound_projection_and_commit() {
         serde_json::to_value(&target.state.lock().unwrap().committed[0]).unwrap(),
         serde_json::to_value(row.into_iter().map(Option::unwrap).collect::<Vec<_>>()).unwrap()
     );
+}
+
+#[tokio::test]
+async fn recordset_scope_shares_filter_order_and_bound_parameter_order() {
+    let source = driver(
+        vec![vec![Some(Value::Integer(2))]],
+        schema(&["id", "status"]),
+    );
+    let target = driver(vec![], schema(&["id"]));
+    let mut job = job();
+    job.tables = vec![TableMapping {
+        source_table: "a".into(),
+        target_table: "a".into(),
+        create_new: false,
+        enabled: true,
+        column_mappings: vec![mapping("id", "id")],
+        ddl_override: None,
+        source_filter: Some(SourceFilter(serde_json::json!({
+            "filters": [{"column": "status", "operator": "eq", "value": "active"}],
+            "logic": "and"
+        }))),
+        recordset: Some(TransferRecordset {
+            order_by: Some("id".into()),
+            start: Some(TransferRecordsetBound {
+                value: serde_json::json!(2),
+                inclusive: true,
+            }),
+            end: Some(TransferRecordsetBound {
+                value: serde_json::json!(5),
+                inclusive: false,
+            }),
+            limit: Some(2),
+        }),
+    }];
+    let tables = vec![inspected("a", vec![mapping("id", "id")])];
+    let schemas = HashMap::from([("a".into(), source.schema.clone())]);
+    let result = execute_same_family_data(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &job,
+        &tables,
+        &schemas,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.rows_inserted, 1);
+    let state = source.state.lock().unwrap();
+    let (sql, params) = &state.source_queries[0];
+    assert!(sql.contains(r#"WHERE ("status" = ?) AND ("id" >= ?) AND ("id" < ?)"#));
+    assert!(sql.contains(r#"ORDER BY "id" ASC LIMIT ?"#));
+    assert!(matches!(params.as_slice(), [
+        Value::String(status),
+        Value::Integer(2),
+        Value::Integer(5),
+        Value::Integer(2)
+    ] if status == "active"));
 }
 #[tokio::test]
 async fn second_batch_failure_rolls_back_and_continues_next_table() {

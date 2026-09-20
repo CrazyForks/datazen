@@ -196,12 +196,11 @@ pub fn build_preview(
                 target_table: table.target_table.clone(),
                 write_mode: job.write_mode,
                 mapped_columns: active_cols,
-                estimated_rows: if table_mapping
-                    .and_then(|mapping| mapping.source_filter.as_ref())
-                    .is_some()
-                {
+                estimated_rows: if table_mapping.is_some_and(|mapping| {
+                    mapping.source_filter.is_some() || mapping.recordset.is_some()
+                }) {
                     // Inspection counts are intentionally unfiltered. Do not
-                    // present them as an exact estimate for a filtered copy.
+                    // present them as an exact estimate for a scoped copy.
                     None
                 } else {
                     table.source_row_count
@@ -210,6 +209,13 @@ pub fn build_preview(
                 source_filter_preview: table_mapping
                     .and_then(|mapping| mapping.source_filter.as_ref())
                     .and_then(|filter| filter.preview_where('"').ok().flatten()),
+                recordset_preview: table_mapping
+                    .and_then(|mapping| mapping.recordset.as_ref())
+                    .and_then(|recordset| {
+                        source_schemas.get(&table.source_table).and_then(|schema| {
+                            super::recordset::preview_summary(schema, recordset, '"').ok()
+                        })
+                    }),
             });
         }
     }
@@ -323,10 +329,12 @@ mod tests {
                 target_native_type: None,
             }],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
+            recordset: None,
         }];
         let preview = build_preview(
             &job,
@@ -359,10 +367,12 @@ mod tests {
                 target_native_type: None,
             }],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
+            recordset: None,
         }];
         let preview = build_preview(
             &job,
@@ -378,6 +388,70 @@ mod tests {
         .unwrap();
         assert!(preview.can_execute, "{:?}", preview.block_reason);
         assert!(preview.block_reason.is_none());
+    }
+
+    #[test]
+    fn preview_marks_scoped_rows_and_exposes_recordset_summary() {
+        let mut job = sample_job(TransferMode::Data, WriteMode::Insert);
+        job.tables[0].recordset = Some(super::super::model::TransferRecordset {
+            order_by: None,
+            start: None,
+            end: None,
+            limit: Some(25),
+        });
+        let schema = TableSchema {
+            table_name: "users".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec!["id".into()],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let inspected = vec![TableInspectResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            status: TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![super::super::model::ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id".into()],
+            source_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: Some(100),
+            recordset: job.tables[0].recordset.clone(),
+        }];
+        let mut schemas = HashMap::new();
+        schemas.insert("users".into(), schema);
+        let preview = build_preview(
+            &job,
+            &inspected,
+            &SyncPairing::Direct {
+                family: "postgresql".into(),
+            },
+            &schemas,
+            true,
+            None,
+        )
+        .unwrap();
+        assert_eq!(preview.write_plans[0].estimated_rows, None);
+        assert_eq!(
+            preview.write_plans[0].recordset_preview.as_deref(),
+            Some(r#"ORDER BY "id" ASC LIMIT ?"#)
+        );
     }
 
     #[test]
@@ -409,10 +483,12 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(
@@ -450,6 +526,7 @@ mod tests {
             }],
             ddl_override: None,
             source_filter: None,
+            recordset: None,
         }];
         let schema = TableSchema {
             table_name: "users".into(),
@@ -477,10 +554,12 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(
@@ -568,6 +647,7 @@ mod tests {
             }],
             ddl_override: None,
             source_filter: None,
+            recordset: None,
         }];
         let schema = TableSchema {
             table_name: "reviews".into(),
@@ -595,10 +675,12 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["created_at".into()],
+            source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(

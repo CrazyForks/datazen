@@ -157,6 +157,7 @@ const pack = {
   'transfer.stopOnError': 'Stop on first error',
   'transfer.estimatedRows': 'Estimated rows',
   'transfer.sourceFilterPreview': 'Source filter',
+  'transfer.recordsetPreview': 'Source recordset',
   'transfer.executePrompt': 'Review the preview, then run the transfer.',
   'transfer.execute': 'Execute transfer',
   'transfer.executing': 'Executing transfer…',
@@ -195,6 +196,18 @@ const pack = {
   'transfer.mapping.sourceFilter': 'Source row filter',
   'transfer.mapping.sourceFilterHint':
     'Only matching source rows are copied. Values are bound parameters.',
+  'transfer.mapping.recordset': 'Source recordset range',
+  'transfer.mapping.recordsetHint':
+    'Select one ordered source column with optional bounds or a limit. This selects rows for this run; it is not a restart checkpoint.',
+  'transfer.mapping.noRecordset': 'No recordset range; all source rows matching the filter are copied.',
+  'transfer.mapping.recordsetOrder': 'Order by',
+  'transfer.mapping.recordsetOrderRequired':
+    'Choose one source column. A table without a single primary key cannot use the automatic order.',
+  'transfer.mapping.recordsetStart': 'Start bound',
+  'transfer.mapping.recordsetEnd': 'End bound',
+  'transfer.mapping.recordsetUnbounded': 'Unbounded',
+  'transfer.mapping.recordsetInclusive': 'Inclusive',
+  'transfer.mapping.recordsetLimit': 'Maximum rows',
   'transfer.mapping.addFilter': 'Add filter',
   'transfer.mapping.noSourceFilter': 'No source filter; all rows will be copied.',
   'transfer.mapping.filterLogic': 'Match',
