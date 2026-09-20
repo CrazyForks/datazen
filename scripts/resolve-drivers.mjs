@@ -602,7 +602,7 @@ import type { DatabaseTypeMeta } from '@datazen/driver-sdk';
 import type { SqlDialectStrategy } from '@datazen/driver-sdk';
 import type { DriverFormValidator } from '@datazen/driver-sdk';
 import type { ConnectionClipboardParser } from '@datazen/driver-sdk';
-import type { DriverSettingsContribution } from '../lib/driverSettings';
+import type { DriverSettingsContribution } from '@datazen/driver-sdk';
 import type { ComponentType } from 'react';
 
 /**

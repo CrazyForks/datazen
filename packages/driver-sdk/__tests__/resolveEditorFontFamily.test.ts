@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveEditorFontFamily, HOST_DEFAULT_EDITOR_FONT } from '../resolveEditorFontFamily';
+import { resolveEditorFontFamily, HOST_DEFAULT_EDITOR_FONT } from '@datazen/driver-sdk';
 
 describe('resolveEditorFontFamily', () => {
   it('prefers explicit user setting over theme', () => {
