@@ -6,27 +6,32 @@ import {
   builtinEagerLocales,
   type BuiltinLocale,
 } from './builtinLocales';
-import type { MongoTranslationKey } from '../../packages/drivers/mongodb/locales/en';
-import { DRIVER_LOCALES, type DriverTranslationKey } from '../extensions/generated-locales';
-import { getLocale, registerTranslations, setLocale, t as translate } from '@datazen/ui';
+import {
+  getLocale,
+  getRegisteredTranslations,
+  registerTranslations,
+  setLocale,
+  t as translate,
+} from '@datazen/ui';
 
-export type { TranslationKey, DriverTranslationKey, MongoTranslationKey };
+export type { TranslationKey };
 export { BUILTIN_LOCALES, builtinLocales, BUILTIN_LOCALE_LABELS };
 export type { BuiltinLocale };
 export { ensureLocaleDomains, ensureAllLazyDomains, isDomainLoaded } from './lazyPacks';
 export type { LazyDomain, LocaleDomain } from './domains';
 export { LAZY_DOMAINS, EAGER_DOMAINS } from './domains';
 
-/** Host keys plus merged wapp keys from enabled drivers. */
-export type I18nKey = TranslationKey | DriverTranslationKey | MongoTranslationKey | (string & {});
+/** Host keys; driver/extension keys are plain strings (no central key union). */
+export type I18nKey = TranslationKey | (string & {});
 
 // ── Single lookup engine ─────────────────────────────────────────────────────
 // All runtime lookup / fallback / interpolation lives in @datazen/ui (`t`).
 // This module owns no dictionary of its own: host dictionaries are pushed
-// into the shared @datazen/ui registry on load (driver packs first so eager
-// host keys keep precedence on collisions; lazy domain packs register on
-// demand via lazyPacks). localeSync wires settingsStore.language → setLocale.
-registerTranslations(DRIVER_LOCALES);
+// into the shared @datazen/ui registry on load (lazy domain packs register on
+// demand via lazyPacks). Driver and extension packs register *themselves*
+// through their own `locales/index.ts` side-effect module — the host never
+// aggregates or imports them. localeSync wires settingsStore.language →
+// setLocale.
 for (const locale of BUILTIN_LOCALES) {
   registerTranslations({ [locale]: builtinEagerLocales[locale] });
 }
@@ -79,10 +84,11 @@ export function getTranslation(
 }
 
 /**
- * Host locale strings only (excludes wapp driver keys).
- * Includes eager packs plus any lazy packs already loaded for this locale.
- * For a complete snapshot of all keys, call ensureAllLazyDomains(locale) first
- * or import from './fullLocales'.
+ * Host eager locale strings only — no lazy domain packs, no driver or
+ * extension registrations. Use {@link getAllTranslations} for a snapshot of
+ * everything currently present in the shared registry.
+ * For a complete host-only snapshot of all keys, call ensureAllLazyDomains(locale)
+ * first or import from './fullLocales'.
  */
 export function getHostTranslations(locale: SupportedLocale | string): Record<string, string> {
   if (isBuiltinLocale(locale)) {
@@ -93,12 +99,13 @@ export function getHostTranslations(locale: SupportedLocale | string): Record<st
   return { ...builtinEagerLocales.en };
 }
 
-/** Host + merged wapp locale strings for the active driver set. */
+/**
+ * Host + driver + extension locale strings currently present in the shared
+ * @datazen/ui registry. Non-built-in locale codes fall back to `en` (same
+ * contract as before the i18n runtime was centralised).
+ */
 export function getAllTranslations(locale: SupportedLocale | string): Record<string, string> {
-  if (isBuiltinLocale(locale)) {
-    return { ...getHostTranslations(locale), ...DRIVER_LOCALES[locale] };
-  }
-  return { ...builtinEagerLocales.en, ...DRIVER_LOCALES.en };
+  return getRegisteredTranslations(isBuiltinLocale(locale) ? locale : 'en');
 }
 
 function isBuiltinLocale(locale: string): locale is BuiltinLocale {
