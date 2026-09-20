@@ -89,6 +89,17 @@ pub async fn scan_rows(
     expected_columns: Vec<String>,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<ScanRows, TransferError> {
+    scan_rows_with_params(driver, handle, sql, &[], expected_columns, cancelled).await
+}
+
+pub async fn scan_rows_with_params(
+    driver: &dyn DatabaseDriver,
+    handle: &ConnectionHandle,
+    sql: &str,
+    params: &[Value],
+    expected_columns: Vec<String>,
+    cancelled: Option<Arc<AtomicBool>>,
+) -> Result<ScanRows, TransferError> {
     let path = std::env::temp_dir().join(format!("datazen-transfer-{}.rows", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.create_new(true).read(true).write(true);
@@ -171,7 +182,7 @@ pub async fn scan_rows(
         }
     });
     driver
-        .query_stream(handle, sql, None, callback)
+        .query_stream_with_params(handle, sql, params, None, callback)
         .await
         .map_err(|e| TransferError::validation(e.to_string()))?;
     {

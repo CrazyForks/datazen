@@ -196,8 +196,20 @@ pub fn build_preview(
                 target_table: table.target_table.clone(),
                 write_mode: job.write_mode,
                 mapped_columns: active_cols,
-                estimated_rows: table.source_row_count,
+                estimated_rows: if table_mapping
+                    .and_then(|mapping| mapping.source_filter.as_ref())
+                    .is_some()
+                {
+                    // Inspection counts are intentionally unfiltered. Do not
+                    // present them as an exact estimate for a filtered copy.
+                    None
+                } else {
+                    table.source_row_count
+                },
                 preamble,
+                source_filter_preview: table_mapping
+                    .and_then(|mapping| mapping.source_filter.as_ref())
+                    .and_then(|filter| filter.preview_where('"').ok().flatten()),
             });
         }
     }
@@ -437,6 +449,7 @@ mod tests {
                 target_native_type: Some("BIGINT".into()),
             }],
             ddl_override: None,
+            source_filter: None,
         }];
         let schema = TableSchema {
             table_name: "users".into(),
@@ -554,6 +567,7 @@ mod tests {
                 target_native_type: Some("DATETIME".into()),
             }],
             ddl_override: None,
+            source_filter: None,
         }];
         let schema = TableSchema {
             table_name: "reviews".into(),

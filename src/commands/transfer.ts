@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { FilterCondition } from '../types';
 
 export type TransferMode = 'structure' | 'data' | 'structureAndData';
 export type WriteMode = 'insert' | 'truncateInsert' | 'dropCreateInsert';
@@ -33,6 +34,13 @@ export interface TransferTableMapping {
   columnMappings?: TransferColumnMapping[];
   /** Execute this CREATE instead of auto-generated DDL. */
   ddlOverride?: string;
+  /** Structured, parameterized source row filter. */
+  sourceFilter?: TransferSourceFilter;
+}
+
+export interface TransferSourceFilter {
+  filters: FilterCondition[];
+  logic?: 'and' | 'or';
 }
 
 export interface TransferOptions {
@@ -63,6 +71,7 @@ export interface TransferTableResult {
   ddlOverride?: string;
   incompatibleReason?: string | null;
   sourceRowCount?: number | null;
+  sourceFilter?: TransferSourceFilter;
 }
 
 export interface TransferDdlPreview {
@@ -78,6 +87,7 @@ export interface TransferWritePlan {
   mappedColumns: TransferColumnMapping[];
   estimatedRows?: number | null;
   preamble: string[];
+  sourceFilterPreview?: string | null;
 }
 
 export interface TransferPreview {

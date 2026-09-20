@@ -566,6 +566,7 @@ mod tests {
                 target_native_type: Some("BIGINT".into()),
             }],
             ddl_override: None,
+            source_filter: None,
         };
         apply_column_type_overrides(&mut ir, &mapping, &DummyTarget).unwrap();
         assert_eq!(ir.columns[0].ir_type, IRType::Other("BIGINT".into()));
@@ -601,6 +602,7 @@ mod tests {
                 target_native_type: Some("DATETIME".into()),
             }],
             ddl_override: None,
+            source_filter: None,
         };
 
         struct TgtAdapter;

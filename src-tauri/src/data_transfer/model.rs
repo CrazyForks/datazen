@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::error::TransferError;
+use super::filter::SourceFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +75,9 @@ pub struct TableMapping {
     /// When set, structure phase executes this SQL instead of auto-generated CREATE TABLE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ddl_override: Option<String>,
+    /// Optional structured predicate applied to source rows during data copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<SourceFilter>,
 }
 
 fn default_true() -> bool {
@@ -90,6 +94,7 @@ impl TableMapping {
             enabled: true,
             column_mappings: Vec::new(),
             ddl_override: None,
+            source_filter: None,
         }
     }
 }
@@ -182,6 +187,9 @@ pub struct WritePlanItem {
     pub mapped_columns: Vec<ColumnMapping>,
     pub estimated_rows: Option<u64>,
     pub preamble: Vec<String>,
+    /// Parameterized source WHERE preview. Values remain bound server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

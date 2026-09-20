@@ -213,16 +213,54 @@ pub async fn execute_transfer_data(
             .iter()
             .map(|c| quote_ident_sql(&c.source_column, src_quote))
             .collect();
-        let base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
+        let mut base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
+        let mut source_filter_params = Vec::new();
+        if let Some(source_filter) = job
+            .tables
+            .iter()
+            .find(|mapping| mapping.source_table == table.source_table)
+            .and_then(|mapping| mapping.source_filter.as_ref())
+        {
+            source_filter
+                .validate(src_schema)
+                .map_err(|error| TransferError::validation(error.to_string()))?;
+            let (where_sql, params) = source_filter.build_where_typed(
+                src_quote,
+                1,
+                |column| {
+                    src_schema
+                        .columns
+                        .iter()
+                        .find(|candidate| candidate.name == column)
+                        .map(|candidate| candidate.data_type.clone())
+                },
+                |index, data_type| {
+                    src_driver
+                        .parameter_placeholder(index, data_type)
+                        .map_err(|error| TransferError::unsupported(error.to_string()))
+                },
+            )?;
+            if let Some(where_sql) = where_sql {
+                base_sql.push(' ');
+                base_sql.push_str(&where_sql);
+            }
+            source_filter_params = params;
+            if !source_filter_params.is_empty() {
+                src_driver
+                    .parameter_placeholder(1, None)
+                    .map_err(|error| TransferError::unsupported(error.to_string()))?;
+            }
+        }
 
         // Resolve capability and scan once before any destructive target operation.
         tgt_driver
             .parameter_placeholder(1, None)
             .map_err(|e| TransferError::validation(e.to_string()))?;
-        let mut scan = match super::scan::scan_rows(
+        let mut scan = match super::scan::scan_rows_with_params(
             src_driver,
             src_handle,
             &base_sql,
+            &source_filter_params,
             columns.iter().map(|c| c.source_column.clone()).collect(),
             cancelled.clone(),
         )

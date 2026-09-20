@@ -2,6 +2,7 @@ import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
+import { SourceFilterEditor } from './SourceFilterEditor';
 import type { TransferColumnMapping, TransferTableResult } from '../../commands/transfer';
 import {
   autoMatchColumnMappings,
@@ -144,6 +145,11 @@ export function ColumnMappingEditor({
           />
         ))}
       </div>
+      <SourceFilterEditor
+        columns={table.sourceColumns ?? mappings.map((mapping) => mapping.sourceColumn)}
+        filter={table.sourceFilter}
+        onChange={(sourceFilter) => onChange({ sourceFilter })}
+      />
     </div>
   );
 }
