@@ -10,6 +10,7 @@ import { CopyableError } from '../../components/ui/CopyableError';
 import { aiCommands } from '../../commands/ai';
 import {
   syncCommands,
+  type DataSyncExecutionResult,
   type DataSyncRowChange,
   type DataSyncSourceFilter,
   type SyncOptions,
@@ -120,6 +121,9 @@ export function DataSyncWindow() {
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
   const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
+  const [lastExecutionResult, setLastExecutionResult] = useState<DataSyncExecutionResult | null>(
+    null,
+  );
   const jobIdRef = useRef<string | null>(null);
   const jobKindRef = useRef<'compare' | 'execute' | null>(null);
   const cancelRequestedJobRef = useRef<string | null>(null);
@@ -653,6 +657,7 @@ export function DataSyncWindow() {
 
     const generation = ++compareGenerationRef.current;
     setSyncState('comparing');
+    setLastExecutionResult(null);
     setSelectedTableKey(null);
     setStatusMsg('');
     const jobId = crypto.randomUUID();
@@ -743,6 +748,7 @@ export function DataSyncWindow() {
     targetSchema,
     syncOptions,
     writeOutcomeUncertain,
+    setLastExecutionResult,
   ]);
 
   const handleCancel = useCallback(async () => {
@@ -772,7 +778,8 @@ export function DataSyncWindow() {
       cancellationGeneration !== compareGenerationRef.current ||
       jobIdRef.current !== jobId ||
       jobKindRef.current !== jobKind
-    ) return;
+    )
+      return;
     if (jobKind === 'execute' && syncStateRef.current !== cancelledPhase) return;
     if (jobKind === 'execute' && writeInFlightRef.current) return;
     jobIdRef.current = null;
@@ -803,24 +810,48 @@ export function DataSyncWindow() {
       setSyncState('idle');
       setMappingResults((rows) =>
         rows.map((row) =>
-          row.sourceTable === sourceTable
-            ? { ...row, sourceFilter, rows: undefined }
-            : row,
+          row.sourceTable === sourceTable ? { ...row, sourceFilter, rows: undefined } : row,
         ),
       );
     },
     [],
   );
 
-  const handleOptionsChange = useCallback((next: SyncOptions) => {
-    setSyncOptions(next);
-    setMappingResults((rows) =>
-      rows.map((row) => {
-        if (!row.rows) return row;
-        return { ...row, rows: applyOptionsToRows(row.rows, next) };
-      }),
-    );
-  }, []);
+  const handleOptionsChange = useCallback(
+    (next: SyncOptions) => {
+      const previousPolicy = syncOptions.conflictPolicy ?? 'abort';
+      const nextPolicy = next.conflictPolicy ?? 'abort';
+      setSyncOptions(next);
+      if (
+        previousPolicy !== nextPolicy &&
+        (syncState === 'compared' || step === 'preview' || step === 'result')
+      ) {
+        // The server binds conflict handling to the immutable comparison plan.
+        // Drop row-level comparison state before allowing the user to continue.
+        setMappingResults((rows) => rows.map((row) => ({ ...row, rows: undefined })));
+        setSelectedTableKey(null);
+        setSyncState('idle');
+        setStep('setup');
+        return;
+      }
+      setMappingResults((rows) =>
+        rows.map((row) => {
+          if (!row.rows) return row;
+          return { ...row, rows: applyOptionsToRows(row.rows, next) };
+        }),
+      );
+    },
+    [
+      setMappingResults,
+      setSelectedTableKey,
+      setStep,
+      setSyncOptions,
+      setSyncState,
+      step,
+      syncOptions.conflictPolicy,
+      syncState,
+    ],
+  );
 
   const handleEnableDelete = useCallback(() => {
     setDeleteConfirmOpen(true);
@@ -889,11 +920,19 @@ export function DataSyncWindow() {
       );
 
       const stmts = await syncCommands.generateDataSyncSql(
-        srcConnId, tgtConnId, tablesWithSelection, syncOptions,
-        sourceDatabase, targetDatabase, sourceSchema || undefined, targetSchema || undefined,
+        srcConnId,
+        tgtConnId,
+        tablesWithSelection,
+        syncOptions,
+        sourceDatabase,
+        targetDatabase,
+        sourceSchema || undefined,
+        targetSchema || undefined,
       );
       if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
-      const selected = stmts.filter((statement) => operationAllowed(statement.operation, syncOptions));
+      const selected = stmts.filter((statement) =>
+        operationAllowed(statement.operation, syncOptions),
+      );
       if (selected.length === 0) {
         setSyncState('compared');
         setExecuteProgress('');
@@ -903,6 +942,7 @@ export function DataSyncWindow() {
       writeStarted = true;
       writeInFlightRef.current = true;
       const result = await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      setLastExecutionResult(result);
       if (result.rolledBack) {
         setErrorMsg(t('sync.rolledBack'));
         setErrorOpen(true);
@@ -941,7 +981,9 @@ export function DataSyncWindow() {
             targetSchema || undefined,
             syncOptions,
           );
-      const recompared = Array.isArray(recomparedResponse) ? recomparedResponse : recomparedResponse.tables;
+      const recompared = Array.isArray(recomparedResponse)
+        ? recomparedResponse
+        : recomparedResponse.tables;
       setMappingResults((prev) => {
         const merged = mergeCompareIntoMappings(prev, recompared);
         return merged.map((row) => {
@@ -955,7 +997,9 @@ export function DataSyncWindow() {
       setExecuteProgress('');
       setStatusMsg('');
     } catch (e) {
-      setErrorMsg(`${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`);
+      setErrorMsg(
+        `${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`,
+      );
       setErrorOpen(true);
       if (writeStarted) setWriteOutcomeUncertain(true);
       setSyncState(writeStarted ? 'unknown' : 'compared');
@@ -964,9 +1008,7 @@ export function DataSyncWindow() {
       writeInFlightRef.current = false;
       if (cancellingStatusJobRef.current === jobId) {
         cancellingStatusJobRef.current = null;
-        setStatusMsg((current) =>
-          current === t('sync.cancellingExecution') ? '' : current,
-        );
+        setStatusMsg((current) => (current === t('sync.cancellingExecution') ? '' : current));
       }
       if (jobIdRef.current === jobId && jobKindRef.current === 'execute') {
         jobIdRef.current = null;
@@ -1006,7 +1048,11 @@ export function DataSyncWindow() {
     setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
   }, []);
 
-  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'unknown' || syncState === 'done';
+  const compared =
+    syncState === 'compared' ||
+    syncState === 'executing' ||
+    syncState === 'unknown' ||
+    syncState === 'done';
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
   const compareDisabled = Boolean(sourceSessionError || targetSessionError);
   const stepIndex = WIZARD_STEPS.indexOf(step);
@@ -1354,6 +1400,11 @@ export function DataSyncWindow() {
                 className="flex flex-wrap items-center gap-3 text-sm text-green-700 dark:text-green-400"
               >
                 <span>{t('sync.executeDone')}</span>
+                {lastExecutionResult?.skipped ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {t('sync.conflictsSkipped', { count: lastExecutionResult.skipped })}
+                  </span>
+                ) : null}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1380,7 +1431,10 @@ export function DataSyncWindow() {
           hasDeletes={hasSelectedDeletes}
           targetReadOnly={targetReadOnly}
           executing={syncState === 'executing'}
-          canExecute={!writeOutcomeUncertain && mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
+          canExecute={
+            !writeOutcomeUncertain &&
+            mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))
+          }
           onExecute={() => void handleExecute()}
           onCancel={() => void handleCancel()}
         />

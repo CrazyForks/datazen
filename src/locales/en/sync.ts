@@ -1,7 +1,8 @@
 /** Auto-split domain: sync (en) — unified sync / transfer / schemaDiff */
 const pack = {
   // --- Data Sync ---
-  'sync.executionUnknown': 'The write outcome could not be confirmed. Compare again before retrying.',
+  'sync.executionUnknown':
+    'The write outcome could not be confirmed. Compare again before retrying.',
   'sync.cancellingExecution': 'Cancellation requested. Waiting for the transaction outcome…',
   'sync.source': 'Source',
   'sync.target': 'Target',
@@ -35,6 +36,12 @@ const pack = {
   'sync.optionInsert': 'Insert',
   'sync.optionUpdate': 'Update',
   'sync.optionDelete': 'Delete',
+  'sync.conflictPolicyLabel': 'Conflict handling',
+  'sync.conflictPolicyAbort': 'Abort and roll back',
+  'sync.conflictPolicySkip': 'Skip conflicts',
+  'sync.conflictPolicyForce': 'Force updates/deletes',
+  'sync.conflictPolicySkipWarning': 'Conflicts are skipped; other rows can be committed.',
+  'sync.conflictPolicyForceWarning': 'Concurrent target changes may be overwritten.',
   'sync.inspecting': 'Inspecting table mappings…',
   'sync.mappingTitle': 'Table mapping',
   'sync.mappingAfterCompare': 'Mapping & compare results',
@@ -45,6 +52,7 @@ const pack = {
   'sync.incompatibleHint': 'Incompatible tables need Schema Diff or Data Transfer.',
   'sync.compareCancelled': 'Compare cancelled',
   'sync.executeDone': 'Changes applied successfully',
+  'sync.conflictsSkipped': '{count} concurrent conflict(s) skipped',
   'sync.reCompare': 'Re-compare',
   'sync.rolledBack': 'Execution was rolled back due to an error',
   'sync.sessionRequired': 'Database sessions are not ready — compare first or check connections',
@@ -157,7 +165,8 @@ const pack = {
   'transfer.error': 'Transfer error',
   'transfer.runCancelled': 'Cancelled',
   'transfer.runPartial': 'Transfer incomplete',
-  'transfer.partialExplanation': 'Completed tables and DDL may remain applied. Current data writes are rolled back when possible. Check errors before retrying; unknown outcomes require verification.',
+  'transfer.partialExplanation':
+    'Completed tables and DDL may remain applied. Current data writes are rolled back when possible. Check errors before retrying; unknown outcomes require verification.',
   'transfer.rowsInserted': 'Rows inserted',
   'transfer.success': 'Success',
   'transfer.step.endpoints': 'Endpoints',
@@ -182,7 +191,8 @@ const pack = {
   'transfer.mapping.sourceType': 'Source type',
   'transfer.mapping.targetType': 'Target type',
   'transfer.mapping.sourceFilter': 'Source row filter',
-  'transfer.mapping.sourceFilterHint': 'Only matching source rows are copied. Values are bound parameters.',
+  'transfer.mapping.sourceFilterHint':
+    'Only matching source rows are copied. Values are bound parameters.',
   'transfer.mapping.addFilter': 'Add filter',
   'transfer.mapping.noSourceFilter': 'No source filter; all rows will be copied.',
   'transfer.mapping.filterLogic': 'Match',

@@ -4,7 +4,10 @@ use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
 use super::apply::generate_data_sync_sql_impl;
 use super::plans::{self, StoredSyncPlan, SyncRunRequest, SyncRunSelection};
-use crate::data_sync::{execute_statements, ExecutionResult, StatementExecutor, SyncOptions};
+use crate::data_sync::{
+    execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
+    SyncOptions,
+};
 use crate::db::{ConnectionHandle, DatabaseDriver, TransactionHandle, Value};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -211,6 +214,9 @@ fn validate_requested_options(
     options.validate().map_err(CommandError::from)?;
     if options.matching_strategy != plan.options.matching_strategy
         || options.large_value_mode != plan.options.large_value_mode
+        || options.conflict_policy != plan.options.conflict_policy
+        || plans::fingerprint_conflict_policy(options.conflict_policy)
+            != plan.conflict_policy_fingerprint
     {
         return Err(CommandError::Validation(
             "comparison options changed; return to comparison".into(),
@@ -271,6 +277,7 @@ pub(crate) async fn execute_data_sync_plan_impl(
     let context = validate_plan_context(state, &plan).await?;
     let comparison = plans::apply_selection(&comparison, &request.selection, &request.options)
         .map_err(CommandError::Validation)?;
+    let conflict_policy = request.options.conflict_policy;
     let statements = generate_data_sync_sql_impl(
         state,
         plan.target_db_session_id.clone(),
@@ -299,9 +306,10 @@ pub(crate) async fn execute_data_sync_plan_impl(
         Some(id) => Some(super::jobs::ensure_job(id).await),
         None => None,
     };
-    let result = execute_statements(&statements, &mut executor, cancelled)
-        .await
-        .map_err(CommandError::from);
+    let result =
+        execute_statements_with_policy(&statements, &mut executor, cancelled, conflict_policy)
+            .await
+            .map_err(CommandError::from);
     if let Some(id) = request.job_id.as_deref() {
         super::jobs::remove_job(id).await;
     }

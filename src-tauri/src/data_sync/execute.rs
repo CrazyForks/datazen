@@ -8,9 +8,19 @@ use datazen_driver_api::Value;
 use serde::{Deserialize, Serialize};
 
 use super::error::DataSyncError;
+use super::model::{ChangeOperation, ConflictPolicy};
 use super::sql::SqlStatement;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConflict {
+    pub table: String,
+    pub operation: ChangeOperation,
+    pub row_key: Vec<Value>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResult {
     pub applied: usize,
@@ -19,6 +29,14 @@ pub struct ExecutionResult {
     /// Defaults during deserialization so older persisted responses remain valid.
     #[serde(default)]
     pub affected_rows: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<SyncConflict>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[async_trait]
@@ -34,6 +52,15 @@ pub async fn execute_statements(
     statements: &[SqlStatement],
     executor: &mut dyn StatementExecutor,
     cancelled: Option<Arc<AtomicBool>>,
+) -> Result<ExecutionResult, DataSyncError> {
+    execute_statements_with_policy(statements, executor, cancelled, ConflictPolicy::Abort).await
+}
+
+pub async fn execute_statements_with_policy(
+    statements: &[SqlStatement],
+    executor: &mut dyn StatementExecutor,
+    cancelled: Option<Arc<AtomicBool>>,
+    conflict_policy: ConflictPolicy,
 ) -> Result<ExecutionResult, DataSyncError> {
     if statements.is_empty() {
         return Err(DataSyncError::validation(
@@ -52,6 +79,8 @@ pub async fn execute_statements(
     executor.begin().await?;
     let mut applied = 0usize;
     let mut affected_rows = 0u64;
+    let mut skipped = 0usize;
+    let mut conflicts = Vec::new();
     for stmt in statements {
         if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
             executor.rollback().await?;
@@ -59,26 +88,37 @@ pub async fn execute_statements(
                 applied,
                 rolled_back: true,
                 affected_rows,
+                skipped: 0,
+                conflicts: Vec::new(),
             });
         }
         let operation = stmt.operation;
         match executor.execute(&stmt.sql, &stmt.parameters).await {
             Ok(affected) => {
-                if matches!(
-                    operation,
-                    super::model::ChangeOperation::Update | super::model::ChangeOperation::Delete
-                ) && affected == 0
+                if matches!(operation, ChangeOperation::Update | ChangeOperation::Delete)
+                    && affected == 0
                 {
-                    let _ = executor.rollback().await;
-                    return Err(DataSyncError::conflict(format!(
+                    let message = format!(
                         "optimistic sync conflict: {} for table '{}' affected zero rows",
                         match operation {
-                            super::model::ChangeOperation::Update => "UPDATE",
-                            super::model::ChangeOperation::Delete => "DELETE",
+                            ChangeOperation::Update => "UPDATE",
+                            ChangeOperation::Delete => "DELETE",
                             _ => "write",
                         },
                         stmt.table
-                    )));
+                    );
+                    if conflict_policy == ConflictPolicy::Skip {
+                        skipped += 1;
+                        conflicts.push(SyncConflict {
+                            table: stmt.table.clone(),
+                            operation,
+                            row_key: stmt.row_key.clone(),
+                            message,
+                        });
+                        continue;
+                    }
+                    let _ = executor.rollback().await;
+                    return Err(DataSyncError::conflict(message));
                 }
                 applied += 1;
                 affected_rows += affected;
@@ -96,6 +136,8 @@ pub async fn execute_statements(
         applied,
         rolled_back: false,
         affected_rows,
+        skipped,
+        conflicts,
     })
 }
 
@@ -193,6 +235,8 @@ mod tests {
             applied: 1,
             rolled_back: false,
             affected_rows: 3,
+            skipped: 0,
+            conflicts: Vec::new(),
         })
         .unwrap();
         assert_eq!(json["affectedRows"], 3);
@@ -266,6 +310,113 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, DataSyncError::Conflict(message) if message.contains("zero rows")));
         assert_eq!(exec.calls, vec!["begin", "execute", "rollback"]);
+    }
+
+    #[tokio::test]
+    async fn skip_policy_commits_other_rows_and_reports_conflicts() {
+        struct MixedRowsExecutor {
+            calls: Vec<String>,
+            executions: usize,
+        }
+        #[async_trait]
+        impl StatementExecutor for MixedRowsExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("begin".into());
+                Ok(())
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                self.calls.push("execute".into());
+                let affected = if self.executions == 0 { 0 } else { 1 };
+                self.executions += 1;
+                Ok(affected)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("commit".into());
+                Ok(())
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("rollback".into());
+                Ok(())
+            }
+        }
+        let mut first = stmt("UPDATE first");
+        first.operation = ChangeOperation::Update;
+        first.row_key = vec![Value::Integer(1)];
+        let mut second = stmt("UPDATE second");
+        second.operation = ChangeOperation::Update;
+        second.row_key = vec![Value::Integer(2)];
+        let mut exec = MixedRowsExecutor {
+            calls: Vec::new(),
+            executions: 0,
+        };
+        let result =
+            execute_statements_with_policy(&[first, second], &mut exec, None, ConflictPolicy::Skip)
+                .await
+                .unwrap();
+        assert_eq!(result.applied, 1);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.conflicts.len(), 1);
+        assert!(matches!(
+            result.conflicts[0].row_key.as_slice(),
+            [Value::Integer(1)]
+        ));
+        assert_eq!(exec.calls, vec!["begin", "execute", "execute", "commit"]);
+    }
+
+    #[tokio::test]
+    async fn force_policy_still_aborts_on_missing_primary_key_row() {
+        struct ZeroRowsExecutor;
+        #[async_trait]
+        impl StatementExecutor for ZeroRowsExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                Ok(0)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                panic!("must not commit")
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+        }
+        let mut update = stmt("UPDATE t");
+        update.operation = ChangeOperation::Update;
+        let err = execute_statements_with_policy(
+            &[update],
+            &mut ZeroRowsExecutor,
+            None,
+            ConflictPolicy::Force,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, DataSyncError::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn force_policy_does_not_skip_insert_errors() {
+        let mut exec = RecordingExecutor {
+            fail_at: Some(0),
+            ..RecordingExecutor::default()
+        };
+        let err = execute_statements_with_policy(
+            &[stmt("INSERT duplicate")],
+            &mut exec,
+            None,
+            ConflictPolicy::Force,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("execution failed"));
+        assert!(exec.calls.contains(&"rollback".to_string()));
+        assert!(!exec.calls.contains(&"commit".to_string()));
     }
 
     #[tokio::test]

@@ -62,6 +62,22 @@ pub enum LargeValueMode {
     Hash,
 }
 
+/// Behaviour when an UPDATE or DELETE no longer matches the target row that
+/// was captured during comparison.
+///
+/// `Abort` is deliberately the default. `Skip` is useful for long-running
+/// synchronizations where independent rows may continue after a concurrent
+/// edit. `Force` only removes the optimistic target-row predicate from
+/// UPDATE/DELETE; INSERT conflicts remain database errors.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictPolicy {
+    #[default]
+    Abort,
+    Skip,
+    Force,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncOptions {
@@ -71,6 +87,8 @@ pub struct SyncOptions {
     pub matching_strategy: MatchingStrategy,
     pub batch_size: u32,
     pub large_value_mode: LargeValueMode,
+    #[serde(default)]
+    pub conflict_policy: ConflictPolicy,
 }
 
 impl Default for SyncOptions {
@@ -82,6 +100,7 @@ impl Default for SyncOptions {
             matching_strategy: MatchingStrategy::PrimaryKey,
             batch_size: 1000,
             large_value_mode: LargeValueMode::Full,
+            conflict_policy: ConflictPolicy::Abort,
         }
     }
 }

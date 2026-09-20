@@ -26,7 +26,10 @@ pub use compare::{
     cmp_keys, cmp_values, compare_sorted_rows, compare_table_pages, RowPageSource, SliceRowSource,
 };
 pub use error::DataSyncError;
-pub use execute::{execute_statements, ExecutionResult, StatementExecutor};
+pub use execute::{
+    execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
+    SyncConflict,
+};
 pub use filter::{SyncFilterLogic, SyncSourceFilter};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
 pub use keyset::{
@@ -39,13 +42,14 @@ pub use legacy::{
 pub use mapping::classify_tables;
 pub use model::{
     keys_equal, optional_values_equal, rows_equal, values_equal, ChangeOperation, ColumnMapping,
-    ComparisonResult, Endpoint, LargeValueMode, MatchingStrategy, Row, RowChange, SyncOptions,
-    SyncTask, TableMapping, TableMappingStatus, TableResult,
+    ComparisonResult, ConflictPolicy, Endpoint, LargeValueMode, MatchingStrategy, Row, RowChange,
+    SyncOptions, SyncTask, TableMapping, TableMappingStatus, TableResult,
 };
 pub use pairing::{classify_data_sync_pair, require_data_sync_family, DataSyncPairingView};
 pub use session::SyncSession;
 pub use sql::{
-    generate_table_sql, generate_table_sql_with_preview_formatter, mysql_placeholder,
-    postgres_placeholder, postgres_typed_placeholder, quote_ident_sql, SqlStatement,
+    generate_table_sql, generate_table_sql_with_preview_formatter,
+    generate_table_sql_with_preview_formatter_and_policy, mysql_placeholder, postgres_placeholder,
+    postgres_typed_placeholder, quote_ident_sql, SqlStatement,
 };
 pub use state::SyncPhase;
