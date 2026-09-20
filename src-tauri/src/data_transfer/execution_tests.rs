@@ -255,11 +255,12 @@ fn job_with_batch_size(batch_size: u32) -> TransferJob {
             database: "s".into(),
             schema: None,
         },
-        target: Endpoint {
+        target: Some(Endpoint {
             db_session_id: "target".into(),
             database: "t".into(),
             schema: None,
-        },
+        }),
+        sql_file_target: None,
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
         tables: vec![],
@@ -600,7 +601,7 @@ async fn source_metadata_and_bound_writer_target_use_endpoint_schema() {
     let target = driver(vec![], schema(&["id"]));
     let mut job = job();
     job.source.schema = Some("source_scope".into());
-    job.target.schema = Some("target_scope".into());
+    job.target.as_mut().unwrap().schema = Some("target_scope".into());
     let source_handle = ConnectionHandle {
         id: "source".into(),
         pool_id: "source".into(),
@@ -644,7 +645,7 @@ async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
     let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
     let target = driver(vec![], schema(&["id"]));
     let mut transfer = job();
-    transfer.target.schema = Some("ambiguous.schema".into());
+    transfer.target.as_mut().unwrap().schema = Some("ambiguous.schema".into());
     let tables = vec![inspected("same_table", vec![mapping("id", "id")])];
     let source_schemas = HashMap::from([("same_table".into(), source.schema.clone())]);
 
@@ -685,11 +686,11 @@ async fn test_tester_same_session_same_catalog_different_schemas_can_transfer_sa
     let target = driver(vec![], schema(&["id"]));
     let mut transfer = job();
     transfer.source.db_session_id = "shared".into();
-    transfer.target.db_session_id = "shared".into();
+    transfer.target.as_mut().unwrap().db_session_id = "shared".into();
     transfer.source.database = "catalog".into();
-    transfer.target.database = "catalog".into();
+    transfer.target.as_mut().unwrap().database = "catalog".into();
     transfer.source.schema = Some("source_schema".into());
-    transfer.target.schema = Some("target_schema".into());
+    transfer.target.as_mut().unwrap().schema = Some("target_schema".into());
     let tables = vec![inspected("same_table", vec![mapping("id", "id")])];
     let source_schemas = HashMap::from([("same_table".into(), source.schema.clone())]);
 
@@ -723,9 +724,9 @@ async fn same_session_catalog_and_normalized_schema_rejects_before_any_write() {
     let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
     let target = driver(vec![], schema(&["id"]));
     let mut transfer = job();
-    transfer.target = transfer.source.clone();
+    transfer.target = Some(transfer.source.clone());
     transfer.source.schema = Some(" selected ".into());
-    transfer.target.schema = Some("selected".into());
+    transfer.target.as_mut().unwrap().schema = Some("selected".into());
     let handle = ConnectionHandle {
         id: "shared".into(),
         pool_id: "shared".into(),

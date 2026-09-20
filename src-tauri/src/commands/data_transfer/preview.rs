@@ -10,11 +10,251 @@ use crate::data_transfer::{
 };
 use datazen_driver_api::{TableSchema, TableType};
 
+/// Preview the source scope and SQL statements for a native-dialog-selected
+/// file target. The file path remains in the server registry and the plan only
+/// stores its opaque token.
+async fn preview_sql_file_target(
+    state: &AppState,
+    mut job: TransferJob,
+) -> Result<TransferPreview, CommandError> {
+    let destination = job
+        .sql_file_target
+        .as_ref()
+        .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?;
+    crate::data_transfer::sql_file::resolve_path(&destination.file_token)
+        .map_err(CommandError::from)?;
+    job.source.schema = job.source.normalized_schema().map(str::to_string);
+    crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
+
+    let src_config = state
+        .connection_manager
+        .get_session_config(&job.source.db_session_id)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&job.source.db_session_id)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    let source_tables = src_driver
+        .get_tables(&src_handle, &job.source.database)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    let source_tables: Vec<_> = source_tables
+        .into_iter()
+        .filter(|table| {
+            crate::data_transfer::metadata::table_in_endpoint_schema(&job.source, table)
+        })
+        .collect();
+    let mut source_schemas = HashMap::new();
+    for table in source_tables
+        .iter()
+        .filter(|t| matches!(t.table_type, TableType::Table))
+    {
+        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+            src_driver.as_ref(),
+            &src_handle,
+            &job.source,
+            &table.name,
+        )
+        .await
+        {
+            source_schemas.insert(table.name.clone(), schema);
+        }
+    }
+
+    let mappings = if job.tables.is_empty() {
+        source_tables
+            .iter()
+            .filter(|table| matches!(table.table_type, TableType::Table))
+            .map(|table| {
+                let mut mapping = crate::data_transfer::TableMapping::auto(&table.name);
+                mapping.create_new = true;
+                mapping
+            })
+            .collect()
+    } else {
+        job.tables
+            .iter()
+            .cloned()
+            .map(|mut mapping| {
+                mapping.create_new = true;
+                mapping
+            })
+            .collect()
+    };
+    job.tables = mappings;
+    for mapping in job.tables.iter().filter(|mapping| mapping.enabled) {
+        let schema = source_schemas.get(&mapping.source_table).ok_or_else(|| {
+            CommandError::Validation(format!(
+                "cannot validate source scope for '{}': source schema is unavailable",
+                mapping.source_table
+            ))
+        })?;
+        crate::data_transfer::recordset::build_source_scope(
+            schema,
+            mapping.source_filter.as_ref(),
+            mapping.recordset.as_ref(),
+            src_driver.quote_char(),
+            |index, data_type| {
+                src_driver
+                    .parameter_placeholder(index, data_type)
+                    .map_err(|error| {
+                        crate::data_transfer::TransferError::unsupported(error.to_string())
+                    })
+            },
+            |column| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        )
+        .map_err(|error| CommandError::Validation(error.to_string()))?;
+    }
+    let empty_targets = Vec::new();
+    let inspected = crate::data_transfer::inspect_tables(
+        &source_tables,
+        &empty_targets,
+        &job.tables,
+        &source_schemas,
+        &HashMap::new(),
+        job.mode,
+        &HashMap::new(),
+    );
+    let mut preview = TransferPreview {
+        plan_id: String::new(),
+        pairing_path: "sqlFile".into(),
+        mode: job.mode,
+        write_mode: job.write_mode,
+        ddl: Vec::new(),
+        write_plans: Vec::new(),
+        warnings: vec!["SQL file uses the source database dialect and is published atomically after all selected tables succeed".into()],
+        can_execute: true,
+        block_reason: None,
+    };
+    for table in inspected.iter().filter(|table| table.enabled) {
+        let Some(schema) = source_schemas.get(&table.source_table) else {
+            preview.can_execute = false;
+            preview.block_reason = Some(format!(
+                "source schema is unavailable for '{}'",
+                table.source_table
+            ));
+            continue;
+        };
+        if table.column_mappings.iter().all(|mapping| mapping.skip) {
+            preview.can_execute = false;
+            preview.block_reason = Some(format!(
+                "table '{}' has no active column mappings",
+                table.source_table
+            ));
+            continue;
+        }
+        if matches!(
+            job.mode,
+            crate::data_transfer::TransferMode::Structure
+                | crate::data_transfer::TransferMode::StructureAndData
+        ) {
+            let mapping = job
+                .tables
+                .iter()
+                .find(|mapping| mapping.source_table == table.source_table);
+            let ddl = match mapping
+                .and_then(|mapping| mapping.ddl_override.as_deref())
+                .map(str::trim)
+                .filter(|ddl| !ddl.is_empty())
+            {
+                Some(ddl) => ddl.to_string(),
+                None => crate::data_transfer::sql_file::create_table_sql(
+                    src_driver.as_ref(),
+                    &job,
+                    table,
+                    schema,
+                )
+                .map_err(CommandError::from)?,
+            };
+            preview
+                .ddl
+                .push(crate::data_transfer::model::DdlPreviewItem {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    ddl,
+                });
+        }
+        if matches!(
+            job.mode,
+            crate::data_transfer::TransferMode::Data
+                | crate::data_transfer::TransferMode::StructureAndData
+        ) {
+            let mapping = job
+                .tables
+                .iter()
+                .find(|mapping| mapping.source_table == table.source_table);
+            let scope = crate::data_transfer::recordset::build_source_scope(
+                schema,
+                mapping.and_then(|mapping| mapping.source_filter.as_ref()),
+                mapping.and_then(|mapping| mapping.recordset.as_ref()),
+                src_driver.quote_char(),
+                |index, data_type| {
+                    src_driver
+                        .parameter_placeholder(index, data_type)
+                        .map_err(|error| {
+                            crate::data_transfer::TransferError::unsupported(error.to_string())
+                        })
+                },
+                |column| {
+                    schema
+                        .columns
+                        .iter()
+                        .find(|candidate| candidate.name == column)
+                        .map(|candidate| candidate.data_type.clone())
+                },
+            )
+            .map_err(CommandError::from)?;
+            preview
+                .write_plans
+                .push(crate::data_transfer::model::WritePlanItem {
+                    source_table: table.source_table.clone(),
+                    target_table: table.target_table.clone(),
+                    write_mode: job.write_mode,
+                    mapped_columns: table.column_mappings.clone(),
+                    estimated_rows: table.source_row_count,
+                    preamble: Vec::new(),
+                    source_filter_preview: scope.where_sql,
+                    recordset_preview: scope.recordset_sql,
+                });
+        }
+    }
+    let target_schemas: HashMap<String, TableSchema> = HashMap::new();
+    let plan_id = super::plans::issue_plan(
+        job,
+        &preview,
+        src_driver.as_ref(),
+        src_driver.as_ref(),
+        &source_schemas,
+        &target_schemas,
+        false,
+    )
+    .map_err(CommandError::from)?;
+    preview.plan_id = plan_id;
+    let _ = src_config;
+    Ok(preview)
+}
+
 pub(crate) async fn preview_data_transfer_impl(
     state: &AppState,
     mut job: TransferJob,
 ) -> Result<TransferPreview, CommandError> {
     job.options.validate().map_err(CommandError::from)?;
+    job.validate_destination().map_err(CommandError::from)?;
+    if job.sql_file_target.is_some() {
+        return preview_sql_file_target(state, job).await;
+    }
+    let target = job
+        .target
+        .as_mut()
+        .ok_or_else(|| CommandError::Validation("database target is missing".into()))?;
 
     let src_config = state
         .connection_manager
@@ -23,7 +263,7 @@ pub(crate) async fn preview_data_transfer_impl(
         .cmd_err("preview_data_transfer")?;
     let tgt_config = state
         .connection_manager
-        .get_session_config(&job.target.db_session_id)
+        .get_session_config(&target.db_session_id)
         .await
         .cmd_err("preview_data_transfer")?;
 
@@ -32,13 +272,12 @@ pub(crate) async fn preview_data_transfer_impl(
         .normalized_schema()
         .map(str::to_string)
         .or_else(|| src_config.schema.clone());
-    job.target.schema = job
-        .target
+    target.schema = target
         .normalized_schema()
         .map(str::to_string)
         .or_else(|| tgt_config.schema.clone());
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
-    crate::data_transfer::metadata::metadata_relation_ref(&job.target, "")?;
+    crate::data_transfer::metadata::metadata_relation_ref(target, "")?;
 
     let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
         .map_err(CommandError::from)?;
@@ -46,11 +285,11 @@ pub(crate) async fn preview_data_transfer_impl(
     let inspected = inspect_data_transfer_impl(
         state,
         job.source.db_session_id.clone(),
-        job.target.db_session_id.clone(),
+        target.db_session_id.clone(),
         Some(job.source.database.clone()),
-        Some(job.target.database.clone()),
+        Some(target.database.clone()),
         job.source.normalized_schema(),
-        job.target.normalized_schema(),
+        target.normalized_schema(),
         job.mode,
         &job.tables,
     )
@@ -63,7 +302,7 @@ pub(crate) async fn preview_data_transfer_impl(
         .cmd_err("preview_data_transfer")?;
     let (target_driver, target_handle) = state
         .connection_manager
-        .get_session(&job.target.db_session_id)
+        .get_session(&target.db_session_id)
         .await
         .cmd_err("preview_data_transfer")?;
 
@@ -112,7 +351,7 @@ pub(crate) async fn preview_data_transfer_impl(
         if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
             target_driver.as_ref(),
             &target_handle,
-            &job.target,
+            target,
             &table.target_table,
         )
         .await

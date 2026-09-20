@@ -136,6 +136,13 @@ const pack = {
   // --- Data Transfer ---
   'transfer.source': 'Source',
   'transfer.target': 'Target',
+  'transfer.destination.database': 'Database',
+  'transfer.destination.sqlFile': 'SQL file',
+  'transfer.destination.sqlFileSelected': 'SQL file selected',
+  'transfer.destination.sourceDatabase': 'Source database',
+  'transfer.destination.sqlFileHint':
+    'The SQL file path is held by the host and will be written atomically after preview.',
+  'transfer.destination.chooseHint': 'Choose an SQL file to continue.',
   'transfer.selectBoth': 'Select source and target connections and databases.',
   'transfer.connectFailed': 'Connect failed:',
   'transfer.path.direct': 'Same dialect family (direct)',

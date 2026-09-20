@@ -11,6 +11,7 @@ pub mod preview;
 pub mod recordset;
 mod recordset_bounds;
 mod scan;
+pub mod sql_file;
 pub mod structure;
 mod writer;
 
@@ -19,8 +20,8 @@ pub use execute::{execute_transfer_data, DropCreateContext, ValueFormatter};
 pub use filter::{FilterLogic, SourceFilter};
 pub use mapping::inspect_tables;
 pub use model::{
-    TableInspectResult, TableMapping, TransferExecutionResult, TransferJob, TransferMode,
-    TransferPairingView, TransferPreview, TransferRecordset, TransferRecordsetBound,
+    SqlFileTarget, TableInspectResult, TableMapping, TransferExecutionResult, TransferJob,
+    TransferMode, TransferPairingView, TransferPreview, TransferRecordset, TransferRecordsetBound,
     TransferRunRequest, WriteMode,
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};

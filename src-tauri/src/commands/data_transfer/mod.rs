@@ -20,7 +20,7 @@ pub(crate) use exec::execute_data_transfer_impl;
 pub(crate) use inspect::inspect_data_transfer_impl;
 pub(crate) use jobs::cancel_job;
 pub(crate) use preview::preview_data_transfer_impl;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub fn classify_transfer_pair(
@@ -63,6 +63,28 @@ pub async fn preview_data_transfer(
     job: TransferJob,
 ) -> Result<TransferPreview, CommandError> {
     preview_data_transfer_impl(&state, job).await
+}
+
+/// Pick a SQL destination through the native dialog. Only the opaque token is
+/// returned to the webview; the selected path remains in the host registry.
+#[tauri::command]
+pub async fn pick_data_transfer_sql_file(
+    app: AppHandle,
+) -> Result<Option<crate::data_transfer::SqlFileTarget>, CommandError> {
+    let picked = super::dialog::save_file(
+        &app,
+        ("SQL".into(), vec!["sql".into()]),
+        "datazen-transfer.sql".into(),
+    )
+    .await?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    super::file::validate_extension(&path, &["sql"])?;
+    let token = crate::data_transfer::sql_file::register_path(path).map_err(CommandError::from)?;
+    Ok(Some(crate::data_transfer::SqlFileTarget {
+        file_token: token,
+    }))
 }
 
 #[tauri::command]

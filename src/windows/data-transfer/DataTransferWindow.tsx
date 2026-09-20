@@ -17,6 +17,7 @@ import {
   type TransferTableMapping,
   type TransferTableResult,
   type TransferExecutionResult,
+  type TransferSqlFileTarget,
   type WriteMode,
 } from '../../commands/transfer';
 import { useI18n } from '../../hooks/useI18n';
@@ -74,6 +75,8 @@ export function DataTransferWindow() {
   const [targetDatabases, setTargetDatabases] = useState<string[]>([]);
   const [sourceDatabase, setSourceDatabase] = useState('');
   const [targetDatabase, setTargetDatabase] = useState('');
+  const [destinationMode, setDestinationMode] = useState<'database' | 'sqlFile'>('database');
+  const [sqlFileTarget, setSqlFileTarget] = useState<TransferSqlFileTarget | null>(null);
   const [mode, setMode] = useState<TransferMode>('data');
   const [writeMode, setWriteMode] = useState<WriteMode>('insert');
   const [tables, setTables] = useState<TransferTableResult[]>([]);
@@ -176,6 +179,19 @@ export function DataTransferWindow() {
   }, [sourceConn, targetConn]);
 
   const targetReadOnly = targetConn?.readOnly === true;
+
+  const chooseSqlFile = useCallback(async () => {
+    try {
+      const picked = await transferCommands.pickSqlFile();
+      if (picked) {
+        setSqlFileTarget(picked);
+        setDestinationMode('sqlFile');
+      }
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const dbSessionId = sourceSession?.dbSessionId;
@@ -311,20 +327,33 @@ export function DataTransferWindow() {
   }, []);
 
   const refreshEndpointSessions = useCallback(async () => {
-    if (!sourceId || !targetId || !sourceDatabase || !targetDatabase) {
+    if (
+      !sourceId ||
+      !sourceDatabase ||
+      (destinationMode === 'database' && (!targetId || !targetDatabase))
+    ) {
       return {
         source: null as DedicatedSideSession | null,
         target: null as DedicatedSideSession | null,
       };
     }
-    const [source, target] = await Promise.all([
-      ensureDedicatedSession(sourceSession, sourceId, sourceDatabase),
-      ensureDedicatedSession(targetSession, targetId, targetDatabase),
-    ]);
+    const source = await ensureDedicatedSession(sourceSession, sourceId, sourceDatabase);
+    const target =
+      destinationMode === 'database'
+        ? await ensureDedicatedSession(targetSession, targetId, targetDatabase)
+        : null;
     setSourceSession(source);
     setTargetSession(target);
     return { source, target };
-  }, [sourceSession, targetSession, sourceId, targetId, sourceDatabase, targetDatabase]);
+  }, [
+    sourceSession,
+    targetSession,
+    sourceId,
+    targetId,
+    sourceDatabase,
+    targetDatabase,
+    destinationMode,
+  ]);
 
   const buildJob = useCallback(
     (sessions?: {
@@ -333,7 +362,19 @@ export function DataTransferWindow() {
     }): TransferJob | null => {
       const srcConnId = sessions?.source?.dbSessionId ?? sourceSession?.dbSessionId;
       const tgtConnId = sessions?.target?.dbSessionId ?? targetSession?.dbSessionId;
-      if (!srcConnId || !tgtConnId || !sourceDatabase || !targetDatabase) return null;
+      if (!srcConnId || !sourceDatabase) return null;
+      if (destinationMode === 'sqlFile') {
+        if (!sqlFileTarget) return null;
+        return {
+          source: { dbSessionId: srcConnId, database: sourceDatabase },
+          sqlFileTarget,
+          mode,
+          writeMode,
+          tables: tablesToMappings(),
+          options: { batchSize, stopOnError, confirmedDestructive },
+        };
+      }
+      if (!tgtConnId || !targetDatabase) return null;
       return {
         source: { dbSessionId: srcConnId, database: sourceDatabase },
         target: { dbSessionId: tgtConnId, database: targetDatabase },
@@ -352,6 +393,8 @@ export function DataTransferWindow() {
       targetSession?.dbSessionId,
       sourceDatabase,
       targetDatabase,
+      destinationMode,
+      sqlFileTarget,
       mode,
       writeMode,
       tables,
@@ -443,7 +486,7 @@ export function DataTransferWindow() {
       setErrorOpen(true);
       return;
     }
-    if (targetReadOnly) {
+    if (destinationMode === 'database' && targetReadOnly) {
       setErrorMsg(t('transfer.readOnlyBlock'));
       setErrorOpen(true);
       return;
@@ -474,7 +517,15 @@ export function DataTransferWindow() {
       setExecuteProgress('');
       jobIdRef.current = null;
     }
-  }, [refreshEndpointSessions, buildJob, preview?.planId, targetReadOnly, confirmedDestructive, t]);
+  }, [
+    refreshEndpointSessions,
+    buildJob,
+    preview?.planId,
+    targetReadOnly,
+    destinationMode,
+    confirmedDestructive,
+    t,
+  ]);
 
   const handleExecuteClick = useCallback(() => {
     if (writeMode !== 'insert') {
@@ -500,7 +551,11 @@ export function DataTransferWindow() {
     switch (step) {
       case 'endpoints':
         return Boolean(
-          sourceId && targetId && sourceDatabase && targetDatabase && pairing?.supported,
+          sourceId &&
+            sourceDatabase &&
+            (destinationMode === 'sqlFile'
+              ? sqlFileTarget
+              : targetId && targetDatabase && pairing?.supported),
         );
       case 'setup':
         if (writeMode !== 'insert' && !confirmedDestructive) return false;
@@ -518,6 +573,8 @@ export function DataTransferWindow() {
     targetId,
     sourceDatabase,
     targetDatabase,
+    destinationMode,
+    sqlFileTarget,
     pairing,
     tables,
     writeMode,
@@ -525,8 +582,11 @@ export function DataTransferWindow() {
   ]);
 
   const canExecute = useMemo(
-    () => preview?.canExecute === true && !targetReadOnly && !loading,
-    [preview, targetReadOnly, loading],
+    () =>
+      preview?.canExecute === true &&
+      (destinationMode === 'sqlFile' || !targetReadOnly) &&
+      !loading,
+    [preview, targetReadOnly, loading, destinationMode],
   );
 
   const goNext = useCallback(async () => {
@@ -536,11 +596,16 @@ export function DataTransferWindow() {
       setStep('preview');
       return;
     }
+    if (step === 'setup' && destinationMode === 'sqlFile') {
+      await runPreview({ quiet: true });
+      setStep('preview');
+      return;
+    }
     if (next === 'objects' && tables.length === 0) {
       await runInspect();
     }
     if (next) setStep(next);
-  }, [step, stepIndex, tables.length, runInspect, runPreview]);
+  }, [step, stepIndex, tables.length, runInspect, runPreview, destinationMode]);
 
   const goBack = () => {
     const prev = STEPS[stepIndex - 1];
@@ -688,35 +753,80 @@ export function DataTransferWindow() {
           )}
         >
           {step === 'endpoints' && (
-            <MigrationEndpointsBar
-              layout="grid"
-              testIdPrefix="data-transfer"
-              i18nPrefix="transfer"
-              showSwap={false}
-              showCompare={false}
-              includeEmptyConnectionOption
-              hideDatabaseUntilConnected
-              sourceLabelKey="transfer.source"
-              targetLabelKey="transfer.target"
-              sourceId={sourceId}
-              targetId={targetId}
-              sourceDatabase={sourceDatabase}
-              targetDatabase={targetDatabase}
-              sourceDatabases={sourceDatabases}
-              targetDatabases={targetDatabases}
-              connOptions={connOptions}
-              targetOptions={targetOptions}
-              targetReadOnly={targetReadOnly}
-              onSourceChange={setSourceId}
-              onTargetChange={setTargetId}
-              onSourceDatabaseChange={setSourceDatabase}
-              onTargetDatabaseChange={setTargetDatabase}
-              footerNote={
-                pairing && !pairing.supported ? (
-                  <TransferPairingNote reason={pairing.reason} />
-                ) : undefined
-              }
-            />
+            <div className="space-y-4">
+              <div className="flex gap-2 rounded-lg border border-edge bg-surface-alt p-2">
+                <Button
+                  variant={destinationMode === 'database' ? 'primary' : 'secondary'}
+                  onClick={() => setDestinationMode('database')}
+                  data-testid="data-transfer-destination-database"
+                >
+                  {t('transfer.destination.database')}
+                </Button>
+                <Button
+                  variant={destinationMode === 'sqlFile' ? 'primary' : 'secondary'}
+                  onClick={() => void chooseSqlFile()}
+                  data-testid="data-transfer-destination-sql-file"
+                >
+                  {sqlFileTarget
+                    ? t('transfer.destination.sqlFileSelected')
+                    : t('transfer.destination.sqlFile')}
+                </Button>
+              </div>
+              {destinationMode === 'database' ? (
+                <MigrationEndpointsBar
+                  layout="grid"
+                  testIdPrefix="data-transfer"
+                  i18nPrefix="transfer"
+                  showSwap={false}
+                  showCompare={false}
+                  includeEmptyConnectionOption
+                  hideDatabaseUntilConnected
+                  sourceLabelKey="transfer.source"
+                  targetLabelKey="transfer.target"
+                  sourceId={sourceId}
+                  targetId={targetId}
+                  sourceDatabase={sourceDatabase}
+                  targetDatabase={targetDatabase}
+                  sourceDatabases={sourceDatabases}
+                  targetDatabases={targetDatabases}
+                  connOptions={connOptions}
+                  targetOptions={targetOptions}
+                  targetReadOnly={targetReadOnly}
+                  onSourceChange={setSourceId}
+                  onTargetChange={setTargetId}
+                  onSourceDatabaseChange={setSourceDatabase}
+                  onTargetDatabaseChange={setTargetDatabase}
+                  footerNote={
+                    pairing && !pairing.supported ? (
+                      <TransferPairingNote reason={pairing.reason} />
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <div className="space-y-3 rounded-lg border border-edge bg-surface-alt p-5">
+                  <label className="block text-sm font-medium text-fg">
+                    {t('transfer.destination.sourceDatabase')}
+                  </label>
+                  <Select
+                    value={sourceId}
+                    options={connOptions}
+                    onChange={setSourceId}
+                    placeholder={t('transfer.selectSource')}
+                  />
+                  <Select
+                    value={sourceDatabase}
+                    options={sourceDatabases.map((db) => ({ value: db, label: db }))}
+                    onChange={setSourceDatabase}
+                    placeholder={t('transfer.selectDatabase')}
+                  />
+                  <p className="text-xs text-fg-muted">
+                    {sqlFileTarget
+                      ? t('transfer.destination.sqlFileHint')
+                      : t('transfer.destination.chooseHint')}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           {step === 'setup' && (
@@ -983,12 +1093,23 @@ export function DataTransferWindow() {
               className="space-y-3 rounded-lg border border-edge bg-surface-alt p-6 text-sm"
             >
               <p className="text-base font-medium" role="status">
-                {result.cancelled ? t('transfer.runCancelled') : result.partial ? t('transfer.runPartial') : t('transfer.success')}
+                {result.cancelled
+                  ? t('transfer.runCancelled')
+                  : result.partial
+                    ? t('transfer.runPartial')
+                    : t('transfer.success')}
               </p>
-              <p>{t('transfer.rowsInserted')}: {result.rowsInserted}</p>
-              {(result.cancelled || result.partial) && <p className="text-fg-muted">{t('transfer.partialExplanation')}</p>}
+              <p>
+                {t('transfer.rowsInserted')}: {result.rowsInserted}
+              </p>
+              {(result.cancelled || result.partial) && (
+                <p className="text-fg-muted">{t('transfer.partialExplanation')}</p>
+              )}
               {result.tables.map((tbl) => (
-                <div key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}`} className="rounded-lg border border-edge bg-surface p-3">
+                <div
+                  key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}`}
+                  className="rounded-lg border border-edge bg-surface p-3"
+                >
                   <div className="font-medium">
                     {tbl.sourceTable}: {tbl.success ? t('transfer.success') : t('transfer.error')}
                   </div>

@@ -24,7 +24,11 @@ pub fn target_relation_ref(
     table: &str,
     adapter: &dyn SyncTargetAdapter,
 ) -> String {
-    match job.target.normalized_schema() {
+    let schema = job
+        .target
+        .as_ref()
+        .and_then(|target| target.normalized_schema());
+    match schema {
         Some(schema) => format!(
             "{}.{}",
             adapter.quote_ident(schema),
@@ -664,11 +668,12 @@ mod tests {
                 database: "db".into(),
                 schema: None,
             },
-            target: super::super::model::Endpoint {
+            target: Some(super::super::model::Endpoint {
                 db_session_id: "t".into(),
                 database: "db".into(),
                 schema: None,
-            },
+            }),
+            sql_file_target: None,
             mode: TransferMode::StructureAndData,
             write_mode: WriteMode::Insert,
             tables: vec![],

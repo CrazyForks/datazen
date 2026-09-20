@@ -67,11 +67,17 @@ export interface TransferOptions {
 
 export interface TransferJob {
   source: TransferEndpoint;
-  target: TransferEndpoint;
+  target?: TransferEndpoint;
+  /** Opaque host token returned by the native SQL save dialog. */
+  sqlFileTarget?: TransferSqlFileTarget;
   mode: TransferMode;
   writeMode: WriteMode;
   tables: TransferTableMapping[];
   options: TransferOptions;
+}
+
+export interface TransferSqlFileTarget {
+  fileToken: string;
 }
 
 export interface TransferTableResult {
@@ -165,6 +171,7 @@ export const DEFAULT_TRANSFER_OPTIONS: TransferOptions = {
 };
 
 export const transferCommands = {
+  pickSqlFile: () => invoke<TransferSqlFileTarget | null>('pick_data_transfer_sql_file'),
   classifyPair: (sourceDatabaseType: string, targetDatabaseType: string) =>
     invoke<TransferPairingView>('classify_transfer_pair', {
       sourceDatabaseType,

@@ -18,6 +18,121 @@ use crate::data_transfer::{
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use datazen_driver_api::TableType;
 
+async fn load_sql_source_snapshot(
+    state: &AppState,
+    job: &TransferJob,
+) -> Result<
+    (
+        Arc<dyn crate::db::DatabaseDriver>,
+        crate::db::ConnectionHandle,
+        Vec<crate::data_transfer::TableInspectResult>,
+        HashMap<String, datazen_driver_api::TableSchema>,
+    ),
+    CommandError,
+> {
+    let (driver, handle) = state
+        .connection_manager
+        .get_session(&job.source.db_session_id)
+        .await
+        .cmd_err("data_transfer_sql_file")?;
+    let tables = driver
+        .get_tables(&handle, &job.source.database)
+        .await
+        .cmd_err("data_transfer_sql_file")?;
+    let tables: Vec<_> = tables
+        .into_iter()
+        .filter(|table| {
+            crate::data_transfer::metadata::table_in_endpoint_schema(&job.source, table)
+        })
+        .collect();
+    let mut schemas = HashMap::new();
+    for table in tables
+        .iter()
+        .filter(|table| matches!(table.table_type, TableType::Table))
+    {
+        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+            driver.as_ref(),
+            &handle,
+            &job.source,
+            &table.name,
+        )
+        .await
+        {
+            schemas.insert(table.name.clone(), schema);
+        }
+    }
+    let inspected = crate::data_transfer::inspect_tables(
+        &tables,
+        &[],
+        &job.tables,
+        &schemas,
+        &HashMap::new(),
+        job.mode,
+        &HashMap::new(),
+    );
+    Ok((driver, handle, inspected, schemas))
+}
+
+async fn execute_sql_file_target(
+    state: &AppState,
+    plan: &StoredTransferPlan,
+    request: &TransferRunRequest,
+) -> Result<TransferExecutionResult, CommandError> {
+    let token = plan
+        .job
+        .sql_file_target
+        .as_ref()
+        .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?
+        .file_token
+        .clone();
+    let destination =
+        crate::data_transfer::sql_file::resolve_path(&token).map_err(CommandError::from)?;
+    if plans::filter_fingerprint(&plan.job).map_err(CommandError::from)? != plan.filter {
+        return Err(CommandError::Validation(
+            "source filter or recordset changed since preview; return to comparison".into(),
+        ));
+    }
+    let (driver, handle, _inspected, _schemas) = load_sql_source_snapshot(state, &plan.job).await?;
+    if driver.driver_type() != plan.source_driver_type
+        || plans::driver_protocol_version(driver.as_ref()) != plan.source_driver_protocol
+    {
+        return Err(CommandError::Validation(
+            "source driver contract changed since preview; return to preview".into(),
+        ));
+    }
+    let fingerprint =
+        schema_fingerprint_for_side(&plan.job.source, driver.as_ref(), &handle, &plan.job, true)
+            .await?;
+    if fingerprint != plan.source_schema_fingerprint {
+        return Err(CommandError::Validation(
+            "source schema changed since preview; return to comparison".into(),
+        ));
+    }
+    let claimed = plans::claim_plan(&request.plan_id).map_err(CommandError::from)?;
+    let mut job = claimed.job;
+    apply_selection(&mut job, &request.selection);
+    let (driver, handle, inspected, schemas) = load_sql_source_snapshot(state, &job).await?;
+    let cancelled = match request.job_id.as_deref() {
+        Some(id) => Some(jobs::ensure_job(id).await),
+        None => None,
+    };
+    let result = crate::data_transfer::sql_file::execute(
+        driver.as_ref(),
+        &handle,
+        &job,
+        &inspected,
+        &schemas,
+        destination,
+        cancelled,
+    )
+    .await
+    .map_err(CommandError::from);
+    if let Some(id) = request.job_id.as_deref() {
+        jobs::remove_job(id).await;
+    }
+    result
+}
+
 struct TransferAdapters {
     src_source: Arc<dyn SyncSourceAdapter>,
     tgt_target: Arc<dyn SyncTargetAdapter>,
@@ -98,6 +213,7 @@ async fn validate_plan_context(
     state: &AppState,
     plan: &StoredTransferPlan,
 ) -> Result<ValidatedTransferContext, CommandError> {
+    let target = plan.job.database_target().map_err(CommandError::from)?;
     if plan.target_read_only_at_preview {
         return Err(CommandError::Validation(
             "target connection was read-only during preview; return to preview".into(),
@@ -115,7 +231,7 @@ async fn validate_plan_context(
         .cmd_err("execute_data_transfer")?;
     let tgt_config = state
         .connection_manager
-        .get_session_config(&plan.job.target.db_session_id)
+        .get_session_config(&target.db_session_id)
         .await
         .cmd_err("execute_data_transfer")?;
 
@@ -132,7 +248,7 @@ async fn validate_plan_context(
         .cmd_err("execute_data_transfer")?;
     let (tgt_driver, tgt_handle) = state
         .connection_manager
-        .get_session(&plan.job.target.db_session_id)
+        .get_session(&target.db_session_id)
         .await
         .cmd_err("execute_data_transfer")?;
 
@@ -154,14 +270,9 @@ async fn validate_plan_context(
         true,
     )
     .await?;
-    let tgt_fingerprint = schema_fingerprint_for_side(
-        &plan.job.target,
-        tgt_driver.as_ref(),
-        &tgt_handle,
-        &plan.job,
-        false,
-    )
-    .await?;
+    let tgt_fingerprint =
+        schema_fingerprint_for_side(target, tgt_driver.as_ref(), &tgt_handle, &plan.job, false)
+            .await?;
     let source_schema_changed = src_fingerprint != plan.source_schema_fingerprint;
     let target_schema_changed = tgt_fingerprint != plan.target_schema_fingerprint;
     if source_schema_changed || target_schema_changed {
@@ -244,6 +355,10 @@ pub(crate) async fn execute_data_transfer_impl(
         ));
     }
 
+    if plan.job.sql_file_target.is_some() {
+        return execute_sql_file_target(state, &plan, &request).await;
+    }
+
     // Context validation happens before the atomic claim. A stale schema or
     // changed read-only policy sends the user back to comparison without
     // burning a still-valid plan; once claimed, retries are always refused.
@@ -277,11 +392,21 @@ pub(crate) async fn execute_data_transfer_impl(
     let mut inspected = inspect_data_transfer_impl(
         state,
         job.source.db_session_id.clone(),
-        job.target.db_session_id.clone(),
+        job.database_target()
+            .map_err(CommandError::from)?
+            .db_session_id
+            .clone(),
         Some(job.source.database.clone()),
-        Some(job.target.database.clone()),
+        Some(
+            job.database_target()
+                .map_err(CommandError::from)?
+                .database
+                .clone(),
+        ),
         job.source.normalized_schema(),
-        job.target.normalized_schema(),
+        job.database_target()
+            .map_err(CommandError::from)?
+            .normalized_schema(),
         job.mode,
         &job.tables,
     )
