@@ -520,6 +520,10 @@ async fn sync_tasks_crud() {
         target_db_session_id: "t".into(),
         source_connection_id: "sc".into(),
         target_connection_id: "tc".into(),
+        source_database: Some("app".into()),
+        target_database: Some("app".into()),
+        source_schema: None,
+        target_schema: None,
         tables: vec!["users".into()],
         completed_tables: vec![],
         current_table: None,
@@ -530,6 +534,7 @@ async fn sync_tasks_crud() {
         error_message: None,
         created_at: now,
         updated_at: now,
+        resume_state: "unknown".into(),
     };
     store.save_sync_task(task.clone()).await.unwrap();
     assert_eq!(store.get_sync_tasks().await.len(), 1);
@@ -541,6 +546,105 @@ async fn sync_tasks_crud() {
 
     store.delete_sync_task("t1").await.unwrap();
     assert!(store.get_sync_tasks().await.is_empty());
+}
+
+#[tokio::test]
+async fn sync_task_persistence_drops_runtime_ids_and_blocks_offsets() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let now = Utc::now();
+    let task = SyncTask {
+        id: "legacy-offset".into(),
+        source_db_session_id: "stale-source-session".into(),
+        target_db_session_id: "stale-target-session".into(),
+        source_connection_id: "source-config".into(),
+        target_connection_id: "target-config".into(),
+        source_database: Some("source_db".into()),
+        target_database: Some("target_db".into()),
+        source_schema: Some("public".into()),
+        target_schema: Some("public".into()),
+        tables: vec!["users".into()],
+        completed_tables: vec![],
+        current_table: Some("users".into()),
+        current_table_offset: 42,
+        source_row_counts: [("users".to_string(), 100u64)].into_iter().collect(),
+        strategy: "continue".into(),
+        status: "paused".into(),
+        error_message: None,
+        created_at: now,
+        updated_at: now,
+        resume_state: "unknown".into(),
+    };
+
+    store.save_sync_task(task).await.unwrap();
+
+    let persisted = tokio::fs::read_to_string(dir.path().join("sync_tasks.json"))
+        .await
+        .unwrap();
+    assert!(!persisted.contains("sourceDbSessionId"));
+    assert!(!persisted.contains("targetDbSessionId"));
+
+    let loaded = store.get_sync_tasks().await;
+    let loaded = &loaded[0];
+    assert!(loaded.source_db_session_id.is_empty());
+    assert!(loaded.target_db_session_id.is_empty());
+    assert_eq!(loaded.current_table_offset, 0);
+    assert_eq!(loaded.strategy, "unknown");
+    assert_eq!(loaded.status, "interrupted");
+    assert_eq!(loaded.resume_state, "unknown");
+    assert!(loaded
+        .error_message
+        .as_deref()
+        .is_some_and(|message| message.contains("cannot be resumed safely")));
+}
+
+#[tokio::test]
+async fn sync_task_legacy_json_loads_and_is_migrated() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let now = Utc::now();
+    let legacy = serde_json::json!([{
+        "id": "old-task",
+        "sourceDbSessionId": "old-source-session",
+        "targetDbSessionId": "old-target-session",
+        "sourceConnectionId": "source-config",
+        "targetConnectionId": "target-config",
+        "tables": ["users"],
+        "completedTables": [],
+        "currentTable": "users",
+        "currentTableOffset": 7,
+        "sourceRowCounts": {"users": 10},
+        "strategy": "continue",
+        "status": "running",
+        "errorMessage": null,
+        "createdAt": now,
+        "updatedAt": now
+    }]);
+    tokio::fs::write(
+        dir.path().join("sync_tasks.json"),
+        serde_json::to_vec_pretty(&legacy).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let loaded = store.get_sync_tasks().await;
+    let loaded = &loaded[0];
+    assert_eq!(loaded.id, "old-task");
+    assert_eq!(loaded.source_connection_id, "source-config");
+    assert_eq!(loaded.target_connection_id, "target-config");
+    assert!(loaded.source_db_session_id.is_empty());
+    assert!(loaded.target_db_session_id.is_empty());
+    assert_eq!(loaded.current_table_offset, 0);
+    assert_eq!(loaded.strategy, "unknown");
+    assert_eq!(loaded.status, "interrupted");
+    assert_eq!(loaded.resume_state, "unknown");
+
+    let migrated = tokio::fs::read_to_string(dir.path().join("sync_tasks.json"))
+        .await
+        .unwrap();
+    assert!(!migrated.contains("old-source-session"));
+    assert!(!migrated.contains("old-target-session"));
+    assert!(migrated.contains("\"resumeState\": \"unknown\""));
 }
 
 #[tokio::test]

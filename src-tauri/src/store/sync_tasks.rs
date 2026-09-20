@@ -9,10 +9,17 @@ impl Store {
                 return;
             }
         }
-        let data = self
+        let (mut data, loaded_from_disk) = match self
             .load_json_file::<Vec<SyncTask>>("sync_tasks.json")
             .await
-            .unwrap_or_default();
+        {
+            Ok(data) => (data, true),
+            Err(_) => (Vec::new(), false),
+        };
+        let mut migrated = false;
+        for task in &mut data {
+            migrated |= task.normalize_legacy_state();
+        }
         let mut cache = self.cache.write().await;
         if cache.sync_tasks_loaded {
             return;
@@ -23,6 +30,17 @@ impl Store {
             count = cache.sync_tasks.len(),
             "Loaded sync tasks on demand"
         );
+
+        // Persist the migration after publishing the cache. This removes
+        // legacy runtime ids and unsafe offsets from disk while preserving the
+        // existing file/IPC format for all other fields.
+        if loaded_from_disk && migrated {
+            let snapshot = cache.sync_tasks.clone();
+            drop(cache);
+            if let Err(error) = self.save_json_file("sync_tasks.json", &snapshot).await {
+                tracing::warn!(%error, "Failed to persist normalized sync task state");
+            }
+        }
     }
 
     pub async fn get_sync_tasks(&self) -> Vec<SyncTask> {
@@ -33,6 +51,8 @@ impl Store {
 
     pub async fn save_sync_task(&self, task: SyncTask) -> Result<(), StoreError> {
         self.ensure_sync_tasks_loaded().await;
+        let mut task = task;
+        task.normalize_legacy_state();
         {
             let mut cache = self.cache.write().await;
             if let Some(pos) = cache.sync_tasks.iter().position(|t| t.id == task.id) {
