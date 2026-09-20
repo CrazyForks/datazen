@@ -1,6 +1,6 @@
 # migration-sync-disk-index
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 ## Scope
 
@@ -32,6 +32,14 @@ Replaced the large Data Sync ComparisonStore JSON file's full-deserialization pa
 
 Coder self-validation is complete; this track is ready for an independent tester. It is not a PASSED verdict until independent testing is complete.
 
+## BUG-001 fix loop (2026-09-20)
+
+Independent testing found that changing a row frame's 8-byte length prefix while preserving total file length made `summaries()` succeed even though page/full-load rejected it. `validate_manifest` now verifies every indexed frame prefix and its seek/bounds without deserializing row payloads. The regression test asserts summary, page and full-load all fail closed and cleanup still removes the private directory.
+
+Focused revalidation passed: driver-injected ComparisonStore 7/7, full `commands::sync::` 44/44, focused frontend 50/50 and TypeScript checking. Cargo.lock and generated driver files were restored. Formal packaging was not rerun in this fix loop because the change is confined to indexed row-file validation and the prior formal build remains valid for the unchanged UI/runtime path.
+
+The earlier independent failure is superseded by this fix. The track remains `READY_FOR_TEST` until an independent tester reruns the corruption reproducer and closes BUG-001.
+
 
 ## Independent tester result (2026-09-20)
 
@@ -39,4 +47,4 @@ The independent Rust and frontend suites passed: ComparisonStore 7/7, Sync plans
 
 A directed corruption test reproduced `migration-sync-disk-index-BUG-001`: after changing a row frame length prefix without changing file length, `load()` and `load_table_page()` fail closed, but `summaries()` succeeds because it does not validate the indexed frame prefix. This violates the requested manifest/frame corruption contract. No production code was changed by the tester.
 
-Phase: FAILED. See `bugs.md`. Formal WebDriver packaging was not rerun because the coder-recorded formal build covers the unchanged UI/runtime path; the focused Rust and frontend suites were rerun independently.
+Phase: FAILED before the BUG-001 fix; superseded by the fix loop below. Formal WebDriver packaging was not rerun because the coder-recorded formal build covers the unchanged UI/runtime path; the focused Rust and frontend suites were rerun independently.

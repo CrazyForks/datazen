@@ -432,7 +432,7 @@ fn validate_manifest(manifest: &DiskManifest, directory: &Path) -> Result<(), St
             .len();
         let mut expected_end = 0u64;
         for row in &table.offsets {
-            if row.offset < 8 || row.offset < expected_end {
+            if row.offset < 8 || row.offset.checked_sub(8) != Some(expected_end) {
                 return Err("Data Sync comparison manifest contains invalid row offsets".into());
             }
             let end = row
@@ -443,6 +443,31 @@ fn validate_manifest(manifest: &DiskManifest, directory: &Path) -> Result<(), St
         }
         if file_len != expected_end {
             return Err("Data Sync comparison row file length does not match its index".into());
+        }
+        validate_frame_lengths(&path, &table.offsets)?;
+    }
+    Ok(())
+}
+
+/// Validate the fixed-size frame prefix for every indexed row without reading
+/// or deserializing any row payload. This is part of manifest validation so
+/// summaries fail closed on the same corruption that would reject a page or
+/// full load.
+fn validate_frame_lengths(path: &Path, offsets: &[RowOffset]) -> Result<(), String> {
+    let mut file = File::open(path)
+        .map_err(|error| format!("cannot open Data Sync comparison row file: {error}"))?;
+    for row in offsets {
+        let frame_prefix = row
+            .offset
+            .checked_sub(8)
+            .ok_or_else(|| "Data Sync comparison row offset is invalid".to_string())?;
+        file.seek(SeekFrom::Start(frame_prefix))
+            .map_err(|error| format!("cannot seek Data Sync comparison row frame: {error}"))?;
+        let mut length_bytes = [0u8; 8];
+        file.read_exact(&mut length_bytes)
+            .map_err(|error| format!("cannot read Data Sync comparison row frame: {error}"))?;
+        if u64::from_le_bytes(length_bytes) != row.length {
+            return Err("Data Sync comparison row frame length does not match its index".into());
         }
     }
     Ok(())
@@ -712,8 +737,12 @@ mod tests {
         let mut bytes = fs::read(&row_path).unwrap();
         bytes[0] = bytes[0].wrapping_add(1);
         fs::write(&row_path, bytes).unwrap();
-        let error = store.load_table_page("users", "users", 0, 1).unwrap_err();
-        assert!(error.contains("frame length does not match"));
+        let summary_error = store.summaries().unwrap_err();
+        assert!(summary_error.contains("frame length does not match"));
+        let load_error = store.load().unwrap_err();
+        assert!(load_error.contains("frame length does not match"));
+        let page_error = store.load_table_page("users", "users", 0, 1).unwrap_err();
+        assert!(page_error.contains("frame length does not match"));
         drop(store);
         assert!(!directory.exists());
     }
