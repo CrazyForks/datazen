@@ -463,9 +463,8 @@ mod tests {
             let mut payload = serde_json::Map::new();
             payload.insert("planId".into(), serde_json::json!("opaque-plan"));
             payload.insert(field.into(), serde_json::json!([]));
-            let request = serde_json::from_value::<TransferRunRequest>(
-                serde_json::Value::Object(payload),
-            );
+            let request =
+                serde_json::from_value::<TransferRunRequest>(serde_json::Value::Object(payload));
             assert!(request.is_err(), "client field {field} must be rejected");
         }
     }

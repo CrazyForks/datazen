@@ -84,7 +84,11 @@ impl SourceFilter {
                     "source filter column is required",
                 ));
             }
-            if !schema.columns.iter().any(|column| column.name == condition.column) {
+            if !schema
+                .columns
+                .iter()
+                .any(|column| column.name == condition.column)
+            {
                 return Err(TransferError::validation(format!(
                     "source filter column '{}' is not present in the source table",
                     condition.column
@@ -262,9 +266,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, TransferError> {
         Value::Float(value) => serde_json::Number::from_f64(*value)
             .map(serde_json::Value::Number)
             .ok_or_else(|| TransferError::validation("source filter float is not finite"))?,
-        Value::String(value) | Value::Timestamp(value) => {
-            serde_json::Value::String(value.clone())
-        }
+        Value::String(value) | Value::Timestamp(value) => serde_json::Value::String(value.clone()),
         Value::Bytes(value) => serde_json::json!({
             "$datazenType": "bytes",
             "encoding": "base64",
@@ -291,7 +293,9 @@ fn json_to_value(value: &serde_json::Value) -> Result<Value, TransferError> {
             let encoded = value
                 .get("value")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| TransferError::validation("source filter bytes value is required"))?;
+                .ok_or_else(|| {
+                    TransferError::validation("source filter bytes value is required")
+                })?;
             Value::Bytes(BASE64.decode(encoded).map_err(|_| {
                 TransferError::validation("source filter bytes value is invalid base64")
             })?)
@@ -350,7 +354,11 @@ mod tests {
     fn builds_parameterized_and_filter_without_interpolating_values() {
         let filter = SourceFilter::new(
             vec![
-                condition("status", FilterOperator::Eq, Value::String("active'".into())),
+                condition(
+                    "status",
+                    FilterOperator::Eq,
+                    Value::String("active'".into()),
+                ),
                 condition("id", FilterOperator::Gt, Value::Integer(2)),
             ],
             FilterLogic::And,
@@ -360,7 +368,10 @@ mod tests {
         let (where_sql, params) = filter
             .build_where('"', 1, |i, _| Ok(format!("${i}")))
             .unwrap();
-        assert_eq!(where_sql.as_deref(), Some("WHERE (\"status\" = $1) AND (\"id\" > $2)"));
+        assert_eq!(
+            where_sql.as_deref(),
+            Some("WHERE (\"status\" = $1) AND (\"id\" > $2)")
+        );
         assert_eq!(params.len(), 2);
         assert!(matches!(params[0], Value::String(ref value) if value == "active'"));
     }
@@ -374,7 +385,11 @@ mod tests {
         .unwrap();
         assert!(unknown.validate(&schema()).is_err());
         let empty = SourceFilter::new(
-            vec![condition("id", FilterOperator::Eq, Value::String(String::new()))],
+            vec![condition(
+                "id",
+                FilterOperator::Eq,
+                Value::String(String::new()),
+            )],
             FilterLogic::And,
         )
         .unwrap();
@@ -409,7 +424,10 @@ mod tests {
         let (_, params) = filter
             .build_where('"', 1, |i, _| Ok(format!("${i}")))
             .unwrap();
-        assert!(matches!(params.as_slice(), [Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert!(matches!(
+            params.as_slice(),
+            [Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        ));
     }
 
     #[test]
@@ -432,7 +450,11 @@ mod tests {
     #[test]
     fn passes_source_type_to_placeholder_formatter() {
         let filter = SourceFilter::new(
-            vec![condition("id", FilterOperator::Gt, Value::String("2".into()))],
+            vec![condition(
+                "id",
+                FilterOperator::Gt,
+                Value::String("2".into()),
+            )],
             FilterLogic::And,
         )
         .unwrap();
@@ -440,7 +462,7 @@ mod tests {
             .build_where_typed(
                 '"',
                 1,
-                    |column| (column == "id").then_some("integer".into()),
+                |column| (column == "id").then_some("integer".into()),
                 |index, data_type| Ok(format!("${index}::{}", data_type.unwrap_or("none"))),
             )
             .unwrap();

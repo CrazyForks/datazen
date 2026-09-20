@@ -28,9 +28,14 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
     match (before, after) {
         (CreateTable { .. }, _) => true,
         (DropPrimaryKey { .. }, AddPrimaryKey { .. }) => true,
-        (DropPrimaryKey { columns, .. }, SetNullable { column, nullable: true, .. }) => {
-            columns.contains(column)
-        }
+        (
+            DropPrimaryKey { columns, .. },
+            SetNullable {
+                column,
+                nullable: true,
+                ..
+            },
+        ) => columns.contains(column),
         (DropIndex { index: old, .. }, CreateIndex { index: new, .. }) => old.name == new.name,
         (DropPrimaryKey { columns, .. }, DropColumn { .. } | AlterColumnType { .. }) => match after
         {
@@ -282,15 +287,27 @@ mod replacement_tests {
     #[test]
     fn replacing_key_relaxes_old_column_and_tightens_new_without_cycles() {
         let relax = MigrationOperation::SetNullable {
-            table: "t".into(), column: "old".into(), nullable: true,
+            table: "t".into(),
+            column: "old".into(),
+            nullable: true,
         };
         let tighten = MigrationOperation::SetNullable {
-            table: "t".into(), column: "new".into(), nullable: false,
+            table: "t".into(),
+            column: "new".into(),
+            nullable: false,
         };
         let unrelated = MigrationOperation::SetNullable {
-            table: "t".into(), column: "other".into(), nullable: true,
+            table: "t".into(),
+            column: "other".into(),
+            nullable: true,
         };
-        let all = vec![pk(true), relax.clone(), tighten.clone(), unrelated.clone(), pk(false)];
+        let all = vec![
+            pk(true),
+            relax.clone(),
+            tighten.clone(),
+            unrelated.clone(),
+            pk(false),
+        ];
         let sorted = resolve_dependencies(all.clone());
         assert_eq!(sorted.len(), all.len());
         let position = |op: &MigrationOperation| sorted.iter().position(|item| item == op).unwrap();

@@ -141,7 +141,7 @@ pub(crate) async fn preview_data_transfer_impl(
                     "cannot validate source filter for '{}': source schema is unavailable",
                     mapping.source_table
                 ))
-        })?;
+            })?;
         source_filter.validate(schema).map_err(CommandError::from)?;
         if !source_filter.is_empty().map_err(CommandError::from)? {
             source_filter
@@ -159,9 +159,7 @@ pub(crate) async fn preview_data_transfer_impl(
                         src_driver
                             .parameter_placeholder(index, data_type)
                             .map_err(|error| {
-                                crate::data_transfer::TransferError::unsupported(
-                                    error.to_string(),
-                                )
+                                crate::data_transfer::TransferError::unsupported(error.to_string())
                             })
                     },
                 )

@@ -55,10 +55,8 @@ async fn collect_rows(
 
 #[tokio::test]
 async fn test_tester_projected_bound_transfer_preserves_values_and_rolls_back_failed_table() {
-    let directory = std::env::temp_dir().join(format!(
-        "datazen-tester-transfer-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("datazen-tester-transfer-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&directory).unwrap();
     let source_path = directory.join("source.db");
     let target_path = directory.join("target.db");
@@ -122,7 +120,10 @@ async fn test_tester_projected_bound_transfer_preserves_values_and_rolls_back_fa
         .await
         .unwrap();
     target
-        .execute(&target_handle, "INSERT INTO target_rows VALUES ('kept', X'01', '1')")
+        .execute(
+            &target_handle,
+            "INSERT INTO target_rows VALUES ('kept', X'01', '1')",
+        )
         .await
         .unwrap();
 
@@ -132,7 +133,11 @@ async fn test_tester_projected_bound_transfer_preserves_values_and_rolls_back_fa
         .execute_with_params(
             &target_handle,
             "INSERT INTO target_rows VALUES (?, ?, ?)",
-            &rows[0].iter().cloned().map(Option::unwrap).collect::<Vec<_>>(),
+            &rows[0]
+                .iter()
+                .cloned()
+                .map(Option::unwrap)
+                .collect::<Vec<_>>(),
         )
         .await
         .unwrap();
@@ -187,9 +192,10 @@ async fn test_tester_projected_bound_transfer_preserves_values_and_rolls_back_fa
         .unwrap();
     assert_eq!(copied.rows.len(), 2);
     assert!(matches!(&copied.rows[0][1], Some(Value::Bytes(value)) if value == &bytes));
-    assert!(copied.rows.iter().all(
-        |row| matches!(&row[2], Some(Value::String(value)) if value == exact)
-    ));
+    assert!(copied
+        .rows
+        .iter()
+        .all(|row| matches!(&row[2], Some(Value::String(value)) if value == exact)));
 
     source.disconnect(source_handle).await.unwrap();
     target.disconnect(target_handle).await.unwrap();
