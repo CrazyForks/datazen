@@ -66,6 +66,7 @@ export interface SyncOptions {
   matchingStrategy?: 'primaryKey';
   batchSize?: number;
   largeValueMode?: 'full' | 'hash';
+  conflictPolicy?: 'abort' | 'skip' | 'force';
 }
 
 export interface DataSyncSqlStatement {
@@ -82,6 +83,15 @@ export interface DataSyncExecutionResult {
   rolledBack: boolean;
   /** Total database-reported affected rows; optional for older responses. */
   affectedRows?: number;
+  skipped?: number;
+  conflicts?: DataSyncConflict[];
+}
+
+export interface DataSyncConflict {
+  table: string;
+  operation: DataSyncOperation;
+  rowKey: Value[];
+  message: string;
 }
 
 export interface DataSyncSelectedRow {
@@ -116,6 +126,7 @@ export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
   matchingStrategy: 'primaryKey',
   batchSize: 1000,
   largeValueMode: 'full',
+  conflictPolicy: 'abort',
 };
 
 let activeComparisonPlan: DataSyncComparisonPreview | null = null;
@@ -138,7 +149,10 @@ function selectionFromTables(
     tables.flatMap((table) =>
       (table.rows ?? [])
         .filter((row) => row.selected && row.operation !== 'UNCHANGED')
-        .map((row) => `${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`),
+        .map(
+          (row) =>
+            `${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`,
+        ),
     ),
   );
   const rows = plan.tables.flatMap((table) =>
@@ -148,7 +162,9 @@ function selectionFromTables(
         if (row.operation === 'INSERT' && !options.insert) return false;
         if (row.operation === 'UPDATE' && !options.update) return false;
         if (row.operation === 'DELETE' && !options.delete) return false;
-        return requested.has(`${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`);
+        return requested.has(
+          `${table.sourceTable}\u0000${table.targetTable}\u0000${row.operation}\u0000${valueToken(row.key)}`,
+        );
       })
       .map((row) => ({
         sourceTable: table.sourceTable,
@@ -169,7 +185,9 @@ function selectionFromStatements(
     for (const table of plan.tables) {
       if (table.targetTable !== statement.table) continue;
       const match = (table.rows ?? []).find(
-        (row) => row.operation === statement.operation && valueToken(row.key) === valueToken(statement.rowKey),
+        (row) =>
+          row.operation === statement.operation &&
+          valueToken(row.key) === valueToken(statement.rowKey),
       );
       if (match) {
         rows.push({

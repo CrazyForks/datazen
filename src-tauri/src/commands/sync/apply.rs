@@ -6,7 +6,7 @@ use super::inspect::inspect_data_sync_impl;
 use super::keyset_source::DriverKeysetSource;
 use super::plans;
 use crate::data_sync::{
-    compare_table_pages, generate_table_sql_with_preview_formatter, mysql_placeholder,
+    compare_table_pages, generate_table_sql_with_preview_formatter_and_policy, mysql_placeholder,
     postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult, DataSyncError,
     SyncOptions, SyncSourceFilter, TableMapping, TableMappingStatus, TableResult,
 };
@@ -542,7 +542,7 @@ pub(crate) async fn generate_data_sync_sql_impl(
             Ok(preview_target.format_literal(value, ir_type))
         };
         let stmts = if family == "mysql" {
-            generate_table_sql_with_preview_formatter(
+            generate_table_sql_with_preview_formatter_and_policy(
                 table,
                 target_database.as_deref(),
                 &pk,
@@ -550,10 +550,11 @@ pub(crate) async fn generate_data_sync_sql_impl(
                 &column_types,
                 |n| quote_ident_sql(n, quote),
                 |idx, _| mysql_placeholder(idx),
+                options.conflict_policy,
                 preview_literal,
             )
         } else {
-            generate_table_sql_with_preview_formatter(
+            generate_table_sql_with_preview_formatter_and_policy(
                 table,
                 target_schema.as_deref(),
                 &pk,
@@ -561,6 +562,7 @@ pub(crate) async fn generate_data_sync_sql_impl(
                 &column_types,
                 |n| quote_ident_sql(n, quote),
                 postgres_typed_placeholder,
+                options.conflict_policy,
                 preview_literal,
             )
         }
@@ -663,6 +665,7 @@ mod tests {
             matching_strategy: None,
             batch_size: Some(50),
             large_value_mode: None,
+            conflict_policy: None,
         };
         let opts = resolve_options(Some(input));
         assert!(!opts.insert);

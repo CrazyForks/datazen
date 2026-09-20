@@ -17,8 +17,8 @@ use super::comparison_store::ComparisonStore;
 #[cfg(test)]
 use crate::data_sync::RowChange;
 use crate::data_sync::{
-    ChangeOperation, ComparisonResult, SyncOptions, SyncSourceFilter, TableMappingStatus,
-    TableResult,
+    ChangeOperation, ComparisonResult, ConflictPolicy, SyncOptions, SyncSourceFilter,
+    TableMappingStatus, TableResult,
 };
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
@@ -92,6 +92,18 @@ pub(crate) fn driver_protocol_version(driver: &dyn DatabaseDriver) -> u32 {
         .unwrap_or(PROTOCOL_VERSION)
 }
 
+pub(crate) fn fingerprint_conflict_policy(policy: ConflictPolicy) -> String {
+    format!("{:x}", Sha256::digest(policy_name(policy).as_bytes()))
+}
+
+fn policy_name(policy: ConflictPolicy) -> &'static str {
+    match policy {
+        ConflictPolicy::Abort => "abort",
+        ConflictPolicy::Skip => "skip",
+        ConflictPolicy::Force => "force",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SyncSelectedRow {
@@ -142,6 +154,7 @@ pub(crate) struct StoredSyncPlan {
     pub(crate) target_schema_fingerprint: String,
     pub(crate) comparison: ComparisonStore,
     pub(crate) options: SyncOptions,
+    pub(crate) conflict_policy_fingerprint: String,
     pub(crate) selection_revision: u64,
     pub(crate) target_read_only_at_preview: bool,
     expires_at: Instant,
@@ -179,6 +192,7 @@ impl SyncPlanStore {
         let selection_revision = 1;
         let preview_tables = comparison.tables.clone();
         let comparison = ComparisonStore::from_comparison(comparison)?;
+        let conflict_policy_fingerprint = fingerprint_conflict_policy(options.conflict_policy);
         let plan = StoredSyncPlan {
             source_db_session_id,
             target_db_session_id,
@@ -194,6 +208,7 @@ impl SyncPlanStore {
             target_schema_fingerprint,
             comparison,
             options,
+            conflict_policy_fingerprint,
             selection_revision,
             target_read_only_at_preview,
             expires_at: Instant::now() + SYNC_PLAN_TTL,
@@ -492,6 +507,18 @@ mod tests {
         )
         .unwrap();
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn conflict_policy_has_a_distinct_plan_fingerprint() {
+        assert_ne!(
+            fingerprint_conflict_policy(ConflictPolicy::Abort),
+            fingerprint_conflict_policy(ConflictPolicy::Skip)
+        );
+        assert_ne!(
+            fingerprint_conflict_policy(ConflictPolicy::Skip),
+            fingerprint_conflict_policy(ConflictPolicy::Force)
+        );
     }
 
     #[test]

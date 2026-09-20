@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::changeset::TableChangeSet;
 use super::error::DataSyncError;
-use super::model::{ChangeOperation, RowChange};
+use super::model::{ChangeOperation, ConflictPolicy, RowChange};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -175,7 +175,7 @@ where
     Q: Fn(&str) -> String + Copy,
     P: Fn(usize, Option<&str>) -> String,
 {
-    generate_table_sql_with_preview_formatter(
+    generate_table_sql_with_preview_formatter_and_policy(
         table,
         target_schema,
         pk_columns,
@@ -183,6 +183,7 @@ where
         column_types,
         quote_ident,
         placeholder,
+        ConflictPolicy::Abort,
         |_, value, data_type| Ok(format_typed_literal(value, data_type)),
     )
 }
@@ -195,6 +196,36 @@ pub fn generate_table_sql_with_preview_formatter<Q, P, L>(
     column_types: &[String],
     quote_ident: Q,
     placeholder: P,
+    preview_literal: L,
+) -> Result<Vec<SqlStatement>, DataSyncError>
+where
+    Q: Fn(&str) -> String + Copy,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
+    generate_table_sql_with_preview_formatter_and_policy(
+        table,
+        target_schema,
+        pk_columns,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        ConflictPolicy::Abort,
+        preview_literal,
+    )
+}
+
+/// Generate DML with an explicit optimistic-concurrency policy.
+pub fn generate_table_sql_with_preview_formatter_and_policy<Q, P, L>(
+    table: &TableChangeSet,
+    target_schema: Option<&str>,
+    pk_columns: &[String],
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: Q,
+    placeholder: P,
+    conflict_policy: ConflictPolicy,
     preview_literal: L,
 ) -> Result<Vec<SqlStatement>, DataSyncError>
 where
@@ -218,6 +249,7 @@ where
             column_types,
             &quote_ident,
             &placeholder,
+            conflict_policy,
             &preview_literal,
         )?);
     }
@@ -233,6 +265,7 @@ fn statement_for_change<Q, P, L>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
     preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
@@ -260,6 +293,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            conflict_policy,
             preview_literal,
         ),
         ChangeOperation::Delete => delete_sql(
@@ -271,6 +305,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            conflict_policy,
             preview_literal,
         ),
         ChangeOperation::Unchanged => Err(DataSyncError::validation(
@@ -351,6 +386,7 @@ fn update_sql<Q, P, L>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
     preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
@@ -400,17 +436,21 @@ where
         placeholder,
         preview_literal,
     )?;
-    let expected_start = idx + where_params.len();
-    let (expected_ph, expected_lit, expected_params) = where_expected_target(
-        pk_columns,
-        change.target_row.as_ref(),
-        expected_start,
-        column_names,
-        column_types,
-        quote_ident,
-        placeholder,
-        preview_literal,
-    )?;
+    let (expected_ph, expected_lit, expected_params) = if conflict_policy != ConflictPolicy::Force {
+        let expected_start = idx + where_params.len();
+        where_expected_target(
+            pk_columns,
+            change.target_row.as_ref(),
+            expected_start,
+            column_names,
+            column_types,
+            quote_ident,
+            placeholder,
+            preview_literal,
+        )?
+    } else {
+        (String::new(), String::new(), Vec::new())
+    };
     params.extend(where_params);
     params.extend(expected_params);
     let where_ph = join_where_clauses(&where_ph, &expected_ph);
@@ -443,6 +483,7 @@ fn delete_sql<Q, P, L>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
     preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
@@ -450,14 +491,15 @@ where
     P: Fn(usize, Option<&str>) -> String,
     L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
-    let target_row = change
-        .target_row
-        .as_ref()
-        .ok_or_else(|| DataSyncError::validation("DELETE requires an expected target row"))?;
-    if target_row.len() != column_names.len() {
-        return Err(DataSyncError::validation(
-            "DELETE target row width does not match column list",
-        ));
+    let target_row = change.target_row.as_ref();
+    if conflict_policy != ConflictPolicy::Force {
+        let target_row = target_row
+            .ok_or_else(|| DataSyncError::validation("DELETE requires an expected target row"))?;
+        if target_row.len() != column_names.len() {
+            return Err(DataSyncError::validation(
+                "DELETE target row width does not match column list",
+            ));
+        }
     }
     let (where_ph, where_lit, params) = where_pk(
         pk_columns,
@@ -469,17 +511,21 @@ where
         placeholder,
         preview_literal,
     )?;
-    let expected_start = 1 + params.len();
-    let (expected_ph, expected_lit, expected_params) = where_expected_target(
-        pk_columns,
-        Some(target_row),
-        expected_start,
-        column_names,
-        column_types,
-        quote_ident,
-        placeholder,
-        preview_literal,
-    )?;
+    let (expected_ph, expected_lit, expected_params) = if conflict_policy != ConflictPolicy::Force {
+        let expected_start = 1 + params.len();
+        where_expected_target(
+            pk_columns,
+            target_row,
+            expected_start,
+            column_names,
+            column_types,
+            quote_ident,
+            placeholder,
+            preview_literal,
+        )?
+    } else {
+        (String::new(), String::new(), Vec::new())
+    };
     let where_ph = join_where_clauses(&where_ph, &expected_ph);
     let where_lit = join_where_clauses(&where_lit, &expected_lit);
     let mut params = params;
@@ -613,7 +659,7 @@ where
 mod tests {
     use super::*;
     use crate::data_sync::changeset::TableChangeSet;
-    use crate::data_sync::model::{RowChange, SyncOptions};
+    use crate::data_sync::model::{ConflictPolicy, RowChange, SyncOptions};
 
     fn q(name: &str) -> String {
         quote_ident_sql(name, '"')
@@ -860,6 +906,56 @@ mod tests {
         assert!(matches!(stmts[0].parameters[3], Value::Null));
         assert!(stmts[0].preview_sql.contains("'NULL'") == false);
         assert!(stmts[0].preview_sql.contains("NULL IS NULL"));
+    }
+
+    #[test]
+    fn skip_keeps_expected_predicates_but_force_removes_them() {
+        let options = SyncOptions::default();
+        let update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1)), Some(Value::String("old".into()))],
+            vec!["name".into()],
+            &options,
+        );
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        let skip = generate_table_sql_with_preview_formatter_and_policy(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+            ConflictPolicy::Skip,
+            |_, value, _| Ok(format_literal(value)),
+        )
+        .unwrap();
+        assert!(skip[0].sql.contains("\"name\" = $3"));
+        assert_eq!(skip[0].parameters.len(), 4);
+
+        let force = generate_table_sql_with_preview_formatter_and_policy(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+            ConflictPolicy::Force,
+            |_, value, _| Ok(format_literal(value)),
+        )
+        .unwrap();
+        assert_eq!(
+            force[0].sql,
+            r#"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#
+        );
+        assert_eq!(force[0].parameters.len(), 2);
+        assert!(!force[0].preview_sql.contains("\"name\" = 'old'"));
     }
 
     #[test]
