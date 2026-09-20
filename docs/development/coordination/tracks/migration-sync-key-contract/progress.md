@@ -1,6 +1,6 @@
 # migration-sync-key-contract
 
-Phase: FAILED
+Phase: CODER_READY_FOR_TEST
 Branch: codex/migration-sync-key-contract
 Worktree: `.worktrees/datazen-migration-sync-key-contract`
 Base: `codex/migration-navicat` @ `268ce616`
@@ -50,3 +50,10 @@ Stable snapshot lifetime, bounded streaming/ComparisonStore and optimistic targe
 - **Real database journeys**: existing Sync real suite passed **25/25** on the exact packaged binary; immutable server-plan journeys passed **2/2** for PostgreSQL and **2/2** for MySQL, including selected-only writes and stale-schema rejection before writes. The setup script emitted two pre-existing demo-fixture warnings (`test_orders.order_id` and `demo_products` join) unrelated to this track.
 - **Finding**: `migration-sync-key-contract-BUG-001` is reproducible in SQLite: the advertised `CAST(key AS BLOB)` seek expression receives a TEXT cursor parameter, so the cursor row is returned again (`a,b,c` after cursor `a`) instead of advancing to `b,c`. SQLite Sync is currently rejected by the V1 pairing gate, so this did not fail the PG/MySQL desktop journeys, but the SQLite contract is not correct until the binding or parameter cast is repaired.
 - **TEST_FAILED**. Do not merge this track until BUG-001 is fixed and a fresh independent Tester reruns the full suite and real journeys.
+
+## Coder Round 1 — 2026-09-20
+
+- Fixed BUG-001 by adding the driver-owned `sync_key_seek_value` hook. The SQLite adapter converts binary text cursors from `Value::String` to `Value::Bytes` before keyset SQL binds them; PostgreSQL/MySQL keep the default raw parameter representation.
+- Added a SQLite driver regression for single-key `a,b,c` paging and composite binary-text paging. The test confirms the cursor row is not repeated and the composite page advances to `(b,a)`.
+- Targeted verification passed: driver API/PG/MySQL/SQLite suites **131/131**, **102/102**, **87/87**, **49/49**; Host `commands::sync` **21/21**; Host keyset SQL **10/10**. `Cargo.lock` generation noise was restored before commit.
+- Formal WebDriver, frontend and real PG/MySQL journeys remain for the independent Tester.

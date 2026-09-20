@@ -25,6 +25,18 @@ pub trait SyncSourceAdapter: Send + Sync {
         contract.normalize(value)
     }
 
+    /// Convert a raw key value into the parameter representation required by
+    /// the driver's keyset seek expression.  Drivers may need this when their
+    /// order expression changes the SQL storage class (for example, SQLite's
+    /// `CAST(text_key AS BLOB)`).
+    fn sync_key_seek_value(
+        &self,
+        value: &Value,
+        _contract: &SyncKeyContract,
+    ) -> Result<Value, String> {
+        Ok(value.clone())
+    }
+
     /// SQL expression used by both `ORDER BY` and the seek predicate.  It
     /// must have the same ordering as [`normalize_sync_key`](Self::normalize_sync_key).
     fn sync_key_order_expression(

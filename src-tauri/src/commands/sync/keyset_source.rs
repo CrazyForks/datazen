@@ -79,6 +79,23 @@ impl RowPageSource for DriverKeysetSource {
     ) -> Result<Vec<Row>, DataSyncError> {
         let family = self.family.clone();
         let quote = self.quote;
+        let seek_key = after_key
+            .map(|key| {
+                if key.len() != self.key_contracts.len() {
+                    return Err(DataSyncError::validation(
+                        "key value count does not match normalized key contract",
+                    ));
+                }
+                key.iter()
+                    .zip(&self.key_contracts)
+                    .map(|(value, contract)| {
+                        self.key_adapter
+                            .sync_key_seek_value(value, contract)
+                            .map_err(DataSyncError::validation)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         let (sql, params) = build_keyset_select_sql_with_order(
             &self.table,
             self.database.as_deref(),
@@ -87,7 +104,7 @@ impl RowPageSource for DriverKeysetSource {
             &self.columns,
             &self.pk_columns,
             &self.key_order_expressions,
-            after_key,
+            seek_key.as_deref(),
             limit,
             quote,
             |i| {
