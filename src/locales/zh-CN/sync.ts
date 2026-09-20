@@ -38,6 +38,7 @@ const pack = {
   'sync.inspecting': '正在检查表映射…',
   'sync.mappingTitle': '表映射',
   'sync.mappingAfterCompare': '映射与比较结果',
+  'sync.sourceFilter': '过滤条件',
   'sync.noTablesFound': '所选源数据库中没有找到可映射的表。',
   'sync.comparePrompt': '确认表映射后，点击“下一步”比较行差异。',
   'sync.includeTable': '参与比较',

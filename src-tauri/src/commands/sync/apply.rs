@@ -8,8 +8,9 @@ use super::plans;
 use crate::data_sync::{
     compare_table_pages, generate_table_sql_with_preview_formatter, mysql_placeholder,
     postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult, DataSyncError,
-    SyncOptions, TableMapping, TableMappingStatus, TableResult,
+    SyncOptions, SyncSourceFilter, TableMapping, TableMappingStatus, TableResult,
 };
+use std::collections::HashMap;
 
 fn ident_quote(family: &str) -> char {
     if family == "mysql" {
@@ -31,6 +32,7 @@ pub(crate) async fn compare_data_sync_impl(
     target_schema: Option<String>,
     options: SyncOptions,
     mappings: &[TableMapping],
+    source_filters: &HashMap<String, SyncSourceFilter>,
 ) -> Result<plans::SyncComparisonPreview, CommandError> {
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(super::jobs::ensure_job(id).await),
@@ -116,7 +118,57 @@ pub(crate) async fn compare_data_sync_impl(
             .get_table_schema(&tgt_handle, &mapping.target_table)
             .await
             .cmd_err("compare_data_sync")?;
+        let sync_filter = source_filters.get(&mapping.source_table).cloned();
+        if let Some(filter) = sync_filter.as_ref() {
+            filter
+                .validate(&schema)
+                .map_err(|error| CommandError::Validation(error.to_string()))?;
+            filter.validate(&target_table_schema).map_err(|error| {
+                CommandError::Validation(format!(
+                    "{}: sync filter is not valid for target '{}': {error}",
+                    mapping.source_table, mapping.target_table
+                ))
+            })?;
+            for (driver, side, table_schema) in [
+                (src_driver.as_ref(), "source", &schema),
+                (tgt_driver.as_ref(), "target", &target_table_schema),
+            ] {
+                filter
+                    .build_where_typed(
+                        driver.quote_char(),
+                        1,
+                        |column| {
+                            table_schema
+                                .columns
+                                .iter()
+                                .find(|candidate| candidate.name == column)
+                                .map(|candidate| candidate.data_type.clone())
+                        },
+                        |index, data_type| {
+                            driver
+                                .parameter_placeholder(index, data_type)
+                                .map_err(|error| DataSyncError::validation(error.to_string()))
+                        },
+                    )
+                    .map_err(|error| {
+                        CommandError::Validation(format!(
+                            "{}: {side} driver cannot execute sync filter: {error}",
+                            mapping.source_table
+                        ))
+                    })?;
+            }
+        }
         let column_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+        let source_column_types: HashMap<String, String> = schema
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.data_type.clone()))
+            .collect();
+        let target_column_types: HashMap<String, String> = target_table_schema
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.data_type.clone()))
+            .collect();
         let pk_columns = schema.effective_primary_keys();
         let mut src_contracts = Vec::with_capacity(pk_columns.len());
         let mut tgt_contracts = Vec::with_capacity(pk_columns.len());
@@ -178,6 +230,8 @@ pub(crate) async fn compare_data_sync_impl(
             &family,
             src_key_adapter.clone(),
             src_contracts,
+            sync_filter.clone(),
+            source_column_types,
         )?;
         let mut tgt_source = DriverKeysetSource::new(
             tgt_driver.clone(),
@@ -191,6 +245,8 @@ pub(crate) async fn compare_data_sync_impl(
             &family,
             tgt_key_adapter.clone(),
             tgt_contracts,
+            sync_filter.clone(),
+            target_column_types,
         )?;
         let mut table_result = compare_table_pages(
             &mapping.source_table,
@@ -205,6 +261,7 @@ pub(crate) async fn compare_data_sync_impl(
         .await
         .map_err(CommandError::from)?;
         table_result.column_types = schema.columns.iter().map(|c| c.data_type.clone()).collect();
+        table_result.source_filter = sync_filter;
         total_bytes += serde_json::to_vec(&table_result)
             .map_err(|e| CommandError::Validation(e.to_string()))?
             .len();
@@ -247,16 +304,24 @@ pub(crate) async fn compare_data_sync_impl(
             .get_table_schema(&tgt_handle, &table.target_table)
             .await
             .cmd_err("compare_data_sync")?;
-        source_entries.push((table.source_table.clone(), Some(source_schema_snapshot)));
-        target_entries.push((table.target_table.clone(), Some(target_schema_snapshot)));
+        source_entries.push((
+            table.source_table.clone(),
+            Some(source_schema_snapshot),
+            table.source_filter.clone(),
+        ));
+        target_entries.push((
+            table.target_table.clone(),
+            Some(target_schema_snapshot),
+            table.source_filter.clone(),
+        ));
     }
-    let source_schema_fingerprint = plans::fingerprint_relations(
+    let source_schema_fingerprint = plans::fingerprint_relations_with_filters(
         &source_database_name,
         source_schema_name.as_deref(),
         source_entries,
     )
     .map_err(CommandError::Validation)?;
-    let target_schema_fingerprint = plans::fingerprint_relations(
+    let target_schema_fingerprint = plans::fingerprint_relations_with_filters(
         &target_database_name,
         target_schema_name.as_deref(),
         target_entries,

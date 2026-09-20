@@ -1,6 +1,7 @@
 import type {
   DataSyncOperation,
   DataSyncRowChange,
+  DataSyncSourceFilter,
   DataSyncTableResult,
   SyncOptions,
 } from '../../commands/sync';
@@ -8,6 +9,7 @@ import type { Value } from '../../types';
 import type { TranslationKey } from '../../locales/zh-CN';
 
 export type { DataSyncOperation, DataSyncRowChange, DataSyncTableResult };
+export type { DataSyncSourceFilter };
 
 export type DataSyncMappingStatus = DataSyncTableResult['status'];
 

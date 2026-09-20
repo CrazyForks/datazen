@@ -439,6 +439,7 @@ async fn compare_data_sync_returns_an_opaque_server_plan() {
         None,
         crate::data_sync::SyncOptions::default(),
         &[],
+        &std::collections::HashMap::new(),
     )
     .await
     .unwrap();
@@ -467,6 +468,7 @@ async fn execute_data_sync_rejects_when_target_active_database_changes() {
         None,
         crate::data_sync::SyncOptions::default(),
         &[],
+        &std::collections::HashMap::new(),
     )
     .await
     .unwrap();
@@ -581,6 +583,7 @@ async fn compare_rejects_mock_driver_that_repeats_keyset_pages() {
         None,
         crate::data_sync::SyncOptions::default(),
         &[],
+        &std::collections::HashMap::new(),
     )
     .await
     .unwrap_err();

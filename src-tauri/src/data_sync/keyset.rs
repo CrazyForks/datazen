@@ -64,6 +64,42 @@ pub fn build_keyset_select_sql_with_order<P>(
 where
     P: Fn(usize) -> String,
 {
+    build_keyset_select_sql_with_order_and_filter(
+        table,
+        database,
+        schema,
+        family,
+        columns,
+        pk_columns,
+        key_order_expressions,
+        after_key,
+        limit,
+        quote,
+        placeholder,
+        None,
+    )
+}
+
+/// Build a keyset page with an additional server-generated, parameterized
+/// predicate. The filter placeholders must already use indexes after the
+/// seek-key placeholders, and its parameters are appended after the seek key.
+pub fn build_keyset_select_sql_with_order_and_filter<P>(
+    table: &str,
+    database: Option<&str>,
+    schema: Option<&str>,
+    family: &str,
+    columns: &[String],
+    pk_columns: &[String],
+    key_order_expressions: &[String],
+    after_key: Option<&[Value]>,
+    limit: u32,
+    quote: char,
+    placeholder: P,
+    filter: Option<(&str, &[Value])>,
+) -> Result<(String, Vec<Value>), DataSyncError>
+where
+    P: Fn(usize) -> String,
+{
     if pk_columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one primary key column",
@@ -101,13 +137,34 @@ where
         .join(", ");
 
     let mut params = Vec::new();
-    let where_clause = if let Some(key) = after_key {
+    let mut where_clauses = Vec::new();
+    if let Some(key) = after_key {
         let pk_idents = key_order_expressions.join(", ");
         let placeholders: Vec<String> = (1..=pk_columns.len()).map(|i| placeholder(i)).collect();
         params.extend_from_slice(key);
-        format!(" WHERE ({pk_idents}) > ({})", placeholders.join(", "))
-    } else {
+        where_clauses.push(format!("({pk_idents}) > ({})", placeholders.join(", ")));
+    }
+    if let Some((filter_sql, filter_params)) = filter {
+        if filter_sql.trim().is_empty() {
+            return Err(DataSyncError::validation("sync filter predicate is empty"));
+        }
+        let predicate = filter_sql
+            .trim()
+            .strip_prefix("WHERE ")
+            .or_else(|| filter_sql.trim().strip_prefix("where "))
+            .ok_or_else(|| {
+                DataSyncError::validation("sync filter predicate must start with WHERE")
+            })?;
+        if predicate.trim().is_empty() {
+            return Err(DataSyncError::validation("sync filter predicate is empty"));
+        }
+        where_clauses.push(format!("({predicate})"));
+        params.extend_from_slice(filter_params);
+    }
+    let where_clause = if where_clauses.is_empty() {
         String::new()
+    } else {
+        format!(" WHERE {}", where_clauses.join(" AND "))
     };
 
     let qualified = super::sql::qualify_relation_sql(family, database, schema, table, quote);
@@ -274,6 +331,33 @@ mod tests {
             "SELECT \"tenant\", \"region\", \"n\" FROM \"shards\" \
              WHERE (\"tenant\", \"region\") > ($1, $2) \
              ORDER BY \"tenant\" ASC, \"region\" ASC LIMIT 5"
+        );
+    }
+
+    #[test]
+    fn parameterized_filter_is_appended_after_seek_parameters() {
+        let (sql, params) = build_keyset_select_sql_with_order_and_filter(
+            "users",
+            None,
+            None,
+            "postgresql",
+            &cols(),
+            &pk1(),
+            &["\"id\"".into()],
+            Some(&[Value::Integer(9)]),
+            10,
+            '"',
+            postgres_placeholder,
+            Some(("WHERE (\"name\" = $2)", &[Value::String("active".into())])),
+        )
+        .unwrap();
+        assert!(matches!(
+            params.as_slice(),
+            [Value::Integer(9), Value::String(value)] if value == "active"
+        ));
+        assert_eq!(
+            sql,
+            "SELECT \"id\", \"name\", \"age\" FROM \"users\" WHERE (\"id\") > ($1) AND ((\"name\" = $2)) ORDER BY \"id\" ASC LIMIT 10"
         );
     }
 

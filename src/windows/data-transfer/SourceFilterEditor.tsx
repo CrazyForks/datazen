@@ -1,7 +1,6 @@
 import { X } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
 import type { FilterCondition, FilterOperator } from '../../types';
-import type { TransferSourceFilter } from '../../commands/transfer';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 
@@ -18,10 +17,15 @@ const OPERATORS: FilterOperator[] = [
   'isNotNull',
 ];
 
+export interface StructuredSourceFilter {
+  filters: FilterCondition[];
+  logic?: 'and' | 'or';
+}
+
 interface SourceFilterEditorProps {
   columns: string[];
-  filter?: TransferSourceFilter;
-  onChange: (filter: TransferSourceFilter | undefined) => void;
+  filter?: StructuredSourceFilter;
+  onChange: (filter: StructuredSourceFilter | undefined) => void;
 }
 
 export function SourceFilterEditor({ columns, filter, onChange }: SourceFilterEditorProps) {

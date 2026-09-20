@@ -16,20 +16,19 @@ mod tests;
 use super::error::CommandError;
 use super::AppState;
 use crate::data_sync::{
-    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncPairingView,
+    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncPairingView, SyncSourceFilter,
 };
 use crate::store::SyncTask;
-pub(crate) use apply::{
-    apply_data_sync_impl, compare_data_sync_impl, revalidate_data_sync_impl,
-};
 #[cfg(test)]
 pub(crate) use apply::generate_data_sync_sql_impl;
+pub(crate) use apply::{apply_data_sync_impl, compare_data_sync_impl, revalidate_data_sync_impl};
 #[cfg(test)]
 pub(crate) use exec::execute_data_sync_impl;
 pub(crate) use exec::{execute_data_sync_plan_impl, generate_data_sync_sql_for_plan_impl};
 pub(crate) use inspect::inspect_data_sync_impl;
 pub(crate) use jobs::cancel_job;
 use plans::{SyncRunRequest, SyncRunSelection};
+use std::collections::HashMap;
 pub(crate) use tasks::{
     check_sync_conflicts_impl, delete_sync_task_impl, get_sync_tasks_impl,
     save_sync_task_direct_impl,
@@ -117,6 +116,7 @@ pub async fn compare_data_sync(
     source_schema: Option<String>,
     target_schema: Option<String>,
     options: Option<SyncOptionsInput>,
+    filters: Option<HashMap<String, SyncSourceFilter>>,
 ) -> Result<plans::SyncComparisonPreview, CommandError> {
     compare_data_sync_impl(
         &state,
@@ -130,6 +130,7 @@ pub async fn compare_data_sync(
         target_schema,
         resolve_options(options),
         &[],
+        &filters.unwrap_or_default(),
     )
     .await
 }

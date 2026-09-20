@@ -7,6 +7,7 @@ use datazen_driver_api::Value;
 use serde::{Deserialize, Serialize};
 
 use super::error::DataSyncError;
+use super::filter::SyncSourceFilter;
 
 pub type Row = Vec<Option<Value>>;
 
@@ -125,6 +126,9 @@ pub struct TableMapping {
     pub enabled: bool,
     #[serde(default)]
     pub matching_columns: Vec<ColumnMapping>,
+    /// Optional structured predicate applied symmetrically to source and target rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<SyncSourceFilter>,
 }
 
 impl TableMapping {
@@ -135,6 +139,7 @@ impl TableMapping {
             source_table: name,
             enabled: true,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 
@@ -144,6 +149,7 @@ impl TableMapping {
             target_table: target_table.into(),
             enabled: true,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 }
@@ -327,6 +333,10 @@ pub struct TableResult {
     pub rows: Vec<RowChange>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Structured predicate used for this comparison. Values remain bound by the
+    /// read path and are retained in the reviewed plan context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<SyncSourceFilter>,
 }
 
 impl TableResult {
@@ -346,6 +356,7 @@ impl TableResult {
             column_types: Vec::new(),
             primary_keys: Vec::new(),
             unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -365,6 +376,7 @@ impl TableResult {
             column_types: Vec::new(),
             primary_keys: Vec::new(),
             unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -380,6 +392,7 @@ impl TableResult {
             column_types: Vec::new(),
             primary_keys: Vec::new(),
             unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -396,6 +409,7 @@ impl TableResult {
             column_types: Vec::new(),
             primary_keys: Vec::new(),
             unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -412,6 +426,7 @@ impl TableResult {
             column_types: Vec::new(),
             primary_keys: Vec::new(),
             unchanged_count: 0,
+            source_filter: None,
         }
     }
 

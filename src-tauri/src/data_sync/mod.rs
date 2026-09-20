@@ -8,6 +8,7 @@ pub mod changeset;
 pub mod compare;
 pub mod error;
 pub mod execute;
+pub mod filter;
 pub mod gate;
 pub mod keyset;
 pub mod legacy;
@@ -26,8 +27,12 @@ pub use compare::{
 };
 pub use error::DataSyncError;
 pub use execute::{execute_statements, ExecutionResult, StatementExecutor};
+pub use filter::{SyncFilterLogic, SyncSourceFilter};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
-pub use keyset::{build_keyset_select_sql, build_keyset_select_sql_with_order};
+pub use keyset::{
+    build_keyset_select_sql, build_keyset_select_sql_with_order,
+    build_keyset_select_sql_with_order_and_filter,
+};
 pub use legacy::{
     is_overwrite_copy_retired_message, refuse_overwrite_copy, OVERWRITE_COPY_RETIRED,
 };

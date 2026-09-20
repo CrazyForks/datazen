@@ -38,6 +38,7 @@ const pack = {
   'sync.inspecting': 'Inspecting table mappings…',
   'sync.mappingTitle': 'Table mapping',
   'sync.mappingAfterCompare': 'Mapping & compare results',
+  'sync.sourceFilter': 'Filter',
   'sync.noTablesFound': 'No table mappings were found in the selected source database.',
   'sync.comparePrompt': 'Review the table mapping, then click Next to compare row differences.',
   'sync.includeTable': 'Include this table in compare',
