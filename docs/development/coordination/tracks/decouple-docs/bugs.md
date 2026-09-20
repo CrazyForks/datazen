@@ -11,8 +11,8 @@
 | `decouple-docs-BUG-003` | 低 | 同上 2.2 决策表行 1 先例列 | `src/lib/driverSettings.ts` 作为「薄再导出先例」引用，实际文件已不存在 | 已修复（第 2 轮复测通过；残留同类问题另立 BUG-005） |
 | `decouple-docs-BUG-004` | 低 | 本 track `progress.md` Coder 自验第 6 条 / B 表 | 自报 zh/en 各 24 个标题，实测各 21 个（结构对应本身通过） | 已修复（第 2 轮复测通过） |
 | `decouple-docs-BUG-005` | 低 | `independent-driver-development.zh-CN.md:196` / `.en.md:211`（§6.2） | 仍无条件声称「宿主原路径仅剩薄再导出」并把 `driverSettings`、`resolveEditorFontFamily` 列为该形态先例，实际二者宿主文件均已不存在，与修复后的契约 2.2/2.5 三分规则互相矛盾 | 已修复（第 3 轮复测通过） |
-| `decouple-docs-BUG-006` | 低 | `driver-api-dependency-boundary.md:295-298`（2.4.3「真值分三层」） | 三层只描述宿主侧接线集（en/zh-CN）与「其余 8 语言生产路径无运行时 import」，未对表 O-1 裁定下「驱动自注册把全部 10 语言灌入共享注册表、启动即进 main chunk」的运行时集合，读者会误判全仓只有 2 语言进 bundle 或以为驱动应只注册 2 语言 | 待复测（第 3 轮修复完成） |
-| `decouple-docs-BUG-007` | 低 | 同上 2.4.3 词条归属表「驱动词条」行 + 指南 §6.3（zh:213 / en:228） | 副作用行示例字面写 `import '../locales';`，却同时点名 redis 入口为 `ui/shared/meta.ts`（嵌套两层），该目录下正确写法只能是 `import '../../locales';` | 待复测（第 3 轮修复完成） |
+| `decouple-docs-BUG-006` | 低 | `driver-api-dependency-boundary.md:295-299`（2.4.3「真值分三层」） | 三层只描述宿主侧接线集（en/zh-CN）与「其余 8 语言生产路径无运行时 import」，未对表 O-1 裁定下「驱动自注册把全部 10 语言灌入共享注册表、启动即进 main chunk」的运行时集合，读者会误判全仓只有 2 语言进 bundle 或以为驱动应只注册 2 语言 | 已修复（第 4 轮复测通过） |
+| `decouple-docs-BUG-007` | 低 | 同上 2.4.3 词条归属表「驱动词条」行 + 指南 §6.3（zh:214 / en:229） | 副作用行示例字面写 `import '../locales';`，却同时点名 redis 入口为 `ui/shared/meta.ts`（嵌套两层），该目录下正确写法只能是 `import '../../locales';` | 已修复（第 4 轮复测通过） |
 
 > **Coder 第 1 轮修复说明（状态推进：待修复 → 待复测）**：4 条判定经本轮独立实测**全部成立，无反驳项**，已按建议方向修正。改法与实测事实逐条见 `progress.md`「Coder Bug 修复记录（第 1 轮）」。BUG-001 额外登记了 Tester 未列的 **8 处 `vi.mock` 宿主 `useI18n` 路径**（非 `from` 形态、不被重现命令命中），供 Wave 4 护栏白名单口径复核。状态由复测 Tester 推进为「已修复」，Coder 不自行判定。
 >
@@ -144,6 +144,12 @@
 
 - **影响范围**：2.4.3 是驱动词条归属与语言集合的唯一规范落点，且被 `independent-driver-development.*` §6.3 引用；读者据此评审 Wave 4 之后的驱动包时，可能误报「驱动注册多余语言」为违规，或反过来低估词条装载代价。
 - **建议修复方向（供 Coder 参考，非 Tester 实施）**：在第 ②/③ 层之间（或第 ③ 层末句后）补 **一句**说明「不对称是有意的」：宿主运行时接线集 = `en`/`zh-CN`，而**驱动包自注册会把本包全部语言文件灌入共享注册表**（O-1 裁定维持，实测代价 +76.57 kB min / +6.59 kB gzip，redis/mongodb 各 10 语言），「生产路径无运行时 import」一句显式限定为「宿主 `src/locales/` 的 8 个语言文件」。改动仅落在 2.4.3（纯文本，无新增标题）；指南 §6.3 若同步补一句须 zh/en 两份同改并维持 21:21（不加则亦可，因 §6.3 只引用契约）。
+- **Tester 第 4 轮复测判定（commit `91921a87d`）→ 已修复**：
+  1. 第 ② 层（`:297`）已带「**就宿主 `src/locales/` 的这 8 个语言文件而言**」限定语并显式指向下条不对称说明；第 ③ 层（`:298`）保留「驱动包各 10 语言文件」事实；新增 `:299` 独立 bullet 首句即「上述三层全部只是宿主侧口径；驱动侧的注册集合有意与之不对称，不是越界」，且含「不存在『驱动跟着宿主只注册 2 语言』这一形态」的显式否定——按 (a)「三层是否仍可能被读成驱动只注册 2 语言」复验通过；
+  2. O-1 数字逐个对表 `.worktrees/datazen-i18n-drivers/.../bugs.md` O-1 表与 `progress.md`「Coder Bug 修复记录（第 1 轮）」：三档 min `1,501.93 / 1,528.55 / 1,605.12`、净增 `+76.57 kB min / +6.59 kB gzip`、均在 main chunk、收益侧「为未来经 `registerLocale()` 接入第 3 语言预付」——**全部与裁定实测值逐项一致**；
+  3. 「惰性 / 按需」措辞全扫（boundary + 两份指南）：仅 `:288`（宿主 lazy 域包既有事实描述）与 `:299`（「不要求、不建议驱动改走惰性 / 按需注册——O-1 裁定明令禁止引入该机制，全量 eager 注册即终态」），**无任何建议性表述**；
+  4. 接管代理自我更正的 `:299` 新判据逐条实测成立：`src/locales/index.ts:42-45`（`registerLocale()` 写 `extensionLocales` + 灌字典）、`:51-56`（`getExtensionLocales()`）、`src/windows/settings/SettingsContent.tsx:91-100`（语言下拉 = `BUILTIN_LOCALES.map(…)` + `…getExtensionLocales()`）行号逐一命中；`registerLocale` 全仓调用点仅 `src/locales/locales.test.ts`（测试），生产代码（含 `src/`、`packages/wapps`、`packages/extension-points`、`packages/wapp-sdk`）**零调用**；`src/locales/lazyPacks.ts:21-34` loaders 键域实测只有 `en` / `'zh-CN'` 两组、值为宿主 4 惰性域包（`src/locales/domains.ts:21` = `['sync','workflows','dashboard','mcp']`），驱动 eager 词条不经它装载——lazyPacks 单列为「只服务宿主词条」**成立**；
+  5. 指南 zh:214 / en:229 同步补「注册集合不随宿主接线的可选语言集合收缩，两者不对称是有意终态」并句内指向契约 2.4.3，zh/en 该小节措辞对等、标题结构维持 21 : 21。
 
 ---
 
@@ -160,7 +166,8 @@
   ```
 
 - **影响范围**：低——照抄会得到解析失败（构建/`tsc` 立即报错，可自纠），但该句正是「驱动词条自注册」的操作指令且被标注为终态唯一落点；入口目录不同（`ui/meta.ts` vs `ui/shared/meta.ts`）的两类驱动会拿到一条对其中一类不成立的字面示例。
-- **建议修复方向（供 Coder 参考，非 Tester 实施）**：把示例改为按入口深度写清（如 `ui/meta.ts` 用 `import '../locales';`、`ui/shared/meta.ts` 用 `import '../../locales';`），或改写成「挂一行副作用 import 指向本包 `locales/` 目录（相对层级随入口深度而定）」；契约与两份指南 §6.3 **三处同改**，指南保持 zh/en 同步与 21:21 结构。
+- **建议修复方向（供 Coder 参考，非 Tester 实施）**：把示例改为按入口深度写清（如 `ui/meta.ts` 用 `import '../locales';`、`ui/shared/meta.ts` 用 `'../../locales'`），或改写成「挂一行副作用 import 指向本包 `locales/` 目录（相对层级随入口深度而定）」；契约与两份指南 §6.3 **三处同改**，指南保持 zh/en 同步与 21:21 结构。
+- **Tester 第 4 轮复测判定（commit `91921a87d`）→ 已修复**：契约 `:289` 与指南 `zh:214` / `en:229` 三处均已改为「**相对层级随入口目录深度而定**」并按入口分例：`ui/meta.ts`（如 mongodb）→ `import '../locales';`、`ui/shared/meta.ts`（如 redis）→ `import '../../locales';`。本轮以 Read 只读核对并行轨真实文件：`/Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-i18n-drivers/packages/drivers/redis/ui/shared/meta.ts:4` 逐字 = `import '../../locales';`；`.../packages/drivers/mongodb/ui/meta.ts:4` 逐字 = `import '../locales';`——**两串与文档三处引用逐字一致**；入口归属旁证：本 worktree `scripts/resolve-drivers.mjs:239`（redis `ui/shared/meta`）/ `:270`（mongodb `ui/meta`）、`src/extensions/generated.ts:10`（redis 首个 UI import 即 `ui/shared/meta`）。全仓文档内 `'../locales'` / `'../../locales'` 串不再存在「单一通用串」写法（其余命中为 bugs/progress 举证引文）。
 
 ---
 
@@ -170,3 +177,13 @@
 2. Part 1（Rust 段）实测逐字未改动（`git diff` 仅改了文件顶部 H1），其「`datazen-driver-api = "0.1"`」示例与当前 crate `version = "0.0.8"` 不吻合，属历史遗留文本，不在本轨勘误范围内。
 3. **第 3 轮复测补记（记录口径，非文档事实错误）**：`progress.md`「第 1 轮自验」第 4 条与第 2 轮阶段 B-7 均写「字面 `../../../src/` 形态 **9 处**」，本轮以 `grep -o` 逐文件实测为 **8 处**（zh 2 / en 2 / boundary 4 / components 0 / extensibility 0）。判定结论不变（8 处逐处复核全部位于带 `❌ 反例` 标注的代码块或「禁止 / 零新增」句内），仅历史记录数字偏大 1，后续复测以 8 为准。
 4. **第 3 轮复测补记**：指南 §6.2 的「留薄再导出壳的先例」列表出现 `src/lib/cn.ts` 等宿主路径字面量，不违反验收 3——§6.1 已确立「禁止任何指向宿主 `src/**` 的相对 import」，该列表是「宿主侧路径如何收尾」的先例举证而非 import 推荐写法，与契约 2.2 行 1 同形；若后续想彻底消除歧义，可在两处先例列表后补一句「驱动侧一律 import 包名，不得 import 下列宿主壳路径」（契约 2.1.2 已有该句，指南暂无），属可选增强，不登记 Bug。
+
+---
+
+## Nit（第 4 轮复测登记 · 留待 Wave 4 文档回扫，不构成缺陷、不阻断合流）
+
+> 判级纪律（协调者第 4 轮指定）：Blocker = 事实错误 / 误导性表述 / zh-en 不同步 / 越界改代码；Nit = 措辞可更清晰、举例可更完整、重复说明可精简。以下均为 Nit。
+
+1. **Nit-1（boundary:299 单条 bullet 过载）**：不对称说明把「三层宿主口径、驱动全量 eager、O-1 三档数字、注册可达性两分、`registerLocale()` 判据、lazyPacks 单列、不可达预付、双向评审禁令」约十句压在一个 bullet 内，检索与 diff 成本高。建议 Wave 4 回扫改写 2.4.3 时拆为 2-3 个子 bullet（内容结论不必变）。
+2. **Nit-2（指南 §6.3 分例举例不完整）**：`zh:214` / `en:229` 的入口深度分例只在嵌套形态处标注「（如 redis）」，`ui/meta.ts` 形态未标注「（如 mongodb）」（契约 `:289` 两处均点名）。属举例可更完整，Wave 4 回扫时对齐契约写法即可。
+3. **Nit-3（既有观察项归并）**：观察项 1（2.4.2 `getTranslation` 括注）、观察项 4（§6.2 先例列表补「驱动不得 import 宿主壳路径」句）与本轮 Nit-1/2 同属一次 Wave 4 文档回扫改动，建议合并处理，避免碎片化改写。

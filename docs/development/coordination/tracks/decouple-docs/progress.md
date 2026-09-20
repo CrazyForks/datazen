@@ -58,7 +58,7 @@
 - [x] Coder Bug 修复（第 2 轮，仅 BUG-005）→ READY_FOR_TEST（zh/en 两份 §6.2 已同步改写为三分规则并换用实测存在的先例；判定成立、无反驳项；状态由复测 Tester 推进）
 - [x] Tester 复测（第 3 轮，commit `595f106dd`）→ **TEST_FAILED**（BUG-005 判定**已修复**，全局不回归 7 项全过，抽验 28 项命中 27；新登记 2 条低级一致性缺陷 `BUG-006`（2.4.3 三层语言真值未对表 O-1 裁定的驱动侧 10 语言运行时集合）与 `BUG-007`（副作用示例 `import '../locales';` 与点名的嵌套入口深度不匹配）。详见文末「Tester 第 3 轮复测记录」）
 - [x] Coder Bug 修复（第 3 轮，BUG-006 / BUG-007）→ **READY_FOR_TEST**（第 3 轮由接管 Coder 完成：现场遗留改动经逐行复核后大部分保留、1 处事实不精确已纠正；详见文末「Coder Bug 修复记录（第 3 轮 · 接管）」）
-- [ ] Tester 复测（第 4 轮）→ TEST_DONE
+- [x] Tester 复测（第 4 轮 · 收口，commit `91921a87d`）→ **TEST_DONE (PASSED)**（BUG-006 / BUG-007 均判定**已修复**，含接管自我更正的 `:299` 运行时可达性调用链逐条实测命中；全局不回归 7 项全过；本轮新抽验 14 条断言 14 命中；无 Blocker，仅 3 条 Nit 登记于 `bugs.md`「Nit · 留待 Wave 4 文档回扫」。详见文末「Tester 第 4 轮（收口）复测记录」）**本轨收口，可合流**
 
 ## Tester 复测记录（commit `6199d9d95`，全新实例独立实测，不采信 Coder 自报）
 
@@ -431,6 +431,7 @@
 - 本轨无 E2E（纯文档）。后续验证点已由 Tester 登记在上方「阶段 D：留待 R 回归」：Wave 4 import 护栏落地时的现网基线白名单口径（BUG-001 修正后为 **34 处宿主相对 import（32 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径 = 42 处**，以 2.1.2 登记为准）、驱动侧 `setLocale` 拦截、以及 `i18n-drivers` 合并后回扫 2.4.3 的措辞与模块名。
 - **Tester 第 2 轮补登**（详见「阶段 D」小节）：① `i18n-drivers` 合并后 **2.1.2 / 2.7 的过渡期基线数字（32 / 2 / 8 / 42）必然失效**——换源归零时须同步删除该清单或改注为「历史基线」，否则「少于基线应更新 2.1.2」的判据会反向悬空；② **Wave 4 护栏脚本落地后**须回扫 2.6 / 2.1.2 / 2.7，把「待 Wave 4 落地」措辞替换为实际脚本文件名与 CI 位置，并核对护栏白名单与本档口径一致；③ BUG-005（指南 §6.2 两层文档矛盾）修复时 **zh/en 两份必须同步改写**，保持标题结构 21:21 不变（**第 3 轮复测已闭环**：20 : 20 code span 相同、21 : 21 标题）。
 - **Tester 第 3 轮补登**：④ **BUG-006 / BUG-007 均落在 2.4.3（及其指南 §6.3 引用面）**，修复属纯文本改动、不得新增标题；两条与 ① 的 `i18n-drivers` 合并回扫同属一次改动，建议协调者让 Coder 一并改清，避免第三次往返；⑤ `i18n-drivers` 合并后须**用本仓库实际实现复核** 2.4.3 的驱动词条行与「三层真值」表述（本轮证据取自并行轨检出只读版：`packages/drivers/redis/locales/index.ts:18-41` 静态 import 10 语言 + `ui/shared/meta.ts:4 import '../../locales';`；O-1 裁定与包体量级见 `.worktrees/datazen-i18n-drivers/docs/development/coordination/tracks/i18n-drivers/bugs.md:170-182`），若合并时语言集合或入口挂载方式变更，2.4.3 需同步改写。
+- **Tester 第 4 轮（收口）补登**：⑥ 本表 ①-⑤ 经本轮核对**无缺项**（①=第 2 轮 ①；②=第 2 轮 ②；③=第 3 轮 ④⑤）；将本轮 3 条 **Nit**（`bugs.md`「Nit · 留待 Wave 4 文档回扫」：299 bullet 拆分、§6.3 分例补 mongodb 标注、观察项 1/4 归并）并入同一份回扫清单——建议 Wave 4 护栏落地 + `i18n-drivers` 合并后的那次文档回扫**一次性处理** ①②⑤⑥，避免碎片化改写。
 
 ## Coder Bug 修复记录（第 3 轮 · 接管）
 
@@ -495,3 +496,67 @@
 
 - **BUG-006**：在 2.4.3「三层真值」后补一条独立 bullet，写明三层全为宿主口径、驱动侧注册集合**有意不对称**（全量 eager、启动即进 main chunk、O-1 三档实测 +76.57 kB min / +6.59 kB gzip 已获认可），并把「运行时可达语言集合」的判据钉回宿主 `BUILTIN_LOCALES` ∪ `registerLocale()` 扩展语言；第 ② 层「无运行时 import」显式限定为宿主 `src/locales/` 的 8 个语言文件，两份指南 §6.3 同步该不对称结论并指向契约。
 - **BUG-007**：把「挂一行 `import '../locales';`」的单一通用串改为「相对层级随入口目录深度而定」，并按实测分别举例——入口 `ui/meta.ts`（mongodb）→ `'../locales'`、入口 `ui/shared/meta.ts`（redis）→ `'../../locales'`；契约 `:289` 与指南 `zh:214` / `en:229` 三处同改。
+
+## Tester 第 4 轮（收口）复测记录（commit `91921a87d`，全新实例独立实测；前三轮记录仅作断言清单，不采信）
+
+工作目录 `.worktrees/datazen-decouple-docs` @ `feature/decouple-docs`；基准 `fd23a66a8`；HEAD 实测 `91921a87d`（父 `8b7338190` → `595f106dd` 链齐）；起始 `git status --short` 空。本轮修复触及 5 文件（`git show --stat 91921a87d`）：契约、两份指南、本 track `progress.md`/`bugs.md`。全程只读访问 `.worktrees/datazen-i18n-drivers`（仅 Read/sed/ls/grep，零写入命令），未触碰主检出。
+
+### 阶段 A：BUG-006 / BUG-007 定点复验 → **两条均「已修复」**
+
+1. **BUG-006（2.4.3 `:288-299` 读全段判定）**：
+   - (a) 三层仍是宿主口径且不可再被误读——`:297` 第 ② 层已带「就宿主 `src/locales/` 的这 8 个语言文件而言」限定语并指向下条；`:299` 新 bullet 首句「上述三层全部只是宿主侧口径；驱动侧的注册集合有意与之不对称，不是越界」+ 显式否定「不存在『驱动跟着宿主只注册 2 语言』这一形态」✅；
+   - (b) O-1 数字逐个比对（对照 `.worktrees/datazen-i18n-drivers/.../i18n-drivers/bugs.md` O-1 表与 `progress.md` B1 段）：三档 min **1,501.93 / 1,528.55 / 1,605.12** kB、净增 **+76.57 kB min / +6.59 kB gzip**、「均在 main chunk / 启动即加载」、「为未来经 `registerLocale()` 接入第 3 语言预付」收益侧表述——**逐项一致，无杜撰、无漂移** ✅；
+   - (c) 「惰性 / 按需」全扫 3 份文档：仅 boundary `:288`（宿主既有机制的事实描述）与 `:299`（「不要求、不建议…O-1 裁定明令禁止引入该机制，全量 eager 注册即终态」），**均为禁止/澄清性表述，无建议语气** ✅。
+2. **接管自我更正的新判据链（`:299`）逐条 Read/Grep 证实**：
+
+   | 文档断言 | 本轮实测 | 判定 |
+   | --- | --- | --- |
+   | `src/locales/index.ts:42-45 registerLocale()` 写入 `extensionLocales` 并灌字典 | 该函数恰在 `:42-45`，`:43` `extensionLocales.set(locale, label)`、`:44` `registerTranslations({[locale]: translations})` | ✅ 行号精确 |
+   | `:51-56 getExtensionLocales()` | 恰在 `:51-56` | ✅ |
+   | 汇入设置页语言下拉，见 `src/windows/settings/SettingsContent.tsx:91-100` | `:91-100` 恰为 `languageOptions = useMemo([...BUILTIN_LOCALES.map(...), ...getExtensionLocales()], [])` | ✅ |
+   | `registerLocale` 生产代码零调用（机制为未来预留） | Grep 全仓（含 `packages/wapps`、`packages/extension-points`、`packages/wapp-sdk`、`src/`）：除定义与文档外仅 `src/locales/locales.test.ts:205/213/218/224` 测试调用 ⇒ **生产零调用** | ✅ |
+   | `lazyPacks.ts:21-34` 只服务宿主词条、键域仅 en/zh-CN | `loaders: Record<BuiltinLocale, ...>` 恰 `:21-34`，仅 `en`（`:22-27`）与 `'zh-CN'`（`:28-33`）两组，值全部为宿主 `./en/*`、`./zh-CN/*` 域包；`:36-38 isBuiltin()` 对其余语言早退（`:54`）| ✅ 行号精确 |
+   | 域清单 `src/locales/domains.ts:21` = `sync` / `workflows` / `dashboard` / `mcp` | `:21` `export const LAZY_DOMAINS = ['sync','workflows','dashboard','mcp'] as const;` | ✅ |
+   | 驱动 eager 词条不经 lazyPacks 装载 | `locales/index.ts`（并行轨）单次 `registerTranslations({...10 语言})` 直灌共享注册表，全链无 lazyPacks 引用 | ✅ |
+
+3. **BUG-007**：契约 `:289` 与指南 `zh:214` / `en:229` 三处均已按入口深度分例；以 Read 逐字核对并行轨真实入口：`packages/drivers/redis/ui/shared/meta.ts:4` = `import '../../locales';`、`packages/drivers/mongodb/ui/meta.ts:4` = `import '../locales';`——**与文档串逐字一致**；入口归属旁证：`scripts/resolve-drivers.mjs:239/:270` 与 `src/extensions/generated.ts:10`（redis 首个 UI import 即 `ui/shared/meta`）。
+
+### 阶段 B：全局不回归（7 项全过）
+
+| # | 验收项 | 实测结果 |
+| --- | --- | --- |
+| 1 | diff 范围 | `git diff --name-only fd23a66a8..HEAD` = 8 文件全在 `docs/**`；`git diff --stat fd23a66a8..HEAD -- src packages scripts src-tauri e2e AGENTS.md` = **空**；`git log fd23a66a8..HEAD -- hub.md` 空输出（hub.md 差异系分叉基线再聚合，非本轨改动）⇒ 零越界 ✅ |
+| 2 | 标题结构 | zh **21** / en **21**；层级分布两份相同 `#`×1 + `##`×13 + `###`×7；`diff <(grep -o '^#\+' zh) <(grep -o '^#\+' en)` = **空** ✅ |
+| 3 | 相对链接 | 临时脚本 `/tmp/dz-links-r4.mjs`（跑完即 `rm`，事后 `git status --porcelain` 空）解析 5 份文档：**14 条，broken 0** ✅ |
+| 4 | 反例污染复检 | `HostLocaleBridge\|setHostLocaleBridge\|getExtensionTranslation` 5 份文档 = **0:0:0:0:0**；字面 `../../../src/` 共 **8 处**（boundary :160/162/163 反例块 + :330 禁止句、zh :181 禁止句 + :185 ❌ 块、en :196 + :200 同形），逐处判定均在 ❌/禁止语境 ✅；`src/lib/cn` 6 处（:162/:176/:197、zh:185/196、en:200/211——其中 boundary :176/:197 与指南 §6.2 为先例举证且同句写明「驱动永远 import 包名」）✅ |
+| 5 | `npx tsc --noEmit -p tsconfig.json` | **exit 0** ✅ |
+| 6 | 三守卫 | `check-id-terminology` exit 0（5 allow-listed / 1714 files）；`check-ci-docs-consistency` exit 0（11 ids / window boundaries / toolchain）；`check-module-layers` exit 0（3 rules）✅ |
+| 7 | `node scripts/aggregate-hub.mjs` | exit 0（聚合 11 tracks）；`git status --short` 仅 ` M hub.md` → `git checkout --` 恢复，**未提交**；本轮结束时 `git status --porcelain` 空（除本记录 commit 前瞬时状态）✅ |
+
+### 阶段 B-6：本轮新写/改写断言抽验（含阶段 A 调用链）
+
+| # | 断言（位置） | 实测 |
+| --- | --- | --- |
+| 1-6 | `:299` 可达性判据链 6 项 | 见阶段 A-2 表，6/6 ✅ |
+| 7 | `:299` O-1 三档 + 净增数字 | 与并行轨 bugs.md/progress.md 逐项一致 ✅ |
+| 8 | `:289` redis 入口副作用串行 | 并行轨 `redis/ui/shared/meta.ts:4` 逐字 ✅ |
+| 9 | `:289` mongodb 入口副作用串行 | 并行轨 `mongodb/ui/meta.ts:4` 逐字 ✅ |
+| 10 | `:289` 「静态 import 本目录全部语言字典后一次性 registerTranslations」 | 并行轨 `redis/locales/index.ts`：`:18` import `registerTranslations`、10 个语言静态 import、单次 `registerTranslations({...})`、`export {}` 纯副作用 ✅ |
+| 11 | `:296` 第 ① 层 `builtinLocales.ts:9 = ['en','zh-CN']` | `sed -n '9p'` 逐字命中 ✅ |
+| 12 | `:297` 第 ② 层 8 语言 = `i18n-sync-check.mjs:23 LOCALE_FILES` | `:23` `['de','es','fr','ja','ko','pt-BR','ru','zh-TW']`，`src/locales/pt-BR.ts` + `pt-BR/` 存在 ✅ |
+| 13 | `:298` 「驱动包 locales/ 现覆盖 10 个语言文件（redis、mongodb 各 10）」 | 本 worktree 对 `packages/drivers/redis/locales` 与 `packages/drivers/mongodb/locales` 计数 .ts 文件 = **10 / 10** ✅ |
+| 14 | `:288` 「lazy 域包经 `useLocaleDomains` / `ensureLocaleDomains` 按需注册」 | `src/hooks/useLocaleDomains.ts:14`、`lazyPacks.ts:50` ✅ |
+
+**抽验合计 14 条 → 命中 14，命中率 100%**（另叠加阶段 A 定点链 6 项细分，共 20 条断言全命中）。
+
+### 阶段 C：一致性度量（文档轨以命中率替代覆盖率）
+
+- 本轮独立核对断言 **≥20 条**（阶段 A 12 细分 + 阶段 B-6 14，交叠去重后净 20），命中 **20**，命中率 **100%**。前轮 47/44/61 条基线断言中未被本轮改动触及的条目经 diff 范围核对（本轮仅 2.4.3 三行 + 指南 §6.3 两行 + track 文件）确认**无一被回退改写**。
+- 未核对项风险与第 3 轮相同（Part 1 Rust 段全量、3 桥字段集合、Pro 装载形态），均不在本轨改动面内，不升级。
+
+### 阶段 D：判定与关账
+
+- 按协调者第 4 轮判级纪律：**Blocker 0、Nit 3** ⇒ 本轨判定 **TEST_DONE (PASSED)**，收口合流。BUG-001..007 全部「已修复」。
+- 3 条 Nit（2.4.3 `:299` bullet 拆分、§6.3 分例补 mongodb 标注、观察项 1/4 归并）已登记 `bugs.md`「Nit · 留待 Wave 4 文档回扫」并挂入上方「留待 R 回归」⑥。
+- 「留待 R 回归」清单完备性核对：① 合并 i18n-drivers 后回扫 2.1.2/2.7 基线数字（在位）、② Wave 4 护栏落地后替换 2.6 措辞（在位）、③ BUG-006/007 相关段落复核（第 3 轮 ④⑤ 在位）⇒ 无缺项，本轮补 ⑥ 归并指引。
+- 交付 commit：本记录 + `bugs.md` 状态推进（Tester 第 4 轮），不含任何生产代码与 hub.md。
