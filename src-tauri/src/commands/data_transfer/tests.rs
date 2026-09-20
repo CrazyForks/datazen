@@ -315,6 +315,79 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
 }
 
 #[tokio::test]
+async fn sql_file_target_executes_after_source_type_enrichment() {
+    use crate::data_transfer::sql_file::register_path;
+    use crate::db::Value;
+    use crate::testing::app_state::TestAppState;
+
+    let mut options = transfer_plan_test_options();
+    options.table_schema = Some(TableSchema {
+        table_name: "users".into(),
+        columns: vec![ColumnSchema {
+            name: "id".into(),
+            // The normal schema endpoint exposes a placeholder native type;
+            // the adapter's full-type query resolves it to a portable type.
+            data_type: "USER-DEFINED".into(),
+            nullable: false,
+            default_value: None,
+            comment: None,
+            is_primary_key: true,
+            is_auto_increment: false,
+        }],
+        primary_keys: vec!["id".into()],
+        indexes: vec![],
+        foreign_keys: vec![],
+    });
+    options.columns = options
+        .table_schema
+        .as_ref()
+        .expect("schema")
+        .columns
+        .clone();
+    options.query_rows = vec![vec![
+        Some(Value::String("id".into())),
+        Some(Value::String("integer".into())),
+    ]];
+    let test = TestAppState::with_options(options).await;
+    let (_config, source) = test.save_and_connect("transfer-sql-file-enrich-src").await;
+    let dir = tempfile::tempdir().expect("temporary SQL output directory");
+    let destination = dir.path().join("enriched.sql");
+    let token = register_path(destination.clone()).expect("register SQL destination");
+    let job = TransferJob {
+        source: Endpoint {
+            db_session_id: source,
+            database: "app".into(),
+            schema: None,
+        },
+        target: None,
+        sql_file_target: Some(SqlFileTarget {
+            file_token: token,
+            database_type: Some("mysql".into()),
+        }),
+        mode: TransferMode::Structure,
+        write_mode: WriteMode::Insert,
+        tables: vec![TableMapping::auto("users")],
+        options: TransferOptions::default(),
+    };
+
+    let preview = super::preview_data_transfer_impl(&test.state, job)
+        .await
+        .expect("preview should enrich source types before target IR validation");
+    let error = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            plan_id: preview.plan_id,
+            selection: TransferRunSelection::default(),
+            options: TransferRunOptions::default(),
+            job_id: None,
+        },
+    )
+    .await
+    .expect("execution should use the same enriched source snapshot as preview");
+    assert!(error.tables.iter().all(|table| table.success));
+}
+
+#[tokio::test]
 async fn test_tester_disabled_existing_table_does_not_invalidate_plan() {
     use crate::db::{TableInfo, TableType};
     use crate::testing::app_state::TestAppState;
