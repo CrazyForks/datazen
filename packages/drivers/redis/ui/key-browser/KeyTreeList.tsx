@@ -2,7 +2,7 @@ import { useMemo, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Trash2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
+import { cn } from '@datazen/ui';
 import { formatSize } from '../shared/formatSize';
 import type { KeyTreeRow } from './keyTree';
 

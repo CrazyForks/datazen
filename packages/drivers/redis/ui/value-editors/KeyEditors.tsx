@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Input } from '@datazen/ui';
+import { Button, Input, cn } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
 import { JsonEditor } from './JsonEditor';

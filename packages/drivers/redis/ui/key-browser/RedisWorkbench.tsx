@@ -8,12 +8,11 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Database, FolderInput, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
-import { Button } from '@datazen/ui';
+import { Button, cn } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useSchemaStore } from '../../../../../src/stores/schemaStore';
 import { useSettingsStore } from '../../../../../src/stores/settingsStore';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { cn } from '../../../../../src/lib/cn';
 import { showNativeContextMenu } from '../../../../../src/lib/nativeContextMenu';
 import { readBooleanField } from '../../../../../src/lib/driverSettings';
 import { invokeGetKey, invokeDbSizes } from '../shared/redisInvoke';
