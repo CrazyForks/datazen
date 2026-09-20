@@ -187,6 +187,10 @@ pub(crate) fn build_structure_plan(
     inspected: &[TableInspectResult],
     source_schemas: &HashMap<String, TableSchema>,
 ) -> Result<Vec<DdlPreviewItem>, TransferError> {
+    super::sql_file::validate_target_dialect_job(job)?;
+    if let Some(target) = job.sql_file_target.as_ref() {
+        super::sql_file::validate_target_scope_for_driver(target_driver, target)?;
+    }
     let order = structure_table_order(inspected, source_schemas, job)?;
     let mut statements = Vec::new();
     let mut object_sets: Vec<(String, String, IRTableObjects)> = Vec::new();

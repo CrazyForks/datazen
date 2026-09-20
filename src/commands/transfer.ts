@@ -80,6 +80,10 @@ export interface TransferSqlFileTarget {
   fileToken: string;
   /** Registered SQL driver used to render the artifact; omitted means source dialect. */
   databaseType?: string;
+  /** Optional target catalog/database qualifier for the generated SQL. */
+  database?: string;
+  /** Optional target schema qualifier for the generated SQL. */
+  schema?: string;
 }
 
 export interface TransferTableResult {

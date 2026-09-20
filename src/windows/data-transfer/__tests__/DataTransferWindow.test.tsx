@@ -554,6 +554,9 @@ describe('DataTransferWindow', () => {
     await waitFor(() => expect(getDatabasesMock).toHaveBeenCalled());
     await pickSelect('data-transfer-source-database', 'src');
     await pickSelect('data-transfer-sql-file-dialect', 'MySQL');
+    fireEvent.change(screen.getByTestId('data-transfer-sql-file-target-database'), {
+      target: { value: 'analytics' },
+    });
 
     fireEvent.click(screen.getByTestId('data-transfer-next'));
     await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
@@ -561,7 +564,11 @@ describe('DataTransferWindow', () => {
     await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
     expect(previewTransferMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        sqlFileTarget: { fileToken: 'sql-file-token', databaseType: 'mysql' },
+        sqlFileTarget: {
+          fileToken: 'sql-file-token',
+          databaseType: 'mysql',
+          database: 'analytics',
+        },
       }),
     );
   });

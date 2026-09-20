@@ -37,7 +37,8 @@ pub fn qualify_table_sql(schema: Option<&str>, table: &str, quote: char) -> Stri
 
 /// Qualify a table reference for DML/SELECT without switching the session catalog.
 ///
-/// - MySQL/MariaDB: `` `database`.`table` `` when `database` is set.
+/// - MySQL/MariaDB/ClickHouse: `` `database`.`table` `` when `database` is set.
+/// - SQL Server: `[database].[schema].[table]` with either qualifier set.
 /// - PostgreSQL and similar: `"schema"."table"` when `schema` is set.
 /// - Otherwise: bare `table`.
 pub fn qualify_relation_sql(
@@ -48,7 +49,7 @@ pub fn qualify_relation_sql(
     quote: char,
 ) -> String {
     let family = family.to_ascii_lowercase();
-    if matches!(family.as_str(), "mysql" | "mariadb") {
+    if matches!(family.as_str(), "mysql" | "mariadb" | "clickhouse") {
         return match database.map(str::trim).filter(|s| !s.is_empty()) {
             Some(db) => format!(
                 "{}.{}",
@@ -57,6 +58,18 @@ pub fn qualify_relation_sql(
             ),
             None => quote_ident_sql(table, quote),
         };
+    }
+    if family == "sqlserver" {
+        return [
+            database.map(str::trim).filter(|s| !s.is_empty()),
+            schema.map(str::trim).filter(|s| !s.is_empty()),
+            Some(table),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|part| quote_ident_sql(part, quote))
+        .collect::<Vec<_>>()
+        .join(".");
     }
     qualify_table_sql(schema, table, quote)
 }

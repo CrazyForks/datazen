@@ -92,6 +92,13 @@ async fn execute_sql_file_target(
             "source filter or recordset changed since preview; return to comparison".into(),
         ));
     }
+    if plans::target_scope_fingerprint(&plan.job).map_err(CommandError::from)?
+        != plan.target_scope_fingerprint
+    {
+        return Err(CommandError::Validation(
+            "SQL-file target scope changed since preview; return to comparison".into(),
+        ));
+    }
     let (driver, handle, _inspected, mut schemas) =
         load_sql_source_snapshot(state, &plan.job).await?;
     if driver.driver_type() != plan.source_driver_type
@@ -107,6 +114,16 @@ async fn execute_sql_file_target(
             .sql_file_target
             .as_ref()
             .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?,
+    )
+    .map_err(CommandError::from)?;
+    let target = plan
+        .job
+        .sql_file_target
+        .as_ref()
+        .ok_or_else(|| CommandError::Validation("SQL file target is missing".into()))?;
+    crate::data_transfer::sql_file::validate_target_scope_for_driver(
+        target_driver.as_ref(),
+        target,
     )
     .map_err(CommandError::from)?;
     if target_driver.driver_type() != plan.target_driver_type
