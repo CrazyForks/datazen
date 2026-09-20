@@ -17,6 +17,10 @@
 - Store focused tests passed: 64 passed, 2 ignored; Sync command focused tests passed: 22 passed; Host Rust full suite passed: 1461 passed, 3 ignored; `pnpm exec tsc --noEmit` passed.
 - The formal WebDriver build completed its frontend phase and reached Rust compilation, then failed because the worktree's ignored build cache exhausted the shared disk (`No space left on device`). This is an environment limitation; generated files were restored and no production files were changed by the failed build.
 
-## Open issue — database override is not rehydrated
+## Closed after fix — database override rehydration (2026-09-20)
 
-`check_sync_conflicts_impl` calls `resolve_session_for_connection(connection_id)` without the persisted `sourceDatabase` / `targetDatabase` override, then rejects the task when the fresh session's configured database differs (`src-tauri/src/commands/sync/tasks.rs:31-65`). A task that selected another catalog therefore cannot be checked after restart, even though `ConnectionManager::connect_dedicated` supports the required database override (`src-tauri/src/services/connection_manager.rs:120-141`). PostgreSQL also needs the override at connection time because a three-part database/schema/table qualifier is not a cross-database query. This remains a production defect for persisted tasks whose selected database differs from the saved connection default; it was recorded only and not modified in the independent test pass.
+`3be34051` now establishes a dedicated session with the persisted database override before counting rows. The independent test `check_sync_conflicts_reconnects_selected_database_with_override` passes with a task selecting `analytics` while the saved source connection defaults to `app`; the live session is confirmed on `analytics`.
+
+## Open issue — dedicated recovery sessions are not released
+
+The override path calls `connect_dedicated` for source and target inside `check_sync_conflicts_impl`, but the returned runtime session ids are not released on success or any later error path. Each conflict check can therefore retain two sessions and their reference counts until application shutdown or idle cleanup. This was found by source review during the independent retest and is recorded only; no production code was changed in this tester pass.
