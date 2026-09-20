@@ -12,6 +12,13 @@ use crate::{
     try_execute_schema_catalog_command, CommandResult, DriverCommandDefinition,
 };
 
+/// Lowercase hexadecimal encoding used by the default SQL literal formatter.
+/// Dialect implementations may reuse this convention or provide their own
+/// binary literal syntax.
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
     fn driver_type(&self) -> DatabaseType;
@@ -103,7 +110,11 @@ pub trait DatabaseDriver: Send + Sync {
             Some(Value::Float(f)) => f.to_string(),
             Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
             Some(Value::Bytes(b)) => {
-                format!("'{}'", String::from_utf8_lossy(b).replace('\'', "''"))
+                // Keep the default dialect conservative and lossless. Drivers
+                // with a stricter binary-literal grammar should override this
+                // method (PostgreSQL uses bytea hex input; MySQL/SQLite use
+                // X'...'). Never turn arbitrary bytes into replacement UTF-8.
+                format!("X'{}'", bytes_to_hex(b))
             }
             Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
             Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),

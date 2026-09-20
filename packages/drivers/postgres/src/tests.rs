@@ -10,6 +10,19 @@ use crate::sql::{apply_select_limit, parse_pg_table_ref};
 use datazen_driver_api::*;
 
 #[test]
+fn format_sql_literal_keeps_binary_bytes_lossless() {
+    let driver = PostgresDriver::new();
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+        "'\\x00fffe'"
+    );
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+        "'O''Brien'"
+    );
+}
+
+#[test]
 fn fetch_tables_sql_uses_pg_catalog_system_schema_filters() {
     const SQL: &str = r#"
         FROM pg_catalog.pg_class c

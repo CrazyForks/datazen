@@ -138,6 +138,26 @@ impl DatabaseDriver for SqliteDriver {
         "sqlite".into()
     }
 
+    fn format_sql_literal(&self, value: &Option<Value>) -> String {
+        match value {
+            None | Some(Value::Null) => "NULL".into(),
+            Some(Value::Bool(true)) => "1".into(),
+            Some(Value::Bool(false)) => "0".into(),
+            Some(Value::Integer(n)) => n.to_string(),
+            Some(Value::Float(n)) => n.to_string(),
+            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(Value::Bytes(bytes)) => format!(
+                "X'{}'",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
+        }
+    }
+
     /// F7: qualify unqualified table references with the ATTACH alias
     /// (`"alias"."t"`). A DataZen SQLite connection is a single file
     /// (`main`), so this is a no-op unless the caller targets an explicit
@@ -739,6 +759,19 @@ fn apply_sqlite_select_limit(stmt: &str, limit: Option<u32>) -> (String, Option<
 mod tests {
     use super::*;
     use datazen_driver_api::DatabaseDriver;
+
+    #[test]
+    fn format_sql_literal_keeps_binary_bytes_lossless() {
+        let driver = SqliteDriver::new();
+        assert_eq!(
+            driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+            "X'00fffe'"
+        );
+        assert_eq!(
+            driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+            "'O''Brien'"
+        );
+    }
 
     #[test]
     fn test_tester_ddl_atomicity_is_transactional() {

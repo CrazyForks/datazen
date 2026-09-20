@@ -4,6 +4,19 @@ use super::*;
 use datazen_driver_api::DatabaseDriver;
 
 #[test]
+fn format_sql_literal_keeps_binary_bytes_lossless() {
+    let driver = MysqlDriver::new(false);
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+        "X'00fffe'"
+    );
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+        "'O''Brien'"
+    );
+}
+
+#[test]
 fn quote_identifier_escapes_backticks() {
     assert_eq!(MysqlDriver::quote_identifier("foo"), "`foo`");
     assert_eq!(MysqlDriver::quote_identifier("foo`bar"), "`foo``bar`");
