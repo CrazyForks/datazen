@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { tid } from '../../lib/tid';
 import { Download, Loader2, Trash2 } from 'lucide-react';
-import type { FilterCondition, SortCondition } from '../../types';
+import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
 import type { CellEdit } from '../../stores/tableDataStore';
 import { useI18n } from '../../hooks/useI18n';
 import { useColumnResize, adjustWidthsForSort } from '../../hooks/useColumnResize';
@@ -290,7 +290,7 @@ export function DataTable({
                         exportTableName || 'table',
                         columnNames,
                         hitRow,
-                        databaseType as import('../../lib/databaseTypes').DatabaseType,
+                        databaseType as DatabaseType,
                       ),
                     );
                   }
@@ -304,7 +304,7 @@ export function DataTable({
                         columnNames,
                         hitRow,
                         primaryKeyColumns,
-                        databaseType as import('../../lib/databaseTypes').DatabaseType,
+                        databaseType as DatabaseType,
                       ),
                     );
                   }

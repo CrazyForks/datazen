@@ -1,5 +1,6 @@
 import type { NativeMenuItemDef } from './nativeContextMenu';
-import { escapeIdent, getEscapeSqlValue, type DatabaseType } from './databaseTypes';
+import type { DatabaseType } from '../types';
+import { escapeIdent, getEscapeSqlValue } from './databaseTypes';
 
 /** Caller-supplied labels (typically from `t()`). */
 export type DataTableContextMenuLabels = {
