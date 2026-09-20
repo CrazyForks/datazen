@@ -7,7 +7,7 @@ import {
   supportsFullTableExport,
 } from '../exportCapability';
 import type { DatabaseTypeMeta } from '../databaseMeta';
-import type { TypeCategory } from '../../components/query-builder/typeCategory';
+import { TypeCategory } from '../../components/query-builder/typeCategory';
 
 const meta = (partial: Partial<DatabaseTypeMeta>): DatabaseTypeMeta => ({
   label: 'x',
