@@ -1,5 +1,5 @@
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
+import { useBoundSettingsStore } from '@datazen/driver-sdk';
 
 /**
  * Renders the shared "Safe" badge when the global `settings.safeMode` is on.
@@ -7,7 +7,7 @@ import { useSettingsStore } from '../../../../../src/stores/settingsStore';
  */
 export function SafeModeBadge() {
   const { t } = useI18n();
-  const safeMode = useSettingsStore((s) => s.settings.safeMode);
+  const safeMode = useBoundSettingsStore((s) => s.settings.safeMode);
   if (!safeMode) return null;
   return (
     <span

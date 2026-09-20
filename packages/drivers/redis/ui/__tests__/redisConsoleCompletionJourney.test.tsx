@@ -7,6 +7,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { create } from 'zustand';
+import {
+  bindConfirmDialog,
+  bindConnectionStore,
+  bindSettingsStore,
+  type ConnectionBridgeState,
+  type SettingsBridgeState,
+} from '@datazen/driver-sdk';
 
 const scanKeys = vi.fn();
 const commandInvoke = vi.fn();
@@ -21,6 +29,15 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { RedisConsole } from '../console/RedisConsole';
+
+// Harness capability bindings (host injects the real ones at startup).
+bindSettingsStore(
+  create<SettingsBridgeState>(() => ({
+    settings: { safeMode: false, editorFontFamily: '', driverSettings: {} },
+  })),
+);
+bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
+bindConfirmDialog(() => [async () => true, null]);
 
 afterEach(() => {
   cleanup();

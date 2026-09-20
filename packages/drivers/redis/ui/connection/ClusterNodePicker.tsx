@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Input } from '@datazen/ui';
 import { Select } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { useConnectionStore } from '../../../../../src/stores/connectionStore';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
+import { useBoundConnectionStore, useBoundSettingsStore } from '@datazen/driver-sdk';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { readRedisOptions } from './connectionOptions';
 import { readClusterRouting } from './settingsHelpers';
@@ -34,8 +33,8 @@ export function ClusterNodePicker({
   onChange,
 }: ClusterNodePickerProps) {
   const { t } = useI18n();
-  const connection = useConnectionStore((s) => s.connections.find((c) => c.id === dbSessionId));
-  const driverSettings = useSettingsStore((s) => s.settings.driverSettings);
+  const connection = useBoundConnectionStore((s) => s.connections.find((c) => c.id === dbSessionId));
+  const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
   const clusterRouting = readClusterRouting(driverSettings?.redis);
 
   const topology = readRedisOptions(

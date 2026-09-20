@@ -1,0 +1,71 @@
+# Track: cap-bridge — 驱动宿主值依赖收敛（能力注入 + 纯函数/IPC 下沉）
+
+- 分支: `feature/cap-bridge`（基准 `feat/driver-decoupling` @ c3058fdd0）
+- 角色: Coder → Tester
+- Wave 2 并行轨道之一（另一轨 i18n-core 负责 useI18n / PathInput，本轨**不碰**）
+
+## 范围
+
+消灭驱动 UI 对宿主**非 i18n 值**的直接 import。已盘点落点（基准上 Grep 复核为准）：
+
+### A. 纯函数 / IPC 封装下沉 @datazen/driver-sdk（移动实现，宿主原位置改为从 driver-sdk import 使用）
+1. `src/lib/driverSettings.ts`（`readBooleanField`、`applySchemaDefaults`，71 行，纯函数）→ `packages/driver-sdk/src/driverSettings.ts`
+2. `src/commands/driver.ts`（`driverCommands`，62 行 Tauri IPC 封装）→ `packages/driver-sdk/src/ipc/driverCommands.ts`；宿主 `commands/driver.ts` 保留再从导出（宿主自身仍用 `driverCommands` 原符号）。driver-sdk/index.ts 已有 re-export，改指本地。
+3. `src/commands/file.ts` 中被 redis ImportExport 用到的部分（先读文件确认，仅下沉被驱动消费的函数，其余留宿主）
+4. `src/lib/nativeContextMenu.ts`（123 行：`showNativeContextMenu` 等；类型 Wave 1 已下沉）→ 实现下沉 driver-sdk；宿主消费点（src/windows 等）改从 driver-sdk 或经薄宿主文件再导出，**只留一份实现**。
+5. `src/lib/resolveEditorFontFamily.ts`（仅 RedisConsole 1 处，先读实现确认无 store 依赖；有则 BLOCKED 上报，无则下沉 driver-sdk）
+
+### B. 能力注入（沿用 schemaStoreBridge 先例，driver-sdk 新增 bind 模块，宿主启动时注入真实实现）
+6. `useSettingsStore`（驱动 5 文件消费）→ driver-sdk `settingsStoreBridge.ts`：`bindSettingsStore(store)` + 暴露 `useBoundSettingsStore` hook 访问器；驱动改从 driver-sdk import。宿主 `src/stores/settingsStore.ts` 在 store 定义处调 `bindSettingsStore`（同 schemaStore.ts:694 模式）。
+7. `useConnectionStore`（ClusterNodePicker 1 文件）→ 同模式 connectionStoreBridge。
+8. `useConfirmDialog`（RedisWorkbench、useRedisGate）→ confirmDialogBridge：`bindConfirmDialog(hook)` + 驱动经访问器使用。
+9. `showNativeContextMenu`（RedisWorkbench + redisKeyContextMenu 消费）：下沉后直接 import，无需 bind（若 A4 遇宿主 store 依赖再评估）。
+
+### C. 驱动侧 import 换源
+以上落点涉及的驱动 ui 文件（约 12 个 + 测试 `__tests__/useRedisGate.test.tsx`、`__tests__/settings.test.ts`、`__tests__/redisKeyWebContextMenu.test.tsx` 的 import/mock 路径）；`vitest.drivers.config.ts` 如需 alias 补齐则补。
+
+## 禁止事项（防跨轨冲突）
+- **不动任何 `src/hooks/useI18n` import、不动 PathInput、不动 packages/ui**（i18n-core 轨范围）。
+- 不动 Wave 1 已下沉的类型文件（`driver-sdk/src/types/*`）。
+- 宿主对下沉模块的存量 import 全部保持可用。
+
+## 验收标准
+- Grep `packages/drivers/*/ui`（排除 useI18n 行）：宿主值 import 仅剩 `src/hooks/useI18n` 与 `src/components/ui/PathInput` 两类。
+- 全仓 `npx tsc --noEmit -p tsconfig.json` 0 错误。
+- redis ui：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` **218 pass / 0 fail**（Wave 1 后新基线）。
+- 宿主 Rust 不涉；宿主 vitest 定向跑下沉模块相关测试（nativeContextMenu、driverSettings、commands）零回归。
+
+## 状态
+
+- [x] Coder 完成 → READY_FOR_TEST
+- [ ] Tester 复测 → TEST_DONE
+
+## Coder 编码记录（READY_FOR_TEST）
+
+### A 下沉（移动实现，全仓单份）
+1. `src/lib/driverSettings.ts` → `packages/driver-sdk/src/driverSettings.ts`（**移动**，纯函数；宿主消费点 JsonSchemaSettingsForm / DriverSettingsSection 改为直接 import sdk；`src/lib/__tests__/driverSettingsForm.test.ts` 迁移至 `packages/driver-sdk/__tests__/`）。
+2. `src/commands/driver.ts` → `packages/driver-sdk/src/ipc/driverCommands.ts`（**移动**；宿主 `commands/driver.ts` 保留薄再导出，任务书明确要求，宿主 10+ 消费点零改动）。
+3. `src/commands/file.ts`：仅下沉驱动消费的 3 个原生对话框函数（saveTextWithDialog / saveBase64WithDialog / openBase64WithDialog）→ `packages/driver-sdk/src/ipc/fileCommands.ts`；宿主 `fileCommands = { ...sdk, openTextWithDialog, beginSave..., exportTablesStream }`，流式/会话命令留宿主（**移动+合并**，单实现）。
+4. `src/lib/nativeContextMenu.ts` → `packages/driver-sdk/src/nativeContextMenu.ts`（**移动 + bind**：实现依赖宿主 `contextMenuStore.showWebContextMenu/hide`，按任务书"遇 store 依赖改走 bind"——新增 `bindContextMenuBridge`；动态 import 的"懒挂载可取消"语义以微任务延后 + request revision 原样保留（宿主 `nativeContextMenu.test.ts` 的 lazy-cancel 用例仍绿）。宿主 `src/lib/nativeContextMenu.ts` 改为薄再导出（任务书允许，15 个宿主消费点零改动、零跨轨冲突面）；绑定发生在 `contextMenuStore.ts` 模块加载时。
+5. `src/lib/resolveEditorFontFamily.ts` → `packages/driver-sdk/src/resolveEditorFontFamily.ts`（**移动**，无 store 依赖；宿主 2 消费点 settingsStore / editorExtensions 改 import sdk；测试迁移至 `packages/driver-sdk/__tests__/`）。
+
+### B 能力注入（复刻 schemaStoreBridge 模式）
+6. `settingsStoreBridge.ts`：`bindSettingsStore` + `useBoundSettingsStore`（callable + getState/setState，zustand 形状）；宿主 `src/stores/settingsStore.ts` 文件末尾 bind。
+7. `connectionStoreBridge.ts`：`bindConnectionStore` + `useBoundConnectionStore`；宿主 `connectionStore.ts` 末尾 bind。
+8. `confirmDialogBridge.ts`：`bindConfirmDialog` + `useBoundConfirmDialog`；宿主 `useConfirmDialog.tsx` 定义处 bind。
+9. `showNativeContextMenu`：见 A4（下沉 + `bindContextMenuBridge`，驱动直接 import sdk 符号，store 侧 bind）。
+10. 超出清单但 Grep 复核发现：`RedisWorkbench` 直接 import 宿主 `useSchemaStore` → 扩展 `schemaStoreBridge`：`BoundSchemaStore` 增加 call signature，新增导出 `useBoundSchemaStore`（宿主已有 `bindSchemaStore(useSchemaStore)` 启动注入，零新增宿主改动）。
+
+### C 驱动侧换源
+redis ui 11 个运行时代码文件（redisInvoke / ImportExport / RedisConsole / useRedisGate / SafeModeBadge / MonitorPanel / ClusterNodePicker / RedisWorkbench）全部改 `@datazen/driver-sdk` import；测试 `settings.test.ts`、`useRedisGate.test.tsx`（改为测试内 bindSettingsStore/bindConfirmDialog 注入 harness store，去除宿主 store/hook 直接依赖）、`redisKeyWebContextMenu.test.tsx`（showNativeContextMenu 换源）、`redisConsoleCompletionJourney.test.tsx`（补 harness bind）。`vitest.drivers.config.ts` alias 已存在，无需改。
+
+### 自验
+- `npx tsc --noEmit -p tsconfig.json`：**0 错误**。
+- redis ui：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui`：**218 pass / 0 fail**（基线保持）。
+- 宿主定向 vitest（nativeContextMenu / settingsStore / commands / DataTable / ExecutionStrategySelect / driver-sdk / ConnectionPage×2）全绿；**全量宿主 vitest：4470 passed / 0 failed**。
+  - 修复记录：`hideNativeContextMenu` 在 bridge 未绑定时静默失效（menu 必然未打开），避免宿主单测中未加载 contextMenuStore 时的 ConnectionPage mount 崩溃（原实现靠动态 import 隐式加载）。
+- Grep 残留：`packages/drivers/*/ui` 宿主值 import 仅剩 useI18n、PathInput（i18n-core 轨）+ `redisKeyWebContextMenu.test.tsx` 两处宿主集成夹具（WebContextMenuHost 渲染器 + contextMenuStore 断言/store 访问，属宿主侧 web 菜单本体，非本轨下沉清单范围，需 Tester/协调人裁决）。
+
+## 留待 R 回归
+
+- （Tester 登记）

@@ -1,7 +1,6 @@
 import { useCallback, type ReactNode } from 'react';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
-import { useConfirmDialog } from '../../../../../src/hooks/useConfirmDialog';
+import { useBoundSettingsStore, useBoundConfirmDialog } from '@datazen/driver-sdk';
 import { type DangerLevel, requiresConfirmation } from '../console/redisConsoleDanger';
 
 /**
@@ -26,11 +25,11 @@ export interface UseRedisGateResult {
 
 export function useRedisGate(): UseRedisGateResult {
   const { t } = useI18n();
-  const [confirm, dialog] = useConfirmDialog();
+  const [confirm, dialog] = useBoundConfirmDialog();
 
   const gateWrite = useCallback(
     async (level: RedisGateLevel, command?: string): Promise<boolean> => {
-      const safeMode = useSettingsStore.getState().settings.safeMode;
+      const safeMode = useBoundSettingsStore.getState().settings.safeMode;
       const isWrite = level !== 'safe';
 
       if (safeMode && isWrite) {
