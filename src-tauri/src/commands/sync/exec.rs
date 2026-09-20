@@ -37,12 +37,10 @@ impl StatementExecutor for LiveExecutor {
         sql: &str,
         params: &[Value],
     ) -> Result<u64, crate::data_sync::DataSyncError> {
-        let result = self
-            .driver
-            .query_with_params(&self.handle, sql, params)
+        self.driver
+            .execute_with_params(&self.handle, sql, params)
             .await
-            .map_err(|e| crate::data_sync::DataSyncError::validation(e.to_string()))?;
-        Ok(result.rows_affected.unwrap_or(1))
+            .map_err(|e| crate::data_sync::DataSyncError::validation(e.to_string()))
     }
 
     async fn commit(&mut self) -> Result<(), crate::data_sync::DataSyncError> {

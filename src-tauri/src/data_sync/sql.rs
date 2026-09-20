@@ -404,7 +404,21 @@ where
         placeholder,
         preview_literal,
     )?;
+    let expected_start = idx + where_params.len();
+    let (expected_ph, expected_lit, expected_params) = where_expected_target(
+        pk_columns,
+        change.target_row.as_ref(),
+        expected_start,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        preview_literal,
+    )?;
     params.extend(where_params);
+    params.extend(expected_params);
+    let where_ph = join_where_clauses(&where_ph, &expected_ph);
+    let where_lit = join_where_clauses(&where_lit, &expected_lit);
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
         table: table.into(),
@@ -440,6 +454,15 @@ where
     P: Fn(usize, Option<&str>) -> String,
     L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
+    let target_row = change
+        .target_row
+        .as_ref()
+        .ok_or_else(|| DataSyncError::validation("DELETE requires an expected target row"))?;
+    if target_row.len() != column_names.len() {
+        return Err(DataSyncError::validation(
+            "DELETE target row width does not match column list",
+        ));
+    }
     let (where_ph, where_lit, params) = where_pk(
         pk_columns,
         &change.key,
@@ -450,6 +473,21 @@ where
         placeholder,
         preview_literal,
     )?;
+    let expected_start = 1 + params.len();
+    let (expected_ph, expected_lit, expected_params) = where_expected_target(
+        pk_columns,
+        Some(target_row),
+        expected_start,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        preview_literal,
+    )?;
+    let where_ph = join_where_clauses(&where_ph, &expected_ph);
+    let where_lit = join_where_clauses(&where_lit, &expected_lit);
+    let mut params = params;
+    params.extend(expected_params);
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
         table: table.into(),
@@ -459,6 +497,73 @@ where
         parameters: params,
         row_key: change.key.clone(),
     })
+}
+
+fn join_where_clauses(primary: &str, expected: &str) -> String {
+    if expected.is_empty() {
+        primary.to_string()
+    } else if primary.is_empty() {
+        expected.to_string()
+    } else {
+        format!("{primary} AND {expected}")
+    }
+}
+
+/// Add optimistic-concurrency predicates for the target row captured during
+/// comparison. Every non-PK column is checked with SQL NULL-safe equality.
+/// The duplicated bound value is intentional: it keeps the expression
+/// portable across PostgreSQL, MySQL and SQLite while never interpolating
+/// target data into executable SQL.
+fn where_expected_target<Q, P, L>(
+    pk_columns: &[String],
+    target_row: Option<&Vec<Option<Value>>>,
+    start_index: usize,
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: &Q,
+    placeholder: &P,
+    preview_literal: &L,
+) -> Result<(String, String, Vec<Value>), DataSyncError>
+where
+    Q: Fn(&str) -> String,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
+    let target_row = target_row.ok_or_else(|| {
+        DataSyncError::validation("UPDATE/DELETE requires an expected target row")
+    })?;
+    if target_row.len() != column_names.len() {
+        return Err(DataSyncError::validation(
+            "expected target row width does not match column list",
+        ));
+    }
+    let mut ph = Vec::new();
+    let mut lit = Vec::new();
+    let mut params = Vec::new();
+    let mut index = start_index;
+    for (position, col) in column_names.iter().enumerate() {
+        if pk_columns.iter().any(|pk| pk == col) {
+            continue;
+        }
+        let ident = quote_ident(col);
+        let expected = target_row[position].clone().unwrap_or(Value::Null);
+        let expected_option = Some(expected.clone());
+        let col_type = column_types.get(position).map(|s| s.as_str());
+        let first = placeholder(index, col_type);
+        let second = placeholder(index + 1, col_type);
+        let first_lit = preview_literal(col, &expected_option, col_type)?;
+        let second_lit = preview_literal(col, &expected_option, col_type)?;
+        ph.push(format!(
+            "({ident} = {first} OR ({ident} IS NULL AND {second} IS NULL))"
+        ));
+        lit.push(format!(
+            "({ident} = {first_lit} OR ({ident} IS NULL AND {second_lit} IS NULL))"
+        ));
+        params.push(expected.clone());
+        params.push(expected);
+        index += 2;
+    }
+    Ok((ph.join(" AND "), lit.join(" AND "), params))
 }
 
 fn where_pk<Q, P, L>(
@@ -576,13 +681,17 @@ mod tests {
         assert!(stmts[0].preview_sql.contains("'a'"));
         assert_eq!(
             stmts[1].sql,
-            r#"UPDATE "clients" SET "name" = $1 WHERE "id" = $2"#
+            r#"UPDATE "clients" SET "name" = $1 WHERE "id" = $2 AND ("name" = $3 OR ("name" IS NULL AND $4 IS NULL))"#
         );
-        assert_eq!(stmts[1].parameters.len(), 2);
-        assert_eq!(stmts[2].sql, r#"DELETE FROM "clients" WHERE "id" = $1"#);
+        assert_eq!(stmts[1].parameters.len(), 4);
+        assert_eq!(
+            stmts[2].sql,
+            r#"DELETE FROM "clients" WHERE "id" = $1 AND ("name" = $2 OR ("name" IS NULL AND $3 IS NULL))"#
+        );
+        assert_eq!(stmts[2].parameters.len(), 3);
         assert_eq!(
             stmts[2].preview_sql,
-            r#"DELETE FROM "clients" WHERE "id" = 3"#
+            r#"DELETE FROM "clients" WHERE "id" = 3 AND ("name" = 'c' OR ("name" IS NULL AND 'c' IS NULL))"#
         );
     }
 
@@ -720,6 +829,69 @@ mod tests {
             .unwrap();
         assert_eq!(stmts[0].sql, r#"DELETE FROM "t" WHERE "id" IS NULL"#);
         assert!(stmts[0].parameters.is_empty());
+    }
+
+    #[test]
+    fn update_expected_target_is_null_safe_and_bound() {
+        let options = SyncOptions::default();
+        let update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1)), None],
+            vec!["name".into()],
+            &options,
+        );
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        let stmts = generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+        )
+        .unwrap();
+        assert_eq!(
+            stmts[0].sql,
+            r#"UPDATE "t" SET "name" = $1 WHERE "id" = $2 AND ("name" = $3 OR ("name" IS NULL AND $4 IS NULL))"#
+        );
+        assert!(matches!(stmts[0].parameters[2], Value::Null));
+        assert!(matches!(stmts[0].parameters[3], Value::Null));
+        assert!(stmts[0].preview_sql.contains("'NULL'") == false);
+        assert!(stmts[0].preview_sql.contains("NULL IS NULL"));
+    }
+
+    #[test]
+    fn update_and_delete_reject_missing_or_mismatched_expected_target() {
+        let options = SyncOptions::default();
+        let mut update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1))],
+            vec!["name".into()],
+            &options,
+        );
+        update.target_row = None;
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        assert!(generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+        )
+        .is_err());
     }
 
     #[test]

@@ -73,6 +73,8 @@ export interface DataSyncSqlStatement {
 export interface DataSyncExecutionResult {
   applied: number;
   rolledBack: boolean;
+  /** Total database-reported affected rows; optional for older responses. */
+  affectedRows?: number;
 }
 
 export interface DataSyncSelectedRow {
