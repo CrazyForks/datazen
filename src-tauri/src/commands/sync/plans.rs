@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::comparison_store::ComparisonStore;
 #[cfg(test)]
 use crate::data_sync::RowChange;
 use crate::data_sync::{
@@ -21,12 +22,6 @@ use crate::data_sync::{
 };
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlanState {
-    Available,
-    Consumed,
-}
 
 #[derive(Debug, Clone, Serialize)]
 struct RelationFingerprintEntry {
@@ -145,12 +140,11 @@ pub(crate) struct StoredSyncPlan {
     pub(crate) target_driver_protocol: u32,
     pub(crate) source_schema_fingerprint: String,
     pub(crate) target_schema_fingerprint: String,
-    pub(crate) comparison: ComparisonResult,
+    pub(crate) comparison: ComparisonStore,
     pub(crate) options: SyncOptions,
     pub(crate) selection_revision: u64,
     pub(crate) target_read_only_at_preview: bool,
     expires_at: Instant,
-    state: PlanState,
 }
 
 pub(crate) struct SyncPlanStore {
@@ -183,6 +177,8 @@ impl SyncPlanStore {
     ) -> Result<SyncComparisonPreview, String> {
         let id = Uuid::new_v4().to_string();
         let selection_revision = 1;
+        let preview_tables = comparison.tables.clone();
+        let comparison = ComparisonStore::from_comparison(comparison)?;
         let plan = StoredSyncPlan {
             source_db_session_id,
             target_db_session_id,
@@ -196,12 +192,11 @@ impl SyncPlanStore {
             target_driver_protocol: driver_protocol_version(target_driver),
             source_schema_fingerprint,
             target_schema_fingerprint,
-            comparison: comparison.clone(),
+            comparison,
             options,
             selection_revision,
             target_read_only_at_preview,
             expires_at: Instant::now() + SYNC_PLAN_TTL,
-            state: PlanState::Available,
         };
         let mut plans = self
             .plans
@@ -213,7 +208,7 @@ impl SyncPlanStore {
         Ok(SyncComparisonPreview {
             plan_id: id,
             selection_revision,
-            tables: comparison.tables,
+            tables: preview_tables,
         })
     }
 
@@ -229,9 +224,6 @@ impl SyncPlanStore {
             plans.remove(id);
             return Err("sync plan has expired; return to comparison".into());
         }
-        if plan.state != PlanState::Available {
-            return Err("sync plan was already consumed; return to comparison".into());
-        }
         Ok(plan.clone())
     }
 
@@ -242,18 +234,13 @@ impl SyncPlanStore {
             .plans
             .lock()
             .map_err(|_| "sync plan registry is unavailable".to_string())?;
-        let Some(plan) = plans.get_mut(id) else {
+        let Some(plan) = plans.remove(id) else {
             return Err("sync plan is unknown or has expired; return to comparison".into());
         };
         if plan.expires_at <= Instant::now() {
-            plans.remove(id);
             return Err("sync plan has expired; return to comparison".into());
         }
-        if plan.state != PlanState::Available {
-            return Err("sync plan was already consumed; return to comparison".into());
-        }
-        plan.state = PlanState::Consumed;
-        Ok(plan.clone())
+        Ok(plan)
     }
 }
 
@@ -307,6 +294,10 @@ pub(crate) fn peek_plan(id: &str) -> Result<StoredSyncPlan, String> {
 
 pub(crate) fn claim_plan(id: &str) -> Result<StoredSyncPlan, String> {
     global_store().claim(id)
+}
+
+pub(crate) fn load_comparison(plan: &StoredSyncPlan) -> Result<ComparisonResult, String> {
+    plan.comparison.load()
 }
 
 pub(crate) fn apply_selection(
@@ -424,6 +415,7 @@ pub(crate) fn selected_rows(
 mod tests {
     use super::*;
     use crate::data_sync::{RowChange, TableResult};
+    use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
     use datazen_driver_api::Value;
 
     fn comparison() -> ComparisonResult {
@@ -523,5 +515,95 @@ mod tests {
                 "client field {field} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn expired_plan_drops_spilled_comparison_store() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let large = ComparisonResult::new(vec![TableResult::matched(
+            "users",
+            "users",
+            vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::String("x".repeat(
+                    super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1,
+                )))],
+                &SyncOptions::default(),
+            )],
+        )]);
+        let store = SyncPlanStore::new();
+        let preview = store
+            .issue(
+                "source-session".into(),
+                "target-session".into(),
+                "source-db".into(),
+                "target-db".into(),
+                None,
+                None,
+                source.as_ref(),
+                target.as_ref(),
+                "source-fingerprint".into(),
+                "target-fingerprint".into(),
+                large,
+                SyncOptions::default(),
+                false,
+            )
+            .unwrap();
+        let path = {
+            let plan = store.peek(&preview.plan_id).unwrap();
+            plan.comparison.path().unwrap()
+        };
+        assert!(path.exists());
+        store
+            .plans
+            .lock()
+            .unwrap()
+            .get_mut(&preview.plan_id)
+            .unwrap()
+            .expires_at = Instant::now() - Duration::from_secs(1);
+        assert!(store.peek(&preview.plan_id).is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn claiming_plan_removes_owner_and_cleans_file_after_claimed_handle_drops() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let large = ComparisonResult::new(vec![TableResult::matched(
+            "users",
+            "users",
+            vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::String("x".repeat(
+                    super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1,
+                )))],
+                &SyncOptions::default(),
+            )],
+        )]);
+        let store = SyncPlanStore::new();
+        let preview = store
+            .issue(
+                "source-session".into(),
+                "target-session".into(),
+                "source-db".into(),
+                "target-db".into(),
+                None,
+                None,
+                source.as_ref(),
+                target.as_ref(),
+                "source-fingerprint".into(),
+                "target-fingerprint".into(),
+                large,
+                SyncOptions::default(),
+                false,
+            )
+            .unwrap();
+        let claimed = store.claim(&preview.plan_id).unwrap();
+        let path = claimed.comparison.path().unwrap();
+        assert!(store.peek(&preview.plan_id).is_err());
+        assert!(path.exists());
+        drop(claimed);
+        assert!(!path.exists());
     }
 }

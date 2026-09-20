@@ -176,7 +176,6 @@ async fn compare_data_sync_impl_inner(
         })?;
 
     options.validate().map_err(CommandError::from)?;
-    let mut total_bytes = 0;
     let mut out = Vec::new();
     for mapping in inspected {
         if mapping.status != TableMappingStatus::Matched
@@ -345,14 +344,6 @@ async fn compare_data_sync_impl_inner(
         .map_err(CommandError::from)?;
         table_result.column_types = schema.columns.iter().map(|c| c.data_type.clone()).collect();
         table_result.source_filter = sync_filter;
-        total_bytes += serde_json::to_vec(&table_result)
-            .map_err(|e| CommandError::Validation(e.to_string()))?
-            .len();
-        if total_bytes > 64 * 1024 * 1024 {
-            return Err(CommandError::Validation(
-                "comparison exceeds 64 MiB total review limit; compare fewer tables".into(),
-            ));
-        }
         out.push(table_result);
     }
     let comparison = ComparisonResult::new(out);

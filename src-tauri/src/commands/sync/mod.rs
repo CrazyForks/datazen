@@ -2,6 +2,7 @@
 
 mod apply;
 pub(crate) mod compare;
+mod comparison_store;
 mod exec;
 mod inspect;
 mod jobs;

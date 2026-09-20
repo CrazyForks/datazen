@@ -73,6 +73,7 @@ async fn validate_plan_context(
     state: &AppState,
     plan: &StoredSyncPlan,
 ) -> Result<ValidatedSyncContext, CommandError> {
+    let comparison = plans::load_comparison(plan).map_err(CommandError::Validation)?;
     if plan.target_read_only_at_preview {
         return Err(CommandError::Validation(
             "target connection was read-only during comparison; return to comparison".into(),
@@ -128,7 +129,7 @@ async fn validate_plan_context(
         &plan.source_db_session_id,
         &plan.source_database,
         plan.source_schema.as_deref(),
-        &plan.comparison,
+        &comparison,
         true,
     )
     .await?;
@@ -138,7 +139,7 @@ async fn validate_plan_context(
         &plan.target_db_session_id,
         &plan.target_database,
         plan.target_schema.as_deref(),
-        &plan.comparison,
+        &comparison,
         false,
     )
     .await?;
@@ -225,16 +226,17 @@ pub(crate) async fn generate_data_sync_sql_for_plan_impl(
     options: SyncOptions,
 ) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
     let plan = plans::peek_plan(&plan_id).map_err(CommandError::Validation)?;
+    let comparison = plans::load_comparison(&plan).map_err(CommandError::Validation)?;
     if selection.revision != plan.selection_revision {
         return Err(CommandError::Validation(
             "selection revision is stale; return to comparison".into(),
         ));
     }
     validate_requested_options(&plan, &options)?;
-    plans::validate_selection(&plan.comparison, &selection, &options)
+    plans::validate_selection(&comparison, &selection, &options)
         .map_err(CommandError::Validation)?;
     let _context = validate_plan_context(state, &plan).await?;
-    let comparison = plans::apply_selection(&plan.comparison, &selection, &options)
+    let comparison = plans::apply_selection(&comparison, &selection, &options)
         .map_err(CommandError::Validation)?;
     generate_data_sync_sql_impl(
         state,
@@ -257,16 +259,17 @@ pub(crate) async fn execute_data_sync_plan_impl(
         ));
     }
     let plan = plans::peek_plan(&request.plan_id).map_err(CommandError::Validation)?;
+    let comparison = plans::load_comparison(&plan).map_err(CommandError::Validation)?;
     if request.selection.revision != plan.selection_revision {
         return Err(CommandError::Validation(
             "selection revision is stale; return to comparison".into(),
         ));
     }
     validate_requested_options(&plan, &request.options)?;
-    plans::validate_selection(&plan.comparison, &request.selection, &request.options)
+    plans::validate_selection(&comparison, &request.selection, &request.options)
         .map_err(CommandError::Validation)?;
     let context = validate_plan_context(state, &plan).await?;
-    let comparison = plans::apply_selection(&plan.comparison, &request.selection, &request.options)
+    let comparison = plans::apply_selection(&comparison, &request.selection, &request.options)
         .map_err(CommandError::Validation)?;
     let statements = generate_data_sync_sql_impl(
         state,
