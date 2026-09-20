@@ -92,7 +92,8 @@ async fn execute_sql_file_target(
             "source filter or recordset changed since preview; return to comparison".into(),
         ));
     }
-    let (driver, handle, _inspected, _schemas) = load_sql_source_snapshot(state, &plan.job).await?;
+    let (driver, handle, _inspected, mut schemas) =
+        load_sql_source_snapshot(state, &plan.job).await?;
     if driver.driver_type() != plan.source_driver_type
         || plans::driver_protocol_version(driver.as_ref()) != plan.source_driver_protocol
     {
@@ -138,22 +139,44 @@ async fn execute_sql_file_target(
             .sync_adapters
             .get_target(&target_type.to_string())
             .ok_or_else(|| CommandError::Validation("missing target sync adapter".into()))?;
-        crate::data_transfer::sql_file::validate_target_ir(
-            src_adapter.as_ref(),
-            driver.as_ref(),
-            target_driver.as_ref(),
-            &_schemas,
-        )
-        .map_err(CommandError::from)?;
         Some((src_adapter, tgt_adapter))
     } else {
         None
     };
     crate::data_transfer::sql_file::validate_target_dialect_job(&plan.job)
         .map_err(CommandError::from)?;
+    // The preview plan fingerprints the source schemas after the optional
+    // full-type enrichment used by cross-dialect rendering. Re-enrich this
+    // pre-claim snapshot before validating the IR and calculating the
+    // fingerprint, otherwise a driver-reported placeholder such as
+    // USER-DEFINED would be rejected (or hash differently) even though the
+    // same source type was resolved successfully during preview.
+    if let Some((src_adapter, _)) = &adapters {
+        crate::data_transfer::structure::enrich_source_types(
+            src_adapter.as_ref(),
+            driver.as_ref(),
+            &handle,
+            &plan.job.source,
+            &mut schemas,
+        )
+        .await
+        .map_err(CommandError::from)?;
+        crate::data_transfer::sql_file::validate_target_ir(
+            src_adapter.as_ref(),
+            driver.as_ref(),
+            target_driver.as_ref(),
+            &schemas,
+        )
+        .map_err(CommandError::from)?;
+    }
     let fingerprint =
-        schema_fingerprint_for_side(&plan.job.source, driver.as_ref(), &handle, &plan.job, true)
-            .await?;
+        plans::fingerprint_schemas(plans::participating_tables(&plan.job).map(|table| {
+            (
+                table.source_table.clone(),
+                schemas.get(&table.source_table).cloned(),
+            )
+        }))
+        .map_err(CommandError::from)?;
     if fingerprint != plan.source_schema_fingerprint {
         return Err(CommandError::Validation(
             "source schema changed since preview; return to comparison".into(),
