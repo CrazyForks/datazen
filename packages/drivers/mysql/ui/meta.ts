@@ -54,15 +54,18 @@ const mysqlDialectSpread = {
 
 /**
  * MySQL/MariaDB use backslash as an escape character in string literals.
- * JSON.stringify may produce backslash sequences (\", \\, \n, etc.) that
- * MySQL would misinterpret. This escaper escapes backslashes first.
+ * This escaper applies three passes in order:
+ *   1. `\` → `\\`  — preserve literal backslashes (must come first)
+ *   2. `"` → `\"`  — escape double quotes for consistency with Navicat
+ *      and to avoid issues with non-standard MySQL clients/middleware
+ *   3. `'` → `''`  — escape single quotes (SQL standard)
  */
 function mysqlEscapeSqlValue(value: unknown): string {
   if (value === null || value === undefined) return 'NULL';
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
   const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return `'${str.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
+  return `'${str.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll("'", "''")}'`;
 }
 
 export const mysqlMeta = {
