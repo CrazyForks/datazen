@@ -38,7 +38,32 @@
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测 → **FAILED（见 bugs.md，待 Coder 补 bridge 单测后复测）**
+
+## Tester 复测记录（Round 1，基准 c3058fdd0，待测 92a039383 + baf0bb0e4）
+
+### 阶段 A 实现审查（全部通过）
+- **单实现约束**：`git diff -M` 确认 driverSettings.ts（97%）/ resolveEditorFontFamily.ts（100%）/ 两个测试文件为 rename；`nativeContextMenu`/`driverCommands`/`fileCommands` 宿主侧仅剩薄再导出（或 spread 合并），全仓 Grep 函数体各仅一份。
+- **bind 完备性**：`bindSettingsStore`（settingsStore.ts 末尾）、`bindConnectionStore`（connectionStore.ts 末尾）、`bindConfirmDialog`（useConfirmDialog.tsx 定义处）、`bindContextMenuBridge`（contextMenuStore.ts 末尾）均模块加载即绑定；宿主运行时 `App.tsx` 恒挂载 `WebContextMenuHost` → 桥必绑定。四处未绑定 throw 文案清晰（`<X> has not been bound to driver-sdk yet.`）。
+- **fileCommands 拆分**：仅下沉驱动消费的 3 函数，宿主流式/会话命令保留，无重复实现；宿主 `file.test.ts` 经再导出对象仍 100% 覆盖 3 下沉函数转发（sdk 实现体被驱动测试执行到）。
+- **hideNativeContextMenu 回归修复复核**：微任务延后 + request revision + pointerdown 可取消语义与基线逐行等价；未绑定 no-op 分支逻辑自洽（未绑定 ⇒ show 必 throw ⇒ 菜单不可能已开）。宿主 lazy-cancel 用例仍绿。
+- **resolve-drivers.mjs**：改动位于生成模板字符串（`DriverSettingsContribution` import 源），非生成物；`node scripts/resolve-drivers.mjs --codegen-only --drivers=all` 重跑后 generated.ts 与现场逐字节一致（含 sdk import、无旧 `../lib/driverSettings` 引用），tsc 0 错误，工作区干净。
+- **越界检查**：diff 不含 useI18n / PathInput / packages/ui。
+- **验收 Grep**：`packages/drivers/*/ui` 宿主值 import 仅剩 useI18n、PathInput 与已裁决的 redisKeyWebContextMenu 夹具两行。
+
+### 阶段 B 独立复验（实测 = 自报，全部通过）
+- `npx tsc --noEmit -p tsconfig.json`：**0 错误**。
+- redis ui：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui`：**218 passed / 0 failed**（基线保持）。
+- 宿主全量：`npx vitest run`：**4470 passed / 433 files**（与 Coder 自报一致；`npx vitest run src` 过滤子集为 4194/4194，差异系 packages 下 sdk/ui/extension-points 测试不在 src 过滤器内）。
+- driver-sdk 新套件存在且绿：`packages/driver-sdk/__tests__/`（3 files / 7 tests）。
+
+### 阶段 C 覆盖率：不达标 → BUG-001
+被改动 driver-sdk 核心模块行覆盖：nativeContextMenu 89.8% / resolveEditorFontFamily 100% / fileCommands 100% / driverSettings 21%（与迁移前基线持平，薄封装按配置豁免）/ **四个 bridge 仅 20%–44%，未绑定 throw、bind 转发、useBoundXxx 组件内订阅更新路径零专属测试** → 登记 `cap-bridge-BUG-001`（待修复）。
+
+## 留待 R 回归
+
+- [E2E] redis 键树右键菜单真实弹出：连接真实 Redis → key-browser 右键 → Web context menu 在光标处弹出（经 `showNativeContextMenu` → `bindContextMenuBridge` 新链路）；菜单弹出后立即移动/按下指针可取消（懒挂载取消语义）；Esc/点击外部关闭。前置：完整构建 + 真实 Redis 连接。
+- [E2E] redis 危险操作确认对话框真实渲染：Safe Mode 开启时执行写命令 → 确认对话框（`useBoundConfirmDialog` → 宿主 `useConfirmDialog`）可见、确认/取消按钮行为正确、gate 拦截与放行结果正确。前置：完整构建 + `allowUnsafeFileOperations`/Safe Mode 两种态。
 
 ## Coder 编码记录（READY_FOR_TEST）
 
@@ -65,7 +90,3 @@ redis ui 11 个运行时代码文件（redisInvoke / ImportExport / RedisConsole
 - 宿主定向 vitest（nativeContextMenu / settingsStore / commands / DataTable / ExecutionStrategySelect / driver-sdk / ConnectionPage×2）全绿；**全量宿主 vitest：4470 passed / 0 failed**。
   - 修复记录：`hideNativeContextMenu` 在 bridge 未绑定时静默失效（menu 必然未打开），避免宿主单测中未加载 contextMenuStore 时的 ConnectionPage mount 崩溃（原实现靠动态 import 隐式加载）。
 - Grep 残留：`packages/drivers/*/ui` 宿主值 import 仅剩 useI18n、PathInput（i18n-core 轨）+ `redisKeyWebContextMenu.test.tsx` 两处宿主集成夹具（WebContextMenuHost 渲染器 + contextMenuStore 断言/store 访问，属宿主侧 web 菜单本体，非本轨下沉清单范围，需 Tester/协调人裁决）。
-
-## 留待 R 回归
-
-- （Tester 登记）
