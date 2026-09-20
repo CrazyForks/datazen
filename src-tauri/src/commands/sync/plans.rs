@@ -13,11 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::data_sync::{
-    ChangeOperation, ComparisonResult, SyncOptions, TableMappingStatus, TableResult,
-};
 #[cfg(test)]
 use crate::data_sync::RowChange;
+use crate::data_sync::{
+    ChangeOperation, ComparisonResult, SyncOptions, SyncSourceFilter, TableMappingStatus,
+    TableResult,
+};
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -33,6 +34,8 @@ struct RelationFingerprintEntry {
     schema: Option<String>,
     relation: String,
     table_schema: Option<TableSchema>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_filter: Option<SyncSourceFilter>,
 }
 
 /// A deterministic identity for the qualified objects participating in a
@@ -44,14 +47,34 @@ pub(crate) fn fingerprint_relations(
     schema: Option<&str>,
     entries: impl IntoIterator<Item = (String, Option<TableSchema>)>,
 ) -> Result<String, String> {
+    fingerprint_relations_with_filters(
+        database,
+        schema,
+        entries
+            .into_iter()
+            .map(|(relation, table_schema)| (relation, table_schema, None)),
+    )
+}
+
+/// Fingerprint the qualified schema plus the structured predicates that were
+/// used for the reviewed comparison. Filter values are part of the plan
+/// identity, so execution cannot silently reuse a plan for another scope.
+pub(crate) fn fingerprint_relations_with_filters(
+    database: &str,
+    schema: Option<&str>,
+    entries: impl IntoIterator<Item = (String, Option<TableSchema>, Option<SyncSourceFilter>)>,
+) -> Result<String, String> {
     let mut entries: Vec<RelationFingerprintEntry> = entries
         .into_iter()
-        .map(|(relation, table_schema)| RelationFingerprintEntry {
-            database: database.to_string(),
-            schema: schema.map(str::to_string),
-            relation,
-            table_schema,
-        })
+        .map(
+            |(relation, table_schema, source_filter)| RelationFingerprintEntry {
+                database: database.to_string(),
+                schema: schema.map(str::to_string),
+                relation,
+                table_schema,
+                source_filter,
+            },
+        )
         .collect();
     entries.sort_by(|left, right| {
         (&left.database, &left.schema, &left.relation).cmp(&(
@@ -443,6 +466,40 @@ mod tests {
         let rows = selected_rows(&comparison(), &SyncOptions::default());
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0].key.as_slice(), [Value::Integer(1)]));
+    }
+
+    #[test]
+    fn filter_values_are_part_of_relation_fingerprint() {
+        let schema = datazen_driver_api::TableSchema {
+            table_name: "users".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let active: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+            "filters": [{"column": "status", "operator": "eq", "value": "active"}],
+            "logic": "and"
+        }))
+        .unwrap();
+        let archived: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+            "filters": [{"column": "status", "operator": "eq", "value": "archived"}],
+            "logic": "and"
+        }))
+        .unwrap();
+        let first = fingerprint_relations_with_filters(
+            "db",
+            Some("public"),
+            vec![("users".into(), Some(schema.clone()), Some(active))],
+        )
+        .unwrap();
+        let second = fingerprint_relations_with_filters(
+            "db",
+            Some("public"),
+            vec![("users".into(), Some(schema), Some(archived))],
+        )
+        .unwrap();
+        assert_ne!(first, second);
     }
 
     #[test]

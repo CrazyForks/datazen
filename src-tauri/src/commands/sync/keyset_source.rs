@@ -1,13 +1,14 @@
 //! Live driver-backed keyset page source for Data Sync compare.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datazen_driver_api::{SyncKeyContract, SyncKeyValue, SyncSourceAdapter, Value};
 
 use crate::data_sync::{
-    build_keyset_select_sql_with_order, mysql_placeholder, postgres_placeholder, quote_ident_sql,
-    DataSyncError, Row, RowPageSource,
+    build_keyset_select_sql_with_order_and_filter, quote_ident_sql, DataSyncError, Row,
+    RowPageSource, SyncSourceFilter,
 };
 use crate::db::{ConnectionHandle, DatabaseDriver};
 
@@ -24,6 +25,8 @@ pub struct DriverKeysetSource {
     key_adapter: Arc<dyn SyncSourceAdapter>,
     key_contracts: Vec<SyncKeyContract>,
     key_order_expressions: Vec<String>,
+    sync_filter: Option<SyncSourceFilter>,
+    column_types: HashMap<String, String>,
 }
 
 impl DriverKeysetSource {
@@ -39,6 +42,8 @@ impl DriverKeysetSource {
         family: &str,
         key_adapter: Arc<dyn SyncSourceAdapter>,
         key_contracts: Vec<SyncKeyContract>,
+        sync_filter: Option<SyncSourceFilter>,
+        column_types: HashMap<String, String>,
     ) -> Result<Self, DataSyncError> {
         if key_contracts.len() != pk_columns.len() {
             return Err(DataSyncError::validation(
@@ -66,6 +71,8 @@ impl DriverKeysetSource {
             key_adapter,
             key_contracts,
             key_order_expressions,
+            sync_filter,
+            column_types,
         })
     }
 }
@@ -96,7 +103,22 @@ impl RowPageSource for DriverKeysetSource {
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
-        let (sql, params) = build_keyset_select_sql_with_order(
+        let (filter_sql, filter_params) = match self.sync_filter.as_ref() {
+            Some(filter) => filter
+                .build_where_typed(
+                    quote,
+                    after_key.map_or(0, |key| key.len()) + 1,
+                    |column| self.column_types.get(column).cloned(),
+                    |index, data_type| {
+                        self.driver
+                            .parameter_placeholder(index, data_type)
+                            .map_err(|error| DataSyncError::validation(error.to_string()))
+                    },
+                )
+                .map_err(|error| DataSyncError::validation(error.to_string()))?,
+            None => (None, Vec::new()),
+        };
+        let (sql, params) = build_keyset_select_sql_with_order_and_filter(
             &self.table,
             self.database.as_deref(),
             self.schema.as_deref(),
@@ -108,12 +130,19 @@ impl RowPageSource for DriverKeysetSource {
             limit,
             quote,
             |i| {
-                if family == "mysql" {
-                    mysql_placeholder(i)
-                } else {
-                    postgres_placeholder(i)
-                }
+                self.driver
+                    .parameter_placeholder(i, None)
+                    .unwrap_or_else(|_| {
+                        if family == "mysql" {
+                            "?".into()
+                        } else {
+                            format!("${i}")
+                        }
+                    })
             },
+            filter_sql
+                .as_deref()
+                .map(|sql| (sql, filter_params.as_slice())),
         )?;
         let result = self
             .driver

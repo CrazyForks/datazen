@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Value } from '../types';
+import type { FilterCondition, Value } from '../types';
 
 export interface SyncTask {
   id: string;
@@ -50,6 +50,13 @@ export interface DataSyncTableResult {
   primaryKeys?: string[];
   unchangedCount?: number;
   rows?: DataSyncRowChange[];
+  sourceFilter?: DataSyncSourceFilter;
+}
+
+/** Structured, parameterized predicate applied symmetrically to one table pair. */
+export interface DataSyncSourceFilter {
+  filters: FilterCondition[];
+  logic?: 'and' | 'or';
 }
 
 export interface SyncOptions {
@@ -227,6 +234,7 @@ export const syncCommands = {
     sourceSchema?: string,
     targetSchema?: string,
     options?: SyncOptions,
+    filters?: Record<string, DataSyncSourceFilter>,
   ) => {
     activeComparisonPlan = null;
     const response = await invoke<DataSyncComparisonPreview>('compare_data_sync', {
@@ -239,6 +247,7 @@ export const syncCommands = {
       sourceSchema: sourceSchema ?? null,
       targetSchema: targetSchema ?? null,
       options: options ?? null,
+      filters: filters ?? null,
     });
     activeComparisonPlan = response;
     return response;

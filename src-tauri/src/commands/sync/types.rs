@@ -123,6 +123,7 @@ impl From<TableMappingInput> for TableMapping {
             target_table: value.target_table,
             enabled: value.enabled,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 }

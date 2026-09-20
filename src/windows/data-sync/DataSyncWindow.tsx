@@ -8,7 +8,12 @@ import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { aiCommands } from '../../commands/ai';
-import { syncCommands, type DataSyncRowChange, type SyncOptions } from '../../commands/sync';
+import {
+  syncCommands,
+  type DataSyncRowChange,
+  type DataSyncSourceFilter,
+  type SyncOptions,
+} from '../../commands/sync';
 import { databaseCommands } from '../../commands/database';
 import { useI18n } from '../../hooks/useI18n';
 import { useLocaleDomains } from '../../hooks/useLocaleDomains';
@@ -666,17 +671,35 @@ export function DataSyncWindow() {
       }
 
       const toCompare = tablesForCompare(mappingResults);
-      const comparedResponse = await syncCommands.compareDataSync(
-        srcConnId,
-        tgtConnId,
-        toCompare,
-        jobId,
-        sourceDatabase,
-        targetDatabase,
-        sourceSchema || undefined,
-        targetSchema || undefined,
-        syncOptions,
+      const filters = Object.fromEntries(
+        mappingResults
+          .filter((row) => row.status === 'MATCHED' && row.sourceFilter)
+          .map((row) => [row.sourceTable, row.sourceFilter as DataSyncSourceFilter]),
       );
+      const comparedResponse = Object.keys(filters).length
+        ? await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            toCompare,
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+            filters,
+          )
+        : await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            toCompare,
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+          );
 
       if (generation !== compareGenerationRef.current) return false;
       const compared = Array.isArray(comparedResponse) ? comparedResponse : comparedResponse.tables;
@@ -774,6 +797,20 @@ export function DataSyncWindow() {
       }),
     );
   }, []);
+
+  const updateSourceFilter = useCallback(
+    (sourceTable: string, sourceFilter: DataSyncSourceFilter | undefined) => {
+      setSyncState('idle');
+      setMappingResults((rows) =>
+        rows.map((row) =>
+          row.sourceTable === sourceTable
+            ? { ...row, sourceFilter, rows: undefined }
+            : row,
+        ),
+      );
+    },
+    [],
+  );
 
   const handleOptionsChange = useCallback((next: SyncOptions) => {
     setSyncOptions(next);
@@ -875,17 +912,35 @@ export function DataSyncWindow() {
       }
 
       setExecuteProgress(t('sync.recomparing'));
-      const recomparedResponse = await syncCommands.compareDataSync(
-        srcConnId,
-        tgtConnId,
-        tablesWithSelection.map((r) => r.sourceTable),
-        jobId,
-        sourceDatabase,
-        targetDatabase,
-        sourceSchema || undefined,
-        targetSchema || undefined,
-        syncOptions,
+      const recompareFilters = Object.fromEntries(
+        tablesWithSelection
+          .filter((row) => row.sourceFilter)
+          .map((row) => [row.sourceTable, row.sourceFilter as DataSyncSourceFilter]),
       );
+      const recomparedResponse = Object.keys(recompareFilters).length
+        ? await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            tablesWithSelection.map((r) => r.sourceTable),
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+            recompareFilters,
+          )
+        : await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            tablesWithSelection.map((r) => r.sourceTable),
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+          );
       const recompared = Array.isArray(recomparedResponse) ? recomparedResponse : recomparedResponse.tables;
       setMappingResults((prev) => {
         const merged = mergeCompareIntoMappings(prev, recompared);
@@ -1190,6 +1245,7 @@ export function DataSyncWindow() {
                   onToggleDisabled={toggleDisabledTable}
                   onOpenSchemaDiff={openSchemaDiffWindow}
                   onOpenDataTransfer={openDataTransferWindow}
+                  onUpdateSourceFilter={updateSourceFilter}
                 />
               ) : (
                 <div className="rounded-lg border border-edge bg-surface-alt px-4 py-8 text-center text-sm text-fg-muted">

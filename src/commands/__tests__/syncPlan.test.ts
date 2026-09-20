@@ -86,4 +86,34 @@ describe('Data Sync immutable plan IPC', () => {
     expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('DROP TABLE');
     expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('attacker supplied row');
   });
+
+  it('sends only structured per-table filters with the compare request', async () => {
+    invoke.mockResolvedValueOnce({ planId: 'filtered-plan', selectionRevision: 1, tables: [] });
+    await syncCommands.compareDataSync(
+      'source-session',
+      'target-session',
+      ['users'],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { insert: true, update: true, delete: false },
+      {
+        users: {
+          filters: [{ column: 'status', operator: 'eq', value: 'active' }],
+          logic: 'and',
+        },
+      },
+    );
+    expect(invoke).toHaveBeenCalledWith('compare_data_sync', expect.objectContaining({
+      filters: {
+        users: {
+          filters: [{ column: 'status', operator: 'eq', value: 'active' }],
+          logic: 'and',
+        },
+      },
+    }));
+    expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('WHERE');
+  });
 });

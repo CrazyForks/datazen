@@ -95,12 +95,35 @@ pub(crate) async fn inspect_data_sync_impl(
         &src_config.database_type,
         &tgt_config.database_type,
     )?;
-    Ok(classify_tables(
+    let mut results = classify_tables(
         &family,
         &src_tables,
         &tgt_tables,
         mappings,
         &source_schemas,
         &target_schemas,
-    ))
+    );
+    for result in &mut results {
+        if result.status != crate::data_sync::TableMappingStatus::Matched {
+            continue;
+        }
+        if let Some(schema) = source_schemas.get(&result.source_table) {
+            result.columns = schema
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect();
+            result.column_types = schema
+                .columns
+                .iter()
+                .map(|column| column.data_type.clone())
+                .collect();
+            result.primary_keys = schema.effective_primary_keys();
+        }
+        result.source_filter = mappings
+            .iter()
+            .find(|mapping| mapping.source_table == result.source_table)
+            .and_then(|mapping| mapping.source_filter.clone());
+    }
+    Ok(results)
 }

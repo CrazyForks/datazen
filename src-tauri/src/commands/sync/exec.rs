@@ -193,9 +193,14 @@ async fn current_schema_fingerprint(
             &table.target_table
         };
         let schema_snapshot = driver.get_table_schema(handle, relation).await.ok();
-        entries.push((relation.clone(), schema_snapshot));
+        entries.push((
+            relation.clone(),
+            schema_snapshot,
+            table.source_filter.clone(),
+        ));
     }
-    plans::fingerprint_relations(database, schema, entries).map_err(CommandError::Validation)
+    plans::fingerprint_relations_with_filters(database, schema, entries)
+        .map_err(CommandError::Validation)
 }
 
 fn validate_requested_options(
