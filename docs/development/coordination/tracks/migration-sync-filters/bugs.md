@@ -11,7 +11,10 @@
 
 ## Independent verification (2026-09-20)
 
-No Sync-filter defect was reproduced. The live PostgreSQL journey confirmed
-that rows outside the symmetric predicate do not become delete candidates or
-receive writes. The unsupported SQLite V1 family gate is an existing product
-boundary, not a regression in this track.
+No defect was reproduced in the Rust filter, keyset, plan-fingerprint, or
+frontend test coverage. The final pass also completed the full host Rust suite,
+Sync frontend tests, TypeScript checking, and the formal WebDriver build. A
+live PostgreSQL filter journey was not rerun in this environment because the
+read-only fixture password is unavailable; the existing track record contains
+the prior live journey evidence. The unsupported SQLite V1 family gate is an
+existing product boundary, not a regression in this track.

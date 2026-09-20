@@ -18,16 +18,19 @@ filter clears the previous comparison and requires a fresh compare.
 
 ## Independent verification (2026-09-20)
 
-- Rust focused suites passed: `commands::sync::` 142/142 and `data_sync::` 114/114.
-- Frontend Sync window and sync-plan tests passed: 32/32; `pnpm typecheck` passed.
-- Formal minimal-driver WebDriver build passed with `pnpm tauri:build:webdriver:minimal`.
-- Live WebDriver journey passed against PostgreSQL source `datazen_e2e` and target
-  `postgres`: a filter `id >= 2` produced only the in-scope UPDATE/INSERT rows,
-  excluded id=1 from delete candidates, executed two selected changes, and left
-  the out-of-scope target row unchanged. A second comparison with a changed
-  filter produced a distinct plan; the original one-shot plan remained protected
-  by the server plan state.
-- The E2E runner warned that `E2E_PG_RO_PASSWORD` is unset, so the standard
-  read-only fixture setup was skipped. This did not affect the writable PG
-  journey above. SQLite is intentionally rejected by the current V1 Data Sync
-  family gate and was not used for the live journey.
+- `cargo test -p datazen --lib` passed **1446 passed, 3 ignored**.
+- Focused Rust suites passed: `commands::sync::` **28 passed** and
+  `data_sync::` **114 passed**. The filter unit tests cover parameter binding,
+  typed placeholders, `IN`, null predicates, binary markers, and the keyset
+  SQL parameter order. The plan tests cover filter values in the relation
+  fingerprint.
+- Frontend Sync tests passed **45/45**; the broader component run passed
+  **749/749**. `pnpm exec tsc --noEmit` passed.
+- Formal `pnpm tauri:build:webdriver` passed, including frontend production
+  build, injected basic drivers, Rust compilation, and macOS bundle creation.
+- A live database journey was not rerun in this final pass because
+  `E2E_PG_RO_PASSWORD` is unset and this environment has no dedicated
+  source-filter WebDriver spec. The existing track record contains the prior
+  PostgreSQL journey; it remains a required release gate for any change to
+  the filter execution path. SQLite is intentionally rejected by the current
+  V1 Data Sync family gate.
