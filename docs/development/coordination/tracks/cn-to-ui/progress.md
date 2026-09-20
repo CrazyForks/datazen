@@ -28,7 +28,22 @@
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测 → TEST_DONE(PASSED)
+
+## Tester 复测记录（2026-09-20，全新实例）
+
+- **阶段 A 实现审查**：`git diff 040e15bde..HEAD` 共 16 个 redis ui 文件，逐文件核实改动仅限 cn import 行（并入既有 `@datazen/ui` import 或原位替换），无夹带逻辑/JSX/其他 import 变更；`src/lib/cn.ts`、宿主 `src/**`、`packages/ui/src/**` 零改动（diff 文件清单除 progress.md 外仅 `packages/drivers/redis/ui/**`）。行为一致性核实：`packages/ui/src/cn.ts` = clsx + twMerge；`src/lib/cn.ts` 已是 `export { cn } from '@datazen/ui'` 再导出，无差异，无需 BLOCKED。
+- **阶段 B 独立复跑**：
+  - Grep `packages/drivers` 下 `src/lib/cn` = 0 命中。
+  - `npx tsc --noEmit -p tsconfig.json`：0 错误。
+  - `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui`：**213 passed / 5 failed（26 文件：24 pass / 2 fail）**，与基线完全一致。5 红分布：stringKeyValue.test.ts ×3（tryDecompressString gzip/zlib 环境性失败）、redisWorkbench.test.tsx ×2（Tauri invoke 未 mock 报 `Cannot read properties of undefined (reading 'invoke')` + set_string 路由断言漂移）；均与本轨 cn 替换无关，归 fix-redis-tests 轨。
+- **阶段 C 覆盖率**：纯 import 替换、零新增逻辑分支，无需补测试；Grep `vi.mock` 含 `lib/cn` 字符串 = 0 命中，无遗漏 mock。
+- **阶段 D E2E 登记**：见下方"留待 R 回归"。
+- 结论：**TEST_DONE(PASSED)**，待测 commit `009461a17`。
+
+## 留待 R 回归
+
+- 【留待 R 回归】redis 工作区视觉回归：打开 redis 连接工作区，确认带 `cn()` 类名拼接的组件渲染正常——重点 `SearchModeTabs` 激活/非激活 tab 高亮样式、`KeyTreeList` 行 hover 态、`RedisConsole` 补全弹出层（`CompletionPopup`）样式；前置条件：webdriver 构建 + redis 示例库。
 
 ## Coder 自验记录（2026-09-20）
 
@@ -37,7 +52,3 @@
 - 行为一致性：`packages/ui/src/cn.ts` = clsx + twMerge，且 `src/lib/cn.ts` 本身已是 `export { cn } from '@datazen/ui'` 的再导出，无差异。
 - `npx tsc --noEmit -p tsconfig.json`：通过（0 错误）。
 - `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui`：213 passed / 5 failed（与基线一致，5 红为 stringKeyValue/decode 既有失败，属 fix-redis-tests 轨）。
-
-## 留待 R 回归
-
-- 无（纯 import 替换）。
