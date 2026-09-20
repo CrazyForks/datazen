@@ -1,6 +1,6 @@
 # Track: migration-transfer-sql-target
 
-- Phase: READY_FOR_TEST
+- Phase: TEST_DONE
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-sql-target`
 - Branch: `codex/migration-transfer-sql-target`
 - Scope: server-owned SQL-file destination for Data Transfer, integrated with immutable preview plans and execute-by-plan-id.
@@ -31,6 +31,7 @@
 - Atomic publication uses POSIX rename replacement and Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)`; staging drops leave an existing destination untouched on failure/cancel.
 - Follow-up Vitest: **32 passed, 0 failed**; Rust SQL-file: **4 passed, 0 failed**; Rust data-transfer commands: **17 passed, 0 failed**; `npx tsc --noEmit`, `cargo fmt --all`, and `git diff --check`: passed.
 - Formal `CI=true pnpm tauri:build:webdriver`: passed; debug app and DMG produced, then generated driver/Cargo files were restored.
+- Fresh independent retest at `8aa2d68c`: prior four P1s closed; Vitest **32/32**, Rust commands **17/17**, SQL-file **4/4**, execution **12/12**, preview **6/6**, type-check, and formal WebDriver build passed. Windows `MoveFileExW` replacement was statically reviewed because this host has no Windows runtime/target.
 
 ## E2E registration
 

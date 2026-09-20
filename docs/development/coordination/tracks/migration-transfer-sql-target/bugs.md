@@ -46,3 +46,22 @@ The independent tester completed the focused Rust, frontend, type-check, and for
 - `npx tsc --noEmit`: passed.
 - `CI=true pnpm tauri:build:webdriver`: passed, producing the debug app and DMG.
 
+## TEST_DONE — independent fix retest (2026-09-20)
+
+Retested commit `8aa2d68c58e50795aab1a70e81d6bdfab979f495` from a fresh tester pass. All four prior P1 findings are closed:
+
+- **BUG-001:** the SQL-file UI omits an empty client table snapshot, and the server treats a stale empty selection as the immutable server-discovered scope. The UI multi-table journey and `sql_file_empty_selection_keeps_server_discovered_tables` both passed.
+- **BUG-002:** preview back navigation returns directly to the SQL-file setup step. The UI journey passed and confirmed the mapping step is not shown.
+- **BUG-003:** SQL-file structure DDL is rendered in a read-only preview element; there is no editor or override callback. The UI journey passed.
+- **BUG-004:** POSIX publication uses replacement `rename`; the Windows branch uses `MoveFileExW` with `REPLACE_EXISTING | WRITE_THROUGH`. The host has no Windows runtime or Windows Rust target installed, so the Windows branch was statically reviewed rather than executed. Existing-destination replacement and staging-drop preservation tests passed; the execution control flow drops staging on write, render, failure, and cancellation paths, leaving the old destination untouched until publication.
+
+Fresh evidence:
+
+- Vitest transfer suites: **32/32**.
+- Injected Rust `commands::data_transfer`: **17/17**; `data_transfer::sql_file`: **4/4**; `data_transfer::execution_tests`: **12/12**; `data_transfer::preview`: **6/6**.
+- `npx tsc --noEmit`: passed.
+- `CI=true pnpm tauri:build:webdriver`: passed; debug app and DMG produced.
+- Path/token review passed: native picker returns only an opaque token; the host validates an absolute existing-parent `.sql` path; preview and execute resolve the server-owned token and accept only the opaque plan id.
+- Database-target compatibility remains intact: the existing `target` endpoint path compiles and its focused plan/execution tests passed alongside the SQL-file path.
+
+No new defect was found. Live database fixtures were not run in this environment; Windows replacement remains statically reviewed because the required target/runtime is unavailable.
