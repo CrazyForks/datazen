@@ -25,3 +25,7 @@ The E2E setup printed the known environment warning that `E2E_PG_RO_PASSWORD` is
 ## Conclusion
 
 TEST_FAILED for the requested preview-cast acceptance gate. SFLT-001 is independently verified as fixed for the real UI/IPC execution path; the track remains open until the preview either exposes the typed placeholder/cast or the product contract explicitly accepts the anonymous preview representation.
+
+## Preview-cast fix pending independent retest
+
+The preview command now replaces the anonymous source-filter preview with the typed placeholder output generated from the same source schema and driver formatter used by execution. The original PostgreSQL journey should now display `$1::integer` for `id > 2`; a fresh tester must verify that output and rerun the execution assertion.

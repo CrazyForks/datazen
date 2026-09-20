@@ -50,7 +50,7 @@ A numeric value entered for an integer or numeric source column is converted or 
 | Field | Value |
 | --- | --- |
 | Severity | S3 (preview and execution contract mismatch) |
-| Status | 待修复 |
+| Status | Fixed; pending independent retest |
 | Found | 2026-09-20 |
 | Scope | Data Transfer source-filter preview, PostgreSQL source |
 | Repro | 100% |
@@ -83,3 +83,7 @@ The same journey confirmed that execution itself is correct: result text was `�
 
 - `src-tauri/src/data_transfer/filter.rs`: `SourceFilter::preview_where` calls `build_where` with `?` and no source type callback.
 - `src-tauri/src/commands/data_transfer/preview.rs`: typed validation is performed, but only for capability checking; the resulting typed SQL is not returned in `source_filter_preview`.
+
+### Fix
+
+The preview command now replaces the anonymous filter preview with the same typed placeholder shape produced from the source schema and driver formatter. A PostgreSQL integer filter is therefore shown as `WHERE ("id" > $1::integer)` before execution.

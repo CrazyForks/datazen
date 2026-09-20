@@ -218,6 +218,49 @@ pub(crate) async fn preview_data_transfer_impl(
     )
     .map_err(CommandError::from)?;
 
+    // Return the same typed placeholder shape that execution will use. The
+    // preview is review evidence, so an anonymous `?` would hide a PostgreSQL
+    // cast such as `$1::integer` and make the reviewed SQL differ from the
+    // actual source predicate.
+    for write_plan in &mut preview.write_plans {
+        let Some(source_filter) = job
+            .tables
+            .iter()
+            .find(|mapping| mapping.source_table == write_plan.source_table)
+            .and_then(|mapping| mapping.source_filter.as_ref())
+        else {
+            continue;
+        };
+        let Some(schema) = source_schemas_for_plan.get(&write_plan.source_table) else {
+            continue;
+        };
+        let (where_sql, _) = source_filter
+            .build_where_typed(
+                src_driver.quote_char(),
+                1,
+                |column| {
+                    schema
+                        .columns
+                        .iter()
+                        .find(|candidate| candidate.name == column)
+                        .map(|candidate| candidate.data_type.clone())
+                },
+                |index, data_type| {
+                    src_driver
+                        .parameter_placeholder(index, data_type)
+                        .map_err(|error| {
+                            crate::data_transfer::TransferError::unsupported(error.to_string())
+                        })
+                },
+            )
+            .map_err(|error| {
+                CommandError::Validation(format!(
+                    "cannot render typed source filter preview: {error}"
+                ))
+            })?;
+        write_plan.source_filter_preview = where_sql;
+    }
+
     if matches!(
         job.mode,
         crate::data_transfer::TransferMode::Data
