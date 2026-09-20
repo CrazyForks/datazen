@@ -9,13 +9,17 @@ This track hardens the existing backend batch export formatter and the shared SQ
 - SQL INSERT batch export receives the live `Arc<dyn DatabaseDriver>` and calls `DatabaseDriver::format_sql_literal` for every value. The generic `data_sync::sql::format_literal` helper is no longer used by this export path.
 - The driver API default binary literal is lossless hexadecimal `X'...'`. PostgreSQL overrides it with bytea hex input (`'\\x...'`); MySQL/MariaDB and SQLite emit `X'...'`.
 - CSV bytes use the explicit `datazen:bytes:hex:<lowercase-hex>` marker. Text and timestamp values that begin with the reserved marker namespace are escaped with `datazen:text:` so a consumer can distinguish them.
-- JSON bytes use a valid structured marker object: `{"$datazenType":"bytes","encoding":"hex","value":"..."}`.
+- CSV fields containing either `\n` or `\r` are quoted.
+- JSON bytes use a valid structured marker object: `{"$datazenType":"bytes","encoding":"hex","value":"..."}`. Native JSON objects claiming the reserved bytes marker are wrapped in a `{"$datazenType":"json","value":...}` envelope; ordinary JSON remains unchanged.
+- SQL Server decodes binary columns as `Value::Bytes` and emits `0xHEX` literals.
 - Existing scalar formatting, quote escaping, SQL transaction batching, callback streaming, and bounded file sinks remain in place.
 
 ## Acceptance gates
 
 - [x] Export formatter tests cover bytes `00 ff fe`, quoted text, CSV marker escaping, valid JSON, and driver-owned SQL literals.
 - [x] PostgreSQL, MySQL, and SQLite driver unit tests cover lossless binary literals and quoted text.
+- [x] SQL Server driver tests cover binary column decoding and `0xHEX` literals.
+- [x] CSV bare carriage return and JSON marker collision regressions are covered.
 - [x] Driver API SQL dump tests pass, preserving the existing driver-owned literal call in the dump pipeline.
 - [ ] Fresh independent tester confirms host, driver, frontend, formal build, and live export journeys.
 

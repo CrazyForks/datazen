@@ -160,12 +160,7 @@ impl SqlServerDriver {
             ColumnData::Bit(v) => v.map(Value::Bool),
             ColumnData::String(v) => v.as_ref().map(|s| Value::String(s.to_string())),
             ColumnData::Guid(v) => v.map(|g| Value::String(g.to_string())),
-            ColumnData::Binary(v) => v.as_ref().map(|b| {
-                Value::String(format!(
-                    "0x{}",
-                    b.iter().map(|x| format!("{x:02x}")).collect::<String>()
-                ))
-            }),
+            ColumnData::Binary(v) => v.as_ref().map(|b| Value::Bytes(b.to_vec())),
             ColumnData::Numeric(v) => v.map(|n| Value::String(n.to_string())),
             ColumnData::Xml(v) => v.as_ref().map(|x| Value::String(x.to_string())),
             ColumnData::DateTime(v) => v.map(|d| Value::String(format!("{d:?}"))),
@@ -316,6 +311,26 @@ fn apply_sqlserver_top(stmt: &str, limit: Option<u32>) -> (String, Option<u32>) 
 impl DatabaseDriver for SqlServerDriver {
     fn driver_type(&self) -> DatabaseType {
         "sqlserver".to_string()
+    }
+
+    fn format_sql_literal(&self, value: &Option<Value>) -> String {
+        match value {
+            None | Some(Value::Null) => "NULL".into(),
+            Some(Value::Bool(true)) => "1".into(),
+            Some(Value::Bool(false)) => "0".into(),
+            Some(Value::Integer(n)) => n.to_string(),
+            Some(Value::Float(n)) => n.to_string(),
+            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(Value::Bytes(bytes)) => format!(
+                "0x{}",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
+        }
     }
 
     /// F7: qualify unqualified table references with the T-SQL three-part
@@ -757,7 +772,30 @@ impl DatabaseDriver for SqlServerDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
     use tiberius::EncryptionLevel;
+
+    #[test]
+    fn binary_columns_remain_bytes_for_lossless_export() {
+        let data = ColumnData::Binary(Some(Cow::Borrowed(&[0x00, 0xff, 0xfe])));
+        assert!(matches!(
+            SqlServerDriver::value_from_column(&data),
+            Some(Value::Bytes(bytes)) if bytes == vec![0x00, 0xff, 0xfe]
+        ));
+    }
+
+    #[test]
+    fn format_sql_literal_uses_sql_server_binary_syntax() {
+        let driver = SqlServerDriver::new();
+        assert_eq!(
+            driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+            "0x00fffe"
+        );
+        assert_eq!(
+            driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+            "'O''Brien'"
+        );
+    }
 
     #[test]
     fn ssl_disable_is_plaintext() {

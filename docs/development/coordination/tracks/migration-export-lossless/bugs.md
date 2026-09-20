@@ -14,19 +14,19 @@ The affected drivers now emit binary-safe hexadecimal literals. The shared defau
 
 CSV now has an explicit hex marker and JSON has a structured marker object. Focused tests assert that `00 ff fe` survives without U+FFFD and that the JSON output remains parseable.
 
-## Open
+## Closed
 
-### EXPORT-LOSSLESS-004 — CSV fields containing a bare carriage return are not quoted
+### EXPORT-LOSSLESS-004 — CSV fields containing a bare carriage return were not quoted
 
-`escape_csv_field` quotes commas, quotes, and `\n`, but not `\r`. A text or timestamp value containing a bare carriage return is therefore emitted as an unquoted record separator by the lossless export path. The field must be quoted whenever it contains either CSV line-break character.
+`escape_csv_field` now quotes both `\n` and `\r`, preserving CSV record boundaries for text and timestamp values with either line-break character.
 
-### EXPORT-LOSSLESS-005 — JSON byte marker collides with a native JSON object
+### EXPORT-LOSSLESS-005 — JSON byte marker collided with a native JSON object
 
-`Value::Bytes` is encoded as an object with `$datazenType`, `encoding`, and `value`, while `Value::Json` is emitted unchanged. A JSON column containing that same object shape is indistinguishable from exported bytes to a marker-based consumer. The format needs a typed envelope or an escaping rule for native JSON values before claiming the marker is unambiguous.
+`Value::Bytes` remains encoded as the documented bytes object. A native `Value::Json` object whose `$datazenType` is `bytes` is now wrapped as `{ "$datazenType": "json", "value": <original> }`, while ordinary JSON values remain unchanged. This removes the marker collision without changing normal JSON output.
 
-### EXPORT-LOSSLESS-006 — SQL Server does not participate in the driver-owned binary literal contract
+### EXPORT-LOSSLESS-006 — SQL Server did not participate in the driver-owned binary literal contract
 
-The shared fallback emits `X'...'`, which is not SQL Server's binary literal syntax. In addition, the SQL Server row decoder currently converts `ColumnData::Binary` to a `Value::String("0x...")`, so SQL INSERT export wraps it as text. SQL Server needs a driver override and a binary-preserving decoder before SQL export is correct for that driver.
+SQL Server now decodes `ColumnData::Binary` as `Value::Bytes` and emits the T-SQL `0xHEX` literal through its driver override. Driver-local tests cover both conversion and quoting.
 
 ## Remaining contract limits
 

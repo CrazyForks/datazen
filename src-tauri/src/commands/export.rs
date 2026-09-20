@@ -152,10 +152,18 @@ fn value_as_string(value: &Option<Value>) -> String {
 
 fn escape_csv_field(value: &Option<Value>) -> String {
     let s = value_as_string(value);
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
         return format!("\"{}\"", s.replace('"', "\"\""));
     }
     s
+}
+
+fn is_bytes_json_marker(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("$datazenType"))
+        .and_then(serde_json::Value::as_str)
+        == Some("bytes")
 }
 
 fn json_value(value: Option<Value>) -> serde_json::Value {
@@ -171,6 +179,10 @@ fn json_value(value: Option<Value>) -> serde_json::Value {
             "value": bytes_to_hex(&b),
         }),
         Some(Value::Timestamp(s)) => serde_json::Value::String(s),
+        Some(Value::Json(j)) if is_bytes_json_marker(&j) => serde_json::json!({
+            "$datazenType": "json",
+            "value": j,
+        }),
         Some(Value::Json(j)) => j,
     }
 }
@@ -1024,6 +1036,17 @@ mod tests {
     }
 
     #[test]
+    fn csv_escapes_bare_carriage_returns() {
+        let mut f = StreamFormatter::new(DataFormat::Csv, "t".into(), None, test_driver());
+        let cols = vec!["text".to_string()];
+        let _ = f.header(&cols);
+        assert_eq!(
+            f.rows(&[vec![v_str("before\rafter")]], &cols),
+            "\"before\rafter\"\n"
+        );
+    }
+
+    #[test]
     fn json_streams_objects_with_comma() {
         let mut f = StreamFormatter::new(DataFormat::Json, "t".into(), None, test_driver());
         let cols = vec!["id".to_string(), "name".to_string()];
@@ -1072,6 +1095,31 @@ mod tests {
                 "value": "00fffe",
             })
         );
+    }
+
+    #[test]
+    fn json_marker_collision_is_enveloped_without_changing_normal_json() {
+        let colliding = json_value(Some(Value::Json(serde_json::json!({
+            "$datazenType": "bytes",
+            "encoding": "hex",
+            "value": "00fffe",
+        }))));
+        assert_eq!(
+            colliding,
+            serde_json::json!({
+                "$datazenType": "json",
+                "value": {
+                    "$datazenType": "bytes",
+                    "encoding": "hex",
+                    "value": "00fffe",
+                },
+            })
+        );
+        let normal = json_value(Some(Value::Json(serde_json::json!({
+            "kind": "event",
+            "value": 42,
+        }))));
+        assert_eq!(normal, serde_json::json!({ "kind": "event", "value": 42 }));
     }
 
     #[test]
