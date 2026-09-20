@@ -27,6 +27,7 @@ pub struct DriverKeysetSource {
     key_order_expressions: Vec<String>,
     sync_filter: Option<SyncSourceFilter>,
     column_types: HashMap<String, String>,
+    recordset_remaining: Option<u64>,
 }
 
 impl DriverKeysetSource {
@@ -44,6 +45,7 @@ impl DriverKeysetSource {
         key_contracts: Vec<SyncKeyContract>,
         sync_filter: Option<SyncSourceFilter>,
         column_types: HashMap<String, String>,
+        recordset_limit: Option<u64>,
     ) -> Result<Self, DataSyncError> {
         if key_contracts.len() != pk_columns.len() {
             return Err(DataSyncError::validation(
@@ -73,6 +75,7 @@ impl DriverKeysetSource {
             key_order_expressions,
             sync_filter,
             column_types,
+            recordset_remaining: recordset_limit,
         })
     }
 }
@@ -84,6 +87,13 @@ impl RowPageSource for DriverKeysetSource {
         after_key: Option<&[Value]>,
         limit: u32,
     ) -> Result<Vec<Row>, DataSyncError> {
+        if self.recordset_remaining == Some(0) {
+            return Ok(Vec::new());
+        }
+        let page_limit = self
+            .recordset_remaining
+            .map(|remaining| remaining.min(u64::from(limit)).max(1) as u32)
+            .unwrap_or(limit);
         let family = self.family.clone();
         let quote = self.quote;
         let seek_key = after_key
@@ -105,9 +115,10 @@ impl RowPageSource for DriverKeysetSource {
             .transpose()?;
         let (filter_sql, filter_params) = match self.sync_filter.as_ref() {
             Some(filter) => filter
-                .build_where_typed(
+                .build_where_typed_with_default_order(
                     quote,
                     after_key.map_or(0, |key| key.len()) + 1,
+                    (self.pk_columns.len() == 1).then(|| self.pk_columns[0].as_str()),
                     |column| self.column_types.get(column).cloned(),
                     |index, data_type| {
                         self.driver
@@ -127,7 +138,7 @@ impl RowPageSource for DriverKeysetSource {
             &self.pk_columns,
             &self.key_order_expressions,
             seek_key.as_deref(),
-            limit,
+            page_limit,
             quote,
             |i| {
                 self.driver
@@ -168,6 +179,9 @@ impl RowPageSource for DriverKeysetSource {
                     .normalize_sync_key(value, &self.key_contracts[key_index])
                     .map_err(DataSyncError::validation)?;
             }
+        }
+        if let Some(remaining) = &mut self.recordset_remaining {
+            *remaining = remaining.saturating_sub(result.rows.len() as u64);
         }
         Ok(result.rows)
     }

@@ -73,6 +73,21 @@ export interface DataSyncTableResult {
 export interface DataSyncSourceFilter {
   filters: FilterCondition[];
   logic?: 'and' | 'or';
+  /** Stable source recordset range. Bounds are text to preserve integer/decimal precision. */
+  recordset?: DataSyncRecordset;
+}
+
+export interface DataSyncRecordsetBound {
+  value: string;
+  inclusive?: boolean;
+}
+
+export interface DataSyncRecordset {
+  /** Omitted only for a single effective primary key. */
+  orderBy?: string;
+  start?: DataSyncRecordsetBound;
+  end?: DataSyncRecordsetBound;
+  limit?: number;
 }
 
 export interface SyncOptions {

@@ -1030,7 +1030,8 @@ mod tests {
         .unwrap();
         let archived: SyncSourceFilter = serde_json::from_value(serde_json::json!({
             "filters": [{"column": "status", "operator": "eq", "value": "archived"}],
-            "logic": "and"
+            "logic": "and",
+            "recordset": {"start": {"value": "100"}, "limit": 25}
         }))
         .unwrap();
         let first = fingerprint_relations_with_filters(

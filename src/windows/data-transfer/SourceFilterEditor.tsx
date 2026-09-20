@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
 import type { FilterCondition, FilterOperator } from '../../types';
+import type { DataSyncRecordset } from '../../commands/sync';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 
@@ -20,6 +21,8 @@ const OPERATORS: FilterOperator[] = [
 export interface StructuredSourceFilter {
   filters: FilterCondition[];
   logic?: 'and' | 'or';
+  /** Sync-only row range; preserved while editing the predicate. */
+  recordset?: DataSyncRecordset;
 }
 
 interface SourceFilterEditorProps {
@@ -38,7 +41,17 @@ export function SourceFilterEditor({ columns, filter, onChange }: SourceFilterEd
   }));
 
   const update = (next: FilterCondition[]) => {
-    onChange(next.length > 0 ? { filters: next, logic: filter?.logic ?? 'and' } : undefined);
+    onChange(
+      next.length > 0
+        ? {
+            filters: next,
+            logic: filter?.logic ?? 'and',
+            ...(filter?.recordset ? { recordset: filter.recordset } : {}),
+          }
+        : filter?.recordset
+          ? { filters: [], recordset: filter.recordset }
+          : undefined,
+    );
   };
 
   const add = () => {
@@ -68,7 +81,13 @@ export function SourceFilterEditor({ columns, filter, onChange }: SourceFilterEd
               { value: 'and', label: t('transfer.mapping.filterAll') },
               { value: 'or', label: t('transfer.mapping.filterAny') },
             ]}
-            onChange={(logic) => onChange({ filters: conditions, logic: logic as 'and' | 'or' })}
+            onChange={(logic) =>
+              onChange({
+                filters: conditions,
+                logic: logic as 'and' | 'or',
+                ...(filter?.recordset ? { recordset: filter.recordset } : {}),
+              })
+            }
             className="!h-7 w-28 !text-xs"
           />
         </label>

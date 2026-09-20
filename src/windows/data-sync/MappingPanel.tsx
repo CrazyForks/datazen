@@ -13,6 +13,7 @@ import {
   type DataSyncTableResult,
 } from './mappingView';
 import { SourceFilterEditor } from '../data-transfer/SourceFilterEditor';
+import { RecordsetEditor } from './RecordsetEditor';
 
 interface MappingPanelProps {
   rows: DataSyncTableResult[];
@@ -105,6 +106,21 @@ export function MappingPanel({
                       {t('sync.sourceFilter')}
                     </Button>
                   )}
+                  {row.status === 'MATCHED' && onUpdateSourceFilter && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-[10px]"
+                      data-testid="data-sync-recordset"
+                      onClick={() =>
+                        setFilterTable((current) =>
+                          current === row.sourceTable ? null : row.sourceTable,
+                        )
+                      }
+                    >
+                      {t('sync.recordset')}
+                    </Button>
+                  )}
                   {row.status === 'INCOMPATIBLE' && (
                     <>
                       <Button
@@ -140,6 +156,26 @@ export function MappingPanel({
               )}
               {filterTable === row.sourceTable && onUpdateSourceFilter && row.status === 'MATCHED' && (
                 <div className="ml-9 mt-2">
+                  <RecordsetEditor
+                    primaryKeys={row.primaryKeys ?? []}
+                    recordset={row.sourceFilter?.recordset}
+                    onChange={(recordset) => {
+                      const current = row.sourceFilter;
+                      if (recordset) {
+                        onUpdateSourceFilter(row.sourceTable, {
+                          ...(current ?? { filters: [] }),
+                          recordset,
+                        });
+                        return;
+                      }
+                      if (current?.filters?.length) {
+                        const { recordset: _recordset, ...withoutRecordset } = current;
+                        onUpdateSourceFilter(row.sourceTable, withoutRecordset);
+                      } else {
+                        onUpdateSourceFilter(row.sourceTable, undefined);
+                      }
+                    }}
+                  />
                   <SourceFilterEditor
                     columns={row.columns ?? []}
                     filter={row.sourceFilter}

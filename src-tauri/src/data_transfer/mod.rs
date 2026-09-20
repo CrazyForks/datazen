@@ -9,7 +9,7 @@ pub mod model;
 pub mod pairing;
 pub mod preview;
 pub mod recordset;
-mod recordset_bounds;
+pub(crate) mod recordset_bounds;
 mod scan;
 pub mod sql_file;
 mod sql_structure;
