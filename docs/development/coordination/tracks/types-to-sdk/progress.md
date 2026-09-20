@@ -34,7 +34,7 @@
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测 → TEST_DONE (PASSED)
 
 ## Coder 实施记录（2026-09-20）
 
@@ -60,3 +60,15 @@ driver-sdk 新目录 `src/types/*.ts` 内部仍经 `'../../../../src/...'` 以 *
 ## 留待 R 回归
 
 - 无（纯类型搬迁）。
+
+## Tester 复测记录（独立复验，commit 38557d34c）
+
+- **A 实现审查**：四类共享类型（KeyEntry/KeyScanResult、NativeMenuItemDef/NativeMenuPredefined、ConnectionFormState、ConnectionViewProps 及配套）均为**移动**而非复制，宿主 src/ 无残留同名定义（grep 仅命中测试 import 行）；宿主 re-export 出口齐全，宿主存量 import 零改动（diff 仅触及 4 个类型定义文件 + hook 签名行）。
+- **ConnectionFormState 重点核实（ReturnType→interface）**：`useConnectionForm.ts:35` 存在显式返回标注 `): ConnectionFormState`（非仅 import 巧合）；程序化比对 interface 78 成员与 hook 返回字面量 78 键，双向零差集、无重复、无可选成员（全 required），`setGroup(value: unknown)` 与基线定义一致——结构一致性强于 tsc 单证。
+- **驱动侧**：9 处 import 全部改指 '@datazen/driver-sdk'；Grep `packages/drivers/*/ui` type-only 宿主 import = 0。驱动 __tests__ 仅各改 1 行 import 路径（keyTree.test.ts / connectionWizard.test.tsx），其余逐行 diff 无断言改动。
+- **B 独立复跑**：`tsc --noEmit -p tsconfig.json` = 0；`vitest --config vitest.drivers.config.ts packages/drivers/redis/ui` = 26 文件 218 用例，**213 pass / 5 fail**（与 Coder 自报及基线完全一致；失败为 stringKeyValue 3 项 + redisWorkbench 2 项，属 fix-redis-tests 轨既有项，与本轨文件零交集）；sqlserver 驱动套件 2 pass / 2 总（ConnectionFields.tsx 改动无破坏）；宿主全量 `npx vitest run src` = **404 文件 / 4199 用例全绿**。
+- **C 覆盖率**：纯类型搬迁，运行时分支零改动，所有变更行均为 `import type` / `export type`（类型擦除），行级覆盖率不适用；以 tsc 全绿 + 全量套件回归零差异作为契约保障。
+- **D E2E 登记**：连接向导与右键菜单类型契约由 tsc 编译期强制保障，无需新增 E2E。
+- 备注：前序 Tester 报告数字（224 用例/219 pass）对应另一分支状态（fix-redis-tests 修复后测试面），本 worktree 基准 040e15bde 下实测 218 总用例，口径以本记录为准。
+
+**结论：TEST_DONE (PASSED)，无 bug 登记。**
