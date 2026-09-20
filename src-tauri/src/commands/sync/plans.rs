@@ -123,14 +123,25 @@ pub(crate) struct SyncSelectionExclusion {
     pub key: Vec<datazen_driver_api::Value>,
 }
 
-/// A server-owned selection of every comparison row for one table and
-/// operation.  The client may only add key exclusions; row payloads and SQL
-/// never cross this boundary.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SyncSelectionMode {
+    #[default]
+    All,
+    Defaults,
+}
+
+/// A server-owned selection of comparison rows for one table and operation.
+/// `All` selects every row while `Defaults` selects the rows that would be
+/// checked by the normal operation defaults. The client may only add key
+/// exclusions; row payloads and SQL never cross this boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SyncTableSelection {
     pub source_table: String,
     pub target_table: String,
+    #[serde(default)]
+    pub selection_mode: SyncSelectionMode,
     pub operations: Vec<ChangeOperation>,
     #[serde(default)]
     pub excluded_rows: Vec<SyncSelectionExclusion>,
@@ -562,7 +573,10 @@ pub(crate) fn apply_selection(
                 continue;
             }
             for change in &table.rows {
-                if scope.operations.contains(&change.operation) {
+                if scope.operations.contains(&change.operation)
+                    && (scope.selection_mode == SyncSelectionMode::All
+                        || change.operation.default_selected(options))
+                {
                     let token = selection_token(
                         &table.source_table,
                         &table.target_table,
@@ -624,6 +638,7 @@ pub(crate) fn validate_selection(
         }
     }
     let mut seen_scopes = HashSet::new();
+    let mut seen_scope_operations: HashMap<(String, String), Vec<ChangeOperation>> = HashMap::new();
     let mut scoped_rows = HashSet::new();
     for scope in &selection.scopes {
         let pair = (scope.source_table.clone(), scope.target_table.clone());
@@ -633,8 +648,9 @@ pub(crate) fn validate_selection(
         if scope.operations.is_empty() {
             return Err("selection scope must include at least one operation".into());
         }
-        if !seen_scopes.insert(pair.clone()) {
-            return Err("selection contains a duplicate table scope".into());
+        let scope_identity = (pair.0.clone(), pair.1.clone(), scope.selection_mode);
+        if !seen_scopes.insert(scope_identity) {
+            return Err("selection contains a duplicate table scope mode".into());
         }
         let mut operations = Vec::new();
         for operation in &scope.operations {
@@ -655,6 +671,15 @@ pub(crate) fn validate_selection(
                 );
             }
         }
+        let pair_operations = seen_scope_operations.entry(pair).or_default();
+        if scope
+            .operations
+            .iter()
+            .any(|operation| pair_operations.contains(operation))
+        {
+            return Err("selection contains overlapping table scope operations".into());
+        }
+        pair_operations.extend(scope.operations.iter().copied());
         let mut exclusions = HashSet::new();
         for exclusion in &scope.excluded_rows {
             if !scope.operations.contains(&exclusion.operation) {
@@ -688,7 +713,10 @@ pub(crate) fn validate_selection(
                 && table.target_table == scope.target_table
         }) {
             for change in &table.rows {
-                if !scope.operations.contains(&change.operation) {
+                if !scope.operations.contains(&change.operation)
+                    || (scope.selection_mode == SyncSelectionMode::Defaults
+                        && !change.operation.default_selected(options))
+                {
                     continue;
                 }
                 let token = selection_token(
@@ -794,6 +822,7 @@ mod tests {
         SyncTableSelection {
             source_table: "users".into(),
             target_table: "users".into(),
+            selection_mode: SyncSelectionMode::All,
             operations: vec![ChangeOperation::Insert],
             excluded_rows,
         }
@@ -822,6 +851,32 @@ mod tests {
     }
 
     #[test]
+    fn defaults_scope_selects_server_rows_across_pages_and_applies_exclusions() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                selection_mode: SyncSelectionMode::Defaults,
+                excluded_rows: vec![SyncSelectionExclusion {
+                    operation: ChangeOperation::Insert,
+                    key: vec![Value::Integer(2)],
+                }],
+                ..table_scope(Vec::new())
+            }],
+        };
+        validate_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let applied = apply_selection(&comparison(), &selection, &SyncOptions::default()).unwrap();
+        let selected: Vec<_> = applied.tables[0]
+            .rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.key.clone())
+            .collect();
+        assert_eq!(selected.len(), 1);
+        assert!(matches!(selected[0].as_slice(), [Value::Integer(1)]));
+    }
+
+    #[test]
     fn table_scope_rejects_unknown_duplicate_and_disabled_inputs() {
         let unknown = SyncRunSelection {
             revision: 1,
@@ -829,6 +884,7 @@ mod tests {
             scopes: vec![SyncTableSelection {
                 source_table: "missing".into(),
                 target_table: "missing".into(),
+                selection_mode: SyncSelectionMode::All,
                 operations: vec![ChangeOperation::Insert],
                 excluded_rows: Vec::new(),
             }],

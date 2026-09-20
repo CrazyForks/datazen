@@ -122,9 +122,12 @@ export interface DataSyncSelectionExclusion {
   key: Value[];
 }
 
+export type DataSyncSelectionMode = 'all' | 'defaults';
+
 export interface DataSyncTableSelection {
   sourceTable: string;
   targetTable: string;
+  selectionMode: DataSyncSelectionMode;
   operations: Array<Exclude<DataSyncOperation, 'UNCHANGED'>>;
   excludedRows: DataSyncSelectionExclusion[];
 }

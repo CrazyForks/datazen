@@ -587,9 +587,15 @@ describe('DataSyncWindow wizard', () => {
     fireEvent.click(screen.getByTestId('data-sync-next'));
     await screen.findByTestId('data-sync-preview');
     await waitFor(() => expect(generateDataSyncSqlMock).toHaveBeenCalled());
-    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[8]).toEqual([
-      { sourceTable: 'users', targetTable: 'users', operation: 'INSERT', key: [1] },
-      { sourceTable: 'users', targetTable: 'users', operation: 'INSERT', key: [2] },
+    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[8]).toEqual([]);
+    expect(generateDataSyncSqlMock.mock.calls.at(-1)?.[9]).toEqual([
+      {
+        sourceTable: 'users',
+        targetTable: 'users',
+        selectionMode: 'defaults',
+        operations: ['INSERT'],
+        excludedRows: [],
+      },
     ]);
   });
 

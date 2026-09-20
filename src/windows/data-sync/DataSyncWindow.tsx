@@ -79,6 +79,31 @@ function selectedRowToken(
   return `${row.sourceTable}\u0000${row.targetTable}\u0000${row.operation}\u0000${rowKeyString(row.key)}`;
 }
 
+function scopeSelectsOperation(
+  scope: DataSyncTableSelection,
+  operation: DataSyncRowChange['operation'],
+  options: SyncOptions,
+): boolean {
+  return (
+    operation !== 'UNCHANGED' &&
+    scope.operations.includes(operation) &&
+    (scope.selectionMode === 'all' || defaultRowSelected(operation, options))
+  );
+}
+
+function scopeForOperation(
+  scopes: DataSyncTableSelection[],
+  table: Pick<DataSyncTableResult, 'sourceTable' | 'targetTable'>,
+  operation: DataSyncRowChange['operation'],
+): DataSyncTableSelection | undefined {
+  return scopes.find(
+    (scope) =>
+      scope.sourceTable === table.sourceTable &&
+      scope.targetTable === table.targetTable &&
+      scope.operations.includes(operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>),
+  );
+}
+
 export function DataSyncWindow() {
   const localesReady = useLocaleDomains(['sync']);
   useSettings();
@@ -981,32 +1006,29 @@ export function DataSyncWindow() {
             )
             .map(selectedRowToken),
         );
-        const scope = tableSelectionsRef.current.find(
-          (candidate) =>
-            candidate.sourceTable === table.sourceTable &&
-            candidate.targetTable === table.targetTable,
-        );
-        const pageRows = page.rows.map((row) => ({
-          ...row,
-          selected: scope?.operations.includes(
-            row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
-          )
-            ? !scope.excludedRows.some(
-                (excluded) =>
-                  excluded.operation === row.operation &&
-                  rowKeyString(excluded.key) === rowKeyString(row.key),
-              )
-            : firstLoad
-              ? row.selected
-              : selectedTokenSet.has(
-                  selectedRowToken({
-                    sourceTable: table.sourceTable,
-                    targetTable: table.targetTable,
-                    operation: row.operation,
-                    key: row.key,
-                  }),
-                ),
-        }));
+        const pageRows = page.rows.map((row) => {
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return {
+            ...row,
+            selected:
+              scope && scopeSelectsOperation(scope, row.operation, syncOptions)
+                ? !scope.excludedRows.some(
+                    (excluded) =>
+                      excluded.operation === row.operation &&
+                      rowKeyString(excluded.key) === rowKeyString(row.key),
+                  )
+                : firstLoad
+                  ? row.selected
+                  : selectedTokenSet.has(
+                      selectedRowToken({
+                        sourceTable: table.sourceTable,
+                        targetTable: table.targetTable,
+                        operation: row.operation,
+                        key: row.key,
+                      }),
+                    ),
+          };
+        });
         if (firstLoad) {
           setSelectedRows((previous) => {
             const known = new Set(previous.map(selectedRowToken));
@@ -1051,7 +1073,7 @@ export function DataSyncWindow() {
         setPageLoading(false);
       }
     },
-    [pageCursors, setMappingResults],
+    [pageCursors, setMappingResults, syncOptions],
   );
 
   useEffect(() => {
@@ -1070,6 +1092,9 @@ export function DataSyncWindow() {
       return (
         total +
         scope.operations.reduce((subtotal, operation) => {
+          if (scope.selectionMode === 'defaults' && !defaultRowSelected(operation, syncOptions)) {
+            return subtotal;
+          }
           const count =
             operation === 'INSERT'
               ? counts.inserts
@@ -1087,9 +1112,7 @@ export function DataSyncWindow() {
         (scope) =>
           scope.sourceTable === row.sourceTable &&
           scope.targetTable === row.targetTable &&
-          scope.operations.includes(
-            row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
-          ),
+          scopeSelectsOperation(scope, row.operation, syncOptions),
       );
     }).length;
     return scopedCount + explicitCount;
@@ -1099,7 +1122,7 @@ export function DataSyncWindow() {
     return (
       syncOptions.delete &&
       (selectedRows.some((row) => row.operation === 'DELETE') ||
-        tableSelections.some((scope) => scope.operations.includes('DELETE')))
+        tableSelections.some((scope) => scopeSelectsOperation(scope, 'DELETE', syncOptions)))
     );
   }, [selectedRows, syncOptions.delete, tableSelections]);
 
@@ -1312,14 +1335,6 @@ export function DataSyncWindow() {
     (key: string, rows: DataSyncRowChange[]) => {
       const table = mappingResults.find((row) => tableKey(row) === key);
       if (!table) return;
-      const scope = tableSelectionsRef.current.find(
-        (candidate) =>
-          candidate.sourceTable === table.sourceTable &&
-          candidate.targetTable === table.targetTable,
-      );
-      const scopedTokens = new Set(
-        scope?.operations.map((operation) => `${operation}\u0000`) ?? [],
-      );
       setSelectedRows((previous) => {
         const pageTokens = new Set(
           rows
@@ -1335,15 +1350,15 @@ export function DataSyncWindow() {
         );
         const retained = previous.filter((row) => {
           if (!pageTokens.has(selectedRowToken(row))) return true;
-          return scopedTokens.has(`${row.operation}\u0000`);
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return Boolean(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
         });
         const next = rows
-          .filter(
-            (row) =>
-              row.selected &&
-              row.operation !== 'UNCHANGED' &&
-              !scopedTokens.has(`${row.operation}\u0000`),
-          )
+          .filter((row) => {
+            if (!row.selected || row.operation === 'UNCHANGED') return false;
+            const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+            return !(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
+          })
           .map((row) => ({
             sourceTable: table.sourceTable,
             targetTable: table.targetTable,
@@ -1353,50 +1368,49 @@ export function DataSyncWindow() {
         const known = new Set(retained.map(selectedRowToken));
         return [...retained, ...next.filter((row) => !known.has(selectedRowToken(row)))];
       });
-      if (scope) {
-        setTableSelections((previous) =>
-          previous.map((candidate) => {
-            if (
-              candidate.sourceTable !== table.sourceTable ||
-              candidate.targetTable !== table.targetTable
+      setTableSelections((previous) =>
+        previous.map((candidate) => {
+          if (
+            candidate.sourceTable !== table.sourceTable ||
+            candidate.targetTable !== table.targetTable
+          )
+            return candidate;
+          const candidateRows = rows.filter((row) =>
+            candidate.operations.includes(
+              row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+            ),
+          );
+          const exclusions = candidate.excludedRows.filter(
+            (excluded) =>
+              !candidateRows.some(
+                (row) =>
+                  row.operation === excluded.operation &&
+                  rowKeyString(row.key) === rowKeyString(excluded.key),
+              ),
+          );
+          const additions: DataSyncSelectionExclusion[] = candidateRows
+            .filter(
+              (row) =>
+                scopeSelectsOperation(candidate, row.operation, syncOptions) && !row.selected,
             )
-              return candidate;
-            const exclusions = candidate.excludedRows.filter(
-              (excluded) =>
-                !rows.some(
-                  (row) =>
-                    row.operation === excluded.operation &&
-                    rowKeyString(row.key) === rowKeyString(excluded.key),
+            .map((row) => ({
+              operation: row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+              key: row.key,
+            }))
+            .filter(
+              (row) =>
+                !exclusions.some(
+                  (excluded) =>
+                    excluded.operation === row.operation &&
+                    rowKeyString(excluded.key) === rowKeyString(row.key),
                 ),
             );
-            const additions: DataSyncSelectionExclusion[] = rows
-              .filter(
-                (row) =>
-                  row.operation !== 'UNCHANGED' &&
-                  candidate.operations.includes(
-                    row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
-                  ) &&
-                  !row.selected,
-              )
-              .map((row) => ({
-                operation: row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
-                key: row.key,
-              }))
-              .filter(
-                (row) =>
-                  !exclusions.some(
-                    (excluded) =>
-                      excluded.operation === row.operation &&
-                      rowKeyString(excluded.key) === rowKeyString(row.key),
-                  ),
-              );
-            return { ...candidate, excludedRows: [...exclusions, ...additions] };
-          }),
-        );
-      }
+          return { ...candidate, excludedRows: [...exclusions, ...additions] };
+        }),
+      );
       setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
     },
-    [mappingResults],
+    [mappingResults, syncOptions],
   );
 
   const setTableOperationScope = useCallback(
@@ -1406,27 +1420,39 @@ export function DataSyncWindow() {
     ) => {
       if (!operationAllowed(operation, syncOptions)) return;
       setTableSelections((previous) => {
-        const existing = previous.find(
+        const allScope = previous.find(
           (scope) =>
-            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable,
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all',
         );
-        if (existing?.operations.includes(operation)) return previous;
-        if (existing) {
-          return previous.map((scope) =>
-            scope === existing
+        if (allScope?.operations.includes(operation)) return previous;
+        const cleaned = previous
+          .map((scope) =>
+            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
               ? {
                   ...scope,
-                  operations: [...scope.operations, operation],
+                  operations: scope.operations.filter((candidate) => candidate !== operation),
                   excludedRows: scope.excludedRows.filter((row) => row.operation !== operation),
                 }
+              : scope,
+          )
+          .filter((scope) => scope.operations.length > 0);
+        if (allScope) {
+          return cleaned.map((scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all'
+              ? { ...scope, operations: [...scope.operations, operation] }
               : scope,
           );
         }
         return [
-          ...previous,
+          ...cleaned,
           {
             sourceTable: table.sourceTable,
             targetTable: table.targetTable,
+            selectionMode: 'all',
             operations: [operation],
             excludedRows: [],
           },
@@ -1461,8 +1487,8 @@ export function DataSyncWindow() {
       table: DataSyncTableResult,
       operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
     ) => {
-      setTableSelections((previous) =>
-        previous
+      setTableSelections((previous) => {
+        const cleaned = previous
           .map((scope) =>
             scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
               ? {
@@ -1472,26 +1498,39 @@ export function DataSyncWindow() {
                 }
               : scope,
           )
-          .filter((scope) => scope.operations.length > 0),
-      );
-      setSelectedRows((previous) => [
-        ...previous.filter(
+          .filter((scope) => scope.operations.length > 0);
+        const defaultsScope = cleaned.find(
+          (scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'defaults',
+        );
+        if (defaultsScope) {
+          return cleaned.map((scope) =>
+            scope === defaultsScope
+              ? { ...scope, operations: [...scope.operations, operation] }
+              : scope,
+          );
+        }
+        return [
+          ...cleaned,
+          {
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            selectionMode: 'defaults',
+            operations: [operation],
+            excludedRows: [],
+          },
+        ];
+      });
+      setSelectedRows((previous) =>
+        previous.filter(
           (row) =>
             row.sourceTable !== table.sourceTable ||
             row.targetTable !== table.targetTable ||
             row.operation !== operation,
         ),
-        ...(table.rows ?? [])
-          .filter(
-            (row) => row.operation === operation && defaultRowSelected(row.operation, syncOptions),
-          )
-          .map((row) => ({
-            sourceTable: table.sourceTable,
-            targetTable: table.targetTable,
-            operation,
-            key: row.key,
-          })),
-      ]);
+      );
       setMappingResults((previous) =>
         previous.map((candidate) =>
           tableKey(candidate) === tableKey(table)

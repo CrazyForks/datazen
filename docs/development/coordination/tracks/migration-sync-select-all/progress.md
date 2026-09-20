@@ -13,10 +13,10 @@
 - Wired command IPC selection scopes through SQL preview and execution; scope data contains only table/op/key exclusions.
 - Added page-aware UI scope state, per-row exclusions and honest scope counts in ExecuteBar.
 - Added command-level journey coverage for 5,000-row scope selection without page-key materialization.
-- Validation: `commands::sync` Rust 48/48 with injected PostgreSQL/MySQL/SQLite/Redis drivers; focused Sync frontend/IPC tests 39/39; `npx tsc --noEmit`; formal `CI=true pnpm tauri:build:webdriver` with App/DMG packaging.
+- Validation: `commands::sync` Rust 50/50 with injected PostgreSQL/MySQL/SQLite/Redis drivers; focused Sync frontend/IPC tests 40/40; `npx tsc --noEmit`; formal `CI=true pnpm tauri:build:webdriver` with App/DMG packaging.
 - Scope counts use server comparison summaries and subtract exclusions; generated selection keeps row keys only for explicit rows outside a scope.
 - Limitations: this track still relies on the existing server-owned full comparison for SQL generation/execution; it adds no checkpointed OFFSET resume, row payload authority, or multi-table scope UI in one click.
-- Status: FAILED — independent testing found migration-sync-select-all-BUG-001; see bugs.md.
+- Status: PASSED — migration-sync-select-all-BUG-001 fixed by defaults scope; see bugs.md.
 
 ## TESTER (2026-09-20)
 
@@ -27,3 +27,19 @@
 - Passed: `npx tsc --noEmit`.
 - Passed: `CI=true pnpm tauri:build:webdriver` (Vite build, Tauri debug app, App and DMG bundles); no live PostgreSQL E2E was run because `E2E_PG_RO_PASSWORD` is unavailable in this environment.
 - `git diff --check` passed. `cargo fmt --all -- --check` is blocked by pre-existing generated `src-tauri/src/driver_init.rs` ordering/blank-line differences after driver injection; no production file was changed by the tester.
+
+## FIX HEARTBEAT (2026-09-20)
+
+- BUG-001 fix: added backwards-compatible `selectionMode` (`all` default, `defaults` explicit) to server-owned table scopes.
+- Clear now replaces an operation's scope with a defaults scope; it never rebuilds selection from the current page.
+- Defaults expansion uses `ChangeOperation::default_selected(options)` on the full server comparison and still applies exclusions.
+- UI supports separate all/default scopes for disjoint operations, preserves unloaded-page defaults, and keeps explicit rows only for scope-excluded/default-disabled operations.
+- The failing journey now asserts an empty explicit-row list plus one defaults scope, proving no page-key materialization.
+
+## FIX VALIDATION (2026-09-20)
+
+- Passed: focused Data Sync UI/IPC journey tests, 3 files and 40 tests.
+- Passed: injected Rust `commands::sync` tests, 50 tests.
+- Passed: `npx tsc --noEmit`.
+- Passed: formal `CI=true pnpm tauri:build:webdriver`, including Vite, Tauri debug application, App bundle, and DMG; generated driver files were restored.
+- Passed: `cargo fmt --all` and `git diff --check`.

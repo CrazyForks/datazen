@@ -258,6 +258,7 @@ describe('Data Sync immutable plan IPC', () => {
         {
           sourceTable: 'users',
           targetTable: 'users',
+          selectionMode: 'all',
           operations: ['INSERT'],
           excludedRows: [{ operation: 'INSERT', key: [42] }],
         },
@@ -272,6 +273,7 @@ describe('Data Sync immutable plan IPC', () => {
           {
             sourceTable: 'users',
             targetTable: 'users',
+            selectionMode: 'all',
             operations: ['INSERT'],
             excludedRows: [{ operation: 'INSERT', key: [42] }],
           },
