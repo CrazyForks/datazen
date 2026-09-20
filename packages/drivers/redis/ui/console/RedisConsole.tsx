@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import {
   useBoundSettingsStore,
   resolveEditorFontFamily,

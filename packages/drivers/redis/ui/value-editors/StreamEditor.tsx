@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
 import { Input } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import type { GateWriteFn } from '../shared/useRedisGate';
 

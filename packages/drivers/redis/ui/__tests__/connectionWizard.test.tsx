@@ -3,7 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { RedisConnectionWizard, RedisTlsFields } from '../connection/ConnectionWizard';
 import type { ConnectionFormState } from '@datazen/driver-sdk';
 
-vi.mock('../../../../../src/hooks/useI18n', () => ({
+// Components take `useI18n` from the single @datazen/ui runtime; keep the
+// assertions locale-independent by overriding only that hook.
+vi.mock('@datazen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }));
 

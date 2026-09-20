@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 
 export interface StreamOverviewProps {

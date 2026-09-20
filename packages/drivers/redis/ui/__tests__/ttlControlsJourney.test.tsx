@@ -10,7 +10,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-vi.mock('../../../../../src/hooks/useI18n', () => ({
+// Components take `useI18n` from the single @datazen/ui runtime; keep the
+// assertions locale-independent by overriding only that hook.
+vi.mock('@datazen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
     t: (key: string) => {
       const map: Record<string, string> = {

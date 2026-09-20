@@ -17,7 +17,7 @@ import {
   readBooleanField,
   useBoundConfirmDialog,
 } from '@datazen/driver-sdk';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { invokeGetKey, invokeDbSizes } from '../shared/redisInvoke';
 import type { KeyDetail } from '../shared/types';
 import { BatchBar, invokeDeleteKeys, invokeBatchDeletePattern } from './BatchBar';

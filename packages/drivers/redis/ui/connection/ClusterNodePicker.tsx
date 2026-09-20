@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Input } from '@datazen/ui';
 import { Select } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { useBoundConnectionStore, useBoundSettingsStore } from '@datazen/driver-sdk';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { readRedisOptions } from './connectionOptions';

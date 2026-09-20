@@ -1,5 +1,5 @@
 import { Input, Select } from '@datazen/ui';
-import { useI18n } from '../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { Label } from '@datazen/ui';
 import type { ConnectionFormState } from '@datazen/driver-sdk';
 import { mergeSqlServerOptions, readSqlServerOptions } from './connectionOptions';

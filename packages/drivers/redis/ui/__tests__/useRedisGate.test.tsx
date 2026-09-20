@@ -12,7 +12,10 @@ import {
 } from '@datazen/driver-sdk';
 import { useRedisGate } from '../shared/useRedisGate';
 
-vi.mock('../../../../../src/hooks/useI18n', () => ({
+// Components take `useI18n` from the single @datazen/ui runtime; keep the
+// assertions locale-independent by overriding only that hook.
+vi.mock('@datazen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
     t: (key: string) => key,
   }),

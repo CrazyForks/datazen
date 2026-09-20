@@ -1,7 +1,7 @@
 //! React rendering of a `RenderedView` (R9). Keeps hex/binary output virtualised
 //! enough (row-capped in `views.ts`) so large values never freeze the panel.
 
-import { useI18n } from '../../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import type { RenderedView } from './views';
 
 export interface ValueViewOutputProps {

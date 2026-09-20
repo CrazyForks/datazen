@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Input } from '@datazen/ui';
 import { PathInput } from '@datazen/ui';
 import { Select } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { Label } from '@datazen/ui';
 import type { ConnectionFormState } from '@datazen/driver-sdk';
 import type { DriverFormValidator } from '@datazen/driver-sdk';
