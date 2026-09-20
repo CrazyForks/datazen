@@ -130,6 +130,48 @@ describe('Data Sync immutable plan IPC', () => {
     expect(JSON.stringify(invoke.mock.calls.at(-1))).not.toContain('WHERE');
   });
 
+  it('sends a lossless primary-key recordset inside the reviewed source scope', async () => {
+    invoke.mockResolvedValueOnce({ planId: 'recordset-plan', selectionRevision: 1, tables: [] });
+    await syncCommands.compareDataSync(
+      'source-session',
+      'target-session',
+      ['users'],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { insert: true, update: true, delete: false },
+      {
+        users: {
+          filters: [],
+          recordset: {
+            orderBy: 'id',
+            start: { value: '9223372036854775807', inclusive: true },
+            end: { value: '9223372036854775808', inclusive: false },
+            limit: 100,
+          },
+        },
+      },
+    );
+    expect(invoke).toHaveBeenLastCalledWith(
+      'compare_data_sync',
+      expect.objectContaining({
+        filters: {
+          users: {
+            filters: [],
+            recordset: {
+              orderBy: 'id',
+              start: { value: '9223372036854775807', inclusive: true },
+              end: { value: '9223372036854775808', inclusive: false },
+              limit: 100,
+            },
+          },
+        },
+      }),
+    );
+  });
+
   it('loads an opaque page and preserves selected keys without row payloads in compare', async () => {
     invoke.mockResolvedValueOnce({
       contractVersion: 1,

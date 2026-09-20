@@ -200,6 +200,7 @@ async fn compare_data_sync_impl_inner(
             .get_table_schema(&tgt_handle, &mapping.target_table)
             .await
             .cmd_err("compare_data_sync")?;
+        let pk_columns = schema.effective_primary_keys();
         let sync_filter = source_filters.get(&mapping.source_table).cloned();
         if let Some(filter) = sync_filter.as_ref() {
             filter
@@ -216,9 +217,10 @@ async fn compare_data_sync_impl_inner(
                 (tgt_driver.as_ref(), "target", &target_table_schema),
             ] {
                 filter
-                    .build_where_typed(
+                    .build_where_typed_with_default_order(
                         driver.quote_char(),
                         1,
+                        (pk_columns.len() == 1).then(|| pk_columns[0].as_str()),
                         |column| {
                             table_schema
                                 .columns
@@ -251,7 +253,18 @@ async fn compare_data_sync_impl_inner(
             .iter()
             .map(|column| (column.name.clone(), column.data_type.clone()))
             .collect();
-        let pk_columns = schema.effective_primary_keys();
+        let source_recordset_limit = sync_filter
+            .as_ref()
+            .map(|filter| filter.recordset_limit(&schema))
+            .transpose()
+            .map_err(|error| CommandError::Validation(error.to_string()))?
+            .flatten();
+        let target_recordset_limit = sync_filter
+            .as_ref()
+            .map(|filter| filter.recordset_limit(&target_table_schema))
+            .transpose()
+            .map_err(|error| CommandError::Validation(error.to_string()))?
+            .flatten();
         let mut src_contracts = Vec::with_capacity(pk_columns.len());
         let mut tgt_contracts = Vec::with_capacity(pk_columns.len());
         for pk in &pk_columns {
@@ -314,6 +327,7 @@ async fn compare_data_sync_impl_inner(
             src_contracts,
             sync_filter.clone(),
             source_column_types,
+            source_recordset_limit,
         )?;
         let mut tgt_source = DriverKeysetSource::new(
             tgt_driver.clone(),
@@ -329,6 +343,7 @@ async fn compare_data_sync_impl_inner(
             tgt_contracts,
             sync_filter.clone(),
             target_column_types,
+            target_recordset_limit,
         )?;
         let mut table_result = compare_table_pages(
             &mapping.source_table,

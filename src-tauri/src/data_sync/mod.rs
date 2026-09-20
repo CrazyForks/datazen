@@ -30,7 +30,7 @@ pub use execute::{
     execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
     SyncConflict,
 };
-pub use filter::{SyncFilterLogic, SyncSourceFilter};
+pub use filter::{SyncFilterLogic, SyncRecordset, SyncRecordsetBound, SyncSourceFilter};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
 pub use keyset::{
     build_keyset_select_sql, build_keyset_select_sql_with_order,
