@@ -18,6 +18,8 @@ This track hardens the legacy `store::SyncTask` persistence format. It does not 
 - `cargo test -p datazen --lib store::tests`: 64 passed, 2 ignored (the filter also includes existing ComparisonStore tests)
 - `cargo test -p datazen --lib commands::sync::tests`: 22 passed
 - `pnpm exec tsc --noEmit`
+- Independent final verification: `cargo test -p datazen --lib` passed 1461 tests with 3 ignored; the focused Store and Sync suites above passed again, and the TypeScript check passed.
+- The formal `pnpm tauri:build:webdriver` frontend build completed and all four driver crates entered compilation, but the build stopped with `No space left on device` while writing Rust archives. The generated driver files were restored and the worktree is clean after removing only its 7.2 GB ignored `target/` cache.
 - Added store tests for legacy JSON migration, omission of runtime ids, and rejection of offset/continue state.
 - Added a command test that starts from stale session ids and verifies conflict checking reconnects through persisted connection ids.
 
