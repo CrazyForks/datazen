@@ -15,7 +15,7 @@ datazen_driver_api::inventory::submit! {
     SyncAdapterFactory {
         // cloudberry: PG wire + catalogs; safe alias of PgSyncAdapter
         // questdb: PG wire + catalogs (ReuseDriver); cloudberry same family
-        db_types: &["postgresql", "cloudberry", "questdb"],
+        db_types: &["postgresql", "postgres", "cloudberry", "questdb"],
         create,
     }
 }
@@ -70,6 +70,19 @@ fn parse_pg_default(raw: &str, col: &ColumnSchema) -> Option<IRDefault> {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for PgSyncAdapter {
+    fn sync_key_order_expression(
+        &self,
+        quoted_column: &str,
+        contract: &datazen_driver_api::SyncKeyContract,
+    ) -> String {
+        match &contract.kind {
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary,
+            } => format!(r#"{quoted_column} COLLATE "C""#),
+            _ => quoted_column.to_string(),
+        }
+    }
+
     fn full_column_types_query(&self, table: &str) -> Option<String> {
         let (schema, name) = crate::sql::parse_pg_table_ref(table);
         let relation = match schema {
@@ -386,6 +399,41 @@ mod tests {
                 precision: 19,
                 scale: 2
             }
+        );
+    }
+
+    #[test]
+    fn pg_sync_key_contract_covers_text_decimal_and_timestamp() {
+        let adapter = PgSyncAdapter;
+        let text = adapter.sync_key_contract(&col("name", "text")).unwrap();
+        assert_eq!(
+            text.kind,
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary
+            }
+        );
+        assert_eq!(
+            adapter.sync_key_order_expression(r#""name""#, &text),
+            r#""name" COLLATE "C""#
+        );
+        let decimal = adapter
+            .sync_key_contract(&col("amount", "numeric(18,4)"))
+            .unwrap();
+        assert_eq!(
+            decimal.kind,
+            datazen_driver_api::SyncKeyKind::Decimal { scale: Some(4) }
+        );
+        let timestamp = adapter
+            .sync_key_contract(&col("created", "timestamp with time zone"))
+            .unwrap();
+        assert_eq!(
+            adapter
+                .normalize_sync_key(
+                    &Some(Value::String("2026-01-01T00:00:00+08:00".into())),
+                    &timestamp,
+                )
+                .unwrap(),
+            datazen_driver_api::SyncKeyValue::Timestamp("2025-12-31 16:00:00Z".into())
         );
     }
 

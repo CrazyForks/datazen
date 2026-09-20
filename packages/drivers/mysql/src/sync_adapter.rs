@@ -80,6 +80,19 @@ fn parse_mysql_default(raw: &str) -> Option<IRDefault> {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for MysqlSyncAdapter {
+    fn sync_key_order_expression(
+        &self,
+        quoted_column: &str,
+        contract: &datazen_driver_api::SyncKeyContract,
+    ) -> String {
+        match &contract.kind {
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary,
+            } => format!("BINARY {quoted_column}"),
+            _ => quoted_column.to_string(),
+        }
+    }
+
     fn column_to_ir(&self, column: &ColumnSchema, _native_full_type: Option<&str>) -> IRColumn {
         let base = strip_modifiers(&column.data_type);
 
@@ -402,5 +415,27 @@ mod tests {
             a.format_literal(&Some(Value::Bytes(vec![0xFF])), &IRType::Blob),
             "X'ff'"
         );
+    }
+
+    #[test]
+    fn mysql_sync_key_contract_is_binary_and_exact() {
+        let a = adapter();
+        let text = a.sync_key_contract(&col("name", "varchar(100)")).unwrap();
+        assert_eq!(
+            a.sync_key_order_expression("`name`", &text),
+            "BINARY `name`"
+        );
+        let decimal = a
+            .sync_key_contract(&col("amount", "decimal(18,4)"))
+            .unwrap();
+        let left = a
+            .normalize_sync_key(&Some(Value::String("1.20".into())), &decimal)
+            .unwrap();
+        let right = a
+            .normalize_sync_key(&Some(Value::String("1.2".into())), &decimal)
+            .unwrap();
+        assert_eq!(left, right);
+        let unsupported = a.sync_key_contract(&col("id", "float")).unwrap_err();
+        assert!(unsupported.contains("normalized"));
     }
 }

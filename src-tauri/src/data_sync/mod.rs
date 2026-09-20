@@ -27,7 +27,7 @@ pub use compare::{
 pub use error::DataSyncError;
 pub use execute::{execute_statements, ExecutionResult, StatementExecutor};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
-pub use keyset::build_keyset_select_sql;
+pub use keyset::{build_keyset_select_sql, build_keyset_select_sql_with_order};
 pub use legacy::{
     is_overwrite_copy_retired_message, refuse_overwrite_copy, OVERWRITE_COPY_RETIRED,
 };

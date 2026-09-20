@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datazen_driver_api::Value;
+use datazen_driver_api::{SyncKeyValue, Value};
 
 use super::error::DataSyncError;
 use super::model::{optional_values_equal, Row, RowChange, SyncOptions, TableResult};
@@ -17,6 +17,11 @@ pub trait RowPageSource: Send {
         after_key: Option<&[Value]>,
         limit: u32,
     ) -> Result<Vec<Row>, DataSyncError>;
+
+    /// Normalize a raw primary-key tuple using the driver's equality/order
+    /// contract.  The raw tuple remains available for seek parameters and
+    /// writes; only comparison uses this canonical representation.
+    fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError>;
 }
 
 pub fn cmp_values(left: &Value, right: &Value) -> Ordering {
@@ -158,7 +163,8 @@ pub fn compare_sorted_rows(
 }
 
 // Fail closed before exposing partial comparisons. Driver ordering must match the merge order.
-fn validate_page(
+fn validate_page_with_source<S: RowPageSource>(
+    source: &S,
     page: &[Row],
     pk_indexes: &[usize],
     columns: &[String],
@@ -174,26 +180,58 @@ fn validate_page(
             "comparison page exceeds 1000 rows / 8 MiB; reduce batch size or large column values",
         ));
     }
-    let mut previous = after.map(<[Value]>::to_vec);
+    let mut previous = after.map(|raw| source.normalize_key(raw)).transpose()?;
     for row in page {
         if row.len() != columns.len() {
             return Err(DataSyncError::validation("row width differs from canonical projection; compare again after checking the driver"));
         }
-        let key = extract_key(row, pk_indexes)?;
-        if key.is_empty() || key.iter().any(|v| matches!(v, Value::Null)) {
+        let raw_key = extract_key(row, pk_indexes)?;
+        if raw_key.is_empty() {
+            return Err(DataSyncError::validation(
+                "comparison requires primary key columns",
+            ));
+        }
+        if raw_key.iter().any(|value| matches!(value, Value::Null)) {
             return Err(DataSyncError::validation(
                 "comparison requires non-null primary keys",
             ));
         }
+        let key = source.normalize_key(&raw_key)?;
         if previous
             .as_ref()
-            .is_some_and(|p| cmp_keys(&key, p) != Ordering::Greater)
+            .is_some_and(|p| key.cmp(p) != Ordering::Greater)
         {
-            return Err(DataSyncError::validation("primary key stream is not strictly increasing; check key collation and driver ordering, then compare again"));
+            return Err(DataSyncError::validation("normalized primary key stream is not strictly increasing; check key collation, duplicate keys and driver ordering, then compare again"));
         }
         previous = Some(key);
     }
     Ok(())
+}
+
+struct RawPageSource;
+
+#[async_trait]
+impl RowPageSource for RawPageSource {
+    async fn next_page(&mut self, _: Option<&[Value]>, _: u32) -> Result<Vec<Row>, DataSyncError> {
+        Err(DataSyncError::validation(
+            "raw page source cannot fetch pages",
+        ))
+    }
+
+    fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError> {
+        key.iter()
+            .map(|value| SyncKeyValue::from_value(value).map_err(DataSyncError::validation))
+            .collect()
+    }
+}
+
+fn validate_page(
+    page: &[Row],
+    pk_indexes: &[usize],
+    columns: &[String],
+    after: Option<&[Value]>,
+) -> Result<(), DataSyncError> {
+    validate_page_with_source(&RawPageSource, page, pk_indexes, columns, after)
 }
 
 const MAX_DIFF_ROWS: usize = 10_000;
@@ -216,8 +254,8 @@ where
     options.validate()?;
     let mut src_page = source.next_page(None, options.batch_size).await?;
     let mut tgt_page = target.next_page(None, options.batch_size).await?;
-    validate_page(&src_page, pk_indexes, column_names, None)?;
-    validate_page(&tgt_page, pk_indexes, column_names, None)?;
+    validate_page_with_source(source, &src_page, pk_indexes, column_names, None)?;
+    validate_page_with_source(target, &tgt_page, pk_indexes, column_names, None)?;
     let mut unchanged_count = 0;
     let mut result_bytes = 0;
     let mut accounted = 0;
@@ -244,13 +282,13 @@ where
         if i >= src_page.len() && !src_page.is_empty() {
             let after = extract_key(&src_page[src_page.len() - 1], pk_indexes)?;
             src_page = source.next_page(Some(&after), options.batch_size).await?;
-            validate_page(&src_page, pk_indexes, column_names, Some(&after))?;
+            validate_page_with_source(source, &src_page, pk_indexes, column_names, Some(&after))?;
             i = 0;
         }
         if j >= tgt_page.len() && !tgt_page.is_empty() {
             let after = extract_key(&tgt_page[tgt_page.len() - 1], pk_indexes)?;
             tgt_page = target.next_page(Some(&after), options.batch_size).await?;
-            validate_page(&tgt_page, pk_indexes, column_names, Some(&after))?;
+            validate_page_with_source(target, &tgt_page, pk_indexes, column_names, Some(&after))?;
             j = 0;
         }
         if src_page.is_empty() && tgt_page.is_empty() {
@@ -268,15 +306,27 @@ where
             i += 1;
             continue;
         }
-        let src_key = extract_key(&src_page[i], pk_indexes)?;
-        let tgt_key = extract_key(&tgt_page[j], pk_indexes)?;
-        match cmp_keys(&src_key, &tgt_key) {
+        let src_raw_key = extract_key(&src_page[i], pk_indexes)?;
+        let tgt_raw_key = extract_key(&tgt_page[j], pk_indexes)?;
+        let src_key = source.normalize_key(&src_raw_key)?;
+        let tgt_key = target.normalize_key(&tgt_raw_key)?;
+        if src_key.len() != tgt_key.len()
+            || src_key
+                .iter()
+                .zip(&tgt_key)
+                .any(|(left, right)| std::mem::discriminant(left) != std::mem::discriminant(right))
+        {
+            return Err(DataSyncError::validation(
+                "source and target normalized key contracts differ; compare again after checking driver capabilities and key types",
+            ));
+        }
+        match src_key.cmp(&tgt_key) {
             Ordering::Less => {
-                changes.push(RowChange::insert(src_key, src_page[i].clone(), options));
+                changes.push(RowChange::insert(src_raw_key, src_page[i].clone(), options));
                 i += 1;
             }
             Ordering::Greater => {
-                changes.push(RowChange::delete(tgt_key, tgt_page[j].clone(), options));
+                changes.push(RowChange::delete(tgt_raw_key, tgt_page[j].clone(), options));
                 j += 1;
             }
             Ordering::Equal => {
@@ -286,7 +336,7 @@ where
                     unchanged_count += 1;
                 } else {
                     changes.push(RowChange::update(
-                        src_key,
+                        src_raw_key,
                         src_page[i].clone(),
                         tgt_page[j].clone(),
                         changed_columns,
@@ -350,6 +400,12 @@ impl RowPageSource for SliceRowSource {
         };
         let end = (start + limit).min(self.rows.len());
         Ok(self.rows[start..end].to_vec())
+    }
+
+    fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError> {
+        key.iter()
+            .map(|value| SyncKeyValue::from_value(value).map_err(DataSyncError::validation))
+            .collect()
     }
 }
 
@@ -617,6 +673,161 @@ mod tests {
         ) -> Result<Vec<Row>, DataSyncError> {
             Ok(vec![vec![i(1)]])
         }
+
+        fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError> {
+            key.iter()
+                .map(|value| SyncKeyValue::from_value(value).map_err(DataSyncError::validation))
+                .collect()
+        }
+    }
+
+    struct ContractRows {
+        rows: Vec<Row>,
+        contracts: Vec<datazen_driver_api::SyncKeyContract>,
+        served: bool,
+    }
+
+    #[async_trait]
+    impl RowPageSource for ContractRows {
+        async fn next_page(
+            &mut self,
+            _: Option<&[Value]>,
+            _: u32,
+        ) -> Result<Vec<Row>, DataSyncError> {
+            if self.served {
+                Ok(Vec::new())
+            } else {
+                self.served = true;
+                Ok(self.rows.clone())
+            }
+        }
+
+        fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError> {
+            if key.len() != self.contracts.len() {
+                return Err(DataSyncError::validation("test key arity mismatch"));
+            }
+            key.iter()
+                .zip(&self.contracts)
+                .map(|(value, contract)| {
+                    contract
+                        .normalize(&Some(value.clone()))
+                        .map_err(DataSyncError::validation)
+                })
+                .collect()
+        }
+    }
+
+    fn contract_rows(
+        rows: Vec<Row>,
+        contracts: Vec<datazen_driver_api::SyncKeyContract>,
+    ) -> ContractRows {
+        ContractRows {
+            rows,
+            contracts,
+            served: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn normalized_text_decimal_timestamp_and_composite_keys_compare() {
+        use datazen_driver_api::{SyncKeyCollation, SyncKeyContract, SyncKeyKind};
+        let contracts = vec![
+            SyncKeyContract::reject_nulls(SyncKeyKind::Text {
+                collation: SyncKeyCollation::Binary,
+            }),
+            SyncKeyContract::reject_nulls(SyncKeyKind::Decimal { scale: None }),
+            SyncKeyContract::reject_nulls(SyncKeyKind::Timestamp {
+                with_timezone: true,
+                precision: 6,
+            }),
+        ];
+        let source_row = vec![
+            s("tenant"),
+            Some(Value::String("1.20".into())),
+            Some(Value::String("2026-01-01T00:00:00+08:00".into())),
+            s("source"),
+        ];
+        let target_row = vec![
+            s("tenant"),
+            Some(Value::String("1.2".into())),
+            Some(Value::String("2025-12-31T16:00:00Z".into())),
+            s("target"),
+        ];
+        let mut source = contract_rows(vec![source_row], contracts.clone());
+        let mut target = contract_rows(vec![target_row], contracts);
+        let result = compare_table_pages(
+            "source",
+            "target",
+            &[0, 1, 2],
+            &[
+                "tenant".into(),
+                "amount".into(),
+                "created".into(),
+                "value".into(),
+            ],
+            &SyncOptions::default(),
+            &mut source,
+            &mut target,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].operation, ChangeOperation::Update);
+        assert!(matches!(
+            result.rows[0].key[0],
+            Value::String(ref value) if value == "tenant"
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_normalized_keys_fail_closed_before_changes() {
+        use datazen_driver_api::{SyncKeyCollation, SyncKeyContract, SyncKeyKind};
+        let contract = SyncKeyContract::reject_nulls(SyncKeyKind::Text {
+            collation: SyncKeyCollation::Binary,
+        });
+        let mut source = contract_rows(
+            vec![vec![s("a"), s("one")], vec![s("a"), s("two")]],
+            vec![contract.clone()],
+        );
+        let mut target = contract_rows(Vec::new(), vec![contract]);
+        let err = compare_table_pages(
+            "source",
+            "target",
+            &[0],
+            &["id".into(), "value".into()],
+            &SyncOptions::default(),
+            &mut source,
+            &mut target,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("strictly increasing"));
+    }
+
+    #[tokio::test]
+    async fn source_and_target_key_domains_cannot_be_coerced() {
+        use datazen_driver_api::{SyncKeyContract, SyncKeyKind};
+        let integer = SyncKeyContract::reject_nulls(SyncKeyKind::Integer { unsigned: false });
+        let text = SyncKeyContract::reject_nulls(SyncKeyKind::Text {
+            collation: datazen_driver_api::SyncKeyCollation::Binary,
+        });
+        let mut source = contract_rows(vec![vec![i(1)]], vec![integer]);
+        let mut target = contract_rows(vec![vec![s("1")]], vec![text]);
+        let err = compare_table_pages(
+            "source",
+            "target",
+            &[0],
+            &["id".into()],
+            &SyncOptions::default(),
+            &mut source,
+            &mut target,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("contracts differ"));
     }
 
     #[tokio::test]

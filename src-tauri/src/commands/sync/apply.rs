@@ -73,6 +73,22 @@ pub(crate) async fn compare_data_sync_impl(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("compare_data_sync")?;
+    state
+        .sync_adapters
+        .ensure_pair(&src_config.database_type, &tgt_config.database_type)
+        .map_err(CommandError::Validation)?;
+    let src_key_adapter = state
+        .sync_adapters
+        .get_source(&src_config.database_type)
+        .ok_or_else(|| {
+            CommandError::Validation("source driver has no Data Sync key contract".into())
+        })?;
+    let tgt_key_adapter = state
+        .sync_adapters
+        .get_source(&tgt_config.database_type)
+        .ok_or_else(|| {
+            CommandError::Validation("target driver has no Data Sync key contract".into())
+        })?;
 
     options.validate().map_err(CommandError::from)?;
     let mut total_bytes = 0;
@@ -96,33 +112,55 @@ pub(crate) async fn compare_data_sync_impl(
             .get_table_schema(&src_handle, &mapping.source_table)
             .await
             .cmd_err("compare_data_sync")?;
+        let target_table_schema = tgt_driver
+            .get_table_schema(&tgt_handle, &mapping.target_table)
+            .await
+            .cmd_err("compare_data_sync")?;
         let column_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         let pk_columns = schema.effective_primary_keys();
+        let mut src_contracts = Vec::with_capacity(pk_columns.len());
+        let mut tgt_contracts = Vec::with_capacity(pk_columns.len());
         for pk in &pk_columns {
-            let column = schema
+            let source_column = schema
                 .columns
                 .iter()
                 .find(|c| &c.name == pk)
                 .ok_or_else(|| CommandError::Validation(format!("missing key column {pk}")))?;
-            let kind = column.data_type.to_ascii_lowercase();
-            let base = kind.split(['(', ' ']).next().unwrap_or("");
-            if !matches!(
-                base,
-                "tinyint"
-                    | "smallint"
-                    | "mediumint"
-                    | "int"
-                    | "integer"
-                    | "bigint"
-                    | "int2"
-                    | "int4"
-                    | "int8"
-                    | "serial"
-                    | "bigserial"
-                    | "smallserial"
-            ) {
-                return Err(CommandError::Validation(format!("{}: key '{}' ({}) has no verified cross-endpoint ordering; use an integer primary key or Data Transfer until the driver supports normalized comparison keys", mapping.source_table, pk, column.data_type)));
+            let target_column = target_table_schema
+                .columns
+                .iter()
+                .find(|c| &c.name == pk)
+                .ok_or_else(|| {
+                    CommandError::Validation(format!(
+                        "target key column {pk} is missing; compare again"
+                    ))
+                })?;
+            let source_contract =
+                src_key_adapter
+                    .sync_key_contract(source_column)
+                    .map_err(|reason| {
+                        CommandError::Validation(format!(
+                            "{}: source key '{}': {reason}",
+                            mapping.source_table, pk
+                        ))
+                    })?;
+            let target_contract =
+                tgt_key_adapter
+                    .sync_key_contract(target_column)
+                    .map_err(|reason| {
+                        CommandError::Validation(format!(
+                            "{}: target key '{}': {reason}",
+                            mapping.target_table, pk
+                        ))
+                    })?;
+            if source_contract != target_contract {
+                return Err(CommandError::Validation(format!(
+                    "{}: key '{}' has incompatible source/target equality or ordering contract (source={source_contract:?}, target={target_contract:?})",
+                    mapping.source_table, pk
+                )));
             }
+            src_contracts.push(source_contract);
+            tgt_contracts.push(target_contract);
         }
         let pk_indexes: Vec<usize> = pk_columns
             .iter()
@@ -138,7 +176,9 @@ pub(crate) async fn compare_data_sync_impl(
             pk_columns.clone(),
             quote,
             &family,
-        );
+            src_key_adapter.clone(),
+            src_contracts,
+        )?;
         let mut tgt_source = DriverKeysetSource::new(
             tgt_driver.clone(),
             tgt_handle.clone(),
@@ -149,7 +189,9 @@ pub(crate) async fn compare_data_sync_impl(
             pk_columns,
             quote,
             &family,
-        );
+            tgt_key_adapter.clone(),
+            tgt_contracts,
+        )?;
         let mut table_result = compare_table_pages(
             &mapping.source_table,
             &mapping.target_table,
