@@ -171,7 +171,11 @@ impl DatabaseDriver for Driver {
         if let Some(flag) = &self.cancel {
             flag.store(true, Ordering::SeqCst);
         }
-        Ok(1)
+        let affected = sql
+            .split_once("VALUES ")
+            .map(|(_, values)| values.matches('(').count() as u64)
+            .unwrap_or(1);
+        Ok(affected)
     }
     async fn commit(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
@@ -225,6 +229,9 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
     }
 }
 fn job() -> TransferJob {
+    job_with_batch_size(1)
+}
+fn job_with_batch_size(batch_size: u32) -> TransferJob {
     TransferJob {
         source: Endpoint {
             db_session_id: "source".into(),
@@ -240,7 +247,7 @@ fn job() -> TransferJob {
         write_mode: WriteMode::Insert,
         tables: vec![],
         options: TransferOptions {
-            batch_size: 1,
+            batch_size,
             stop_on_error: false,
             confirmed_destructive: false,
         },
@@ -267,6 +274,15 @@ async fn run(
     tables: &[TableInspectResult],
     cancel: Option<Arc<AtomicBool>>,
 ) -> TransferExecutionResult {
+    run_with_batch_size(source, target, tables, cancel, 1).await
+}
+async fn run_with_batch_size(
+    source: &Driver,
+    target: &Driver,
+    tables: &[TableInspectResult],
+    cancel: Option<Arc<AtomicBool>>,
+    batch_size: u32,
+) -> TransferExecutionResult {
     let schemas = tables
         .iter()
         .map(|table| (table.source_table.clone(), source.schema.clone()))
@@ -282,7 +298,7 @@ async fn run(
             id: "target".into(),
             pool_id: "target".into(),
         },
-        &job(),
+        &job_with_batch_size(batch_size),
         tables,
         &schemas,
         false,
@@ -291,6 +307,31 @@ async fn run(
     .await
     .unwrap()
 }
+
+#[tokio::test]
+async fn batched_insert_reports_all_affected_rows_with_one_target_call() {
+    let source = driver(
+        vec![vec![Some(Value::Integer(1))], vec![Some(Value::Integer(2))]],
+        schema(&["id"]),
+    );
+    let target = driver(vec![], schema(&["id"]));
+    let result = run_with_batch_size(
+        &source,
+        &target,
+        &[inspected("a", vec![mapping("id", "id")])],
+        None,
+        500,
+    )
+    .await;
+
+    assert!(!result.partial);
+    assert_eq!(result.rows_inserted, 2);
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.calls, 1);
+    assert_eq!(state.committed.len(), 1);
+    assert_eq!(state.committed[0].len(), 2);
+}
+
 #[test]
 fn projected_rows_keep_skips_reorder_and_subsets() {
     let schema = schema(&["id", "name", "age"]);

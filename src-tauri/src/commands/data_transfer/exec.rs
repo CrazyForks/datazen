@@ -69,7 +69,11 @@ async fn schema_fingerprint_for_side(
         } else {
             &table.target_table
         };
-        let schema = if relation.trim().is_empty() {
+        // CREATE NEW mappings intentionally have no target schema at preview
+        // time. Preserve that `None` sentinel during revalidation instead of
+        // turning a driver's empty-schema response into `Some(empty)`, which
+        // would make an unchanged immutable plan stale.
+        let schema = if relation.trim().is_empty() || (!source && table.create_new) {
             None
         } else {
             match crate::data_transfer::metadata::load_table_schema(
@@ -158,9 +162,9 @@ async fn validate_plan_context(
         false,
     )
     .await?;
-    if src_fingerprint != plan.source_schema_fingerprint
-        || tgt_fingerprint != plan.target_schema_fingerprint
-    {
+    let source_schema_changed = src_fingerprint != plan.source_schema_fingerprint;
+    let target_schema_changed = tgt_fingerprint != plan.target_schema_fingerprint;
+    if source_schema_changed || target_schema_changed {
         return Err(CommandError::Validation(
             "source or target schema changed since preview; return to comparison".into(),
         ));

@@ -123,6 +123,11 @@ pub(crate) async fn preview_data_transfer_impl(
 
     let target_read_only_ok = !tgt_config.read_only;
 
+    // Keep the raw source snapshot for immutable-plan validation. The
+    // precision enrichment below is required by DDL/value conversion, but it
+    // is not part of the live schema identity revalidated before execution.
+    let source_schemas_for_plan = source_schemas.clone();
+
     let adapter_handles = if state
         .sync_adapters
         .ensure_pair(&src_config.database_type, &tgt_config.database_type)
@@ -190,7 +195,7 @@ pub(crate) async fn preview_data_transfer_impl(
         &preview,
         src_driver.as_ref(),
         target_driver.as_ref(),
-        &source_schemas,
+        &source_schemas_for_plan,
         &target_schemas,
         tgt_config.read_only,
     )
