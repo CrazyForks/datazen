@@ -68,3 +68,11 @@ The immutable Transfer plan wave is integrated in `7d37002a`. Preview now issues
 Independent final testing passed Host Rust 1413/1413 (3 ignored), Transfer frontend 25/25, TypeScript, PostgreSQL/MySQL/SQLite driver suites 101/86/46, formal WebDriver build, and `data-transfer-diverse-types.ts` 3/3. The desktop journey transferred 25,000 wide-type rows in both PG→MySQL and MySQL→PG paths and reached the result page. Integration sanity after merge passed Host Rust 1413/1413, Transfer frontend 30/30, and TypeScript.
 
 This gate closes the immutable-plan, create-new mapping, and large-transfer execution defects recorded in the Transfer track. It does not claim completion of bounded comparison scans, normalized composite-key equality, object dependency preservation, source filters, SQL-file targets, profiles/run history, or the remaining lossless export consumers listed above.
+
+## Immutable Sync plan release gate (2026-09-20)
+
+The Sync plan wave is integrated in merge commit `d8d84182` after `351595a0`. `compare_data_sync` now returns a server-owned opaque plan with a 15-minute TTL; `generate_data_sync_sql` and `execute_data_sync` consume only the plan ID, selection revision, key-only selection and validated options. The plan binds both sessions, active database/schema/relation identity, schema and primary-key fingerprints, driver protocol, target read-only policy and the reviewed comparison. Claim is one-shot and remains consumed after rollback, cancellation or an unknown outcome.
+
+The independent gate passed Host Rust 1419/1419 (3 ignored), Sync command/data-sync suites 27/99, Sync frontend 46/46, TypeScript, PostgreSQL/MySQL/SQLite driver suites 101/86/46, formal WebDriver build, and the real Sync suite 25/25. PostgreSQL and MySQL immutable-plan journeys passed 2/2 each, including selected-only writes and stale schema rejection before target writes. The real suite also verifies legacy apply rejection and one-shot retry behavior.
+
+This closes the Sync immutable-plan and active-database identity gate. Integer-only key ordering, bounded snapshot scans, normalized collation/composite keys, disk-backed ComparisonStore, optimistic conflict detection, object dependency ordering, profiles and run history remain later parity work.
