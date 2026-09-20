@@ -594,7 +594,7 @@ mod tests {
         assert!(matches!(statements[0].parameters[0], Value::Integer(10)));
         assert_eq!(
             statements[0].sql,
-            "UPDATE `target` SET `a` = ? WHERE `id` = ?"
+            "UPDATE `target` SET `a` = ? WHERE `id` = ? AND (`a` = ? OR (`a` IS NULL AND ? IS NULL)) AND (`b` = ? OR (`b` IS NULL AND ? IS NULL))"
         );
         schema.primary_keys = vec!["b".into()];
         assert!(super::resolve_projection_types(&result, &schema, "mysql").is_err());
