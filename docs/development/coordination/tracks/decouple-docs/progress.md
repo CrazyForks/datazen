@@ -54,7 +54,9 @@
 - [x] Coder 完成 → READY_FOR_TEST（commits `da30426b3` / `9a88c7778` / `8ac2705d2` / 本记录 commit）
 - [x] Tester 复测 → **TEST_FAILED**（4 个 Bug 待修复，见 `bugs.md`；结构类验收全部通过，仅事实/引用一致性问题）
 - [x] Coder Bug 修复（第 1 轮）→ READY_FOR_TEST（BUG-001..004 全部修正并实测复核，4 条判定均无反驳；状态见 `bugs.md` 已推进为「待复测」）
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测（第 2 轮，commit `9bf1c6600`）→ **TEST_FAILED**（BUG-001..004 **全部判定「已修复」**；新发现 1 条低级残留缺陷 `decouple-docs-BUG-005`（指南 §6.2 zh/en 未同步 BUG-003 三分规则），状态「待修复」；全局不回归 7 项全部通过。详见下方「Tester 第 2 轮复测记录」）
+- [ ] Coder Bug 修复（第 2 轮，仅 BUG-005）→ READY_FOR_TEST
+- [ ] Tester 复测（第 3 轮）→ TEST_DONE
 
 ## Tester 复测记录（commit `6199d9d95`，全新实例独立实测，不采信 Coder 自报）
 
@@ -136,6 +138,69 @@
   2. 驱动/EP 生产代码的 `setLocale` 调用（宿主 `localeSync.ts` 接线与 `getTranslation` 适配器需白名单区分）。
   3. 驱动 `t()` key 断言宿主 `I18nKey`（2.4.4）与新增宿主聚合 codegen（2.4.3 禁止项）。
 - i18n 自注册终态（`locales/index.ts`、入口副作用行、`DRIVER_LOCALES` 删除、`i18n-sync-check` 驱动扫描）在 `i18n-drivers` 轨合并后需**回扫本文件 2.4.3**，把「同期落地」措辞改为已交付并核对实际模块名一致。
+
+
+## Tester 第 2 轮复测记录（commit `9bf1c6600`，全新实例独立实测；第 1 轮报告仅作断言清单，不采信）
+
+工作目录 `.worktrees/datazen-decouple-docs` @ `feature/decouple-docs`；基准 `fd23a66a8`；起始 `git status --short` 干净。HEAD 实测 `9bf1c6600`（其父 `8e68a79dc`、`006906c6a` 均在链上）。
+
+### 阶段 A：BUG-001..004 定点复验（逐条独立重现）
+
+| Bug | 复验动作（全部为本轮自己执行的命令/Read） | 实测结果 | 判定 |
+| --- | --- | --- | --- |
+| **BUG-001（中）** | `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/` 全量清点 + 目录分布 + `vi.mock` 独立扫描 + 宽松正则 `grep -rEn "['\"]\.\./.*src/" packages/drivers/*/ui/` 交叉验证 | total **34** =（redis **31** + sqlserver **1**）`src/hooks/useI18n` **32**（且恰为 32 个不同文件，`grep -rl` 复核）+ 夹具 `redisKeyWebContextMenu.test.tsx:5,9` **2**；redis 目录分布 `connection/3, console/1, console/consoleCompletion/1, key-browser/7, observe/4, shared/2, value-editors/11, value-editors/valueView/1, value-search/1 = 31` 与 Coder 主张逐目录一致；`sqlserver/ui/ConnectionFields.tsx:2` 属实；**8 处 `vi.mock` 宿主 `src/hooks/useI18n` 属实**（`__tests__/` 下 ValueViewer:11 / connectionWizard:6 / useRedisGate:15 / PubSubPanel:8 / redisConsoleCompletionJourney:22 / jsonModeBar:11 / ttlControlsJourney:13 / consoleResultRenderer:7 各 1 处，非 `from` 形态确不被基线命令命中）；宽松正则总命中恰 **42 = 34 + 8**，`ui/` 之外驱动目录 **0** 命中 ⇒ **基线 42 成立**，Wave 4 白名单口径与 2.1.2/2.7 文档声明逐项吻合 | **已修复** |
+| **BUG-002（低）** | `sed`/`grep`/`ls` 核对 2.4.3 三层表述三出处 | 接线层：`builtinLocales.ts:9` = `BUILTIN_LOCALES = ['en', 'zh-CN']`（全文件 `pt-BR` 0 命中；真值源 `builtin-locales.json` 仅 en/zh-CN；`BUILTIN_LOCALE_LABELS:26-29` 两项；`fullLocales.ts` 仅 en/zh-CN 且注释自陈 "Import only from tests or tooling"）；校验层：`i18n-sync-check.mjs:23` = `LOCALE_FILES = ['de','es','fr','ja','ko','pt-BR','ru','zh-TW']`（8 语言，行号命中）；命名层：`src/locales/pt-BR.ts` + `src/locales/pt-BR/` 存在、redis/mongodb `locales/` 各 **10** 语言文件含 `pt-BR.ts`；「生产路径无运行时 import」复核：`src/` 内 `pt-BR` 仅 `resolveUiLanguage.ts` 语言码字面量（非词条模块 import），表述成立；`9bf1c6600` 修订后正文为「真值分**三层**」，与三个项目符号实数一致 | **已修复** |
+| **BUG-003（低）** | 2.2 行 1 先例列 4+1 个引用逐个 Read/ls | `src/lib/cn.ts` 整文件 1 行薄壳 ✅；`src/lib/nativeContextMenu.ts:7-15` 值+类型再导出块 ✅；`src/commands/driver.ts:6-11` `driverCommands`+类型薄壳 ✅;`src/commands/file.ts:2/9`（`:2` import SDK `fileCommands`、`:17` 起 spread + host-only 命令）「合并再导出」形态标注准确 ✅；反例：宿主 `src/lib/driverSettings.ts` 确不存在（`ls` No such file；`find src -iname "*driverSettings*"` 仅 `DriverSettingsSection.tsx`；`git log -1 --` = `92a039383` ✅）；消费点直连 SDK 属实（`DriverSettingsSection.tsx:3` `mergeDriverSettings` from SDK；`JsonSchemaSettingsForm.tsx:6` from SDK）；2.1.2「唯一实现原则」与 2.5 第 2 步的「无消费方连文件删除」规则句均在位 | **已修复**（但修复未同步两份指南 §6.2 ⇒ 新登记 BUG-005） |
+| **BUG-004（低）** | `grep -c "^#"` + 层级分布 + 序列 diff | zh **21** / en **21**（`grep -o "^#+ "` 分布两份完全相同：`# `×1 + `## `×13 + `### `×7）；标题层级序列 `diff` 逐行一致；progress.md B 表末行与自验第 6 条均已写 21 + 口径（含 ATX/H1/不计表格与代码块的排除说明），与实测吻合 | **已修复** |
+
+### 阶段 B：全局不回归（7 项全过）
+
+| # | 验收项 | 实测结果 |
+| --- | --- | --- |
+| 1 | diff 范围 | `git diff --name-only fd23a66a8..HEAD` = 8 文件全在 `docs/**`（含 `hub.md` 系本分支自 `d172476fc` 分叉、未含 `fd23a66a8` 的 hub 再聚合，**非本轨改动**：`git log fd23a66a8..HEAD -- hub.md` 空）；`git diff --stat fd23a66a8..HEAD -- src packages scripts src-tauri e2e AGENTS.md` = **空**；两个修复 commit 触及文件仅 `boundary.md` + 本 track `progress.md`/`bugs.md`，未触碰指南（与 BUG-005 判定相互印证） |
+| 2 | `npx tsc --noEmit -p tsconfig.json` | **exit 0**，0 error |
+| 3 | 三守卫（脚本名取自 `package.json:91-93`） | `check-id-terminology` exit 0（5 allow-listed skipped / ok 1714 files）；`check-ci-docs-consistency` exit 0（11 ids / window boundaries / toolchain 全 ok）；`check-module-layers` exit 0（3 rules） |
+| 4 | 相对链接 | 临时 node 脚本（`/tmp`，跑完即删，`git status` 复核仓库零残留）解析 5 份文档：14 条相对链接，**broken 0** |
+| 5 | zh/en 标题结构 | 21 : 21，层级分布与序列 1:1（同 BUG-004 复验，两份均未在本轮修复中被改动） |
+| 6 | 新一轮 API/路径一致性抽验 | **20 项，20 命中（100%）**，优先覆盖被改动的 2.1.2/2.2/2.4.3/2.5/2.7 与 §6.1~6.3，明细见下表 |
+| 7 | `node scripts/aggregate-hub.mjs` | exit 0（聚合 11 tracks）；`git status --short` 仅 ` M hub.md` → `git checkout --` 恢复，**未提交** |
+
+阶段 B-6 抽验明细（文档断言 → 实测出处）：
+
+| # | 断言（位置） | 实测 |
+| --- | --- | --- |
+| 1 | 2.1.2 基线命令与 34/32/2/8/42（同 BUG-001，此处不重复计入命中的细分项） | ✅ |
+| 2 | 2.2 行 5 EP 先例 `sqlEditorProEP` | `packages/extension-points/src/index.ts:27` ✅ |
+| 3 | 2.2 行 4 `src/lib/connectionViews/types.ts` re-export `ConnectionViewActions` | 该文件 `:9/:11` ✅ |
+| 4 | 2.3.1 宿主 bind 时机 5 处 | `settingsStore.ts:197`、`connectionStore.ts:248`、`schemaStore.ts:694`、`useConfirmDialog.tsx:69`、`contextMenuStore.ts:40` ✅ |
+| 5 | 2.2/2.3 未绑定抛错文案全 SDK 恰 5 处 | `grep -rc "has not been bound to driver-sdk yet"` 合计 **5** ✅ |
+| 6 | 2.3.1 约束 3 `SettingsBridgeState` 三字段 | `settingsStoreBridge.ts:11-17` ✅ |
+| 7 | 2.3.1 约束 2 `hide` 未绑定 no-op | `nativeContextMenu.ts:104-111`（`if (!boundBridge) return;`）✅ |
+| 8 | 2.3.1 约束 4 / 2.1.1 `sideEffects: false` | `packages/driver-sdk/package.json:13` ✅ |
+| 9 | 2.4.1 五 API 签名与行号（`setLocale:34`/`getLocale:44`/`registerTranslations:53`/`t:73`/`useI18n:89`） | `packages/ui/src/i18n.ts` 逐行命中 ✅ |
+| 10 | 2.4.2 `startLocaleSync` + `main.tsx` 恰一次调用 | `localeSync.ts:18`、`main.tsx:26` import + `:66` `startLocaleSync();` ✅ |
+| 11 | 2.4.3 表：宿主 eager `registerTranslations` + `__DATAZEN_HOST__['@datazen/ui']` | `src/locales/index.ts:29-32`、`src/main.tsx:46-48` ✅ |
+| 12 | 2.4.3 驱动自注册「同期落地未合并」标注仍为真 | `packages/drivers/{redis,mongodb}/locales/index.ts` 均不存在；两入口 `meta.ts` 无 `import '../locales'` ✅ |
+| 13 | 2.4.4 前缀 `redis.*`/`mongo.*` | 两包 `locales/en.ts` 首 key 前缀命中 ✅ |
+| 14 | 2.4.5 / 6.3 `DriverFormValidator` 第二参 `t: (key: string) => string` | `packages/driver-sdk/src/index.ts:49-60` ✅ |
+| 15 | 2.5 步 3 桥单测先例目录 | `packages/driver-sdk/__tests__/`（confirmDialog/connectionStore/driverSettingsForm 等存在）✅ |
+| 16 | 6.1 `@datazen/ui` 导出组件清单（含 `Slider`/`TemporalValueInput`/`PathInput`、`cn`、i18n） | `packages/ui/src/index.ts:1/15/17-21/24-26` ✅ |
+| 17 | 6.1 SDK 消费面 `useBound*`/`bindContextMenuBridge`/`showNativeContextMenu`/`resolveEditorFontFamily` | `packages/driver-sdk/src/index.ts:85/89-90/99/107/116/131` ✅ |
+| 18 | 2.4.3 generated.ts redis 入口 `ui/shared/meta` | `src/extensions/generated.ts:10` ✅（mongodb 入口 `ui/meta` 见 resolve-drivers `:270`，第 1 轮已核） |
+| 19 | 2.1.2 夹具引用的宿主文件存在 | `src/components/ui/WebContextMenu.tsx`、`src/stores/contextMenuStore.ts` ✅ |
+| 20 | 「消费点直连 SDK」旁证（BUG-005 证据链） | `src/components/sql-editor/editorExtensions.ts:36-38` from `@datazen/driver-sdk` ✅ |
+
+**未回归项复核（验收 3）**：5 份文档 `HostLocaleBridge|setHostLocaleBridge|getExtensionTranslation` 0 命中复确认由三守卫 + 本轮 `薄再导出` 全量 grep 顺带覆盖；字面 `../../../src/` 仍仅存在于 ❌ 反例块（2.1.2 正文与 2.5 步 5），未扩散。
+
+### 阶段 C：一致性覆盖率（替代行覆盖率）
+
+- 本轮独立核对断言 **44 条**（阶段 A 逐 Bug 细分 24 条 + 阶段 B-6 抽验 20 条）：命中 **43**，命中率 **97.7%**；唯一失配 = 指南 §6.2（zh:196/en:211）无条件「宿主原路径仅剩薄再导出」且先例含 2 个无壳模块 → `decouple-docs-BUG-005`（低，待修复）。
+- 风险清单（未核对断言）：Part 1 Rust 段内部 API 细节（第 1 轮抽查 2 项通过，全量不在本轨范围）；观察项 1（2.4.2 `getTranslation` 括注）与 2（Part 1 `"0.1"` 版本示例）维持第 1 轮记录，不升级。
+
+### 阶段 D：留待 R 回归（本轮复核 + 补登）
+
+- 已覆盖确认：① Wave 4 白名单口径 **34（32+2）+ 8 = 42**（本轨 `## 留待 R 回归` 段已按修复后事实登记，且 2.1.2/2.7 双处一致）；② `i18n-drivers` 合并后回扫 **2.4.3** 措辞与模块名。
+- **补登缺项**（已并入文末「留待 R 回归」）：③ `i18n-drivers` 合并后 **2.1.2/2.7 的 32/2/8/42 基线必然失效**（换源归零），须回扫删除或改「历史基线」注记；④ **Wave 4 护栏落地后** 2.6/2.1.2/2.7「待 Wave 4 落地」措辞须替换为实际脚本名与 CI 位置，并把白名单实现与本档口径对表；⑤ BUG-005 修复须 **zh/en 两份同步**（保持 21:21，不新增标题）。
 
 
 ## Coder 实施记录
@@ -246,3 +311,4 @@
 ## 留待 R 回归
 
 - 本轨无 E2E（纯文档）。后续验证点已由 Tester 登记在上方「阶段 D：留待 R 回归」：Wave 4 import 护栏落地时的现网基线白名单口径（BUG-001 修正后为 **34 处宿主相对 import（32 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径 = 42 处**，以 2.1.2 登记为准）、驱动侧 `setLocale` 拦截、以及 `i18n-drivers` 合并后回扫 2.4.3 的措辞与模块名。
+- **Tester 第 2 轮补登**（详见「阶段 D」小节）：① `i18n-drivers` 合并后 **2.1.2 / 2.7 的过渡期基线数字（32 / 2 / 8 / 42）必然失效**——换源归零时须同步删除该清单或改注为「历史基线」，否则「少于基线应更新 2.1.2」的判据会反向悬空；② **Wave 4 护栏脚本落地后**须回扫 2.6 / 2.1.2 / 2.7，把「待 Wave 4 落地」措辞替换为实际脚本文件名与 CI 位置，并核对护栏白名单与本档口径一致；③ BUG-005（指南 §6.2 两层文档矛盾）修复时 **zh/en 两份必须同步改写**，保持标题结构 21:21 不变。

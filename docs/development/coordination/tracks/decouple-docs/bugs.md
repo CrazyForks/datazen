@@ -6,10 +6,11 @@
 
 | Bug ID | 严重度 | 文档位置 | 一句话 | 状态 |
 | --- | --- | --- | --- | --- |
-| `decouple-docs-BUG-001` | 中 | `driver-api-dependency-boundary.md` 2.1.2 过渡期例外 | 声明「除两点外不存在任何豁免」，但 sqlserver 驱动存在同类宿主 import | 待复测 |
-| `decouple-docs-BUG-002` | 低 | 同上 2.4.3 配套终态第 2 条 | 用 `BUILTIN_LOCALES` 佐证 `pt-BR` 连字符，但该常量不含 `pt-BR` | 待复测 |
-| `decouple-docs-BUG-003` | 低 | 同上 2.2 决策表行 1 先例列 | `src/lib/driverSettings.ts` 作为「薄再导出先例」引用，实际文件已不存在 | 待复测 |
-| `decouple-docs-BUG-004` | 低 | 本 track `progress.md` Coder 自验第 6 条 / B 表 | 自报 zh/en 各 24 个标题，实测各 21 个（结构对应本身通过） | 待复测 |
+| `decouple-docs-BUG-001` | 中 | `driver-api-dependency-boundary.md` 2.1.2 过渡期例外 | 声明「除两点外不存在任何豁免」，但 sqlserver 驱动存在同类宿主 import | 已修复（第 2 轮复测通过） |
+| `decouple-docs-BUG-002` | 低 | 同上 2.4.3 配套终态第 2 条 | 用 `BUILTIN_LOCALES` 佐证 `pt-BR` 连字符，但该常量不含 `pt-BR` | 已修复（第 2 轮复测通过） |
+| `decouple-docs-BUG-003` | 低 | 同上 2.2 决策表行 1 先例列 | `src/lib/driverSettings.ts` 作为「薄再导出先例」引用，实际文件已不存在 | 已修复（第 2 轮复测通过；残留同类问题另立 BUG-005） |
+| `decouple-docs-BUG-004` | 低 | 本 track `progress.md` Coder 自验第 6 条 / B 表 | 自报 zh/en 各 24 个标题，实测各 21 个（结构对应本身通过） | 已修复（第 2 轮复测通过） |
+| `decouple-docs-BUG-005` | 低 | `independent-driver-development.zh-CN.md:196` / `.en.md:211`（§6.2） | 仍无条件声称「宿主原路径仅剩薄再导出」并把 `driverSettings`、`resolveEditorFontFamily` 列为该形态先例，实际二者宿主文件均已不存在，与修复后的契约 2.2/2.5 三分规则互相矛盾 | 待修复（第 2 轮复测新发现） |
 
 > **Coder 第 1 轮修复说明（状态推进：待修复 → 待复测）**：4 条判定经本轮独立实测**全部成立，无反驳项**，已按建议方向修正。改法与实测事实逐条见 `progress.md`「Coder Bug 修复记录（第 1 轮）」。BUG-001 额外登记了 Tester 未列的 **8 处 `vi.mock` 宿主 `useI18n` 路径**（非 `from` 形态、不被重现命令命中），供 Wave 4 护栏白名单口径复核。状态由复测 Tester 推进为「已修复」，Coder 不自行判定。
 
@@ -35,7 +36,7 @@
 - **交叉证据（正确事实的代码/文档出处）**：并行轨 `i18n-drivers` 自己的任务书就已把它计入换源范围——`.worktrees/datazen-i18n-drivers/docs/development/coordination/tracks/i18n-drivers/progress.md:28`：「已盘点范围（基准 d172476fc）：redis ui 31 处 + `packages/drivers/sqlserver/ui/ConnectionFields.tsx` 1 处」。实测 redis 侧 `useI18n` 宿主相对 import 命中 **31 个文件**，与并行轨盘点完全一致，故仅本契约文档少写一条。
 - **影响范围**：本文件是「依赖边界的唯一规范落点」。2.7 自查清单写作「驱动 UI 无任何 `.../src/` 形态宿主 import（2.1.2 登记的过渡期例外除外）」——Reviewer 依据该基线会把 sqlserver 判为「新增违规」而阻断无关 MR；Wave 4 import 护栏若照 2.1.2 清单实现豁免白名单，则会漏配该文件（要么护栏落地即红，要么白名单与规范不一致）。
 - **建议修复方向（供 Coder 参考，非 Tester 实施）**：把例外 1 的适用范围从 `packages/drivers/redis/ui/**` 扩为「`packages/drivers/*/ui/**` 现存 32 处宿主 `useI18n` 相对 import（redis 31 + sqlserver 1）」，或显式并列两处，并与 `i18n-drivers` 轨盘点口径对齐。
-- **Coder 处理（待复测）**：2.1.2 已改为「命令 + 计数」式基线（32 处 `useI18n`（redis 31 + `sqlserver/ui/ConnectionFields.tsx:2`）+ 2 处测试夹具 = 34 行命中）并同步 2.7 判据；实测 redis 31 处目录分布见 `progress.md` 修复记录，与 `i18n-drivers` 轨盘点口径一致。另补登记 Tester 未覆盖的 8 处 `vi.mock` 宿主 `useI18n` 路径（护栏按 mock 扫描时基线 42 处）。
+- **Coder 处理（第 2 轮复测通过 → 已修复）**：2.1.2 已改为「命令 + 计数」式基线（32 处 `useI18n`（redis 31 + `sqlserver/ui/ConnectionFields.tsx:2`）+ 2 处测试夹具 = 34 行命中）并同步 2.7 判据；实测 redis 31 处目录分布见 `progress.md` 修复记录，与 `i18n-drivers` 轨盘点口径一致。另补登记 Tester 未覆盖的 8 处 `vi.mock` 宿主 `useI18n` 路径（护栏按 mock 扫描时基线 42 处）。
 
 ---
 
@@ -52,7 +53,7 @@
 
 - **正确事实的代码出处**：`pt-BR` 的连字符约定实由以下两处支撑——`scripts/i18n-sync-check.mjs:23`（`const LOCALE_FILES = ['de','es','fr','ja','ko','pt-BR','ru','zh-TW']`）与各包文件名 `src/locales/` / `packages/drivers/redis/locales/pt-BR.ts`、`packages/drivers/mongodb/locales/pt-BR.ts`。
 - **影响范围**：结论（用连字符）本身正确，但读者按文档去 `BUILTIN_LOCALES` 核对 `pt-BR` 会找不到，属引用错配。建议把 `pt-BR` 的出处改为 `i18n-sync-check.mjs` 的 `LOCALE_FILES` / 现有语言文件名，或把括号内的举例拆成「`zh-CN`（`BUILTIN_LOCALES`）与 `pt-BR`（`LOCALE_FILES`）」。
-- **Coder 处理（待复测）**：2.4.3 该条已拆为三层——接线层仅 `en`/`zh-CN`（`builtinLocales.ts:9` + 真值源 `builtin-locales.json`，并点明 `fullLocales.ts` 也只含这两个）、parity 校验层其余 8 语言（`i18n-sync-check.mjs:23` `LOCALE_FILES`）、命名约定层 `pt-BR` 以 `LOCALE_FILES` 与文件名为出处；并加写「有语言文件 ≠ 宿主已接线」与驱动包 10 个语言文件的实测覆盖，杜绝 10 种语言全在线的误读。
+- **Coder 处理（第 2 轮复测通过 → 已修复）**：2.4.3 该条已拆为三层——接线层仅 `en`/`zh-CN`（`builtinLocales.ts:9` + 真值源 `builtin-locales.json`，并点明 `fullLocales.ts` 也只含这两个）、parity 校验层其余 8 语言（`i18n-sync-check.mjs:23` `LOCALE_FILES`）、命名约定层 `pt-BR` 以 `LOCALE_FILES` 与文件名为出处；并加写「有语言文件 ≠ 宿主已接线」与驱动包 10 个语言文件的实测覆盖，杜绝 10 种语言全在线的误读。
 
 ---
 
@@ -69,7 +70,7 @@
   ```
 
 - **影响范围**：作为「宿主路径改薄再导出」的先例举证失效（另两个先例 `src/commands/driver.ts`、`src/lib/nativeContextMenu.ts` 实测确为薄再导出，故表格主结论仍成立）。建议把该行先例改为实际留存薄再导出的 `src/lib/cn.ts`、`src/lib/nativeContextMenu.ts`、`src/commands/driver.ts`、`src/commands/file.ts`，并注明「无宿主消费方时可直接移走、不留薄再导出（driverSettings 即此例）」。
-- **Coder 处理（待复测）**：2.2 行 1 先例列已换为 `src/lib/cn.ts`（实测整文件 1 行）、`src/lib/nativeContextMenu.ts:7-15`、`src/commands/driver.ts:6-11` 三个真壳，外加 `src/commands/file.ts:2/9`（实测为与 SDK `fileCommands` **合并再导出**、宿主另留 host-only 命令，故按实际形态标注为「合并」而非纯薄壳）；`driverSettings` 从先例列改列为「整体移走不留壳」反例（`git log --oneline -1 -- src/lib/driverSettings.ts` = `92a039383`；全仓 `lib/driverSettings` 仅剩文档命中；旁证 `tracks/cap-bridge/progress.md:111` 本身即记载「移动 + 宿主消费点改为直接 import SDK」）。同一规则补齐到 2.1.2「唯一实现原则」与 2.5 流程第 2 步，避免只在表格里出现一次。
+- **Coder 处理（第 2 轮复测通过 → 已修复）**：2.2 行 1 先例列已换为 `src/lib/cn.ts`（实测整文件 1 行）、`src/lib/nativeContextMenu.ts:7-15`、`src/commands/driver.ts:6-11` 三个真壳，外加 `src/commands/file.ts:2/9`（实测为与 SDK `fileCommands` **合并再导出**、宿主另留 host-only 命令，故按实际形态标注为「合并」而非纯薄壳）；`driverSettings` 从先例列改列为「整体移走不留壳」反例（`git log --oneline -1 -- src/lib/driverSettings.ts` = `92a039383`；全仓 `lib/driverSettings` 仅剩文档命中；旁证 `tracks/cap-bridge/progress.md:111` 本身即记载「移动 + 宿主消费点改为直接 import SDK」）。同一规则补齐到 2.1.2「唯一实现原则」与 2.5 流程第 2 步，避免只在表格里出现一次。
 
 ---
 
@@ -85,7 +86,29 @@
   ```
 
 - **影响范围**：零生产影响，但 progress.md 是 Tester/Reviewer 的核对基线，失真数字会让后续复测误判「漏了 3 个标题」。建议随本轮修正文中数字（或改为「21 个，zh/en 一一对应」）。
-- **Coder 处理（待复测）**：`progress.md` B 表末行与自验第 6 条的 24 已改为 **21**（`#`×1 + `##`×13 + `###`×7，`####`×0），并写明计数口径＝行首 `#` 的 ATX 标题行、含 H1 主标题、不计表格 `#` 列与代码块注释；本轮另以 `paste` 逐行比对两份标题序列，确认 21:21 且顺序 1:1（验收标准 4 结论不变）。同批把自验表第 13 条对 `BUILTIN_LOCALES` 的错误断言就地标注作废（指向 BUG-002）。
+- **Coder 处理（第 2 轮复测通过 → 已修复）**：`progress.md` B 表末行与自验第 6 条的 24 已改为 **21**（`#`×1 + `##`×13 + `###`×7，`####`×0），并写明计数口径＝行首 `#` 的 ATX 标题行、含 H1 主标题、不计表格 `#` 列与代码块注释；本轮另以 `paste` 逐行比对两份标题序列，确认 21:21 且顺序 1:1（验收标准 4 结论不变）。同批把自验表第 13 条对 `BUILTIN_LOCALES` 的错误断言就地标注作废（指向 BUG-002）。
+
+---
+
+## decouple-docs-BUG-005（低，第 2 轮复测新发现）— 指南 §6.2 仍无条件声称「下沉后宿主原路径仅剩薄再导出」
+
+- **文档写**：`docs/development/independent-driver-development.zh-CN.md:196`「**纯函数 / IPC 封装**：实现下沉 `@datazen/driver-sdk`（全仓单实现，**宿主原路径仅剩薄再导出**）。已有先例：**`driverSettings`、`resolveEditorFontFamily`**、`ipc/driverCommands`、`ipc/fileCommands`、`nativeContextMenu`。」`.en.md:211` 同义（"the host path keeps only a thin re-export … precedents: `driverSettings`, `resolveEditorFontFamily`, …"）。
+- **代码实为**：所列 5 个先例中 2 个**宿主侧连薄再导出壳都不存在**——
+  - `src/lib/driverSettings.ts`：No such file（`92a039383` 整体移走，仅存 `packages/driver-sdk/src/driverSettings.ts`）；
+  - `src/lib/resolveEditorFontFamily.ts`：No such file（同一 commit `92a039383` 移走；宿主消费点 `src/components/sql-editor/editorExtensions.ts:36-38` 直接 `from '@datazen/driver-sdk'` import `resolveEditorFontFamily`）。
+- **与修复后契约自相矛盾**：契约 2.2 行 1 / 2.5 第 2 步（`driver-api-dependency-boundary.md:197/:326`，BUG-003 修复后）已确立三分规则「**有存量消费方改薄再导出、无消费方连文件删除**」并把 `driverSettings` 明确标注为「整体移走不留壳」反例；指南却仍用无条件句式并把 `driverSettings`、`resolveEditorFontFamily` 归入「薄再导出先例」，属 BUG-003 同类残留在并行文档面的复现（修复只改了契约文档，未同步两份指南）。
+- **重现命令**：
+
+  ```bash
+  grep -n "宿主原路径仅剩薄再导出" docs/development/independent-driver-development.zh-CN.md   # :196
+  ls src/lib/driverSettings.ts src/lib/resolveEditorFontFamily.ts                              # 均 No such file
+  git log --oneline -1 -- src/lib/resolveEditorFontFamily.ts                                   # 92a039383
+  grep -rn "resolveEditorFontFamily" src/ --include='*.ts*' | grep "@datazen/driver-sdk"       # 消费点直连 SDK，无宿主壳
+  ```
+
+- **影响范围**：指南是 git 驱动作者的第一入口文档；按该句照做的作者会为「无宿主消费方」的下沉能力徒留空壳文件（与 2.5 流程第 2 步相反），或按先例反查宿主壳而不得、连带怀疑契约 2.2 的可信度——正是 BUG-003 登记的失效模式。
+- **建议修复方向（供 Coder 参考，非 Tester 实施）**：将 zh:196 / en:211 该括注改为与契约 2.2 一致的三分表述（「有存量消费方→薄再导出；无消费方→整体移走不留壳，如 `driverSettings` / `resolveEditorFontFamily`」），**zh/en 两份必须同步**（维持验收 4 的 21:21 结构，不新增标题）。
+- **Tester 判定依据（实测日志摘录）**：`find src -iname "*driverSettings*"` 仅剩 `src/windows/settings/DriverSettingsSection.tsx`；`find src -name "resolveEditorFontFamily*"` 0 命中；`grep -n "薄再导出" docs/**` 全量清点确认其余文档（契约 2.1.2/2.2/2.5、components.md:575）均已带限定语，唯指南 6.2 两处（zh/en）为无条件句式。
 
 ---
 
