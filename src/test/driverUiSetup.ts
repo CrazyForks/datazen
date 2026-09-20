@@ -6,13 +6,21 @@
  * dictionaries the same way the running app does:
  *   1. host eager dictionaries — loaded by the host app itself
  *      (`src/locales/index.ts` registers them on import);
- *   2. each driver pack — self-registered by `packages/drivers/<id>/locales`
- *      (in the app this module is reached through the driver UI entry that
- *      `src/extensions/generated.ts` imports).
+ *   2. each driver pack — registered as a *side effect of the driver UI entry
+ *      module* (`ui/shared/meta.ts` for redis, `ui/meta.ts` for mongodb),
+ *      which is exactly the module `src/extensions/generated.ts` imports in
+ *      the real app. The entry module in turn pulls `packages/drivers/<id>/
+ *      locales/index.ts`.
+ *
+ * The harness deliberately goes through the meta entry and never imports a
+ * driver `locales/index.ts` directly: mounting the pack on the real loading
+ * path is what this track guarantees, and `ui/__tests__/localePackRegistration
+ * .test.ts` per driver keeps that link permanently covered. Importing the
+ * pack here instead would hide a broken/removed side-effect line in meta.
  *
  * Host-only test runs keep using `./setup.ts`; this file exists so the driver
  * suites get real strings without any `src/**` import inside `packages/drivers`.
  */
 import '../locales';
-import '../../packages/drivers/redis/locales';
-import '../../packages/drivers/mongodb/locales';
+import '../../packages/drivers/redis/ui/shared/meta';
+import '../../packages/drivers/mongodb/ui/meta';
