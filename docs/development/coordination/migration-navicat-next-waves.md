@@ -248,3 +248,13 @@ The Data Transfer UI exposes the encoding selector beside the target dialect and
 Independent final verification passed Rust `data_transfer` focused tests (92/92), Host Rust (1511 passed, 3 ignored), DataTransferWindow tests (29/29), TypeScript and diff checks. The integration branch reproduced `data_transfer` 92/92 and frontend 27/27. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. This environment has no Windows runtime or live transfer fixtures, so those checks remain deferred.
 
 This gate closes selectable UTF-8 output variants for SQL-file transfer. It does not add legacy code-page encodings, UTF-16/GBK conversion, compression, target profiles/history, resumable checkpoints or broader driver coverage.
+
+## SQL-file table-mapping release gate (2026-09-21)
+
+The table-mapping wave is integrated in merge commit `3be9943b` after implementation `7a4f4db6` and independent final verification. SQL-file Data Transfer now performs a source-only inspection before preview, so the wizard exposes the same object and mapping review used by database destinations: tables can be disabled, target table names can be changed, and columns can be renamed or skipped. The selected source filter and recordset remain part of each mapping, while the server still forces SQL-file mappings to create-new targets and renders only the reviewed immutable plan.
+
+The source-only IPC resolves the selected source session and schema, validates an optional registered target dialect, enriches target-native types through the adapter contract, and never opens or trusts a target database. Empty table payloads retain the legacy server-discovered-table behavior. Changing the SQL dialect clears inspected mappings so target-native overrides cannot leak across dialects; preview back navigation returns to the mapping step.
+
+Independent verification passed source-only inspect 1/1, related Data Transfer Rust 94/94, frontend transfer tests 35/35, TypeScript, formatting and diff checks. The integration branch reproduced Data Transfer 94/94 and frontend 35/35. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. Live database journeys and Windows publication remain deferred in this environment.
+
+This gate closes per-table and per-column review for SQL-file output for the covered registered adapters. It does not add reusable target profiles/history, code-page/UTF-16 encodings, compression, resumable checkpoints, composite recordset ranges or broader driver coverage.
