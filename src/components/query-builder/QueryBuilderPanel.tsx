@@ -152,7 +152,9 @@ export function QueryBuilderPanel({
   // ── Load columns for selected tables ───────────────────
   useEffect(() => {
     if (selectedTables.length === 0) return;
-    void ensureColumns(selectedTables, dbSessionId, currentDatabase ?? '');
+    void ensureColumns(selectedTables, dbSessionId, currentDatabase ?? '', {
+      requireTypes: true,
+    });
   }, [selectedTables, ensureColumns, dbSessionId, currentDatabase]);
 
   // ── Foreign key detection ──────────────────────────────
