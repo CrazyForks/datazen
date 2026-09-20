@@ -20,13 +20,15 @@ use uuid::Uuid;
 use super::error::TransferError;
 use super::execute::active_column_mappings;
 use super::model::{
-    ColumnMapping, TableExecutionResult, TableInspectResult, TransferExecutionResult, TransferJob,
-    TransferMode, WriteMode,
+    ColumnMapping, DdlPreviewItem, DdlPreviewKind, TableExecutionResult, TableInspectResult,
+    TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, Value};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use crate::transfer::ir::IRType;
+
+pub(crate) use super::sql_structure::build_structure_plan;
 
 static PATHS: LazyLock<Mutex<HashMap<String, PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -256,7 +258,11 @@ fn table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> Str
     )
 }
 
-fn target_table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> String {
+pub(crate) fn target_table_ref(
+    driver: &dyn DatabaseDriver,
+    job: &TransferJob,
+    table: &str,
+) -> String {
     qualify_relation_sql(
         &driver.driver_type(),
         None,
@@ -531,6 +537,7 @@ pub async fn execute(
         source_schemas,
         destination,
         cancelled,
+        None,
     )
     .await
 }
@@ -549,6 +556,7 @@ pub async fn execute_with_target(
     source_schemas: &HashMap<String, TableSchema>,
     destination: PathBuf,
     cancelled: Option<Arc<AtomicBool>>,
+    immutable_structure: Option<&[DdlPreviewItem]>,
 ) -> Result<TransferExecutionResult, TransferError> {
     let ir_rendering = source_adapter.zip(target_adapter);
     if (source_adapter.is_some()) != (target_adapter.is_some()) {
@@ -563,6 +571,70 @@ pub async fn execute_with_target(
     let mut results = Vec::new();
     let mut total = 0u64;
     let mut partial = false;
+
+    let structure_mode = matches!(
+        job.mode,
+        TransferMode::Structure | TransferMode::StructureAndData
+    );
+    let structure_plan = if structure_mode {
+        match immutable_structure {
+            Some(statements) => Some(statements.to_vec()),
+            None => Some(build_structure_plan(
+                source_adapter,
+                target_adapter,
+                target_driver,
+                job,
+                inspected,
+                source_schemas,
+            )?),
+        }
+    } else {
+        None
+    };
+
+    // Destructive table preambles are emitted before any CREATE statement so
+    // the structure sequence remains tables-first and deterministic.
+    for table in inspected
+        .iter()
+        .filter(|table| table.enabled && !table.source_table.is_empty())
+    {
+        let target_ref = target_table_ref(target_driver, job, &table.target_table);
+        if matches!(job.write_mode, WriteMode::DropCreateInsert) {
+            output.line(&format!("DROP TABLE IF EXISTS {target_ref};"))?;
+        } else if matches!(job.write_mode, WriteMode::TruncateInsert) {
+            output.line(&format!("TRUNCATE TABLE {target_ref};"))?;
+        }
+    }
+
+    if let Some(statements) = &structure_plan {
+        let enabled: std::collections::HashSet<&str> = inspected
+            .iter()
+            .filter(|table| table.enabled)
+            .map(|table| table.source_table.as_str())
+            .collect();
+        for statement in statements {
+            if !enabled.contains(statement.source_table.as_str())
+                || statement
+                    .depends_on
+                    .iter()
+                    .any(|dependency| !enabled.contains(dependency.as_str()))
+            {
+                return Err(TransferError::validation(format!(
+                    "SQL-file structure statement for '{}' depends on an unselected table",
+                    statement.source_table
+                )));
+            }
+        }
+        // CREATE TABLE statements must precede data. Secondary indexes and
+        // foreign keys are deliberately deferred until after the data loop so
+        // child/parent inserts and cyclic graphs do not fail during loading.
+        for statement in statements
+            .iter()
+            .filter(|statement| matches!(statement.kind, DdlPreviewKind::Table))
+        {
+            output.line(&format!("{};", statement.ddl))?;
+        }
+    }
 
     for table in inspected
         .iter()
@@ -594,36 +666,6 @@ pub async fn execute_with_target(
             .tables
             .iter()
             .find(|mapping| mapping.source_table == table.source_table);
-        let target_ref = target_table_ref(target_driver, job, &table.target_table);
-        if matches!(job.write_mode, WriteMode::DropCreateInsert) {
-            output.line(&format!("DROP TABLE IF EXISTS {target_ref};"))?;
-        } else if matches!(job.write_mode, WriteMode::TruncateInsert) {
-            output.line(&format!("TRUNCATE TABLE {target_ref};"))?;
-        }
-        if matches!(
-            job.mode,
-            TransferMode::Structure | TransferMode::StructureAndData
-        ) {
-            let ddl = match mapping
-                .and_then(|mapping| mapping.ddl_override.as_deref())
-                .map(str::trim)
-                .filter(|ddl| !ddl.is_empty())
-            {
-                Some(ddl) => ddl.to_string(),
-                None => match ir_rendering {
-                    Some((src_adapter, tgt_adapter)) => create_table_sql_with_target(
-                        src_adapter,
-                        tgt_adapter,
-                        target_driver,
-                        job,
-                        table,
-                        schema,
-                    )?,
-                    None => create_table_sql(target_driver, job, table, schema)?,
-                },
-            };
-            output.line(&format!("{ddl};"))?;
-        }
         if !matches!(
             job.mode,
             TransferMode::Data | TransferMode::StructureAndData
@@ -772,6 +814,18 @@ pub async fn execute_with_target(
                 success: true,
                 error: None,
             });
+        }
+    }
+    if !partial {
+        if let Some(statements) = &structure_plan {
+            for statement in statements.iter().filter(|statement| {
+                matches!(
+                    statement.kind,
+                    DdlPreviewKind::Index | DdlPreviewKind::ForeignKey
+                )
+            }) {
+                output.line(&format!("{};", statement.ddl))?;
+            }
         }
     }
     if !partial
@@ -1042,5 +1096,244 @@ mod tests {
         output.line("partial").unwrap();
         drop(output);
         assert_eq!(fs::read_to_string(destination).unwrap(), "old");
+    }
+
+    fn structure_table(
+        source: &str,
+        target: &str,
+        columns: &[(&str, &str)],
+    ) -> (TableInspectResult, TableSchema) {
+        let mappings = columns
+            .iter()
+            .map(|(source_column, target_column)| ColumnMapping {
+                source_column: (*source_column).into(),
+                target_column: (*target_column).into(),
+                skip: false,
+                target_native_type: None,
+            })
+            .collect::<Vec<_>>();
+        let schema = TableSchema {
+            table_name: source.into(),
+            columns: columns
+                .iter()
+                .map(|(name, data_type)| ColumnSchema {
+                    name: (*name).into(),
+                    data_type: (*data_type).into(),
+                    nullable: *name != "id",
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: *name == "id",
+                    is_auto_increment: false,
+                })
+                .collect(),
+            primary_keys: vec!["id".into()],
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+        };
+        let inspected = TableInspectResult {
+            source_table: source.into(),
+            target_table: target.into(),
+            status: super::super::model::TableMappingStatus::CreateNew,
+            create_new: true,
+            enabled: true,
+            column_mappings: mappings,
+            source_columns: columns.iter().map(|(name, _)| (*name).into()).collect(),
+            source_primary_keys: vec!["id".into()],
+            target_columns: Vec::new(),
+            source_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: None,
+            recordset: None,
+        };
+        (inspected, schema)
+    }
+
+    #[test]
+    fn structure_plan_orders_tables_then_indexes_then_foreign_keys_in_target_dialect() {
+        let (parent, mut parent_schema) =
+            structure_table("accounts", "accounts_copy", &[("id", "account_id")]);
+        parent_schema.indexes.push(datazen_driver_api::IndexInfo {
+            name: "accounts_name_idx".into(),
+            columns: vec!["id".into()],
+            is_unique: true,
+            is_primary: false,
+            index_type: "btree".into(),
+        });
+        let (child, mut child_schema) = structure_table(
+            "invoices",
+            "invoices_copy",
+            &[("id", "invoice_id"), ("account_id", "account_ref")],
+        );
+        child_schema
+            .foreign_keys
+            .push(datazen_driver_api::ForeignKeyInfo {
+                name: "invoice_account_fk".into(),
+                columns: vec!["account_id".into()],
+                referenced_table: "accounts".into(),
+                referenced_columns: vec!["id".into()],
+                on_update: "NO ACTION".into(),
+                on_delete: "CASCADE".into(),
+            });
+        let mut schemas = HashMap::new();
+        schemas.insert("accounts".into(), parent_schema);
+        schemas.insert("invoices".into(), child_schema);
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "source".into(),
+                database: "source_catalog".into(),
+                schema: Some("public".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "opaque".into(),
+                database_type: Some("mysql".into()),
+            }),
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: vec![
+                TableMapping {
+                    source_table: "invoices".into(),
+                    target_table: "invoices_copy".into(),
+                    create_new: true,
+                    enabled: true,
+                    column_mappings: vec![
+                        ColumnMapping {
+                            source_column: "id".into(),
+                            target_column: "invoice_id".into(),
+                            skip: false,
+                            target_native_type: None,
+                        },
+                        ColumnMapping {
+                            source_column: "account_id".into(),
+                            target_column: "account_ref".into(),
+                            skip: false,
+                            target_native_type: None,
+                        },
+                    ],
+                    ddl_override: None,
+                    source_filter: None,
+                    recordset: None,
+                },
+                TableMapping {
+                    source_table: "accounts".into(),
+                    target_table: "accounts_copy".into(),
+                    create_new: true,
+                    enabled: true,
+                    column_mappings: vec![ColumnMapping {
+                        source_column: "id".into(),
+                        target_column: "account_id".into(),
+                        skip: false,
+                        target_native_type: None,
+                    }],
+                    ddl_override: None,
+                    source_filter: None,
+                    recordset: None,
+                },
+            ],
+            options: Default::default(),
+        };
+        let mut inspected = vec![child, parent];
+        inspected[0].column_mappings = vec![
+            ColumnMapping {
+                source_column: "id".into(),
+                target_column: "invoice_id".into(),
+                skip: false,
+                target_native_type: None,
+            },
+            ColumnMapping {
+                source_column: "account_id".into(),
+                target_column: "account_ref".into(),
+                skip: false,
+                target_native_type: None,
+            },
+        ];
+        inspected[1].column_mappings = vec![ColumnMapping {
+            source_column: "id".into(),
+            target_column: "account_id".into(),
+            skip: false,
+            target_native_type: None,
+        }];
+        let source_adapter = PgSyncAdapter;
+        let target_adapter = MysqlSyncAdapter { is_mariadb: false };
+        let target_driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let plan = build_structure_plan(
+            Some(&source_adapter),
+            Some(&target_adapter),
+            &target_driver,
+            &job,
+            &inspected,
+            &schemas,
+        )
+        .unwrap();
+
+        assert_eq!(plan.len(), 4);
+        assert!(matches!(plan[0].kind, DdlPreviewKind::Table));
+        assert!(plan[0].ddl.contains("`accounts_copy`"));
+        assert!(matches!(plan[1].kind, DdlPreviewKind::Table));
+        assert!(plan[1].ddl.contains("`invoices_copy`"));
+        assert!(matches!(plan[2].kind, DdlPreviewKind::Index));
+        assert!(matches!(plan[3].kind, DdlPreviewKind::ForeignKey));
+        assert!(plan[3].ddl.contains("REFERENCES `accounts_copy`"));
+        assert!(plan[3].ddl.contains("`account_ref`"));
+        assert!(plan.iter().all(|item| !item.ddl.contains("source_catalog")));
+        assert!(plan.iter().all(|item| !item.ddl.contains("`public`")));
+        assert_eq!(plan[3].depends_on, vec!["accounts"]);
+    }
+
+    #[test]
+    fn structure_plan_fails_closed_for_unrepresentable_index_type() {
+        let (table, mut schema) = structure_table("events", "events_copy", &[("id", "id")]);
+        schema.indexes.push(datazen_driver_api::IndexInfo {
+            name: "events_search_idx".into(),
+            columns: vec!["id".into()],
+            is_unique: false,
+            is_primary: false,
+            index_type: "gin".into(),
+        });
+        let mut schemas = HashMap::new();
+        schemas.insert("events".into(), schema);
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "source".into(),
+                database: "source".into(),
+                schema: None,
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "opaque".into(),
+                database_type: Some("mysql".into()),
+            }),
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: vec![TableMapping {
+                source_table: "events".into(),
+                target_table: "events_copy".into(),
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![ColumnMapping {
+                    source_column: "id".into(),
+                    target_column: "id".into(),
+                    skip: false,
+                    target_native_type: None,
+                }],
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            }],
+            options: Default::default(),
+        };
+        let source_adapter = PgSyncAdapter;
+        let target_adapter = MysqlSyncAdapter { is_mariadb: false };
+        let target_driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let error = build_structure_plan(
+            Some(&source_adapter),
+            Some(&target_adapter),
+            &target_driver,
+            &job,
+            &[table],
+            &schemas,
+        )
+        .expect_err("GIN must not be silently emitted as a MySQL index");
+        assert!(error.to_string().contains("cannot represent index type"));
     }
 }

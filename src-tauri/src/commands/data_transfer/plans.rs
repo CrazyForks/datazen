@@ -14,7 +14,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::data_transfer::{TransferError, TransferJob, TransferPreview};
+use crate::data_transfer::{DdlPreviewItem, TransferError, TransferJob, TransferPreview};
 
 pub(crate) const TRANSFER_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -41,6 +41,11 @@ pub(crate) struct StoredTransferPlan {
     /// supported by Transfer, all plans explicitly bind `None` here.
     pub(crate) filter: Option<String>,
     pub(crate) target_read_only_at_preview: bool,
+    /// SQL-file structure statements captured at preview time. The execution
+    /// path consumes this immutable sequence instead of re-rendering DDL from
+    /// a second inspection, so object ordering and target mappings cannot
+    /// drift between preview and publish.
+    pub(crate) sql_file_structure: Option<Vec<DdlPreviewItem>>,
     expires_at: Instant,
     state: PlanState,
 }
@@ -175,6 +180,11 @@ impl TransferPlanStore {
         let source_schema_fingerprint = fingerprint_schemas(source_entries)?;
         let target_schema_fingerprint = fingerprint_schemas(target_entries)?;
         let filter = filter_fingerprint(&job)?;
+        let sql_file_structure = job
+            .sql_file_target
+            .as_ref()
+            .filter(|_| !preview.ddl.is_empty())
+            .map(|_| preview.ddl.clone());
         let id = Uuid::new_v4().to_string();
         let plan = StoredTransferPlan {
             id: id.clone(),
@@ -188,6 +198,7 @@ impl TransferPlanStore {
             target_schema_fingerprint,
             filter,
             target_read_only_at_preview: target_read_only,
+            sql_file_structure,
             expires_at: Instant::now() + ttl,
             state: PlanState::Available,
         };
@@ -498,7 +509,13 @@ mod tests {
             pairing_path: "sqlFile".into(),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
-            ddl: vec![],
+            ddl: vec![DdlPreviewItem {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                ddl: "CREATE TABLE `users` (`id` INT)".into(),
+                kind: crate::data_transfer::DdlPreviewKind::Table,
+                depends_on: vec![],
+            }],
             write_plans: vec![],
             warnings: vec!["mysql".into()],
             can_execute: true,
@@ -532,6 +549,14 @@ mod tests {
                 .as_ref()
                 .and_then(|target| target.database_type.as_deref()),
             Some("mysql")
+        );
+        assert_eq!(
+            stored
+                .sql_file_structure
+                .as_ref()
+                .and_then(|statements| statements.first())
+                .map(|statement| statement.ddl.as_str()),
+            Some("CREATE TABLE `users` (`id` INT)")
         );
     }
 

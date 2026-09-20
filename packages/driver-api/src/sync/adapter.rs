@@ -1,6 +1,6 @@
 //! Sync adapter traits — the bridge between native types and the IR.
 
-use super::ir::{IRColumn, IRDefault, IRTable, IRType};
+use super::ir::{IRColumn, IRDefault, IRForeignKey, IRIndex, IRTable, IRTableObjects, IRType};
 use super::key::{contract_from_column, SyncKeyContract, SyncKeyValue};
 use crate::{ColumnSchema, TableSchema, Value};
 use std::collections::HashMap;
@@ -88,6 +88,37 @@ pub trait SyncSourceAdapter: Send + Sync {
         }
     }
 
+    /// Convert table-level objects to the neutral form used by export and
+    /// transfer renderers. Drivers may override this when their catalog uses
+    /// a native index or constraint representation that needs normalization.
+    fn table_objects_to_ir(&self, schema: &TableSchema) -> IRTableObjects {
+        IRTableObjects {
+            indexes: schema
+                .indexes
+                .iter()
+                .map(|index| IRIndex {
+                    name: index.name.clone(),
+                    columns: index.columns.clone(),
+                    is_unique: index.is_unique,
+                    is_primary: index.is_primary,
+                    index_type: index.index_type.clone(),
+                })
+                .collect(),
+            foreign_keys: schema
+                .foreign_keys
+                .iter()
+                .map(|foreign_key| IRForeignKey {
+                    name: foreign_key.name.clone(),
+                    columns: foreign_key.columns.clone(),
+                    referenced_table: foreign_key.referenced_table.clone(),
+                    referenced_columns: foreign_key.referenced_columns.clone(),
+                    on_update: foreign_key.on_update.clone(),
+                    on_delete: foreign_key.on_delete.clone(),
+                })
+                .collect(),
+        }
+    }
+
     /// Optional SQL returning `(col_name, full_type)` rows for precision-preserving sync.
     /// Default: none (host uses `column.data_type` only).
     fn full_column_types_query(&self, _table: &str) -> Option<String> {
@@ -163,6 +194,97 @@ pub trait SyncTargetAdapter: Send + Sync {
     /// Optional value transform before formatting literals (identity by default).
     fn transform_value(&self, value: &Option<Value>, _ir_type: &IRType) -> Option<Value> {
         value.clone()
+    }
+
+    /// Render one non-primary index after its table has been created. The
+    /// default is deliberately conservative: only ordinary B-tree indexes
+    /// have portable SQL across the registered SQL adapters. Drivers with
+    /// richer index syntax can override this hook.
+    fn render_index_ddl(&self, table_ref: &str, index: &IRIndex) -> Result<Option<String>, String> {
+        if index.is_primary {
+            return Ok(None);
+        }
+        if index.name.trim().is_empty() || index.columns.is_empty() {
+            return Err("index must have a name and at least one column".into());
+        }
+        if index
+            .columns
+            .iter()
+            .any(|column| column.trim().is_empty() || column.contains('(') || column.contains(')'))
+        {
+            return Err(
+                "target adapter cannot represent index expressions or prefix lengths".into(),
+            );
+        }
+        let normalized = index.index_type.trim().to_ascii_lowercase();
+        if !normalized.is_empty() && !matches!(normalized.as_str(), "btree" | "b-tree" | "default")
+        {
+            return Err(format!(
+                "target adapter cannot represent index type '{}'",
+                index.index_type
+            ));
+        }
+        let unique = if index.is_unique { "UNIQUE " } else { "" };
+        let columns = index
+            .columns
+            .iter()
+            .map(|column| self.quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(Some(format!(
+            "CREATE {unique}INDEX {} ON {table_ref} ({columns})",
+            self.quote_ident(&index.name)
+        )))
+    }
+
+    /// Render one foreign key after all table definitions and row data. The
+    /// caller supplies a target relation reference so source catalogs never
+    /// leak into a generated SQL-file artifact.
+    fn render_foreign_key_ddl(
+        &self,
+        table_ref: &str,
+        foreign_key: &IRForeignKey,
+        referenced_table_ref: &str,
+    ) -> Result<String, String> {
+        if foreign_key.name.trim().is_empty()
+            || foreign_key.columns.is_empty()
+            || foreign_key.columns.len() != foreign_key.referenced_columns.len()
+        {
+            return Err("foreign key must have a name and matching column lists".into());
+        }
+        let action = |raw: &str, clause: &str| -> Result<Option<String>, String> {
+            let normalized = raw.trim().to_ascii_uppercase();
+            if normalized.is_empty() || normalized == "NO ACTION" {
+                return Ok(None);
+            }
+            if matches!(normalized.as_str(), "CASCADE" | "RESTRICT" | "SET NULL") {
+                return Ok(Some(format!(" {clause} {normalized}")));
+            }
+            Err(format!(
+                "target adapter cannot represent foreign-key action '{}'",
+                raw
+            ))
+        };
+        let on_update = action(&foreign_key.on_update, "ON UPDATE")?;
+        let on_delete = action(&foreign_key.on_delete, "ON DELETE")?;
+        let columns = foreign_key
+            .columns
+            .iter()
+            .map(|column| self.quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let referenced_columns = foreign_key
+            .referenced_columns
+            .iter()
+            .map(|column| self.quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(format!(
+            "ALTER TABLE {table_ref} ADD CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {referenced_table_ref} ({referenced_columns}){}{}",
+            self.quote_ident(&foreign_key.name),
+            on_update.unwrap_or_default(),
+            on_delete.unwrap_or_default()
+        ))
     }
 }
 

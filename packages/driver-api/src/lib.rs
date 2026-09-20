@@ -59,9 +59,9 @@ pub use sql_dump::{RestoreSession, RestoreStatementGuard};
 pub use sql_split::{SqlStatementScanner, Utf8ChunkDecoder};
 pub use sql_target::{qualify_sql_with, QualifiedSql, QualifierQuote, SqlTarget};
 pub use sync::{
-    BoxedSyncAdapter, DecimalKey, IRColumn, IRDefault, IRTable, IRType, SyncAdapterFactory,
-    SyncKeyCollation, SyncKeyContract, SyncKeyKind, SyncKeyNullPolicy, SyncKeyValue,
-    SyncSourceAdapter, SyncTargetAdapter,
+    BoxedSyncAdapter, DecimalKey, IRColumn, IRDefault, IRForeignKey, IRIndex, IRTable,
+    IRTableObjects, IRType, SyncAdapterFactory, SyncKeyCollation, SyncKeyContract, SyncKeyKind,
+    SyncKeyNullPolicy, SyncKeyValue, SyncSourceAdapter, SyncTargetAdapter,
 };
 pub use sync_taxonomy::{normalize_driver_id, sync_category_of, sync_family_of};
 pub use traits::*;

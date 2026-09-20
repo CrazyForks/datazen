@@ -104,6 +104,8 @@ export interface TransferDdlPreview {
   sourceTable: string;
   targetTable: string;
   ddl: string;
+  kind?: 'table' | 'index' | 'foreignKey';
+  dependsOn?: string[];
 }
 
 export interface TransferWritePlan {

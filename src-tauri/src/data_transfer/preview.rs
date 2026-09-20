@@ -98,6 +98,8 @@ pub fn build_preview(
                     source_table: table.source_table.clone(),
                     target_table: table.target_table.clone(),
                     ddl: override_ddl.to_string(),
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             } else if let Some(ddl_sql) =
                 create_ddl_for_table(&table.source_table, &table.target_table)
@@ -106,6 +108,8 @@ pub fn build_preview(
                     source_table: table.source_table.clone(),
                     target_table: table.target_table.clone(),
                     ddl: ddl_sql,
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             } else if let Some(schema) = source_schemas.get(&table.source_table) {
                 warnings.push(format!(
@@ -123,8 +127,10 @@ pub fn build_preview(
                             .iter()
                             .map(|c| format!("{} {}", c.name, c.data_type))
                             .collect::<Vec<_>>()
-                            .join(", ")
+                        .join(", ")
                     ),
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             }
         }
