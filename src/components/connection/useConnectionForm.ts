@@ -20,6 +20,10 @@ import type {
   SshTunnelConfig,
 } from '../../types';
 import { getDriverConnectionForm, getDriverValidator } from '../../extensions/generated';
+import type { ConnectionFormState } from '@datazen/driver-sdk';
+
+/** Canonical shape lives in @datazen/driver-sdk; re-exported for existing host imports. */
+export type { ConnectionFormState };
 
 export interface UseConnectionFormOptions {
   editId?: string | null;
@@ -28,7 +32,7 @@ export interface UseConnectionFormOptions {
   onAfterSave?: () => void;
 }
 
-export function useConnectionForm(options: UseConnectionFormOptions = {}) {
+export function useConnectionForm(options: UseConnectionFormOptions = {}): ConnectionFormState {
   const { editId, existingConnections, defaultGroup, onAfterSave } = options;
   const { t } = useI18n();
   const saveConnection = useConnectionStore((s) => s.saveConnection);
@@ -596,5 +600,3 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}) {
     setOptions,
   };
 }
-
-export type ConnectionFormState = ReturnType<typeof useConnectionForm>;

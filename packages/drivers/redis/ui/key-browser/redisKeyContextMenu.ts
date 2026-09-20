@@ -1,4 +1,4 @@
-import type { NativeMenuItemDef } from '../../../../../src/lib/nativeContextMenu';
+import type { NativeMenuItemDef } from '@datazen/driver-sdk';
 
 /** Caller-supplied labels (typically from `t()`). No hardcoded locale strings here. */
 export type RedisKeyContextMenuLabels = {

@@ -1,4 +1,4 @@
-import type { KeyEntry } from '../../../../../src/types';
+import type { KeyEntry } from '@datazen/driver-sdk';
 import type { ChildEntry } from '../shared/redisInvoke';
 
 /** Flat row or expandable namespace folder in the key browser. */

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { RedisConnectionWizard, RedisTlsFields } from '../connection/ConnectionWizard';
-import type { ConnectionFormState } from '../../../../../src/components/connection/useConnectionForm';
+import type { ConnectionFormState } from '@datazen/driver-sdk';
 
 vi.mock('../../../../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),

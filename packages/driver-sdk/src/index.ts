@@ -26,7 +26,21 @@ export type {
   ConnectionClipboardFill,
   ConnectionClipboardParser,
 } from '../../../src/lib/connectionClipboardTypes';
-export type { ConnectionFormState } from '../../../src/components/connection/useConnectionForm';
+export type { ConnectionFormState } from './types/connection-form';
+
+// === Key-Value (Redis) data contracts ===
+export type { KeyEntry, KeyScanResult } from './types/kv';
+
+// === Web context-menu item defs (type-only contract) ===
+export type { NativeMenuPredefined, NativeMenuItemDef } from './types/menu';
+
+// === Connection view props (host shell ↔ driver view) ===
+export type {
+  NodeContextMenuPayload,
+  ConnectionOpenTarget,
+  ConnectionViewActions,
+  ConnectionViewProps,
+} from './types/connection-view';
 
 /**
  * Driver form validator: receives raw field values and i18n `t()`,

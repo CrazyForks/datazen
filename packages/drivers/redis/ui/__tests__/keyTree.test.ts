@@ -6,7 +6,7 @@ import {
   splitKeyNamespace,
 } from '../key-browser/keyTree';
 import type { ChildEntry } from '../shared/redisInvoke';
-import type { KeyEntry } from '../../../../../src/types';
+import type { KeyEntry } from '@datazen/driver-sdk';
 
 function entry(key: string): KeyEntry {
   return { key, keyType: 'string', ttl: -1, size: 0, preview: '' };

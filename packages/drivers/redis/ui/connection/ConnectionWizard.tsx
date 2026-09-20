@@ -4,7 +4,7 @@ import { PathInput } from '../../../../../src/components/ui/PathInput';
 import { Select } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
 import { Label } from '@datazen/ui';
-import type { ConnectionFormState } from '../../../../../src/components/connection/useConnectionForm';
+import type { ConnectionFormState } from '@datazen/driver-sdk';
 import type { DriverFormValidator } from '@datazen/driver-sdk';
 import {
   formatNodeLines,
