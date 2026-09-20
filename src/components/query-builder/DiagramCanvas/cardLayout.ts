@@ -13,8 +13,13 @@
 
 /** Grid step for card positions. */
 export const CARD_GRID = 24;
-/** Horizontal stride between cards sharing a row (max card width + gap). */
-export const CARD_STRIDE = 264;
+/**
+ * Horizontal stride between cards sharing a row (max card width + gap).
+ * The 72px gap must stay above the relation router's bypass threshold
+ * (`LANE_STEP * 3` in fkGeometry) — a narrower gap forces the trunk line to
+ * detour around the right edge of the second card instead of crossing the gap.
+ */
+export const CARD_STRIDE = 312;
 /** Vertical tolerance for "this drop belongs to the same row". */
 export const CARD_ROW_TOLERANCE = 56;
 
