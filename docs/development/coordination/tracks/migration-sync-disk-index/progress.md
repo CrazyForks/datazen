@@ -1,6 +1,6 @@
 # migration-sync-disk-index
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 ## Scope
 
@@ -31,3 +31,12 @@ Replaced the large Data Sync ComparisonStore JSON file's full-deserialization pa
 - Summary/page path, private permissions, full round-trip, unknown table, out-of-range page, zero-limit store API, manifest corruption, trailing manifest data, frame-length corruption, cleanup after Drop and cloned-owner cleanup are covered.
 
 Coder self-validation is complete; this track is ready for an independent tester. It is not a PASSED verdict until independent testing is complete.
+
+
+## Independent tester result (2026-09-20)
+
+The independent Rust and frontend suites passed: ComparisonStore 7/7, Sync plans 10/10, `commands::sync` 44/44, focused Data Sync frontend files 39/39, and `npx tsc --noEmit`. The existing multi-table indexed journey passed: a large spilled comparison returned an `orders` middle page without increasing `full_load_calls`, and full `load()` round-tripped the comparison. Private 0700/0600 permissions, clone/Drop cleanup, TTL/claim cleanup, unknown table, out-of-range offset, zero-limit behavior and cursor lifecycle were reviewed and covered by the focused tests.
+
+A directed corruption test reproduced `migration-sync-disk-index-BUG-001`: after changing a row frame length prefix without changing file length, `load()` and `load_table_page()` fail closed, but `summaries()` succeeds because it does not validate the indexed frame prefix. This violates the requested manifest/frame corruption contract. No production code was changed by the tester.
+
+Phase: FAILED. See `bugs.md`. Formal WebDriver packaging was not rerun because the coder-recorded formal build covers the unchanged UI/runtime path; the focused Rust and frontend suites were rerun independently.
