@@ -93,6 +93,8 @@ const pack = {
   'sync.pageOf': '第 {page} / {total} 页',
   'sync.pagePrev': '上一页',
   'sync.pageNext': '下一页',
+  'sync.pageScope': '仅当前页',
+  'sync.loadingPage': '加载中…',
   'sync.refreshPreview': '刷新',
   'sync.execute': '执行',
   'sync.executing': '正在执行同步…',

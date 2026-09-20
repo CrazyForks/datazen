@@ -94,6 +94,8 @@ const pack = {
   'sync.pageOf': 'Page {page} / {total}',
   'sync.pagePrev': 'Previous',
   'sync.pageNext': 'Next',
+  'sync.pageScope': 'loaded page only',
+  'sync.loadingPage': 'Loading…',
   'sync.refreshPreview': 'Refresh',
   'sync.execute': 'Execute',
   'sync.executing': 'Executing sync…',

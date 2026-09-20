@@ -23,9 +23,9 @@ export function rowDiffCounts(row: DataSyncTableResult): {
 } {
   const rows = row.rows ?? [];
   return {
-    inserts: rows.filter((r) => r.operation === 'INSERT').length,
-    updates: rows.filter((r) => r.operation === 'UPDATE').length,
-    deletes: rows.filter((r) => r.operation === 'DELETE').length,
+    inserts: row.insertCount ?? rows.filter((r) => r.operation === 'INSERT').length,
+    updates: row.updateCount ?? rows.filter((r) => r.operation === 'UPDATE').length,
+    deletes: row.deleteCount ?? rows.filter((r) => r.operation === 'DELETE').length,
     unchanged: (row.unchangedCount ?? 0) + rows.filter((r) => r.operation === 'UNCHANGED').length,
   };
 }

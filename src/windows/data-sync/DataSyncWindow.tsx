@@ -12,7 +12,9 @@ import {
   syncCommands,
   type DataSyncExecutionResult,
   type DataSyncRowChange,
+  type DataSyncSelectedRow,
   type DataSyncSourceFilter,
+  type DataSyncTableResult,
   type SyncOptions,
 } from '../../commands/sync';
 import { databaseCommands } from '../../commands/database';
@@ -53,7 +55,7 @@ import {
   markDisabledTables,
   mergeCompareIntoMappings,
   operationAllowed,
-  selectedRowCount,
+  rowKeyString,
   summarizeCompare,
   tableHasRowDiffs,
   tableKey,
@@ -66,6 +68,12 @@ import {
   WIZARD_STEPS,
   NARROW_WIZARD_STEPS,
 } from './useDataSyncWizardState';
+
+function selectedRowToken(
+  row: Pick<DataSyncSelectedRow, 'sourceTable' | 'targetTable' | 'operation' | 'key'>,
+): string {
+  return `${row.sourceTable}\u0000${row.targetTable}\u0000${row.operation}\u0000${rowKeyString(row.key)}`;
+}
 
 export function DataSyncWindow() {
   const localesReady = useLocaleDomains(['sync']);
@@ -124,6 +132,12 @@ export function DataSyncWindow() {
   const [lastExecutionResult, setLastExecutionResult] = useState<DataSyncExecutionResult | null>(
     null,
   );
+  const [selectedRows, setSelectedRows] = useState<DataSyncSelectedRow[]>([]);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageIndex, setPageIndex] = useState<Record<string, number>>({});
+  const [pageCursors, setPageCursors] = useState<
+    Record<string, { current: string | null; next: string | null; previous: string[] }>
+  >({});
   const jobIdRef = useRef<string | null>(null);
   const jobKindRef = useRef<'compare' | 'execute' | null>(null);
   const cancelRequestedJobRef = useRef<string | null>(null);
@@ -131,7 +145,17 @@ export function DataSyncWindow() {
   const compareGenerationRef = useRef(0);
   const writeInFlightRef = useRef(false);
   const syncStateRef = useRef(syncState);
+  const selectedRowsRef = useRef<DataSyncSelectedRow[]>([]);
+  const loadedPageRef = useRef<Set<string>>(new Set());
+  selectedRowsRef.current = selectedRows;
   syncStateRef.current = syncState;
+
+  useEffect(() => {
+    setSelectedRows([]);
+    setPageIndex({});
+    setPageCursors({});
+    loadedPageRef.current.clear();
+  }, [sourceId, targetId, sourceDatabase, targetDatabase, sourceSchema, targetSchema]);
 
   useEffect(() => {
     void loadSettings();
@@ -659,6 +683,10 @@ export function DataSyncWindow() {
     setSyncState('comparing');
     setLastExecutionResult(null);
     setSelectedTableKey(null);
+    setSelectedRows([]);
+    setPageIndex({});
+    setPageCursors({});
+    loadedPageRef.current.clear();
     setStatusMsg('');
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
@@ -708,17 +736,32 @@ export function DataSyncWindow() {
 
       if (generation !== compareGenerationRef.current) return false;
       const compared = Array.isArray(comparedResponse) ? comparedResponse : comparedResponse.tables;
+      const pagedComparison =
+        !Array.isArray(comparedResponse) && comparedResponse.contractVersion != null;
       if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
         jobIdRef.current = null;
         jobKindRef.current = null;
       }
       const merged = mergeCompareIntoMappings(mappingResults, compared).map((row) => {
-        if (row.status !== 'MATCHED' || !row.rows) return row;
-        return {
-          ...row,
-          rows: applyOptionsToRows(row.rows, syncOptions),
-        };
+        if (!pagedComparison && row.rows) {
+          return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
+        }
+        return { ...row, rows: undefined };
       });
+      if (!pagedComparison) {
+        setSelectedRows(
+          merged.flatMap((table) =>
+            (table.rows ?? [])
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              })),
+          ),
+        );
+      }
       setMappingResults(merged);
       setWriteOutcomeUncertain(false);
       const firstDiff = merged.find((r) => r.status === 'MATCHED' && tableHasRowDiffs(r));
@@ -840,6 +883,14 @@ export function DataSyncWindow() {
           return { ...row, rows: applyOptionsToRows(row.rows, next) };
         }),
       );
+      setSelectedRows((rows) =>
+        rows.filter((row) => {
+          if (row.operation === 'INSERT') return next.insert;
+          if (row.operation === 'UPDATE') return next.update;
+          if (row.operation === 'DELETE') return next.delete;
+          return false;
+        }),
+      );
     },
     [
       setMappingResults,
@@ -862,27 +913,134 @@ export function DataSyncWindow() {
     setDeleteConfirmOpen(false);
   }, []);
 
+  const compared =
+    syncState === 'compared' ||
+    syncState === 'executing' ||
+    syncState === 'unknown' ||
+    syncState === 'done';
+
   const selectedTable = useMemo(
     () => mappingResults.find((r) => tableKey(r) === selectedTableKey) ?? null,
     [mappingResults, selectedTableKey],
   );
 
+  const loadTablePage = useCallback(
+    async (
+      table: NonNullable<typeof selectedTable>,
+      direction: 'initial' | 'previous' | 'next' = 'initial',
+    ) => {
+      if (table.status !== 'MATCHED') return;
+      const key = `${table.sourceTable}\u0000${table.targetTable}`;
+      const current = pageCursors[key] ?? {
+        current: table.firstCursor ?? null,
+        next: null,
+        previous: [],
+      };
+      const cursor =
+        direction === 'next'
+          ? current.next
+          : direction === 'previous'
+            ? (current.previous[current.previous.length - 1] ?? null)
+            : current.current;
+      if (direction === 'next' && !current.next) return;
+      if (direction === 'previous' && current.previous.length === 0) return;
+      setPageLoading(true);
+      try {
+        const page = await syncCommands.getDataSyncComparisonPage(
+          cursor,
+          table.sourceTable,
+          table.targetTable,
+          table.pageSize,
+        );
+        const pageToken = `${key}\u0000${cursor ?? ''}`;
+        const firstLoad = !loadedPageRef.current.has(pageToken);
+        loadedPageRef.current.add(pageToken);
+        const selectedTokenSet = new Set(
+          selectedRowsRef.current
+            .filter(
+              (row) =>
+                row.sourceTable === table.sourceTable && row.targetTable === table.targetTable,
+            )
+            .map(selectedRowToken),
+        );
+        const pageRows = page.rows.map((row) => ({
+          ...row,
+          selected: firstLoad
+            ? row.selected
+            : selectedTokenSet.has(
+                selectedRowToken({
+                  sourceTable: table.sourceTable,
+                  targetTable: table.targetTable,
+                  operation: row.operation,
+                  key: row.key,
+                }),
+              ),
+        }));
+        if (firstLoad) {
+          setSelectedRows((previous) => {
+            const known = new Set(previous.map(selectedRowToken));
+            const additions = pageRows
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              }))
+              .filter((row) => !known.has(selectedRowToken(row)));
+            return additions.length ? [...previous, ...additions] : previous;
+          });
+        }
+        setMappingResults((previous) =>
+          previous.map((row) =>
+            tableKey(row) === tableKey(table) ? { ...row, rows: pageRows } : row,
+          ),
+        );
+        const nextPrevious =
+          direction === 'next'
+            ? [...current.previous, current.current ?? '']
+            : direction === 'previous'
+              ? current.previous.slice(0, -1)
+              : [];
+        setPageCursors((previous) => ({
+          ...previous,
+          [key]: { current: cursor, next: page.nextCursor, previous: nextPrevious },
+        }));
+        setPageIndex((previous) => ({
+          ...previous,
+          [key]: Math.max(
+            0,
+            (previous[key] ?? 0) + (direction === 'next' ? 1 : direction === 'previous' ? -1 : 0),
+          ),
+        }));
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : String(error));
+        setErrorOpen(true);
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [pageCursors, setMappingResults],
+  );
+
+  useEffect(() => {
+    if (!compared || !selectedTable || selectedTable.rows || selectedTable.status !== 'MATCHED')
+      return;
+    void loadTablePage(selectedTable, 'initial');
+  }, [compared, selectedTableKey, selectedTable, loadTablePage]);
+
   const totalSelectedRows = useMemo(() => {
-    let n = 0;
-    for (const row of mappingResults) {
-      n += selectedRowCount(row, syncOptions);
-    }
-    return n;
-  }, [mappingResults, syncOptions]);
+    return selectedRows.filter((row) => {
+      if (row.operation === 'INSERT') return syncOptions.insert;
+      if (row.operation === 'UPDATE') return syncOptions.update;
+      if (row.operation === 'DELETE') return syncOptions.delete;
+      return false;
+    }).length;
+  }, [selectedRows, syncOptions]);
 
   const hasSelectedDeletes = useMemo(() => {
-    for (const table of mappingResults) {
-      for (const row of table.rows ?? []) {
-        if (row.selected && row.operation === 'DELETE' && syncOptions.delete) return true;
-      }
-    }
-    return false;
-  }, [mappingResults, syncOptions]);
+    return syncOptions.delete && selectedRows.some((row) => row.operation === 'DELETE');
+  }, [selectedRows, syncOptions.delete]);
 
   const runExecute = useCallback(async () => {
     if (!sourceId || !targetId) return;
@@ -916,7 +1074,12 @@ export function DataSyncWindow() {
       }
 
       const tablesWithSelection = mappingResults.filter(
-        (r) => r.status === 'MATCHED' && selectedRowCount(r, syncOptions) > 0,
+        (r) =>
+          r.status === 'MATCHED' &&
+          selectedRows.some(
+            (selected) =>
+              selected.sourceTable === r.sourceTable && selected.targetTable === r.targetTable,
+          ),
       );
 
       const stmts = await syncCommands.generateDataSyncSql(
@@ -928,6 +1091,7 @@ export function DataSyncWindow() {
         targetDatabase,
         sourceSchema || undefined,
         targetSchema || undefined,
+        selectedRows,
       );
       if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
       const selected = stmts.filter((statement) =>
@@ -984,13 +1148,36 @@ export function DataSyncWindow() {
       const recompared = Array.isArray(recomparedResponse)
         ? recomparedResponse
         : recomparedResponse.tables;
+      const pagedRecompare =
+        !Array.isArray(recomparedResponse) && recomparedResponse.contractVersion != null;
+      if (pagedRecompare) {
+        setSelectedRows([]);
+        setPageIndex({});
+        setPageCursors({});
+        loadedPageRef.current.clear();
+      }
       setMappingResults((prev) => {
         const merged = mergeCompareIntoMappings(prev, recompared);
         return merged.map((row) => {
+          if (pagedRecompare) return { ...row, rows: undefined };
           if (row.status !== 'MATCHED' || !row.rows) return row;
           return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
         });
       });
+      if (!pagedRecompare) {
+        setSelectedRows(
+          (recompared as DataSyncTableResult[]).flatMap((table) =>
+            (table.rows ?? [])
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              })),
+          ),
+        );
+      }
       setWriteOutcomeUncertain(false);
       setSyncState('done');
       setStep('result');
@@ -1020,6 +1207,7 @@ export function DataSyncWindow() {
     sourceId,
     targetId,
     mappingResults,
+    selectedRows,
     syncOptions,
     refreshEndpointSessions,
     sourceDatabase,
@@ -1044,15 +1232,40 @@ export function DataSyncWindow() {
     void runExecute();
   }, [targetReadOnly, hasSelectedDeletes, runExecute]);
 
-  const updateTableRows = useCallback((key: string, rows: DataSyncRowChange[]) => {
-    setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
-  }, []);
+  const updateTableRows = useCallback(
+    (key: string, rows: DataSyncRowChange[]) => {
+      const table = mappingResults.find((row) => tableKey(row) === key);
+      if (!table) return;
+      const pageTokens = new Set(
+        rows
+          .filter((row) => row.operation !== 'UNCHANGED')
+          .map((row) =>
+            selectedRowToken({
+              sourceTable: table.sourceTable,
+              targetTable: table.targetTable,
+              operation: row.operation,
+              key: row.key,
+            }),
+          ),
+      );
+      setSelectedRows((previous) => {
+        const retained = previous.filter((row) => !pageTokens.has(selectedRowToken(row)));
+        const next = rows
+          .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+          .map((row) => ({
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            operation: row.operation,
+            key: row.key,
+          }));
+        const known = new Set(retained.map(selectedRowToken));
+        return [...retained, ...next.filter((row) => !known.has(selectedRowToken(row)))];
+      });
+      setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
+    },
+    [mappingResults],
+  );
 
-  const compared =
-    syncState === 'compared' ||
-    syncState === 'executing' ||
-    syncState === 'unknown' ||
-    syncState === 'done';
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
   const compareDisabled = Boolean(sourceSessionError || targetSessionError);
   const stepIndex = WIZARD_STEPS.indexOf(step);
@@ -1340,6 +1553,23 @@ export function DataSyncWindow() {
                           table={selectedTable}
                           options={syncOptions}
                           onUpdateRows={(rows) => updateTableRows(tableKey(selectedTable), rows)}
+                          pageLoading={pageLoading}
+                          pageIndex={
+                            pageIndex[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ] ?? 0
+                          }
+                          hasPreviousPage={Boolean(
+                            pageCursors[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ]?.previous.length,
+                          )}
+                          hasNextPage={Boolean(
+                            pageCursors[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ]?.next,
+                          )}
+                          onPageChange={(direction) => void loadTablePage(selectedTable, direction)}
                         />
                       ) : (
                         <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
@@ -1378,6 +1608,7 @@ export function DataSyncWindow() {
                   targetSchema={targetSchema}
                   tables={mappingResults}
                   options={syncOptions}
+                  selectedRows={selectedRows}
                 />
               ) : (
                 <div

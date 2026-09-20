@@ -136,6 +136,15 @@ pub async fn compare_data_sync(
     .await
 }
 
+/// Return one bounded page of the immutable, server-owned comparison. The
+/// page request carries no SQL, credentials or row values from the client.
+#[tauri::command]
+pub fn get_data_sync_comparison_page(
+    request: plans::SyncComparisonPageRequest,
+) -> Result<plans::SyncComparisonPage, CommandError> {
+    plans::get_comparison_page(request).map_err(CommandError::Validation)
+}
+
 #[tauri::command]
 pub async fn apply_data_sync(
     state: State<'_, AppState>,
