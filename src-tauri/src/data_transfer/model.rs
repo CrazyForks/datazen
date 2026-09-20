@@ -22,6 +22,20 @@ pub struct Endpoint {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SqlFileTarget {
     pub file_token: String,
+    /// Optional registered driver id used to render the SQL artifact. When
+    /// omitted, the source driver's dialect is used for backwards
+    /// compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_type: Option<String>,
+}
+
+impl SqlFileTarget {
+    pub fn normalized_database_type(&self) -> Option<&str> {
+        self.database_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
 }
 
 impl Endpoint {

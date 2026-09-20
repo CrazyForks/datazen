@@ -84,6 +84,7 @@ pub async fn pick_data_transfer_sql_file(
     let token = crate::data_transfer::sql_file::register_path(path).map_err(CommandError::from)?;
     Ok(Some(crate::data_transfer::SqlFileTarget {
         file_token: token,
+        database_type: None,
     }))
 }
 

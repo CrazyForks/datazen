@@ -25,6 +25,8 @@ use super::model::{
 };
 use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, Value};
+use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
+use crate::transfer::ir::IRType;
 
 static PATHS: LazyLock<Mutex<HashMap<String, PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -54,6 +56,38 @@ pub fn resolve_path(token: &str) -> Result<PathBuf, TransferError> {
         .ok_or_else(|| TransferError::validation("SQL file destination is unknown or expired"))?;
     validate_path(&path)?;
     Ok(path)
+}
+
+/// Resolve a SQL-file rendering dialect from the registered driver factories.
+/// A missing selection deliberately returns the live source driver so older
+/// plans keep their source-dialect behavior.
+pub fn resolve_target_driver(
+    source_driver: Arc<dyn DatabaseDriver>,
+    target: &super::model::SqlFileTarget,
+) -> Result<Arc<dyn DatabaseDriver>, TransferError> {
+    let Some(database_type) = target.normalized_database_type() else {
+        return Ok(source_driver);
+    };
+    let driver = datazen_driver_api::create_driver(database_type).ok_or_else(|| {
+        TransferError::validation(format!(
+            "SQL file target dialect '{database_type}' is not registered in this build"
+        ))
+    })?;
+    if !matches!(
+        driver.driver_category(),
+        datazen_driver_api::DriverCategory::Sql
+    ) {
+        return Err(TransferError::validation(format!(
+            "SQL file target dialect '{database_type}' is not a SQL driver"
+        )));
+    }
+    if driver.driver_type() != database_type {
+        return Err(TransferError::validation(format!(
+            "SQL file target dialect '{database_type}' resolved to '{}', which is not a stable driver id",
+            driver.driver_type()
+        )));
+    }
+    Ok(driver)
 }
 
 fn validate_path(path: &Path) -> Result<(), TransferError> {
@@ -222,6 +256,42 @@ fn table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> Str
     )
 }
 
+fn target_table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> String {
+    qualify_relation_sql(
+        &driver.driver_type(),
+        None,
+        job.source.schema.as_deref(),
+        table,
+        driver.quote_char(),
+    )
+}
+
+/// A custom DDL string is an opaque dialect-specific escape hatch. It cannot
+/// be safely re-rendered when the SQL-file target dialect differs from the
+/// source, so reject it before preview and execution instead of emitting a
+/// source-dialect statement into a target-dialect artifact.
+pub(crate) fn validate_target_dialect_job(job: &TransferJob) -> Result<(), TransferError> {
+    let Some(target) = job.sql_file_target.as_ref() else {
+        return Ok(());
+    };
+    if target.normalized_database_type().is_none() {
+        return Ok(());
+    }
+    if job.tables.iter().any(|mapping| {
+        mapping.enabled
+            && mapping
+                .ddl_override
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|ddl| !ddl.is_empty())
+    }) {
+        return Err(TransferError::validation(
+            "custom SQL-file DDL is unavailable with an explicit target dialect; clear the DDL override and preview again",
+        ));
+    }
+    Ok(())
+}
+
 fn source_table_ref(driver: &dyn DatabaseDriver, job: &TransferJob, table: &str) -> String {
     qualify_relation_sql(
         &driver.driver_type(),
@@ -295,6 +365,67 @@ pub(crate) fn create_table_sql(
     ))
 }
 
+/// Render a CREATE statement through the target dialect's IR adapter. Source
+/// metadata and defaults are interpreted by the source adapter; identifiers,
+/// native types, defaults, and constraints are emitted by the target adapter.
+pub(crate) fn create_table_sql_with_target(
+    source_adapter: &dyn SyncSourceAdapter,
+    target_adapter: &dyn SyncTargetAdapter,
+    target_driver: &dyn DatabaseDriver,
+    job: &TransferJob,
+    table: &TableInspectResult,
+    schema: &TableSchema,
+) -> Result<String, TransferError> {
+    let mappings = active_column_mappings(&table.column_mappings);
+    if mappings.is_empty() {
+        return Err(TransferError::validation(format!(
+            "table '{}' has no active column mappings",
+            table.source_table
+        )));
+    }
+    let mapping = job
+        .tables
+        .iter()
+        .find(|mapping| mapping.source_table == table.source_table);
+    let mut ir = source_adapter.table_to_ir(schema, None);
+    ir.name = table.target_table.clone();
+    if let Some(mapping) = mapping {
+        super::structure::apply_column_type_overrides(&mut ir, mapping, target_adapter)?;
+    }
+    Ok(crate::transfer::ddl::build_create_table_ddl_ref(
+        &ir,
+        target_adapter,
+        &target_table_ref(target_driver, job, &table.target_table),
+    ))
+}
+
+/// Reject source native types for which the registered IR bridge has no safe
+/// cross-dialect representation. Falling back to the source type would emit
+/// SQL that looks valid while changing the target schema semantics.
+pub(crate) fn validate_target_ir(
+    source_adapter: &dyn SyncSourceAdapter,
+    source_driver: &dyn DatabaseDriver,
+    target_driver: &dyn DatabaseDriver,
+    schemas: &HashMap<String, TableSchema>,
+) -> Result<(), TransferError> {
+    if source_driver.sync_family() == target_driver.sync_family() {
+        return Ok(());
+    }
+    for (table, schema) in schemas {
+        for column in &source_adapter.table_to_ir(schema, None).columns {
+            if let IRType::Other(native) = &column.ir_type {
+                return Err(TransferError::unsupported(format!(
+                    "target dialect '{}' has no safe IR mapping for {}.{} ({native})",
+                    target_driver.driver_type(),
+                    table,
+                    column.name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn insert_sql(
     driver: &dyn DatabaseDriver,
     job: &TransferJob,
@@ -325,8 +456,61 @@ fn insert_sql(
     ))
 }
 
+fn insert_sql_with_target(
+    target_driver: &dyn DatabaseDriver,
+    target_adapter: &dyn SyncTargetAdapter,
+    source_column_ir_types: &HashMap<String, IRType>,
+    job: &TransferJob,
+    table: &TableInspectResult,
+    mappings: &[&ColumnMapping],
+    row: &[Option<Value>],
+) -> Result<String, TransferError> {
+    if mappings.len() != row.len() {
+        return Err(TransferError::validation(format!(
+            "projected row has {} values, expected {}",
+            row.len(),
+            mappings.len()
+        )));
+    }
+    let columns = mappings
+        .iter()
+        .map(|mapping| target_adapter.quote_ident(&mapping.target_column))
+        .collect::<Vec<_>>();
+    let values = mappings
+        .iter()
+        .zip(row.iter())
+        .map(|(mapping, value)| {
+            let ir_type = source_column_ir_types
+                .get(&mapping.source_column)
+                .ok_or_else(|| {
+                    TransferError::validation(format!(
+                        "missing IR type for {}.{}",
+                        table.source_table, mapping.source_column
+                    ))
+                })?;
+            let transformed = target_adapter.transform_value(value, ir_type);
+            if value.is_some() && transformed.is_none() {
+                return Err(TransferError::validation(format!(
+                    "target dialect '{}' cannot represent {}.{}",
+                    target_driver.driver_type(),
+                    table.source_table,
+                    mapping.source_column
+                )));
+            }
+            Ok(target_adapter.format_literal(&transformed, ir_type))
+        })
+        .collect::<Result<Vec<_>, TransferError>>()?;
+    Ok(format!(
+        "INSERT INTO {} ({}) VALUES ({})",
+        target_table_ref(target_driver, job, &table.target_table),
+        columns.join(", "),
+        values.join(", ")
+    ))
+}
+
 /// Execute a transfer into one atomically published SQL file using the source
-/// dialect for identifiers, DDL, and literal formatting.
+/// dialect for identifiers, DDL, and literal formatting. This wrapper keeps
+/// the original source-dialect contract for old callers and plans.
 pub async fn execute(
     driver: &dyn DatabaseDriver,
     handle: &ConnectionHandle,
@@ -336,6 +520,42 @@ pub async fn execute(
     destination: PathBuf,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<TransferExecutionResult, TransferError> {
+    execute_with_target(
+        driver,
+        driver,
+        None,
+        None,
+        handle,
+        job,
+        inspected,
+        source_schemas,
+        destination,
+        cancelled,
+    )
+    .await
+}
+
+/// Execute a SQL-file transfer with independent source and target dialects.
+/// Source scanning remains owned by `source_driver`; the target driver and IR
+/// adapters own every emitted identifier, type, default, and literal.
+pub async fn execute_with_target(
+    source_driver: &dyn DatabaseDriver,
+    target_driver: &dyn DatabaseDriver,
+    source_adapter: Option<&dyn SyncSourceAdapter>,
+    target_adapter: Option<&dyn SyncTargetAdapter>,
+    handle: &ConnectionHandle,
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    destination: PathBuf,
+    cancelled: Option<Arc<AtomicBool>>,
+) -> Result<TransferExecutionResult, TransferError> {
+    let ir_rendering = source_adapter.zip(target_adapter);
+    if (source_adapter.is_some()) != (target_adapter.is_some()) {
+        return Err(TransferError::validation(
+            "SQL file target requires both source and target IR adapters",
+        ));
+    }
     job.options.validate()?;
     let mut output = AtomicSqlFile::create(destination)?;
     output.line("-- DataZen Data Transfer SQL export")?;
@@ -374,7 +594,7 @@ pub async fn execute(
             .tables
             .iter()
             .find(|mapping| mapping.source_table == table.source_table);
-        let target_ref = table_ref(driver, job, &table.target_table);
+        let target_ref = target_table_ref(target_driver, job, &table.target_table);
         if matches!(job.write_mode, WriteMode::DropCreateInsert) {
             output.line(&format!("DROP TABLE IF EXISTS {target_ref};"))?;
         } else if matches!(job.write_mode, WriteMode::TruncateInsert) {
@@ -390,7 +610,17 @@ pub async fn execute(
                 .filter(|ddl| !ddl.is_empty())
             {
                 Some(ddl) => ddl.to_string(),
-                None => create_table_sql(driver, job, table, schema)?,
+                None => match ir_rendering {
+                    Some((src_adapter, tgt_adapter)) => create_table_sql_with_target(
+                        src_adapter,
+                        tgt_adapter,
+                        target_driver,
+                        job,
+                        table,
+                        schema,
+                    )?,
+                    None => create_table_sql(target_driver, job, table, schema)?,
+                },
             };
             output.line(&format!("{ddl};"))?;
         }
@@ -425,18 +655,18 @@ pub async fn execute(
             "SELECT {} FROM {}",
             mappings
                 .iter()
-                .map(|mapping| quote_ident_sql(&mapping.source_column, driver.quote_char()))
+                .map(|mapping| quote_ident_sql(&mapping.source_column, source_driver.quote_char()))
                 .collect::<Vec<_>>()
                 .join(", "),
-            source_table_ref(driver, job, &table.source_table)
+            source_table_ref(source_driver, job, &table.source_table)
         );
         let scope = super::recordset::build_source_scope(
             schema,
             mapping.and_then(|mapping| mapping.source_filter.as_ref()),
             mapping.and_then(|mapping| mapping.recordset.as_ref()),
-            driver.quote_char(),
+            source_driver.quote_char(),
             |index, data_type| {
-                driver
+                source_driver
                     .parameter_placeholder(index, data_type)
                     .map_err(|error| TransferError::unsupported(error.to_string()))
             },
@@ -449,8 +679,19 @@ pub async fn execute(
             },
         )?;
         scope.append_to(&mut query);
+        let ir_types = match ir_rendering {
+            Some((src_adapter, _)) => Some(
+                src_adapter
+                    .table_to_ir(schema, None)
+                    .columns
+                    .into_iter()
+                    .map(|column| (column.name, column.ir_type))
+                    .collect::<HashMap<_, _>>(),
+            ),
+            None => None,
+        };
         let mut scan = super::scan::scan_rows_with_params(
-            driver,
+            source_driver,
             handle,
             &query,
             &scope.params,
@@ -476,7 +717,26 @@ pub async fn execute(
                 break;
             }
             for row in batch {
-                match insert_sql(driver, job, table, &mappings, &row) {
+                let rendered = match ir_rendering {
+                    Some((_src_adapter, tgt_adapter)) => {
+                        let Some(ir_types) = ir_types.as_ref() else {
+                            return Err(TransferError::validation(
+                                "source IR adapter is unavailable",
+                            ));
+                        };
+                        insert_sql_with_target(
+                            target_driver,
+                            tgt_adapter,
+                            &ir_types,
+                            job,
+                            table,
+                            &mappings,
+                            &row,
+                        )
+                    }
+                    None => insert_sql(target_driver, job, table, &mappings, &row),
+                };
+                match rendered {
                     Ok(sql) => {
                         output.line(&format!("{sql};"))?;
                         rows += 1;
@@ -542,7 +802,12 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_transfer::model::TableMapping;
     use crate::testing::mock_driver::MockDriver;
+    use crate::transfer::adapter::SyncSourceAdapter;
+    use datazen_driver_api::{ColumnSchema, TableSchema};
+    use datazen_driver_mysql::MysqlSyncAdapter;
+    use datazen_driver_postgres::PgSyncAdapter;
 
     #[test]
     fn path_registry_rejects_non_sql_and_resolves_opaque_token() {
@@ -565,6 +830,7 @@ mod tests {
             target: None,
             sql_file_target: Some(super::super::model::SqlFileTarget {
                 file_token: "token".into(),
+                database_type: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -602,6 +868,157 @@ mod tests {
         .unwrap();
         assert!(sql.contains("\"display_name\""));
         assert!(sql.contains("'O''Reilly'"));
+    }
+
+    #[test]
+    fn explicit_mysql_target_changes_identifiers_literals_and_ddl() {
+        let target_driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let source_adapter = PgSyncAdapter;
+        let target_adapter = MysqlSyncAdapter { is_mariadb: false };
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "s".into(),
+                database: "db".into(),
+                schema: Some("public".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: Some("mysql".into()),
+            }),
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: vec![TableMapping {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![
+                    ColumnMapping {
+                        source_column: "id".into(),
+                        target_column: "id".into(),
+                        skip: false,
+                        target_native_type: None,
+                    },
+                    ColumnMapping {
+                        source_column: "enabled".into(),
+                        target_column: "is_enabled".into(),
+                        skip: false,
+                        target_native_type: None,
+                    },
+                ],
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            }],
+            options: Default::default(),
+        };
+        let schema = TableSchema {
+            table_name: "users".into(),
+            columns: vec![
+                ColumnSchema {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                },
+                ColumnSchema {
+                    name: "enabled".into(),
+                    data_type: "boolean".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                },
+            ],
+            primary_keys: vec!["id".into()],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let table = TableInspectResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            status: super::super::model::TableMappingStatus::CreateNew,
+            create_new: true,
+            enabled: true,
+            column_mappings: vec![
+                ColumnMapping {
+                    source_column: "id".into(),
+                    target_column: "id".into(),
+                    skip: false,
+                    target_native_type: None,
+                },
+                ColumnMapping {
+                    source_column: "enabled".into(),
+                    target_column: "is_enabled".into(),
+                    skip: false,
+                    target_native_type: None,
+                },
+            ],
+            source_columns: vec!["id".into(), "enabled".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec![],
+            source_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: None,
+            recordset: None,
+        };
+        let ddl = create_table_sql_with_target(
+            &source_adapter,
+            &target_adapter,
+            &target_driver,
+            &job,
+            &table,
+            &schema,
+        )
+        .unwrap();
+        assert!(ddl.contains("CREATE TABLE `users`"), "{ddl}");
+        assert!(ddl.contains("`id` INT NOT NULL"), "{ddl}");
+        assert!(ddl.contains("`is_enabled` TINYINT(1) NOT NULL"), "{ddl}");
+        assert!(ddl.contains("PRIMARY KEY (`id`)"), "{ddl}");
+
+        let ir_types = source_adapter
+            .table_to_ir(&schema, None)
+            .columns
+            .into_iter()
+            .map(|column| (column.name, column.ir_type))
+            .collect::<HashMap<_, _>>();
+        let mappings = active_column_mappings(&table.column_mappings);
+        let sql = insert_sql_with_target(
+            &target_driver,
+            &target_adapter,
+            &ir_types,
+            &job,
+            &table,
+            &mappings,
+            &[Some(Value::Integer(7)), Some(Value::Bool(true))],
+        )
+        .unwrap();
+        assert!(
+            sql.contains("INSERT INTO `users` (`id`, `is_enabled`) VALUES (7, 1)"),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn unregistered_sql_file_dialect_is_rejected() {
+        let source: std::sync::Arc<dyn DatabaseDriver> =
+            MockDriver::new("postgresql", Default::default());
+        let target = super::super::model::SqlFileTarget {
+            file_token: "token".into(),
+            database_type: Some("not-a-registered-driver".into()),
+        };
+        let result = resolve_target_driver(source, &target);
+        assert!(result.is_err(), "unknown dialect must fail");
+        let error = result
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(error.contains("not registered"));
     }
 
     #[test]

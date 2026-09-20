@@ -139,6 +139,10 @@ const pack = {
   'transfer.destination.database': 'Database',
   'transfer.destination.sqlFile': 'SQL file',
   'transfer.destination.sqlFileSelected': 'SQL file selected',
+  'transfer.destination.sqlDialect': 'SQL dialect',
+  'transfer.destination.sourceDialect': 'Source dialect ({dialect})',
+  'transfer.destination.sqlDialectHint':
+    'Choose a registered target dialect. The preview and generated file use its identifiers, types, and literals.',
   'transfer.destination.sourceDatabase': 'Source database',
   'transfer.destination.sqlFileHint':
     'The SQL file path is held by the host and will be written atomically after preview.',
