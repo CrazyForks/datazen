@@ -140,3 +140,11 @@ The conflict-policy wave is integrated after implementation `268be9d8` and indep
 Independent verification passed conflict-policy Rust 11/11, SQL generation 15/15, Sync command 36/36, Host Rust 1458/1458 (3 ignored), PostgreSQL/MySQL drivers 104/104 and 89/89, Data Sync frontend 46/46, TypeScript, locale checks, formal WebDriver/macOS packaging, Data Sync window 12/12, boundary 15/15 and real base/cross-family journeys 23/23. The environment still lacks `E2E_PG_RO_PASSWORD` for read-only fixtures. Two full-journey assertions remain pre-existing contract issues unrelated to this policy.
 
 This gate closes explicit conflict handling for the covered Sync DML. It does not add paged IPC comparison results, row ranges/recordsets, object dependency graphs, SQL-file targets, profiles/run history, automatic recompare workflows or broader driver coverage.
+
+## SyncTask persistence safety release gate (2026-09-20)
+
+The SyncTask persistence wave is integrated after implementation `33bbfc5b`, database-override fix `3be34051`, dedicated-session cleanup fix `f7c2d9b4`, and independent verification `f42775aa`. Persisted tasks no longer write runtime `sourceDbSessionId` or `targetDbSessionId`. Legacy files are normalized on load: unsafe offsets and `continue`/`running`/`paused` states become `interrupted` with `resumeState: unknown`, offset zero and a re-run message. Conflict checks resolve fresh sessions from stable connection IDs, honor saved database/schema overrides, and release dedicated sessions on success and every error path.
+
+Independent verification passed Store focused 64/64 (2 ignored), Sync focused 24/24, session cleanup 4/4 and TypeScript checking. The original database-override defect and the follow-up dedicated-session leak were both reproduced, fixed and independently closed. The formal WebDriver build was not rerun in the final fix loop because the worktree host ran out of shared disk space; the prior successful build remains valid for the unchanged UI/runtime path, while a clean rebuild is still required before release.
+
+This gate closes stale-session and unsafe-offset persistence for the legacy SyncTask commands. It does not add full profile editing, run history, cursor-based resumability, paged comparison IPC, row ranges/recordsets, object dependency graphs, SQL-file targets or broader driver coverage.
