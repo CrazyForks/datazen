@@ -22,6 +22,12 @@
 
 `3be34051` now establishes a dedicated session with the persisted database override before counting rows. The independent test `check_sync_conflicts_reconnects_selected_database_with_override` passes with a task selecting `analytics` while the saved source connection defaults to `app`; the live session is confirmed on `analytics`.
 
-## Open issue — dedicated recovery sessions are not released
+## Closed after fix — dedicated recovery session cleanup (TPR-002, 2026-09-20)
 
-The override path calls `connect_dedicated` for source and target inside `check_sync_conflicts_impl`, but the returned runtime session ids are not released on success or any later error path. Each conflict check can therefore retain two sessions and their reference counts until application shutdown or idle cleanup. This was found by source review during the independent retest and is recorded only; no production code was changed in this tester pass.
+`f7c2d9b4` releases task-local source and target sessions on successful checks, target-resolution failures, configuration validation failures, and `count_rows` errors. The independent regression `check_sync_conflicts_reconnects_selected_database_with_override` runs twice and leaves no owner-map entries after each check; `check_sync_conflicts_releases_selected_database_sessions_on_count_error` confirms both sessions are released when row counting fails.
+
+## TPR-002 independent verification — 2026-09-20
+
+- Session cleanup and error cleanup tests: 4 passed, including the two new TPR-002 regressions.
+- Store focused suite: 64 passed, 2 ignored; Sync focused suite: 24 passed; `pnpm exec tsc --noEmit` passed.
+- Formal WebDriver build was not rerun by this retest. The prior formal build reached Rust compilation but stopped with `No space left on device`; this remains an environment limitation rather than a code result.
