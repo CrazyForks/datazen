@@ -9,7 +9,7 @@
 
 ## i18n-drivers-BUG-001：驱动词条自注册链路（`ui/**/meta.ts` 副作用挂载点）零常驻测试覆盖，删除该行不会被任何 CI 捕获
 
-- **状态**: 待修复
+- **状态**: 待复测（Coder 第 1 轮已实施：harness 改走 meta + 每驱动常驻注册链路套件；反证 A/B/C 见 progress.md「Coder Bug 修复记录（第 1 轮）」§1）
 - **严重度**: 中（不阻断当前运行时行为——已实测 bundle 内生效；阻断本轨核心链路的回归防护与 tester.md §3「覆盖率硬标准」）
 - **位置**:
   - 被测代码：`packages/drivers/redis/ui/shared/meta.ts:1-4`、`packages/drivers/mongodb/ui/meta.ts:1-4`（`import '../locales'` 副作用行）
@@ -107,7 +107,7 @@
 
 ## i18n-drivers-BUG-002：`scripts/i18n-sync-check.mjs` 新增 ~100 行驱动词条扫描逻辑零单测（脚本无导出，与同目录 guard 脚本惯例不一致）
 
-- **状态**: 待修复
+- **状态**: 待复测（Coder 第 1 轮已实施：扫描逻辑提为 5 个导出纯函数 + main 守卫，新增 `scripts/__tests__/i18n-sync-check.test.mjs` 18 例；CLI 输出 md5 与首轮基线逐字一致，见 progress.md §2）
 - **严重度**: 低-中（脚本本身经 Tester 手工四分支实测正确；缺的是回归防护。该脚本是本轨「不再由宿主 codegen 聚合」后**唯一**的词条完整性守门，若被改坏无人发现）
 - **位置**: `scripts/i18n-sync-check.mjs:56-72`（`extractPackKeys`）、`74-84`（`findDriverLocalePacks`）、`186-243`（驱动包结构 + 缺失/多余扫描、`totalStructural` 退出码）；对照 `scripts/__tests__/`（存在 `check-id-terminology.test.ts` / `check-managed-stubs.test.ts` / `check-module-layers.test.ts` 等同类目测试，**无 `i18n-sync-check` 任何测试文件**）
 - **描述（含量级）**: 本轨为 `i18n-sync-check.mjs` 新增 97 行（含 4 条可判定分支：缺 index.ts / 漏 import / key 缺失 / key 多余），并改变汇总行与退出码语义（`totalStructural` 参与 `exitCode=1`）。实测该逻辑**当前行为正确**（见下日志），但 `scripts` 套件（21 files / 190 tests）里没有一条用例触达它——脚本全部逻辑在模块顶层裸执行、未 `export`，因此**技术上无法被单测导入**（`scripts/__tests__/check-*.test.ts` 的既有写法都是「脚本导出纯函数 + 测试断言」）。
@@ -142,7 +142,8 @@
 
 ## i18n-drivers-BUG-003：三处宿主注释仍声明「`src/locales` 注册 host + driver dictionaries」，本轨后语义失真
 
-- **状态**: 待修复（其中 2 个文件属本轨任务书禁改清单，需协调者裁定落点）
+- **状态**: 待复测（协调者裁定：授权对 `src/hooks/useI18n.ts` / `src/lib/localeSync.ts` **仅改注释文案**；
+  Coder 第 1 轮已改完三处注释，语句与 import 行为零改动，见 progress.md §3）
 - **严重度**: 低（纯注释，但恰好描述的是本轨推翻的那条契约，误导后续读者）
 - **位置**:
   - `src/locales/t.ts:1` — `import './index'; // side effect: register eager host + driver dictionaries`
@@ -167,7 +168,10 @@
 
 ## 观察项（非 Bug，不要求修复，供协调者/Wave 4 决策）
 
-- **O-1 包体代价复核（Coder 自报数字成立，方向已被任务书认可）**：`npx vite build` 三档实测同一 config、
+- **O-1 包体代价复核（Coder 自报数字成立，方向已被任务书认可）**：
+  **【协调者裁定 · 第 1 轮修复循环】维持 10 语言全量自注册**，+76.57 kB min / +6.59 kB gzip 的代价由用户
+  明确认可；本轨禁止改回 en+zh-CN、禁止引入惰性/按需注册机制。裁定与下表三档数字已归档到 progress.md
+  「Coder Bug 修复记录（第 1 轮）」§0，R-8 的第二选项（退回两档）作废。`npx vite build` 三档实测同一 config、
   仅切换 locale 装配：
   | 装配 | main chunk (min) | gzip |
   | --- | --- | --- |
@@ -188,6 +192,7 @@
   (a) 认可 76.6 kB 作为「消灭 8 个死文件」的代价并在 progress 记录；(b) 退回 en+zh-CN 两档，
   把其余 8 语言连同宿主可选语言集合作为 Wave 4 的同一里程碑一起做（两者都不该维持现状的沉默）。
 - **O-2 宿主仍持有驱动前缀 key（既有耦合，非本轨引入，但本轨使其更显性）**：
+  **【协调者裁定 · 第 1 轮修复循环】与改动前同集、非本轨回归 → 本轨不修**，保持登记在 R-6 / Wave 4 lint 里程碑。
   `src/windows/connection/DocumentConnectionView.tsx` 有 20 处 `t('mongo.*')`，而
   `src/lib/connectionViews/index.ts:16` 对未知 mode 兜底返回该视图；`--drivers=basic`
   （不含 mongodb）时这些 key 会退化为 raw key。改动前后行为一致（旧 codegen 同样只合并
