@@ -15,6 +15,15 @@ pub struct Endpoint {
     pub schema: Option<String>,
 }
 
+/// A destination selected through the native save dialog. The token is an
+/// opaque server-side handle; clients never submit a filesystem path or SQL
+/// text to the transfer commands.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SqlFileTarget {
+    pub file_token: String,
+}
+
 impl Endpoint {
     #[allow(dead_code)]
     pub fn normalized_schema(&self) -> Option<&str> {
@@ -167,11 +176,36 @@ impl TransferOptions {
 #[serde(rename_all = "camelCase")]
 pub struct TransferJob {
     pub source: Endpoint,
-    pub target: Endpoint,
+    /// Database target for the original transfer flow. SQL-file transfers set
+    /// this to `None` and provide `sql_file_target` instead.
+    #[serde(default)]
+    pub target: Option<Endpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_file_target: Option<SqlFileTarget>,
     pub mode: TransferMode,
     pub write_mode: WriteMode,
     pub tables: Vec<TableMapping>,
     pub options: TransferOptions,
+}
+
+impl TransferJob {
+    pub fn validate_destination(&self) -> Result<(), TransferError> {
+        match (&self.target, &self.sql_file_target) {
+            (Some(_), None) | (None, Some(_)) => Ok(()),
+            (Some(_), Some(_)) => Err(TransferError::validation(
+                "transfer must choose either a database target or a SQL file target",
+            )),
+            (None, None) => Err(TransferError::validation(
+                "transfer requires a database target or a SQL file target",
+            )),
+        }
+    }
+
+    pub fn database_target(&self) -> Result<&Endpoint, TransferError> {
+        self.target.as_ref().ok_or_else(|| {
+            TransferError::validation("transfer job does not have a database target")
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

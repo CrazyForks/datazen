@@ -129,6 +129,13 @@ const pack = {
   // --- Data Transfer ---
   'transfer.source': '源',
   'transfer.target': '目标',
+  'transfer.destination.database': '数据库',
+  'transfer.destination.sqlFile': 'SQL 文件',
+  'transfer.destination.sqlFileSelected': '已选择 SQL 文件',
+  'transfer.destination.sourceDatabase': '源数据库',
+  'transfer.destination.sqlFileHint': 'SQL 文件路径由宿主安全持有，预览后将以原子方式写入。',
+  'transfer.destination.chooseHint': '请选择 SQL 文件后继续。',
+  'transfer.preview.backToSetup': '返回设置',
   'transfer.selectBoth': '请选择源/目标连接及数据库。',
   'transfer.connectFailed': '连接失败：',
   'transfer.path.direct': '同方言族（直连）',
@@ -195,8 +202,7 @@ const pack = {
     '选择一个有序源列，可设置起止边界或上限。它只定义本次传输范围，不是断点续传检查点。',
   'transfer.mapping.noRecordset': '未设置记录集范围，将传输过滤条件匹配的全部源数据。',
   'transfer.mapping.recordsetOrder': '排序列',
-  'transfer.mapping.recordsetOrderRequired':
-    '请选择一个源列。没有单列主键的表不能使用自动排序。',
+  'transfer.mapping.recordsetOrderRequired': '请选择一个源列。没有单列主键的表不能使用自动排序。',
   'transfer.mapping.recordsetStart': '起始边界',
   'transfer.mapping.recordsetEnd': '结束边界',
   'transfer.mapping.recordsetUnbounded': '不限制',

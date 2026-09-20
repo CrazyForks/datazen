@@ -87,4 +87,12 @@ describe('transferCommands.inspect', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('cancel_data_transfer', { jobId: 'cancel-token' });
   });
+
+  it('requests an opaque SQL-file destination from the native host dialog', async () => {
+    const { transferCommands } = await import('../transfer');
+
+    await transferCommands.pickSqlFile();
+
+    expect(invokeMock).toHaveBeenCalledWith('pick_data_transfer_sql_file');
+  });
 });

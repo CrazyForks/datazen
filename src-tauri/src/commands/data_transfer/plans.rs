@@ -306,11 +306,12 @@ mod tests {
                 database: "source_db".into(),
                 schema: Some("public".into()),
             },
-            target: Endpoint {
+            target: Some(Endpoint {
                 db_session_id: "tgt".into(),
                 database: "target_db".into(),
                 schema: Some("public".into()),
-            },
+            }),
+            sql_file_target: None,
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
             tables: vec![],

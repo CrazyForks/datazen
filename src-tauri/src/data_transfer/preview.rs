@@ -301,11 +301,12 @@ mod tests {
                 database: "src".into(),
                 schema: None,
             },
-            target: Endpoint {
+            target: Some(Endpoint {
                 db_session_id: "t".into(),
                 database: "tgt".into(),
                 schema: None,
-            },
+            }),
+            sql_file_target: None,
             mode,
             write_mode,
             tables: vec![TableMapping::auto("users")],

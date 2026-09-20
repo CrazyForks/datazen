@@ -104,6 +104,7 @@ pub async fn execute_transfer_data(
     target_read_only: bool,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<TransferExecutionResult, TransferError> {
+    let target = job.database_target()?;
     if target_read_only {
         return Err(TransferError::validation(
             "target connection is read-only; Data Transfer cannot execute",
@@ -153,7 +154,7 @@ pub async fn execute_transfer_data(
 
         if is_self_table_overwrite(
             &job.source,
-            &job.target,
+            target,
             &table.source_table,
             &table.target_table,
         ) {
@@ -203,8 +204,8 @@ pub async fn execute_transfer_data(
         );
         let tgt_table_ref = qualify_relation_sql(
             &tgt_family,
-            Some(&job.target.database),
-            job.target.schema.as_deref(),
+            Some(&target.database),
+            target.schema.as_deref(),
             &table.target_table,
             tgt_quote,
         );
@@ -312,8 +313,8 @@ pub async fn execute_transfer_data(
         } else if job.write_mode == WriteMode::TruncateInsert {
             let tgt_table_ref = qualify_relation_sql(
                 &tgt_family,
-                Some(&job.target.database),
-                job.target.schema.as_deref(),
+                Some(&target.database),
+                target.schema.as_deref(),
                 &table.target_table,
                 tgt_quote,
             );
@@ -341,7 +342,7 @@ pub async fn execute_transfer_data(
         let target_schema = match super::metadata::load_table_schema(
             tgt_driver,
             tgt_handle,
-            &job.target,
+            target,
             &table.target_table,
         )
         .await

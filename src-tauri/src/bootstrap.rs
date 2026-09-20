@@ -532,6 +532,7 @@ pub fn run() {
             crate::commands::classify_transfer_pair,
             crate::commands::inspect_data_transfer,
             crate::commands::preview_data_transfer,
+            crate::commands::pick_data_transfer_sql_file,
             crate::commands::execute_data_transfer,
             crate::commands::cancel_data_transfer,
             crate::commands::get_sync_tasks,
