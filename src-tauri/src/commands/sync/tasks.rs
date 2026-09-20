@@ -19,9 +19,41 @@ pub(crate) async fn save_sync_task_direct_impl(
 }
 
 struct ResolvedTaskEndpoint {
+    db_session_id: String,
+    dedicated: bool,
     driver: std::sync::Arc<dyn crate::db::DatabaseDriver>,
     handle: crate::db::ConnectionHandle,
     config: crate::db::ConnectionConfig,
+}
+
+async fn release_task_endpoint(state: &AppState, endpoint: &ResolvedTaskEndpoint) {
+    if !endpoint.dedicated {
+        return;
+    }
+    if let Err(error) = state
+        .connection_manager
+        .release(&endpoint.db_session_id)
+        .await
+    {
+        tracing::warn!(
+            db_session_id = %endpoint.db_session_id,
+            %error,
+            "Failed to release dedicated sync task session"
+        );
+    }
+}
+
+async fn release_task_session_if_dedicated(state: &AppState, db_session_id: &str, dedicated: bool) {
+    if !dedicated {
+        return;
+    }
+    if let Err(error) = state.connection_manager.release(db_session_id).await {
+        tracing::warn!(
+            db_session_id,
+            %error,
+            "Failed to release dedicated sync task session"
+        );
+    }
 }
 
 /// Resolve a persisted task endpoint from its stable connection id. A task's
@@ -43,7 +75,7 @@ async fn resolve_task_endpoint(
     }
 
     let requested_database = database.filter(|value| !value.trim().is_empty());
-    let (db_session_id, driver, handle) = if let Some(database) = requested_database {
+    let (db_session_id, driver, handle, dedicated) = if let Some(database) = requested_database {
         // A persisted task may select a catalog other than the connection's
         // default. Reusing the connection's mutable session would leave
         // PostgreSQL attached to the wrong database, so always establish a
@@ -53,30 +85,53 @@ async fn resolve_task_endpoint(
             .connect_dedicated(connection_id, Some(database))
             .await
             .cmd_err("check_sync_conflicts")?;
-        let (driver, handle) = state
+        let (driver, handle) = match state
             .connection_manager
             .get_session(&db_session_id)
             .await
-            .cmd_err("check_sync_conflicts")?;
-        (db_session_id, driver, handle)
+            .cmd_err("check_sync_conflicts")
+        {
+            Ok(session) => session,
+            Err(error) => {
+                release_task_session_if_dedicated(state, &db_session_id, true).await;
+                return Err(error);
+            }
+        };
+        (db_session_id, driver, handle, true)
     } else {
-        state
+        let (db_session_id, driver, handle) = state
             .connection_manager
             .resolve_session_for_connection(connection_id)
             .await
-            .cmd_err("check_sync_conflicts")?
+            .cmd_err("check_sync_conflicts")?;
+        (db_session_id, driver, handle, false)
     };
     let config = state
         .connection_manager
         .get_session_config(&db_session_id)
         .await
-        .cmd_err("check_sync_conflicts")?;
+        .cmd_err("check_sync_conflicts");
+    let config = match config {
+        Ok(config) => config,
+        Err(error) => {
+            release_task_session_if_dedicated(state, &db_session_id, dedicated).await;
+            return Err(error);
+        }
+    };
 
     // Keep database/schema explicit in the count and in the validation error.
     // A persisted task may outlive an edited connection config; silently
     // counting a different catalog would produce a false conflict result.
     if let Some(expected) = database.filter(|value| !value.trim().is_empty()) {
         if config.database.as_deref() != Some(expected) {
+            let endpoint = ResolvedTaskEndpoint {
+                db_session_id,
+                dedicated,
+                driver,
+                handle,
+                config,
+            };
+            release_task_endpoint(state, &endpoint).await;
             return Err(CommandError::Validation(format!(
                 "Sync task {label} database '{}' is not active on connection '{}'; reopen the task and compare again",
                 expected, connection_id
@@ -89,6 +144,8 @@ async fn resolve_task_endpoint(
     // process-local search_path to match it.
 
     Ok(ResolvedTaskEndpoint {
+        db_session_id,
+        dedicated,
         driver,
         handle,
         config,
@@ -126,48 +183,65 @@ pub(crate) async fn check_sync_conflicts_impl(
     .await?;
     // Resolve the target as well so a stale or deleted target cannot make the
     // task appear safe to resume. No target rows are read by this command.
-    let _target = resolve_task_endpoint(
+    let target = match resolve_task_endpoint(
         state,
         &task.target_connection_id,
         task.target_database.as_deref(),
         task.target_schema.as_deref(),
         "target",
     )
-    .await?;
+    .await
+    {
+        Ok(target) => target,
+        Err(error) => {
+            release_task_endpoint(state, &source).await;
+            return Err(error);
+        }
+    };
 
-    let mut conflicts = Vec::<serde_json::Value>::new();
+    let result = async {
+        let mut conflicts = Vec::<serde_json::Value>::new();
 
-    for table in &task.tables {
-        if task.completed_tables.contains(table) {
-            continue;
+        for table in &task.tables {
+            if task.completed_tables.contains(table) {
+                continue;
+            }
+
+            let original_count = task.source_row_counts.get(table).copied().unwrap_or(0);
+            let current_count = count_rows(
+                source.driver.as_ref(),
+                &source.handle,
+                &source.config.database_type,
+                task.source_database
+                    .as_deref()
+                    .or(source.config.database.as_deref()),
+                task.source_schema
+                    .as_deref()
+                    .or(source.config.schema.as_deref()),
+                table,
+            )
+            .await?;
+
+            if current_count != original_count {
+                conflicts.push(serde_json::json!({
+                    "table": table,
+                    "originalRows": original_count,
+                    "currentRows": current_count,
+                }));
+            }
         }
 
-        let original_count = task.source_row_counts.get(table).copied().unwrap_or(0);
-        let current_count = count_rows(
-            source.driver.as_ref(),
-            &source.handle,
-            &source.config.database_type,
-            task.source_database
-                .as_deref()
-                .or(source.config.database.as_deref()),
-            task.source_schema
-                .as_deref()
-                .or(source.config.schema.as_deref()),
-            table,
-        )
-        .await?;
-
-        if current_count != original_count {
-            conflicts.push(serde_json::json!({
-                "table": table,
-                "originalRows": original_count,
-                "currentRows": current_count,
-            }));
-        }
+        Ok(serde_json::json!({
+            "hasConflicts": !conflicts.is_empty(),
+            "conflicts": conflicts,
+        }))
     }
+    .await;
 
-    Ok(serde_json::json!({
-        "hasConflicts": !conflicts.is_empty(),
-        "conflicts": conflicts,
-    }))
+    // Dedicated sessions are task-local resources. Release them on both the
+    // successful result and every count_rows error path; ordinary reused UI
+    // sessions remain owned by their existing callers.
+    release_task_endpoint(state, &source).await;
+    release_task_endpoint(state, &target).await;
+    result
 }

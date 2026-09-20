@@ -5,6 +5,7 @@
 - Legacy task files persisted process-local database session ids. After restart, conflict checking could pass that stale id to `get_session`, causing a lookup failure or an unsafe assumption about the endpoint. The store now drops those ids and the command resolves from stable connection ids.
 - Legacy offset/continue fields looked resumable even though no durable source snapshot, target checkpoint, or idempotent write contract was stored. They now become explicit interrupted/unknown state and require a fresh run.
 - Conflict checking reused the connection's default runtime session even when a persisted task selected another database. The endpoint now opens a dedicated session with the persisted database override.
+- Dedicated sessions created for conflict checking were not released, so repeated checks accumulated references. All dedicated endpoints now release on success and error paths.
 
 ## Remaining limitations
 

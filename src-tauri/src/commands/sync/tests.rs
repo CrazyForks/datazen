@@ -635,24 +635,72 @@ async fn check_sync_conflicts_reconnects_selected_database_with_override() {
     .await
     .unwrap();
 
-    let result = check_sync_conflicts_impl(&test.state, "selected-database-check".into())
-        .await
-        .unwrap();
-    assert_eq!(result["hasConflicts"], false);
+    for _ in 0..2 {
+        let result = check_sync_conflicts_impl(&test.state, "selected-database-check".into())
+            .await
+            .unwrap();
+        assert_eq!(result["hasConflicts"], false);
+        assert_eq!(
+            test.state.connection_manager.session_owner_map_len().await,
+            0,
+            "dedicated task sessions must be released after each check"
+        );
+    }
+}
 
-    let source_session = test
-        .state
-        .connection_manager
-        .get_or_connect_session("selected-source")
+#[tokio::test]
+async fn check_sync_conflicts_releases_selected_database_sessions_on_count_error() {
+    use crate::testing::app_state::{rich_mock_options, sample_postgres_config, TestAppState};
+    use chrono::Utc;
+
+    let mut options = rich_mock_options();
+    options.query_error = Some("count failed".into());
+    let test = TestAppState::with_options(options).await;
+    test.store
+        .save_connection(sample_postgres_config("error-source"))
         .await
         .unwrap();
-    let source_config = test
-        .state
-        .connection_manager
-        .get_session_config(&source_session)
+    test.store
+        .save_connection(sample_postgres_config("error-target"))
         .await
         .unwrap();
-    assert_eq!(source_config.database.as_deref(), Some("analytics"));
+
+    let now = Utc::now();
+    let legacy = serde_json::json!([{
+        "id": "count-error-check",
+        "sourceDbSessionId": "stale-source-session",
+        "targetDbSessionId": "stale-target-session",
+        "sourceConnectionId": "error-source",
+        "targetConnectionId": "error-target",
+        "sourceDatabase": "analytics",
+        "targetDatabase": "app",
+        "tables": ["users"],
+        "completedTables": [],
+        "currentTable": null,
+        "currentTableOffset": 0,
+        "sourceRowCounts": {"users": 2},
+        "strategy": "full",
+        "status": "completed",
+        "errorMessage": null,
+        "createdAt": now,
+        "updatedAt": now
+    }]);
+    tokio::fs::write(
+        test.store.data_dir().join("sync_tasks.json"),
+        serde_json::to_vec_pretty(&legacy).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let error = check_sync_conflicts_impl(&test.state, "count-error-check".into())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("count failed"));
+    assert_eq!(
+        test.state.connection_manager.session_owner_map_len().await,
+        0,
+        "count_rows errors must release both dedicated task sessions"
+    );
 }
 
 #[tokio::test]
