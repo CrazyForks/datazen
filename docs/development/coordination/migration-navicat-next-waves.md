@@ -92,3 +92,11 @@ The export consumer wave is integrated after independent commit `5a36cbc3` on to
 Independent final testing passed Host Rust 1428/1428 (3 ignored), export-focused Host 16/16, Driver API SQL dump 12/12, PostgreSQL/MySQL/SQLite/SQL Server suites 103/88/50/44, frontend export-related tests 77/77, TypeScript and the formal WebDriver build. Source review found no lossy UTF-8 conversion in the export path; the existing callback batches and 64 KiB file sink remain bounded. Live UI export assertions were not reachable because this environment lacks `E2E_PG_RO_PASSWORD` and could not initialize the seeded fixture.
 
 This gate closes the lossless SQL/CSV/JSON consumer defect for the covered drivers. It does not add an import decoder, SQL-file target profiles, stable snapshots, bounded comparison storage, object dependency graphs, source filters, run history or broader driver-specific export coverage.
+
+## Optimistic Sync conflict release gate (2026-09-20)
+
+The optimistic-conflict wave is integrated in merge commit `483d9597` after implementation `42d0ee66` and independent testing `2680409c`. Sync UPDATE and DELETE statements now carry the reviewed expected non-key values as null-safe predicates. A target row changed or deleted after comparison therefore affects zero rows and is reported as `DataSyncError::Conflict`; the executor rolls back the transaction instead of treating the write as successful. Missing or malformed reviewed target rows fail closed before execution. The live executor reports the database's actual `affectedRows` in the execution result rather than a constant fallback.
+
+Independent final testing passed Host Rust 1432/1432 (3 ignored), Sync/data-sync suites 112/112, Driver API/PostgreSQL/MySQL/SQLite suites 131/103/88/50, Sync frontend 46/46, TypeScript and the formal WebDriver build. PostgreSQL and MySQL immutable-plan journeys passed 2/2 each; live conflict journeys for both families confirmed target modification causes conflict and rollback, while a successful update reports `affectedRows: 1`.
+
+This gate closes silent zero-row optimistic writes for the covered DML paths. It does not add force/skip/recompare policy, stable snapshots, bounded comparison storage, source filters, object dependency graphs, SQL-file targets, profiles/run history or broader driver coverage.
