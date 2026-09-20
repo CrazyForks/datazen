@@ -53,3 +53,24 @@ Open correctness defects found by source review are recorded as `EXPORT-LOSSLESS
 - `cargo test -p datazen-driver-api --lib sql_dump` (12 passed)
 
 Generated driver files and Cargo.lock injection noise are not part of this track.
+
+## Independent tester round 2 — TEST_DONE
+
+Commit under test: `12d39459 fix(export): close lossless format edge cases`.
+
+Passed:
+
+- Full Host Rust suite: `cargo test -p datazen --lib` — 1428 passed, 3 ignored.
+- Export-focused Host tests — 16 passed.
+- Driver API SQL dump tests — 12 passed.
+- PostgreSQL/MySQL/SQLite/SQL Server driver suites — 103/88/50/44 passed.
+- Frontend export, batch export, file, and chart export tests — 77 passed.
+- TypeScript check passed.
+- Formal `pnpm tauri:build:webdriver` passed and produced the webdriver app and DMG bundles; generated files and Cargo.lock injection were restored.
+- Source review found no `from_utf8_lossy` or replacement UTF-8 conversion in the export formatter/path. The bounded stream remains 500-row query batches, 500-row SQL INSERT batches, and a 64 KiB file sink buffer.
+
+Live evidence limitation:
+
+- `pnpm e2e:contract:matrix` and the focused `e2e/specs/export-import.ts` run could not reach export assertions because `E2E_PG_RO_PASSWORD` is absent. The setup script stopped before creating the contract fixture tables; the focused export hook then timed out locating the seeded `product` table. This is an environment/fixture limitation, separate from the passing unit, driver, frontend, and formal-build evidence.
+
+No correctness blocker was found in the code under test. `TEST_DONE` is recorded for this track.
