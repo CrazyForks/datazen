@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { AppSettings } from '../types';
+import type { AppSettings } from '../../../src/types';
 
 export type DriverSettingsContribution = {
   driverId: string;

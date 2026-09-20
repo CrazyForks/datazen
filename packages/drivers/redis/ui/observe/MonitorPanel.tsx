@@ -4,7 +4,7 @@ import { Button, cn } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
 import { redisCommandInvoke } from '../shared/redisInvoke';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
+import { useBoundSettingsStore } from '@datazen/driver-sdk';
 import { parseInfoSections, filterInfoSections, type InfoSection } from './infoParse';
 import { StreamOverview } from '../value-editors/StreamOverview';
 import { ClusterNodePicker } from '../connection/ClusterNodePicker';
@@ -73,7 +73,7 @@ export function MonitorPanel({
   onPinnedNodeAddrChange,
 }: MonitorPanelProps) {
   const { t } = useI18n();
-  const driverSettings = useSettingsStore((s) => s.settings.driverSettings);
+  const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
   const clusterRouting = readClusterRouting(driverSettings?.redis);
   const nodeAddr = resolvePinnedNodeAddr(clusterRouting, pinnedNodeAddr);
   const [subPage, setSubPage] = useState<MonitorSubPage>('info');

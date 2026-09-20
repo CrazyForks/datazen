@@ -1,7 +1,15 @@
 import { useEffect } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
+import { create } from 'zustand';
+import {
+  bindSettingsStore,
+  bindConfirmDialog,
+  useBoundSettingsStore,
+  type ConfirmDialogFn,
+  type ConfirmDialogOptions,
+  type SettingsBridgeState,
+} from '@datazen/driver-sdk';
 import { useRedisGate } from '../shared/useRedisGate';
 
 vi.mock('../../../../../src/hooks/useI18n', () => ({
@@ -10,7 +18,24 @@ vi.mock('../../../../../src/hooks/useI18n', () => ({
   }),
 }));
 
+// Harness capability bindings: drivers consume the settings store and the
+// confirm dialog through @datazen/driver-sdk bridges (the host injects its
+// real implementations at startup; tests bind fakes here).
+const harnessSettingsStore = create<SettingsBridgeState>(() => ({
+  settings: {
+    safeMode: false,
+    editorFontFamily: '',
+    driverSettings: {},
+  },
+}));
+
+beforeAll(() => {
+  bindSettingsStore(harnessSettingsStore);
+});
+
 let latestGateWrite: ((level: string, command?: string) => Promise<boolean>) | null = null;
+let lastConfirmOptions: ConfirmDialogOptions | null = null;
+let resolveLastConfirm: ((value: boolean) => void) | null = null;
 
 function Harness() {
   const { gateWrite, gateDialog } = useRedisGate();
@@ -21,7 +46,7 @@ function Harness() {
 }
 
 function setSafeMode(value: boolean) {
-  useSettingsStore.setState((s) => ({
+  useBoundSettingsStore.setState((s) => ({
     settings: { ...s.settings, safeMode: value },
   }));
 }
@@ -35,12 +60,22 @@ describe('useRedisGate', () => {
   afterEach(() => {
     cleanup();
     latestGateWrite = null;
+    lastConfirmOptions = null;
+    resolveLastConfirm = null;
     setSafeMode(false);
     vi.clearAllMocks();
   });
 
   it('Safe Mode ON blocks a write-op and resolves false after dismiss', async () => {
     setSafeMode(true);
+    const confirmFn = vi.fn<ConfirmDialogFn>(
+      (options) =>
+        new Promise<boolean>((resolve) => {
+          lastConfirmOptions = options;
+          resolveLastConfirm = resolve;
+        }),
+    );
+    bindConfirmDialog(() => [confirmFn, null]);
     render(<Harness />);
     let result: boolean | undefined;
     await act(async () => {
@@ -48,26 +83,36 @@ describe('useRedisGate', () => {
         result = r;
       });
     });
-    const ok = await screen.findByTestId('confirm-dialog-ok');
+    expect(lastConfirmOptions?.title).toBe('settings.safeMode');
     await act(async () => {
-      fireEvent.click(ok);
+      resolveLastConfirm?.(true);
     });
     expect(result).toBe(false);
   });
 
   it('Safe Mode OFF lets a write-op through without a dialog', async () => {
     setSafeMode(false);
+    const confirmFn = vi.fn<ConfirmDialogFn>(async () => true);
+    bindConfirmDialog(() => [confirmFn, null]);
     render(<Harness />);
     let result: boolean | undefined;
     await act(async () => {
       result = await gateCall('write-op');
     });
     expect(result).toBe(true);
-    expect(screen.queryByTestId('confirm-dialog-ok')).toBeNull();
+    expect(confirmFn).not.toHaveBeenCalled();
   });
 
   it('danger level confirms when Safe Mode is OFF', async () => {
     setSafeMode(false);
+    const confirmFn = vi.fn<ConfirmDialogFn>(
+      (options) =>
+        new Promise<boolean>((resolve) => {
+          lastConfirmOptions = options;
+          resolveLastConfirm = resolve;
+        }),
+    );
+    bindConfirmDialog(() => [confirmFn, null]);
     render(<Harness />);
     let result: boolean | undefined;
     await act(async () => {
@@ -75,15 +120,22 @@ describe('useRedisGate', () => {
         result = r;
       });
     });
-    const ok = await screen.findByTestId('confirm-dialog-ok');
+    expect(lastConfirmOptions?.codePreview).toBe('DEL key');
     await act(async () => {
-      fireEvent.click(ok);
+      resolveLastConfirm?.(true);
     });
     expect(result).toBe(true);
   });
 
   it('danger level cancels to false', async () => {
     setSafeMode(false);
+    const confirmFn = vi.fn<ConfirmDialogFn>(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveLastConfirm = resolve;
+        }),
+    );
+    bindConfirmDialog(() => [confirmFn, null]);
     render(<Harness />);
     let result: boolean | undefined;
     await act(async () => {
@@ -91,9 +143,8 @@ describe('useRedisGate', () => {
         result = r;
       });
     });
-    const cancel = await screen.findByTestId('confirm-dialog-cancel');
     await act(async () => {
-      fireEvent.click(cancel);
+      resolveLastConfirm?.(false);
     });
     expect(result).toBe(false);
   });

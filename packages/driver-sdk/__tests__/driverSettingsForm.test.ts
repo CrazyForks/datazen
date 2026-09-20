@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeDriverSettings, readBooleanField } from '../driverSettings';
+import { mergeDriverSettings, readBooleanField } from '@datazen/driver-sdk';
 
 describe('wapp settings helpers', () => {
   it('merges one wapp bucket without clobbering others', () => {

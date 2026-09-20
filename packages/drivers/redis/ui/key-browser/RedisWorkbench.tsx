@@ -10,11 +10,14 @@ import {
 import { Database, FolderInput, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
 import { Input } from '@datazen/ui';
-import { useSchemaStore } from '../../../../../src/stores/schemaStore';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
+import {
+  useBoundSchemaStore,
+  useBoundSettingsStore,
+  showNativeContextMenu,
+  readBooleanField,
+  useBoundConfirmDialog,
+} from '@datazen/driver-sdk';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { showNativeContextMenu } from '../../../../../src/lib/nativeContextMenu';
-import { readBooleanField } from '../../../../../src/lib/driverSettings';
 import { invokeGetKey, invokeDbSizes } from '../shared/redisInvoke';
 import type { KeyDetail } from '../shared/types';
 import { BatchBar, invokeDeleteKeys, invokeBatchDeletePattern } from './BatchBar';
@@ -32,7 +35,6 @@ import { ValueSearchResults } from '../value-search/ValueSearchResults';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTree } from './useKeyTree';
 import { useRedisGate } from '../shared/useRedisGate';
-import { useConfirmDialog } from '../../../../../src/hooks/useConfirmDialog';
 import { buildServerTreeRows } from './keyTree';
 import {
   KeyWorkbenchDialogs,
@@ -73,10 +75,10 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     ref,
   ) {
     const { t } = useI18n();
-    const databasesFromStore = useSchemaStore((s) => s.databases);
-    const loading = useSchemaStore((s) => s.loading);
-    const loadForConnection = useSchemaStore((s) => s.loadForConnection);
-    const driverSettings = useSettingsStore((s) => s.settings.driverSettings);
+    const databasesFromStore = useBoundSchemaStore((s) => s.databases);
+    const loading = useBoundSchemaStore((s) => s.loading);
+    const loadForConnection = useBoundSchemaStore((s) => s.loadForConnection);
+    const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
     const allowFlush = readBooleanField(
       (driverSettings?.redis ?? {}) as Record<string, unknown>,
       'allowFlush',
@@ -145,7 +147,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     });
 
     const { gateWrite, gateDialog } = useRedisGate();
-    const [confirmDelete, confirmDeleteDialog] = useConfirmDialog();
+    const [confirmDelete, confirmDeleteDialog] = useBoundConfirmDialog();
 
     const tree = useKeyTree({
       dbSessionId,

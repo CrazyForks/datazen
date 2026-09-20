@@ -3,7 +3,7 @@ import { Download, Loader2, Upload } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { Input } from '@datazen/ui';
-import { fileCommands } from '../../../../../src/commands/file';
+import { fileCommands } from '@datazen/driver-sdk';
 import { useI18n } from '../../../../../src/hooks/useI18n';
 import { invokeScanKeys, redisCommandInvoke } from '../shared/redisInvoke';
 import { invokeCountMatching } from './BatchBar';

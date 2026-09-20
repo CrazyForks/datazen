@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { Loader2 } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
-import { useSettingsStore } from '../../../../../src/stores/settingsStore';
 import {
+  useBoundSettingsStore,
   resolveEditorFontFamily,
   HOST_DEFAULT_EDITOR_FONT,
-} from '../../../../../src/lib/resolveEditorFontFamily';
+  readBooleanField,
+} from '@datazen/driver-sdk';
 import { redisCommandInvoke } from '../shared/redisInvoke';
-import { readBooleanField } from '../../../../../src/lib/driverSettings';
 import { classifyDangerLevel, dangerBadgeColor, type DangerLevel } from './redisConsoleDanger';
 import { useRedisGate } from '../shared/useRedisGate';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
@@ -87,7 +87,7 @@ export function RedisConsole({
   onPinnedNodeAddrChange,
 }: RedisConsoleProps) {
   const { t } = useI18n();
-  const driverSettings = useSettingsStore((s) => s.settings.driverSettings);
+  const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
   const clusterRouting = readClusterRouting(driverSettings?.redis);
   const allowFlush = readBooleanField(
     (driverSettings?.redis ?? {}) as Record<string, unknown>,
@@ -96,7 +96,7 @@ export function RedisConsole({
   );
   const { gateWrite, gateDialog } = useRedisGate();
   const nodeAddr = resolvePinnedNodeAddr(clusterRouting, pinnedNodeAddr);
-  const editorFontFamily = useSettingsStore(
+  const editorFontFamily = useBoundSettingsStore(
     (s) => s.settings.editorFontFamily || HOST_DEFAULT_EDITOR_FONT,
   );
   const fontFamily = resolveEditorFontFamily(editorFontFamily, '', HOST_DEFAULT_EDITOR_FONT);

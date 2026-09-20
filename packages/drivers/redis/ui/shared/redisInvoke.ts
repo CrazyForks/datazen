@@ -1,5 +1,4 @@
-import { driverCommands } from '../../../../../src/commands/driver';
-import type { KeyScanResult } from '@datazen/driver-sdk';
+import { driverCommands, type KeyScanResult } from '@datazen/driver-sdk';
 import type { KeyDetail, ValueFrame } from './types';
 
 /** Test-injectable invoke used by Redis UI helpers. */
