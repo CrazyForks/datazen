@@ -37,4 +37,4 @@ Filtered V8 coverage for the changed frontend files was 75.48% statements, 78.21
 
 E2E status: the new frontend journey is executable in this worktree and covers the review state machine. A real desktop database journey was not rerun by this tester because the track's recorded formal build is sufficient for compilation and the environment lacks `E2E_PG_RO_PASSWORD` for read-only fixtures; this environment limitation is unrelated to paged IPC.
 
-Tester commit: pending until the test-only change and this result are committed.
+Tester commit: `d0b71d3e`.
