@@ -352,4 +352,58 @@ mod tests {
         }));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_tester_rejects_reversed_bounds_before_query() {
+        let schema = schema(&["id"]);
+        let mut recordset = rs(Some("id"));
+        recordset.start.as_mut().unwrap().value = serde_json::json!("20");
+        recordset.end.as_mut().unwrap().value = serde_json::json!("10");
+
+        let result = build_source_scope(
+            &schema,
+            None,
+            Some(&recordset),
+            '"',
+            |_, _| Ok("?".to_string()),
+            |column| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        );
+        assert!(result.is_err(), "start > end must fail closed before query");
+    }
+
+    #[test]
+    fn test_tester_rejects_integer_bound_overflow_from_frontend_text() {
+        let schema = schema(&["id"]);
+        let recordset = TransferRecordset {
+            order_by: Some("id".into()),
+            start: Some(TransferRecordsetBound {
+                value: serde_json::json!("2147483648"),
+                inclusive: true,
+            }),
+            end: None,
+            limit: None,
+        };
+
+        let result = build_source_scope(
+            &schema,
+            None,
+            Some(&recordset),
+            '"',
+            |_, _| Ok("?".to_string()),
+            |column| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name == column)
+                    .map(|candidate| candidate.data_type.clone())
+            },
+        );
+        assert!(result.is_err(), "integer bound overflow must fail closed");
+    }
 }

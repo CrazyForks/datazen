@@ -1,6 +1,6 @@
 # Track: migration-transfer-recordsets
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-recordsets`
 - Branch: `codex/migration-transfer-recordsets`
 - Scope: validated per-table stable recordset/range selection for Transfer, shared preview/execute scope construction, immutable-plan binding, and UI editing.
@@ -30,6 +30,24 @@
 - `cargo fmt --all -- --check`: passed.
 - `git diff --check`: passed; generated driver/Cargo noise restored.
 - Formal `CI=true pnpm tauri:build:webdriver` and a live PostgreSQL recordset journey were not run in this coder pass; an independent tester should cover them.
+
+## Independent tester pass
+
+- Focused Rust suite before tester additions: **65 passed, 0 failed**.
+- Focused frontend Vitest: **23 passed, 0 failed**.
+- `npx tsc --noEmit`: passed.
+- Scoped frontend coverage (`DataTransferWindow`, `ColumnMappingEditor`, `transferMappingView`): **84.27% statements, 73.57% branches, 85.09% functions, 86.51% lines**. Branch threshold missed by 1.43 percentage points; `ColumnMappingEditor` lines were 76.56% because the new validation/error branches are not fully exercised.
+- Formal `CI=true pnpm tauri:build:webdriver`: passed; generated driver/Cargo files restored afterward.
+- Tester-added focused boundary tests: **4 passed, 2 failed**, exposing BUG-001 and BUG-002. Full post-test Rust suite is therefore intentionally blocked until the coder fixes both bugs.
+- Live PostgreSQL smoke was not run because no E2E database password/fixture was available in this tester environment.
+
+## E2E registration
+
+| Journey | Status |
+| --- | --- |
+| Mapping → enable recordset → select PK → enter inclusive bounds → preview → edit bound → old preview invalidated → re-preview | 【本机可执行】 covered by existing `DataTransferWindow.test.tsx` (23/23) |
+| Start bound greater than end bound is rejected before preview/execute | 【留待 R 回归】 blocked by BUG-001 |
+| Integer/date/decimal text bound is type checked and overflow fails closed across source drivers | 【留待 R 回归】 blocked by BUG-002; live DB fixture required |
 
 ## Findings / bugs
 
