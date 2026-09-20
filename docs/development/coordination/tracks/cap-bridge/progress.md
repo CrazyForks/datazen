@@ -40,7 +40,45 @@
 - [x] Coder 完成 → READY_FOR_TEST
 - [x] Tester 复测 → **FAILED（见 bugs.md，待 Coder 补 bridge 单测后复测）**
 - [x] Coder round 2 修复 cap-bridge-BUG-001 → READY_FOR_TEST（见下方记录）
-- [ ] Tester 复测 BUG-001
+- [x] Tester 复测 BUG-001 → **TEST_DONE(PASSED)**（Round 2，见下方记录，全轨关账）
+
+## Tester 复测记录（Round 2，待测 3908f64e5，上轮 docs 4cf33a4c6）
+
+### 阶段 A 修复审查（通过）
+- `git diff 4cf33a4c6..3908f64e5`：仅新增 `packages/driver-sdk/__tests__/` 四套件
+  （settingsStoreBridge 8 / connectionStoreBridge 5 / confirmDialogBridge 3 /
+  schemaStoreBridge.bound 13）+ `packages/driver-sdk/tsconfig.json` 一行 `"jsx": "react-jsx"`
+  + 两份协调文档；`packages/driver-sdk/src`、`src/`、`packages/drivers` **零运行时改动**。
+- 断言真实性逐文件核对：四处未绑定 throw 文案与源码逐字一致（`vi.resetModules()` +
+  动态 import 隔离，不与驱动侧顶层 bind 套件互污）；setState 对象/updater 两形态
+  `toBe(patch)` 同引用透传断言；`useBoundSettingsStore`/`useBoundConnectionStore`/
+  `useBoundSchemaStore` 用真实 zustand `create` store 组件内订阅→act→重渲染；
+  confirm 二元组引用透传 + options 原样入参（confirm/cancel 两态）；schemaStoreBridge
+  sync 助手 dbSessionId 有/无分支、`subscribeSchemaPathItems` 引用相同跳过 + 退订断言。
+  无为覆盖率凑数的空断言。
+
+### 阶段 B 完整复跑（实测 = 全绿）
+- `npx vitest run packages/driver-sdk`：**36 passed / 0 failed**（7 files；Coder 自报 32/32
+  系计数口径偏差，实测多 4 个既有用例、方向为全绿，非缺陷）。
+- 覆盖率重现命令（bugs.md 口径，v8 + `--coverage.all`）：四个 bridge
+  **Stmts/Branch/Funcs/Lines 均 100%**（Coder 自报 100% 属实）。
+- redis ui：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui`：
+  **218 passed / 0 failed**（基线保持）。
+- `npx vitest run src`：**4194 passed / 402 files / 0 fail**。
+- `npx tsc --noEmit -p tsconfig.json`：**0 错误**。
+- 上轮 B 结论抽查：`nativeContextMenu.ts` 89.8% Lines / 80% Branch、`fileCommands.ts`
+  100%，均未因重构回退。
+
+### 阶段 C 覆盖率收口（c3058fdd0..HEAD 全 diff 核心模块）
+- 本轨新增/下沉 driver-sdk 模块：四 bridge 100%、resolveEditorFontFamily 100%、
+  fileCommands 100%、nativeContextMenu 89.8% — 全部 ≥80%。
+- 豁免维持上轮口径：`driverSettings.ts` 21%、`ipc/driverCommands.ts` 14%（薄封装，
+  与迁移前基线持平）；`index.ts` 为纯 re-export barrel 无逻辑。
+- redis ui 改动行均为 import 换源（baf0bb0e4 diff 复核非 import 行仅测试 harness bind），
+  由 218 套件全量执行。BUG-001 置"已修复"，**全轨验收关账**。
+
+### 判定
+- **TEST_DONE(PASSED)**。留待 R 回归的 2 项真实环境 E2E 见上方登记表，不变。
 
 ## Tester 复测记录（Round 1，基准 c3058fdd0，待测 92a039383 + baf0bb0e4）
 

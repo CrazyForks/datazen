@@ -2,7 +2,17 @@
 
 ## cap-bridge-BUG-001：新增能力桥模块缺少专属单测（未绑定 throw / bind 转发 / useBoundXxx 订阅路径）
 
-- **状态**: 待复测
+- **状态**: 已修复（Tester round 2 复测通过，commit 3908f64e5）
+- **复测记录（Tester round 2）**: 阶段 A 审查 `git diff 4cf33a4c6..3908f64e5` 确认仅新增 4 个
+  bridge 测试套件 + `packages/driver-sdk/tsconfig.json` 一行 `"jsx": "react-jsx"`，零运行时改动；
+  四套件断言与 bridge 源码逐字核对属实（throw 文案、setState 同引用透传、真实 zustand
+  订阅重渲染、confirm 二元组透传、dbSessionId 分支、引用相同跳过），无凑数空断言。
+  以 bugs.md 重现命令实测：confirmDialogBridge / connectionStoreBridge /
+  settingsStoreBridge / schemaStoreBridge 四项 Stmts/Branch/Funcs/Lines 均 **100%**（≥80% 达标）。
+  回归：driver-sdk 36/36（Coder 自报 32/32 系计数口径偏差，实测 7 files/36 tests 全绿：
+  29 新增 + 既有 driverSettingsForm 2 / resolveEditorFontFamily 3 / pathItemsCache 2）；
+  redis ui 218/218；`npx vitest run src` 402 files / 4194 passed；`tsc --noEmit -p tsconfig.json` 0 错误；
+  nativeContextMenu 89.8% Lines / fileCommands 100% 未回退。
 - **修复记录（Coder round 2）**: `packages/driver-sdk/__tests__/` 新增四个专属套件
   `settingsStoreBridge.test.tsx`（8 tests）/ `connectionStoreBridge.test.tsx`（5）/
   `confirmDialogBridge.test.tsx`（3）/ `schemaStoreBridge.bound.test.tsx`（13），
