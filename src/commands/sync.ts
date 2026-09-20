@@ -3,12 +3,19 @@ import type { FilterCondition, Value } from '../types';
 
 export interface SyncTask {
   id: string;
-  /** Runtime db session ids captured when the task was created/resumed. */
-  sourceDbSessionId: string;
-  targetDbSessionId: string;
+  /**
+   * Legacy runtime ids may be absent. They are transient and are never used
+   * to reopen a saved task; resolve fresh sessions from the connection ids.
+   */
+  sourceDbSessionId?: string;
+  targetDbSessionId?: string;
   /** Persisted owning connection ids (config) for display / resume lookup. */
   sourceConnectionId: string;
   targetConnectionId: string;
+  sourceDatabase?: string | null;
+  targetDatabase?: string | null;
+  sourceSchema?: string | null;
+  targetSchema?: string | null;
   tables: string[];
   completedTables: string[];
   currentTable: string | null;
@@ -19,6 +26,8 @@ export interface SyncTask {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Saved checkpoints are explicitly unknown and require a fresh compare. */
+  resumeState: 'unknown' | string;
 }
 
 export type DataSyncOperation = 'INSERT' | 'UPDATE' | 'DELETE' | 'UNCHANGED';
