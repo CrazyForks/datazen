@@ -2,7 +2,7 @@
 
 ## migration-sync-select-all-BUG-001 — P1 — clearing a table scope drops default-selected rows on unloaded pages
 
-- **Status:** 已修复（defaults scope）
+- **Status:** 已修复（defaults scope；第二轮独立复测通过）
 - **Description:** Clearing an operation scope after paging through a comparison restores explicit selection only from the currently loaded page. The server then receives explicit keys for that page and silently omits default-selected rows on pages that were never loaded.
 - **Reproduction:**
   1. Compare a matched table with at least two INSERT changes and a page size smaller than the row count.
@@ -14,3 +14,5 @@
 - **Evidence:** Fixed by representing Clear as a server-owned `selectionMode: "defaults"` scope. The updated journey asserts no explicit row keys and a defaults scope after paging and clearing.
 - **Impact:** A user can execute an incomplete synchronization without an error after clearing a cross-page scope. The loss is silent because the UI does not materialize or revalidate the unloaded default-selected rows.
 - **Resolution:** Defaults scopes expand `RowChange::default_selected(options)` across the complete comparison and apply key exclusions. UI paging uses the same mode, so unloaded default-selected rows remain selected without IPC key materialization.
+
+- **Retest:** Independent second pass on `c98ce4ea` passed Rust 50/50, Data Sync/IPC UI 53/53, TypeScript, and the formal WebDriver build. The repaired clear journey confirmed SQL preview receives no materialized page keys and one `selectionMode: "defaults"` scope.

@@ -43,3 +43,13 @@
 - Passed: `npx tsc --noEmit`.
 - Passed: formal `CI=true pnpm tauri:build:webdriver`, including Vite, Tauri debug application, App bundle, and DMG; generated driver files were restored.
 - Passed: `cargo fmt --all` and `git diff --check`.
+
+## RETESTER (2026-09-20)
+
+- Independent second pass against `c98ce4ea` passed: injected Rust `commands::sync` tests 50/50, including defaults-scope expansion across unloaded rows, exclusions, overlapping modes, stale revisions, legacy row-only selection, unknown/disabled table and operation rejection, and client-payload authority checks.
+- Passed: all Data Sync/IPC Vitest coverage — 9 files, 53/53 tests. The repaired journey explicitly covers `All INSERT` → next page → `Clear INSERT` → previous page → SQL preview and asserts an empty explicit-row list plus one server-owned `defaults` scope.
+- Passed: `npx tsc --noEmit` and `git diff --check`.
+- Formal `CI=true pnpm tauri:build:webdriver` passed, including Vite, Tauri debug application, App bundle, and DMG; generated driver files were restored and the worktree remained clean.
+- Live PostgreSQL read-only E2E was skipped because `E2E_PG_RO_PASSWORD` is unavailable in this environment.
+- `cargo fmt --all -- --check` still reports only generated `src-tauri/src/driver_init.rs` ordering/blank-line differences after injected-driver generation; no production file was changed by the retester.
+- Status: PASSED — no new defects found; migration-sync-select-all-BUG-001 remains closed.
