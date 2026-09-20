@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::comparison_store::ComparisonStore;
 use crate::data_sync::{
     ChangeOperation, ComparisonResult, ConflictPolicy, RowChange, SyncOptions, SyncSourceFilter,
-    TableMappingStatus, TableResult,
+    TableMappingStatus,
 };
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
@@ -230,27 +230,36 @@ fn parse_cursor(
     Ok(offset)
 }
 
-fn summary_for_table(plan_id: &str, table: &TableResult) -> SyncComparisonTableSummary {
-    let row_count = table.rows.len();
+fn summary_for_table(
+    plan_id: &str,
+    table: &super::comparison_store::ComparisonTableMetadata,
+) -> SyncComparisonTableSummary {
+    let row_count = table.row_count;
     SyncComparisonTableSummary {
-        source_table: table.source_table.clone(),
-        target_table: table.target_table.clone(),
-        status: table.status,
-        incompatible_reason: table.incompatible_reason.clone(),
-        columns: table.columns.clone(),
-        column_types: table.column_types.clone(),
-        primary_keys: table.primary_keys.clone(),
-        unchanged_count: table.unchanged_row_count(),
-        insert_count: table.insert_count(),
-        update_count: table.update_count(),
-        delete_count: table.delete_count(),
+        source_table: table.table.source_table.clone(),
+        target_table: table.table.target_table.clone(),
+        status: table.table.status,
+        incompatible_reason: table.table.incompatible_reason.clone(),
+        columns: table.table.columns.clone(),
+        column_types: table.table.column_types.clone(),
+        primary_keys: table.table.primary_keys.clone(),
+        unchanged_count: table.unchanged_count,
+        insert_count: table.insert_count,
+        update_count: table.update_count,
+        delete_count: table.delete_count,
         row_count,
         page_size: SYNC_COMPARISON_PAGE_SIZE,
-        first_cursor: (row_count > 0)
-            .then(|| make_cursor(plan_id, &table.source_table, &table.target_table, 0)),
+        first_cursor: (row_count > 0).then(|| {
+            make_cursor(
+                plan_id,
+                &table.table.source_table,
+                &table.table.target_table,
+                0,
+            )
+        }),
         has_more: row_count > SYNC_COMPARISON_PAGE_SIZE as usize,
-        warnings: table.warnings.clone(),
-        source_filter: table.source_filter.clone(),
+        warnings: table.table.warnings.clone(),
+        source_filter: table.table.source_filter.clone(),
     }
 }
 
@@ -306,12 +315,12 @@ impl SyncPlanStore {
     ) -> Result<SyncComparisonPreview, String> {
         let id = Uuid::new_v4().to_string();
         let selection_revision = 1;
+        let comparison = ComparisonStore::from_comparison(comparison)?;
         let preview_tables = comparison
-            .tables
+            .summaries()?
             .iter()
             .map(|table| summary_for_table(&id, table))
             .collect();
-        let comparison = ComparisonStore::from_comparison(comparison)?;
         let conflict_policy_fingerprint = fingerprint_conflict_policy(options.conflict_policy);
         let plan = StoredSyncPlan {
             source_db_session_id,
@@ -437,10 +446,9 @@ pub(crate) fn load_comparison(plan: &StoredSyncPlan) -> Result<ComparisonResult,
     plan.comparison.load()
 }
 
-/// Read one review page from the server-owned comparison. The temporary JSON
-/// store currently has no row index, so `load()` deserializes the full
-/// comparison before slicing. IPC and UI memory are page-bounded; a future
-/// disk-backed index can remove this remaining server-side allocation.
+/// Read one review page from the server-owned comparison. File-backed stores
+/// use their manifest index and read only the requested table row range;
+/// inline stores slice the in-memory comparison.
 pub(crate) fn get_comparison_page(
     request: SyncComparisonPageRequest,
 ) -> Result<SyncComparisonPage, String> {
@@ -460,12 +468,13 @@ pub(crate) fn get_comparison_page(
         .limit
         .unwrap_or(SYNC_COMPARISON_PAGE_SIZE)
         .min(SYNC_COMPARISON_PAGE_MAX_LIMIT) as usize;
-    let comparison = load_comparison(&plan)?;
-    let table = comparison
-        .tables
-        .iter()
+    let table = plan
+        .comparison
+        .summaries()?
+        .into_iter()
         .find(|table| {
-            table.source_table == request.source_table && table.target_table == request.target_table
+            table.table.source_table == request.source_table
+                && table.table.target_table == request.target_table
         })
         .ok_or_else(|| "table does not belong to the comparison plan".to_string())?;
     let offset = match request.cursor.as_deref() {
@@ -474,12 +483,12 @@ pub(crate) fn get_comparison_page(
             &request.source_table,
             &request.target_table,
             cursor,
-            table.rows.len(),
+            table.row_count,
         )?,
         None => 0,
     };
-    let end = offset.saturating_add(limit).min(table.rows.len());
-    let next_cursor = (end < table.rows.len()).then(|| {
+    let end = offset.saturating_add(limit).min(table.row_count);
+    let next_cursor = (end < table.row_count).then(|| {
         make_cursor(
             &request.plan_id,
             &request.source_table,
@@ -490,13 +499,18 @@ pub(crate) fn get_comparison_page(
     Ok(SyncComparisonPage {
         contract_version: SYNC_COMPARISON_CONTRACT_VERSION,
         plan_id: request.plan_id,
-        source_table: table.source_table.clone(),
-        target_table: table.target_table.clone(),
+        source_table: table.table.source_table.clone(),
+        target_table: table.table.target_table.clone(),
         cursor: request.cursor,
         next_cursor,
-        has_more: end < table.rows.len(),
+        has_more: end < table.row_count,
         page_size: limit as u32,
-        rows: table.rows[offset..end].to_vec(),
+        rows: plan.comparison.load_table_page(
+            &request.source_table,
+            &request.target_table,
+            offset,
+            limit,
+        )?,
     })
 }
 
@@ -852,6 +866,60 @@ mod tests {
             limit: Some(1),
         })
         .is_err());
+    }
+
+    #[test]
+    fn indexed_plan_summary_and_page_do_not_call_full_load() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let large_row = RowChange::insert(
+            vec![Value::Integer(7)],
+            vec![Some(Value::String("x".repeat(
+                super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1,
+            )))],
+            &SyncOptions::default(),
+        );
+        let preview = issue_plan(
+            "source-session".into(),
+            "target-session".into(),
+            "source-db".into(),
+            "target-db".into(),
+            None,
+            None,
+            source.as_ref(),
+            target.as_ref(),
+            "source-fingerprint".into(),
+            "target-fingerprint".into(),
+            ComparisonResult::new(vec![
+                TableResult::matched("users", "users", vec![large_row]),
+                TableResult::matched(
+                    "orders",
+                    "orders",
+                    vec![RowChange::insert(
+                        vec![Value::Integer(8)],
+                        vec![Some(Value::Integer(8))],
+                        &SyncOptions::default(),
+                    )],
+                ),
+            ]),
+            SyncOptions::default(),
+            false,
+        )
+        .unwrap();
+        let plan = peek_plan(&preview.plan_id).unwrap();
+        assert!(plan.comparison.is_spilled());
+        assert_eq!(preview.tables[0].row_count, 1);
+        let before = plan.comparison.full_load_calls();
+        let page = get_comparison_page(SyncComparisonPageRequest {
+            plan_id: preview.plan_id,
+            source_table: "users".into(),
+            target_table: "users".into(),
+            cursor: None,
+            limit: Some(1),
+        })
+        .unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(plan.comparison.full_load_calls(), before);
     }
 
     #[test]
