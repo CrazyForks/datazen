@@ -141,11 +141,30 @@ pub(crate) async fn preview_data_transfer_impl(
                     "cannot validate source filter for '{}': source schema is unavailable",
                     mapping.source_table
                 ))
-            })?;
+        })?;
         source_filter.validate(schema).map_err(CommandError::from)?;
         if !source_filter.is_empty().map_err(CommandError::from)? {
-            src_driver
-                .parameter_placeholder(1, None)
+            source_filter
+                .build_where_typed(
+                    src_driver.quote_char(),
+                    1,
+                    |column| {
+                        schema
+                            .columns
+                            .iter()
+                            .find(|candidate| candidate.name == column)
+                            .map(|candidate| candidate.data_type.clone())
+                    },
+                    |index, data_type| {
+                        src_driver
+                            .parameter_placeholder(index, data_type)
+                            .map_err(|error| {
+                                crate::data_transfer::TransferError::unsupported(
+                                    error.to_string(),
+                                )
+                            })
+                    },
+                )
                 .map_err(|error| {
                     CommandError::Validation(format!(
                         "source driver cannot execute parameterized filters: {error}"

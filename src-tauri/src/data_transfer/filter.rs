@@ -104,10 +104,28 @@ impl SourceFilter {
         &self,
         quote: char,
         start_index: usize,
+        placeholder: P,
+    ) -> Result<(Option<String>, Vec<Value>), TransferError>
+    where
+        P: FnMut(usize, Option<&str>) -> Result<String, TransferError>,
+    {
+        self.build_where_typed(quote, start_index, |_| None, placeholder)
+    }
+
+    /// Build a source predicate while passing the source column type to the
+    /// driver's placeholder formatter. This lets PostgreSQL cast UI-entered
+    /// text such as `2` to the inspected integer/numeric type without losing
+    /// large-value precision in the browser.
+    pub fn build_where_typed<P, F>(
+        &self,
+        quote: char,
+        start_index: usize,
+        column_type: F,
         mut placeholder: P,
     ) -> Result<(Option<String>, Vec<Value>), TransferError>
     where
-        P: FnMut(usize) -> Result<String, TransferError>,
+        P: FnMut(usize, Option<&str>) -> Result<String, TransferError>,
+        F: Fn(&str) -> Option<String>,
     {
         let payload = self.payload()?;
         if payload.filters.is_empty() {
@@ -119,6 +137,7 @@ impl SourceFilter {
         for condition in &payload.filters {
             validate_condition(condition)?;
             let column = quote_ident_sql(&condition.column, quote);
+            let data_type = column_type(&condition.column);
             let part = match condition.operator {
                 FilterOperator::Eq
                 | FilterOperator::Ne
@@ -138,7 +157,7 @@ impl SourceFilter {
                         _ => unreachable!(),
                     };
                     let value = scalar_value(&condition.value)?;
-                    let marker = placeholder(next)?;
+                    let marker = placeholder(next, data_type.as_deref())?;
                     next += 1;
                     params.push(value);
                     format!("({column} {op} {marker})")
@@ -148,7 +167,7 @@ impl SourceFilter {
                     let markers = values
                         .into_iter()
                         .map(|value| {
-                            let marker = placeholder(next)?;
+                            let marker = placeholder(next, data_type.as_deref())?;
                             next += 1;
                             params.push(value);
                             Ok(marker)
@@ -171,7 +190,7 @@ impl SourceFilter {
     /// Human-readable preview with anonymous placeholders. Values remain
     /// private to the server and are never interpolated into preview SQL.
     pub fn preview_where(&self, quote: char) -> Result<Option<String>, TransferError> {
-        self.build_where(quote, 1, |_| Ok("?".into()))
+        self.build_where(quote, 1, |_, _| Ok("?".into()))
             .map(|(sql, _)| sql)
     }
 }
@@ -339,7 +358,7 @@ mod tests {
         .unwrap();
         filter.validate(&schema()).unwrap();
         let (where_sql, params) = filter
-            .build_where('"', 1, |i| Ok(format!("${i}")))
+            .build_where('"', 1, |i, _| Ok(format!("${i}")))
             .unwrap();
         assert_eq!(where_sql.as_deref(), Some("WHERE (\"status\" = $1) AND (\"id\" > $2)"));
         assert_eq!(params.len(), 2);
@@ -374,7 +393,7 @@ mod tests {
         )
         .unwrap();
         let (where_sql, params) = filter
-            .build_where('`', 3, |i| Ok(format!("?{i}")))
+            .build_where('`', 3, |i, _| Ok(format!("?{i}")))
             .unwrap();
         assert_eq!(where_sql.as_deref(), Some("WHERE (`id` IN (?3, ?4, ?5))"));
         assert_eq!(params.len(), 3);
@@ -388,7 +407,7 @@ mod tests {
         }))
         .unwrap();
         let (_, params) = filter
-            .build_where('"', 1, |i| Ok(format!("${i}")))
+            .build_where('"', 1, |i, _| Ok(format!("${i}")))
             .unwrap();
         assert!(matches!(params.as_slice(), [Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
     }
@@ -405,8 +424,27 @@ mod tests {
         )
         .unwrap();
         let (_, params) = filter
-            .build_where('"', 1, |i| Ok(format!("${i}")))
+            .build_where('"', 1, |i, _| Ok(format!("${i}")))
             .unwrap();
         assert!(matches!(params.as_slice(), [Value::Bytes(value)] if value == &[0, 255]));
+    }
+
+    #[test]
+    fn passes_source_type_to_placeholder_formatter() {
+        let filter = SourceFilter::new(
+            vec![condition("id", FilterOperator::Gt, Value::String("2".into()))],
+            FilterLogic::And,
+        )
+        .unwrap();
+        let (sql, params) = filter
+            .build_where_typed(
+                '"',
+                1,
+                    |column| (column == "id").then_some("integer".into()),
+                |index, data_type| Ok(format!("${index}::{}", data_type.unwrap_or("none"))),
+            )
+            .unwrap();
+        assert_eq!(sql.as_deref(), Some("WHERE (\"id\" > $1::integer)"));
+        assert!(matches!(params.as_slice(), [Value::String(value)] if value == "2"));
     }
 }

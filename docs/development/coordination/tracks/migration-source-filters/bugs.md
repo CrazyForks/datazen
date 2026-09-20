@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Severity | S2 for the filtered-transfer feature |
-| Status | Open / TEST_FAILED |
+| Status | Fixed in pending retest |
 | Found | 2026-09-20 |
 | Scope | Data Transfer source filter, PostgreSQL source |
 | Repro | 100% |
@@ -36,3 +36,7 @@ A numeric value entered for an integer or numeric source column is converted or 
 - `src/windows/data-transfer/SourceFilterEditor.tsx`: input change always writes a string.
 - `src-tauri/src/data_transfer/filter.rs`: JSON strings become `Value::String` and the filter placeholder is generated without source-column type information.
 - `src-tauri/src/commands/data_transfer/preview.rs`: capability validation calls `parameter_placeholder(1, None)`, so the reviewed plan does not catch this typed PostgreSQL failure.
+
+### Fix
+
+`build_where_typed` now passes the inspected source column type to the driver's placeholder formatter in both preview validation and execution. PostgreSQL therefore emits casts such as `$1::integer` while retaining the exact user-entered value as a bound parameter. The browser remains string-based so large numeric values do not lose precision in JavaScript.

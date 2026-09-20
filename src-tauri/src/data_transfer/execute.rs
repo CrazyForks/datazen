@@ -224,12 +224,19 @@ pub async fn execute_transfer_data(
             source_filter
                 .validate(src_schema)
                 .map_err(|error| TransferError::validation(error.to_string()))?;
-            let (where_sql, params) = source_filter.build_where(
+            let (where_sql, params) = source_filter.build_where_typed(
                 src_quote,
                 1,
-                |index| {
+                |column| {
+                    src_schema
+                        .columns
+                        .iter()
+                        .find(|candidate| candidate.name == column)
+                        .map(|candidate| candidate.data_type.clone())
+                },
+                |index, data_type| {
                     src_driver
-                        .parameter_placeholder(index, None)
+                        .parameter_placeholder(index, data_type)
                         .map_err(|error| TransferError::unsupported(error.to_string()))
                 },
             )?;

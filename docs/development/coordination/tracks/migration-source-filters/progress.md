@@ -25,3 +25,7 @@ The E2E database setup printed pre-existing nonfatal demo-fixture errors for sta
 ## Conclusion
 
 TEST_FAILED. The source-filter feature is correct for typed JSON numeric values and for text predicates, but the shipped editor path cannot reliably filter PostgreSQL integer/numeric columns until values are typed from source column metadata or the server supplies compatible typed placeholders/bindings. Do not close this track as a complete filtered-transfer gate until SFLT-001 is fixed and independently retested.
+
+## Defect fix pending independent retest
+
+`build_where_typed` now passes inspected source column types to the driver placeholder formatter in both preview validation and execution. PostgreSQL can therefore emit casts such as `$1::integer` while retaining the entered value as a bound parameter; the browser remains string-based so large values do not lose precision in JavaScript. A fresh independent run must repeat the original `id > 2` journey before this track can close.
