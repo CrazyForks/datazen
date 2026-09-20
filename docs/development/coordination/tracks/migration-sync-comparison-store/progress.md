@@ -28,3 +28,19 @@ replace the stored comparison, SQL, or mapping.
 - Existing `cargo test -p datazen --lib commands::sync::tests`: **21 passed**.
 - Coverage includes inline and spilled round trips, malformed files, cloned
   owner cleanup, expiry cleanup, and claim cleanup.
+
+## Independent final verification
+
+- `cargo test -p datazen --lib commands::sync::comparison_store::tests -- --test-threads=1`: **5 passed**.
+- `cargo test -p datazen --lib commands::sync::plans::tests -- --test-threads=1`: **6 passed**.
+- `cargo test -p datazen --lib commands::sync::tests -- --test-threads=1`: **21 passed**.
+- `cargo test -p datazen --lib -- --test-threads=2`: **1,453 passed, 3 ignored**.
+- `pnpm typecheck`: **passed**.
+- `pnpm tauri:build:webdriver`: **passed** with PostgreSQL, MySQL, SQLite, and Redis driver injection; the macOS app and DMG bundles were produced successfully.
+
+The independent review confirmed that `ComparisonStore` uses unique-create file
+creation, Unix `0600` file permissions, trailing-data rejection, owner-based
+cleanup after both expiry and one-shot claim, and cleanup on malformed-load
+failure. The plan preview, SQL generation, and execution paths all reload the
+server-owned comparison through `load_comparison`; no client-supplied SQL,
+rows, or mapping can replace it.

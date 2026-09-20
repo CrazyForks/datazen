@@ -14,3 +14,10 @@
 - Temporary files are private to the current process and are deleted when the
   last owner drops. A process crash can leave orphan files under the
   `datazen-sync-comparisons` temp directory; startup scavenging is a follow-up.
+
+## Independent final verification
+
+No new defect was reproduced in the focused storage, plan lifecycle, Sync
+command regression, full Host Rust, TypeScript, or formal WebDriver build
+checks. The limits above remain product boundaries for the next track rather
+than failures of this implementation.
