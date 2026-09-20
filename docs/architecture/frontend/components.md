@@ -886,7 +886,7 @@ ContentView
 
 ## 9. PathInput 控件
 
-`src/components/ui/PathInput.tsx` — 统一的路径输入/选择控件：
+`packages/ui/src/PathInput.tsx`（`@datazen/ui` 导出）— 统一的路径输入/选择控件：
 - 左侧：文本输入框（可手动输入路径）
 - 右侧：「浏览」按钮（调用 Tauri Dialog API 选择文件或目录）
 - 支持 `mode` 属性：`file` / `directory` / `save`

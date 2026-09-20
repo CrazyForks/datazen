@@ -2,14 +2,13 @@ import type { TranslationKey } from './zh-CN';
 import {
   BUILTIN_LOCALES,
   builtinLocales,
-  builtinEagerLocales,
   BUILTIN_LOCALE_LABELS,
+  builtinEagerLocales,
   type BuiltinLocale,
 } from './builtinLocales';
 import type { MongoTranslationKey } from '../../packages/drivers/mongodb/locales/en';
 import { DRIVER_LOCALES, type DriverTranslationKey } from '../extensions/generated-locales';
-import { lookupLazyTranslation } from './lazyPacks';
-import { getExtensionTranslation } from '@datazen/extension-points';
+import { getLocale, registerTranslations, setLocale, t as translate } from '@datazen/ui';
 
 export type { TranslationKey, DriverTranslationKey, MongoTranslationKey };
 export { BUILTIN_LOCALES, builtinLocales, BUILTIN_LOCALE_LABELS };
@@ -21,7 +20,18 @@ export { LAZY_DOMAINS, EAGER_DOMAINS } from './domains';
 /** Host keys plus merged wapp keys from enabled drivers. */
 export type I18nKey = TranslationKey | DriverTranslationKey | MongoTranslationKey | (string & {});
 
-const extensionLocales = new Map<string, { label: string; translations: Record<string, string> }>();
+// ── Single lookup engine ─────────────────────────────────────────────────────
+// All runtime lookup / fallback / interpolation lives in @datazen/ui (`t`).
+// This module owns no dictionary of its own: host dictionaries are pushed
+// into the shared @datazen/ui registry on load (driver packs first so eager
+// host keys keep precedence on collisions; lazy domain packs register on
+// demand via lazyPacks). localeSync wires settingsStore.language → setLocale.
+registerTranslations(DRIVER_LOCALES);
+for (const locale of BUILTIN_LOCALES) {
+  registerTranslations({ [locale]: builtinEagerLocales[locale] });
+}
+
+const extensionLocales = new Map<string, string>();
 
 export function getAvailableLocales(): string[] {
   return [...BUILTIN_LOCALES, ...extensionLocales.keys()];
@@ -29,12 +39,9 @@ export function getAvailableLocales(): string[] {
 
 export type SupportedLocale = string;
 
-export function registerLocale(
-  locale: string,
-  label: string,
-  translations: Record<string, string>,
-): void {
-  extensionLocales.set(locale, { label, translations });
+export function registerLocale(locale: string, label: string, translations: Record<string, string>): void {
+  extensionLocales.set(locale, label);
+  registerTranslations({ [locale]: translations });
 }
 
 export function unregisterLocale(locale: string): void {
@@ -42,58 +49,33 @@ export function unregisterLocale(locale: string): void {
 }
 
 export function getExtensionLocales(): Array<{ value: string; label: string }> {
-  return [...extensionLocales.entries()].map(([value, { label }]) => ({
+  return [...extensionLocales.entries()].map(([value, label]) => ({
     value,
     label,
   }));
 }
 
-const driverLocalesEn = DRIVER_LOCALES.en;
-
-function isBuiltinLocale(locale: string): locale is BuiltinLocale {
-  return (BUILTIN_LOCALES as readonly string[]).includes(locale);
-}
-
-function hostLookup(locale: BuiltinLocale, key: string): string | undefined {
-  return builtinEagerLocales[locale][key] ?? lookupLazyTranslation(locale, key);
-}
-
+/**
+ * Locale-parameterized lookup used by tooling and tests. Delegates to the
+ * single @datazen/ui engine: for the active locale this is a direct `t`
+ * call; for a foreign locale the active locale is swapped for the duration
+ * of the synchronous lookup (never in React render paths).
+ */
 export function getTranslation(
   locale: SupportedLocale | string,
   key: I18nKey,
   params?: Record<string, string | number>,
 ): string {
-  let text: string | undefined;
-
-  if (isBuiltinLocale(locale)) {
-    const driverDict = DRIVER_LOCALES[locale] as Record<string, string> | undefined;
-    text =
-      hostLookup(locale, key) ??
-      driverDict?.[key] ??
-      getExtensionTranslation(locale, key) ??
-      hostLookup('en', key) ??
-      driverLocalesEn[key] ??
-      getExtensionTranslation('en', key) ??
-      hostLookup('zh-CN', key);
-  } else {
-    const ext = extensionLocales.get(locale);
-    text =
-      ext?.translations[key] ??
-      getExtensionTranslation(locale, key) ??
-      hostLookup('en', key) ??
-      driverLocalesEn[key] ??
-      getExtensionTranslation('en', key) ??
-      hostLookup('zh-CN', key);
+  const previous = getLocale();
+  if (previous === locale) {
+    return translate(key, params);
   }
-
-  text = text ?? key;
-
-  if (params) {
-    for (const [k, v] of Object.entries(params)) {
-      text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
+  setLocale(locale);
+  try {
+    return translate(key, params);
+  } finally {
+    setLocale(previous);
   }
-  return text;
 }
 
 /**
@@ -108,8 +90,7 @@ export function getHostTranslations(locale: SupportedLocale | string): Record<st
     // Consumers that need every key should use fullLocales in tests.
     return { ...builtinEagerLocales[locale] };
   }
-  const ext = extensionLocales.get(locale);
-  return ext?.translations ?? { ...builtinEagerLocales.en };
+  return { ...builtinEagerLocales.en };
 }
 
 /** Host + merged wapp locale strings for the active driver set. */
@@ -117,6 +98,9 @@ export function getAllTranslations(locale: SupportedLocale | string): Record<str
   if (isBuiltinLocale(locale)) {
     return { ...getHostTranslations(locale), ...DRIVER_LOCALES[locale] };
   }
-  const ext = extensionLocales.get(locale);
-  return { ...(ext?.translations ?? builtinEagerLocales.en), ...DRIVER_LOCALES.en };
+  return { ...builtinEagerLocales.en, ...DRIVER_LOCALES.en };
+}
+
+function isBuiltinLocale(locale: string): locale is BuiltinLocale {
+  return (BUILTIN_LOCALES as readonly string[]).includes(locale);
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Input } from '@datazen/ui';
-import { PathInput } from '../../../../../src/components/ui/PathInput';
+import { PathInput } from '@datazen/ui';
 import { Select } from '@datazen/ui';
 import { useI18n } from '../../../../../src/hooks/useI18n';
 import { Label } from '@datazen/ui';
