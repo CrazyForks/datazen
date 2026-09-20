@@ -264,6 +264,13 @@ impl DatabaseDriver for PostgresDriver {
         Self::begin_transaction_impl(self, handle).await
     }
 
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        Self::begin_read_snapshot_impl(self, handle).await
+    }
+
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
         Self::commit_impl(self, tx).await
     }

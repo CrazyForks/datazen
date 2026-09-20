@@ -747,6 +747,37 @@ impl PostgresDriver {
         })
     }
 
+    pub(crate) async fn begin_read_snapshot_impl(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        let mut txs = self.transactions.lock().await;
+        if txs.contains_key(&handle.id) {
+            return Err(DriverError::TransactionError(
+                "A transaction is already open on this connection".into(),
+            ));
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        drop(pools);
+
+        sqlx::query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| DriverError::TransactionError(e.to_string()))?;
+
+        txs.insert(handle.id.clone(), conn);
+        Ok(TransactionHandle {
+            id: format!("pg_snapshot_{}", uuid::Uuid::new_v4()),
+            connection_id: handle.id.clone(),
+        })
+    }
+
     pub(crate) async fn commit_impl(&self, tx: TransactionHandle) -> Result<(), DriverError> {
         let mut conn = self
             .transactions

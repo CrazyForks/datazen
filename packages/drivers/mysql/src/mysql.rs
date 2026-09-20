@@ -1219,6 +1219,40 @@ impl DatabaseDriver for MysqlDriver {
         })
     }
 
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        let mut txs = self.transactions.lock().await;
+        if txs.contains_key(&handle.id) {
+            return Err(DriverError::TransactionError(
+                "A transaction is already open on this connection".into(),
+            ));
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        drop(pools);
+
+        self.apply_active_database(handle, &mut conn).await?;
+        Self::execute_text_on_conn(
+            &mut conn,
+            "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY",
+        )
+        .await
+        .map_err(|e| DriverError::TransactionError(e.to_string()))?;
+
+        txs.insert(handle.id.clone(), conn);
+        Ok(TransactionHandle {
+            id: format!("mysql_snapshot_{}", uuid::Uuid::new_v4()),
+            connection_id: handle.id.clone(),
+        })
+    }
+
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
         let mut conn = self
             .transactions

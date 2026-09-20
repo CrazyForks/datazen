@@ -163,6 +163,13 @@ impl MockDriver {
         self.get_columns_calls.store(0, Ordering::Relaxed);
     }
 
+    pub fn open_transaction_count(&self) -> usize {
+        self.open_txs
+            .lock()
+            .map(|txs| txs.len())
+            .unwrap_or_default()
+    }
+
     fn sample_columns() -> Vec<ColumnSchema> {
         vec![
             ColumnSchema {
@@ -472,6 +479,13 @@ impl DatabaseDriver for MockDriver {
             id: format!("mock_tx_{}", handle.id),
             connection_id: handle.id.clone(),
         })
+    }
+
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        self.begin_transaction(handle).await
     }
 
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {

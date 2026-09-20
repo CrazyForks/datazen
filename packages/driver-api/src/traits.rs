@@ -400,6 +400,20 @@ pub trait DatabaseDriver: Send + Sync {
         ))
     }
 
+    /// Begin a read-only transaction with a stable snapshot for a multi-page
+    /// comparison. Drivers must override this when their normal transaction
+    /// isolation does not guarantee that every statement sees the same
+    /// committed view. The default fails closed so a caller cannot silently
+    /// downgrade a consistency-sensitive comparison to auto-commit reads.
+    async fn begin_read_snapshot(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        Err(DriverError::Unsupported(
+            "stable read snapshots are not supported by this driver".into(),
+        ))
+    }
+
     async fn commit(&self, _tx: TransactionHandle) -> Result<(), DriverError> {
         Err(DriverError::TransactionError(
             "Not supported for this driver type".into(),
@@ -914,6 +928,19 @@ mod structure_defaults_tests {
     async fn default_ddl_atomicity_is_unknown() {
         let driver = StubDriver;
         assert_eq!(driver.ddl_atomicity(), DdlAtomicity::Unknown);
+    }
+
+    #[tokio::test]
+    async fn default_read_snapshot_fails_closed() {
+        let driver = StubDriver;
+        let handle = ConnectionHandle {
+            id: "conn".into(),
+            pool_id: "pool".into(),
+        };
+        let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
+        assert!(
+            matches!(err, DriverError::Unsupported(message) if message.contains("stable read snapshots"))
+        );
     }
 
     #[tokio::test]

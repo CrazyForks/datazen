@@ -259,6 +259,13 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.begin_transaction(handle).await
     }
 
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        self.inner.begin_read_snapshot(handle).await
+    }
+
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
         self.inner.commit(tx).await
     }

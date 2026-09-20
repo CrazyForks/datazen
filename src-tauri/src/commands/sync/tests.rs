@@ -445,6 +445,7 @@ async fn compare_data_sync_returns_an_opaque_server_plan() {
     .unwrap();
     assert!(!preview.plan_id.is_empty());
     assert_eq!(preview.selection_revision, 1);
+    assert_eq!(test.mock.open_transaction_count(), 0);
 }
 
 #[tokio::test]
@@ -590,6 +591,7 @@ async fn compare_rejects_mock_driver_that_repeats_keyset_pages() {
     // The shared mock always returns the same page and cannot honor keyset WHERE.
     // This must fail rather than treating a repeated page as end-of-stream.
     assert!(err.to_string().contains("not strictly increasing"));
+    assert_eq!(test.mock.open_transaction_count(), 0);
 }
 
 #[tokio::test]
