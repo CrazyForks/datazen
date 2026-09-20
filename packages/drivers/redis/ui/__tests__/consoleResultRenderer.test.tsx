@@ -4,7 +4,10 @@ import React from 'react';
 import { ConsoleResultView, inferResultType } from '../console/consoleResultRenderer';
 import type { ConsoleResultItem } from '../console/consoleResultRenderer';
 
-vi.mock('../../../../../src/hooks/useI18n', () => ({
+// Components take `useI18n` from the single @datazen/ui runtime; keep the
+// assertions locale-independent by overriding only that hook.
+vi.mock('@datazen/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
     t: (key: string, params?: Record<string, string>) => {
       const map: Record<string, string> = {

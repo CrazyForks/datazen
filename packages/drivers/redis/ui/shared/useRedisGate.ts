@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode } from 'react';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { useBoundSettingsStore, useBoundConfirmDialog } from '@datazen/driver-sdk';
 import { type DangerLevel, requiresConfirmation } from '../console/redisConsoleDanger';
 

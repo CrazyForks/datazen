@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { cn } from '@datazen/ui';
 import type { ConnectionViewProps } from '@datazen/driver-sdk';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';

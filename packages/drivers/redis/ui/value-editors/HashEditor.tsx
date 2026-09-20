@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Search, RefreshCw } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import {
   invokeHashDel,

@@ -1,4 +1,4 @@
-import './index'; // side effect: register eager host + driver dictionaries
+import './index'; // side effect: register the eager host dictionaries (driver/extension packs self-register)
 import { t as translate } from '@datazen/ui';
 import type { I18nKey } from './index';
 

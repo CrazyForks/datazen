@@ -57,6 +57,19 @@ export function registerTranslations(resources: Record<string, Record<string, st
   }
 }
 
+/**
+ * Read-only snapshot of the dictionary currently registered for `locale`
+ * (host eager + lazy packs already loaded + every driver/extension pack that
+ * registered itself). Returns a shallow copy: callers must never write back
+ * into the registry through it. Unknown locale codes yield an empty object.
+ *
+ * Intended for tooling, export/templating and tests — not render paths (it
+ * does not subscribe to locale changes).
+ */
+export function getRegisteredTranslations(locale: string): Record<string, string> {
+  return { ...(registry[locale] ?? {}) };
+}
+
 /** Interpolate `{param}` tokens in a template string. */
 function formatMessage(template: string, params?: I18nParams): string {
   if (!params) return template;

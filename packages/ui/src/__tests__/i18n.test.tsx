@@ -1,6 +1,13 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
-import { getLocale, registerTranslations, setLocale, t, useI18n } from '../i18n';
+import {
+  getLocale,
+  getRegisteredTranslations,
+  registerTranslations,
+  setLocale,
+  t,
+  useI18n,
+} from '../i18n';
 
 function Probe() {
   const { t: translate, language } = useI18n();
@@ -48,6 +55,21 @@ describe('@datazen/ui i18n engine (single implementation)', () => {
     registerTranslations({ 'zh-CN': { 'settings.plain': '纯文本' } });
     setLocale('zh-CN');
     expect(t('settings.plain')).toBe('纯文本');
+  });
+
+  it('exposes a read-only snapshot of the registered dictionary', () => {
+    registerTranslations({ 'xx-XX': { 'snapshot.only': 'Snap' } });
+    expect(getRegisteredTranslations('xx-XX')).toEqual({ 'snapshot.only': 'Snap' });
+    // Mutating the snapshot must not write back into the registry.
+    const snapshot = getRegisteredTranslations('xx-XX');
+    snapshot['snapshot.only'] = 'tampered';
+    delete snapshot['snapshot.only'];
+    expect(getRegisteredTranslations('xx-XX')['snapshot.only']).toBe('Snap');
+    setLocale('xx-XX');
+    expect(t('snapshot.only')).toBe('Snap');
+    expect(getRegisteredTranslations('no-such-locale')).toEqual({});
+    // Host snapshot covers every registration so far (host + driver packs).
+    expect(getRegisteredTranslations('en')['greeting.hello']).toBe('Hello {name}!');
   });
 
   it('re-renders useI18n consumers when the locale changes', () => {

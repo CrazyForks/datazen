@@ -1,4 +1,4 @@
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { cn } from '@datazen/ui';
 import type { JsonDisplayMode } from './jsonModes';
 

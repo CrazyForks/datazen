@@ -3,7 +3,7 @@ import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { Select } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { invokeDeleteKeys } from './BatchBar';
 import { invokeCreateKey, invokeRename, invokeSetTtl } from '../value-editors/KeyEditors';

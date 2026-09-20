@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Copy } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import type { ValueFrame } from '../shared/types';
 import { formatSize } from '../shared/formatSize';
 import { invokeDecodeValue, redisCommandInvoke, type RedisInvokeFn } from '../shared/redisInvoke';

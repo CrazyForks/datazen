@@ -1,5 +1,5 @@
 import { Select } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { KEY_TYPE_FILTERS } from './keyTree';
 
 export interface KeyBrowserControlsProps {

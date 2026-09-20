@@ -3,7 +3,7 @@ import { Trash2, Clock, Replace } from 'lucide-react';
 import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
-import { useI18n } from '../../../../../src/hooks/useI18n';
+import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke, type RedisInvokeFn } from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
 
