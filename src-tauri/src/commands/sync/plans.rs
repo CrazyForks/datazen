@@ -892,6 +892,24 @@ mod tests {
     }
 
     #[test]
+    fn table_scope_rejects_explicit_row_that_was_excluded() {
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: vec![SyncSelectedRow {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(2)],
+            }],
+            scopes: vec![table_scope(vec![SyncSelectionExclusion {
+                operation: ChangeOperation::Insert,
+                key: vec![Value::Integer(2)],
+            }])],
+        };
+        assert!(validate_selection(&comparison(), &selection, &SyncOptions::default()).is_err());
+    }
+
+    #[test]
     fn table_scope_contract_rejects_client_row_payloads() {
         let parsed = serde_json::from_value::<SyncRunSelection>(serde_json::json!({
             "revision": 1,
