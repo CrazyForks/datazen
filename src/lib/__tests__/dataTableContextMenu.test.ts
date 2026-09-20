@@ -109,27 +109,123 @@ describe('rowToNamedRecord / formatRowAsSqlInsert / formatRowAsSqlUpdate', () =>
     expect(rowToNamedRecord(['id', 'name'], [1, 'Ada'])).toEqual({ id: 1, name: 'Ada' });
   });
 
-  it('formats SQL INSERT with escaping', () => {
-    expect(formatRowAsSqlInsert('users', ['id', 'name'], [1, "O'Brien"])).toBe(
+  it('formats SQL INSERT with escaping (PostgreSQL)', () => {
+    expect(formatRowAsSqlInsert('users', ['id', 'name'], [1, "O'Brien"], 'postgresql')).toBe(
       `INSERT INTO "users" ("id", "name") VALUES (1, 'O''Brien');`,
     );
   });
 
-  it('formats SQL UPDATE using primary key or first column', () => {
-    expect(formatRowAsSqlUpdate('users', ['id', 'name'], [1, 'Ada'], ['id'])).toBe(
+  it('formats SQL INSERT with escaping (MySQL)', () => {
+    expect(formatRowAsSqlInsert('users', ['id', 'name'], [1, "O'Brien"], 'mysql')).toBe(
+      "INSERT INTO `users` (`id`, `name`) VALUES (1, 'O''Brien');",
+    );
+  });
+
+  it('formats SQL UPDATE using primary key or first column (PostgreSQL)', () => {
+    expect(formatRowAsSqlUpdate('users', ['id', 'name'], [1, 'Ada'], ['id'], 'postgresql')).toBe(
       `UPDATE "users" SET "name" = 'Ada' WHERE "id" = 1;`,
     );
-    expect(formatRowAsSqlUpdate('users', ['id', 'name'], [1, 'Ada'])).toBe(
+    expect(formatRowAsSqlUpdate('users', ['id', 'name'], [1, 'Ada'], undefined, 'postgresql')).toBe(
       `UPDATE "users" SET "name" = 'Ada' WHERE "id" = 1;`,
     );
   });
 
+  it('formats SQL UPDATE using primary key or first column (MySQL)', () => {
+    expect(formatRowAsSqlUpdate('users', ['id', 'name'], [1, 'Ada'], ['id'], 'mysql')).toBe(
+      "UPDATE `users` SET `name` = 'Ada' WHERE `id` = 1;",
+    );
+  });
+
   it('formats SQL DELETE with PK WHERE and IS NULL for null keys', () => {
-    expect(formatRowAsSqlDelete('users', ['id', 'name'], [1, 'Ada'], ['id'])).toBe(
+    expect(formatRowAsSqlDelete('users', ['id', 'name'], [1, 'Ada'], ['id'], 'postgresql')).toBe(
       `DELETE FROM "users" WHERE "id" = 1;`,
     );
-    expect(formatRowAsSqlDelete('users', ['id', 'name'], [null, 'Ada'], ['id'])).toBe(
+    expect(formatRowAsSqlDelete('users', ['id', 'name'], [null, 'Ada'], ['id'], 'postgresql')).toBe(
       `DELETE FROM "users" WHERE "id" IS NULL;`,
+    );
+  });
+
+  // --- JSON field escaping for PostgreSQL ---
+  it('does NOT double-escape backslashes in JSON for PostgreSQL', () => {
+    // PostgreSQL with standard_conforming_strings=on treats backslashes as literal.
+    // JSON.stringify({ path: 'C:\\Users\\test' }) produces: {"path":"C:\\Users\\test"}
+    // No extra escaping needed.
+    const jsonVal = { path: 'C:\\Users\\test' };
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'postgresql');
+    expect(result).toContain(`'{"path":"C:\\\\Users\\\\test"}'`);
+  });
+
+  it('escapes single quotes inside JSON object values (PostgreSQL)', () => {
+    const jsonVal = { name: "O'Brien" };
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'postgresql');
+    expect(result).toContain(`'{"name":"O''Brien"}'`);
+  });
+
+  it('escapes newline characters in JSON for PostgreSQL', () => {
+    const jsonVal = { text: 'line1\nline2' };
+    // PG standard_conforming_strings=on: backslash is literal
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'postgresql');
+    expect(result).toContain(`'{"text":"line1\\nline2"}'`);
+  });
+
+  // --- JSON field escaping for MySQL ---
+  it('escapes backslashes in JSON for MySQL compatibility', () => {
+    // JSON.stringify({ path: 'C:\\Users\\test' }) produces: {"path":"C:\\Users\\test"}
+    // MySQL interprets \\ as \, so we must escape to \\\\
+    const jsonVal = { path: 'C:\\Users\\test' };
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'mysql');
+    // After escaping: {"path":"C:\\\\Users\\\\test"}
+    expect(result).toContain(`'{"path":"C:\\\\\\\\Users\\\\\\\\test"}'`);
+  });
+
+  it('escapes backslash-escaped quotes in JSON for MySQL', () => {
+    // JSON.stringify({ bio: 'He said "hello"' }) produces: {"bio":"He said \"hello\""}
+    // The \" contains a backslash that MySQL would interpret as quote escape
+    const jsonVal = { bio: 'He said "hello"' };
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'mysql');
+    // After escaping backslashes: {"bio":"He said \\"hello\\""}
+    expect(result).toContain(`'{"bio":"He said \\\\"hello\\\\""}'`);
+  });
+
+  it('escapes backslashes in JSON for MySQL UPDATE statements', () => {
+    const jsonVal = { path: 'C:\\Users\\test' };
+    const result = formatRowAsSqlUpdate('t', ['id', 'meta'], [1, jsonVal], ['id'], 'mysql');
+    expect(result).toContain(`'{"path":"C:\\\\\\\\Users\\\\\\\\test"}'`);
+  });
+
+  it('escapes single quotes inside JSON object values (MySQL)', () => {
+    const jsonVal = { name: "O'Brien" };
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'mysql');
+    expect(result).toContain(`'{"name":"O''Brien"}'`);
+  });
+
+  it('escapes newline characters in JSON for MySQL', () => {
+    const jsonVal = { text: 'line1\nline2' };
+    // MySQL: \n must be escaped to \\n to preserve literal backslash-n
+    const result = formatRowAsSqlInsert('t', ['id', 'meta'], [1, jsonVal], 'mysql');
+    expect(result).toContain(`'{"text":"line1\\\\nline2"}'`);
+  });
+
+  it('handles deeply nested JSON with special characters', () => {
+    const nestedJson = {
+      user: {
+        name: "O'Brien",
+        bio: 'He said "hello"',
+        metadata: { tags: ['admin', 'user\\role'] },
+      },
+    };
+    const pgResult = formatRowAsSqlInsert('t', ['id', 'data'], [1, nestedJson], 'postgresql');
+    expect(pgResult).toContain('INSERT INTO');
+    expect(pgResult).toContain("'{");
+
+    const myResult = formatRowAsSqlInsert('t', ['id', 'data'], [1, nestedJson], 'mysql');
+    expect(myResult).toContain('INSERT INTO');
+    expect(myResult).toContain("'{");
+  });
+
+  it('backward-compatible: no dialect defaults to PostgreSQL-style quoting', () => {
+    expect(formatRowAsSqlInsert('users', ['id', 'name'], [1, 'Ada'])).toBe(
+      `INSERT INTO "users" ("id", "name") VALUES (1, 'Ada');`,
     );
   });
 });

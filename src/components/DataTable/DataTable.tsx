@@ -285,7 +285,14 @@ export function DataTable({
             onCopyAsSqlInsert:
               hasCellContext && hitRow
                 ? () => {
-                    copyText(formatRowAsSqlInsert(exportTableName || 'table', columnNames, hitRow));
+                    copyText(
+                      formatRowAsSqlInsert(
+                        exportTableName || 'table',
+                        columnNames,
+                        hitRow,
+                        databaseType as import('../../lib/databaseTypes').DatabaseType,
+                      ),
+                    );
                   }
                 : undefined,
             onCopyAsUpdate:
@@ -297,6 +304,7 @@ export function DataTable({
                         columnNames,
                         hitRow,
                         primaryKeyColumns,
+                        databaseType as import('../../lib/databaseTypes').DatabaseType,
                       ),
                     );
                   }
