@@ -18,6 +18,8 @@
 | types-to-sdk | — | 未开始 | — | — | — |
 | i18n-core | — | 未开始 | — | — | — |
 | cap-bridge | — | 未开始 | — | — | — |
+| decouple-docs | — | 未开始 | — | — | — |
+| i18n-drivers | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -33,6 +35,8 @@
 | types-to-sdk | — | — | `feature/types-to-sdk`（基准 `feat/driver-decoupling` @ 040e15bde） | 未开始 | — |
 | i18n-core | — | — | `feature/i18n-core`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
 | cap-bridge | — | — | `feature/cap-bridge`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
+| decouple-docs | — | — | `feature/decouple-docs`（基准 `feat/driver-decoupling` @ d172476fc） | 未开始 | — |
+| i18n-drivers | — | — | `feature/i18n-drivers`（基准 `feat/driver-decoupling` @ d172476fc，已含 Wave 1 全部 + i18n-core + cap-bridge） | 未开始 | — |
 
 ## 波次记录
 
