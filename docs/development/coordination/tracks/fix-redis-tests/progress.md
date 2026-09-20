@@ -21,7 +21,14 @@
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测 → TEST_DONE (PASSED)
+
+## Tester 记录（TEST_DONE / PASSED）
+
+- 待测 commit `10a555c98`，基准 `040e15bde`。独立实测：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` → **218 pass / 0 fail**（26 文件），与 Coder 自报一致；`npx tsc --noEmit -p tsconfig.json` → **0 错误**。
+- 阴性对照：基准版 2 个测试文件复跑 → 恰好 **5 failed / 22 passed**（3 例解压 + 2 例 workbench），确认 5 红转绿 solely 由本轨完成（本 worktree diff 不含 cn-to-ui / types-to-sdk 改动）。
+- 实现审查：生产代码零改动（diff 仅 2 测试文件 + 本 progress.md）；polyfill 位于测试文件内、feature-detect 守卫、Vitest 默认 isolate 下无跨文件泄漏（未动共享 `src/test/setup.ts`）；断言无删除/弱化——解压测试真实断言 gzip/zlib 解压后内容（Tester 独立用 node:zlib 验证 zlib fixture 解压为 `hello-zlib-pr1`）；`keepTtl: false` 断言与 `invokeSetString` 现签名（第 5 参 `keepTtl = false`）及 `invokeCreateKey` 传参一致；`clearAllMocks` 不清 implementations，不影响 `mockResolvedValue`。
+- 覆盖率（`stringKeyValue.ts`，改动核心路径）：Stmts 92.1% / Branch 89.85% / Funcs 100% / Lines 93.3%（≥80% 达标）。gzip、zlib、base64-gzip、DecompressionStream 缺失守卫四条分支全覆盖；未覆盖仅 50 MiB 超限守卫等巨型 payload 边界（需外部大负载，单测性价比低，标注豁免）。
 
 ## Coder 记录（READY_FOR_TEST）
 
@@ -32,3 +39,4 @@
 ## 留待 R 回归
 
 - 无新增 E2E 用例（纯单测修复）。
+- Tester 登记：gzip/zlib 解压路径已在 `stringKeyValue.test.ts` 单测中真实覆盖（含字节级内容断言），无需 E2E；`set_string` keepTtl 接线由 `redisWorkbench.test.tsx` / `keyEditorsInvokes.test.ts` 单测覆盖，无 UI 交互路径变化。
