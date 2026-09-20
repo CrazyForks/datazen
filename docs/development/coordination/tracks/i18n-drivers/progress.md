@@ -75,7 +75,7 @@
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST
-- [ ] Tester 复测 → TEST_DONE
+- [ ] Tester 复测 → TEST_DONE：**TEST_FAILED**（Phase = `FAILED`；无功能/红线违规，运行时链路实测为真，但本轨核心注册链路零常驻覆盖 → 见 `bugs.md` BUG-001/002/003 + 观察项 O-1~O-6；复测记录见文末）
 
 ## Coder 实施记录
 
@@ -169,4 +169,137 @@ Phase = `READY_FOR_TEST`（本小节末尾为自验实测数字；未做 `PASSED
 - **R-3**：`npx vitest run --config vitest.drivers.config.ts`（31 files / 233）+ `npx vitest run src packages/driver-sdk packages/ui`（412 / 4243）+ `npx vitest run scripts`（21 / 190）在 R 环境复跑一致。
 - **R-4**：`node scripts/i18n-sync-check.mjs` 输出结构与本轨实测逐项一致（宿主段数字不变、驱动段 8×139 + 1×72），并在翻译回合后转为退出 0。
 - **R-5**：Pro/EP 与 wapp 侧若开始自带词条，验证其 `registerTranslations` 与驱动/宿主词条无前缀冲突。
+- **R-6（Tester 补登，对应 O-2）**：`--drivers=basic`（不含 mongodb）构建下打开任意非 document 模式连接并触发
+  `getConnectionView()` 的未知 mode 兜底路径，确认 `DocumentConnectionView` 的 20 处 `t('mongo.*')`
+  是否显示为 raw key（改动前后同源，属既有耦合，但需在真实 GUI 取证一次）。前置：webdriver 构建 + 一条 hbase/vector 类连接。
+- **R-7（Tester 补登，对应 O-3）**：`basic` 与 `all` 两种选型下走查驱动 UI 对宿主 key 的依赖
+  （`common.*` 32 处、`newConn.*` 22 处、`sqlserver.*` 4 处）：新建连接表单（redis / sqlserver）、
+  工作台按钮与右键菜单文案不得出现 raw key；重点验证「驱动 UI 组件不再经 `src/hooks/useI18n`
+  间接拉起宿主 `src/locales` 副作用」后宿主字典仍在渲染前注册完毕。
+- **R-8（Tester 补登，对应 O-1 / BUG-001 修复项）**：若协调者裁定退回 `en`+`zh-CN` 两档，
+  需同时复量 main chunk（预期 1,528.55 kB / gzip 460.56 kB）并确认 `i18n-sync-check` 的 structural
+  校验仍绿；若裁定保留 10 语言，则补一条「扩展经 `registerLocale()` 引入第 3 语言时驱动词条命中」
+  的手工验证（当前宿主语言下拉只有 en / zh-CN，8 个驱动语言运行时不可达）。
+
+## Tester 复测记录（commit 9d4016295）
+
+独立实例全新复测（与 Coder 无共享状态；一切数字为本人实测）。worktree `feature/i18n-drivers`，
+起点 `git status` 干净，结束时 `git status` 仅剩本文件与 `bugs.md`（探针/临时文件已全部删除）。
+实际基准：`d172476fc` 为分支父提交（任务书写 `fd23a66a8`，两者仅差一个 hub 聚合提交，非祖先关系；
+`fd23a66a8..HEAD` 的 `hub.md` 差异来自该聚合提交，**本轨 7 个 commit 均未触碰 `hub.md`**——已逐 commit 核对）。
+
+### 1. 阶段 B 独立复跑（Coder 自报 vs Tester 实测）
+
+| 命令 | Coder 自报 | Tester 实测 | 判定 |
+| --- | --- | --- | --- |
+| `node scripts/resolve-drivers.mjs --codegen-only --drivers=all` | 成功，仅产 generated.ts/driver_init.rs | exit 0；同样两文件产出，`src/extensions/` 仅 `generated.ts` + `generated-pro.ts`；`generated.ts` 第 10/15 行确认 `redis/ui/shared/meta`、`mongodb/ui/meta` 为静态 import（挂载点选择与真实装载链路一致） | ✅ |
+| `npx tsc --noEmit -p tsconfig.json` | 0 error | **0 error**（`--drivers=all` 与 `--drivers=basic` 两档分别实测） | ✅ |
+| `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | 26 files / 218 / 0 | **26 files / 218 passed / 0 failed** | ✅ |
+| `npx vitest run --config vitest.drivers.config.ts`（驱动全量） | 31 / 233 / 0 | **31 files / 233 passed / 0 failed** | ✅ |
+| `npx vitest run src packages/driver-sdk packages/ui` | 412 / 4243 / 0 | **412 files / 4243 passed / 0 failed**（= 基线 4241 + 本轨 2 例，逐文件核对为 ui i18n 快照 1 例 + locales 驱动可见 1 例） | ✅ |
+| `npx vitest run scripts` | 21 / 190 | **21 files / 190 passed** | ✅ |
+| `npx vite build` | exit 0；main 1,605.12 kB / gzip 467.15 | **exit 0；main-rSNK-HW9.js 1,605.12 kB / gzip 467.15 kB**；`main-*.js` 内 grep 到 `バイト`(redis/ja) 与 `批次 TTL`(redis/zh-TW) → 驱动词条确在 main chunk、启动即注册 | ✅ |
+| `npx vitest run packages/drivers`（任务书验收 #6 原文） | 按 include 收集 0 文件、退出 1 | 复现：`No test files found, exiting with code 1`（默认 include 不含 `packages/drivers/**`）→ **非回归**，驱动入口是 `vitest.drivers.config.ts` | ⚠️ 任务书命令本身需更正 |
+| `node scripts/i18n-sync-check.mjs` | 2400 missing / 1650 stale / 0 driver issue，退出 1 | **同一数字，exit 1**；算术核对 `1216 + 8×139 + 72 = 2400` ✅ | ✅ |
+| CI guard 连带面（Coder 未跑） | — | `node scripts/check-managed-stubs.mjs` ok / `node scripts/check-id-terminology.mjs` ok（1717 files，SKIP_FILES 缩减后无影响） | ✅ |
+| Rust（`src-tauri/**`、`Cargo.lock`、`Cargo.toml`） | 未改 | `git diff --name-only` = 0 命中 → **判定不受影响，未跑 `cargo test`** | ✅ |
+
+### 2. 验收标准逐条对照（任务书 10 条）
+
+| # | 验收项 | 实测 | 判定 |
+| --- | --- | --- | --- |
+| 1 | 驱动 UI `from '…src/` 命中 = 0（除裁定 fixture） | **2 命中**，均在 `redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`（已裁定夹具） | ✅ |
+| 2 | 全仓无 `DRIVER_LOCALES` / `generated-locales` 残留 | 生产代码 / `scripts/` / `src/` / `packages/` / `e2e/` **0 命中**；仅 `AGENTS.md`×2、`CONTRIBUTING.md`×1、`.gitignore`×1、`docs/**`（越界不动，Coder 已登记） | ✅ |
+| 3 | codegen 成功且不再产 generated-locales | 见上表；另测干净 checkout 等价：删 `generated.ts` → `node scripts/ensure-generated-drivers.mjs --drivers=basic` 正常补齐（25 import、redis 11 处、mongodb 0 处） | ✅ |
+| 4 | `tsc --noEmit` 0 error | 0 error（all + basic 两档） | ✅ |
+| 5 | redis UI 218/0 且**不得靠改断言保绿** | 218/0；`git diff` 逐文件核实 8 个测试文件**只有 `vi.mock` 落点那一处 hunk**，断言文本一字未动；改动前它们本就是 `t: (key) => key` 回显，**不存在从译文断言退化为 raw key 的用例** | ✅（但见 §3-B3 与 BUG-001） |
+| 6 | `npx vitest run packages/drivers` 全绿 | 命令本身收集 0 文件（配置使然）→ 以 `vitest.drivers.config.ts` 全量代跑：31/233 全绿 | ✅（附命令更正建议） |
+| 7 | `src packages/driver-sdk packages/ui` 全绿 | 412 / 4243 全绿 | ✅ |
+| 8 | `npx vitest run scripts` 全绿 | 21 / 190 全绿 | ✅ |
+| 9 | sync-check 能报驱动缺失 + 当前仓库全绿 | 能报（四分支实测，见 §3-B6）；**「当前全绿」不可达成且属既有债**（基线版脚本在 `fd23a66a8` 提交上实测就是 1216/1650 + exit 1）→ Coder「如实上报不刷绿」判定成立 | ✅（半条按事实修正） |
+| 10 | 运行时切换语言 | 以 bundle 取证（main chunk 含 10 语言值）+ 驱动套件探针取证；GUI 实机切换按任务书登记 R-1 | ✅（R-1 待跑） |
+
+### 3. 重点审查项逐条判定（协调者指定 6 项）
+
+**B1 — 全部 10 语言自注册的体积代价**：Coder 数字**成立且归因准确**。三档受控对照（同 config，仅切装配）：
+无驱动词条 1,501.93 kB / gzip 452.27 → 仅 en+zh-CN（= 改动前真实基线）1,528.55 / 460.56 → 全 10 语言 1,605.12 / 467.15；
+本轨净增 **+76.57 kB min / +6.59 kB gzip**。确认驱动字典被 `ui/**/meta.ts` 静态 import 拉进 **main chunk**（启动即加载，非按需）。
+被忽略的低成本替代：宿主自身 eager 集合只有 `BUILTIN_LOCALES = ['en','zh-CN']`（`builtinLocales.ts` 由 codegen 生成），
+设置页语言下拉亦只有这两项（`SettingsContent.tsx:91-95`），`registerLocale()` 生产侧零调用 →
+**这 8 个语言在现网运行时不可达**；而宿主 `lazyPacks.isBuiltin()` 同样硬编码 en/zh-CN，
+故「按键命中时再注册」需要新的共享机制（不属本轨遗漏）。已量化登记为 **O-1**，请协调者在
+「认可 76.6 kB 消灭 8 个死文件」/「退回两档并连同宿主可选语言集合一起做」之间明确裁定（登记 R-8）。
+
+**B2 — 测试装配改动**：断言一字未改（§2 第 5 条），8 个 partial-mock 落点迁移正确，驱动侧零 `src/` import。
+但**协调者担心的方向恰好相反并已被证实**：`src/test/driverUiSetup.ts` 直接 import 驱动 `locales/index.ts`，
+**绕过了 `meta.ts` 挂载点**，即 harness 会掩盖「真实装载链路」是否生效；叠加「218 用例全部与语言无关」
+（把 harness 三行 import 清空后 218 仍全绿，实测日志见 BUG-001），得到结论：
+**驱动 UI 套件对本轨核心链路的常驻有效断言 = 0 条**。不依赖 harness 的证据我已自行取证（见 B3），
+但它只是临时探针，未进入仓库 → 登记 **BUG-001**（中，待修复）。
+
+**B3 — 「真绿非假绿」反证（亲测）**：在清空 harness 的最坏情形下，只 import `../shared/meta` 的探针得到
+`t('redis.batchDelete') === 'Delete selected'` 且 `getRegisteredTranslations('en')` > 100 key；
+mongodb 同法得 `t('mongo.collections') === 'Collections'`、en/zh-CN/ja/pt-BR 各 15 key（10 语言全注册）
+→ **机制为真，不是「查不到就回显 key」的假绿**。反向：再把 `meta.ts` 的 `import '../../locales'` 注释掉，
+探针以 `expected 'redis.batchDelete' to be 'Delete selected'` **失败**，而同一次运行 **218 常驻用例仍全绿**
+→ 无法满足协调者要求的「≥2 个常驻驱动用例在移除自注册后失败」，因为**这类用例根本不存在**。
+所有探针/临时文件已删除，`git status` 干净。
+
+**B4 — codegen 链删除完整性**：(a) 干净 checkout 等价场景（删 `generated.ts` 后 `ensure-generated-drivers.mjs`）
+与 `--codegen-only --drivers=all` 均正常产出 `generated.ts` / `driver_init.rs`，且 `--drivers=basic` 档
+`npx vite build` 亦 exit 0；(b) 遗留 gitignored `generated-locales.ts` 在开发机上**仍可 0 error 通过 tsc**
+（其 import 的 `RedisTranslationKey` / `MongoTranslationKey` 与默认导出均未删）→ 无悬空引用，仅惰性死文件（O-6）；
+(c) 7 个 commit 内**无任何 codegen 产物**（`generated.ts` / `driver_init.rs` / `.driver-features.json` /
+`capabilities/default.json` 均不在提交面；`Cargo.toml` / `Cargo.lock` / `hub.md` 未动）；
+(d) `npx vitest run scripts` 21/190 全绿。附带：`resolve-drivers.mjs` 删码后无失效 import / 死函数
+（`mkdirSync` / `dirname` / `workPath` 均有其他用处）；`check-managed-stubs.mjs`、`check-id-terminology.mjs` 实跑 ok。
+**未发现问题。**
+
+**B5 — `I18nKey` 收敛的连带影响**：宿主 40+ 处 `I18nKey` 消费点全部为类型位（`t(key as I18nKey)` /
+`Record<string, I18nKey>`），`TranslationKey | (string & {})` 使类型退化为 string 超集 → 零 breakage（tsc 0 error 佐证）。
+`getAllTranslations()` / `getTranslation()` 改走新快照 API 后生产消费者仍只有测试/工具路径。
+宿主侧读取驱动前缀 key 的位置**只有一处**：`src/windows/connection/DocumentConnectionView.tsx`（20 处 `mongo.*`），
+其可达性判据是「mongodb 是否被选型」，与改动前（codegen 只合并已选型驱动）**完全同集** →
+**判定非本轨回归**（既有宿主硬编码耦合，登记 O-2 + R-6；`getConnectionView()` 的未知 mode 兜底放大该风险）。
+两个 HTML 入口（`index.html` / `window.html`）均指向 `src/main.tsx` → 不存在「某窗口未加载 generated.ts 却渲染驱动 key」的时序窗口。
+
+**B6 — sync-check 未全绿**：(a) 以只读方式复核基线：`git show fd23a66a8:scripts/i18n-sync-check.mjs`
+另存为 `scripts/.tester-base-sync-check.mjs` 后运行 = `1216 missing / 1650 stale`、exit 1 →
+**债务确为改动前既有，非本轨引入**（临时文件已删）。(b) 新增驱动扫描四分支实测全部如实上报：
+删 key → `Missing 1 key(s)` 且合计 2400→2401；加 key → `Extra 1 key(s): redis.testerExtraKey`（多余不致命，与宿主一致）；
+删 `locales/index.ts` → `locales/index.ts is missing` + `1 driver pack issue(s)` + exit 1；
+index 去掉一个 import → `does not import 1 locale file(s): de.ts` + exit 1。
+key 抽取正确性独立佐证：我用朴素正则统计 redis `en`=340 / `de`=201 / `zh-CN`=268（→ 139 / 72 缺失），
+与脚本正则给出**完全相同**的 key 数（340/201），无「折行值 key 不可见」的假缺失。(c) 退出码语义：
+`.github/workflows/ci.yml:66-68` 该步骤为 `continue-on-error: true`（"Guard i18n sync (warning only)"），
+且基线本就 exit 1 → **不会打破 CI**；`package.json` 无脚本调用方。**未发现问题**，但脚本新增逻辑
+0% 单测覆盖（实测 v8 报告 0/0/0/0，`20-246` 未触达）→ 登记 **BUG-002**。
+
+### 4. 阶段 C 覆盖率实测（v8，改动核心模块）
+
+| 模块 | Stmts / Branch / Funcs / Lines | 判定 |
+| --- | --- | --- |
+| `packages/ui/src/i18n.ts`（含新增快照 API） | 100 / 100 / 100 / 100 | ✅ 达标（新 API 的只读性、未知 locale、跨包合并三点均有断言） |
+| `packages/drivers/redis/locales/index.ts` | 100 / 100 / 100 / 100 | ⚠️ 数字达标**仅因** `src/locales/locales.test.ts` 显式动态 import；常驻驱动套件对该文件零触达 |
+| `packages/drivers/mongodb/locales/index.ts` | 100 / 100 / 100 / 100 | 同上 |
+| `src/locales/index.ts`（本轨语义改写主体） | 95.23 / 83.33 / 100 / 95（未覆盖 L99：`getHostTranslations` 非内置 locale 回落 `en`） | ✅ 达 80% 线；L99 建议补 1 例（并入 BUG-001 修复回合即可，不单开 Bug） |
+| `src/test/driverUiSetup.ts` | 报告不含（`vitest.config.ts` coverage.exclude `src/test/**`） | 纯 3 行 import 装配文件，无分支；**豁免理由**：可执行语句仅模块副作用，且被配置排除。真正缺口是它「测错了对象」→ BUG-001 |
+| `ui/**/meta.ts` 副作用行（本轨核心挂载点） | 常驻套件 0 条断言（变异测试：删除该行 CI 全绿） | ❌ **BUG-001** |
+| `scripts/i18n-sync-check.mjs`（本轨 +97 行） | 0 / 0 / 0 / 0（L20-246 未触达） | ❌ **BUG-002** |
+
+### 5. 红线复核（设计底线）
+
+- `@datazen/ui` 唯一实现：全仓插值正则 `replace(/\{` 在 `packages/ui/src/i18n.ts` 之外 **0 命中**；无 bridge / 无兼容 re-export。
+- `packages/ui/src/i18n.ts` 既有 5 个 API：diff 仅**新增** 13 行函数，其余 5 个 API 一字未动。
+- 只有宿主调用 `setLocale`：`packages/drivers/**` 内 `setLocale` **2 命中且全为文档注释**、0 调用；`packages/extension-points` / `wapp-sdk` 亦 0。
+- 快照 API 只读性：浅拷贝 + 值类型为 string → 外部写回不影响注册表（实测篡改后重读原值）；未知 locale 返回 `{}`（与 `t()` 回落 en 不同，已登记 O-5 提醒勿作第二查表入口）。
+- 未新增/未重命名/未翻译任何 key：`packages/drivers/*/locales/{en,zh-CN,…}.ts` 与 `src/locales/**` 词典文件**零改动**（`git diff --name-status` 全量清单中仅两个新增 `locales/index.ts`）；宿主 2,181 key × 驱动 355 key **交集 0**，驱动 key 100% 带前缀 → O-4。
+- 越界检查：`src-tauri/**`、`Cargo.lock`、`Cargo.toml`、`packages/pro-extensions/**`、`src/hooks/useI18n.ts`（未删未改）、`src/lib/localeSync.ts`（未改）、`hub.md`（7 commit 均未触碰）全部 0 命中；32 个驱动 UI 文件的改动逐行核对为「`useI18n` import 单行换源」，无夹带。
+
+### 6. 判定与交棒
+
+`TEST_FAILED`：功能与红线全绿，但 `i18n-drivers-BUG-001`（注册链路零常驻覆盖，变异测试可静默删除挂载点）
+与 `i18n-drivers-BUG-002`（守门脚本 0% 覆盖）为本轨「核心链路必须可被自动化守住」的硬标准缺口，
+`BUG-003` 为注释语义失真（其中 2 处属任务书禁改文件，需协调者裁定落点）。
+缺陷明细、实测日志与建议用例见 `docs/development/coordination/tracks/i18n-drivers/bugs.md`。
 
