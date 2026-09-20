@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use datazen_driver_api::{QueryStreamCallback, QueryStreamEvent, Value};
+use datazen_driver_api::{DatabaseDriver, QueryStreamCallback, QueryStreamEvent, Value};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use zip::write::SimpleFileOptions;
@@ -121,6 +121,21 @@ fn fmt_ident(name: &str, db_type: Option<&str>) -> String {
     )
 }
 
+const CSV_BYTES_PREFIX: &str = "datazen:bytes:hex:";
+const CSV_TEXT_PREFIX: &str = "datazen:text:";
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn escape_reserved_csv_text(value: &str) -> String {
+    if value.starts_with(CSV_BYTES_PREFIX) || value.starts_with(CSV_TEXT_PREFIX) {
+        format!("{CSV_TEXT_PREFIX}{value}")
+    } else {
+        value.to_string()
+    }
+}
+
 fn value_as_string(value: &Option<Value>) -> String {
     match value {
         None | Some(Value::Null) => String::new(),
@@ -128,19 +143,27 @@ fn value_as_string(value: &Option<Value>) -> String {
         Some(Value::Bool(false)) => "false".into(),
         Some(Value::Integer(n)) => n.to_string(),
         Some(Value::Float(n)) => n.to_string(),
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Bytes(b)) => String::from_utf8_lossy(b).into_owned(),
-        Some(Value::Timestamp(s)) => s.clone(),
+        Some(Value::String(s)) => escape_reserved_csv_text(s),
+        Some(Value::Bytes(b)) => format!("{CSV_BYTES_PREFIX}{}", bytes_to_hex(b)),
+        Some(Value::Timestamp(s)) => escape_reserved_csv_text(s),
         Some(Value::Json(j)) => j.to_string(),
     }
 }
 
 fn escape_csv_field(value: &Option<Value>) -> String {
     let s = value_as_string(value);
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
         return format!("\"{}\"", s.replace('"', "\"\""));
     }
     s
+}
+
+fn is_bytes_json_marker(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("$datazenType"))
+        .and_then(serde_json::Value::as_str)
+        == Some("bytes")
 }
 
 fn json_value(value: Option<Value>) -> serde_json::Value {
@@ -150,10 +173,16 @@ fn json_value(value: Option<Value>) -> serde_json::Value {
         Some(Value::Integer(n)) => serde_json::Value::from(n),
         Some(Value::Float(n)) => serde_json::Value::from(n),
         Some(Value::String(s)) => serde_json::Value::String(s),
-        Some(Value::Bytes(b)) => {
-            serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
-        }
+        Some(Value::Bytes(b)) => serde_json::json!({
+            "$datazenType": "bytes",
+            "encoding": "hex",
+            "value": bytes_to_hex(&b),
+        }),
         Some(Value::Timestamp(s)) => serde_json::Value::String(s),
+        Some(Value::Json(j)) if is_bytes_json_marker(&j) => serde_json::json!({
+            "$datazenType": "json",
+            "value": j,
+        }),
         Some(Value::Json(j)) => j,
     }
 }
@@ -188,11 +217,17 @@ struct StreamFormatter {
     format: DataFormat,
     table: String,
     database_type: Option<String>,
+    driver: Arc<dyn DatabaseDriver>,
     state: FormatterState,
 }
 
 impl StreamFormatter {
-    fn new(format: DataFormat, table: String, database_type: Option<String>) -> Self {
+    fn new(
+        format: DataFormat,
+        table: String,
+        database_type: Option<String>,
+        driver: Arc<dyn DatabaseDriver>,
+    ) -> Self {
         let state = match format {
             DataFormat::Csv => FormatterState::Csv,
             DataFormat::Json => FormatterState::Json { started: false },
@@ -204,6 +239,7 @@ impl StreamFormatter {
             format,
             table,
             database_type,
+            driver,
             state,
         }
     }
@@ -291,6 +327,7 @@ impl StreamFormatter {
                     columns,
                     &self.table,
                     &self.database_type,
+                    self.driver.as_ref(),
                     &batch,
                 ));
                 batch.clear();
@@ -301,6 +338,7 @@ impl StreamFormatter {
                 columns,
                 &self.table,
                 &self.database_type,
+                self.driver.as_ref(),
                 &batch,
             ));
         }
@@ -333,6 +371,7 @@ fn emit_insert_batch(
     columns: &[String],
     table: &str,
     database_type: &Option<String>,
+    driver: &dyn DatabaseDriver,
     rows: &[Vec<Option<Value>>],
 ) -> String {
     let db_type = database_type.as_deref();
@@ -353,7 +392,7 @@ fn emit_insert_batch(
         }
         let values = row
             .iter()
-            .map(|v| crate::data_sync::sql::format_literal(v))
+            .map(|v| driver.format_sql_literal(v))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!("({values})"));
@@ -597,6 +636,7 @@ async fn write_data_file(
         format,
         table.table_name.clone(),
         request.database_type.clone(),
+        driver.clone(),
     )));
 
     let columns = Arc::new(Mutex::new(table.columns.clone()));
@@ -966,6 +1006,13 @@ mod tests {
     use super::*;
     use datazen_driver_api::ColumnInfo;
 
+    fn test_driver() -> Arc<dyn DatabaseDriver> {
+        crate::testing::mock_driver::MockDriver::new(
+            "test",
+            crate::testing::mock_driver::MockDriverOptions::default(),
+        )
+    }
+
     fn v_str(s: &str) -> Option<Value> {
         Some(Value::String(s.to_string()))
     }
@@ -979,7 +1026,7 @@ mod tests {
 
     #[test]
     fn csv_escapes_commas_quotes_newlines() {
-        let mut f = StreamFormatter::new(DataFormat::Csv, "t".into(), None);
+        let mut f = StreamFormatter::new(DataFormat::Csv, "t".into(), None, test_driver());
         let cols = vec!["id".to_string(), "name".to_string()];
         let header = f.header(&cols);
         assert_eq!(header, "id,name\n");
@@ -989,8 +1036,19 @@ mod tests {
     }
 
     #[test]
+    fn csv_escapes_bare_carriage_returns() {
+        let mut f = StreamFormatter::new(DataFormat::Csv, "t".into(), None, test_driver());
+        let cols = vec!["text".to_string()];
+        let _ = f.header(&cols);
+        assert_eq!(
+            f.rows(&[vec![v_str("before\rafter")]], &cols),
+            "\"before\rafter\"\n"
+        );
+    }
+
+    #[test]
     fn json_streams_objects_with_comma() {
-        let mut f = StreamFormatter::new(DataFormat::Json, "t".into(), None);
+        let mut f = StreamFormatter::new(DataFormat::Json, "t".into(), None, test_driver());
         let cols = vec!["id".to_string(), "name".to_string()];
         assert_eq!(f.header(&cols), "[");
         let rows: Vec<Vec<Option<Value>>> = vec![
@@ -1007,11 +1065,70 @@ mod tests {
     }
 
     #[test]
+    fn csv_bytes_use_lossless_marker_and_escape_reserved_text() {
+        let mut f = StreamFormatter::new(DataFormat::Csv, "t".into(), None, test_driver());
+        let cols = vec!["payload".to_string(), "text".to_string()];
+        assert_eq!(f.header(&cols), "payload,text\n");
+        let rows = vec![vec![
+            Some(Value::Bytes(vec![0x00, 0xff, 0xfe])),
+            v_str("datazen:bytes:hex:00fffe"),
+        ]];
+        assert_eq!(
+            f.rows(&rows, &cols),
+            "datazen:bytes:hex:00fffe,datazen:text:datazen:bytes:hex:00fffe\n"
+        );
+    }
+
+    #[test]
+    fn json_bytes_are_structured_and_valid_json() {
+        let mut f = StreamFormatter::new(DataFormat::Json, "t".into(), None, test_driver());
+        let cols = vec!["payload".to_string()];
+        let mut text = f.header(&cols);
+        text.push_str(&f.rows(&[vec![Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))]], &cols));
+        text.push_str(&f.tail(&cols));
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid JSON export");
+        assert_eq!(
+            parsed[0]["payload"],
+            serde_json::json!({
+                "$datazenType": "bytes",
+                "encoding": "hex",
+                "value": "00fffe",
+            })
+        );
+    }
+
+    #[test]
+    fn json_marker_collision_is_enveloped_without_changing_normal_json() {
+        let colliding = json_value(Some(Value::Json(serde_json::json!({
+            "$datazenType": "bytes",
+            "encoding": "hex",
+            "value": "00fffe",
+        }))));
+        assert_eq!(
+            colliding,
+            serde_json::json!({
+                "$datazenType": "json",
+                "value": {
+                    "$datazenType": "bytes",
+                    "encoding": "hex",
+                    "value": "00fffe",
+                },
+            })
+        );
+        let normal = json_value(Some(Value::Json(serde_json::json!({
+            "kind": "event",
+            "value": 42,
+        }))));
+        assert_eq!(normal, serde_json::json!({ "kind": "event", "value": 42 }));
+    }
+
+    #[test]
     fn sql_insert_single_transaction_never_per_insert() {
         let mut f = StreamFormatter::new(
             DataFormat::SqlInsert,
             "users".into(),
             Some("postgres".into()),
+            test_driver(),
         );
         let cols = vec!["id".to_string(), "email".to_string()];
         let header = f.header(&cols);
@@ -1028,7 +1145,7 @@ mod tests {
 
     #[test]
     fn sql_insert_batches_at_limit() {
-        let mut f = StreamFormatter::new(DataFormat::SqlInsert, "t".into(), None);
+        let mut f = StreamFormatter::new(DataFormat::SqlInsert, "t".into(), None, test_driver());
         let cols = vec!["id".to_string()];
         let rows: Vec<Vec<Option<Value>>> =
             (0..600).map(|i| vec![Some(Value::Integer(i))]).collect();
@@ -1042,6 +1159,16 @@ mod tests {
         // No pending rows left; tail only adds COMMIT (single transaction).
         assert_eq!(tail, "COMMIT;\n");
         assert_eq!(tail.matches("INSERT INTO").count(), 0);
+    }
+
+    #[test]
+    fn sql_insert_uses_driver_owned_binary_literal() {
+        let mut f = StreamFormatter::new(DataFormat::SqlInsert, "t".into(), None, test_driver());
+        let cols = vec!["payload".to_string()];
+        let _ = f.header(&cols);
+        let text = f.rows(&[vec![Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))]], &cols);
+        assert!(text.contains("X'00fffe'"), "{text}");
+        assert!(!text.contains('\u{fffd}'), "{text}");
     }
 
     #[test]

@@ -69,6 +69,26 @@ impl DatabaseDriver for PostgresDriver {
         "postgresql".into()
     }
 
+    fn format_sql_literal(&self, value: &Option<Value>) -> String {
+        match value {
+            None | Some(Value::Null) => "NULL".into(),
+            Some(Value::Bool(true)) => "TRUE".into(),
+            Some(Value::Bool(false)) => "FALSE".into(),
+            Some(Value::Integer(n)) => n.to_string(),
+            Some(Value::Float(n)) => n.to_string(),
+            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(Value::Bytes(bytes)) => format!(
+                "'\\x{}'",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
+        }
+    }
+
     /// F7: qualify unqualified table references with the target schema
     /// (`"schema"."t"`). The database dimension is not inlined — PG resolves
     /// it through the host pool switch (`ensure_session_database`); parse

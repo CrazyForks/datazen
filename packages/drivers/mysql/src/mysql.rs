@@ -382,7 +382,12 @@ impl DatabaseDriver for MysqlDriver {
             Some(super::Value::Float(f)) => f.to_string(),
             Some(super::Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
             Some(super::Value::Bytes(b)) => {
-                format!("'{}'", String::from_utf8_lossy(b).replace('\'', "''"))
+                format!(
+                    "X'{}'",
+                    b.iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>()
+                )
             }
             Some(super::Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
             Some(super::Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
