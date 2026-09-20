@@ -5,6 +5,12 @@
  * Compares English locale (en.ts) against all other locale files.
  * Reports missing keys and stale translations (unchanged since last tag).
  *
+ * Two scopes, same contract (`en.ts` is the single source of truth):
+ *   1. Host dictionaries — src/locales domain packs
+ *   2. Driver-owned locale packs — packages/drivers/<id>/locales
+ *      (driver packs self-register into the shared @datazen/ui registry, so
+ *      nothing else validates their completeness)
+ *
  * Usage:
  *   node scripts/i18n-sync-check.mjs              # check all locales
  *   node scripts/i18n-sync-check.mjs --from v1.0   # diff from tag v1.0
@@ -13,12 +19,13 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const localesDir = resolve(root, 'src/locales');
+const driversDir = resolve(root, 'packages/drivers');
 
 const LOCALE_FILES = ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'ru', 'zh-TW'];
 
@@ -44,6 +51,37 @@ function extractLocaleKeys(locale) {
   const keys = {};
   for (const file of files) Object.assign(keys, extractKeys(file));
   return keys;
+}
+
+/**
+ * Key extractor for driver-owned locale packs.
+ *
+ * Same shape as `extractKeys`, but additionally recognises the line-wrapped
+ * form used by driver dictionaries (`'key':` ending a line, value on the next
+ * one) — without it those keys would be invisible to the completeness check.
+ */
+function extractPackKeys(filePath) {
+  const src = readFileSync(filePath, 'utf-8');
+  const keys = {};
+  const re =
+    /^\s*'([^']+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`(?:[^`\\]|\\.)*`|$)/gm;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    keys[m[1]] = m[2] ?? m[3] ?? '';
+  }
+  return keys;
+}
+
+/** Every `packages/drivers/<id>/locales/` directory shipping an en.ts source. */
+function findDriverLocalePacks() {
+  if (!existsSync(driversDir)) return [];
+  const packs = [];
+  for (const entry of readdirSync(driversDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'node_modules') continue;
+    const dir = join(driversDir, entry.name, 'locales');
+    if (existsSync(join(dir, 'en.ts'))) packs.push({ driver: entry.name, dir });
+  }
+  return packs.sort((a, b) => a.driver.localeCompare(b.driver));
 }
 
 function getEnKeysAtRef(ref) {
@@ -145,9 +183,65 @@ for (const locale of LOCALE_FILES) {
   }
 }
 
-if (totalMissing === 0 && totalStale === 0) {
+// ── Driver-owned locale packs (packages/drivers/<id>/locales/) ───────────────
+// Drivers self-register their dictionaries through locales/index.ts, so the
+// host performs no aggregation and nothing else validates completeness.
+let totalStructural = 0;
+let driverPackCount = 0;
+
+for (const { driver, dir } of findDriverLocalePacks()) {
+  driverPackCount += 1;
+  const siblings = readdirSync(dir)
+    .filter((name) => name.endsWith('.ts') && name !== 'en.ts' && name !== 'index.ts')
+    .sort();
+
+  // Structural convention: an index.ts side-effect module must import every
+  // language file in the pack, otherwise the translations never reach the
+  // shared registry at runtime.
+  const indexPath = join(dir, 'index.ts');
+  if (!existsSync(indexPath)) {
+    console.log(`[driver.${driver}] locales/index.ts is missing — a driver pack must self-register via registerTranslations().`);
+    totalStructural += 1;
+  } else {
+    const indexSrc = readFileSync(indexPath, 'utf-8');
+    const notRegistered = siblings.filter(
+      (name) => !new RegExp(`from\\s+'\\./${name.replace(/\.ts$/, '')}'`).test(indexSrc),
+    );
+    if (notRegistered.length > 0) {
+      console.log(`[driver.${driver}] locales/index.ts does not import ${notRegistered.length} locale file(s): ${notRegistered.join(', ')}`);
+      totalStructural += notRegistered.length;
+    }
+  }
+
+  const packEnKeys = extractPackKeys(join(dir, 'en.ts'));
+  const packEnKeySet = new Set(Object.keys(packEnKeys));
+
+  for (const file of siblings) {
+    const locale = file.replace(/\.ts$/, '');
+    const keys = extractPackKeys(join(dir, file));
+    const keySet = new Set(Object.keys(keys));
+    const missing = [...packEnKeySet].filter((k) => !keySet.has(k));
+    const extra = [...keySet].filter((k) => !packEnKeySet.has(k));
+
+    if (missing.length === 0 && extra.length === 0) continue;
+
+    console.log(`[driver.${driver}/${locale}]`);
+    if (missing.length > 0) {
+      console.log(`  Missing ${missing.length} key(s): ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}`);
+      totalMissing += missing.length;
+    }
+    if (extra.length > 0) {
+      console.log(`  Extra ${extra.length} key(s): ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '…' : ''}`);
+    }
+  }
+}
+
+if (totalMissing === 0 && totalStale === 0 && totalStructural === 0) {
   console.log('All locale files are in sync with en.ts.');
 } else {
-  console.log(`\nSummary: ${totalMissing} missing key(s), ${totalStale} stale translation(s) across ${LOCALE_FILES.length} locales.`);
+  console.log(
+    `\nSummary: ${totalMissing} missing key(s), ${totalStale} stale translation(s) across ${LOCALE_FILES.length} host locales; ` +
+      `${totalStructural} driver pack issue(s) across ${driverPackCount} driver locale pack(s).`,
+  );
   process.exitCode = 1;
 }
