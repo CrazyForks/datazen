@@ -340,7 +340,7 @@ Tester 刻意未提交（会红）的三条用例全部按原文意图落地：B
 | `npx tsc --noEmit -p tsconfig.json` | **exit 0** | 本轨零 TS 改动 |
 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0** · 1403 files · **0 blocking** · 4 advisory · 2 allow-listed | 与上轮逐字一致 |
 | 生产路径裸 `unwrap()`/`expect()` | 对 `ops_workbench.rs` 与 `commands.rs` 分别 `grep -c` 这两种调用形态，结果均 **0 命中** | 合规（`#[cfg(test)]` 全在独立文件，不计） |
-| `cargo llvm-cov` | **本轮未重跑**：上轮 `ops_workbench.rs` 行覆盖 91.49% / 函数 100%，第 3 轮改动只在同一函数体内替换发送方式、未新增分支 ⇒ 请 Tester 复测时一并复跑，勿沿用本行数字当实测 | 待复测 |
+| `cargo llvm-cov -p datazen-driver-redis --lib`（`CARGO_TARGET_DIR=target/cargo-wt-cov`） | `ops_workbench.rs`（本轨唯一生产改动面）**区域 84.77%（545 中缺 83）· 函数 93.62%（47 中缺 3）· 行 87.17%（382 中缺 49）** ⇒ ≥80% 硬标准满足。与上轮（88.59% / 100% / 91.49%）相比的下降**全部由 BUG-007 新增的行数造成**：分母从 491/40/329 涨到 545/47/382（新增 trait 默认实现、Cluster 实现体、`master_route`、`routed_*`），缺 3 个函数即这几行里进程内不可执行的那几个（`--branch` 需 nightly，Branches 列 `-`） | **实测**（收尾轮自跑，非沿用）。与上轮（88.59% / 100% / 91.49%）的**函数覆盖从 100% 掉到 93.62%** 需归因：BUG-007 新增的行数把分母从 491/40/329 抬到 545/47/382（trait 默认实现、Cluster 实现体、`master_route`、`routed_*`），本实例**未逐函数导出**是哪 3 个（`cargo llvm-cov ... -- --show-missing-lines` 需显式 profdata 路径，收尾轮未跑通）⇒ 记为 Tester 复测时的一个自由核验点，不据此开 Bug |
 
 ### 文件规模登记（供协调者裁定是否触发拆分条）
 
