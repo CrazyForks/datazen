@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+PASSED / READY_TO_MERGE
 
 ## Objective
 
@@ -41,6 +41,16 @@ Backend schema_diff/profile.rs, store/schema_diff_profiles.rs, commands/schema_d
 - `npx vitest run src/windows/schema-diff/__tests__/SchemaDiffProfileLoad.test.tsx src/windows/schema-diff/__tests__/SchemaDiffWindow.test.tsx src/commands/__tests__/schemaDiff.test.ts` — 16 passed.
 - `npx tsc --noEmit` — passed.
 
+## Independent tester verification (round 2)
+
+- Code review of `593eaf22` plus fix `72c7b63c`: profile persistence excludes runtime sessions, generated DDL/plans and credentials; cross-endpoint loading keeps `typeOverrides` until the fresh inspection completes.
+- `cargo test -p datazen --lib -- --test-threads=1` — 1520 passed, 3 ignored.
+- `npx vitest run src/commands/__tests__/schemaDiff.test.ts src/windows/schema-diff/__tests__/SchemaDiffWindow.test.tsx src/windows/schema-diff/__tests__/SchemaDiffProfileLoad.test.tsx` — 16 passed.
+- `npx tsc --noEmit` — passed.
+- `cargo fmt --all -- --check`, Prettier checks for changed frontend/E2E files, and `git diff --check` — passed.
+- Coverage run executed with V8 instrumentation; the repository-wide threshold is not actionable for this scoped run because the configured global threshold includes the entire host and reports 0.46% lines. The changed profile paths are exercised by the 16 frontend tests and the dedicated Rust profile/store tests.
+- Generated locale output and `Cargo.lock` were restored; worktree is clean apart from this coordination commit.
+
 ## E2E cases
 
 - SD-010: save profile, select it again, load it, and verify the window returns to Objects with a fresh source table inspection.
@@ -50,3 +60,4 @@ Backend schema_diff/profile.rs, store/schema_diff_profiles.rs, commands/schema_d
 ## Commit
 
 - Implementation handoff commit: `6afa2fe2` (the exact final amended hash is reported with `READY_FOR_TEST`); no generated files are included.
+- Independent tester round-2 commit: `8d8de55b`.
