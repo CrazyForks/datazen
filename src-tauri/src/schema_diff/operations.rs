@@ -2,6 +2,7 @@
 
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{ForeignKeyInfo, IndexInfo};
+use datazen_driver_api::MigrationView;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -71,6 +72,16 @@ pub enum MigrationOperation {
         table: String,
         foreign_key: ForeignKeyInfo,
     },
+    CreateView {
+        view: MigrationView,
+    },
+    ReplaceView {
+        current: MigrationView,
+        desired: MigrationView,
+    },
+    DropView {
+        view: MigrationView,
+    },
 }
 
 impl MigrationOperation {
@@ -79,12 +90,14 @@ impl MigrationOperation {
             Self::DropColumn { .. }
             | Self::DropPrimaryKey { .. }
             | Self::DropIndex { .. }
-            | Self::DropForeignKey { .. } => StatementRisk::Destructive,
+            | Self::DropForeignKey { .. }
+            | Self::DropView { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
             }
-            | Self::SetAutoIncrement { .. } => StatementRisk::Rewrite,
+            | Self::SetAutoIncrement { .. }
+            | Self::ReplaceView { .. } => StatementRisk::Rewrite,
             _ => StatementRisk::Additive,
         }
     }
@@ -109,6 +122,14 @@ impl MigrationOperation {
             | Self::DropForeignKey { table, foreign_key } => {
                 format!("foreign-key:{table}.{}", foreign_key.name)
             }
+            Self::CreateView { view }
+            | Self::ReplaceView { desired: view, .. }
+            | Self::DropView { view } => view
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("view:{schema}.{}", view.name))
+                .unwrap_or_else(|| format!("view:{}", view.name)),
         }
     }
 }
@@ -265,6 +286,12 @@ impl MigrationOperation {
                 table: table.clone(),
                 foreign_key: foreign_key.clone(),
             },
+            Self::CreateView { view } => O::CreateView { view: view.clone() },
+            Self::ReplaceView { current, desired } => O::ReplaceView {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropView { view } => O::DropView { view: view.clone() },
             Self::CreateTable {
                 table,
                 columns,

@@ -47,6 +47,14 @@ fn mysql_fk_action(raw: &str, clause: &str) -> Result<String, String> {
     Err(format!("MySQL cannot represent foreign-key action '{raw}'"))
 }
 
+fn mysql_view_ident(view: &MigrationView) -> String {
+    let quote = |value: &str| format!("`{}`", value.replace('`', "``"));
+    match view.schema.as_deref().filter(|schema| !schema.is_empty()) {
+        Some(schema) => format!("{}.{}", quote(schema), quote(&view.name)),
+        None => quote(&view.name),
+    }
+}
+
 pub struct MysqlMigrationRenderer;
 
 impl MigrationRenderer for MysqlMigrationRenderer {
@@ -287,6 +295,46 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 rollback_sql: None,
                 summary: format!("DROP FOREIGN KEY {}.{}", table, foreign_key.name),
             }),
+            MigrationOperation::CreateView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = mysql_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("CREATE VIEW {ident} AS {}", view.definition.trim()),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP VIEW {ident}")),
+                    summary: format!("CREATE VIEW {}", view.name),
+                })
+            }
+            MigrationOperation::ReplaceView { current, desired } => {
+                validate_view_definition(&desired.definition)?;
+                validate_view_definition(&current.definition)?;
+                let ident = mysql_view_ident(desired);
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "CREATE OR REPLACE VIEW {ident} AS {}",
+                        desired.definition.trim()
+                    ),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!(
+                        "CREATE OR REPLACE VIEW {ident} AS {}",
+                        current.definition.trim()
+                    )),
+                    summary: format!("REPLACE VIEW {}", desired.name),
+                })
+            }
+            MigrationOperation::DropView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = mysql_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("DROP VIEW {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!(
+                        "CREATE VIEW {ident} AS {}",
+                        view.definition.trim()
+                    )),
+                    summary: format!("DROP VIEW {}", view.name),
+                })
+            }
         }
     }
 }
@@ -309,7 +357,10 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
             | MigrationOperation::CreateIndex { .. }
             | MigrationOperation::DropIndex { .. }
             | MigrationOperation::AddForeignKey { .. }
-            | MigrationOperation::DropForeignKey { .. } => true,
+            | MigrationOperation::DropForeignKey { .. }
+            | MigrationOperation::CreateView { .. }
+            | MigrationOperation::ReplaceView { .. }
+            | MigrationOperation::DropView { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -490,5 +541,36 @@ mod tests {
             Some("ALTER TABLE `orders` DROP FOREIGN KEY `orders_user_id_fk`")
         );
         assert!(MysqlMigrationCapabilities.supports(&op));
+    }
+
+    #[test]
+    fn renders_qualified_view_with_mysql_identifier_quoting() {
+        let view = MigrationView {
+            schema: Some("reporting`archive".into()),
+            name: "active`users".into(),
+            definition: "SELECT id FROM users".into(),
+        };
+        let stmt = MysqlMigrationRenderer
+            .render(&MigrationOperation::CreateView { view: view.clone() })
+            .unwrap();
+        assert_eq!(
+            stmt.sql,
+            "CREATE VIEW `reporting``archive`.`active``users` AS SELECT id FROM users"
+        );
+        assert_eq!(
+            stmt.rollback_sql.as_deref(),
+            Some("DROP VIEW `reporting``archive`.`active``users`")
+        );
+        let replacement = MysqlMigrationRenderer
+            .render(&MigrationOperation::ReplaceView {
+                current: view.clone(),
+                desired: MigrationView {
+                    definition: "SELECT id, email FROM users".into(),
+                    ..view
+                },
+            })
+            .unwrap();
+        assert!(replacement.sql.starts_with("CREATE OR REPLACE VIEW"));
+        assert!(replacement.rollback_sql.is_some());
     }
 }

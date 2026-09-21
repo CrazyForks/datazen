@@ -1,5 +1,5 @@
 //! Short-lived, one-shot backend plans. Client SQL and risk labels never authorize writes.
-use super::types::SchemaDiffPlan;
+use super::{objects::SchemaObjectSnapshot, types::SchemaDiffPlan};
 use datazen_driver_api::{ConnectionConfig, ConnectionHandle, TableSchema};
 use std::{
     collections::HashMap,
@@ -14,6 +14,7 @@ pub struct ReviewedPlan {
     pub target_pool: String,
     pub target_identity: serde_json::Value,
     pub snapshots: Vec<(String, TableSchema)>,
+    pub object_snapshots: Vec<SchemaObjectSnapshot>,
     created: Instant,
 }
 
@@ -32,6 +33,17 @@ pub async fn freeze(
     handle: &ConnectionHandle,
     config: &ConnectionConfig,
     snapshots: Vec<(String, TableSchema)>,
+) {
+    freeze_with_objects(plan, session, handle, config, snapshots, Vec::new()).await;
+}
+
+pub async fn freeze_with_objects(
+    plan: &mut SchemaDiffPlan,
+    session: String,
+    handle: &ConnectionHandle,
+    config: &ConnectionConfig,
+    snapshots: Vec<(String, TableSchema)>,
+    object_snapshots: Vec<SchemaObjectSnapshot>,
 ) {
     let id = uuid::Uuid::new_v4().to_string();
     plan.plan_id = Some(id.clone());
@@ -55,6 +67,7 @@ pub async fn freeze(
             target_pool: handle.pool_id.clone(),
             target_identity: identity(config),
             snapshots,
+            object_snapshots,
             created: Instant::now(),
         },
     );
@@ -132,6 +145,23 @@ pub fn validate_snapshot(
     Ok(())
 }
 
+pub fn validate_object_snapshot(
+    reviewed: &SchemaObjectSnapshot,
+    current: &SchemaObjectSnapshot,
+) -> Result<(), String> {
+    if reviewed.kind != current.kind
+        || reviewed.schema != current.schema
+        || reviewed.name != current.name
+        || reviewed.definition.trim() != current.definition.trim()
+    {
+        return Err(format!(
+            "Target object {} changed after review; compare again",
+            reviewed.name
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +227,19 @@ mod tests {
             index_type: "btree".into(),
         });
         assert!(validate_snapshot("t", &old, &current).is_err());
+    }
+
+    #[test]
+    fn target_object_snapshot_detects_definition_or_identity_changes() {
+        let old =
+            SchemaObjectSnapshot::view(Some("public"), "active_users", "SELECT id FROM users");
+        assert!(validate_object_snapshot(&old, &old).is_ok());
+        let mut changed = old.clone();
+        changed.definition = "SELECT id, email FROM users".into();
+        assert!(validate_object_snapshot(&old, &changed).is_err());
+        changed = old.clone();
+        changed.schema = Some("other".into());
+        assert!(validate_object_snapshot(&old, &changed).is_err());
     }
     #[tokio::test]
     async fn test_tester_concurrent_deploy_consumes_exactly_once() {

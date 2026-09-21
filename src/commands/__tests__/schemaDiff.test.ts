@@ -251,6 +251,27 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('prepareViewPlan forwards qualified selectors and normalizes requirements', async () => {
+    invokeMock.mockResolvedValueOnce({
+      ...samplePlan({ table: 'public.active_users', tables: ['public.active_users'] }),
+      requirements: [],
+    });
+    await expect(
+      schemaDiffCommands.prepareViewPlan({
+        sourceDbSessionId: 'src-view',
+        targetDbSessionId: 'tgt-view',
+        objectNames: ['public.active_users'],
+        allowDestructive: false,
+      }),
+    ).resolves.toMatchObject({ tables: ['public.active_users'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_view_plan', {
+      sourceDbSessionId: 'src-view',
+      targetDbSessionId: 'tgt-view',
+      objectNames: ['public.active_users'],
+      allowDestructive: false,
+    });
+  });
+
   it('executeDeploy forwards deploy options and confirm token', async () => {
     const plan = samplePlan();
     const result = { status: 'committed', executedCount: 1 };

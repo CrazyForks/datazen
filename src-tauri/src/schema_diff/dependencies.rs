@@ -18,6 +18,9 @@ fn op_table(op: &MigrationOperation) -> &str {
         | MigrationOperation::DropIndex { table, .. }
         | MigrationOperation::AddForeignKey { table, .. }
         | MigrationOperation::DropForeignKey { table, .. } => table,
+        MigrationOperation::CreateView { view }
+        | MigrationOperation::ReplaceView { desired: view, .. }
+        | MigrationOperation::DropView { view } => &view.name,
     }
 }
 
@@ -254,10 +257,15 @@ pub fn resolve_dependencies(mut ops: Vec<MigrationOperation>) -> Vec<MigrationOp
 fn priority(op: &MigrationOperation) -> u8 {
     use MigrationOperation::*;
     match op {
-        CreateTable { .. } => 0,
+        CreateTable { .. } | CreateView { .. } => 0,
         AddColumn { .. } | AddPrimaryKey { .. } => 1,
         CreateIndex { .. } | AddForeignKey { .. } => 3,
-        DropColumn { .. } | DropIndex { .. } | DropPrimaryKey { .. } | DropForeignKey { .. } => 4,
+        DropColumn { .. }
+        | DropIndex { .. }
+        | DropPrimaryKey { .. }
+        | DropForeignKey { .. }
+        | DropView { .. } => 4,
+        ReplaceView { .. } => 2,
         _ => 2,
     }
 }

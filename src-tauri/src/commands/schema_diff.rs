@@ -8,6 +8,9 @@ use crate::schema_diff::deploy::{
     DESTRUCTIVE_CONFIRM_TOKEN,
 };
 use crate::schema_diff::diff_table_schemas;
+use crate::schema_diff::objects::{
+    build_view_migration_plan_with_components, SchemaObjectSnapshot,
+};
 use crate::schema_diff::plan::{build_schema_diff_plan, is_source_unbounded_text, PlanOptions};
 use crate::schema_diff::types::TableColumnDiff;
 use crate::schema_diff::types::{
@@ -21,6 +24,116 @@ use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::full_types::fetch_full_column_types;
 use std::sync::Arc;
 use tauri::State;
+
+async fn list_schema_views(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+) -> Result<Vec<datazen_driver_api::DatabaseObject>, CommandError> {
+    let result = datazen_driver_api::execute_schema_object_command(
+        driver,
+        &driver.driver_type(),
+        handle,
+        "list_objects",
+        serde_json::json!({ "kind": "view" }),
+    )
+    .await
+    .map_err(CommandError::Driver)?;
+    result
+        .data
+        .get("objects")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| CommandError::Internal(format!("invalid view metadata: {error}")))
+        .map(|objects| objects.unwrap_or_default())
+}
+
+async fn fetch_schema_view(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+    object: &datazen_driver_api::DatabaseObject,
+) -> Result<SchemaObjectSnapshot, CommandError> {
+    let result = datazen_driver_api::execute_schema_object_command(
+        driver,
+        &driver.driver_type(),
+        handle,
+        "get_object_ddl",
+        serde_json::json!({
+            "kind": "view",
+            "name": object.name,
+            "schema": object.schema,
+        }),
+    )
+    .await
+    .map_err(CommandError::Driver)?;
+    let definition = result
+        .data
+        .get("ddl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if definition.is_empty() {
+        return Err(CommandError::Validation(format!(
+            "View {} disappeared while it was being inspected",
+            object.name
+        )));
+    }
+    Ok(SchemaObjectSnapshot::view(
+        object.schema.as_deref(),
+        &object.name,
+        &definition,
+    ))
+}
+
+fn object_selector(object: &datazen_driver_api::DatabaseObject) -> String {
+    object
+        .schema
+        .as_deref()
+        .map(|schema| format!("{schema}.{}", object.name))
+        .unwrap_or_else(|| object.name.clone())
+}
+
+fn select_view_object_pair(
+    source: &[datazen_driver_api::DatabaseObject],
+    target: &[datazen_driver_api::DatabaseObject],
+    requested: &[String],
+) -> Result<
+    (
+        Vec<datazen_driver_api::DatabaseObject>,
+        Vec<datazen_driver_api::DatabaseObject>,
+    ),
+    CommandError,
+> {
+    let mut source_selected = Vec::new();
+    let mut target_selected = Vec::new();
+    for raw in requested {
+        let name = raw.trim();
+        let source_matches = source
+            .iter()
+            .filter(|object| object.name == name || object_selector(object) == name)
+            .collect::<Vec<_>>();
+        let target_matches = target
+            .iter()
+            .filter(|object| object.name == name || object_selector(object) == name)
+            .collect::<Vec<_>>();
+        if source_matches.len() > 1
+            || target_matches.len() > 1
+            || (source_matches.is_empty() && target_matches.is_empty())
+        {
+            return Err(CommandError::Validation(format!(
+                "View selector `{name}` must identify exactly one available view"
+            )));
+        }
+        if let Some(object) = source_matches.first() {
+            source_selected.push((*object).clone());
+        }
+        if let Some(object) = target_matches.first() {
+            target_selected.push((*object).clone());
+        }
+    }
+    Ok((source_selected, target_selected))
+}
 
 #[tauri::command]
 pub async fn get_schema_diff_profiles(
@@ -394,6 +507,104 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
     Ok(plan)
 }
 
+/// Prepare a reviewed migration plan for selected views.
+///
+/// The source and target definitions are read by the backend from live object
+/// metadata. The client supplies only qualified object selectors; it never
+/// supplies replacement SQL. The returned plan can be deployed through the
+/// existing `execute_schema_diff_deploy` command and is guarded by the same
+/// one-shot identity and target-snapshot checks as table plans.
+#[tauri::command]
+pub async fn prepare_schema_view_plan(
+    state: State<'_, AppState>,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    object_names: Vec<String>,
+    allow_destructive: bool,
+) -> Result<SchemaDiffPlan, CommandError> {
+    if object_names.is_empty() {
+        return Err(CommandError::Validation(
+            "object_names must not be empty".into(),
+        ));
+    }
+    let src_config = state
+        .connection_manager
+        .get_session_config(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_view_plan")?;
+    let tgt_config = state
+        .connection_manager
+        .get_session_config(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_view_plan")?;
+    if tgt_config.read_only {
+        return Err(CommandError::Validation(
+            "Target connection is read-only".into(),
+        ));
+    }
+    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config) {
+        return Err(CommandError::Validation(
+            "Source and target must identify different database scopes".into(),
+        ));
+    }
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_view_plan")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_view_plan")?;
+    let source_available = list_schema_views(src_driver.as_ref(), &src_handle).await?;
+    let target_available = list_schema_views(tgt_driver.as_ref(), &tgt_handle).await?;
+    let (source_selected, target_selected) =
+        select_view_object_pair(&source_available, &target_available, &object_names)?;
+
+    let mut source_snapshots = Vec::with_capacity(source_selected.len());
+    for object in &source_selected {
+        source_snapshots.push(fetch_schema_view(src_driver.as_ref(), &src_handle, object).await?);
+    }
+    let mut target_snapshots = Vec::with_capacity(target_selected.len());
+    for object in &target_selected {
+        target_snapshots.push(fetch_schema_view(tgt_driver.as_ref(), &tgt_handle, object).await?);
+    }
+    let src_dialect = normalize_dialect(&src_config.database_type);
+    let tgt_dialect = normalize_dialect(&tgt_config.database_type);
+    let Some(renderer) = tgt_driver.migration_renderer() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration rendering",
+            tgt_config.database_type
+        )));
+    };
+    let Some(capabilities) = tgt_driver.migration_capabilities() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration capabilities",
+            tgt_config.database_type
+        )));
+    };
+    let mut plan = build_view_migration_plan_with_components(
+        &source_snapshots,
+        &target_snapshots,
+        &src_dialect,
+        &tgt_dialect,
+        allow_destructive,
+        renderer.as_ref(),
+        capabilities.as_ref(),
+    );
+    crate::schema_diff::reviewed::freeze_with_objects(
+        &mut plan,
+        target_db_session_id,
+        &tgt_handle,
+        &tgt_config,
+        Vec::new(),
+        target_snapshots,
+    )
+    .await;
+    Ok(plan)
+}
+
 /// Execute a reviewed schema diff plan on the target connection.
 async fn fail_schema_diff_deploy<T>(
     state: &AppState,
@@ -574,6 +785,23 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
         };
         if let Err(error) =
             crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
+        {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
+    }
+    for snapshot in &reviewed.object_snapshots {
+        let object = datazen_driver_api::DatabaseObject {
+            kind: "view".into(),
+            schema: snapshot.schema.clone(),
+            name: snapshot.name.clone(),
+        };
+        let current = match fetch_schema_view(driver.as_ref(), &handle, &object).await {
+            Ok(value) => value,
+            Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
+        };
+        if let Err(error) =
+            crate::schema_diff::reviewed::validate_object_snapshot(snapshot, &current)
         {
             return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
                 .await;
@@ -813,6 +1041,42 @@ mod tests {
         assert!(is_table_missing_error("Table not found: users"));
         assert!(!is_table_missing_error("Connection refused"));
         assert!(!is_table_missing_error("Syntax error in SQL statement"));
+    }
+
+    #[test]
+    fn view_selectors_require_unambiguous_identity_and_allow_target_only_drop() {
+        let source = vec![datazen_driver_api::DatabaseObject {
+            kind: "view".into(),
+            schema: Some("public".into()),
+            name: "active_users".into(),
+        }];
+        let target = vec![datazen_driver_api::DatabaseObject {
+            kind: "view".into(),
+            schema: Some("public".into()),
+            name: "legacy_users".into(),
+        }];
+        let (source_selected, target_selected) =
+            select_view_object_pair(&source, &target, &["public.active_users".into()]).unwrap();
+        assert_eq!(source_selected.len(), 1);
+        assert!(target_selected.is_empty());
+        let (source_selected, target_selected) =
+            select_view_object_pair(&source, &target, &["public.legacy_users".into()]).unwrap();
+        assert!(source_selected.is_empty());
+        assert_eq!(target_selected.len(), 1);
+
+        let ambiguous = vec![
+            datazen_driver_api::DatabaseObject {
+                kind: "view".into(),
+                schema: Some("one".into()),
+                name: "same".into(),
+            },
+            datazen_driver_api::DatabaseObject {
+                kind: "view".into(),
+                schema: Some("two".into()),
+                name: "same".into(),
+            },
+        ];
+        assert!(select_view_object_pair(&ambiguous, &[], &["same".into()]).is_err());
     }
 
     #[tokio::test]

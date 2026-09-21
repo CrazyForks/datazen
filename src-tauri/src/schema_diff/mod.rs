@@ -4,6 +4,7 @@ pub mod compare;
 pub mod dependencies;
 pub mod deploy;
 pub mod ir;
+pub mod objects;
 pub mod operations;
 pub mod plan;
 pub mod profile;
