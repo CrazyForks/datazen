@@ -146,7 +146,10 @@
 | M6b | `ErrorBoundary.test.tsx` 派生源 `en['common.error']` → typo | 转红 | **`Tests 1 passed (1)` = 永真退化命中**：`getByRole('heading', { name: undefined })` 退化为无 name 约束，页面上只有 1 个 heading 就照样绿；把 `common.close` 也 typo 后才因 `Found multiple elements with the role "button"` 偶然红 | ✓ → **BUG-002（中）** |
 | M6c | `retest-round1-fixes` 的 `JUST_NOW` key → typo；`ConfirmDialog`/`useConfirmDialog` 的 `confirm-dialog-cancel` testid → typo | 转红 | retest **4 例红**；ConfirmDialog **1 例红**、useConfirmDialog **1 例红**（`Unable to find an element by: [data-testid="confirm-dialog-cancelZZZ"]`）⇒ 三处字典/testid 派生均未退化 | ✓ |
 | M7 | 护栏自身修复的往返自证：临时在 `settingsHelpers.test.ts` 追加 `getByText('Import Connections')`（宿主 `src/locales/en/core.ts` 真词条）+ `getByRole('button', { name: 'Set TTL' })`（驱动真词条） | HEAD 报命中；`1f7965677` 版须看不见 | HEAD：`2 copy-literal assertion(s) … "Import Connections" / "Set TTL"`，**`exit=0`（有命中仍不拦，CLI 级实证"报而不拦"，强于 D 段的 0 命中演示）**；同一棵树跑首任版护栏：**`ok (33 driver test files scanned, 0 copy literals pinned)`** ⇒ 首任"宿主词条全盲（`endsWith('en.ts')`）+ 无 `getByRole({name})` 形态"两点诊断成立、修复有效 | ✓ |
+| M8 | 敏感性反证（针对本 Tester 在 Journey 5 新补的断言）：`TtlControls.tsx` 按钮 `disabled={busy \|\| !expireAtLocal}` 改为 `disabled={busy}`（禁用保护被摘掉） | 新断言必须转红 | 该用例转红于 `expected element to be disabled`；`git restore` 后 8/8 全绿 ⇒ 补的断言确实"断行为"，不是新增一条装饰性绿 | `git restore` ✓ status 空 |
 | M9 | 单词文案探针（`getByRole('tab',{name:'Console'})` + `{name:'Persist'}`，均为真词条） | 记录护栏能力边界 | **0 hits、`--strict` 仍 `exit=0`** ⇒ 空格门槛使单词文案结构性失明 | ✓ → **BUG-005（低）** |
+
+> M7 与 M9 是**护栏脚本层面**的自证（报不报、退出码），不属"测试是否转红"的 9 组，故 §1 的"9 组破坏 8 组转红"计的是 M1~M6c + M8。
 
 ### 3. 阶段 A 实现审查（逐条对任务书 §5）
 
