@@ -730,7 +730,7 @@ $ grep -n "datazen-r-phase\|/Users/wuxiaolong" /tmp/rphase2-vitest-scripts.log
 
 ## r-phase-BUG-007 · 契约 §2.4.2 行内计数漂移（「单测调用 7 行」实测 15 行；文档数字失配，低危非阻断）
 
-- **状态**：`待复测`（第 2 轮复测新登记 2026-09-21；第 3 轮 Coder 修复回合已提交，待独立 Tester 复测）
+- **状态**：`已修复`（第 3 轮收尾复测通过，2026-09-21，独立 Tester 实例）
 - **严重度**：低（不影响运行时与门禁；但验收标准 5 要求文档抽验「路径/符号/行号/数字」零失配，该数字现为失配）
 - **发现方式**：第 2 轮复测实例的边界遗漏审查（**非** Coder 修复 diff 引入；属 Wave 4-B「契约回扫早于 R-8 单测落地」的时间差产物）
 - **位置**：`docs/development/driver-api-dependency-boundary.md:283`（§2.4.2 末段）
@@ -789,3 +789,54 @@ $ git show 5328cd5e0:packages/ui/src/__tests__/i18n.test.tsx | grep -c "setLocal
   - 契约现文复核：`grep -n "单测调用" docs/development/driver-api-dependency-boundary.md` → 1 命中且为「单测调用 **15** 行」。
 - **自证**：`node scripts/check-ci-docs-consistency.mjs` → exit 0（三类检查全绿）；`npx vitest run scripts` → **23 files / 246 pass / 0 fail**（不降）；`git status --porcelain` 干净（本回合仅契约 + 本文件 + `progress.md` 三处文档）。
 - **提交 hash**：`a5eed7b57`（`fix(r-phase): BUG-007 契约 §2.4.2 单测调用行数同步为 15 并补防漂移口径`；本行 hash 由紧随的 hash 回填 commit 记录，见 `git log feature/r-phase`）。
+
+### 第 3 轮复测（BUG-007 收尾复测，独立 Tester 实例，2026-09-21）
+
+本实例为**全新 Tester**（未复用编码代理），只测不修；计数完全独立重做，**不引用 Coder 结论**。worktree `.worktrees/datazen-r-phase` @ `feature/r-phase` HEAD `125d19e3f`。
+
+**（1）变更面复核（checklist 1）**：`git diff 283d2ad05..HEAD --numstat` = `bugs.md +13/-1`、`progress.md +4/-0`、`driver-api-dependency-boundary.md +1/-1`，**仅这三处文档**；无代码/护栏/他轨/`hub.md`/`src-tauri`/`pro-extensions` 改动。`125d19e3f`（hash 回填）自身亦只动 `bugs.md` 与 `progress.md` 两文件。
+
+**（2）独立计数（工具 = Grep 工具；本实例原始命中）**：
+
+```text
+Grep(pattern="setLocale\(", path=packages/ui/src/__tests__/i18n.test.tsx, output_mode=content, -n)
+→ 16 行命中：:29 :34 :40 :56 :68 :79 :82 :100 :142 :146 :153 :170 :179 :192 :200 :208
+Grep(pattern="setLocale", 同文件, output_mode=content, -n)          # 宽松口径交叉
+→ 17 行 = :7 import（`setLocale,`）+ 上列 16 行
+Grep(pattern="setLocale\(", path=packages, output_mode=files_with_matches)
+→ 仅 2 文件：packages/ui/src/i18n.ts + packages/ui/src/__tests__/i18n.test.tsx（⇒「其余为 0」成立）
+Grep(pattern="setLocale\(", path=packages/ui/src/i18n.ts, output_mode=content, -n)
+→ 34:export function setLocale(locale: string): void {               # 定义处恰 1 行，未变
+```
+
+扣除依据（逐行判定，非依赖 Coder 提示）：`Read` 全文 213 行后确认 `:100` 位于 `:87-102` 的 JSDoc 注释块内（原文「…新建 `packages/**` 测试文件调用 `setLocale()` 会被 R2 直接阻断…」= 注释文字，契约自身口径「注释文字…不算调用」）；其余 15 行均为语句级调用——`:29/:146` afterEach 复位、`:34/:40/:56/:68/:153/:170/:179` 用例内切语言、`:79/:82/:192/:200/:208` `act(() => …)`、`:142` beforeEach 复位。⇒ 调用行 = **16 − 1 = 15**，与契约现文一致。
+
+**（3）契约现文（`driver-api-dependency-boundary.md:283`）复核**：
+
+- 数字 = 「定义处 1 行 + 单测调用 **15** 行」，与本实例独立统计**一致**；
+- 防腐坏口径**表述准确**：明示行数权威落点 = 该单测文件本身（`packages/ui/src/__tests__/i18n.test.tsx`）、15 为 2026-09-21 回扫快照值、给出可独立复现的复核命令与扣减口径（`grep -c "setLocale("` 命中 16 行 − `:100` 注释 1 = 15；`:7` 的 `import` 不计），并注明 R2 豁免为文件级清单、文件内行数变化不触发门禁；
+- **未新增对 EP/wapp 的强制条款**（新增文字只涉计数权威与复核口径；EP/wapp 义务表述仍只有原有「生产路径出现任何 `setLocale` 调用即违规」+ §2.4.4「不构成强制」观察项）；
+- **未顺带改其它内容**：契约全文件 diff = `+1/-1` 单行替换；
+- 同源残留独立抽查：Grep `单测调用` 全仓 → 除契约 `:283`（现文 = 15）外，其余命中全部落在本轨 `bugs.md` / `progress.md` 的漂移取证与历史记录语境（同处均标注实测 15，非现役断言）⇒ 现役数字无第二处残留。
+
+**（4）自证命令（本实例实跑）**：
+
+```text
+$ node scripts/check-ci-docs-consistency.mjs
+[check-ci-docs] drivers ok (11 ids in ci-test-matrix.md)
+[check-ci-docs] window boundaries ok
+[check-ci-docs] toolchain ok (Node 24, pnpm 11, Rust stable)
+EXIT=0
+
+$ npx vitest run scripts          # 日志 /tmp/rphase3-vitest-scripts.log
+ Test Files  23 passed (23)
+      Tests  246 passed (246)
+VITEST_EXIT=0
+
+$ git status --porcelain
+（空）
+```
+
+**（5）未做项与理由**：本轮**不重跑全量回归**（`bash scripts/run-regression.sh`）——上游复测实例 @ `283d2ad05`（即本次修复的起点 HEAD）已 7/7 全绿（见 `progress.md`「第 2 轮复测记录」§6），本回合 diff 仅 3 处文档（契约 1 行 + 两条记录），除上述秒级脚本外无回归面；GUI-1~GUI-9 真实 e2e 仍按本专项口径留用户本地打勾（同前，非本 Bug 范围）。
+
+**判定：通过** ⇒ 状态置 `已修复`。至此本轨缺陷：BUG-001/002/003/005/006/007 全部 `已修复`；BUG-004 维持「契约侧观察项已完成 + 外部仓移交」。

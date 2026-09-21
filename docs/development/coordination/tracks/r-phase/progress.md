@@ -108,6 +108,14 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
   （独立复测同口径实测值）并就地补写防腐坏口径（行数权威落点 = `packages/ui/src/__tests__/i18n.test.tsx` 本身 +
   复核命令）；同源数字全仓排查无其它现役残留 → **已提交、待复测**（修复 commit `a5eed7b57`；
   复测须由独立 Tester 实例执行，记录见 `bugs.md` BUG-007「修复回合」小节）
+- [x] 第 3 轮复测（**BUG-007 收尾复测**，独立 Tester 实例，2026-09-21）：契约 `:283`「单测调用 **15** 行」经
+  独立逐行清点一致（Grep 命中 16 行 − `:100` JSDoc 注释 1 = 15 调用行；`packages/**` 内 `setLocale(` 仅命中
+  豁免两文件 ⇒「其余为 0」成立；定义处 `i18n.ts:34` 恰 1 行）；防腐坏口径（权威落点 = 单测文件自身 + 复核
+  命令）准确、未新增 EP/wapp 强制条款、契约无顺带改动（diff = 单行替换）；`node scripts/check-ci-docs-consistency.mjs`
+  exit 0、`npx vitest run scripts` = **23 files / 246 pass**（exit 0，日志 `/tmp/rphase3-vitest-scripts.log`）、
+  `git status` 干净 ⇒ BUG-007 → `已修复`（BUG-001~003、005~007 全部闭环；BUG-004 维持契约侧观察项 +
+  外部仓移交）。本轮不重跑全量回归：上游实例 @ `283d2ad05` 已 7/7 全绿，本回合仅文档 diff，除秒级脚本外
+  无回归面。复测记录详见 `bugs.md` BUG-007「第 3 轮复测」小节
 
 ## 执行记录
 
