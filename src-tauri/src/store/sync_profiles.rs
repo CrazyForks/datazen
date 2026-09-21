@@ -9,12 +9,15 @@ impl Store {
                 return;
             }
         }
+        // Parse each record independently. A future-version or malformed
+        // profile must not hide otherwise usable profiles in the same file.
         let data = match self
-            .load_json_file::<Vec<SyncProfile>>("sync_profiles.json")
+            .load_json_file::<Vec<serde_json::Value>>("sync_profiles.json")
             .await
         {
-            Ok(profiles) => profiles
+            Ok(records) => records
                 .into_iter()
+                .filter_map(|record| serde_json::from_value::<SyncProfile>(record).ok())
                 .filter(|profile| profile.validate().is_ok())
                 .collect(),
             Err(_) => Vec::new(),

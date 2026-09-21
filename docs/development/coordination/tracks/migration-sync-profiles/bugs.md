@@ -4,7 +4,7 @@
 
 - **级别**：P1
 - **描述**：`Store::ensure_sync_profiles_loaded` treats the whole `sync_profiles.json` array as invalid when any one record has an unknown field or unsupported version. The implementation filters only after deserializing `Vec<SyncProfile>`, so one corrupt/stale profile causes valid profiles in the same file to disappear.
-- **状态**：待修复
+- **状态**：待复测
 - **重现步骤**：
   1. Write `sync_profiles.json` with one valid version-1 profile and one record containing an unknown field (or version `99`).
   2. Initialize `Store` and call `get_sync_profiles()`.

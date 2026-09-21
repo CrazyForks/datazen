@@ -1,7 +1,7 @@
 # migration-sync-profiles
 
 ## Phase
-FAILED
+READY_FOR_TEST
 
 ## Objective
 Add reusable Data Sync profiles with versioned persisted configuration, strict validation, Tauri IPC, and UI save/load flow. Persist connection IDs, database/schema scope, table selection, filters/recordsets, and sync options. Never persist dbSessionId, comparison rows, plan IDs, or credentials.
@@ -48,3 +48,11 @@ Backend data_sync/profile.rs, store/sync_profiles.rs, commands/sync/*; frontend 
 - Formatting/diff: passed before tester additions; rerun after additions is required by coordinator.
 - Coverage with changed frontend files included: 78.40% statements, 69.25% branches, 77.44% functions, 81.08% lines. The global threshold command failed on statements/functions/branches; added profile save/load/delete, stale connection, mapping/recordset restoration, IPC, and invalid-store tests. Core profile lines are exercised, but the changed files remain below the hard 80% all-metric target.
 - **TEST_FAILED**: `migration-sync-profiles-BUG-001` blocks merge.
+
+## BUG-001 fix
+
+- Changed profile loading to parse each JSON record independently and filter
+  malformed, unknown-field, or unsupported-version records without discarding
+  valid profiles from the same array.
+- Regression `store::tests::sync_profiles_filter_invalid_records_on_load` now passes.
+- Status: READY_FOR_TEST; requires a fresh independent retest.
