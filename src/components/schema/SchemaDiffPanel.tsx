@@ -5,10 +5,19 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
   const { t } = useI18n();
   const missing = diff.missingOnTarget ?? diff.added;
   const extra = diff.extraOnTarget ?? diff.removed;
-  const identical = missing.length === 0 && extra.length === 0 && diff.changed.length === 0;
+  const identical =
+    !diff.targetOnly && missing.length === 0 && extra.length === 0 && diff.changed.length === 0;
 
   return (
     <div className="space-y-4 text-xs">
+      {diff.targetOnly && (
+        <section
+          data-testid="schema-diff-target-only-detail"
+          className="rounded border border-danger/30 bg-danger/10 p-3 text-danger"
+        >
+          {t('schemaDiff.targetOnlyDetail')}
+        </section>
+      )}
       {missing.length > 0 && (
         <section>
           <h4 className="mb-1.5 font-semibold text-success">{t('schemaDiff.missingOnTarget')}</h4>

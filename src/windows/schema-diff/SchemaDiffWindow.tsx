@@ -43,8 +43,9 @@ import { SchemaDiffObjectsStep } from './SchemaDiffObjectsStep';
 import { useSchemaDiffEndpoints } from './useSchemaDiffEndpoints';
 import {
   enabledTableNames,
-  filterTablesForSchema,
-  qualifySchemaDiffTableName,
+  enabledSourceTableNames,
+  enabledTargetOnlyTableNames,
+  mergeSchemaDiffTablePicks,
   type SchemaDiffTablePick,
 } from './schemaDiffTableNames';
 
@@ -56,6 +57,7 @@ const STEPS: WizardStep[] = ['endpoints', 'objects', 'compare', 'plan', 'deploy'
 const NARROW_STEPS: WizardStep[] = ['endpoints', 'objects', 'deploy'];
 
 function tableDiffHasChanges(diff: TableSchemaDiff): boolean {
+  if (diff.targetOnly) return true;
   const missing = diff.missingOnTarget ?? diff.added;
   const extra = diff.extraOnTarget ?? diff.removed;
   return missing.length > 0 || extra.length > 0 || diff.changed.length > 0;
@@ -107,7 +109,6 @@ export function SchemaDiffWindow() {
   const endpoints = useSchemaDiffEndpoints({ onError: setError });
 
   const selectedTables = useMemo(() => enabledTableNames(tablePicks), [tablePicks]);
-
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
@@ -203,15 +204,20 @@ export function SchemaDiffWindow() {
     setError('');
     try {
       const srcConnId = await endpoints.ensureConnected('source');
-      if (!srcConnId) return;
-      const rows = await databaseCommands.getTables(srcConnId, endpoints.sourceDatabase);
-      const filtered = filterTablesForSchema(rows, endpoints.sourceSchema || undefined);
-      const picks = filtered.map((table) => ({
-        name: qualifySchemaDiffTableName(table, endpoints.sourceSchema || undefined),
-        enabled: true,
-      }));
-      picks.sort((a, b) => a.name.localeCompare(b.name));
-      setTablePicks(picks);
+      const tgtConnId = await endpoints.ensureConnected('target');
+      if (!srcConnId || !tgtConnId) return;
+      const [sourceRows, targetRows] = await Promise.all([
+        databaseCommands.getTables(srcConnId, endpoints.sourceDatabase),
+        databaseCommands.getTables(tgtConnId, endpoints.targetDatabase),
+      ]);
+      setTablePicks(
+        mergeSchemaDiffTablePicks(
+          sourceRows,
+          targetRows,
+          endpoints.sourceSchema || undefined,
+          endpoints.targetSchema || undefined,
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setTablePicks([]);
@@ -227,8 +233,8 @@ export function SchemaDiffWindow() {
     setDeployResult(null);
     if (!endpoints.validateEndpoints()) return false;
 
-    const tables = enabledTableNames(tablePicks);
-    if (tables.length === 0) {
+    const selected = tablePicks.filter((row) => row.enabled);
+    if (selected.length === 0) {
       setError(t('schemaDiff.tableRequired'));
       return false;
     }
@@ -239,11 +245,24 @@ export function SchemaDiffWindow() {
       const tgtConnId = await endpoints.ensureConnected('target');
       if (!srcConnId || !tgtConnId) return false;
       const results: TableSchemaDiff[] = [];
-      for (const table of tables) {
+      for (const pick of selected) {
+        if (pick.origin === 'target-only') {
+          results.push({
+            table: pick.name,
+            targetOnly: true,
+            missingOnTarget: [],
+            extraOnTarget: [],
+            added: [],
+            removed: [],
+            changed: [],
+          });
+          continue;
+        }
+        const table = pick.sourceName ?? pick.name;
         results.push(await schemaDiffCommands.compareTableSchemas(srcConnId, tgtConnId, table));
       }
       setDiffs(results);
-      setSelectedTable(tables[0] ?? null);
+      setSelectedTable(selected[0]?.name ?? null);
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -267,8 +286,9 @@ export function SchemaDiffWindow() {
     async (explicitOverrides?: ColumnTypeOverride[]) => {
       setError('');
       setDeployResult(null);
-      const tables = enabledTableNames(tablePicks);
-      if (tables.length === 0) {
+      const sourceTables = enabledSourceTableNames(tablePicks);
+      const targetOnlyTables = enabledTargetOnlyTableNames(tablePicks);
+      if (sourceTables.length === 0 && targetOnlyTables.length === 0) {
         setError(t('schemaDiff.tableRequired'));
         return;
       }
@@ -283,7 +303,8 @@ export function SchemaDiffWindow() {
         const next = await schemaDiffCommands.preparePlan({
           sourceDbSessionId: srcConnId,
           targetDbSessionId: tgtConnId,
-          tableNames: tables,
+          tableNames: sourceTables,
+          targetOnlyTableNames: targetOnlyTables.length > 0 ? targetOnlyTables : undefined,
           allowDestructive,
           includeIndexes,
           typeOverrides: overridesToUse.length > 0 ? overridesToUse : undefined,
@@ -441,6 +462,7 @@ export function SchemaDiffWindow() {
       sourceConnectionId: endpoints.sourceId,
       targetConnectionId: endpoints.targetId,
       tables: selectedTables,
+      targetOnlyTables: enabledTargetOnlyTableNames(tablePicks),
       allowDestructive,
       includeIndexes,
       requireRollback,
@@ -470,7 +492,14 @@ export function SchemaDiffWindow() {
         }
         endpoints.setSourceId(cfg.sourceConnectionId);
         endpoints.setTargetId(cfg.targetConnectionId);
-        setTablePicks((cfg.tables ?? []).map((name) => ({ name, enabled: true })));
+        const targetOnly = new Set(cfg.targetOnlyTables ?? []);
+        setTablePicks(
+          (cfg.tables ?? []).map((name) =>
+            targetOnly.has(name)
+              ? { name, enabled: true, origin: 'target-only' as const, targetName: name }
+              : { name, enabled: true, origin: 'source-only' as const, sourceName: name },
+          ),
+        );
         setAllowDestructive(Boolean(cfg.allowDestructive));
         setIncludeIndexes(cfg.includeIndexes ?? true);
         setRequireRollback(Boolean(cfg.requireRollback));
@@ -502,16 +531,26 @@ export function SchemaDiffWindow() {
       setError('');
       try {
         const srcConnId = await endpoints.ensureConnected('source');
-        if (!srcConnId) return;
-        const rows = await databaseCommands.getTables(srcConnId, profile.sourceDatabase);
-        const filtered = filterTablesForSchema(rows, profile.sourceSchema || undefined);
-        const selected = new Set(profile.tables);
-        const picks = filtered
-          .map((table) => {
-            const name = qualifySchemaDiffTableName(table, profile.sourceSchema || undefined);
-            return { name, enabled: selected.has(name) };
-          })
-          .filter((row) => selected.has(row.name));
+        const tgtConnId = await endpoints.ensureConnected('target');
+        if (!srcConnId || !tgtConnId) return;
+        const [sourceRows, targetRows] = await Promise.all([
+          databaseCommands.getTables(srcConnId, profile.sourceDatabase),
+          databaseCommands.getTables(tgtConnId, profile.targetDatabase),
+        ]);
+        const selected = new Set([...profile.tables, ...(profile.targetOnlyTables ?? [])]);
+        const picks = mergeSchemaDiffTablePicks(
+          sourceRows,
+          targetRows,
+          profile.sourceSchema || undefined,
+          profile.targetSchema || undefined,
+        )
+          .map((row) => ({
+            ...row,
+            enabled: [row.name, row.sourceName, row.targetName].some(
+              (name) => name !== undefined && selected.has(name),
+            ),
+          }))
+          .filter((row) => row.enabled);
         setTablePicks(picks);
         setStep('objects');
       } catch (e) {
@@ -549,7 +588,20 @@ export function SchemaDiffWindow() {
     endpoints.setTargetDatabase(profile.targetDatabase);
     endpoints.setSourceSchema(profile.sourceSchema ?? '');
     endpoints.setTargetSchema(profile.targetSchema ?? '');
-    setTablePicks(profile.tables.map((name) => ({ name, enabled: true })));
+    setTablePicks([
+      ...profile.tables.map((name) => ({
+        name,
+        enabled: true,
+        origin: 'source-only' as const,
+        sourceName: name,
+      })),
+      ...(profile.targetOnlyTables ?? []).map((name) => ({
+        name,
+        enabled: true,
+        origin: 'target-only' as const,
+        targetName: name,
+      })),
+    ]);
     setAllowDestructive(profile.allowDestructive);
     setIncludeIndexes(profile.includeIndexes);
     setRequireRollback(profile.requireRollback);
@@ -584,7 +636,8 @@ export function SchemaDiffWindow() {
       targetDatabase: endpoints.targetDatabase,
       sourceSchema: endpoints.sourceSchema || null,
       targetSchema: endpoints.targetSchema || null,
-      tables: selectedTables,
+      tables: enabledSourceTableNames(tablePicks),
+      targetOnlyTables: enabledTargetOnlyTableNames(tablePicks),
       allowDestructive,
       includeIndexes,
       requireRollback,

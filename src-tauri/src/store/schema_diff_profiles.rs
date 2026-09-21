@@ -116,6 +116,7 @@ mod tests {
             target_database: "app".into(),
             source_schema: None,
             target_schema: None,
+            target_only_tables: vec![],
             tables: vec!["users".into()],
             allow_destructive: false,
             include_indexes: true,

@@ -11,7 +11,7 @@ use crate::schema_diff::diff_table_schemas;
 use crate::schema_diff::objects::{
     build_view_migration_plan_with_components, SchemaObjectSnapshot,
 };
-use crate::schema_diff::plan::{build_schema_diff_plan, is_source_unbounded_text, PlanOptions};
+use crate::schema_diff::plan::{is_source_unbounded_text, PlanOptions};
 use crate::schema_diff::types::TableColumnDiff;
 use crate::schema_diff::types::{
     normalize_dialect, resolve_table_for_dialect, ColumnTypeOverride, SchemaDiffDeployResult,
@@ -22,7 +22,7 @@ use crate::services::job_registry::{cancel_job, ensure_job, remove_job};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::full_types::fetch_full_column_types;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tauri::State;
 
 async fn list_schema_views(
@@ -248,6 +248,7 @@ pub async fn prepare_schema_diff_plan(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_only_table_names: Option<Vec<String>>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
@@ -257,6 +258,7 @@ pub async fn prepare_schema_diff_plan(
         source_db_session_id,
         target_db_session_id,
         table_names,
+        target_only_table_names.unwrap_or_default(),
         allow_destructive,
         include_indexes,
         type_overrides,
@@ -269,6 +271,7 @@ pub(crate) async fn prepare_schema_diff_plan_impl(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_only_table_names: Vec<String>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
@@ -278,6 +281,7 @@ pub(crate) async fn prepare_schema_diff_plan_impl(
         source_db_session_id,
         target_db_session_id,
         table_names,
+        target_only_table_names,
         allow_destructive,
         include_indexes,
         type_overrides,
@@ -297,6 +301,7 @@ pub(crate) async fn prepare_schema_diff_profile_plan_impl(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_only_table_names: Vec<String>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
@@ -308,6 +313,7 @@ pub(crate) async fn prepare_schema_diff_profile_plan_impl(
         source_db_session_id,
         target_db_session_id,
         table_names,
+        target_only_table_names,
         allow_destructive,
         include_indexes,
         type_overrides,
@@ -322,6 +328,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_only_table_names: Vec<String>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
@@ -336,9 +343,9 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         "prepare_schema_diff_plan"
     );
 
-    if table_names.is_empty() {
+    if table_names.is_empty() && target_only_table_names.is_empty() {
         return Err(CommandError::Validation(
-            "table_names must not be empty".into(),
+            "table_names and target_only_table_names must not both be empty".into(),
         ));
     }
 
@@ -398,6 +405,40 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         // target-resolved. Using `table` here leaks the source's schema qualification into the
         // target DDL (e.g. `public.table` on MySQL) and breaks deploy.
         pairs.push((tgt_table, src_schema, tgt_schema));
+    }
+
+    let mut target_only_snapshots = Vec::new();
+    let mut target_only_tables = Vec::new();
+    let source_target_tables = pairs
+        .iter()
+        .map(|(table, _, _)| table.as_str())
+        .collect::<HashSet<_>>();
+    let mut seen_target_only_tables = HashSet::new();
+    for table in &target_only_table_names {
+        let tgt_table = resolve_profile_table(
+            &tgt_config.database_type,
+            table,
+            target_schema_override.as_deref(),
+        );
+        // Target-only selection is an explicit destructive request. Read the
+        // real target schema and fail closed if the selected table disappeared;
+        // do not turn it into an empty source schema sentinel.
+        let tgt_schema = tgt_driver
+            .get_table_schema(&tgt_handle, &tgt_table)
+            .await
+            .cmd_err("prepare_schema_diff_plan")?;
+        if source_target_tables.contains(tgt_table.as_str()) {
+            return Err(CommandError::Validation(format!(
+                "Table `{tgt_table}` cannot be selected as both a source table and target-only table"
+            )));
+        }
+        if !seen_target_only_tables.insert(tgt_table.clone()) {
+            return Err(CommandError::Validation(format!(
+                "Target-only table `{tgt_table}` was selected more than once"
+            )));
+        }
+        target_only_tables.push(tgt_table.clone());
+        target_only_snapshots.push((tgt_table, tgt_schema));
     }
 
     let src_d = normalize_dialect(&src_config.database_type);
@@ -462,8 +503,9 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             ))
         };
 
-        build_schema_diff_plan(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
             &pairs,
+            &target_only_tables,
             &src_d,
             &tgt_d,
             PlanOptions {
@@ -474,8 +516,9 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             },
         )
     } else {
-        build_schema_diff_plan(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
             &pairs,
+            &target_only_tables,
             &src_d,
             &tgt_d,
             PlanOptions {
@@ -495,6 +538,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         pairs
             .iter()
             .map(|(table, _, target)| (table.clone(), target.clone()))
+            .chain(target_only_snapshots)
             .collect(),
     )
     .await;
@@ -1022,6 +1066,7 @@ mod tests {
             target_database: "app".into(),
             source_schema: None,
             target_schema: None,
+            target_only_tables: vec![],
             tables: vec!["users".into()],
             allow_destructive: false,
             include_indexes: true,

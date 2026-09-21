@@ -5,6 +5,8 @@ import { SchemaDiffRightPanel } from '../SchemaDiffRightPanel';
 import { SchemaDiffPlanPanel } from '../SchemaDiffPlanPanel';
 import { SchemaDiffDeployPanel } from '../SchemaDiffDeployPanel';
 import { SchemaDiffTableListPanel } from '../SchemaDiffTableListPanel';
+import { SchemaDiffObjectsStep } from '../SchemaDiffObjectsStep';
+import { SchemaDiffPanel } from '../../../components/schema/SchemaDiffPanel';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -54,6 +56,63 @@ describe('SchemaDiffTableListPanel', () => {
 
     fireEvent.click(screen.getByTestId('schema-diff-table-row-orders'));
     expect(onSelect).toHaveBeenCalledWith('orders');
+  });
+});
+
+describe('SchemaDiffObjectsStep target-only picker', () => {
+  it('shows source/target identity and leaves target-only tables unchecked', () => {
+    render(
+      <SchemaDiffObjectsStep
+        loading={false}
+        tables={[
+          {
+            name: 'users',
+            enabled: true,
+            origin: 'both',
+            sourceName: 'public.users',
+            targetName: 'users',
+          },
+          {
+            name: 'archive',
+            enabled: false,
+            origin: 'target-only',
+            targetName: 'archive',
+          },
+        ]}
+        onToggle={vi.fn()}
+        onSelectAll={vi.fn()}
+        onSelectNone={vi.fn()}
+      />,
+    );
+
+    const rows = screen.getAllByTestId('schema-diff-table-row');
+    expect(rows[0]).toHaveAttribute('data-table-origin', 'both');
+    expect(rows[1]).toHaveAttribute('data-table-origin', 'target-only');
+    expect(within(rows[1]!).getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByTestId('schema-diff-table-origin-archive')).toHaveTextContent(
+      'schemaDiff.targetOnly',
+    );
+  });
+});
+
+describe('SchemaDiffPanel target-only review', () => {
+  it('does not present a target-only table as identical', () => {
+    render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'archive',
+          targetOnly: true,
+          missingOnTarget: [],
+          extraOnTarget: [],
+          added: [],
+          removed: [],
+          changed: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('schema-diff-target-only-detail')).toBeInTheDocument();
+    expect(screen.queryByText('schemaDiff.schemaIdentical')).not.toBeInTheDocument();
   });
 });
 
