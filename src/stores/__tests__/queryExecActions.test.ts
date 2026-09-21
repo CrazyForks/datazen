@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyQueryExecState, runBoundQuery, runStreamingQuery } from '../queryExecActions';
+import { useTableDataStore } from '../tableDataStore';
 
 const mockExecuteQuery = vi.fn();
 const mockExecuteQueryStream = vi.fn();
 const mockEmitCrossWindow = vi.fn();
+const mockGetTableData = vi.fn();
+
+vi.mock('../../commands/database', () => ({
+  databaseCommands: {
+    getTableData: (...args: unknown[]) => mockGetTableData(...args),
+  },
+}));
 
 vi.mock('../../commands/query', () => ({
   queryCommands: {
@@ -20,8 +28,8 @@ describe('queryExecActions schema refresh', () => {
   beforeEach(() => {
     mockExecuteQuery.mockReset();
     mockExecuteQueryStream.mockReset();
-    mockExecuteQueryStream.mockImplementation(
-      async (...args: unknown[]) => (args[2] as (event: unknown) => void)({
+    mockExecuteQueryStream.mockImplementation(async (...args: unknown[]) =>
+      (args[2] as (event: unknown) => void)({
         type: 'done',
         totalTimeMs: 5,
       }),
@@ -103,6 +111,81 @@ describe('queryExecActions schema refresh', () => {
 
     expect(mockEmitCrossWindow).not.toHaveBeenCalled();
     expect(exec.get('panel-1')?.error).toBe('syntax error');
+  });
+
+  async function seedCachedTableRows(dbSessionId: string) {
+    mockGetTableData.mockReset();
+    mockGetTableData.mockResolvedValue({
+      columns: [
+        { name: 'id', dataType: 'integer', isPrimaryKey: true },
+        { name: 'name', dataType: 'text', isPrimaryKey: false },
+      ],
+      rows: [
+        [1, 'Alice'],
+        [2, 'Bob'],
+      ],
+      totalRows: 2,
+      page: 0,
+      pageSize: 50,
+    });
+    useTableDataStore.getState().reset();
+    useTableDataStore
+      .getState()
+      .loadTableData({ panelId: 'table-panel', dbSessionId, table: 'users' })
+      .catch(() => {});
+    await vi.waitFor(() => {
+      expect(useTableDataStore.getState().byPanel.get('table-panel')?.rows).toHaveLength(2);
+    });
+  }
+
+  function cachedRows() {
+    return useTableDataStore.getState().byPanel.get('table-panel')?.rows;
+  }
+
+  it('invalidates cached table data after a successful UPDATE', async () => {
+    await seedCachedTableRows('s-write');
+    let exec = new Map([['panel-1', emptyQueryExecState()]]);
+    await runStreamingQuery(
+      'panel-1',
+      's-write',
+      "UPDATE users SET name = 'x' WHERE id = 1",
+      () => exec,
+      (next) => {
+        exec = next;
+      },
+    );
+    expect(cachedRows()).toHaveLength(0);
+  });
+
+  it('keeps cached table data after a read-only query', async () => {
+    await seedCachedTableRows('s-read');
+    let exec = new Map([['panel-1', emptyQueryExecState()]]);
+    await runStreamingQuery(
+      'panel-1',
+      's-read',
+      'SELECT * FROM users',
+      () => exec,
+      (next) => {
+        exec = next;
+      },
+    );
+    expect(cachedRows()).toHaveLength(2);
+  });
+
+  it('does not invalidate cached table data when the write fails', async () => {
+    await seedCachedTableRows('s-fail');
+    mockExecuteQueryStream.mockRejectedValueOnce(new Error('constraint violated'));
+    let exec = new Map([['panel-1', emptyQueryExecState()]]);
+    await runStreamingQuery(
+      'panel-1',
+      's-fail',
+      'DELETE FROM users',
+      () => exec,
+      (next) => {
+        exec = next;
+      },
+    );
+    expect(cachedRows()).toHaveLength(2);
   });
 });
 
@@ -253,9 +336,7 @@ describe('queryExecActions cancellation terminal semantics', () => {
       },
       markCancelRequested: () => {
         const current = exec.get('panel-1')!;
-        exec = new Map([
-          ['panel-1', { ...current, cancelState: 'requested' as const }],
-        ]);
+        exec = new Map([['panel-1', { ...current, cancelState: 'requested' as const }]]);
       },
     };
   }
@@ -288,14 +369,12 @@ describe('queryExecActions cancellation terminal semantics', () => {
 
   it('stores executionId only for the active stream and clears it on completion', async () => {
     const gate = deferred();
-    mockExecuteQueryStream.mockImplementationOnce(
-      async (...args: unknown[]) => {
-        const onEvent = args[2] as (event: unknown) => void;
-        onEvent({ type: 'executionStarted', executionId: 'exec-1' });
-        await gate.promise;
-        onEvent({ type: 'done', totalTimeMs: 5 });
-      },
-    );
+    mockExecuteQueryStream.mockImplementationOnce(async (...args: unknown[]) => {
+      const onEvent = args[2] as (event: unknown) => void;
+      onEvent({ type: 'executionStarted', executionId: 'exec-1' });
+      await gate.promise;
+      onEvent({ type: 'done', totalTimeMs: 5 });
+    });
     const context = makeExecContext();
     const run = runStreamingQuery(
       'panel-1',

@@ -4,6 +4,8 @@ import {
   isSchemaMutatingStatement,
   sqlContainsSchemaChangingDdl,
   sqlMayMutateSchema,
+  isDataModifyingStatement,
+  sqlContainsDataModifying,
 } from '../schemaChangingSql';
 
 describe('schemaChangingSql', () => {
@@ -43,5 +45,19 @@ describe('schemaChangingSql', () => {
     expect(isSchemaMutatingStatement("COMMENT ON TABLE users IS 'app users'")).toBe(true);
     expect(isSchemaMutatingStatement('SELECT 1')).toBe(false);
     expect(sqlMayMutateSchema('SELECT 1; ALTER TABLE users ADD COLUMN y text;')).toBe(true);
+  });
+
+  it('detects data-modifying statements (DML + TRUNCATE)', () => {
+    expect(isDataModifyingStatement("UPDATE users SET name = 'x' WHERE id = 1")).toBe(true);
+    expect(isDataModifyingStatement('INSERT INTO users VALUES (1)')).toBe(true);
+    expect(isDataModifyingStatement('DELETE FROM users WHERE id = 1')).toBe(true);
+    expect(isDataModifyingStatement('REPLACE INTO users VALUES (1)')).toBe(true);
+    expect(isDataModifyingStatement('MERGE INTO users USING s ON 1=1')).toBe(true);
+    expect(isDataModifyingStatement('TRUNCATE TABLE users')).toBe(true);
+    expect(isDataModifyingStatement('SELECT * FROM users')).toBe(false);
+    expect(isDataModifyingStatement('CREATE TABLE users (id int)')).toBe(false);
+    expect(sqlContainsDataModifying("SELECT 1; UPDATE users SET name = 'x';")).toBe(true);
+    expect(sqlContainsDataModifying("SELECT 'UPDATE x'; SELECT 1")).toBe(false);
+    expect(sqlContainsDataModifying('SELECT 1')).toBe(false);
   });
 });

@@ -2,8 +2,13 @@ import { queryCommands } from '../commands/query';
 import { emitCrossWindow } from '../lib/crossWindowBus';
 import { applyQueryStreamEvent } from '../lib/queryStream';
 import { resolvePostQueryViewMode } from '../lib/chart/postQueryView';
-import { sqlContainsSchemaChangingDdl, sqlMayMutateSchema } from '../lib/schemaChangingSql';
+import {
+  sqlContainsSchemaChangingDdl,
+  sqlMayMutateSchema,
+  sqlContainsDataModifying,
+} from '../lib/schemaChangingSql';
 import { invalidateSchemaCache } from '../lib/schemaCache';
+import { useTableDataStore } from './tableDataStore';
 import { t } from '../locales/t';
 import type { QueryStreamEvent, StatementResult } from '../types';
 import type { ChartConfig } from '../types/chart';
@@ -62,6 +67,11 @@ function extractError(e: unknown): string {
 async function notifySchemaChangedIfNeeded(dbSessionId: string, sql: string): Promise<void> {
   if (sqlMayMutateSchema(sql)) {
     invalidateSchemaCache(dbSessionId);
+  }
+  if (sqlContainsDataModifying(sql)) {
+    // The table-data grid caches rows per session; a write from the query tab
+    // must drop that cache or a reopened table tab shows stale rows.
+    useTableDataStore.getState().invalidateCachedData(dbSessionId);
   }
   if (!sqlContainsSchemaChangingDdl(sql)) return;
   await emitCrossWindow('datazen:refresh-connection', { dbSessionId });
