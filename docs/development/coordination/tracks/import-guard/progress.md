@@ -228,3 +228,86 @@ Phase：**TEST_DONE(PASSED)**。复测于 worktree `.worktrees/datazen-import-gu
 - **环境限制备忘（非缺陷）**：本 worktree 无独立安装态，任何 `pnpm test:*` 均触发 deps-check 且无 TTY 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`（既有 `pnpm test:ids` 复现完全相同）；新接线与既有 guard 同构，CI 首步 `pnpm install` 后即正常。
 
 Tester 复测 commit：见本文件所在提交（`git log -1 --format=%h`）。**未 push。**
+
+## BUG-008 接管实施记录（Takeover / Rescuer，Wave 4-A）
+
+Phase：**READY_FOR_TEST**（待全新 Tester 复测）。分支 `feature/import-guard`，开工 HEAD `17e51023c`；修复 commit：`17c3d5cc7`（脚本+单测）/ `485d75797`（契约文档回扫+2 Nit）/ 本 commit（本轨记录）。**未 push。**
+
+### 0. 现场盘点判定（前任崩溃代理遗留）
+
+`git status --short` 仅两个未提交文件，`git diff` 逐行复核与协调者盘点结论**一致，全部保留**：
+
+- `scripts/check-driver-import-boundaries.mjs`（+66/−3）：`createGitIgnorePredicate`（`git check-ignore -q --` 逐**违规文件**调用、Map 缓存、任何 git 失败按 tracked = fail-closed）、`EXTERNAL_ADVISORY_NOTE` 导出、`opts.isIgnored` 注入点（虚拟树默认全 tracked）、分类插入点 `finding.rule.blocking && isIgnored(finding.file)`、advisory 输出后缀、头注释与退出码语义重写。**`ALLOWLIST`（2 条）/ `R2_FILE_CARVEOUTS`（2 精确文件）/ `RULES.R3.blocking=false` 逐字节未动**（裁定第 2、3 条满足）。无截断函数、无夹带改动。
+- `scripts/__tests__/check-driver-import-boundaries.test.mjs`（+67）：`describe('tracking-scope classification (BUG-008)')` 恰 5 例（①ignored 树 R1/R2 降 advisory+exit 0 ②tracked 下同违规 blocking+exit 1 ③虚拟树默认全 tracked ④真实仓 predicate 命中并缓存 ⑤git 不可用 fail-closed）。
+- 主检出运行证据本人独立复跑一次，与协调者预采集输出逐字一致（见 §2）。
+
+### 1. 改动文件清单（本轮接管新增部分）
+
+| 文件 | 性质 |
+| --- | --- |
+| `scripts/check-driver-import-boundaries.mjs` + `scripts/__tests__/…test.mjs` | 保留前任实现，`17c3d5cc7` 提交 |
+| `docs/development/driver-api-dependency-boundary.md` | 2.1.2 末段 / 2.4.2 新段 / 2.6（本地等价行、单测格、新增「阻断范围（BUG-008）」bullet、退出码行）/ 2.7 第一条，`485d75797` |
+| `scripts/ci-local.sh` | Nit②：boundaries 步 `3.4/11→3.3/11`、i18n warning `3.3/11→3.4/11`（仅编号对调，执行顺序不变、与 ci.yml 一致），`485d75797` |
+| 本文件 + 本轨 `bugs.md` | BUG-008 状态 → 待复测，本 commit |
+
+未触碰：两个外部仓（`packages/drivers/superset`、`packages/pro-extensions/**` 全程只读）、`packages/ui/src/i18n.ts`、`src-tauri/**`、`Cargo.lock`、hub.md、他轨台账；codegen 产物未提交（`git status` 全程仅预期文件）。
+
+### 2. 验收增补三条的真实输出
+
+**(a) 主检出（--drivers=all + Pro 已 stage）→ exit 0、12 advisory**（前置 `node scripts/resolve-drivers.mjs --codegen-only --drivers=all` 于 worktree，CODEGEN_EXIT=0）：
+
+```console
+$ node scripts/check-driver-import-boundaries.mjs --root=/Users/wuxiaolong/code/rust-projects/datazen
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R1 (advisory) packages/drivers/superset/ui/SupersetConnectionFields.tsx:3: resolves to host src/hooks/useI18n · external (untracked) repo — contract drift to be fixed in that repo, not here
+[check-driver-import-boundaries] R1 (advisory) packages/drivers/superset/ui/SupersetSchemaTree.tsx:19: … · external …
+[check-driver-import-boundaries] R2 (advisory) packages/pro-extensions/sql-editor-pro/src/intentions/__tests__/intentionCodeActions.test.ts:119: … · external …
+[check-driver-import-boundaries] R2 (advisory) …/intentionCodeActions.test.ts:141 / locales/__tests__/locales.test.ts:28,32,36,39（共 6 处，逐条点名，形态同上）
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107 / src/test/driverUiSetup.ts:25,26 / src/windows/connection/DocumentConnectionView.tsx:25（4 处，无 external 后缀）
+[check-driver-import-boundaries] ok (1489 file(s) scanned · 0 blocking violation(s) · 12 advisory finding(s))
+MAIN_CHECKOUT_EXIT=0
+```
+
+R1×2 + R2×6 + R3×4 = **12 advisory**，与协调者订正口径一致。worktree 自身默认 root：`ok (1403 file(s) scanned · 0 blocking · 4 advisory)` EXIT=0（worktree 无外部树，属预期盲区，见记忆 worktree-external-tree-blindspot）。
+
+**(b) 反证：降级没把口子开进本仓**——在 `packages/drivers/redis/ui/testerProbe.ts`（本仓跟踪目录、未被 ignore）注入 R1：
+
+```console
+$ git check-ignore -q -- packages/drivers/redis/ui/testerProbe.ts; echo $?   # 1（非 ignored）
+$ node scripts/check-driver-import-boundaries.mjs
+[check-driver-import-boundaries] R1 packages/drivers/redis/ui/testerProbe.ts:1: resolves to host src/hooks/useI18n
+    import { useI18n } from '../../../../src/hooks/useI18n';
+[check-driver-import-boundaries] FAILED: 1 violation(s) (1404 file(s) scanned · 4 advisory finding(s))
+    see docs/development/driver-api-dependency-boundary.md §2.1.2
+PROBE_EXIT=1
+$ rm packages/drivers/redis/ui/testerProbe.ts && node scripts/check-driver-import-boundaries.mjs; echo $?
+[check-driver-import-boundaries] ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+0    # git status 恢复仅预期文件
+```
+
+**任务书勘误（需协调者知悉）**：任务书示例探针写 `from '../../../src/hooks/useI18n'`（三级），从 `packages/drivers/redis/ui/` 出发解析落点是 `packages/src/…`，**不构成 R1 违规**（首跑确实 exit 0，属正确行为而非降级漏洞）；反证必须用四级 `../../../../src/hooks/useI18n`。已按四级深度完成反证并在此登记。
+
+**(c) `npx vitest run scripts` 全绿 + 数字如实**：**23 files / 244 tests**（原 239 + BUG-008 新增 5）；本轨单测文件单独跑 **36 passed**（31→36）。覆盖（`--coverage.include='scripts/check-driver-import-boundaries.mjs'`，json 逐条解析）：**Lines 100% / Stmts 99.31% / Branch 95.72% / Funcs 100%**。未覆盖语句恰 2 处 = `walk()` 目录过滤器 `:444`/`:450`；未触发分支共 8 处 = 上述 2 continue + 6 处 `??`/默认参数兜底（`:275`/`:305` 转义符在文件末尾、`:379` 取行文本、`:524`/`:525` `opts.log`/`opts.error`、`:630` `opts.argv`）——**Tester Nit① 的行号已按改动后实测重定位**（旧 `:261/:291/:365/:476/:477/:570` 系脚本变更前坐标）。
+
+### 3. 其余自测清单（真实命令与结果）
+
+| 命令 | 结果 |
+| --- | --- |
+| `npx tsc --noEmit -p tsconfig.json` | **exit 0** |
+| `npx vite build` | **exit 0**（`✓ built in 5.07s`，仅既有 chunk 体积提示） |
+| `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | **27 files / 222 pass / 0 fail**（= 基线） |
+| `npx vitest run --config vitest.drivers.config.ts`（全驱动） | **33 files / 241 pass / 0 fail**（= 基线） |
+| `npx vitest run src packages/driver-sdk packages/ui` | **412 files / 4243 pass / 0 fail**（= 基线） |
+| `node scripts/check-id-terminology.mjs` | ok（1719 files，5 处既有豁免） |
+| `node scripts/check-module-layers.mjs` | ok (3 rules) |
+| `node scripts/check-ci-docs-consistency.mjs` | drivers / window boundaries / toolchain 三项 ok（步骤编号对调不影响其校验口径，已在改后复跑） |
+
+### 4. 文档回扫核实纪律
+
+契约新登记的每个路径/行号均为实测：外部漂移 8 处文件:行来自上表 (a) 的真实脚本输出（`--root` 主检出扫描）；覆盖未触发行号来自 coverage-final.json 解析并对当前脚本逐行 Read 比对；`ci-local.sh` 编号引用与实文件一致（grep `3.3/11|3.4/11` 全仓复扫零残留旧口径，历史 progress 章节按「只追加不覆盖」原则保留旧文字）。
+
+### 5. 需协调者裁定的新发现
+
+1. **任务书探针深度示例错误**（见 §2(b) 勘误）：不影响修复正确性，但后续 Tester 复测请按四级 `../` 注入，否则会误判「降级开了口子」。
+2. **fail-closed 语义延伸确认**：`git check-ignore` 判定的是「是否被 ignore」，故**新建未跟踪但未被 ignore** 的文件（如探针）同样按本仓源码 blocking——与裁定「作用域按是否被本仓跟踪判定」的字面（tracked-vs-untracked）略有出入，但方向更严格、不放水，判为符合裁定精神，单测例③④⑤已固化该行为。
+3. `ci-local.sh` 既有 `3.25/11`（version consistency）奇数编号系本轨之前遗留风格，未动。
