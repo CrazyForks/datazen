@@ -121,6 +121,15 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                     summary: format!("CREATE TABLE {}", table),
                 })
             }
+            MigrationOperation::DropTable { table } => {
+                let table = validate_migration_identifier(table)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP TABLE {}", qi(table)),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: None,
+                    summary: format!("DROP TABLE {}", table),
+                })
+            }
 
             MigrationOperation::AddColumn { table, column } => {
                 let mut sql = format!(
@@ -396,6 +405,7 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
         match operation {
             MigrationOperation::SetAutoIncrement { .. } => false,
             MigrationOperation::CreateTable { .. }
+            | MigrationOperation::DropTable { .. }
             | MigrationOperation::AddColumn { .. }
             | MigrationOperation::DropColumn { .. }
             | MigrationOperation::AlterColumnType { .. }
@@ -557,6 +567,47 @@ mod tests {
             stmt.rollback_sql.as_deref(),
             Some("ALTER TABLE \"users\" DROP CONSTRAINT \"users_pkey\"")
         );
+    }
+
+    #[test]
+    fn drop_table_is_quoted_destructive_and_has_no_rollback() {
+        let stmt = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropTable {
+                table: "audit.events".into(),
+            })
+            .unwrap();
+        assert_eq!(stmt.sql, "DROP TABLE \"audit\".\"events\"");
+        assert_eq!(stmt.risk, MigrationRisk::Destructive);
+        assert!(stmt.rollback_sql.is_none());
+        assert!(
+            PostgresMigrationCapabilities.supports(&MigrationOperation::DropTable {
+                table: "audit.events".into(),
+            })
+        );
+        assert!(!stmt.sql.contains("CASCADE"));
+    }
+
+    #[test]
+    fn test_tester_drop_table_rejects_empty_identifier() {
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::DropTable {
+                table: String::new()
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn drop_table_rejects_blank_control_and_invalid_qualified_identifiers() {
+        for table in [" ", "audit\nevents", "audit..events", "audit. events"] {
+            assert!(
+                PostgresMigrationRenderer
+                    .render(&MigrationOperation::DropTable {
+                        table: table.into()
+                    })
+                    .is_err(),
+                "{table:?}"
+            );
+        }
     }
 
     #[test]

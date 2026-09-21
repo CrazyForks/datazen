@@ -32,6 +32,14 @@ pub enum MigrationOperation {
         columns: Vec<MigrationColumn>,
         primary_keys: Vec<String>,
     },
+    /// Remove a table without a cascade clause.
+    ///
+    /// A table drop is intentionally a first-class reviewed operation. The
+    /// host marks it destructive and does not synthesize rollback SQL because
+    /// recreating a table cannot restore its rows, indexes, or constraints.
+    DropTable {
+        table: String,
+    },
     AddColumn {
         table: String,
         column: MigrationColumn,
@@ -103,6 +111,27 @@ pub enum MigrationOperation {
     DropView {
         view: MigrationView,
     },
+}
+
+/// Validate and trim a relation identifier used by a reviewed migration
+/// statement. A qualified relation may contain dots between non-empty
+/// segments, but whitespace around a segment or control characters would make
+/// the target relation ambiguous and must fail closed.
+pub fn validate_migration_identifier(raw: &str) -> Result<&str, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("migration identifier must not be empty".into());
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err("migration identifier contains control characters".into());
+    }
+    if trimmed
+        .split('.')
+        .any(|segment| segment.is_empty() || segment != segment.trim())
+    {
+        return Err("migration identifier contains an empty or whitespace-padded segment".into());
+    }
+    Ok(trimmed)
 }
 
 /// Validate a query body before it is embedded into one reviewed DDL
@@ -308,5 +337,22 @@ mod type_parts_tests {
         assert!(validate_view_definition("  ").is_err());
         assert!(validate_view_definition("SELECT 1; DROP TABLE users").is_err());
         assert!(validate_view_definition("SELECT '\0'").is_err());
+    }
+
+    #[test]
+    fn migration_identifier_validation_rejects_blank_controls_and_bad_segments() {
+        assert_eq!(
+            validate_migration_identifier("  audit.events  ").unwrap(),
+            "audit.events"
+        );
+        for value in [
+            "",
+            " \t ",
+            "audit\nevents",
+            "audit..events",
+            "audit. events",
+        ] {
+            assert!(validate_migration_identifier(value).is_err(), "{value:?}");
+        }
     }
 }
