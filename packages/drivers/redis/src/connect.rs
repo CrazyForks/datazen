@@ -104,6 +104,19 @@ impl RedisLiveConn {
         matches!(self, Self::Sentinel { .. })
     }
 
+    /// Which topology this handle talks to, so an operation can pick a request
+    /// shape the transport actually supports. A `ClusterConnection` folds batch
+    /// errors and pins a pipeline to one slot, unlike the single-node
+    /// `MultiplexedConnection` used by standalone and sentinel — see
+    /// `ops_workbench`'s module docs for the consequence.
+    pub fn topology(&self) -> Topology {
+        match self {
+            Self::Standalone(_) => Topology::Standalone,
+            Self::Cluster(_) => Topology::Cluster,
+            Self::Sentinel { .. } => Topology::Sentinel,
+        }
+    }
+
     /// Re-resolve the current master via Sentinel and replace the cached connection.
     pub async fn rediscover_sentinel_master(&mut self) -> Result<(), DriverError> {
         let Self::Sentinel { client, connection } = self else {

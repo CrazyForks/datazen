@@ -23,6 +23,11 @@ fn err_reply(detail: &str) -> RValue {
     }
 }
 
+/// A bulk-string reply — the shape scalar answers actually arrive in.
+fn bulk(s: &str) -> RValue {
+    RValue::BulkString(s.as_bytes().to_vec())
+}
+
 /// Replay journal: what the connection was asked to do.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Journal {
@@ -452,6 +457,12 @@ fn key_info_survives_a_short_or_empty_reply_vector() {
 
 #[tokio::test]
 async fn key_object_info_uses_one_round_trip_and_survives_a_rejected_field() {
+    // Scope of the "one round trip" claim: this is the *op*, called directly.
+    // The command path additionally issues the db `SELECT` that
+    // `with_live_op!` sends on every call, so a real `key_object_info` costs two
+    // round trips (and the whole probe is replayed once after a Sentinel
+    // failover). MONITOR-based regression checks must expect that SELECT —
+    // counting only the probe's own traffic is what this journal can see.
     let mut conn = ScriptedConn::new();
     conn.push_int("MEMORY", 88);
     conn.push_str("OBJECT", "listpack");
@@ -460,7 +471,7 @@ async fn key_object_info_uses_one_round_trip_and_survives_a_rejected_field() {
     conn.push_int("PTTL", 60_000);
     conn.push_str("TYPE", "list");
 
-    let info = key_object_info(&mut conn, "lqueue")
+    let info = key_object_info(&mut conn, "lqueue", Topology::Standalone)
         .await
         .expect("key_object_info must not fail because one field errored");
 
@@ -481,7 +492,8 @@ async fn key_object_info_uses_one_round_trip_and_survives_a_rejected_field() {
     assert_eq!(
         journal.round_trips(),
         1,
-        "the whole sidebar payload must cost exactly one round trip"
+        "the op's own payload must cost exactly one pipeline round trip, \
+         excluding the db SELECT issued by with_live_op!"
     );
     assert!(journal.singles.is_empty(), "no per-command round trips");
     assert_eq!(journal.batches[0].len(), KEY_INFO_PIPELINE_LEN);
@@ -497,7 +509,7 @@ async fn key_object_info_reports_missing_over_the_wire() {
     conn.push_int("PTTL", -2);
     conn.push_str("TYPE", "none");
 
-    let info = key_object_info(&mut conn, "gone:soon")
+    let info = key_object_info(&mut conn, "gone:soon", Topology::Standalone)
         .await
         .expect("a missing key is a success case");
     assert_eq!(info, KeyObjectInfo::missing());
@@ -513,7 +525,7 @@ async fn type_distribution_counts_a_fully_scanned_small_db() {
     conn.push_scan(0, &["a", "b", "c", "d", "e", "f"]);
     conn.push_types(&["string", "string", "hash", "list", "string", "stream"]);
 
-    let dist = type_distribution(&mut conn, Some(100))
+    let dist = type_distribution(&mut conn, Some(100), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -544,7 +556,7 @@ async fn type_distribution_flags_truncated_when_the_sample_is_partial() {
     conn.push_scan(4_096, &["k1", "k2", "k3"]);
     conn.push_types(&["string", "hash", "hash"]);
 
-    let dist = type_distribution(&mut conn, Some(3))
+    let dist = type_distribution(&mut conn, Some(3), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -573,7 +585,7 @@ async fn type_distribution_pipelines_types_in_chunks_and_never_calls_keys() {
     conn.push_scan(0, &flat);
     conn.push_types(&vec!["string"; keys.len()]);
 
-    let dist = type_distribution(&mut conn, Some(MAX_TYPE_SAMPLE_LIMIT))
+    let dist = type_distribution(&mut conn, Some(MAX_TYPE_SAMPLE_LIMIT), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -612,7 +624,7 @@ async fn type_distribution_continues_scanning_until_the_cursor_wraps() {
     ]);
     conn.push_types(&["string", "string", "string", "hash", "hash", "zset"]);
 
-    let dist = type_distribution(&mut conn, Some(500))
+    let dist = type_distribution(&mut conn, Some(500), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -645,7 +657,7 @@ async fn type_distribution_clamps_an_oversized_window_instead_of_erroring() {
     conn.push_scan_batches(&batches);
     conn.push_types(&vec!["string"; MAX_TYPE_SAMPLE_LIMIT as usize * 2]);
 
-    let dist = type_distribution(&mut conn, Some(u64::MAX))
+    let dist = type_distribution(&mut conn, Some(u64::MAX), Topology::Standalone)
         .await
         .expect("an oversized sampleLimit is clamped, not rejected");
 
@@ -670,7 +682,7 @@ async fn type_distribution_skips_keys_that_vanished_before_type() {
     conn.push_type("string");
     conn.push("TYPE", err_reply("ERR unknown key"));
 
-    let dist = type_distribution(&mut conn, Some(10))
+    let dist = type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -688,7 +700,7 @@ async fn type_distribution_on_an_empty_db_is_not_truncated() {
     conn.push_int("DBSIZE", 0);
     conn.push_scan(0, &[]);
 
-    let dist = type_distribution(&mut conn, None)
+    let dist = type_distribution(&mut conn, None, Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -713,7 +725,7 @@ async fn type_distribution_deduplicates_repeated_scan_results() {
     conn.push_scan(0, &["a", "b"]);
     conn.push_types(&["string", "hash", "string", "hash"]);
 
-    let dist = type_distribution(&mut conn, Some(100))
+    let dist = type_distribution(&mut conn, Some(100), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -731,7 +743,7 @@ async fn rejected_dbsize_aborts_the_distribution_instead_of_reading_zero() {
     let mut conn = ScriptedConn::new();
     conn.push("DBSIZE", err_reply("ERR unknown command"));
 
-    let err = type_distribution(&mut conn, Some(10))
+    let err = type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect_err("a rejected DBSIZE must reach the caller");
     assert!(!err.is_empty(), "the failure reason must be carried over");
@@ -749,7 +761,7 @@ async fn rejected_scan_aborts_the_distribution_before_typing_anything() {
     conn.push_int("DBSIZE", 1_000);
     conn.push("SCAN", err_reply("ERR not allowed on this replica"));
 
-    let err = type_distribution(&mut conn, None)
+    let err = type_distribution(&mut conn, None, Topology::Standalone)
         .await
         .expect_err("a rejected SCAN must reach the caller");
     assert!(!err.is_empty());
@@ -767,7 +779,7 @@ async fn a_missing_reply_stream_is_read_as_empty_not_as_data() {
     // nothing yields an empty census instead of invented counts, and the
     // `sampled == counts.sum()` invariant still holds.
     let mut conn = ScriptedConn::new();
-    let dist = type_distribution(&mut conn, Some(10))
+    let dist = type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect("silent nil replies stay parseable");
     assert_eq!(dist.dbsize, 0);
@@ -1011,7 +1023,7 @@ async fn test_tester_sample_window_is_clamped_to_the_limit_not_the_batch() {
     conn.push_scan(0, &["e", "d", "c", "b", "a"]);
     conn.push_types(&["string", "hash", "list", "zset", "set"]);
 
-    let dist = type_distribution(&mut conn, Some(3))
+    let dist = type_distribution(&mut conn, Some(3), Topology::Standalone)
         .await
         .expect("overshoot inside one batch must be truncated, not fatal");
     assert_eq!(dist.sampled, 3, "sampled may never exceed sampleLimit");
@@ -1055,7 +1067,7 @@ async fn test_tester_dbsize_falls_back_to_zero_on_a_non_numeric_reply() {
     conn.push("DBSIZE", RValue::Nil);
     conn.push_scan(0, &["a"]);
     conn.push_type("string");
-    let dist = type_distribution(&mut conn, Some(10))
+    let dist = type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect("an unparsable DBSIZE must not fail the command");
     assert_eq!(dist.dbsize, 0);
@@ -1064,7 +1076,7 @@ async fn test_tester_dbsize_falls_back_to_zero_on_a_non_numeric_reply() {
     let mut conn = ScriptedConn::new();
     conn.push_int("DBSIZE", -5);
     conn.push_scan(0, &[]);
-    let dist = type_distribution(&mut conn, None)
+    let dist = type_distribution(&mut conn, None, Topology::Standalone)
         .await
         .expect("a negative DBSIZE must not underflow");
     assert_eq!(dist.dbsize, 0);
@@ -1075,7 +1087,7 @@ async fn test_tester_dbsize_falls_back_to_zero_on_a_non_numeric_reply() {
 async fn test_tester_short_type_reply_never_inflates_the_sample() {
     let keys: Vec<String> = (0..5).map(|i| format!("k{i}")).collect();
     let mut conn = ShortReplyConn { replies: 2 };
-    let counts = sample_types(&mut conn, &keys)
+    let counts = sample_types(&mut conn, &keys, Topology::Standalone)
         .await
         .expect("a short reply is degraded, not fatal");
     assert_eq!(
@@ -1093,7 +1105,7 @@ async fn test_tester_module_type_tokens_survive_the_whole_command() {
     conn.push_scan(0, &["j1", "j2", "s1", "h1"]);
     conn.push_types(&["ReJSON-RL", "ReJSON-RL", "string", "hash"]);
 
-    let dist = type_distribution(&mut conn, Some(10))
+    let dist = type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect("type distribution");
     assert_eq!(
@@ -1118,7 +1130,7 @@ async fn test_tester_keys_is_issued_in_neither_shape_on_either_path() {
     conn.push_int("DBSIZE", 2);
     conn.push_scan(0, &["a", "b"]);
     conn.push_types(&["string", "hash"]);
-    type_distribution(&mut conn, Some(10))
+    type_distribution(&mut conn, Some(10), Topology::Standalone)
         .await
         .expect("type distribution");
 
@@ -1128,7 +1140,7 @@ async fn test_tester_keys_is_issued_in_neither_shape_on_either_path() {
     conn.push_int("OBJECT", 2);
     conn.push_int("PTTL", -1);
     conn.push_str("TYPE", "string");
-    key_object_info(&mut conn, "a")
+    key_object_info(&mut conn, "a", Topology::Standalone)
         .await
         .expect("key_object_info");
 
@@ -1162,3 +1174,14 @@ async fn test_tester_keys_is_issued_in_neither_shape_on_either_path() {
         );
     }
 }
+
+// ==========================================================================
+// [coder] 修复回合（Bug 第 1 轮）— 回归面按主题拆成两个子模块，避免本文件
+// 继续超出单文件规模：
+//   * `fix_round1`       — BUG-003 / BUG-004 / BUG-005（拓扑无关）
+//   * `cluster_topology` — BUG-001 / BUG-002，直接仿真 redis 的 cluster 分发层
+//                          （逐项错误折叠 + 单 slot 路由），而不是把它 mock 掉。
+// ==========================================================================
+
+mod cluster_topology;
+mod fix_round1;
