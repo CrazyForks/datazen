@@ -7,8 +7,8 @@ use crate::command::{
     DriverCommandMetadata,
 };
 use crate::schema_objects::{
-    list_objects_sql, list_privileges_sql, object_ddl_sql, DatabaseObject, ObjectKind,
-    PrivilegeGrant,
+    list_objects_sql, list_privileges_sql, object_ddl_sql_with_metadata, DatabaseObject,
+    ObjectKind, PrivilegeGrant,
 };
 use crate::traits::DatabaseDriver;
 use crate::types::{ColumnInfo, DriverError, QueryResult, Value};
@@ -49,7 +49,10 @@ pub fn schema_object_command_definitions() -> Vec<DriverCommandDefinition> {
                             "properties": {
                                 "kind": { "type": "string" },
                                 "schema": { "type": ["string", "null"] },
-                                "name": { "type": "string" }
+                                "name": { "type": "string" },
+                                "signature": { "type": ["string", "null"] },
+                                "targetSchema": { "type": ["string", "null"] },
+                                "targetName": { "type": ["string", "null"] }
                             },
                             "required": ["kind", "name"]
                         }
@@ -74,7 +77,10 @@ pub fn schema_object_command_definitions() -> Vec<DriverCommandDefinition> {
                         "description": "Object kind"
                     },
                     "name": { "type": "string", "description": "Object name" },
-                    "schema": { "type": ["string", "null"], "description": "Schema name (optional)" }
+                    "schema": { "type": ["string", "null"], "description": "Schema name (optional)" },
+                    "signature": { "type": ["string", "null"], "description": "Routine identity arguments (PostgreSQL overload disambiguation)" },
+                    "targetSchema": { "type": ["string", "null"], "description": "Trigger target schema (optional)" },
+                    "targetName": { "type": ["string", "null"], "description": "Trigger target relation (optional)" }
                 },
                 "required": ["kind", "name"]
             }),
@@ -155,14 +161,28 @@ pub async fn execute_schema_object_command<D: DatabaseDriver + ?Sized>(
             let name = input["name"]
                 .as_str()
                 .ok_or_else(|| DriverError::InvalidConfig("name is required".into()))?;
+            if name.trim().is_empty() {
+                return Err(DriverError::InvalidConfig("name must not be empty".into()));
+            }
             let schema = input.get("schema").and_then(|v| v.as_str());
-            let Some(sql) = object_ddl_sql(db_type, parsed, name, schema) else {
+            let signature = input.get("signature").and_then(|v| v.as_str());
+            let target_schema = input.get("targetSchema").and_then(|v| v.as_str());
+            let target_name = input.get("targetName").and_then(|v| v.as_str());
+            let Some(sql) = object_ddl_sql_with_metadata(
+                db_type,
+                parsed,
+                name,
+                schema,
+                signature,
+                target_schema,
+                target_name,
+            ) else {
                 return Err(DriverError::InvalidConfig(
                     "This database type does not expose object DDL".into(),
                 ));
             };
             let result = driver.query(handle, &sql).await?;
-            let ddl = extract_object_ddl(&result);
+            let ddl = extract_object_ddl_checked(&result)?;
             Ok(CommandResult::new(json!({ "ddl": ddl })))
         }
         "list_privileges" => {
@@ -187,6 +207,14 @@ fn value_as_string(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn value_as_string_allow_empty(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Integer(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
 fn column_index(columns: &[ColumnInfo], names: &[&str]) -> Option<usize> {
     columns
         .iter()
@@ -203,16 +231,37 @@ pub fn parse_object_list(
     let name_idx = column_index(&result.columns, &["name", "Name", "Trigger", "proname"])
         .ok_or_else(|| DriverError::QueryFailed("Object list query missing name column".into()))?;
     let schema_idx = column_index(&result.columns, &["schema", "Db", "nspname"]);
+    let signature_idx = column_index(
+        &result.columns,
+        &["signature", "identity_arguments", "identityArguments"],
+    );
+    let target_schema_idx = column_index(
+        &result.columns,
+        &["target_schema", "targetSchema", "event_object_schema"],
+    );
+    let target_name_idx = column_index(
+        &result.columns,
+        &["target_name", "targetName", "event_object_table", "Table"],
+    );
     let mut out = Vec::new();
     for row in &result.rows {
         let Some(name) = value_as_string(row.get(name_idx).and_then(|v| v.as_ref())) else {
             continue;
         };
         let schema = schema_idx.and_then(|i| value_as_string(row.get(i).and_then(|v| v.as_ref())));
+        let signature = signature_idx
+            .and_then(|i| value_as_string_allow_empty(row.get(i).and_then(|v| v.as_ref())));
+        let target_schema =
+            target_schema_idx.and_then(|i| value_as_string(row.get(i).and_then(|v| v.as_ref())));
+        let target_name =
+            target_name_idx.and_then(|i| value_as_string(row.get(i).and_then(|v| v.as_ref())));
         out.push(DatabaseObject {
             kind: kind.into(),
             schema,
             name,
+            signature,
+            target_schema,
+            target_name,
         });
     }
     Ok(out)
@@ -246,6 +295,24 @@ pub fn extract_object_ddl(result: &QueryResult) -> String {
         .first()
         .and_then(|row| value_as_string(row.get(idx).and_then(|v| v.as_ref())))
         .unwrap_or_default()
+}
+
+/// Extract exactly one non-empty DDL value. A missing object and an ambiguous
+/// overload are both errors so callers cannot accidentally execute a partial
+/// or unrelated definition.
+pub fn extract_object_ddl_checked(result: &QueryResult) -> Result<String, DriverError> {
+    if result.rows.len() > 1 {
+        return Err(DriverError::QueryFailed(
+            "Object DDL lookup returned multiple definitions; provide the full identity".into(),
+        ));
+    }
+    let ddl = extract_object_ddl(result);
+    if ddl.trim().is_empty() {
+        return Err(DriverError::QueryFailed(
+            "Object was not found or its DDL is unavailable".into(),
+        ));
+    }
+    Ok(ddl)
 }
 
 pub fn parse_privilege_list(result: &QueryResult) -> Result<Vec<PrivilegeGrant>, DriverError> {
@@ -317,6 +384,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_object_list_preserves_routine_and_trigger_identity() {
+        let result = QueryResult {
+            columns: vec![
+                col("schema"),
+                col("name"),
+                col("signature"),
+                col("target_schema"),
+                col("target_name"),
+            ],
+            rows: vec![vec![
+                Some(Value::String("public".into())),
+                Some(Value::String("lookup".into())),
+                Some(Value::String("integer".into())),
+                Some(Value::String("public".into())),
+                Some(Value::String("orders".into())),
+            ]],
+            rows_affected: None,
+            execution_time_ms: 0,
+        };
+        let objects = parse_object_list(&result, "function").unwrap();
+        assert_eq!(objects[0].signature.as_deref(), Some("integer"));
+        assert_eq!(objects[0].target_schema.as_deref(), Some("public"));
+        assert_eq!(objects[0].target_name.as_deref(), Some("orders"));
+    }
+
+    #[test]
+    fn parse_object_list_preserves_empty_zero_argument_signature() {
+        let result = QueryResult {
+            columns: vec![col("name"), col("signature")],
+            rows: vec![vec![
+                Some(Value::String("zero_arg".into())),
+                Some(Value::String(String::new())),
+            ]],
+            rows_affected: None,
+            execution_time_ms: 0,
+        };
+        let objects = parse_object_list(&result, "function").unwrap();
+        assert_eq!(objects[0].signature.as_deref(), Some(""));
+    }
+
+    #[test]
     fn parse_object_list_empty_when_no_columns() {
         let result = QueryResult {
             columns: vec![],
@@ -340,6 +448,28 @@ mod tests {
         };
         let ddl = extract_object_ddl(&result);
         assert!(ddl.contains("CREATE FUNCTION"));
+    }
+
+    #[test]
+    fn checked_ddl_rejects_missing_and_ambiguous_results() {
+        let empty = QueryResult {
+            columns: vec![col("ddl")],
+            rows: vec![],
+            rows_affected: None,
+            execution_time_ms: 0,
+        };
+        assert!(extract_object_ddl_checked(&empty).is_err());
+
+        let ambiguous = QueryResult {
+            columns: vec![col("ddl")],
+            rows: vec![
+                vec![Some(Value::String("CREATE FUNCTION a()".into()))],
+                vec![Some(Value::String("CREATE FUNCTION a(integer)".into()))],
+            ],
+            rows_affected: None,
+            execution_time_ms: 0,
+        };
+        assert!(extract_object_ddl_checked(&ambiguous).is_err());
     }
 
     #[test]

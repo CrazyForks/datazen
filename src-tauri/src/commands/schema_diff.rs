@@ -795,6 +795,9 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
             kind: "view".into(),
             schema: snapshot.schema.clone(),
             name: snapshot.name.clone(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
         };
         let current = match fetch_schema_view(driver.as_ref(), &handle, &object).await {
             Ok(value) => value,
@@ -1049,11 +1052,17 @@ mod tests {
             kind: "view".into(),
             schema: Some("public".into()),
             name: "active_users".into(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
         }];
         let target = vec![datazen_driver_api::DatabaseObject {
             kind: "view".into(),
             schema: Some("public".into()),
             name: "legacy_users".into(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
         }];
         let (source_selected, target_selected) =
             select_view_object_pair(&source, &target, &["public.active_users".into()]).unwrap();
@@ -1069,11 +1078,17 @@ mod tests {
                 kind: "view".into(),
                 schema: Some("one".into()),
                 name: "same".into(),
+                signature: None,
+                target_schema: None,
+                target_name: None,
             },
             datazen_driver_api::DatabaseObject {
                 kind: "view".into(),
                 schema: Some("two".into()),
                 name: "same".into(),
+                signature: None,
+                target_schema: None,
+                target_name: None,
             },
         ];
         assert!(select_view_object_pair(&ambiguous, &[], &["same".into()]).is_err());

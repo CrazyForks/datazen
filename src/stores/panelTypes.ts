@@ -83,6 +83,9 @@ export interface DatabaseObjectPanel extends PanelBase {
   objectKind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type';
   objectName: string;
   objectSchema: string | null;
+  objectSignature?: string | null;
+  objectTargetSchema?: string | null;
+  objectTargetName?: string | null;
 }
 
 export interface RedisDbPanel extends PanelBase {

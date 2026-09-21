@@ -9,6 +9,8 @@ import {
 import { useSchemaStore } from '../../../stores/schemaStore';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import { showWebContextMenu } from '../../../stores/contextMenuStore';
+import { getUnifiedRowKey } from '../navigator/utils';
+import type { UnifiedRow } from '../navigator/types';
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const mockGetDatabaseObjects = vi.hoisted(() => vi.fn());
@@ -141,7 +143,6 @@ vi.mock('../../../extensions/generated', () => {
   };
   return {
     DRIVER_DB_ENTRIES,
-    DRIVER_DB_ENTRIES: DRIVER_DB_ENTRIES,
     DRIVER_ICON_ENTRIES: {},
     DRIVER_ICON_PARENTS: {},
     DRIVER_SQL_DIALECTS: {},
@@ -557,6 +558,54 @@ beforeEach(() => {
   mockGetDriverCommands.mockResolvedValue([]);
   useSchemaStore.getState().reset();
   useSchemaStore.getState().setActiveConnection('conn-1');
+});
+
+describe('[tester] navigator object identity keys', () => {
+  it('keeps routine overloads unique', () => {
+    const routineInteger: UnifiedRow = {
+      type: 'object',
+      obj: { kind: 'function', schema: 'public', name: 'lookup', signature: 'integer' },
+      depth: 0,
+      catId: 'functions',
+    };
+    const routineText: UnifiedRow = {
+      type: 'object',
+      obj: { kind: 'function', schema: 'public', name: 'lookup', signature: 'text' },
+      depth: 0,
+      catId: 'functions',
+    };
+
+    expect(getUnifiedRowKey(routineInteger, 0)).not.toBe(getUnifiedRowKey(routineText, 1));
+  });
+
+  it('keeps same-name trigger targets unique', () => {
+    const triggerOrders: UnifiedRow = {
+      type: 'object',
+      obj: {
+        kind: 'trigger',
+        schema: 'public',
+        name: 'audit_trigger',
+        targetSchema: 'public',
+        targetName: 'orders',
+      },
+      depth: 0,
+      catId: 'triggers',
+    };
+    const triggerUsers: UnifiedRow = {
+      type: 'object',
+      obj: {
+        kind: 'trigger',
+        schema: 'public',
+        name: 'audit_trigger',
+        targetSchema: 'public',
+        targetName: 'users',
+      },
+      depth: 0,
+      catId: 'triggers',
+    };
+
+    expect(getUnifiedRowKey(triggerOrders, 2)).not.toBe(getUnifiedRowKey(triggerUsers, 3));
+  });
 });
 
 describe('ConnectionNavigatorTree active connection highlight', () => {
@@ -1695,6 +1744,66 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
     // Object context menu copies the object name.
     await openMenuAndPick(container.querySelector('[data-item-name="fn_calc"]')!, 'copy-name');
     expect(mockWriteText).toHaveBeenCalledWith('fn_calc');
+  });
+
+  it('[tester] dispatches routine signatures and trigger relation identity', async () => {
+    const openObject = vi.fn();
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: null }],
+      {},
+      { viewActions: { openObject } },
+    );
+    await findByText('settings');
+
+    mockGetDatabaseObjects.mockImplementation((_c: string, catId: string) => {
+      if (catId === 'function') {
+        return Promise.resolve([
+          {
+            name: 'lookup',
+            kind: 'function',
+            schema: 'public',
+            signature: 'integer',
+          },
+          { name: 'lookup', kind: 'function', schema: 'public', signature: 'text' },
+        ]);
+      }
+      if (catId === 'trigger') {
+        return Promise.resolve([
+          {
+            name: 'audit_trigger',
+            kind: 'trigger',
+            schema: null,
+            targetSchema: null,
+            targetName: 'orders',
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    fireEvent.click(categoryButton(container, 'function'));
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-item-name="lookup"]').length).toBe(2);
+    });
+    const routines = container.querySelectorAll('[data-item-name="lookup"]');
+    fireEvent.click(routines[0]!);
+    expect(openObject).toHaveBeenCalledWith('function', 'lookup', 'public', 'integer');
+    fireEvent.click(routines[1]!);
+    expect(openObject).toHaveBeenCalledWith('function', 'lookup', 'public', 'text');
+
+    fireEvent.click(categoryButton(container, 'trigger'));
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="audit_trigger"]')).not.toBeNull();
+    });
+    fireEvent.click(container.querySelector('[data-item-name="audit_trigger"]')!);
+    expect(openObject).toHaveBeenCalledWith(
+      'trigger',
+      'audit_trigger',
+      undefined,
+      undefined,
+      undefined,
+      'orders',
+    );
   });
 
   it('caches an empty list when an object category fails to refresh', async () => {

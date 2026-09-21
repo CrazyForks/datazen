@@ -114,8 +114,24 @@ export const databaseCommands = {
   getDatabaseObjects: (dbSessionId: string, kind: string) =>
     invoke<DatabaseObject[]>('get_database_objects', { dbSessionId, kind }),
 
-  getObjectDdl: (dbSessionId: string, kind: string, name: string, schema?: string | null) =>
-    invoke<string>('get_object_ddl', { dbSessionId, kind, name, schema: schema ?? null }),
+  getObjectDdl: (
+    dbSessionId: string,
+    kind: string,
+    name: string,
+    schema?: string | null,
+    signature?: string | null,
+    targetSchema?: string | null,
+    targetName?: string | null,
+  ) =>
+    invoke<string>('get_object_ddl', {
+      dbSessionId,
+      kind,
+      name,
+      schema: schema ?? null,
+      signature: signature ?? null,
+      targetSchema: targetSchema ?? null,
+      targetName: targetName ?? null,
+    }),
 
   getPrivileges: (dbSessionId: string) =>
     invoke<PrivilegeGrant[]>('get_privileges', { dbSessionId }),

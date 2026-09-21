@@ -69,6 +69,11 @@ export interface DatabaseObject {
   kind: DatabaseObjectKind;
   schema?: string | null;
   name: string;
+  /** PostgreSQL routine identity arguments used to disambiguate overloads. */
+  signature?: string | null;
+  /** Relation attached to a trigger, when exposed by the driver. */
+  targetSchema?: string | null;
+  targetName?: string | null;
 }
 
 export interface PrivilegeGrant {

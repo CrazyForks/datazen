@@ -47,6 +47,16 @@ pub struct DatabaseObject {
     pub kind: String,
     pub schema: Option<String>,
     pub name: String,
+    /// PostgreSQL routine identity arguments. This disambiguates overloaded
+    /// functions/procedures without putting SQL syntax into `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Schema/name of the relation a trigger is attached to. A trigger name
+    /// is only unique within its relation on some supported engines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -63,25 +73,28 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
     let family = dialect_family(db_type);
     match (family, kind) {
         ("postgresql", ObjectKind::Function) => Some(
-            "SELECT n.nspname AS schema, p.proname AS name \
+            "SELECT n.nspname AS schema, p.proname AS name, \
+                    pg_get_function_identity_arguments(p.oid) AS signature \
              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
              WHERE n.nspname NOT IN ('pg_catalog','information_schema') \
                AND p.prokind = 'f' \
-             ORDER BY 1, 2"
+             ORDER BY 1, 2, 3"
                 .into(),
         ),
         ("postgresql", ObjectKind::Procedure) => Some(
-            "SELECT n.nspname AS schema, p.proname AS name \
+            "SELECT n.nspname AS schema, p.proname AS name, \
+                    pg_get_function_identity_arguments(p.oid) AS signature \
              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
              WHERE n.nspname NOT IN ('pg_catalog','information_schema') \
                AND p.prokind = 'p' \
-             ORDER BY 1, 2"
+             ORDER BY 1, 2, 3"
                 .into(),
         ),
         ("postgresql", ObjectKind::Trigger) => Some(
-            "SELECT event_object_schema AS schema, trigger_name AS name \
+            "SELECT DISTINCT event_object_schema AS schema, trigger_name AS name, \
+                    event_object_schema AS target_schema, event_object_table AS target_name \
              FROM information_schema.triggers \
-             ORDER BY 1, 2"
+             ORDER BY 1, 2, 4"
                 .into(),
         ),
         ("postgresql", ObjectKind::View) => Some(
@@ -106,13 +119,28 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
              ORDER BY 1, 2"
                 .into(),
         ),
-        ("mysql", ObjectKind::Function) => {
-            Some("SHOW FUNCTION STATUS WHERE Db = DATABASE()".into())
-        }
-        ("mysql", ObjectKind::Procedure) => {
-            Some("SHOW PROCEDURE STATUS WHERE Db = DATABASE()".into())
-        }
-        ("mysql", ObjectKind::Trigger) => Some("SHOW TRIGGERS".into()),
+        ("mysql", ObjectKind::Function) => Some(
+            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+             FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'FUNCTION' \
+             ORDER BY 1, 2"
+                .into(),
+        ),
+        ("mysql", ObjectKind::Procedure) => Some(
+            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+             FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'PROCEDURE' \
+             ORDER BY 1, 2"
+                .into(),
+        ),
+        ("mysql", ObjectKind::Trigger) => Some(
+            "SELECT TRIGGER_SCHEMA AS schema, TRIGGER_NAME AS name, \
+                    EVENT_OBJECT_SCHEMA AS target_schema, EVENT_OBJECT_TABLE AS target_name \
+             FROM information_schema.TRIGGERS \
+             WHERE TRIGGER_SCHEMA = DATABASE() \
+             ORDER BY 1, 2, 4"
+                .into(),
+        ),
         ("mysql", ObjectKind::View) => Some(
             "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name \
              FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() \
@@ -124,9 +152,11 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
              WHERE type = 'view' ORDER BY name"
                 .into(),
         ),
-        ("sqlite", ObjectKind::Trigger) => {
-            Some("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name".into())
-        }
+        ("sqlite", ObjectKind::Trigger) => Some(
+            "SELECT NULL AS schema, name, NULL AS target_schema, tbl_name AS target_name \
+                 FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+                .into(),
+        ),
         ("duckdb", ObjectKind::Trigger) => Some(
             "SELECT NULL AS schema, trigger_name AS name \
              FROM information_schema.triggers \
@@ -187,6 +217,24 @@ pub fn object_ddl_sql(
     name: &str,
     schema: Option<&str>,
 ) -> Option<String> {
+    object_ddl_sql_with_metadata(db_type, kind, name, schema, None, None, None)
+}
+
+/// Build a metadata lookup for an object using its full identity.
+///
+/// `signature` is the PostgreSQL identity-argument string for routines.
+/// `target_schema`/`target_name` disambiguate triggers attached to relations.
+/// All values are encoded as SQL string literals; identifiers used in DDL
+/// statements are quoted with the target dialect's rules.
+pub fn object_ddl_sql_with_metadata(
+    db_type: &str,
+    kind: ObjectKind,
+    name: &str,
+    schema: Option<&str>,
+    signature: Option<&str>,
+    target_schema: Option<&str>,
+    target_name: Option<&str>,
+) -> Option<String> {
     let family = dialect_family(db_type);
     let ident = quote_ident(family, name);
     let schema_ident = schema
@@ -204,21 +252,38 @@ pub fn object_ddl_sql(
             sql_string(name),
             sql_string(schema.unwrap_or("public")),
         )),
-        ("postgresql", ObjectKind::Function | ObjectKind::Procedure) => Some(format!(
+        ("postgresql", ObjectKind::Function | ObjectKind::Procedure) => {
+            let prokind = if kind == ObjectKind::Function { "f" } else { "p" };
+            let signature_filter = signature
+                .map(|value| format!(" AND pg_get_function_identity_arguments(p.oid) = {}", sql_string(value)))
+                .unwrap_or_default();
+            Some(format!(
             "SELECT pg_get_functiondef(p.oid) AS ddl \
              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-             WHERE p.proname = {} AND n.nspname = {}",
+             WHERE p.proname = {} AND n.nspname = {} AND p.prokind = '{}'{}",
             sql_string(name),
             sql_string(schema.unwrap_or("public")),
-        )),
+            prokind,
+            signature_filter,
+        ))
+        }
         ("postgresql", ObjectKind::Trigger) => Some(format!(
-            "SELECT pg_get_triggerdef(t.oid) AS ddl \
+            "SELECT pg_get_triggerdef(t.oid, true) AS ddl \
              FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE t.tgname = {} AND n.nspname = {}",
             sql_string(name),
             sql_string(schema.unwrap_or("public")),
-        )),
+        )).map(|sql| {
+            let mut sql = sql;
+            if let Some(target_schema) = target_schema.or(schema) {
+                sql.push_str(&format!(" AND n.nspname = {}", sql_string(target_schema)));
+            }
+            if let Some(target_name) = target_name {
+                sql.push_str(&format!(" AND c.relname = {}", sql_string(target_name)));
+            }
+            sql
+        }),
         ("postgresql", ObjectKind::Sequence) => {
             let schema_str = sql_string(schema.unwrap_or("public"));
             let name_str = sql_string(name);
@@ -256,12 +321,17 @@ pub fn object_ddl_sql(
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
         ("mysql", ObjectKind::View) => Some(format!(
             "SELECT VIEW_DEFINITION AS ddl FROM information_schema.VIEWS \
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = {}",
-            sql_string(name)
+             WHERE TABLE_SCHEMA = COALESCE(NULLIF({}, ''), DATABASE()) AND TABLE_NAME = {}",
+            sql_string(schema.filter(|s| !s.is_empty()).unwrap_or("")),
+            sql_string(name),
         )),
-        ("mysql", ObjectKind::Function) => Some(format!("SHOW CREATE FUNCTION {ident}")),
-        ("mysql", ObjectKind::Procedure) => Some(format!("SHOW CREATE PROCEDURE {ident}")),
-        ("mysql", ObjectKind::Trigger) => Some(format!("SHOW CREATE TRIGGER {ident}")),
+        ("mysql", ObjectKind::Function) => Some(format!(
+            "SHOW CREATE FUNCTION {qualified}"
+        )),
+        ("mysql", ObjectKind::Procedure) => Some(format!(
+            "SHOW CREATE PROCEDURE {qualified}"
+        )),
+        ("mysql", ObjectKind::Trigger) => Some(format!("SHOW CREATE TRIGGER {qualified}")),
         ("sqlite", ObjectKind::Table) => Some(format!(
             "SELECT sql AS ddl FROM sqlite_master WHERE type = 'table' AND name = {}",
             sql_string(name),
@@ -460,6 +530,71 @@ mod tests {
         assert!(list_objects_sql("duckdb", ObjectKind::Trigger).is_some());
         assert!(list_objects_sql("duckdb", ObjectKind::Sequence).is_some());
         assert!(object_ddl_sql("duckdb", ObjectKind::Sequence, "seq", None).is_some());
+    }
+
+    #[test]
+    fn postgres_routine_catalog_and_ddl_use_overload_identity() {
+        let list = list_objects_sql("postgresql", ObjectKind::Function).unwrap();
+        assert!(list.contains("pg_get_function_identity_arguments"));
+        assert!(list.contains("p.prokind = 'f'"));
+
+        let ddl = object_ddl_sql_with_metadata(
+            "postgresql",
+            ObjectKind::Function,
+            "lookup",
+            Some("app"),
+            Some("integer, text"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(ddl.contains("pg_get_function_identity_arguments"));
+        assert!(ddl.contains("'integer, text'"));
+        assert!(ddl.contains("p.prokind = 'f'"));
+    }
+
+    #[test]
+    fn ddl_identity_literals_escape_sql_metacharacters() {
+        let sql = object_ddl_sql_with_metadata(
+            "postgresql",
+            ObjectKind::Function,
+            "lookup' OR 1=1 --",
+            Some("app'\"schema"),
+            Some("integer' OR 1=1 --"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(sql.contains("p.proname = 'lookup'' OR 1=1 --'"));
+        assert!(sql.contains("n.nspname = 'app''\"schema'"));
+        assert!(sql.contains("= 'integer'' OR 1=1 --'"));
+    }
+
+    #[test]
+    fn trigger_catalog_and_ddl_include_attached_relation() {
+        let list = list_objects_sql("mysql", ObjectKind::Trigger).unwrap();
+        assert!(list.contains("information_schema.TRIGGERS"));
+        assert!(list.contains("target_name"));
+
+        let ddl = object_ddl_sql_with_metadata(
+            "postgresql",
+            ObjectKind::Trigger,
+            "audit_trigger",
+            Some("app"),
+            None,
+            Some("app"),
+            Some("orders"),
+        )
+        .unwrap();
+        assert!(ddl.contains("c.relname = 'orders'"));
+    }
+
+    #[test]
+    fn unsupported_sequence_families_fail_closed() {
+        assert!(list_objects_sql("mysql", ObjectKind::Sequence).is_none());
+        assert!(list_objects_sql("sqlite", ObjectKind::Sequence).is_none());
+        assert!(object_ddl_sql("mysql", ObjectKind::Sequence, "seq", None).is_none());
+        assert!(object_ddl_sql("sqlite", ObjectKind::Sequence, "seq", None).is_none());
     }
 
     #[test]

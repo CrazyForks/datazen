@@ -134,6 +134,9 @@ export interface ConnectionNavigatorTreeProps {
       kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
       name: string,
       schema?: string,
+      signature?: string,
+      targetSchema?: string,
+      targetName?: string,
     ) => void;
     openQueryHistory?: () => void;
     openServerStatus?: (ctx?: ConnectionOpenTarget) => void;

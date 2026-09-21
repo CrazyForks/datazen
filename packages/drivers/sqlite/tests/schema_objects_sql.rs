@@ -34,3 +34,11 @@ fn function_list_returns_none_so_host_skips_query() {
     assert!(list_objects_sql("sqlite", ObjectKind::Function).is_none());
     assert!(list_privileges_sql("sqlite").is_none());
 }
+
+#[test]
+fn trigger_catalog_exposes_target_table_and_sequences_are_unsupported() {
+    let trigger_list = list_objects_sql("sqlite", ObjectKind::Trigger).unwrap();
+    assert!(trigger_list.contains("tbl_name AS target_name"));
+    assert!(list_objects_sql("sqlite", ObjectKind::Sequence).is_none());
+    assert!(object_ddl_sql("sqlite", ObjectKind::Sequence, "seq", None).is_none());
+}

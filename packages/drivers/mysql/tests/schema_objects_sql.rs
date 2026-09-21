@@ -5,9 +5,10 @@ use datazen_driver_api::schema_objects::{
 };
 
 #[test]
-fn procedure_list_uses_show_status() {
+fn procedure_list_uses_information_schema() {
     let sql = list_objects_sql("mysql", ObjectKind::Procedure).unwrap();
-    assert!(sql.to_ascii_uppercase().contains("SHOW PROCEDURE"));
+    assert!(sql.contains("information_schema.ROUTINES"));
+    assert!(sql.contains("ROUTINE_TYPE = 'PROCEDURE'"));
 }
 
 #[test]
@@ -17,13 +18,25 @@ fn list_and_ddl_cover_all_kinds() {
         .contains("FUNCTION"));
     assert!(list_objects_sql("mysql", ObjectKind::Trigger)
         .unwrap()
-        .contains("TRIGGERS"));
+        .contains("information_schema.TRIGGERS"));
     assert!(object_ddl_sql("mysql", ObjectKind::Procedure, "p", None)
         .unwrap()
         .contains("SHOW CREATE PROCEDURE"));
     assert!(object_ddl_sql("mysql", ObjectKind::Trigger, "t", None)
         .unwrap()
         .contains("SHOW CREATE TRIGGER"));
+}
+
+#[test]
+fn routines_and_triggers_preserve_identity_and_mysql_has_no_sequences() {
+    let functions = list_objects_sql("mysql", ObjectKind::Function).unwrap();
+    assert!(functions.contains("ROUTINE_TYPE = 'FUNCTION'"));
+    let triggers = list_objects_sql("mysql", ObjectKind::Trigger).unwrap();
+    assert!(triggers.contains("EVENT_OBJECT_TABLE AS target_name"));
+    let ddl = object_ddl_sql("mysql", ObjectKind::Function, "f`n", Some("db`name")).unwrap();
+    assert!(ddl.contains("SHOW CREATE FUNCTION `db``name`.`f``n`"));
+    assert!(list_objects_sql("mysql", ObjectKind::Sequence).is_none());
+    assert!(object_ddl_sql("mysql", ObjectKind::Sequence, "seq", None).is_none());
 }
 
 #[test]

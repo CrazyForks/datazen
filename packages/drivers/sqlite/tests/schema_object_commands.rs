@@ -104,11 +104,122 @@ async fn list_objects_and_get_ddl_for_sqlite_trigger() {
     .unwrap();
     assert!(empty.data["objects"].as_array().unwrap().is_empty());
 
+    let unsupported_sequence = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "list_objects",
+        json!({ "kind": "sequence" }),
+    )
+    .await
+    .unwrap();
+    assert!(unsupported_sequence.data["objects"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let missing = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({ "kind": "trigger", "name": "missing_trigger" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(missing.to_string().contains("not found"));
+
     let privs =
         execute_schema_object_command(&driver, "sqlite", &handle, "list_privileges", json!({}))
             .await
             .unwrap();
     assert!(privs.data["grants"].as_array().unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn test_tester_trigger_identity_journey_preserves_targets_and_escapes_names() {
+    let dir = std::env::temp_dir().join(format!(
+        "datazen-sqlite-trigger-identity-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("trigger_identity.db");
+    let path_str = path.to_string_lossy().to_string();
+    std::fs::File::create(&path).unwrap();
+
+    let driver = SqliteDriver::new();
+    let handle = driver.connect(&test_config(&path_str)).await.unwrap();
+    driver
+        .execute(
+            &handle,
+            r#"
+            CREATE TABLE orders (id INTEGER PRIMARY KEY);
+            CREATE TABLE audit_log (id INTEGER PRIMARY KEY);
+            CREATE TRIGGER "orders_audit'" AFTER INSERT ON orders
+            BEGIN SELECT 1; END;
+            CREATE TRIGGER audit_log_trigger AFTER INSERT ON audit_log
+            BEGIN SELECT 1; END;
+            "#,
+        )
+        .await
+        .unwrap();
+
+    let list = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "list_objects",
+        json!({ "kind": "trigger" }),
+    )
+    .await
+    .unwrap();
+    let objects = list.data["objects"].as_array().unwrap();
+    assert_eq!(objects.len(), 2);
+    let order_trigger = objects
+        .iter()
+        .find(|object| object["name"] == "orders_audit'")
+        .expect("quoted trigger should be listed");
+    assert_eq!(order_trigger["targetName"], "orders");
+    assert!(order_trigger["targetSchema"].is_null());
+    let audit_trigger = objects
+        .iter()
+        .find(|object| object["name"] == "audit_log_trigger")
+        .expect("second trigger should be listed");
+    assert_eq!(audit_trigger["targetName"], "audit_log");
+
+    let ddl = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({
+            "kind": "trigger",
+            "name": "orders_audit'",
+            "targetSchema": null,
+            "targetName": "orders"
+        }),
+    )
+    .await
+    .unwrap();
+    let ddl = ddl.data["ddl"].as_str().unwrap();
+    assert!(ddl.to_ascii_uppercase().contains("CREATE TRIGGER"));
+    assert!(ddl.contains("orders_audit'"));
+    assert!(ddl.contains("orders"));
+
+    let unsupported = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({ "kind": "function", "name": "not_supported" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(unsupported
+        .to_string()
+        .contains("does not expose object DDL"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
