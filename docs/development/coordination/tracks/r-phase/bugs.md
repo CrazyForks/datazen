@@ -730,7 +730,7 @@ $ grep -n "datazen-r-phase\|/Users/wuxiaolong" /tmp/rphase2-vitest-scripts.log
 
 ## r-phase-BUG-007 · 契约 §2.4.2 行内计数漂移（「单测调用 7 行」实测 15 行；文档数字失配，低危非阻断）
 
-- **状态**：`待修复`（第 2 轮复测新登记，2026-09-21；只登记不修）
+- **状态**：`待复测`（第 2 轮复测新登记 2026-09-21；第 3 轮 Coder 修复回合已提交，待独立 Tester 复测）
 - **严重度**：低（不影响运行时与门禁；但验收标准 5 要求文档抽验「路径/符号/行号/数字」零失配，该数字现为失配）
 - **发现方式**：第 2 轮复测实例的边界遗漏审查（**非** Coder 修复 diff 引入；属 Wave 4-B「契约回扫早于 R-8 单测落地」的时间差产物）
 - **位置**：`docs/development/driver-api-dependency-boundary.md:283`（§2.4.2 末段）
@@ -777,3 +777,15 @@ $ git show 5328cd5e0:packages/ui/src/__tests__/i18n.test.tsx | grep -c "setLocal
 
 - 派 docs 将 `:283` 的「（定义处 1 行 + 单测调用 7 行）」改为当前实测值（1 + 15）；
 - 或改为**不含具体行数的写法**（如「定义处 1 行 + 若干单测调用行，均在上述两文件内」），从根源上消除单测后续扩写再次漂移的隐患（更稳，推荐）。
+
+### 修复回合（第 3 轮 Coder，2026-09-21；协调者裁定本轮只修本条，修完即复测与关账）
+
+- **改了什么**：契约 §2.4.2 末句（`docs/development/driver-api-dependency-boundary.md:283`）「定义处 1 行 + 单测调用 7 行」→「定义处 1 行 + 单测调用 **15** 行」，并在同句内补写防腐坏口径——明示**行数的权威落点即 `packages/ui/src/__tests__/i18n.test.tsx` 本身**、15 为当前快照值（2026-09-21 回扫）、给出复核命令与扣减口径（`grep -c "setLocale("` 会命中 `:100` 的 JSDoc 注释提及，需 −1；`:7` 的 `import` 行不计），并注明 R2 豁免是文件级清单、行数变化不触发门禁。契约其它内容零改动；未改任何代码与护栏脚本。
+- **同源数字排查**：全仓 grep「单测调用 / 7 行 / 7 处 / 7 lines」后确认，**该断言的现役拷贝只有契约 `:283` 一处**（已改），无其它文档把它当现役事实重复；本 `bugs.md` 与 `tracks/r-phase/progress.md` 中出现的「7 行」均处在本条漂移取证 / 历史记录语境（同一小节内均给出实测 15 行），非现役断言，按缺陷报告不动本体；`tracks/import-guard/progress.md:177` 的「7 处」属他轨历史决策记录且按纪律不可触碰 ⇒ **无其它同源残留**（英文指南 `independent-driver-development.en.md:223` 只写「豁免定义文件与其自身单测」的文件级口径，不含行数）。
+- **复测命令与真实数字**（worktree @ HEAD `283d2ad05`，与第 2 轮 Tester 同口径）：
+  - `grep -n "setLocale(" packages/ui/src/__tests__/i18n.test.tsx` → **16 行命中**：`:29/34/40/56/68/79/82/142/146/153/170/179/192/200/208` 共 **15 行调用** + `:100` 1 行 JSDoc 注释提及；按契约口径「注释文字不算调用」扣除后 **调用 = 15 行**；
+  - `grep "setLocale" packages/ui/src/__tests__/i18n.test.tsx | wc -l` → **17**（= 1 行 `:7` import + 15 行调用 + 1 行注释，与 Tester 实测一致）；
+  - `grep -n "setLocale(" packages/ui/src/i18n.ts` → `:34` 恰 1 行（定义处，未变）；
+  - 契约现文复核：`grep -n "单测调用" docs/development/driver-api-dependency-boundary.md` → 1 命中且为「单测调用 **15** 行」。
+- **自证**：`node scripts/check-ci-docs-consistency.mjs` → exit 0（三类检查全绿）；`npx vitest run scripts` → **23 files / 246 pass / 0 fail**（不降）；`git status --porcelain` 干净（本回合仅契约 + 本文件 + `progress.md` 三处文档）。
+- **提交 hash**：`<待回填>`（本回合修复 commit 提交后，由紧随的 hash 回填 commit 于本行回填）。
