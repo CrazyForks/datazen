@@ -62,7 +62,7 @@ Wave 1~3 已把驱动侧对宿主代码的引用清零（`grep ['"]\.\./.*src/` 
 ## 状态
 
 - [x] Coder 完成 → READY_FOR_TEST（commits `3e9014d91` 护栏+单测 / `b56058f46` 四处接入 / `d250e52de` 文档回扫 / `1a64ca904` 本实施记录 / `43e042341` 回扫口径修正，本报告末尾）
-- [ ] Tester 复测 → TEST_DONE
+- [x] Tester 复测 → **TEST_DONE(PASSED)**（复测记录见文末，本 commit）
 
 ## Coder 实施记录
 
@@ -189,3 +189,42 @@ EXIT=0
 - **`scripts/run-regression.sh` 是否纳入新护栏**（开放项 C）。
 - `AGENTS.md:31/232`、`CONTRIBUTING.md:91`、`.gitignore:64` 仍描述已退役的 `src/extensions/generated-locales.ts`（`i18n-drivers` 轨已登记给 `decouple-docs`/hub，本轨无权限改，维持原登记）。
 - 两份驱动指南的 §6.2/§6.3 措辞本轮已随护栏落地更新；后续若 `WebContextMenuHost` 夹具豁免被移除（菜单挂载下沉进 SDK），须同步回扫 2.1.2 与 `ALLOWLIST`（预期从 2 条变 0 条，届时过期豁免检测会主动报错）。
+
+## Tester 复测记录（Wave 4-A · 全新 Tester 实例）
+
+Phase：**TEST_DONE(PASSED)**。复测于 worktree `.worktrees/datazen-import-guard`（分支 `feature/import-guard`，起始 HEAD `83434e73c`）。环境前置：`node scripts/resolve-drivers.mjs --codegen-only --drivers=all`（后切 `--drivers=basic` 复验）+ `node scripts/generate-builtin-locales.mjs`。
+
+### 开工异常（已处置，不构成本轨缺陷）
+
+开工 `git status --short` 非干净：存在**上一 Tester 会话中断残留**的未提交改动（`scripts/__tests__/check-driver-import-boundaries.test.mjs` +1 用例；复测中该会话残留进程还实时改写了 boundary.md/progress.md 的「31→32 例」口径）。逐项核验后**全部 reset 回 HEAD**：新增用例的断言（R2 精确文件豁免 + ui 包其它文件照样红）已由本人以**真实文件注入**独立验证（见下 R2/R3 段），不保留半成品用例，使复测口径与 Coder 提交（31 例/239 tests）严格对齐。
+
+### 8 条验收标准逐条判定（全部实测）
+
+| # | 标准 | 判定 | 实测证据 |
+| --- | --- | --- | --- |
+| 1 | 还原态 exit 0、输出含扫描数/豁免命中/过期豁免 | ✅ | `ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` + `2 allow-listed reference(s) skipped`；`--drivers=basic` 档同样 exit 0 |
+| 2 | 注入三形态 R1 + R2 必红点名 `文件:行`，还原必绿 | ✅ | **本人独立注入**（与 Coder 自证不同文件不同形态组合）：①`packages/drivers/redis/testerProbeR1a.ts:1` `from '../../../src/hooks/useI18n'` ②`packages/drivers/redis/ui/testerProbeR1b.ts:1` `vi.mock('../../../../src/stores/settingsStore')` ③`packages/drivers/testerProbeR1c.ts:1` 动态 `import('../../src/lib/cn')` ④同 ② 文件 `:2` 真实 `setLocale('en')` ⑤`packages/ui/src/testerCarveoutProbe.ts:1`（`@datazen/ui` **非豁免文件**调用 setLocale，裁定 A② 验证）——5 条全部点名报出，`FAILED: 5 violation(s)` EXIT=1；删除探针后 EXIT=0、`git status` 干净 |
+| 3 | `npx vitest run scripts` 全绿 + 覆盖如实 | ✅ | **23 files / 239 tests**（与自报一致）；本轨文件单独覆盖 Lines 100 / Funcs 100 / Stmts 99.26 / Branch 95.42；未覆盖 **statement 仅 2 处**（json 解析实测：`walk()` `:430`/`:436` 目录过滤 continue），真实 fs 分支（默认 root `runCli` 扫全仓 + 真实 fs 过期豁免）已有 2 例单测覆盖，非「只测虚拟树」 |
+| 4 | allowlist 恰好 2 条、无通配、过期豁免 exit 1 | ✅ | 常量逐字段核对 = `redisKeyWebContextMenu.test.tsx` 的 `WebContextMenuHost`（实测该文件 `:5`）与 `useContextMenuStore`（`:9`）说明符逐字节一致；**真实 fs 探针**（node -e 注入 2 条假条目）：文件不存在→`the file no longer exists`、文件存在未命中→`no matching violation was found`，各自报出且 PROBE_EXIT=1 |
+| 5 | 四处接入一致、CI 失败即阻断 | ✅ | `package.json:94` `test:boundaries=node scripts/check-driver-import-boundaries.mjs`；ci.yml `:67-68` 步骤名与文档 2.6 表格逐字一致，位于 `Guard version consistency` 后、i18n warning 前，**无** `continue-on-error`（`:72` 属既有 i18n 步骤）；ci-local.sh `:64-65`、run-full-automation-test.sh `:78` 均 `pnpm test:boundaries \|\| fail` |
+| 6 | tsc 双档 = 0；vite build = 0 | ✅ | `--drivers=all` 与 `--drivers=basic` 分别 `npx tsc --noEmit -p tsconfig.json` exit 0；`npx vite build` exit 0（仅既有 >500kB chunk 提示） |
+| 7 | 既有守卫/测试零回归 | ✅ | redis UI **27/222/0**；全驱动 **33/241**；`src packages/driver-sdk packages/ui` **412/4243**；`check-id-terminology`（1719 files）/ `check-module-layers`（3 rules）/ `check-ci-docs-consistency` 全 exit 0，与本轨基线口径逐项一致 |
+| 8 | 文档回扫事实性 | ✅ | 2.6 无「尚未确定」；2.1.2/2.7 基线 = **生产码 0 / 夹具 2**，旧 34/42 口径仅以「历史上登记过」措辞出现；42 处路径/行号引用逐条抽验零失配（含 `i18n.ts:34`、`localeSync.ts:20/24`、`main.tsx:66`、`meta.ts:4`×2、`i18n-sync-check.mjs:33/34/36/318`、`index.ts:47-50/78/82`、`lazyPacks.ts:21-34`、`domains.ts:21`、`SettingsContent.tsx:91-100`、O-1 三档数字与 i18n-drivers/bugs.md 一致）；3 条 decouple-docs Nit 全部关闭；两份指南标题 zh `#`1/`##`13/`###`7 = en 同 = **21:21**；R2 豁免措辞（2.4.2/2.6/两份指南 §6.2-6.3）与 `R2_FILE_CARVEOUTS` 实现一致，无「整包豁免」残留 |
+
+### 覆盖越界与开放项核验
+
+- `git diff -M 8b66586e4..HEAD --stat`：仅 10 个文件（护栏+单测+四处接入+3 文档+本 progress），逐 commit 核对**无**驱动/宿主业务码、无 `packages/ui/src/i18n.ts`、无 `src-tauri/**`、无 codegen 产物、无 hub.md/他轨文件。
+- 裁定 A：`R2_FILE_CARVEOUTS` 实测为两个精确文件（非 `packages/ui/**`）；注入验证 ui 包其它文件照样红（上表 #2⑤）。契约 2.4.2 措辞一致。
+- 裁定 B：R3 实测恰报 4 处（`locales.test.ts:107`、`driverUiSetup.ts:25,26`、`DocumentConnectionView.tsx:25`）且 advisory 不影响 exit 0；`DocumentConnectionView.tsx:25` 在**基准 `8b66586e4`** 用 `git cat-file` 核实真实存在；2.6/2.7 与本文件开放项 B 均明示其为待整改项，未隐藏。
+- 裁定 C/D 按协调者指示不纳入判定。
+
+### Tester 结论与遗留
+
+- **无 Blocker，未登记 bugs.md**（本轨目录仅 progress.md）。
+- E2E 登记表：本轨纯静态脚本/CI，无 UI 交互路径，**不适用**。
+- **Nit（可留 Wave 4-B，不阻断）**：
+  1. 契约 2.6 单测格「未覆盖部分全部位于 `walk()` 的目录遍历过滤器」——对 **statement** 成立（实测未覆盖语句恰为 `:430/:436`），对 **branch**（95.42%）不完整：另有 `:261/:291/:365/:476/:477/:570` 六处 `??`/默认参数兜底分支未触发，建议措辞补全（Coder progress §4 本身口径是对的）。
+  2. `ci-local.sh` 新步 `3.4/11` 排在了既有 `3.3/11`（i18n warning）之前，执行顺序与 ci.yml 一致但编号观感倒置，纯排版。
+- **环境限制备忘（非缺陷）**：本 worktree 无独立安装态，任何 `pnpm test:*` 均触发 deps-check 且无 TTY 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`（既有 `pnpm test:ids` 复现完全相同）；新接线与既有 guard 同构，CI 首步 `pnpm install` 后即正常。
+
+Tester 复测 commit：见本文件所在提交（`git log -1 --format=%h`）。**未 push。**
