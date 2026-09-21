@@ -212,3 +212,44 @@ async fn test_tester_round2_view_ddl_preserves_single_line_and_spacing_variants(
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn test_tester_round3_view_ddl_strips_mixed_separator_whitespace() {
+    let dir = std::env::temp_dir().join(format!(
+        "datazen-sqlite-schema-view-round3-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("schema_views_round3.db");
+    let path_str = path.to_string_lossy().to_string();
+    std::fs::File::create(&path).unwrap();
+
+    let driver = SqliteDriver::new();
+    let handle = driver.connect(&test_config(&path_str)).await.unwrap();
+    driver
+        .execute(
+            &handle,
+            "CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
+             CREATE VIEW mixed_separator AS \r\n\tSELECT id\r\nFROM source_rows",
+        )
+        .await
+        .unwrap();
+
+    let ddl = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({ "kind": "view", "name": "mixed_separator" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ddl.data["ddl"], "SELECT id\r\nFROM source_rows");
+    assert!(!matches!(
+        ddl.data["ddl"].as_str().unwrap().chars().next(),
+        Some(' ' | '\t' | '\r' | '\n')
+    ));
+    assert!(!ddl.data["ddl"].as_str().unwrap().contains("ATE VIEW"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

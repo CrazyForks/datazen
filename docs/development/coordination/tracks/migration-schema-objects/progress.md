@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_TO_MERGE
 
 ## Scope
 
@@ -44,6 +44,14 @@ FAILED
 - B. Re-ran the SQLite schema-object command suite: 3/3 passed before the new CRLF coverage; after adding the independent variant journey, 3/4 passed and `test_tester_round2_view_ddl_preserves_single_line_and_spacing_variants` failed with actual `\\nSELECT id\\r\\nFROM source_rows`. SQLite object SQL: 4/4 passed. Driver API migration: 6/6; API type-parts focused: 6/6; API schema objects: 5/5; PostgreSQL migration: 12/12; MySQL migration: 11/11; SQLite migration: 6/6; PostgreSQL object SQL: 6/6; MySQL object SQL: 5/5.
 - C. Added a real SQLite integration journey covering uppercase single-line `AS`, extra spaces, CRLF, exact body preservation, and the absence of `ATE VIEW`. The non-CRLF variants pass; CRLF exposes `migration-schema-objects-BUG-002`. Rust coverage instrumentation remains unavailable; changed Rust paths are covered by focused tests except the failing CRLF branch.
 - D. `TEST_FAILED`; see `migration-schema-objects-BUG-002`. All remaining host/frontend/check commands completed successfully: Host `schema_diff` 84/84 through the driver-injection wrapper; Vitest `schemaDiff.test.ts` 15/15; V8 coverage for `src/commands/schemaDiff.ts` was 100% statements, 84.21% branches, 100% functions, and 100% lines; `npx --no-install tsc --noEmit`, rustfmt `--check` on all changed Rust files, and `git diff --check` passed. Rust line/branch coverage instrumentation was unavailable because `cargo-llvm-cov` is not installed. The diff contains only this track's implementation/test files plus the track records; generated files and `Cargo.lock` were restored clean.
+
+## Independent tester 3 — 2026-09-21
+
+- BOOTSTRAP: worktree `/Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-objects`, branch `feature/migration-schema-objects`, coder fix `c5a63d90`, initially clean. Reviewed the fix in `packages/driver-api/src/schema_objects.rs`; it computes the source-body offset from the normalized `AS` marker and strips only separator whitespace, preserving query-body line endings.
+- Re-ran SQLite `schema_object_commands`: 5/5 passed, including BUG-001 multiline `AS`, BUG-002 CRLF, uppercase/lowercase `AS`, extra spaces, LF, tab, exact query body, no `ATE VIEW`, and the new mixed space + CRLF + tab journey `test_tester_round3_view_ddl_strips_mixed_separator_whitespace`. SQLite `schema_objects_sql`: 4/4. Driver API `schema_objects`: 5/5; `schema_migration::type_parts_tests`: 6/6. PostgreSQL object SQL: 6/6; command definitions: 1/1; migration: 12/12. MySQL object SQL: 5/5; command definitions: 1/1; migration: 11/11. SQLite migration: 6/6.
+- Host `schema_diff` focused suite through driver injection: 84/84. Vitest `src/commands/__tests__/schemaDiff.test.ts`: 15/15. Changed-file V8 coverage for `src/commands/schemaDiff.ts`: 100% statements, 84.21% branches, 100% functions, 100% lines. `npx --no-install tsc --noEmit`: passed. `rustfmt --edition 2021 --check` on all track implementation/test Rust files: passed. `git diff --check`: passed.
+- Added only a test regression and this progress record; no business implementation changes. Generated driver files and the injected `Cargo.lock` line were cleaned. No active worktree changes remain after the tester commit below.
+- `TEST_DONE` / `READY_TO_MERGE`: BUG-001 and BUG-002 both pass after `c5a63d90`; no new bugs found. Rust line/branch coverage instrumentation remains unavailable because `cargo-llvm-cov` is not installed; focused Rust suites cover the changed paths.
 
 ## Known limits
 
