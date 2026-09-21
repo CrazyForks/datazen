@@ -33,6 +33,11 @@ READY_FOR_TEST
 - Trigger target metadata is used to disambiguate DDL lookup; trigger migration/rendering remains outside this track.
 - Rust coverage instrumentation was not run because no repository coverage command was available in this worktree.
 
+## Follow-up BUG-001
+
+- ObjectBrowser now keys rows and compares selected/copy state by the complete object identity: kind, schema, name, routine signature, and trigger target schema/name.
+- Overload and trigger identity journeys remain covered by the focused ObjectBrowser, navigator, PostgreSQL, and SQLite tests.
+
 ## Commit
 
 - Coding commit: to be recorded in the READY_FOR_TEST handoff.

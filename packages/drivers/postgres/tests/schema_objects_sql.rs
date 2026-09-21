@@ -84,6 +84,64 @@ fn function_ddl_escapes_quotes_in_name() {
 }
 
 #[test]
+fn test_tester_routine_identity_filters_prokind_and_escapes_query_literals() {
+    let function_list = list_objects_sql("postgresql", ObjectKind::Function).unwrap();
+    assert!(function_list.contains("p.prokind = 'f'"));
+    assert!(function_list.contains("pg_get_function_identity_arguments(p.oid) AS signature"));
+    assert!(!function_list.contains("p.prokind = 'p'"));
+
+    let procedure_list = list_objects_sql("postgresql", ObjectKind::Procedure).unwrap();
+    assert!(procedure_list.contains("p.prokind = 'p'"));
+    assert!(!procedure_list.contains("p.prokind = 'f'"));
+
+    let function_ddl = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Function,
+        "lookup'name",
+        Some("ops'schema"),
+        Some("text, uuid'suffix"),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(function_ddl.contains("p.proname = 'lookup''name'"));
+    assert!(function_ddl.contains("n.nspname = 'ops''schema'"));
+    assert!(function_ddl.contains("p.prokind = 'f'"));
+    assert!(function_ddl.contains("pg_get_function_identity_arguments(p.oid) = 'text, uuid''suffix'"));
+
+    let procedure_ddl = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Procedure,
+        "rebuild",
+        Some("ops"),
+        Some(""),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(procedure_ddl.contains("p.prokind = 'p'"));
+    assert!(procedure_ddl.contains("pg_get_function_identity_arguments(p.oid) = ''"));
+}
+
+#[test]
+fn test_tester_trigger_identity_escapes_relation_literals() {
+    let sql = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Trigger,
+        "audit'trigger",
+        Some("app'schema"),
+        None,
+        Some("target'schema"),
+        Some("orders'table"),
+    )
+    .unwrap();
+    assert!(sql.contains("t.tgname = 'audit''trigger'"));
+    assert!(sql.contains("n.nspname = 'app''schema'"));
+    assert!(sql.contains("n.nspname = 'target''schema'"));
+    assert!(sql.contains("c.relname = 'orders''table'"));
+}
+
+#[test]
 fn privilege_sql_includes_roles_and_table_grants() {
     let pg = list_privileges_sql("postgres").unwrap();
     assert!(pg.contains("role_table_grants"));

@@ -18,6 +18,21 @@ import type { DatabaseObject, DatabaseObjectKind } from '../../types';
 
 const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence'];
 
+function objectIdentityKey(object: DatabaseObject): string {
+  return JSON.stringify([
+    object.kind,
+    object.schema ?? null,
+    object.name,
+    object.signature ?? null,
+    object.targetSchema ?? null,
+    object.targetName ?? null,
+  ]);
+}
+
+function sameObjectIdentity(left: DatabaseObject | null, right: DatabaseObject): boolean {
+  return left !== null && objectIdentityKey(left) === objectIdentityKey(right);
+}
+
 interface ObjectBrowserProps {
   dbSessionId: string;
   databaseType?: string;
@@ -94,15 +109,7 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
   const copyObjectDdl = useCallback(
     async (obj: DatabaseObject) => {
       try {
-        const text =
-          selected?.name === obj.name &&
-          selected?.schema === obj.schema &&
-          selected?.signature === obj.signature &&
-          selected?.targetSchema === obj.targetSchema &&
-          selected?.targetName === obj.targetName &&
-          ddl
-            ? ddl
-            : await fetchObjectDdl(obj);
+        const text = sameObjectIdentity(selected, obj) && ddl ? ddl : await fetchObjectDdl(obj);
         await copyToClipboard(text);
       } catch (e) {
         setRunMessage(e instanceof Error ? e.message : String(e));
@@ -241,12 +248,12 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
           )}
           {objects.map((obj) => (
             <button
-              key={`${obj.schema ?? ''}.${obj.name}`}
+              key={objectIdentityKey(obj)}
               type="button"
               data-testid="object-browser-item"
               className={cn(
                 'flex w-full flex-col items-start px-3 py-1.5 text-left text-[13px] hover:bg-surface-raised',
-                selected?.name === obj.name && selected?.schema === obj.schema
+                sameObjectIdentity(selected, obj)
                   ? 'bg-surface-raised text-fg'
                   : 'text-fg-secondary',
               )}

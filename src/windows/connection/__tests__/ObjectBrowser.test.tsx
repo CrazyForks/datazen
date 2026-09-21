@@ -135,4 +135,64 @@ describe('ObjectBrowser', () => {
       expect(screen.getByDisplayValue(/no ddl/)).toBeInTheDocument();
     });
   });
+
+  it('[tester] passes routine and trigger identity metadata to DDL IPC', async () => {
+    getDatabaseObjects.mockResolvedValueOnce([
+      { kind: 'function', schema: 'public', name: 'lookup', signature: 'integer' },
+    ]);
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
+    const routine = await screen.findByText('lookup');
+    fireEvent.click(routine);
+    await waitFor(() => {
+      expect(getObjectDdl).toHaveBeenCalledWith(
+        'c1',
+        'function',
+        'lookup',
+        'public',
+        'integer',
+        undefined,
+        undefined,
+      );
+    });
+
+    getDatabaseObjects.mockResolvedValueOnce([
+      {
+        kind: 'trigger',
+        schema: null,
+        name: 'audit_trigger',
+        targetSchema: null,
+        targetName: 'orders',
+      },
+    ]);
+    fireEvent.click(screen.getByTestId('object-browser-trigger'));
+    const trigger = await screen.findByText('audit_trigger');
+    fireEvent.click(trigger);
+    await waitFor(() => {
+      expect(getObjectDdl).toHaveBeenCalledWith(
+        'c1',
+        'trigger',
+        'audit_trigger',
+        null,
+        undefined,
+        null,
+        'orders',
+      );
+    });
+  });
+
+  it('[tester] keeps overloaded routines independently selected', async () => {
+    getDatabaseObjects.mockResolvedValueOnce([
+      { kind: 'function', schema: 'public', name: 'lookup', signature: 'integer' },
+      { kind: 'function', schema: 'public', name: 'lookup', signature: 'text' },
+    ]);
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
+    const items = await screen.findAllByTestId('object-browser-item');
+    expect(items).toHaveLength(2);
+
+    fireEvent.click(items[0]!);
+    await waitFor(() => expect(items[0]!.className).toContain('bg-surface-raised'));
+    fireEvent.click(items[1]!);
+    await waitFor(() => expect(items[1]!.className).toContain('bg-surface-raised'));
+    expect(items[0]!.className.split(/\s+/)).not.toContain('bg-surface-raised');
+  });
 });
