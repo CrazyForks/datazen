@@ -65,7 +65,8 @@ function tableDiffHasChanges(diff: TableSchemaDiff): boolean {
     extra.length > 0 ||
     diff.changed.length > 0 ||
     (diff.missingCheckConstraints?.length ?? 0) > 0 ||
-    (diff.extraCheckConstraints?.length ?? 0) > 0
+    (diff.extraCheckConstraints?.length ?? 0) > 0 ||
+    Boolean(diff.tableOptions)
   );
 }
 

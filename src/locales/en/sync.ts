@@ -391,6 +391,10 @@ const pack = {
   'schemaDiff.extraOnTarget': 'Extra on target (DROP)',
   'schemaDiff.checkMissing': 'CHECK constraints missing on target (ADD)',
   'schemaDiff.checkExtra': 'CHECK constraints extra on target (DROP)',
+  'schemaDiff.tableOptions': 'Table options',
+  'schemaDiff.tableOptionComment': 'Comment',
+  'schemaDiff.tableOptionEngine': 'Engine',
+  'schemaDiff.tableOptionCharset': 'Character set',
   'schemaDiff.limitations.title': 'Current limitations',
   'schemaDiff.limitations.noViews':
     'Does not sync views, functions, triggers, or stored procedures',

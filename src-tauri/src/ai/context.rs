@@ -327,6 +327,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("users", &schema);
         assert!(ddl.starts_with("users ("));
@@ -353,6 +354,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("settings", &schema);
         assert!(ddl.contains("DEFAULT 'light'"));
@@ -389,6 +391,7 @@ mod tests {
                 on_delete: "CASCADE".into(),
             }],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("orders", &schema);
         assert!(ddl.contains("FK: user_id -> users.id"));
@@ -404,6 +407,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("empty", &schema);
         assert_eq!(ddl, "empty ()");
@@ -426,6 +430,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("t", &schema);
         assert!(ddl.contains("id int PK"));
@@ -455,6 +460,7 @@ mod tests {
             }],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("t", &schema);
         // PK index should NOT appear in the Indexes section

@@ -220,6 +220,31 @@ describe('SchemaDiffPanel target-only review', () => {
     );
   });
 
+  it('test_tester renders and exports table option changes', () => {
+    const diff = {
+      table: 'orders',
+      missingOnTarget: [],
+      extraOnTarget: [],
+      added: [],
+      removed: [],
+      changed: [],
+      tableOptions: {
+        source: { comment: "owner's orders", engine: 'InnoDB', charset: 'utf8mb4' },
+        target: { comment: 'legacy orders', engine: 'MyISAM', charset: 'latin1' },
+        changes: ['comment', 'engine', 'charset'],
+      },
+    };
+
+    render(<SchemaDiffPanel diff={diff} />);
+    expect(screen.getByText('schemaDiff.tableOptions')).toBeInTheDocument();
+    expect(screen.getByText("~ comment: legacy orders -> owner's orders")).toBeInTheDocument();
+    expect(screen.getByText('~ engine: MyISAM -> InnoDB')).toBeInTheDocument();
+    expect(screen.getByText('~ charset: latin1 -> utf8mb4')).toBeInTheDocument();
+    expect(formatSchemaDiffText(diff)).toBe(
+      "-- Schema diff: orders\n~ table comment: legacy orders -> owner's orders\n~ table engine: MyISAM -> InnoDB\n~ table charset: latin1 -> utf8mb4",
+    );
+  });
+
   it('supports legacy aliases and identifies an unchanged schema', () => {
     const { rerender } = render(
       <SchemaDiffPanel

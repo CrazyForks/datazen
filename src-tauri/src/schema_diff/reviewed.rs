@@ -214,6 +214,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         assert!(validate_snapshot("t", &old, &old).is_ok());
         let mut current = old.clone();
@@ -242,6 +243,7 @@ mod tests {
                 name: "t_positive_id".into(),
                 expression: "id > 0".into(),
             }],
+            table_options: Default::default(),
         };
         assert!(validate_snapshot("t", &old, &old).is_ok());
         let mut current = old.clone();
@@ -266,6 +268,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let disappeared = TableSchema {
             table_name: "archive".into(),
@@ -274,6 +277,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
 
         assert!(validate_snapshot("archive", &reviewed, &reviewed).is_ok());

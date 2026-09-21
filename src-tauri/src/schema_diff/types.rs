@@ -1,5 +1,6 @@
 //! Shared types for schema diff plans and deploy results.
 
+use crate::db::TableOptions;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,6 +20,22 @@ pub struct ColumnSnapshot {
 pub struct CheckConstraintSnapshot {
     pub name: String,
     pub expression: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TableOptionChange {
+    Comment,
+    Engine,
+    Charset,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TableOptionsDiff {
+    pub source: TableOptions,
+    pub target: TableOptions,
+    pub changes: Vec<TableOptionChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,6 +134,8 @@ pub struct TableColumnDiff {
     pub missing_check_constraints: Vec<CheckConstraintSnapshot>,
     #[serde(default)]
     pub extra_check_constraints: Vec<CheckConstraintSnapshot>,
+    #[serde(default)]
+    pub table_options: Option<TableOptionsDiff>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

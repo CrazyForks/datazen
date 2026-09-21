@@ -324,6 +324,30 @@ pub struct TableInfo {
     pub row_count: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableOptions {
+    /// Table comment when the driver can read and render it without guessing.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Storage engine (currently populated by the MySQL-family driver only).
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Default character set (currently populated by the MySQL-family driver only).
+    #[serde(default)]
+    pub charset: Option<String>,
+}
+
+impl Default for TableOptions {
+    fn default() -> Self {
+        Self {
+            comment: None,
+            engine: None,
+            charset: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TableSchema {
@@ -334,6 +358,8 @@ pub struct TableSchema {
     pub foreign_keys: Vec<ForeignKeyInfo>,
     #[serde(default)]
     pub check_constraints: Vec<CheckConstraint>,
+    #[serde(default)]
+    pub table_options: TableOptions,
 }
 
 impl TableSchema {
@@ -785,6 +811,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: TableOptions::default(),
         }
     }
 

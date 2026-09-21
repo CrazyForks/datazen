@@ -226,6 +226,7 @@ fn schema(names: &[&str]) -> TableSchema {
         indexes: vec![],
         foreign_keys: vec![],
         check_constraints: vec![],
+        table_options: Default::default(),
     }
 }
 fn mapping(source: &str, target: &str) -> ColumnMapping {

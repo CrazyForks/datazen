@@ -136,5 +136,6 @@ pub(crate) fn diff_table_schemas_ir(
         changed,
         missing_check_constraints: Vec::new(),
         extra_check_constraints: Vec::new(),
+        table_options: None,
     }
 }

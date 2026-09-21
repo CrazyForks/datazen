@@ -735,6 +735,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let types = super::resolve_projection_types(&result, &schema, "mysql").unwrap();
         let set =

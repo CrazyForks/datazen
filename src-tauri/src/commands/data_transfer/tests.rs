@@ -78,6 +78,7 @@ fn auto_map_columns_matches_names_only() {
         indexes: vec![],
         foreign_keys: vec![],
         check_constraints: vec![],
+        table_options: Default::default(),
     };
     let tgt = TableSchema {
         table_name: "t".into(),
@@ -94,6 +95,7 @@ fn auto_map_columns_matches_names_only() {
         indexes: vec![],
         foreign_keys: vec![],
         check_constraints: vec![],
+        table_options: Default::default(),
     };
     let maps = auto_map_columns(&src, &tgt);
     assert_eq!(maps.len(), 1);
@@ -526,6 +528,7 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
         indexes: vec![],
         foreign_keys: vec![],
         check_constraints: vec![],
+        table_options: Default::default(),
     });
     options.columns = options
         .table_schema
