@@ -9,10 +9,14 @@
  * it matters and that the shipped allow-list is exactly the coordinator ruling.
  */
 import { describe, expect, it } from 'vitest';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import {
   ALLOWLIST,
+  EXTERNAL_ADVISORY_NOTE,
   RULES,
   checkDriverImportBoundaries,
+  createGitIgnorePredicate,
   resolveSpecifier,
   runCli,
   scanCode,
@@ -245,6 +249,69 @@ describe('R3 · host must not import driver internals', () => {
     });
     expect(result.code).toBe(0);
     expect(result.out).not.toContain('advisory');
+  });
+});
+
+// BUG-008 blocking scope: rules only fail the gate for source this repository
+// tracks. Violations inside gitignored external trees (git-driver clones under
+// `packages/drivers/<id>/`, staged Pro EPs under `packages/pro-extensions/`)
+// are downgraded to advisory and never absorbed into the allow-list.
+describe('tracking-scope classification (BUG-008)', () => {
+  const SUPERSET_FILE = 'packages/drivers/superset/ui/SupersetConnectionFields.tsx';
+  const EP_TEST_FILE = 'packages/pro-extensions/sql-editor-pro/src/locales/__tests__/locales.test.ts';
+  /** One R1 (external clone), one R2 (staged Pro EP) and one R3 (tracked host). */
+  const MIXED_TREE = {
+    [SUPERSET_FILE]: "import { useI18n } from '../../../../src/hooks/useI18n';\n",
+    [EP_TEST_FILE]: "import { setLocale } from '@datazen/ui';\nsetLocale('en');\n",
+    'src/test/driverUiSetup.ts': "import '../../packages/drivers/redis/ui/shared/meta';\n",
+  };
+  const ignoredExternal = (rel) =>
+    rel.startsWith('packages/drivers/superset/') || rel.startsWith('packages/pro-extensions/');
+
+  it('downgrades R1/R2 violations in ignored external trees to advisory, exit 0', () => {
+    const result = run(MIXED_TREE, { isIgnored: ignoredExternal });
+    expect(result.code).toBe(0);
+    expect(result.err).toBe('');
+    expect(result.out).toContain(`R1 (advisory) ${SUPERSET_FILE}:1`);
+    expect(result.out).toContain(`R2 (advisory) ${EP_TEST_FILE}:2`);
+    // each downgraded finding is tagged so the developer sees who owns the fix …
+    expect(result.out.split(EXTERNAL_ADVISORY_NOTE)).toHaveLength(3); // 2 findings + trailing piece
+    // … while the plain R3 host advisory keeps its usual shape
+    expect(result.out).toContain('R3 (advisory) src/test/driverUiSetup.ts:1');
+    expect(result.out).toContain('3 advisory finding(s)');
+  });
+
+  it('keeps the same violations blocking (exit 1) when the files are tracked', () => {
+    const result = run(MIXED_TREE, { isIgnored: () => false });
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(`R1 ${SUPERSET_FILE}:1`);
+    expect(result.err).toContain(`R2 ${EP_TEST_FILE}:2`);
+    expect(result.err).toContain('FAILED: 2 violation(s)');
+    expect(result.err).not.toContain(EXTERNAL_ADVISORY_NOTE);
+  });
+
+  it('virtual trees default to all-tracked (no git consulted, gate stays strict)', () => {
+    const result = run({ [SUPERSET_FILE]: MIXED_TREE[SUPERSET_FILE] });
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(`R1 ${SUPERSET_FILE}:1`);
+  });
+
+  it('createGitIgnorePredicate answers from the real repository and caches per file', () => {
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const isIgnored = createGitIgnorePredicate(root);
+    // tracked source ⇒ never ignored, even where a glob would match
+    expect(isIgnored('packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx')).toBe(
+      false,
+    );
+    // not tracked + covered by `.gitignore` `/packages/drivers/*` ⇒ external
+    expect(isIgnored('packages/drivers/not-a-builtin-driver/ui/probe.tsx')).toBe(true);
+    // second call hits the cache and returns the same verdict
+    expect(isIgnored('packages/drivers/not-a-builtin-driver/ui/probe.tsx')).toBe(true);
+  });
+
+  it('createGitIgnorePredicate fails closed (tracked) when git cannot answer', () => {
+    const isIgnored = createGitIgnorePredicate('/tmp/definitely-not-a-datazen-root');
+    expect(isIgnored('packages/drivers/superset/ui/probe.tsx')).toBe(false);
   });
 });
 

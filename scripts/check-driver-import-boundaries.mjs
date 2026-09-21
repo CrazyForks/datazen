@@ -46,9 +46,23 @@
  * wildcards. Entries that stop matching (file gone, or violation fixed) are
  * reported as expired exemptions so the list cannot silently rot.
  *
- * Exit codes: 0 clean · 1 blocking violation(s) or expired exemption(s) ·
- * 2 the guard could not scan anything (wrong repo root / broken checkout).
+ * Blocking scope (BUG-008 ruling): a rule with `blocking: true` only fails the
+ * gate for **source this repository tracks**. A local full checkout may carry
+ * gitignored external trees — git-driver clones under `packages/drivers/<id>/`
+ * (`.gitignore` `/packages/drivers/*` + per-builtin un-ignores) and Pro EPs
+ * under `packages/pro-extensions/` (each its own git repo). Those are not this
+ * repo's code, so findings there are downgraded to **advisory** (still listed
+ * file:line, counted, but exit code stays 0) and flagged as external drift to
+ * be fixed in that repository — never absorbed into `ALLOWLIST`. Classification
+ * runs `git check-ignore` **per violating file only** (single-digit calls),
+ * never on the walk hot path. If git is unavailable or errors, the file is
+ * treated as tracked (fail-safe: the gate stays strict).
+ *
+ * Exit codes: 0 clean (external-tree advisories do not count) · 1 blocking
+ * violation(s) or expired exemption(s) · 2 the guard could not scan anything
+ * (wrong repo root / broken checkout).
  */
+import { execFileSync } from 'child_process';
 import { readdirSync, existsSync, readFileSync } from 'fs';
 import { dirname, join, posix, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -460,12 +474,46 @@ function createFsAdapter(root) {
   };
 }
 
+/** Suffix that makes external-tree downgrades self-explanatory in the report. */
+export const EXTERNAL_ADVISORY_NOTE =
+  'external (untracked) repo — contract drift to be fixed in that repo, not here';
+
+/**
+ * Per-file "is this path git-ignored (i.e. external code this repo does not
+ * track)?" predicate backed by `git check-ignore`. Invoked **only** after a
+ * blocking-rule violation is found (single-digit call counts), never while
+ * walking the tree. `git check-ignore` consults the index first, so tracked
+ * files exit non-zero even if a pattern would match them; any git failure
+ * (missing git, symlinked path, non-repo) is treated as "tracked" so the gate
+ * can never be loosened by a broken environment.
+ *
+ * @param {string} root repository root the predicate runs in
+ * @returns {(rel: string) => boolean}
+ */
+export function createGitIgnorePredicate(root) {
+  const cache = new Map();
+  return (rel) => {
+    const cached = cache.get(rel);
+    if (cached !== undefined) return cached;
+    let ignored = false;
+    try {
+      execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd: root, stdio: 'ignore' });
+      ignored = true;
+    } catch {
+      ignored = false; // exit 1 = not ignored · exit ≥128 = fail-safe to tracked
+    }
+    cache.set(rel, ignored);
+    return ignored;
+  };
+}
+
 /**
  * @param {{
  *   root?: string,
  *   files?: Record<string, string>,           // virtual file tree (tests)
  *   allowlist?: Array<{ rule: string, file: string, specifier: string }>,
  *   checkExpiredAllowlist?: boolean,
+ *   isIgnored?: (rel: string) => boolean,     // tracking-scope override (tests)
  *   log?: (...args: unknown[]) => void,
  *   error?: (...args: unknown[]) => void,
  * }} [opts]
@@ -477,6 +525,10 @@ export function checkDriverImportBoundaries(opts = {}) {
   const error = opts.error ?? console.error.bind(console);
   const allowlist = opts.allowlist ?? ALLOWLIST;
   const checkExpired = opts.checkExpiredAllowlist ?? true;
+  // Virtual trees carry no git state: default to "everything tracked" unless a
+  // test injects its own predicate. Real scans classify via `git check-ignore`.
+  const isIgnored =
+    opts.isIgnored ?? (opts.files === undefined ? createGitIgnorePredicate(root) : () => false);
 
   const adapter =
     opts.files === undefined
@@ -513,6 +565,13 @@ export function checkDriverImportBoundaries(opts = {}) {
         allowed += 1;
         continue;
       }
+      // BUG-008: findings in files this repo does not track (gitignored
+      // external trees: git-driver clones, staged Pro EPs) never block the
+      // gate — they are reported as advisories to be fixed upstream.
+      if (finding.rule.blocking && isIgnored(finding.file)) {
+        advisory.push({ ...finding, external: true });
+        continue;
+      }
       (finding.rule.blocking ? blocked : advisory).push(finding);
     }
   }
@@ -535,7 +594,8 @@ export function checkDriverImportBoundaries(opts = {}) {
     error(`    ${finding.text}`);
   }
   for (const finding of advisory) {
-    log(`${tag} ${finding.rule.id} (advisory) ${finding.file}:${finding.line}: ${finding.detail}`);
+    const note = finding.external ? ` · ${EXTERNAL_ADVISORY_NOTE}` : '';
+    log(`${tag} ${finding.rule.id} (advisory) ${finding.file}:${finding.line}: ${finding.detail}${note}`);
   }
   for (const { entry, fileMissing } of expired) {
     const why = fileMissing
