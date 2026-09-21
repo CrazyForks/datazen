@@ -7,8 +7,12 @@ import { rowToRecord } from '../../lib/rowToRecord';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { DetailPanel } from '../../components/DataTable/DetailPanel';
 import { AiChatPanel } from '../../components/ai/AiChatPanel';
-import type { DatabaseType } from '../../types';
+import type { ColumnSchema, DatabaseType } from '../../types';
 import type { AiChatDraftRequest } from './query/aiDraftBridge';
+
+const NO_COLUMNS: ColumnSchema[] = [];
+const NO_ROWS: Record<string, unknown>[] = [];
+const NO_SELECTED: Set<number> = new Set();
 
 export interface ContentViewDrawersProps {
   activePanel: Panel | null;
@@ -50,12 +54,17 @@ export function ContentViewDrawers({
     storageKey: 'connection.aiSidebar',
   });
 
-  const tableColumns = useTableDataStore((s) => s.columns);
-  const tableRows = useTableDataStore((s) => s.rows);
-  const selectedRows = useTableDataStore((s) => s.selectedRows);
-  const detailRowIndex = useTableDataStore((s) => s.detailRowIndex);
-  const updateCell = useTableDataStore((s) => s.updateCell);
-  const applyColumnToRows = useTableDataStore((s) => s.applyColumnToRows);
+  const detailPanelId =
+    activePanel && (activePanel.type === 'table' || activePanel.type === 'view')
+      ? activePanel.id
+      : null;
+  const tableSlice = useTableDataStore((s) =>
+    detailPanelId ? s.byPanel.get(detailPanelId) : undefined,
+  );
+  const tableColumns = tableSlice?.columns ?? NO_COLUMNS;
+  const tableRows = tableSlice?.rows ?? NO_ROWS;
+  const selectedRows = tableSlice?.selectedRows ?? NO_SELECTED;
+  const detailRowIndex = tableSlice?.detailRowIndex ?? null;
 
   const activeQueryExec = usePanelStore((s) =>
     activePanel?.type === 'query' ? s.queryExec.get(activePanel.id) : undefined,
@@ -103,17 +112,18 @@ export function ContentViewDrawers({
 
   const handleDetailFieldEdit = useCallback(
     (row: number, col: string, value: unknown) => {
+      const store = useTableDataStore.getState();
       if (activePanel?.type === 'table') {
         if (selectedRows.size > 1) {
-          applyColumnToRows(col, value, [...selectedRows]);
+          store.applyColumnToRows(activePanel.id, col, value, [...selectedRows]);
         } else {
-          updateCell(row, col, value);
+          store.stageCellChange(activePanel.id, row, col, value);
         }
       } else if (activePanel?.type === 'query' && activeQueryExec) {
         updateResultCell(activePanel.id, activeQueryExec.activeResultIdx, row, col, value);
       }
     },
-    [activePanel, activeQueryExec, updateCell, updateResultCell, applyColumnToRows, selectedRows],
+    [activePanel, activeQueryExec, updateResultCell, selectedRows],
   );
 
   return (

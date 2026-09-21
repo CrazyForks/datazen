@@ -11,16 +11,9 @@ const schemaStore = vi.hoisted(() => ({
   setActiveConnection: vi.fn(),
   removeConnection: vi.fn(),
 }));
-const tableDataStore = vi.hoisted(() => ({
-  setActiveConnection: vi.fn(),
-  removeConnection: vi.fn(),
-}));
 
 vi.mock('../../../stores/schemaStore', () => ({
   useSchemaStore: { getState: () => schemaStore },
-}));
-vi.mock('../../../stores/tableDataStore', () => ({
-  useTableDataStore: { getState: () => tableDataStore },
 }));
 
 describe('[tester] connectionPageUtils', () => {
@@ -74,13 +67,11 @@ describe('[tester] connectionPageUtils', () => {
     expect(consumePendingConnection()).toBeNull();
   });
 
-  it('syncStoresActiveConnection and removeConnectionFromStores delegate to stores', () => {
+  it('syncStoresActiveConnection and removeConnectionFromStores delegate to the schema store', () => {
     syncStoresActiveConnection('sess-1');
     expect(schemaStore.setActiveConnection).toHaveBeenCalledWith('sess-1');
-    expect(tableDataStore.setActiveConnection).toHaveBeenCalledWith('sess-1');
 
     removeConnectionFromStores('sess-1');
     expect(schemaStore.removeConnection).toHaveBeenCalledWith('sess-1');
-    expect(tableDataStore.removeConnection).toHaveBeenCalledWith('sess-1');
   });
 });

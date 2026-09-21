@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import { TableView } from '../TableView';
+import { emptyTableState } from '../../../stores/tableData/connectionState';
+import type { TableState } from '../../../stores/tableData/types';
+import type { TableChangeContext } from '../../../lib/tableChanges';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -81,15 +84,15 @@ vi.mock('../../../components/ai/NlFilterInput', () => ({
   NlFilterInput: () => <div data-testid="mock-nl-filter" />,
 }));
 
-const tableState = vi.hoisted(() => ({
-  tableStates: new Map<string, Record<string, unknown>>(),
-  activeTable: 'users',
+const tableStore = vi.hoisted(() => ({
+  byPanel: new Map<string, TableState>(),
   loadTableData: vi.fn(),
-  switchToTable: vi.fn(),
+  reloadPanel: vi.fn(),
   setSort: vi.fn(),
   removeFilter: vi.fn(),
   clearFilters: vi.fn(),
   addFilter: vi.fn(),
+  setFilters: vi.fn(),
   updateFilter: vi.fn(),
   setFilterLogic: vi.fn(),
   applyFilters: vi.fn(),
@@ -98,18 +101,61 @@ const tableState = vi.hoisted(() => ({
   setPage: vi.fn(),
   setPageSize: vi.fn(),
   startEdit: vi.fn(),
-  updateCell: vi.fn(),
+  stageCellChange: vi.fn(),
   cancelEdit: vi.fn(),
   selectRow: vi.fn(),
   toggleSelectAll: vi.fn(),
   deleteRows: vi.fn(),
+  previewPendingChanges: vi.fn().mockResolvedValue(null),
+  commitPendingChanges: vi.fn().mockResolvedValue({}),
+  rollbackPendingChanges: vi.fn(),
   setDetailRow: vi.fn(),
-  detailRowIndex: null as number | null,
 }));
 
 vi.mock('../../../stores/tableDataStore', () => ({
-  useTableDataStore: (sel: (s: typeof tableState) => unknown) => sel(tableState),
+  useTableDataStore: Object.assign((sel: (s: typeof tableStore) => unknown) => sel(tableStore), {
+    getState: () => tableStore,
+  }),
 }));
+
+const PANEL = 'panel-users';
+const TARGET = {
+  dbSessionId: 'c1',
+  database: 'app',
+  tableName: 'users',
+  databaseType: 'postgresql',
+};
+
+function contextOf(overrides: Partial<TableChangeContext> = {}): TableChangeContext {
+  return {
+    connectionId: null,
+    dbSessionId: TARGET.dbSessionId,
+    driverType: TARGET.databaseType,
+    database: TARGET.database,
+    schema: null,
+    table: TARGET.tableName,
+    ...overrides,
+  };
+}
+
+/** Seed the panel slice with data already loaded, so the mount effect stays quiet. */
+function seedPanel(context: TableChangeContext, overrides: Partial<TableState> = {}) {
+  tableStore.byPanel.set(PANEL, { ...emptyTableState(context), ...overrides });
+}
+
+function renderTable(overrides: Partial<TableChangeContext> = {}) {
+  const context = contextOf(overrides);
+  return render(
+    <TableView
+      panelId={PANEL}
+      dbSessionId={context.dbSessionId}
+      database={context.database ?? ''}
+      tableName={context.table}
+      connectionId={context.connectionId ?? undefined}
+      databaseType={context.driverType ?? undefined}
+    />,
+  );
+}
 
 afterEach(cleanup);
 
@@ -117,9 +163,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   settingsState.confirmOnDelete = false;
   settingsState.safeMode = false;
-  tableState.tableStates = new Map();
-  tableState.activeTable = 'users';
-  tableState.detailRowIndex = null;
+  connectionsState.connections = [];
+  tableStore.byPanel = new Map();
 });
 
 describe('TableView', () => {
@@ -135,27 +180,9 @@ describe('TableView', () => {
 
   it('shows a copyable full-page error when initial load fails', () => {
     const errorMsg = 'permission denied for table users\nDETAIL: role lacks SELECT';
-    tableState.tableStates.set('users', {
-      columns: [],
-      rows: [],
-      totalRows: 0,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
-      error: errorMsg,
-    });
+    seedPanel(contextOf(), { error: errorMsg });
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     const message = screen.getByTestId('copyable-error-message');
     expect(message).toHaveClass('selectable', 'whitespace-pre-wrap', 'break-words');
@@ -167,27 +194,14 @@ describe('TableView', () => {
 
   it('shows a copyable inline error banner without truncate when reload fails', () => {
     const errorMsg = 'syntax error near filter clause with a very long message that must wrap';
-    tableState.tableStates.set('users', {
+    seedPanel(contextOf(), {
       columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
       rows: [{ id: 1 }],
       totalRows: 1,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
       error: errorMsg,
     });
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     const message = screen.getByTestId('copyable-error-message');
     expect(message).toHaveClass('selectable', 'whitespace-pre-wrap', 'break-words');
@@ -199,11 +213,10 @@ describe('TableView', () => {
   });
 
   it('loads data through the panel target database on mount (F1 BUG-002)', () => {
-    render(
-      <TableView dbSessionId="c1" database="db_b" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable({ database: 'db_b' });
 
-    expect(tableState.loadTableData).toHaveBeenCalledWith({
+    expect(tableStore.loadTableData).toHaveBeenCalledWith({
+      panelId: PANEL,
       dbSessionId: 'c1',
       table: 'users',
       connectionId: null,
@@ -214,32 +227,17 @@ describe('TableView', () => {
   });
 
   it('retries failed loads with the panel target database (F1 BUG-002)', () => {
-    tableState.tableStates.set('users', {
-      columns: [],
-      rows: [],
-      totalRows: 0,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
+    seedPanel(contextOf({ database: 'db_b' }), {
       error: 'table not found in current database',
     });
 
-    render(
-      <TableView dbSessionId="c1" database="db_b" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable({ database: 'db_b' });
 
     fireEvent.click(screen.getByText('common.retry'));
     // The mount effect also fetches once; the retry click must be the last
     // call and must carry the panel's target database.
-    expect(tableState.loadTableData).toHaveBeenLastCalledWith({
+    expect(tableStore.loadTableData).toHaveBeenLastCalledWith({
+      panelId: PANEL,
       dbSessionId: 'c1',
       table: 'users',
       connectionId: null,
@@ -249,16 +247,29 @@ describe('TableView', () => {
     });
   });
 
+  it('refresh button re-fetches the current page even when cached data exists', () => {
+    seedPanel(contextOf(), {
+      columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
+      rows: [{ id: 1 }],
+      totalRows: 1,
+    });
+
+    renderTable();
+
+    // Cached data must not trigger an automatic reload on mount.
+    expect(tableStore.loadTableData).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('table-data-refresh'));
+    expect(tableStore.reloadPanel).toHaveBeenCalledWith(PANEL);
+  });
+
   it('allows cell editing when safe mode is true', () => {
     settingsState.safeMode = true;
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     fireEvent.click(screen.getByTestId('mock-cell-double-click'));
 
-    expect(tableState.startEdit).toHaveBeenCalledWith(0, 'id');
+    expect(tableStore.startEdit).toHaveBeenCalledWith(PANEL, 0, 'id');
     expect(screen.queryByTestId('table-read-only-tip')).toBeNull();
   });
 
@@ -267,6 +278,7 @@ describe('TableView', () => {
 
     render(
       <TableView
+        panelId={PANEL}
         dbSessionId="c1"
         database="app"
         tableName="users"
@@ -277,7 +289,7 @@ describe('TableView', () => {
 
     fireEvent.click(screen.getByTestId('mock-cell-double-click'));
 
-    expect(tableState.startEdit).not.toHaveBeenCalled();
+    expect(tableStore.startEdit).not.toHaveBeenCalled();
     expect(screen.getByTestId('table-read-only-tip')).toHaveTextContent(
       'tableData.readOnlyEditDisabled',
     );
@@ -289,6 +301,7 @@ describe('TableView', () => {
 
     render(
       <TableView
+        panelId={PANEL}
         dbSessionId="c1"
         connectionId="conn-ro"
         database="app"
@@ -299,7 +312,7 @@ describe('TableView', () => {
 
     fireEvent.click(screen.getByTestId('mock-cell-double-click'));
 
-    expect(tableState.startEdit).not.toHaveBeenCalled();
+    expect(tableStore.startEdit).not.toHaveBeenCalled();
     expect(screen.getByTestId('table-read-only-tip')).toHaveTextContent(
       'tableData.readOnlyEditDisabled',
     );
@@ -311,6 +324,7 @@ describe('TableView', () => {
 
     render(
       <TableView
+        panelId={PANEL}
         dbSessionId="c1"
         connectionId="conn-rw"
         database="app"
@@ -321,7 +335,7 @@ describe('TableView', () => {
 
     fireEvent.click(screen.getByTestId('mock-cell-double-click'));
 
-    expect(tableState.startEdit).toHaveBeenCalledWith(0, 'id');
+    expect(tableStore.startEdit).toHaveBeenCalledWith(PANEL, 0, 'id');
     expect(screen.queryByTestId('table-read-only-tip')).toBeNull();
   });
 
@@ -329,48 +343,41 @@ describe('TableView', () => {
     settingsState.safeMode = false;
     registryState.registry.superset = { readOnly: true };
 
-    render(<TableView dbSessionId="c1" database="app" tableName="users" databaseType="superset" />);
+    render(
+      <TableView
+        panelId={PANEL}
+        dbSessionId="c1"
+        database="app"
+        tableName="users"
+        databaseType="superset"
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('mock-cell-double-click'));
-    expect(tableState.startEdit).not.toHaveBeenCalled();
+    expect(tableStore.startEdit).not.toHaveBeenCalled();
     expect(screen.getByTestId('table-read-only-tip')).toHaveTextContent(
       'tableData.readOnlyEditDisabled',
     );
   });
 
   it('renders field filter toggle button in toolbar', () => {
-    tableState.tableStates.set('users', {
+    seedPanel(contextOf(), {
       columns: [
         { name: 'id', dataType: 'int', isPrimaryKey: true },
         { name: 'name', dataType: 'varchar', isPrimaryKey: false },
       ],
       rows: [{ id: 1, name: 'Alice' }],
       totalRows: 1,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      visibleColumns: null,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
-      error: null,
     });
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     expect(screen.getByTestId('table-column-filter-toggle')).toBeInTheDocument();
     expect(screen.getByTestId('mock-data-table-columns')).toHaveTextContent('id,name');
   });
 
   it('filters displayed columns to only user-selected columns', () => {
-    tableState.tableStates.set('users', {
+    seedPanel(contextOf(), {
       columns: [
         { name: 'id', dataType: 'int', isPrimaryKey: true },
         { name: 'name', dataType: 'varchar', isPrimaryKey: false },
@@ -378,109 +385,55 @@ describe('TableView', () => {
       ],
       rows: [{ id: 1, name: 'Alice', email: 'alice@example.com' }],
       totalRows: 1,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
       visibleColumns: ['name', 'email'],
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
-      error: null,
     });
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     expect(screen.getByTestId('mock-data-table-columns')).toHaveTextContent('name,email');
   });
 
   it('shows all-columns-hidden empty state when user deselects all columns', () => {
-    tableState.tableStates.set('users', {
+    seedPanel(contextOf(), {
       columns: [
         { name: 'id', dataType: 'int', isPrimaryKey: true },
         { name: 'name', dataType: 'varchar', isPrimaryKey: false },
       ],
       rows: [{ id: 1, name: 'Alice' }],
       totalRows: 1,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
       visibleColumns: [],
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
-      error: null,
     });
 
-    render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    renderTable();
 
     expect(screen.getByTestId('all-columns-hidden-state')).toBeInTheDocument();
     expect(screen.getByText('tableData.allColumnsHidden')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('tableData.resetColumns'));
-    expect(tableState.setVisibleColumns).toHaveBeenCalledWith(null);
+    expect(tableStore.setVisibleColumns).toHaveBeenCalledWith(PANEL, null);
   });
 
   it('does not trigger React hook count mismatch when transitioning from loading to loaded', () => {
-    tableState.tableStates.set('users', {
-      columns: [],
-      rows: [],
-      totalRows: 0,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      visibleColumns: null,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: true,
-      error: null,
-    });
+    seedPanel(contextOf(), { loading: true });
 
-    const { rerender } = render(
-      <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
-    );
+    const { rerender } = renderTable();
     expect(screen.getByText('tableView.loadingData')).toBeInTheDocument();
 
-    tableState.tableStates.set('users', {
+    seedPanel(contextOf(), {
       columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
       rows: [{ id: 1 }],
       totalRows: 1,
-      page: 0,
-      pageSize: 50,
-      sorts: [],
-      filters: [],
-      filterLogic: 'and',
-      draftFilters: [],
-      draftFilterLogic: 'and',
-      filterPanelOpen: false,
-      visibleColumns: null,
-      editingCell: null,
-      selectedRows: new Set<number>(),
-      loading: false,
-      error: null,
     });
 
     expect(() => {
       rerender(
-        <TableView dbSessionId="c1" database="app" tableName="users" databaseType="postgresql" />,
+        <TableView
+          panelId={PANEL}
+          dbSessionId="c1"
+          database="app"
+          tableName="users"
+          databaseType="postgresql"
+        />,
       );
     }).not.toThrow();
 

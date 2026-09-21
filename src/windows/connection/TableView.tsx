@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Columns3, Filter, Loader2, ShieldAlert } from 'lucide-react';
+import { Columns3, Filter, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { DataTable } from '../../components/DataTable/DataTable';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { NlFilterInput } from '../../components/ai/NlFilterInput';
 import { TableColumnFilter } from './TableColumnFilter';
-import { useTableDataStore, type TableState } from '../../stores/tableDataStore';
+import { useTableDataStore } from '../../stores/tableDataStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { useI18n } from '../../hooks/useI18n';
@@ -12,7 +12,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { cn } from '../../lib/cn';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { tableChangeContextKey } from '../../lib/tableChanges';
-import type { RowChangePlan } from '../../lib/tableChanges';
+import type { RowChangePlan, TableChangeContext } from '../../lib/tableChanges';
 import {
   filterExpressionToConditions,
   parseFilterForApply,
@@ -21,9 +21,11 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
-import type { DatabaseType } from '../../types';
+import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
 
 interface TableViewProps {
+  /** Table/view panel this grid belongs to; its data slice is keyed by this id. */
+  panelId: string;
   dbSessionId: string;
   database: string;
   tableName: string;
@@ -37,6 +39,7 @@ interface TableViewProps {
 }
 
 export function TableView({
+  panelId,
   dbSessionId,
   database,
   tableName,
@@ -64,33 +67,57 @@ export function TableView({
   const isEditable = !isConnectionReadOnly;
 
   // NlFilterInput handles unconfigured state internally
-  const tableStates = useTableDataStore((s) => s.tableStates);
-  const activeTable = useTableDataStore((s) => s.activeTable);
-  const activeTableKey = useTableDataStore((s) => s.activeTableKey);
-  const loadTableData = useTableDataStore((s) => s.loadTableData);
-  const switchToTable = useTableDataStore((s) => s.switchToTable);
-  const setSort = useTableDataStore((s) => s.setSort);
-  const removeFilter = useTableDataStore((s) => s.removeFilter);
-  const clearFilters = useTableDataStore((s) => s.clearFilters);
-  const addFilter = useTableDataStore((s) => s.addFilter);
-  const updateFilter = useTableDataStore((s) => s.updateFilter);
-  const setFilterLogic = useTableDataStore((s) => s.setFilterLogic);
-  const applyFilters = useTableDataStore((s) => s.applyFilters);
-  const setFilterPanelOpen = useTableDataStore((s) => s.setFilterPanelOpen);
-  const setVisibleColumns = useTableDataStore((s) => s.setVisibleColumns);
-  const setPage = useTableDataStore((s) => s.setPage);
-  const setPageSize = useTableDataStore((s) => s.setPageSize);
-  const startEdit = useTableDataStore((s) => s.startEdit);
-  const updateCell = useTableDataStore((s) => s.updateCell);
-  const cancelEdit = useTableDataStore((s) => s.cancelEdit);
-  const selectRow = useTableDataStore((s) => s.selectRow);
-  const toggleSelectAll = useTableDataStore((s) => s.toggleSelectAll);
-  const deleteRows = useTableDataStore((s) => s.deleteRows);
-  const previewPendingChanges = useTableDataStore((s) => s.previewPendingChanges);
-  const commitPendingChanges = useTableDataStore((s) => s.commitPendingChanges);
-  const rollbackPendingChanges = useTableDataStore((s) => s.rollbackPendingChanges);
-  const setDetailRow = useTableDataStore((s) => s.setDetailRow);
-  const detailRowIndex = useTableDataStore((s) => s.detailRowIndex);
+  const ts = useTableDataStore((s) => s.byPanel.get(panelId));
+  /**
+   * F1: the panel pins its own target database, so a cross-database table loads
+   * correctly even when the session's active database differs.
+   */
+  const context = useMemo<TableChangeContext>(
+    () => ({
+      connectionId: connectionId ?? null,
+      dbSessionId,
+      driverType: databaseType ?? null,
+      database: database || null,
+      schema,
+      table: tableName,
+    }),
+    [connectionId, database, databaseType, dbSessionId, schema, tableName],
+  );
+  /** Panel-scoped action binders: every store call is namespaced by this tab's id. */
+  const actions = useMemo(() => {
+    const store = () => useTableDataStore.getState();
+    return {
+      load: () => void store().loadTableData({ panelId, ...context }),
+      reload: () => store().reloadPanel(panelId),
+      setSort: (sort: SortCondition) => store().setSort(panelId, sort),
+      removeFilter: (index: number) => store().removeFilter(panelId, index),
+      clearFilters: () => store().clearFilters(panelId),
+      addFilter: (filter: FilterCondition) => store().addFilter(panelId, filter),
+      setFilters: (filters: FilterCondition[], logic?: 'and' | 'or') =>
+        store().setFilters(panelId, filters, logic),
+      updateFilter: (index: number, filter: FilterCondition) =>
+        store().updateFilter(panelId, index, filter),
+      setFilterLogic: (logic: 'and' | 'or') => store().setFilterLogic(panelId, logic),
+      applyFilters: () => store().applyFilters(panelId),
+      setFilterPanelOpen: (open: boolean) => store().setFilterPanelOpen(panelId, open),
+      setVisibleColumns: (columns: string[] | null) => store().setVisibleColumns(panelId, columns),
+      setPage: (page: number) => store().setPage(panelId, page),
+      setPageSize: (size: number) => store().setPageSize(panelId, size),
+      startEdit: (row: number, col: string) => store().startEdit(panelId, row, col),
+      stageCellChange: (row: number, col: string, value: unknown) =>
+        store().stageCellChange(panelId, row, col, value),
+      cancelEdit: () => store().cancelEdit(panelId),
+      selectRow: (index: number, opts?: { multi?: boolean; range?: boolean }) =>
+        store().selectRow(panelId, index, opts),
+      toggleSelectAll: () => store().toggleSelectAll(panelId),
+      deleteRows: (rowIndices: number[]) => store().deleteRows(panelId, rowIndices),
+      previewPendingChanges: () => store().previewPendingChanges(panelId),
+      commitPendingChanges: () => store().commitPendingChanges(panelId),
+      rollbackPendingChanges: () => store().rollbackPendingChanges(panelId),
+      setDetailRow: (index: number | null) => store().setDetailRow(panelId, index),
+    };
+  }, [context, panelId]);
+
   const confirmOnDelete = useSettingsStore((s) => s.settings.confirmOnDelete);
   const [confirmDelete, confirmDeleteDialog] = useConfirmDialog();
   const [confirmCommit, confirmCommitDialog] = useConfirmDialog();
@@ -121,21 +148,21 @@ export function TableView({
         showReadOnlyTip();
         return;
       }
-      startEdit(row, col);
+      actions.startEdit(row, col);
     },
-    [isEditable, showReadOnlyTip, startEdit],
+    [actions, isEditable, showReadOnlyTip],
   );
 
   const handleCellEdit = useCallback(
     (row: number, col: string, value: unknown) => {
       if (!isEditable) {
         showReadOnlyTip();
-        cancelEdit();
+        actions.cancelEdit();
         return;
       }
-      updateCell(row, col, value);
+      actions.stageCellChange(row, col, value);
     },
-    [cancelEdit, isEditable, showReadOnlyTip, updateCell],
+    [actions, isEditable, showReadOnlyTip],
   );
 
   const handleDeleteRows = useCallback(
@@ -149,59 +176,29 @@ export function TableView({
         });
         if (!confirmed) return;
       }
-      await deleteRows(rowIndices);
+      actions.deleteRows(rowIndices);
     },
-    [confirmOnDelete, confirmDelete, deleteRows, isEditable, t],
+    [actions, confirmOnDelete, confirmDelete, isEditable, t],
   );
 
-  const tableContext = {
-    connectionId: connectionId ?? null,
-    dbSessionId,
-    driverType: databaseType ?? null,
-    database: database || null,
-    schema,
-    table: tableName,
-  } as const;
-  const tableKey = tableChangeContextKey(tableContext);
-  // The fallback keeps isolated component tests and older embedders readable;
-  // the real store always keys table state by the complete context key.
-  const ts: TableState | undefined = tableStates.get(tableKey) ?? tableStates.get(tableName);
+  // Re-fetch the current page from the database, keeping page/filters/sorts
+  // (they live in the panel slice and the load re-reads them).
+  const handleRefresh = useCallback(() => {
+    actions.reload();
+  }, [actions]);
+
+  const contextKey = tableChangeContextKey(context);
   const hasData = ts != null && ts.columns.length > 0;
+  const sliceContextKey = ts?.context ? tableChangeContextKey(ts.context) : null;
+  // Nothing fetched yet, the panel was invalidated (rows dropped by a write from
+  // elsewhere), or this tab now points at a different table/database.
+  const needsLoad = !hasData || sliceContextKey !== contextKey;
+  const requestRevision = ts?.requestRevision ?? 0;
 
   useEffect(() => {
-    if (hasData && (activeTable !== tableName || activeTableKey !== tableKey)) {
-      switchToTable(tableName, {
-        connectionId: connectionId ?? null,
-        driverType: databaseType ?? null,
-        database: database || null,
-        schema,
-      });
-    } else if (!hasData) {
-      // F1: carry the panel's target database so cross-database tables load
-      // correctly even when the session's active database differs.
-      void loadTableData({
-        dbSessionId,
-        table: tableName,
-        connectionId: connectionId ?? null,
-        driverType: databaseType ?? null,
-        database: database || null,
-        schema,
-      });
-    }
-  }, [
-    dbSessionId,
-    tableName,
-    hasData,
-    activeTable,
-    activeTableKey,
-    tableKey,
-    connectionId,
-    databaseType,
-    database,
-    schema,
-    loadTableData,
-    switchToTable,
-  ]);
+    if (!needsLoad) return;
+    actions.load();
+  }, [actions, needsLoad, requestRevision]);
 
   const columns = ts?.columns ?? [];
   const rows = ts?.rows ?? [];
@@ -237,6 +234,7 @@ export function TableView({
     [rows, displayedColumns],
   );
   const editingCell = ts?.editingCell ?? null;
+  const detailRowIndex = ts?.detailRowIndex ?? null;
   const selectedRows = ts?.selectedRows ?? new Set<number>();
   const loading = ts?.loading ?? false;
   const error = ts?.error ?? null;
@@ -252,14 +250,14 @@ export function TableView({
   const pendingBusy = loading || pendingStatus !== 'idle';
 
   useEffect(() => {
-    if (!isEditable && editingCell) cancelEdit();
-  }, [cancelEdit, editingCell, isEditable]);
+    if (!isEditable && editingCell) actions.cancelEdit();
+  }, [actions, editingCell, isEditable]);
 
   const handlePreviewPendingChanges = useCallback(async () => {
     if (driverReadOnly || pendingBusy || pendingChanges.size === 0) return;
-    const plan = await previewPendingChanges();
+    const plan = await actions.previewPendingChanges();
     if (plan) setPreviewOpen(true);
-  }, [driverReadOnly, pendingBusy, pendingChanges.size, previewPendingChanges]);
+  }, [actions, driverReadOnly, pendingBusy, pendingChanges.size]);
 
   const handleCommitPendingChanges = useCallback(async () => {
     if (driverReadOnly || pendingBusy || pendingChanges.size === 0) return;
@@ -272,9 +270,9 @@ export function TableView({
       confirmLabel: t('tableData.commit'),
       kind: 'warning',
     });
-    if (confirmed) await commitPendingChanges();
+    if (confirmed) await actions.commitPendingChanges();
   }, [
-    commitPendingChanges,
+    actions,
     confirmCommit,
     driverReadOnly,
     pendingBusy,
@@ -299,7 +297,7 @@ export function TableView({
     const input = quickFilter.trim();
     if (!input) {
       setQuickFilterError(null);
-      clearFilters();
+      actions.clearFilters();
       return;
     }
     const parsed = parseFilterForApply(input, columns);
@@ -321,19 +319,20 @@ export function TableView({
       return;
     }
     setQuickFilterError(null);
-    useTableDataStore
-      .getState()
-      .setFilters(filterExpressionToConditions(parsed.value.expression), [...logic][0] ?? 'and');
-  }, [clearFilters, columns, quickFilter, t]);
+    actions.setFilters(
+      filterExpressionToConditions(parsed.value.expression),
+      [...logic][0] ?? 'and',
+    );
+  }, [actions, columns, quickFilter, t]);
 
   const openManualFilter = () => {
     if (filterPanelOpen) {
-      setFilterPanelOpen(false);
+      actions.setFilterPanelOpen(false);
       return;
     }
-    setFilterPanelOpen(true);
+    actions.setFilterPanelOpen(true);
     if (draftFilters.length === 0) {
-      addFilter({
+      actions.addFilter({
         column: columns[0]?.name ?? '',
         operator: 'eq',
         value: '',
@@ -360,16 +359,7 @@ export function TableView({
           <button
             type="button"
             className="mt-2 text-xs text-accent hover:underline"
-            onClick={() =>
-              void loadTableData({
-                dbSessionId,
-                table: tableName,
-                connectionId: connectionId ?? null,
-                driverType: databaseType ?? null,
-                database: database || null,
-                schema,
-              })
-            }
+            onClick={actions.load}
           >
             {t('common.retry')}
           </button>
@@ -388,22 +378,25 @@ export function TableView({
           <button
             type="button"
             className="shrink-0 text-xs text-accent hover:underline"
-            onClick={() =>
-              void loadTableData({
-                dbSessionId,
-                table: tableName,
-                connectionId: connectionId ?? null,
-                driverType: databaseType ?? null,
-                database: database || null,
-                schema,
-              })
-            }
+            onClick={actions.load}
           >
             {t('common.retry')}
           </button>
         </div>
       )}
       <div className="flex shrink-0 items-start gap-0.5 border-b border-edge px-2 py-0.5">
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          className="mt-0 flex h-7 w-7 shrink-0 items-center justify-center rounded text-xs text-fg-muted transition-colors hover:bg-surface-alt hover:text-fg disabled:opacity-50"
+          onClick={handleRefresh}
+          disabled={loading}
+          title={t('connWin.refresh')}
+          aria-label={t('connWin.refresh')}
+          data-testid="table-data-refresh"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+        </button>
         <button
           type="button"
           onMouseDown={(e) => e.preventDefault()}
@@ -420,7 +413,12 @@ export function TableView({
         >
           <Filter className="h-3.5 w-3.5" />
         </button>
-        <NlFilterInput dbSessionId={dbSessionId} database={database} tableName={tableName} />
+        <NlFilterInput
+          panelId={panelId}
+          dbSessionId={dbSessionId}
+          database={database}
+          tableName={tableName}
+        />
         <div className="ml-1 flex min-w-0 flex-1 items-center">
           <input
             type="text"
@@ -507,7 +505,7 @@ export function TableView({
               size="sm"
               variant="ghost"
               disabled={pendingBusy}
-              onClick={() => rollbackPendingChanges()}
+              onClick={() => actions.rollbackPendingChanges()}
               data-testid="pending-rollback"
             >
               {t('tableData.rollback')}
@@ -527,26 +525,26 @@ export function TableView({
         draftFilters={draftFilters}
         draftFilterLogic={draftFilterLogic}
         filterPanelOpen={filterPanelOpen}
-        onFilterPanelOpenChange={setFilterPanelOpen}
-        onAddFilter={addFilter}
-        onUpdateFilter={updateFilter}
-        onFilterLogicChange={setFilterLogic}
-        onApplyFilters={applyFilters}
+        onFilterPanelOpenChange={actions.setFilterPanelOpen}
+        onAddFilter={actions.addFilter}
+        onUpdateFilter={actions.updateFilter}
+        onFilterLogicChange={actions.setFilterLogic}
+        onApplyFilters={actions.applyFilters}
         editingCell={!isEditable ? null : editingCell}
         selectedRows={selectedRows}
         loading={loading}
-        onSort={setSort}
-        onRemoveFilter={removeFilter}
-        onClearFilters={clearFilters}
-        onPageChange={setPage}
-        onPageSizeChange={setPageSize}
+        onSort={actions.setSort}
+        onRemoveFilter={actions.removeFilter}
+        onClearFilters={actions.clearFilters}
+        onPageChange={actions.setPage}
+        onPageSizeChange={actions.setPageSize}
         onCellDoubleClick={handleCellDoubleClick}
         onCellEdit={isEditable ? handleCellEdit : undefined}
-        onCellEditCancel={cancelEdit}
+        onCellEditCancel={actions.cancelEdit}
         enableSetNull={isEditable}
-        onRowSelect={selectRow}
-        onSelectAll={toggleSelectAll}
-        onRowClick={setDetailRow}
+        onRowSelect={actions.selectRow}
+        onSelectAll={actions.toggleSelectAll}
+        onRowClick={actions.setDetailRow}
         highlightedRow={detailRowIndex}
         exportTableName={tableName}
         databaseType={databaseType}
@@ -558,7 +556,7 @@ export function TableView({
           <TableColumnFilter
             columns={columns}
             visibleColumns={visibleColumns}
-            onChange={setVisibleColumns}
+            onChange={actions.setVisibleColumns}
             disabled={loading || pendingBusy || columns.length === 0}
           />
         }
@@ -574,7 +572,7 @@ export function TableView({
                 size="sm"
                 variant="ghost"
                 className="mt-2 text-xs"
-                onClick={() => setVisibleColumns(null)}
+                onClick={() => actions.setVisibleColumns(null)}
               >
                 {t('tableData.resetColumns')}
               </Button>

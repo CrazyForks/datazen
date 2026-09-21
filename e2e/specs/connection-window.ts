@@ -16,6 +16,7 @@ import {
   dismissWebContextMenu,
   expandConnectedConnectionInNavigator,
   expandSchemaTableCategory,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 const TEST_PARENT = '_e2e_idx_parent';
@@ -113,8 +114,7 @@ describe('数据库浏览模块 (DB-001~DB-010, DE-001, DE-006)', () => {
         (2, 'Bob', 'bob@test.com', 85)
     `);
 
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(2000);
 
     // Refresh rebuilds the tree DOM and collapses expansion state.
@@ -141,7 +141,7 @@ describe('数据库浏览模块 (DB-001~DB-010, DE-001, DE-006)', () => {
   // ── 工具栏 ──────────────────────────────────────────────────────
 
   it('连接窗口应显示工具栏 (DB-001)', async () => {
-    await expect(await $(`button[title="${t('connWin.refresh')} (⌘R)"]`)).toBeDisplayed();
+    await expect(await $('[data-testid="navigator-refresh"]')).toBeDisplayed();
     await expect(await waitForNewQueryButton()).toBeDisplayed();
   });
 

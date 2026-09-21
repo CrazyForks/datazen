@@ -11,6 +11,7 @@ import {
   waitForTableInSidebar,
   expandConnectedConnectionInNavigator,
   expandSchemaTableCategory,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 /**
@@ -134,8 +135,7 @@ describe('表结构编辑 (TS-001~TS-008)', () => {
     `);
 
     // Refresh sidebar
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(1500);
     // Refresh rebuilds the tree DOM — re-expand so the table node is visible.
     await expandConnectedConnectionInNavigator();

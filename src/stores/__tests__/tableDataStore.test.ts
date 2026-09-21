@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { FilterCondition, SortCondition } from '../../types';
+import type { TableState } from '../tableData/types';
 
 const mockDatabaseCommands = {
   getTableData: vi.fn(),
@@ -62,8 +63,18 @@ const samplePlan = {
   warnings: [],
 };
 
-describe('tableDataStore', () => {
+const PANEL = 'panel-users';
+const OTHER_PANEL = 'panel-orders';
+
+describe('tableDataStore (panel-scoped)', () => {
   let useTableDataStore: typeof import('../tableDataStore').useTableDataStore;
+
+  const slice = (panelId: string = PANEL) => useTableDataStore.getState().byPanel.get(panelId);
+  const loaded = (panelId: string = PANEL): TableState => {
+    const ts = slice(panelId);
+    if (!ts) throw new Error(`panel ${panelId} has no table-data slice`);
+    return ts;
+  };
 
   beforeEach(async () => {
     vi.resetModules();
@@ -81,13 +92,13 @@ describe('tableDataStore', () => {
     const mod = await import('../tableDataStore');
     useTableDataStore = mod.useTableDataStore;
     useTableDataStore.getState().reset();
-    useTableDataStore.getState().setActiveConnection('conn-1');
   });
 
-  async function loadTable() {
+  async function loadTable(panelId: string = PANEL) {
     await useTableDataStore.getState().loadTableData({
+      panelId,
       dbSessionId: 'conn-1',
-      table: 'users',
+      table: panelId === OTHER_PANEL ? 'orders' : 'users',
       connectionId: 'conn-1',
       driverType: 'postgres',
       database: 'app',
@@ -95,30 +106,32 @@ describe('tableDataStore', () => {
     });
   }
 
-  it('detailRowIndex defaults to null', () => {
-    expect(useTableDataStore.getState().detailRowIndex).toBeNull();
+  it('has no slice for a panel that never loaded', () => {
+    expect(slice()).toBeUndefined();
   });
 
-  it('setDetailRow sets and clears index', () => {
-    useTableDataStore.getState().setDetailRow(2);
-    expect(useTableDataStore.getState().detailRowIndex).toBe(2);
-    useTableDataStore.getState().setDetailRow(null);
-    expect(useTableDataStore.getState().detailRowIndex).toBeNull();
-  });
-
-  it('loadTableData populates rows and columns', async () => {
+  it('detailRowIndex defaults to null and is scoped to the panel', async () => {
     await loadTable();
-    const s = useTableDataStore.getState();
-    expect(s.activeTable).toBe('users');
-    expect(s.rows).toHaveLength(2);
-    expect(s.rows[0]).toEqual({ id: 1, name: 'Alice' });
-    expect(s.loading).toBe(false);
+    expect(loaded().detailRowIndex).toBeNull();
+    useTableDataStore.getState().setDetailRow(PANEL, 2);
+    expect(loaded().detailRowIndex).toBe(2);
+    useTableDataStore.getState().setDetailRow(PANEL, null);
+    expect(loaded().detailRowIndex).toBeNull();
+  });
+
+  it('loadTableData populates rows and columns on the panel slice', async () => {
+    await loadTable();
+    const ts = loaded();
+    expect(ts.context?.table).toBe('users');
+    expect(ts.rows).toHaveLength(2);
+    expect(ts.rows[0]).toEqual({ id: 1, name: 'Alice' });
+    expect(ts.loading).toBe(false);
   });
 
   it('loadTableData handles errors', async () => {
     mockDatabaseCommands.getTableData.mockRejectedValueOnce(new Error('db error'));
     await loadTable();
-    expect(useTableDataStore.getState().error).toBe('db error');
+    expect(loaded().error).toBe('db error');
   });
 
   it('skips duplicate concurrent loads', async () => {
@@ -130,28 +143,36 @@ describe('tableDataStore', () => {
     );
     const p1 = useTableDataStore
       .getState()
-      .loadTableData({ dbSessionId: 'conn-1', table: 'users' });
-    await useTableDataStore.getState().loadTableData({ dbSessionId: 'conn-1', table: 'users' });
+      .loadTableData({ panelId: PANEL, dbSessionId: 'conn-1', table: 'users' });
+    await useTableDataStore
+      .getState()
+      .loadTableData({ panelId: PANEL, dbSessionId: 'conn-1', table: 'users' });
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(1);
     resolveLoad!();
     await p1;
   });
 
-  it('switchToTable syncs flat state', async () => {
-    await loadTable();
+  it('keeps one slice per panel so two tabs on different tables never overwrite each other', async () => {
+    await loadTable(PANEL);
     mockDatabaseCommands.getTableData.mockResolvedValueOnce({
       ...sampleResponse,
       rows: [[3, 'Carol']],
     });
-    await useTableDataStore.getState().loadTableData({ dbSessionId: 'conn-1', table: 'orders' });
-    useTableDataStore.getState().switchToTable('users');
-    expect(useTableDataStore.getState().rows[0].name).toBe('Alice');
+    await loadTable(OTHER_PANEL);
+    expect(loaded(PANEL).rows[0].name).toBe('Alice');
+    expect(loaded(OTHER_PANEL).rows[0].name).toBe('Carol');
+  });
+
+  it('ignores actions on a panel without a slice', () => {
+    useTableDataStore.getState().setDetailRow('missing-panel', 1);
+    useTableDataStore.getState().startEdit('missing-panel', 0, 'name');
+    expect(slice('missing-panel')).toBeUndefined();
   });
 
   it('setPage triggers reload with skipCount', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().setPage(1);
+    useTableDataStore.getState().setPage(PANEL, 1);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, skipCount: true }),
@@ -170,10 +191,10 @@ describe('tableDataStore', () => {
         params.page === 2 ? oldPage.promise : newFilterPage.promise,
     );
 
-    useTableDataStore.getState().setPage(2);
+    useTableDataStore.getState().setPage(PANEL, 2);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(1));
-    useTableDataStore.getState().addFilter(filter);
-    useTableDataStore.getState().applyFilters();
+    useTableDataStore.getState().addFilter(PANEL, filter);
+    useTableDataStore.getState().applyFilters(PANEL);
 
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(2));
     expect(mockDatabaseCommands.getTableData).toHaveBeenNthCalledWith(
@@ -183,27 +204,27 @@ describe('tableDataStore', () => {
 
     oldPage.resolve({ ...sampleResponse, page: 2, rows: [[200, 'Old page']] });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(useTableDataStore.getState().rows[0]).toEqual({ id: 1, name: 'Alice' });
-    expect(useTableDataStore.getState().page).toBe(0);
+    expect(loaded().rows[0]).toEqual({ id: 1, name: 'Alice' });
+    expect(loaded().page).toBe(0);
 
     newFilterPage.resolve({ ...sampleResponse, page: 0, rows: [[99, 'Filtered']] });
-    await vi.waitFor(() => expect(useTableDataStore.getState().loading).toBe(false));
-    expect(useTableDataStore.getState().rows[0]).toEqual({ id: 99, name: 'Filtered' });
-    expect(useTableDataStore.getState().filters).toEqual([filter]);
-    expect(useTableDataStore.getState().page).toBe(0);
+    await vi.waitFor(() => expect(loaded().loading).toBe(false));
+    expect(loaded().rows[0]).toEqual({ id: 99, name: 'Filtered' });
+    expect(loaded().filters).toEqual([filter]);
+    expect(loaded().page).toBe(0);
   });
 
   it('forwards the explicit database and remembers it for refreshes (F1 BUG-002)', async () => {
     await useTableDataStore
       .getState()
-      .loadTableData({ dbSessionId: 'conn-1', table: 'users', database: 'db_b' });
+      .loadTableData({ panelId: PANEL, dbSessionId: 'conn-1', table: 'users', database: 'db_b' });
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
       expect.objectContaining({ table: 'users', database: 'db_b' }),
     );
 
     // Store-driven refreshes (paging) keep targeting the same database.
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().setPage(1);
+    useTableDataStore.getState().setPage(PANEL, 1);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, database: 'db_b' }),
@@ -211,9 +232,13 @@ describe('tableDataStore', () => {
   });
 
   it('forwards the table schema so a non-default schema still resolves', async () => {
-    await useTableDataStore
-      .getState()
-      .loadTableData({ dbSessionId: 'conn-1', table: 'users', database: 'db_b', schema: 'sales' });
+    await useTableDataStore.getState().loadTableData({
+      panelId: PANEL,
+      dbSessionId: 'conn-1',
+      table: 'users',
+      database: 'db_b',
+      schema: 'sales',
+    });
     // Omitting this made the host fall back to the connection default, which
     // reads a table outside that default as missing.
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
@@ -222,36 +247,16 @@ describe('tableDataStore', () => {
 
     // Store-driven refreshes (paging) keep the same schema.
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().setPage(1);
+    useTableDataStore.getState().setPage(PANEL, 1);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, schema: 'sales' }),
     );
   });
-
-  it('isolates pending changes when the database context changes', async () => {
-    await loadTable();
-    useTableDataStore.getState().stageCellChange(0, 'name', 'App change');
-
-    await useTableDataStore.getState().loadTableData({
-      dbSessionId: 'conn-1',
-      table: 'users',
-      connectionId: 'conn-1',
-      driverType: 'postgres',
-      database: 'db_b',
-      schema: null,
-    });
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(0);
-
-    useTableDataStore.getState().switchToTable('users', {
-      connectionId: 'conn-1',
-      driverType: 'postgres',
-      database: 'app',
-      schema: null,
-    });
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(1);
-    expect(useTableDataStore.getState().rows[0].name).toBe('App change');
-  });
+  // NOTE: upstream's "isolates pending changes when the database context
+  // changes" test was dropped here: it relied on the removed connection-scoped
+  // API (switchToTable / root pendingChanges). Pending-change isolation is now
+  // per-panel and covered by the slice-isolation tests above.
 
   it('uses the complete remembered context when no explicit target is given', async () => {
     await loadTable();
@@ -260,50 +265,60 @@ describe('tableDataStore', () => {
     );
   });
 
+  it('reloadPanel re-runs the panel load with its own context', async () => {
+    await loadTable();
+    mockDatabaseCommands.getTableData.mockClear();
+    useTableDataStore.getState().reloadPanel(PANEL);
+    await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
+    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
+      expect.objectContaining({ dbSessionId: 'conn-1', table: 'users', database: 'app' }),
+    );
+  });
+
   it('addFilter edits draft only; applyFilters reloads', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
     const filter: FilterCondition = { column: 'name', operator: 'eq', value: 'Alice' };
-    useTableDataStore.getState().addFilter(filter);
-    expect(useTableDataStore.getState().draftFilters).toContainEqual(filter);
-    expect(useTableDataStore.getState().filters).toEqual([]);
-    expect(useTableDataStore.getState().filterPanelOpen).toBe(true);
+    useTableDataStore.getState().addFilter(PANEL, filter);
+    expect(loaded().draftFilters).toContainEqual(filter);
+    expect(loaded().filters).toEqual([]);
+    expect(loaded().filterPanelOpen).toBe(true);
     await new Promise((r) => setTimeout(r, 20));
     expect(mockDatabaseCommands.getTableData).not.toHaveBeenCalled();
 
-    useTableDataStore.getState().applyFilters();
+    useTableDataStore.getState().applyFilters(PANEL);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
-    expect(useTableDataStore.getState().filters).toContainEqual(filter);
+    expect(loaded().filters).toContainEqual(filter);
 
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().removeFilter(0);
-    expect(useTableDataStore.getState().draftFilters).toEqual([]);
-    expect(useTableDataStore.getState().filters).toContainEqual(filter);
+    useTableDataStore.getState().removeFilter(PANEL, 0);
+    expect(loaded().draftFilters).toEqual([]);
+    expect(loaded().filters).toContainEqual(filter);
     await new Promise((r) => setTimeout(r, 20));
     expect(mockDatabaseCommands.getTableData).not.toHaveBeenCalled();
 
-    useTableDataStore.getState().setFilters([filter]);
+    useTableDataStore.getState().setFilters(PANEL, [filter]);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
-    useTableDataStore.getState().clearFilters();
-    expect(useTableDataStore.getState().filters).toEqual([]);
-    expect(useTableDataStore.getState().draftFilters).toEqual([]);
+    useTableDataStore.getState().clearFilters(PANEL);
+    expect(loaded().filters).toEqual([]);
+    expect(loaded().draftFilters).toEqual([]);
   });
 
   it('addFilter with empty value does not reload', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().addFilter({ column: 'id', operator: 'eq', value: '' });
-    expect(useTableDataStore.getState().draftFilters).toHaveLength(1);
-    expect(useTableDataStore.getState().filters).toHaveLength(0);
+    useTableDataStore.getState().addFilter(PANEL, { column: 'id', operator: 'eq', value: '' });
+    expect(loaded().draftFilters).toHaveLength(1);
+    expect(loaded().filters).toHaveLength(0);
     await new Promise((r) => setTimeout(r, 20));
     expect(mockDatabaseCommands.getTableData).not.toHaveBeenCalled();
   });
 
   it('loadTableData omits incomplete applied filters from the request', async () => {
     await loadTable();
-    useTableDataStore.getState().addFilter({ column: 'id', operator: 'eq', value: '' });
-    useTableDataStore.getState().addFilter({ column: 'name', operator: 'eq', value: 'Bob' });
-    useTableDataStore.getState().applyFilters();
+    useTableDataStore.getState().addFilter(PANEL, { column: 'id', operator: 'eq', value: '' });
+    useTableDataStore.getState().addFilter(PANEL, { column: 'name', operator: 'eq', value: 'Bob' });
+    useTableDataStore.getState().applyFilters(PANEL);
     await vi.waitFor(() =>
       expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -317,27 +332,27 @@ describe('tableDataStore', () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
     const sort: SortCondition = { column: 'name', direction: 'asc' };
-    useTableDataStore.getState().setSort(sort);
+    useTableDataStore.getState().setSort(PANEL, sort);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
-    expect(useTableDataStore.getState().sorts).toEqual([sort]);
+    expect(loaded().sorts).toEqual([sort]);
   });
 
   it('startEdit and cancelEdit', async () => {
     await loadTable();
-    useTableDataStore.getState().startEdit(0, 'name');
-    expect(useTableDataStore.getState().editingCell).toEqual({ row: 0, col: 'name' });
-    useTableDataStore.getState().cancelEdit();
-    expect(useTableDataStore.getState().editingCell).toBeNull();
+    useTableDataStore.getState().startEdit(PANEL, 0, 'name');
+    expect(loaded().editingCell).toEqual({ row: 0, col: 'name' });
+    useTableDataStore.getState().cancelEdit(PANEL);
+    expect(loaded().editingCell).toBeNull();
   });
 
-  it('updateCell stages changes without committing', async () => {
+  it('stageCellChange stages without committing', async () => {
     await loadTable();
-    useTableDataStore.getState().updateCell(0, 'name', 'Updated');
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
     expect(mockDatabaseCommands.commitRowUpdates).not.toHaveBeenCalled();
     expect(mockDatabaseCommands.previewPendingChanges).not.toHaveBeenCalled();
-    expect(useTableDataStore.getState().rows[0].name).toBe('Updated');
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(1);
-    expect([...useTableDataStore.getState().pendingChanges.values()][0]).toMatchObject({
+    expect(loaded().rows[0].name).toBe('Updated');
+    expect(loaded().pendingChanges.size).toBe(1);
+    expect([...loaded().pendingChanges.values()][0]).toMatchObject({
       rowIdentity: { id: 1 },
       originalValues: { name: 'Alice' },
       currentValues: { name: 'Updated' },
@@ -352,23 +367,21 @@ describe('tableDataStore', () => {
       rows: [[1, null]],
     });
     await loadTable();
-    useTableDataStore.getState().stageCellChange(0, 'name', 'Updated');
-    expect([...useTableDataStore.getState().pendingChanges.values()][0].originalValues).toEqual({
-      name: null,
-    });
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
+    expect([...loaded().pendingChanges.values()][0].originalValues).toEqual({ name: null });
 
-    useTableDataStore.getState().stageCellChange(0, 'name', null);
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(0);
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', null);
+    expect(loaded().pendingChanges.size).toBe(0);
   });
 
   it('rejects a single-column primary-key edit that collides with another row', async () => {
     await loadTable();
-    useTableDataStore.getState().stageCellChange(0, 'id', 2);
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'id', 2);
 
-    const state = useTableDataStore.getState();
-    expect(state.pendingChanges.size).toBe(0);
-    expect(state.rows[0].id).toBe(1);
-    expect(state.error).toContain('ambiguous');
+    const ts = loaded();
+    expect(ts.pendingChanges.size).toBe(0);
+    expect(ts.rows[0].id).toBe(1);
+    expect(ts.error).toContain('ambiguous');
   });
 
   it('rejects a composite primary-key edit that collides with another row', async () => {
@@ -384,28 +397,21 @@ describe('tableDataStore', () => {
         [1, 10, 'Bob'],
       ],
     });
-    await useTableDataStore.getState().loadTableData({
-      dbSessionId: 'conn-1',
-      table: 'users',
-      connectionId: 'conn-1',
-      driverType: 'postgres',
-      database: 'app',
-      schema: null,
-    });
-    useTableDataStore.getState().stageCellChange(0, 'id', 10);
+    await loadTable();
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'id', 10);
 
-    const state = useTableDataStore.getState();
-    expect(state.pendingChanges.size).toBe(0);
-    expect(state.rows[0].id).toBe(9);
-    expect(state.error).toContain('ambiguous');
+    const ts = loaded();
+    expect(ts.pendingChanges.size).toBe(0);
+    expect(ts.rows[0].id).toBe(9);
+    expect(ts.error).toContain('ambiguous');
   });
 
   it('keeps the original identity after a non-colliding primary-key edit', async () => {
     await loadTable();
-    useTableDataStore.getState().stageCellChange(0, 'id', 3);
-    useTableDataStore.getState().stageCellChange(0, 'name', 'Updated');
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'id', 3);
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
 
-    const changes = [...useTableDataStore.getState().pendingChanges.values()];
+    const changes = [...loaded().pendingChanges.values()];
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({
       rowIdentity: { id: 1 },
@@ -421,28 +427,30 @@ describe('tableDataStore', () => {
       page: 0,
       pageSize: 50,
     });
-    await useTableDataStore.getState().loadTableData({ dbSessionId: 'conn-1', table: 'nopk' });
-    useTableDataStore.getState().updateCell(0, 'name', 'y');
-    expect(useTableDataStore.getState().error).toBeTruthy();
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(0);
+    await useTableDataStore
+      .getState()
+      .loadTableData({ panelId: PANEL, dbSessionId: 'conn-1', table: 'nopk' });
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'y');
+    expect(loaded().error).toBeTruthy();
+    expect(loaded().pendingChanges.size).toBe(0);
     expect(mockDatabaseCommands.previewPendingChanges).not.toHaveBeenCalled();
   });
 
   it('commit failure preserves pending changes', async () => {
     await loadTable();
-    useTableDataStore.getState().updateCell(0, 'name', 'Fail');
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Fail');
     mockDatabaseCommands.commitPendingChanges.mockRejectedValueOnce(new Error('commit fail'));
-    const result = await useTableDataStore.getState().commitPendingChanges();
+    const result = await useTableDataStore.getState().commitPendingChanges(PANEL);
     expect(result.status).toBe('failed');
-    expect(useTableDataStore.getState().error).toBe('commit fail');
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(1);
-    expect(useTableDataStore.getState().previewPlan).toEqual(samplePlan);
+    expect(loaded().error).toBe('commit fail');
+    expect(loaded().pendingChanges.size).toBe(1);
+    expect(loaded().previewPlan).toEqual(samplePlan);
   });
 
   it('preview and successful commit clear pending changes and request refresh', async () => {
     await loadTable();
-    useTableDataStore.getState().stageCellChange(0, 'name', 'Updated');
-    const plan = await useTableDataStore.getState().previewPendingChanges();
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
+    const plan = await useTableDataStore.getState().previewPendingChanges(PANEL);
     expect(plan).toEqual(samplePlan);
     expect(mockDatabaseCommands.previewPendingChanges).toHaveBeenCalledWith({
       context: samplePlan.table,
@@ -456,11 +464,11 @@ describe('tableDataStore', () => {
         },
       ],
     });
-    const result = await useTableDataStore.getState().commitPendingChanges();
+    const result = await useTableDataStore.getState().commitPendingChanges(PANEL);
     expect(result.status).toBe('committed');
     expect(result.refreshRequired).toBe(true);
     expect(result.refreshed).toBe(true);
-    expect(useTableDataStore.getState().pendingChanges.size).toBe(0);
+    expect(loaded().pendingChanges.size).toBe(0);
     expect(mockDatabaseCommands.commitPendingChanges).toHaveBeenCalledWith({
       dbSessionId: 'conn-1',
       plan: samplePlan,
@@ -469,119 +477,129 @@ describe('tableDataStore', () => {
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(2);
   });
 
-  it('discardChanges reloads table', async () => {
+  it('rollbackPendingChanges discards staged edits and reloads', async () => {
     await loadTable();
-    useTableDataStore.getState().startEdit(0, 'name');
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().discardChanges();
+    useTableDataStore.getState().rollbackPendingChanges(PANEL);
+    await vi.waitFor(() => expect(loaded().pendingChanges.size).toBe(0));
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
   });
 
   it('selectRow single, multi, and range', async () => {
     await loadTable();
-    useTableDataStore.getState().selectRow(0);
-    expect(useTableDataStore.getState().selectedRows).toEqual(new Set([0]));
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    expect(loaded().selectedRows).toEqual(new Set([0]));
 
-    useTableDataStore.getState().selectRow(1, { multi: true });
-    expect(useTableDataStore.getState().selectedRows).toEqual(new Set([0, 1]));
+    useTableDataStore.getState().selectRow(PANEL, 1, { multi: true });
+    expect(loaded().selectedRows).toEqual(new Set([0, 1]));
 
-    useTableDataStore.getState().selectRow(0, { multi: true });
-    expect(useTableDataStore.getState().selectedRows).toEqual(new Set([1]));
+    useTableDataStore.getState().selectRow(PANEL, 0, { multi: true });
+    expect(loaded().selectedRows).toEqual(new Set([1]));
 
-    useTableDataStore.getState().selectRow(0);
-    useTableDataStore.getState().selectRow(1, { range: true });
-    expect(useTableDataStore.getState().selectedRows).toEqual(new Set([0, 1]));
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    useTableDataStore.getState().selectRow(PANEL, 1, { range: true });
+    expect(loaded().selectedRows).toEqual(new Set([0, 1]));
   });
 
   it('toggleSelectAll selects and deselects all rows', async () => {
     await loadTable();
-    useTableDataStore.getState().toggleSelectAll();
-    expect(useTableDataStore.getState().selectedRows.size).toBe(2);
-    useTableDataStore.getState().toggleSelectAll();
-    expect(useTableDataStore.getState().selectedRows.size).toBe(0);
+    useTableDataStore.getState().toggleSelectAll(PANEL);
+    expect(loaded().selectedRows.size).toBe(2);
+    useTableDataStore.getState().toggleSelectAll(PANEL);
+    expect(loaded().selectedRows.size).toBe(0);
   });
 
-  it('deleteSelectedRows stages PK deletes without executing', async () => {
+  it('applyColumnToRows stages the same value for the selected rows', async () => {
     await loadTable();
-    useTableDataStore.getState().selectRow(0);
-    useTableDataStore.getState().selectRow(1, { multi: true });
-    await useTableDataStore.getState().deleteSelectedRows();
-    expect(mockDatabaseCommands.commitRowDeletes).not.toHaveBeenCalled();
-    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(1);
-    expect([...useTableDataStore.getState().pendingChanges.values()]).toEqual([
-      expect.objectContaining({ rowIdentity: { id: 1 }, deleteMarked: true }),
-      expect.objectContaining({ rowIdentity: { id: 2 }, deleteMarked: true }),
-    ]);
+    useTableDataStore.getState().applyColumnToRows(PANEL, 'name', 'Same', [0, 1]);
+    expect(loaded().pendingChanges.size).toBe(2);
+    expect(loaded().rows.map((row) => row.name)).toEqual(['Same', 'Same']);
   });
 
   it('deleteRows selects indices then stages deletes', async () => {
     await loadTable();
-    await useTableDataStore.getState().deleteRows([1]);
+    useTableDataStore.getState().deleteRows(PANEL, [1]);
     expect(mockDatabaseCommands.commitRowDeletes).not.toHaveBeenCalled();
-    expect([...useTableDataStore.getState().pendingChanges.values()]).toEqual([
+    expect([...loaded().pendingChanges.values()]).toEqual([
       expect.objectContaining({ rowIdentity: { id: 2 }, deleteMarked: true }),
     ]);
   });
 
-  it('closeTable removes table state', async () => {
+  it('removePanel drops the slice entirely', async () => {
     await loadTable();
-    useTableDataStore.getState().closeTable('users');
-    expect(useTableDataStore.getState().activeTable).toBeNull();
-    expect(useTableDataStore.getState().tableStates.has('users')).toBe(false);
+    useTableDataStore.getState().removePanel(PANEL);
+    expect(slice(PANEL)).toBeUndefined();
   });
 
-  it('reset clears all state', async () => {
+  it('invalidateCachedData drops cached rows so the panel re-fetches', async () => {
+    await loadTable();
+    useTableDataStore.getState().invalidateCachedData('conn-1');
+    expect(loaded().columns).toHaveLength(0);
+    expect(loaded().rows).toHaveLength(0);
+    mockDatabaseCommands.getTableData.mockClear();
+    await loadTable();
+    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidateCachedData can target a single table', async () => {
+    await loadTable(PANEL);
+    await loadTable(OTHER_PANEL);
+    useTableDataStore.getState().invalidateCachedData('conn-1', 'users');
+    expect(loaded(PANEL).rows).toHaveLength(0);
+    expect(loaded(OTHER_PANEL).rows).toHaveLength(2);
+  });
+
+  it('invalidateCachedData keeps panels with staged edits untouched', async () => {
+    await loadTable();
+    useTableDataStore.getState().stageCellChange(PANEL, 0, 'name', 'Updated');
+    useTableDataStore.getState().invalidateCachedData('conn-1');
+    expect(loaded().rows[0]).toEqual({ id: 1, name: 'Updated' });
+    expect(loaded().pendingChanges.size).toBe(1);
+  });
+
+  it('invalidateCachedData ignores other sessions', async () => {
+    await loadTable();
+    useTableDataStore.getState().invalidateCachedData('conn-other');
+    expect(loaded().rows).toHaveLength(2);
+  });
+
+  it('reset clears every panel slice', async () => {
     await loadTable();
     useTableDataStore.getState().reset();
-    expect(useTableDataStore.getState().activeDbSessionId).toBeNull();
-    expect(useTableDataStore.getState().rows).toEqual([]);
-  });
-
-  it('setDatabaseType affects page size from registry', async () => {
-    useTableDataStore.getState().setDatabaseType('postgresql');
-    await loadTable();
-    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
-      expect.objectContaining({ pageSize: expect.any(Number) }),
-    );
+    expect(useTableDataStore.getState().byPanel.size).toBe(0);
   });
 
   it('setFilterLogic only updates draft until apply', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
-    useTableDataStore.getState().setFilterLogic('or');
-    expect(useTableDataStore.getState().draftFilterLogic).toBe('or');
-    expect(useTableDataStore.getState().filterLogic).toBe('and');
+    useTableDataStore.getState().setFilterLogic(PANEL, 'or');
+    expect(loaded().draftFilterLogic).toBe('or');
+    expect(loaded().filterLogic).toBe('and');
     await new Promise((r) => setTimeout(r, 20));
     expect(mockDatabaseCommands.getTableData).not.toHaveBeenCalled();
 
-    useTableDataStore.getState().applyFilters();
+    useTableDataStore.getState().applyFilters(PANEL);
     await vi.waitFor(() => {
       expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
         expect.objectContaining({ filterLogic: 'or' }),
       );
     });
-    expect(useTableDataStore.getState().filterLogic).toBe('or');
+    expect(loaded().filterLogic).toBe('or');
   });
 
-  it('manages visibleColumns and column visibility toggles', async () => {
+  it('manages visibleColumns and drops stale names on the next page', async () => {
     await loadTable();
-    expect(useTableDataStore.getState().visibleColumns).toBeNull();
+    expect(loaded().visibleColumns).toBeNull();
 
-    // Set visible columns to a subset
-    useTableDataStore.getState().setVisibleColumns(['id']);
-    expect(useTableDataStore.getState().visibleColumns).toEqual(['id']);
+    useTableDataStore.getState().setVisibleColumns(PANEL, ['id']);
+    expect(loaded().visibleColumns).toEqual(['id']);
 
-    // Toggle 'name' on
-    useTableDataStore.getState().toggleColumnVisibility('name');
-    // All columns are now visible, so it normalizes back to null
-    expect(useTableDataStore.getState().visibleColumns).toBeNull();
+    useTableDataStore.getState().setVisibleColumns(PANEL, ['id', 'ghost']);
+    await loadTable();
+    expect(loaded().visibleColumns).toEqual(['id']);
 
-    // Toggle 'name' off
-    useTableDataStore.getState().toggleColumnVisibility('name');
-    expect(useTableDataStore.getState().visibleColumns).toEqual(['id']);
-
-    // Reset visible columns
-    useTableDataStore.getState().resetVisibleColumns();
-    expect(useTableDataStore.getState().visibleColumns).toBeNull();
+    useTableDataStore.getState().setVisibleColumns(PANEL, null);
+    expect(loaded().visibleColumns).toBeNull();
   });
 });

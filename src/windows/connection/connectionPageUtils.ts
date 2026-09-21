@@ -1,5 +1,4 @@
 import { useSchemaStore } from '../../stores/schemaStore';
-import { useTableDataStore } from '../../stores/tableDataStore';
 import { PENDING_CONNECTION_KEY } from '../../lib/windowManager';
 import type { DatabaseType } from '../../types';
 
@@ -48,10 +47,8 @@ export function consumePendingConnection(): { tab: ConnectionTab; action?: strin
 
 export function syncStoresActiveConnection(dbSessionId: string | null) {
   useSchemaStore.getState().setActiveConnection(dbSessionId);
-  useTableDataStore.getState().setActiveConnection(dbSessionId);
 }
 
 export function removeConnectionFromStores(dbSessionId: string) {
   useSchemaStore.getState().removeConnection(dbSessionId);
-  useTableDataStore.getState().removeConnection(dbSessionId);
 }

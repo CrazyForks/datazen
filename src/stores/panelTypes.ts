@@ -45,6 +45,8 @@ export interface CreateTablePanel extends PanelBase {
 
 export interface ErDiagramPanel extends PanelBase {
   type: 'er-diagram';
+  /** Bound at creation: the diagram must not follow the session-wide database. */
+  database?: string;
   focusTable?: string;
   /**
    * Schema the diagram reads its tables from, captured from the panel that was

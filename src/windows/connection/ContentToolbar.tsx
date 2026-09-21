@@ -6,11 +6,9 @@ import {
   KeyRound,
   MessageSquare,
   Plus,
-  RefreshCw,
   TableProperties,
 } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
-import { usePlatform } from '../../hooks/usePlatform';
 import {
   estimateExpandedToolbarWidth,
   TOOLBAR_GAP,
@@ -72,7 +70,6 @@ export interface ContentToolbarProps {
   onBatchExport: () => void;
   onToggleAiChat: () => void;
   onToggleDetail: () => void;
-  onRefresh: () => void;
 }
 
 export function ContentToolbar({
@@ -92,7 +89,6 @@ export function ContentToolbar({
   onBatchExport,
   onToggleAiChat,
   onToggleDetail,
-  onRefresh,
 }: ContentToolbarProps) {
   const { t } = useI18n();
   const expandedMinWidth = contentToolbarExpandedMinWidth({
@@ -104,8 +100,6 @@ export function ContentToolbar({
     detailPanelApplicable,
   });
   const { ref: toolbarRef, compact } = useCompactToolbar(expandedMinWidth);
-  const platform = usePlatform();
-  const refreshTitle = `${t('connWin.refresh')} (${platform === 'macos' ? '⌘R' : 'Ctrl+R'})`;
 
   return (
     <ToolbarShell ref={toolbarRef} className="h-12 min-h-[48px] px-3">
@@ -180,15 +174,6 @@ export function ContentToolbar({
       )}
 
       <div className="flex-1" />
-
-      <ToolbarButton
-        compact
-        variant="ghost"
-        title={refreshTitle}
-        label={t('connWin.refresh')}
-        icon={<RefreshCw className="h-3.5 w-3.5" />}
-        onClick={onRefresh}
-      />
 
       <ToolbarButton
         compact

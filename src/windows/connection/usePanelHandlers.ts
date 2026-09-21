@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useI18n } from '../../hooks/useI18n';
 import type { ConnectionOpenTarget } from '../../lib/connectionViews/types';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { useTableDataStore } from '../../stores/tableDataStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import {
   usePanelStore,
@@ -320,6 +321,10 @@ export function usePanelHandlers({
         ...sidebarConnCtx,
         type: 'er-diagram',
         id: nextPanelId('er'),
+        // Bind the target database for the tab's lifetime, the same way query and
+        // table panels do. Reading the session-wide `currentDatabase` at render
+        // time made the diagram silently follow whichever tab was last active.
+        database: currentDatabase ?? initialDatabase ?? undefined,
         focusTable: focus,
         schema,
       };
@@ -334,6 +339,8 @@ export function usePanelHandlers({
       addPanel,
       setActivePanel,
       storeUpdatePanel,
+      currentDatabase,
+      initialDatabase,
     ],
   );
 
@@ -603,6 +610,7 @@ export function usePanelHandlers({
 
   const handleRefresh = useCallback(() => {
     if (!sidebarConnCtx?.dbSessionId) return;
+    useTableDataStore.getState().invalidateCachedData(sidebarConnCtx.dbSessionId);
     if (currentDatabase) {
       void loadTables(currentDatabase);
     } else {

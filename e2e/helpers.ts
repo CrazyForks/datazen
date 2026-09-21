@@ -28,6 +28,14 @@ export function newConnectionButtonSelector() {
   return '[data-testid="new-connection-button"], [data-testid="empty-new-connection-button"]';
 }
 
+/** Click the navigator sidebar refresh button (reloads the schema tree). */
+export async function clickNavigatorRefresh(timeout = 10000) {
+  const btn = await $('[data-testid="navigator-refresh"]');
+  await btn.waitForDisplayed({ timeout, timeoutMsg: '等待侧栏刷新按钮超时' });
+  await btn.click();
+  await browser.pause(500);
+}
+
 /** Wait until a new-connection entry point is visible. */
 export async function waitForNewConnectionButton(timeout = 15000) {
   await browser.waitUntil(

@@ -44,4 +44,20 @@ describe('[tester] schemaStoreHelpers', () => {
     expect(resolvePreferredDatabase(['a', 'b'], 'b')).toBe('b');
     expect(resolveVisibleDatabases(['a', 'b'], 'a').lockedToConfigured).toBe(true);
   });
+
+  it('skips system databases when no database is configured', () => {
+    // MySQL `SHOW DATABASES` lists information_schema first; a cold connect must
+    // not default the workspace (and its ER diagram) onto it.
+    expect(resolvePreferredDatabase(['information_schema', 'mysql', 'sys', 'app', 'test'])).toBe(
+      'app',
+    );
+    expect(resolvePreferredDatabase(['postgres', 'analytics'])).toBe('analytics');
+    // A server that only exposes system databases keeps the old first-entry fallback.
+    expect(resolvePreferredDatabase(['information_schema', 'mysql'])).toBe('information_schema');
+    // An explicit configured database still wins, even if it is a system one.
+    expect(resolvePreferredDatabase(['information_schema', 'app'], 'information_schema')).toBe(
+      'information_schema',
+    );
+    expect(resolvePreferredDatabase([])).toBeNull();
+  });
 });

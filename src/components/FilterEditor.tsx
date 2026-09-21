@@ -7,7 +7,7 @@ import { Select } from './ui/Select';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
 import { cn } from '../lib/cn';
-import { filterDraftEqualsApplied, isCompleteFilter } from '../stores/tableDataStore';
+import { filterDraftEqualsApplied, isCompleteFilter } from '../stores/tableData/filterUtils';
 import { formatCell } from '../lib/formatters';
 
 export type FilterLogic = 'and' | 'or';

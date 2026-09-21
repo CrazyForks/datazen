@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { tid } from '../../lib/tid';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
-import type { CellEdit } from '../../stores/tableDataStore';
+import type { CellEdit } from '../../stores/tableData/types';
 import { useI18n } from '../../hooks/useI18n';
 import { useColumnResize, adjustWidthsForSort } from '../../hooks/useColumnResize';
 import {

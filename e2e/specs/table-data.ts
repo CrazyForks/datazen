@@ -9,6 +9,7 @@ import {
   switchSubTab,
   waitForNewQueryButton,
   waitForTableInSidebar,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 /**
@@ -46,8 +47,7 @@ describe('表数据视图 (TD-001~TD-008)', () => {
     `);
 
     // Refresh sidebar
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await waitForTableInSidebar(TEST_TABLE);
   });
 
@@ -263,8 +263,7 @@ describe('表数据视图 (TD-001~TD-008)', () => {
     await openQueryTab();
     await executeSQL(`DROP TABLE IF EXISTS ${emptyTable}`);
     await executeSQL(`CREATE TABLE ${emptyTable} (id SERIAL PRIMARY KEY, name TEXT)`);
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(1500);
     await clickTableInSidebar(emptyTable);
     await browser.pause(1500);
