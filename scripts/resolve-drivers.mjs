@@ -194,20 +194,32 @@ const DRIVER_ICON_PARENT = {
   ob_oracle: 'mysql',
 };
 
-function driverUiDirFromMetaPath(metaPath) {
+/**
+ * Candidate badge dirs for a driver, in probe order. Convention is
+ * `packages/drivers/<id>/ui/icons/<dbType>.svg`, but a meta file may live in a
+ * nested feature dir (redis: `ui/shared/meta.ts`), so probe both the meta file's
+ * own directory and the enclosing `ui/` directory.
+ */
+function driverIconDirs(metaPath) {
   // metaPath like '../../packages/drivers/postgres/ui/meta' (from src/extensions)
   const absMetaTs = resolve(ROOT, 'src/extensions', `${metaPath}.ts`);
-  return dirname(absMetaTs);
+  const dirs = [dirname(absMetaTs)];
+  const segments = relative(ROOT, absMetaTs).split(/[\\/]/);
+  const uiIdx = segments.lastIndexOf('ui');
+  if (uiIdx > 0) dirs.push(resolve(ROOT, ...segments.slice(0, uiIdx + 1)));
+  return dirs;
 }
 
-function resolveDriverIconImport(metaPath, dbTypeId) {
-  const uiDir = driverUiDirFromMetaPath(metaPath);
-  const abs = join(uiDir, 'icons', `${dbTypeId}.svg`);
-  if (!existsSync(abs)) return null;
-  // import path relative to src/extensions/generated.ts
-  const relFromExtensions = relative(resolve(ROOT, 'src/extensions'), abs).replaceAll('\\', '/');
-  const importPath = relFromExtensions.startsWith('.') ? relFromExtensions : `./${relFromExtensions}`;
-  return { abs, importPath: `${importPath}?url`, fileKey: dbTypeId };
+export function resolveDriverIconImport(metaPath, dbTypeId) {
+  for (const dir of driverIconDirs(metaPath)) {
+    const abs = join(dir, 'icons', `${dbTypeId}.svg`);
+    if (!existsSync(abs)) continue;
+    // import path relative to src/extensions/generated.ts
+    const relFromExtensions = relative(resolve(ROOT, 'src/extensions'), abs).replaceAll('\\', '/');
+    const importPath = relFromExtensions.startsWith('.') ? relFromExtensions : `./${relFromExtensions}`;
+    return { abs, importPath: `${importPath}?url`, fileKey: dbTypeId };
+  }
+  return null;
 }
 
 const BASIC_PATH_FRONTEND = {

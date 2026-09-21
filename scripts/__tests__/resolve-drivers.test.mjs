@@ -10,7 +10,7 @@ import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { resolveDrivers, wantsCodegenOnly } from '../resolve-drivers.mjs';
+import { resolveDrivers, resolveDriverIconImport, wantsCodegenOnly } from '../resolve-drivers.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -127,5 +127,29 @@ describe('drivers-registry.json snapshot', () => {
     for (const id of resolved) {
       expect(live[id]?.source).toBe('path');
     }
+  });
+});
+
+describe('resolveDriverIconImport', () => {
+  it('resolves badges next to the meta file', () => {
+    const resolved = resolveDriverIconImport(
+      '../../packages/drivers/postgres/ui/meta',
+      'postgresql',
+    );
+    expect(resolved?.importPath).toContain('drivers/postgres/ui/icons/postgresql.svg?url');
+  });
+
+  it('falls back to the driver ui/ dir when meta sits in a nested feature dir', () => {
+    const resolved = resolveDriverIconImport(
+      '../../packages/drivers/redis/ui/shared/meta',
+      'redis',
+    );
+    expect(resolved?.importPath).toContain('drivers/redis/ui/icons/redis.svg?url');
+  });
+
+  it('returns null for dbTypes without a badge SVG', () => {
+    expect(
+      resolveDriverIconImport('../../packages/drivers/redis/ui/shared/meta', 'no-such-db-type'),
+    ).toBeNull();
   });
 });
