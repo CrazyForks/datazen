@@ -10,6 +10,7 @@ import {
   setSafeMode,
   withSafeModeOff,
   waitForTableInSidebar,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 /**
@@ -39,8 +40,7 @@ describe('表索引创建与删除 (IDX-001~IDX-006)', () => {
     // navigator; the schema refresh is independent of SQL completion.
     await browser.pause(1200);
 
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await waitForTableInSidebar(TEST_TABLE);
 
     await clickTableInSidebar(TEST_TABLE);

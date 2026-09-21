@@ -34,9 +34,13 @@ import type {
   ConnectionViewActions,
   NodeContextMenuPayload,
 } from '../../lib/connectionViews/types';
-import type { DatabaseType } from '../../types';
+import type { ColumnSchema, DatabaseType } from '../../types';
 import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { AiChatDraftRequest, ContentViewCallbacks } from './query/aiDraftBridge';
+
+const NO_COLUMNS: ColumnSchema[] = [];
+const NO_ROWS: Record<string, unknown>[] = [];
+const NO_SELECTION: Set<number> = new Set();
 
 export interface ContentViewProps {
   selectTableRef?: MutableRefObject<
@@ -69,12 +73,20 @@ export function ContentView({
   const schemaViews = useSchemaStore((s) => s.views);
   const loadForConnection = useSchemaStore((s) => s.loadForConnection);
 
-  const tableColumns = useTableDataStore((s) => s.columns);
-  const tableRows = useTableDataStore((s) => s.rows);
-  const totalRows = useTableDataStore((s) => s.totalRows);
-  const selectedRows = useTableDataStore((s) => s.selectedRows);
-  const tableName = useTableDataStore((s) => s.tableName);
-  const setDbType = useTableDataStore((s) => s.setDatabaseType);
+  const isTablePanel = activePanel?.type === 'table' || activePanel?.type === 'view';
+  const tableSlice = useTableDataStore((s) =>
+    isTablePanel && activePanelId ? s.byPanel.get(activePanelId) : undefined,
+  );
+  const tableColumns = tableSlice?.columns ?? NO_COLUMNS;
+  const tableRows = tableSlice?.rows ?? NO_ROWS;
+  const totalRows = tableSlice?.totalRows ?? 0;
+  const selectedRows = tableSlice?.selectedRows ?? NO_SELECTION;
+  const tableName =
+    activePanel?.type === 'table'
+      ? activePanel.tableName
+      : activePanel?.type === 'view'
+        ? (activePanel as ViewPanel).viewName
+        : undefined;
 
   const {
     sidebarConnCtx,
@@ -141,10 +153,6 @@ export function ContentView({
     [schemaTables, schemaViews, currentDatabase],
   );
 
-  useEffect(() => {
-    if (databaseType) setDbType(databaseType);
-  }, [databaseType, setDbType]);
-
   const schemaTreeDbSessionId = sidebarConnCtx?.dbSessionId ?? dbSessionId;
   const schemaTreeDatabaseType = sidebarConnCtx?.databaseType ?? databaseType;
 
@@ -170,6 +178,16 @@ export function ContentView({
     }
     knownPanelIdsRef.current = liveIds;
   }, [allPanels, destroyQbForPanel]);
+
+  // Table-data slices live and die with their panel; prune the ones left behind
+  // when a tab (or a whole connection) closes.
+  useEffect(() => {
+    const store = useTableDataStore.getState();
+    const liveIds = new Set(allPanels.map((p) => p.id));
+    for (const panelId of store.byPanel.keys()) {
+      if (!liveIds.has(panelId)) store.removePanel(panelId);
+    }
+  }, [allPanels]);
 
   // Keep the session-level `currentDatabase` aligned with the ACTIVE panel's
   // bound database. Without this, loadForConnection/schema-tree defaults can
@@ -394,7 +412,6 @@ export function ContentView({
           onBatchExport={handleOpenBatchExportFromToolbar}
           onToggleAiChat={() => setAiChatOpen((v) => !v)}
           onToggleDetail={() => setDetailOpen((p) => !p)}
-          onRefresh={handlers.handleRefresh}
         />
       )}
 

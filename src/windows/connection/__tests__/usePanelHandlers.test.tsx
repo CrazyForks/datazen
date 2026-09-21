@@ -125,3 +125,62 @@ describe('usePanelHandlers.handleNewQuery binds a database to the query tab', ()
     expect(panel?.namespacePath).toEqual(['558:hive', 'snap']);
   });
 });
+
+describe('usePanelHandlers.handleOpenErDiagram binds a database to the ER tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    usePanelStore.getState().reset();
+    useActiveConnectionStore.getState().reset();
+  });
+
+  function renderErHandlers(props: { currentDatabase: string | null; initialDatabase?: string }) {
+    return renderHook(
+      ({ currentDatabase, initialDatabase }) =>
+        usePanelHandlers({
+          connCtx: {
+            connectionId: 'conn-1',
+            dbSessionId: 'sess-1',
+            connectionName: 'MyConn',
+            databaseType: 'mysql',
+          },
+          showStructureEditor: false,
+          currentDatabase,
+          initialDatabase,
+          lastTableSchema: null,
+          schemaViews: [],
+        }),
+      { initialProps: props },
+    );
+  }
+
+  it('carries the database selected at open time', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+
+  it('falls back to the configured database when the session has none', async () => {
+    const { result } = renderErHandlers({ currentDatabase: null, initialDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+
+  it('keeps its own database when another tab moves the session default', async () => {
+    const { result, rerender } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    rerender({ currentDatabase: 'analytics' });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+});

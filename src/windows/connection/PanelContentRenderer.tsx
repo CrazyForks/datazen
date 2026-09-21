@@ -168,6 +168,7 @@ function SqlPanelContent({
         <div className="flex min-h-0 flex-1 flex-col">
           {panel.subTab === 'data' && (
             <TableView
+              panelId={panel.id}
               dbSessionId={panel.dbSessionId}
               database={panel.database ?? currentDatabase ?? ''}
               connectionId={panel.connectionId}
@@ -253,6 +254,7 @@ function SqlPanelContent({
         <div className="flex min-h-0 flex-1 flex-col">
           {(panel as ViewPanel).subTab === 'data' && (
             <TableView
+              panelId={panel.id}
               dbSessionId={panel.dbSessionId}
               connectionId={panel.connectionId}
               database={(panel as ViewPanel).database ?? currentDatabase ?? ''}
@@ -322,12 +324,14 @@ function SqlPanelContent({
     );
   }
 
-  if (panel.type === 'er-diagram' && currentDatabase) {
+  if (panel.type === 'er-diagram') {
+    const erDatabase = (panel as ErDiagramPanel).database ?? currentDatabase;
+    if (!erDatabase) return null;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <ErDiagramView
           dbSessionId={panel.dbSessionId}
-          database={currentDatabase}
+          database={erDatabase}
           focusTable={(panel as ErDiagramPanel).focusTable}
           onSelectTable={onSelectTable}
           onFocusTable={(table) => onOpenErDiagram(table)}

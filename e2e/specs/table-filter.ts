@@ -9,6 +9,7 @@ import {
   selectDzOption,
   connectSeededPgInWorkspace,
   waitForTableInSidebar,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 /**
@@ -92,8 +93,7 @@ describe('表数据筛选 (TF-001~TF-010)', () => {
     // absent from the navigator on a cold Tauri run.
     await browser.pause(1200);
 
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await waitForTableInSidebar(TEST_TABLE);
 
     await clickTableInSidebar(TEST_TABLE);

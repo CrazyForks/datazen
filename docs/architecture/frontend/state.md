@@ -13,7 +13,7 @@ DataZen 前端使用 React + TypeScript + Zustand。状态按领域拆分，Taur
 | `connectionStore` | 持久化连接配置、分组等 |
 | `activeConnectionStore` | 当前运行连接及 `dbSessionId` |
 | `schemaStore` | database/schema/table/object 元数据 |
-| `tableDataStore` | 表数据、筛选、排序、分页和编辑 |
+| `tableDataStore` | 表数据、筛选、排序、分页和编辑（按 `panelId` 分片） |
 | `panelStore` | 主工作区 Panel、Query 状态和结果 |
 | `workspaceTabsStore` | 工作区 Tab |
 | `aiStore` | AI 配置/会话相关状态 |

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { databaseCommands } from '../commands/database';
 import { t } from '../locales/t';
-import type { ColumnSchema, DatabaseType, FilterCondition, SortCondition } from '../types';
+import type { DatabaseType, FilterCondition, SortCondition } from '../types';
 import { DB_REGISTRY } from '../lib/databaseTypes';
 import {
   buildRowIdentity,
@@ -11,26 +11,19 @@ import {
   tableChangeContextKey,
   valuesEqual,
   type CommitPendingChangesResult,
-  type PendingRowChange,
-  type PendingStatus,
   type RowChangePlan,
   type TableChangeContext,
 } from '../lib/tableChanges';
 import { useSettingsStore } from './settingsStore';
-import type { CellEdit, ConnectionTableState, TableState } from './tableData/types';
+import type { TableState } from './tableData/types';
 import { cloneFilters, filterDraftEqualsApplied, isCompleteFilter } from './tableData/filterUtils';
 import {
-  activeTableContext,
-  buildTableChangeContext,
-  emptyConnectionTableState,
+  buildTableContext,
   emptyTableState,
   extractErrorMessage,
-  flattenActive,
-  getState,
-  patchConnection,
   rowsToRecords,
-  syncFlat,
   toCellValue,
+  type TableTarget,
 } from './tableData/connectionState';
 import {
   AMBIGUOUS_ROW_IDENTITY_ERROR,
@@ -43,273 +36,167 @@ import {
   rowIdentityIsUnique,
 } from './tableData/pendingChanges';
 
-export type { CellEdit, TableState } from './tableData/types';
-export { isCompleteFilter, cloneFilters, filterDraftEqualsApplied } from './tableData/filterUtils';
-
 // ── Store ─────────────────────────────────────────────────────────
 
-interface TableDataStore extends ConnectionTableState {
-  perConnection: Map<string, ConnectionTableState>;
-  /** Runtime DB session id of the active session. */
-  activeDbSessionId: string | null;
+export interface LoadTableDataParams extends TableTarget {
+  /** Table/view panel this load belongs to; its state slice is keyed by this id. */
+  panelId: string;
+  /** Reuse the cached total instead of running COUNT(*) (pagination/sort re-reads). */
+  skipCount?: boolean;
+}
 
-  columns: ColumnSchema[];
-  visibleColumns: string[] | null;
-  rows: Record<string, unknown>[];
-  totalRows: number;
-  page: number;
-  pageSize: number;
-  filters: FilterCondition[];
-  filterLogic: 'and' | 'or';
-  draftFilters: FilterCondition[];
-  draftFilterLogic: 'and' | 'or';
-  filterPanelOpen: boolean;
-  sorts: SortCondition[];
-  editBuffer: Map<string, CellEdit>;
-  pendingChanges: Map<string, PendingRowChange>;
-  previewPlan: RowChangePlan | null;
-  pendingStatus: PendingStatus;
-  lastCommitResult: CommitPendingChangesResult | null;
-  selectedRows: Set<number>;
-  lastSelectedIndex: number | null;
-  editingCell: { row: number; col: string } | null;
-  loading: boolean;
-  error: string | null;
-  tableName: string | null;
+/** Every action is scoped to one table/view panel, like `panelStore`'s queryExec map. */
+interface TableDataStore {
+  byPanel: Map<string, TableState>;
 
-  setActiveConnection: (dbSessionId: string | null) => void;
-  removeConnection: (dbSessionId: string) => void;
-  setDatabaseType: (dbType: string) => void;
-  switchToTable: (
-    table: string,
-    context?: Pick<TableChangeContext, 'connectionId' | 'driverType' | 'database' | 'schema'>,
-  ) => void;
-  loadTableData: (params: {
-    dbSessionId: string;
-    table: string;
-    skipCount?: boolean;
-    /** F1: explicit target database; remembered per connection so store-driven
-     * refreshes (paging, filters, row edits) keep hitting the right database. */
-    database?: string | null;
-    schema?: string | null;
-    connectionId?: string | null;
-    driverType?: string | null;
-  }) => Promise<void>;
-  setVisibleColumns: (columns: string[] | null) => void;
-  toggleColumnVisibility: (columnName: string) => void;
-  resetVisibleColumns: () => void;
-  setPage: (page: number) => void;
-  setPageSize: (size: number) => void;
-  addFilter: (filter: FilterCondition) => void;
-  setFilters: (filters: FilterCondition[], logic?: 'and' | 'or') => void;
-  updateFilter: (index: number, filter: FilterCondition) => void;
-  setFilterLogic: (logic: 'and' | 'or') => void;
-  removeFilter: (index: number) => void;
-  clearFilters: () => void;
-  applyFilters: () => void;
-  setFilterPanelOpen: (open: boolean) => void;
-  setSort: (sort: SortCondition) => void;
-  startEdit: (row: number, col: string) => void;
-  stageCellChange: (row: number, col: string, value: unknown) => void;
-  stageRowDelete: (rowIndices: number | number[]) => void;
-  discardPendingChanges: () => void;
-  rollbackPendingChanges: () => void;
-  previewPendingChanges: () => Promise<RowChangePlan | null>;
-  commitPendingChanges: () => Promise<CommitPendingChangesResult>;
-  /** Compatibility aliases retained until the shared UI wiring is migrated. */
-  updateCell: (row: number, col: string, value: unknown) => void;
-  applyColumnToRows: (col: string, value: unknown, rows: number[]) => void;
-  cancelEdit: () => void;
-  commitChanges: () => Promise<CommitPendingChangesResult>;
-  discardChanges: () => void;
-  selectRow: (index: number, opts?: { multi?: boolean; range?: boolean }) => void;
-  toggleSelectAll: () => void;
-  deleteSelectedRows: () => Promise<void>;
-  deleteRows: (rowIndices: number[]) => Promise<void>;
-  closeTable: (table: string) => void;
-
-  setDetailRow: (index: number | null) => void;
+  loadTableData: (params: LoadTableDataParams) => Promise<void>;
+  /** Re-run the load a panel last performed, keeping its page/filters/sorts. */
+  reloadPanel: (panelId: string, opts?: { skipCount?: boolean }) => void;
+  /** Drop a panel's slice entirely — called when the tab closes. */
+  removePanel: (panelId: string) => void;
+  /**
+   * Drop cached rows of a session's panels so the next render re-fetches. Pass
+   * `tableName` to hit only that table. Panels with staged (uncommitted) edits
+   * are never touched.
+   */
+  invalidateCachedData: (dbSessionId: string, tableName?: string) => void;
   reset: () => void;
+
+  setPage: (panelId: string, page: number) => void;
+  setPageSize: (panelId: string, size: number) => void;
+  addFilter: (panelId: string, filter: FilterCondition) => void;
+  setFilters: (panelId: string, filters: FilterCondition[], logic?: 'and' | 'or') => void;
+  updateFilter: (panelId: string, index: number, filter: FilterCondition) => void;
+  setFilterLogic: (panelId: string, logic: 'and' | 'or') => void;
+  removeFilter: (panelId: string, index: number) => void;
+  clearFilters: (panelId: string) => void;
+  applyFilters: (panelId: string) => void;
+  setFilterPanelOpen: (panelId: string, open: boolean) => void;
+  setVisibleColumns: (panelId: string, columns: string[] | null) => void;
+  setSort: (panelId: string, sort: SortCondition) => void;
+  setDetailRow: (panelId: string, index: number | null) => void;
+
+  startEdit: (panelId: string, row: number, col: string) => void;
+  cancelEdit: (panelId: string) => void;
+  selectRow: (panelId: string, index: number, opts?: { multi?: boolean; range?: boolean }) => void;
+  toggleSelectAll: (panelId: string) => void;
+  stageCellChange: (panelId: string, row: number, col: string, value: unknown) => void;
+  applyColumnToRows: (panelId: string, col: string, value: unknown, rows: number[]) => void;
+  stageRowDelete: (panelId: string, rowIndices: number | number[]) => void;
+  deleteRows: (panelId: string, rowIndices: number[]) => void;
+  rollbackPendingChanges: (panelId: string) => void;
+  previewPendingChanges: (panelId: string) => Promise<RowChangePlan | null>;
+  commitPendingChanges: (panelId: string) => Promise<CommitPendingChangesResult>;
 }
 
-/** Get the active DB session's state. */
-function getActiveConn(get: () => TableDataStore): ConnectionTableState {
-  const { activeDbSessionId, perConnection } = get();
-  if (!activeDbSessionId) return emptyConnectionTableState();
-  return perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-}
+type Getter = () => TableDataStore;
+type Setter = (partial: Partial<TableDataStore>) => void;
 
-/** Commit a per-connection patch and re-flatten. */
-function commitPatch(
-  get: () => TableDataStore,
-  set: (partial: Partial<TableDataStore>) => void,
-  dbSessionId: string | null,
-  patch: Partial<ConnectionTableState>,
-): void {
-  const state = get();
-  const targetDbSessionId = dbSessionId ?? state.activeDbSessionId;
-  if (!targetDbSessionId) return;
-  const perConnection = patchConnection(state.perConnection, targetDbSessionId, patch);
-  set({ perConnection, ...flattenActive(perConnection, state.activeDbSessionId) });
-}
-
-/** Update active table's state within the active connection. */
-function updateActive(
-  get: () => TableDataStore,
-  set: (partial: Partial<TableDataStore>) => void,
+/** Write one panel's slice. Panels that never loaded have no slice, so writes are no-ops. */
+function patchPanel(
+  get: Getter,
+  set: Setter,
+  panelId: string,
   updater: (ts: TableState) => Partial<TableState>,
 ): void {
-  const conn = getActiveConn(get);
-  if (!conn.activeTableKey) return;
-  const current = getState(conn.tableStates, conn.activeTableKey);
-  const patched = { ...current, ...updater(current) };
-  const next = new Map(conn.tableStates);
-  next.set(conn.activeTableKey, patched);
-  commitPatch(get, set, null, { tableStates: next });
+  const current = get().byPanel.get(panelId);
+  if (!current) return;
+  const next = new Map(get().byPanel);
+  next.set(panelId, { ...current, ...updater(current) });
+  set({ byPanel: next });
 }
 
-/** Mark a page/filter/sort transition so an older response can never commit. */
-function updateActiveForReload(
-  get: () => TableDataStore,
-  set: (partial: Partial<TableDataStore>) => void,
+/** Same as {@link patchPanel} but marks a page/filter/sort transition, so an older response can never commit. */
+function patchPanelForReload(
+  get: Getter,
+  set: Setter,
+  panelId: string,
   updater: (ts: TableState) => Partial<TableState>,
 ): void {
-  updateActive(get, set, (ts) => ({
+  patchPanel(get, set, panelId, (ts) => ({
     ...updater(ts),
     requestRevision: ts.requestRevision + 1,
   }));
 }
 
-function reloadActive(get: () => TableDataStore): void {
-  const conn = getActiveConn(get);
-  const { activeDbSessionId } = get();
-  const context = activeTableContext(conn);
-  if (activeDbSessionId && context) {
-    void get().loadTableData({
-      dbSessionId: activeDbSessionId,
-      table: context.table,
-      connectionId: context.connectionId,
-      driverType: context.driverType,
-      database: context.database,
-      schema: context.schema,
-    });
-  }
+function targetOf(context: TableChangeContext): TableTarget {
+  return {
+    dbSessionId: context.dbSessionId,
+    table: context.table,
+    connectionId: context.connectionId,
+    driverType: context.driverType,
+    database: context.database,
+    schema: context.schema,
+  };
+}
+
+/** Apply a successful page fetch to the panel slice, unless it was superseded meanwhile. */
+function commitFetchedPage(
+  get: Getter,
+  set: Setter,
+  panelId: string,
+  context: TableChangeContext,
+  requestRevision: number,
+  res: Awaited<ReturnType<typeof databaseCommands.getTableData>>,
+): void {
+  const current = get().byPanel.get(panelId);
+  if (!current) return; // panel closed while the request was in flight
+  if (current.requestRevision !== requestRevision || current.loadingRevision !== requestRevision)
+    return;
+
+  const fetchedRows = rowsToRecords(res.columns, res.rows);
+  const pkColumns = res.columns.filter((column) => column.isPrimaryKey);
+  const duplicateIdentityKeys = duplicateRowIdentityKeys(fetchedRows, pkColumns);
+  const anchors = new Map(current.rowIdentityAnchors);
+  fetchedRows.forEach((row, rowIndex) => {
+    const identity = buildRowIdentity(row, pkColumns);
+    if (identity) anchors.set(rowIndex, rowIdentityKey(identity));
+    else anchors.delete(rowIndex);
+  });
+  const rowsWithPending = overlayPendingRows(
+    { ...current, columns: res.columns, rows: fetchedRows, rowIdentityAnchors: anchors },
+    fetchedRows,
+  );
+  const validColumnNames = new Set(res.columns.map((c) => c.name));
+  const sanitizedVisible = current.visibleColumns
+    ? current.visibleColumns.filter((c) => validColumnNames.has(c))
+    : null;
+
+  const next = new Map(get().byPanel);
+  next.set(panelId, {
+    ...current,
+    columns: res.columns,
+    visibleColumns:
+      sanitizedVisible && sanitizedVisible.length === res.columns.length ? null : sanitizedVisible,
+    rows: rowsWithPending,
+    totalRows: res.totalRows ?? current.totalRows,
+    page: res.page,
+    pageSize: res.pageSize,
+    context,
+    rowIdentityAnchors: anchors,
+    loading: false,
+    loadingRevision: null,
+    selectedRows: new Set(),
+    editBuffer: rebuildEditBuffer({
+      ...current,
+      columns: res.columns,
+      rows: rowsWithPending,
+      rowIdentityAnchors: anchors,
+    }),
+    editingCell: null,
+    error: duplicateIdentityKeys.length > 0 ? AMBIGUOUS_ROW_IDENTITY_ERROR : null,
+  });
+  set({ byPanel: next });
 }
 
 export const useTableDataStore = create<TableDataStore>((set, get) => ({
-  perConnection: new Map(),
-  activeDbSessionId: null,
-  ...emptyConnectionTableState(),
-  ...syncFlat(null, null, new Map()),
+  byPanel: new Map(),
 
-  setActiveConnection: (dbSessionId) => {
-    const state = get();
-    let perConnection = state.perConnection;
-    if (dbSessionId && !perConnection.has(dbSessionId)) {
-      perConnection = new Map(perConnection);
-      perConnection.set(dbSessionId, emptyConnectionTableState());
-    }
-    set({
-      perConnection,
-      activeDbSessionId: dbSessionId,
-      ...flattenActive(perConnection, dbSessionId),
-    });
-  },
-
-  removeConnection: (dbSessionId) => {
-    const state = get();
-    const perConnection = new Map(state.perConnection);
-    perConnection.delete(dbSessionId);
-    const activeDbSessionId =
-      state.activeDbSessionId === dbSessionId ? null : state.activeDbSessionId;
-    set({
-      perConnection,
-      activeDbSessionId,
-      ...flattenActive(perConnection, activeDbSessionId),
-    });
-  },
-
-  setDetailRow: (index) => {
-    commitPatch(get, set, null, { detailRowIndex: index });
-  },
-
-  setDatabaseType: (dbType: string) => {
-    const conn = getActiveConn(get);
-    const current = activeTableContext(conn);
-    const nextStates = new Map(conn.tableStates);
-    if (current && current.driverType !== dbType && conn.activeTableKey) {
-      const currentState = getState(conn.tableStates, conn.activeTableKey);
-      nextStates.set(conn.activeTableKey, {
-        ...currentState,
-        previewPlan: null,
-        pendingStatus: 'idle',
-        lastCommitResult: null,
-        error: 'Table context changed; preview must be rebuilt before commit.',
-      });
-    }
-    commitPatch(get, set, null, { databaseType: dbType, tableStates: nextStates });
-  },
-
-  switchToTable: (table, contextPatch) => {
-    const conn = getActiveConn(get);
-    const context = buildTableChangeContext(conn, {
-      dbSessionId: get().activeDbSessionId ?? '',
-      table,
-      ...contextPatch,
-    });
-    const key = tableChangeContextKey(context);
-    const previous = conn.activeTableKey;
-    const nextStates = new Map(conn.tableStates);
-    if (previous && previous !== key) {
-      const previousState = nextStates.get(previous);
-      if (previousState?.previewPlan) {
-        nextStates.set(previous, {
-          ...previousState,
-          previewPlan: null,
-          pendingStatus: 'idle',
-          lastCommitResult: null,
-        });
-      }
-    }
-    commitPatch(get, set, null, {
-      activeTable: table,
-      activeTableKey: key,
-      connectionId: context.connectionId,
-      databaseType: context.driverType,
-      activeDatabase: context.database,
-      activeSchema: context.schema,
-      tableStates: nextStates,
-    });
-  },
-
-  loadTableData: async ({
-    dbSessionId,
-    table,
-    skipCount,
-    database,
-    schema,
-    connectionId,
-    driverType,
-  }) => {
-    const state = get();
-    const connState = state.perConnection.get(dbSessionId) ?? emptyConnectionTableState();
-    const context = buildTableChangeContext(connState, {
-      dbSessionId,
-      table,
-      connectionId,
-      driverType,
-      database: database !== undefined ? database : connState.activeDatabase,
-      schema: schema !== undefined ? schema : connState.activeSchema,
-    });
-    const tableKey = tableChangeContextKey(context);
-    const existing = connState.tableStates.get(tableKey) ?? emptyTableState(context);
-
+  loadTableData: async ({ panelId, skipCount, ...target }) => {
+    const context = buildTableContext(target);
+    const existing = get().byPanel.get(panelId) ?? emptyTableState(context);
     const requestRevision = existing.requestRevision;
     if (existing.loading && existing.loadingRevision === requestRevision) return;
-
-    // F1: explicit pin wins; otherwise reuse the remembered target database so
-    // store-driven refreshes stay on the panel's database.
-    const targetDatabase = context.database;
 
     const { page, filters, sorts, filterLogic } = existing;
     const driverPageSize = DB_REGISTRY[context.driverType as DatabaseType]?.defaultPageSize;
@@ -319,153 +206,103 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
         ? existing.pageSize
         : settingsPageSize || driverPageSize || existing.pageSize;
 
-    const nextStates = new Map(connState.tableStates);
-    if (connState.activeTableKey && connState.activeTableKey !== tableKey) {
-      const previous = nextStates.get(connState.activeTableKey);
-      if (previous?.previewPlan) {
-        nextStates.set(connState.activeTableKey, {
-          ...previous,
-          previewPlan: null,
-          pendingStatus: 'idle',
-          lastCommitResult: null,
-        });
-      }
-    }
-    nextStates.set(tableKey, {
+    const states = new Map(get().byPanel);
+    states.set(panelId, {
       ...existing,
       context,
+      pageSize,
       loading: true,
       loadingRevision: requestRevision,
       error: null,
     });
-    commitPatch(get, set, dbSessionId, {
-      activeTable: table,
-      activeTableKey: tableKey,
-      connectionId: context.connectionId,
-      databaseType: context.driverType,
-      tableStates: nextStates,
-      activeDatabase: context.database,
-      activeSchema: context.schema,
-    });
+    set({ byPanel: states });
 
     try {
       const res = await databaseCommands.getTableData({
-        dbSessionId,
-        table,
+        dbSessionId: context.dbSessionId,
+        table: context.table,
         page,
         pageSize,
         filters: filters.filter(isCompleteFilter),
         sorts,
         skipCount,
         filterLogic,
-        database: targetDatabase,
+        database: context.database,
       });
-      const latestConn = get().perConnection.get(dbSessionId) ?? emptyConnectionTableState();
-      const updated = new Map(latestConn.tableStates);
-      const ts = updated.get(tableKey) ?? emptyTableState(context);
-      if (ts.requestRevision !== requestRevision || ts.loadingRevision !== requestRevision) return;
-      const fetchedRows = rowsToRecords(res.columns, res.rows);
-      const pkColumns = res.columns.filter((column) => column.isPrimaryKey);
-      const duplicateIdentityKeys = duplicateRowIdentityKeys(fetchedRows, pkColumns);
-      const anchors = new Map(ts.rowIdentityAnchors);
-      fetchedRows.forEach((row, rowIndex) => {
-        const identity = buildRowIdentity(row, pkColumns);
-        if (identity) anchors.set(rowIndex, rowIdentityKey(identity));
-        else anchors.delete(rowIndex);
-      });
-      const rowsWithPending = overlayPendingRows(
-        { ...ts, columns: res.columns, rows: fetchedRows, rowIdentityAnchors: anchors },
-        fetchedRows,
-      );
-      const validColumnNames = new Set(res.columns.map((c) => c.name));
-      const currentVisible = ts.visibleColumns;
-      const sanitizedVisible = currentVisible
-        ? currentVisible.filter((c) => validColumnNames.has(c))
-        : null;
-      const patched: TableState = {
-        ...ts,
-        columns: res.columns,
-        visibleColumns:
-          sanitizedVisible && sanitizedVisible.length === res.columns.length
-            ? null
-            : sanitizedVisible,
-        rows: rowsWithPending,
-        totalRows: res.totalRows ?? ts.totalRows,
-        page: res.page,
-        pageSize: res.pageSize,
-        context,
-        rowIdentityAnchors: anchors,
-        loading: false,
-        loadingRevision: null,
-        selectedRows: new Set(),
-        editBuffer: rebuildEditBuffer({
-          ...ts,
-          columns: res.columns,
-          rows: rowsWithPending,
-          rowIdentityAnchors: anchors,
-        }),
-        editingCell: null,
-        error: duplicateIdentityKeys.length > 0 ? AMBIGUOUS_ROW_IDENTITY_ERROR : null,
-      };
-      updated.set(tableKey, patched);
-      commitPatch(get, set, dbSessionId, { tableStates: updated });
+      commitFetchedPage(get, set, panelId, context, requestRevision, res);
     } catch (e) {
-      const latestConn = get().perConnection.get(dbSessionId) ?? emptyConnectionTableState();
-      const updated = new Map(latestConn.tableStates);
-      const ts = updated.get(tableKey) ?? emptyTableState(context);
-      if (ts.requestRevision !== requestRevision || ts.loadingRevision !== requestRevision) return;
-      updated.set(tableKey, {
-        ...ts,
-        loading: false,
-        loadingRevision: null,
-        error: extractErrorMessage(e, t('tableData.loadFailed')),
-      });
-      commitPatch(get, set, dbSessionId, { tableStates: updated });
+      patchPanel(get, set, panelId, (ts) =>
+        ts.requestRevision === requestRevision && ts.loadingRevision === requestRevision
+          ? {
+              loading: false,
+              loadingRevision: null,
+              error: extractErrorMessage(e, t('tableData.loadFailed')),
+            }
+          : {},
+      );
     }
   },
 
-  setPage: (page) => {
-    updateActiveForReload(get, set, () => ({ page }));
-    const conn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (activeDbSessionId && conn.activeTable)
-      void get().loadTableData({
-        dbSessionId: activeDbSessionId,
-        table: conn.activeTable,
-        connectionId: conn.connectionId,
-        driverType: conn.databaseType,
-        database: conn.activeDatabase,
-        schema: conn.activeSchema,
-        skipCount: true,
-      });
+  reloadPanel: (panelId, opts) => {
+    const context = get().byPanel.get(panelId)?.context;
+    if (!context) return;
+    void get().loadTableData({ panelId, ...targetOf(context), skipCount: opts?.skipCount });
   },
 
-  setPageSize: (size) => {
-    updateActiveForReload(get, set, () => ({ pageSize: size, page: 0 }));
-    const conn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (activeDbSessionId && conn.activeTable)
-      void get().loadTableData({
-        dbSessionId: activeDbSessionId,
-        table: conn.activeTable,
-        connectionId: conn.connectionId,
-        driverType: conn.databaseType,
-        database: conn.activeDatabase,
-        schema: conn.activeSchema,
-        skipCount: true,
-      });
+  removePanel: (panelId) => {
+    if (!get().byPanel.has(panelId)) return;
+    const next = new Map(get().byPanel);
+    next.delete(panelId);
+    set({ byPanel: next });
   },
 
-  addFilter: (filter) => {
-    updateActive(get, set, (ts) => ({
+  invalidateCachedData: (dbSessionId, tableName) => {
+    let changed = false;
+    const next = new Map(get().byPanel);
+    for (const [panelId, ts] of next) {
+      if (ts.context?.dbSessionId !== dbSessionId) continue;
+      if (tableName && ts.context?.table !== tableName) continue;
+      if (ts.pendingChanges.size > 0) continue;
+      if (ts.columns.length === 0 && ts.rows.length === 0) continue;
+      next.set(panelId, {
+        ...ts,
+        columns: [],
+        rows: [],
+        totalRows: 0,
+        selectedRows: new Set(),
+        editBuffer: new Map(),
+        editingCell: null,
+        // Bump the revision so an in-flight (or late) response can never commit.
+        requestRevision: ts.requestRevision + 1,
+        loadingRevision: null,
+      });
+      changed = true;
+    }
+    if (changed) set({ byPanel: next });
+  },
+
+  reset: () => set({ byPanel: new Map() }),
+
+  setPage: (panelId, page) => {
+    patchPanelForReload(get, set, panelId, () => ({ page }));
+    get().reloadPanel(panelId, { skipCount: true });
+  },
+
+  setPageSize: (panelId, size) => {
+    patchPanelForReload(get, set, panelId, () => ({ pageSize: size, page: 0 }));
+    get().reloadPanel(panelId, { skipCount: true });
+  },
+
+  addFilter: (panelId, filter) => {
+    patchPanel(get, set, panelId, (ts) => ({
       draftFilters: [...ts.draftFilters, filter],
       filterPanelOpen: true,
     }));
   },
 
-  setFilters: (filters, logic = 'and') => {
+  setFilters: (panelId, filters, logic = 'and') => {
     const next = cloneFilters(filters);
-    updateActiveForReload(get, set, () => ({
+    patchPanelForReload(get, set, panelId, () => ({
       filters: next,
       draftFilters: cloneFilters(next),
       filterLogic: logic,
@@ -473,115 +310,126 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       page: 0,
       filterPanelOpen: true,
     }));
-    reloadActive(get);
+    get().reloadPanel(panelId);
   },
 
-  updateFilter: (index, filter) => {
-    updateActive(get, set, (ts) => ({
+  updateFilter: (panelId, index, filter) => {
+    patchPanel(get, set, panelId, (ts) => ({
       draftFilters: ts.draftFilters.map((f, i) => (i === index ? filter : f)),
     }));
   },
 
-  setFilterLogic: (logic) => {
-    updateActive(get, set, () => ({ draftFilterLogic: logic }));
+  setFilterLogic: (panelId, logic) => {
+    patchPanel(get, set, panelId, () => ({ draftFilterLogic: logic }));
   },
 
-  removeFilter: (index) => {
-    updateActive(get, set, (ts) => ({
+  removeFilter: (panelId, index) => {
+    patchPanel(get, set, panelId, (ts) => ({
       draftFilters: ts.draftFilters.filter((_, i) => i !== index),
     }));
   },
 
-  clearFilters: () => {
-    updateActiveForReload(get, set, () => ({
+  clearFilters: (panelId) => {
+    patchPanelForReload(get, set, panelId, () => ({
       filters: [],
       draftFilters: [],
       filterLogic: 'and',
       draftFilterLogic: 'and',
       page: 0,
     }));
-    reloadActive(get);
+    get().reloadPanel(panelId);
   },
 
-  applyFilters: () => {
-    const conn = getActiveConn(get);
-    if (!conn.activeTable) return;
-    const ts = getState(conn.tableStates, conn.activeTableKey);
+  applyFilters: (panelId) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return;
     if (
       filterDraftEqualsApplied(ts.draftFilters, ts.draftFilterLogic, ts.filters, ts.filterLogic)
     ) {
       return;
     }
-    updateActiveForReload(get, set, (cur) => ({
+    patchPanelForReload(get, set, panelId, (cur) => ({
       filters: cloneFilters(cur.draftFilters),
       filterLogic: cur.draftFilterLogic,
       page: 0,
     }));
-    reloadActive(get);
+    get().reloadPanel(panelId);
   },
 
-  setFilterPanelOpen: (open) => {
-    updateActive(get, set, () => ({ filterPanelOpen: open }));
+  setFilterPanelOpen: (panelId, open) => {
+    patchPanel(get, set, panelId, () => ({ filterPanelOpen: open }));
   },
 
-  setVisibleColumns: (columns) => {
-    updateActive(get, set, () => ({ visibleColumns: columns }));
+  setVisibleColumns: (panelId, columns) => {
+    patchPanel(get, set, panelId, () => ({ visibleColumns: columns }));
   },
 
-  toggleColumnVisibility: (columnName) => {
-    updateActive(get, set, (ts) => {
-      const allNames = ts.columns.map((c) => c.name);
-      const current = ts.visibleColumns ?? allNames;
-      const next = current.includes(columnName)
-        ? current.filter((c) => c !== columnName)
-        : [...current, columnName];
-      return { visibleColumns: next.length === allNames.length ? null : next };
+  setSort: (panelId, sort) => {
+    patchPanelForReload(get, set, panelId, () => ({ sorts: [sort], page: 0 }));
+    get().reloadPanel(panelId, { skipCount: true });
+  },
+
+  setDetailRow: (panelId, index) => {
+    patchPanel(get, set, panelId, () => ({ detailRowIndex: index }));
+  },
+
+  startEdit: (panelId, row, col) => {
+    patchPanel(get, set, panelId, () => ({ editingCell: { row, col } }));
+  },
+
+  cancelEdit: (panelId) => {
+    patchPanel(get, set, panelId, () => ({ editingCell: null }));
+  },
+
+  selectRow: (panelId, index, opts) => {
+    patchPanel(get, set, panelId, (ts) => {
+      if (opts?.range && ts.lastSelectedIndex !== null) {
+        const lo = Math.min(ts.lastSelectedIndex, index);
+        const hi = Math.max(ts.lastSelectedIndex, index);
+        const next = new Set(ts.selectedRows);
+        for (let i = lo; i <= hi; i += 1) next.add(i);
+        return { selectedRows: next, lastSelectedIndex: index };
+      }
+      if (opts?.multi) {
+        const next = new Set(ts.selectedRows);
+        if (next.has(index)) next.delete(index);
+        else next.add(index);
+        return { selectedRows: next, lastSelectedIndex: index };
+      }
+      return { selectedRows: new Set([index]), lastSelectedIndex: index };
     });
   },
 
-  resetVisibleColumns: () => {
-    updateActive(get, set, () => ({ visibleColumns: null }));
+  toggleSelectAll: (panelId) => {
+    patchPanel(get, set, panelId, (ts) => {
+      const allSelected = ts.selectedRows.size === ts.rows.length && ts.rows.length > 0;
+      if (allSelected) return { selectedRows: new Set(), lastSelectedIndex: null };
+      const next = new Set<number>();
+      for (let i = 0; i < ts.rows.length; i += 1) next.add(i);
+      return { selectedRows: next, lastSelectedIndex: null };
+    });
   },
 
-  setSort: (sort) => {
-    updateActiveForReload(get, set, () => ({ sorts: [sort], page: 0 }));
-    const conn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (activeDbSessionId && conn.activeTable)
-      void get().loadTableData({
-        dbSessionId: activeDbSessionId,
-        table: conn.activeTable,
-        connectionId: conn.connectionId,
-        driverType: conn.databaseType,
-        database: conn.activeDatabase,
-        schema: conn.activeSchema,
-        skipCount: true,
-      });
-  },
-
-  startEdit: (row, col) => updateActive(get, set, () => ({ editingCell: { row, col } })),
-
-  stageCellChange: (row, col, value) => {
-    const conn = getActiveConn(get);
-    if (!conn.activeTable) return;
-    const ts = getState(conn.tableStates, conn.activeTableKey);
+  stageCellChange: (panelId, row, col, value) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return;
     const rowObj = ts.rows[row];
     if (!rowObj) return;
     const pkCols = ts.columns.filter((c) => c.isPrimaryKey);
     if (pkCols.length === 0) {
-      updateActive(get, set, () => ({ error: t('tableData.noPrimaryKey') }));
+      patchPanel(get, set, panelId, () => ({ error: t('tableData.noPrimaryKey') }));
       return;
     }
 
     const rowIdentity = buildRowIdentity(rowObj, pkCols);
     if (!rowIdentity || !rowIdentityIsUnique(ts, row, rowIdentity, pkCols)) {
-      updateActive(get, set, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
+      patchPanel(get, set, panelId, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
       return;
     }
     const match = findPendingForRow(ts, row, rowObj, pkCols);
     const identity = match?.change.rowIdentity ?? rowIdentity;
     if (!identity) {
-      updateActive(get, set, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
+      patchPanel(get, set, panelId, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
       return;
     }
     const existing = match?.change;
@@ -607,7 +455,7 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       ) ||
       hasPendingIdentityCollision(ts, key, prospectiveIdentity, pkCols)
     ) {
-      updateActive(get, set, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
+      patchPanel(get, set, panelId, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
       return;
     }
     const originalValues = { ...(existing?.originalValues ?? {}) };
@@ -643,35 +491,28 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
     const rowIdentityAnchors = new Map(ts.rowIdentityAnchors);
     rowIdentityAnchors.set(row, key);
 
-    const next = new Map(conn.tableStates);
-    next.set(conn.activeTableKey!, {
-      ...ts,
+    patchPanel(get, set, panelId, () => ({
       rows: nextRows,
       pendingChanges,
       rowIdentityAnchors,
       previewPlan: null,
       pendingStatus: 'idle',
-      lastCommitResult: null,
       editBuffer: rebuildEditBuffer({ ...ts, rows: nextRows, pendingChanges }),
       editingCell: null,
       error: null,
-    });
-    commitPatch(get, set, null, { tableStates: next });
+    }));
   },
 
-  applyColumnToRows: (col, value, rows) => {
-    for (const row of rows) get().stageCellChange(row, col, value);
+  applyColumnToRows: (panelId, col, value, rows) => {
+    for (const row of rows) get().stageCellChange(panelId, row, col, value);
   },
 
-  cancelEdit: () => updateActive(get, set, () => ({ editingCell: null })),
-
-  stageRowDelete: (rowIndices) => {
-    const conn = getActiveConn(get);
-    if (!conn.activeTable) return;
-    const ts = getState(conn.tableStates, conn.activeTableKey);
+  stageRowDelete: (panelId, rowIndices) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return;
     const pkCols = ts.columns.filter((c) => c.isPrimaryKey);
     if (pkCols.length === 0) {
-      updateActive(get, set, () => ({ error: t('tableData.noPrimaryKey') }));
+      patchPanel(get, set, panelId, () => ({ error: t('tableData.noPrimaryKey') }));
       return;
     }
 
@@ -691,14 +532,14 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       if (!row) continue;
       const rowIdentity = buildRowIdentity(row, pkCols);
       if (!rowIdentity || !rowIdentityIsUnique(ts, rowIndex, rowIdentity, pkCols)) {
-        updateActive(get, set, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
+        patchPanel(get, set, panelId, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
         return;
       }
       const match = findPendingForRow(ts, rowIndex, row, pkCols);
       const identity = match?.change.rowIdentity ?? rowIdentity;
       const key = match?.key ?? rowIdentityKey(identity);
       if (hasPendingIdentityCollision(ts, key, rowIdentity, pkCols)) {
-        updateActive(get, set, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
+        patchPanel(get, set, panelId, () => ({ error: AMBIGUOUS_ROW_IDENTITY_ERROR }));
         return;
       }
       const existing = match?.change;
@@ -713,47 +554,49 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       rowIdentityAnchors.set(rowIndex, key);
     }
 
-    const next = new Map(conn.tableStates);
-    next.set(conn.activeTableKey!, {
-      ...ts,
+    patchPanel(get, set, panelId, () => ({
       pendingChanges,
       rowIdentityAnchors,
       previewPlan: null,
       pendingStatus: 'idle',
-      lastCommitResult: null,
       editBuffer: rebuildEditBuffer({ ...ts, pendingChanges }),
       editingCell: null,
       error: null,
-    });
-    commitPatch(get, set, null, { tableStates: next });
+    }));
   },
 
-  discardPendingChanges: () => {
-    const conn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (!conn.activeTable) return;
-    updateActive(get, set, () => ({
+  deleteRows: (panelId, rowIndices) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return;
+    const unique = [...new Set(rowIndices.filter((i) => Number.isInteger(i) && i >= 0))];
+    if (unique.length === 0) return;
+    patchPanel(get, set, panelId, () => ({
+      selectedRows: new Set(unique),
+      lastSelectedIndex: unique[unique.length - 1] ?? null,
+    }));
+    get().stageRowDelete(panelId, unique);
+  },
+
+  rollbackPendingChanges: (panelId) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return;
+    patchPanel(get, set, panelId, () => ({
       pendingChanges: new Map(),
       previewPlan: null,
       pendingStatus: 'idle',
-      lastCommitResult: null,
       editBuffer: new Map(),
       editingCell: null,
       error: null,
     }));
-    if (activeDbSessionId) reloadActive(get);
+    get().reloadPanel(panelId);
   },
 
-  rollbackPendingChanges: () => get().discardPendingChanges(),
-
-  previewPendingChanges: async () => {
-    const conn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (!conn.activeTable || !activeDbSessionId) return null;
-    const ts = getState(conn.tableStates, conn.activeTableKey);
+  previewPendingChanges: async (panelId) => {
+    const ts = get().byPanel.get(panelId);
+    if (!ts) return null;
     if (ts.pendingChanges.size === 0) return null;
     if (!ts.context || !isCompleteTableChangeContext(ts.context)) {
-      updateActive(get, set, () => ({
+      patchPanel(get, set, panelId, () => ({
         pendingStatus: 'idle',
         error: 'Table context is incomplete; pending changes cannot be committed.',
       }));
@@ -761,32 +604,24 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
     }
 
     const signature = pendingChangesSignature(ts.pendingChanges);
-    const tableKey = conn.activeTableKey;
-    const changes = pendingChangesForWire(ts.pendingChanges);
-    updateActive(get, set, () => ({ pendingStatus: 'previewing', error: null }));
+    const context = ts.context;
+    patchPanel(get, set, panelId, () => ({ pendingStatus: 'previewing', error: null }));
     try {
       const plan = await databaseCommands.previewPendingChanges({
-        context: ts.context,
-        changes,
+        context,
+        changes: pendingChangesForWire(ts.pendingChanges),
       });
-      const latestConn = get().perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-      const latest = getState(latestConn.tableStates, tableKey);
-      if (
-        latestConn.activeTableKey === tableKey &&
-        pendingChangesSignature(latest.pendingChanges) === signature
-      ) {
-        const next = new Map(latestConn.tableStates);
-        next.set(tableKey!, {
-          ...latest,
+      const latest = get().byPanel.get(panelId);
+      if (latest && pendingChangesSignature(latest.pendingChanges) === signature) {
+        patchPanel(get, set, panelId, () => ({
           previewPlan: plan,
           pendingStatus: 'idle',
           error: null,
-        });
-        commitPatch(get, set, activeDbSessionId, { tableStates: next });
+        }));
       }
       return plan;
     } catch (e) {
-      updateActive(get, set, () => ({
+      patchPanel(get, set, panelId, () => ({
         pendingStatus: 'idle',
         error: extractErrorMessage(e, t('tableData.commitFailed')),
       }));
@@ -794,7 +629,7 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
     }
   },
 
-  commitPendingChanges: async () => {
+  commitPendingChanges: async (panelId) => {
     const emptyResult: CommitPendingChangesResult = {
       status: 'noop',
       planId: '',
@@ -804,12 +639,8 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       refreshed: false,
       refreshRequired: false,
     };
-    const initialConn = getActiveConn(get);
-    const { activeDbSessionId } = get();
-    if (!initialConn.activeTable || !activeDbSessionId) return emptyResult;
-    const table = initialConn.activeTable;
-    const tableKey = initialConn.activeTableKey;
-    const initial = getState(initialConn.tableStates, tableKey);
+    const initial = get().byPanel.get(panelId);
+    if (!initial) return emptyResult;
     if (initial.pendingChanges.size === 0) return emptyResult;
     if (!initial.context || !isCompleteTableChangeContext(initial.context)) {
       return {
@@ -818,14 +649,15 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
         error: 'Table context is incomplete; pending changes cannot be committed.',
       };
     }
+    const context = initial.context;
 
     const signature = pendingChangesSignature(initial.pendingChanges);
     let plan = initial.previewPlan;
-    if (!plan || tableChangeContextKey(plan.table) !== tableChangeContextKey(initial.context)) {
-      plan = await get().previewPendingChanges();
+    if (!plan || tableChangeContextKey(plan.table) !== tableChangeContextKey(context)) {
+      plan = await get().previewPendingChanges(panelId);
     }
     if (!plan) return emptyResult;
-    if (tableChangeContextKey(plan.table) !== tableChangeContextKey(initial.context)) {
+    if (tableChangeContextKey(plan.table) !== tableChangeContextKey(context)) {
       return {
         ...emptyResult,
         status: 'failed',
@@ -833,78 +665,39 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       };
     }
 
-    updateActive(get, set, () => ({ pendingStatus: 'committing', error: null }));
+    patchPanel(get, set, panelId, () => ({ pendingStatus: 'committing', error: null }));
     try {
       const response = await databaseCommands.commitPendingChanges({
-        dbSessionId: activeDbSessionId,
+        dbSessionId: context.dbSessionId,
         plan,
         fingerprint: plan.fingerprint,
       });
-      const latestConn = get().perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-      const latest = getState(latestConn.tableStates, tableKey);
-      const unchanged = pendingChangesSignature(latest.pendingChanges) === signature;
-      if (unchanged) {
-        const next = new Map(latestConn.tableStates);
-        next.set(tableKey!, {
-          ...latest,
+      const latest = get().byPanel.get(panelId);
+      if (latest && pendingChangesSignature(latest.pendingChanges) === signature) {
+        patchPanel(get, set, panelId, () => ({
           pendingChanges: new Map(),
           previewPlan: null,
           pendingStatus: 'idle',
           editBuffer: new Map(),
           editingCell: null,
           error: null,
-        });
-        commitPatch(get, set, activeDbSessionId, { tableStates: next });
+        }));
       }
 
-      const currentConn = get().perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-      if (currentConn.activeTableKey !== tableKey) {
-        const result: CommitPendingChangesResult = {
-          ...response,
-          status: 'committed',
-          refreshed: false,
-          refreshRequired: true,
-          refreshStatus: 'failed',
-        };
-        const oldState = getState(currentConn.tableStates, tableKey);
-        const states = new Map(currentConn.tableStates);
-        states.set(tableKey!, { ...oldState, pendingStatus: 'idle', lastCommitResult: result });
-        commitPatch(get, set, activeDbSessionId, { tableStates: states });
-        return result;
-      }
-
-      await get().loadTableData({
-        dbSessionId: activeDbSessionId,
-        table,
-        connectionId: initial.context.connectionId,
-        driverType: initial.context.driverType,
-        database: initial.context.database,
-        schema: initial.context.schema,
-      });
-      const refreshedConn =
-        get().perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-      const refreshedState = getState(refreshedConn.tableStates, tableKey);
+      await get().loadTableData({ panelId, ...targetOf(context) });
+      const refreshed = get().byPanel.get(panelId);
       const result: CommitPendingChangesResult = {
         ...response,
         status: 'committed',
-        refreshed: !refreshedState.error,
+        refreshed: !refreshed?.error,
         refreshRequired: true,
-        refreshStatus: refreshedState.error ? 'failed' : 'completed',
+        refreshStatus: refreshed?.error ? 'failed' : 'completed',
       };
-      const afterRefreshConn =
-        get().perConnection.get(activeDbSessionId) ?? emptyConnectionTableState();
-      const afterRefresh = new Map(afterRefreshConn.tableStates);
-      const afterRefreshState = getState(afterRefreshConn.tableStates, tableKey);
-      afterRefresh.set(tableKey!, {
-        ...afterRefreshState,
-        pendingStatus: 'idle',
-        lastCommitResult: result,
-      });
-      commitPatch(get, set, activeDbSessionId, { tableStates: afterRefresh });
+      patchPanel(get, set, panelId, () => ({ pendingStatus: 'idle' }));
       return result;
     } catch (e) {
       const error = extractErrorMessage(e, t('tableData.commitFailed'));
-      updateActive(get, set, () => ({ pendingStatus: 'idle', error }));
+      patchPanel(get, set, panelId, () => ({ pendingStatus: 'idle', error }));
       return {
         ...emptyResult,
         status: 'failed',
@@ -914,82 +707,6 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
       };
     }
   },
-
-  updateCell: (row, col, value) => get().stageCellChange(row, col, value),
-
-  commitChanges: () => get().commitPendingChanges(),
-
-  discardChanges: () => get().discardPendingChanges(),
-
-  selectRow: (index, opts) => {
-    updateActive(get, set, (ts) => {
-      if (opts?.range && ts.lastSelectedIndex !== null) {
-        const lo = Math.min(ts.lastSelectedIndex, index);
-        const hi = Math.max(ts.lastSelectedIndex, index);
-        const next = new Set(ts.selectedRows);
-        for (let i = lo; i <= hi; i += 1) next.add(i);
-        return { selectedRows: next, lastSelectedIndex: index };
-      } else if (opts?.multi) {
-        const next = new Set(ts.selectedRows);
-        if (next.has(index)) next.delete(index);
-        else next.add(index);
-        return { selectedRows: next, lastSelectedIndex: index };
-      }
-      return { selectedRows: new Set([index]), lastSelectedIndex: index };
-    });
-  },
-
-  toggleSelectAll: () => {
-    updateActive(get, set, (ts) => {
-      const allSelected = ts.selectedRows.size === ts.rows.length && ts.rows.length > 0;
-      if (allSelected) return { selectedRows: new Set(), lastSelectedIndex: null };
-      const next = new Set<number>();
-      for (let i = 0; i < ts.rows.length; i += 1) next.add(i);
-      return { selectedRows: next, lastSelectedIndex: null };
-    });
-  },
-
-  deleteSelectedRows: async () => {
-    const conn = getActiveConn(get);
-    if (!conn.activeTable) return;
-    const ts = getState(conn.tableStates, conn.activeTableKey);
-    const indices = Array.from(ts.selectedRows).sort((a, b) => a - b);
-    if (indices.length === 0) return;
-    get().stageRowDelete(indices);
-  },
-
-  deleteRows: async (rowIndices: number[]) => {
-    const conn = getActiveConn(get);
-    if (!conn.activeTable) return;
-    const unique = [...new Set(rowIndices.filter((i) => Number.isInteger(i) && i >= 0))];
-    if (unique.length === 0) return;
-    updateActive(get, set, () => ({
-      selectedRows: new Set(unique),
-      lastSelectedIndex: unique[unique.length - 1] ?? null,
-    }));
-    await get().deleteSelectedRows();
-  },
-
-  closeTable: (table: string) => {
-    const conn = getActiveConn(get);
-    const next = new Map(conn.tableStates);
-    if (conn.activeTableKey) next.delete(conn.activeTableKey);
-    const newActive = conn.activeTable === table ? null : conn.activeTable;
-    const newActiveKey = newActive === null ? null : conn.activeTableKey;
-    commitPatch(get, set, null, {
-      activeTable: newActive,
-      activeTableKey: newActiveKey,
-      tableStates: next,
-    });
-  },
-
-  reset: () =>
-    set({
-      perConnection: new Map(),
-      activeDbSessionId: null,
-      ...emptyConnectionTableState(),
-      ...syncFlat(null, null, new Map()),
-    }),
 }));
 
 if (import.meta.env.DEV) {
