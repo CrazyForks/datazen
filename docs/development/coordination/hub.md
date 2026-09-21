@@ -11,6 +11,27 @@
 | migration-navicat | — | 未开始 | — | — | — |
 | migration-schema-core | — | 未开始 | — | — | — |
 | migration-sync-core | — | 未开始 | — | — | — |
+| migration-export-lossless | — | 未开始 | — | — | — |
+| migration-schema-profiles | — | 未开始 | — | — | — |
+| migration-source-filters | — | 未开始 | — | — | — |
+| migration-sync-comparison-store | — | 未开始 | — | — | — |
+| migration-sync-conflict-policy | — | 未开始 | — | — | — |
+| migration-sync-conflicts | — | 未开始 | — | — | — |
+| migration-sync-disk-index | — | 未开始 | — | — | — |
+| migration-sync-filters | — | 未开始 | — | — | — |
+| migration-sync-key-contract | — | 未开始 | — | — | — |
+| migration-sync-paged | — | 未开始 | — | — | — |
+| migration-sync-plan | — | 未开始 | — | — | — |
+| migration-sync-profiles | — | 未开始 | — | — | — |
+| migration-sync-recordsets | — | 未开始 | — | — | — |
+| migration-sync-select-all | — | 未开始 | — | — | — |
+| migration-sync-snapshot | — | 未开始 | — | — | — |
+| migration-sync-task-persistence | — | 未开始 | — | — | — |
+| migration-transfer-core | — | READY_FOR_TEST. BUG002 state: 待复测. | — | — | — |
+| migration-transfer-plan | — | READY_TO_MERGE（BUG-001/002/003 已关闭） | — | — | — |
+| migration-transfer-recordsets | — | PASSED | — | — | — |
+| migration-transfer-sql-dependencies | — | 未开始 | — | — | — |
+| migration-transfer-sql-target | — | TEST_DONE | — | — | — |
 
 ## 写锁台账
 
@@ -19,6 +40,27 @@
 | migration-navicat | — | — | feature/migration-navicat | 未开始 | — |
 | migration-schema-core | — | 63 passed, 0 failed. Initial build required the ignored empty Community resource directory `src-tauri/resources/builtin-ep`; created it, reran successfully. Wrapper restored Cargo injections. | feature/migration-schema-core | 未开始 | — |
 | migration-sync-core | — | **98 passed**. | feature/migration-sync-core | 未开始 | — |
+| migration-export-lossless | — | — | feature/migration-export-lossless | 未开始 | — |
+| migration-schema-profiles | — | — | feature/migration-schema-profiles | 未开始 | — |
+| migration-source-filters | — | — | feature/migration-source-filters | 未开始 | — |
+| migration-sync-comparison-store | — | — | feature/migration-sync-comparison-store | 未开始 | — |
+| migration-sync-conflict-policy | — | — | feature/migration-sync-conflict-policy | 未开始 | — |
+| migration-sync-conflicts | — | — | feature/migration-sync-conflicts | 未开始 | — |
+| migration-sync-disk-index | — | — | feature/migration-sync-disk-index | 未开始 | — |
+| migration-sync-filters | — | — | feature/migration-sync-filters | 未开始 | — |
+| migration-sync-key-contract | — | — | feature/migration-sync-key-contract | 未开始 | — |
+| migration-sync-paged | — | — | feature/migration-sync-paged | 未开始 | — |
+| migration-sync-plan | — | — | feature/migration-sync-plan | 未开始 | — |
+| migration-sync-profiles | — | — | feature/migration-sync-profiles | 未开始 | — |
+| migration-sync-recordsets | — | — | feature/migration-sync-recordsets | 未开始 | — |
+| migration-sync-select-all | — | `codex/migration-sync-select-all`. | feature/migration-sync-select-all | 未开始 | — |
+| migration-sync-snapshot | — | — | feature/migration-sync-snapshot | 未开始 | — |
+| migration-sync-task-persistence | — | — | feature/migration-sync-task-persistence | 未开始 | — |
+| migration-transfer-core | — | .worktrees/datazen-migration-transfer-core | all four identity dimensions, normalized equal/different schemas, legal cross-schema execution and fail-closed timing are exercised; no instrumented Rust percentage is claimed. | READY_FOR_TEST. BUG002 state: 待复测. | — |
+| migration-transfer-plan | — | `.worktrees/datazen-migration-transfer-plan` | make create-new mappings explicit` 提交。 | READY_TO_MERGE（BUG-001/002/003 已关闭） | — |
+| migration-transfer-recordsets | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-recordsets` | `codex/migration-transfer-recordsets` | PASSED | — |
+| migration-transfer-sql-dependencies | — | — | feature/migration-transfer-sql-dependencies | 未开始 | — |
+| migration-transfer-sql-target | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-sql-target` | `codex/migration-transfer-sql-target` | TEST_DONE | — |
 
 ## 波次记录
 

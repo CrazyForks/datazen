@@ -52,6 +52,14 @@ Backend schema_diff/profile.rs, store/schema_diff_profiles.rs, commands/schema_d
 - Coverage run executed with V8 instrumentation; the repository-wide threshold is not actionable for this scoped run because the configured global threshold includes the entire host and reports 0.46% lines. The changed profile paths are exercised by the 16 frontend tests and the dedicated Rust profile/store tests.
 - Generated locale output and `Cargo.lock` were restored; worktree is clean apart from this coordination commit.
 
+## Independent tester verification (round 3)
+
+- `cargo test -p datazen --lib -- --test-threads=1` — 1520 passed, 3 ignored.
+- `cargo test -p datazen --lib` — 1520 passed, 3 ignored; both encrypted profile roundtrip tests pass under parallel execution.
+- Schema Diff focused Rust tests — 71 passed; focused Vitest — 16 passed; `npx tsc --noEmit` passed.
+- `cargo fmt --all -- --check` and `git diff --check` passed; `Cargo.lock` and generated files restored.
+- BUG-001 and the encrypted Store test isolation issue are closed. Final fix commits: `72c7b63c`, `545c1dd8`.
+
 ## E2E cases
 
 - SD-010: save profile, select it again, load it, and verify the window returns to Objects with a fresh source table inspection.
@@ -60,5 +68,5 @@ Backend schema_diff/profile.rs, store/schema_diff_profiles.rs, commands/schema_d
 
 ## Commit
 
-- Implementation handoff commit: `6afa2fe2` (the exact final amended hash is reported with `READY_FOR_TEST`); no generated files are included.
-- Independent tester round-2 commit: `8d8de55b`.
+- Implementation commits: `593eaf22`, `72c7b63c`, `545c1dd8`; no generated files are included.
+- Independent tester commits: `8b52d5e2` and third-round verification completed with no new code changes.
