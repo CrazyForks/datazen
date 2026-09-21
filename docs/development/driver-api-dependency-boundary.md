@@ -339,12 +339,12 @@ function RedisConsole() {
 | npm script | `pnpm test:boundaries` |
 | CI | `.github/workflows/ci.yml` 步骤 **`Guard driver/host import boundaries`**（位于 `Guard version consistency` 之后、`Guard i18n sync (warning only)` 之前） |
 | 本地等价 | `scripts/ci-local.sh` 步骤 `3.4/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries` |
-| 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（内联虚拟文件树 fixture；新增逻辑行覆盖 99.6%） |
+| 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（31 例：内联虚拟文件树 fixture 覆盖三条规则与豁免路径 + 真实仓库 `runCli` 用例。本轨新增脚本实测覆盖：行 **100%** / 语句 99.26% / 分支 95.42% / 函数 100%，未覆盖部分全部位于 `walk()` 的真实文件系统目录遍历过滤器，不影响规则与豁免逻辑） |
 
 三条规则与退出码：
 
 - **R1**（阻断）驱动包禁引宿主：扫描 `packages/drivers/**`（`ui/**`、`locales/**`、`e2e/**` 全含）内**所有说明符字面量**并做相对路径解析——`import` / `export … from` / 动态 `import()` / `vi.mock` / `vi.doMock` / `require` 以及任何以模块路径为参数的辅助函数一律同等对待，解析结果落进宿主 `src/` 即违规。这是 2.1.2 那条 `grep "from '…'"` 口径被抛弃的原因：只匹配 `from` 会漏掉 mock/require 形态。
-- **R2**（阻断）非宿主禁调 `setLocale(`：扫描 `packages/**`，豁免 `setLocale` 的定义方所在包 `packages/ui/**`（其自身单测必须能调用）；注释、字符串、契约成员声明（`setLocale(locale: string): void;`）与 `import { setLocale }` 这类不带括号的引用均不算调用。
+- **R2**（阻断）非宿主禁调 `setLocale(`：扫描 `packages/**`，豁免只有脚本内 `R2_FILE_CARVEOUTS` 列出的**两个精确文件**——`setLocale` 的定义文件 `packages/ui/src/i18n.ts` 与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（不是整包 `packages/ui/**` 目录级豁免，`@datazen/ui` 其它组件调用照样红，见 2.4.2）；注释、字符串、契约成员声明（`setLocale(locale: string): void;`）与 `import { setLocale }` 这类不带括号的引用均不算调用。
 - **R3**（**advisory，暂不阻断**）宿主禁引驱动内部：`src/**` 相对解析进 `packages/drivers/**` 即列出，跳过 gitignored codegen `src/extensions/generated{,-locales,-pro}.ts`（那是唯一被允许的宿主→驱动边，见 2.2 第 4 行）。**现状基线非 0**（4 处：`src/locales/locales.test.ts:107`、`src/test/driverUiSetup.ts:25,26`、`src/windows/connection/DocumentConnectionView.tsx:25`），是否收紧（改造或另立豁免）已交协调者裁定；裁定前 R3 只报告不失败，`RULES.R3.blocking` 翻为 `true` 即收紧。
 - 退出码：`0` 干净 · `1` 存在阻断违规或**过期豁免** · `2` 一个文件都没扫到（防「扫描器失效却报成功」）。豁免写在脚本内 `ALLOWLIST` 常量里，形如 `(规则, 文件, 说明符)` 精确三元组 + 原因 + 归属里程碑，**禁止目录级/通配级豁免**；条目所指文件消失或违规已修，同样按过期豁免报错。
 
@@ -355,4 +355,5 @@ function RedisConsole() {
 - [ ] 新共享类型为移动而非复制，宿主存量 import 零改动（薄 re-export）。
 - [ ] 新 bridge 具备：宿主模块加载期 bind、未绑定抛错文案、消费侧类型收窄、SDK 侧单测。
 - [ ] 驱动词条带自有前缀，只改本包 `en.ts`，经本包 `locales/index.ts` 自注册（不新增宿主聚合 codegen）。
-- [ ] 驱动/扩展代码零 `setLocale` 调用；i18n 一律 `import { t | useI18n } from '@datazen/ui'`。
+- [ ] 驱动/扩展代码零 `setLocale` 调用（同一 `pnpm test:boundaries` 的 **R2** 阻断，豁免仅 2.4.2 所列两个精确文件）；i18n 一律 `import { t | useI18n } from '@datazen/ui'`。
+- [ ] 宿主侧不新增对 `packages/drivers/**` 的相对 import（R3 目前为 advisory 报告项，见 2.6；已列出的 4 处基线等待协调者裁定，评审时不得默认放行新命中）。

@@ -205,7 +205,7 @@ const safeMode = useBoundSettingsStore((s) => s.settings.safeMode); // 组件内
 const [confirm, dialog] = useBoundConfirmDialog(); // dialog 渲染一次，confirm 返回 Promise<boolean>
 ```
 
-需要新的宿主能力时，**不要从宿主直接 import**，按契约文档 2.5 的流程下沉或建桥。这条禁令覆盖宿主的**薄再导出路径**（如 `src/lib/cn.ts`、`src/commands/driver.ts`）：它们只是给存量宿主消费方看的兼容壳，驱动一律 import 包名。约束已由 Wave 4 护栏静态阻断：`pnpm test:boundaries`（规则 R1 扫描驱动包内所有说明符字面量并解析是否爬进宿主 `src/`，规则 R2 阻断驱动/扩展调用 `setLocale`），详见契约文档 2.6。
+需要新的宿主能力时，**不要从宿主直接 import**，按契约文档 2.5 的流程下沉或建桥。这条禁令覆盖宿主的**薄再导出路径**（如 `src/lib/cn.ts`、`src/commands/driver.ts`）：它们只是给存量宿主消费方看的兼容壳，驱动一律 import 包名。约束已由 Wave 4 护栏静态阻断：`pnpm test:boundaries`（规则 R1 扫描驱动包内所有说明符字面量并解析是否爬进宿主 `src/`，规则 R2 阻断 `packages/**` 里的 `setLocale` 调用——仅 i18n 运行时定义文件与其自身单测豁免），详见契约文档 2.6。
 
 ### 6.3 i18n：单一运行时与词条自注册
 

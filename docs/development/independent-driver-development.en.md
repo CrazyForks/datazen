@@ -220,7 +220,7 @@ const safeMode = useBoundSettingsStore((s) => s.settings.safeMode); // reactive 
 const [confirm, dialog] = useBoundConfirmDialog(); // render `dialog` once; `confirm` returns Promise<boolean>
 ```
 
-When a new host capability is required, **do not import it from the host**; sink it down or add a bridge following the procedure in contract document section 2.5. The ban also covers the host's **thin re-export shells** (`src/lib/cn.ts`, `src/commands/driver.ts`, …): they exist only to keep legacy host imports stable, so driver code always imports the package name instead. This is now enforced statically by the Wave 4 guard — `pnpm test:boundaries` (rule R1 resolves every specifier literal inside driver packages and rejects anything climbing into host `src/`; rule R2 blocks `setLocale` calls outside the host), see contract document section 2.6.
+When a new host capability is required, **do not import it from the host**; sink it down or add a bridge following the procedure in contract document section 2.5. The ban also covers the host's **thin re-export shells** (`src/lib/cn.ts`, `src/commands/driver.ts`, …): they exist only to keep legacy host imports stable, so driver code always imports the package name instead. This is now enforced statically by the Wave 4 guard — `pnpm test:boundaries` (rule R1 resolves every specifier literal inside driver packages and rejects anything climbing into host `src/`; rule R2 blocks `setLocale` calls anywhere under `packages/**`, exempting only the i18n runtime definition file and its own unit test), see contract document section 2.6.
 
 ### 6.3 i18n: one runtime and locale self-registration
 
