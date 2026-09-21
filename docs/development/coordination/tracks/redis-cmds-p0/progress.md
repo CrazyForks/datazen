@@ -1,8 +1,8 @@
 # Track: redis-cmds-p0 — KV 上下文条与键属性侧栏所需的两条 P0 后端命令
 
 - 分支: `feature/redis-cmds-p0`（基准 `feat/redis-workspace-ux` @ ae65ae375）
-- 角色: Coder → Tester → **Coder（Bug 修复第 1 轮 + 收尾）** → Tester（复测）
-- 状态: **待复测**（Coder 修复第 1 轮 @ `346ebc979`：BUG-001 / 002 / 003 / 004 / 005 已修（拓扑分支 + 三处静默面收口），BUG-006 按 Tester 建议仅改测试口径、`select_db` 短路交协调者裁定；Tester 刻意未提交的三条"会红"用例已落地，另加 11 条回归用例 ⇒ `cargo test -p datazen-driver-redis` **210 + 4 全绿**；详见下方「Coder 修复记录」。**收尾轮 @ `c844b6804`**：BUG-006 剩余两处夸大措辞（`commands.rs` 面向 UI 的 description、`tests.rs` 第二处裸 `round_trips() == 1`）改如实，`bugs.md` 六条状态全部流转到 `待复测`（补齐 BUG-003/004/005/006 的分节修复备注），本文件「契约偏离」第 6 条正文按 Tester 裁定就地更正，R 项 9a/9b 补 `SELECT`；并逐条自查 `346ebc979` **未**放宽 / 未删 / 未注释掉任何一条 Tester 断言 ⇒ 数字不变（210 + 4）。详见下方「Coder 收尾记录」。上一轮 Tester 的 FAILED 裁定**原样存档**。）
+- 角色: Coder → Tester → **Coder（Bug 修复第 1 轮 + 收尾）** → **Tester（复测 · 第 1 实例中断 → 第 2 实例接手，已完成 · FAILED）** → Coder（修复第 2 轮，待派）
+- 状态（Phase）: **FAILED**（Tester 复测轮判定，HEAD `2c1f77134`，2026-09-22，Bug 循环 1/5 的复测）—— BUG-001 ~ 006 **六条全部复测通过 ⇒ 已修复**（Cluster 拓扑分支、回复条数守卫、四态 TYPE 判定、SCAN 双守卫、往返口径逐条独立验证；真连项 9a/9b/13 仍保留），完整套件复跑 **lib 217 passed / 0 failed / 1 ignored + 集成 4**（= Coder 自报 210 + Tester 继承用例 7）、fmt `-p` exit 0、clippy `(lib) 17 warnings` + 2 条 deny 位置逐字未变、`tsc` exit 0、边界护栏 **0 blocking**。**但复测新登记 2 条 Bug**：**(1)** `redis-cmds-p0-BUG-007`（中）—— 修复轮写下的三条 Cluster 口径被 redis 0.27.6 **自己的路由表**证伪（四条两词探测命令按**子命令 token** 而非键路由 ⇒ 每次侧栏探测必吃 `-MOVED` 重发 + 全集群 `CLUSTER SLOTS` 刷新，协调者裁定 1 的"Cluster 7 次往返"是下界；Cluster 的 `DBSIZE` 是**所有主节点之和**而非"该分片数字"；`SCAN` 无路由 ⇒ 每轮可能换分片，"分片视图"说法不成立），且 `ClusterFoldingConn` 的路由建模比真实客户端更乐观 ⇒ 修复轮用例结构上测不到；本回合已把其四条事实**逐条对 redis 源码复核为成立**。**(2)** `redis-cmds-p0-BUG-008`（低）—— `MAX_SCAN_ROUNDS = 64` / `MAX_STALLED_SCAN_ROUNDS = 16` / `CLUSTER_TYPE_SAMPLE_LIMIT = 200` 三个对外口径数字**在测试里只以常量自身出现**，变异 64→65 / 16→8 / 200→201 **全绿零反馈**（对照：`MAX_TYPE_SAMPLE_LIMIT` 5000→5001 有红，故属可修缺口）。**本轮另补做上一任完全未做的两项最高风险检验**：13 项**变异实测**（含任务书点名的三个方向，全部立即变红 ⇒ 修复守卫**不是**装饰性替身）与**契约冻结逐字节核对**（两个返回结构体 `b1e1f4010..HEAD` **字节 IDENTICAL**，`commands.rs` 全文只改 3 行描述串，`required` / `minimum` / `maximum` 缺失 / 类型 / 可空性零动 ⇒ Wave 2 的 TS 类型无需返工）。⇒ 进入 **Bug 循环 2/5**，下一手交 Coder（BUG-007 改口径 + BUG-008 加 3 行字面量锁定）。上一轮 Coder 的记录、首轮 Tester 的裁定与第 1 实例的复测判定**原样存档**，本轮只做增量与新节。
 - Worktree: `.worktrees/datazen-redis-cmds-p0`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.4、§6（P0 两行）、§7、§8
 
@@ -228,7 +228,48 @@ Tester 刻意未提交（会红）的三条用例全部按原文意图落地：B
 6. 〔收尾轮补登〕BUG-003 修法 2 的后半（是否把 `Cargo.toml` 的 `redis = "0.27"` 锁到小版本以杜绝 0.27.x 漂移）本轨未做 —— 任务书禁止改 `Cargo.toml`；现行缓解是运行期守卫（条数不符即 `Err`）+ R 项 15 的升级必查清单。属依赖治理轨。
 7. 〔收尾轮补登 · 环境性既有红〕workspace 级 `cargo fmt --check` **exit 1** 的两处均在本轨 diff 之外：`src-tauri/src/commands/ai/integration_tests.rs`（宿主既有未格式化代码）与 `src-tauri/src/driver_init.rs`（**gitignored codegen**，`resolve-drivers.mjs` 注入的 `extern crate` 顺序未排序 ⇒ 每次构建都可能重新触发）。本轨不修（禁碰宿主与 codegen），建议协调者 either 在 codegen 脚本内补 `rustfmt` 或把该文件排除出 fmt 范围。
 
+## Tester 复测轮 · 第 2 实例（变异实测 + 契约冻结 · 2026-09-22 · 起始 HEAD `2c1f77134` · 结论 **FAILED**）
+
+接手现场：起始 `git status --porcelain` **不是干净**（任务书写"应 clean"）—— 工作区残留上一任复测实例的未提交成果：`bugs.md` / `progress.md` 的复测裁定与新增文件 `ops_workbench/tests/fix_round1_retest.rs`（259 行 / 7 条 `test_tester_` 用例）。这与本轨「Coder 收尾记录」第 202 行记过的中断情形**同类**（turn 上限死亡、现场未提交）。处置：**不丢弃、不轻信** —— 逐条独立核实后由本实例一并提交，归属如实标注。构建目录 `CARGO_TARGET_DIR=$PWD/target/cargo-wt-retest2`（APFS clone 自 `cargo-wt-retest`，秒级且不与他人争锁；`/target` 已 gitignored）。主检出全程只读。**只测不修**：生产码零改动（变异全部复原，md5 逐次核对，结束态与 HEAD blob 一致）。
+
+### 本回合补做的两项（上一任未做）
+
+1. **变异实测（本轨最高风险项"反自证循环"的唯一有效手段）**：13 项语义反转 + 4 项数值漂移，全部打在 `ops_workbench.rs` 生产码上，跑完整 lib 套件。**任务书点名的三个方向 M1（`issue_batch` 改回统一 pipeline）/ M2（删回复条数守卫）/ M3（去掉 `from_sharded_view` 的 `truncated` 强制位）全部立刻变红**，M3b / M4 / M5 / M6 / M7 / M7b / M8a / M11 / M12 / M13 亦红 ⇒ **`ClusterFoldingConn` 不是把期望演一遍的装饰替身**，四条修复（BUG-001 / 002 / 003 / 004）的守卫是真可证伪的。附带结论：上一任新增的 7 条用例中，分类表两条**只在 M11 / M12 / M13 变红**（既有 cluster 用例都不红），Sentinel 臂只在 M4 红 ⇒ 它们提供了**独有**的证伪能力，不是重复劳动。完整表格见 `bugs.md`「变异实测」节。
+2. **契约冻结逐字节核对**：用**已提交 blob** 比较（不受工作区变异影响）。`pub struct TypeDistribution` 与 `pub struct KeyObjectInfo` 在 `b1e1f4010` 与 `HEAD` 之间 **273/273、267/267 字节完全相同**（字段名、类型、`#[serde(rename = "type")]`、`dbsize` 全小写、`Option<…>` 可空性一律未动）；`git diff b1e1f4010 HEAD -- commands.rs` **全文只 3 行**改动，逐行读为两条 `description` + `sampleLimit` 的 `description`，`required`（`&[]` / `&["key"]`）、`"type": "integer"`、`"minimum": 0`、`maximum` 仍**不存在**、`permissions`、`output_schema: None` 零改动。⇒ **Coder"只改 description"的声称成立，Wave 2 可按「契约偏离」继续冻结 TS 类型**。4 条 `tests/workbench_commands.rs` 契约用例逐条读为真断言（`assert_eq!` 到 `json!([])` / `json!(["key"])`、`["maximum"].is_null()`、`Observe` + `Read`、`ConnectionFailed` 反 `Unsupported`），不是 `contains` 式弱断言。
+
+### 独立核实上一任结论（零信任同样适用于 Tester 自述）
+
+| 上一任主张 | 本实例独立复核手段 | 结论 |
+| --- | --- | --- |
+| "12 条 `test_tester_` 用例无放宽 / 无删除 / 无注释" | `git diff 1e6b9cf4a HEAD -- tests.rs` 取**净差异全集**（覆盖 `346ebc979` + `c844b6804` 两笔，而非只审 Coder 自选的那一笔）+ 大括号配对逐函数抽取比对：12 条**全部在位**，逐函数 `assert!` 计数 67 = 67，**normalize 掉 `Topology::Standalone` 实参后 12 个函数体逐字节相同**；`#[ignore]` / `#[should_panic]` 增删 **0** | **成立**（Coder 的自查结论对，但它只审了一笔 commit；净差异层面同样干净） |
+| BUG-007 的四条路由事实 | 本机 `redis-0.27.6` 源码逐行：`cluster_routing.rs:522-533`（`command()` 把 `MEMORY`/`OBJECT` 拼成两词名）+ `:503-507` 兜底臂 `_ => arg_idx(1)`、表内**无** `MEMORY USAGE` / `OBJECT *`；`request.rs:212-220` MovedRedirect → `Retry::Immediately` + `RebuildSlots`；`mod.rs:394-395` `refresh_slots` 持 `conn_lock.write()`；`:321-322` + `:366-387` `DBSIZE` = `AllMasters` + `Aggregate(Sum)`；`:477-478` `SCAN => None`（带 `// TODO - special handling`）+ `mod.rs:1052-1053` `unwrap_or(SingleNode(Random))`；`connect.rs:373-397` 未设 `read_from_replicas`（全 crate grep 零命中） | **四条全部成立，无夸大**（其"排除从节点滞后风险"一句亦准确）⇒ BUG-007 维持 `待修复` |
+| "Coder 报 210 + 4 全绿" | 独立目录实跑 **217 + 4**（217 = 210 + 继承的 7 条），`ignored` 恰 1 且是 `connect.rs:1015` 既有真连用例 | **一致** |
+
+### 本回合新发现（登记 BUG-008 · 低）
+
+变异 M8b / M8d / M8e 三项**全绿**：`MAX_SCAN_ROUNDS`(64) / `MAX_STALLED_SCAN_ROUNDS`(16) / `CLUSTER_TYPE_SAMPLE_LIMIT`(200) 在测试中只以常量自身出现，改数字零反馈；而 200 已写进面向 UI 的 description、64/16 是 R 项 13 真连判据的字面值 —— R 项 13 那句"**单测已按'恰 16 / 恰 64 轮'钉死**，不是'≤'式弱断言"**过强**（单测钉的是"哪条守卫先生效"，不是这两个数），对照证据：`MAX_TYPE_SAMPLE_LIMIT` 5000→5001 会红（那条用例里有字面量 `10`）。详见 `bugs.md` redis-cmds-p0-BUG-008（含可粘贴复现与 3~4 行修法）。
+
+### 门禁实测（全部本机真跑，无推算）
+
+| 门禁 | 实测 | 与自报/基线 |
+| --- | --- | --- |
+| `cargo test -p datazen-driver-redis` | lib **217 / 0 / 1 ignored** + 集成 **4 / 0** + doc 0 | Coder 210+4 ✅（+7 为继承用例） |
+| `cargo fmt -p datazen-driver-redis -- --check` | **exit 0** | 一致 |
+| `cargo fmt --all -- --check` | **exit 1**：`src-tauri/src/commands/ai/integration_tests.rs:1244`、gitignored codegen `src-tauri/src/driver_init.rs:4,19` | 与既有"环境性既有红"登记逐字一致，`git diff --name-only ae65ae375 HEAD -- src-tauri/` 零输出 |
+| `cargo clippy -p datazen-driver-redis --all-targets` | exit 101：`(lib) 17 warnings`、`(lib test) 18 (17 dup)`、`driver-api (lib) 3`、**2 条 deny** `ops.rs:905:38` / `ops_exec.rs:260:57`；20 个命中点全部枚举，`ops_workbench*` / `connect.rs` / `commands.rs` **零命中** | **不劣于基线**（2 deny + 17 warning 逐字一致） |
+| `npx tsc --noEmit -p tsconfig.json` | **exit 0** | 一致（本轨零 TS 改动） |
+| `node scripts/check-driver-import-boundaries.mjs` | **exit 0 · 1403 files · 0 blocking · 4 advisory · 2 allow-listed** | **边界护栏 0 blocking 保持** |
+| `cargo llvm-cov -p datazen-driver-redis --lib` | `ops_workbench.rs`（本轨唯一生产改动面）**区域 491/56 未覆盖 = 88.59% · 函数 40/40 = 100.00% · 行 329/28 = 91.49%** —— 本实例自测，与 Coder 自报及第 1 实例复述**逐字一致** ⇒ ≥80% 硬标准满足（同前两轮：未命中行全为 `tracing` 字段闭包与 `parse_type_token` 的 `RValue::Int` 现实不可达臂；`--branch` 需 nightly，Branches 列 `-`） | 一致 |
+
+### 交回协调者（本回合新增，不重复上一任已登记者）
+
+1. **轨道卫生 / 流程问题（值得进 playbook）**：本轨**两次**出现"子代理跑到 turn 上限、现场完全未提交"（Coder 第 1 轮 → 收尾轮接手一次；本次 Tester 复测轮第 1 实例 → 第 2 实例接手第二次）。派发书应硬性要求"**每完成一个阶段立即 commit**"，否则接手者无法区分"已验证结论"与"未验证草稿"—— 本回合为此额外花了整轮做二次核实。
+2. **BUG-008 建议与 BUG-007 修法 3 合并处理**（同属"断言/替身把要守的东西自己声明了一遍"），一次改动即可同时闭合测试面缺口，成本 3~4 行。
+3. R 项 13 的措辞需按 BUG-008 修法 3 收窄（"钉死数字"→"钉死守卫身份"），否则 R 阶段会照抄一句过强的话；本实例**未代改**（属 Coder 整改面）。
+4. 本回合**未新增任何契约字段**、未改任何生产码、未跑 `pnpm install` / `pnpm build` / `pnpm e2e`（任务书禁止项）。
+
 ## 留待 R 回归
+
 
 子代理不跑 `pnpm e2e`；以下需真连 Redis（或真实服务端差异）才能证伪，登记给 R / Wave 2 Tester。P0 阶段上下文条与侧栏 UI 尚未落地（Wave 2），故 1–8 先以 `execute_driver_command` 命令级真连回归，Wave 2 落地后同一批用例升级为 GUI/E2E。〔Tester 首轮复测后：1/3/4/6/9/10/11 已按 `bugs.md` 加强或修正（带 `〔Tester〕` 标记），并新增 12–16 五条 mock 无法证伪的边界；项 9 已按 BUG-001/002 改写为"预期失败即确认 Bug"。〕〔**修复第 1 轮后**：项 9a/9b/9c/9d 与 4/13/15 的**期望值已随拓扑分支更新**（带 `〔修复第 1 轮〕` 标记）—— 现在"报 `CrossSlot` / 整条 `Err`"才是回归，"成功但字段按项降级"是期望行为；进程内的 `ClusterFoldingConn` 只能防形状回归，真连仍是唯一能证伪 redis cluster 分发层真实形态的手段。〕
 
