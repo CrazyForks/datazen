@@ -9,6 +9,8 @@ import { queryCommands } from '../../../commands/query';
 import { settingsCommands } from '../../../commands/settings';
 import { clearCachedAppExecutablePathForTest } from '../../../lib/mcpAgentConfig';
 import type { ConnectionConfig } from '../../../types';
+import type { ConnectionHomeSlotProps } from '@datazen/driver-sdk';
+import type { KvConnectionHomeBinding } from '../useKvWorkspaceSlots';
 
 afterEach(cleanup);
 
@@ -107,6 +109,37 @@ const extraConnections: ConnectionConfig[] = [
     port: 8123,
   },
 ];
+
+/** Fixture standing in for a driver's connection home (屏 A): props echoed as data. */
+function FixtureConnectionHome({
+  connectionId,
+  dbSessionId,
+  connectionName,
+  databaseType,
+  initialDatabase,
+}: ConnectionHomeSlotProps) {
+  return (
+    <div
+      data-testid="fixture-connection-home"
+      data-connection-id={connectionId}
+      data-db-session-id={dbSessionId}
+      data-connection-name={connectionName}
+      data-database-type={databaseType}
+      data-initial-database={initialDatabase ?? ''}
+    />
+  );
+}
+
+const homeSlot: KvConnectionHomeBinding = {
+  Component: FixtureConnectionHome,
+  props: {
+    connectionId: 'cfg-1',
+    dbSessionId: 'conn-1',
+    connectionName: 'Local PG',
+    databaseType: 'postgresql',
+    initialDatabase: 'db3',
+  },
+};
 
 describe('ConnectionWorkspaceHome', () => {
   beforeEach(() => {
@@ -603,6 +636,61 @@ describe('ConnectionWorkspaceHome', () => {
     expect(screen.getByText('Local PG')).toBeInTheDocument();
     fireEvent.click(screen.getByText('common.newQuery'));
     expect(onNewQuery).toHaveBeenCalledOnce();
+  });
+
+  it('yields the connected landing screen to a driver-contributed connection home', () => {
+    render(
+      <ConnectionWorkspaceHome
+        hasConnections
+        connectionContext={baseContext}
+        recentPanels={[]}
+        showNewQuery
+        showNewTable={false}
+        showErDiagram={false}
+        showObjects={false}
+        onNewConnection={vi.fn()}
+        onNewQuery={vi.fn()}
+        onCreateTable={vi.fn()}
+        onOpenErDiagram={vi.fn()}
+        onOpenObjects={vi.fn()}
+        onOpenPanel={vi.fn()}
+        connectionHomeSlot={homeSlot}
+      />,
+    );
+
+    const slot = screen.getByTestId('home-kv-connection-home');
+    expect(slot.getAttribute('data-slot')).toBe('kv-connection-home');
+    const fixture = screen.getByTestId('fixture-connection-home');
+    expect(fixture.getAttribute('data-connection-id')).toBe('cfg-1');
+    expect(fixture.getAttribute('data-db-session-id')).toBe('conn-1');
+    expect(fixture.getAttribute('data-initial-database')).toBe('db3');
+    // 屏 A takeover is wholesale: the host banner page (hero + quick actions) is gone,
+    // while the landing-screen test id survives so outer wiring keeps working.
+    expect(screen.queryByText('common.newQuery')).not.toBeInTheDocument();
+    expect(screen.getByTestId('connection-workspace-home')).toBeInTheDocument();
+  });
+
+  it('keeps the host banner page when the driver contributes no connection home', () => {
+    render(
+      <ConnectionWorkspaceHome
+        hasConnections
+        connectionContext={baseContext}
+        recentPanels={[]}
+        showNewQuery
+        showNewTable={false}
+        showErDiagram={false}
+        showObjects={false}
+        onNewConnection={vi.fn()}
+        onNewQuery={vi.fn()}
+        onCreateTable={vi.fn()}
+        onOpenErDiagram={vi.fn()}
+        onOpenObjects={vi.fn()}
+        onOpenPanel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('home-kv-connection-home')).not.toBeInTheDocument();
+    expect(screen.getByText('common.newQuery')).toBeInTheDocument();
   });
 
   it('lists recent panels and opens them on click', () => {
