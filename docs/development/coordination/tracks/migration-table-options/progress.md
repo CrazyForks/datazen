@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_FOR_RETEST
 
 ## Scope
 
@@ -29,8 +29,9 @@ FAILED
 
 ## Commit
 
-- Coding commit: ad07a025.
-- Independent Tester verification: FAILED; see `bugs.md`.
+- Coding commit: 03644d70.
+- Bug-fix commit: pending.
+- Independent Tester verification: prior round FAILED on BUG-001; fix is ready for a fresh retest.
 
 ## Tester verification
 
