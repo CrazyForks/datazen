@@ -12,6 +12,9 @@ const {
   executeDataSyncMock,
   generateDataSyncSqlMock,
   cancelDataSyncMock,
+  getSyncProfilesMock,
+  saveSyncProfileMock,
+  deleteSyncProfileMock,
   getDatabasesMock,
   getTablesMock,
   aiChatMock,
@@ -31,6 +34,9 @@ const {
     executeDataSyncMock: vi.fn(),
     generateDataSyncSqlMock: vi.fn(),
     cancelDataSyncMock: vi.fn().mockResolvedValue(true),
+    getSyncProfilesMock: vi.fn(),
+    saveSyncProfileMock: vi.fn(),
+    deleteSyncProfileMock: vi.fn(),
     getDatabasesMock: vi.fn(),
     getTablesMock: vi.fn(),
     aiChatMock: vi.fn(),
@@ -76,6 +82,9 @@ vi.mock('../../../commands/sync', () => ({
     executeDataSync: (...args: unknown[]) => executeDataSyncMock(...args),
     generateDataSyncSql: (...args: unknown[]) => generateDataSyncSqlMock(...args),
     cancelDataSync: (...args: unknown[]) => cancelDataSyncMock(...args),
+    getSyncProfiles: () => getSyncProfilesMock(),
+    saveSyncProfile: (...args: unknown[]) => saveSyncProfileMock(...args),
+    deleteSyncProfile: (...args: unknown[]) => deleteSyncProfileMock(...args),
   },
   DEFAULT_SYNC_OPTIONS: { insert: true, update: true, delete: false },
 }));
@@ -277,6 +286,12 @@ describe('DataSyncWindow wizard', () => {
     executeDataSyncMock.mockReset();
     cancelDataSyncMock.mockReset();
     cancelDataSyncMock.mockResolvedValue(true);
+    getSyncProfilesMock.mockReset();
+    getSyncProfilesMock.mockResolvedValue([]);
+    saveSyncProfileMock.mockReset();
+    saveSyncProfileMock.mockResolvedValue(undefined);
+    deleteSyncProfileMock.mockReset();
+    deleteSyncProfileMock.mockResolvedValue(undefined);
     generateDataSyncSqlMock.mockReset();
     generateDataSyncSqlMock.mockImplementation(async (_source, _target, tables, options) =>
       tables.flatMap((table: { targetTable: string; rows?: DataSyncRowChange[] }) =>

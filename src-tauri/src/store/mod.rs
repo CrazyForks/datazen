@@ -8,6 +8,7 @@ pub(crate) mod history_db;
 mod key_store;
 mod models;
 mod settings;
+mod sync_profiles;
 mod sync_tasks;
 mod transfer_profiles;
 

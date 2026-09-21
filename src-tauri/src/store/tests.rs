@@ -549,6 +549,45 @@ async fn sync_tasks_crud() {
 }
 
 #[tokio::test]
+async fn sync_profiles_roundtrip_and_runtime_fields_are_not_persisted() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let now = Utc::now();
+    let profile = crate::data_sync::SyncProfile {
+        version: crate::data_sync::SyncProfile::CURRENT_VERSION,
+        id: "sync-profile-1".into(),
+        name: "Nightly sync".into(),
+        source_connection_id: "source-config".into(),
+        target_connection_id: "target-config".into(),
+        source_database: Some("app".into()),
+        target_database: Some("app".into()),
+        source_schema: Some("public".into()),
+        target_schema: Some("public".into()),
+        tables: vec![crate::data_sync::TableMapping::auto("users")],
+        options: crate::data_sync::SyncOptions::default(),
+        created_at: now,
+        updated_at: now,
+    };
+    store.save_sync_profile(profile.clone()).await.unwrap();
+    assert_eq!(store.get_sync_profiles().await, vec![profile]);
+
+    let persisted = tokio::fs::read_to_string(dir.path().join("sync_profiles.json"))
+        .await
+        .unwrap();
+    assert!(!persisted.contains("dbSessionId"));
+    assert!(!persisted.contains("planId"));
+    assert!(!persisted.contains("credentials"));
+
+    let reloaded = init_store_for_test(dir.path()).await;
+    assert_eq!(reloaded.get_sync_profiles().await.len(), 1);
+    reloaded
+        .delete_sync_profile("sync-profile-1")
+        .await
+        .unwrap();
+    assert!(reloaded.get_sync_profiles().await.is_empty());
+}
+
+#[tokio::test]
 async fn sync_task_persistence_drops_runtime_ids_and_blocks_offsets() {
     let dir = tempfile::tempdir().unwrap();
     let store = init_store_for_test(dir.path()).await;

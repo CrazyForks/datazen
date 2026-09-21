@@ -1,0 +1,41 @@
+# migration-sync-profiles
+
+## Phase
+READY_FOR_TEST
+
+## Objective
+Add reusable Data Sync profiles with versioned persisted configuration, strict validation, Tauri IPC, and UI save/load flow. Persist connection IDs, database/schema scope, table selection, filters/recordsets, and sync options. Never persist dbSessionId, comparison rows, plan IDs, or credentials.
+
+## Conflict surface
+Backend data_sync/profile.rs, store/sync_profiles.rs, commands/sync/*; frontend commands/sync.ts, windows/data-sync/DataSyncWindow.tsx; bootstrap registration may conflict during merge.
+
+## Acceptance
+- versioned strict profile model with unknown-field rejection and validation
+- encrypted store roundtrip; invalid records filtered safely
+- IPC get/save/delete with connection existence validation
+- UI saves/restores reviewed setup and reapplies filters/table selections after fresh inspect
+- no runtime sessions, comparison results, or credentials persisted
+- targeted Rust/frontend/type tests and E2E case registration
+
+## E2E cases (留待 R 回归)
+- save profile, reopen Data Sync, load profile, inspect, verify disabled tables and source filters restored
+- load profile with missing connection and verify actionable validation error
+
+## Implementation
+
+- Commit: 83cc1d70972373c1fd6ee336cb6503ae21378519
+- Added strict versioned `SyncProfile` model and `sync_profiles.json` store CRUD.
+- Added `get_sync_profiles`, `save_sync_profile`, and `delete_sync_profile` IPC with
+  source/target connection existence validation and bootstrap registration.
+- Added profile-aware inspection mappings so disabled tables, structured filters,
+  and recordset bounds are restored after a fresh inspect.
+- Added Data Sync window profile save/load/delete controls; runtime sessions,
+  comparison rows, credentials, and plan ids remain transient.
+
+## Validation
+
+- `cargo test -p datazen --lib`: 1519 passed, 3 ignored.
+- `npx vitest run src/commands/__tests__/syncPlan.test.ts src/windows/data-sync/__tests__/DataSyncWindow.test.tsx`: 39 passed.
+- `npx tsc --noEmit`: passed.
+- `cargo fmt --all`: passed after restoring generated driver files and Cargo.lock.
+- `git diff --check`: passed.

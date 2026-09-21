@@ -10,6 +10,73 @@ describe('Data Sync immutable plan IPC', () => {
     invoke.mockReset();
   });
 
+  it('persists profiles through dedicated IPC commands', async () => {
+    const profile = {
+      version: 1,
+      id: 'profile-1',
+      name: 'nightly',
+      sourceConnectionId: 'src',
+      targetConnectionId: 'tgt',
+      sourceDatabase: 'app',
+      targetDatabase: 'app',
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          enabled: false,
+          sourceFilter: {
+            filters: [],
+            recordset: { orderBy: 'id', start: { value: '1' } },
+          },
+        },
+      ],
+      options: { insert: true, update: true, delete: false },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    } as const;
+    await syncCommands.getSyncProfiles();
+    await syncCommands.saveSyncProfile(profile);
+    await syncCommands.deleteSyncProfile(profile.id);
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_sync_profiles');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'save_sync_profile', { profile });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'delete_sync_profile', {
+      profileId: profile.id,
+    });
+  });
+
+  it('sends saved table mappings only when inspecting a loaded profile', async () => {
+    invoke.mockResolvedValueOnce([]);
+    const mappings = [
+      {
+        sourceTable: 'users',
+        targetTable: 'archive_users',
+        enabled: false,
+        sourceFilter: {
+          filters: [],
+          recordset: { limit: 10 },
+        },
+      },
+    ];
+    await syncCommands.inspectDataSync(
+      'source-session',
+      'target-session',
+      'app',
+      'app',
+      'public',
+      'public',
+      mappings,
+    );
+    expect(invoke).toHaveBeenCalledWith('inspect_data_sync', {
+      sourceDbSessionId: 'source-session',
+      targetDbSessionId: 'target-session',
+      sourceDatabase: 'app',
+      targetDatabase: 'app',
+      sourceSchema: 'public',
+      targetSchema: 'public',
+      tables: mappings,
+    });
+  });
+
   it('keeps replacement SQL and row payloads out of preview and execute IPC', async () => {
     invoke.mockResolvedValueOnce({
       planId: 'opaque-plan',

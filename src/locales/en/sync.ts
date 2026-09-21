@@ -144,6 +144,18 @@ const pack = {
   'sync.schemaIdentical': 'Schemas are identical',
   'sync.back': 'Back',
   'sync.next': 'Next',
+  'sync.profile.name': 'Profile name',
+  'sync.profile.namePlaceholder': 'Name this sync configuration',
+  'sync.profile.select': 'Select a saved profile',
+  'sync.profile.save': 'Save profile',
+  'sync.profile.load': 'Load profile',
+  'sync.profile.delete': 'Delete profile',
+  'sync.profile.saved': 'Sync profile saved',
+  'sync.profile.loaded': 'Sync profile loaded; inspect will refresh the mapping',
+  'sync.profile.deleted': 'Sync profile deleted',
+  'sync.profile.missingFields': 'Choose both endpoints and enter a profile name.',
+  'sync.profile.missingConnection':
+    'This profile references a connection that no longer exists. Choose new endpoints or delete the profile.',
 
   // --- Data Transfer ---
   'transfer.source': 'Source',
