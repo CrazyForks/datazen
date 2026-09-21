@@ -267,7 +267,7 @@ pub fn object_ddl_sql(
             sql_string(name),
         )),
         ("sqlite", ObjectKind::View) => Some(format!(
-            "SELECT substr(sql, instr(lower(sql), ' as ') + 4) AS ddl \
+            "SELECT trim(substr(sql, instr(lower(replace(replace(replace(sql, char(13), ' '), char(10), ' '), char(9), ' ')), ' as ') + 4)) AS ddl \
              FROM sqlite_master WHERE type = 'view' AND name = {}",
             sql_string(name),
         )),

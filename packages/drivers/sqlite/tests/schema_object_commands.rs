@@ -129,7 +129,10 @@ async fn test_tester_view_ddl_preserves_query_body_when_as_is_multiline() {
     driver
         .execute(
             &handle,
-            "CREATE TABLE source_rows (id INTEGER PRIMARY KEY); CREATE VIEW active_rows AS\nSELECT id\nFROM source_rows",
+            "CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
+             CREATE VIEW active_rows AS\nSELECT id\nFROM source_rows;
+             CREATE VIEW compact_lower as select id from source_rows;
+             CREATE VIEW tabbed_rows\nAS\tSELECT id\nFROM source_rows",
         )
         .await
         .unwrap();
@@ -143,18 +146,24 @@ async fn test_tester_view_ddl_preserves_query_body_when_as_is_multiline() {
     )
     .await
     .unwrap();
-    assert_eq!(list.data["objects"][0]["name"], "active_rows");
-
-    let ddl = execute_schema_object_command(
-        &driver,
-        "sqlite",
-        &handle,
-        "get_object_ddl",
-        json!({ "kind": "view", "name": "active_rows" }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(ddl.data["ddl"], "SELECT id\nFROM source_rows");
+    let objects = list.data["objects"].as_array().unwrap();
+    assert_eq!(objects.len(), 3);
+    for (name, expected) in [
+        ("active_rows", "SELECT id\nFROM source_rows"),
+        ("compact_lower", "select id from source_rows"),
+        ("tabbed_rows", "SELECT id\nFROM source_rows"),
+    ] {
+        let ddl = execute_schema_object_command(
+            &driver,
+            "sqlite",
+            &handle,
+            "get_object_ddl",
+            json!({ "kind": "view", "name": name }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ddl.data["ddl"], expected, "unexpected DDL for {name}");
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }
