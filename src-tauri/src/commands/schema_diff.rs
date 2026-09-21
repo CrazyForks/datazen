@@ -116,6 +116,18 @@ async fn fetch_target_table_schema(
     }
 }
 
+fn resolve_profile_table(dialect: &str, table: &str, schema: Option<&str>) -> String {
+    let Some(schema) = schema.map(str::trim).filter(|value| !value.is_empty()) else {
+        return resolve_table_for_dialect(dialect, table);
+    };
+    let relation = table
+        .trim()
+        .rsplit_once('.')
+        .map(|(_, name)| name)
+        .unwrap_or_else(|| table.trim());
+    format!("{schema}.{relation}")
+}
+
 /// Prepare a DDL deploy plan (source = desired → target).
 #[tauri::command]
 pub async fn prepare_schema_diff_plan(
@@ -126,6 +138,82 @@ pub async fn prepare_schema_diff_plan(
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
+) -> Result<SchemaDiffPlan, CommandError> {
+    prepare_schema_diff_plan_impl(
+        &state,
+        source_db_session_id,
+        target_db_session_id,
+        table_names,
+        allow_destructive,
+        include_indexes,
+        type_overrides,
+    )
+    .await
+}
+
+pub(crate) async fn prepare_schema_diff_plan_impl(
+    state: &AppState,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    table_names: Vec<String>,
+    allow_destructive: bool,
+    include_indexes: Option<bool>,
+    type_overrides: Option<Vec<ColumnTypeOverride>>,
+) -> Result<SchemaDiffPlan, CommandError> {
+    prepare_schema_diff_plan_with_schemas_impl(
+        state,
+        source_db_session_id,
+        target_db_session_id,
+        table_names,
+        allow_destructive,
+        include_indexes,
+        type_overrides,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Prepare a plan using schema overrides stored in a migration profile.
+///
+/// Interactive callers inherit the live connection schema. Persisted profiles
+/// carry both source and target schema, so their runner must keep those scopes
+/// explicit when it creates the reviewed immutable plan.
+pub(crate) async fn prepare_schema_diff_profile_plan_impl(
+    state: &AppState,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    table_names: Vec<String>,
+    allow_destructive: bool,
+    include_indexes: Option<bool>,
+    type_overrides: Option<Vec<ColumnTypeOverride>>,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
+) -> Result<SchemaDiffPlan, CommandError> {
+    prepare_schema_diff_plan_with_schemas_impl(
+        state,
+        source_db_session_id,
+        target_db_session_id,
+        table_names,
+        allow_destructive,
+        include_indexes,
+        type_overrides,
+        source_schema,
+        target_schema,
+    )
+    .await
+}
+
+async fn prepare_schema_diff_plan_with_schemas_impl(
+    state: &AppState,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    table_names: Vec<String>,
+    allow_destructive: bool,
+    include_indexes: Option<bool>,
+    type_overrides: Option<Vec<ColumnTypeOverride>>,
+    source_schema_override: Option<String>,
+    target_schema_override: Option<String>,
 ) -> Result<SchemaDiffPlan, CommandError> {
     tracing::info!(
         %source_db_session_id,
@@ -176,8 +264,16 @@ pub async fn prepare_schema_diff_plan(
 
     let mut pairs = Vec::new();
     for table in &table_names {
-        let src_table = resolve_table_for_dialect(&src_config.database_type, table);
-        let tgt_table = resolve_table_for_dialect(&tgt_config.database_type, table);
+        let src_table = resolve_profile_table(
+            &src_config.database_type,
+            table,
+            source_schema_override.as_deref(),
+        );
+        let tgt_table = resolve_profile_table(
+            &tgt_config.database_type,
+            table,
+            target_schema_override.as_deref(),
+        );
         let src_schema = src_driver
             .get_table_schema(&src_handle, &src_table)
             .await
@@ -221,8 +317,11 @@ pub async fn prepare_schema_diff_plan(
                     // 1. User explicit column type overrides take highest priority
                     if let Some(ref overrides) = type_overrides {
                         if let Some(ov) = overrides.iter().find(|o| {
-                            resolve_table_for_dialect(&tgt_config.database_type, &o.table)
-                                == *tgt_tbl
+                            resolve_profile_table(
+                                &tgt_config.database_type,
+                                &o.table,
+                                target_schema_override.as_deref(),
+                            ) == *tgt_tbl
                                 && o.column == col_name
                         }) {
                             return Ok(ov.target_type.clone());
@@ -309,6 +408,29 @@ async fn fail_schema_diff_deploy<T>(
 #[tauri::command]
 pub async fn execute_schema_diff_deploy(
     state: State<'_, AppState>,
+    target_db_session_id: String,
+    plan: SchemaDiffPlan,
+    use_transaction: Option<bool>,
+    require_rollback: Option<bool>,
+    confirm_destructive: Option<String>,
+    job_id: Option<String>,
+    profile: Option<crate::store::MigrationProfileRef>,
+) -> Result<SchemaDiffDeployResult, CommandError> {
+    execute_schema_diff_deploy_impl(
+        &state,
+        target_db_session_id,
+        plan,
+        use_transaction,
+        require_rollback,
+        confirm_destructive,
+        job_id,
+        profile,
+    )
+    .await
+}
+
+pub(crate) async fn execute_schema_diff_deploy_impl(
+    state: &AppState,
     target_db_session_id: String,
     plan: SchemaDiffPlan,
     use_transaction: Option<bool>,

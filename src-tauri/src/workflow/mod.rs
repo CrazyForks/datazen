@@ -7,6 +7,7 @@ pub mod command;
 pub mod command_runtime;
 pub mod error;
 pub mod history;
+pub(crate) mod migration;
 pub mod workflows;
 
 pub use error::WorkflowError;
@@ -23,7 +24,8 @@ pub use command::WorkflowCommandStep;
 pub use command_runtime::{execute_command, resolve_connection_id};
 pub use history::WorkflowHistoryManager;
 pub use workflows::{
-    enforce_workflow_query_guards, StepExecutionResult, StepStatus, WorkflowDefinition,
-    WorkflowExecuteOptions, WorkflowExecutionResult, WorkflowExecutor, WorkflowListItem,
-    WorkflowRegistry, WorkflowStep, WorkflowVisibility, WORKFLOW_QUERY_ROW_LIMIT,
+    enforce_workflow_query_guards, StepExecutionResult, StepStatus, UnattendedDestructivePolicy,
+    WorkflowDefinition, WorkflowExecuteOptions, WorkflowExecutionResult, WorkflowExecutor,
+    WorkflowListItem, WorkflowMigrationOperation, WorkflowRegistry, WorkflowStep,
+    WorkflowVisibility, WORKFLOW_QUERY_ROW_LIMIT,
 };

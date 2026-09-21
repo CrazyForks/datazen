@@ -1,5 +1,5 @@
 import type { WorkflowStepType } from '../types';
-import type { WorkflowDraft } from '../windows/workflow/WorkflowForm';
+import type { WorkflowDraft, WorkflowStepDraft } from '../windows/workflow/WorkflowForm';
 
 export function draftToYamlObject(d: WorkflowDraft): Record<string, unknown> {
   return {
@@ -15,10 +15,20 @@ export function draftToYamlObject(d: WorkflowDraft): Record<string, unknown> {
     steps: d.steps.map((s) => ({
       type: s.type,
       id: s.id,
-      sql: s.sql,
-      prompt: s.prompt,
-      connection: s.connection,
-      database: s.database,
+      ...(s.type === 'migration'
+        ? {
+            operation: s.operation ?? 'dataSync',
+            profileId: s.profileId ?? '',
+            profileRevision: s.profileRevision,
+            destructivePolicy: s.destructivePolicy ?? 'reject',
+            sqlFileTokenVariable: s.sqlFileTokenVariable,
+          }
+        : {
+            sql: s.sql,
+            prompt: s.prompt,
+            connection: s.connection,
+            database: s.database,
+          }),
     })),
     schedule: d.scheduleEnabled
       ? { enabled: true, interval_secs: Math.max(30, d.scheduleIntervalSecs ?? 3600) }
@@ -44,6 +54,18 @@ export function yamlObjectToDraft(obj: Record<string, unknown>): WorkflowDraft {
         prompt: String(s.prompt ?? ''),
         connection: s.connection != null ? String(s.connection) : undefined,
         database: s.database != null ? String(s.database) : undefined,
+        operation:
+          s.type === 'migration'
+            ? (String(s.operation ?? 'dataSync') as WorkflowStepDraft['operation'])
+            : undefined,
+        profileId: s.type === 'migration' ? String(s.profileId ?? '') : undefined,
+        profileRevision: s.type === 'migration' ? String(s.profileRevision ?? '') || undefined : undefined,
+        destructivePolicy:
+          s.type === 'migration'
+            ? (String(s.destructivePolicy ?? 'reject') as WorkflowStepDraft['destructivePolicy'])
+            : undefined,
+        sqlFileTokenVariable:
+          s.type === 'migration' ? String(s.sqlFileTokenVariable ?? '') || undefined : undefined,
       }))
     : [];
   return {
