@@ -198,6 +198,28 @@ describe('SchemaDiffPanel target-only review', () => {
     );
   });
 
+  it('test_tester renders and exports CHECK constraint changes', () => {
+    const diff = {
+      table: 'users',
+      missingOnTarget: [],
+      extraOnTarget: [],
+      added: [],
+      removed: [],
+      changed: [],
+      missingCheckConstraints: [{ name: 'users_age_check', expression: 'age >= 0' }],
+      extraCheckConstraints: [{ name: 'users_status_check', expression: "status <> 'deleted'" }],
+    };
+
+    render(<SchemaDiffPanel diff={diff} />);
+    expect(screen.getByText('schemaDiff.checkMissing')).toBeInTheDocument();
+    expect(screen.getByText('+ users_age_check: CHECK (age >= 0)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.checkExtra')).toBeInTheDocument();
+    expect(screen.getByText("- users_status_check: CHECK (status <> 'deleted')")).toBeInTheDocument();
+    expect(formatSchemaDiffText(diff)).toBe(
+      "-- Schema diff: users\n+ users_age_check: CHECK (age >= 0)\n- users_status_check: CHECK (status <> 'deleted')",
+    );
+  });
+
   it('supports legacy aliases and identifies an unchanged schema', () => {
     const { rerender } = render(
       <SchemaDiffPanel

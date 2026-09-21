@@ -231,6 +231,25 @@ mod tests {
     }
 
     #[test]
+    fn test_tester_target_snapshot_detects_check_constraint_changed_after_review() {
+        let old = TableSchema {
+            table_name: "t".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![datazen_driver_api::CheckConstraint {
+                name: "t_positive_id".into(),
+                expression: "id > 0".into(),
+            }],
+        };
+        assert!(validate_snapshot("t", &old, &old).is_ok());
+        let mut current = old.clone();
+        current.check_constraints[0].expression = "id >= 0".into();
+        assert!(validate_snapshot("t", &old, &current).is_err());
+    }
+
+    #[test]
     fn target_only_snapshot_detects_table_disappearing_after_review() {
         let reviewed = TableSchema {
             table_name: "archive".into(),

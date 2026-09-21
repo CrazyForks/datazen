@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+FAILED
 
 ## Implemented slice
 
@@ -27,6 +27,19 @@ READY_FOR_TEST
 - `npx tsc --noEmit`: passed.
 - `cargo fmt --all -- --check` and `git diff --check`: passed after generated driver registration formatting.
 
+## Independent Tester verification
+
+- Code review covered all changed API, driver, Schema Diff, reviewed-plan, and UI/text-export paths.
+- `cargo test -p datazen-driver-api --lib`: **141 passed**.
+- `cargo test -p datazen-driver-postgres --lib`: **119 passed**.
+- `cargo test -p datazen-driver-mysql --lib`: **96 passed** before tester boundary cases; focused parser reproduction **failed** with BUG-001.
+- `cargo test -p datazen-driver-sqlite --lib`: **56 passed** before tester boundary cases; focused parser reproduction **failed** with BUG-002.
+- Injected Host Schema Diff suite: **99 passed** before tester-only reviewed snapshot assertion; frontend Schema Diff suite: **28 passed** before tester-only CHECK rendering assertion.
+- Tester-only frontend CHECK rendering/text-export assertion passed: **17/17** in `SchemaDiffPanels.test.tsx`.
+- Coverage command was attempted, but repository-wide configured threshold is not meaningful for focused files and failed on global coverage (0.44% statements); changed UI paths were exercised by the focused suite.
+- No live PostgreSQL/MySQL database journey or destructive migration was run.
+- Tester added only tests and this track's bug/progress records; no business implementation was changed.
+
 ## Known limits
 
 - Independent Tester must review this worktree and run the full required verification; coder self-validation is not a pass verdict.
@@ -34,6 +47,10 @@ READY_FOR_TEST
 - CHECK expressions are not translated between database families; cross-dialect plans record an unsupported requirement.
 - Table-level engine, charset/collation, table comments, and partition metadata remain a separate follow-up slice.
 - Live PostgreSQL/MySQL database journeys were not run in this coding worktree.
+
+## Tester verdict
+
+- **TEST_FAILED**: `migration-schema-constraints-options-BUG-001` and `migration-schema-constraints-options-BUG-002` block merge until the two catalog parsers ignore SQL literals/comments.
 
 ## Commit
 

@@ -35,6 +35,16 @@ fn parses_named_and_unnamed_checks_from_show_create() {
 }
 
 #[test]
+fn test_tester_check_parser_ignores_default_literal_before_real_check() {
+    let checks = MysqlDriver::parse_check_from_create_table(
+        "CREATE TABLE `users` (\n  `note` varchar(64) DEFAULT 'CHECK (literal)',\n  CONSTRAINT `users_age_check` CHECK (`age` >= 0)\n)",
+    );
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].name, "users_age_check");
+    assert_eq!(checks[0].expression, "`age` >= 0");
+}
+
+#[test]
 fn build_use_database_sql_quotes_and_trims() {
     assert_eq!(
         MysqlDriver::build_use_database_sql("mydb").unwrap(),

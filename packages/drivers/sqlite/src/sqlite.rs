@@ -926,6 +926,15 @@ mod tests {
         assert_eq!(checks[1].expression, "length(note) > 0");
     }
 
+    #[test]
+    fn test_tester_check_parser_ignores_sql_comments() {
+        let checks = parse_sqlite_check_constraints(
+            "CREATE TABLE users (id INTEGER /* CHECK (comment_only) */, CHECK (id > 0))",
+        );
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].expression, "id > 0");
+    }
+
     fn collect_events() -> (
         QueryStreamCallback,
         std::sync::Arc<std::sync::Mutex<Vec<QueryStreamEvent>>>,
