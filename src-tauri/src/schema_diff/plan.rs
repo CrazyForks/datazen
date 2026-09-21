@@ -162,6 +162,17 @@ fn plan_single_table(
     warnings: &mut Vec<String>,
     requirements: &mut Vec<super::types::PlanRequirement>,
 ) {
+    let table = match datazen_driver_api::validate_migration_identifier(table) {
+        Ok(value) => value,
+        Err(reason) => {
+            requirements.push(super::types::PlanRequirement::Unsupported {
+                operation: table.to_string(),
+                reason: format!("Invalid target table identifier: {reason}"),
+            });
+            return;
+        }
+    };
+
     let Some(driver) = datazen_driver_api::create_driver(target_dialect) else {
         requirements.push(super::types::PlanRequirement::Unsupported {
             operation: table.to_string(),

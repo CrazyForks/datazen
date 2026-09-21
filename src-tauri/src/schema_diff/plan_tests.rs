@@ -148,6 +148,33 @@ fn test_tester_target_only_empty_identifier_is_not_executable() {
 }
 
 #[test]
+fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
+    let src = schema(vec![]);
+    let tgt = schema(vec![col("id", "integer")]);
+    for table in [" ", "audit\nevents", "audit..events", "audit. events"] {
+        let plan = build_schema_diff_plan(
+            &[(table.into(), src.clone(), tgt.clone())],
+            "postgresql",
+            "postgresql",
+            PlanOptions {
+                allow_destructive: true,
+                include_indexes: true,
+                type_mapper: None,
+                cross_dialect: false,
+            },
+        );
+
+        assert!(plan.statements.is_empty(), "{table:?}");
+        assert!(plan.requirements.iter().any(|requirement| {
+            matches!(
+                requirement,
+                super::super::types::PlanRequirement::Unsupported { .. }
+            )
+        }), "{table:?}");
+    }
+}
+
+#[test]
 fn test_tester_target_only_unknown_driver_is_not_executable() {
     let src = schema(vec![]);
     let tgt = schema(vec![col("id", "integer")]);

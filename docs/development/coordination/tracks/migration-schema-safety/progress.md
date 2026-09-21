@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_FOR_TEST
 
 ## Worktree
 
@@ -46,3 +46,11 @@ FAILED
 - Schema Diff Vitest: 33 passed, 0 failed.
 - Host Schema Diff focused: baseline 89 passed, 0 failed; new empty-identifier regression failed as expected.
 - Driver migration focused: baseline PG 13, MySQL 12, SQLite 7 passed; new empty-identifier regression failed in all three renderers.
+
+## BUG-001 repair
+
+- Renderer validation now trims relation identifiers and rejects empty, control-character, empty-segment, and whitespace-padded qualified names before quoting `DropTable` SQL.
+- Host planning applies the same fail-closed validation before driver lookup or renderer invocation, so invalid target-only identifiers produce `PlanRequirement::Unsupported` with no executable statement.
+- Added regression coverage for blank, control-character, and malformed qualified identifiers in the Driver API, PG/MySQL/SQLite renderers, and Host planner.
+- Validation after repair: Host Schema Diff 92 passed; PostgreSQL 116, MySQL 94, and SQLite 54 driver tests passed; Driver API 134 passed; Schema Diff Vitest 33 passed; TypeScript check passed.
+- Commit SHA is recorded in the repair handoff after the single fix commit is created.
