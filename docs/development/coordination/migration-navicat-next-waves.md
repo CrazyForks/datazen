@@ -265,9 +265,9 @@ The reusable-profile wave is integrated in commit `e7c66a6e`. Data Transfer prof
 
 The host exposes get/save/delete profile IPC with connection-existence validation and rejects unsupported versions, unknown fields and invalid destination/options. The Data Transfer window can save the current reviewed configuration, load it back into the endpoints/setup state, restore mappings after source inspection, and clears stale previews. Existing empty-table SQL-file payload compatibility remains intact.
 
-Independent verification passed profile-focused Rust command/store tests 24/24, Data Transfer command/frontend tests 37/37, TypeScript, formatting and diff checks. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. Profiles currently cover Data Transfer; Data Sync/Schema Diff profiles and run-history reconciliation remain open, as do live database and Windows-specific checks in this environment.
+Independent verification passed profile-focused Rust command/store tests 24/24, Data Transfer command/frontend tests 37/37, TypeScript, formatting and diff checks. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. Subsequent Sync and Schema Diff profile waves plus shared run-history and host-owned workflow execution are integrated in the same branch; live database and Windows-specific checks remain environment limits.
 
-This gate closes repeatable Data Transfer setup persistence. It does not add unattended scheduling, resumable checkpoints, per-run history, profile sharing/encryption beyond the existing local store, or profiles for the other migration windows.
+This gate closes repeatable Data Transfer setup persistence. It does not add unattended scheduling, resumable checkpoints, profile sharing/encryption beyond the existing local store, or profiles for migration features outside the reviewed trio.
 
 ## Schema Diff target-only table picker release gate (2026-09-21)
 
