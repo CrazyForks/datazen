@@ -9,7 +9,7 @@
 Wave 1~4 中间各次合入只做「合并健全性校验」，完整回归统一在本轨跑一次。本轨输入 = 下方
 【A 门禁】全量复跑 + 【B 各轨留待项】逐项闭环 + 【C 关账】文档与状态收口。
 
-## A. 门禁基线（合并后主检出实测，2026-09-21 @ 8b66586e4）
+## A. 门禁基线（合并后主检出实测，2026-09-21 @ `8b66586e4`；Wave 4-A 二次合流后代码基准 = `b22b41ac8`，文档基准 = 本文件所在 HEAD）
 
 | 命令 | 基线 |
 | --- | --- |
@@ -18,7 +18,7 @@ Wave 1~4 中间各次合入只做「合并健全性校验」，完整回归统�
 | `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | **27 files / 222 pass / 0 fail** |
 | `npx vitest run --config vitest.drivers.config.ts` | **33 files / 241 pass / 0 fail** |
 | `npx vitest run src packages/driver-sdk packages/ui` | **412 files / 4243 pass / 0 fail** |
-| `npx vitest run scripts` | **22 files / 208 pass / 0 fail**（Wave 4-A 后会增加本轨新增护栏用例） |
+| `npx vitest run scripts` | **23 files / 244 pass / 0 fail**（Wave 4-A 已并入：护栏 36 例，其中 BUG-008 跟踪域分类 5 例；原基线 22/208 已过时） |
 | `node scripts/check-driver-import-boundaries.mjs` | exit 0（**必须在主检出跑**：worktree 缺外部树会假绿）；2 条夹具豁免命中 + 12 条 advisory（R1×2 superset / R2×6 editor-pro 单测 / R3×4 宿主引驱动内部） |
 | `node scripts/check-id-terminology.mjs` / `check-module-layers.mjs` / `check-ci-docs-consistency.mjs` | 全绿 |
 | `node scripts/i18n-sync-check.mjs` | 结构与 Wave 3 实测一致（**既有翻译债，非本专项回归**：宿主缺 1216 / 冗余 1650；redis 9 语言各缺 139、1 语言缺 72；CI 该步 `continue-on-error: true`） |
@@ -86,7 +86,7 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 
 ## 状态
 
-- [ ] 派发 Tester → 回归执行
+- [x] 派发 Tester → 回归执行（协调者已按任务书派出独立 Tester 实例，worktree `.worktrees/datazen-r-phase` @ `feature/r-phase`）
 - [ ] TEST_DONE / 关账汇报
 
 ## 执行记录
