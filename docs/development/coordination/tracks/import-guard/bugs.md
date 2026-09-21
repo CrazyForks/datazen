@@ -44,17 +44,17 @@ node scripts/check-driver-import-boundaries.mjs   # EXIT=1，FAILED: 8 violation
    注入式自证两类各一次（结束还原、`git status` 干净）。
 5. **文档同步**：契约 2.1.2 / 2.4.2（及 2.6 表格）写明「阻断范围 = 本仓跟踪的源码；
    gitignored 外部仓库树（git driver clone、`packages/pro-extensions/*`）以 advisory 报告，
-   漂移由该仓库自行整改」，并**如实记录当前外部漂移**：superset 2 处 R1、editor-pro 5 处 R2（含文件:行）。
+   漂移由该仓库自行整改」，并**如实记录当前外部漂移**：superset 2 处 R1、editor-pro 6 处 R2（含文件:行）。
    顺带关掉上一轮 Tester 留待的 2 条 Nit：① 2.6 单测格对 branch 95.42% 未触发的 6 处 `??` 兜底描述不完整；
    ② `scripts/ci-local.sh` 步骤编号 `3.4/11` 排在 `3.3/11` 之前。
 6. **另立移交项（不属本轨修复）**：superset 外部驱动仓库的 2 处 R1 需在其自身仓库整改
-   （换源 `@datazen/ui`）；editor-pro 的 5 处 R2 是其单测合法用法，若日后要求收敛再议。
+   （换源 `@datazen/ui`）；editor-pro 的 6 处 R2 是其单测合法用法，若日后要求收敛再议。
    本轨只在文档里登记，不动那两个外部仓。
 
 **验收增补（在原 8 条之上）**：
 
 - 主检出（`--drivers=all` + Pro 已 stage）跑 `node scripts/check-driver-import-boundaries.mjs` → **exit 0**，
-  且输出里 8 条以 advisory 形态点名（R1×2 + R2×5 + R3×4 = 11 advisory）。
+  且输出里 8 条以 advisory 形态点名（R1×2 + R2×6 + R3×4 = 12 advisory）。
 - 在**本仓跟踪**的驱动文件里注入 R1 → 仍 blocking 且 exit 1（证明降级只作用于外部树，没把口子开进本仓）。
 - `npx vitest run scripts` 全绿；覆盖数字如实更新；`npx tsc --noEmit` 0；`npx vite build` exit 0。
 
