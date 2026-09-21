@@ -40,8 +40,3 @@ export function hasKvSlotCapability(
   if (!capabilities) return false;
   return capabilities[capabilityKeyForSlot(slot)] === true;
 }
-
-/** Whether the driver claims *any* KV workspace slot at all. */
-export function hasAnyKvSlotCapability(meta: DatabaseTypeMeta | undefined): boolean {
-  return KV_SLOT_NAMES.some((slot) => hasKvSlotCapability(meta, slot));
-}

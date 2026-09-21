@@ -13,7 +13,8 @@ Wave 2 会踩的契约缺口），按协调者指令另列 3 条"不登记为 Bu
 ## redis-host-slots-BUG-001 — 两个导出的契约函数在生产代码里零调用者（救援残留的"写了没接线"面）
 
 - **严重级**：低（非阻断；不影响本轨任何验收标准与今日 UI 行为）
-- **状态**：待修复（或协调者裁定为"Wave 2 契约面预留"后直接关闭）
+- **状态**：已修复（第 1 轮 Coder，READY_FOR_TEST）— 采默认处置**删除** `hasAnyKvSlotCapability` /
+  `disposeKvSlotState` 及其单测（非接线：二者均非宿主唯一能力判定入口，见 progress.md §修复记录 BUG-001）
 - **现象**：
   - `src/lib/kvWorkspaceCapabilities.ts:45` 的 `hasAnyKvSlotCapability(meta)` 仅被
     `src/lib/__tests__/kvWorkspaceCapabilities.test.ts` 调用（6 处断言），**生产代码 0 处引用**。
@@ -47,7 +48,8 @@ Wave 2 会踩的契约缺口），按协调者指令另列 3 条"不登记为 Bu
 ## redis-host-slots-BUG-002 — 自验记录里的"基线数字 / 本轨新增用例数"与 git 事实不符
 
 - **严重级**：低（非阻断；门禁结论不受影响，但这张表是 Wave 2 任务书的输入）
-- **状态**：待修复
+- **状态**：已修复（第 1 轮 Coder，READY_FOR_TEST）— §自验记录/门禁 3 段按 git 事实改写为基线
+  **442/4599**、本轨 **7 新增 + 2 修改测试文件 / +47 用例**，判据改为"改后全量 exit 0、失败集合为空"
 - **现象**：`progress.md` §自验记录 与"门禁 3 的红/绿比对方法"写：
   - 基线（同一 worktree、`9b073ed46` 落地前实跑）= **447 files / 4634 tests**；
   - "两者差值恰为本轨新增的 **2 个测试文件 / 12 个用例**"，并列 `ContentViewDrawers.test.tsx` +5、
@@ -86,7 +88,8 @@ Wave 2 会踩的契约缺口），按协调者指令另列 3 条"不登记为 Bu
 ## redis-host-slots-BUG-003 — F-2 未写清"`open === false` 时宿主 wrapper 常驻 DOM"，Wave 2 E2E 必踩
 
 - **严重级**：低（非阻断；当前单测已把行为钉住，缺的是契约文字）
-- **状态**：待修复
+- **状态**：已修复（第 1 轮 Coder，READY_FOR_TEST）— 已在 F-2 几何条目后追加对偶事实引用块，并显式警告
+  Wave 2 E2E 不得用 `conn-kv-key-props-sidebar` wrapper 存在性判抽屉开合（`toHaveCount(0)` 必红）
 - **现象**：F-2 几何规则只写了驱动侧义务
   （"`keyPropsSidebar` 在 `open === false` 时必须渲染 `null`，宿主不卸载它，只翻 `open`"），
   但没有登记宿主侧的对偶事实：`src/windows/connection/ContentViewDrawers.tsx:152-153` 的

@@ -69,15 +69,11 @@ export function getKvSlotState(panelId: string): KvSlotState {
   return atom;
 }
 
-/** Drop a panel's atom when the panel closes, so atoms do not accumulate. */
-export function disposeKvSlotState(panelId: string): void {
-  atoms.delete(panelId);
-}
-
 /**
  * Drop the atoms of every panel absent from {@link livePanelIds}.
  * Called by the workspace whenever its panel list changes, mirroring how
- * table-data slices are pruned.
+ * table-data slices are pruned. This is the single recycling path — the host
+ * never disposes one panel's atom directly, so atoms cannot accumulate.
  */
 export function pruneKvSlotStates(livePanelIds: ReadonlySet<string>): void {
   for (const panelId of [...atoms.keys()]) {

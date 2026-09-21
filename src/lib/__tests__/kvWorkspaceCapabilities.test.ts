@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseTypeMeta, KvWorkspaceCapabilities } from '../databaseMeta';
 import {
   KV_SLOT_NAMES,
-  hasAnyKvSlotCapability,
   hasKvSlotCapability,
 } from '../kvWorkspaceCapabilities';
 
@@ -56,8 +55,8 @@ describe('kvWorkspaceCapabilities', () => {
   // [tester] The generator side of the list is pinned against the same union by
   // `scripts/__tests__/resolve-drivers.test.mjs`; this closes the other direction.
   // `KV_SLOT_NAMES` is typed `readonly KvSlotName[]`, so a slot added to the union
-  // but forgotten here would compile fine and silently drop out of
-  // `hasAnyKvSlotCapability` — only a source-text pin can catch it.
+  // but forgotten here would compile fine and silently desync the host slot list
+  // from the frozen contract — only a source-text pin can catch it.
   it('[tester] keeps the host slot list in sync with the frozen KvSlotName union', () => {
     const src = readFileSync(
       resolve(
@@ -82,7 +81,6 @@ describe('kvWorkspaceCapabilities', () => {
     for (const slot of KV_SLOT_NAMES) {
       expect(hasKvSlotCapability(meta, slot)).toBe(false);
     }
-    expect(hasAnyKvSlotCapability(meta)).toBe(false);
   });
 
   it('treats an empty kvWorkspace declaration as "no capability"', () => {
@@ -90,7 +88,6 @@ describe('kvWorkspaceCapabilities', () => {
     for (const slot of KV_SLOT_NAMES) {
       expect(hasKvSlotCapability(meta, slot)).toBe(false);
     }
-    expect(hasAnyKvSlotCapability(meta)).toBe(false);
   });
 
   it('resolves connectionHome from the `home` flag and the others by their own name', () => {
@@ -99,7 +96,6 @@ describe('kvWorkspaceCapabilities', () => {
     expect(hasKvSlotCapability(meta, 'statusBar')).toBe(true);
     expect(hasKvSlotCapability(meta, 'keyPropsSidebar')).toBe(true);
     expect(hasKvSlotCapability(meta, 'connectionHome')).toBe(true);
-    expect(hasAnyKvSlotCapability(meta)).toBe(true);
   });
 
   it('keeps slots independent so a driver can fill only one surface', () => {
@@ -108,20 +104,17 @@ describe('kvWorkspaceCapabilities', () => {
     expect(hasKvSlotCapability(meta, 'contextBar')).toBe(false);
     expect(hasKvSlotCapability(meta, 'statusBar')).toBe(false);
     expect(hasKvSlotCapability(meta, 'connectionHome')).toBe(false);
-    expect(hasAnyKvSlotCapability(meta)).toBe(true);
   });
 
   it('requires a literal true, not just a present key', () => {
     const meta = metaWithKvWorkspace({ contextBar: false, home: false });
     expect(hasKvSlotCapability(meta, 'contextBar')).toBe(false);
     expect(hasKvSlotCapability(meta, 'connectionHome')).toBe(false);
-    expect(hasAnyKvSlotCapability(meta)).toBe(false);
   });
 
   it('answers false for a missing meta (unknown or not-yet-registered driver)', () => {
     for (const slot of KV_SLOT_NAMES) {
       expect(hasKvSlotCapability(undefined, slot)).toBe(false);
     }
-    expect(hasAnyKvSlotCapability(undefined)).toBe(false);
   });
 });

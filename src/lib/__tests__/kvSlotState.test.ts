@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createKvSlotState,
-  disposeKvSlotState,
   getKvSlotState,
   pruneKvSlotStates,
   resetKvSlotStatesForTests,
@@ -97,19 +96,6 @@ describe('panel-scoped KV slot atoms', () => {
 
     expect(panelB.getSelectedKey()).toBeNull();
     expect(panelB.getDirty()).toBe(false);
-  });
-
-  it('drops a disposed panel atom and hands the next one a clean state', () => {
-    const before = getKvSlotState('panel-a');
-    before.selectKey('stale');
-    before.setDirty(true);
-
-    disposeKvSlotState('panel-a');
-    const after = getKvSlotState('panel-a');
-
-    expect(after).not.toBe(before);
-    expect(after.getSelectedKey()).toBeNull();
-    expect(after.getDirty()).toBe(false);
   });
 
   it('prunes every atom whose panel is gone and keeps the live ones', () => {

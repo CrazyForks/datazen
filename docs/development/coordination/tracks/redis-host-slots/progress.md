@@ -1,8 +1,9 @@
 # Track: redis-host-slots — 宿主 KV 槽位与能力判定（去硬编码）
 
 - 分支: `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375）
-- 角色: Coder → Tester（已复测）
-- 状态: **PASSED**（Tester 全新实例复测，测试提交 `cbcf49cf9`；3 条非阻断登记见 `bugs.md`，F-1/F-2/F-3 可冻结）
+- 角色: Coder → Tester（已复测）→ Coder（第 1 轮修复）→ Tester（待复测）
+- 状态: **READY_FOR_TEST**（Tester 复测 PASSED 后，3 条非阻断 Bug 由第 1 轮 Coder 修复完成，见 §修复记录；
+  等待全新 Tester 实例复测确认后方可合流。F-1/F-2/F-3 保留符号与 4 个 DOM 标记未改名，仍可按现状冻结）
 - Worktree: `.worktrees/datazen-redis-host-slots`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.0、§3.4、§7-1/2/4、§8-1（P0 ⑥）
 
@@ -81,8 +82,11 @@ kvWorkspace?: KvWorkspaceCapabilities;
 
 - **槽位名 ↔ 能力位映射只有一处不对称**：槽位 `connectionHome` ← 能力位 `home`（其余三个同名）。
   真源是 `src/lib/kvWorkspaceCapabilities.ts` 的 `capabilityKeyForSlot()`，宿主代码里**不存在**手写字面量分支。
-- 判据：`hasKvSlotCapability(meta, slot)` / `hasAnyKvSlotCapability(meta)`；`meta` 为 `undefined`（未知驱动）
+- 判据：`hasKvSlotCapability(meta, slot)`；`meta` 为 `undefined`（未知驱动）
   与 `kvWorkspace` 缺省都返回 `false` ⇒ mysql / postgresql / sqlite / mongodb / clickhouse… 行为逐位不变。
+  （BUG-001 修订：原聚合便捷位 `hasAnyKvSlotCapability(meta)` 因生产零调用者已删除，宿主能力判定一律
+  按槽位逐个走 `hasKvSlotCapability(meta, slot)`；Wave 2 若要"任一 KV 面是否存在"的聚合判定，就地
+  `KV_SLOT_NAMES.some(...)` 即可，宿主不再提供该函数。）
 - **Wave 2 声明位置**：`packages/drivers/redis/ui/shared/meta.ts`（该文件已声明 `isKeyValue: true` /
   `dbCountsCommand` / `databaseFieldType: 'index'`），加 `kvWorkspace: { contextBar: true, statusBar: true, keyPropsSidebar: true, home: true }`。
   **禁止**在宿主 `src/lib/databaseMeta.ts` 的 redis 条目上写能力位。
@@ -145,13 +149,23 @@ export interface KvSlotState {
   `ConnectionViewProps.kvSlotState?: KvSlotState`（`packages/driver-sdk/src/types/connection-view.ts`）。
   Wave 2 的 `RedisConnectionView` 用它发布，槽位用它读取，两侧无需任何新桥。
 - 原子生命周期（`src/lib/kvSlotState.ts`）：`getKvSlotState(panelId)` **按面板 id** 键控
-  （同一连接的多个面板可能开在不同 db，选中态不得串台）；`pruneKvSlotStates(livePanelIds)` 由
-  `ContentView` 在面板列表变化时回收；`disposeKvSlotState` / `createKvSlotState` /
-  `resetKvSlotStatesForTests`（仅测试）可用。
+  （同一连接的多个面板可能开在不同 db，选中态不得串台）；`pruneKvSlotStates(livePanelIds)` 是**唯一**
+  回收路径，由 `ContentView` 在面板列表变化时以共享 `liveIds` 调用（退订路径已存在，无泄漏）；
+  （BUG-001 修订：原单点 `disposeKvSlotState` 因生产零调用者、被 `pruneKvSlotStates` 批量回收取代，
+  已删除）；`createKvSlotState`（供宿主与测试造原子）/ `resetKvSlotStatesForTests`（仅测试）可用。
 
 **几何归属约定（Wave 2 必须遵守）**：宿主只拥有容器与 `data-slot` / `data-testid` 包装层；
 驱动组件拥有自己的内部布局。`keyPropsSidebar` 自己负责宽度/边框/滚动（与 `DetailPanel` 同构），
 且 **`open === false` 时必须渲染 `null`**（宿主不卸载它，只翻 `open`）。
+
+> **对偶事实（BUG-003，Wave 2 E2E 硬约束）**：正因为宿主"不卸载、只翻 `open`"，抽屉收起时宿主
+> 包裹层 `data-testid="conn-kv-key-props-sidebar"`（`data-slot="kv-key-props-sidebar"`，
+> `ContentViewDrawers.tsx:152-153`）**仍常驻 DOM** —— 收起与否只体现在**内层驱动组件根节点返回
+> `null`**。**Wave 2 的 E2E 严禁用该 wrapper 的存在性判断抽屉开合**：写
+> `expect(page.getByTestId('conn-kv-key-props-sidebar')).toHaveCount(0)` 来断言"抽屉已关闭"必然红
+> （wrapper 恒在）。正确断言落在驱动自身根节点（其可见性 / 内容），或"内层
+> `[data-slot=kv-key-props-sidebar]` 无可视内容"。此常驻是有意设计（保住驱动内部列表滚动/展开态
+> 在开合间不丢），属契约的一部分，非缺陷。
 
 Wave 2 E2E 可直接依赖的宿主标记：
 
@@ -170,7 +184,7 @@ Wave 2 E2E 可直接依赖的宿主标记：
 | codegen 条目类型 | `interface DriverKvSlotEntry { dbType; slot; component }` / `type DriverKvSlotName` | 同上 |
 | **lookup** | **`getDriverKvSlot(dbType: string, slot: DriverKvSlotName): ComponentType<any> \| undefined`** | 同上，与 `getDriverConnectionView` 同风格 |
 | 宿主双门闸封装 | `getKvSlotComponent<T>(databaseType, slot)` | `src/lib/kvWorkspaceSlots.ts` |
-| 能力读取 | `hasKvSlotCapability(meta, slot)` / `hasAnyKvSlotCapability(meta)` / `KV_SLOT_NAMES` | `src/lib/kvWorkspaceCapabilities.ts` |
+| 能力读取 | `hasKvSlotCapability(meta, slot)` / `KV_SLOT_NAMES` | `src/lib/kvWorkspaceCapabilities.ts` |
 | 绑定 hook | `useKvWorkspaceSlots(args): KvWorkspaceSlots`（含 `resolveKvDatabaseIndex`） | `src/windows/connection/useKvWorkspaceSlots.ts` |
 
 - 宿主**只调 `getKvSlotComponent`**：能力位与"本次构建确实注册了组件"两道闸都过才返回，
@@ -202,7 +216,7 @@ kvSlots: {
 | # | 门禁 | 命令 | 结果 |
 | --- | --- | --- | --- |
 | 1 | 类型 | `npx tsc --noEmit -p tsconfig.json` | **0 错误**（exit 0） |
-| 2 | 定向单测 | `npx vitest run src/windows/connection src/lib` | **204 files / 2068 tests 全绿**（接管时 202/2061 → 本轨新增 2 文件 7 用例） |
+| 2 | 定向单测 | `npx vitest run src/windows/connection src/lib` | **204 files / 2068 tests 全绿**（BUG-002：原括注"新增 2 文件 7 用例"有误；本轨在此两目录实为新增 7 文件 + 改 1 文件，最终数字见 §修复记录） |
 | 3 | Host 全量 | `npx vitest run` | **449 files / 4646 tests 全绿，exit 0** |
 | 4a | 边界 | `node scripts/check-driver-import-boundaries.mjs` | **0 blocking**（1413 files，4 advisory，全部为本轨之前既有：`locales.test.ts` / `driverUiSetup.ts` ×2 / `DocumentConnectionView.tsx`） |
 | 4b | ID 术语 | `node scripts/check-id-terminology.mjs` | ok（1730 files，5 allow-listed） |
@@ -212,12 +226,13 @@ kvSlots: {
 | 4f | 脚本单测 | `npx vitest run scripts/__tests__` | **23 files / 254 tests 全绿** |
 | 5 | codegen | `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | ok，生成表为空（无驱动声明 `kvSlots`）⇒ 与今日一致；**generated 未提交** |
 
-**门禁 3 的红/绿比对方法**：改后 `npx vitest run` 以 **exit 0 / 0 失败** 结束，失败集合为空，
-因此"是否引入新红"无需与基线求差集（零元素集合的任何子集都是零）；基线数字（同一 worktree、
-`9b073ed46` 落地前实跑）为 **447 files / 4634 tests 全绿**，两者差值恰为本轨新增的
-2 个测试文件 / 12 个用例（`ContentViewDrawers.test.tsx` +5、
-`ConnectionWorkspaceHomeKvSlot.test.tsx` +2、`scripts/__tests__/resolve-drivers.test.mjs` +5）。
-未做 `git stash -u` 取基线，因为改后全绿已蕴含"无新红"。
+**门禁 3 的红/绿比对方法（BUG-002 修订）**：判据是改后全量 `npx vitest run` 以 **exit 0、失败集合为空**
+结束即蕴含"无新红"（零失败集合无需与基线求差集）。经 Tester 依 git 事实核对（`9b073ed46` 的父提交即
+基准 `ae65ae375`；`git diff --name-status ae65ae375..` 显示 **7 个新增 + 2 个修改测试文件、+47 用例**），
+真实基线应为 **442 files / 4599 tests 全绿**（= 本轨合入后 449/4646 减 7 文件 / 47 用例）。原自报的
+"基线 447/4634、本轨新增 2 文件 / 12 用例"是救援过程中一次未落地完整测试文件的中途测量、且"2 文件"与
+所举 3 个文件自相矛盾，均作废。本轨合入后全量 449/4646、Tester 复测补 1 文件 / 8 用例后 450/4654，
+两者均 exit 0、失败集合为空。
 
 **门禁 5 的 lookup 实取证明**（不留在提交里）：临时给 `redis` 配置注入 `kvSlots`
 （contextBar / statusBar / connectionHome 三项，指向尚不存在的 `ui/kvSlots`）→ 重跑 codegen ⇒
@@ -243,9 +258,11 @@ kvSlots: {
 2. **redis 面板在本轨之后仍是今日外观**（预期，非缺陷）：redis meta 尚无 `kvWorkspace: true`、
    codegen 尚无 `kvSlots` 声明 ⇒ P-1（48px 空带）与 P-3（死按钮空抽屉）**要到 Wave 2 才真正在 UI 上消失**。
    R 阶段验证这两处必须等 Wave 2 合入后做。
-3. **能力真但组件未贡献时的死按钮**：`detailPanelApplicable` 未额外门控在 `hasAnyKvSlotCapability` 上
-   （任务书裁定"能力为假时行为不变"）。若 Wave 2 出现"meta 写了 `keyPropsSidebar: true` 但漏了 codegen
-   声明"，KV 面板会退回空白抽屉 ⇒ 建议 R 阶段把这条列入 Wave 2 checklist，或裁定改为门控 toggle 可见性。
+3. **能力真但组件未贡献时的死按钮**：`detailPanelApplicable` 未按 KV 能力额外门控（任务书裁定
+   "能力为假时行为不变"）。原拟用于此门控的聚合位 `hasAnyKvSlotCapability` 因生产零调用者已随 BUG-001
+   删除 ⇒ 若 Wave 2 出现"meta 写了 `keyPropsSidebar: true` 但漏了 codegen 声明"，KV 面板仍会退回空白抽屉。
+   届时如需门控，按槽位用 `hasKvSlotCapability(meta, 'keyPropsSidebar')` 判定即可，**不要再引入聚合位**
+   （避免两套并存）。建议列入 Wave 2 checklist。
 4. **`isKvPanel` 去字面量的回归面**：现在完全依赖 `DB_REGISTRY[databaseType ?? sidebarConnCtx.databaseType].isKeyValue`。
    已核实 `packages/drivers/redis/ui/shared/meta.ts:22` 有 `isKeyValue: true`；Host 全量单测零红。
    仍需 GUI 确认：从连接树新建 redis 面板时 `panel.databaseType` 确已赋值（面板创建早于会话就绪的时序）。
@@ -388,3 +405,55 @@ Tester 新增 **1 个测试文件 + 8 个用例**（全部标注 `[tester]`）�
 - 新增 R-11（E2E 判据不得用 wrapper 存在性）、R-12（禁止再在 `panel.type` 上写驱动字面量），见上表。
 - 本轨未跑 `pnpm e2e`（子代理不跑），未触碰 `RedisWorkbench.tsx` / `packages/drivers/**` /
   任何 `locales/**` / `package.json`；`git diff --name-only ae65ae375..HEAD` 命中禁止路径数为 0（Tester 复核）。
+
+## 修复记录（第 1 轮 Coder 修复，READY_FOR_TEST）
+
+针对 `bugs.md` 三条非阻断登记项逐条修复。全部改动落在允许面（宿主 `src/lib/**` + 本轨文档），
+未触碰禁止路径。修复后重新实跑全部门禁（见下表），零新红。
+
+### BUG-001（未接线导出）— 处置 = 删除（默认处置，已核实无判定丢失）
+
+- 删除 `src/lib/kvWorkspaceCapabilities.ts` 的 `hasAnyKvSlotCapability` 与 `src/lib/kvSlotState.ts` 的
+  `disposeKvSlotState`，并同步删除其单测（`kvSlotState.test.ts` 的"drops a disposed panel atom"整例、
+  `kvWorkspaceCapabilities.test.ts` 内所有 `hasAnyKvSlotCapability` 断言与过时注释）。
+- **删除依据（三维自查）**：
+  1. 检索 `hasAnyKvSlotCapability|disposeKvSlotState` 在 `src/**`、`packages/**`、`scripts/**` 生产码
+     **零命中**（仅测试与文档，删除后非文档命中数 0）。
+  2. 二者**均非宿主唯一能力判定入口**：真实 KV 能力判定逐槽位走 `hasKvSlotCapability(meta, slot)`
+     （唯一生产消费者 `kvWorkspaceSlots.ts:33` 的 `getKvSlotComponent` 双闸），删除聚合便捷位不丢任何判定；
+     `detailPanelApplicable` 依协调者裁定本就未门控在能力位上（见 R-3），"any"聚合无既有判定依赖它。
+  3. `disposeKvSlotState` 的回收语义由**已接线**的 `pruneKvSlotStates`（`ContentView.tsx:212`，与 store
+     面板剪枝共用 `liveIds`）完整承担，其反例用例（prune 后返回全新干净原子）仍在，行为覆盖不降。
+  - 结论：符合项目「单一实现、不留桥接与预留层」口径 ⇒ 选删除而非接线、不"留给 Wave 2"。
+- 契约段（F-1 判据 / F-2 原子生命周期 / F-3 能力读取表 / R-3）已同步移除对这两个名字的引用，并就地
+  注明"因生产零调用者随 BUG-001 删除"，Wave 2 逐字复制契约段时不会引用到已不存在的函数。
+  **F-1/F-2/F-3 保留的字段名 / 类型名 / 函数名 / 4 个 DOM 标记均未改名。**
+
+### BUG-002（自验记录数字与 git 事实不符）— 已按 Tester 口径改写
+
+- §自验记录"定向单测"行括注、§门禁 3 红/绿比对方法段更正为：真实基线 **442 files / 4599 tests**、
+  本轨相对 `ae65ae375` **新增 7 个测试文件 + 修改 2 个 / +47 用例**；原自报"447/4634、2 文件/12 用例"作废。
+- 判据改为"**改后全量 `npx vitest run` exit 0、失败集合为空**（无需与基线求差集）"。
+
+### BUG-003（F-2 缺对偶事实）— 已补写并显式警告 Wave 2
+
+- F-2 几何条目后追加引用块：宿主 `conn-kv-key-props-sidebar` wrapper 在 `open === false` 时**常驻 DOM**
+  （驱动组件自身返回 `null`），**Wave 2 E2E 不得用该 wrapper 存在性判抽屉开合**（`toHaveCount(0)` 必红），
+  断言须落在驱动根节点可见性/内容。§留待 R 回归 R-11 已有同源提示。
+
+### 修复后门禁实跑（worktree `.worktrees/datazen-redis-host-slots`，全部真实执行）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npx tsc --noEmit -p tsconfig.json` | **0 错误**（exit 0） |
+| 定向单测 | `npx vitest run src/windows/connection src/lib` | **205 files / 2075 tests 全绿**，exit 0 |
+| Host 全量 | `npx vitest run` | **450 files / 4653 tests 全绿**，exit 0（较合入 Tester 测试后的 4654 少 1，正是 BUG-001 删除的 `disposeKvSlotState` 整例；无新红、失败集合为空） |
+| 边界 | `node scripts/check-driver-import-boundaries.mjs` | **0 blocking**（1416 files，4 advisory，全为本轨之前既有） |
+| ID 术语 | `pnpm test:ids` | ok（1732 files，5 allow-listed） |
+| 分层 | `pnpm test:layers` | ok（3 rules） |
+| CI 文档 | `pnpm test:ci-docs` | ok（11 driver ids / window boundaries / toolchain） |
+| 版本 | `pnpm test:version` | ok（all sources at 0.2.1） |
+| 脚本单测 | `npx vitest run scripts/__tests__` | **23 files / 254 tests 全绿**（`KV_SLOT_NAMES` ↔ `KvSlotName` 钉死断言仍绿） |
+| codegen | `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | ok，`DRIVER_KV_SLOTS = []`（无驱动声明 `kvSlots`）⇒ 与今日一致；`generated.ts` / `driver_init.rs` 经 `git check-ignore` 确认未跟踪，**未提交** |
+
+**零残留确认**：`rg hasAnyKvSlotCapability|disposeKvSlotState`（排除 `docs/**`）命中 0。
