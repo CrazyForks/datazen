@@ -29,6 +29,7 @@ import { openDocsWindow } from '../../lib/windowManager';
 import { cn } from '../../lib/cn';
 import { canRunDeploy } from '../../lib/schemaDiffConfirm';
 import { MigrationEndpointsBar } from '../../components/migration/MigrationEndpointsBar';
+import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
 import type { TableSchemaDiff } from '../../types';
 import {
   isSchemaDiffLimitationsDismissed,
@@ -341,6 +342,9 @@ export function SchemaDiffWindow() {
         useTransaction,
         requireRollback,
         confirmDestructive: planHasDestructive(plan) ? confirmText.trim() : undefined,
+        profile: profiles.find((profile) => profile.id === selectedProfileId)
+          ? { id: selectedProfileId, revision: profiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
+          : undefined,
       });
       setDeployResult(result);
     } catch (e) {
@@ -646,14 +650,14 @@ export function SchemaDiffWindow() {
       <TitleBar
         title={t('common.schemaDiff')}
         rightContent={
-          <Button
+          <div className="flex items-center gap-1"><MigrationRunHistoryDialog operation="schemaDiff" /><Button
             variant="secondary"
             className="h-6 w-6 !px-0"
             title={t('docs.openSchemaDiffHelp')}
             onClick={() => openDocsWindow('schemaDiff')}
           >
             <BookOpen className="h-3 w-3" />
-          </Button>
+          </Button></div>
         }
       />
 

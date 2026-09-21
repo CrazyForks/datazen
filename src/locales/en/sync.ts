@@ -1,5 +1,12 @@
 /** Auto-split domain: sync (en) — unified sync / transfer / schemaDiff */
 const pack = {
+  'migrationHistory.open': 'Run history',
+  'migrationHistory.title': 'Migration run history',
+  'migrationHistory.empty': 'No recorded runs yet.',
+  'migrationHistory.outcome': 'Outcome',
+  'migrationHistory.counts': 'Committed / failed / conflicts',
+  'migrationHistory.rollback': 'Rollback',
+  'migrationHistory.profile': 'Profile revision',
   // --- Data Sync ---
   'sync.executionUnknown':
     'The write outcome could not be confirmed. Compare again before retrying.',

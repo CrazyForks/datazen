@@ -44,6 +44,7 @@ import {
 } from '../../lib/dedicatedDbSession';
 import { useSyncPairingState } from '../../lib/syncPairing';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
+import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
 import type { ConnectionConfig } from '../../types';
 import { pickDefaultSchema, uniqueSchemasFromTables } from './utils';
 import { CompareSummary } from './CompareSummary';
@@ -1345,16 +1346,23 @@ export function DataSyncWindow() {
       setExecuteProgress(t('sync.executingSql', { count: selected.length }));
       writeStarted = true;
       writeInFlightRef.current = true;
+      const selectedProfile = syncProfiles.find((profile) => profile.id === selectedProfileId);
+      const profileRef = selectedProfile
+        ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
+        : undefined;
       const result = tableSelections.length
-        ? await syncCommands.executeDataSync(
-            tgtConnId,
-            selected,
-            jobId,
-            targetDatabase,
-            selectedRows,
-            tableSelections,
-          )
-        : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+        ? profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections, profileRef,
+            )
+          : await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections,
+            )
+        : profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, undefined, undefined, profileRef,
+            )
+          : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
       setLastExecutionResult(result);
       if (result.rolledBack) {
         setErrorMsg(t('sync.rolledBack'));
@@ -1843,7 +1851,7 @@ export function DataSyncWindow() {
       data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
-      <TitleBar title={t('common.dataSyncTitle')} />
+      <TitleBar title={t('common.dataSyncTitle')} rightContent={<MigrationRunHistoryDialog operation="dataSync" />} />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">

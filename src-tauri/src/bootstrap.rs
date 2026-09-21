@@ -499,6 +499,8 @@ pub fn run() {
             crate::commands::get_query_history,
             crate::commands::clear_query_history,
             crate::commands::purge_history,
+            crate::commands::list_migration_runs,
+            crate::commands::get_migration_run,
             crate::commands::get_favorite_queries,
             crate::commands::add_favorite_query,
             crate::commands::delete_favorite_query,

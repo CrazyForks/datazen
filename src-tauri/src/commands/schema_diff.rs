@@ -296,6 +296,16 @@ pub async fn prepare_schema_diff_plan(
 }
 
 /// Execute a reviewed schema diff plan on the target connection.
+async fn fail_schema_diff_deploy<T>(
+    state: &AppState,
+    run: crate::store::MigrationRunRecord,
+    error: CommandError,
+) -> Result<T, CommandError> {
+    crate::commands::history::finish_migration_run(state, run, false, false, 0, 1, 0, "unknown")
+        .await;
+    Err(error)
+}
+
 #[tauri::command]
 pub async fn execute_schema_diff_deploy(
     state: State<'_, AppState>,
@@ -305,7 +315,17 @@ pub async fn execute_schema_diff_deploy(
     require_rollback: Option<bool>,
     confirm_destructive: Option<String>,
     job_id: Option<String>,
+    profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<SchemaDiffDeployResult, CommandError> {
+    crate::commands::history::validate_migration_profile_ref(
+        &state,
+        "schemaDiff",
+        profile.as_ref(),
+    )
+    .await?;
+    let mut history_run =
+        crate::commands::history::start_migration_run(&state, "schemaDiff", profile.as_ref()).await;
+    history_run.selected_count = plan.statements.len() as u64;
     tracing::info!(
         %target_db_session_id,
         statements = plan.statements.len(),
@@ -313,30 +333,62 @@ pub async fn execute_schema_diff_deploy(
         "execute_schema_diff_deploy"
     );
 
-    let (driver, handle) = state
+    let (driver, handle) = match state
         .connection_manager
         .get_session(&target_db_session_id)
         .await
-        .cmd_err("execute_schema_diff_deploy")?;
+        .cmd_err("execute_schema_diff_deploy")
+    {
+        Ok(value) => value,
+        Err(error) => {
+            return fail_schema_diff_deploy(&state, history_run, error).await;
+        }
+    };
     let config = state
         .connection_manager
         .get_session_config(&target_db_session_id)
         .await
-        .cmd_err("execute_schema_diff_deploy")?;
-    let owner = state
+        .cmd_err("execute_schema_diff_deploy");
+    let config = match config {
+        Ok(value) => value,
+        Err(error) => {
+            return fail_schema_diff_deploy(&state, history_run, error).await;
+        }
+    };
+    let owner = match state
         .connection_manager
         .owner_connection_id(&target_db_session_id)
         .await
-        .ok_or_else(|| CommandError::Validation("Target connection owner is unavailable".into()))?;
-    let persisted = state
-        .store
-        .get_connection(&owner)
-        .await
-        .ok_or_else(|| CommandError::Validation("Target connection was removed".into()))?;
+    {
+        Some(value) => value,
+        None => {
+            return fail_schema_diff_deploy(
+                &state,
+                history_run,
+                CommandError::Validation("Target connection owner is unavailable".into()),
+            )
+            .await;
+        }
+    };
+    history_run.target_connection_id = Some(owner.clone());
+    let persisted = match state.store.get_connection(&owner).await {
+        Some(value) => value,
+        None => {
+            return fail_schema_diff_deploy(
+                &state,
+                history_run,
+                CommandError::Validation("Target connection was removed".into()),
+            )
+            .await;
+        }
+    };
     if config.read_only || persisted.read_only {
-        return Err(CommandError::Validation(
-            "Target connection is read-only".into(),
-        ));
+        return fail_schema_diff_deploy(
+            &state,
+            history_run,
+            CommandError::Validation("Target connection is read-only".into()),
+        )
+        .await;
     }
     if require_rollback.unwrap_or(false)
         && (!plan.rollback_completeness.complete
@@ -346,32 +398,64 @@ pub async fn execute_schema_diff_deploy(
                 crate::db::DdlAtomicity::Transactional
             ))
     {
-        return Err(CommandError::Validation(
-            "Complete rollback requires transactional DDL and a complete rollback plan".into(),
-        ));
+        return fail_schema_diff_deploy(
+            &state,
+            history_run,
+            CommandError::Validation(
+                "Complete rollback requires transactional DDL and a complete rollback plan".into(),
+            ),
+        )
+        .await;
     }
     if !plan.requirements.is_empty() {
-        return Err(CommandError::Validation(
-            "Resolve plan requirements and prepare again before deploying".into(),
-        ));
+        return fail_schema_diff_deploy(
+            &state,
+            history_run,
+            CommandError::Validation(
+                "Resolve plan requirements and prepare again before deploying".into(),
+            ),
+        )
+        .await;
     }
     if plan_has_destructive(&plan) {
         let token = confirm_destructive.as_deref().unwrap_or("");
         if token != DESTRUCTIVE_CONFIRM_TOKEN {
-            return Err(CommandError::Validation(format!(
-                "destructive plan requires confirm_destructive = \"{DESTRUCTIVE_CONFIRM_TOKEN}\""
-            )));
+            return fail_schema_diff_deploy(
+                &state,
+                history_run,
+                CommandError::Validation(format!(
+                    "destructive plan requires confirm_destructive = \"{DESTRUCTIVE_CONFIRM_TOKEN}\""
+                )),
+            )
+            .await;
         }
     }
 
     let reviewed =
-        crate::schema_diff::reviewed::consume(&plan, &target_db_session_id, &handle, &config)
+        match crate::schema_diff::reviewed::consume(&plan, &target_db_session_id, &handle, &config)
             .await
-            .map_err(CommandError::Validation)?;
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return fail_schema_diff_deploy(
+                    &state,
+                    history_run,
+                    CommandError::Validation(error),
+                )
+                .await;
+            }
+        };
     for (table, snapshot) in &reviewed.snapshots {
-        let current = fetch_target_table_schema(driver.as_ref(), &handle, table).await?;
-        crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
-            .map_err(CommandError::Validation)?;
+        let current = match fetch_target_table_schema(driver.as_ref(), &handle, table).await {
+            Ok(value) => value,
+            Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
+        };
+        if let Err(error) =
+            crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
+        {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
     }
     let plan = reviewed.plan;
     let cancelled = match job_id.as_deref() {
@@ -395,6 +479,26 @@ pub async fn execute_schema_diff_deploy(
         executed = result.executed_count,
         "execute_schema_diff_deploy OK"
     );
+    let cancelled_outcome = matches!(result.status, crate::schema_diff::DeployStatus::Cancelled);
+    let success_outcome = matches!(result.status, crate::schema_diff::DeployStatus::Committed);
+    let rollback_outcome = match result.status {
+        crate::schema_diff::DeployStatus::RolledBack => "completed",
+        crate::schema_diff::DeployStatus::Unknown | crate::schema_diff::DeployStatus::Mixed => {
+            "unknown"
+        }
+        _ => "notRequired",
+    };
+    crate::commands::history::finish_migration_run(
+        &state,
+        history_run,
+        success_outcome,
+        cancelled_outcome,
+        result.executed_count as u64,
+        result.errors.len() as u64,
+        0,
+        rollback_outcome,
+    )
+    .await;
     Ok(result)
 }
 

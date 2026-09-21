@@ -171,8 +171,61 @@ pub async fn pick_data_transfer_sql_file(
 pub async fn execute_data_transfer(
     state: State<'_, AppState>,
     request: TransferRunRequest,
+    profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<TransferExecutionResult, CommandError> {
-    execute_data_transfer_impl(&state, request).await
+    crate::commands::history::validate_migration_profile_ref(
+        &state,
+        "dataTransfer",
+        profile.as_ref(),
+    )
+    .await?;
+    let mut run =
+        crate::commands::history::start_migration_run(&state, "dataTransfer", profile.as_ref())
+            .await;
+    run.selected_count = request
+        .selection
+        .source_tables
+        .as_ref()
+        .map_or(0, |tables| tables.len() as u64);
+    if let Ok(plan) = plans::peek_plan(&request.plan_id) {
+        run.source_connection_id = state
+            .connection_manager
+            .owner_connection_id(&plan.job.source.db_session_id)
+            .await;
+        if let Some(target) = plan.job.target.as_ref() {
+            run.target_connection_id = state
+                .connection_manager
+                .owner_connection_id(&target.db_session_id)
+                .await;
+        }
+    }
+    let result = execute_data_transfer_impl(&state, request).await;
+    match &result {
+        Ok(value) => {
+            crate::commands::history::finish_migration_run(
+                &state,
+                run,
+                !value.partial && !value.cancelled,
+                value.cancelled,
+                value.rows_inserted,
+                value.tables.iter().filter(|table| !table.success).count() as u64,
+                0,
+                if value.partial {
+                    "unknown"
+                } else {
+                    "notRequired"
+                },
+            )
+            .await
+        }
+        Err(_) => {
+            crate::commands::history::finish_migration_run(
+                &state, run, false, false, 0, 1, 0, "unknown",
+            )
+            .await
+        }
+    }
+    result
 }
 
 #[tauri::command]
