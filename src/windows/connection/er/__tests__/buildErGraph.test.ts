@@ -96,10 +96,12 @@ const allSchemas = [usersSchema, ordersSchema, productsSchema, orderItemsSchema]
 
 describe('buildErGraph', () => {
   describe('basic graph generation', () => {
-    it('creates one node per table', () => {
+    it('creates one node per table, ordered by relation rather than by name', () => {
       const { nodes } = buildErGraph(allSchemas);
       expect(nodes).toHaveLength(4);
-      expect(nodes.map((n) => n.id)).toEqual(['users', 'orders', 'products', 'order_items']);
+      // The walk starts at a most-connected table and visits its neighbours next,
+      // so a line never has to cross the whole canvas to reach a join partner.
+      expect(nodes.map((n) => n.id)).toEqual(['order_items', 'orders', 'products', 'users']);
     });
 
     it('all nodes use tableNode type', () => {
@@ -187,6 +189,39 @@ describe('buildErGraph', () => {
       const { edges } = buildErGraph(allSchemas);
       const ordersFk = edges.find((e) => e.id === 'orders-fk_orders_user')!;
       expect(ordersFk.label).toBe('user_id');
+    });
+
+    it('anchors a foreign key on the two columns it joins', () => {
+      // A line that leaves the node's vertical centre reads as a claim about
+      // whatever row happens to sit there, which is how a join on `user_id` ended
+      // up looking like a join on `product_name`.
+      const { edges } = buildErGraph(allSchemas);
+      const ordersFk = edges.find((e) => e.id === 'orders-fk_orders_user')!;
+      expect(ordersFk.sourceHandle).toBe('s:user_id');
+      expect(ordersFk.targetHandle).toBe('t:id');
+    });
+
+    it('falls back to a column the target actually reports', () => {
+      const broken = makeSchema(
+        'broken_fk',
+        [{ name: 'ghost_id', dataType: 'INT' }],
+        [],
+        [
+          {
+            name: 'fk_to_absent_column',
+            columns: ['ghost_id'],
+            referencedTable: 'users',
+            referencedColumns: ['no_such_column'],
+            onUpdate: 'CASCADE',
+            onDelete: 'CASCADE',
+          },
+        ],
+      );
+      const { edges } = buildErGraph([broken, usersSchema]);
+      const edge = edges.find((e) => e.source === 'broken_fk')!;
+      // Losing the handle would drop the edge entirely; anchor on a real row instead.
+      expect(edge.sourceHandle).toBe('s:ghost_id');
+      expect(edge.targetHandle).toBe('t:id');
     });
 
     it('order_items has two FK edges', () => {
@@ -281,6 +316,39 @@ describe('buildErGraph', () => {
       const { nodes } = buildErGraph([usersSchema]);
       expect(nodes[0].position.x).toBe(0);
       expect(nodes[0].position.y).toBe(0);
+    });
+
+    it('places every related pair in neighbouring grid cells', () => {
+      const { nodes, edges } = buildErGraph(allSchemas);
+      const columns = [...new Set(nodes.map((n) => n.position.x))].sort((a, b) => a - b);
+      const rows = [...new Set(nodes.map((n) => n.position.y))].sort((a, b) => a - b);
+      const cellOf = (id: string) => {
+        const node = nodes.find((n) => n.id === id)!;
+        return { col: columns.indexOf(node.position.x), row: rows.indexOf(node.position.y) };
+      };
+      for (const edge of edges) {
+        const from = cellOf(edge.source);
+        const to = cellOf(edge.target);
+        expect(Math.abs(from.col - to.col) + Math.abs(from.row - to.row)).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('does not overlap rows when tables differ in height', () => {
+      const wide = makeSchema(
+        'wide_table',
+        Array.from({ length: 12 }, (_, i) => ({ name: `c${i}`, dataType: 'INT' })),
+        ['c0'],
+      );
+      const { nodes } = buildErGraph([wide, usersSchema, ordersSchema, productsSchema]);
+      const ys = nodes.map((n) => n.position.y);
+      const firstRowY = Math.min(...ys);
+      const secondRowY = Math.max(...ys);
+      const tallestFirstRow = Math.max(
+        ...nodes
+          .filter((n) => n.position.y === firstRowY)
+          .map((n) => 40 + (n.data.columns as unknown[]).length * 24),
+      );
+      expect(secondRowY).toBeGreaterThanOrEqual(firstRowY + tallestFirstRow);
     });
   });
 
@@ -521,5 +589,115 @@ describe('buildErGraph with inferred relationships', () => {
     const { edges } = buildErGraph(allSchemas, undefined, predicted);
     const inferred = edges.find((e) => e.data?.kind === 'predicted')!;
     expect(inferred.label).toBe('user_id');
+  });
+
+  it('anchors an inferred edge on the columns it joins', () => {
+    const { edges } = buildErGraph(allSchemas, undefined, predicted);
+    const inferred = edges.find((e) => e.data?.kind === 'predicted')!;
+    expect(inferred.sourceHandle).toBe('s:user_id');
+    expect(inferred.targetHandle).toBe('t:id');
+  });
+
+  it('draws a guess the engine made from both sides only once', () => {
+    // Three tables sharing a `order_id` key each predict the link to each of the
+    // others in both directions; the second copy adds nothing but crossing lines.
+    const bothWays: ErPredictedRelation[] = [
+      {
+        id: 'predicted-orders-users-user_id=id',
+        fromTable: 'orders',
+        toTable: 'users',
+        columnPairs: [{ left: 'user_id', right: 'id' }],
+        score: 0.9,
+      },
+      {
+        id: 'predicted-users-orders-id=user_id',
+        fromTable: 'users',
+        toTable: 'orders',
+        columnPairs: [{ left: 'id', right: 'user_id' }],
+        score: 0.7,
+      },
+    ];
+    const { edges } = buildErGraph(allSchemas, undefined, bothWays);
+    const inferred = edges.filter((e) => e.data?.kind === 'predicted');
+    expect(inferred).toHaveLength(1);
+    expect(inferred[0]!.id).toBe('predicted-orders-users-user_id=id');
+    expect(inferred[0]!.source).toBe('orders');
+  });
+
+  it('keeps two different guesses about the same table pair apart', () => {
+    const twoLinks: ErPredictedRelation[] = [
+      {
+        id: 'predicted-orders-users-id=name',
+        fromTable: 'orders',
+        toTable: 'users',
+        columnPairs: [{ left: 'id', right: 'name' }],
+        score: 0.6,
+      },
+      {
+        id: 'predicted-orders-users-name=email',
+        fromTable: 'orders',
+        toTable: 'users',
+        columnPairs: [{ left: 'name', right: 'email' }],
+        score: 0.6,
+      },
+    ];
+    const { edges } = buildErGraph(allSchemas, undefined, twoLinks);
+    expect(edges.filter((e) => e.data?.kind === 'predicted')).toHaveLength(2);
+  });
+
+  it('renders an ambiguous guess as a faint, unlabelled line', () => {
+    const ambiguous: ErPredictedRelation[] = [
+      {
+        id: 'predicted-orders-users-user_id=id',
+        fromTable: 'orders',
+        toTable: 'users',
+        columnPairs: [{ left: 'user_id', right: 'id' }],
+        score: 0.8,
+        ambiguous: true,
+      },
+    ];
+    const { edges } = buildErGraph(allSchemas, undefined, ambiguous);
+    const edge = edges.find((e) => e.id === 'predicted-orders-users-user_id=id')!;
+    expect(edge.label).toBeFalsy();
+    expect(edge.style?.opacity).toBeLessThan(1);
+    expect(edge.data?.ambiguous).toBe(true);
+  });
+
+  it('fades an ambiguous guess with its arrowhead', () => {
+    // `<marker>` paint is not reached by the line's opacity, so an unfaded chevron
+    // would be the one loud thing left on a faint line.
+    const faded: ErPredictedRelation[] = [
+      {
+        id: 'predicted-orders-users-user_id=id',
+        fromTable: 'orders',
+        toTable: 'users',
+        columnPairs: [{ left: 'user_id', right: 'id' }],
+        score: 0.8,
+        ambiguous: true,
+      },
+    ];
+    const { edges } = buildErGraph(allSchemas, undefined, faded);
+    const edge = edges.find((e) => e.data?.kind === 'predicted')!;
+    expect(String((edge.markerEnd as { color: string }).color)).toContain('color-mix');
+  });
+
+  it('paints every edge from theme tokens, not the nonexistent --color-* namespace', () => {
+    // A `--color-*` reference resolves to neither theme and silently drops the
+    // paint; `src/styles/globals.css` documents the same trap for the query builder.
+    const { edges } = buildErGraph(allSchemas, undefined, predicted);
+    expect(edges.length).toBeGreaterThan(0);
+    for (const edge of edges) {
+      const painted = [
+        edge.style?.stroke,
+        edge.labelStyle?.fill,
+        edge.labelBgStyle?.fill,
+        (edge.markerEnd as { color?: string } | undefined)?.color,
+      ];
+      for (const value of painted) {
+        if (typeof value !== 'string') continue;
+        expect(value).not.toMatch(/--color-/);
+        if (value.startsWith('var(')) expect(value).toMatch(/^var\(--c-/);
+      }
+    }
   });
 });

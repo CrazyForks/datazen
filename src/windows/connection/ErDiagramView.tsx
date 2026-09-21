@@ -27,7 +27,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
-import { buildErGraph } from './er/buildErGraph';
+import { buildErGraph, dedupeSymmetricPredictions } from './er/buildErGraph';
 import type { ErPredictedRelation } from './er/buildErGraph';
 import { toPredictionTablesFromSchemas } from '../../lib/relationPrediction/fromTableSchema';
 import { predictRelations } from '../../lib/relationPrediction/predictRelations';
@@ -131,6 +131,7 @@ function ErDiagramInner({
       toTable: candidate.toTable,
       columnPairs: candidate.columnPairs,
       score: candidate.score,
+      ambiguous: candidate.ambiguous,
     }));
   }, [fkPredictionEnabled, schemas]);
 
@@ -184,11 +185,14 @@ function ErDiagramInner({
   const stats = useMemo(() => {
     const tableCount = schemas.length;
     const declaredCount = schemas.reduce((acc, s) => acc + s.foreignKeys.length, 0);
+    // Count what the diagram draws: the engine can guess the same link from both
+    // sides, and a total that promises more lines than appear is its own confusion.
+    const predictedCount = dedupeSymmetricPredictions(predictedRelations).length;
     return {
       tableCount,
       declaredCount,
-      predictedCount: predictedRelations.length,
-      relationCount: declaredCount + predictedRelations.length,
+      predictedCount,
+      relationCount: declaredCount + predictedCount,
     };
   }, [schemas, predictedRelations]);
 
