@@ -45,6 +45,7 @@ Backend schema_diff/profile.rs, store/schema_diff_profiles.rs, commands/schema_d
 
 - Code review of `593eaf22` plus fix `72c7b63c`: profile persistence excludes runtime sessions, generated DDL/plans and credentials; cross-endpoint loading keeps `typeOverrides` until the fresh inspection completes.
 - `cargo test -p datazen --lib -- --test-threads=1` — 1520 passed, 3 ignored.
+- `cargo test -p datazen --lib` — 1520 passed, 3 ignored with parallel execution; encrypted profile reload tests are stable after forcing the file key backend for their full lifetime.
 - `npx vitest run src/commands/__tests__/schemaDiff.test.ts src/windows/schema-diff/__tests__/SchemaDiffWindow.test.tsx src/windows/schema-diff/__tests__/SchemaDiffProfileLoad.test.tsx` — 16 passed.
 - `npx tsc --noEmit` — passed.
 - `cargo fmt --all -- --check`, Prettier checks for changed frontend/E2E files, and `git diff --check` — passed.
