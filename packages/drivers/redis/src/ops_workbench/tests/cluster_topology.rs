@@ -414,6 +414,30 @@ fn redis_table_routes_the_two_word_probes_to_a_shard_that_does_not_hold_the_key(
     }
 }
 
+/// The other half of the addressing fact: what **we** hand redis once we do say.
+///
+/// No in-process double can observe `impl SlotRoutedConnection for
+/// ClusterConnection` — the doubles implement the trait themselves, so the use of
+/// the public `route_command` is a real-cluster item (R 项 9a). What *is* checkable is the
+/// only value that impl produces: the route built from a slot must name that
+/// slot's master and nothing else. A drift to `ReplicaOnly`, to `Any`, or to a
+/// different slot would otherwise surface only as `-MOVED` storms on a real
+/// cluster, which is the cost BUG-007 is about.
+#[test]
+fn the_address_we_build_names_exactly_the_master_of_the_given_slot() {
+    for slot in [0u16, 1, LAST_SLOT, cluster_scan_anchor_slot()] {
+        let built = master_route(slot);
+        let RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) = &built else {
+            panic!("a probe address must name exactly one node, got {built:?}");
+        };
+        assert_eq!(
+            *route,
+            Route::new(slot, SlotAddr::Master),
+            "slot {slot} must be addressed at its master: {built:?}"
+        );
+    }
+}
+
 /// The tripwire that replaces the old optimistic double: an **unaddressed** probe
 /// is refused by the shard that received it, at the price of a slot rebuild. If
 /// production ever stops addressing, `cluster_key_object_info_*` turns red for

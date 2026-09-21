@@ -28,19 +28,24 @@ fn scan_budgets_are_the_numbers_the_docs_quoted() {
     );
     // The two guards must stay ordered: the stall guard is the one meant to fire
     // first (16 empty rounds is already conclusive), and the cap is the backstop.
+    // Bound through locals on purpose: `assert!(CONST < CONST)` is const-folded
+    // to `assert!(true)` — clippy flags it, and it would keep passing in a build
+    // where the comparison is optimised out, i.e. it guards nothing.
+    let (stall_guard, round_cap) = (MAX_STALLED_SCAN_ROUNDS, MAX_SCAN_ROUNDS);
     assert!(
-        MAX_STALLED_SCAN_ROUNDS < MAX_SCAN_ROUNDS,
+        stall_guard < round_cap,
         "the round cap would swallow the stall guard"
     );
     // Sizing relation the docs lean on: the largest window needs 10 rounds, so the
     // cap is 6.4x the progress-making case.
+    let full_window_rounds = (MAX_TYPE_SAMPLE_LIMIT / TYPE_SCAN_COUNT as u64) as u32;
     assert_eq!(
         MAX_TYPE_SAMPLE_LIMIT / TYPE_SCAN_COUNT as u64,
         10,
         "the sample ceiling and the SCAN count are calibrated together"
     );
     assert!(
-        MAX_SCAN_ROUNDS > (MAX_TYPE_SAMPLE_LIMIT / TYPE_SCAN_COUNT as u64) as u32,
+        round_cap > full_window_rounds,
         "a full window must be reachable without ever hitting the round cap"
     );
 }
