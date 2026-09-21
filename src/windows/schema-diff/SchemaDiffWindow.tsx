@@ -16,6 +16,7 @@ import {
   type SchemaDiffConfigJson,
   type SchemaDiffDeployResult,
   type SchemaDiffPlan,
+  type SchemaDiffProfile,
 } from '../../commands/schemaDiff';
 import { databaseCommands } from '../../commands/database';
 import { fileCommands } from '../../commands/file';
@@ -85,6 +86,12 @@ export function SchemaDiffWindow() {
   const [importConfigError, setImportConfigError] = useState('');
   const [limitationsOpen, setLimitationsOpen] = useState(false);
   const [typeOverrides, setTypeOverrides] = useState<ColumnTypeOverride[]>([]);
+  const [profiles, setProfiles] = useState<SchemaDiffProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [pendingProfileLoad, setPendingProfileLoad] = useState<SchemaDiffProfile | null>(null);
   const planAutoRequestedRef = useRef(false);
 
   const { size: tableListWidth, handleRef: tableListResizeRef } = useResizable({
@@ -102,6 +109,19 @@ export function SchemaDiffWindow() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  const refreshProfiles = useCallback(async () => {
+    try {
+      setProfiles(await schemaDiffCommands.getProfiles());
+    } catch (e) {
+      setProfiles([]);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProfiles();
+  }, [refreshProfiles]);
 
   useEffect(() => {
     if (!isSchemaDiffLimitationsDismissed()) {
@@ -279,11 +299,20 @@ export function SchemaDiffWindow() {
     void buildPlan();
   }, [step, plan, loading, buildPlan]);
 
-  const deployAllowed = Boolean(plan && !deployResult && !plan.requirements?.length
-    && (!requireRollback || (useTransaction && dialectSupportsTransactionalDdl(plan.targetDialect)))
-    && canRunDeploy({ hasDestructive: planHasDestructive(plan), confirmText,
-      requireRollback, rollbackComplete: plan.rollbackCompleteness.complete,
-      statementCount: plan.statements.length }));
+  const deployAllowed = Boolean(
+    plan &&
+      !deployResult &&
+      !plan.requirements?.length &&
+      (!requireRollback ||
+        (useTransaction && dialectSupportsTransactionalDdl(plan.targetDialect))) &&
+      canRunDeploy({
+        hasDestructive: planHasDestructive(plan),
+        confirmText,
+        requireRollback,
+        rollbackComplete: plan.rollbackCompleteness.complete,
+        statementCount: plan.statements.length,
+      }),
+  );
 
   const handleDeploy = useCallback(async () => {
     if (!plan || !deployAllowed) return;
@@ -448,6 +477,136 @@ export function SchemaDiffWindow() {
     setImportConfigError('');
     setImportConfigOpen(true);
   };
+
+  const inspectProfileSource = useCallback(
+    async (profile: SchemaDiffProfile) => {
+      setObjectsLoading(true);
+      setError('');
+      try {
+        const srcConnId = await endpoints.ensureConnected('source');
+        if (!srcConnId) return;
+        const rows = await databaseCommands.getTables(srcConnId, profile.sourceDatabase);
+        const filtered = filterTablesForSchema(rows, profile.sourceSchema || undefined);
+        const selected = new Set(profile.tables);
+        const picks = filtered
+          .map((table) => {
+            const name = qualifySchemaDiffTableName(table, profile.sourceSchema || undefined);
+            return { name, enabled: selected.has(name) };
+          })
+          .filter((row) => selected.has(row.name));
+        setTablePicks(picks);
+        setStep('objects');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setTablePicks([]);
+      } finally {
+        setObjectsLoading(false);
+      }
+    },
+    [endpoints],
+  );
+
+  useEffect(() => {
+    const profile = pendingProfileLoad;
+    if (!profile) return;
+    if (
+      endpoints.sourceId !== profile.sourceConnectionId ||
+      endpoints.targetId !== profile.targetConnectionId ||
+      endpoints.sourceDatabase !== profile.sourceDatabase ||
+      endpoints.targetDatabase !== profile.targetDatabase
+    ) {
+      return;
+    }
+    setPendingProfileLoad(null);
+    void inspectProfileSource(profile);
+  }, [endpoints, inspectProfileSource, pendingProfileLoad]);
+
+  const handleLoadProfile = useCallback(() => {
+    const profile = profiles.find((item) => item.id === selectedProfileId);
+    if (!profile) return;
+    endpoints.setSourceId(profile.sourceConnectionId);
+    endpoints.setTargetId(profile.targetConnectionId);
+    endpoints.setSourceDatabase(profile.sourceDatabase);
+    endpoints.setTargetDatabase(profile.targetDatabase);
+    endpoints.setSourceSchema(profile.sourceSchema ?? '');
+    endpoints.setTargetSchema(profile.targetSchema ?? '');
+    setTablePicks(profile.tables.map((name) => ({ name, enabled: true })));
+    setAllowDestructive(profile.allowDestructive);
+    setIncludeIndexes(profile.includeIndexes);
+    setRequireRollback(profile.requireRollback);
+    setTypeOverrides(profile.typeOverrides ?? []);
+    setPlan(null);
+    setDiffs([]);
+    setDeployResult(null);
+    planAutoRequestedRef.current = false;
+    setPendingProfileLoad(profile);
+    setError('');
+  }, [endpoints, profiles, selectedProfileId]);
+
+  const handleSaveProfile = useCallback(async () => {
+    const name = profileName.trim();
+    if (!name) {
+      setProfileError(t('schemaDiff.profileNameRequired'));
+      return;
+    }
+    if (!endpoints.validateEndpoints() || selectedTables.length === 0) {
+      setProfileError(t('schemaDiff.profileSetupRequired'));
+      return;
+    }
+    const existing = profiles.find((item) => item.id === selectedProfileId);
+    const now = new Date().toISOString();
+    const profile: SchemaDiffProfile = {
+      version: 1,
+      id: existing?.id ?? `schema-diff-${Date.now()}`,
+      name,
+      sourceConnectionId: endpoints.sourceId,
+      targetConnectionId: endpoints.targetId,
+      sourceDatabase: endpoints.sourceDatabase,
+      targetDatabase: endpoints.targetDatabase,
+      sourceSchema: endpoints.sourceSchema || null,
+      targetSchema: endpoints.targetSchema || null,
+      tables: selectedTables,
+      allowDestructive,
+      includeIndexes,
+      requireRollback,
+      typeOverrides,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    try {
+      await schemaDiffCommands.saveProfile(profile);
+      await refreshProfiles();
+      setSelectedProfileId(profile.id);
+      setProfileDialogOpen(false);
+      setProfileName('');
+      setProfileError('');
+    } catch (e) {
+      setProfileError(e instanceof Error ? e.message : String(e));
+    }
+  }, [
+    allowDestructive,
+    endpoints,
+    includeIndexes,
+    profileName,
+    profiles,
+    refreshProfiles,
+    requireRollback,
+    selectedProfileId,
+    selectedTables,
+    t,
+    typeOverrides,
+  ]);
+
+  const handleDeleteProfile = useCallback(async () => {
+    if (!selectedProfileId) return;
+    try {
+      await schemaDiffCommands.deleteProfile(selectedProfileId);
+      setSelectedProfileId('');
+      await refreshProfiles();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [refreshProfiles, selectedProfileId]);
 
   const endpointsCrossDialectNote = endpoints.isCrossDialect ? (
     <span
@@ -644,6 +803,48 @@ export function SchemaDiffWindow() {
                     {clipboardFeedback === 'sql' ? t('common.copied') : t('common.copySql')}
                   </Button>
                 )}
+                <select
+                  data-testid="schema-diff-profile-select"
+                  className="h-8 rounded-md border border-edge bg-surface px-2 text-xs text-fg"
+                  value={selectedProfileId}
+                  aria-label={t('schemaDiff.profileSelect')}
+                  onChange={(event) => setSelectedProfileId(event.target.value)}
+                >
+                  <option value="">{t('schemaDiff.profileSelect')}</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="secondary"
+                  data-testid="schema-diff-profile-load"
+                  disabled={!selectedProfileId || loading}
+                  onClick={handleLoadProfile}
+                >
+                  {t('schemaDiff.profileLoad')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  data-testid="schema-diff-profile-save"
+                  onClick={() => {
+                    const selected = profiles.find((profile) => profile.id === selectedProfileId);
+                    setProfileName(selected?.name ?? '');
+                    setProfileError('');
+                    setProfileDialogOpen(true);
+                  }}
+                >
+                  {t('schemaDiff.profileSave')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  data-testid="schema-diff-profile-delete"
+                  disabled={!selectedProfileId || loading}
+                  onClick={() => void handleDeleteProfile()}
+                >
+                  {t('schemaDiff.profileDelete')}
+                </Button>
                 <Button
                   variant="ghost"
                   data-testid="schema-diff-export-config"
@@ -806,6 +1007,48 @@ export function SchemaDiffWindow() {
             data-testid="schema-diff-import-config-error"
           />
         )}
+      </Dialog>
+      <Dialog
+        open={profileDialogOpen}
+        title={t('schemaDiff.profileSaveTitle')}
+        description={t('schemaDiff.profileSaveHint')}
+        testId="schema-diff-profile-dialog"
+        onClose={() => {
+          setProfileDialogOpen(false);
+          setProfileError('');
+        }}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setProfileDialogOpen(false);
+                setProfileError('');
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              data-testid="schema-diff-profile-save-confirm"
+              disabled={!profileName.trim()}
+              onClick={() => void handleSaveProfile()}
+            >
+              {t('schemaDiff.profileSave')}
+            </Button>
+          </>
+        }
+      >
+        <input
+          data-testid="schema-diff-profile-name"
+          className="h-9 w-full rounded-md border border-edge bg-surface px-3 text-sm text-fg"
+          value={profileName}
+          placeholder={t('schemaDiff.profileNamePlaceholder')}
+          onChange={(event) => {
+            setProfileName(event.target.value);
+            if (profileError) setProfileError('');
+          }}
+        />
+        {profileError && <CopyableError message={profileError} className="error-message mt-2" />}
       </Dialog>
       <StatusBar left={<span className="truncate">{t('common.schemaDiff')}</span>} />
     </div>

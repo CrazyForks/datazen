@@ -124,6 +124,35 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('persists only reusable Schema Diff profile configuration through IPC', async () => {
+    const profile = {
+      version: 1 as const,
+      id: 'profile-1',
+      name: 'Production schema',
+      sourceConnectionId: 'source',
+      targetConnectionId: 'target',
+      sourceDatabase: 'app',
+      targetDatabase: 'app',
+      sourceSchema: 'public',
+      targetSchema: 'public',
+      tables: ['public.users'],
+      allowDestructive: false,
+      includeIndexes: true,
+      requireRollback: false,
+      typeOverrides: [],
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    await schemaDiffCommands.getProfiles();
+    await schemaDiffCommands.saveProfile(profile);
+    await schemaDiffCommands.deleteProfile(profile.id);
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'get_schema_diff_profiles');
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'save_schema_diff_profile', { profile });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'delete_schema_diff_profile', {
+      profileId: profile.id,
+    });
+  });
+
   it('preparePlan normalizes IPC requirement tags into plan requirements', async () => {
     invokeMock.mockResolvedValueOnce({
       ...samplePlan(),
@@ -259,10 +288,19 @@ describe('schemaDiffCommands wrappers', () => {
 it('keeps the immutable plan identity and forwards required rollback to the backend', async () => {
   const plan = samplePlan({ planId: 'reviewed-plan-42' });
   invokeMock.mockResolvedValueOnce({ status: 'unknown' });
-  await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'target', plan, requireRollback: true, useTransaction: true });
-  expect(invokeMock).toHaveBeenLastCalledWith('execute_schema_diff_deploy', expect.objectContaining({
-    plan: expect.objectContaining({ planId: 'reviewed-plan-42' }), requireRollback: true,
-  }));
+  await schemaDiffCommands.executeDeploy({
+    targetDbSessionId: 'target',
+    plan,
+    requireRollback: true,
+    useTransaction: true,
+  });
+  expect(invokeMock).toHaveBeenLastCalledWith(
+    'execute_schema_diff_deploy',
+    expect.objectContaining({
+      plan: expect.objectContaining({ planId: 'reviewed-plan-42' }),
+      requireRollback: true,
+    }),
+  );
 });
 
 it('round-trips all requirement tags without losing table or column identity', async () => {
@@ -273,14 +311,22 @@ it('round-trips all requirement tags without losing table or column identity', a
     { unsupported: { operation: 'users.id', reason: 'column unavailable' } },
   ];
   invokeMock.mockResolvedValueOnce({ ...samplePlan(), requirements });
-  const prepared = await schemaDiffCommands.preparePlan({ sourceDbSessionId: 'src', targetDbSessionId: 'tgt', tableNames: ['users'], allowDestructive: false });
+  const prepared = await schemaDiffCommands.preparePlan({
+    sourceDbSessionId: 'src',
+    targetDbSessionId: 'tgt',
+    tableNames: ['users'],
+    allowDestructive: false,
+  });
   expect(prepared.requirements).toEqual([
     { kind: 'Backfill', table: 'users', column: 'status', reason: 'populate first' },
     { kind: 'Unsupported', table: 'users', column: '', reason: 'table unavailable' },
     { kind: 'Unsupported', table: 'users', column: 'id', reason: 'column unavailable' },
   ]);
   await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'tgt', plan: prepared });
-  expect(invokeMock).toHaveBeenLastCalledWith('execute_schema_diff_deploy', expect.objectContaining({ plan: expect.objectContaining({ requirements }) }));
+  expect(invokeMock).toHaveBeenLastCalledWith(
+    'execute_schema_diff_deploy',
+    expect.objectContaining({ plan: expect.objectContaining({ requirements }) }),
+  );
 });
 
 it('cancels only the requested job and propagates cancellation failures', async () => {

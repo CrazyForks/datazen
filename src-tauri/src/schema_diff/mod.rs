@@ -6,11 +6,13 @@ pub mod deploy;
 pub mod ir;
 pub mod operations;
 pub mod plan;
+pub mod profile;
 pub mod types;
 
 pub use compare::diff_table_schemas;
 pub use deploy::{execute_schema_diff_deploy, DeployOptions};
 pub use plan::{build_column_plan, build_schema_diff_plan, PlanOptions};
+pub use profile::SchemaDiffProfile;
 pub use types::*;
 
 pub mod reviewed;

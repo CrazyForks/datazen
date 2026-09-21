@@ -3,7 +3,13 @@ import type { TableSchemaDiff } from '../types';
 
 export type StatementRisk = 'additive' | 'destructive' | 'rewrite';
 
-export type DeployStatus = 'committed' | 'unknown' | 'rolled_back' | 'mixed' | 'failed' | 'cancelled';
+export type DeployStatus =
+  | 'committed'
+  | 'unknown'
+  | 'rolled_back'
+  | 'mixed'
+  | 'failed'
+  | 'cancelled';
 
 export interface PlanStatement {
   sql: string;
@@ -142,6 +148,26 @@ export interface SchemaDiffConfigJson {
   requireRollback?: boolean;
 }
 
+/** Persisted Schema Diff setup. Runtime sessions and generated plans are never stored. */
+export interface SchemaDiffProfile {
+  version: 1;
+  id: string;
+  name: string;
+  sourceConnectionId: string;
+  targetConnectionId: string;
+  sourceDatabase: string;
+  targetDatabase: string;
+  sourceSchema?: string | null;
+  targetSchema?: string | null;
+  tables: string[];
+  allowDestructive: boolean;
+  includeIndexes: boolean;
+  requireRollback: boolean;
+  typeOverrides?: ColumnTypeOverride[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const DESTRUCTIVE_CONFIRM_TOKEN = 'DEPLOY';
 
 export async function cancelSchemaDiffDeploy(jobId: string): Promise<boolean> {
@@ -168,6 +194,13 @@ export function exportPlanSql(plan: SchemaDiffPlan): string {
 }
 
 export const schemaDiffCommands = {
+  getProfiles: () => invoke<SchemaDiffProfile[]>('get_schema_diff_profiles'),
+
+  saveProfile: (profile: SchemaDiffProfile) =>
+    invoke<void>('save_schema_diff_profile', { profile }),
+
+  deleteProfile: (profileId: string) => invoke<void>('delete_schema_diff_profile', { profileId }),
+
   compareTableSchemas: (sourceDbSessionId: string, targetDbSessionId: string, tableName: string) =>
     invoke<TableSchemaDiff>('compare_table_schemas', {
       sourceDbSessionId,
