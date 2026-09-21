@@ -371,7 +371,7 @@ pub struct IndexInfo {
     pub index_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForeignKeyInfo {
     pub name: String,

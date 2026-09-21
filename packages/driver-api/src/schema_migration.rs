@@ -1,6 +1,6 @@
 //! Dialect-neutral schema migration contracts exposed by the driver API.
 
-use crate::{ColumnSchema, IndexInfo};
+use crate::{ColumnSchema, ForeignKeyInfo, IndexInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationColumn {
@@ -71,6 +71,14 @@ pub enum MigrationOperation {
     DropIndex {
         table: String,
         index: IndexInfo,
+    },
+    AddForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
+    },
+    DropForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
     },
 }
 

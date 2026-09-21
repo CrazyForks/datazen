@@ -48,6 +48,22 @@ fn pg_pk_constraint_name(table: &str) -> String {
     format!("{table}_pkey")
 }
 
+fn pg_fk_action(raw: &str, clause: &str) -> Result<String, String> {
+    let action = raw.trim().to_ascii_uppercase();
+    if action.is_empty() || action == "NO ACTION" {
+        return Ok(String::new());
+    }
+    if matches!(
+        action.as_str(),
+        "CASCADE" | "RESTRICT" | "SET NULL" | "SET DEFAULT"
+    ) {
+        return Ok(format!(" {clause} {action}"));
+    }
+    Err(format!(
+        "PostgreSQL cannot represent foreign-key action '{raw}'"
+    ))
+}
+
 pub struct PostgresMigrationRenderer;
 
 impl MigrationRenderer for PostgresMigrationRenderer {
@@ -273,6 +289,55 @@ impl MigrationRenderer for PostgresMigrationRenderer {
             MigrationOperation::SetAutoIncrement { .. } => {
                 Err("PostgreSQL auto-increment changes require identity/sequence metadata".into())
             }
+            MigrationOperation::AddForeignKey { table, foreign_key } => {
+                if foreign_key.name.trim().is_empty()
+                    || foreign_key.columns.is_empty()
+                    || foreign_key.columns.len() != foreign_key.referenced_columns.len()
+                {
+                    return Err("foreign key must have a name and matching column lists".into());
+                }
+                let on_update = pg_fk_action(&foreign_key.on_update, "ON UPDATE")?;
+                let on_delete = pg_fk_action(&foreign_key.on_delete, "ON DELETE")?;
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}){}{}",
+                        qi(table),
+                        qi(&foreign_key.name),
+                        foreign_key
+                            .columns
+                            .iter()
+                            .map(|column| qi(column))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        qi(&foreign_key.referenced_table),
+                        foreign_key
+                            .referenced_columns
+                            .iter()
+                            .map(|column| qi(column))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        on_update,
+                        on_delete,
+                    ),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "ALTER TABLE {} DROP CONSTRAINT {}",
+                        qi(table),
+                        qi(&foreign_key.name)
+                    )),
+                    summary: format!("ADD FOREIGN KEY {}.{}", table, foreign_key.name),
+                })
+            }
+            MigrationOperation::DropForeignKey { table, foreign_key } => Ok(MigrationStatement {
+                sql: format!(
+                    "ALTER TABLE {} DROP CONSTRAINT {}",
+                    qi(table),
+                    qi(&foreign_key.name)
+                ),
+                risk: MigrationRisk::Destructive,
+                rollback_sql: None,
+                summary: format!("DROP FOREIGN KEY {}.{}", table, foreign_key.name),
+            }),
         }
     }
 }
@@ -292,7 +357,9 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             | MigrationOperation::AddPrimaryKey { .. }
             | MigrationOperation::DropPrimaryKey { .. }
             | MigrationOperation::CreateIndex { .. }
-            | MigrationOperation::DropIndex { .. } => true,
+            | MigrationOperation::DropIndex { .. }
+            | MigrationOperation::AddForeignKey { .. }
+            | MigrationOperation::DropForeignKey { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -451,5 +518,30 @@ mod tests {
         };
         assert!(!PostgresMigrationCapabilities.supports(&op));
         assert!(PostgresMigrationRenderer.render(&op).is_err());
+    }
+
+    #[test]
+    fn renders_foreign_key_with_actions_and_rollback() {
+        let op = MigrationOperation::AddForeignKey {
+            table: "orders".into(),
+            foreign_key: ForeignKeyInfo {
+                name: "orders_user_id_fkey".into(),
+                columns: vec!["user_id".into()],
+                referenced_table: "public.users".into(),
+                referenced_columns: vec!["id".into()],
+                on_update: "CASCADE".into(),
+                on_delete: "SET NULL".into(),
+            },
+        };
+        let stmt = PostgresMigrationRenderer.render(&op).unwrap();
+        assert_eq!(
+            stmt.sql,
+            "ALTER TABLE \"orders\" ADD CONSTRAINT \"orders_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"public\".\"users\" (\"id\") ON UPDATE CASCADE ON DELETE SET NULL"
+        );
+        assert_eq!(
+            stmt.rollback_sql.as_deref(),
+            Some("ALTER TABLE \"orders\" DROP CONSTRAINT \"orders_user_id_fkey\"")
+        );
+        assert!(PostgresMigrationCapabilities.supports(&op));
     }
 }

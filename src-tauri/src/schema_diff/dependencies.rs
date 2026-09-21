@@ -15,18 +15,154 @@ fn op_table(op: &MigrationOperation) -> &str {
         | MigrationOperation::AddPrimaryKey { table, .. }
         | MigrationOperation::DropPrimaryKey { table, .. }
         | MigrationOperation::CreateIndex { table, .. }
-        | MigrationOperation::DropIndex { table, .. } => table,
+        | MigrationOperation::DropIndex { table, .. }
+        | MigrationOperation::AddForeignKey { table, .. }
+        | MigrationOperation::DropForeignKey { table, .. } => table,
     }
+}
+
+fn foreign_key_references_table(
+    foreign_key: &datazen_driver_api::ForeignKeyInfo,
+    table: &str,
+) -> bool {
+    foreign_key.referenced_table == table
+        || foreign_key
+            .referenced_table
+            .rsplit_once('.')
+            .is_some_and(|(_, relation)| relation == table)
+}
+
+fn foreign_key_uses_column(
+    foreign_key_table: &str,
+    foreign_key: &datazen_driver_api::ForeignKeyInfo,
+    table: &str,
+    column: &str,
+) -> bool {
+    if op_table_name_matches(foreign_key_table, table) {
+        foreign_key.columns.iter().any(|value| value == column)
+    } else if foreign_key_references_table(foreign_key, table) {
+        foreign_key
+            .referenced_columns
+            .iter()
+            .any(|value| value == column)
+    } else {
+        false
+    }
+}
+
+fn op_table_name_matches(table: &str, referenced_table: &str) -> bool {
+    referenced_table == table
+        || referenced_table
+            .rsplit_once('.')
+            .is_some_and(|(_, relation)| relation == table)
 }
 
 /// A directed edge means `before` must complete before `after`.
 fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
     use MigrationOperation::*;
-    if op_table(before) != op_table(after) {
-        return false;
-    }
     match (before, after) {
-        (CreateTable { .. }, _) => true,
+        (CreateTable { table, .. }, AddForeignKey { foreign_key, .. })
+            if *table == op_table(after) || foreign_key_references_table(foreign_key, table) =>
+        {
+            true
+        }
+        (CreateTable { .. }, _) if op_table(before) == op_table(after) => true,
+        (AddColumn { table, column }, AddForeignKey { foreign_key, .. })
+            if *table == op_table(after)
+                && foreign_key.columns.iter().any(|name| name == &column.name) =>
+        {
+            true
+        }
+        (AddPrimaryKey { table, columns }, AddForeignKey { foreign_key, .. })
+            if foreign_key_references_table(foreign_key, table)
+                && columns
+                    .iter()
+                    .any(|column| foreign_key.referenced_columns.contains(column)) =>
+        {
+            true
+        }
+        (CreateIndex { table, index }, AddForeignKey { foreign_key, .. })
+            if *table == op_table(after)
+                && index
+                    .columns
+                    .iter()
+                    .any(|column| foreign_key.columns.contains(column)) =>
+        {
+            true
+        }
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            DropColumn { table, column },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, &column.name) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            DropPrimaryKey { table, columns },
+        ) if (op_table_name_matches(foreign_key_table, table)
+            && columns
+                .iter()
+                .any(|column| foreign_key.columns.contains(column)))
+            || (foreign_key_references_table(foreign_key, table)
+                && columns
+                    .iter()
+                    .any(|column| foreign_key.referenced_columns.contains(column))) =>
+        {
+            true
+        }
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            AlterColumnType { table, column, .. },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, column) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            SetNullable { table, column, .. },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, column) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            SetDefault { table, column, .. },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, column) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            SetComment { table, column, .. },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, column) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            SetAutoIncrement { table, column, .. },
+        ) if foreign_key_uses_column(foreign_key_table, foreign_key, table, column) => true,
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            DropIndex { table, index },
+        ) if op_table_name_matches(foreign_key_table, table)
+            && index
+                .columns
+                .iter()
+                .any(|column| foreign_key.columns.contains(column)) =>
+        {
+            true
+        }
         (DropPrimaryKey { .. }, AddPrimaryKey { .. }) => true,
         (
             DropPrimaryKey { columns, .. },
@@ -37,6 +173,14 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
             },
         ) => columns.contains(column),
         (DropIndex { index: old, .. }, CreateIndex { index: new, .. }) => old.name == new.name,
+        (
+            DropForeignKey {
+                foreign_key: old, ..
+            },
+            AddForeignKey {
+                foreign_key: new, ..
+            },
+        ) => old.name == new.name,
         (DropPrimaryKey { columns, .. }, DropColumn { .. } | AlterColumnType { .. }) => match after
         {
             DropColumn { column, .. } => columns.contains(&column.name),
@@ -58,6 +202,7 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
         (AlterColumnType { column, .. }, CreateIndex { index, .. }) => {
             index.columns.contains(column)
         }
+        _ if op_table(before) != op_table(after) => false,
         _ => false,
     }
 }
@@ -75,7 +220,9 @@ pub fn retain_dependency_closed(
                 (MigrationOperation::DropPrimaryKey { .. }, MigrationOperation::AddPrimaryKey { .. }))
                 && op_table(op) == op_table(dependency)
                 || matches!((op, dependency),
-                    (MigrationOperation::DropIndex { index: a, .. }, MigrationOperation::CreateIndex { index: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
+                    (MigrationOperation::DropIndex { index: a, .. }, MigrationOperation::CreateIndex { index: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency))
+                || matches!((op, dependency),
+                    (MigrationOperation::DropForeignKey { foreign_key: a, .. }, MigrationOperation::AddForeignKey { foreign_key: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
             !(precedes(dependency, op) || replacement) || previous.iter().any(|present| std::mem::discriminant(present) == std::mem::discriminant(dependency) && present.key() == dependency.key())
         }));
         if selected.len() == previous.len() {
@@ -109,8 +256,8 @@ fn priority(op: &MigrationOperation) -> u8 {
     match op {
         CreateTable { .. } => 0,
         AddColumn { .. } | AddPrimaryKey { .. } => 1,
-        CreateIndex { .. } => 3,
-        DropColumn { .. } | DropIndex { .. } | DropPrimaryKey { .. } => 4,
+        CreateIndex { .. } | AddForeignKey { .. } => 3,
+        DropColumn { .. } | DropIndex { .. } | DropPrimaryKey { .. } | DropForeignKey { .. } => 4,
         _ => 2,
     }
 }
@@ -237,7 +384,7 @@ mod tests {
 #[cfg(test)]
 mod replacement_tests {
     use super::*;
-    use crate::db::IndexInfo;
+    use crate::db::{ForeignKeyInfo, IndexInfo};
     fn pk(add: bool) -> MigrationOperation {
         if add {
             MigrationOperation::AddPrimaryKey {
@@ -271,9 +418,35 @@ mod replacement_tests {
             }
         }
     }
+
+    fn fk(add: bool) -> MigrationOperation {
+        let foreign_key = ForeignKeyInfo {
+            name: "orders_user_id_fk".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "CASCADE".into(),
+            on_delete: "RESTRICT".into(),
+        };
+        if add {
+            MigrationOperation::AddForeignKey {
+                table: "orders".into(),
+                foreign_key,
+            }
+        } else {
+            MigrationOperation::DropForeignKey {
+                table: "orders".into(),
+                foreign_key,
+            }
+        }
+    }
     #[test]
     fn replacement_order_is_drop_before_create_regardless_of_input() {
-        for (add, drop) in [(pk(true), pk(false)), (idx(true), idx(false))] {
+        for (add, drop) in [
+            (pk(true), pk(false)),
+            (idx(true), idx(false)),
+            (fk(true), fk(false)),
+        ] {
             assert_eq!(
                 resolve_dependencies(vec![add.clone(), drop.clone()]),
                 vec![drop.clone(), add.clone()]
@@ -321,7 +494,11 @@ mod replacement_tests {
 
     #[test]
     fn filtering_either_half_removes_the_entire_replacement() {
-        for all in [vec![pk(true), pk(false)], vec![idx(true), idx(false)]] {
+        for all in [
+            vec![pk(true), pk(false)],
+            vec![idx(true), idx(false)],
+            vec![fk(true), fk(false)],
+        ] {
             for half in &all {
                 let mut selected = vec![half.clone()];
                 retain_dependency_closed(&all, &mut selected);
@@ -342,5 +519,46 @@ mod replacement_tests {
         let mut selected = vec![drop];
         retain_dependency_closed(&all, &mut selected);
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn foreign_key_waits_for_referenced_table_and_columns() {
+        let add_ref_table = MigrationOperation::CreateTable {
+            table: "users".into(),
+            columns: vec![super::tests::snap("id")],
+            primary_keys: vec!["id".into()],
+        };
+        let add_local_table = MigrationOperation::CreateTable {
+            table: "orders".into(),
+            columns: vec![super::tests::snap("user_id")],
+            primary_keys: vec![],
+        };
+        let sorted = resolve_dependencies(vec![fk(true), add_local_table, add_ref_table]);
+        let fk_position = sorted
+            .iter()
+            .position(|op| matches!(op, MigrationOperation::AddForeignKey { .. }))
+            .unwrap();
+        assert!(sorted[..fk_position].iter().any(
+            |op| matches!(op, MigrationOperation::CreateTable { table, .. } if table == "users")
+        ));
+        assert!(sorted[..fk_position].iter().any(
+            |op| matches!(op, MigrationOperation::CreateTable { table, .. } if table == "orders")
+        ));
+    }
+
+    #[test]
+    fn dropping_foreign_key_precedes_local_column_drop() {
+        let drop_column = MigrationOperation::DropColumn {
+            table: "orders".into(),
+            column: super::tests::snap("user_id"),
+        };
+        let sorted = resolve_dependencies(vec![drop_column.clone(), fk(false)]);
+        assert!(matches!(
+            sorted.as_slice(),
+            [
+                MigrationOperation::DropForeignKey { .. },
+                MigrationOperation::DropColumn { .. }
+            ]
+        ));
     }
 }

@@ -1,7 +1,7 @@
 //! Dialect-neutral schema migration operations.
 
 use super::types::{ColumnSnapshot, StatementRisk};
-use crate::db::IndexInfo;
+use crate::db::{ForeignKeyInfo, IndexInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -63,14 +63,23 @@ pub enum MigrationOperation {
         table: String,
         index: IndexInfo,
     },
+    AddForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
+    },
+    DropForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
+    },
 }
 
 impl MigrationOperation {
     pub fn risk(&self) -> StatementRisk {
         match self {
-            Self::DropColumn { .. } | Self::DropPrimaryKey { .. } | Self::DropIndex { .. } => {
-                StatementRisk::Destructive
-            }
+            Self::DropColumn { .. }
+            | Self::DropPrimaryKey { .. }
+            | Self::DropIndex { .. }
+            | Self::DropForeignKey { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
@@ -95,6 +104,10 @@ impl MigrationOperation {
             | Self::SetAutoIncrement { table, column, .. } => format!("column:{table}.{column}"),
             Self::CreateIndex { table, index } | Self::DropIndex { table, index } => {
                 format!("index:{table}.{}", index.name)
+            }
+            Self::AddForeignKey { table, foreign_key }
+            | Self::DropForeignKey { table, foreign_key } => {
+                format!("foreign-key:{table}.{}", foreign_key.name)
             }
         }
     }
@@ -243,6 +256,14 @@ impl MigrationOperation {
             Self::DropIndex { table, index } => O::DropIndex {
                 table: table.clone(),
                 index: index.clone(),
+            },
+            Self::AddForeignKey { table, foreign_key } => O::AddForeignKey {
+                table: table.clone(),
+                foreign_key: foreign_key.clone(),
+            },
+            Self::DropForeignKey { table, foreign_key } => O::DropForeignKey {
+                table: table.clone(),
+                foreign_key: foreign_key.clone(),
             },
             Self::CreateTable {
                 table,
