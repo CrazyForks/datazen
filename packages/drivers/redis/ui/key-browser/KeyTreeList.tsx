@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Trash2 } from '
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '@datazen/ui';
 import { cn } from '@datazen/ui';
-import { formatSize } from '../shared/formatSize';
 import type { KeyTreeRow } from './keyTree';
 
 /**
@@ -61,7 +60,7 @@ export interface KeyTreeListProps {
 /**
  * Compact hierarchical key tree (server-driven `list_children` levels):
  * one row per folder/leaf with a leading checkbox, folder icon + child count,
- * inline type / TTL / size badges, and a hover delete action (folder rows
+ * inline type / TTL badges, and a hover delete action (folder rows
  * delete their whole subtree).
  */
 export function KeyTreeList({
@@ -242,9 +241,6 @@ export function KeyTreeList({
               </span>
               <span className="shrink-0 rounded-full border border-warning/40 px-1.5 py-px text-[10px] font-medium leading-tight text-warning">
                 {entry.ttl < 0 ? t('redis.noExpiry') : `${entry.ttl}${t('redis.seconds')}`}
-              </span>
-              <span className="shrink-0 rounded-full border border-edge px-1.5 py-px text-[10px] font-medium leading-tight text-fg-muted">
-                {formatSize(entry.size)}
               </span>
               <button
                 type="button"
