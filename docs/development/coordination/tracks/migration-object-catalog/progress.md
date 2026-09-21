@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+READY_TO_MERGE
 
 ## Scope
 
@@ -57,3 +57,14 @@ READY_FOR_TEST
 - Live DB limitation: PostgreSQL and MySQL live-server integration was unavailable; SQL contracts and Host mock IPC were used.
 - Tester commits: 0ec82dfa, de8412ef, 00339a67
 - Follow-up coding commit: current repair commit (reported in handoff)
+
+## Tester round 3
+
+- Repair under test: `fe6d6661` (shared `databaseObjectIdentityKey` used by ObjectBrowser and navigator keys).
+- Focused Vitest after mock-noise cleanup: 99 passed, 0 failed across ObjectBrowser, ConnectionNavigatorTree, and usePanelHandlers.
+- Identity journeys: routine overload React keys, same-name trigger target keys, selected/copy state, DDL IPC metadata, and panel identity all passed.
+- ObjectBrowser coverage: 96% statements, 82.35% branches, 95.83% functions, 97.29% lines; shared identity helper coverage 100%.
+- Driver/API/Host checks: Driver API 140 passed; PostgreSQL object SQL 10 passed; MySQL object SQL 6 passed; SQLite object command 6 passed; SQLite object SQL 5 passed; Host schema tests 14 passed.
+- TypeScript, Prettier, rustfmt, and `git diff --check`: passed.
+- Live DB limitation: PostgreSQL and MySQL live-server integration was unavailable; SQL contracts and Host mock IPC were used.
+- Tester commit: pending.

@@ -143,7 +143,6 @@ vi.mock('../../../extensions/generated', () => {
   };
   return {
     DRIVER_DB_ENTRIES,
-    DRIVER_DB_ENTRIES: DRIVER_DB_ENTRIES,
     DRIVER_ICON_ENTRIES: {},
     DRIVER_ICON_PARENTS: {},
     DRIVER_SQL_DIALECTS: {},
