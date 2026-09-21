@@ -10,6 +10,11 @@ use datazen_driver_api::{
 };
 use serde_json::Value as JsonValue;
 
+use crate::ops_workbench::{
+    CLUSTER_TYPE_SAMPLE_LIMIT, DEFAULT_TYPE_SAMPLE_LIMIT, KEY_INFO_PIPELINE_LEN,
+    MAX_TYPE_SAMPLE_LIMIT, TYPE_PIPELINE_CHUNK,
+};
+
 fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
     let category = match id {
         id if id.starts_with("pubsub_") => CommandCategory::PubSub,
@@ -453,12 +458,22 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "type_distribution",
             "Type distribution",
-            "SCAN-sampled key type counts, TYPE resolved one pipeline per 500 keys (one command per key on Cluster); never KEYS; reports sampled/dbsize/truncated",
+            &format!(
+                "SCAN-sampled key type counts, TYPE resolved one pipeline per {} keys \
+                 (on Cluster every key is one command, addressed to the shard that owns it, \
+                 and the sample covers one pinned shard while dbsize sums all masters); \
+                 never KEYS; reports sampled/dbsize/truncated",
+                TYPE_PIPELINE_CHUNK
+            ),
             "redis:allow-info",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
-                    "sampleLimit": { "type": "integer", "minimum": 0, "description": "Sample window in keys. Defaults to 1000; values above 5000 are clamped to 5000, never rejected. A Cluster connection clamps further to 200 because typing a key there costs a round trip" }
+                    "sampleLimit": { "type": "integer", "minimum": 0, "description": format!(
+                        "Sample window in keys. Defaults to {}; values above {} are clamped to {}, never rejected. \
+                         A Cluster connection clamps further to {} because it sends one command per sampled key",
+                        DEFAULT_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, CLUSTER_TYPE_SAMPLE_LIMIT
+                    ) }
                 }),
                 &[],
             ),
@@ -466,7 +481,15 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "key_object_info",
             "Key object info",
-            "MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE in one pipeline (issued one at a time on Cluster); the command layer adds one SELECT per call, so a call is two round trips. A missing key replies missing=true instead of failing",
+            &format!(
+                "MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE in one pipeline \
+                 (on Cluster the same {} commands go one at a time, each addressed to the shard \
+                 that owns the key); the command layer adds one SELECT per call, so a call is 2 \
+                 round trips on a single node and {} on Cluster. A missing key replies \
+                 missing=true instead of failing",
+                KEY_INFO_PIPELINE_LEN,
+                KEY_INFO_PIPELINE_LEN + 1
+            ),
             "redis:allow-memory-sample",
             object_schema(
                 serde_json::json!({ "dbIndex": db, "key": key }),

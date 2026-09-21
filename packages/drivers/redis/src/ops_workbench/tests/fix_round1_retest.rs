@@ -155,6 +155,12 @@ fn test_tester_cluster_routing_ignores_the_key_for_two_word_probes() {
     //
     // 本用例是**绊线**：若将来 redis 修正了路由（或我们改成显式按地址路由），
     // 这两条 assert_eq 会失败，提醒我们同时回收口径与 R 项 9a 的 MONITOR 核对表。
+    //
+    // [修复轮 3 补注] 本用例只问 **redis 自己的路由表**，表未变 ⇒ 仍然成立，断言一字未松。
+    // 变的是驱动侧：探测命令不再交给这张表，而是按 `get_slot(key)` 显式寻址
+    // （`SlotRoutedConnection`），所以"必吃 -MOVED + 槽位刷新"现在是**假如不寻址**的后果，
+    // 由 `cluster_topology::an_unaddressed_two_word_probe_is_moved_and_rebuilds_the_slot_map`
+    // 作为绊线守住（替身自此按 `for_routable` 路由，不再假设"按键走"）。
     for segments in [
         ["MEMORY", "USAGE"],
         ["OBJECT", "ENCODING"],

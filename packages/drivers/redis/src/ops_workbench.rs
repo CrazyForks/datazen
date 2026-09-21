@@ -14,8 +14,9 @@
 //!   `maxmemory-policy` (rejects `OBJECT FREQ`), or Redis < 4.0 (no
 //!   `MEMORY USAGE`) degrades a single field to `None` instead of failing the
 //!   command — the sidebar shows an empty slot, not a red error. On a cluster
-//!   connection the same six commands go out one at a time (see below), which
-//!   keeps the degradation contract and costs six round trips instead of one.
+//!   connection the same six commands go out one at a time, each addressed to
+//!   the shard that owns the key (see below), which keeps the degradation
+//!   contract and costs six round trips instead of one.
 //!
 //! # Why replies are read as a batch, and why Cluster is the exception
 //!
@@ -37,12 +38,50 @@
 //! every non-LFU server, a cluster pipeline would make `key_object_info` fail
 //! always and `type_distribution` fail whenever the sample crosses a slot — i.e.
 //! the degradation contract cannot be met with a batch there. So on
-//! [`Topology::Cluster`] the very same commands are issued one at a time with
-//! [`redis::aio::ConnectionLike::req_packed_command`], which the cluster client
-//! routes per key and whose errors are per command by construction. Degradation
-//! semantics are then identical; only the cost differs (one round trip per
-//! command), which is why the cluster sample window is bounded far tighter — see
+//! [`Topology::Cluster`] the very same commands are issued one at a time, each
+//! addressed to the shard that owns the key. Degradation semantics are then
+//! identical; only the cost differs (one round trip per command), which is why
+//! the cluster sample window is bounded far tighter — see
 //! [`CLUSTER_TYPE_SAMPLE_LIMIT`].
+//!
+//! # Cluster: every command names the node it runs on
+//!
+//! Issuing a command through [`ConnectionLike`] is *not* enough on a cluster
+//! connection, because redis derives the target node from its own command-name
+//! table (`cluster_routing::RoutingInfo::for_routable`), and that table does not
+//! describe these probes:
+//!
+//! * `MEMORY USAGE` and `OBJECT ENCODING|IDLETIME|FREQ` are two-word commands
+//!   that are **absent** from it, so the fallback arm (`_ => arg_idx(1)`) reads
+//!   the *subcommand token* as the key and sends the probe to whoever owns
+//!   `slot("USAGE")`. The server answers `-MOVED`, the client resends, and — the
+//!   expensive part — `RebuildSlots` runs `refresh_slots`, which takes the
+//!   connection's write lock and re-queries `CLUSTER SLOTS` on every node. A
+//!   sidebar that refreshes per key selection would serialise the whole
+//!   connection behind that, so an unaddressed probe is not acceptable here even
+//!   though the client does eventually return the right value.
+//! * `SCAN` is in the table only as an explicit `None` ⇒ `SingleNode(Random)`,
+//!   which would hand every sampling round to a different node and feed one
+//!   node's cursor to another.
+//!
+//! So each probe carries its own address, via [`SlotRoutedConnection`] over the
+//! public [`redis::cluster_async::ClusterConnection::route_command`] and
+//! [`redis::cluster_routing::get_slot`]. Consequences:
+//!
+//! * a cluster probe costs exactly one round trip per command — no redirects, no
+//!   slot rebuilds;
+//! * `type_distribution` pins **every** `SCAN` round to
+//!   [`cluster_scan_anchor_slot`], so its sample is one shard's sample and stays
+//!   comparable between refreshes instead of mixing nodes;
+//! * `DBSIZE` *is* in the table, as `MultiNode(AllMasters, Aggregate(Sum))`, so
+//!   `dbsize` on a cluster is the **whole cluster's** count for the selected db
+//!   (and one unreachable or non-integer master fails the aggregate). That is
+//!   the `M` the "采样 N/M" label needs, so it is deliberately left unrouted.
+//!
+//! With those three facts, [`is_sample_truncated`] needs no cluster special
+//! case: `sampled` counts keys on one shard while `dbsize` counts the whole
+//! cluster, so `sampled == dbsize` — the only non-truncated answer — can only
+//! mean every key of the cluster lives on the shard that was scanned.
 //!
 //! Upgrading the `redis` dependency is a documented review point: this module
 //! relies on `req_packed_commands` (`#[doc(hidden)]` internal API) answering with
@@ -51,11 +90,15 @@
 
 use std::collections::BTreeMap;
 
+use futures_util::FutureExt;
 use redis::aio::ConnectionLike;
+use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+use redis::RedisFuture;
 use redis::Value as RValue;
 use serde::Serialize;
 
 use crate::connect::Topology;
+use crate::redis_driver::parse_scan_result;
 
 /// Default sample window for `type_distribution` when `sampleLimit` is omitted.
 pub const DEFAULT_TYPE_SAMPLE_LIMIT: u64 = 1_000;
@@ -73,6 +116,22 @@ pub const CLUSTER_TYPE_SAMPLE_LIMIT: u64 = 200;
 
 /// `SCAN COUNT` used while filling the sample window.
 pub const TYPE_SCAN_COUNT: u32 = 500;
+
+/// Key whose hash slot a cluster sample is pinned to. The key is never sent to
+/// the server — only its slot is used to pick a node — but it is named so the
+/// choice is reproducible and cannot collide with a real workload key.
+///
+/// `SCAN` carries no cluster route (redis' own table answers `None` ⇒ a random
+/// node per round), which would feed one node's cursor to another node. Pinning
+/// every round to this slot keeps a cluster sample a *single shard's* sample.
+pub const CLUSTER_SCAN_ANCHOR: &str = "datazen:redis:workbench:sample-anchor";
+
+/// The shard a cluster sample covers — see [`CLUSTER_SCAN_ANCHOR`]. Stable
+/// across calls, so consecutive `type_distribution` results describe the same
+/// node and stay comparable over refreshes.
+pub fn cluster_scan_anchor_slot() -> u16 {
+    get_slot(CLUSTER_SCAN_ANCHOR.as_bytes())
+}
 
 /// Keys per `TYPE` pipeline: one round trip per 500 sampled keys.
 pub const TYPE_PIPELINE_CHUNK: usize = 500;
@@ -123,6 +182,12 @@ pub fn sample_window_for(requested: Option<u64>, topology: Topology) -> u64 {
 ///
 /// Drives the mandatory "采样 N/M" annotation; `sampled >= dbsize` (a small db
 /// scanned in full) is the only case the UI may present as an exact count.
+///
+/// This one rule is also what makes a cluster answer honest, and it is the
+/// reason no cluster-only variant is needed any more: on a cluster `sampled`
+/// comes from one pinned shard ([`CLUSTER_SCAN_ANCHOR`]) while `dbsize` is the
+/// `Aggregate(Sum)` over every master, so equality can only be reached when the
+/// whole cluster's keys happen to live on the shard that was scanned.
 pub fn is_sample_truncated(sampled: u64, dbsize: u64) -> bool {
     sampled < dbsize
 }
@@ -132,12 +197,18 @@ pub fn is_sample_truncated(sampled: u64, dbsize: u64) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct TypeDistribution {
     /// `TYPE` token → key count; serializes as a JSON object. Module types
-    /// keep their raw server token (e.g. `ReJSON-RL`).
+    /// keep their raw server token (e.g. `ReJSON-RL`). On a cluster these come
+    /// from the one pinned shard of [`CLUSTER_SCAN_ANCHOR`], not from every
+    /// node.
     pub counts: BTreeMap<String, u64>,
     /// Keys whose type was actually resolved. Always equals the sum of
     /// [`Self::counts`], which is what lets the UI label the sample honestly.
     pub sampled: u64,
-    /// `DBSIZE` of the selected database, read exactly once per command.
+    /// `DBSIZE` of the selected database, read exactly once per command. On a
+    /// cluster redis routes `DBSIZE` to every master and sums the answers, so
+    /// this is the whole cluster's count — a different scope than
+    /// [`Self::sampled`], which is why [`Self::truncated`] is rarely `false`
+    /// there.
     pub dbsize: u64,
     /// `sampled < dbsize` — the distribution is a sample, not a census.
     pub truncated: bool,
@@ -146,6 +217,11 @@ pub struct TypeDistribution {
 impl TypeDistribution {
     /// Fold resolved types into the payload, maintaining the
     /// `sampled == counts.values().sum()` invariant.
+    ///
+    /// Used for every topology: [`is_sample_truncated`] already says the right
+    /// thing on a cluster, where the sample covers one shard and `dbsize` the
+    /// whole cluster. A non-truncated cluster answer therefore *is* a census —
+    /// all of the cluster's keys live on the scanned shard.
     pub fn from_sample(counts: BTreeMap<String, u64>, dbsize: u64) -> Self {
         let sampled = counts.values().sum();
         Self {
@@ -154,21 +230,6 @@ impl TypeDistribution {
             dbsize,
             truncated: is_sample_truncated(sampled, dbsize),
         }
-    }
-
-    /// [`Self::from_sample`] for a view that can never see the whole database.
-    ///
-    /// A cluster connection samples the one node its unkeyed `SCAN` / `DBSIZE`
-    /// happened to route to, so `dbsize` is a shard's count and the types are a
-    /// shard's sample: wrapping the cursor proves nothing about the keyspace.
-    /// `truncated` is therefore forced on (PRD §3.4 — a sample must never read
-    /// as an exact distribution), except when there is nothing to claim at all.
-    pub fn from_sharded_view(counts: BTreeMap<String, u64>, dbsize: u64) -> Self {
-        let mut dist = Self::from_sample(counts, dbsize);
-        if dist.sampled > 0 || dist.dbsize > 0 {
-            dist.truncated = true;
-        }
-        dist
     }
 }
 
@@ -398,6 +459,51 @@ fn unreadable_key_state() -> KeyObjectInfo {
     }
 }
 
+/// The transport capability the cluster path needs and [`ConnectionLike`]
+/// cannot express: naming the node a command runs on.
+///
+/// Left to itself, redis' cluster client picks the node from its own command-name
+/// table, which does not describe these probes — see the module docs for what
+/// that costs. Only [`Topology::Cluster`] asks for it.
+///
+/// A single-node connection has exactly one node, so the slot is vacuous and the
+/// default implementation just sends the command.
+pub trait SlotRoutedConnection: ConnectionLike {
+    /// Issue `cmd` against the master that owns `slot`.
+    fn command_at_slot<'a>(
+        &'a mut self,
+        cmd: &'a redis::Cmd,
+        _slot: u16,
+    ) -> RedisFuture<'a, RValue> {
+        self.req_packed_command(cmd)
+    }
+}
+
+impl SlotRoutedConnection for redis::aio::MultiplexedConnection {}
+
+impl<C> SlotRoutedConnection for redis::cluster_async::ClusterConnection<C>
+where
+    C: ConnectionLike + redis::cluster_async::Connect + Clone + Send + Sync + Unpin + 'static,
+{
+    fn command_at_slot<'a>(
+        &'a mut self,
+        cmd: &'a redis::Cmd,
+        slot: u16,
+    ) -> RedisFuture<'a, RValue> {
+        self.route_command(cmd, master_route(slot)).boxed()
+    }
+}
+
+/// Address a command at the master owning `slot` — the same route shape redis
+/// builds for a keyed command, but computed from the real key rather than from
+/// whatever token its table happens to read.
+fn master_route(slot: u16) -> RoutingInfo {
+    RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+        slot,
+        SlotAddr::Master,
+    )))
+}
+
 /// Issue a batch and return the raw per-command replies (see module docs).
 ///
 /// The outer `Err` is reserved for failures of the connection itself, i.e. a
@@ -425,7 +531,10 @@ where
 /// Used only on the per-command path, where an answered error (`OBJECT FREQ` on
 /// a non-LFU server, `MEMORY USAGE` below Redis 4.0) degrades a single field
 /// while an I/O, timeout or topology failure means the probe never ran and must
-/// not be dressed up as "no value".
+/// not be dressed up as "no value". A `MOVED` / `ASK` reaching this point means
+/// the redirects were exhausted, i.e. the cluster cannot serve the key right
+/// now — explicitly addressed probes (see [`SlotRoutedConnection`]) are what
+/// keeps that path quiet in the first place.
 fn is_connection_level_failure(error: &redis::RedisError) -> bool {
     error.is_io_error()
         || error.is_unrecoverable_error()
@@ -438,12 +547,10 @@ fn is_connection_level_failure(error: &redis::RedisError) -> bool {
         )
 }
 
-/// Issue one command per round trip, degrading answered errors to "no value".
-async fn single_command<C>(conn: &mut C, cmd: &redis::Cmd) -> Result<RValue, String>
-where
-    C: ConnectionLike + Send,
-{
-    match conn.req_packed_command(cmd).await {
+/// Shared tail of the per-command paths: sort "the server answered that it has
+/// no value for this field" from "the read never happened".
+fn fold_command_answer(answer: Result<RValue, redis::RedisError>) -> Result<RValue, String> {
+    match answer {
         Ok(value) => Ok(value),
         Err(error) if is_connection_level_failure(&error) => Err(error.to_string()),
         Err(error) => {
@@ -459,35 +566,68 @@ where
     }
 }
 
-/// Send a batch one command at a time — the cluster-safe form of
-/// [`pipeline_raw`], answering with one value per command.
-async fn sequential_raw<C>(conn: &mut C, pipe: &redis::Pipeline) -> Result<Vec<RValue>, String>
+/// Issue one command per round trip, addressed to `slot`, degrading answered
+/// errors to "no value" exactly like a single-node pipeline degrades one item.
+async fn routed_single<C>(conn: &mut C, cmd: &redis::Cmd, slot: u16) -> Result<RValue, String>
 where
-    C: ConnectionLike + Send,
+    C: SlotRoutedConnection + Send,
 {
-    let mut values = Vec::with_capacity(pipe.cmd_iter().count());
-    for cmd in pipe.cmd_iter() {
-        values.push(single_command(conn, cmd).await?);
+    fold_command_answer(conn.command_at_slot(cmd, slot).await)
+}
+
+/// Send a batch as one addressed command at a time — the cluster-safe form of
+/// [`pipeline_raw`], answering with one value per command.
+async fn routed_sequential<C>(
+    conn: &mut C,
+    pipe: &redis::Pipeline,
+    slot: u16,
+) -> Result<Vec<RValue>, String>
+where
+    C: SlotRoutedConnection + Send,
+{
+    let commands: Vec<&redis::Cmd> = pipe.cmd_iter().collect();
+    tracing::debug!(
+        slot,
+        commands = commands.len(),
+        "redis workbench: addressing every probe at one shard master"
+    );
+    let mut values = Vec::with_capacity(commands.len());
+    for cmd in commands {
+        values.push(routed_single(conn, cmd, slot).await?);
     }
     Ok(values)
 }
 
 /// Run a batch on the transport that keeps per-command errors per command.
+///
+/// `key_slot` is the slot the probed key hashes to. A single-node connection has
+/// one node, so it ignores the address.
 async fn issue_batch<C>(
     conn: &mut C,
     pipe: &redis::Pipeline,
     topology: Topology,
+    key_slot: u16,
 ) -> Result<Vec<RValue>, String>
 where
-    C: ConnectionLike + Send,
+    C: ConnectionLike + SlotRoutedConnection + Send,
 {
     match topology {
-        Topology::Cluster => sequential_raw(conn, pipe).await,
+        Topology::Cluster => routed_sequential(conn, pipe, key_slot).await,
         Topology::Standalone | Topology::Sentinel => pipeline_raw(conn, pipe).await,
     }
 }
 
 /// `DBSIZE` of the currently selected database (read once per command).
+///
+/// Deliberately **not** addressed, on any topology. `DBSIZE` is one of the
+/// commands redis' cluster table does describe — `MultiNode(AllMasters,
+/// Aggregate(Sum))` — so the client fans it out and adds the answers up, which
+/// is the `M` the context bar's "采样 N/M" label needs. Pinning it to the sample
+/// shard instead would report a shard's count as if it were the database's.
+/// Two consequences of that policy are documented in the module docs and in
+/// `progress.md`: the number spans the whole cluster, and one unreachable (or
+/// non-integer-answering) master fails the aggregate, so the command errors
+/// rather than reporting a partial total.
 async fn fetch_dbsize<C>(conn: &mut C) -> Result<u64, String>
 where
     C: ConnectionLike + Send,
@@ -497,6 +637,33 @@ where
         .await
         .map_err(|e| e.to_string())?;
     Ok(parse_opt_int(&raw).unwrap_or(0).max(0) as u64)
+}
+
+/// One `SCAN` round: `(next cursor, keys)`.
+///
+/// On a cluster the round is addressed to [`cluster_scan_anchor_slot`] because
+/// redis gives `SCAN` no route at all and falls back to a random node, which
+/// would pass one node's cursor to another. A rejected `SCAN` is a failed read,
+/// never an empty page, so — unlike [`routed_single`] — nothing is degraded
+/// here: any error aborts the sampling.
+async fn scan_round<C>(
+    conn: &mut C,
+    cursor: u64,
+    topology: Topology,
+) -> Result<(u64, Vec<String>), String>
+where
+    C: ConnectionLike + SlotRoutedConnection + Send,
+{
+    if !matches!(topology, Topology::Cluster) {
+        return crate::ops::scan_batch(conn, cursor, TYPE_SCAN_COUNT, None, None).await;
+    }
+    let mut cmd = redis::cmd("SCAN");
+    cmd.arg(cursor).arg("COUNT").arg(TYPE_SCAN_COUNT.max(1));
+    let raw = conn
+        .command_at_slot(&cmd, cluster_scan_anchor_slot())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(parse_scan_result(&raw))
 }
 
 /// Fill a bounded sample window with `SCAN`, stopping as soon as the window is
@@ -509,9 +676,13 @@ where
 /// stall every other command on the connection. Leaving early is always
 /// honest — `sampled` stays the number of keys actually typed, which makes
 /// `truncated` report the gap.
-async fn collect_sample<C>(conn: &mut C, limit: u64) -> Result<Vec<String>, String>
+async fn collect_sample<C>(
+    conn: &mut C,
+    limit: u64,
+    topology: Topology,
+) -> Result<Vec<String>, String>
 where
-    C: ConnectionLike + Send,
+    C: ConnectionLike + SlotRoutedConnection + Send,
 {
     let limit = limit as usize;
     let mut keys: Vec<String> = Vec::new();
@@ -519,8 +690,7 @@ where
     let mut rounds = 0u32;
     let mut stalled = 0u32;
     loop {
-        let (next, batch) =
-            crate::ops::scan_batch(conn, cursor, TYPE_SCAN_COUNT, None, None).await?;
+        let (next, batch) = scan_round(conn, cursor, topology).await?;
         rounds += 1;
         let seen_before = keys.len();
         keys.extend(batch);
@@ -553,21 +723,25 @@ where
 }
 
 /// Resolve `TYPE` for the sample: [`TYPE_PIPELINE_CHUNK`]-sized pipelines, or
-/// one command per key on a cluster connection (see the module docs).
+/// one addressed command per key on a cluster connection (see the module docs).
 async fn sample_types<C>(
     conn: &mut C,
     keys: &[String],
     topology: Topology,
 ) -> Result<BTreeMap<String, u64>, String>
 where
-    C: ConnectionLike + Send,
+    C: ConnectionLike + SlotRoutedConnection + Send,
 {
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     if matches!(topology, Topology::Cluster) {
         for key in keys {
             let mut cmd = redis::cmd("TYPE");
             cmd.arg(key);
-            if let Some(token) = parse_type_token(&single_command(conn, &cmd).await?) {
+            // Keys returned by the pinned shard's `SCAN` hash into that shard's
+            // slot range, so addressing by the key's own slot keeps the whole
+            // sample on one node.
+            let slot = get_slot(key.as_bytes());
+            if let Some(token) = parse_type_token(&routed_single(conn, &cmd, slot).await?) {
                 *counts.entry(token).or_insert(0) += 1;
             }
         }
@@ -596,31 +770,36 @@ where
 }
 
 /// Cursor-sampled type distribution for the selected database.
+///
+/// On a cluster the sample covers the single pinned shard of
+/// [`CLUSTER_SCAN_ANCHOR`] while `dbsize` is the whole cluster's count — see
+/// [`scan_round`] and [`fetch_dbsize`] for why each is addressed the way it is.
 pub async fn type_distribution<C>(
     conn: &mut C,
     requested_limit: Option<u64>,
     topology: Topology,
 ) -> Result<TypeDistribution, String>
 where
-    C: ConnectionLike + Send,
+    C: ConnectionLike + SlotRoutedConnection + Send,
 {
     let limit = sample_window_for(requested_limit, topology);
     let dbsize = fetch_dbsize(conn).await?;
-    let keys = collect_sample(conn, limit).await?;
+    let keys = collect_sample(conn, limit, topology).await?;
     let counts = sample_types(conn, &keys, topology).await?;
     let type_round_trips = match topology {
         Topology::Cluster => keys.len(),
         Topology::Standalone | Topology::Sentinel => keys.len().div_ceil(TYPE_PIPELINE_CHUNK),
     };
-    let result = match topology {
-        Topology::Cluster => TypeDistribution::from_sharded_view(counts, dbsize),
-        Topology::Standalone | Topology::Sentinel => TypeDistribution::from_sample(counts, dbsize),
-    };
+    let result = TypeDistribution::from_sample(counts, dbsize);
     tracing::info!(
         dbsize = result.dbsize,
         sampled = result.sampled,
         truncated = result.truncated,
         type_round_trips,
+        anchor_slot = match topology {
+            Topology::Cluster => cluster_scan_anchor_slot(),
+            Topology::Standalone | Topology::Sentinel => 0,
+        },
         topology = ?topology,
         "redis type_distribution done"
     );
@@ -628,16 +807,20 @@ where
 }
 
 /// Key attributes for the sidebar, in a single batch.
+///
+/// On a cluster the six commands go out one at a time, each addressed to the
+/// master owning [`get_slot(key)`], so none of them is left to redis'
+/// command-name table (see the module docs).
 pub async fn key_object_info<C>(
     conn: &mut C,
     key: &str,
     topology: Topology,
 ) -> Result<KeyObjectInfo, String>
 where
-    C: ConnectionLike + Send,
+    C: ConnectionLike + SlotRoutedConnection + Send,
 {
     let pipe = build_key_info_pipeline(key);
-    let values = issue_batch(conn, &pipe, topology).await?;
+    let values = issue_batch(conn, &pipe, topology, get_slot(key.as_bytes())).await?;
     if values.len() != KEY_INFO_PIPELINE_LEN {
         // `req_packed_commands` is an internal API whose contract is "one reply
         // per command". If that ever stops holding, reading the vector by slot

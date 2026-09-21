@@ -224,6 +224,11 @@ impl ConnectionLike for ScriptedConn {
     }
 }
 
+/// A single-node connection has exactly one node, so the address is vacuous and
+/// the default implementation (send it) is the honest one. Every journal
+/// assertion below keeps working unchanged; the cluster double overrides this.
+impl SlotRoutedConnection for ScriptedConn {}
+
 // --- contract helpers (pure) ------------------------------------------
 
 #[test]
@@ -827,6 +832,8 @@ impl ConnectionLike for ShortReplyConn {
         0
     }
 }
+
+impl SlotRoutedConnection for ShortReplyConn {}
 
 #[test]
 fn test_tester_type_distribution_json_shape_is_the_wave2_contract() {
