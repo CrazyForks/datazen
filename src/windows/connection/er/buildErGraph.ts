@@ -22,6 +22,11 @@ export interface ErPredictedRelation {
   toTable: string;
   columnPairs: readonly { left: string; right: string }[];
   score: number;
+  /**
+   * Another table matched these columns just as well. The engine will not pick one
+   * automatically, and the diagram must not present its guess as a certain one.
+   */
+  ambiguous?: boolean;
 }
 
 /**
@@ -43,6 +48,62 @@ export function defaultCollapsedTables(schemas: readonly TableSchema[]): Set<str
 
 /** Shared empty set, so the default argument does not allocate per call. */
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
+
+/** How quiet an ambiguous inference sits: still visible, never as loud as a constraint. */
+const AMBIGUOUS_OPACITY = 0.3;
+/**
+ * A label that lands on top of another line has to knock that line out behind it.
+ * React Flow's default chip is white, which disappears into the light theme's own
+ * whiteness and glares in the dark one, so it is taken from the surface token.
+ */
+const LABEL_BG_STYLE = { fill: 'var(--c-surface, #ffffff)' };
+const LABEL_BG_PADDING: [number, number] = [4, 2];
+const LABEL_BG_RADIUS = 3;
+/**
+ * An arrowhead is painted by a `<marker>`, which the line's own opacity does not
+ * reach: leaving it fully saturated would put a bright chevron on a faint line.
+ * `color-mix` is already a baseline here (globals.css).
+ */
+const AMBIGUOUS_MARKER_COLOR = `color-mix(in oklab, ${ER_PREDICTED_COLOR} ${AMBIGUOUS_OPACITY * 100}%, transparent)`;
+
+/**
+ * The column a line attaches to. Connection points live on rendered rows, so a
+ * name the table does not report would drop the edge entirely.
+ */
+function handleColumn(schema: TableSchema | undefined, wanted: string | undefined): string {
+  const columns = schema?.columns ?? [];
+  if (columns.length === 0) return '';
+  const needle = wanted?.toLowerCase();
+  const match = needle ? columns.find((c) => c.name.toLowerCase() === needle) : undefined;
+  return (match ?? columns[0]).name;
+}
+
+/**
+ * Collapse a relationship the engine guessed in both directions into one edge.
+ *
+ * `a.user_id → b.user_id` and `b.user_id → a.user_id` are the same unknown link
+ * seen twice; drawing both doubles the lines crossing the canvas without adding
+ * information. The stronger-scoring direction wins.
+ *
+ * Exported because the stats readout must count the lines that are actually drawn.
+ */
+export function dedupeSymmetricPredictions(
+  relations: readonly ErPredictedRelation[],
+): ErPredictedRelation[] {
+  const best = new Map<string, ErPredictedRelation>();
+  for (const relation of relations) {
+    const tables = [relation.fromTable, relation.toTable].sort();
+    const columns = relation.columnPairs
+      .flatMap((pair) => [pair.left, pair.right])
+      .map((name) => name.toLowerCase())
+      .sort()
+      .join(',');
+    const key = `${tables[0]}\u0000${tables[1]}\u0000${columns}`;
+    const existing = best.get(key);
+    if (!existing || relation.score > existing.score) best.set(key, relation);
+  }
+  return [...best.values()];
+}
 
 /**
  * Build the ER diagram's nodes and edges.
@@ -98,6 +159,13 @@ export function buildErGraph(
   }
 
   const visibleNames = new Set(visibleSchemas.map((s) => s.tableName));
+  const schemaByName = new Map(visibleSchemas.map((s) => [s.tableName, s]));
+  // The diagram draws the same guess only once even when the engine saw it from
+  // both ends, and it never shows a table that the focus filter has hidden.
+  const predictions = dedupeSymmetricPredictions(
+    predicted.filter((r) => visibleNames.has(r.fromTable) && visibleNames.has(r.toTable)),
+  );
+
 
   // Sizes are declared up front, exactly as `TableNode` renders them, and the
   // positions come from the layout below — never from the node's index.
@@ -132,6 +200,10 @@ export function buildErGraph(
   for (const schema of visibleSchemas) {
     for (const fk of schema.foreignKeys) {
       if (!visibleNames.has(fk.referencedTable)) continue;
+      // A composite key still draws as one line, anchored on its first column and
+      // labelled with all of them.
+      const fromColumn = handleColumn(schema, fk.columns[0]);
+      const toColumn = handleColumn(schemaByName.get(fk.referencedTable), fk.referencedColumns[0]);
       edges.push({
         id: `${schema.tableName}-${fk.name}`,
         source: schema.tableName,
@@ -140,21 +212,33 @@ export function buildErGraph(
         animated: true,
         style: { stroke: ER_DECLARED_COLOR },
         markerEnd: { type: MarkerType.ArrowClosed, color: ER_DECLARED_COLOR },
-        labelStyle: { fontSize: 10, fill: 'var(--color-fg-muted, #888)' },
+        labelStyle: { fontSize: 10, fill: 'var(--c-fg-muted, #888)' },
+        labelBgStyle: LABEL_BG_STYLE,
+        labelBgPadding: LABEL_BG_PADDING,
+        labelBgBorderRadius: LABEL_BG_RADIUS,
         // A composite foreign key spans several rows; the edge meets the first
-        // one, since a line has only one endpoint.
+        // column the table actually reports (never a name it does not have),
+        // while the label still lists them all.
         data: {
           kind: 'declared' satisfies ErRelationKind,
-          sourceColumn: fk.columns[0],
-          targetColumn: fk.referencedColumns[0],
+          sourceColumn: fromColumn || undefined,
+          targetColumn: toColumn || undefined,
           columns: [...fk.columns],
         },
       });
     }
   }
 
-  for (const relation of predicted) {
-    if (!visibleNames.has(relation.fromTable) || !visibleNames.has(relation.toTable)) continue;
+  for (const relation of predictions) {
+    const ambiguous = relation.ambiguous === true;
+    const fromColumn = handleColumn(
+      schemaByName.get(relation.fromTable),
+      relation.columnPairs[0]?.left,
+    );
+    const toColumn = handleColumn(
+      schemaByName.get(relation.toTable),
+      relation.columnPairs[0]?.right,
+    );
     edges.push({
       // The engine's id already encodes both tables and every column pair, so it
       // is stable across re-prediction and unique among sibling edges.
@@ -165,14 +249,25 @@ export function buildErGraph(
       // Not animated and dashed: this relationship is inferred, and the diagram
       // must not present it with the same certainty as a constraint.
       animated: false,
-      style: { stroke: ER_PREDICTED_COLOR, strokeDasharray: ER_PREDICTED_DASH },
-      markerEnd: { type: MarkerType.ArrowClosed, color: ER_PREDICTED_COLOR },
+      style: {
+        stroke: ER_PREDICTED_COLOR,
+        strokeDasharray: ambiguous ? '2 5' : ER_PREDICTED_DASH,
+        opacity: ambiguous ? AMBIGUOUS_OPACITY : 1,
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: ambiguous ? AMBIGUOUS_MARKER_COLOR : ER_PREDICTED_COLOR,
+      },
       labelStyle: { fontSize: 10, fill: ER_PREDICTED_COLOR },
+      labelBgStyle: LABEL_BG_STYLE,
+      labelBgPadding: LABEL_BG_PADDING,
+      labelBgBorderRadius: LABEL_BG_RADIUS,
       data: {
         kind: 'predicted' satisfies ErRelationKind,
         score: relation.score,
-        sourceColumn: relation.columnPairs[0]?.left,
-        targetColumn: relation.columnPairs[0]?.right,
+        ambiguous,
+        sourceColumn: fromColumn || undefined,
+        targetColumn: toColumn || undefined,
         columns: relation.columnPairs.map((pair) => pair.left),
       },
     });
@@ -259,7 +354,8 @@ function withHandles(edges: readonly Edge[], nodes: readonly Node[]): Edge[] {
     }
 
     const forward = target.x >= source.x;
-    const columns = (data as { columns?: string[] } | undefined)?.columns ?? [];
+    const typed = data as { columns?: string[]; ambiguous?: boolean } | undefined;
+    const columns = typed?.columns ?? [];
     // The label is placed between the two nodes, so it can only be as wide as the
     // gap between them.
     const gap = forward
@@ -270,7 +366,9 @@ function withHandles(edges: readonly Edge[], nodes: readonly Node[]): Edge[] {
 
     return {
       ...edge,
-      label: fitEdgeLabel(columns, Math.max(gap, 0)),
+      // An ambiguous guess carries no label: a clique of identical labels is
+      // precisely what made this diagram unreadable.
+      label: typed?.ambiguous ? undefined : fitEdgeLabel(columns, Math.max(gap, 0)),
       sourceHandle: handleId(data?.sourceColumn, 's', forward ? 'r' : 'l', source.collapsed),
       targetHandle: handleId(data?.targetColumn, 't', forward ? 'l' : 'r', target.collapsed),
     };
