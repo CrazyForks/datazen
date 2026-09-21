@@ -1,6 +1,6 @@
 # Track: import-guard — Bug 台账
 
-## import-guard-BUG-008 · Blocker · 待复测
+## import-guard-BUG-008 · Blocker · 已修复
 
 **标题**：护栏在本地全量检出红 8 条（作用域误把 gitignored 外部仓库树算作阻断范围）
 
@@ -58,4 +58,4 @@ node scripts/check-driver-import-boundaries.mjs   # EXIT=1，FAILED: 8 violation
 - 在**本仓跟踪**的驱动文件里注入 R1 → 仍 blocking 且 exit 1（证明降级只作用于外部树，没把口子开进本仓）。
 - `npx vitest run scripts` 全绿；覆盖数字如实更新；`npx tsc --noEmit` 0；`npx vite build` exit 0。
 
-**状态**：待修复 → **待复测**（接管代理补齐，修复 commit `17c3d5cc7` 代码+单测 / `485d75797` 文档回扫+Nit；主检出 `--root` 复跑 exit 0 + 12 advisory，本仓跟踪文件注入 R1 反证 exit 1，证据见本轨 `progress.md`「BUG-008 接管实施记录」）→ （全新 Tester 复测通过）已修复
+**状态**：待修复 → **待复测**（接管代理补齐，修复 commit `17c3d5cc7` 代码+单测 / `485d75797` 文档回扫+Nit；主检出 `--root` 复跑 exit 0 + 12 advisory，本仓跟踪文件注入 R1 反证 exit 1，证据见本轨 `progress.md`「BUG-008 接管实施记录」）→ **已修复**（第 2 轮全新 Tester 实例 66 次工具调用、10 项核查全绿；该实例在写记录时遭网络中断，正文由协调者从其 transcript 恢复，见 `progress.md`「BUG-008 第 2 轮复测记录」+ 协调者在合并后主检出的三条交叉核对。二次合流 `b22b41ac8`）

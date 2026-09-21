@@ -63,6 +63,8 @@ Wave 1~3 已把驱动侧对宿主代码的引用清零（`grep ['"]\.\./.*src/` 
 
 - [x] Coder 完成 → READY_FOR_TEST（commits `3e9014d91` 护栏+单测 / `b56058f46` 四处接入 / `d250e52de` 文档回扫 / `1a64ca904` 本实施记录 / `43e042341` 回扫口径修正，本报告末尾）
 - [x] Tester 复测 → **TEST_DONE(PASSED)**（复测记录见文末，本 commit）
+- [x] BUG-008 第 2 轮 Tester 复测（全新实例）→ **TEST_DONE(PASSED)**：该实例跑完全部核查后在写记录时遭网络中断，正文丢失；协调者从其 transcript 逐条恢复实测证据（见文末「BUG-008 第 2 轮复测记录」），并在合并后的主检出独立复跑关键门禁交叉核对。
+- [x] 二次合流 → `b22b41ac8`（`git merge --no-ff feature/import-guard`），合流后主检出护栏 exit 0 / 12 advisory、`vitest run scripts` 23/244、`tsc --noEmit` 0。
 
 ## Coder 实施记录
 
@@ -311,3 +313,53 @@ $ rm packages/drivers/redis/ui/testerProbe.ts && node scripts/check-driver-impor
 1. **任务书探针深度示例错误**（见 §2(b) 勘误）：不影响修复正确性，但后续 Tester 复测请按四级 `../` 注入，否则会误判「降级开了口子」。
 2. **fail-closed 语义延伸确认**：`git check-ignore` 判定的是「是否被 ignore」，故**新建未跟踪但未被 ignore** 的文件（如探针）同样按本仓源码 blocking——与裁定「作用域按是否被本仓跟踪判定」的字面（tracked-vs-untracked）略有出入，但方向更严格、不放水，判为符合裁定精神，单测例③④⑤已固化该行为。
 3. `ci-local.sh` 既有 `3.25/11`（version consistency）奇数编号系本轨之前遗留风格，未动。
+
+## BUG-008 第 2 轮复测记录（Tester 实例 `be50383b…` 实测 · 协调者自 transcript 恢复）
+
+**为什么这一节由协调者执笔**：该 Tester 是 BUG-008 修复后的全新独立实例，08:5x 起在 worktree
+`fda61f690` 上跑完 **66 次工具调用、10 项核查全部执行完毕**，最后一步（把记录写进 `progress.md`）
+时遭遇网络中断（`Unable to connect to the service, or the connection was interrupted.`，09:06），
+正文随之丢失，工作区只留下一行指向不存在章节的 `TEST_DONE(PASSED)` 勾选。协调者当时的处置是
+「无正文的结论不采信」并重派全新实例；重派实例只跑到读文档阶段（6 次工具调用，同样中断），
+于是改为**从该 Tester 的会话 transcript 逐条恢复其原始命令与输出**——下表每一项都是它本人的实测，
+不是协调者重跑，也不是它继承的上一轮结论。
+
+**协调者独立交叉核对**（合并到基准分支 `b22b41ac8` 之后，在主检出重跑最承重的三条门禁，10:15）：
+主检出 `node scripts/check-driver-import-boundaries.mjs` → **EXIT=0 / 1489 files / 0 blocking / 12 advisory
+逐条点名**；`npx vitest run scripts` → **23 files / 244 tests 全绿**；`npx tsc --noEmit -p tsconfig.json` → **0 error**。
+三条与被恢复的记录完全一致，故接受其 PASSED 判定。
+
+### 10 项核查逐条（恢复自 transcript 的原始输出）
+
+| # | 核查 | 该 Tester 实测（原文摘要） | 判定 |
+| --- | --- | --- | --- |
+| 1 | 主检出全量复现（BUG-008 症状消失） | `--root` 指主检出 → `ok (1489 file(s) scanned · 0 blocking violation(s) · 12 advisory finding(s))`，EXIT=0；advisory 构成 = superset R1×2 + editor-pro R2×6 + R3×4，逐条带 `external (untracked) repo — contract drift to be fixed in that repo, not here`（R3 四条为既有 advisory，无该后缀） | ✅ 8 条红 → 0 阻断 / 12 advisory，与验收附加条款「advisory 总数 12」一致 |
+| 2 | worktree 侧不回退 | basic codegen 下 `ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))`，EXIT=0 | ✅ |
+| 3 | **反证：降级没有放水**（四级 `../` 注入） | 本仓跟踪文件注入后 `R1 packages/drivers/redis/ui/tester2Forms.ts:1/2/3`（`from` / `vi.mock` / 动态 `import()` 三形态同批命中）照样 blocking、EXIT=1；`tester2ProbeDeep.ts`（四级 useI18n）+ `tester2ProbeDeep2.ts`（五级 cn）→ `shallow_ignored_exit=1 (1=not ignored/tracked-scope)`；还原后 `git status` 空、EXIT=0 | ✅ 阻断仍生效；采纳接管记录的「探针必须四级」口径，三级 `packages/src/...` 反例已单独验过为 0 命中 |
+| 4 | 分类按「是否被 ignore」而非目录白名单 | 在 gitignored 外部树里现造探针：`olapclone_ignored=0 proext_ignored=0` → `packages/drivers/olapclone/ui/tester2Ext.ts` R1、`packages/pro-extensions/tester2probe/src/tester2Ext.ts` R2 **都只报 advisory 且点名**；未跟踪但未被 ignore 的临时文件按 tracked 处理 | ✅ 探针全部清理（协调者复核：`packages/drivers/olapclone`、`packages/pro-extensions/tester2probe` 均已不存在，全仓 `tester2*` 零残留） |
+| 5 | fail-closed 语义 | 主检出把 `git` 从 PATH 摘掉 → `EXIT(git missing, main checkout) = 1`（无法判定即按 tracked → blocking，门禁不被环境损坏放松）；对非 git 目录跑 → `fatal: 不是 git 仓库` + EXIT=1 | ✅ |
+| 6 | `git check-ignore` 不在遍历热路径 | PATH 垫片计数：一次干净的全量扫描 **total git invocations: 4**，参数逐条为 4 个*违规文件*的 `check-ignore -q -- <file>`（superset×2 + editor-pro×2 文件），1489 文件耗时 1.756s | ✅ 违规数级别而非法文件数级别，符合裁定 |
+| 7 | 豁免额度未膨胀 | 断言 `ALLOWLIST` 恰 2 条且全为 R1 + `redisKeyWebContextMenu.test.tsx`、无 glob；`R2_FILE_CARVEOUTS` 恰 2 个精确文件 | ✅ superset / editor-pro 未占用任何豁免位（与裁定一致） |
+| 8 | 过期豁免双向检测仍红 | `file-missing EXIT=1`（`gone.test.tsx` 指向不存在文件）；`no-match EXIT=1`（`decoupledAlready` 已无对应违规） | ✅ 第 1 轮能力未回退 |
+| 9 | 单测与覆盖如实 | 本轨文件单独跑 **36 passed**；`npx vitest run scripts` **23 files / 244 tests** 全绿；覆盖 json 逐条解析：**未覆盖语句恰 2 处 = `:444`/`:450`（`walk()` 目录过滤 continue）**，未触发分支 8 处 = 上述 2 + `:275`/`:305`/`:379`/`:524`/`:525`/`:630` 的 `??`/默认参数兜底 | ✅ 与契约 2.6 单测格登记的行号**逐字一致**（接管记录重定位的坐标成立） |
+| 10 | 基线零回归 | `tsc --noEmit` 0（`--drivers=all` 与 `basic` 两档）；redis UI **27 files / 222**；全驱动 **33 / 241**；宿主 **412 / 4243**；`npx vite build` EXIT=0；`check-id-terminology` / `check-module-layers` / `check-ci-docs-consistency` 全 EXIT=0 | ✅ |
+
+### 越界与只读性核验
+
+- `git diff -M 8b66586e4..HEAD` 仅 11 个文件（护栏脚本 + 其单测 + 5 个接入/文档 + 本轨 progress/bugs），
+  `packages/ui/src/i18n.ts` 与 `src-tauri/**` 未出现在 diff 中；未提交任何 codegen 产物；未触碰 `hub.md`。
+- 两份驱动指南标题数 `zh-CN 21 / en 21`，逐行 diff 完全一致（结构未偏斜）。
+- 外部仓只读：探针只建在 gitignored 目录且事后删除；主检出 `git status` 全程仅既有脏文件。
+
+### 遗留观察（登记事实，不构成本轨缺陷，交协调者裁定）
+
+1. **`packages/drivers/superset` 自身有未提交改动**：`M ui/SupersetConnectionFields.tsx`、`M ui/SupersetSchemaTree.tsx`、
+   `M ui/plugin-meta.ts`、`?? .DS_Store` —— 前两个正是 2 条 R1 advisory 的所在文件。属该外部仓自己的漂移，
+   按裁定由该仓整改，本仓不改（移交项见 2.4.2 / `bugs.md` 裁定第 6 条）。
+2. **`npx prettier --check` 对护栏脚本与其单测报 warn**，但同批对既有 `check-id-terminology.mjs` 等仓库内多个
+   脚本一并报 warn，且 CI 无 prettier 门禁 → 判定为全仓既有风格欠账，**非本轨回归**，未登记 Bug。
+
+### 结论
+
+**TEST_DONE(PASSED)**：`import-guard-BUG-008` 的三条验收增补与第 1 轮 8 条验收全部实测通过，
+无新增 Bug，本 Tester 未改 `bugs.md`（状态流转归协调者）。协调者据此完成第二次合流 `b22b41ac8`。

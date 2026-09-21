@@ -20,6 +20,8 @@
 | cap-bridge | — | 未开始 | — | — | — |
 | decouple-docs | — | 未开始 | — | — | — |
 | i18n-drivers | — | 未开始 | — | — | — |
+| import-guard | boundaries`，一行即可，请裁定。 | 未开始 | — | — | — |
+| r-phase | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -37,6 +39,8 @@
 | cap-bridge | — | — | `feature/cap-bridge`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
 | decouple-docs | — | — | `feature/decouple-docs`（基准 `feat/driver-decoupling` @ d172476fc） | 未开始 | — |
 | i18n-drivers | — | — | `feature/i18n-drivers`（基准 `feat/driver-decoupling` @ d172476fc，已含 Wave 1 全部 + i18n-core + cap-bridge） | 未开始 | — |
+| import-guard | 31/232`、`CONTRIBUTING.md:91`、`.gitignore:64` 仍描述已退役的 `src/extensions/generated-locales.ts`（`i18n-drivers` 轨已登记给 `decouple-docs`/hub，本轨无权限改，维持原登记）。 | *` 均触发 deps-check 且无 TTY 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`（既有 `pnpm test:ids` 复现完全相同）；新接线与既有 guard 同构，CI 首步 `pnpm install` 后即正常。 | 15）： | 未开始 | — |
+| r-phase | — | — | `feature/r-phase`（基准 = Wave 4-A `import-guard` 合并后的 `feat/driver-decoupling` HEAD） | 未开始 | — |
 
 ## 波次记录
 

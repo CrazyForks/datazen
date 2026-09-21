@@ -342,7 +342,7 @@ function RedisConsole() {
 | 脚本 | `scripts/check-driver-import-boundaries.mjs`（导出纯函数 + `runCli()` + `process.argv[1].endsWith(...)` main 守卫，与 `check-id-terminology.mjs` / `check-module-layers.mjs` 同构） |
 | npm script | `pnpm test:boundaries` |
 | CI | `.github/workflows/ci.yml` 步骤 **`Guard driver/host import boundaries`**（位于 `Guard version consistency` 之后、`Guard i18n sync (warning only)` 之前） |
-| 本地等价 | `scripts/ci-local.sh` 步骤 `3.3/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries` |
+| 本地等价 | `scripts/ci-local.sh` 步骤 `3.3/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries`；`scripts/run-regression.sh` 步骤 `1/7`（合并前全量门禁首步，秒级失败即停） |
 | 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（**36 例**：内联虚拟文件树 fixture 覆盖三条规则、豁免路径与 BUG-008 跟踪域分类〔ignored 外部树降 advisory / tracked 照样 blocking / 虚拟树默认全 tracked / 真实仓 predicate 命中并缓存 / git 不可用 fail-closed〕 + 真实仓库 `runCli` 用例。本轨新增脚本实测覆盖：行 **100%** / 语句 99.31% / 分支 95.72% / 函数 100%。未覆盖语句仅 2 处，位于 `walk()` 的真实文件系统目录遍历过滤器（`:444` 的 `SKIP_DIR_NAMES` continue、`:450` 的 `!entry.isFile()` continue）；其余 6 处未触发分支是 `??`/默认参数兜底（`:275`/`:305` 转义符恰在文件末尾、`:379` 取行文本兜底、`:524`/`:525` `opts.log`/`opts.error` 默认值、`:630` `opts.argv` 默认值），均非规则与豁免逻辑） |
 
 三条规则与退出码：

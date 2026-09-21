@@ -50,7 +50,7 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 | i18n-drivers R-7（O-3） | 驱动 UI 依赖宿主 key（`common.*` 32 / `newConn.*` 22 / `sqlserver.*` 4）在换源后仍命中；宿主字典在渲染前注册完毕 | 单测层已证明；GUI 走查新建连接表单（redis / sqlserver）与工作台菜单文案 |
 | i18n-drivers R-8（O-1） | 保留 10 语言档：补「扩展经 `registerLocale()` 引入第 3 语言时驱动词条命中」的手工验证 | 可用 `packages/ui` 单测证明（`registerTranslations` + 第三 locale 快照），无需 GUI |
 | decouple-docs | ②⑤⑥ 文档回扫：2.6 落实名、2.1.2/2.7 基线数字改「生产码 0 / 夹具 2」、3 条 Nit | **Wave 4-A 已并入其范围第 5 条**；本轨只做抽验（文档内路径/符号逐条 Read 核实，零失配） |
-| import-guard | 新护栏纳入全量回归清单 + 注入/还原自证复跑 | A 门禁 + 本轨独立复做一次「注入红 → 还原绿」 |
+| import-guard | 新护栏纳入全量回归清单 + 注入/还原自证复跑 | A 门禁 + 本轨独立复做一次「注入红 → 还原绿」。〔Wave 4-A 关账时 `scripts/run-regression.sh` 已把护栏加为**步骤 1/7**（秒级失败即停，放在 10 分钟级 cargo 之前），契约 2.6「本地等价」行同步登记第 5 个接入点；R 阶段只需复跑该脚本确认编号与耗时口径，不必再接线〕 |
 | fix-redis-tests / types-to-sdk | 无 E2E | N/A（仅门禁数字对齐） |
 
 ## C. E2E / GUI 项处置（协调者裁定）
