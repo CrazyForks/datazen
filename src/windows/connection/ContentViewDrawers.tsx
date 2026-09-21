@@ -9,6 +9,7 @@ import { DetailPanel } from '../../components/DataTable/DetailPanel';
 import { AiChatPanel } from '../../components/ai/AiChatPanel';
 import type { ColumnSchema, DatabaseType } from '../../types';
 import type { AiChatDraftRequest } from './query/aiDraftBridge';
+import type { KvKeyPropsSidebarBinding } from './useKvWorkspaceSlots';
 
 const NO_COLUMNS: ColumnSchema[] = [];
 const NO_ROWS: Record<string, unknown>[] = [];
@@ -22,6 +23,15 @@ export interface ContentViewDrawersProps {
   dbSessionId: string;
   currentDatabase: string | null;
   databaseType: DatabaseType | undefined;
+  /** Collapse request wired to the driver's own close control. */
+  onCloseDetail: () => void;
+  /**
+   * Driver-contributed key-props sidebar for a KV panel's detail drawer. Present ⇒
+   * the drawer renders it instead of the row-detail table, which on a KV panel was
+   * an empty grid behind a working-looking toggle (P-3). Absent ⇒ the row table,
+   * unchanged.
+   */
+  keyPropsSidebarSlot?: KvKeyPropsSidebarBinding;
   /** S3-B2: pending AI draft request from ContentView coordinator. */
   pendingDraftRequest: AiChatDraftRequest | null;
   /** S3-B2: called after AiChatPanel writes the draft to its textarea. */
@@ -42,6 +52,8 @@ export function ContentViewDrawers({
   dbSessionId,
   currentDatabase,
   databaseType,
+  onCloseDetail,
+  keyPropsSidebarSlot,
   pendingDraftRequest,
   onDraftConsumed,
 }: ContentViewDrawersProps) {
@@ -126,21 +138,38 @@ export function ContentViewDrawers({
     [activePanel, activeQueryExec, updateResultCell, selectedRows],
   );
 
+  const Sidebar = keyPropsSidebarSlot?.Component;
+
   return (
     <>
-      {detailPanelApplicable && (
-        <DetailPanel
-          open={detailOpen}
-          columns={detailColumnDefs}
-          row={detailRow}
-          rowIndex={detailRowIdx}
-          selectedRows={
-            activePanel?.type === 'table' || activePanel?.type === 'view' ? selectedRows : undefined
-          }
-          editable
-          onFieldEdit={handleDetailFieldEdit}
-        />
-      )}
+      {detailPanelApplicable &&
+        (Sidebar && keyPropsSidebarSlot ? (
+          // KV panel with a driver-contributed key-props sidebar: the same drawer
+          // slot now carries real content instead of an empty row grid (P-3).
+          // The sidebar owns its own container (width / border / scroll) just like
+          // DetailPanel does, and is expected to render nothing while `open` is false.
+          <div
+            data-slot="kv-key-props-sidebar"
+            data-testid="conn-kv-key-props-sidebar"
+            className="flex min-w-0 shrink-0"
+          >
+            <Sidebar {...keyPropsSidebarSlot.props} open={detailOpen} onClose={onCloseDetail} />
+          </div>
+        ) : (
+          <DetailPanel
+            open={detailOpen}
+            columns={detailColumnDefs}
+            row={detailRow}
+            rowIndex={detailRowIdx}
+            selectedRows={
+              activePanel?.type === 'table' || activePanel?.type === 'view'
+                ? selectedRows
+                : undefined
+            }
+            editable
+            onFieldEdit={handleDetailFieldEdit}
+          />
+        ))}
 
       {aiChatOpen && dbSessionId && (
         <>

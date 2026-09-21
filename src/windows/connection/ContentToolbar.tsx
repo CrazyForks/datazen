@@ -19,6 +19,7 @@ import { tid } from '../../lib/tid';
 import { DetailPanelToggle } from '../../components/DataTable/DetailPanelToggle';
 import { ToolbarShell } from '../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../components/ui/ToolbarButton';
+import type { KvContextBarBinding } from './useKvWorkspaceSlots';
 
 /** Minimum toolbar width (px) to show text labels for the visible left-side actions. */
 export function contentToolbarExpandedMinWidth({
@@ -62,6 +63,12 @@ export interface ContentToolbarProps {
   aiChatOpen: boolean;
   detailPanelApplicable: boolean;
   detailOpen: boolean;
+  /**
+   * Driver-contributed KV context bar for the 48px left cluster. Absent (or not
+   * provided by this build) ⇒ the toolbar keeps its plain spacer, exactly as
+   * before KV slots existed.
+   */
+  contextBarSlot?: KvContextBarBinding;
   onNewQuery: () => void;
   onCreateTable: () => void;
   onOpenErDiagram: () => void;
@@ -81,6 +88,7 @@ export function ContentToolbar({
   aiChatOpen,
   detailPanelApplicable,
   detailOpen,
+  contextBarSlot,
   onNewQuery,
   onCreateTable,
   onOpenErDiagram,
@@ -100,9 +108,24 @@ export function ContentToolbar({
     detailPanelApplicable,
   });
   const { ref: toolbarRef, compact } = useCompactToolbar(expandedMinWidth);
+  const ContextBar = contextBarSlot?.Component;
 
   return (
     <ToolbarShell ref={toolbarRef} className="h-12 min-h-[48px] px-3">
+      {/*
+        KV context bar: the driver's 48px left cluster. It takes the spacer's
+        flex-1 so the band is actually filled instead of pushing an empty gap
+        into the middle (P-1). Absent ⇒ the plain spacer below, unchanged.
+      */}
+      {ContextBar && contextBarSlot && (
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2"
+          data-slot="kv-context-bar"
+          data-testid="conn-toolbar-kv-context-bar"
+        >
+          <ContextBar {...contextBarSlot.props} compact={compact} />
+        </div>
+      )}
       {showNewQuery && (
         <ToolbarButton
           compact={compact}
@@ -173,7 +196,7 @@ export function ContentToolbar({
         />
       )}
 
-      <div className="flex-1" />
+      {!ContextBar && <div className="flex-1" />}
 
       <ToolbarButton
         compact

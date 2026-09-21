@@ -2,6 +2,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { usePlatform } from '../../hooks/usePlatform';
 import { getDbLabel } from '../../lib/databaseTypes';
 import type { DatabaseType } from '../../types';
+import type { KvStatusBarBinding } from './useKvWorkspaceSlots';
 
 export interface ContentStatusBarProps {
   databaseType?: DatabaseType;
@@ -10,6 +11,12 @@ export interface ContentStatusBarProps {
   tableName: string;
   columnCount: number;
   totalRows: number;
+  /**
+   * Driver-contributed KV status bar. When present it takes the centre cluster —
+   * which is always empty on a KV panel — and the rest of the footer is untouched,
+   * so a driver without the `statusBar` capability keeps the byte-identical footer.
+   */
+  statusBarSlot?: KvStatusBarBinding;
 }
 
 export function ContentStatusBar({
@@ -19,12 +26,14 @@ export function ContentStatusBar({
   tableName,
   columnCount,
   totalRows,
+  statusBarSlot,
 }: ContentStatusBarProps) {
   const { t } = useI18n();
   const platform = usePlatform();
   const isMac = platform === 'macos';
   const mod = isMac ? '⌘' : 'Ctrl';
   const keySep = isMac ? '' : '+';
+  const Slot = statusBarSlot?.Component;
 
   return (
     <footer
@@ -35,18 +44,28 @@ export function ContentStatusBar({
         <span className="inline-flex h-2 w-2 rounded-full bg-success" aria-hidden="true" />
         <span>{t('connWin.connected')}</span>
       </div>
-      <div className="min-w-0 flex-1 truncate px-4 text-center text-fg-muted">
-        {[
-          databaseType ? getDbLabel(databaseType) : null,
-          connectionName || null,
-          currentDatabase,
-          tableName,
-          columnCount > 0 && `${columnCount} ${t('connWin.fields')}`,
-          totalRows > 0 && `${totalRows} ${t('connWin.rowCount')}`,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </div>
+      {Slot && statusBarSlot ? (
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2 px-4"
+          data-slot="kv-status-bar"
+          data-testid="conn-status-kv-bar"
+        >
+          <Slot {...statusBarSlot.props} />
+        </div>
+      ) : (
+        <div className="min-w-0 flex-1 truncate px-4 text-center text-fg-muted">
+          {[
+            databaseType ? getDbLabel(databaseType) : null,
+            connectionName || null,
+            currentDatabase,
+            tableName,
+            columnCount > 0 && `${columnCount} ${t('connWin.fields')}`,
+            totalRows > 0 && `${totalRows} ${t('connWin.rowCount')}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </div>
+      )}
       <div className="shrink-0 text-fg-muted">
         <kbd className="font-mono">
           {mod}

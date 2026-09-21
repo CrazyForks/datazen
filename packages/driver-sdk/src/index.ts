@@ -15,7 +15,11 @@ export type {
 } from '../../../src/lib/sqlDialects/types';
 
 // === Database metadata ===
-export type { DatabaseTypeMeta, ConnectionMode } from '../../../src/lib/databaseMeta';
+export type {
+  DatabaseTypeMeta,
+  ConnectionMode,
+  KvWorkspaceCapabilities,
+} from '../../../src/lib/databaseMeta';
 export type { DatabaseObjectKind, TableSchema, TableInfo } from '../../../src/types';
 
 // === SQL function catalog types ===
@@ -41,6 +45,17 @@ export type {
   ConnectionViewActions,
   ConnectionViewProps,
 } from './types/connection-view';
+
+// === KV workspace slot props (host shell ↔ driver KV slots) ===
+export type {
+  KvSlotName,
+  KvSlotState,
+  KvPanelSlotProps,
+  KvContextBarProps,
+  KvStatusBarProps,
+  KeyPropsSidebarProps,
+  ConnectionHomeSlotProps,
+} from './types/kv-slots';
 
 /**
  * Driver form validator: receives raw field values and i18n `t()`,

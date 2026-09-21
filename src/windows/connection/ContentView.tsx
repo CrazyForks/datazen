@@ -23,6 +23,8 @@ import { PanelContentRenderer } from './PanelContentRenderer';
 import { usePanelHandlers } from './usePanelHandlers';
 import { useConnectionContextMenu } from './useConnectionContextMenu';
 import { useConnectionWorkspaceMeta } from './useConnectionWorkspaceMeta';
+import { useKvWorkspaceSlots } from './useKvWorkspaceSlots';
+import { pruneKvSlotStates } from '../../lib/kvSlotState';
 import { ContentViewDialogs } from './ContentViewDialogs';
 import { ContentViewDrawers } from './ContentViewDrawers';
 import { ConnectionWorkspaceHome } from './ConnectionWorkspaceHome';
@@ -107,6 +109,8 @@ export function ContentView({
     connectingDbType,
     recentPanels,
     statusDatabase,
+    isKvPanel,
+    connectionId,
   } = useConnectionWorkspaceMeta(activePanel);
 
   const [aiChatOpen, setAiChatOpen] = useState(false);
@@ -144,6 +148,24 @@ export function ContentView({
     activePanel != null &&
     (activePanel.type !== 'table' || activePanel.subTab === 'data') &&
     (activePanel.type !== 'view' || (activePanel as ViewPanel).subTab === 'data');
+
+  const closeDetail = useCallback(() => setDetailOpen(false), []);
+
+  // Driver-contributable KV surfaces (context bar / status bar / key-props sidebar /
+  // connection home). Every binding stays `undefined` unless the driver both declares
+  // the capability and contributed a component, so non-KV and pre-Wave-2 drivers render
+  // exactly as before.
+  const kvSlots = useKvWorkspaceSlots({
+    activePanel,
+    isKvPanel,
+    databaseType,
+    database: statusDatabase,
+    dbSessionId,
+    connectionId,
+    connectionName,
+    connectionContext: sidebarConnCtx,
+    initialDatabase,
+  });
 
   const resolveTableSchema = useCallback(
     (table: string): string | null => {
@@ -187,6 +209,7 @@ export function ContentView({
     for (const panelId of store.byPanel.keys()) {
       if (!liveIds.has(panelId)) store.removePanel(panelId);
     }
+    pruneKvSlotStates(liveIds);
   }, [allPanels]);
 
   // Keep the session-level `currentDatabase` aligned with the ACTIVE panel's
@@ -404,6 +427,7 @@ export function ContentView({
           aiChatOpen={aiChatOpen}
           detailPanelApplicable={detailPanelApplicable}
           detailOpen={detailOpen}
+          contextBarSlot={kvSlots.contextBar}
           onNewQuery={() => handlers.handleNewQuery()}
           onCreateTable={handlers.handleCreateTable}
           onOpenErDiagram={() => handlers.handleOpenErDiagram()}
@@ -452,6 +476,7 @@ export function ContentView({
                   currentConnectionId: sidebarConnCtx?.connectionId,
                 });
               }}
+              connectionHomeSlot={kvSlots.connectionHome}
             />
           ) : (
             <PanelContentRenderer
@@ -469,6 +494,7 @@ export function ContentView({
               onUpdatePanelData={(id, data) =>
                 storeUpdatePanel(id, data as Parameters<typeof storeUpdatePanel>[1])
               }
+              kvSlotState={kvSlots.panelState}
               callbacks={callbacks}
             />
           )}
@@ -482,6 +508,8 @@ export function ContentView({
           dbSessionId={dbSessionId}
           currentDatabase={currentDatabase}
           databaseType={databaseType}
+          onCloseDetail={closeDetail}
+          keyPropsSidebarSlot={kvSlots.keyPropsSidebar}
           pendingDraftRequest={pendingDraftRequest}
           onDraftConsumed={handleDraftConsumed}
         />
@@ -495,6 +523,7 @@ export function ContentView({
           tableName={tableName ?? ''}
           columnCount={tableColumns.length}
           totalRows={totalRows}
+          statusBarSlot={kvSlots.statusBar}
         />
       )}
 

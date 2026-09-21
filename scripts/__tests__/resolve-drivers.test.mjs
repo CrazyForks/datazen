@@ -10,7 +10,13 @@ import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { resolveDrivers, resolveDriverIconImport, wantsCodegenOnly } from '../resolve-drivers.mjs';
+import {
+  resolveDrivers,
+  resolveDriverIconImport,
+  wantsCodegenOnly,
+  collectDriverKvSlotEntries,
+  KV_SLOT_NAMES,
+} from '../resolve-drivers.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -151,5 +157,76 @@ describe('resolveDriverIconImport', () => {
     expect(
       resolveDriverIconImport('../../packages/drivers/redis/ui/shared/meta', 'no-such-db-type'),
     ).toBeNull();
+  });
+});
+
+describe('collectDriverKvSlotEntries', () => {
+  it('keeps the generator slot list in sync with the frozen KvSlotName contract', () => {
+    const src = readFileSync(
+      resolve(ROOT, 'packages/driver-sdk/src/types/kv-slots.ts'),
+      'utf8',
+    );
+    const match = /export type KvSlotName = ([^;]+);/.exec(src);
+    expect(match).not.toBeNull();
+    const sdkSlots = match[1]
+      .split('|')
+      .map((s) => s.trim().replace(/'/g, ''))
+      .filter(Boolean);
+    expect(KV_SLOT_NAMES).toEqual(sdkSlots);
+  });
+
+  it('emits nothing for a driver that declares no kvSlots block', () => {
+    const config = {
+      postgres: { dbTypes: [{ id: 'postgresql' }] },
+    };
+    expect(collectDriverKvSlotEntries(config, ['postgres'])).toEqual([]);
+  });
+
+  it('treats every slot as optional so an unfilled path never has to exist', () => {
+    const config = {
+      redis: {
+        dbTypes: [{ id: 'redis' }],
+        kvSlots: {
+          statusBar: { component: 'RedisStatusBar', path: '../drivers/redis/ui/kvSlots' },
+          home: undefined,
+        },
+      },
+    };
+    expect(collectDriverKvSlotEntries(config, ['redis'])).toEqual([
+      {
+        dbType: 'redis',
+        slot: 'statusBar',
+        component: 'RedisStatusBar',
+        path: '../drivers/redis/ui/kvSlots',
+      },
+    ]);
+  });
+
+  it('drops half-declared slots (component or path missing)', () => {
+    const config = {
+      redis: {
+        dbTypes: [{ id: 'redis' }],
+        kvSlots: {
+          contextBar: { component: 'OnlyComponent' },
+          keyPropsSidebar: { path: '../drivers/redis/ui/kvSlots' },
+        },
+      },
+    };
+    expect(collectDriverKvSlotEntries(config, ['redis'])).toEqual([]);
+  });
+
+  it('fans one contribution out over every dbType of the driver', () => {
+    const config = {
+      family: {
+        dbTypes: [{ id: 'redis' }, { id: 'valkey' }],
+        kvSlots: {
+          contextBar: { component: 'KvContextBar', path: '../drivers/family/ui/kvSlots' },
+        },
+      },
+    };
+    expect(collectDriverKvSlotEntries(config, ['family']).map((e) => e.dbType)).toEqual([
+      'redis',
+      'valkey',
+    ]);
   });
 });

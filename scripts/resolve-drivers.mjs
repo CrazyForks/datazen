@@ -182,8 +182,48 @@ function generateCargoFeatures(drivers, registry) {
  * - metaPath: path to the file exporting meta objects
  * - connectionForm: { component, path, formVariant, advanced? } — custom connection form (optional)
  * - connectionView: { component, path, viewMode } — custom connection window view (optional)
+ * - kvSlots: { contextBar?, statusBar?, keyPropsSidebar?, connectionHome? } — KV workspace slot
+ *   components, each `{ component, path }` (optional; every slot is independent, so a
+ *   driver may fill one, several, or none. The host only ever asks for a slot whose
+ *   `kvWorkspace` capability the driver's meta declares.)
  * - sqlDialects: array of { family, export, path } — SQL dialect strategies (optional)
  */
+/**
+ * KV workspace slot names a driver may contribute a component for.
+ * Mirrors `KvSlotName` in `packages/driver-sdk/src/types/kv-slots.ts`.
+ */
+export const KV_SLOT_NAMES = ['contextBar', 'statusBar', 'keyPropsSidebar', 'connectionHome'];
+
+/**
+ * Collect KV workspace slot contributions as `{ dbType, slot, component }` entries.
+ *
+ * Optional by design: contributions are read from `cfg.kvSlots` slot by slot, so a
+ * driver that declares no `kvSlots` block (or only part of it) generates no import
+ * and no registry row — nothing on disk has to exist for a slot the driver does not
+ * fill. Entries fan out over the driver's dbTypes because the host resolves a slot
+ * by the panel's database type.
+ *
+ * @param {Record<string, any>} [config] driver id → frontend config
+ * @param {string[]} [ids] driver ids to read (defaults to every key of `config`)
+ */
+export function collectDriverKvSlotEntries(config = FRONTEND_DRIVER_CONFIG, ids) {
+  const entries = [];
+  for (const id of ids ?? Object.keys(config)) {
+    const cfg = config[id];
+    const slots = cfg?.kvSlots;
+    if (!slots) continue;
+    const dbTypes = (cfg.dbTypes ?? []).map(dt => dt.id);
+    for (const slot of KV_SLOT_NAMES) {
+      const slotCfg = slots[slot];
+      if (!slotCfg?.component || !slotCfg?.path) continue;
+      for (const dbType of dbTypes) {
+        entries.push({ dbType, slot, component: slotCfg.component, path: slotCfg.path });
+      }
+    }
+  }
+  return entries;
+}
+
 /** Protocol-reuse dbTypes → parent dbType used for composite badges when own SVG is missing. */
 const DRIVER_ICON_PARENT = {
   questdb: 'postgresql',
@@ -389,6 +429,9 @@ function generateFrontendRegistry(drivers) {
   const dialectEntryLines = [];
   const schemaTreeEntryLines = [];
   const connectionViewEntryLines = [];
+  const kvSlotEntryLines = [];
+  /** path → set of KV slot component bindings (one import statement per file). */
+  const kvSlotImportsByPath = new Map();
   const settingsEntryLines = [];
   const driverDbTypes = [];
   const iconImportByAbs = new Map();
@@ -469,6 +512,20 @@ function generateFrontendRegistry(drivers) {
       );
     }
 
+    // KV workspace slots (context bar / status bar / key-props sidebar / home).
+    // Each slot is optional: undeclared slots generate neither import nor entry.
+    for (const slot of collectDriverKvSlotEntries(FRONTEND_DRIVER_CONFIG, [id])) {
+      const imports = kvSlotImportsByPath.get(slot.path);
+      if (imports) {
+        imports.add(slot.component);
+      } else {
+        kvSlotImportsByPath.set(slot.path, new Set([slot.component]));
+      }
+      kvSlotEntryLines.push(
+        `  { dbType: '${slot.dbType}', slot: '${slot.slot}', component: ${slot.component} },`
+      );
+    }
+
     // Clipboard parsers (new-connection auto-detect)
     for (const parser of cfg.clipboardParsers || []) {
       importLines.push(`import { ${parser.export} } from '${parser.path}';`);
@@ -507,6 +564,11 @@ function generateFrontendRegistry(drivers) {
       }
       settingsEntryLines.push(`  { ${entryParts.join(', ')} },`);
     }
+  }
+
+  // KV slot contributions: one import statement per contributing driver file.
+  for (const [path, components] of kvSlotImportsByPath) {
+    importLines.push(`import { ${[...components].join(', ')} } from '${path}';`);
   }
 
   const typeUnion = driverDbTypes.length > 0
@@ -658,6 +720,43 @@ ${connectionViewEntryLines.join('\n')}
 export function getDriverConnectionView(viewMode: string): ComponentType<any> | undefined {
   for (const entry of DRIVER_CONNECTION_VIEWS) {
     if (entry.viewMode === viewMode) {
+      return entry.component;
+    }
+  }
+  return undefined;
+}
+
+// ===== Driver KV Workspace Slots =====
+
+/** KV workspace slot a driver can contribute (mirrors KvSlotName in @datazen/driver-sdk). */
+export type DriverKvSlotName = 'contextBar' | 'statusBar' | 'keyPropsSidebar' | 'connectionHome';
+
+interface DriverKvSlotEntry {
+  dbType: string;
+  slot: DriverKvSlotName;
+  component: ComponentType<any>;
+}
+
+/**
+ * Driver-contributed KV workspace slot components. Populated only by drivers that
+ * declare a \`kvSlots\` block in resolve-drivers' frontend config; a driver that
+ * declares none adds no rows here (and the host renders its default UI).
+ */
+const DRIVER_KV_SLOTS: DriverKvSlotEntry[] = [
+${kvSlotEntryLines.join('\n')}
+];
+
+/**
+ * Lookup a driver-provided KV workspace slot component by database type and slot.
+ * Returns \`undefined\` when the driver contributed nothing for that slot — callers
+ * must fall back to their own default UI, never throw.
+ */
+export function getDriverKvSlot(
+  dbType: string,
+  slot: DriverKvSlotName,
+): ComponentType<any> | undefined {
+  for (const entry of DRIVER_KV_SLOTS) {
+    if (entry.dbType === dbType && entry.slot === slot) {
       return entry.component;
     }
   }
