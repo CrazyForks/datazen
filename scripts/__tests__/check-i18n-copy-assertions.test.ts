@@ -450,3 +450,238 @@ describe('[coder] checkI18nCopyAssertions watchlist and scan-face options', () =
     ]);
   });
 });
+
+/**
+ * [coder] redis-assert-policy round 2 — the three forms that let the guard see
+ * what the interaction specs and mock-style hook tests actually write
+ * (BUG-006: an assertion *argument*; BUG-007: substring matches and
+ * copy-taking helper calls), plus the watchlist phrase matching that finally
+ * covers composed and interpolated copy (BUG-008's third judgement trap).
+ *
+ * The default face and its two-word dictionary heuristic are asserted to be
+ * untouched in every case here: widening the forms must not widen what a plain
+ * `node scripts/check-i18n-copy-assertions.mjs` run reports.
+ */
+describe('[coder] round-2 assertion-argument, substring and helper forms', () => {
+  let root: string;
+  const DRIVER_TESTS = 'packages/drivers/redis/ui/__tests__';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'check-i18n-forms-'));
+    mkdirSync(join(root, 'packages/drivers/redis/locales'), { recursive: true });
+    mkdirSync(join(root, DRIVER_TESTS), { recursive: true });
+    mkdirSync(join(root, 'src/locales/en'), { recursive: true });
+    mkdirSync(join(root, 'e2e/specs/journeys'), { recursive: true });
+    writeFileSync(
+      join(root, 'packages/drivers/redis/locales/en.ts'),
+      "export const redisEn = {\n  'redis.noExpiry': 'No expiry',\n  'redis.size': 'Size',\n  'redis.ok': 'OK {count}',\n};\n",
+    );
+    writeFileSync(
+      join(root, 'src/locales/en/query.ts'),
+      "export default {\n  'query.editor.param.missingValue': 'Missing value for {token}',\n};\n",
+    );
+    writeFileSync(
+      join(root, 'src/locales/en/workflows.ts'),
+      "export default {\n  'workflow.history': 'Run history',\n};\n",
+    );
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const writeAt = (rel: string, source: string) => {
+    mkdirSync(join(root, rel, '..'), { recursive: true });
+    writeFileSync(join(root, rel), source);
+  };
+
+  const probe = (opts: { dirs?: string[]; terms?: string[]; strict?: boolean } = {}) => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const result = checkI18nCopyAssertions({
+      root,
+      dirs: opts.dirs ?? ['packages/drivers'],
+      terms: opts.terms,
+      strict: opts.strict ?? false,
+      log: (msg) => logs.push(String(msg)),
+      warn: (msg) => warnings.push(String(msg)),
+    });
+    return { ...result, logs, warnings };
+  };
+
+  it('catches copy pinned as an assertion argument, not only as a selector', () => {
+    // `toHaveBeenCalledWith` is how a mock-style hook test asserts that a
+    // component handed rendered copy to a callback — the form that survived the
+    // full-dictionary probe in BUG-006 because no selector matcher looked there.
+    writeAt(
+      `${DRIVER_TESTS}/gate.test.tsx`,
+      "it('ok', () => {\n" +
+        "  expect(showMessageDialog).toHaveBeenCalledWith('No expiry', 'error');\n" +
+        "  expect(showMessageDialog).toHaveBeenCalledWith('stub-missing-param token=:uid', 'error');\n" +
+        '});\n',
+    );
+    const { hits } = probe({ strict: true });
+    // Only the line whose argument really ships as dictionary wording.
+    expect(hits).toEqual([
+      { file: `${DRIVER_TESTS}/gate.test.tsx`, line: 2, literal: 'No expiry' },
+    ]);
+  });
+
+  it('catches the substring idioms the interaction specs are written in', () => {
+    writeAt(
+      'e2e/specs/schema-tree-completeness.ts',
+      "export async function journey(browser) {\n" +
+        "  const body = await $('body').getText();\n" +
+        "  if (body.includes('No expiry')) return true;\n" +
+        "  expect(body).toContain('No expiry');\n" +
+        "  expect(body.startsWith('No expiry')).toBe(true);\n" +
+        "  expect(body.endsWith('No expiry')).toBe(true);\n" +
+        // Data stays quiet: this is neither a dictionary value nor watchlisted.
+        "  if (body.includes('SELECT name FROM users')) return false;\n" +
+        '}\n',
+    );
+    const { hits } = probe({ dirs: ['e2e'] });
+    expect(hits.map((hit) => [hit.line, hit.literal])).toEqual([
+      [3, 'No expiry'],
+      [4, 'No expiry'],
+      [5, 'No expiry'],
+      [6, 'No expiry'],
+    ]);
+  });
+
+  it('judges every literal of a copy-taking helper call, one by one', () => {
+    // `findAndClickButton(['执行记录', 'Run history'])` is the WDIO idiom the
+    // guard was blind to (BUG-007). Only the English half of the bilingual
+    // fallback is dictionary copy, so only that half is reported, and the
+    // helper name list is the configuration point for new wrappers.
+    writeAt(
+      'e2e/specs/workflow-window.ts',
+      "export async function journey(browser) {\n" +
+        "  await findAndClickButton(['执行记录', 'Run history']);\n" +
+        "  await openDbContextMenu(dbName, 'No expiry');\n" +
+        '}\n',
+    );
+    const { hits } = probe({ dirs: ['e2e'] });
+    expect(hits).toEqual([
+      { file: 'e2e/specs/workflow-window.ts', line: 2, literal: 'Run history' },
+      { file: 'e2e/specs/workflow-window.ts', line: 3, literal: 'No expiry' },
+    ]);
+  });
+
+  it('puts nested specs directories on the face, not only one level under specs/', () => {
+    // `TEST_FILE_RE` used to match `specs/[^/]+.ts`, which silently dropped all
+    // 26 `e2e/specs/journeys/**` files — including four of the pinned sites.
+    writeAt(
+      'e2e/specs/journeys/visual-query-builder-complex-journey.ts',
+      "export async function journey(browser) {\n  await findAndClickButton(['Run history']);\n}\n",
+    );
+    writeAt('e2e/helpers/notASpec.ts', "export const x = 'Run history';\n");
+    const face = probe({ dirs: ['e2e'] });
+    expect(face.scanned).toBe(1);
+    expect(face.hits).toEqual([
+      {
+        file: 'e2e/specs/journeys/visual-query-builder-complex-journey.ts',
+        line: 2,
+        literal: 'Run history',
+      },
+    ]);
+  });
+
+  it('matches a watchlisted term inside a longer literal, so composed copy is caught', () => {
+    // `redis.size` is `Size`; the test pins `'Size: 42 B'`. Equality against a
+    // dictionary value can never see that, and the space gate does not apply to
+    // a watchlisted term — the phrase rule is what closes the gap (BUG-008 ③).
+    writeAt(
+      `${DRIVER_TESTS}/composed.test.tsx`,
+      "it('ok', () => {\n  screen.getByText('Size: 42 B');\n});\n",
+    );
+    expect(probe().hits).toEqual([]);
+    const { hits } = probe({ terms: ['redis.size'] });
+    expect(hits).toEqual([
+      {
+        file: `${DRIVER_TESTS}/composed.test.tsx`,
+        line: 2,
+        literal: 'Size: 42 B',
+        term: 'redis.size',
+      },
+    ]);
+  });
+
+  it('matches the static fragments of an interpolated entry', () => {
+    // The exact shape BUG-006 left behind: `'Missing value for {token}'` renders
+    // as `'Missing value for :uid'`, which is *not* any dictionary value.
+    writeAt(
+      `${DRIVER_TESTS}/journey.test.tsx`,
+      "it('ok', () => {\n  expect(spy).toHaveBeenCalledWith('Missing value for :uid', 'error');\n});\n",
+    );
+    expect(probe().hits).toEqual([]);
+    expect(
+      probe({ terms: ['query.editor.param.missingValue'] }).hits.map((hit) => hit.term),
+    ).toEqual(['query.editor.param.missingValue']);
+  });
+
+  it('keeps phrase matching bounded and non-trivial', () => {
+    writeAt(
+      `${DRIVER_TESTS}/bounds.test.tsx`,
+      "it('ok', () => {\n" +
+        "  screen.getByText('Sizes modal');\n" +
+        "  screen.getByText('Resize panel');\n" +
+        "  screen.getByText('sizes total');\n" +
+        '});\n',
+    );
+    // Not a standalone word (and `sizes` is the wrong case) in any of the three.
+    expect(probe({ terms: ['redis.size'] }).hits).toEqual([]);
+    // A fragment shorter than the minimum ('OK' from 'OK {count}') protects
+    // nothing it could match without drowning the report, so it is dropped.
+    writeAt(`${DRIVER_TESTS}/short.test.tsx`, "it('ok', () => {\n  screen.getByText('OK: 5');\n});\n");
+    expect(probe({ terms: ['redis.ok'] }).hits).toEqual([]);
+    expect(probe({ terms: ['redis.ok'] }).watchedTerms).toEqual([
+      { key: 'redis.ok', value: 'OK {count}' },
+    ]);
+  });
+
+  it('does not widen what the default face reports', () => {
+    // Every new form is gated behind the same advisory heuristics, and the
+    // interaction specs remain off the default face entirely.
+    writeAt(
+      `${DRIVER_TESTS}/sample.test.tsx`,
+      "it('ok', () => {\n" +
+        "  expect(spy).toHaveBeenCalledWith('Size', 'error');\n" +
+        "  expect(body).toContain('Size');\n" +
+        "  await findAndClickButton(['Size']);\n" +
+        '});\n',
+    );
+    writeAt(
+      'e2e/specs/redis-console.ts',
+      "export async function journey(browser) {\n  expect(body).toContain('Run history');\n}\n",
+    );
+    const face = probe({ strict: true });
+    expect(face.scanned).toBe(1);
+    expect(face.hits).toEqual([]);
+    expect(face.code).toBe(0);
+    // Same tree, watchlisted: the single-word pins in the new forms are visible
+    // to `--terms`, which is the opt-in this test must not silently disable.
+    expect(probe({ terms: ['redis.size'] }).hits).toHaveLength(3);
+    // And widening the root list is what brings the spec onto the face.
+    expect(probe({ dirs: ['packages/drivers', 'e2e'] }).hits).toHaveLength(1);
+  });
+
+  it('reports a line once even when several forms match the same literal', () => {
+    writeAt(
+      `${DRIVER_TESTS}/dedupe.test.tsx`,
+      "it('ok', () => {\n" +
+        "  expect(el).toHaveTextContent('No expiry');\n  expect(body).toContain('No expiry');\n" +
+        "  screen.getByText('No expiry');\n" +
+        '});\n',
+    );
+    const { hits } = probe({ strict: true });
+    // Three distinct lines, three hits; a second matcher on the same line adds
+    // nothing (the helper form and the selector form agree on the literal).
+    expect(hits.map((hit) => hit.line)).toEqual([2, 3, 4]);
+    writeAt(
+      `${DRIVER_TESTS}/dedupe.test.tsx`,
+      "it('ok', () => {\n  expect(body).toContain('No expiry'); screen.getByText('No expiry');\n});\n",
+    );
+    expect(probe({ strict: true }).hits).toHaveLength(1);
+  });
+});

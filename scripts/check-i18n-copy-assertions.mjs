@@ -37,20 +37,25 @@
  * Capability boundary (read this before trusting a green run):
  * - heuristic (b) needs a space, so **single-word copy** (`Console`, `Wrap`,
  *   `Size`, `Discard`) pinned into an assertion is invisible by default;
- * - comparison is **literal equality against a dictionary value**, so an
- *   interpolated/concatenated string only registers through the fragment it
- *   contains in the same line — `'Size: 42 B'` and a copy reassembled from
- *   pieces are not matched by heuristic (b) (watchlisted terms can still catch
- *   the substring forms);
+ * - comparison is **literal equality against a dictionary value**, so a composed
+ *   or interpolated pin (`'Size: 42 B'`, `'Missing value for :uid'`) is invisible
+ *   to heuristic (b) — it is visible only when that key is on the `--terms`
+ *   watchlist, because a watchlisted value is then also matched as a *bounded
+ *   phrase inside* the literal, and the static fragments around `{placeholders}`
+ *   count as needles;
  * - the scan is **line based**: `const label = 'Console'; getByRole(…, { name:
  *   label })` pins copy through a variable and stays invisible;
  * - the default scan face is `packages/drivers` only, i.e. host tests and the
  *   WebdriverIO interaction specs are not looked at unless `--dirs` says so;
- * - a green `--dirs e2e` does **not** mean the specs are clean: `e2e/specs/**`
- *   mostly pins copy through the substring/helper forms above, which need a
- *   dictionary-shaped literal to match, and its bilingual
- *   `x.includes('中文') || x.includes('English')` fallbacks are only visible for
- *   the English half.
+ * - a green `--dirs e2e` still does **not** mean the specs are clean. Their
+ *   dominant idiom is the bilingual fallback
+ *   `x.includes('中文') || x.includes('English')`: the guard can now *see* the
+ *   English half (substring form), but a copy change does not fail such a run
+ *   while the Chinese branch still matches — those hits are landmines, not
+ *   current regressions. Single-language pins (`body.includes('Structure')`,
+ *   `findAndClickButton([...])`, `toContain('DataZen')`) do fail on rewording,
+ *   and only a real WDIO run can say which of the reported sites are of that
+ *   kind; this guard never executes them.
  *
  * That is what the two opt-in flags are for:
  * - `--dirs src,packages,e2e` widens the scanned roots (interaction specs under
@@ -60,8 +65,14 @@
  *   reads their *current* English values back from the dictionaries (so the
  *   watchlist itself never pins copy) and reports every assertion that pins one
  *   of those values — including single words, because the two-word heuristic is
- *   bypassed for watchlisted literals. A term that resolves to no dictionary
- *   entry is reported loudly and fails `--strict`: a typo'd term protects nothing.
+ *   bypassed for watchlisted literals, and including copy the test *embeds* in a
+ *   longer string (`getByText('Size: 42 B')` while `redis.size` is `Size`),
+ *   because a watchlisted value is also matched as a bounded phrase inside the
+ *   literal. For an entry that ships with `{placeholders}`, each static fragment
+ *   counts as such a phrase, which is what finally makes the interpolated pin
+ *   (`'Missing value for :uid'` from `'Missing value for {token}'`) visible.
+ *   A term that resolves to no dictionary entry is reported loudly and fails
+ *   `--strict`: a typo'd term protects nothing.
  *
  * Exit code is 0 by design (advisory, not a gate) — there is no dev-time release
  * gate on i18n (PRD §8.2). Pass `--strict` to fail on hits; useful as a
@@ -103,6 +114,45 @@ const COPY_HELPER_NAMES = ['findAndClickButton', 'openDbContextMenu'];
 const COPY_HELPER_RE = new RegExp(`(?:${COPY_HELPER_NAMES.join('|')})\\s*\\(`);
 /** Every string literal on a line (used for the helper form, which is variadic). */
 const STRING_LITERAL_RE = /(['"])((?:[^'"\\\n]|\\.)*?)\1/g;
+
+/**
+ * Watchlist needles: why `--terms` protects more than whole-string pins. A
+ * watchlisted value is matched (a) exactly, and (b) as a **bounded phrase inside**
+ * the literal — so `getByText('Size: 42 B')` trips while `redis.size` is on the
+ * list, and an entry that ships with `{placeholders}` contributes its static
+ * fragments as phrases, which is what finally catches the interpolated pin
+ * `'Missing value for :uid'` (from `'Missing value for {token}'`, the one hit a
+ * full-dictionary probe surfaced in redis-assert-policy BUG-006).
+ *
+ * Phrases are only ever derived from keys the caller explicitly watchlisted,
+ * never from the whole dictionary, so the default face cannot widen. Fragments
+ * shorter than this are dropped — `redis.ttl` is `TTL`, and a three-letter phrase
+ * would match half the English language.
+ */
+const NEEDLE_MIN_LENGTH = 4;
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * @param {{key: string, value: string}[]} watchedTerms
+ * @returns {Array<{needle: string, key: string, re: RegExp}>} first-wins per needle
+ */
+function buildPhraseNeedles(watchedTerms) {
+  const needles = [];
+  for (const { key, value } of watchedTerms) {
+    for (const fragment of value.split(/\{[^}]*\}/g)) {
+      const needle = fragment.trim();
+      if (needle.length < NEEDLE_MIN_LENGTH) continue;
+      if (needles.some((existing) => existing.needle === needle)) continue;
+      needles.push({
+        needle,
+        key,
+        re: new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(needle)}(?:[^A-Za-z0-9]|$)`),
+      });
+    }
+  }
+  return needles;
+}
 
 const COPY_MATCHERS = [
   { re: /(?:get|query|find)(?:All)?By(?:Text|LabelText|Title|PlaceholderText)\(\s*(['"])([^'"]+)\1/ },
@@ -254,6 +304,17 @@ export function checkI18nCopyAssertions(opts = {}) {
     watchedTerms.push({ key, value });
     if (!watched.has(value)) watched.set(value, key);
   }
+  // Bounded-phrase view of the same watchlist: catches the composed and
+  // interpolated pins that the exact comparison above structurally cannot see.
+  const phraseNeedles = buildPhraseNeedles(watchedTerms);
+  const watchTermFor = (literal) => {
+    const exact = watched.get(literal);
+    if (exact !== undefined) return exact;
+    for (const entry of phraseNeedles) {
+      if (entry.re.test(literal)) return entry.key;
+    }
+    return undefined;
+  };
 
   const files = [];
   for (const dir of dirs) {
@@ -284,7 +345,7 @@ export function checkI18nCopyAssertions(opts = {}) {
           ? matcher.literalsFromLine(text)
           : [matcher.re.exec(text)[2]];
         for (const literal of literals) {
-          const term = watched.get(literal);
+          const term = watchTermFor(literal);
           if (term === undefined) {
             // Advisory heuristics: English copy shape (which already excludes
             // i18n keys such as `redis.noExpiry`, since those start lowercase), at
