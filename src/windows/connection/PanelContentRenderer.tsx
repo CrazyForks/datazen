@@ -36,6 +36,7 @@ import { PrivilegeView } from './PrivilegeView';
 import { ProcessListView } from './ProcessListView';
 import { ServerStatusView } from './ServerStatusView';
 import type { ContentViewCallbacks } from './query/aiDraftBridge';
+import type { KvSlotState } from '@datazen/driver-sdk';
 
 export interface PanelContentRendererProps {
   activePanel: Panel | null;
@@ -53,6 +54,12 @@ export interface PanelContentRendererProps {
   onUpdatePanelData: (panelId: string, data: unknown) => void;
   /** S3-B2: Navigation and AI draft bridge callbacks from ContentView. */
   callbacks?: ContentViewCallbacks;
+  /**
+   * Host-owned selection/dirty atom of a KV panel, forwarded to the driver's
+   * connection view so the workbench can publish what the KV slots read.
+   * Undefined for non-KV panels.
+   */
+  kvSlotState?: KvSlotState;
 }
 
 export function PanelContentRenderer({
@@ -69,6 +76,7 @@ export function PanelContentRenderer({
   resolveTableSchema,
   onUpdatePanelData,
   callbacks,
+  kvSlotState,
 }: PanelContentRendererProps) {
   if (!activePanel) {
     return null;
@@ -89,6 +97,7 @@ export function PanelContentRenderer({
         initialDatabase={kvPanel.dbName}
         hideSidebar
         isActive
+        kvSlotState={kvSlotState}
       />
     );
   }

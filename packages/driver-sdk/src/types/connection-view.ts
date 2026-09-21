@@ -7,6 +7,7 @@
 import type { MutableRefObject } from 'react';
 import type { DatabaseType } from '../../../../src/types';
 import type { TableContextInput, TableSqlActionKind } from '../../../../src/lib/tableSqlActions';
+import type { KvSlotState } from './kv-slots';
 
 export interface NodeContextMenuPayload {
   kind: string;
@@ -74,4 +75,11 @@ export interface ConnectionViewProps {
   nodeContextMenuRef?: MutableRefObject<((payload: NodeContextMenuPayload) => void) | undefined>;
   /** Ref for the parent to receive direct action callbacks from the view. */
   actionsRef?: MutableRefObject<ConnectionViewActions | undefined>;
+  /**
+   * Host-owned per-panel KV state relay, present only on a KV panel whose driver
+   * declared a `kvWorkspace` capability in its `DatabaseTypeMeta`. The workbench
+   * publishes the selected key and the dirty flag here so the host-rendered KV
+   * slots (context bar / status bar / key-props sidebar) read the same values.
+   */
+  kvSlotState?: KvSlotState;
 }

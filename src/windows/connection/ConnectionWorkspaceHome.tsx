@@ -23,6 +23,7 @@ import { type ConnectionContext, type Panel } from '../../stores/panelStore';
 import { queryCommands } from '../../commands/query';
 import type { DatabaseType, QueryHistoryEntry } from '../../types';
 import { getPanelIcon, getPanelLabel } from './contentViewHelpers';
+import type { KvConnectionHomeBinding } from './useKvWorkspaceSlots';
 import { GlobalQueryHistoryDialog } from '../../components/history/GlobalQueryHistoryDialog';
 import { HomeHero } from './home/HomeHero';
 import { ConnectionCardList } from './home/ConnectionCardList';
@@ -54,6 +55,12 @@ export interface ConnectionWorkspaceHomeProps {
   onSelectConnection?: (connectionId: string) => void;
   onOpenQueryHistory?: () => void;
   onSelectHistoryQuery?: (entry: QueryHistoryEntry) => void;
+  /**
+   * Driver-contributed connection home (屏 A). When the connected session's driver
+   * claims the `home` capability and contributed this component, the whole landing
+   * surface yields to it; otherwise the host banner page renders exactly as before.
+   */
+  connectionHomeSlot?: KvConnectionHomeBinding;
 }
 
 interface QuickActionProps {
@@ -118,6 +125,7 @@ export function ConnectionWorkspaceHome({
   onOpenPanel,
   onSelectConnection,
   onSelectHistoryQuery,
+  connectionHomeSlot,
 }: Readonly<ConnectionWorkspaceHomeProps>) {
   const { t } = useI18n();
 
@@ -265,6 +273,27 @@ export function ConnectionWorkspaceHome({
             onSelectQuery={onSelectHistoryQuery}
           />
         )}
+      </div>
+    );
+  }
+
+  // ── State 3b: driver-claimed connection home (屏 A) ──
+  // The KV overview replaces the host banner page wholesale; the host keeps the
+  // scroll container and the landing-screen test id, the driver owns the layout.
+  const ConnectionHome = connectionHomeSlot?.Component;
+  if (ConnectionHome && connectionHomeSlot && connectionContext) {
+    return (
+      <div
+        className="flex flex-1 flex-col overflow-y-auto"
+        data-testid="connection-workspace-home"
+      >
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          data-slot="kv-connection-home"
+          data-testid="home-kv-connection-home"
+        >
+          <ConnectionHome {...connectionHomeSlot.props} />
+        </div>
       </div>
     );
   }
