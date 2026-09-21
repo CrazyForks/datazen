@@ -14,7 +14,7 @@ DataZen 是一款主要面向开发者的开源 AI 数据库客户端，运行�
 - Schema Diff、同族数据库的数据同步与异构数据迁移；
 - MCP Server 与 MCP Client；
 - 可独立扩展的数据库 Driver；
-- 可安装的工作区页面和主题 Extension。
+- 可安装的工作区页面和主题 Wapp。
 
 ## 为什么要做一个数据库管理软件？
 

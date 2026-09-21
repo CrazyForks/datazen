@@ -14,7 +14,7 @@ import {
 } from '../lib/sqlNamespace';
 import { t } from '../locales/t';
 import type { DatabaseType, TableInfo } from '../types';
-import { bindSchemaStore } from '../plugin-sdk/schemaStoreBridge';
+import { bindSchemaStore } from '@datazen/driver-sdk';
 import {
   computeIsMultiDatabase,
   knownTableNames,
@@ -67,6 +67,10 @@ interface SchemaStore extends ConnectionSchemaState {
   /** F7: pin/clear the PG-family current schema (local UI state; sent as the
    * `schema` envelope field on query executions). */
   setCurrentSchema: (schema: string | null, dbSessionId?: string) => void;
+  /** Sync the session `currentDatabase` to the ACTIVE panel's bound database so
+   * the store reflects the tab the user is on (prevents drift to the first
+   * database after a reload, e.g. Settings round-trip). */
+  setCurrentDatabase: (database: string | null, dbSessionId?: string) => void;
   setLoadedTables: (database: string, all: TableInfo[], dbSessionId?: string) => void;
   removeRelation: (name: string, dbSessionId?: string) => void;
   mergeNamespace: (
@@ -78,8 +82,13 @@ interface SchemaStore extends ConnectionSchemaState {
   cachePathItems: (fetchPath: string, items: TableInfo[], dbSessionId?: string) => void;
   registerPathAliases: (entries: { name: string; id: string }[], dbSessionId?: string) => void;
   ensureNamespacePath: (segments: string[], dbSessionId?: string) => Promise<void>;
-  ensureColumns: (tableNames: string[], dbSessionId?: string) => Promise<void>;
-  loadColumnMap: (dbSessionId?: string) => Promise<void>;
+  ensureColumns: (
+    tableNames: string[],
+    dbSessionId: string,
+    database: string,
+    options?: { requireTypes?: boolean },
+  ) => Promise<void>;
+  loadColumnMap: (dbSessionId: string, database: string) => Promise<void>;
   toggleExpand: (id: string, dbSessionId?: string) => void;
   setSelected: (id: string | null, dbSessionId?: string) => void;
   reset: () => void;
@@ -240,9 +249,21 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
 
         const isMultiDatabase =
           !lockedToConfigured && computeIsMultiDatabase(meta?.hasMultiDatabase, databases.length);
+
+        // Preserve the user-selected database across component remounts (e.g.
+        // opening Settings and navigating back re-triggers loadForConnection).
+        // Without this the session's currentDatabase reverts to the first
+        // database in the dropdown, so a query pinned to a non-first database
+        // would then fail with "table does not exist". Only fall back to the
+        // configured/preferred database when the previous selection is no
+        // longer present in the freshly listed databases.
+        const previousDatabase = get().schemas.get(dbSessionId)?.currentDatabase ?? null;
+        const currentDatabase =
+          previousDatabase && databases.includes(previousDatabase) ? previousDatabase : preferred;
+
         commitConnectionPatch(
           dbSessionId,
-          { databases, isMultiDatabase, loading: false, currentDatabase: preferred },
+          { databases, isMultiDatabase, loading: false, currentDatabase },
           { activate: true },
         );
         if (usesPluginDbList) {
@@ -252,9 +273,9 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           get().mergeNamespace([], 'branch', databases, dbSessionId);
         }
         if (options?.skipLoadTables) return;
-        if (preferred) {
-          await get().loadTables(preferred, dbSessionId);
-          get().setSelected(`db:${preferred}`, dbSessionId);
+        if (currentDatabase) {
+          await get().loadTables(currentDatabase, dbSessionId);
+          get().setSelected(`db:${currentDatabase}`, dbSessionId);
         }
       } catch (e) {
         commitConnectionPatch(
@@ -318,6 +339,25 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       if (!dbSessionId) return;
       const normalized = schema?.trim() ? schema.trim() : null;
       commitConnectionPatch(dbSessionId, { currentSchema: normalized });
+    },
+
+    // Session-local database pointer. When the active (query/table) panel is
+    // switched or brought back into focus, the host drives this from the
+    // panel's bound database so `currentDatabase` always reflects the tab the
+    // user is on — otherwise loadForConnection/schema-tree defaults can
+    // re-pin it to the first database after a reload (e.g. Settings round-trip)
+    // even though the panel is still targeting `tradingdb`.
+    setCurrentDatabase: (database, dbSessionIdOverride) => {
+      const dbSessionId = resolveTargetConnectionId(get(), dbSessionIdOverride);
+      if (!dbSessionId) return;
+      const normalized = database?.trim() || null;
+      if (!normalized) return;
+      const session = get().schemas.get(dbSessionId);
+      const databases = session?.databases ?? [];
+      // Only adopt a database the session actually knows about; before the
+      // database list is loaded (empty) we still allow the panel pointer.
+      if (databases.length > 0 && !databases.includes(normalized)) return;
+      commitConnectionPatch(dbSessionId, { currentDatabase: normalized }, { activate: true });
     },
 
     mergeNamespace: (segments, kind, names, dbSessionIdOverride) => {
@@ -445,6 +485,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         schemaNames,
         currentDatabase: database,
         columnMap: {},
+        typedColumnMap: {},
         namespaceTree: nextTree,
         loadedPaths: nextLoadedPaths,
       });
@@ -465,11 +506,11 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       });
     },
 
-    ensureColumns: async (tableNames, dbSessionIdOverride) => {
-      const dbSessionId = resolveRealConnectionId(get(), dbSessionIdOverride);
-      if (!dbSessionId) return;
+    ensureColumns: async (tableNames, dbSessionId, database, options) => {
+      if (!dbSessionId || !database?.trim()) return;
       const schema = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
-      const { columnMap, namespaceTree, tables, views, pathItems, columnInflight } = schema;
+      const { columnMap, typedColumnMap, namespaceTree, tables, views, pathItems, columnInflight } =
+        schema;
       const known = knownTableNames(namespaceTree, tables, views, pathItems);
       if (known.size === 0) return;
       const wanted = [
@@ -480,59 +521,88 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         ),
       ];
       const missing = wanted.filter((name) => !(name in columnMap) && !columnInflight.has(name));
-      if (missing.length === 0) return;
+      // The batch endpoint returns names only — consumers that need dataTypes
+      // (the visual query builder) pass `requireTypes` so tables already in
+      // `columnMap` still get the per-table typed endpoint.
+      const typedMissing = options?.requireTypes
+        ? wanted.filter((name) => !(name in typedColumnMap) && !columnInflight.has(name))
+        : [];
+      if (missing.length === 0 && typedMissing.length === 0) return;
 
-      // Try batch loading first
-      try {
-        const batchResult = await databaseCommands.getAllColumns(dbSessionId);
-        if (batchResult && Object.keys(batchResult).length > 0) {
-          const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
-          const nextColumnMap = { ...latest.columnMap };
-          let changed = false;
-          for (const name of missing) {
-            if (name in batchResult) {
-              nextColumnMap[name] = batchResult[name];
-              changed = true;
+      // Try batch loading first. Only satisfied tables are recorded; any table
+      // missing from the batch result falls through to per-table loading below
+      // (e.g. batch hit another database, or the driver returned a subset).
+      let stillMissing = missing;
+      if (missing.length > 0) {
+        try {
+          const batchResult = await databaseCommands.getAllColumns(dbSessionId, database);
+          if (batchResult && Object.keys(batchResult).length > 0) {
+            const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
+            const nextColumnMap = { ...latest.columnMap };
+            let changed = false;
+            for (const name of missing) {
+              if (name in batchResult) {
+                nextColumnMap[name] = batchResult[name];
+                changed = true;
+              }
             }
+            if (changed) {
+              commitConnectionPatch(dbSessionId, { columnMap: nextColumnMap });
+            }
+            stillMissing = missing.filter((name) => !(name in batchResult));
           }
-          if (changed) {
-            commitConnectionPatch(dbSessionId, { columnMap: nextColumnMap });
-          }
-          return;
+        } catch {
+          // Batch not supported or failed — fall through to per-table
         }
-      } catch {
-        // Batch not supported or failed — fall through to per-table
       }
+      const toFetch = [...new Set([...stillMissing, ...typedMissing])];
+      if (toFetch.length === 0) return;
 
-      // Fallback: per-table loading
+      // Fallback: per-table loading (uses typed endpoint for dataType info)
       const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
       const nextInflight = new Set(latest.columnInflight);
-      for (const name of missing) nextInflight.add(name);
+      for (const name of toFetch) nextInflight.add(name);
       commitConnectionPatch(dbSessionId, { columnInflight: nextInflight });
 
       try {
         const settled = await Promise.all(
-          missing.map(async (name) => {
+          toFetch.map(async (name) => {
             try {
-              return { name, cols: await databaseCommands.getColumns(dbSessionId, name) };
+              const typedCols = await databaseCommands.getColumnsTyped(dbSessionId, name, database);
+              return {
+                name,
+                cols: typedCols.map((c) => c.name),
+                typeMap: Object.fromEntries(typedCols.map((c) => [c.name, c.dataType])),
+              };
             } catch {
-              return { name, cols: null };
+              try {
+                // Fallback to untyped endpoint if typed not available
+                const cols = await databaseCommands.getColumns(dbSessionId, name, database);
+                return { name, cols, typeMap: null };
+              } catch {
+                return { name, cols: null, typeMap: null };
+              }
             }
           }),
         );
         const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
         const nextColumnMap = { ...latest.columnMap };
+        const nextTypedColumnMap = { ...latest.typedColumnMap };
         let changed = false;
         for (const row of settled) {
           if (row.cols == null) continue;
           nextColumnMap[row.name] = row.cols;
+          if (row.typeMap) {
+            nextTypedColumnMap[row.name] = row.typeMap;
+          }
           changed = true;
         }
         const clearedInflight = new Set(latest.columnInflight);
-        for (const name of missing) clearedInflight.delete(name);
+        for (const name of toFetch) clearedInflight.delete(name);
         if (changed) {
           commitConnectionPatch(dbSessionId, {
             columnMap: nextColumnMap,
+            typedColumnMap: nextTypedColumnMap,
             columnInflight: clearedInflight,
           });
         } else {
@@ -541,17 +611,20 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       } catch {
         const latest = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
         const clearedInflight = new Set(latest.columnInflight);
-        for (const name of missing) clearedInflight.delete(name);
+        for (const name of toFetch) clearedInflight.delete(name);
         commitConnectionPatch(dbSessionId, { columnInflight: clearedInflight });
       }
     },
 
-    loadColumnMap: async (dbSessionIdOverride) => {
-      const dbSessionId = resolveRealConnectionId(get(), dbSessionIdOverride);
-      if (!dbSessionId) return;
+    loadColumnMap: async (dbSessionId, database) => {
+      if (!dbSessionId || !database?.trim()) return;
       const schema = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
-      const allNames = [...schema.tables, ...schema.views].map((item) => item.name);
-      await get().ensureColumns(allNames, dbSessionId);
+      // Collect table names from ALL sources: tables array (normal drivers),
+      // namespaceTree (path-hierarchy / multi-db), and pathItems.
+      const allNames = [
+        ...knownTableNames(schema.namespaceTree, schema.tables, schema.views, schema.pathItems),
+      ];
+      await get().ensureColumns(allNames, dbSessionId, database);
     },
 
     toggleExpand: (id, dbSessionIdOverride) => {
@@ -614,7 +687,7 @@ export function useConnectionSchemaField<K extends keyof ConnectionSchemaState>(
   });
 }
 
-if (import.meta.env.DEV) {
+if (typeof window !== 'undefined') {
   (window as unknown as Record<string, unknown>).__schemaStore = useSchemaStore;
 }
 

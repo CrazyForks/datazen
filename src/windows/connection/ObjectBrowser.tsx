@@ -21,10 +21,10 @@ const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger'];
 interface ObjectBrowserProps {
   dbSessionId: string;
   databaseType?: string;
-  database?: string | null;
+  database: string;
 }
 
-export function ObjectBrowser({ dbSessionId, databaseType, database = null }: ObjectBrowserProps) {
+export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBrowserProps) {
   const { t } = useI18n();
   const [kind, setKind] = useState<DatabaseObjectKind>('function');
   const [objects, setObjects] = useState<DatabaseObject[]>([]);
@@ -213,7 +213,7 @@ export function ObjectBrowser({ dbSessionId, databaseType, database = null }: Ob
               {t('common.loading')}
             </div>
           )}
-          {error && <CopyableError message={error} className="px-3 py-2 text-xs text-red-400" />}
+          {error && <CopyableError message={error} className="px-3 py-2 text-xs text-danger" />}
           {!loading && objects.length === 0 && !error && (
             <div className="px-3 py-3 text-xs text-fg-muted">{t('objects.empty')}</div>
           )}

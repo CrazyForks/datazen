@@ -1,5 +1,6 @@
 /** Auto-split domain: settings (zh-CN) */
 const pack = {
+  'settings.editorCompletionIncludeTablePrefix': '列名补全时添加表名或别名前缀',
   'settings.title': '偏好设置',
   'settings.general': '通用',
   'settings.extensions.title': '扩展',
@@ -48,6 +49,10 @@ const pack = {
   'settings.limitSelect': '限制 SELECT 结果行数',
   'settings.autoChartOnQuery': '查询后自动切换图表',
   'settings.autoChartOnQueryHint': '当结果适合可视化时，查询完成后自动打开图表视图。',
+  'settings.workflowStepResultOrder': '工作流步骤结果排序',
+  'settings.workflowStepResultOrderHint': '工作流运行后步骤结果选项卡的排列顺序。',
+  'settings.workflowStepOrder.asc': '步骤递增（第一步在前）',
+  'settings.workflowStepOrder.desc': '步骤递减（最后一步在前）',
   'settings.maxRows': '最大返回行数',
   'settings.editor': '编辑器',
   'settings.editorCompletionQuotePolicy': '字段自动补全引号策略',
@@ -117,6 +122,9 @@ const pack = {
   'settings.safeMode': 'Safe Mode',
   'settings.safeModeHint':
     '尽力防护：禁止无 WHERE 的 UPDATE/DELETE，以及 TRUNCATE/DROP；非形式化安全保证。',
+  'settings.confirmDangerousExecution': '关闭 Safe Mode 后执行高危 SQL 时弹框确认',
+  'settings.confirmDangerousExecutionHint':
+    '关闭 Safe Mode 后，执行高危/生产 SQL 前弹出确认框。关闭此项将直接执行不弹框。',
   'settings.monitor': '监控',
   'settings.monitor.description': '看板后台刷新、系统托盘、告警与运行历史保留策略。',
   'settings.monitor.trayEnabled': '显示系统托盘图标',

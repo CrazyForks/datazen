@@ -253,6 +253,7 @@ mod tests {
 
     fn sample_def(id: &str, visibility: WorkflowVisibility) -> WorkflowDefinition {
         WorkflowDefinition {
+            database: None,
             id: id.into(),
             name: format!("Name {id}"),
             description: "d".into(),

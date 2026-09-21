@@ -8,6 +8,7 @@ import { hideSplash } from './lib/splash';
 import {
   installDragSelectionGuard,
   installGlobalTextSelectionPolicy,
+  installNativeContextMenuSuppressor,
   installRightDragSelectionSuppressor,
 } from './lib/globalTextSelection';
 
@@ -41,6 +42,12 @@ const BackupWindow = lazy(() =>
     return { default: m.BackupWindow };
   }),
 );
+const OnboardingWindow = lazy(() =>
+  import('./windows/onboarding/OnboardingWindow').then((m) => {
+    mark('OnboardingWindow chunk loaded');
+    return { default: m.OnboardingWindow };
+  }),
+);
 
 const windowKind = getWindowKind();
 mark(`windowKind resolved: "${windowKind}"`);
@@ -48,10 +55,15 @@ mark(`windowKind resolved: "${windowKind}"`);
 function WindowContent() {
   useEffect(() => {
     mark('window component mounted');
-    hideSplash(document.getElementById('splash'));
+    // Main window hides splash after connections load (see MainPage).
+    if (windowKind !== 'main') {
+      hideSplash(document.getElementById('splash'));
+    }
   }, []);
 
   switch (windowKind) {
+    case 'onboarding':
+      return <OnboardingWindow />;
     case 'data-sync':
       return <DataSyncWindow />;
     case 'data-transfer':
@@ -71,10 +83,12 @@ export default function App() {
     const stopSelectAll = installGlobalTextSelectionPolicy();
     const stopRightDrag = installRightDragSelectionSuppressor();
     const stopDragGuard = installDragSelectionGuard();
+    const stopNativeCtxMenu = installNativeContextMenuSuppressor();
     return () => {
       stopSelectAll();
       stopRightDrag();
       stopDragGuard();
+      stopNativeCtxMenu();
     };
   }, []);
 

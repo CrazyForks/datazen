@@ -121,7 +121,7 @@ SQLite 侧仍以 `ADD COLUMN` / 索引为主；复杂 `DROP`/`MODIFY` 会提示�
 }
 ```
 
-导入后进入 **Objects** 步并恢复表勾选；**database / schema 需手动重选**（v2 尚未持久化，见 [backlog](../todo/migration-tools-backlog.md#schema-diff)）。连接须已存在于本机配置列表。
+导入后进入 **Objects** 步并恢复表勾选；**database / schema 需手动重选**（v2 尚未持久化）。连接须已存在于本机配置列表。
 
 ---
 

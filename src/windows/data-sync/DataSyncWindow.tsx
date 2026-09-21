@@ -713,8 +713,12 @@ export function DataSyncWindow() {
   const loadSelectedProfile = useCallback(() => {
     const profile = syncProfiles.find((candidate) => candidate.id === selectedProfileId);
     if (!profile) return;
-    const sourceExists = connections.some((connection) => connection.id === profile.sourceConnectionId);
-    const targetExists = connections.some((connection) => connection.id === profile.targetConnectionId);
+    const sourceExists = connections.some(
+      (connection) => connection.id === profile.sourceConnectionId,
+    );
+    const targetExists = connections.some(
+      (connection) => connection.id === profile.targetConnectionId,
+    );
     if (!sourceExists || !targetExists) {
       setErrorMsg(t('sync.profile.missingConnection'));
       setErrorOpen(true);
@@ -799,7 +803,11 @@ export function DataSyncWindow() {
 
       const profileMappings = pendingProfileMappingsRef.current;
       const profileDisabled = profileMappings
-        ? new Set(profileMappings.filter((mapping) => !mapping.enabled).map((mapping) => mapping.sourceTable))
+        ? new Set(
+            profileMappings
+              .filter((mapping) => !mapping.enabled)
+              .map((mapping) => mapping.sourceTable),
+          )
         : disabledTables;
 
       const inspected = profileMappings
@@ -1857,7 +1865,7 @@ export function DataSyncWindow() {
                   className={cn(
                     'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
                     i === stepIndex
-                      ? 'bg-accent text-white'
+                      ? 'bg-accent text-on-accent'
                       : i < stepIndex
                         ? 'bg-accent/20 text-accent'
                         : 'bg-surface-raised text-fg-muted',

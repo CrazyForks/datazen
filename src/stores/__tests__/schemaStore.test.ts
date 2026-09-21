@@ -9,6 +9,10 @@ vi.mock('../../commands/database', () => ({
       { name: 'orders', tableType: 'TABLE', schema: 'public', rowCount: null },
     ]),
     getColumns: vi.fn().mockResolvedValue(['id', 'name']),
+    // Default: typed endpoint unavailable → per-table path falls back to
+    // getColumns. Tests that exercise type loading mock this explicitly.
+    getColumnsTyped: vi.fn().mockRejectedValue(new Error('typed not available')),
+    getAllColumns: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -148,6 +152,34 @@ describe('schemaStore.loadForConnection isMultiDatabase', () => {
     expect(useSchemaStore.getState().databases).toEqual(['alpha', 'beta']);
     expect(useSchemaStore.getState().currentDatabase).toBe('alpha');
     expect(useSchemaStore.getState().isMultiDatabase).toBe(true);
+  });
+
+  it('keeps a user-selected non-first database across reload instead of reverting to the first', async () => {
+    vi.mocked(databaseCommands.getDatabases).mockResolvedValueOnce(['db_a', 'db_b', 'db_c']);
+
+    await useSchemaStore.getState().loadForConnection('conn-1', {
+      databaseType: 'mysql',
+      skipLoadTables: true,
+    });
+
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
+
+    // User selects a non-first database from the multi-db dropdown.
+    vi.mocked(databaseCommands.getTables).mockResolvedValueOnce([]);
+    await useSchemaStore.getState().switchDatabase('db_b');
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_b');
+
+    // Re-mounting ContentView (e.g. switching to Settings and back) re-runs
+    // loadForConnection. It must keep db_b instead of reverting to db_a.
+    vi.mocked(databaseCommands.getDatabases).mockResolvedValueOnce(['db_a', 'db_b', 'db_c']);
+
+    await useSchemaStore.getState().loadForConnection('conn-1', {
+      databaseType: 'mysql',
+      skipLoadTables: true,
+    });
+
+    expect(useSchemaStore.getState().databases).toEqual(['db_a', 'db_b', 'db_c']);
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_b');
   });
 
   it('refresh after creating a new DB preserves locked database when preferred is passed', async () => {
@@ -313,6 +345,52 @@ describe('schemaStore.switchDatabase', () => {
   });
 });
 
+describe('schemaStore.setCurrentDatabase', () => {
+  let useSchemaStore: typeof import('../../stores/schemaStore').useSchemaStore;
+  let createEmptyConnectionSchema: typeof import('../../stores/schemaStoreState').createEmptyConnectionSchema;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const storeMod = await import('../../stores/schemaStore');
+    useSchemaStore = storeMod.useSchemaStore;
+    const stateMod = await import('../../stores/schemaStoreState');
+    createEmptyConnectionSchema = stateMod.createEmptyConnectionSchema;
+    useSchemaStore.setState({ dbSessionId: 'test-conn' });
+  });
+
+  it('adopts the panel database as the session currentDatabase', () => {
+    useSchemaStore.getState().setCurrentDatabase('tradingdb', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('tradingdb');
+  });
+
+  it('follows a bound non-first database even when current is the first one', () => {
+    const schemas = new Map();
+    schemas.set('test-conn', {
+      ...createEmptyConnectionSchema(),
+      databases: ['channeling_dock_db', 'tradingdb'],
+      currentDatabase: 'channeling_dock_db',
+    });
+    useSchemaStore.setState({ schemas });
+
+    // The active query tab is bound to tradingdb — currentDatabase must follow.
+    useSchemaStore.getState().setCurrentDatabase('tradingdb', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('tradingdb');
+  });
+
+  it('ignores a database the session does not know about', () => {
+    const schemas = new Map();
+    schemas.set('test-conn', {
+      ...createEmptyConnectionSchema(),
+      databases: ['channeling_dock_db', 'tradingdb'],
+      currentDatabase: 'channeling_dock_db',
+    });
+    useSchemaStore.setState({ schemas });
+
+    useSchemaStore.getState().setCurrentDatabase('ghost_db', 'test-conn');
+    expect(useSchemaStore.getState().currentDatabase).toBe('channeling_dock_db');
+  });
+});
+
 describe('schemaStore.loadColumnMap', () => {
   let useSchemaStore: typeof import('../../stores/schemaStore').useSchemaStore;
   let databaseCommands: typeof import('../../commands/database').databaseCommands;
@@ -331,7 +409,7 @@ describe('schemaStore.loadColumnMap', () => {
     await useSchemaStore.getState().loadTables('testdb');
     expect(databaseCommands.getColumns).not.toHaveBeenCalled();
 
-    await useSchemaStore.getState().loadColumnMap();
+    await useSchemaStore.getState().loadColumnMap('test-conn', 'testdb');
 
     const state = useSchemaStore.getState();
     expect(databaseCommands.getColumns).toHaveBeenCalledTimes(3);
@@ -344,8 +422,17 @@ describe('schemaStore.loadColumnMap', () => {
 
   it('does nothing when dbSessionId is null', async () => {
     useSchemaStore.setState({ dbSessionId: null });
-    await useSchemaStore.getState().loadColumnMap();
+    await useSchemaStore.getState().loadColumnMap('', 'testdb');
     expect(databaseCommands.getColumns).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when database is empty', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getColumns).mockClear();
+    vi.mocked(databaseCommands.getAllColumns).mockClear();
+    await useSchemaStore.getState().loadColumnMap('test-conn', '');
+    expect(databaseCommands.getColumns).not.toHaveBeenCalled();
+    expect(databaseCommands.getAllColumns).not.toHaveBeenCalled();
   });
 });
 
@@ -368,10 +455,10 @@ describe('schemaStore.ensureColumns', () => {
     await useSchemaStore.getState().loadTables('testdb');
     vi.mocked(databaseCommands.getColumns).mockClear();
 
-    await useSchemaStore.getState().ensureColumns(['users']);
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', 'testdb');
 
     expect(databaseCommands.getColumns).toHaveBeenCalledTimes(1);
-    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'users');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'users', 'testdb');
     expect(useSchemaStore.getState().columnMap).toEqual({ users: ['id', 'name'] });
   });
 
@@ -379,9 +466,9 @@ describe('schemaStore.ensureColumns', () => {
     await useSchemaStore.getState().loadTables('testdb');
     vi.mocked(databaseCommands.getColumns).mockClear();
     useSchemaStore.setState({ columnMap: { users: ['id'] } });
-    await useSchemaStore.getState().ensureColumns(['users', 'orders']);
+    await useSchemaStore.getState().ensureColumns(['users', 'orders'], 'test-conn', 'testdb');
     expect(databaseCommands.getColumns).toHaveBeenCalledTimes(1);
-    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'orders');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'orders', 'testdb');
     expect(useSchemaStore.getState().columnMap).toEqual({
       users: ['id'],
       orders: ['id', 'name'],
@@ -392,7 +479,9 @@ describe('schemaStore.ensureColumns', () => {
     useSchemaStore.setState({
       namespaceTree: { hive: { snap: { wb_daily_orders: [] } } },
     });
-    await useSchemaStore.getState().ensureColumns(['wb_d', 'wb_daily', 'snap', 'hive']);
+    await useSchemaStore
+      .getState()
+      .ensureColumns(['wb_d', 'wb_daily', 'snap', 'hive'], 'test-conn', 'hive');
     expect(databaseCommands.getColumns).not.toHaveBeenCalled();
     expect(useSchemaStore.getState().columnMap).toEqual({});
   });
@@ -401,9 +490,13 @@ describe('schemaStore.ensureColumns', () => {
     useSchemaStore.setState({
       namespaceTree: { hive: { snap: { wb_daily_orders: [] } } },
     });
-    await useSchemaStore.getState().ensureColumns(['wb_d', 'wb_daily_orders']);
+    await useSchemaStore.getState().ensureColumns(['wb_d', 'wb_daily_orders'], 'test-conn', 'hive');
     expect(databaseCommands.getColumns).toHaveBeenCalledTimes(1);
-    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'wb_daily_orders');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith(
+      'test-conn',
+      'wb_daily_orders',
+      'hive',
+    );
     expect(useSchemaStore.getState().columnMap).toEqual({
       wb_daily_orders: ['id', 'name'],
     });
@@ -413,18 +506,105 @@ describe('schemaStore.ensureColumns', () => {
     await useSchemaStore.getState().loadTables('testdb');
     vi.mocked(databaseCommands.getColumns).mockClear();
     vi.mocked(databaseCommands.getColumns).mockRejectedValueOnce(new Error('500'));
-    await useSchemaStore.getState().ensureColumns(['users']);
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', 'testdb');
     expect(useSchemaStore.getState().columnMap).toEqual({});
 
     vi.mocked(databaseCommands.getColumns).mockResolvedValueOnce(['id', 'name']);
-    await useSchemaStore.getState().ensureColumns(['users']);
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', 'testdb');
     expect(useSchemaStore.getState().columnMap).toEqual({ users: ['id', 'name'] });
   });
 
   it('does nothing when dbSessionId is null', async () => {
     useSchemaStore.setState({ dbSessionId: null });
-    await useSchemaStore.getState().ensureColumns(['users']);
+    await useSchemaStore.getState().ensureColumns(['users'], '', 'testdb');
     expect(databaseCommands.getColumns).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when database is empty', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getColumns).mockClear();
+    vi.mocked(databaseCommands.getAllColumns).mockClear();
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', '');
+    expect(databaseCommands.getColumns).not.toHaveBeenCalled();
+    expect(databaseCommands.getAllColumns).not.toHaveBeenCalled();
+  });
+
+  it('passes the tab-bound database to batch and per-table column reads', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getAllColumns).mockClear();
+    vi.mocked(databaseCommands.getColumns).mockClear();
+
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', 'tab_db');
+
+    expect(databaseCommands.getAllColumns).toHaveBeenCalledWith('test-conn', 'tab_db');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'users', 'tab_db');
+  });
+
+  it('falls back to per-table reads for tables missing from the batch result', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getAllColumns).mockClear();
+    vi.mocked(databaseCommands.getAllColumns).mockResolvedValueOnce({ users: ['id'] });
+    vi.mocked(databaseCommands.getColumns).mockClear();
+
+    await useSchemaStore.getState().ensureColumns(['users', 'orders'], 'test-conn', 'tab_db');
+
+    expect(databaseCommands.getColumns).toHaveBeenCalledTimes(1);
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('test-conn', 'orders', 'tab_db');
+    expect(useSchemaStore.getState().columnMap).toEqual({
+      users: ['id'],
+      orders: ['id', 'name'],
+    });
+  });
+
+  it('requireTypes fetches typed columns even when the batch already filled columnMap', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getAllColumns).mockResolvedValueOnce({ users: ['id', 'name'] });
+    vi.mocked(databaseCommands.getColumnsTyped).mockResolvedValueOnce([
+      { name: 'id', dataType: 'integer' },
+      { name: 'ordered_at', dataType: 'timestamp without time zone' },
+    ] as never);
+
+    await useSchemaStore
+      .getState()
+      .ensureColumns(['users'], 'test-conn', 'testdb', { requireTypes: true });
+
+    expect(databaseCommands.getColumnsTyped).toHaveBeenCalledWith('test-conn', 'users', 'testdb');
+    expect(useSchemaStore.getState().typedColumnMap).toEqual({
+      users: { id: 'integer', ordered_at: 'timestamp without time zone' },
+    });
+  });
+
+  it('without requireTypes the batch path leaves typedColumnMap empty', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    vi.mocked(databaseCommands.getAllColumns).mockResolvedValueOnce({ users: ['id', 'name'] });
+
+    await useSchemaStore.getState().ensureColumns(['users'], 'test-conn', 'testdb');
+
+    expect(databaseCommands.getColumnsTyped).not.toHaveBeenCalled();
+    expect(useSchemaStore.getState().typedColumnMap).toEqual({});
+    expect(useSchemaStore.getState().columnMap).toEqual({ users: ['id', 'name'] });
+  });
+
+  it('requireTypes only re-fetches tables that still lack types', async () => {
+    await useSchemaStore.getState().loadTables('testdb');
+    useSchemaStore.setState({
+      columnMap: { users: ['id'], orders: ['id'] },
+      typedColumnMap: { users: { id: 'integer' } },
+    });
+    vi.mocked(databaseCommands.getColumnsTyped).mockResolvedValueOnce([
+      { name: 'id', dataType: 'bigint' },
+    ] as never);
+
+    await useSchemaStore
+      .getState()
+      .ensureColumns(['users', 'orders'], 'test-conn', 'testdb', { requireTypes: true });
+
+    expect(databaseCommands.getColumnsTyped).toHaveBeenCalledTimes(1);
+    expect(databaseCommands.getColumnsTyped).toHaveBeenCalledWith('test-conn', 'orders', 'testdb');
+    expect(useSchemaStore.getState().typedColumnMap).toEqual({
+      users: { id: 'integer' },
+      orders: { id: 'bigint' },
+    });
   });
 });
 
@@ -719,11 +899,11 @@ describe('schemaStore keyed multi-connection', () => {
       ]);
 
     vi.mocked(databaseCommands.getColumns).mockClear();
-    await useSchemaStore.getState().ensureColumns(['users'], 'conn-a');
-    await useSchemaStore.getState().ensureColumns(['orders'], 'conn-b');
+    await useSchemaStore.getState().ensureColumns(['users'], 'conn-a', 'db');
+    await useSchemaStore.getState().ensureColumns(['orders'], 'conn-b', 'db');
 
-    expect(databaseCommands.getColumns).toHaveBeenCalledWith('conn-a', 'users');
-    expect(databaseCommands.getColumns).toHaveBeenCalledWith('conn-b', 'orders');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('conn-a', 'users', 'db');
+    expect(databaseCommands.getColumns).toHaveBeenCalledWith('conn-b', 'orders', 'db');
     expect(useSchemaStore.getState().getConnectionSchema('conn-a')?.columnMap).toEqual({
       users: ['id', 'name'],
     });
@@ -733,7 +913,7 @@ describe('schemaStore keyed multi-connection', () => {
   });
 });
 
-describe('parsePathHierarchyDatabaseEntry / plugin namespace bootstrap', () => {
+describe('parsePathHierarchyDatabaseEntry / wapp namespace bootstrap', () => {
   it('parses Superset-style database list entries', async () => {
     const { parsePathHierarchyDatabaseEntry } = await import('../schemaStore');
     expect(parsePathHierarchyDatabaseEntry('558:presto_afi_data (presto)')).toEqual({

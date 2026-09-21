@@ -7,7 +7,7 @@
 
 | 层级 | PR CI（`ci.yml`） | Release（`release.yml`） | 本地 / 维护者 |
 |------|-------------------|--------------------------|---------------|
-| 驱动选型 | **`basic` 固定**（postgres, mysql, sqlite, redis） | Basic / All / Akulaku 三 SKU × 四平台 | 任意 `--drivers=` / `DATAZEN_DRIVERS` |
+| 驱动选型 | **`basic` 固定**（postgres, mysql, sqlite, redis） | Basic / All × 四平台 + Akulaku × 三平台（Windows / macOS，无 Linux） | 任意 `--drivers=` / `DATAZEN_DRIVERS` |
 | Host 前端单测 | ✅ `pnpm test:unit` | 构建前 `pnpm build`（含 typecheck） | `pnpm test:unit` |
 | TypeScript | ✅ `pnpm typecheck` | 同上 | `pnpm typecheck` |
 | Host Rust lib | ✅ `cargo test -p datazen --lib`（basic features） | 完整 release 构建 | `cargo test -p datazen --lib` |
@@ -15,7 +15,7 @@
 | ai-api | ✅ | 随构建链接 | `cargo test -p datazen-ai-api --lib` |
 | Basic path 驱动 lib | ✅ 四 crate 并行 | Basic SKU 内嵌 | `cargo test -p datazen-driver-<id> --lib` |
 | 可选 path 驱动 lib | ❌ | **All SKU** 构建时编译链接 | 改驱动 crate 时本地必跑 |
-| Git 驱动（kiwi/superset） | ❌ | **Akulaku SKU**（需 Deploy Key） | 见 [ci-private-plugins.md](./ci-private-plugins.md) |
+| Git 驱动（kiwi/superset） | ❌ | **Akulaku SKU**（需 Deploy Key） | 见 [ci-private-drivers.md](./ci-private-drivers.md) |
 | Host E2E | ❌ | ❌（发版后手工 / R 阶段） | `pnpm e2e` / `pnpm e2e:minimal` |
 | Host 契约矩阵 E2E | ❌ | ❌ | `pnpm e2e:contract:matrix` |
 | 驱动专属 E2E | ❌ | ❌ | `packages/drivers/<id>/e2e/` |
@@ -66,7 +66,7 @@ cargo test -p datazen-ai-api --lib
 | Akulaku 显式列表 | postgres,mysql,sqlite,redis,mongodb,kiwi,superset | ❌ | Akulaku 变体（`*-akulaku`）；`needs_git: true` |
 | 自定义逗号列表 | 任意 registry id 组合 | ❌ | 仅本地 / 定制发版 |
 
-详见 [optional-drivers.md](./optional-drivers.md)、[ci-private-plugins.md](./ci-private-plugins.md)。
+详见 [optional-drivers.md](./optional-drivers.md)、[ci-private-drivers.md](./ci-private-drivers.md)。
 
 ## 4. 本地 PR 基线（与 CI 对齐）
 
@@ -109,12 +109,12 @@ cargo test -p datazen-ai-api --lib
 
 - **Basic**：四平台 × basic 驱动（与 PR CI 同套核心驱动，但做完整 `tauri build`）。
 - **All**：四平台 × 全部 path 驱动（**不进 PR CI** 的集成验证点）。
-- **Akulaku**：含 git 私有驱动；Secrets 在 GitHub Environment `release`。
+- **Akulaku**：三平台（Windows / macOS）× 含 git 私有驱动；Secrets 在 GitHub Environment `release`。
 
 ## 7. 相关文档
 
 - [e2e-testing.md](./e2e-testing.md) — WebDriver 构建与跑法
 - [e2e-coverage.md](./e2e-coverage.md) — Host 路径覆盖矩阵
 - [optional-drivers.md](./optional-drivers.md) — 可选 path 驱动说明
-- [ci-private-plugins.md](./ci-private-plugins.md) — Git 驱动 Deploy Key
+- [ci-private-drivers.md](./ci-private-drivers.md) — Git 驱动 Deploy Key
 - [packaging.md](./packaging.md) — 发版渠道与 SKU 命名

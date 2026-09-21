@@ -82,11 +82,27 @@ export function useQueryContextPath({
         return;
       }
       const db = next[0];
-      if (db && db !== currentDatabase) {
+      // Guard: in single-database mode the context-path root can be a *schema*
+      // (e.g. `public`) rather than a database — never hand a schema name to
+      // switchDatabase, which would run get_tables('public') and pin the
+      // session's currentDatabase to a non-existent database.
+      if (db && databases.includes(db) && db !== currentDatabase) {
+        // Persist the database to the panel so that `selectedDatabase`
+        // (= database ?? currentDatabase) reflects the switch even when the
+        // panel already has a bound database from creation time.
+        updatePanel(panelId, { database: db });
         await switchDatabase(db);
       }
     },
-    [currentDatabase, ensureNamespacePath, isPathHierarchy, panelId, switchDatabase, updatePanel],
+    [
+      currentDatabase,
+      databases,
+      ensureNamespacePath,
+      isPathHierarchy,
+      panelId,
+      switchDatabase,
+      updatePanel,
+    ],
   );
 
   useEffect(() => {
@@ -100,10 +116,14 @@ export function useQueryContextPath({
   const handleSelectContextLevel = useCallback(
     (index: number, value: string) => {
       if (!value) return;
-      if (!isPathHierarchy) {
-        if (index === 0) updatePanel(panelId, { database: value });
-        if (index === 1) updatePanel(panelId, { schema: value });
-      }
+      // Level 0 is always the database/catalog root. Sync it to the panel's
+      // bound `database` (for both plain and path-hierarchy drivers) so that
+      // re-execution and tab restoration keep using the tab's own database.
+      if (index === 0) updatePanel(panelId, { database: value });
+      // Level 1 is the PG-family schema envelope only for non-path-hierarchy
+      // drivers; in path-hierarchy trees it is a namespace level carried by
+      // `namespacePath`, not the panel schema.
+      if (!isPathHierarchy && index === 1) updatePanel(panelId, { schema: value });
       void applyContextPath([...contextPath.slice(0, index), value]);
     },
     [applyContextPath, contextPath, panelId, updatePanel, isPathHierarchy],
@@ -376,7 +396,7 @@ export function QuerySidebarSection({
                 data-testid="history-scope-current"
                 aria-pressed={historyScopeMode === 'current'}
                 onClick={() => setHistoryScopeMode('current')}
-                className={`rounded px-2 py-0.5 text-[11px] ${historyScopeMode === 'current' ? 'bg-accent text-white' : 'border border-edge text-fg-muted hover:text-fg'}`}
+                className={`rounded px-2 py-0.5 text-[11px] ${historyScopeMode === 'current' ? 'bg-accent text-on-accent' : 'border border-edge text-fg-muted hover:text-fg'}`}
               >
                 {t('query.historyScopeCurrent')}
               </button>
@@ -385,7 +405,7 @@ export function QuerySidebarSection({
                 data-testid="history-scope-all"
                 aria-pressed={historyScopeMode === 'all'}
                 onClick={() => setHistoryScopeMode('all')}
-                className={`rounded px-2 py-0.5 text-[11px] ${historyScopeMode === 'all' ? 'bg-accent text-white' : 'border border-edge text-fg-muted hover:text-fg'}`}
+                className={`rounded px-2 py-0.5 text-[11px] ${historyScopeMode === 'all' ? 'bg-accent text-on-accent' : 'border border-edge text-fg-muted hover:text-fg'}`}
               >
                 {t('query.historyScopeAll')}
               </button>

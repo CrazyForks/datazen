@@ -73,6 +73,21 @@ pub struct XpendingResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConsumerInfo {
+    pub name: String,
+    pub pending: u64,
+    pub idle_ms: u64,
+    pub delivery_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamLagResult {
+    pub lag: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamOverviewRow {
     pub key: String,
     pub length: u64,
@@ -229,6 +244,185 @@ fn parse_xpending_entries(raw: &redis::Value) -> Result<XpendingResult, String> 
         total: entries.len() as u64,
         entries,
     })
+}
+
+fn parse_xinfo_consumers(raw: &redis::Value) -> Result<Vec<ConsumerInfo>, String> {
+    let items = match raw {
+        redis::Value::Array(items) => items,
+        _ => return Ok(vec![]),
+    };
+
+    let mut out = Vec::new();
+    for item in items {
+        let mut name = String::new();
+        let mut pending = 0u64;
+        let mut idle_ms = 0u64;
+        let mut delivery_count = 0u64;
+
+        match item {
+            redis::Value::Array(fields) => {
+                for chunk in fields.chunks(2) {
+                    if chunk.len() != 2 {
+                        continue;
+                    }
+                    let key = value_to_string(&chunk[0]).to_ascii_lowercase();
+                    let val = &chunk[1];
+                    match key.as_str() {
+                        "name" => name = value_to_string(val),
+                        "pending" => pending = value_to_u64(val),
+                        "idle" => idle_ms = value_to_u64(val),
+                        "delivery-count" => delivery_count = value_to_u64(val),
+                        _ => {}
+                    }
+                }
+            }
+            redis::Value::Map(pairs) => {
+                for (k, v) in pairs {
+                    let key = value_to_string(k).to_ascii_lowercase();
+                    match key.as_str() {
+                        "name" => name = value_to_string(v),
+                        "pending" => pending = value_to_u64(v),
+                        "idle" => idle_ms = value_to_u64(v),
+                        "delivery-count" => delivery_count = value_to_u64(v),
+                        _ => {}
+                    }
+                }
+            }
+            _ => continue,
+        }
+
+        if !name.is_empty() {
+            out.push(ConsumerInfo {
+                name,
+                pending,
+                idle_ms,
+                delivery_count,
+            });
+        }
+    }
+
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Parse a Redis stream ID string, returning the numeric sequence part.
+/// For IDs like "1000-0", returns (milliseconds, sequence_number).
+fn parse_stream_id(id: &str) -> Option<(u64, u64)> {
+    let parts: Vec<&str> = id.split('-').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let ms = parts[0].parse::<u64>().ok()?;
+    let seq = parts[1].parse::<u64>().ok()?;
+    Some((ms, seq))
+}
+
+pub async fn xinfo_consumers<C>(
+    conn: &mut C,
+    key: &str,
+    group: &str,
+) -> Result<Vec<ConsumerInfo>, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("key is required".into());
+    }
+    let group = validate_xgroup_name(group)?;
+
+    let raw: redis::Value = redis::cmd("XINFO")
+        .arg("CONSUMERS")
+        .arg(key)
+        .arg(&group)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    parse_xinfo_consumers(&raw)
+}
+
+pub async fn stream_lag<C>(conn: &mut C, key: &str, group: &str) -> Result<StreamLagResult, String>
+where
+    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+{
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("key is required".into());
+    }
+    let group = validate_xgroup_name(group)?;
+
+    // Fetch XINFO GROUPS to get last-delivered-id
+    let groups_raw: redis::Value = redis::cmd("XINFO")
+        .arg("GROUPS")
+        .arg(key)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let groups = parse_xinfo_groups(&groups_raw)?;
+
+    let group_info = groups
+        .iter()
+        .find(|g| g.name == group)
+        .ok_or_else(|| format!("consumer group '{}' not found", group))?;
+
+    // If no entries delivered yet, lag = stream length (all entries are pending)
+    if group_info.last_delivered_id.is_empty() || group_info.last_delivered_id == "0-0" {
+        // Get stream length
+        let len: u64 = redis::cmd("XLEN")
+            .arg(key)
+            .query_async(conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(StreamLagResult { lag: Some(len) });
+    }
+
+    // Get the max ID in the stream using XRANGE with COUNT 1 from the end
+    let max_raw: redis::Value = redis::cmd("XREVRANGE")
+        .arg(key)
+        .arg("+")
+        .arg("-")
+        .arg("COUNT")
+        .arg(1u32)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let max_entries = match &max_raw {
+        redis::Value::Array(items) => items,
+        _ => return Ok(StreamLagResult { lag: None }),
+    };
+
+    if max_entries.is_empty() {
+        return Ok(StreamLagResult { lag: None });
+    }
+
+    // Extract the max entry ID
+    let max_id_str = match &max_entries[0] {
+        redis::Value::Array(parts) if !parts.is_empty() => value_to_string(&parts[0]),
+        _ => return Ok(StreamLagResult { lag: None }),
+    };
+
+    let (max_ms, max_seq) =
+        parse_stream_id(&max_id_str).ok_or_else(|| format!("invalid stream ID: {}", max_id_str))?;
+    let (delivered_ms, delivered_seq) =
+        parse_stream_id(&group_info.last_delivered_id).ok_or_else(|| {
+            format!(
+                "invalid last-delivered-id: {}",
+                group_info.last_delivered_id
+            )
+        })?;
+
+    // lag = max_id - last_delivered_id (approximate, using milliseconds-level comparison)
+    let lag = if max_ms > delivered_ms {
+        Some(max_ms - delivered_ms)
+    } else if max_ms == delivered_ms && max_seq > delivered_seq {
+        Some(max_seq - delivered_seq)
+    } else {
+        Some(0)
+    };
+
+    Ok(StreamLagResult { lag })
 }
 
 pub async fn xrange<C>(
@@ -583,5 +777,199 @@ mod tests {
         assert_eq!(pending.entries[0].consumer, "c1");
         assert_eq!(pending.entries[0].idle_ms, 42);
         assert_eq!(pending.entries[0].delivery_count, 1);
+    }
+
+    #[test]
+    fn parse_xinfo_consumers_from_array_pairs() {
+        let raw = redis::Value::Array(vec![
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"worker1".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(5),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(1200),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(3),
+            ]),
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"worker2".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(2),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(500),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(1),
+            ]),
+        ]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 2);
+        // sorted by name
+        assert_eq!(consumers[0].name, "worker1");
+        assert_eq!(consumers[0].pending, 5);
+        assert_eq!(consumers[0].idle_ms, 1200);
+        assert_eq!(consumers[0].delivery_count, 3);
+        assert_eq!(consumers[1].name, "worker2");
+        assert_eq!(consumers[1].pending, 2);
+        assert_eq!(consumers[1].idle_ms, 500);
+        assert_eq!(consumers[1].delivery_count, 1);
+    }
+
+    #[test]
+    fn parse_stream_id_basic() {
+        assert_eq!(parse_stream_id("1000-0"), Some((1000, 0)));
+        assert_eq!(parse_stream_id("1000-5"), Some((1000, 5)));
+        assert_eq!(parse_stream_id("9999999999999-1"), Some((9999999999999, 1)));
+        assert_eq!(parse_stream_id("invalid"), None);
+        assert_eq!(parse_stream_id(""), None);
+    }
+
+    #[test]
+    fn parse_xinfo_consumers_empty_array() {
+        let raw = redis::Value::Array(vec![]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert!(consumers.is_empty());
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_from_map_variant() {
+        // XINFO CONSUMERS can return Map entries in some Redis versions
+        let raw = redis::Value::Array(vec![redis::Value::Map(vec![
+            (
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"consumer-a".to_vec()),
+            ),
+            (
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(10),
+            ),
+            (
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(2500),
+            ),
+            (
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(7),
+            ),
+        ])]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "consumer-a");
+        assert_eq!(consumers[0].pending, 10);
+        assert_eq!(consumers[0].idle_ms, 2500);
+        assert_eq!(consumers[0].delivery_count, 7);
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_skips_entry_without_name() {
+        let raw = redis::Value::Array(vec![
+            // Entry with name - should be kept
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"good".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(1),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(0),
+            ]),
+            // Entry without name - should be skipped
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(5),
+            ]),
+        ]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "good");
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_skips_non_array_non_map() {
+        let raw = redis::Value::Array(vec![
+            redis::Value::BulkString(b"not a structured entry".to_vec()),
+            redis::Value::Int(42),
+            redis::Value::Nil,
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"valid".to_vec()),
+                redis::Value::BulkString(b"pending".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"idle".to_vec()),
+                redis::Value::Int(0),
+                redis::Value::BulkString(b"delivery-count".to_vec()),
+                redis::Value::Int(0),
+            ]),
+        ]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "valid");
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_non_array_outer_returns_empty() {
+        // When Redis returns a non-Array top-level value (e.g., error string)
+        let raw = redis::Value::BulkString(b"ERR key does not exist".to_vec());
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert!(consumers.is_empty());
+    }
+
+    #[test]
+    fn test_tester_parse_xinfo_consumers_odd_field_count() {
+        // Odd number of fields in array - last field has no pair
+        let raw = redis::Value::Array(vec![redis::Value::Array(vec![
+            redis::Value::BulkString(b"name".to_vec()),
+            redis::Value::BulkString(b"orphan".to_vec()),
+            redis::Value::BulkString(b"pending".to_vec()),
+            redis::Value::Int(3),
+            redis::Value::BulkString(b"idle".to_vec()),
+            // missing value for idle - odd chunk len
+        ])]);
+        let consumers = parse_xinfo_consumers(&raw).unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].name, "orphan");
+        assert_eq!(consumers[0].pending, 3);
+        // idle was not set because chunk had len 1
+        assert_eq!(consumers[0].idle_ms, 0);
+    }
+
+    #[test]
+    fn test_tester_parse_stream_id_multiple_dashes() {
+        // Stream IDs like "1000-0-extra" should return None (invalid)
+        assert_eq!(parse_stream_id("1000-0-extra"), None);
+        assert_eq!(parse_stream_id("1-2-3"), None);
+    }
+
+    #[test]
+    fn test_tester_parse_stream_id_zero_zero() {
+        assert_eq!(parse_stream_id("0-0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn test_tester_consumer_info_serde_roundtrip() {
+        let info = ConsumerInfo {
+            name: "w1".to_string(),
+            pending: 42,
+            idle_ms: 1500,
+            delivery_count: 8,
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["name"], "w1");
+        assert_eq!(json["pending"], 42);
+        assert_eq!(json["idleMs"], 1500);
+        assert_eq!(json["deliveryCount"], 8);
+    }
+
+    #[test]
+    fn test_tester_stream_lag_result_serde() {
+        let with_lag = StreamLagResult { lag: Some(42) };
+        let json = serde_json::to_value(&with_lag).unwrap();
+        assert_eq!(json["lag"], 42);
+
+        let no_lag = StreamLagResult { lag: None };
+        let json = serde_json::to_value(&no_lag).unwrap();
+        assert!(json["lag"].is_null());
     }
 }

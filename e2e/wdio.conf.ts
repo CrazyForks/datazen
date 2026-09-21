@@ -23,18 +23,26 @@ import {
   isScreenshotTraceEnabled,
   saveJourneyScreenshot,
 } from './lib/screenshotTrace.js';
-import { cleanupAppDataViaIpc, seedDefaultPgConnection } from './lib/testDataLifecycle.js';
+import {
+  cleanupAppDataViaIpc,
+  createWorkerDatabase,
+  dropWorkerDatabase,
+  seedDefaultPgConnection,
+} from './lib/testDataLifecycle.js';
 import { ensureMainWindowForIpc, invokeBackend } from './helpers.js';
 import { browser } from '@wdio/globals';
 
 const WD_PORT = parseInt(process.env.E2E_WD_PORT || '4445', 10);
+
+/** Per-worker isolated database name — set in runSessionBootstrap, dropped in after. */
+let _workerDb: string | undefined;
 
 const capabilities: WebdriverIO.Capabilities[] = [{}];
 
 async function runSessionBootstrap() {
   await browser.url('tauri://localhost');
   await browser.pause(2000);
-  // Ensure we're on the main page — the app may start on welcome/settings
+  // Ensure we're on the main page — the app may start on settings
   try {
     await $('[data-testid="workspace-nav-databases"]').waitForDisplayed({ timeout: 10000 });
   } catch {
@@ -67,6 +75,11 @@ async function runSessionBootstrap() {
             safeMode: true,
             defaultPageSize: 50,
             sqlExecutionStrategy: 'entire_script',
+            // Every suite except `onboarding-journey` asserts the workspace, and
+            // a wiped `e2e/.app-data` is a fresh install whose first-run journey
+            // would otherwise replace MainPage. The journey spec flips this back
+            // to `{ completed: false }` for its own cases.
+            onboarding: { completed: true, version: 1 },
           },
         }),
       )
@@ -74,7 +87,10 @@ async function runSessionBootstrap() {
       .catch((e: unknown) => done(String(e)));
   });
 
-  await seedDefaultPgConnection(browser);
+  // Create a per-worker isolated PG database so parallel specs never conflict.
+  _workerDb = createWorkerDatabase();
+
+  await seedDefaultPgConnection(browser, _workerDb);
 
   // Reload page so the new language and seeded connections take effect
   await browser.execute(() => location.reload());
@@ -129,7 +145,7 @@ export const config: WebdriverIO.Config = {
       './specs/client-parity.ts',
       './specs/conn-ctx-menu-submenus.ts',
       './specs/object-browser.ts',
-      './specs/plugins.spec.ts',
+      './specs/wapps.spec.ts',
       './specs/workflow.ts',
       './specs/er-diagram.ts',
       './specs/multi-database.ts',
@@ -153,7 +169,7 @@ export const config: WebdriverIO.Config = {
       './specs/i18n-menu.ts',
       './specs/homepage-features.ts',
       './specs/connection-empty-state.ts',
-      './specs/welcome.ts',
+      './specs/connection-zero-state.ts',
       './specs/drag-drop-groups.ts',
       './specs/backup-database.ts',
       './specs/backup-window.ts',
@@ -161,7 +177,7 @@ export const config: WebdriverIO.Config = {
       './specs/data-sync-window.ts',
       './specs/window-operations.ts',
       './specs/unified-tab-bar.ts',
-      './specs/plugins.spec.ts',
+      './specs/wapps.spec.ts',
     ],
     // Real-DB Host specs incl. the host contract matrix (was `pnpm e2e:db`)
     db: [
@@ -187,7 +203,7 @@ export const config: WebdriverIO.Config = {
       './specs/er-diagram.ts',
       './specs/data-transfer-window.ts',
       './specs/data-transfer-type-mapping.ts',
-      './specs/data-transfer-type-mapping-mysql-pg.ts',
+      './specs/journeys/data-transfer-type-mapping-journey.ts',
       './specs/data-transfer-diverse-types.ts',
       './specs/data-transfer-mode-paths.ts',
     ],
@@ -196,6 +212,10 @@ export const config: WebdriverIO.Config = {
     contract: ['./specs/host-contract-matrix.ts'],
     // Redis driver's own E2E, not part of default full run (`pnpm e2e:redis`)
     redis: ['../packages/drivers/redis/e2e/*.ts'],
+    // SQL Editor Pro enhanced features (S4-A statement frame/gutter, S5-B bind-param panel),
+    // migrated to the Pro extension's own e2e dir — requires a Pro build:
+    // `pnpm e2e:pro:sql-editor`. Not part of the default Community run.
+    'pro-sql-editor': ['../packages/pro-extensions/sql-editor-pro/e2e/specs/*.ts'],
     // AI features (`pnpm e2e:ai`)
     ai: [
       './specs/ai-features.ts',
@@ -224,7 +244,7 @@ export const config: WebdriverIO.Config = {
     'data-transfer': [
       './specs/data-transfer-window.ts',
       './specs/data-transfer-type-mapping.ts',
-      './specs/data-transfer-type-mapping-mysql-pg.ts',
+      './specs/journeys/data-transfer-type-mapping-journey.ts',
       './specs/data-transfer-diverse-types.ts',
       './specs/data-transfer-mode-paths.ts',
       './specs/journeys/data-transfer-journey.ts',
@@ -250,8 +270,9 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/data-transfer-journey.ts',
       './specs/journeys/data-transfer-pg-mysql-journey.ts',
       './specs/journeys/data-transfer-mysql-pg-journey.ts',
+      './specs/journeys/data-transfer-type-mapping-journey.ts',
       './specs/connection-navigator-expansion.ts',
-      './specs/journeys/welcome-query-journey.ts',
+      './specs/journeys/zero-state-query-journey.ts',
       './specs/journeys/connection-create-journey.ts',
       './specs/journeys/connection-browse-journey.ts',
       './specs/journeys/connection-query-journey.ts',
@@ -259,8 +280,51 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/query-recovery-journey.ts',
       './specs/journeys/query-toolbar-responsive-journey.ts',
       './specs/journeys/query-edge-journey.ts',
+      './specs/journeys/query-row-limit-journey.ts',
       './specs/journeys/first-run-edge-journey.ts',
+      // Visual Query Builder journeys (normal / abnormal / high-complexity /
+      // clause list). These were previously unregistered, which is how the spec
+      // drifted away from the shipped UI without anyone noticing.
+      './specs/journeys/visual-query-builder-journey.ts',
+      './specs/journeys/visual-query-builder-edge-journey.ts',
+      './specs/journeys/visual-query-builder-complex-journey.ts',
+      './specs/journeys/visual-query-builder-clauses-journey.ts',
+      // First-run journey (onboarding wizard). Runs last on purpose: its cases
+      // rewrite the onboarding gate and restore it in `after`.
+      './specs/journeys/onboarding-journey.ts',
     ],
+    // Visual Query Builder only (`pnpm e2e:qb`) — normal, abnormal,
+    // high-complexity and clause-list statement journeys.
+    'query-builder': [
+      './specs/journeys/visual-query-builder-journey.ts',
+      './specs/journeys/visual-query-builder-edge-journey.ts',
+      './specs/journeys/visual-query-builder-complex-journey.ts',
+      './specs/journeys/visual-query-builder-clauses-journey.ts',
+    ],
+    // Blast-radius guard for the Query Builder work (`pnpm e2e:qb:regression`).
+    // The builder shares the query panel, the SQL editor host and the
+    // navigator's `onSelectTable`, so these are the specs that would catch a
+    // layout / execution-gate / navigation regression from it.
+    // Run with one instance per spec (`--instances 5`): several of these specs
+    // churn connections, and sharing one app process makes a later spec's schema
+    // tree time out on state the earlier spec left behind.
+    //
+    // `sql-query.ts` is intentionally absent: its SQ-CTX-001 assertion fails on
+    // a pristine checkout too (the database context selector reports the
+    // default database instead of the qualified path's), so including it would
+    // keep this guard permanently red. The Postgres double-quote lint that this
+    // guard exists to protect is covered by unit tests in
+    // `src/windows/connection/__tests__/query.modules.test.tsx`.
+    'qb-regression': [
+      './specs/journeys/connection-query-journey.ts',
+      './specs/journeys/query-edge-journey.ts',
+      './specs/journeys/query-toolbar-responsive-journey.ts',
+      './specs/connection-navigator-expansion.ts',
+      './specs/table-data.ts',
+    ],
+    // First-run journey only (`pnpm e2e:onboarding`). Self-contained: it flips
+    // the onboarding gate itself and restores it afterwards.
+    onboarding: ['./specs/journeys/onboarding-journey.ts'],
     // Continuous failure/recovery and state-boundary paths
     // (`pnpm e2e:journeys:edge`)
     'journey-edge': [
@@ -342,6 +406,11 @@ export const config: WebdriverIO.Config = {
       await cleanupAppDataViaIpc(browser);
     } catch (err) {
       console.warn('[e2e-teardown]', err);
+    }
+    // Drop the per-worker isolated database.
+    if (_workerDb) {
+      dropWorkerDatabase(_workerDb);
+      _workerDb = undefined;
     }
   },
 };

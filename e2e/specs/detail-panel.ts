@@ -123,30 +123,44 @@ describe('详情面板 (DP-001~DP-004)', () => {
   });
 
   it('详情面板中的字段应可编辑 (DP-003)', async () => {
-    // Find the input/textarea for the "name" field in the detail panel
-    // and change Alice to AliceEdited.
-    const edited = await browser.execute(() => {
-      // Detail panel is the right-hand aside (w-72), not the schema tree.
-      const asides = Array.from(document.querySelectorAll('aside'));
-      const panel = asides.find((el) => el.className.includes('w-72')) ?? asides[asides.length - 1];
-      if (!panel) return false;
-      const inputs = panel.querySelectorAll('input, textarea');
-      for (const input of inputs) {
-        if ((input as HTMLInputElement).value === 'Alice') {
-          const el = input as HTMLInputElement;
-          el.focus();
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-          setter?.call(el, 'AliceEdited');
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          el.dispatchEvent(new Event('blur', { bubbles: true }));
-          return true;
-        }
+    // The detail panel is the right-hand aside (w-72), not the schema tree.
+    const panel = await $('aside.w-72');
+    // Find the "name" field editor (the input whose value equals Alice).
+    // Note: InlineFieldEditor commits onBlur/Enter via a controlled input;
+    // native-setter + synthetic blur never triggers React's commit (it listens
+    // to focusout), so we must type for real and blur (Tab) to persist.
+    const inputs = await panel.$$('input');
+    const count = await inputs.length;
+    let nameIdx = -1;
+    for (let i = 0; i < count; i++) {
+      if ((await inputs[i].getValue()) === 'Alice') {
+        nameIdx = i;
+        break;
       }
-      return false;
-    });
-    expect(edited).toBe(true);
-    await browser.pause(2000);
+    }
+    expect(nameIdx).toBeGreaterThanOrEqual(0);
+    const nameInput = inputs[nameIdx];
+    await nameInput.click();
+    await nameInput.setValue('AliceEdited');
+    await browser.pause(150);
+    // Enter commits InlineFieldEditor for non-longtext fields (handleKeyDown);
+    // a more deterministic trigger than relying on blur under WebKit.
+    await browser.keys(['Enter']);
+    await browser.pause(1500);
+    // InlineFieldEditor Enter only stages a cell change in the store
+    // (updateCell -> stageCellChange).  The pending-changes-bar appears with a
+    // commit button; click it and confirm so the change is really flushed to DB,
+    // otherwise DP-004's readback would still see the original value.
+    const commitBtn = await $('[data-testid="pending-commit"]');
+    if (await commitBtn.isExisting()) {
+      await commitBtn.click();
+      await browser.pause(300);
+      const ok = await $('[data-testid="confirm-dialog-ok"]');
+      if (await ok.isExisting()) {
+        await ok.click();
+        await browser.pause(1500);
+      }
+    }
   });
 
   it('编辑后的值应持久化到数据库 (DP-004)', async () => {

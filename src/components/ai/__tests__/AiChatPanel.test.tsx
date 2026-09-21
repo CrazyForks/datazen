@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { AiChatPanel, QuestionBlock } from '../AiChatPanel';
@@ -5,6 +6,16 @@ import type { AiChatDraftRequest } from '../../../windows/connection/query/aiDra
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock('../../../hooks/useAutoScroll', () => ({
+  useAutoScroll: () => ({
+    atBottom: true,
+    unreadCount: 0,
+    jumpToBottom: vi.fn(),
+    onScroll: vi.fn(),
+    containerRef: { current: null },
+  }),
 }));
 
 const openSettingsWindow = vi.fn();
@@ -25,36 +36,37 @@ vi.mock('../../SqlCodeBlock', () => ({
 }));
 
 vi.mock('../AiInput', () => ({
-  AiInput: ({
-    value,
-    onChange,
-    onSubmit,
-    disabled,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    onSubmit: () => void;
-    disabled?: boolean;
-  }) => (
-    <div>
-      <textarea
-        data-testid="chat-input"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <button type="button" data-testid="chat-send" onClick={onSubmit}>
-        send
-      </button>
-    </div>
-  ),
+  AiInput: forwardRef<
+    HTMLTextAreaElement,
+    {
+      value: string;
+      onChange: (v: string) => void;
+      onSubmit: () => void;
+      disabled?: boolean;
+    }
+  >(function AiInput({ value, onChange, onSubmit, disabled }, ref) {
+    return (
+      <div>
+        <textarea
+          ref={ref}
+          data-testid="chat-input"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button type="button" data-testid="chat-send" onClick={onSubmit}>
+          send
+        </button>
+      </div>
+    );
+  }),
 }));
 
 const aiState = vi.hoisted(() => ({
   isConfigured: true,
   chatSession: {
     messages: [] as {
-      role: 'user' | 'assistant';
+      role: 'user' | 'assistant' | 'tool';
       content: string;
       reasoning?: string;
       questions?: {
@@ -72,6 +84,18 @@ const aiState = vi.hoisted(() => ({
   initChatSession: vi.fn(),
   sendChatMessage: vi.fn().mockResolvedValue(undefined),
   clearChat: vi.fn(),
+  settingsConfig: null as {
+    activeProfileId: string;
+    profiles: {
+      id: string;
+      name: string;
+      model: string;
+      isDefault?: boolean;
+      safetyGate?: string;
+    }[];
+  } | null,
+  setActiveProfile: vi.fn().mockResolvedValue(undefined),
+  loadConfig: vi.fn(),
 }));
 
 vi.mock('../../../stores/aiStore', () => ({
@@ -89,7 +113,9 @@ beforeEach(() => {
     isStreaming: false,
     streamContent: '',
     streamReasoning: '',
+    streamMcpToolName: null,
   };
+  aiState.settingsConfig = null;
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -211,7 +237,7 @@ describe('QuestionBlock', () => {
     const { getByText } = render(<QuestionBlock questions={questions} onSubmit={onSubmit} />);
     fireEvent.click(getByText('Alpha'));
     fireEvent.click(getByText('chat.questions.submit'));
-    expect(onSubmit).toHaveBeenCalledWith('Pick one\nAlpha');
+    expect(onSubmit).toHaveBeenCalledWith('[q1] Pick one\nAlpha');
   });
 });
 

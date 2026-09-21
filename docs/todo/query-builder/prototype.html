@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>可视化查询构建器 · 图解</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+
+      :root {
+        --bg: #0b0d12;
+        --panel: #12151d;
+        --card: #1a1e29;
+        --border: #262b38;
+        --text: #e4e7ef;
+        --muted: #7d8598;
+        --accent: #6c8cff;
+        --accent2: #22d3a6;
+        --warn: #f5a623;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+          sans-serif;
+        background: radial-gradient(1200px 600px at 50% -10%, #161b28 0%, var(--bg) 60%);
+        color: var(--text);
+        padding: 40px 24px 64px;
+        min-height: 100vh;
+      }
+
+      .wrap {
+        max-width: 1140px;
+        margin: 0 auto;
+      }
+
+      .page-title {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      .page-title .grad {
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .page-sub {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+        max-width: 780px;
+        margin: 0 0 28px;
+      }
+
+      /* ===== 工具窗口 ===== */
+      .app {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow:
+          0 30px 80px -20px rgba(0, 0, 0, 0.8),
+          0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+      }
+
+      .titlebar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        background: #0e1118;
+        border-bottom: 1px solid var(--border);
+      }
+      .dots {
+        display: flex;
+        gap: 6px;
+      }
+      .dots i {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        display: block;
+      }
+      .dots i:nth-child(1) {
+        background: #ff5f57;
+      }
+      .dots i:nth-child(2) {
+        background: #febc2e;
+      }
+      .dots i:nth-child(3) {
+        background: #28c840;
+      }
+      .titlebar .name {
+        font-size: 13px;
+        color: var(--muted);
+        margin-left: 6px;
+      }
+      .titlebar .name b {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .body {
+        display: grid;
+        grid-template-columns: 200px 600px 260px;
+      }
+
+      .panel-l {
+        border-right: 1px solid var(--border);
+        padding: 14px 12px;
+        background: var(--panel);
+      }
+      .panel-c {
+        position: relative;
+        height: 400px;
+        background-color: #0e1118;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 20px 20px;
+        overflow: hidden;
+      }
+      .panel-r {
+        border-left: 1px solid var(--border);
+        padding: 14px 12px;
+        background: var(--panel);
+      }
+
+      .panel-title {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* ===== 左：对象树 ===== */
+      .tree-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12.5px;
+        padding: 5px 7px;
+        border-radius: 6px;
+        color: var(--text);
+        cursor: default;
+        margin-bottom: 1px;
+      }
+      .tree-item:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .tree-item .ico {
+        color: var(--muted);
+        font-size: 11px;
+        width: 12px;
+        text-align: center;
+      }
+      .tree-item.table .ico {
+        color: var(--accent);
+      }
+      .tree-item.muted {
+        color: var(--muted);
+      }
+      .tree-item.muted .ico {
+        color: #4a5162;
+      }
+      .tree-item.active {
+        background: rgba(108, 140, 255, 0.12);
+        color: #a9bcff;
+      }
+
+      .drag-hint {
+        margin-top: 14px;
+        padding: 10px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.6;
+        text-align: center;
+      }
+
+      /* ===== 画布：表卡片 ===== */
+      .table-card {
+        position: absolute;
+        width: 220px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        overflow: hidden;
+        box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.7);
+        transition:
+          border-color 0.2s,
+          transform 0.2s;
+      }
+      .table-card:hover {
+        transform: translateY(-2px);
+      }
+      .table-card.joined {
+        border-color: rgba(108, 140, 255, 0.55);
+        box-shadow:
+          0 0 0 1px rgba(108, 140, 255, 0.2),
+          0 12px 30px -10px rgba(0, 0, 0, 0.7);
+      }
+
+      .table-header {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 8px 11px;
+        height: 34px;
+        background: linear-gradient(180deg, #232838, #1c2130);
+        border-bottom: 1px solid var(--border);
+        font-size: 12.5px;
+        font-weight: 600;
+      }
+      .table-header .tico {
+        color: var(--accent);
+        font-size: 11px;
+      }
+      .table-card.joined .table-header .tico {
+        color: var(--accent2);
+      }
+
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 11px;
+        font-size: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+      }
+      .field:last-child {
+        border-bottom: none;
+      }
+      .field.selected {
+        background: rgba(108, 140, 255, 0.08);
+        color: var(--text);
+      }
+      .field .ck {
+        width: 13px;
+        height: 13px;
+        border-radius: 3px;
+        border: 1.5px solid #3a4152;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        color: transparent;
+        flex: 0 0 auto;
+      }
+      .field.selected .ck {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .field .fname {
+        flex: 1;
+      }
+      .field .ftype {
+        font-size: 10px;
+        color: #5a6274;
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      .field .fkey {
+        font-size: 9px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: rgba(245, 166, 35, 0.15);
+        color: var(--warn);
+      }
+      .field .fkey.fk {
+        background: rgba(34, 211, 166, 0.13);
+        color: var(--accent2);
+      }
+
+      /* ===== 画布：连线 ===== */
+      .links {
+        position: absolute;
+        inset: 0;
+        width: 600px;
+        height: 400px;
+        pointer-events: none;
+      }
+      .link-path {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 1.6;
+        stroke-dasharray: 6 4;
+        animation: flow 1s linear infinite;
+      }
+      @keyframes flow {
+        to {
+          stroke-dashoffset: -20;
+        }
+      }
+      .link-dot {
+        fill: var(--accent);
+      }
+
+      .join-label {
+        position: absolute;
+        left: 150px;
+        top: 120px;
+        background: #1c2231;
+        border: 1px solid rgba(108, 140, 255, 0.4);
+        color: #a9bcff;
+        font-size: 10.5px;
+        padding: 4px 9px;
+        border-radius: 6px;
+        white-space: nowrap;
+        font-family: ui-monospace, Menlo, monospace;
+        box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.7);
+      }
+
+      /* ===== 右：配置面板 ===== */
+      .cfg-block {
+        margin-bottom: 18px;
+      }
+      .cfg-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11.5px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.025);
+        margin-bottom: 5px;
+        border: 1px solid transparent;
+      }
+      .cfg-row .tag {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 2px 5px;
+        border-radius: 4px;
+        flex: 0 0 auto;
+      }
+      .tag.sel {
+        background: rgba(108, 140, 255, 0.18);
+        color: #a9bcff;
+      }
+      .tag.where {
+        background: rgba(245, 166, 35, 0.15);
+        color: var(--warn);
+      }
+      .tag.join {
+        background: rgba(34, 211, 166, 0.14);
+        color: var(--accent2);
+      }
+      .tag.order {
+        background: rgba(244, 114, 182, 0.15);
+        color: #f472b6;
+      }
+      .cfg-row .txt {
+        color: var(--text);
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 11px;
+        flex: 1;
+      }
+      .cfg-row .x {
+        color: #4a5162;
+        font-size: 11px;
+      }
+
+      /* ===== 底部 SQL ===== */
+      .sqlbar {
+        border-top: 1px solid var(--border);
+        background: #0e1118;
+        padding: 14px 18px 18px;
+      }
+      .sqlbar .panel-title {
+        margin-bottom: 8px;
+      }
+      .sql {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        line-height: 1.75;
+        color: #c8cede;
+        white-space: pre;
+        overflow-x: auto;
+      }
+      .sql .kw {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .sql .num {
+        color: var(--warn);
+      }
+      .sql .fn {
+        color: var(--accent2);
+      }
+
+      /* ===== 底部说明 ===== */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-top: 26px;
+      }
+      .step {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 15px;
+      }
+      .step .n {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        margin-bottom: 9px;
+        background: rgba(108, 140, 255, 0.15);
+        color: #a9bcff;
+      }
+      .step h4 {
+        margin: 0 0 5px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .step p {
+        margin: 0;
+        font-size: 11.5px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1 class="page-title">可视化查询构建器 <span class="grad">Visual Query Builder</span></h1>
+      <p class="page-sub">
+        不写一行 SQL，通过拖拽表、勾选字段、连线建立 JOIN、填写条件，实时生成查询语句。
+        下图为典型界面示意（以 <b>users</b> 与 <b>orders</b> 两表关联查询为例）。
+      </p>
+
+      <div class="app">
+        <!-- 标题栏 -->
+        <div class="titlebar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="name">Query Builder — <b>demo_db</b></div>
+        </div>
+
+        <div class="body">
+          <!-- 左侧：对象树 -->
+          <div class="panel-l">
+            <div class="panel-title">数据库对象</div>
+            <div class="tree-item"><span class="ico">▾</span> public</div>
+            <div class="tree-item table active"><span class="ico">▦</span> users</div>
+            <div class="tree-item table active"><span class="ico">▦</span> orders</div>
+            <div class="tree-item table muted"><span class="ico">▦</span> products</div>
+            <div class="tree-item table muted"><span class="ico">▦</span> payments</div>
+            <div class="drag-hint">拖拽表到右侧画布<br />即可加入查询</div>
+          </div>
+
+          <!-- 中间：画布 -->
+          <div class="panel-c">
+            <!-- 连线 -->
+            <svg class="links" viewBox="0 0 600 400">
+              <path class="link-path" d="M 250 69 C 300 69, 280 199, 330 199" />
+              <circle class="link-dot" cx="250" cy="69" r="3.5" />
+              <circle class="link-dot" cx="330" cy="199" r="3.5" />
+            </svg>
+
+            <!-- JOIN 标签 -->
+            <div class="join-label">ON users.id = orders.user_id</div>
+
+            <!-- users 表 -->
+            <div class="table-card joined" style="left: 30px; top: 20px">
+              <div class="table-header"><span class="tico">▦</span> users</div>
+              <div class="field selected">
+                <span class="ck">✓</span><span class="fname">id</span><span class="ftype">INT</span
+                ><span class="fkey">PK</span>
+              </div>
+              <div class="field selected">
+                <span class="ck">✓</span><span class="fname">name</span
+                ><span class="ftype">VARCHAR</span>
+              </div>
+              <div class="field selected">
+                <span class="ck">✓</span><span class="fname">email</span
+                ><span class="ftype">VARCHAR</span>
+              </div>
+              <div class="field">
+                <span class="ck">✓</span><span class="fname">created_at</span
+                ><span class="ftype">TIMESTAMP</span>
+              </div>
+            </div>
+
+            <!-- orders 表 -->
+            <div class="table-card joined" style="left: 330px; top: 120px">
+              <div class="table-header"><span class="tico">▦</span> orders</div>
+              <div class="field">
+                <span class="ck">✓</span><span class="fname">id</span><span class="ftype">INT</span
+                ><span class="fkey">PK</span>
+              </div>
+              <div class="field selected">
+                <span class="ck">✓</span><span class="fname">user_id</span
+                ><span class="ftype">INT</span><span class="fkey fk">FK</span>
+              </div>
+              <div class="field">
+                <span class="ck">✓</span><span class="fname">product</span
+                ><span class="ftype">VARCHAR</span>
+              </div>
+              <div class="field selected">
+                <span class="ck">✓</span><span class="fname">amount</span
+                ><span class="ftype">DECIMAL</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：配置 -->
+          <div class="panel-r">
+            <div class="cfg-block">
+              <div class="panel-title">SELECT 字段</div>
+              <div class="cfg-row">
+                <span class="tag sel">SEL</span><span class="txt">users.id</span
+                ><span class="x">×</span>
+              </div>
+              <div class="cfg-row">
+                <span class="tag sel">SEL</span><span class="txt">users.name</span
+                ><span class="x">×</span>
+              </div>
+              <div class="cfg-row">
+                <span class="tag sel">SEL</span><span class="txt">users.email</span
+                ><span class="x">×</span>
+              </div>
+              <div class="cfg-row">
+                <span class="tag sel">SEL</span><span class="txt">orders.amount</span
+                ><span class="x">×</span>
+              </div>
+            </div>
+
+            <div class="cfg-block">
+              <div class="panel-title">JOIN 关系</div>
+              <div class="cfg-row">
+                <span class="tag join">JOIN</span><span class="txt">users.id = orders.user_id</span>
+              </div>
+            </div>
+
+            <div class="cfg-block">
+              <div class="panel-title">WHERE 条件</div>
+              <div class="cfg-row">
+                <span class="tag where">WH</span><span class="txt">orders.amount &gt; 100</span
+                ><span class="x">×</span>
+              </div>
+            </div>
+
+            <div class="cfg-block">
+              <div class="panel-title">排序 / 限制</div>
+              <div class="cfg-row">
+                <span class="tag order">ORD</span><span class="txt">amount DESC</span>
+              </div>
+              <div class="cfg-row">
+                <span class="tag order">LIM</span><span class="txt">50</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部 SQL 预览 -->
+        <div class="sqlbar">
+          <div class="panel-title">实时生成的 SQL</div>
+          <pre class="sql"><span class="kw">SELECT</span>
+  users.id,
+  users.name,
+  users.email,
+  orders.amount
+<span class="kw">FROM</span> users
+<span class="kw">INNER JOIN</span> orders
+  <span class="kw">ON</span> users.id = orders.user_id
+<span class="kw">WHERE</span> orders.amount &gt; <span class="num">100</span>
+<span class="kw">ORDER BY</span> orders.amount <span class="kw">DESC</span>
+<span class="kw">LIMIT</span> <span class="num">50</span>;</pre>
+        </div>
+      </div>
+
+      <!-- 四步说明 -->
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <h4>拖入表</h4>
+          <p>从左侧对象树把 users、orders 拖到画布，表结构自动展开。</p>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <h4>勾选字段</h4>
+          <p>点击字段前的复选框，选中的字段进入 SELECT 列表。</p>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <h4>连线建 JOIN</h4>
+          <p>从 users.id 拖到 orders.user_id，自动识别主外键并生成 ON 条件。</p>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <h4>生成 SQL</h4>
+          <p>底部实时预览可执行 SQL，也可直接切换到手写模式继续编辑。</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

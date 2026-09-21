@@ -78,8 +78,27 @@ async function clickMenuItemById(id: string) {
 async function hoverServerSubmenu() {
   const trigger = await $('[data-testid="web-context-submenu-trigger-server-submenu"]');
   if (await trigger.isExisting()) {
-    await trigger.moveTo();
-    await browser.pause(400);
+    // Real pointer hover (.moveTo()) does not reliably open submenus under the
+    // WebKit WebDriver. WebContextMenu opens a submenu on onMouseEnter / onFocus,
+    // so dispatch those DOM events deterministically.
+    await trigger.moveTo().catch(() => {});
+    await browser.execute(() => {
+      const t = document.querySelector(
+        '[data-testid="web-context-submenu-trigger-server-submenu"]',
+      ) as HTMLElement | null;
+      t?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+      t?.focus();
+    });
+    await browser
+      .waitUntil(
+        () =>
+          browser.execute(() => {
+            const sub = document.querySelector('[data-testid="web-context-submenu"]');
+            return !!sub && sub.querySelectorAll('[data-testid^="web-context-item-"]').length > 0;
+          }),
+        { timeout: 3000, timeoutMsg: '服务器子菜单未打开' },
+      )
+      .catch(() => {});
   }
 }
 
@@ -301,11 +320,11 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
 
   it('OPS-SS-002: refresh keeps panel healthy', async () => {
     // Open server status panel via context menu on main connection
-    const connItem = await browser.execute(() => {
+    const connItem = await browser.execute((connName: string) => {
       const items = Array.from(document.querySelectorAll('[data-conn-item]'));
       const main = items.find((el) => {
         const name = el.getAttribute('data-conn-name') || '';
-        return name === E2E_PG_CONN_NAME;
+        return name === connName;
       });
       if (!main) return false;
       const rect = main.getBoundingClientRect();
@@ -318,30 +337,34 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
         }),
       );
       return true;
-    });
+    }, E2E_PG_CONN_NAME);
     if (!connItem) return;
     await browser.pause(400);
 
     await hoverServerSubmenu();
     await clickMenuItemById('server-status');
+    // The default dashboard tab renders the server STATUS VALUE (e.g. the PG
+    // version string) and metric cards; the literal '版本' LABEL only exists on
+    // the "details" sub-tab. Wait on the dashboard title that is actually shown
+    // on the default tab instead (OPS-PROC-003 asserts it passes the same way).
     await browser.waitUntil(
-      async () => (await $('body').getText()).includes(t('serverStatus.version')),
+      async () => (await $('body').getText()).includes(t('serverStatus.dashboardTitle')),
       { timeout: 10000, timeoutMsg: 'Server status panel did not render' },
     );
     const refresh = await $(`button*=${t('serverStatus.refresh')}`);
     await refresh.click();
     await browser.pause(800);
     const body = await $('body').getText();
-    expect(body).toContain(t('serverStatus.version'));
+    expect(body).toContain(t('serverStatus.dashboardTitle'));
   });
 
   it('OPS-PL-001: process list table headers render specific columns', async () => {
     // Open process list on the main connection
-    const connItem = await browser.execute(() => {
+    const connItem = await browser.execute((connName: string) => {
       const items = Array.from(document.querySelectorAll('[data-conn-item]'));
       const main = items.find((el) => {
         const name = el.getAttribute('data-conn-name') || '';
-        return name === E2E_PG_CONN_NAME;
+        return name === connName;
       });
       if (!main) return false;
       const rect = main.getBoundingClientRect();
@@ -354,18 +377,25 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
         }),
       );
       return true;
-    });
+    }, E2E_PG_CONN_NAME);
     if (!connItem) return;
     await browser.pause(400);
 
     await hoverServerSubmenu();
     await clickMenuItemById('process-list');
+    // DataTable headers are rendered as <div data-col-header>/[data-col-label],
+    // NOT as <th> / [role="columnheader"]. Wait for a header cell (or a typed
+    // row cell) to appear instead.
     await browser.waitUntil(
       async () => {
-        const count = await browser.execute(
-          () => document.querySelectorAll('table th, [role="columnheader"]').length,
+        const headers = await browser.execute(
+          () =>
+            document.querySelectorAll('[data-col-header], [role="columnheader"], table th').length,
         );
-        return count > 0;
+        const rows = await browser.execute(
+          () => document.querySelectorAll('[data-dt-row], table tbody tr').length,
+        );
+        return headers > 0 || rows > 0;
       },
       { timeout: 10000, timeoutMsg: 'Process list table did not render' },
     );
@@ -378,7 +408,20 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
   it('OPS-PL-002: kill shows confirm then cancel (non-destructive)', async () => {
     const killBtn = await $(`button*=${t('processList.kill')}`);
     if (!(await killBtn.isExisting())) return;
-    await expect(killBtn).toBeDisplayed();
+    // The Kill button/confirmation requires a highlighted row; select a PID row
+    // (mirrors clickRowByPid in OPS-PROC-004) so the dialog actually opens,
+    // otherwise the button stays disabled and no confirm dialog appears.
+    await browser.execute(() => {
+      const pidCells = Array.from(document.querySelectorAll('[data-dt-col]')).filter(
+        (c) => c.getAttribute('data-dt-col')?.toLowerCase() === 'pid',
+      );
+      const cell = pidCells.find((c) => (c.textContent?.trim().length ?? 0) > 0);
+      const row = cell?.closest('[tabindex="0"]') as HTMLElement | null;
+      row?.click();
+    });
+    await browser.pause(300);
+    // Kill button must be enabled now (a row is highlighted).
+    await expect(killBtn).toBeEnabled();
     await killBtn.click();
     await browser.pause(400);
     const body = await $('body').getText();

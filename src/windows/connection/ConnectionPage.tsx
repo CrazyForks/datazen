@@ -30,13 +30,19 @@ import {
   type WorkspaceMode,
 } from './connectionPageUtils';
 import { useConnectionTabs } from './useConnectionTabs';
-import { openNewConnectionDialog, PENDING_CONNECTION_KEY } from '../../lib/windowManager';
+import {
+  openNewConnectionDialog,
+  PENDING_CONNECTION_KEY,
+  POST_ONBOARDING_SAMPLE_KEY,
+  type PostOnboardingSample,
+} from '../../lib/windowManager';
 import {
   ConnectionNavigatorTree,
   type ConnectionNavigatorTreeHandle,
 } from './ConnectionNavigatorTree';
 import { ContentView } from './ContentView';
 import { useDashboardStore } from '../../stores/dashboardStore';
+import { useWorkspacePanelStateStore } from '../../stores/workspacePanelStateStore';
 import { DashboardPanel } from '../dashboard/DashboardPanel';
 import { WorkflowPage } from '../workflow/WorkflowPage';
 import { SettingsContent } from '../settings/SettingsContent';
@@ -81,7 +87,7 @@ export function ConnectionPage() {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectTableRef = useRef<
-    ((table: string, schema?: string, database?: string) => void) | undefined
+    ((table: string, schema: string | null, database: string) => void) | undefined
   >();
   const nodeContextMenuRef = useRef<
     | ((payload: { kind: string; name: string; x: number; y: number; schema?: string }) => void)
@@ -89,6 +95,10 @@ export function ConnectionPage() {
   >();
   const actionsRef = useRef<ConnectionViewActions | undefined>();
   const navigatorRef = useRef<ConnectionNavigatorTreeHandle>(null);
+
+  // ── Post-onboarding: auto-open sample connection + preset query ──
+  const postOnboardingRef = useRef<PostOnboardingSample | null>(null);
+  const postOnboardingConsumedRef = useRef(false);
   const workspaceSidebarMode = useUiStore((s) => s.workspaceSidebarMode);
   const toggleWorkspaceSidebarMode = useUiStore((s) => s.toggleWorkspaceSidebarMode);
   const sidebarExpanded = workspaceSidebarMode === 'expanded';
@@ -115,6 +125,7 @@ export function ConnectionPage() {
   }, [activeTab?.dbSessionId, activeTab?.status, executePendingAction]);
 
   const allPanels = usePanelStore((s) => s.panels);
+
   const activePanelId = usePanelStore((s) => s.activePanelId);
   const activePanel = allPanels.find((p) => p.id === activePanelId) ?? null;
 
@@ -398,19 +409,92 @@ export function ConnectionPage() {
     [handleCloseTab],
   );
 
-  const handleSelectTable = useCallback((tableName: string, schema?: string, database?: string) => {
-    // Defer so that any preceding handleSelectConnection state flush + useLayoutEffect
-    // has time to update selectTableRef to the correct connection's handler.
-    requestAnimationFrame(() => {
-      selectTableRef.current?.(tableName, schema, database);
-    });
+  const pendingSelectTableRef = useRef<{
+    table: string;
+    schema: string | null;
+    database: string;
+  } | null>(null);
+
+  // State counter that increments on each handleSelectTable call, guaranteeing
+  // a re-render so the effect below can flush the pending selection.  Without
+  // this, a no-op setActiveIdx in handleSelectConnection would skip the re-render
+  // and the bare effect would never re-fire to pick up the pending selection.
+  const [pendingSelectVersion, setPendingSelectVersion] = useState(0);
+
+  const flushPendingSelect = useCallback(() => {
+    const p = pendingSelectTableRef.current;
+    if (!p || !selectTableRef.current) return;
+    pendingSelectTableRef.current = null;
+    selectTableRef.current(p.table, p.schema, p.database);
   }, []);
+
+  const handleSelectTable = useCallback(
+    (tableName: string, schema: string | null, database: string) => {
+      // Clicking a table always opens its data view — including while the
+      // visual builder is open. Tables enter the builder only by dragging a
+      // navigator row onto its canvas, so this path has no builder branch.
+      pendingSelectTableRef.current = { table: tableName, schema, database };
+      // Bump state to guarantee a re-render → useEffect fires → flush.
+      // Also schedule rAF as a fast path for the common case where ContentView
+      // is already mounted and selectTableRef.current is ready.
+      setPendingSelectVersion((v) => v + 1);
+      requestAnimationFrame(flushPendingSelect);
+    },
+    [flushPendingSelect],
+  );
+
+  // Reliable retry: fires after the re-render triggered by pendingSelectVersion
+  // changing.  At this point useLayoutEffect in ContentView has already set
+  // selectTableRef.current, so the ref is guaranteed to be ready.
+  useEffect(() => {
+    flushPendingSelect();
+  }, [pendingSelectVersion, flushPendingSelect]);
 
   const handleRefresh = useCallback(() => {
     void fetchConnections();
     void fetchGroups();
     void navigatorRef.current?.refreshAllConnections();
   }, [fetchConnections, fetchGroups]);
+
+  // ── Post-onboarding sample: read directive once, open connection + query ──
+
+  // Step 1: Read the directive from localStorage on first mount.
+  useEffect(() => {
+    if (postOnboardingConsumedRef.current) return;
+    try {
+      const raw = localStorage.getItem(POST_ONBOARDING_SAMPLE_KEY);
+      if (!raw) return;
+      localStorage.removeItem(POST_ONBOARDING_SAMPLE_KEY);
+      postOnboardingConsumedRef.current = true;
+      postOnboardingRef.current = JSON.parse(raw) as PostOnboardingSample;
+    } catch {
+      // Malformed key — ignore.
+    }
+  }, []);
+
+  // Step 2: Once connections are loaded, find the sample connection and open a tab.
+  useEffect(() => {
+    const directive = postOnboardingRef.current;
+    if (!directive) return;
+    if (!connections.length) return;
+    const conn = connections.find((c) => c.name === directive.connectionName);
+    if (!conn) return;
+    handleSelectConnection(conn.id);
+  }, [connections, handleSelectConnection]);
+
+  // Step 3: When the sample connection becomes connected, open a query panel
+  // with the preset SQL.
+  useEffect(() => {
+    const directive = postOnboardingRef.current;
+    if (!directive) return;
+    const conn = connections.find((c) => c.name === directive.connectionName);
+    if (!conn) return;
+    const tab = tabs.find((t) => t.connectionId === conn.id && t.status === 'connected');
+    if (!tab) return;
+    if (allPanels.some((p) => p.connectionId === conn.id)) return;
+    postOnboardingRef.current = null;
+    actionsRef.current?.newQuery?.(directive.sql);
+  }, [tabs, connections, allPanels]);
 
   const handleExportConfig = useCallback(async () => {
     let saved: boolean;
@@ -460,8 +544,17 @@ export function ConnectionPage() {
     }
   }, [confirmImportAppData, showMessageDialog, t]);
 
+  // Sidebar mode switch: plain mode change, the dashboard panel restores
+  // its own view state from the snapshot (or bootstraps on first open).
+  const handleSwitchToDashboard = useCallback(() => {
+    setWorkspaceMode('dashboard');
+  }, []);
+
   const handleOpenDashboard = useCallback(async () => {
     await fetchDashboards();
+    // Explicit open: drop the dashboard view snapshot so the panel shows the
+    // requested board instead of restoring the previous one.
+    useWorkspacePanelStateStore.getState().clearDashboardSnapshot();
     const list = useDashboardStore.getState().list;
     if (list.length > 0) {
       setEmbeddedDashboardId(list[0]!.id);
@@ -476,6 +569,7 @@ export function ConnectionPage() {
 
   const handleOpenDashboardById = useCallback(
     (dashboardId?: string, dashboardName?: string) => {
+      useWorkspacePanelStateStore.getState().clearDashboardSnapshot();
       setEmbeddedDashboardId(dashboardId);
       setDashboardTitle(dashboardName ?? t('connection.dashboard.title'));
       setWorkspaceMode('dashboard');
@@ -637,7 +731,7 @@ export function ConnectionPage() {
               <div className="copyable text-sm text-danger">{activeTab.error}</div>
               <div className="flex gap-2">
                 <button
-                  className="rounded-md bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent/90"
+                  className="rounded-md bg-accent px-4 py-1.5 text-sm text-on-accent hover:bg-accent-2"
                   type="button"
                   onClick={() => {
                     setTabs((prev) =>
@@ -662,19 +756,23 @@ export function ConnectionPage() {
             </div>
           )}
 
+          {/* Hide ContentView while connecting to avoid duplicate loading indicators.
+              ConnectionPage already shows its own connecting UI above. */}
+          {!(activeTab?.status === 'connecting' && !activePanel) && (
+            <ContentView
+              selectTableRef={selectTableRef}
+              nodeContextMenuRef={nodeContextMenuRef}
+              actionsRef={actionsRef}
+              onSelectConnection={handleSelectConnection}
+            />
+          )}
+
           {activeTab?.status === 'connecting' && !activePanel && (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
               <div className="text-sm text-fg-muted">{t('conn.connecting')}</div>
             </div>
           )}
-
-          <ContentView
-            selectTableRef={selectTableRef}
-            nodeContextMenuRef={nodeContextMenuRef}
-            actionsRef={actionsRef}
-            onSelectConnection={handleSelectConnection}
-          />
         </div>
       </div>
     </div>
@@ -715,22 +813,25 @@ export function ConnectionPage() {
             sidebarExpanded={sidebarExpanded}
             onSetWorkspaceMode={setWorkspaceMode}
             onOpenWorkflow={handleOpenWorkflow}
-            onOpenDashboard={handleOpenDashboard}
+            onOpenDashboard={handleSwitchToDashboard}
             onOpenSettings={() => openSettingsInShell()}
             onToggleSidebarMode={toggleWorkspaceSidebarMode}
           />
 
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-            {workspaceMode === 'connections' ? (
-              connectionWorkspace
-            ) : workspaceMode === 'workflow' ? (
+            {workspaceMode === 'connections' && connectionWorkspace}
+            {workspaceMode === 'workflow' && (
               <WorkflowPage embedded onOpenDashboardInShell={handleOpenDashboardById} />
-            ) : workspaceMode === 'workspace' ? (
+            )}
+            {workspaceMode === 'workspace' && (
               <WorkspaceView onOpenExtensions={() => setWorkspaceMode('extension')} />
-            ) : workspaceMode === 'extension' ? (
+            )}
+            {workspaceMode === 'extension' && (
               <WappManagementPage onOpenInWorkspace={() => setWorkspaceMode('workspace')} />
-            ) : (
+            )}
+            {workspaceMode === 'dashboard' && (
               <DashboardPanel
+                key={embeddedDashboardId ?? 'no-board'}
                 initialDashboardId={embeddedDashboardId}
                 onDashboardChange={(_id, name) => setDashboardTitle(name)}
                 onOpenWorkflowEditor={handleOpenWorkflow}

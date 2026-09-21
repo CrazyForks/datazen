@@ -262,6 +262,8 @@ export interface AppSettings {
   autoCommit: boolean;
   /** Require WHERE on UPDATE/DELETE; also block TRUNCATE/DROP. Default true. */
   safeMode: boolean;
+  /** When Safe Mode is OFF, show a confirm dialog before high-risk/production execution. Default true. */
+  confirmDangerousExecution: boolean;
   defaultPageSize: number;
   /** Max DB session pool size (Postgres/MySQL). Default 10; applies on next connect. */
   connectionPoolSize: number;
@@ -280,12 +282,16 @@ export interface AppSettings {
   autoChartOnQuery: boolean;
   /** Dashboard monitor / tray / retention settings. */
   monitor: MonitorSettings;
-  /** Opaque per-plugin settings keyed by plugin id (e.g. `"redis"`). */
-  pluginSettings: Record<string, unknown>;
+  /** Opaque per-driver settings keyed by driver id (e.g. `"redis"`). */
+  driverSettings: Record<string, unknown>;
+  /** Opaque per-wapp settings keyed by wapp id. Reserved for future workspace app configs. */
+  wappSettings: Record<string, unknown>;
   /** Saved external MCP Client server configs. Runtime connections are separate. */
   mcpClientServers?: McpServerConfig[];
   /** Strip query result rows before AI requests leave the device. Default true. */
   aiStrictEgress: boolean;
+  /** Automatically qualify column completions with a table name or alias. Default true. */
+  editorCompletionIncludeTablePrefix?: boolean;
   /** Identifier quotation policy in SQL autocomplete ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   editorCompletionQuotePolicy?: 'unquoted' | 'always' | 'both';
   /** Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat'). Default 'default'. */
@@ -300,6 +306,10 @@ export interface AppSettings {
   sqlSnippets?: Array<{ id: string; prefix: string; descriptionKey: string; template: string }>;
   /** SQL syntax highlighting color preset ('default' follows the active theme pack). */
   sqlSyntaxTheme?: string;
+  /** Workflow result step tabs order: 'desc' = last step first (default), 'asc' = first step first. */
+  workflowStepResultOrder?: 'asc' | 'desc';
+  /** Onboarding wizard state. `undefined` or `version < 1` → show wizard. */
+  onboarding?: { completed: boolean; version: number };
 }
 
 export type FilterOperator =
@@ -467,6 +477,8 @@ export interface AiToolResult {
 }
 
 export interface AiChatMessage {
+  /** Unique message identifier for stable React keys. */
+  id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   reasoning?: string;
@@ -477,6 +489,8 @@ export interface AiChatMessage {
 
 export interface AiChatSession {
   id: string;
+  /** Session isolation key used for localStorage persistence. */
+  sessionKey: string;
   messages: AiChatMessage[];
   isStreaming: boolean;
   streamContent: string;
@@ -618,6 +632,8 @@ export interface WorkflowDefinition {
   variables: WorkflowVariable[];
   /** Default connection inherited by data-operation steps. */
   connection?: string;
+  /** Default database inherited by data-operation steps (multi-db connections). */
+  database?: string;
   steps: WorkflowStep[];
   output?: WorkflowOutput;
   timeoutSecs?: number;

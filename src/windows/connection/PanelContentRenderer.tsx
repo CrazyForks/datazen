@@ -44,7 +44,7 @@ export interface PanelContentRendererProps {
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onOpenErDiagram: (focus?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
@@ -119,7 +119,7 @@ interface SqlPanelContentProps {
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
-  onSelectTable: (table: string, schema?: string) => void;
+  onSelectTable: (table: string, schema: string | null, database: string) => void;
   onOpenErDiagram: (focus?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
@@ -183,7 +183,7 @@ function SqlPanelContent({
               <TableStructureEditor
                 dbSessionId={panel.dbSessionId}
                 databaseType={panel.databaseType}
-                database={panel.database ?? currentDatabase}
+                database={panel.database ?? currentDatabase ?? ''}
                 schema={panel.tableSchema ?? resolveTableSchema(panel.tableName)}
                 mode="alter"
                 tableName={panel.tableName}
@@ -199,7 +199,7 @@ function SqlPanelContent({
               <StructureView
                 dbSessionId={panel.dbSessionId}
                 tableName={panel.tableName}
-                database={panel.database ?? currentDatabase ?? undefined}
+                database={panel.database ?? currentDatabase ?? ''}
                 targetColumn={panel.targetColumn}
                 onEditStructure={
                   panelShowStructureEditor ? () => onEditTableStructure(panel.tableName) : undefined
@@ -209,6 +209,7 @@ function SqlPanelContent({
           {panel.subTab === 'indexes' && (
             <IndexesView
               dbSessionId={panel.dbSessionId}
+              database={panel.database ?? currentDatabase ?? ''}
               tableName={panel.tableName}
               databaseType={panel.databaseType}
               onEditStructure={
@@ -217,13 +218,17 @@ function SqlPanelContent({
             />
           )}
           {panel.subTab === 'foreignKeys' && (
-            <ForeignKeysView dbSessionId={panel.dbSessionId} tableName={panel.tableName} />
+            <ForeignKeysView
+              dbSessionId={panel.dbSessionId}
+              database={panel.database ?? currentDatabase ?? ''}
+              tableName={panel.tableName}
+            />
           )}
           {panel.subTab === 'ddl' && (
             <DDLView
               dbSessionId={panel.dbSessionId}
               tableName={panel.tableName}
-              database={panel.database ?? currentDatabase ?? undefined}
+              database={panel.database ?? currentDatabase ?? ''}
               databaseType={panel.databaseType}
             />
           )}
@@ -262,14 +267,14 @@ function SqlPanelContent({
             <StructureView
               dbSessionId={panel.dbSessionId}
               tableName={(panel as ViewPanel).viewName}
-              database={(panel as ViewPanel).database ?? currentDatabase ?? undefined}
+              database={(panel as ViewPanel).database ?? currentDatabase ?? ''}
             />
           )}
           {(panel as ViewPanel).subTab === 'ddl' && (
             <DDLView
               dbSessionId={panel.dbSessionId}
               tableName={(panel as ViewPanel).viewName}
-              database={(panel as ViewPanel).database ?? currentDatabase ?? undefined}
+              database={(panel as ViewPanel).database ?? currentDatabase ?? ''}
               databaseType={panel.databaseType}
               isView
             />
@@ -336,7 +341,7 @@ function SqlPanelContent({
       <ObjectBrowser
         dbSessionId={panel.dbSessionId}
         databaseType={panel.databaseType}
-        database={currentDatabase}
+        database={currentDatabase ?? ''}
       />
     );
   }
@@ -397,7 +402,7 @@ function SqlPanelContent({
       <DatabaseObjectView
         dbSessionId={panel.dbSessionId}
         databaseType={panel.databaseType}
-        database={currentDatabase}
+        database={currentDatabase ?? ''}
         objectKind={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectKind}
         objectName={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectName}
         objectSchema={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectSchema}
@@ -442,7 +447,7 @@ function CreateTablePanelContent({
     <TableStructureEditor
       dbSessionId={dbSessionId}
       databaseType={databaseType}
-      database={database}
+      database={database ?? ''}
       schema={schema}
       mode="create"
       onSuccess={onSuccess}

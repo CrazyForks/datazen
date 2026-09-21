@@ -34,7 +34,7 @@ export interface NavigatorTreeRowProps {
   expandedDbs: Set<string>;
   onNewConnection: () => void;
   onSelectConnection: (connectionId: string) => void;
-  onSelectTable: (tableName: string, schema?: string, database?: string) => void;
+  onSelectTable: (tableName: string, schema: string | null, database: string) => void;
   onSelectKvDb?: (connectionId: string, dbName: string) => void;
   toggleGroup: (group: string) => void;
   toggleConnection: (connectionId: string, sectionGroup: string) => void;
@@ -62,7 +62,7 @@ export interface NavigatorTreeRowProps {
     args: {
       kind: 'table' | 'view';
       name: string;
-      schema?: string;
+      schema: string | null;
       dbName: string;
       connectionId: string;
       dbSessionId: string;
@@ -406,7 +406,7 @@ export function NavigatorTreeRow({
             setDragPayload(e.dataTransfer, {
               kind: isView ? 'view' : 'table',
               database: row.dbName,
-              schema: row.item.schema ?? undefined,
+              schema: row.item.schema ?? null,
               table: row.item.name,
               connectionId: row.connectionId,
               dbSessionId: row.dbSessionId || undefined,
@@ -427,14 +427,14 @@ export function NavigatorTreeRow({
             void (async () => {
               onSelectConnection(row.connectionId);
               await activateDatabase(row.dbSessionId, row.dbName);
-              onSelectTable(row.item.name, row.item.schema ?? undefined, row.dbName);
+              onSelectTable(row.item.name, row.item.schema ?? null, row.dbName);
             })();
           }}
           onContextMenu={(e) => {
             handleTableContextMenu(e, {
               kind: row.catId === 'views' ? 'view' : 'table',
               name: row.item.name,
-              schema: row.item.schema ?? undefined,
+              schema: row.item.schema ?? null,
               dbName: row.dbName,
               connectionId: row.connectionId,
               dbSessionId: row.dbSessionId,
@@ -493,7 +493,7 @@ export function NavigatorTreeRow({
               onSelectKvDb(row.connectionId, row.dbName);
             } else {
               onSelectConnection(row.connectionId);
-              onSelectTable(row.dbName);
+              onSelectTable(row.dbName, null, row.dbName);
             }
           }}
         >
@@ -551,7 +551,7 @@ export function NavigatorTreeRow({
               setDragPayload(e.dataTransfer, {
                 kind: relationKind,
                 database: dbName,
-                schema: schema ?? undefined,
+                schema: schema,
                 table: tableName,
                 connectionId: row.connectionId,
                 dbSessionId: row.dbSessionId || undefined,
@@ -581,7 +581,7 @@ export function NavigatorTreeRow({
                 if (database) {
                   await activateDatabase(row.dbSessionId, database);
                 }
-                onSelectTable(tableName, schema, database);
+                onSelectTable(tableName, schema, database ?? row.segments[0] ?? '');
               })();
             }}
             onContextMenu={(e) => {

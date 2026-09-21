@@ -42,6 +42,35 @@ export interface SchemaCompletionOptions {
   schema?: SQLNamespace;
   /** Identifier quoting policy ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   quotePolicy?: CompletionQuotePolicy;
+  /** Whether to insert an automatic table/alias prefix. Explicit prefixes are preserved. */
+  includeTablePrefix?: boolean;
+  /**
+   * Current identifier prefix being typed (lowercased, without quotes).
+   * When short (≤2 chars) the all-columns fallback pre-filters + truncates so
+   * deleting down to a short prefix doesn't build Completion objects for the
+   * whole database. Empty/undefined = no truncation. The caller keeps `from`
+   * stable and relies on CM-internal filtering for the rest.
+   */
+  prefixHint?: string;
+}
+
+/**
+ * Max Completion items built by the all-columns fallback for a short prefix.
+ * CM renders at most `maxRenderedOptions` (50); 300 gives the fuzzy matcher
+ * headroom while bounding object construction + quote/dialect work.
+ */
+export const SHORT_PREFIX_COLUMN_CAP = 300;
+/** Prefix length at/below which the cap applies (implicit typing only). */
+export const SHORT_PREFIX_LEN = 2;
+
+/**
+ * Whether a column name is a plausible match for a short typed prefix.
+ * Cheap pre-filter (prefix/substring, case-insensitive) — the precise fuzzy
+ * ranking still happens inside CM on the truncated set.
+ */
+function matchesShortPrefix(colName: string, prefix: string): boolean {
+  const lower = colName.toLowerCase();
+  return lower.startsWith(prefix) || lower.includes(prefix);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -214,6 +243,7 @@ function relationKeyFromLabel(
  */
 function allColumnsFromSnapshot(
   snapshot: EditorMetadataSnapshot,
+  includeTablePrefix: boolean,
   adapter: SqlDialectAdapter,
   quotePolicy: CompletionQuotePolicy = 'unquoted',
 ): SchemaCompletionItem[] {
@@ -241,7 +271,7 @@ function allColumnsFromSnapshot(
             filterText: col.name,
             type: 'property' as const,
             detail,
-            apply: `${tableName}.${unquotedLabel}`,
+            apply: includeTablePrefix ? `${tableName}.${unquotedLabel}` : unquotedLabel,
             boost: 12,
           });
         }
@@ -256,7 +286,7 @@ function allColumnsFromSnapshot(
             filterText: col.name,
             type: 'property' as const,
             detail,
-            apply: `${tableName}.${quotedLabel}`,
+            apply: includeTablePrefix ? `${tableName}.${quotedLabel}` : quotedLabel,
             boost,
           });
         }
@@ -302,10 +332,18 @@ function allColumnsFromSnapshot(
  */
 function allColumnsFromEditorSchema(
   schema: SQLNamespace,
+  includeTablePrefix: boolean,
   adapter: SqlDialectAdapter,
   quotePolicy: CompletionQuotePolicy = 'unquoted',
+  prefixHint?: string,
 ): SchemaCompletionItem[] {
   const results: SchemaCompletionItem[] = [];
+  // Short-prefix cap: only pre-filter when the caller passes a short implicit
+  // prefix. Long prefixes and explicit invocations keep full results.
+  const prefix =
+    prefixHint && prefixHint.length > 0 && prefixHint.length <= SHORT_PREFIX_LEN
+      ? prefixHint.toLowerCase()
+      : null;
 
   const walk = (node: SQLNamespace, tableName: string | null) => {
     if (Array.isArray(node)) {
@@ -313,6 +351,8 @@ function allColumnsFromEditorSchema(
       if (tableName && node.length > 0) {
         const quotedTable = adapter.quoteIdentifier(tableName);
         for (const colName of node) {
+          if (prefix && !matchesShortPrefix(colName, prefix)) continue;
+          if (prefix && results.length >= SHORT_PREFIX_COLUMN_CAP) return;
           const quotedLabel = adapter.quoteIdentifier(colName);
           const unquotedLabel = colName;
           const mustQuote = adapter.shouldQuoteIdentifier(colName);
@@ -323,7 +363,7 @@ function allColumnsFromEditorSchema(
               filterText: colName,
               type: 'property' as const,
               detail: tableName,
-              apply: `${quotedTable}.${unquotedLabel}`,
+              apply: includeTablePrefix ? `${quotedTable}.${unquotedLabel}` : unquotedLabel,
               boost: 12,
             });
           };
@@ -334,7 +374,7 @@ function allColumnsFromEditorSchema(
               filterText: colName,
               type: 'property' as const,
               detail: tableName,
-              apply: `${quotedTable}.${quotedLabel}`,
+              apply: includeTablePrefix ? `${quotedTable}.${quotedLabel}` : quotedLabel,
               boost,
             });
           };
@@ -605,12 +645,128 @@ function filterRelationsByColumns(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Resolve `schema.` / `db.schema.` prefix → table completions from the editor
+ * schema tree.
+ *
+ * The alias resolver (`resolveAliasDotCompletions`) only understands FROM
+ * bindings — a qualifier that names a schema/database namespace (e.g. PG
+ * multidb `FROM buyer.` where `buyer` is a schema) falls through to here.
+ * We walk the namespace tree along the qualifier parts and list the table
+ * leaves under the final namespace node, so `buyer.` offers `buyer.orders`
+ * etc. without any IPC.
+ *
+ * Returns `null` when the qualifier does not address a namespace node
+ * (caller keeps its previous behavior — no guessing).
+ */
+export function resolveSchemaDotCompletions(
+  qualifierParts: readonly string[],
+  schema: SQLNamespace | undefined,
+  adapter?: SqlDialectAdapter,
+): SchemaCompletionItem[] | null {
+  if (!schema || qualifierParts.length === 0 || qualifierParts.length > 2) return null;
+  const dialect = adapter ?? getDialectAdapter('standard');
+
+  // 1. Precise walk: `buyer.` → top-level `buyer`; `db.schema.` → two levels.
+  // This preserves the qualified-path semantics for explicitly nested trees.
+  let node: SQLNamespace = schema;
+  let precise = true;
+  for (const part of qualifierParts) {
+    const branch = asBranchNode(node);
+    if (!branch) {
+      precise = false;
+      break;
+    }
+    const key = Object.keys(branch).find((k) => dialect.compareIdentifiers(k, part));
+    if (!key) {
+      precise = false;
+      break;
+    }
+    node = branch[key]!;
+  }
+  const preciseBranch = precise ? asBranchNode(node) : null;
+  if (preciseBranch) {
+    const fromPrecise = tablesFromNamespaceNode(preciseBranch, dialect);
+    if (fromPrecise) return fromPrecise;
+  }
+
+  // 2. Deep search: the namespace may sit below the current database hoist
+  // (e.g. `{ winam: { buyer: { … } } }` while the qualifier is bare `buyer`).
+  // Find the first branch node whose key matches the LAST qualifier part and
+  // list its table leaves. Single-part qualifiers only — deeper paths already
+  // had their precise chance above.
+  if (qualifierParts.length === 1) {
+    const found = findNamespaceBranch(schema, qualifierParts[0]!, dialect);
+    if (found) {
+      const fromDeep = tablesFromNamespaceNode(found, dialect);
+      if (fromDeep) return fromDeep;
+    }
+  }
+  return null;
+}
+
+/** Narrow an `SQLNamespace` to a plain key→child map (null for leaves). */
+function asBranchNode(node: SQLNamespace): Record<string, SQLNamespace> | null {
+  if (Array.isArray(node)) return null;
+  return node as Record<string, SQLNamespace>;
+}
+
+/** Table-leaf completions under a namespace node (null when it holds no tables). */
+function tablesFromNamespaceNode(
+  node: Record<string, SQLNamespace>,
+  adapter: SqlDialectAdapter,
+): SchemaCompletionItem[] | null {
+  // NOTE: `apply` carries ONLY the table name (not the qualifier prefix).
+  // The completion `from` covers just the table-name fragment after the dot,
+  // so accepting `au` in `buyer.au` yields `buyer."autoscale_configs"` —
+  // prefixing the qualifier here would duplicate it (`buyer."buyer".…`).
+  const results: SchemaCompletionItem[] = [];
+  const seen = new Set<string>();
+  for (const [tblKey, child] of Object.entries(node)) {
+    if (!Array.isArray(child)) continue; // nested namespace, not a table leaf
+    const folded = adapter.foldUnquotedIdentifier(tblKey);
+    if (seen.has(folded)) continue;
+    seen.add(folded);
+    const quoted = adapter.quoteIdentifier(tblKey);
+    results.push({
+      label: quoted,
+      filterText: tblKey,
+      type: 'type' as const,
+      detail: 'table',
+      apply: quoted,
+      boost: 10,
+    });
+  }
+  return results.length > 0 ? results : null;
+}
+
+/** Depth-first search for the first branch node keyed by `name`. */
+function findNamespaceBranch(
+  node: SQLNamespace,
+  name: string,
+  adapter: SqlDialectAdapter,
+): Record<string, SQLNamespace> | null {
+  const branch = asBranchNode(node);
+  if (!branch) return null;
+  for (const [key, child] of Object.entries(branch)) {
+    if (Array.isArray(child)) continue;
+    if (adapter.compareIdentifiers(key, name)) {
+      return asBranchNode(child);
+    }
+    const deeper = findNamespaceBranch(child, name, adapter);
+    if (deeper) return deeper;
+  }
+  return null;
+}
+
+/**
  * Resolve `alias.` prefix → column completions for the uniquely-bound relation.
  *
  * Returns `null` if:
  * - The prefix doesn't match an `alias.` pattern.
  * - The alias is ambiguous or unresolved.
- * - No metadata is available for the relation.
+ * - No metadata is available for the relation, or the metadata carries zero
+ *   columns (an empty hit must NOT short-circuit the caller's schema-tree
+ *   fallback — it means "no columns known", not "completions resolved").
  */
 export function resolveAliasDotCompletions(
   qualifierParts: readonly string[],
@@ -637,7 +793,7 @@ export function resolveAliasDotCompletions(
   if (result.binding.sourceKind !== 'table' && result.binding.sourceKind !== 'view') return null;
 
   const relMeta = matchRelation(result.binding, snapshot, dialect, schemaTree);
-  if (!relMeta) return null;
+  if (!relMeta || relMeta.columns.length === 0) return null;
 
   return columnCompletionsFromRelation(relMeta, '', dialect, quotePolicy);
 }
@@ -652,7 +808,14 @@ export function resolveAliasDotCompletions(
  * 4. Fallback → relation completions.
  */
 export function produceSchemaCompletions(options: SchemaCompletionOptions): SchemaCompletionItem[] {
-  const { model, snapshot, adapter: adapterOverride, quotePolicy = 'unquoted' } = options;
+  const {
+    model,
+    snapshot,
+    adapter: adapterOverride,
+    includeTablePrefix = true,
+    quotePolicy = 'unquoted',
+    prefixHint,
+  } = options;
   const adapter = adapterOverride ?? getDialectAdapter('standard');
   const intent = model.cursorIntent;
 
@@ -666,7 +829,19 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
         options.schema,
         quotePolicy,
       );
-      if (completions) return completions;
+      if (completions && completions.length > 0) return completions;
+      // Schema-namespace fallback: `buyer.` where `buyer` is a schema/database
+      // (not a FROM binding, or a binding with zero known columns) offers its
+      // tables from the schema tree. Note an empty alias hit must NOT
+      // short-circuit here — it means "no columns known", not "resolved".
+      if (options.schema) {
+        const schemaTables = resolveSchemaDotCompletions(
+          intent.qualifierParts,
+          options.schema,
+          adapter,
+        );
+        if (schemaTables) return schemaTables;
+      }
       // If qualifier is ambiguous or unresolved, return nothing — don't guess.
       return [];
     }
@@ -764,7 +939,14 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
           if (seenQualifiers.has(adapter.foldUnquotedIdentifier(qualifier))) continue;
           seenQualifiers.add(adapter.foldUnquotedIdentifier(qualifier));
 
-          results.push(...columnCompletionsFromRelation(relMeta, qualifier, adapter, quotePolicy));
+          results.push(
+            ...columnCompletionsFromRelation(
+              relMeta,
+              includeTablePrefix ? qualifier : '',
+              adapter,
+              quotePolicy,
+            ),
+          );
         }
 
         // Deduplicate completions by label
@@ -778,7 +960,12 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
 
       // FALLBACK: no visible relations — show ALL columns from ALL tables.
       // First try the metadata snapshot (tables referenced in the SQL).
-      const fromSnapshot = allColumnsFromSnapshot(snapshot, adapter, quotePolicy);
+      const fromSnapshot = allColumnsFromSnapshot(
+        snapshot,
+        includeTablePrefix,
+        adapter,
+        quotePolicy,
+      );
       if (fromSnapshot.length > 0) return fromSnapshot;
 
       // Second fallback: the full editor schema tree (all tables loaded at
@@ -786,7 +973,13 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
       // with no FROM clause, where the snapshot is empty but the schema tree
       // contains all tables and columns.
       if (options.schema) {
-        return allColumnsFromEditorSchema(options.schema, adapter, quotePolicy);
+        return allColumnsFromEditorSchema(
+          options.schema,
+          includeTablePrefix,
+          adapter,
+          quotePolicy,
+          prefixHint,
+        );
       }
 
       return [];

@@ -47,6 +47,9 @@ const pack = {
   'workflows.form.defaultConnection': 'Использовать соединение по умолчанию',
   'workflows.form.database': 'База данных',
   'workflows.form.databasePlaceholder': 'Введите имя базы данных',
+  'workflows.form.databaseRequired': 'Выберите базу данных (обязательно для нескольких БД)',
+  'workflows.form.databaseLoading': 'Загрузка баз данных…',
+  'workflows.form.databaseInherit': 'Наследовать базу данных workflow по умолчанию',
   'workflows.form.addConditionStep': '+ Шаг условия',
   'workflows.form.addForeachStep': '+ Для каждого шага',
   'workflows.form.condition': 'Состояние',
@@ -92,5 +95,16 @@ const pack = {
   'workflows.editor.invalidYamlField': 'Неверный YAML: поле «{field}» отсутствует или неверно',
   'workflows.addToDashboard': 'Добавить на дашборд',
   'workflows.dashboard.defaultName': 'Новый дашборд',
+  'workflows.viewTable': 'Таблица',
+  'workflows.viewChart': 'График',
+  'workflows.notChartableTooltip': 'Результат нельзя отобразить графиком',
+  'workflows.sampledWarning':
+    'Большой набор данных — график показывает только первые {limit} строк',
+  'workflows.runSelection': 'Выполнить выделение',
+  'workflows.format': 'Формат',
+  'workflows.comment': 'Комментировать',
+  'workflows.stepOrder.toggle': 'Переключить порядок результатов шагов',
+  'workflows.stepOrder.asc': 'Сначала старые',
+  'workflows.stepOrder.desc': 'Сначала последние',
 } as const;
 export default pack;

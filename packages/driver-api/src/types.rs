@@ -522,6 +522,12 @@ impl std::fmt::Display for PromptScenario {
 pub struct PromptTemplate {
     #[serde(alias = "systemEn", alias = "system_en")]
     pub system: String,
+
+    /// Optional dialect-specific notes injected as `{{dialect_notes}}` in the
+    /// prompt. When present, the prompt resolver appends these notes to the
+    /// system prompt so the LLM is aware of the target SQL dialect quirks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialect_notes: Option<String>,
 }
 
 /// Options for driver-native SQL database dumps.

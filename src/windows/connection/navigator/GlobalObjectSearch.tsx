@@ -114,13 +114,29 @@ export function GlobalObjectSearch({
                     </span>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-fg-muted">
-                    {resultContext(result)} · {t('objectSearch.matched', { field: result.matchReason ?? 'name' })}
+                    {resultContext(result)} ·{' '}
+                    {t('objectSearch.matched', { field: result.matchReason ?? 'name' })}
                   </div>
                 </button>
                 {isTableResult && (
                   <div className="flex shrink-0 items-center gap-1">
                     {result.actions.map((action) => {
-                      const tableAction = buildTableSqlAction(result, action);
+                      const tableAction = buildTableSqlAction(
+                        {
+                          connectionId: result.connectionId,
+                          dbSessionId: result.dbSessionId,
+                          databaseType: result.databaseType,
+                          database: result.database ?? '',
+                          schema: result.schema ?? null,
+                          tableName: result.tableName,
+                          tableSchema: result.schema ?? null,
+                          viewName: result.objectType === 'view' ? result.name : undefined,
+                          viewSchema: result.objectType === 'view' ? (result.schema ?? null) : null,
+                          objectType: result.objectType,
+                          name: result.name,
+                        },
+                        action,
+                      );
                       return (
                         <Button
                           key={action}

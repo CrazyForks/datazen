@@ -71,6 +71,10 @@ export const AiInput = forwardRef<HTMLTextAreaElement, AiInputProps>(function Ai
   const showStop = isLoading && onStop;
   const hasContext = onContextItemsChange !== undefined;
 
+  // BUG-06: Store the ContextPicker's keyboard handler so we can forward events
+  // from the textarea, avoiding window capture.
+  const pickerKeyHandler = useRef<((e: KeyboardEvent) => void) | null>(null);
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newValue = e.target.value;
@@ -95,7 +99,13 @@ export const AiInput = forwardRef<HTMLTextAreaElement, AiInputProps>(function Ai
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (showPicker && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape')) {
+      // BUG-06: Forward picker navigation keys to the ContextPicker handler
+      // instead of using window capture.
+      if (
+        showPicker &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape')
+      ) {
+        pickerKeyHandler.current?.(e.nativeEvent);
         return;
       }
       if (disabled) return;
@@ -162,7 +172,10 @@ export const AiInput = forwardRef<HTMLTextAreaElement, AiInputProps>(function Ai
         )}
         onMouseDown={(e) => {
           // Keep focus in the textarea when clicking chips / padding (span-like field).
-          if (e.target === e.currentTarget || (e.target as HTMLElement).closest('[data-testid="context-token"]')) {
+          if (
+            e.target === e.currentTarget ||
+            (e.target as HTMLElement).closest('[data-testid="context-token"]')
+          ) {
             e.preventDefault();
             textareaRef.current?.focus();
           }
@@ -177,6 +190,9 @@ export const AiInput = forwardRef<HTMLTextAreaElement, AiInputProps>(function Ai
             position={pickerPosition}
             dbSessionId={dbSessionId}
             database={database}
+            onReady={(handler) => {
+              pickerKeyHandler.current = handler;
+            }}
           />
         )}
 
@@ -263,7 +279,7 @@ export const AiInput = forwardRef<HTMLTextAreaElement, AiInputProps>(function Ai
                 className={cn(
                   'flex h-6 w-6 items-center justify-center rounded-md transition-colors',
                   canSend
-                    ? 'bg-accent text-white hover:bg-accent/90'
+                    ? 'bg-accent text-on-accent hover:bg-accent/90'
                     : 'bg-fg-muted/10 text-fg-muted/40 cursor-not-allowed',
                 )}
               >

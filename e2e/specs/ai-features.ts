@@ -1,5 +1,11 @@
 import { expect, browser, $ } from '@wdio/globals';
-import { openConnectionWindow, closeExtraWindows } from '../helpers.js';
+import {
+  openConnectionWindow,
+  closeExtraWindows,
+  connectSeededPgInWorkspace,
+  openQueryTab,
+  executeSQL,
+} from '../helpers.js';
 
 /**
  * Invoke a Tauri IPC command from the browser context.
@@ -59,6 +65,7 @@ function getAiConfig() {
     endpoint: process.env.E2E_AI_ENDPOINT || 'https://token.sensenova.cn/v1',
     apiKey: process.env.E2E_AI_API_KEY || '',
     model: process.env.E2E_AI_MODEL || 'glm-5.2',
+    protocol: process.env.E2E_AI_PROTOCOL || undefined,
   };
 }
 
@@ -84,7 +91,7 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
         endpoint: aiConfig.endpoint,
         apiKey: aiConfig.apiKey,
         model: aiConfig.model,
-        extra: null,
+        extra: aiConfig.protocol ? { protocol: aiConfig.protocol } : null,
       },
     });
 
@@ -126,7 +133,7 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
 
     const config = await invokeBackend<any>('ai_get_config');
     expect(config).not.toBeNull();
-    expect(config.providerType).toBe('open_ai');
+    expect(config.providerType).toBe(aiConfig.providerType);
     expect(config.model).toBe(aiConfig.model);
   });
 
@@ -140,7 +147,7 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
         endpoint: aiConfig.endpoint,
         apiKey: aiConfig.apiKey,
         model: aiConfig.model,
-        extra: null,
+        extra: aiConfig.protocol ? { protocol: aiConfig.protocol } : null,
       },
     });
   });
@@ -289,6 +296,17 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
     if (!aiConfig.apiKey) return this.skip();
     this.timeout(120000);
 
+    // Seed at least one executed query so query-history analysis has input
+    // (ai_analyze_queries errors with "No query history available" otherwise).
+    // Do it in the main workspace query tab — the connection window has no
+    // mounted sql-editor to run a query against.
+    const host = await browser.getWindowHandle();
+    await connectSeededPgInWorkspace();
+    await openQueryTab();
+    await executeSQL('SELECT 1');
+    await browser.pause(1000);
+    await closeExtraWindows(host);
+
     const result = await invokeWithRetry<any>('ai_analyze_queries', {});
 
     expect(result).toBeDefined();
@@ -303,7 +321,7 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
 
     const config = await invokeBackend<any>('ai_get_config');
     expect(config).not.toBeNull();
-    expect(config.providerType).toBe('open_ai');
+    expect(config.providerType).toBe(aiConfig.providerType);
   });
 
   // ── AI-011: Delete AI Config ───────────────────────────────────
@@ -322,13 +340,13 @@ describe('AI 功能 E2E 测试 (AI-001~AI-012)', () => {
         endpoint: aiConfig.endpoint,
         apiKey: aiConfig.apiKey,
         model: aiConfig.model,
-        extra: null,
+        extra: aiConfig.protocol ? { protocol: aiConfig.protocol } : null,
       },
     });
 
     const restored = await invokeBackend<any>('ai_get_config');
     expect(restored).not.toBeNull();
-    expect(restored.providerType).toBe('open_ai');
+    expect(restored.providerType).toBe(aiConfig.providerType);
   });
 
   // ── AI-012: Streaming Support ──────────────────────────────────

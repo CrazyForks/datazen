@@ -8,8 +8,8 @@
 
 | 类型 | 组件 / 窗口 | 说明 |
 |------|-------------|------|
-| **main** | `MainPage` | 路由壳：无连接 → `WelcomePage`；有连接 → `ConnectionPage` |
-| Page | `WelcomePage` | 首次安装 / 无保存连接时的功能介绍与「创建第一个连接」引导 |
+| **main** | `MainPage` | 路由壳：首次启动 → 独立 `onboarding` OS 窗口（`OnboardingWizard`）；完成后主窗直进 `ConnectionPage`（零连接时由 `ConnectionWorkspaceHome` 空状态承接） |
+| Page | `OnboardingWizard` | 首次启动旅程（S0 入口 → S1 第一步 → S2 AI → S3 Done），独立 Tauri 窗口（`?window=onboarding`），见 §1.1 |
 | Page | `ConnectionPage` | 统一工作区：`ConnectionNavigatorTree`、连接 Tab、Workflow / Dashboard 内嵌导航 |
 | Page | `SettingsPage` | 设置（含返回主界面）；sidebar 底部入口或 `openSettingsWindow(section?)` |
 | Page | `WorkflowPage` / `DashboardPanel` | 由 `ConnectionPage` 内嵌渲染，非独立 OS 窗口 |
@@ -33,6 +33,37 @@
 - **Docs / Help**：`openDocsWindow(section?)` 在系统浏览器打开 GitHub Pages 使用手册（`src/lib/docsUrls.ts` → `https://flyxl.github.io/datazen/manual.html` 或 `/zh/manual.html`；旧 section id 如 `context` 会 remap 到 manual anchor）。Rust `open_docs_window` 同样打开该 URL。
 
 `openConnectionWindow()` 聚焦主工作区并通过 `localStorage` + `datazen:open-connection` 投递连接 payload，**不再**创建 `connection-*` 子窗口。
+
+### 1.1 首次启动旅程（OnboardingWizard）
+
+`src/windows/onboarding/`，只在首次安装时由 Rust 创建独立 `onboarding` OS 窗口
+（`?window=onboarding`，见 `bootstrap.rs` + `commands/window.rs`）；此时主窗口尚未创建，
+两者永不共存。完成后端 `onboarding_complete` 关闭向导窗并创建主窗口。
+
+```
+MainPage（主窗口，Rust 在向导完成后或升级/正常启动时创建）:
+  connectionsLoaded ?
+    connections.length === 0 + loadError → 加载失败页（重试）
+    : ConnectionPage                         // 零连接空状态由 ConnectionWorkspaceHome state 1 承接
+```
+
+**全新安装 vs 升级（`store/mod.rs::load_all`）**：数据目录从未落盘 `settings.json` = 全新安装 →
+materialize `onboarding = { completed: false, version: 1 }`（显示旅程）；`settings.json` 已存在但没有
+`onboarding` 字段（老版本升级）→ 标记 `{ completed: true }`（**升级用户永不显示旅程**），并在启动时写回。
+前端只渲染后端明确给出未完成态（`shouldShowOnboarding`，见 `onboardingGate.ts`）——缺字段一律视为升级。
+
+**步骤契约**：S0 三入口（导入 / 手动 / 示例）→ S1 = 第一步（按入口渲染内联导入表单 / 连接表单 / 示例库就绪面板）
+→ S2 = **始终** AI Provider 配置 → S3 Done（摘要 + 写明 `onboarding.completed`）。
+
+- S1 导入表单在向导内**内联渲染**（复用 `useConnectionImport` + `ConnectionImportFields`），不再打开
+  `ConnectionShareDialog` 弹窗；`ConnectionShareDialog` 自身也复用同一套 hook/字段，无第二份实现。
+- S2 复用设置页表单：`useModelProfileDraft`（状态/校验/保存/高风险门）+ `ModelProfileForm`（basic + safety 两个
+  Tab），与 `ModelProfileDialog` 同源。向导只在最外层加标题/安全说明，主操作由向导 footer 的 Finish 触发
+  `requestSave()`；未填 key（且非 Ollama）时 Finish 视为跳过 AI，不写 profile。
+- 底部对齐由 `onboardingLayout.ts` 的共享高度常量保证（左侧版本号行与右侧步骤指示器同一 `h-[56px]` 行）。
+
+E2E：`e2e/specs/journeys/onboarding-journey.ts`（`pnpm e2e:onboarding`）；其余 suite 由 `e2e/wdio.conf.ts`
+的 bootstrap 显式置 `onboarding.completed = true` 以绕过旅程。
 
 ## 2. Rust 端窗口创建
 

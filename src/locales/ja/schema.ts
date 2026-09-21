@@ -277,10 +277,10 @@ const pack = {
   'fk.refTable': '参照表',
   'fk.refColumn': '参照列',
   'schemaTree.generateSql': 'SQL 生成',
-  'schemaTree.generateSelect': 'SELECT',
-  'schemaTree.generateInsert': 'INSERT',
-  'schemaTree.generateUpdate': 'UPDATE',
-  'schemaTree.generateDelete': 'DELETE',
-  'schemaTree.generateDdl': 'DDL',
+  'schemaTree.generateSelect': 'SELECT を生成',
+  'schemaTree.generateInsert': 'INSERT を生成',
+  'schemaTree.generateUpdate': 'UPDATE を生成',
+  'schemaTree.generateDelete': 'DELETE を生成',
+  'schemaTree.generateDdl': 'DDL を生成',
 } as const;
 export default pack;

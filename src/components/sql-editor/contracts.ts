@@ -91,7 +91,9 @@ export interface SqlEditorProps {
     kind: 'table' | 'view';
   }) => void;
 
-  // ── Completion quoting policy ──────────────────────────────────────
+  // ── Completion preferences ─────────────────────────────────────────
+  /** Automatically insert table/alias prefixes; explicit prefixes are preserved. Default true. */
+  completionIncludeTablePrefix?: boolean;
   /** Quoting policy for column autocomplete ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   completionQuotePolicy?: CompletionQuotePolicy;
 }

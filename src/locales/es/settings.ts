@@ -53,10 +53,18 @@ const pack = {
   'settings.autoChartOnQuery': 'Cambiar automáticamente al gráfico',
   'settings.autoChartOnQueryHint':
     'Después de una consulta, abrir la pestaña de gráfico si el resultado es visualizable.',
+  'settings.workflowStepResultOrder': 'Orden del resultado de los pasos del workflow',
+  'settings.workflowStepResultOrderHint':
+    'Orden de las pestañas de resultado de paso que se muestran tras ejecutar un workflow.',
+  'settings.workflowStepOrder.asc': 'Pasos ascendentes (el primer paso primero)',
+  'settings.workflowStepOrder.desc': 'Pasos descendentes (el último paso primero)',
   'settings.maxRows': 'Máximo de filas devueltas',
   'settings.editor': 'Editor',
   'settings.fontSize': 'Tamaño de fuente',
   'settings.fontFamily': 'Familia de fuentes',
+  'settings.sqlSyntaxTheme': 'Tema de sintaxis SQL',
+  'settings.sqlSyntaxThemeHint':
+    'Esquema de colores para palabras clave, cadenas y comentarios de SQL. "Predeterminado" sigue el tema activo de la aplicación.',
   'settings.behavior': 'Comportamiento',
   'settings.dataCleanup.title': 'Limpieza de historial',
   'settings.dataCleanup.description':
@@ -104,6 +112,10 @@ const pack = {
   'settings.autoCommitHint': 'Confirmar automáticamente las ediciones de los datos',
   'settings.safeMode': 'Modo seguro',
   'settings.safeModeHint': 'Bloquear UPDATE/DELETE sin cláusula WHERE, y TRUNCATE/DROP',
+  'settings.confirmDangerousExecution':
+    'Confirmar SQL peligroso cuando el modo seguro está desactivado',
+  'settings.confirmDangerousExecutionHint':
+    'Muestra un cuadro de diálogo de confirmación antes de ejecutar SQL de alto riesgo/producción cuando el modo seguro está desactivado. Desactívalo para ejecutar directamente.',
   'settings.monitor': 'Monitor',
   'settings.monitor.description':
     'Actualización de paneles en segundo plano, bandeja del sistema, alertas y retención del historial de ejecución.',
@@ -236,7 +248,7 @@ const pack = {
   'settings.prompts.template': 'Prompt del sistema (Inglés)',
   'settings.prompts.langNotice':
     'Las plantillas de prompts se mantienen en inglés para mayor precisión y estabilidad del razonamiento. La respuesta de la IA se adaptará automáticamente al idioma de visualización actual.',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'Servidor MCP',
   'settings.mcpClient.title': 'Servidores MCP externos',
 } as const;
 export default pack;

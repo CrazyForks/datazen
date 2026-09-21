@@ -11,7 +11,7 @@ AI 模块采用与数据库驱动相同的 **Provider 抽象 + Registry** 模式
 ```
 packages/ai-api/                    # 公共 AI Provider API crate
 ├── src/
-│   ├── lib.rs                      # AI_PROTOCOL_VERSION + re-exports
+│   ├── lib.rs                      # AI_PROTOCOL_VERSION（当前 1，最低兼容 1）+ re-exports
 │   ├── traits.rs                   # AiProvider trait (async_trait, Send+Sync)
 │   ├── types.rs                    # AiProviderConfig, ChatMessage, StreamChunk, AiError,
 │   │                               # ToolDefinition, ToolCall, ToolResult, ModelInfo
@@ -24,7 +24,7 @@ src-tauri/src/ai/                   # 内置 AI Provider 实现
 ├── deepseek.rs                     # DeepSeek Provider (Responses API, reasoning 支持)
 ├── custom.rs                       # 自定义 Provider (三种协议: Chat/Responses/Anthropic 兼容,
 │                                   #   远程模型列表获取)
-├── registry.rs                     # AiProviderRegistry (动态注册/获取, inventory 插件发现)
+├── registry.rs                     # AiProviderRegistry (动态注册/获取, inventory 发现)
 ├── context.rs                      # SchemaContextBuilder (DDL 上下文, token 预算控制)
 ├── prompt_resolver.rs              # PromptResolver (资源文件加载 + 用户/驱动覆盖 + 多语言 fallback)
 └── protocol/                       # 共享 HTTP 协议实现

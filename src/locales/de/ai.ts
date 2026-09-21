@@ -80,7 +80,7 @@ const pack = {
     'Im Eingabefeld befindet sich ungesendeter Text. Wie möchten Sie mit dem Entwurf verfahren?',
   'chat.draft.replace': 'Ersetzen',
   'chat.draft.append': 'Anhängen',
-  'chat.draft.appendSeparator': '\n\n---\n\n',
-  'ai.workflows.tab': 'Workflows',
+  'chat.draft.appendSeparator': '\n\n----\n\n',
+  'ai.workflows.tab': 'Arbeitsabläufe',
 } as const;
 export default pack;

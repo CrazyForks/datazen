@@ -15,35 +15,48 @@
 
 **Direction:** source = desired schema; target = apply site.
 
+**Diff labels:** missing on target (ADD) · extra on target (DROP, needs allowDestructive) · changed columns.
+
 ---
 
 ## 2. UI layout
 
-**Five-step wizard** (same stepper chrome as Data Transfer):
+Schema Diff is a **five-step wizard** (same stepper chrome as Data Transfer):
 
-1. **Endpoints** — source/target connection, database, schema (when supported)  
-2. **Objects** — multi-select tables loaded from the source catalog  
-3. **Compare** — table list + column-level diff panel  
-4. **Plan** — options, SQL list, export/import config  
-5. **Deploy** — transaction options, `DEPLOY` token, deploy result  
+```text
+┌ TitleBar (title + help) ────────────────────────────────┐
+├ Stepper: Endpoints → Objects → Compare → Plan → Deploy ┤
+├ ① Endpoints: source/target (connection · database · schema) ┤
+├ ② Objects: multi-select tables from source (select/clear all) ┤
+├ ③ Compare: left table list │ column-level diff details ┤
+├ ④ Plan: options + SQL list + export/import config       ┤
+├ ⑤ Deploy: transaction options · DEPLOY confirm · result ┤
+└ StatusBar ──────────────────────────────────────────────┘
+```
 
-First open shows a **limitations** dialog (optional “don’t show again”).  
-**Swap** on Endpoints is not enabled yet (see [backlog](../todo/migration-tools-backlog.md)).  
-Code: `src/windows/schema-diff/`.
+- First open shows a **limitations** dialog (optional “don’t show again”).
+- **Endpoints** uses a dedicated session to fetch the database list; PostgreSQL and similar list schemas (**Swap** not enabled yet).
+- **Objects** loads the table list from the source catalog; check the tables to compare.
+- **Plan** step offers `allowDestructive` / `includeIndexes` toggles plus SQL and risk badges.
+- **Deploy** step: `DEPLOY` token, transaction options, and deploy status.
+
+Code: `src/windows/schema-diff/` (`SchemaDiffWindow`, `SchemaDiffObjectsStep`, `SchemaDiffTableListPanel`, `SchemaDiffRightPanel`).
 
 ---
 
 ## 3. Quick start
 
 1. Open **Schema Diff** (dismiss limitations dialog if shown)  
-2. **Endpoints:** pick source/target connections and databases → **Next**  
+2. **Endpoints:** pick source/target connections and databases (must differ; pick a schema for PostgreSQL-style targets) → **Next**  
 3. **Objects:** select tables → **Next** (compare runs automatically)  
-4. **Compare:** review diffs → **Next**  
-5. **Plan:** click **Generate deploy script** and review SQL + risk badges  
+4. **Compare:** left table list shows change badges; middle panel lists missing/extra/changed columns → **Next**  
+5. **Plan:** click **Generate deploy script** first, then review SQL + risk badges (`additive` / `destructive` / `rewrite`)
 6. **Deploy:** set options, type **`DEPLOY`** if required, click **Deploy to target**  
 7. Read status (`committed` / `rolled_back` / `mixed` / `failed`)
 
 You can **Copy SQL** or export/import config from the Plan step without deploying.
+
+Note: the compare list and the Plan step are not the same state object. Entering Plan does not generate a plan yet — the page prompts **Generate deploy script** first; only after clicking it are both schemas re-read and DDL generated.
 
 ---
 
@@ -73,7 +86,7 @@ The transaction checkbox is disabled when the target dialect does not support tr
 
 ## 6. Multi-table & indexes
 
-- Multiple tables are planned in one batch  
+- Multiple tables are planned in one batch, concatenating column-level and index statements per table  
 - Uncheck **Include indexes** to plan column changes only  
 - DROP INDEX often has incomplete rollback → listed under rollback incompleteness  
 
@@ -108,14 +121,21 @@ Export / import clipboard JSON (config IDs only — no secrets):
 }
 ```
 
-Import lands on **Objects** with table picks restored; **database / schema must be re-selected** (v2 does not persist them yet — see [backlog](../todo/migration-tools-backlog.md)). Connections must already exist locally.
+Import lands on **Objects** with table picks restored; **database / schema must be re-selected** (v2 does not persist them yet). Connections must already exist locally.
 
 ---
 
 ## 9. Relation to Data Sync / Data Transfer
 
-- **Data Sync**: compare + row copy; schema diff view shares source=desired semantics  
-- **Schema Diff**: structural align + gated DDL deploy (no row sync)  
+| Product | What it does | User guide |
+|---|---|---|
+| **Schema Diff (this guide)** | Structural align + gated DDL deploy, no row sync | This guide |
+| **Data Synchronization** | Identical schema + same PK → row diff → review → Execute | [data-sync-guide.md](./data-sync-guide.zh-CN.md) |
+| **Data Transfer** | Heterogeneous / different schema / no PK → one-way move (V1 basics) | [data-transfer-guide.md](./data-transfer-guide.zh-CN.md) |
+
+When schemas differ, do not use Data Sync to “sync only some columns”; align DDL with **Schema Diff** first, or switch to **Data Transfer**.
+
+Cross-database CREATE TABLE DDL belongs to Transfer / adapter IR; the Deploy path is ALTERs on existing tables — do not mix it with Sync Change Sets.
 
 ---
 
@@ -133,7 +153,10 @@ Import lands on **Objects** with table picks restored; **database / schema must 
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Empty plan | Already identical, or destructive diffs skipped by default |
+| Plan not generated yet | **Generate deploy script** was never clicked — absence of a plan means nothing yet |
+| Plan empty, no warnings | With the current plan options there really is nothing executable |
+| Plan empty but warnings present | Some diffs were skipped as destructive or unsupported cross-dialect |
+| Compare shows ADD but plan still empty | Confirm **Generate deploy script** was clicked and neither schema changed since; if it still reproduces on the same snapshot with no warnings, treat as a bug and file repro info |
 | Deploy rejected | Missing `DEPLOY`, or incomplete rollback while required |
 | MySQL `mixed` | Earlier DDL already committed |
 | Missing cross-dialect stmts | Type map failed — check warnings |

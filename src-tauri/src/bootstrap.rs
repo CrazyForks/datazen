@@ -19,11 +19,11 @@ use tauri::Manager;
 #[cfg(target_os = "macos")]
 use crate::app_menu::setup_menu;
 use crate::driver_init;
-use crate::extensions;
 use crate::mcp;
 use crate::redis_flush_gate;
 use crate::theme;
 use crate::tray;
+use crate::wapps;
 use crate::workflow;
 
 /// Collect unique driver type ids from saved connections (stable insertion order).
@@ -196,17 +196,12 @@ pub(crate) fn finish_app_state(
     let history_db = store.history_db();
     let app_db = store.app_db();
 
-    // Runtime extensions: scan {appData}/wapps/ for installed packages.
-    // If legacy {appData}/plugins/ exists and wapps does not, auto-migrate.
+    // Runtime wapps: scan {appData}/wapps/ for installed packages.
     let wapps_dir = data_dir.join("wapps");
-    let legacy_plugins_dir = data_dir.join("plugins");
-    if !wapps_dir.exists() && legacy_plugins_dir.exists() {
-        let _ = std::fs::rename(&legacy_plugins_dir, &wapps_dir);
-    }
     // Invalid packages are skipped (warn) so one bad install can't break boot.
-    let extension_manager = Arc::new(extensions::ExtensionManager::new(wapps_dir));
-    let extension_count = extension_manager.load_from_disk();
-    tracing::info!("[startup]   ui extensions loaded: {extension_count}");
+    let wapp_manager = Arc::new(wapps::WappManager::new(wapps_dir));
+    let wapp_count = wapp_manager.load_from_disk();
+    tracing::info!("[startup]   ui wapps loaded: {wapp_count}");
 
     // AI / prompts / workflows / history / MCP client: empty shells.
     // Nothing here touches disk or network — window can show immediately.
@@ -230,8 +225,8 @@ pub(crate) fn finish_app_state(
         session_transactions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         query_executions: Arc::new(crate::commands::QueryExecutionRegistry::new()),
         workflow_scheduler: workflow::scheduler::WorkflowScheduler::new(),
-        wapps: extension_manager.clone(),
-        extensions: extension_manager,
+        wapps: wapp_manager,
+        cancel_registry: crate::ai::CancellationRegistry::default(),
     };
     monitor_engine.attach_app_state(Arc::new(state.clone()));
     state
@@ -322,7 +317,7 @@ pub fn run() {
     // `datazen://` plugin asset service + deep links (F2). Windows exposes
     // this as `http://datazen./...`; parsing accepts both forms.
     let builder = builder.register_uri_scheme_protocol("datazen", |ctx, request| {
-        extensions::protocol::handle_datazen_request(ctx, request)
+        wapps::protocol::handle_datazen_request(ctx, request)
     });
 
     let t_builder = Instant::now();
@@ -361,13 +356,35 @@ pub fn run() {
                 tray::sync_tray(&handle);
             }
 
-            if let Some(main) = app.get_webview_window("main") {
-                crate::commands::window::prepare_main_window(&main);
-                let main_for_deferred = main.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    crate::commands::window::prepare_main_window(&main_for_deferred);
-                });
+            // ── Window creation ───────────────────────────────────────────
+            // No windows are defined in tauri.conf.json — we create the
+            // appropriate one here based on the onboarding state so the two
+            // never coexist.
+            {
+                let state = handle.state::<AppState>();
+                let settings = tauri::async_runtime::block_on(state.store.get_settings());
+                let needs_onboarding = settings.onboarding.as_ref().map_or(true, |o| !o.completed);
+
+                if needs_onboarding {
+                    tracing::info!("onboarding not completed — creating wizard window");
+                    if let Err(e) = crate::commands::window::create_onboarding_window(&handle) {
+                        tracing::error!(error = %e, "failed to create onboarding window");
+                    }
+                } else {
+                    tracing::info!("onboarding completed — creating main window");
+                    match crate::commands::window::create_main_window(&handle) {
+                        Ok(main) => {
+                            let main_for_deferred = main.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                crate::commands::window::prepare_main_window(&main_for_deferred);
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to create main window");
+                        }
+                    }
+                }
             }
 
             // Optional embedded MCP: only if user explicitly enabled it in settings (default off).
@@ -450,6 +467,7 @@ pub fn run() {
             crate::commands::get_databases,
             crate::commands::get_tables,
             crate::commands::get_columns,
+            crate::commands::get_columns_typed,
             crate::commands::get_all_columns,
             crate::commands::get_table_schema,
             crate::commands::get_structure_capabilities,
@@ -487,6 +505,7 @@ pub fn run() {
             crate::commands::get_settings,
             crate::commands::get_system_ui_language,
             crate::commands::save_settings,
+            crate::commands::seed_sample_db,
             crate::commands::get_log_path,
             crate::commands::get_app_executable_path,
             crate::commands::open_path,
@@ -562,6 +581,7 @@ pub fn run() {
             crate::commands::ai_diagnose_error,
             crate::commands::ai_analyze_explain,
             crate::commands::ai_chat,
+            crate::commands::ai_cancel,
             crate::commands::ai_parse_filter,
             crate::commands::mcp_get_status,
             crate::commands::mcp_start_stdio,
@@ -586,6 +606,7 @@ pub fn run() {
             crate::commands::mcp_client_tools,
             crate::commands::mcp_client_call_tool,
             crate::commands::create_sub_window,
+            crate::commands::onboarding_complete,
             crate::commands::prompt_list,
             crate::commands::prompt_set_override,
             crate::commands::prompt_remove_override,
@@ -621,17 +642,6 @@ pub fn run() {
             crate::commands::wapp_storage_remove,
             crate::commands::read_wapp_file,
             crate::commands::wapp_audit_log,
-            crate::commands::list_extensions,
-            crate::commands::inspect_extension_package_with_dialog,
-            crate::commands::install_extension,
-            crate::commands::remove_extension,
-            crate::commands::set_extension_enabled,
-            crate::commands::get_extension_manifest,
-            crate::commands::extension_storage_get,
-            crate::commands::extension_storage_set,
-            crate::commands::extension_storage_remove,
-            crate::commands::read_extension_file,
-            crate::commands::extension_audit_log,
             crate::app_menu::rebuild_menu,
             // E2E-only dialog-injection surface (commands/dialog.rs): each
             // entry carries its own cfg gate so production registration
@@ -933,9 +943,9 @@ mod tests {
         assert!(lib.contains("mod bootstrap"));
     }
 
-    /// [tester] `finish_app_state` wires extension manager and driver registry shells.
+    /// [tester] `finish_app_state` wires wapp manager and driver registry shells.
     #[tokio::test]
-    async fn test_tester_finish_app_state_initializes_extensions_and_registry() {
+    async fn test_tester_finish_app_state_initializes_wapps_and_registry() {
         use crate::db::registry::DriverRegistry;
         use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
         use crate::transfer::adapter_registry::SyncAdapterRegistry;
@@ -962,10 +972,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(state.extensions.extensions_dir(), temp.path().join("wapps"));
+        assert_eq!(state.wapps.wapps_dir(), temp.path().join("wapps"));
         assert!(Arc::ptr_eq(&state.driver_registry, &registry));
         assert!(registry.get(&db_type).await.is_some());
-        assert!(state.extensions.list().is_empty());
+        assert!(state.wapps.list().is_empty());
     }
 
     fn invoke_handler_registration_block() -> &'static str {
@@ -987,7 +997,7 @@ mod tests {
             "commands::execute_driver_command,",
             "commands::connect,",
             "commands::mcp_start_stdio,",
-            "commands::list_extensions,",
+            "commands::list_wapps,",
             "app_menu::rebuild_menu,",
         ] {
             assert!(
@@ -1019,7 +1029,7 @@ mod tests {
 
     /// [tester] GUI bootstrap registers driver plugins and the datazen URI scheme.
     #[test]
-    fn test_tester_run_registers_plugins_and_uri_scheme() {
+    fn test_tester_run_registers_wapps_and_uri_scheme() {
         let src = include_str!("bootstrap.rs");
         assert!(src.contains("driver_init::register_drivers"));
         assert!(src.contains("register_uri_scheme_protocol(\"datazen\""));

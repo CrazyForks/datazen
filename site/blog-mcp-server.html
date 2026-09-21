@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Server: Let AI Agents Safely Access Your Database — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen features a built-in MCP Server based on the Model Context Protocol, exposing database capabilities as Tools, Resources, and Prompts that AI Agents can invoke. Supports SQL queries, schema browsing, and security controls, and can run in headless mode via --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access your database."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog-mcp-server.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-mcp-server.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-mcp-server.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-mcp-server.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="MCP Server: Let AI Agents Safely Access Your Database" />
+    <meta
+      property="og:description"
+      content="DataZen features a built-in MCP Server based on the Model Context Protocol, exposing database capabilities as Tools, Resources, and Prompts that AI Agents can invoke. Supports SQL queries, schema browsing, and security controls, and can run in headless mode via --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access your database."
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/blog-mcp-server.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MCP Server: Let AI Agents Safely Access Your Database" />
+    <meta
+      name="twitter:description"
+      content="DataZen features a built-in MCP Server based on the Model Context Protocol, exposing database capabilities as Tools, Resources, and Prompts that AI Agents can invoke. Supports SQL queries, schema browsing, and security controls, and can run in headless mode via --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access your database."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "MCP Server: Let AI Agents Safely Access Your Database",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-16",
+        "description": "DataZen features a built-in MCP Server based on the Model Context Protocol, exposing database capabilities as Tools, Resources, and Prompts that AI Agents can invoke. Supports SQL queries, schema browsing, and security controls, and can run in headless mode via --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access your database.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-mcp-server.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>MCP Server: Let AI Agents Safely Access Your Database</h1>
+        <p>
+          DataZen features a built-in MCP Server based on the Model Context Protocol, exposing
+          database capabilities as Tools, Resources, and Prompts that AI Agents can invoke. Supports
+          SQL queries, schema browsing, and security controls, and can run in headless mode via
+          --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access your database.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">October 16, 2026</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>MCP Server: Let AI Agents Safely Access Your Database</h1>
+        <p>
+          Large language models are powerful, but they have an inherent limitation: they don&#39;t
+          know where your data lives. ChatGPT doesn&#39;t know what tables are in your database.
+          Claude doesn&#39;t know the structure of your orders table. DeepSeek can&#39;t query your
+          PostgreSQL directly.
+        </p>
+        <p>
+          The Model Context Protocol (MCP) is changing this. It provides a standardized protocol
+          that lets AI Agents safely discover and invoke external tool capabilities. DataZen&#39;s
+          MCP Server is a participant in this ecosystem — it wraps your database connection
+          capabilities into Tools, Resources, and Prompts that AI Agents can understand, turning AI
+          assistants into true data assistants.
+        </p>
+        <h2>Model Context Protocol: The Standard for AI-Tool Interaction</h2>
+        <p>
+          Before MCP, every AI application that wanted to access external tools had to implement its
+          own integration. No unified standard, different access patterns for each tool, and
+          developers reinventing the wheel repeatedly.
+        </p>
+        <p>
+          MCP solves this. It defines a unified protocol specifying how AI Agents discover tools,
+          invoke them, and retrieve results. Any tool that implements MCP can be used directly by
+          any MCP-compatible AI Agent.
+        </p>
+        <p>
+          DataZen&#39;s MCP Server fully implements this protocol, providing three core
+          capabilities:
+        </p>
+        <ul>
+          <li>
+            <strong>Tools</strong> — Database operations AI can invoke (query, browse, modify).
+          </li>
+          <li>
+            <strong>Resources</strong> — Database metadata AI can read (connection status, schema
+            information).
+          </li>
+          <li>
+            <strong>Prompts</strong> — Predefined database operation templates that help AI complete
+            tasks more efficiently.
+          </li>
+        </ul>
+        <h2>Tools: Database Operations AI Can Invoke</h2>
+        <p>DataZen MCP Server exposes the following core Tools:</p>
+        <h3>execute_query</h3>
+        <p>
+          Execute SQL queries and return results. This is the most fundamental and commonly used
+          capability.
+        </p>
+        <p>
+          AI Agents can invoke this Tool to execute any SQL query. DataZen manages the database
+          connection, executes the query, and returns structured results in the background.
+        </p>
+        <pre><code class="language-json">{
+  &quot;tool&quot;: &quot;execute_query&quot;,
+  &quot;arguments&quot;: {
+    &quot;connection_id&quot;: &quot;my-postgres&quot;,
+    &quot;sql&quot;: &quot;SELECT COUNT(*) FROM users WHERE created_at &gt;= CURRENT_DATE&quot;
+  }
+}
+</code></pre>
+        <h3>list_tables</h3>
+        <p>
+          Browse the database schema. AI Agents can use this Tool to discover what tables exist,
+          what columns each table has, and what types those columns are.
+        </p>
+        <p>
+          This capability enables AI to &quot;understand&quot; your database structure, leading to
+          more accurate query generation.
+        </p>
+        <pre><code class="language-json">{
+  &quot;tool&quot;: &quot;list_tables&quot;,
+  &quot;arguments&quot;: {
+    &quot;connection_id&quot;: &quot;my-postgres&quot;
+  }
+}
+</code></pre>
+        <h3>get_table_schema</h3>
+        <p>
+          Retrieve detailed structure information for a single table, including column names, types,
+          constraints, indexes, and more.
+        </p>
+        <h3>execute_command</h3>
+        <p>
+          Execute database administration commands, such as viewing connection status, getting
+          database size, checking replication status, and more.
+        </p>
+        <h2>Resources: Metadata AI Can Read</h2>
+        <p>
+          Resources are context information that AI Agents can read to better understand the current
+          database environment.
+        </p>
+        <ul>
+          <li>
+            <strong>database://connections</strong> — List of all configured database connections.
+          </li>
+          <li>
+            <strong>database://{connection_id}/schema</strong> — Complete schema information for a
+            specific connection.
+          </li>
+          <li>
+            <strong>database://{connection_id}/status</strong> — Connection status and database
+            server information.
+          </li>
+        </ul>
+        <p>
+          Before starting work, an AI Agent can read these Resources to understand &quot;which
+          databases I can access&quot; and &quot;what&#39;s inside each database,&quot; then decide
+          how to use the Tools.
+        </p>
+        <h2>Prompts: Predefined Operation Templates</h2>
+        <p>
+          Prompts are predefined templates that DataZen provides for common database operations.
+          They help AI Agents complete specific tasks more efficiently.
+        </p>
+        <p>
+          For example, when you ask AI to &quot;help me optimize this SQL,&quot; DataZen&#39;s
+          Prompt template guides the AI to:
+        </p>
+        <ol>
+          <li>First execute EXPLAIN to analyze the query plan.</li>
+          <li>Check for full table scans.</li>
+          <li>Examine index usage.</li>
+          <li>Provide specific optimization recommendations.</li>
+        </ol>
+        <p>
+          These templates encode database optimization best practices, enabling AI to not only
+          execute queries but also analyze and optimize them professionally.
+        </p>
+        <h2>Security Controls: The Prerequisite for Exposing Capabilities</h2>
+        <p>
+          Exposing a database to AI Agents makes security paramount. DataZen MCP Server provides
+          multiple layers of security control:
+        </p>
+        <h3>Connection Permission Management</h3>
+        <p>
+          Each MCP connection has clearly defined permission scopes. You can configure which
+          database connections AI Agents are allowed to access and which are not. Sensitive
+          production databases can be set to read-only or have AI access blocked entirely.
+        </p>
+        <h3>Read-Only Mode</h3>
+        <p>
+          With read-only mode enabled, AI Agents can only execute SELECT queries — any write
+          operations (INSERT, UPDATE, DELETE, DROP) are intercepted. This is extremely useful for
+          data analysis scenarios — AI can freely query and analyze data without modifying anything.
+        </p>
+        <h3>SQL Auditing</h3>
+        <p>
+          All SQL executed through MCP is recorded in audit logs. Who ran what query and when —
+          it&#39;s all clearly documented. Issues can be traced back, and compliance reviews have a
+          solid record.
+        </p>
+        <h2>Real-World Scenarios: Querying Data Through AI Assistants</h2>
+        <p>
+          Suppose you&#39;ve configured the MCP Server in DataZen. Now you can use database query
+          capabilities in any MCP-compatible AI assistant.
+        </p>
+        <h3>Scenario 1: Querying Data in Claude</h3>
+        <p>Type in Claude&#39;s chat:</p>
+        <blockquote>
+          <p>Show me the number of new users per day over the past 7 days</p>
+        </blockquote>
+        <p>
+          Claude will call DataZen&#39;s <code>list_tables</code> Tool via MCP to understand the
+          database structure, then call <code>execute_query</code> to run the query, and finally
+          present the results in a clear table.
+        </p>
+        <h3>Scenario 2: Let AI Analyze Database Structure</h3>
+        <p>Ask Claude:</p>
+        <blockquote>
+          <p>What tables are in my database? What are the relationships between them?</p>
+        </blockquote>
+        <p>
+          Claude will first read DataZen&#39;s Schema Resource to get the complete table structure
+          and foreign key relationships, then present a &quot;database map&quot; in natural
+          language.
+        </p>
+        <h3>Scenario 3: AI-Assisted Data Migration</h3>
+        <p>You say:</p>
+        <blockquote>
+          <p>
+            I want to change the email field in the users table from VARCHAR(255) to VARCHAR(512).
+            Help me generate an ALTER TABLE statement and check for any indexes that depend on this
+            field.
+          </p>
+        </blockquote>
+        <p>
+          Claude will call DataZen to query <code>information_schema</code>, find related indexes
+          and constraints, then provide a complete migration plan and rollback plan.
+        </p>
+        <h2>Headless Mode: <code>--mcp-stdio</code> for a Pure MCP Server</h2>
+        <p>
+          DataZen supports a special launch mode — <strong>Headless Mode</strong>. When started with
+          the <code>--mcp-stdio</code> parameter, DataZen doesn&#39;t open a GUI window. Instead, it
+          runs as a pure MCP server, communicating with AI Agents via standard input/output (stdio).
+        </p>
+        <pre><code class="language-bash">datazen --mcp-stdio
+</code></pre>
+        <p>This mode is ideal for:</p>
+        <ul>
+          <li>
+            <strong>CI/CD pipelines</strong>: AI Agents need to access databases for checks or
+            analysis in automated pipelines.
+          </li>
+          <li>
+            <strong>Server deployment</strong>: Run the MCP Server on a headless Linux server for
+            remote AI Agent access.
+          </li>
+          <li>
+            <strong>Containerized deployment</strong>: Package the DataZen MCP Server into a Docker
+            container and run it as a microservice.
+          </li>
+        </ul>
+        <p>
+          In headless mode, all of DataZen&#39;s security controls (permission management, read-only
+          mode, SQL auditing) remain active. You can configure security policies in the GUI, then
+          switch to headless mode for the best of both worlds.
+        </p>
+        <h2>Comparison with Other Approaches</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Comparison</th>
+              <th>DataZen MCP Server</th>
+              <th>Custom MCP Implementation</th>
+              <th>Direct Database Access</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Development cost</td>
+              <td>Zero, works out of the box</td>
+              <td>Must be built from scratch</td>
+              <td>Requires custom integration code</td>
+            </tr>
+            <tr>
+              <td>Security controls</td>
+              <td>Built-in multi-layer security</td>
+              <td>Must be implemented yourself</td>
+              <td>Virtually no security layer</td>
+            </tr>
+            <tr>
+              <td>Multi-database support</td>
+              <td>PostgreSQL / MySQL / SQLite / Redis and more</td>
+              <td>Must adapt for each database individually</td>
+              <td>Only supports one</td>
+            </tr>
+            <tr>
+              <td>Connection management</td>
+              <td>GUI configuration, encrypted password storage</td>
+              <td>Must manage yourself</td>
+              <td>Must manage yourself</td>
+            </tr>
+            <tr>
+              <td>Maintenance burden</td>
+              <td>Maintained by the DataZen team</td>
+              <td>Self-maintained</td>
+              <td>Self-maintained</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>Wrapping Up</h2>
+        <p>
+          MCP is becoming the standard protocol for AI Agent interaction with external tools.
+          DataZen&#39;s MCP Server integrates your database capabilities into this ecosystem — AI
+          assistants are no longer just chatbots, they become intelligent partners that truly
+          understand and operate on your data.
+        </p>
+        <p>
+          Whether you want to query databases directly from Claude or use AI to analyze data in
+          CI/CD pipelines, DataZen MCP Server provides a secure, standards-based, ready-to-use
+          solution.
+        </p>
+        <p>Try it now — completely free, no registration required.</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html"
+              >Download DataZen Now</a
+            ></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub Source</a>
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-mcp-server.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

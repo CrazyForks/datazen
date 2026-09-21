@@ -35,8 +35,27 @@ async function clickMenuItemById(id: string) {
 async function hoverConnectionSubmenu() {
   const trigger = await $('[data-testid="web-context-submenu-trigger-connection-submenu"]');
   if (await trigger.isExisting()) {
-    await trigger.moveTo();
-    await browser.pause(400);
+    // Real pointer hover (.moveTo()) does not reliably open submenus under the
+    // WebKit WebDriver. The WebContextMenu component opens a submenu on
+    // onMouseEnter / onFocus, so dispatch those DOM events deterministically.
+    await trigger.moveTo().catch(() => {});
+    await browser.execute(() => {
+      const t = document.querySelector(
+        '[data-testid="web-context-submenu-trigger-connection-submenu"]',
+      ) as HTMLElement | null;
+      t?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+      t?.focus();
+    });
+    await browser
+      .waitUntil(
+        () =>
+          browser.execute(() => {
+            const sub = document.querySelector('[data-testid="web-context-submenu"]');
+            return !!sub && sub.querySelectorAll('[data-testid^="web-context-item-"]').length > 0;
+          }),
+        { timeout: 3000, timeoutMsg: '连接子菜单未打开' },
+      )
+      .catch(() => {});
   }
 }
 
@@ -215,12 +234,12 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     await connectSeededPgInWorkspace();
     await openQueryTab();
     await withSafeModeOff(async () => {
-      await executeSQL(`DROP TABLE IF EXISTS ${FT1}`);
-      await executeSQL(`DROP TABLE IF EXISTS ${FT2}`);
-      await executeSQL(`DROP TABLE IF EXISTS ${PLAIN}`);
-      await executeSQL(`CREATE TABLE ${FT1} (id int PRIMARY KEY)`);
-      await executeSQL(`CREATE TABLE ${FT2} (id int PRIMARY KEY)`);
-      await executeSQL(`CREATE TABLE ${PLAIN} (id int PRIMARY KEY)`);
+      await executeSQL(`DROP TABLE IF EXISTS public.${FT1}`);
+      await executeSQL(`DROP TABLE IF EXISTS public.${FT2}`);
+      await executeSQL(`DROP TABLE IF EXISTS public.${PLAIN}`);
+      await executeSQL(`CREATE TABLE public.${FT1} (id int PRIMARY KEY)`);
+      await executeSQL(`CREATE TABLE public.${FT2} (id int PRIMARY KEY)`);
+      await executeSQL(`CREATE TABLE public.${PLAIN} (id int PRIMARY KEY)`);
     });
     await closeExtraWindows(mainWindow);
   });
@@ -230,9 +249,9 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
       await connectSeededPgInWorkspace();
       await openQueryTab();
       await withSafeModeOff(async () => {
-        await executeSQL(`DROP TABLE IF EXISTS ${FT1}`);
-        await executeSQL(`DROP TABLE IF EXISTS ${FT2}`);
-        await executeSQL(`DROP TABLE IF EXISTS ${PLAIN}`);
+        await executeSQL(`DROP TABLE IF EXISTS public.${FT1}`);
+        await executeSQL(`DROP TABLE IF EXISTS public.${FT2}`);
+        await executeSQL(`DROP TABLE IF EXISTS public.${PLAIN}`);
       });
     } catch {
       /* best effort */

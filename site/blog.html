@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blog — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen official blog: new features, deep dives, and usage guides for the database management tool."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog.html" />
+    <link rel="alternate" hreflang="en" href="https://flyxl.github.io/datazen/blog.html" />
+    <link rel="alternate" hreflang="zh-CN" href="https://flyxl.github.io/datazen/zh/blog.html" />
+    <link rel="alternate" hreflang="x-default" href="https://flyxl.github.io/datazen/blog.html" />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": "Blog",
+        "description": "DataZen official blog",
+        "url": "https://flyxl.github.io/datazen/blog.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb"><a href="index.html">Home</a> / Blog</p>
+        <h1>Blog</h1>
+        <p>DataZen official blog: new features, deep dives, and usage guides.</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <ul style="list-style: none; padding: 0; margin: 0">
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-mcp-server.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >MCP Server: Let AI Agents Safely Access Your Database</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen features a built-in MCP Server based on the Model Context Protocol, exposing
+            database capabilities as Tools, Resources, and Prompts that AI Agents can invoke.
+            Supports SQL queries, schema browsing, and security controls, and can run in headless
+            mode via --mcp-stdio — letting AI assistants like Claude and ChatGPT directly access
+            your database.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">October 16, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-workflow.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Cross-Service Database Queries: Trace Your Entire Business Flow with One Workflow</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            In a microservice architecture, tracking a single order means querying 5 different
+            databases. DataZen Workflow supports cross-database operations, using YAML to chain
+            multi-database queries and trace your entire business flow in one shot.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">October 14, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-dashboard.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Turn SQL Query Results into a Dashboard with One Click</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen lets you generate visual dashboards directly from SQL query results. Supports
+            line charts, bar charts, pie charts, tables, and more — with drag-and-drop layout,
+            scheduled refresh, and multiple query charts in a single dashboard.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">October 12, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-ai-nl2sql.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >AI-Powered SQL Editor: A Deep Dive into DataZen NL2SQL</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen features a built-in AI Chat panel that converts natural language into SQL
+            queries (NL2SQL). Type a plain-English description and instantly generate, explain, and
+            diagnose SQL — with support for OpenAI, Anthropic, DeepSeek, Ollama, and more.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">October 10, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-smart-paste.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Smart Paste and Drag: Seamless Flow from Schema Tree to Editor</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen's SQL editor supports smart paste (Paste-as-IN), drag-to-insert, parameter
+            binding panels, and SQL Guard safety interception — making database operations more
+            efficient and secure.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 22, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-realtime-diagnostics.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Real-Time SQL Diagnostics: Spot Errors as You Type, Not After Execution</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen's SQL editor automatically analyzes SQL semantics as you type, using squiggly
+            underlines to flag unknown table names, type mismatches, potential performance issues,
+            and syntax errors in real time — helping you avoid costly mistakes.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 21, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-database-tool-comparison-2026.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >DataZen vs Navicat vs DBeaver: A Deep Comparison of Database Management Tools in
+            2026</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            A comprehensive comparison of DataZen, Navicat, and DBeaver across price, performance,
+            AI capabilities, database support, and user experience to help you find the tool that
+            best fits your needs.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 20, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-alt-enter-intentions.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting
+            star expansion, INSERT template generation, qualifier additions, subquery wrapping, and
+            more to dramatically boost SQL writing efficiency.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 20, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-getting-started.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >DataZen Getting Started Guide: Connect to Your First Database in 5 Minutes</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen is a free, open-source, cross-platform desktop database management tool
+            supporting PostgreSQL, MySQL, SQLite, Redis, and more — with built-in AI assistance.
+            This step-by-step guide walks you through downloading, installing, and connecting to
+            your first database in just 5 minutes.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 18, 2026</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-statement-level-execution.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen SQL editor features automatic statement boundary detection with independent run
+            buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute
+            workflow.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 16, 2025</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-hover-tooltip.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick
+            Navigation</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen SQL editor lets you hover over a table name to view complete Schema information
+            — including columns, types, foreign key relationships, and table comments — without
+            switching to the Schema tree panel.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 16, 2025</time>
+        </li>
+        <li style="padding: 20px 0; border-bottom: 1px solid var(--border)">
+          <a
+            href="blog-fk-aware-completion.html"
+            style="
+              color: var(--text);
+              text-decoration: none;
+              font-size: 20px;
+              font-weight: 600;
+              display: block;
+              margin-bottom: 6px;
+            "
+            >Write JOINs Without Looking Up Docs: Foreign-Key-Aware Smart SQL Completion</a
+          >
+          <p style="color: var(--muted); font-size: 14px; margin: 0 0 4px">
+            DataZen's SQL editor supports foreign-key-aware JOIN auto-completion, recommending
+            related tables and join conditions based on schema foreign key definitions. Smart column
+            completion supports alias inference and multi-table disambiguation.
+          </p>
+          <time style="color: var(--muted); font-size: 13px">September 16, 2025</time>
+        </li>
+      </ul>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

@@ -22,6 +22,7 @@ describe('exportTableStructureToFile', () => {
     const result = await exportTableStructureToFile({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mongodb' as never,
       getDdl: vi.fn(),
       saveText: vi.fn(),
@@ -35,6 +36,7 @@ describe('exportTableStructureToFile', () => {
     const result = await exportTableStructureToFile({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mysql',
       getDdl,
       saveText,
@@ -45,6 +47,7 @@ describe('exportTableStructureToFile', () => {
       'users',
       'SHOW CREATE TABLE users',
       expect.any(Function),
+      'app',
     );
     expect(saveText).toHaveBeenCalledWith('CREATE TABLE users (id INT)', 'users.sql', 'SQL', [
       'sql',
@@ -55,6 +58,7 @@ describe('exportTableStructureToFile', () => {
     const result = await exportTableStructureToFile({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mysql',
       getDdl: vi.fn().mockResolvedValue('CREATE TABLE t (id INT)'),
       saveText: vi.fn().mockResolvedValue(false),
@@ -67,6 +71,7 @@ describe('exportTableStructureToFile', () => {
     await exportTableStructureToFile({
       dbSessionId: 'c1',
       tableName: 'users',
+      database: 'app',
       databaseType: 'mysql',
       getDdl: vi.fn().mockResolvedValue('  '),
       saveText,

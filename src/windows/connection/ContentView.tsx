@@ -14,6 +14,7 @@ import { useTableDataStore } from '../../stores/tableDataStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { usePanelStore, type ViewPanel } from '../../stores/panelStore';
+import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { ContentToolbar } from './ContentToolbar';
 import { PanelTabBar } from './PanelTabBar';
@@ -34,12 +35,12 @@ import type {
   NodeContextMenuPayload,
 } from '../../lib/connectionViews/types';
 import type { DatabaseType } from '../../types';
-import type { SchemaTreeNodeContextMenuPayload } from './schema-tree/SchemaTree';
+import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { AiChatDraftRequest, ContentViewCallbacks } from './query/aiDraftBridge';
 
 export interface ContentViewProps {
   selectTableRef?: MutableRefObject<
-    ((table: string, schema?: string, database?: string) => void) | undefined
+    ((table: string, schema: string | null, database: string) => void) | undefined
   >;
   nodeContextMenuRef?: MutableRefObject<((payload: NodeContextMenuPayload) => void) | undefined>;
   actionsRef?: MutableRefObject<ConnectionViewActions | undefined>;
@@ -157,6 +158,31 @@ export function ContentView({
     });
   }, [schemaTreeDbSessionId, schemaTreeDatabaseType, initialDatabase, loadForConnection]);
 
+  // The visual builder belongs to the query panel that opened it, so it is torn
+  // down when that panel is closed — not when the component unmounts, because
+  // switching tabs unmounts the inactive panel and its canvas must survive that.
+  const destroyQbForPanel = useQueryBuilderStore((s) => s.destroyFor);
+  const knownPanelIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const liveIds = new Set(allPanels.map((p) => p.id));
+    for (const id of knownPanelIdsRef.current) {
+      if (!liveIds.has(id)) destroyQbForPanel(id);
+    }
+    knownPanelIdsRef.current = liveIds;
+  }, [allPanels, destroyQbForPanel]);
+
+  // Keep the session-level `currentDatabase` aligned with the ACTIVE panel's
+  // bound database. Without this, loadForConnection/schema-tree defaults can
+  // re-pin it to the first database on a reload (e.g. Settings round-trip)
+  // while the active query tab is still targeting another database — the store
+  // drifts even though the panel itself is correct. Driving it from the panel
+  // also makes switching tabs instantly reflect the selected tab's database.
+  const activePanelBoundDatabase = (activePanel as { database?: string } | null)?.database;
+  useEffect(() => {
+    if (!activePanel?.dbSessionId || !activePanelBoundDatabase?.trim()) return;
+    useSchemaStore.getState().setCurrentDatabase(activePanelBoundDatabase, activePanel.dbSessionId);
+  }, [activePanel?.id, activePanel?.dbSessionId, activePanelBoundDatabase]);
+
   const handlers = usePanelHandlers({
     connCtx: sidebarConnCtx,
     showStructureEditor,
@@ -181,8 +207,8 @@ export function ContentView({
   const handleSelectTableWithSchema = useCallback(
     (
       table: string,
-      schema?: string,
-      database?: string,
+      schema: string | null,
+      database: string,
       subTab?: 'data' | 'structure' | 'ddl',
       targetColumn?: string,
     ) => {
@@ -222,9 +248,9 @@ export function ContentView({
 
   // Dialog-trigger callbacks reused by the node context menu (export/import).
   const requestExport = useCallback(
-    (name: string, schema?: string) => {
+    (name: string, schema: string | null, database: string) => {
       setExportTableName(name);
-      handleSelectTableWithSchema(name, schema);
+      handleSelectTableWithSchema(name, schema, database);
       setExportOpen(true);
     },
     [setExportTableName, handleSelectTableWithSchema, setExportOpen],

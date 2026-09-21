@@ -106,7 +106,7 @@ src/windows/workflow/
 
 - AI 入口始终可见，即使未配置 API Key
 - 进入 AI 相关页面时显示未配置提示
-- 点击「配置」按钮直接跳转 Settings 窗口的 AI 配置部分
+- 点击「配置」按钮直接跳转 Settings 页的 AI 配置部分
 
 ---
 

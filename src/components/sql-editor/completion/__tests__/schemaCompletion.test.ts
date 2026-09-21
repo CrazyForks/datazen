@@ -12,6 +12,7 @@ import { buildSemanticModel } from '../../semantic/scopeModel';
 import {
   produceSchemaCompletions,
   resolveAliasDotCompletions,
+  resolveSchemaDotCompletions,
   extractSelectColumns,
 } from '../schemaCompletion';
 
@@ -858,6 +859,65 @@ describe('schemaCompletion', () => {
       expect(completions.length).toBe(1);
       expect(completions.map((c) => c.label)).toContain('id');
     });
+
+    it('truncates the schema fallback for short prefixes (deletion fast-path)', () => {
+      const snapshot = makeSnapshot([]);
+      const model = makeModel([], {
+        kind: 'projection',
+        prefix: 'na',
+        replacementRange: { from: 7, to: 9 },
+        qualifierParts: [],
+      });
+
+      // 400 non-matching columns + a few matching ones.
+      const filler = Array.from({ length: 400 }, (_, i) => `zzz_col_${i}`);
+      const schema: Record<string, string[]> = {
+        big: [...filler, 'other'],
+        users: ['id', 'name', 'email', 'nationality'],
+      };
+
+      const completions = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter,
+        schema,
+        prefixHint: 'na',
+      });
+      // Only pre-filtered matches are built — far below the 404-column total.
+      expect(completions.length).toBeLessThan(50);
+      const labels = completions.map((c) => c.label);
+      expect(labels).toContain('name');
+      expect(labels).toContain('nationality');
+      expect(labels).not.toContain('zzz_col_0');
+      expect(labels).not.toContain('other');
+    });
+
+    it('keeps full schema fallback without a short prefix hint', () => {
+      const snapshot = makeSnapshot([]);
+      const model = makeModel([], {
+        kind: 'projection',
+        prefix: 'nam',
+        replacementRange: { from: 7, to: 10 },
+        qualifierParts: [],
+      });
+
+      const schema: Record<string, string[]> = {
+        users: ['id', 'name', 'email'],
+        orders: ['id', 'total', 'user_id'],
+      };
+
+      // 3-char prefix / no hint → no truncation.
+      const full = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter,
+        schema,
+        prefixHint: 'nam',
+      });
+      expect(full.length).toBe(6);
+      const noHint = produceSchemaCompletions({ model, snapshot, adapter, schema });
+      expect(noHint.length).toBe(6);
+    });
   });
 
   describe('FROM hint (relation with SELECT columns)', () => {
@@ -1063,6 +1123,121 @@ describe('schemaCompletion', () => {
       expect(bothCompletions.length).toBe(6);
       expect(bothCompletions.map((c) => c.label)).toContain('"id"');
       expect(bothCompletions.map((c) => c.label)).toContain('id');
+    });
+  });
+
+  describe('resolveSchemaDotCompletions (schema-namespace fallback)', () => {
+    const pgAdapter = getDialectAdapter('postgresql');
+    const emptySnapshot: EditorMetadataSnapshot = {
+      dbSessionId: 's',
+      epoch: 1,
+      relations: new Map(),
+    };
+    const mdSchema = {
+      buyer: { agent_playbook_proposals: ['id'], autoscale_configs: ['id'] },
+      public: { users: ['id'] },
+    } as never;
+
+    it('journey: `FROM buyer.` offers the schema tables (typing simulation)', () => {
+      // Keystroke journey: `SELECT * FROM buyer` → linter warns `buyer` is a
+      // schema → user types `.` → completion must offer its tables.
+      const sql = 'SELECT * FROM buyer.';
+      const model = buildSemanticModel(sql, sql.length, { dialectId: 'postgresql' });
+      expect(model.cursorIntent.kind).toBe('qualified_column');
+      expect(model.cursorIntent.qualifierParts).toEqual(['buyer']);
+
+      const completions = produceSchemaCompletions({
+        model,
+        snapshot: emptySnapshot,
+        adapter: pgAdapter,
+        schema: mdSchema,
+      });
+      const labels = completions.map((c) => c.label);
+      expect(labels).toContain('"agent_playbook_proposals"');
+      expect(labels).toContain('"autoscale_configs"');
+      const first = completions.find((c) => c.label === '"agent_playbook_proposals"');
+      // apply carries only the table name — the `buyer.` prefix is already in
+      // the document (the completion `from` covers just the name fragment).
+      expect(first?.apply).toBe('"agent_playbook_proposals"');
+      expect(first?.detail).toBe('table');
+    });
+
+    it('drills two levels for `db.schema.`', () => {
+      const schema = { shop: { buyer: { orders: ['id'] } } } as never;
+      const out = resolveSchemaDotCompletions(['shop', 'buyer'], schema, pgAdapter);
+      expect(out?.map((c) => c.label)).toEqual(['"orders"']);
+      expect(out?.[0]?.apply).toBe('"orders"');
+    });
+
+    it('returns null for unknown qualifiers (no guessing)', () => {
+      expect(resolveSchemaDotCompletions(['ghost'], mdSchema, pgAdapter)).toBeNull();
+    });
+
+    it('returns null when the qualifier already names a table', () => {
+      const flat = { users: ['id'] } as never;
+      expect(resolveSchemaDotCompletions(['users'], flat, pgAdapter)).toBeNull();
+    });
+
+    it('returns null beyond two qualifier levels', () => {
+      expect(resolveSchemaDotCompletions(['a', 'b', 'c'], mdSchema, pgAdapter)).toBeNull();
+    });
+
+    it('finds the namespace below the database hoist (`{ winam: { buyer } }`)', () => {
+      // True story: the toolbar database is `winam`, the editor tree is
+      // `{ winam: { buyer: { … } } }` and the qualifier is bare `buyer`.
+      // Precise top-level lookup misses; deep search must still offer tables.
+      const nested = { winam: { buyer: { orders: ['id'] } } } as never;
+      const out = resolveSchemaDotCompletions(['buyer'], nested, pgAdapter);
+      expect(out?.map((c) => c.label)).toEqual(['"orders"']);
+      expect(out?.[0]?.apply).toBe('"orders"');
+    });
+
+    it('regression: zero-column snapshot hit must not short-circuit the schema fallback', () => {
+      // True story from PG multidb: the snapshot holds a lightweight (zero
+      // column) entry for `buyer`, the schema tree holds `buyer` as a schema.
+      // `buyer.` must still offer the schema tables — an empty alias hit is
+      // "no columns known", not "completions resolved".
+      const sql = 'SELECT * FROM buyer.';
+      const model = buildSemanticModel(sql, sql.length, { dialectId: 'postgresql' });
+      const buyerStub = makeRelation('buyer', [], [], pgAdapter);
+      const snapshot: EditorMetadataSnapshot = {
+        dbSessionId: 's',
+        epoch: 1,
+        relations: new Map([[buyerStub.key, buyerStub]]),
+      };
+      const completions = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter: pgAdapter,
+        schema: mdSchema,
+      });
+      const labels = completions.map((c) => c.label);
+      expect(labels).toContain('"agent_playbook_proposals"');
+      expect(labels).toContain('"autoscale_configs"');
+    });
+
+    it('alias completions still win over the schema fallback', () => {
+      // `u.` where `u` is a FROM alias → columns, not schema tables.
+      const sql = 'SELECT * FROM buyer.orders o WHERE o.';
+      const model = buildSemanticModel(sql, sql.length, { dialectId: 'postgresql' });
+      const orders = makeRelation(
+        'orders',
+        [{ name: 'id', dataType: 'integer', nullable: false }],
+        ['buyer'],
+        pgAdapter,
+      );
+      const snapshot: EditorMetadataSnapshot = {
+        dbSessionId: 's',
+        epoch: 1,
+        relations: new Map([[orders.key, orders]]),
+      };
+      const completions = produceSchemaCompletions({
+        model,
+        snapshot,
+        adapter: pgAdapter,
+        schema: mdSchema,
+      });
+      expect(completions.map((c) => c.label)).toContain('id');
     });
   });
 });

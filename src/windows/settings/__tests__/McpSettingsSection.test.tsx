@@ -29,6 +29,55 @@ describe('McpSettingsSection', () => {
     vi.spyOn(aiCommands, 'mcpGetStatus').mockResolvedValue({ running: false, transport: 'stdio' });
   });
 
+  it('shows explanations only in tooltips and keeps permission help outside radio labels', async () => {
+    vi.spyOn(settingsCommands, 'getAppExecutablePath').mockResolvedValue('/usr/bin/datazen');
+    vi.spyOn(aiCommands, 'mcpListAllTools').mockResolvedValue(['query']);
+    const updateSettings = vi.fn();
+    render(
+      <McpSettingsSection
+        settings={useSettingsStore.getState().settings}
+        onSettingsChange={updateSettings}
+      />,
+    );
+
+    await screen.findByText('query');
+    expect(screen.getByText('mcp.stopped')).toBeInTheDocument();
+    expect(screen.getByText('mcp.allowlist.empty')).toBeInTheDocument();
+    expect(screen.getByText(/mcp.config.pathHint:/)).toBeInTheDocument();
+
+    for (const [label, description] of [
+      ['mcp.title', 'mcp.description'],
+      ['mcp.enabled', 'mcp.enabledHint'],
+      ['mcp.permission.title', 'mcp.permission.applyHint'],
+      ['mcp.allowlist.title', 'mcp.allowlist.description mcp.allowlist.applyHint'],
+      ['mcp.tools', 'mcp.tools.description mcp.tools.applyHint'],
+      ['mcp.permission.readOnly', 'mcp.permission.readOnlyHint'],
+      ['mcp.permission.safeWrite', 'mcp.permission.safeWriteHint'],
+      ['mcp.permission.highRiskWrite', 'mcp.permission.highRiskWriteHint'],
+    ]) {
+      expect(screen.queryByText(description)).not.toBeInTheDocument();
+      const help = screen.getByRole('button', { name: label });
+      expect(help.closest('label')).toBeNull();
+      expect(help.parentElement?.closest('button')).toBeNull();
+      fireEvent.focus(help);
+      expect(screen.getByRole('tooltip')).toHaveTextContent(description);
+      fireEvent.keyDown(document, { key: 'Escape' });
+    }
+
+    const configHelp = screen
+      .getAllByRole('button', { name: 'mcp.config.cursor' })
+      .find((button) => button.textContent === '?');
+    expect(configHelp).toBeDefined();
+    fireEvent.focus(configHelp!);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('mcp.usage mcp.config.commandHint');
+    fireEvent.click(configHelp!);
+    expect(updateSettings).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    fireEvent.click(screen.getByRole('radio', { name: 'mcp.permission.readOnly' }));
+    expect(updateSettings).toHaveBeenCalledWith({ mcpPermissionMode: 'read_only' });
+  });
+
   it('renders and copies snippet with full executable path', async () => {
     vi.spyOn(settingsCommands, 'getAppExecutablePath').mockResolvedValue(
       '/Applications/DataZen.app/Contents/MacOS/datazen',

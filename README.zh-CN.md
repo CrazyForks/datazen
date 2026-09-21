@@ -1,42 +1,77 @@
 <div align="center">
-
 <img src="site/assets/logo.png" width="96" alt="DataZen" />
 
 # DataZen
 
-### 面向开发者的轻量级、开源 AI 数据库客户端
+### 面向开发者与 AI Agent 的数据库工作台
 
-自然语言 SQL · 查询分析 · 图表 · Workflow · MCP · 可扩展 Driver
+查询 · 排障 · 可视化 · 迁移 · 自动化 · MCP
 
 [![Release](https://img.shields.io/github/v/release/flyxl/datazen?style=flat-square)](https://github.com/flyxl/datazen/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-blue?style=flat-square)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square)](#安装)
 
-[下载](https://github.com/flyxl/datazen/releases) · [官网](https://flyxl.github.io/datazen/zh/) · [English](README.md) · [贡献指南](CONTRIBUTING.md)
-
+[下载](https://flyxl.github.io/datazen/zh/download.html) · [官网](https://flyxl.github.io/datazen/zh/) · [English](README.md) · [贡献指南](CONTRIBUTING.md)
 </div>
 
-![DataZen 主界面](site/assets/screenshots/01-main-window.png)
+<video src="site/assets/video/demo-recording.mp4" controls width="100%" poster="site/assets/video/demo-poster.png"></video>
 
 ## 为什么选择 DataZen？
 
-DataZen 是一款基于 **Tauri + Rust** 构建的桌面数据库客户端。在传统数据库管理能力之外，DataZen 将 AI 辅助查询、执行计划分析、数据可视化、Workflow 自动化和 MCP 集成融入日常数据库工作流。
+DataZen 是一款基于 **Tauri + Rust** 构建的桌面数据库工作台。它把连接、理解、修改和自动化数据库的完整流程放在一个应用里。
 
-- **轻量** — Tauri + Rust 带来更小的安装包和更快的启动速度。
-- **AI 原生** — 自然语言生成 SQL、错误诊断、EXPLAIN 分析，以及带数据库上下文的 AI Chat。
-- **可视化** — 查询结果可以直接转换成图表，无需导出到 Excel。
-- **可自动化** — 使用 YAML Workflow 编排 SQL、AI、条件和循环，并支持跨数据库执行。
-- **可扩展** — 数据库 Driver 通过 DataZen Driver API 在编译期集成。
-- **本地优先** — 数据库连接和凭据保留在本机（AES-256-GCM；主密钥在系统钥匙串，或开发/未签名构建下的 `{appData}/.key`）。主题包可通过 `--dt-*` 定制 DataTable 各数据类型颜色。
-- **开源** — GPLv3，支持社区 Driver 和代码贡献。
+- **查询** — 编写 SQL、浏览 Schema、编辑数据、查看 ER 图，并使用 Redis Key 浏览器。
+- **排障** — 用自然语言生成 SQL、诊断错误、分析 EXPLAIN，并通过只读连接降低误操作风险。
+- **可视化** — 查询结果直接生成图表，也可以构建带刷新、历史和告警的 Ops Dashboard。
+- **迁移数据** — 备份数据库、同步同族数据库、迁移异构数据库，或审查并部署 Schema 变更。
+- **自动化** — 用 YAML Workflow 编排查询、AI、条件和循环，也可以从 UI、MCP 或无头模式运行。
+- **重视隐私** — AI 请求只发送给你配置的 Provider。
+- **开源且可扩展** — GPLv3 应用、社区 Driver API、沙箱 Workspace App 和宿主扩展点。
 
-## 围绕真实开发流程构建
+## 三分钟开始使用
+
+1. 下载 [DataZen](https://flyxl.github.io/datazen/zh/download.html)。
+2. 打开本地 SQLite 文件，或创建 PostgreSQL、MySQL/MariaDB、Redis 连接。
+3. 浏览 Schema，编写查询或让 AI 按需求生成 SQL，执行后查看结果并切换为图表。
+
+AI 不是必需品：普通数据库浏览和查询不需要 API Key。
+
+## 一个工作台，解决四类数据库工作
+
+| 工作 | DataZen 提供的能力 |
+|---|---|
+| **理解数据** | SQL 编辑器、Schema 浏览、ER 图、查询历史、图表和 Redis 工具 |
+| **解决问题** | AI 诊断、EXPLAIN 分析、只读连接、SQL 安全门和事务编辑 |
+| **移动数据** | Backup、Data Sync、Data Transfer、Schema Diff 和可审查执行计划 |
+| **自动运行** | YAML Workflow、Ops Dashboard、MCP Server/Client 和 `--mcp-stdio` 无头模式 |
+
+## 围绕真实数据库工作流构建
 
 ### SQL 与数据探索
 
 在现代 SQL 编辑器中编写和执行 SQL，浏览 Schema 和数据，并直接在查询结果与图表之间切换。
 
 ![查询结果与图表](site/assets/screenshots/02-query-chart.png)
+
+### Editor Pro — 更智能的 SQL 编辑器
+
+发布的 **Basic** 和 **All** 安装包均包含 **SQL Editor Pro**，提供基于实时 Schema 元数据的深度编辑辅助功能，远超基础语法高亮。从源码构建的 **Community 社区版**（见[从源码构建](#从源码构建)）使用内置基础编辑器，不包含 Pro 扩展。驱动集合（Basic / All）与编辑器版本（Community / Pro）是两个独立选项。
+
+| 功能 | 说明 |
+|---|---|
+| **语句 Gutter** | 从多语句脚本中独立运行任意单条语句 |
+| **智能补全** | 基于实时 Schema 的表名、列名和关键字补全 |
+| **Hover 悬浮卡** | 悬停查看列类型、注释和表结构 |
+| **函数签名提示** | 输入函数参数时显示内联参数提示 |
+| **SQL Linter** | 实时语法和语义错误反馈 |
+| **意图菜单 (Alt+Enter)** | 上下文感知的快速修复和重构建议 |
+| **事务控制** | 工具栏中切换 Auto-Commit，手动 Commit / Rollback |
+| **智能粘贴 IN** | 自动将粘贴的 CSV 值转换为 `IN (...)` 表达式 |
+| **格式化 SQL** | 一键统一代码格式 |
+
+![Editor Pro — 语句 Gutter](site/assets/screenshots/pro-01-statement-gutter.png)
+![Editor Pro — Hover 悬浮卡](site/assets/screenshots/pro-03-hover-tooltip.png)
+![Editor Pro — SQL Linter](site/assets/screenshots/pro-05-linter.png)
 
 ### AI 辅助数据库开发
 
@@ -77,6 +112,17 @@ AI Sidebar 可以自动获取当前连接的 Schema，上下文中的 SQL 也可
 支持折线图、柱状图、饼图、散点图和面积图，并支持聚合、分组以及 PNG / SVG 导出。
 
 ![图表导出](site/assets/screenshots/11-chart-export.png)
+
+## 安全地移动和监控数据
+
+DataZen 不把数据操作包装成不可逆的一键魔法，而是提供清晰、可审查的流程。
+
+- **Data Sync**：同族数据库在结构和主键一致时比较并同步行数据。
+- **Data Transfer**：通过映射和预览流程，在异构数据库之间迁移结构和/或数据。
+- **Schema Diff**：比较数据库结构，并生成受控的 DDL 部署计划。
+- **Ops Dashboard**：定时刷新保存的查询，保留运行历史，并触发阈值告警。
+
+![Data Sync — 源端与目标端选择（英文界面）](site/assets/screenshots/26-data-sync-en.png)
 
 ## 使用 Workflow 自动化数据库工作
 
@@ -159,21 +205,24 @@ DataZen 默认提供精简的 Driver 集合，也可以在编译时加入更多 
 
 | 数据库 | 类型 | 说明 |
 |---|---|---|
-| PostgreSQL | 默认 | SQL、Schema、EXPLAIN、AI 上下文 |
-| MySQL / MariaDB | 默认 | SQL、Schema、EXPLAIN |
-| SQLite | 默认 | 嵌入式数据库工作流 |
-| Redis | 默认 | Key 浏览、命令台、Monitor、Pub/Sub |
-| MongoDB | 可选 | 原生 Driver |
-| ClickHouse | 可选 | 原生 Driver |
-| DuckDB | 可选 | 原生 Driver |
-| SQL Server | 可选 | 原生 Driver |
-| Presto / Trino 等 OLAP | Plugin | 外部 Driver 架构 |
+| PostgreSQL | Basic | SQL、Schema、EXPLAIN、AI 上下文 |
+| MySQL / MariaDB | Basic | SQL、Schema、EXPLAIN |
+| SQLite | Basic | 嵌入式数据库工作流 |
+| Redis | Basic | Key 浏览、命令台、Monitor、Pub/Sub |
+| MongoDB | `all` | 原生 Driver |
+| ClickHouse | `all` | 原生 Driver |
+| DuckDB | `all` | 原生 Driver |
+| SQL Server | `all` | 原生 Driver |
+| 其他 path 驱动（如 Elasticsearch、Turso、InfluxDB） | `all` | 完整列表见 `drivers-registry.json` |
+| Kiwi / OLAP / Superset 等 Git 驱动 | 自定义列表 | `all` 不包含，需显式添加，如 `--drivers=basic,kiwi,superset` |
 
-Driver 集合由编译期配置决定，因此发行版不需要携带所有数据库引擎。
+`basic`（四个核心驱动）和 `all`（全部已注册的 path 驱动，不含 Git 驱动）是构建预设；Driver 集合由编译期配置决定，因此发行版不需要携带所有数据库引擎。
+
+**更多外部驱动正在规划中。**未来将探索支持使用 Go、C++、Rust、Java 等语言实现和接入数据库 Driver，进一步扩展 DataZen 的数据库生态。
 
 ## 安装
 
-从 **[GitHub Releases](https://github.com/flyxl/datazen/releases)** 下载最新版本。
+从 **[下载 DataZen](https://flyxl.github.io/datazen/zh/download.html)** 获取自动匹配的平台安装包；也可以直接浏览 **[GitHub Releases](https://github.com/flyxl/datazen/releases)**。
 
 | 平台 | 安装包 |
 |---|---|
@@ -188,36 +237,34 @@ DataZen 免费使用，不需要注册账号。
 
 ### 前置条件
 
-- Node.js >= 20
-- pnpm >= 9
-- Rust >= 1.77
-- Tauri v2 系统依赖
+- **Node.js 24**、**pnpm 11**、**Rust stable**（CI 验证的工具链）
+- [Tauri v2 系统依赖](https://v2.tauri.app/start/prerequisites/)
+
+开发详情见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [CI 与测试矩阵](docs/development/ci-test-matrix.md)。以下命令显式选择 Community，避免公开源码构建依赖独立的 Pro 扩展。
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev --edition=community --drivers=basic
 ```
 
 只构建需要的 Driver：
 
 ```bash
-# 默认 Driver 集合
-pnpm tauri:build
+# Community + 四个核心驱动
+pnpm tauri:build:community --drivers=basic
 
-# 全部 path Driver
-DATAZEN_DRIVERS=all pnpm tauri:build
+# Community + 全部已注册的 path 驱动（不含 Git 驱动）
+pnpm tauri:build:community --drivers=all
 
-# 自定义 Driver 集合
-DATAZEN_DRIVERS=postgres,mongodb pnpm tauri:build
+# Community + 自定义驱动集合
+pnpm tauri:build:community --drivers=postgres,mongodb
 ```
 
 ## 安全与隐私
 
-DataZen 按照本地数据库访问场景设计：
+DataZen 按照数据库访问场景设计：
 
-- 数据库凭据保存在本地。
 - AI 请求发送到用户配置的 AI Provider。
-- DataZen 不提供云端数据库代理服务，也不会将数据库数据上传到 DataZen 云端。
 - SSH 连接可以直接由应用建立。
 
 使用 AI 功能时，请同时遵守你所配置的 AI Provider / Endpoint 的隐私和安全策略。
@@ -242,7 +289,7 @@ DataZen 按照本地数据库访问场景设计：
 
 ## License
 
-DataZen 使用 **GNU General Public License v3.0** 开源。`packages/driver-api` 下的 `datazen-driver-api` crate 单独采用 **MIT License**。详见 [LICENSE](LICENSE) 和 [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT)。
+DataZen 核心使用 **GNU General Public License v3.0 或更高版本**开源，并附带 [Plugin、Driver 与 Extension 链接例外](LICENSE)：仅通过公开 SDK 与 DataZen 交互的独立 Driver、主题、扩展点和 Workspace App 可以采用作者自选的条款发布。`packages/driver-api` 下的 `datazen-driver-api` crate 单独采用 **MIT License**。详见 [LICENSE](LICENSE) 和 [packages/driver-api/LICENSE-MIT](packages/driver-api/LICENSE-MIT)。
 
 <div align="center">
 

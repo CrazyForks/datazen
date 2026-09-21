@@ -4,7 +4,7 @@ import { databaseCommands } from '../../../commands/database';
 import { useSchemaStore } from '../../../stores/schemaStore';
 import type { ConnectionConfig, DatabaseObject, TableInfo } from '../../../types';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
-import { shouldUseMultiDatabaseTree } from '../schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './utils';
 import { useExpandedDbCacheRefresh } from '../schema-tree/useExpandedDbCacheRefresh';
 
 export function useNavigatorDbState(

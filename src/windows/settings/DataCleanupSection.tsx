@@ -4,6 +4,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { historyCommands, type HistoryPurgeScope } from '../../commands/history';
 import { SectionTitle, SettingRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
 
 const RETENTION_PRESETS = [7, 30, 90] as const;
 
@@ -74,8 +75,13 @@ export function DataCleanupSection() {
       data-testid="data-cleanup-section"
     >
       <div>
-        <h3 className="text-sm font-medium text-fg">{t('settings.dataCleanup.title')}</h3>
-        <p className="mt-1 text-xs text-fg-muted">{t('settings.dataCleanup.description')}</p>
+        <h3 className="text-sm font-medium text-fg">
+          {t('settings.dataCleanup.title')}
+          <SettingHint
+            label={t('settings.dataCleanup.title')}
+            text={t('settings.dataCleanup.description')}
+          />
+        </h3>
       </div>
 
       <SettingRow label={t('settings.dataCleanup.scope')}>

@@ -349,6 +349,7 @@ async fn workflow_save_list_get_delete() {
     let test = TestAppState::new().await;
     test.state.workflow_registry.load_all().await.unwrap();
     let wf = WorkflowDefinition {
+        database: None,
         id: "test-wf".into(),
         name: "Test Workflow".into(),
         description: "desc".into(),
@@ -898,6 +899,7 @@ async fn workflow_execute_ai_step_with_wiremock() {
     mock.mount_chat_completion_text("workflow output").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "exec-wf".into(),
         name: "Exec".into(),
         description: String::new(),
@@ -1030,6 +1032,7 @@ async fn workflow_history_clear_after_execute() {
     mock.mount_chat_completion_text("done").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "hist-wf".into(),
         name: "Hist".into(),
         description: String::new(),
@@ -1075,6 +1078,7 @@ async fn dashboard_hidden_workflow_execute_skips_history() {
     mock.mount_chat_completion_text("done").await;
 
     let wf = WorkflowDefinition {
+        database: None,
         id: "hidden-hist".into(),
         name: "Hidden Hist".into(),
         description: String::new(),
@@ -1185,6 +1189,7 @@ async fn ai_chat_mcp_tool_roundtrip() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![ToolCall {
             id: "call_mcp".into(),
@@ -1192,6 +1197,7 @@ async fn ai_chat_mcp_tool_roundtrip() {
             arguments: r#"{"message":"hello"}"#.into(),
         }]),
         response_id: None,
+        egress_summary: None,
     }]);
     mock.push_stream_text("done");
 
@@ -1234,6 +1240,15 @@ async fn ai_chat_mcp_and_db_same_round() {
     use std::sync::atomic::Ordering;
 
     let (test, mock) = TestAppState::with_mock_ai_tables().await;
+    let mut ai_settings = test.state.store.get_ai_settings_config().await;
+    for profile in &mut ai_settings.profiles {
+        profile.safety_gate.data_egress_level = datazen_ai_api::AiDataEgressLevel::Unrestricted;
+    }
+    test.state
+        .store
+        .save_ai_settings_config(&ai_settings)
+        .await
+        .unwrap();
     test.save_connection("same-round-cfg").await;
     let mcp_calls = register_echo_test_mcp(&test.state).await;
 
@@ -1241,6 +1256,7 @@ async fn ai_chat_mcp_and_db_same_round() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![
             ToolCall {
@@ -1255,6 +1271,7 @@ async fn ai_chat_mcp_and_db_same_round() {
             },
         ]),
         response_id: None,
+        egress_summary: None,
     }]);
     mock.push_stream_text("all done");
 
@@ -1330,6 +1347,7 @@ async fn ai_chat_ask_questions_with_executable_runs_tools_then_stops() {
         content: String::new(),
         reasoning: None,
         done: true,
+        cancelled: false,
         usage: None,
         tool_calls: Some(vec![
             ToolCall {
@@ -1349,6 +1367,7 @@ async fn ai_chat_ask_questions_with_executable_runs_tools_then_stops() {
             },
         ]),
         response_id: None,
+        egress_summary: None,
     }]);
 
     ai_chat_impl(

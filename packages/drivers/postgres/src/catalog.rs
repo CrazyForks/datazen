@@ -348,48 +348,23 @@ impl PostgresDriver {
         opts: &BackupDumpOptions,
         on_progress: &mut (dyn FnMut(DumpProgress) + Send),
     ) -> Result<String, DriverError> {
-        let snapshot = match self.begin_transaction(handle).await {
-            Ok(tx) => {
-                let _ = self
-                    .execute(
-                        handle,
-                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-                    )
-                    .await;
-                Some(tx)
-            }
-            Err(_) => None,
-        };
-        let result = async {
-            let mut out = String::new();
-            if opts.create_database {
-                // No `\connect` — restore runs against the existing session.
-                out.push_str(&format!(
-                    "CREATE DATABASE {};\n",
-                    self.quote_ident(database)
-                ));
-            }
-            out.push_str(
-                &sql_dump::dump_sql_database_with_progress(
-                    self,
-                    handle,
-                    database,
-                    opts,
-                    on_progress,
-                )
+        // Do NOT wrap the dump in a REPEATABLE READ transaction.  A single
+        // failed query (e.g. a table the user lacks SELECT on) would poison
+        // the entire transaction with "current transaction is aborted",
+        // preventing the rest of the backup from completing.  Running in
+        // auto-commit mode lets each object succeed or fail independently.
+        let mut out = String::new();
+        if opts.create_database {
+            out.push_str(&format!(
+                "CREATE DATABASE {};\n",
+                self.quote_ident(database)
+            ));
+        }
+        out.push_str(
+            &sql_dump::dump_sql_database_with_progress(self, handle, database, opts, on_progress)
                 .await?,
-            );
-            Ok(out)
-        }
-        .await;
-        if let Some(tx) = snapshot {
-            if result.is_ok() {
-                let _ = self.commit(tx).await;
-            } else {
-                let _ = self.rollback(tx).await;
-            }
-        }
-        result
+        );
+        Ok(out)
     }
 
     pub(crate) async fn execute_command_impl(
@@ -398,6 +373,12 @@ impl PostgresDriver {
         command: &str,
         input: serde_json::Value,
     ) -> Result<CommandResult, DriverError> {
+        if command == "drop_database" {
+            // PostgreSQL cannot drop the currently-open database, nor one that still
+            // has active backends. Handle it on the driver so we can move our own pool
+            // off the target and terminate remaining connections first.
+            return crate::admin_commands::drop_database_impl(self, handle, &input).await;
+        }
         match execute_standard_sql_command(self, handle, command, input.clone()).await {
             Err(DriverError::Unsupported(_)) => {}
             other => return other,

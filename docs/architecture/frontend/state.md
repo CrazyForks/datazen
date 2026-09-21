@@ -18,7 +18,7 @@ DataZen 前端使用 React + TypeScript + Zustand。状态按领域拆分，Taur
 | `workspaceTabsStore` | 工作区 Tab |
 | `aiStore` | AI 配置/会话相关状态 |
 | `dashboardStore` | Dashboard 状态 |
-| `extensionStore` | Extension 状态 |
+| `wappStore` | Workspace App 状态 |
 | `settingsStore` | 应用设置 |
 | `uiStore` | UI 层状态 |
 | `contextMenuStore` | Context Menu 状态 |

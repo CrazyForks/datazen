@@ -57,6 +57,7 @@ describe('metadata copyDdl', () => {
         _t: string,
         _sql: string,
         extract: (r: unknown[][]) => string,
+        _db: string,
         ident: DdlCacheIdentity,
       ) => {
         expect(ident).toEqual({ objectKind: 'table', namespacePath: ['public'] });
@@ -65,14 +66,22 @@ describe('metadata copyDdl', () => {
     );
     const ddl = await copyRelationDdl('s1', ident(['public'], 'users'), 'table', {
       databaseType: 'postgresql',
+      database: 'app',
       getDdl: getDdl as never,
       getDialect: () => tableDialect,
     });
     expect(ddl).toBe('CREATE TABLE users (...)');
-    expect(getDdl).toHaveBeenCalledWith('s1', 'users', 'DDL publicusers', expect.any(Function), {
-      objectKind: 'table',
-      namespacePath: ['public'],
-    });
+    expect(getDdl).toHaveBeenCalledWith(
+      's1',
+      'users',
+      'DDL publicusers',
+      expect.any(Function),
+      'app',
+      {
+        objectKind: 'table',
+        namespacePath: ['public'],
+      },
+    );
   });
 
   it('passes objectKind view and the raw namespace when allowQualified=false', async () => {
@@ -82,11 +91,13 @@ describe('metadata copyDdl', () => {
         _t: string,
         _sql: string,
         _extract: (r: unknown[][]) => string,
+        _db: string,
         ident: DdlCacheIdentity,
       ) => `ddl-${ident.objectKind}`,
     );
     const ddl = await copyRelationDdl('s1', ident(['public'], 'orders'), 'view', {
       databaseType: 'postgresql',
+      database: 'app',
       allowQualified: false,
       getDdl: getDdl as never,
       getDialect: () => tableDialect,
@@ -102,6 +113,7 @@ describe('metadata copyDdl', () => {
     await expect(
       copyRelationDdl('s1', ident([], 'users'), 'table', {
         databaseType: 'generic',
+        database: 'app',
         getDialect: () => null,
       }),
     ).rejects.toThrow('unable-generate-ddl');

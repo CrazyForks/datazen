@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor — DataZen
+    </title>
+    <meta
+      name="description"
+      content="DataZen SQL editor features automatic statement boundary detection with independent run buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute workflow."
+    />
+    <link
+      rel="canonical"
+      href="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta
+      property="og:title"
+      content="Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor"
+    />
+    <meta
+      property="og:description"
+      content="DataZen SQL editor features automatic statement boundary detection with independent run buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute workflow."
+    />
+    <meta
+      property="og:url"
+      content="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor"
+    />
+    <meta
+      name="twitter:description"
+      content="DataZen SQL editor features automatic statement boundary detection with independent run buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute workflow."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2025-09-16",
+        "description": "DataZen SQL editor features automatic statement boundary detection with independent run buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute workflow.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>Goodbye Select-All-Then-Run: Statement-Level Execution in the SQL Editor</h1>
+        <p>
+          DataZen SQL editor features automatic statement boundary detection with independent run
+          buttons for each SQL statement — say goodbye to the inefficient select-all-then-execute
+          workflow.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">September 16, 2025</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>
+          Goodbye &quot;Select All Then Execute&quot;: Statement-Level Execution in the SQL Editor
+        </h1>
+        <blockquote>
+          <p>
+            You&#39;ve written 10 SQL statements but only want to run one of them — an operation
+            that feels natural in any text editor, yet in most database tools it turns into a
+            tedious selection game.
+          </p>
+        </blockquote>
+        <h2>An Overlooked Daily Pain Point</h2>
+        <p>
+          Imagine this scenario: you&#39;re debugging a data repair script with seven or eight SQL
+          statements lined up in the editor — first a SELECT on users, then orders, then an UPDATE,
+          then another SELECT to verify the result. You want to run just that middle UPDATE to see
+          how many rows it affects.
+        </p>
+        <p>
+          In most database tools, you need to do this: manually select the exact text range of that
+          SQL statement, then press Ctrl+Enter to execute. Sounds simple, but in practice things
+          often go wrong:
+        </p>
+        <ul>
+          <li>
+            You select too much and accidentally execute the unrelated statements above and below;
+          </li>
+          <li>
+            You select too little and miss the WHERE clause, nearly wiping out the entire table;
+          </li>
+          <li>
+            Multi-line SQL with nested subqueries makes it agonizing to judge selection boundaries;
+          </li>
+          <li>
+            Sometimes the cursor is clearly in the middle of one statement, but select-all execution
+            runs a completely different one.
+          </li>
+        </ul>
+        <p>
+          These may seem like small issues, but in high-frequency SQL editing scenarios, they
+          constantly drain your attention. You&#39;re not thinking about business logic — you&#39;re
+          fighting with the editor&#39;s interaction model.
+        </p>
+        <h2>DataZen&#39;s Solution: Every SQL Statement Gets Its Own &quot;Run Button&quot;</h2>
+        <p>
+          DataZen&#39;s SQL editor fundamentally changes the interaction approach:
+          <strong
+            >instead of relying on manual selection, the editor automatically identifies the
+            boundary of each SQL statement and provides an independent execution entry point for
+            each one.</strong
+          >
+        </p>
+        <p>Specifically, this capability works on three levels:</p>
+        <h3>Semicolon-Based Statement Boundary Detection</h3>
+        <p>
+          The DataZen editor parses SQL text in real time, using semicolons as the primary delimiter
+          to automatically identify each individual statement. Whether you&#39;ve written 3
+          statements or 30, the editor accurately distinguishes them.
+        </p>
+        <p>
+          This isn&#39;t simple text splitting. The editor understands basic SQL syntax structure,
+          correctly skipping semicolons inside string literals, comment blocks, and similar contexts
+          — it won&#39;t mistake a semicolon in a comment for a statement separator.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/03-statement-gutter.png"
+            alt="Statement Boundary Detection and Run Button"
+          />
+        </p>
+        <h3>Independent Run Button for Each Statement</h3>
+        <p>
+          After identifying statement boundaries, DataZen displays an independent ▶ run button in
+          the gutter area (left of the line numbers) for each SQL statement. This button belongs to
+          that specific statement — clicking it executes only that one, nothing more, nothing less.
+        </p>
+        <p>
+          You don&#39;t need to select any text. Simply place your cursor in a statement or click
+          the ▶ button next to it for precise execution. It&#39;s as natural as &quot;run current
+          class&quot; or &quot;run current test method&quot; in an IDE.
+        </p>
+        <h3>Automatic Highlighting of the Current Statement</h3>
+        <p>
+          When you place your cursor in a SQL statement, DataZen automatically highlights the
+          background of that statement. This gives you a clear visual indication of &quot;what&#39;s
+          about to be executed&quot; — no more counting semicolons by eye.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/03-statement-highlight.png"
+            alt="Automatic Highlighting of Current Statement"
+          />
+        </p>
+        <p>
+          This visual feedback works together with the ▶ button to form a very clear operational
+          loop:
+        </p>
+        <ol>
+          <li>Move cursor to the target statement → background highlight confirms the scope;</li>
+          <li>
+            Press Ctrl+Enter or click the ▶ button → only the highlighted statement executes;
+          </li>
+          <li>The results panel updates immediately.</li>
+        </ol>
+        <h2>Real-World Scenarios for Multi-Statement Script Debugging</h2>
+        <p>
+          This feature truly shines in daily work scenarios that go beyond writing a single SELECT.
+        </p>
+        <p>
+          <strong>Data repair script debugging</strong>: You&#39;ve written a set of repair SQL —
+          first SELECT to identify problem data, then UPDATE to fix it, then another SELECT to
+          verify the result. During debugging, you want to repeatedly execute the middle UPDATE and
+          the final SELECT without running everything from the beginning each time. With
+          statement-level execution, you can quickly switch between several SQL statements,
+          verifying each one individually — just like debugging code line by line.
+        </p>
+        <p>
+          <strong>Batch DDL management</strong>: When modifying table structure, you might write a
+          series of ALTER TABLE statements. Want to run just one to check for syntax errors? Click
+          the ▶ button next to it — no need to carefully select those specific lines of text.
+        </p>
+        <p>
+          <strong>Data exploration</strong>: When analyzing data, you might write five queries from
+          different angles. Want to execute them one by one to compare results? Statement-level
+          execution lets you seamlessly switch between queries, far more efficient than the
+          select-and-run approach.
+        </p>
+        <h2>Comparing with Traditional Select-to-Execute Tools</h2>
+        <p>
+          Speaking of &quot;select then execute,&quot; most database tools — including Navicat and
+          DBeaver — still use this model today. You need to manually select a block of SQL text,
+          then press a shortcut key to execute.
+        </p>
+        <p>
+          This works fine when there are only one or two SQL statements in the editor. But when
+          multiple statements accumulate — which is very common in daily work — the limitations
+          become apparent:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Operation</th>
+              <th>Traditional Select-to-Execute</th>
+              <th>DataZen Statement-Level Execution</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Execute a single SQL</td>
+              <td>Requires precise text range selection</td>
+              <td>Place cursor in it, Ctrl+Enter</td>
+            </tr>
+            <tr>
+              <td>Switch between statements</td>
+              <td>Re-select each time</td>
+              <td>Just move the cursor</td>
+            </tr>
+            <tr>
+              <td>Execute multi-line SQL</td>
+              <td>Selection easily misses lines</td>
+              <td>Automatic boundary detection by statement</td>
+            </tr>
+            <tr>
+              <td>Confirm execution scope</td>
+              <td>Visual judgment by eye</td>
+              <td>Automatic background highlight</td>
+            </tr>
+            <tr>
+              <td>Prevent accidental execution</td>
+              <td>Entirely dependent on user&#39;s selection accuracy</td>
+              <td>▶ button bound to specific statements</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          The traditional model places the full responsibility of &quot;confirming execution
+          scope&quot; on the user. DataZen takes over that responsibility through syntax analysis
+          and visual feedback, letting you keep your attention on the SQL logic itself rather than
+          wrestling with editor interaction details.
+        </p>
+        <h2>This Is More Than Just a Button</h2>
+        <p>
+          Statement-level execution may seem like a small feature, but it reflects a deeper design
+          philosophy:
+          <strong
+            >tools should understand what you&#39;re doing, rather than making you adapt to the
+            tool&#39;s limitations.</strong
+          >
+        </p>
+        <p>
+          The traditional select-to-execute model essentially treats the SQL editor as a plain text
+          editor — it doesn&#39;t know what you&#39;ve written, doesn&#39;t know which text
+          constitutes a complete statement, so it can only ask you to select it yourself.
+          DataZen&#39;s editor understands SQL structure, which is why it can provide more precise
+          operational entry points.
+        </p>
+        <p>
+          This &quot;understand the content structure&quot; philosophy is also reflected in other
+          DataZen editor capabilities — like hover-to-view table structure, foreign-key-aware smart
+          completion, cursor-context-aware SQL generation, and more. They all share the same goal:
+          transforming the editor from a &quot;text recording container&quot; into a
+          &quot;SQL-understanding assistant.&quot;
+        </p>
+        <h2>Try It Out</h2>
+        <p>
+          If you write multiple SQL statements every day — debugging scripts, data repair, batch
+          queries — statement-level execution will save you a lot of time spent on repetitive
+          selection.
+        </p>
+        <p>
+          👉 <a href="https://flyxl.github.io/datazen/">Download DataZen</a>, open the SQL editor,
+          paste a few SQL statements, and experience the smooth flow of executing whichever
+          statement your cursor is in.
+        </p>
+        <p>
+          📦 Source code is open on <a href="https://github.com/flyxl/datazen">GitHub</a> — Stars
+          and feedback are welcome.
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

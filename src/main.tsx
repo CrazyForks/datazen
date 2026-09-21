@@ -19,16 +19,50 @@ mark('CSS loaded');
 
 import { hideSplash, waitForStartupTask } from './lib/splash';
 import { installTauriEventUnlistenRaceWorkaround } from './lib/tauriEventCompat';
+import { installDocumentScrollLock } from './lib/documentScrollLock';
 import { bootstrapDefaultIconResolver } from './lib/bootstrapIconResolver';
 import { maybeCheckOnStartup } from './lib/updater';
 import { getWindowKind } from './lib/windowKind';
 import { initProExtensions } from './extensions/generated-pro';
-import { setHostLocaleBridge, setTableSchemaProvider } from '@datazen/extension-points';
+import * as extensionPoints from '@datazen/extension-points';
+import * as jsxRuntime from 'react/jsx-runtime';
+import * as reactAll from 'react';
+import * as reactDomAll from 'react-dom';
+import * as ui from '@datazen/ui';
+import * as cmView from '@codemirror/view';
+import * as cmState from '@codemirror/state';
+import * as cmLint from '@codemirror/lint';
+import * as cmAutocomplete from '@codemirror/autocomplete';
 import { useSettingsStore } from './stores/settingsStore';
+import { useQueryBuilderStore } from './stores/queryBuilderStore';
+import { useSchemaStore } from './stores/schemaStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 import { t } from './locales/t';
 
-setHostLocaleBridge({
+// Expose host shared modules so the dynamically-loaded PRO extension can
+// resolve bare specifiers from blob URLs. The pack-ep rewrite step
+// (scripts/pack-ep.mjs `rewriteEpImportsToHostGlobals`) redirects every bare
+// import in the staged bundle to this table at package time — keep the key
+// lists in sync or the blob-loaded bundle throws on a missing key.
+(globalThis as any).__DATAZEN_HOST__ = {
+  '@datazen/extension-points': extensionPoints,
+  '@datazen/ui': ui,
+  react: reactAll,
+  'react-dom': reactDomAll,
+  'react/jsx-runtime': jsxRuntime,
+  '@codemirror/view': cmView,
+  '@codemirror/state': cmState,
+  '@codemirror/lint': cmLint,
+  '@codemirror/autocomplete': cmAutocomplete,
+};
+
+// E2E test hooks: expose Zustand stores on globalThis for WebDriver tests.
+// Module-level window assignments in store files get tree-shaken by Vite,
+// so the stores must be registered here in the entry module.
+(globalThis as any).__qbStore = useQueryBuilderStore;
+(globalThis as any).__schemaStore = useSchemaStore;
+
+extensionPoints.setHostLocaleBridge({
   getLocale: () => useSettingsStore.getState().settings.language ?? 'en',
   subscribe: (listener) =>
     useSettingsStore.subscribe((state, prevState) => {
@@ -38,11 +72,14 @@ setHostLocaleBridge({
     }),
   translate: (key, params) => t(key, params),
 });
-setTableSchemaProvider(getCachedTableSchema);
+extensionPoints.setTableSchemaProvider(getCachedTableSchema);
 
 bootstrapDefaultIconResolver();
 initProExtensions();
 installTauriEventUnlistenRaceWorkaround();
+// Keep the viewport anchored at (0,0): programmatic scrolls (WebDriver
+// scrollIntoView/click, focus()) must never shift the fixed chrome.
+installDocumentScrollLock();
 
 const SETTINGS_PRELOAD_TIMEOUT_MS = 3_000;
 

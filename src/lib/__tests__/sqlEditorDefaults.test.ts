@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { inferDefaultSchema, inferDefaultTable, tablesReferencedInSql } from '../sqlEditorDefaults';
+import {
+  inferDefaultSchema,
+  inferDefaultTable,
+  tableClauseFingerprint,
+  tablesReferencedInSql,
+} from '../sqlEditorDefaults';
 import type { TableInfo } from '../../types';
 
 describe('inferDefaultTable', () => {
@@ -84,6 +89,41 @@ describe('tablesReferencedInSql', () => {
 
   it('still extracts an in-progress identifier (store must filter unknown names)', () => {
     expect(tablesReferencedInSql('SELECT * FROM hive.snap.wb_d')).toEqual(['wb_d']);
+  });
+});
+
+describe('tableClauseFingerprint', () => {
+  it('stays stable while only SELECT-list column names change (deletion fast-path)', () => {
+    const a = tableClauseFingerprint('SELECT name FROM users');
+    const b = tableClauseFingerprint('SELECT nam FROM users');
+    const c = tableClauseFingerprint('SELECT na FROM users');
+    const d = tableClauseFingerprint('SELECT n FROM users');
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    expect(d).toBe(a);
+  });
+
+  it('changes when the table changes', () => {
+    expect(tableClauseFingerprint('SELECT * FROM users')).not.toBe(
+      tableClauseFingerprint('SELECT * FROM orders'),
+    );
+  });
+
+  it('changes when a clause boundary is added', () => {
+    expect(tableClauseFingerprint('SELECT * FROM users')).not.toBe(
+      tableClauseFingerprint('SELECT * FROM users WHERE id = 1'),
+    );
+  });
+
+  it('ignores identifiers inside strings and comments', () => {
+    const a = tableClauseFingerprint("SELECT * FROM users WHERE name = 'FROM admins'");
+    const b = tableClauseFingerprint("SELECT * FROM users WHERE name = 'x'");
+    expect(a).toBe(b);
+  });
+
+  it('is empty-stable for blank input', () => {
+    expect(tableClauseFingerprint('')).toBe('empty');
+    expect(tableClauseFingerprint('   ')).toBe('empty');
   });
 });
 

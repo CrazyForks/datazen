@@ -6,6 +6,8 @@ import type { EditorRelationKind } from './types';
 
 export interface CopyRelationDdlDeps {
   databaseType: DatabaseType;
+  /** Tab/panel-bound database — every DDL lookup runs against it. */
+  database: string;
   /** Drivers that cannot resolve a qualified target should set `allowQualified: false`. */
   allowQualified?: boolean;
   /** Injectable for tests (defaults to the real `getCachedDDL`). */
@@ -72,6 +74,7 @@ export async function copyRelationDdl(
     name,
     sql,
     (rows) => DEFAULT_EXTRACTOR(rows, extractColumnIndex),
+    deps.database,
     cacheIdentity,
   );
 }

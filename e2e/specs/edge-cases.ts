@@ -3,10 +3,10 @@
  */
 import { expect, browser, $ } from '@wdio/globals';
 import {
-  clickCardConnectButton,
   closeExtraWindows,
   executeSQL,
   expandAllGroups,
+  openConnectionWindow,
   openQueryTab,
   setEditorContent,
   waitForNewQueryButton,
@@ -101,13 +101,9 @@ describe('边缘用例 (TC-EDGE-001/002/004/008)', () => {
   });
 
   it('TC-EDGE-004: 大结果集查询应返回结果或截断提示且不崩溃', async () => {
-    await clickCardConnectButton();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length > 1, {
-      timeout: 30000,
-    });
-    const handles = await browser.getWindowHandles();
-    const connWindow = handles.find((h) => h !== mainWindow)!;
-    await browser.switchToWindow(connWindow);
+    // Unified workspace: seeding the PG connection opens in the SAME OS
+    // window (openConnectionWindow returns connWindow === mainWindow).
+    await openConnectionWindow();
     await waitForNewQueryButton(20000);
     await openQueryTab();
     await executeSQL('SELECT generate_series(1, 5000) AS n');
@@ -126,24 +122,22 @@ describe('边缘用例 (TC-EDGE-001/002/004/008)', () => {
   it('TC-EDGE-008: 快速重复点击执行不应导致应用崩溃', async () => {
     await closeExtraWindows(mainWindow);
     await browser.switchToWindow(mainWindow);
-    await clickCardConnectButton();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length > 1, {
-      timeout: 30000,
-    });
-    const handles = await browser.getWindowHandles();
-    const connWindow = handles.find((h) => h && h !== mainWindow);
-    expect(connWindow).toBeTruthy();
-    await browser.switchToWindow(connWindow!);
+    // Unified workspace: connection opens in the same window, no second handle.
+    await openConnectionWindow();
     await waitForNewQueryButton(20000);
     await openQueryTab();
     await setEditorContent('SELECT 1 AS rapid');
-    const execBtn = await $(`button*=${t('query.execute')}`);
+    const execSel = `button*=${t('query.execute')}`;
     for (let i = 0; i < 5; i++) {
-      await execBtn.click();
+      // Re-query each iteration: the result grid re-renders after each run, so a
+      // cached element reference goes stale and WebKit WebDriver throws a JS
+      // exception on .click(). Fresh lookup avoids that.
+      const btn = await $(execSel);
+      if (await btn.isExisting()) await btn.click();
       await browser.pause(80);
     }
     await browser.pause(3000);
-    await expect(await $(`button*=${t('query.execute')}`)).toBeDisplayed();
+    await expect(await $(execSel)).toBeDisplayed();
     await closeExtraWindows(mainWindow);
   });
 });

@@ -170,13 +170,22 @@ async function selectQueryPanelDatabase(dbName: string) {
         const raw = (el.textContent || '').replace(/✓/g, '').trim();
         if (raw !== target) continue;
         if ((el.textContent || '').includes('✓')) return { state: 'selected' as const };
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        // Mark the element so we can click it via WebDriver
+        el.setAttribute('data-e2e-pick-target', 'true');
         return { state: 'picked' as const };
       }
       return { state: 'missing' as const };
     }, dbName);
-    if (probe.state === 'selected' || probe.state === 'picked') picked = true;
-    else {
+    if (probe.state === 'selected') {
+      picked = true;
+    } else if (probe.state === 'picked') {
+      // Use WebDriver native click (triggers real mouse events → React picks them up)
+      const target = await $('[data-e2e-pick-target]');
+      await target.waitForDisplayed({ timeout: 3000 });
+      await target.click();
+      await browser.pause(300);
+      picked = true;
+    } else {
       await browser.pause(300);
       await browser.execute(() => {
         if (document.querySelector('[id^="dz-select-listbox-"]')) return;
@@ -187,7 +196,20 @@ async function selectQueryPanelDatabase(dbName: string) {
       await browser.pause(200);
     }
   }
-  await browser.pause(800);
+  // Wait for the dropdown to fully close (React state → DOM removal)
+  for (let w = 0; w < 10; w++) {
+    const still = await browser.execute(
+      () => !!document.querySelector('[id^="dz-select-listbox-"]'),
+    );
+    if (!still) break;
+    await browser.pause(100);
+  }
+  await browser.execute(() => {
+    document
+      .querySelectorAll('[data-e2e-pick-target]')
+      .forEach((el) => el.removeAttribute('data-e2e-pick-target'));
+  });
+  await browser.pause(200);
 }
 
 async function newQueryTab() {
@@ -438,6 +460,14 @@ UPDATE demo_sales SET amount = amount * 1.05;`;
     // Wait for safety dialog to appear (ConfirmDialog or ResultMessageDialog)
     const dialog = await $('[role="dialog"]');
     await dialog.waitForDisplayed({ timeout: 10000 });
+    // Hide any portal listbox overlapping the dialog (React state may not have
+    // cleaned up yet — the Select component renders its listbox via createPortal
+    // with fixed z-[9999], which covers the entire viewport).
+    await browser.execute(() => {
+      document.querySelectorAll('[role="listbox"]').forEach((el) => {
+        (el as HTMLElement).style.display = 'none';
+      });
+    });
     await browser.pause(800);
     await shot('30-sql-editor-danger-guard.png');
 

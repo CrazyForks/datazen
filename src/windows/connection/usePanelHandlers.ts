@@ -30,8 +30,8 @@ import { splitPathHierarchyDatabasePin } from '../../lib/queryContextPath';
 export interface PanelHandlers {
   handleSelectTable: (
     table: string,
-    schema?: string,
-    database?: string,
+    schema: string | null,
+    database: string,
     subTab?: 'data' | 'structure' | 'ddl',
     targetColumn?: string,
   ) => void;
@@ -128,12 +128,16 @@ export function usePanelHandlers({
   const handleSelectTable = useCallback(
     (
       table: string,
-      schema?: string,
-      database?: string,
+      schema: string | null,
+      database: string,
       subTab?: 'data' | 'structure' | 'ddl',
       targetColumn?: string,
     ) => {
-      const ctx = sidebarConnCtx;
+      // Use connCtxRef instead of the closure-captured sidebarConnCtx to avoid
+      // a stale-null race: when handleSelectConnection triggers a tab switch,
+      // ContentView remounts and sidebarConnCtx may transiently be null in the
+      // closure even though the ref has already been updated to the live value.
+      const ctx = connCtxRef.current;
       if (!ctx) return;
       const currentPanels = usePanelStore
         .getState()
@@ -143,10 +147,7 @@ export function usePanelHandlers({
       );
       if (isView) {
         const existing = currentPanels.find(
-          (p) =>
-            p.type === 'view' &&
-            p.viewName === table &&
-            (database == null || p.database === database),
+          (p) => p.type === 'view' && p.viewName === table && p.database === database,
         );
         if (existing) {
           if (subTab) {
@@ -168,10 +169,7 @@ export function usePanelHandlers({
         return;
       }
       const existing = currentPanels.find(
-        (p) =>
-          p.type === 'table' &&
-          p.tableName === table &&
-          (database == null || p.database === database),
+        (p) => p.type === 'table' && p.tableName === table && p.database === database,
       );
       if (existing) {
         if (subTab) {
@@ -209,8 +207,8 @@ export function usePanelHandlers({
       ...sidebarConnCtx,
       type: 'create-table',
       id: nextPanelId('new-tbl'),
-      database: currentDatabase ?? initialDatabase ?? undefined,
-      tableSchema: lastTableSchema ?? undefined,
+      database: currentDatabase ?? initialDatabase ?? '',
+      tableSchema: lastTableSchema ?? null,
     };
     addPanel(panel);
   }, [
@@ -237,6 +235,8 @@ export function usePanelHandlers({
         type: 'table',
         id: nextPanelId('tbl'),
         tableName: name,
+        database: currentDatabase ?? initialDatabase ?? '',
+        tableSchema: null,
         subTab: 'structure',
         structureEditing: true,
       };
@@ -263,6 +263,8 @@ export function usePanelHandlers({
         type: 'table',
         id: nextPanelId('tbl'),
         tableName: name,
+        database: currentDatabase ?? initialDatabase ?? '',
+        tableSchema: null,
         subTab: 'structure',
       };
       addPanel(panel);
@@ -339,7 +341,7 @@ export function usePanelHandlers({
         id: nextPanelId('dbobj'),
         objectKind: kind,
         objectName: name,
-        objectSchema: schema,
+        objectSchema: schema ?? null,
       };
       addPanel(panel);
     },
@@ -404,15 +406,30 @@ export function usePanelHandlers({
     ): boolean => {
       if (!sidebarConnCtx) return false;
       const panelId = nextPanelId('qry');
-      let panelDatabase = target?.database?.trim() || undefined;
-      let namespacePath: string[] | undefined;
       const meta = DB_REGISTRY[sidebarConnCtx.databaseType];
-      if (meta?.namespaceEnsure === 'path-hierarchy' && panelDatabase?.includes('/')) {
-        const split = splitPathHierarchyDatabasePin(panelDatabase);
-        panelDatabase = split.root || undefined;
-        namespacePath = split.namespacePath.length > 0 ? split.namespacePath : undefined;
+      const isPathHierarchy = meta?.namespaceEnsure === 'path-hierarchy';
+
+      // Bind the database to this query tab *at creation time*. The tab then
+      // carries its own immutable database target (what the user picks in this
+      // tab's database dropdown) so re-execution and tab restoration use that
+      // bound database rather than the session-wide, shared `currentDatabase`,
+      // which other tabs or a Settings round-trip can change out from under it.
+      const rawDatabase = target?.database?.trim() || currentDatabase || undefined;
+      let boundDatabase = rawDatabase;
+      let namespacePath: string[] | undefined;
+      if (isPathHierarchy && rawDatabase) {
+        const split = splitPathHierarchyDatabasePin(rawDatabase);
+        boundDatabase = split.root || undefined;
+        // Bind the *whole* path hierarchy (root + catalog/schema) to the tab.
+        // The panel's `namespacePath` mirrors the selector path exactly — root
+        // first — so restoration reuses the complete selection, not just the
+        // first level.
+        namespacePath = [split.root, ...split.namespacePath].filter(
+          (segment): segment is string => !!segment,
+        );
       }
-      const db = panelDatabase ?? currentDatabase ?? initialDatabase ?? '';
+
+      const db = rawDatabase ?? initialDatabase ?? '';
       const panel: QueryPanel = {
         ...sidebarConnCtx,
         type: 'query',
@@ -420,8 +437,8 @@ export function usePanelHandlers({
         title:
           title?.trim() ||
           (db ? `${sidebarConnCtx.connectionName}@${db}` : sidebarConnCtx.connectionName),
-        database: panelDatabase || undefined,
-        schema: target?.schema?.trim() || undefined,
+        database: boundDatabase ?? '',
+        schema: target?.schema?.trim() || null,
         namespacePath,
       };
       addPanel(panel);
@@ -471,8 +488,8 @@ export function usePanelHandlers({
     if (!pending || !sidebarConnCtx || sidebarConnCtx.connectionId !== pending.connectionId) return;
     usePanelStore.getState().setPendingHistoryQuery(null);
     handleNewQuery(pending.sql, {
-      database: pending.database || undefined,
-      schema: pending.schema || undefined,
+      database: pending.database || '',
+      schema: pending.schema ?? null,
     });
   }, [sidebarConnCtx, handleNewQuery]);
 

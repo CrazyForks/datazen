@@ -25,7 +25,7 @@ export async function waitForNewConnectionDialog(timeout = 15000) {
 
 /** CSS selector for any entry point that opens the new-connection dialog. */
 export function newConnectionButtonSelector() {
-  return '[data-testid="new-connection-button"], [data-testid="welcome-create-connection"]';
+  return '[data-testid="new-connection-button"], [data-testid="empty-new-connection-button"]';
 }
 
 /** Wait until a new-connection entry point is visible. */
@@ -34,8 +34,8 @@ export async function waitForNewConnectionButton(timeout = 15000) {
     async () => {
       const toolbar = await $('[data-testid="new-connection-button"]');
       if (await toolbar.isDisplayed()) return true;
-      const welcome = await $('[data-testid="welcome-create-connection"]');
-      return welcome.isDisplayed();
+      const empty = await $('[data-testid="empty-new-connection-button"]');
+      return empty.isDisplayed();
     },
     { timeout, timeoutMsg: '等待新建连接按钮超时' },
   );
@@ -49,8 +49,8 @@ export async function clickNewConnectionButton() {
     await toolbar.click();
     return;
   }
-  const welcome = await $('[data-testid="welcome-create-connection"]');
-  await welcome.click();
+  const empty = await $('[data-testid="empty-new-connection-button"]');
+  await empty.click();
 }
 
 /** Select a driver type in the new-connection dialog sidebar. */
@@ -809,12 +809,104 @@ export async function setSafeMode(enabled: boolean): Promise<void> {
   await browser.pause(300);
 }
 
+/** Turn the "confirm dangerous SQL when Safe Mode is off" setting on/off (default on). */
+export async function setConfirmDangerousExecution(enabled: boolean): Promise<void> {
+  const settings = await invokeSettings<SettingsLike>('get_settings');
+  const next = { ...settings, confirmDangerousExecution: enabled };
+  if (settings.confirmDangerousExecution !== enabled) {
+    await invokeSettings('save_settings', { settings: next });
+  }
+  await emitCrossWindowEvent('datazen:settings-changed', next);
+  await browser.pause(300);
+}
+
 /** Click the in-app ConfirmDialog primary button (useConfirmDialog / ConfirmDialog). */
 export async function confirmWebDialog(timeout = 5000): Promise<void> {
   const okBtn = await $('[data-testid="confirm-dialog-ok"]');
   await okBtn.waitForDisplayed({ timeout });
   await okBtn.click();
   await browser.pause(800);
+}
+
+/**
+ * Dismiss (cancel) an open Safe-Mode / dangerous-SQL confirm dialog, if any.
+ *
+ * Waits up to `timeout` for the dialog to appear (the backend may take a moment to
+ * render it after an execute) and then clicks Cancel so the dangerous op stays blocked.
+ * Returns immediately when no dialog is present — safe to call before navigation so a
+ * leftover modal can never block `openQueryTab` of the next test.
+ *
+ * Prefer Cancel; falls back to Escape (the Dialog default cancel) when the dialog has no
+ * cancel testid, so it still closes instead of lingering. It never clicks OK, which would
+ * confirm/execute a dangerous op. Use `confirmWebDialog` when a test genuinely wants to
+ * accept the operation.
+ */
+export async function dismissConfirmDialogIfOpen(timeout = 3000): Promise<void> {
+  const okBtn = await $('[data-testid="confirm-dialog-ok"]');
+  // Fast existence check — keeps the no-dialog path near-zero cost (called from hot paths).
+  if (!(await okBtn.isExisting().catch(() => false))) return;
+  try {
+    await okBtn.waitForDisplayed({ timeout });
+  } catch {
+    // Dialog element existed but never became visible — nothing to act on.
+    return;
+  }
+  const cancelBtn = await $('[data-testid="confirm-dialog-cancel"]');
+  const hasCancel = await cancelBtn.isDisplayed().catch(() => false);
+  if (hasCancel) {
+    await cancelBtn.click();
+  } else {
+    // No explicit cancel target: press Escape (Cancel is the Dialog default for Esc), and
+    // never fall through to clicking OK — that would CONFIRM/execute a dangerous op.
+    await browser.keys('Escape');
+  }
+  await browser.pause(400);
+}
+
+/**
+ * Confirm (accept) a Safe-Mode / dangerous-SQL confirm dialog IF it appears, else proceed.
+ *
+ * Unlike `confirmWebDialog` (which hard-fails when no dialog shows), this tolerates the
+ * "safe mode off → dangerous op executes directly with no confirm" path: it waits up to
+ * `timeout` for the OK button and clicks it when present, returning immediately otherwise.
+ * Use this for tests that must accept the operation when a dialog is shown.
+ */
+export async function confirmWebDialogIfOpen(timeout = 5000): Promise<void> {
+  const okBtn = await $('[data-testid="confirm-dialog-ok"]');
+  if (!(await okBtn.isExisting().catch(() => false))) return;
+  try {
+    await okBtn.waitForDisplayed({ timeout });
+  } catch {
+    return;
+  }
+  await okBtn.click();
+  await browser.pause(800);
+}
+
+/**
+ * Dismiss an open ResultMessageDialog (success/error alert) via its OK button, if any.
+ * Fast no-op when absent. The Safe Mode hard-block shows one of these, and it is a modal
+ * that otherwise stays up and blocks the query toolbar of the next test.
+ */
+export async function dismissResultMessageIfOpen(timeout = 3000): Promise<void> {
+  const okBtn = await $('[data-testid="result-message-ok"]');
+  if (!(await okBtn.isExisting().catch(() => false))) return;
+  try {
+    await okBtn.waitForDisplayed({ timeout });
+  } catch {
+    return;
+  }
+  await okBtn.click();
+  await browser.pause(300);
+}
+
+/**
+ * Close any leftover modal before proceeding: Safe-Mode / dangerous-confirm dialog OR a
+ * ResultMessageDialog alert. Both are modals that would block the query toolbar.
+ */
+export async function dismissAnyOpenDialog(timeout = 1200): Promise<void> {
+  await dismissConfirmDialogIfOpen(timeout);
+  await dismissResultMessageIfOpen(timeout);
 }
 
 /**
@@ -858,6 +950,38 @@ export async function executeSQL(sql: string) {
   return executeSqlInEditor(sql);
 }
 
+/**
+ * Like `executeSQL` but **throws** when the backend reports a PostgreSQL error.
+ * Use in `before` / `after` hooks where silent failures would cascade into
+ * confusing downstream timeouts.
+ */
+export async function executeSQLChecked(sql: string) {
+  await executeSQL(sql);
+  // The regular executeSQL swallows errors; re-read the result panel for
+  // any SQL error text that appeared after execution.
+  const errorText = await browser.execute(() => {
+    // Look for the error panel/result message in the DOM.
+    const selectors = [
+      '[data-testid="result-message-content"]',
+      '[data-testid="result-panel"] [class*="text-red"]',
+      '[class*="result"][class*="error"]',
+      '[data-testid="query-result-error"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      const text = el?.textContent?.trim();
+      if (text && /error|failed|不存在|denied/i.test(text)) return text;
+    }
+    // Fallback: search body for the error pattern near "Query failed".
+    const body = document.body.textContent ?? '';
+    const m = body.match(/(error returned from database[^\n]{0,200}|Query failed[^\n]{0,200})/i);
+    return m?.[0] ?? '';
+  });
+  if (errorText && /error|failed|不存在|denied/i.test(errorText)) {
+    throw new Error(`SQL 执行失败:\n${errorText}\nSQL: ${sql.trim().slice(0, 200)}`);
+  }
+}
+
 async function executeSqlInEditor(sql: string) {
   await setEditorContent(sql);
   // Stable E2E locator (vite-gated data-testid, see src/lib/tid.ts) — survives i18n switching.
@@ -889,6 +1013,15 @@ async function executeSqlInEditor(sql: string) {
         await confirmOk.click();
         await browser.pause(200);
         return false;
+      }
+      // Dismiss a Safe-Mode hard-block ResultMessageDialog if shown (safe mode ON). It is a
+      // modal notice that would otherwise stay up and block the query toolbar of the next test.
+      // The query did not run, so treat the attempt as handled once it is dismissed.
+      const blockedMsg = await $('[data-testid="result-message-ok"]');
+      if ((await blockedMsg.isExisting()) && (await blockedMsg.isDisplayed().catch(() => false))) {
+        await blockedMsg.click();
+        await browser.pause(200);
+        return true;
       }
       if (
         /current transaction is aborted/i.test(body) ||
@@ -952,33 +1085,55 @@ async function executeSqlInEditor(sql: string) {
 
 /** Open a new query tab and wait for the execute button. */
 export async function openQueryTab() {
+  // Defense-in-depth: a leftover Safe-Mode / dangerous-SQL confirm dialog is a modal that
+  // would cover the toolbar and make the new-query button unclickable. Close both the
+  // ConfirmDialog and the Safe-Mode ResultMessageDialog first so a slow previous test can
+  // never block navigation here. Fast no-op when no dialog is open.
+  await dismissAnyOpenDialog(2000);
   // Stable E2E locators (vite-gated data-testid, see src/lib/tid.ts).
-  let clicked = false;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
+  //
+  // Robustness: after connecting, the toolbar button can be displayed but still DISABLED
+  // while the connection initializes (under multi-instance load the pool can contend and the
+  // ready state lags well past the previous fixed 5s waitForClickable). Poll for genuine
+  // clickability within a total 30s budget and confirm the editor actually mounted before
+  // declaring success. Healthy runs resolve in well under a second.
+  const deadline = Date.now() + 30_000;
+  let opened = false;
+  while (Date.now() < deadline && !opened) {
     try {
       let newQueryBtn = await $('[data-testid="conn-toolbar-new-query"]');
-      if (!(await newQueryBtn.isExisting()) || !(await newQueryBtn.isDisplayed())) {
+      if (
+        !(await newQueryBtn.isExisting()) ||
+        !(await newQueryBtn.isDisplayed().catch(() => false))
+      ) {
         newQueryBtn = await $('[data-testid="home-quick-new-query"]');
       }
-      await newQueryBtn.waitForDisplayed({ timeout: 15000 });
-      await newQueryBtn.scrollIntoView({ block: 'center' });
-      await newQueryBtn.waitForClickable({ timeout: 5000 });
+      if (
+        !(await newQueryBtn.isExisting()) ||
+        !(await newQueryBtn.isDisplayed().catch(() => false))
+      ) {
+        await browser.pause(300);
+        continue;
+      }
+      await newQueryBtn.scrollIntoView({ block: 'center' }).catch(() => {});
+      await newQueryBtn.waitForClickable({ timeout: Math.max(1000, deadline - Date.now()) });
       await newQueryBtn.click();
-      clicked = true;
-    } catch (error) {
-      lastError = error;
+      await browser.pause(250);
+      const execPresent = await $('[data-testid="editor-execute-button"]')
+        .isExisting()
+        .catch(() => false);
+      if (execPresent) opened = true;
+    } catch {
+      // Still initializing (not yet clickable / click didn't mount the editor) — keep polling.
       await browser.pause(300);
     }
   }
-  if (!clicked) throw lastError ?? new Error('无法打开新建查询面板');
-  await browser.pause(500);
   // Wait for execute button — try testid first, then aria-label fallback.
   let execBtn = await $('[data-testid="editor-execute-button"]');
   if (!(await execBtn.isExisting())) {
     execBtn = await $('button[aria-label="执行"]');
   }
-  await execBtn.waitForDisplayed({ timeout: 10000 });
+  await execBtn.waitForDisplayed({ timeout: 15000 });
 }
 
 // ── schema sidebar ──────────────────────────────────────────────────
@@ -1107,53 +1262,74 @@ export async function waitForSchemaTreeLoaded(timeout = 20000) {
 
 /** Expand db → schema → Tables category in the virtualized navigator tree. */
 export async function expandSchemaTableCategory(schemaName?: string, dbName?: string) {
-  const targetSchema = schemaName || process.env.E2E_WORKER_SCHEMA || 'public';
-  await browser.execute(
-    (schema: string, db?: string) => {
-      const isCollapsed = (el: Element) => {
-        const expanded = el.getAttribute('aria-expanded');
-        if (expanded !== null) return expanded !== 'true';
-        const cls = el.querySelector('svg')?.getAttribute('class') ?? '';
-        return cls.includes('chevron-right');
-      };
-      const expandIfCollapsed = (el: Element | null | undefined) => {
-        if (el instanceof HTMLElement && isCollapsed(el)) el.click();
-      };
-      const dbs = Array.from(
-        document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="db"]'),
-      );
-      const targetDb = db
-        ? dbs.find((el) => (el.getAttribute('data-db-name') || el.textContent || '').includes(db))
-        : (dbs.find((el) =>
-            (el.getAttribute('data-db-name') || el.textContent || '').includes('datazen_e2e'),
-          ) ?? dbs[0]);
-      expandIfCollapsed(targetDb);
-      const schemas = Array.from(
-        document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="schema"]'),
-      );
-      const targets = [schema.toLowerCase()];
-      if (schema.toLowerCase() !== 'public') targets.push('public');
-      for (const t of targets) {
-        const match = schemas.find((el) => el.textContent?.toLowerCase().includes(t));
-        expandIfCollapsed(match);
-      }
-      for (const cat of document.querySelectorAll(
-        '[data-testid="schema-tree-node"][data-tree-node="category"][data-cat-id="tables"]',
-      )) {
-        expandIfCollapsed(cat);
-      }
-    },
-    targetSchema,
-    dbName,
-  );
-  await browser.pause(800);
+  await expandSchemaCategory('tables', schemaName, dbName);
 }
 
-/** Expand db → schema → a specific object category in the navigator tree. */
+/**
+ * Expand db → [schema →] a specific object category in the navigator tree.
+ *
+ * Handles two tree shapes:
+ *  1. Multi-schema: db → schema node(s) → category  (e.g. MySQL)
+ *  2. Single-schema: db → category  (PG when all objects are in public;
+ *     the frontend collapses the schema layer via groupBySchema → null).
+ */
 export async function expandSchemaCategory(catId: string, schemaName?: string, dbName?: string) {
   const targetSchema = schemaName || process.env.E2E_WORKER_SCHEMA || 'public';
-  await browser.execute(
-    (category: string, schema: string, db?: string) => {
+
+  // Step 1: expand the db node, then wait for either schema children or
+  // the category rows to appear directly under the db.
+  await browser.execute((db?: string) => {
+    const isCollapsed = (el: Element) => {
+      const expanded = el.getAttribute('aria-expanded');
+      if (expanded !== null) return expanded !== 'true';
+      const cls = el.querySelector('svg')?.getAttribute('class') ?? '';
+      return cls.includes('chevron-right');
+    };
+    const dbs = Array.from(
+      document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="db"]'),
+    );
+    const targetDb = db
+      ? dbs.find((el) => (el.getAttribute('data-db-name') || el.textContent || '').includes(db))
+      : (dbs.find((el) =>
+          (el.getAttribute('data-db-name') || el.textContent || '').includes('datazen_e2e'),
+        ) ?? dbs[0]);
+    if (targetDb instanceof HTMLElement && isCollapsed(targetDb)) targetDb.click();
+  }, dbName);
+
+  // Poll for up to 10s: either a schema node appears, or the category
+  // appears directly under the db (single-schema flattening).
+  const hasSchemaOrCategory = await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (schema: string, category: string) => {
+          const schemaNodes = Array.from(
+            document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="schema"]'),
+          );
+          // Case 1: schema node present — any match is fine.
+          const targets = [schema.toLowerCase()];
+          if (schema.toLowerCase() !== 'public') targets.push('public');
+          if (
+            targets.some((t) => schemaNodes.some((el) => el.textContent?.toLowerCase().includes(t)))
+          ) {
+            return 'schema';
+          }
+          // Case 2: no schema layer — check if category is directly under db.
+          const cats = document.querySelectorAll(
+            `[data-testid="schema-tree-node"][data-tree-node="category"][data-cat-id="${category}"]`,
+          );
+          if (cats.length > 0) return 'category';
+          return false;
+        },
+        targetSchema,
+        catId,
+      ),
+    { timeout: 10000, timeoutMsg: '等待 schema 节点或 category 节点挂载超时' },
+  );
+
+  // Step 2a: expand the schema node (if in multi-schema mode) and wait
+  // for React to re-render the category children.
+  if (hasSchemaOrCategory === 'schema') {
+    await browser.execute((schema: string) => {
       const isCollapsed = (el: Element) => {
         const expanded = el.getAttribute('aria-expanded');
         if (expanded !== null) return expanded !== 'true';
@@ -1163,15 +1339,6 @@ export async function expandSchemaCategory(catId: string, schemaName?: string, d
       const expandIfCollapsed = (el: Element | null | undefined) => {
         if (el instanceof HTMLElement && isCollapsed(el)) el.click();
       };
-      const dbs = Array.from(
-        document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="db"]'),
-      );
-      const targetDb = db
-        ? dbs.find((el) => (el.getAttribute('data-db-name') || el.textContent || '').includes(db))
-        : (dbs.find((el) =>
-            (el.getAttribute('data-db-name') || el.textContent || '').includes('datazen_e2e'),
-          ) ?? dbs[0]);
-      expandIfCollapsed(targetDb);
       const schemas = Array.from(
         document.querySelectorAll('[data-testid="schema-tree-node"][data-tree-node="schema"]'),
       );
@@ -1181,17 +1348,30 @@ export async function expandSchemaCategory(catId: string, schemaName?: string, d
         const match = schemas.find((el) => el.textContent?.toLowerCase().includes(t));
         expandIfCollapsed(match);
       }
-      for (const cat of document.querySelectorAll(
-        `[data-testid="schema-tree-node"][data-tree-node="category"][data-cat-id="${category}"]`,
-      )) {
-        expandIfCollapsed(cat);
-      }
-    },
-    catId,
-    targetSchema,
-    dbName,
-  );
-  await browser.pause(800);
+    }, targetSchema);
+    // Wait for React to mount the category children after the schema click.
+    await browser.pause(600);
+  }
+
+  // Step 2b: now expand the category node(s) — categories are in the DOM
+  // after the schema re-render.
+  await browser.execute((category: string) => {
+    const isCollapsed = (el: Element) => {
+      const expanded = el.getAttribute('aria-expanded');
+      if (expanded !== null) return expanded !== 'true';
+      const cls = el.querySelector('svg')?.getAttribute('class') ?? '';
+      return cls.includes('chevron-right');
+    };
+    const expandIfCollapsed = (el: Element | null | undefined) => {
+      if (el instanceof HTMLElement && isCollapsed(el)) el.click();
+    };
+    for (const cat of document.querySelectorAll(
+      `[data-testid="schema-tree-node"][data-tree-node="category"][data-cat-id="${category}"]`,
+    )) {
+      expandIfCollapsed(cat);
+    }
+  }, catId);
+  await browser.pause(600);
 }
 
 async function setNavigatorSearch(query: string) {
@@ -1394,12 +1574,24 @@ export async function clickTableInSidebar(tableName: string) {
               // and the WebDriver click. Let the outer wait reacquire it.
               return false;
             }
+            // Fallback: in-page click when the WebDriver hit-test missed
+            // the virtualized row (e.g. after a layout shift from a
+            // preceding spec's window handling).
+            if (!(await tableWorkspaceIsOpen(tableName))) {
+              await browser.execute((table: string) => {
+                const nav =
+                  document.querySelector('[data-testid="connection-navigator-aside"]') ??
+                  Array.from(document.querySelectorAll('aside')).find((a) =>
+                    a.querySelector('[data-conn-item]'),
+                  );
+                const el = nav?.querySelector<HTMLElement>(
+                  `[data-testid="schema-tree-node"][data-item-name="${table}"]`,
+                );
+                el?.click();
+              }, tableName);
+              await browser.pause(500);
+            }
           }
-          // The navigator handler first activates the database and then
-          // schedules TableView creation. Keep the search mounted while that
-          // async chain settles. Do not click repeatedly while that chain is
-          // in flight: a second click can restart database activation and
-          // make the virtualized row disappear from the filtered tree.
           await browser.waitUntil(() => tableWorkspaceIsOpen(tableName), {
             timeout: 15000,
             timeoutMsg: `等待表 "${tableName}" 工作区打开超时`,
@@ -1578,6 +1770,23 @@ export async function clickFirstTable() {
             // Reacquire the row on the next polling iteration if React
             // replaced the virtualized node while it was being clicked.
             return false;
+          }
+          // Fallback: if the WebDriver click did not open the workspace
+          // (e.g. WebKit hit-test missed a virtualized row after a layout
+          // shift), dispatch an in-page click on the same node.
+          if (!(await tableWorkspaceIsOpen(name))) {
+            await browser.execute((table: string) => {
+              const nav =
+                document.querySelector('[data-testid="connection-navigator-aside"]') ??
+                Array.from(document.querySelectorAll('aside')).find((a) =>
+                  a.querySelector('[data-conn-item]'),
+                );
+              const el = nav?.querySelector<HTMLElement>(
+                `[data-testid="schema-tree-node"][data-item-name="${table}"]`,
+              );
+              el?.click();
+            }, name);
+            await browser.pause(500);
           }
         }
       }

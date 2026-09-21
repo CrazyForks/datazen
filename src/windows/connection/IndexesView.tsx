@@ -17,6 +17,7 @@ import { dataTypeTextClass } from '../../lib/dataTypeColors';
 interface IndexesViewProps {
   dbSessionId: string;
   tableName: string;
+  database: string;
   createIndexTrigger?: number;
   databaseType?: string;
   onEditStructure?: (tableName: string) => void;
@@ -271,6 +272,7 @@ function DeleteConfirmDialog({ indexName, onConfirm, onCancel, submitting }: Del
 export function IndexesView({
   dbSessionId,
   tableName,
+  database,
   createIndexTrigger,
   databaseType,
   onEditStructure,
@@ -294,7 +296,7 @@ export function IndexesView({
     setLoading(true);
     setError(null);
 
-    getCachedTableSchema(dbSessionId, tableName)
+    getCachedTableSchema(dbSessionId, tableName, database)
       .then((schema: TableSchema) => {
         if (!cancelled) {
           setIndexes(schema.indexes);
@@ -314,7 +316,7 @@ export function IndexesView({
     return () => {
       cancelled = true;
     };
-  }, [dbSessionId, tableName, version, t]);
+  }, [dbSessionId, tableName, database, version, t]);
 
   useEffect(() => loadSchema(), [loadSchema]);
 

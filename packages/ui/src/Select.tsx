@@ -53,7 +53,7 @@ function filterOptions(options: readonly SelectOption[], query: string): SelectO
 }
 
 const triggerShellClass =
-  'flex items-center rounded-md border border-edge bg-surface text-left text-sm text-fg outline-none focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50';
+  'flex items-center rounded-[9px] border border-edge bg-surface-inset text-left text-sm text-fg outline-none hover:border-edge-hi focus-within:border-accent focus-within:ring-[3px] focus-within:ring-accent-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 function fitContentCharCount(text: string, min = 2, max = 12): number {
   return Math.max(min, Math.min(text.length, max));
@@ -98,7 +98,7 @@ function OptionList({
             className={cn(
               'flex cursor-pointer items-center px-2.5 py-1.5 text-sm transition-colors',
               opt.disabled && 'cursor-not-allowed opacity-40',
-              isHighlighted && !opt.disabled && 'bg-surface-raised',
+              isHighlighted && !opt.disabled && 'bg-accent-dim text-fg',
               isSelected && !isHighlighted && 'text-accent',
             )}
             onMouseEnter={() => {
@@ -144,11 +144,9 @@ export function Select({
   const triggerRef = useRef<HTMLDivElement | HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({
-    top: 0,
-    left: 0,
-    width: 0,
-  });
+  const [pos, setPos] = useState<{ top: number; left: number; minWidth: number; maxWidth: number }>(
+    { top: 0, left: 0, minWidth: 0, maxWidth: 0 },
+  );
 
   const strValue = String(value);
   const selectedOption = options.find((o) => o.value === strValue);
@@ -176,14 +174,14 @@ export function Select({
     const goUp = spaceBelow < listHeight && spaceAbove > spaceBelow;
     const preferredWidth = Math.max(rect.width, listMinWidth ?? 0);
     const availableRight = globalThis.innerWidth - rect.left - 8;
-    const width =
-      availableRight > 0
-        ? Math.min(preferredWidth, Math.max(rect.width, availableRight))
-        : preferredWidth;
+    // The listbox sizes to its longest option (`max-content`) instead of
+    // clamping to the trigger width — a compact trigger must not truncate
+    // option labels. `minWidth` keeps it at least as wide as the trigger.
     setPos({
       top: goUp ? rect.top - listHeight - 4 : rect.bottom + 4,
       left: rect.left,
-      width,
+      minWidth: preferredWidth,
+      maxWidth: Math.max(preferredWidth, availableRight),
     });
   }, [filteredOptions.length, listMinWidth]);
 
@@ -350,8 +348,15 @@ export function Select({
         data-testid="select-listbox"
         role="listbox"
         aria-label={accessibleLabel}
-        className="fixed z-[9999] overflow-y-auto rounded-lg border border-edge bg-surface-alt py-1 shadow-xl"
-        style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: 240 }}
+        className="fixed z-[9999] overflow-y-auto rounded-[10px] border border-edge bg-surface-alt py-1 shadow-xl"
+        style={{
+          top: pos.top,
+          left: pos.left,
+          minWidth: pos.minWidth,
+          maxWidth: pos.maxWidth,
+          width: 'max-content',
+          maxHeight: 240,
+        }}
         onKeyDown={handleListKeyDown}
       >
         <OptionList

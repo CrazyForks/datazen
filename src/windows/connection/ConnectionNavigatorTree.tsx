@@ -27,7 +27,7 @@ import {
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useSchemaStore } from '../../stores/schemaStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { shouldUseMultiDatabaseTree } from './schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './navigator/utils';
 import { connectionCommands } from '../../commands/connection';
 import type { ConnectionConfig } from '../../types';
 import { buildNavigatorFlatRows } from './navigator/buildFlatRows';

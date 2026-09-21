@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInfoSections } from '../infoParse';
+import { parseInfoSections, filterInfoSections } from '../infoParse';
 
 describe('parseInfoSections', () => {
   it('splits section headers', () => {
@@ -23,5 +23,50 @@ describe('parseInfoSections', () => {
   it('returns empty array for blank input', () => {
     expect(parseInfoSections('')).toEqual([]);
     expect(parseInfoSections('   \n\n')).toEqual([]);
+  });
+});
+
+describe('filterInfoSections', () => {
+  const sample = parseInfoSections(
+    '# Server\r\nredis_version:7.0.0\r\nos:Linux\r\n# Memory\r\nused_memory:100\r\nused_memory_rss:200\r\n# Clients\r\nconnected_clients:5\r\n',
+  );
+
+  it('returns all entries when no search query', () => {
+    const result = filterInfoSections(sample);
+    expect(result.totalEntries).toBe(5);
+    expect(result.matchedEntries).toBe(5);
+    expect(result.sections).toHaveLength(3);
+  });
+
+  it('filters by key name (case-insensitive)', () => {
+    const result = filterInfoSections(sample, 'version');
+    expect(result.matchedEntries).toBe(1);
+    expect(result.sections).toHaveLength(1);
+    expect(result.sections[0].name).toBe('Server');
+    expect(result.sections[0].entries[0].key).toBe('redis_version');
+  });
+
+  it('filters by value (case-insensitive)', () => {
+    const result = filterInfoSections(sample, 'linux');
+    expect(result.matchedEntries).toBe(1);
+    expect(result.sections[0].entries[0].value).toBe('Linux');
+  });
+
+  it('filters across multiple sections', () => {
+    const result = filterInfoSections(sample, 'memory');
+    expect(result.matchedEntries).toBe(2);
+    expect(result.sections).toHaveLength(1);
+    expect(result.sections[0].name).toBe('Memory');
+  });
+
+  it('returns empty when nothing matches', () => {
+    const result = filterInfoSections(sample, 'zzzznotfound');
+    expect(result.matchedEntries).toBe(0);
+    expect(result.sections).toHaveLength(0);
+  });
+
+  it('ignores leading/trailing whitespace in query', () => {
+    const result = filterInfoSections(sample, '  linux  ');
+    expect(result.matchedEntries).toBe(1);
   });
 });

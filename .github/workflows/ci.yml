@@ -55,6 +55,9 @@ jobs:
       - name: Guard ID terminology (connectionId / dbSessionId)
         run: pnpm test:ids
 
+      - name: Guard module layers (editor / query builder peers)
+        run: pnpm test:layers
+
       - name: Guard CI-docs consistency
         run: pnpm test:ci-docs
 

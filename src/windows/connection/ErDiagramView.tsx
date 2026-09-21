@@ -34,7 +34,7 @@ interface ErDiagramViewProps {
   dbSessionId: string;
   database: string;
   focusTable?: string;
-  onSelectTable?: (tableName: string) => void;
+  onSelectTable?: (tableName: string, schema: string | null, database: string) => void;
   /** Optional; when omitted, Focus still works via internal focus state. */
   onFocusTable?: (tableName: string) => void;
 }
@@ -171,7 +171,7 @@ function ErDiagramInner({
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (onSelectTable && node.data?.tableName) {
-        onSelectTable(node.data.tableName as string);
+        onSelectTable(node.data.tableName as string, null, database);
       }
     },
     [onSelectTable],
@@ -202,7 +202,7 @@ function ErDiagramInner({
           handlers: {
             onOpenTable: onSelectTable
               ? () => {
-                  onSelectTable(tableName);
+                  onSelectTable(tableName, null, database);
                 }
               : undefined,
             onCopyName: () => {

@@ -32,9 +32,12 @@ describe('Windows release packaging', () => {
 
   it('publishes an installer-free portable archive with runtime resources', () => {
     expect(releaseWorkflow).toContain('Package Windows portable archive');
-    expect(releaseWorkflow).toContain('DataZen-windows-${version}-portable-${label}.zip');
+    // New naming: DataZen-{version}-{osLabel}[-variant]-portable.zip
+    expect(releaseWorkflow).toContain('DataZen-$version-$osLabel-portable.zip');
     expect(releaseWorkflow).toContain('Copy-Item -LiteralPath $prompts');
-    expect(releaseWorkflow).toContain('*-windows-*-portable-windows-x64.zip');
+    // Portable includes Pro extension resources
+    expect(releaseWorkflow).toContain('builtin-ep');
+    expect(releaseWorkflow).toContain('Copy-Item -LiteralPath $builtinEp');
   });
 
   it('builds Pro edition by default in release workflow and excludes pure community builds', () => {
@@ -43,5 +46,54 @@ describe('Windows release packaging', () => {
     expect(releaseWorkflow).toContain('needs_pro: true');
     expect(releaseWorkflow).not.toMatch(/edition:\s*"community"/);
     expect(releaseWorkflow).toMatch(/variant_suffix:\s*"-all"/);
+  });
+
+  it('drops Akulaku Linux matrix entries', () => {
+    // Akulaku should only have Windows and macOS — no ubuntu / linux
+    const akulakuBlock = releaseWorkflow.slice(
+      releaseWorkflow.indexOf('# ── Akulaku'),
+      releaseWorkflow.indexOf('# ── Akulaku') + 500,
+    );
+    expect(akulakuBlock).not.toContain('ubuntu-22.04');
+    expect(akulakuBlock).not.toContain('linux-x64');
+  });
+
+  it('uses canonical artifact naming: DataZen-{Version}-{Platform}-{Arch}[-{Variant}]-{Type}.{ext}', () => {
+    expect(releaseWorkflow).toContain('Rename artifacts with canonical names');
+    // Canonical name function
+    expect(releaseWorkflow).toContain('DataZen-${VERSION}-${PLATFORM}-${ARCH}');
+    // Pro verification step checks actual bundled output (.app / deb), not staging dir
+    expect(releaseWorkflow).toContain('Verify Pro extension is bundled in app');
+    expect(releaseWorkflow).toContain('builtin-ep/sql-editor-pro/dist/index.esm.js');
+  });
+
+  it('builds the Pro extension once and shares it with every variant as an artifact', () => {
+    // One clone/build/sign for the whole matrix instead of one per variant.
+    expect(releaseWorkflow).toContain('prepare-pro-extension');
+    expect(releaseWorkflow).toContain(
+      'Clone, build and sign the Pro extension at the pinned revision',
+    );
+    expect(releaseWorkflow).toContain('node scripts/resolve-pro.mjs --edition=pro');
+    expect(releaseWorkflow).toContain('actions/upload-artifact@v4');
+    expect(releaseWorkflow).toContain('if-no-files-found: error');
+    // Every Pro variant consumes that artifact rather than re-cloning the repo.
+    expect(releaseWorkflow).toContain('actions/download-artifact@v4');
+    expect(releaseWorkflow).toContain('name: pro-extension');
+    expect(releaseWorkflow).toContain('needs: prepare-pro-extension');
+    // The .dzx is packed from the Pro source checkout, so it is produced once in
+    // the prepare job too and downloaded by the one variant that ships it.
+    expect(releaseWorkflow).toContain('Pack the signed Pro .dzx');
+    expect(releaseWorkflow).toContain('Upload the signed Pro .dzx');
+    expect(releaseWorkflow).toContain('name: pro-dzx');
+    expect(releaseWorkflow).toContain('Download the signed Pro .dzx (Default Pro, once)');
+    // pack-ep must run exactly once for the whole workflow — the build jobs no
+    // longer hold a Pro checkout to pack from.
+    expect(releaseWorkflow.match(/scripts\/pack-ep\.mjs/g)?.length).toBe(1);
+    // No PAT: the private Pro repo is reached with the deploy key, so the
+    // releases API token and its fallback notices are gone.
+    expect(releaseWorkflow).not.toContain('PRO_PREBUILT_TOKEN');
+    expect(releaseWorkflow).not.toContain('Download prebuilt Pro extension (fast path)');
+    // Verify step emits notices so the next failure is diagnosable from annotations
+    expect(releaseWorkflow).toContain('::notice::[pro-verify]');
   });
 });

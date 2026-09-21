@@ -85,6 +85,7 @@ describe('tableSchemaForSql', () => {
         dbSessionId: 'sess-1',
         tableName: 'users',
         schema: 'public',
+        database: 'app',
         databaseType: 'postgresql',
       });
 
@@ -122,6 +123,7 @@ describe('tableSchemaForSql', () => {
       const result = await fetchTableSchemaForSqlGeneration({
         dbSessionId: 'sess-1',
         tableName: 'users',
+        database: 'mydb',
         databaseType: 'mysql',
         columnMap: { users: ['id', 'email'] },
       });

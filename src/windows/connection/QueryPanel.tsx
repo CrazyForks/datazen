@@ -5,9 +5,11 @@ import { buildEditorSchema } from '../../lib/buildEditorSchema';
 import {
   inferDefaultSchema,
   inferDefaultTable,
+  tableClauseFingerprint,
   tablesReferencedInSql,
 } from '../../lib/sqlEditorDefaults';
 import { usePanelStore } from '../../stores/panelStore';
+import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useQueryExec } from '../../hooks/useQueryExec';
 import { useSchemaStore } from '../../stores/schemaStore';
@@ -29,6 +31,7 @@ import {
   ensureMetadataRelations,
   resolveEditorDialectId,
 } from '../../stores/schemaStoreSelectors';
+import { metadataCache } from '../../components/sql-editor/metadata/metadataCache';
 import type { QueryPanelProps } from './query/contracts';
 import { QuerySidebarSection, useQueryContextPath } from './query/QuerySidebarSection';
 import { QueryEditorSection } from './query/QueryEditorSection';
@@ -40,9 +43,21 @@ import {
 } from './query/QueryTransactionModals';
 import { useQueryExecutionGate } from './query/useQueryExecutionGate';
 import { createQueryDropHandler, useQueryPanelWorkflows } from './query/queryDropHandler';
+import {
+  estimateQueryResultPaneHeight,
+  queryResultPaneSizing,
+} from './query/queryResultPaneHeight';
+import { resolveResultWorkspaceView } from './result-workspace/resultWorkspaceHelpers';
+import { cn } from '../../lib/cn';
 import { sendQueryErrorChatDraft } from './query/queryErrorChatPrompt';
 
 export type { QueryPanelProps } from './query/contracts';
+
+/**
+ * Persisted editor height. Presence of the stored value is also what marks the
+ * split as user-controlled rather than automatic.
+ */
+const EDITOR_HEIGHT_STORAGE_KEY = 'query-editor-height';
 
 export function QueryPanel({
   panelId,
@@ -58,6 +73,14 @@ export function QueryPanel({
   const { t } = useI18n();
   const [confirmRetry, confirmRetryDialog] = useConfirmDialog();
   const exec = useQueryExec(panelId);
+  // While the visual builder is up it replaces the whole query content area,
+  // so the result pane yields its height to the canvas (PRD §6.4 / G2).
+  const qbOpenHere = useQueryBuilderStore((s) =>
+    s.openPanelId ? s.openPanelId === panelId : s.isOpen,
+  );
+  // NOTE: the builder is torn down when the panel *tab* closes, not when this
+  // component unmounts — switching tabs unmounts the inactive panel too, and
+  // that must not throw its builder away. See ContentView's panel-diff effect.
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
   const driverCapabilities = useActiveConnectionStore(
     (s) => s.connections[connectionId]?.capabilities,
@@ -117,12 +140,33 @@ export function QueryPanel({
   const [executionSeq, setExecutionSeq] = useState(0);
   const resultViewMode = exec.resultViewMode ?? 'table';
 
+  /**
+   * The editor/results split starts out automatic: the editor owns whatever
+   * height the result pane does not need, and the pane itself only claims the
+   * height its content needs (capped at half by CSS). Dragging the splitter
+   * pins the editor to an explicit height for good — `editorResizeManual`
+   * remembers that choice, including across restarts via the same storage key
+   * `useResizable` persists to.
+   */
+  const [editorResizeManual, setEditorResizeManual] = useState(() => {
+    try {
+      return localStorage.getItem(`resize:${EDITOR_HEIGHT_STORAGE_KEY}`) != null;
+    } catch {
+      return false;
+    }
+  });
+  const editorViewportRef = useRef<HTMLDivElement | null>(null);
+
   const { size: editorHeight, handleRef: editorResizeRef } = useResizable({
     direction: 'vertical',
     initialSize: 280,
     minSize: 100,
     maxSize: 900,
-    storageKey: 'query-editor-height',
+    storageKey: EDITOR_HEIGHT_STORAGE_KEY,
+    onResizeStart: () => setEditorResizeManual(true),
+    // Measured at grab time: automatic sizing is CSS-driven, so `size` would
+    // otherwise still hold a stale value and the splitter would jump.
+    getStartSize: () => editorViewportRef.current?.offsetHeight,
   });
 
   const tables = useSchemaStore((s) => s.tables);
@@ -135,35 +179,47 @@ export function QueryPanel({
   const currentSchema = useSchemaStore((s) => s.currentSchema);
   const isMultiDb = useSchemaStore((s) => s.isMultiDatabase);
   const ensureColumns = useSchemaStore((s) => s.ensureColumns);
+  const loadColumnMap = useSchemaStore((s) => s.loadColumnMap);
   const namespaceLoading = useSchemaStore((s) => s.ensuringCount > 0);
+  const schemaEpoch = useSchemaStore((s) => s.schemaEpoch);
 
   const metadataSnapshot = useMetadataSnapshot(dbSessionId);
 
   const onNavigateToTable = useCallback(
     (target: { database?: string; schema?: string; name: string }) => {
-      callbacks?.openRelation(target.name, target.schema, target.database, 'data');
+      callbacks?.openRelation(
+        target.name,
+        target.schema ?? null,
+        target.database ?? database,
+        'data',
+      );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const onNavigateToStructure = useCallback(
     (target: { database?: string; schema?: string; name: string; columnName?: string }) => {
       callbacks?.openRelation(
         target.name,
-        target.schema,
-        target.database,
+        target.schema ?? null,
+        target.database ?? database,
         'structure',
         target.columnName,
       );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const onNavigateToDdl = useCallback(
     (target: { database?: string; schema?: string; name: string; kind: 'table' | 'view' }) => {
-      callbacks?.openRelation(target.name, target.schema, target.database, 'ddl');
+      callbacks?.openRelation(
+        target.name,
+        target.schema ?? null,
+        target.database ?? database,
+        'ddl',
+      );
     },
-    [callbacks],
+    [callbacks, database],
   );
 
   const dbMeta = databaseType ? DB_REGISTRY[databaseType as keyof typeof DB_REGISTRY] : undefined;
@@ -237,7 +293,45 @@ export function QueryPanel({
     [namespaceTree, tables, views, columnMap, selectedDatabase, contextPathState.contextPath],
   );
   const editorDefaultSchema = useMemo(() => inferDefaultSchema(tables, views), [tables, views]);
-  const editorDefaultTable = useMemo(() => inferDefaultTable(exec.sql), [exec.sql]);
+  // Table-clause fingerprint of the live SQL: stable while only column names
+  // change (e.g. deleting a column), changes when tables/clauses change.
+  // Drives two keystroke-cost optimizations below (defaultTable + workflowSql).
+  const tableFingerprint = useMemo(() => tableClauseFingerprint(exec.sql), [exec.sql]);
+  // `defaultTable` feeds the CodeMirror SQL compartment: a new reference
+  // reconfigures lang-sql (schema reindex, O(tables)). Only recompute when
+  // the table fingerprint changes, and only publish when the table changes.
+  const defaultTableRef = useRef<string | undefined>(undefined);
+  const defaultTableFpRef = useRef('');
+  const defaultTableInit = useRef(false);
+  if (!defaultTableInit.current || tableFingerprint !== defaultTableFpRef.current) {
+    defaultTableInit.current = true;
+    defaultTableFpRef.current = tableFingerprint;
+    const next = inferDefaultTable(exec.sql);
+    if (next !== defaultTableRef.current) {
+      defaultTableRef.current = next;
+    }
+  }
+  const editorDefaultTable = defaultTableRef.current;
+  // Snapshot of the SQL for diagnosis/retry/explain workflows. These only
+  // need the SQL at error/execution time; keeping a stable reference across
+  // column-name keystrokes skips the whole workflow memo chain
+  // (diagnosis context build + retry action) per keystroke. Refreshes when
+  // the table fingerprint changes, on error change, or after an execution.
+  const workflowSqlRef = useRef(exec.sql);
+  const workflowFpRef = useRef(tableFingerprint);
+  const workflowErrRef = useRef(exec.error);
+  const workflowSeqRef = useRef(executionSeq);
+  if (
+    tableFingerprint !== workflowFpRef.current ||
+    exec.error !== workflowErrRef.current ||
+    executionSeq !== workflowSeqRef.current
+  ) {
+    workflowFpRef.current = tableFingerprint;
+    workflowErrRef.current = exec.error;
+    workflowSeqRef.current = executionSeq;
+    workflowSqlRef.current = exec.sql;
+  }
+  const workflowSql = workflowSqlRef.current;
   const boundPayload = useMemo(
     () => (sqlParams.length > 0 ? paramsToPayload(sqlParams, paramValues) : undefined),
     [sqlParams, paramValues],
@@ -278,7 +372,13 @@ export function QueryPanel({
     connectionName,
     database,
     schema,
-    sql: exec.sql,
+    // NOTE: workflows (diagnosis/retry/explain) only need the SQL snapshot at
+    // error/execution time. Passing live `exec.sql` re-runs the whole workflow
+    // memo chain (diagnosis context build + retry action) on every keystroke
+    // including column-name deletions. `workflowSql` below stays referentially
+    // stable while only column names change (see tableClauseFingerprint) and
+    // refreshes on table changes, errors, or executions.
+    sql: workflowSql,
     error: exec.error,
     chartConfig: exec.chartConfig,
     resultViewMode,
@@ -296,8 +396,15 @@ export function QueryPanel({
   });
 
   const handleDropTable = useMemo(
-    () => createQueryDropHandler({ connectionId, dbSessionId, databaseType, editorRef }),
-    [connectionId, dbSessionId, databaseType],
+    () =>
+      createQueryDropHandler({
+        connectionId,
+        dbSessionId,
+        databaseType,
+        database: selectedDatabase ?? '',
+        editorRef,
+      }),
+    [connectionId, dbSessionId, databaseType, selectedDatabase],
   );
 
   // S6-A: Build sanitized error context and send as AI chat draft.
@@ -354,12 +461,62 @@ export function QueryPanel({
     void loadFavorites(connectionId);
   }, [connectionId, loadHistory, loadFavorites]);
 
+  // Eagerly load column metadata so SQL autocomplete can suggest columns
+  // even without a FROM clause (e.g. typing "SELECT na" shows matching columns).
+  //
+  // Phase 1: For multi-DB / path-hierarchy drivers, loadForConnection skips
+  // loadTables, so `tables` stays empty. Trigger loadTables for the current
+  // database so that namespaceTree gets table entries and columnMap can be built.
+  const loadTablesFn = useSchemaStore((s) => s.loadTables);
+  useEffect(() => {
+    if (!dbSessionId || !isMultiDb || !currentDatabase) return;
+    if (tables.length > 0) return; // already loaded
+    void loadTablesFn(currentDatabase, dbSessionId);
+  }, [dbSessionId, loadTablesFn, isMultiDb, currentDatabase, tables.length]);
+
+  // Phase 2: Once tables are available (or for non-multi-DB), load columns.
+  // Trigger on schemaEpoch (bumped by loadTables) and namespaceTree structural
+  // changes (bumped via namespaceFingerprint). Also depends on tables.length so
+  // it re-fires after Phase 1 populates tables.
+  const namespaceFingerprint = useSchemaStore((s) => {
+    const tree = s.namespaceTree;
+    if (Array.isArray(tree)) return String(tree.length);
+    return Object.keys(tree).sort().join(',');
+  });
+  useEffect(() => {
+    if (!dbSessionId || !selectedDatabase) return;
+    void loadColumnMap(dbSessionId, selectedDatabase);
+  }, [
+    dbSessionId,
+    loadColumnMap,
+    selectedDatabase,
+    schemaEpoch,
+    namespaceFingerprint,
+    tables.length,
+  ]);
+
+  // Keep the editor metadata cache pinned to the tab's database. Only
+  // switch when the bound database actually changes — switchContext drops
+  // all loaded relations, so calling it per keystroke would thrash the cache.
+  useEffect(() => {
+    if (!dbSessionId || !selectedDatabase) return;
+    const snapshot = metadataCache.getSnapshot(dbSessionId);
+    if (snapshot.database !== selectedDatabase) {
+      metadataCache.switchContext(dbSessionId, {
+        database: selectedDatabase,
+        schema: selectedSchema ?? undefined,
+        dialectId: resolveEditorDialectId(databaseType),
+      });
+    }
+  }, [dbSessionId, selectedDatabase, selectedSchema, databaseType]);
+
   useEffect(() => {
     const names = tablesReferencedInSql(exec.sql);
     if (names.length === 0) return;
     const timer = setTimeout(() => {
-      void ensureColumns(names);
-      if (dbSessionId) {
+      if (!dbSessionId || !selectedDatabase) return;
+      void ensureColumns(names, dbSessionId, selectedDatabase);
+      {
         const dialectId = resolveEditorDialectId(databaseType);
         const requests = names.map((name) => ({
           identity: {
@@ -369,7 +526,7 @@ export function QueryPanel({
           kind: 'table' as const,
         }));
         ensureMetadataRelations(dbSessionId, requests, {
-          database: selectedDatabase ?? undefined,
+          database: selectedDatabase,
           schema: selectedSchema ?? undefined,
           dialectId,
         });
@@ -414,6 +571,41 @@ export function QueryPanel({
   const { results, activeResultIdx } = exec;
   const activeResult = results[activeResultIdx];
 
+  // Nothing has been executed yet: the editor owns the whole panel and the
+  // result pane is not mounted at all.
+  const resultsIdle =
+    !exec.running &&
+    !exec.error &&
+    !workflows.showExplain &&
+    !workflows.diagnosisVisible &&
+    results.length === 0;
+
+  // A pinned editor height only makes sense while there is something to split
+  // against; before the first execution the editor always fills the panel.
+  const editorHeightPinned = editorResizeManual && !resultsIdle;
+
+  const resultsPaneHeight = useMemo(
+    () =>
+      estimateQueryResultPaneHeight({
+        result: activeResult,
+        view: resolveResultWorkspaceView(activeResult, resultViewMode, exec.chartConfig).view,
+        hasResultTabs: results.length > 1 || workflows.explainResult != null,
+        hasError: !!exec.error,
+        showExplain: workflows.showExplain,
+        showDiagnosis: workflows.diagnosisVisible,
+      }),
+    [
+      activeResult,
+      exec.chartConfig,
+      exec.error,
+      resultViewMode,
+      results.length,
+      workflows.diagnosisVisible,
+      workflows.explainResult,
+      workflows.showExplain,
+    ],
+  );
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -424,6 +616,7 @@ export function QueryPanel({
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <QueryEditorSection
+            panelId={panelId}
             dbSessionId={dbSessionId}
             databaseType={databaseType}
             editorRef={editorRef}
@@ -442,6 +635,10 @@ export function QueryPanel({
             onClearParamHistory={bindState.clearHistory}
             editorHeight={editorHeight}
             editorResizeRef={editorResizeRef}
+            editorHeightPinned={editorHeightPinned}
+            showIdleHint={resultsIdle}
+            showResizeHandle={!resultsIdle}
+            editorViewportRef={editorViewportRef}
             editorSchema={editorSchema}
             editorDefaultSchema={editorDefaultSchema}
             editorDefaultTable={editorDefaultTable}
@@ -487,45 +684,59 @@ export function QueryPanel({
             onNavigateToStructure={onNavigateToStructure}
             onNavigateToDdl={onNavigateToDdl}
           />
-          <QueryResultsPane
-            dbSessionId={dbSessionId}
-            databaseType={databaseType}
-            sql={exec.sql}
-            running={exec.running}
-            error={exec.error}
-            results={results}
-            activeResultIdx={activeResultIdx}
-            activeResult={activeResult}
-            resultViewMode={resultViewMode}
-            chartConfig={exec.chartConfig}
-            resultDetailRowIndex={exec.resultDetailRowIndex}
-            queryResultExportCapability={queryResultExportCapability}
-            selectedDatabase={selectedDatabase}
-            showExplain={workflows.showExplain}
-            explainLoading={workflows.explainLoading}
-            explainError={workflows.explainError}
-            explainResult={workflows.explainResult}
-            diagnosisVisible={workflows.diagnosisVisible}
-            diagnosisContext={workflows.diagnosisContext}
-            onExplainError={workflows.handleExplainError}
-            retryActionEnabled={workflows.retryAction.enabled}
-            addToDashboardOpen={workflows.addToDashboardOpen}
-            onApplyAiSql={(v) => updateSql(panelId, v)}
-            onApplyFixSql={workflows.handleApplyFixSql}
-            onRetry={workflows.handleRetry}
-            onSetActiveResult={(idx) => setActiveResult(panelId, idx)}
-            onTogglePinResult={(idx) => usePanelStore.getState().togglePinResult(panelId, idx)}
-            onSetResultViewMode={(mode) => {
-              setResultViewModeStore(panelId, mode);
-            }}
-            onChartConfigChange={(cfg) => setChartConfig(panelId, cfg)}
-            onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex)}
-            onShowExplain={workflows.setShowExplain}
-            onDiagnosisVisible={workflows.setDiagnosisVisible}
-            onAddToDashboardOpen={workflows.setAddToDashboardOpen}
-            onAddToDashboardConfirm={workflows.handleAddToDashboardConfirm}
-            onAskInChat={handleAskInChat}
-          />
+          {!qbOpenHere && !resultsIdle && (
+            /*
+             * Automatic sizing: the pane claims the height its content needs,
+             * capped at half of the query content area so the editor keeps the
+             * other half. Once the user has dragged the splitter the pane simply
+             * fills what is left.
+             */
+            <div
+              className={cn('flex min-h-0 flex-col', editorHeightPinned ? 'flex-1' : 'shrink')}
+              style={queryResultPaneSizing(editorHeightPinned, resultsPaneHeight)}
+              data-testid="query-results-host"
+            >
+              <QueryResultsPane
+                dbSessionId={dbSessionId}
+                databaseType={databaseType}
+                sql={exec.sql}
+                running={exec.running}
+                error={exec.error}
+                results={results}
+                activeResultIdx={activeResultIdx}
+                activeResult={activeResult}
+                resultViewMode={resultViewMode}
+                chartConfig={exec.chartConfig}
+                resultDetailRowIndex={exec.resultDetailRowIndex}
+                queryResultExportCapability={queryResultExportCapability}
+                selectedDatabase={selectedDatabase}
+                showExplain={workflows.showExplain}
+                explainLoading={workflows.explainLoading}
+                explainError={workflows.explainError}
+                explainResult={workflows.explainResult}
+                diagnosisVisible={workflows.diagnosisVisible}
+                diagnosisContext={workflows.diagnosisContext}
+                onExplainError={workflows.handleExplainError}
+                retryActionEnabled={workflows.retryAction.enabled}
+                addToDashboardOpen={workflows.addToDashboardOpen}
+                onApplyAiSql={(v) => updateSql(panelId, v)}
+                onApplyFixSql={workflows.handleApplyFixSql}
+                onRetry={workflows.handleRetry}
+                onSetActiveResult={(idx) => setActiveResult(panelId, idx)}
+                onTogglePinResult={(idx) => usePanelStore.getState().togglePinResult(panelId, idx)}
+                onSetResultViewMode={(mode) => {
+                  setResultViewModeStore(panelId, mode);
+                }}
+                onChartConfigChange={(cfg) => setChartConfig(panelId, cfg)}
+                onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex)}
+                onShowExplain={workflows.setShowExplain}
+                onDiagnosisVisible={workflows.setDiagnosisVisible}
+                onAddToDashboardOpen={workflows.setAddToDashboardOpen}
+                onAddToDashboardConfirm={workflows.handleAddToDashboardConfirm}
+                onAskInChat={handleAskInChat}
+              />
+            </div>
+          )}
           <FavoriteNameDialog
             open={workflows.showFavoriteDialog}
             favoriteName={workflows.favoriteName}

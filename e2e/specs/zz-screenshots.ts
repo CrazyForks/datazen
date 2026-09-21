@@ -310,7 +310,7 @@ async function goToDashboard() {
 }
 
 /** Navigate to the extensions management page. */
-async function goToPlugins() {
+async function goToWapps() {
   await browser.execute(() => {
     document
       .querySelector('[data-testid="workspace-nav-extensions"]')
@@ -899,21 +899,21 @@ describe('site screenshots', () => {
     await deleteConnectionsByIds(['conn_e2e_pg']);
     await browser.pause(400);
 
-    // ── 00-welcome: first-run page with zero connections ──
+    // ── 00-empty-workspace: zero-connection workspace home ──
     try {
       await browser.url('tauri://localhost');
       await browser.waitUntil(
         async () =>
           browser.execute(
             () =>
-              !!document.querySelector('[data-testid="welcome-page"]') &&
+              !!document.querySelector('[data-testid="connection-workspace-home"]') &&
               document.querySelectorAll('[data-conn-item]').length === 0,
           ),
-        { timeout: 15000, timeoutMsg: 'welcome page not shown with zero connections' },
+        { timeout: 15000, timeoutMsg: 'empty workspace home not shown with zero connections' },
       );
-      await softShot('00-welcome.png', 900);
+      await softShot('00-empty-workspace.png', 900);
     } catch (e) {
-      console.warn(`[warn] 00-welcome capture skipped: ${e}`);
+      console.warn(`[warn] 00-empty-workspace capture skipped: ${e}`);
     }
 
     const demoPgUser = process.env.E2E_DEMO_PG_USER || 'datazen_demo';
@@ -1593,18 +1593,18 @@ describe('site screenshots', () => {
   // ─────────────────────── 22-extensions ──────────────────────────────────────
 
   it('22-extensions: extensions management page', async () => {
-    await goToPlugins();
+    await goToWapps();
     await browser.waitUntil(
       async () =>
         browser.execute(
           () =>
-            !!document.querySelector('[data-testid="plugin-management-page"]') &&
-            (!!document.querySelector('[data-testid="plugin-card"]') ||
-              !!document.querySelector('[data-testid="plugin-install-button"]')),
+            !!document.querySelector('[data-testid="extension-management-page"]') &&
+            (!!document.querySelector('[data-testid="extension-card"]') ||
+              !!document.querySelector('[data-testid="extension-install-button"]')),
         ),
-      { timeout: 15000, timeoutMsg: 'plugin management page not ready' },
+      { timeout: 15000, timeoutMsg: 'wapp management page not ready' },
     );
-    await shot('22-extensions.png');
+    await shot('22-wapps.png');
     await goToConnections();
   });
 

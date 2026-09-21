@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::{ConnectionConfig, SshTunnelConfig, SslMode};
+use crate::store::settings::{OnboardingState, ONBOARDING_VERSION};
 use chrono::Utc;
 use settings::{deserialize_theme, ThemePreference};
 
@@ -168,6 +169,112 @@ async fn ssh_credentials_roundtrip_after_reload() {
 }
 
 #[test]
+fn onboarding_state_roundtrip_and_legacy_compat() {
+    // roundtrip: completed + version survive serde
+    let settings = AppSettings {
+        onboarding: Some(OnboardingState {
+            completed: true,
+            version: 1,
+        }),
+        ..AppSettings::default()
+    };
+    let json = serde_json::to_string(&settings).unwrap();
+    assert!(json.contains("onboarding"));
+    let parsed: AppSettings = serde_json::from_str(&json).unwrap();
+    let state = parsed.onboarding.as_ref().unwrap();
+    assert!(state.completed);
+    assert_eq!(state.version, 1);
+
+    // legacy compat: old settings.json without the key → None (treated as an upgrade)
+    let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+    legacy.as_object_mut().unwrap().remove("onboarding");
+    let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
+    assert!(parsed.onboarding.is_none());
+}
+
+#[tokio::test]
+async fn fresh_install_materializes_uncompleted_onboarding() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+
+    let onboarding = store
+        .get_settings()
+        .await
+        .onboarding
+        .expect("fresh install must materialize onboarding state");
+    assert!(!onboarding.completed, "fresh install shows the journey");
+    assert_eq!(onboarding.version, ONBOARDING_VERSION);
+
+    // Materialized on disk so a settings write cannot make the next launch
+    // look like an upgrade.
+    assert!(dir.path().join("settings.json").exists());
+    let reloaded = init_store_for_test(dir.path()).await;
+    let onboarding = reloaded.get_settings().await.onboarding.unwrap();
+    assert!(
+        !onboarding.completed,
+        "an unfinished fresh install stays uncompleted after a restart"
+    );
+}
+
+#[tokio::test]
+async fn existing_settings_without_onboarding_key_is_an_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Settings written by a build that predates the wizard.
+    let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+    legacy.as_object_mut().unwrap().remove("onboarding");
+    legacy["language"] = serde_json::json!("en");
+    std::fs::write(
+        dir.path().join("settings.json"),
+        serde_json::to_string_pretty(&legacy).unwrap(),
+    )
+    .unwrap();
+
+    let store = init_store_for_test(dir.path()).await;
+    let onboarding = store
+        .get_settings()
+        .await
+        .onboarding
+        .expect("upgrade must resolve an onboarding state");
+    assert!(
+        onboarding.completed,
+        "upgrading users must not see the journey"
+    );
+    assert_eq!(onboarding.version, ONBOARDING_VERSION);
+
+    // The resolved state is persisted so the decision is not re-derived.
+    let persisted: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        persisted["onboarding"]["completed"],
+        serde_json::json!(true)
+    );
+}
+
+#[tokio::test]
+async fn existing_onboarding_state_is_respected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = AppSettings::default_for_first_run();
+    settings.onboarding = Some(OnboardingState {
+        completed: false,
+        version: 1,
+    });
+    std::fs::write(
+        dir.path().join("settings.json"),
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+
+    let store = init_store_for_test(dir.path()).await;
+    let onboarding = store.get_settings().await.onboarding.unwrap();
+    assert!(
+        !onboarding.completed,
+        "an explicit unfinished state survives restart (mid-journey quit)"
+    );
+}
+
+#[test]
 fn default_app_data_dir_uses_bundle_identifier() {
     let _g = env_lock();
     std::env::remove_var("DATAZEN_DATA_DIR");
@@ -278,11 +385,69 @@ fn first_run_language_is_supported() {
 }
 
 #[test]
-fn plugin_settings_defaults_when_key_missing() {
+fn sql_execution_strategy_defaults_to_current_statement() {
+    assert_eq!(
+        AppSettings::default().sql_execution_strategy,
+        "current_statement"
+    );
+    assert_eq!(
+        AppSettings::default_for_first_run().sql_execution_strategy,
+        "current_statement"
+    );
     let mut value = serde_json::to_value(AppSettings::default()).unwrap();
-    value.as_object_mut().unwrap().remove("pluginSettings");
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("sqlExecutionStrategy");
     let parsed: AppSettings = serde_json::from_value(value).unwrap();
-    assert!(parsed.plugin_settings.is_empty());
+    assert_eq!(parsed.sql_execution_strategy, "current_statement");
+}
+
+#[test]
+fn sql_execution_strategy_preserves_explicit_saved_choices() {
+    for strategy in [
+        "entire_script",
+        "current_statement",
+        "largest_statement",
+        "ask",
+    ] {
+        let settings = AppSettings {
+            sql_execution_strategy: strategy.into(),
+            ..AppSettings::default()
+        };
+        let parsed: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(parsed.sql_execution_strategy, strategy);
+    }
+}
+
+#[test]
+fn intention_actions_roundtrips_in_extension_settings() {
+    for enabled in [true, false] {
+        let mut settings = AppSettings::default();
+        settings.driver_settings.insert(
+            "sql-editor-enhanced".into(),
+            serde_json::json!({ "intentionActions": enabled, "insertValueHints": true }),
+        );
+        let parsed: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(
+            parsed.driver_settings["sql-editor-enhanced"]["intentionActions"],
+            enabled
+        );
+        assert_eq!(
+            parsed.driver_settings["sql-editor-enhanced"]["insertValueHints"],
+            true
+        );
+    }
+}
+
+#[test]
+fn driver_settings_defaults_when_key_missing() {
+    let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+    value.as_object_mut().unwrap().remove("driverSettings");
+    let parsed: AppSettings = serde_json::from_value(value).unwrap();
+    assert!(parsed.driver_settings.is_empty());
 }
 
 #[test]
@@ -294,9 +459,9 @@ fn mcp_client_servers_defaults_when_key_missing() {
 }
 
 #[test]
-fn plugin_settings_roundtrip_opaque() {
+fn driver_settings_roundtrip_opaque() {
     let settings = AppSettings {
-        plugin_settings: {
+        driver_settings: {
             let mut m = serde_json::Map::new();
             m.insert("redis".into(), serde_json::json!({ "allowFlush": true }));
             m
@@ -304,10 +469,10 @@ fn plugin_settings_roundtrip_opaque() {
         ..AppSettings::default()
     };
     let json = serde_json::to_string(&settings).unwrap();
-    assert!(json.contains("pluginSettings"));
+    assert!(json.contains("driverSettings"));
     let parsed: AppSettings = serde_json::from_str(&json).unwrap();
     assert_eq!(
-        parsed.plugin_settings.get("redis").unwrap()["allowFlush"],
+        parsed.driver_settings.get("redis").unwrap()["allowFlush"],
         true
     );
 }

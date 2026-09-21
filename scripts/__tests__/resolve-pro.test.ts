@@ -1,10 +1,13 @@
 /** @vitest-environment node */
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'fs';
+import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   parseArgs,
+  readProLock,
+  pinProCheckout,
   writeCommunityCodegen,
   writeProCodegen,
   resolvePro,
@@ -67,6 +70,75 @@ describe('resolve-pro parseArgs', () => {
     expect(res.proGit).toBe('git@github.com:custom/repo.git');
     expect(res.codegenOnly).toBe(true);
   });
+
+  it('parses --pro-ref and defaults it to null', () => {
+    expect(parseArgs([]).proRef).toBeNull();
+    expect(parseArgs(['--pro-ref=abc1234']).proRef).toBe('abc1234');
+  });
+
+  it('reads the pinned Pro ref from the lock file', () => {
+    const lock = readProLock();
+    expect(lock.ref).toMatch(/^[0-9a-f]{40}$/);
+    expect(lock.git).toContain('datazen-extension-sql-editor-pro');
+  });
+
+  it('treats a missing lock file as unpinned rather than throwing', () => {
+    expect(readProLock('/nonexistent/pro-extension.lock.json')).toEqual({
+      git: null,
+      ref: null,
+    });
+  });
+});
+
+describe('resolve-pro checkout pinning', () => {
+  /** Build a throwaway repo with two commits and return both shas. */
+  function makeRepo(): { dir: string; first: string; second: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'pro-pin-'));
+    const run = (cmd: string) => execSync(cmd, { cwd: dir, stdio: 'pipe' });
+    run('git init -q');
+    run('git config user.email t@t.t');
+    run('git config user.name t');
+    writeFileSync(join(dir, 'a.txt'), 'one\n');
+    run('git add . && git commit -qm one');
+    const first = execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim();
+    writeFileSync(join(dir, 'a.txt'), 'two\n');
+    run('git add . && git commit -qm two');
+    const second = execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim();
+    return { dir, first, second };
+  }
+
+  it('checks out the pinned commit and reports the resulting sha', () => {
+    const { dir, first, second } = makeRepo();
+    try {
+      expect(second).not.toBe(first);
+      const head = pinProCheckout(dir, first, { log: () => {} });
+      expect(head).toBe(first);
+      expect(execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim()).toBe(first);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op when no ref is pinned', () => {
+    const { dir, second } = makeRepo();
+    try {
+      expect(pinProCheckout(dir, null, { log: () => {} })).toBeNull();
+      expect(execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf-8' }).trim()).toBe(second);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails loudly when the pinned ref does not exist', () => {
+    const { dir } = makeRepo();
+    try {
+      expect(() =>
+        pinProCheckout(dir, '0000000000000000000000000000000000000000', { log: () => {} }),
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolve-pro codegen output', () => {
@@ -81,15 +153,18 @@ describe('resolve-pro codegen output', () => {
     expect(content).not.toContain('@datazen/extension-sql-editor-pro');
   });
 
-  it('writes pro codegen with builtin-ep HostExtensionLoader activation', () => {
+  it('writes pro codegen with builtin-ep runtime loader', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolve-pro-test-'));
     const file = join(dir, 'generated-pro.ts');
     writeProCodegen(file);
     expect(existsSync(file)).toBe(true);
     const content = readFileSync(file, 'utf-8');
     expect(content).toContain("export const DATAZEN_EDITION = 'pro'");
+    // Track B: dynamic hot-plug through hostExtensionLoader + signature gate,
+    // resolved from the staged `builtin-ep` resource — no static alias import.
     expect(content).toContain('hostExtensionLoader');
-    expect(content).toContain('loadFromUrl');
+    expect(content).toContain('loadFromUrl(');
+    expect(content).toContain('verifyExtensionPackage');
     expect(content).toContain("'builtin-ep'");
     expect(content).not.toContain('@datazen/extension-sql-editor-pro');
   });
@@ -170,7 +245,30 @@ describe('[tester] resolve-pro staging and edition flows', () => {
     expect(existsSync(join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro'))).toBe(false);
   });
 
-  it('test_tester_resolvePro_pro_stages_extension_when_checkout_available', () => {
+  it('test_tester_resolvePro_uses_already_staged_tree_without_cloning', () => {
+    // CI builds the extension once and hands the signed tree to every variant as
+    // an artifact. resolve-pro must use that tree verbatim rather than cloning
+    // the private repo again in each matrix job.
+    const staging = join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro');
+    rmSync(staging, { recursive: true, force: true });
+    writeFixtureExtension(staging);
+    const bundle = join(staging, 'dist/index.esm.js');
+    const staged = readFileSync(bundle, 'utf-8');
+
+    const prevGit = process.env.DATAZEN_PRO_GIT;
+    delete process.env.DATAZEN_PRO_GIT;
+    try {
+      const res = resolvePro({ edition: 'pro' });
+      expect(res).toMatchObject({ edition: 'pro', active: true, prebuilt: true });
+      // A clone would have overwritten the staged bundle.
+      expect(readFileSync(bundle, 'utf-8')).toBe(staged);
+    } finally {
+      if (prevGit !== undefined) process.env.DATAZEN_PRO_GIT = prevGit;
+      rmSync(staging, { recursive: true, force: true });
+    }
+  });
+
+  it('test_tester_resolvePro_pro_stages_builtin_ep_for_runtime_loading', () => {
     const extDir = join(process.cwd(), 'packages/pro-extensions/sql-editor-pro');
     if (!existsSync(join(extDir, 'package.json'))) {
       return;
@@ -178,8 +276,16 @@ describe('[tester] resolve-pro staging and edition flows', () => {
     clearBuiltinEpStaging();
     const res = resolvePro({ edition: 'pro', proPath: extDir });
     expect(res).toMatchObject({ edition: 'pro', active: true, path: extDir });
+    // Track B: the rewritten + signed bundle is staged as a Tauri resource and
+    // the codegen loads it dynamically — no static alias reference.
     const staged = join(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro');
+    expect(existsSync(join(staged, 'dist/index.esm.js'))).toBe(true);
     expect(existsSync(join(staged, 'signature.sig'))).toBe(true);
+    const stagedBundle = readFileSync(join(staged, 'dist/index.esm.js'), 'utf-8');
+    expect(stagedBundle).toContain('__DATAZEN_HOST__');
+    expect(readFileSync(GENERATED_PRO_TS, 'utf-8')).not.toContain(
+      '@datazen/extension-sql-editor-pro',
+    );
     clearBuiltinEpStaging();
   }, 120_000);
 

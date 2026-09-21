@@ -47,6 +47,9 @@ const pack = {
   'workflows.form.defaultConnection': 'Usar conexión predeterminada',
   'workflows.form.database': 'Base de datos',
   'workflows.form.databasePlaceholder': 'Introduzca el nombre de la base de datos',
+  'workflows.form.databaseRequired': 'Selecciona una base de datos (obligatorio para multi-db)',
+  'workflows.form.databaseLoading': 'Cargando bases de datos…',
+  'workflows.form.databaseInherit': 'Heredar el valor predeterminado del workflow',
   'workflows.form.addConditionStep': '+ Paso de condición',
   'workflows.form.addForeachStep': '+ Para cada paso',
   'workflows.form.condition': 'Condición',
@@ -95,5 +98,16 @@ const pack = {
   'workflows.editor.invalidYamlField': 'YAML inválido: campo «{field}» faltante o inválido',
   'workflows.addToDashboard': 'Agregar al panel',
   'workflows.dashboard.defaultName': 'Nuevo panel',
+  'workflows.viewTable': 'Tabla',
+  'workflows.viewChart': 'Gráfico',
+  'workflows.notChartableTooltip': 'El resultado no se puede graficar',
+  'workflows.sampledWarning':
+    'Conjunto de datos grande, el gráfico muestra solo las primeras {limit} filas',
+  'workflows.runSelection': 'Ejecutar selección',
+  'workflows.format': 'Formato',
+  'workflows.comment': 'Comentar',
+  'workflows.stepOrder.toggle': 'Alternar el orden de los resultados de los pasos',
+  'workflows.stepOrder.asc': 'Más antiguos primero',
+  'workflows.stepOrder.desc': 'Más recientes primero',
 } as const;
 export default pack;

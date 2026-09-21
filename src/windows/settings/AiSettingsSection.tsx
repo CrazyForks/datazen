@@ -129,8 +129,9 @@ export function AiSettingsSection() {
 
       <div className="flex items-center justify-between border-b border-edge/60 pb-3">
         <div>
-          <SectionTitle>{t('settings.ai.modelsTitle')}</SectionTitle>
-          <p className="mt-1 text-xs text-fg-muted">{t('settings.ai.description')}</p>
+          <SectionTitle hint={t('settings.ai.description')}>
+            {t('settings.ai.modelsTitle')}
+          </SectionTitle>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-fg-muted">

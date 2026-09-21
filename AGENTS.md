@@ -28,7 +28,7 @@ datazen/
 │   ├── lib/                     # 工具库与业务算法
 │   ├── hooks/                   # React hooks
 │   ├── locales/                 # i18n 领域包与按需加载
-│   └── plugins/                 # 自动生成注册文件（generated.ts / generated-locales.ts / generated-pro.ts）
+│   └── extensions/              # 自动生成注册文件（generated.ts / generated-locales.ts / generated-pro.ts）
 ├── src-tauri/                   # Rust 后端
 │   ├── src/
 │   │   ├── ai/                  # AI Provider 实现 / protocol / context
@@ -54,7 +54,7 @@ datazen/
 │   ├── drivers/                 # path 驱动 crate（测试严格写在各 crate 内）
 │   │   └── <id>/                # Rust `src/` + `tests/`；UI `ui/__tests__/`；E2E `e2e/`
 │   ├── wapps/                   # Workspace Apps 运行时应用与主题源码包（安装测试见其 README）
-│   ├── pro-extensions/          # Pro 扩展本地存放/挂载目录（gitignored）
+│   ├── pro-extensions/          # Pro 扩展本地存放/挂载目录（gitignored）；每个子包是独立 git 仓库，需独立 commit/pull/push
 │   └── themes/                  # 旧 v1 ThemePack 存档
 ├── e2e/                         # Host WebdriverIO E2E（通用 UI / IPC；非驱动方言）
 ├── test/                        # 手工黑盒测试
@@ -67,7 +67,7 @@ datazen/
 
 1. `drivers-registry.json` 定义 path 驱动 + git 驱动；Git 可钉 `ref`。
 2. `scripts/resolve-drivers.mjs` 构建前执行驱动选型、克隆 Git driver，并生成 `generated.ts`、`driver_init.rs`、`.driver-features.json`（均 gitignored）。
-3. `scripts/resolve-pro.mjs` 控制构建版本：默认 `--edition=community`（纯开源 Fallback）；`--edition=pro`（拉取并注入 `@datazen/extension-sql-editor-pro`）。
+3. `scripts/resolve-pro.mjs` 控制构建版本：默认 `--edition=community`（纯开源 Fallback）；`--edition=pro`（打包并 stage `@datazen/extension-sql-editor-pro` 到 `src-tauri/resources/builtin-ep/`，运行时经签名验签后动态加载）。
 4. 数据库驱动通过 `inventory` crate 实现链接时自动注册；宿主 `DriverRegistry` 仅走 factories。
 
 ```bash
@@ -199,7 +199,7 @@ pnpm e2e:contract:matrix     # Host 契约 × 驱动矩阵
 
 ## i18n 国际化规则
 
-- **开发期间**：只修改 `en.ts`（英文）和可选的 `zh-CN.ts`（中文），不要同时修改其他语言文件。
+- **开发期间**：只修改 `en.ts`（英文），不要同时修改其他语言文件。
 - **发布前**：使用 `node scripts/i18n-sync-check.mjs` 检查翻译完整性，然后通过 i18n-sync skill 补齐所有语言。
 - `en.ts` 是唯一的翻译 source of truth，其他语言文件必须保持相同的 key 集合。
 - 采用领域包（Domain Packs）结构，子窗口与深层功能通过 `useLocaleDomains` 按需惰性（Lazy）加载。

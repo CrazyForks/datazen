@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting star expansion, INSERT template generation, qualifier additions, subquery wrapping, and more to dramatically boost SQL writing efficiency."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta
+      property="og:title"
+      content="Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions"
+    />
+    <meta
+      property="og:description"
+      content="DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting star expansion, INSERT template generation, qualifier additions, subquery wrapping, and more to dramatically boost SQL writing efficiency."
+    />
+    <meta
+      property="og:url"
+      content="https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+    />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions"
+    />
+    <meta
+      name="twitter:description"
+      content="DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting star expansion, INSERT template generation, qualifier additions, subquery wrapping, and more to dramatically boost SQL writing efficiency."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-09-20",
+        "description": "DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting star expansion, INSERT template generation, qualifier additions, subquery wrapping, and more to dramatically boost SQL writing efficiency.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-alt-enter-intentions.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions</h1>
+        <p>
+          DataZen's SQL smart editor triggers context-aware intent menus via Alt+Enter, supporting
+          star expansion, INSERT template generation, qualifier additions, subquery wrapping, and
+          more to dramatically boost SQL writing efficiency.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">September 20, 2026</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>Write INSERT Statements in Seconds: Alt+Enter Smart Intent Actions</h1>
+        <p>
+          When writing SQL, have you ever found yourself in this situation: you want to write an
+          <code>INSERT INTO</code> statement, but the table has a dozen or more fields and you have
+          to type each column name one by one, then fill in each value one by one — and if
+          you&#39;re not careful, you&#39;ll mistype a column name or forget a comma.
+        </p>
+        <p>
+          This kind of repetitive work is not only tedious, it&#39;s also extremely error-prone.
+          Especially when table structures change frequently, manually maintaining INSERT statements
+          can be pure torture.
+        </p>
+        <p>
+          DataZen&#39;s SQL editor comes with a built-in &quot;smart intent&quot; system. With a
+          single shortcut key — <code>Alt+Enter</code> — you can trigger context-sensitive operation
+          suggestions at the cursor position. This isn&#39;t simple code completion; it actually
+          understands what you&#39;re writing and helps you finish the most tedious part.
+        </p>
+        <h2>Alt+Enter Triggers the Intent Menu</h2>
+        <p>
+          In DataZen&#39;s SQL editor, you don&#39;t need to select any text — just place the cursor
+          anywhere, press <code>Alt+Enter</code>, and the editor analyzes the current context and
+          pops up a context-sensitive operation suggestion menu.
+        </p>
+        <p>
+          This menu intelligently determines what operation you might need based on your cursor
+          position, the SQL statement you&#39;re currently editing, and the database&#39;s schema
+          information.
+        </p>
+        <h2>Star Expansion: SELECT * Is No Longer a Bad Habit</h2>
+        <p>
+          Writing <code>SELECT * FROM _blog_employee</code> feels great, but in practice you rarely
+          need every column. The problem is, manually replacing <code>*</code> with a long list of
+          column names is just too tedious.
+        </p>
+        <p>
+          In DataZen, place the cursor on the asterisk in <code>SELECT *</code> and press
+          <code>Alt+Enter</code> — the editor automatically expands it to all column names:
+        </p>
+        <pre><code class="language-sql">-- Before expansion
+SELECT * FROM _blog_employee
+
+-- After expansion
+SELECT id, name, email, salary, dept_id, is_active, hire_date, created_at, updated_at FROM _blog_employee
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-star-expand.png"
+            alt="Star expansion"
+          />
+        </p>
+        <p>
+          After expansion, you can delete any columns you don&#39;t need — at least ten times faster
+          than typing them out. And the column names are fetched in real time from the database
+          schema, so there&#39;s no risk of typos.
+        </p>
+        <h2>INSERT Template: Say Goodbye to Column Name Hell</h2>
+        <p>This is probably the most practical use case for <code>Alt+Enter</code>.</p>
+        <p>
+          Normally, to write an INSERT statement you first need to look up the table structure, note
+          all column names and types, then manually piece together the complete statement. If the
+          table has a dozen fields, typing the column names alone takes several minutes.
+        </p>
+        <p>
+          In DataZen, simply type <code>INSERT INTO _blog_employee ()</code>, place the cursor
+          inside the parentheses, and press <code>Alt+Enter</code> — the editor automatically
+          expands it into a complete INSERT template:
+        </p>
+        <pre><code class="language-sql">-- Before expansion
+INSERT INTO _blog_employee ()
+
+-- After expansion
+INSERT INTO _blog_employee (
+    id,
+    name,
+    email,
+    salary,
+    dept_id,
+    is_active,
+    hire_date,
+    created_at,
+    updated_at
+) VALUES (
+    /* id */ NULL,
+    /* name */ &#39;&#39;,
+    /* email */ &#39;&#39;,
+    /* salary */ 0,
+    /* dept_id */ NULL,
+    /* is_active */ TRUE,
+    /* hire_date */ NOW(),
+    /* created_at */ NOW(),
+    /* updated_at */ NOW()
+);
+</code></pre>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-insert-template.png"
+            alt="INSERT template expansion"
+          />
+        </p>
+        <p>
+          Each value comes with a column name comment, and the types are intelligently inferred:
+          strings use empty string placeholders, numbers use 0, and datetime fields use
+          <code>NOW()</code>. You just need to replace the placeholder values with actual data.
+        </p>
+        <p>
+          Even better, if you only want to insert certain columns, just delete the unwanted columns
+          and their corresponding values after expansion — far more efficient than starting from
+          scratch.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-intention-insert-columns.png"
+            alt="INSERT column selection"
+          />
+        </p>
+        <h2>Adding and Removing Qualifiers</h2>
+        <p>
+          When writing complex queries, you often need to add table alias prefixes to column names,
+          like <code>e.name</code> instead of <code>name</code>. If you need to add or remove these
+          prefixes in bulk, doing it manually is tiring and easy to miss spots.
+        </p>
+        <p>
+          In DataZen, place the cursor on a column name and press <code>Alt+Enter</code> to quickly
+          add or remove a table alias prefix:
+        </p>
+        <ul>
+          <li>Add: <code>name</code> → <code>e.name</code></li>
+          <li>Remove: <code>e.name</code> → <code>name</code></li>
+        </ul>
+        <p>
+          In multi-table JOIN queries, this feature is especially useful — quickly qualify all
+          columns to avoid &quot;ambiguous column&quot; errors.
+        </p>
+        <h2>Subquery Wrapping</h2>
+        <p>
+          Sometimes you want to wrap a plain expression into a subquery, for example turning
+          <code>SELECT id FROM _blog_employee WHERE is_active = 1</code> into
+          <code>SELECT * FROM (SELECT id FROM _blog_employee WHERE is_active = 1) AS subquery</code
+          >.
+        </p>
+        <p>
+          In DataZen, select the SQL fragment you want to wrap, press <code>Alt+Enter</code>, and
+          choose &quot;Wrap as subquery&quot; — the editor automatically adds the outer
+          <code>SELECT * FROM (...) AS subquery</code> structure for you.
+        </p>
+        <h2>Function Signature Hints</h2>
+        <p>
+          When writing SQL functions, do you often forget the parameter order? For example, is
+          <code>SUBSTRING</code> <code>(str, start, length)</code> or
+          <code>(str, length, start)</code>?
+        </p>
+        <p>
+          In DataZen, after typing a function name and the opening parenthesis <code>(</code>, the
+          editor automatically shows a function signature hint displaying parameter names and types:
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/06-signature-help.png"
+            alt="Function signature hint"
+          />
+        </p>
+        <p>
+          For unfamiliar functions, this saves you from looking up documentation. For familiar
+          functions, it helps confirm parameter order and avoid careless mistakes.
+        </p>
+        <h2>Live Demo</h2>
+        <p>Let&#39;s put all the features together in a real development scenario.</p>
+        <p>Suppose you&#39;re writing a bulk import script for an employee management system:</p>
+        <p>
+          <strong>Step 1</strong>: Type the table name and use <code>Alt+Enter</code> to expand the
+          INSERT template — no need to look up column names.
+        </p>
+        <p>
+          <strong>Step 2</strong>: Delete fields that don&#39;t need auto-population (like the
+          auto-incrementing <code>id</code>).
+        </p>
+        <p>
+          <strong>Step 3</strong>: Type <code>SELECT *</code> to query the department table, use
+          <code>Alt+Enter</code> to expand the columns, and quickly select the ones you need.
+        </p>
+        <p>
+          <strong>Step 4</strong>: Add <code>d.</code> prefixes to column names to avoid ambiguity
+          in multi-table JOINs.
+        </p>
+        <p>
+          The entire process — from &quot;I think the employee table has about a dozen fields&quot;
+          to &quot;a complete INSERT...SELECT statement&quot; — takes just two or three minutes.
+        </p>
+        <p>
+          That&#39;s the value of smart intentions — it doesn&#39;t write SQL for you, but it helps
+          you skip the repetitive, boring, error-prone mechanical work so you can focus on business
+          logic.
+        </p>
+        <h2>Final Thoughts</h2>
+        <p>
+          The intelligence level of a SQL editor directly impacts your work efficiency.
+          DataZen&#39;s <code>Alt+Enter</code> intent system covers the most common pain points in
+          daily SQL writing — from star expansion to INSERT templates, from qualifier management to
+          subquery wrapping.
+        </p>
+        <p>
+          Combined with function signature hints and real-time completion, you can put more energy
+          into thinking about business logic rather than wrestling with the editor.
+        </p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html"
+              >Download DataZen Now</a
+            ></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub Source Code</a>
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-alt-enter-intentions.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

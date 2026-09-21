@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema 信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-hover-tooltip.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-hover-tooltip.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转" />
+    <meta
+      property="og:description"
+      content="DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema 信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。"
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转" />
+    <meta
+      name="twitter:description"
+      content="DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema 信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2025-09-16",
+        "description": "DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema 信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转",
+            "item": "https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转</h1>
+        <p>
+          DataZen SQL 编辑器支持鼠标悬停表名查看完整 Schema
+          信息，包括列名、类型、外键关系和表注释，无需切换到 Schema 树面板。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2025 年 9 月 16 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>不离开编辑器看 Schema：表结构悬浮卡片与快捷跳转</h1>
+        <blockquote>
+          <p>
+            写 SQL 时最烦的事情之一：刚写了一个表名，突然忘了某个字段叫什么，不得不切到 Schema
+            树里去找。心流被打断，思路也跟着断。
+          </p>
+        </blockquote>
+        <h2>写 SQL 时的&quot;查表&quot;困境</h2>
+        <p>每个写 SQL 的人都有过这种体验：</p>
+        <p>
+          你正在写一条多表 JOIN 查询，已经想好了逻辑，表名和 JOIN 条件都写好了。但写到 SELECT
+          列表时，突然不确定某个字段是叫 <code>user_name</code> 还是 <code>username</code>，或者是叫
+          <code>display_name</code>。
+        </p>
+        <p>这时候你需要做什么？</p>
+        <ol>
+          <li>把光标从当前位置移开；</li>
+          <li>切换到左侧的 Schema 树面板；</li>
+          <li>展开目标表的列列表；</li>
+          <li>找到那个字段名；</li>
+          <li>切回编辑器；</li>
+          <li>重新定位光标到刚才的位置继续写。</li>
+        </ol>
+        <p>
+          六步操作，只为了确认一个字段名。如果这条 SQL
+          涉及三四张表，你可能要重复这个过程好几次。每次中断都在打断你的思路，而重新组织思路需要额外的时间和精力。
+        </p>
+        <p>DataZen 的方案是：<strong>让你不用离开编辑器，就能看到 Schema 的完整信息。</strong></p>
+        <h2>悬浮卡片：光标在哪里，信息就在哪里</h2>
+        <p>
+          在 DataZen 的 SQL 编辑器中，当你把鼠标悬停在一个表名或表别名上时，编辑器会自动弹出一个
+          Schema 悬浮卡片。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/04-hover-tooltip.png"
+            alt="表结构悬浮卡片"
+          />
+        </p>
+        <p>这张卡片包含的信息比你想象的要丰富：</p>
+        <p>
+          <strong>列信息</strong
+          >：列出该表所有列的名称和数据类型。你一眼就能看到有哪些字段，每个字段是什么类型，不用再切到
+          Schema 树去翻。
+        </p>
+        <p>
+          <strong>是否可空</strong>：每列是否允许 NULL 值，直接标注在类型旁边。写 INSERT 或 UPDATE
+          时，这个信息非常关键。
+        </p>
+        <p><strong>默认值</strong>：如果某列有默认值，卡片上也会显示。不用再去查表结构定义。</p>
+        <p>
+          <strong>外键关系</strong
+          >：这张表和其他哪些表有关联，外键指向哪张表的哪个字段，都在卡片里一目了然。这在写 JOIN
+          查询时特别有用——你不用去记忆或查文档，关联关系直接呈现在眼前。
+        </p>
+        <p>
+          <strong>表注释</strong>：如果建表时写了
+          COMMENT，也会显示在卡片顶部。对于字段含义不太直观的业务表，这个注释能帮你快速理解表的用途。
+        </p>
+        <h2>Cmd/Ctrl+Click 快速跳转</h2>
+        <p>
+          除了悬停查看信息，DataZen 还支持 Cmd+Click（macOS）或
+          Ctrl+Click（Windows/Linux）直接跳转到 Schema 树中对应的对象。
+        </p>
+        <p>
+          当你在编辑器里 Cmd+Click 一个表名，Schema
+          树会自动展开并定位到那张表。点击一个列名也能直接定位到对应列。
+        </p>
+        <p>
+          这个功能在你确实需要更多上下文时非常有用——比如你想看整张表的完整
+          DDL、查看索引定义，或者对比多张表的结构。悬浮卡片给你快速概览，Cmd+Click
+          给你深度查看，两者配合覆盖了绝大多数&quot;查 Schema&quot;的需求。
+        </p>
+        <h2>多表 JOIN 场景：同时悬停，快速对比</h2>
+        <p>
+          写多表 JOIN 查询时，你经常需要同时参考多张表的结构。在传统工具里，你可能需要在 Schema
+          树里分别展开好几张表，来回切换查看。
+        </p>
+        <p>
+          DataZen 的悬浮卡片支持同时显示多个。你可以把鼠标依次悬停在 JOIN
+          的每张表上，快速对比各表的列名和类型，确认关联条件是否正确。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/04-hover-multi-table.png"
+            alt="多表同时悬停对比"
+          />
+        </p>
+        <p>
+          举个例子：你在写 <code>_blog_employee</code> JOIN <code>_blog_dept</code> JOIN
+          <code>_blog_emp_project</code> 的查询。把鼠标悬停在
+          <code>_blog_employee</code> 上看看它有哪些外键，再移到
+          <code>_blog_dept</code> 上确认部门表的主键字段名，然后移到
+          <code>_blog_emp_project</code>
+          上确认关联字段。整个过程不需要移动光标，不需要切换面板，不需要打断思路。
+        </p>
+        <p>
+          这种&quot;原地查看&quot;的体验，让你能把注意力集中在 SQL
+          的逻辑设计上，而不是分散在各个面板之间做信息搬运工。
+        </p>
+        <h2>对比传统工具的 Schema 查看方式</h2>
+        <p>在 Navicat 和 DBeaver 中，查看表结构通常需要以下操作：</p>
+        <ul>
+          <li>
+            <strong>Navicat</strong
+            >：双击表名打开表设计面板，或在左侧树中展开列列表。如果编辑器里有多张表，你需要逐个去查找。
+          </li>
+          <li>
+            <strong>DBeaver</strong>：在左侧 Database Navigator 中展开表 → 列，或者右键表名选择
+            &quot;Properties&quot;。信息分散在不同的 Tab 页里。
+          </li>
+        </ul>
+        <p>
+          这两种方式的共同问题是：<strong
+            >你需要离开编辑器去获取信息，然后带着信息回到编辑器继续工作。</strong
+          >
+          这个来回切换的过程，就是心流被打断的根本原因。
+        </p>
+        <p>
+          DataZen
+          的悬浮卡片把这个过程压缩到了零切换：信息在你需要的时候自动出现在你的光标旁边，看完之后继续写，没有任何中间步骤。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>操作</th>
+              <th>传统工具</th>
+              <th>DataZen</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>查看单表列信息</td>
+              <td>切到 Schema 树，展开表</td>
+              <td>悬停表名即可</td>
+            </tr>
+            <tr>
+              <td>查看外键关系</td>
+              <td>右键表 → Properties → FK Tab</td>
+              <td>悬停表名，卡片底部直接显示</td>
+            </tr>
+            <tr>
+              <td>确认列名和类型</td>
+              <td>切到 Schema 树 → 展开列</td>
+              <td>悬停表名，列信息一目了然</td>
+            </tr>
+            <tr>
+              <td>查看表注释</td>
+              <td>右键表 → Properties → Comment</td>
+              <td>悬停表名，卡片顶部直接显示</td>
+            </tr>
+            <tr>
+              <td>多表对比</td>
+              <td>分别展开多张表，来回切换</td>
+              <td>依次悬停即可</td>
+            </tr>
+            <tr>
+              <td>跳转到 Schema 树</td>
+              <td>手动在树中搜索定位</td>
+              <td>Cmd+Click 自动定位</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>从&quot;切换&quot;到&quot;原地&quot;的体验升级</h2>
+        <p>这种设计思路的本质是<strong>减少上下文切换</strong>。</p>
+        <p>
+          写 SQL
+          是一个需要高度集中注意力的工作——你在脑子里构建表之间的关联关系，规划查询逻辑，组织列的选取和聚合。每一次切换面板、每一次搜索定位，都是对这个思维过程的打断。
+        </p>
+        <p>
+          DataZen 的悬浮卡片和快捷跳转，把&quot;查看 Schema
+          信息&quot;这个辅助操作的成本降到了最低。你不需要离开编辑器，不需要记住路径，不需要在多个面板之间做信息搬运。Schema
+          信息就在你的光标旁边，你需要的时候它就出现，你看完就继续写。
+        </p>
+        <p>
+          这不是一个&quot;花哨&quot;的功能。它解决的是一个每天都会遇到、每次都让人分心的小问题。而当你把这些&quot;小问题&quot;的解决方案累积起来，编辑器的整体体验就会有质的提升。
+        </p>
+        <h2>试试看</h2>
+        <p>
+          下次写多表 JOIN 时，试试在 DataZen 的 SQL
+          编辑器里悬停表名看看——你会发现，原来确认一个字段名可以这么快。
+        </p>
+        <p>
+          👉
+          <a href="https://flyxl.github.io/datazen/">下载 DataZen</a>，体验不离开编辑器就能查看完整
+          Schema 的流畅工作流。
+        </p>
+        <p>
+          📦 源码开放在 <a href="https://github.com/flyxl/datazen">GitHub</a>，欢迎 Star 和反馈。
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

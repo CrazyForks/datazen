@@ -10,9 +10,98 @@ on:
 permissions: {}
 
 jobs:
+  # Build + sign the SQL Editor Pro extension ONCE and hand it to every variant
+  # as an artifact. Doing it here rather than inside each matrix job means one
+  # clone/build instead of eleven, and it drops the need for a PAT able to read
+  # the private Pro repo's releases. The revision is pinned by
+  # pro-extension.lock.json, so a host tag reproduces its extension.
+  prepare-pro-extension:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Setup SSH for the private Pro extension repo
+        shell: bash
+        env:
+          PRO_DEPLOY_KEY: ${{ secrets.PRO_DEPLOY_KEY || secrets.SQL_EDITOR_PRO_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PRO_DEPLOY_KEY:-}" ]; then
+            echo "::error::PRO_DEPLOY_KEY is not set — cannot clone the private Pro extension"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+          printf '%s\n' "$PRO_DEPLOY_KEY" > ~/.ssh/datazen_pro
+          chmod 600 ~/.ssh/datazen_pro
+          printf '%s\n' \
+            'Host github.com-pro' \
+            '  HostName github.com' \
+            '  User git' \
+            '  IdentityFile ~/.ssh/datazen_pro' \
+            '  IdentitiesOnly yes' \
+            >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          git config --global --add url."git@github.com-pro:flyxl/datazen-extension-sql-editor-pro.git".insteadOf "https://github.com/flyxl/datazen-extension-sql-editor-pro.git"
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Clone, build and sign the Pro extension at the pinned revision
+        run: node scripts/resolve-pro.mjs --edition=pro
+
+      # The .dzx is a signed, platform-independent package built from the Pro
+      # source checkout, so it is produced here rather than in the one matrix
+      # job that used to clone the repo just to pack it.
+      - name: Pack the signed Pro .dzx
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          node scripts/pack-ep.mjs \
+            --extension=sql-editor-pro \
+            --mode=dzx \
+            --skip-build \
+            --out=artifacts/
+          ls -la artifacts/*.dzx
+        env:
+          DATAZEN_EP_SIGNING_PRIVATE_KEY: ${{ secrets.DATAZEN_EP_SIGNING_PRIVATE_KEY }}
+
+      - name: Upload the staged Pro extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-extension
+          path: src-tauri/resources/builtin-ep/sql-editor-pro
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload the signed Pro .dzx
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-dzx
+          path: artifacts/*.dzx
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     # Secrets (Deploy Keys, Windows signing) live in Environment "release"
     # — see docs/development/ci-private-plugins.md
+    needs: prepare-pro-extension
     environment: release
     permissions:
       contents: write
@@ -86,7 +175,7 @@ jobs:
             variant_suffix: "-all"
             needs_git: false
             needs_pro: true
-          # ── Akulaku Pro：定制驱动部署（全核心 + MongoDB + Kiwi + Superset + SQL Editor Pro）──
+          # ── Akulaku：定制驱动部署（全核心 + MongoDB + Kiwi + Superset + Pro；仅 Windows / macOS）──
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             os_label: windows-x64
@@ -106,14 +195,6 @@ jobs:
           - platform: macos-latest
             target: x86_64-apple-darwin
             os_label: macos-x64
-            drivers: "postgres,mysql,sqlite,redis,mongodb,kiwi,superset"
-            edition: "pro"
-            variant_suffix: "-akulaku"
-            needs_git: true
-            needs_pro: true
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            os_label: linux-x64
             drivers: "postgres,mysql,sqlite,redis,mongodb,kiwi,superset"
             edition: "pro"
             variant_suffix: "-akulaku"
@@ -169,6 +250,10 @@ jobs:
         with:
           workspaces: . -> target
           shared-key: ${{ matrix.target }}
+          # Retain workspace driver artifacts alongside dependency artifacts.
+          # Cargo checks fingerprints and rebuilds changed inputs/features.
+          # Parallel variants can only restore caches already saved by earlier jobs.
+          cache-workspace-crates: true
           cache-on-failure: true
 
       # Git-driver & Pro extension SKUs: read-only Deploy Keys for private repos.
@@ -278,6 +363,13 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install upx --no-progress
 
+      - name: Download the Pro extension built once for every variant
+        if: matrix.needs_pro
+        uses: actions/download-artifact@v4
+        with:
+          name: pro-extension
+          path: src-tauri/resources/builtin-ep/sql-editor-pro
+
       - name: Resolve drivers and build Tauri app
         shell: bash
         run: |
@@ -289,6 +381,8 @@ jobs:
           if [ "${{ matrix.edition }}" = "pro" ]; then
             EDITION_FLAG="--edition=pro"
           fi
+          # The signed Pro extension is already staged under builtin-ep from the
+          # prepare-pro-extension artifact, so resolve-pro uses it verbatim.
           node scripts/with-driver-inject.mjs --drivers="${{ matrix.drivers }}" ${EDITION_FLAG} -- node scripts/ci-tauri-build.mjs --target=${{ matrix.target }} ${UPDATER_FLAG} ${EDITION_FLAG}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -298,20 +392,87 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.variant_suffix == '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Pack signed SQL Editor Pro .dzx (Default Pro, once)
-        if: matrix.needs_pro && matrix.variant_suffix == '' && matrix.os_label == 'linux-x64'
+      - name: Verify Pro extension is bundled in app
+        if: matrix.needs_pro
         shell: bash
         run: |
-          mkdir -p artifacts
-          node scripts/pack-ep.mjs \
-            --extension=sql-editor-pro \
-            --mode=dzx \
-            --skip-build \
-            --out=artifacts/
-          ls -la artifacts/*.dzx
-        env:
-          DATAZEN_EP_SIGNING_PRIVATE_KEY: ${{ secrets.DATAZEN_EP_SIGNING_PRIVATE_KEY }}
+          # Note: with-driver-inject.mjs restores staging dirs after the child command,
+          # so src-tauri/resources/builtin-ep/ may already be cleared here.
+          # We verify the actual bundled output instead.
+          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
+          FAIL=0
 
+          # ── macOS: check .app bundle ──
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            APP_DIR=$(find "$BUNDLE_DIR/macos" -name "*.app" -type d 2>/dev/null | head -1)
+            if [ -z "$APP_DIR" ]; then
+              echo "::error::macOS .app bundle not found in $BUNDLE_DIR/macos"
+              ls -la "$BUNDLE_DIR/macos/" 2>/dev/null || echo "(no macOS bundle dir)"
+              FAIL=1
+            elif [ -f "$APP_DIR/Contents/Resources/builtin-ep/sql-editor-pro/dist/index.esm.js" ]; then
+              echo "✓ Pro extension found in macOS .app: $APP_DIR"
+              ls -la "$APP_DIR/Contents/Resources/builtin-ep/sql-editor-pro/"
+            else
+              echo "::error::Pro extension (builtin-ep) not found in macOS .app bundle"
+              echo "Contents of $APP_DIR/Contents/Resources/:"
+              ls -laR "$APP_DIR/Contents/Resources/" 2>/dev/null | head -40
+              FAIL=1
+            fi
+          fi
+
+          # ── Linux: check deb + AppImage ──
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            echo "::notice::[pro-verify] staging state before check:"
+            ls -la src-tauri/resources/builtin-ep/sql-editor-pro/dist/ 2>/dev/null || echo "::notice::[pro-verify] staging dir already restored (expected)"
+
+            DEB=$(find "$BUNDLE_DIR/deb" -name "*.deb" 2>/dev/null | head -1)
+            if [ -z "$DEB" ]; then
+              echo "::error::Linux deb package not found in $BUNDLE_DIR/deb"
+              FAIL=1
+            else
+              # Cache dpkg-deb listing once — avoids re-running for each check
+              # and prevents bash 3.2 pipeline exit-code issues with grep -q.
+              DEB_LISTING=$(dpkg-deb -c "$DEB" 2>/dev/null || true)
+              echo "$DEB_LISTING" | grep "builtin-ep/sql-editor-pro" | head -10
+              if echo "$DEB_LISTING" | grep -q "builtin-ep/sql-editor-pro/dist/index.esm.js"; then
+                echo "✓ Pro extension found in Linux deb: $DEB"
+              else
+                echo "::error::Pro extension (builtin-ep) not found in Linux deb package"
+                echo "::notice::[pro-verify] deb entries with 'builtin-ep':"
+                echo "$DEB_LISTING" | grep -i "builtin-ep" || echo "::notice::[pro-verify] (no builtin-ep entries)"
+                FAIL=1
+              fi
+            fi
+
+            # AppImage is a squashfs dump of the same resource tree — check it too.
+            APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" 2>/dev/null | head -1)
+            if [ -n "$APPIMAGE" ] && [ -f "$APPIMAGE" ]; then
+              chmod +x "$APPIMAGE" 2>/dev/null || true
+              if "$APPIMAGE" --appimage-extract "usr/lib/*/resources/builtin-ep/sql-editor-pro/dist/index.esm.js" >/dev/null 2>&1; then
+                echo "✓ Pro extension found in Linux AppImage"
+                rm -rf squashfs-root
+              else
+                echo "::notice::[pro-verify] builtin-ep not confirmed in AppImage (extraction probe failed)"
+                rm -rf squashfs-root
+              fi
+            fi
+          fi
+
+          # ── Windows: NSIS installer check (portable is verified in its own step) ──
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "ℹ Windows portable archive is verified in the dedicated packaging step."
+          fi
+
+          exit $FAIL
+
+      - name: Download the signed Pro .dzx (Default Pro, once)
+        if: matrix.needs_pro && matrix.variant_suffix == '' && matrix.os_label == 'linux-x64'
+        uses: actions/download-artifact@v4
+        with:
+          name: pro-dzx
+          path: artifacts/
+
+      # ── Windows portable: includes runtime resources (prompts + Pro builtin-ep) ──
       - name: Package Windows portable archive
         if: runner.os == 'Windows'
         shell: pwsh
@@ -329,7 +490,7 @@ jobs:
             throw "Portable resources not found: $prompts"
           }
 
-          $stageDir = Join-Path $env:RUNNER_TEMP "datazen-portable-${{ matrix.variant_suffix }}"
+          $stageDir = Join-Path $env:RUNNER_TEMP "datazen-portable"
           if (Test-Path -LiteralPath $stageDir) {
             Remove-Item -LiteralPath $stageDir -Recurse -Force
           }
@@ -337,77 +498,146 @@ jobs:
           Copy-Item -LiteralPath $executable -Destination (Join-Path $stageDir "DataZen.exe")
           Copy-Item -LiteralPath $prompts -Destination (Join-Path $stageDir "prompts") -Recurse
 
+          # Include Pro extension resources (builtin-ep) for full feature parity with installers.
+          $builtinEp = Join-Path $releaseDir "builtin-ep"
+          if (Test-Path -LiteralPath $builtinEp -PathType Container) {
+            Copy-Item -LiteralPath $builtinEp -Destination (Join-Path $stageDir "builtin-ep") -Recurse
+            Write-Host "Included builtin-ep (Pro extensions) in portable archive"
+          } else {
+            Write-Warning "builtin-ep directory not found at $builtinEp — portable archive will not include Pro extensions"
+          }
+
           # Keep future adjacent runtime libraries with the portable executable.
           Get-ChildItem -LiteralPath $releaseDir -File -Filter "*.dll" | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $stageDir
           }
 
           $version = (Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json).version
-          $label = "${{ matrix.os_label }}${{ matrix.variant_suffix }}"
+          $osLabel = "${{ matrix.os_label }}"
+          $variant = "${{ matrix.variant_suffix }}"
+          $variantTrimmed = $variant.TrimStart('-')
           New-Item -ItemType Directory -Path "artifacts" -Force | Out-Null
-          # Put the OS immediately after the product name so GitHub's
-          # lexicographic asset sorting keeps every OS together. Keep the
-          # detailed label at the end for compatibility with existing links.
-          $archive = Join-Path "artifacts" "DataZen-windows-${version}-portable-${label}.zip"
+          if ($variantTrimmed) {
+            $archive = Join-Path "artifacts" "DataZen-$version-$osLabel-portable-$variantTrimmed.zip"
+          } else {
+            $archive = Join-Path "artifacts" "DataZen-$version-$osLabel-portable.zip"
+          }
           Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $archive -CompressionLevel Optimal -Force
           Write-Host "Created portable archive: $archive"
 
-      - name: Rename artifacts with platform and variant label
+      # ── Canonical artifact naming: DataZen-{Version}-{Platform}-{Arch}[-{Variant}].{ext} ──
+      - name: Rename artifacts with canonical names
         shell: bash
         run: |
           BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
-          LABEL="${{ matrix.os_label }}${{ matrix.variant_suffix }}"
-          OS_GROUP="${{ matrix.os_label }}"
-          OS_GROUP="${OS_GROUP%%-*}"
+          VERSION=$(node -p "require('./package.json').version")
+          OS_LABEL="${{ matrix.os_label }}"
+          VARIANT="${{ matrix.variant_suffix }}"
+          VARIANT="${VARIANT#-}"          # strip leading hyphen
+          PLATFORM="${OS_LABEL%%-*}"      # macos / windows / linux
+          ARCH="${OS_LABEL#*-}"           # arm64 / x64
+
           mkdir -p artifacts
 
+          installer_type() {
+            local name="$1"
+            case "$name" in
+              *.app.tar.gz) echo "tar" ;;
+              *.tar.gz)     echo "tar" ;;
+              *.dmg)        echo "dmg" ;;
+              *.exe)        echo "nsis" ;;
+              *.AppImage)   echo "appimage" ;;
+              *.deb)        echo "deb" ;;
+              *.rpm)        echo "rpm" ;;
+              *)            echo "" ;;
+            esac
+          }
+
+          file_ext() {
+            local name="$1"
+            case "$name" in
+              *.app.tar.gz) echo "tar.gz" ;;
+              *.tar.gz)     echo "tar.gz" ;;
+              *.dmg)        echo "dmg" ;;
+              *.exe)        echo "exe" ;;
+              *.AppImage)   echo "AppImage" ;;
+              *.deb)        echo "deb" ;;
+              *.rpm)        echo "rpm" ;;
+              *)            echo "" ;;
+            esac
+          }
+
+          canonical_name() {
+            local ext="$1"
+            if [ -n "$VARIANT" ]; then
+              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
+            else
+              echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}.${ext}"
+            fi
+          }
+
           shopt -s nullglob
+
+          # Process non-sig files first, writing a mapping file for sig resolution
+          # (avoids bash 4+ associative arrays which break on macOS bash 3.2)
+          MAPPING_FILE=$(mktemp)
           for file in \
             "$BUNDLE_DIR"/dmg/*.dmg \
             "$BUNDLE_DIR"/macos/*.tar.gz \
-            "$BUNDLE_DIR"/macos/*.sig \
             "$BUNDLE_DIR"/nsis/*.exe \
-            "$BUNDLE_DIR"/nsis/*.sig \
             "$BUNDLE_DIR"/deb/*.deb \
             "$BUNDLE_DIR"/rpm/*.rpm \
-            "$BUNDLE_DIR"/appimage/*.AppImage \
+            "$BUNDLE_DIR"/appimage/*.AppImage; do
+            [ -f "$file" ] || continue
+            base=$(basename "$file")
+            type=$(installer_type "$base")
+            ext=$(file_ext "$base")
+            [ -z "$type" ] && continue
+
+            newbase=$(canonical_name "$ext")
+            echo "${base}=${newbase}" >> "$MAPPING_FILE"
+            cp "$file" "artifacts/$newbase"
+            echo "  $base → $newbase"
+          done
+
+          # Process sig files (must follow their main file's new name)
+          for file in \
+            "$BUNDLE_DIR"/macos/*.sig \
+            "$BUNDLE_DIR"/nsis/*.sig \
             "$BUNDLE_DIR"/appimage/*.sig; do
             [ -f "$file" ] || continue
             base=$(basename "$file")
-            if [[ "$base" == *.sig ]]; then
-              # Signature files must follow their bundle's renamed name so the
-              # updater latest.json generator can resolve "<bundle>.<ext>.sig".
-              sigstem="${base%.sig}"
-              if [[ "$sigstem" == *.tar.gz ]]; then
-                inner="${sigstem%.tar.gz}"
-                newsigstem="${inner}-${LABEL}.tar.gz"
-              elif [[ "$sigstem" == *.AppImage ]]; then
-                inner="${sigstem%.AppImage}"
-                newsigstem="${inner}-${LABEL}.AppImage"
-              else
-                inner="${sigstem%.*}"
-                ext="${sigstem##*.}"
-                newsigstem="${inner}-${LABEL}.${ext}"
-              fi
-              newname="${newsigstem}.sig"
-            elif [[ "$base" == *.tar.gz ]]; then
-              stem="${base%.tar.gz}"
-              newname="${stem}-${LABEL}.tar.gz"
-            elif [[ "$base" == *.AppImage ]]; then
-              stem="${base%.AppImage}"
-              newname="${stem}-${LABEL}.AppImage"
-            else
-              stem="${base%.*}"
-              ext="${base##*.}"
-              newname="${stem}-${LABEL}.${ext}"
+            sigstem="${base%.sig}"
+
+            # Look up the mapping via grep (works on bash 3.2)
+            newbase=$(grep "^${sigstem}=" "$MAPPING_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
+
+            if [ -z "$newbase" ]; then
+              ext=$(file_ext "$sigstem")
+              [ -z "$ext" ] && { echo "  SKIP unrecognized sig: $base"; continue; }
+              newbase="$(canonical_name "$ext")"
             fi
-            # GitHub sorts release assets by name. Prefixing the OS group
-            # keeps Linux, macOS and Windows assets together regardless of
-            # architecture or release variant.
-            newname="${OS_GROUP}-${newname}"
-            cp "$file" "artifacts/$newname"
+
+            cp "$file" "artifacts/${newbase}.sig"
+            echo "  $base → ${newbase}.sig"
           done
+
+          rm -f "$MAPPING_FILE"
           ls -la artifacts/ || true
+
+      - name: Resolve release notes file
+        id: release-notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES_FILE="docs/release-notes/${TAG}-github.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "✅ Found release notes: $NOTES_FILE"
+          else
+            echo "⚠️ No release notes found at $NOTES_FILE, release body will be empty"
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload artifacts to release
         # v3 runs on Node 24 (v2 is Node 20 and breaks under FORCE_JAVASCRIPT_ACTIONS_TO_NODE24
@@ -416,42 +646,7 @@ jobs:
         with:
           draft: true
           files: artifacts/*
-          body: |
-            ## 版本说明
-
-            本版本为 **DataZen** 正式发布版，集成 **SQL Editor** 增强套件：
-            - **SQL Editor 核心增强**：表结构/字段智能悬浮预览 (Hover)、函数签名实时帮助 (Signature Help)、外键 JOIN 智能补全、智能 Intention 意图操作（星号展开、限定符补全等）、拖拽精准光标与 Paste-as-IN 高级粘贴、语句运行指示与高级参数绑定面板。
-            - **全量原生数据库驱动**：内置 PostgreSQL、MySQL、SQLite、Redis、MongoDB、SQL Server、ClickHouse、DuckDB、Elasticsearch 等全部原生驱动。
-
-            ### 发行变体
-            - **DataZen (Basic)**（默认推荐，体积最小）：4 核心原生驱动（PostgreSQL、MySQL、SQLite、Redis）+ SQL Editor 增强
-            - **DataZen (All)**（文件名含 `-all`）：全部原生驱动（PostgreSQL、MySQL、SQLite、Redis、MongoDB、SQL Server、ClickHouse、DuckDB、Elasticsearch 等）+ SQL Editor 增强
-            - **Akulaku**（文件名含 `-akulaku`）：DataZen + 特定渠道定制驱动（Kiwi、Superset）
-
-            源码构建可进一步裁剪：`DATAZEN_DRIVERS=postgres,mongodb` 等显式列表，只编译需要的类型。
-
-            ## 安装说明
-
-            ### macOS
-            由于应用未经过 Apple 公证，首次打开时可能提示"已损坏"或"无法验证"。请按以下步骤操作：
-
-            1. 安装应用后，打开终端运行：
-               ```
-               xattr -cr /Applications/DataZen.app
-               ```
-            2. 然后正常打开应用即可。
-
-            或者：右键点击应用 → 选择"打开" → 在弹出的对话框中点击"打开"。
-
-            ### Windows
-            - **NSIS 安装包**：运行 `.exe` 并按提示安装。
-            - **Portable**：解压 `*-windows-*-portable-windows-x64*.zip`，直接运行 `DataZen.exe`，无需安装。
-
-            ### Linux (x86_64)
-            - **AppImage**：`chmod +x *.AppImage` 后直接运行（部分发行版需安装 `libfuse2`）
-            - **deb**：`sudo apt install ./DataZen-*-linux-x64.deb`
-            - **rpm**：`sudo rpm -i ./DataZen-*-linux-x64.rpm`（或发行版对应的包管理器）
-            运行时依赖 WebKitGTK（常见包名：`libwebkit2gtk-4.1-0` / `webkit2gtk4.1`）。
+          body_path: ${{ steps.release-notes.outputs.path || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -526,12 +721,14 @@ jobs:
           found=0
           for f in assets/*; do
             base=$(basename "$f")
+            # Skip variant builds, signatures, and non-installer files
             case "$base" in
-              *-all.*|*-akulaku.*) continue ;;
-              *.sig|latest.json) continue ;;
+              *-all-*) continue ;;
+              *-akulaku-*) continue ;;
+              *.sig|latest.json|*.dzx) continue ;;
             esac
             case "$base" in
-              *-macos-arm64.dmg|*-macos-x64.dmg|*-windows-x64.exe|*-windows-*-portable-windows-x64.zip|*-linux-x64.deb|*-linux-x64.rpm|*-linux-x64.AppImage)
+              *-macos-*.dmg|*-macos-*.tar.gz|*-windows-*-nsis.exe|*-windows-*-portable.zip|*-linux-*.deb|*-linux-*.rpm|*-linux-*.AppImage)
                 sha=$(sha256sum "$f" | awk '{print $1}')
                 echo "| \`$base\` | \`$sha\` |" >> checksums.md
                 found=$((found + 1))

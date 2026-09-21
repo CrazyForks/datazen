@@ -157,3 +157,7 @@ e2e/.demo-recording/
 .cursor/mcp.json.bak
 opencode.jsonc
 feat/
+e2e/.demo-recording-v2/
+e2e/demo-recording-v2.mp4
+e2e/demo-recording-v2.webm
+datazen-redis-work/

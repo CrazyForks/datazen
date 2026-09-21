@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DataZen 入门指南：5 分钟连接你的第一个数据库 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis 等主流数据库，内置 AI 辅助功能。本文手把手教你 5 分钟内完成下载、安装并连接第一个数据库。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-getting-started.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-getting-started.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-getting-started.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-getting-started.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="DataZen 入门指南：5 分钟连接你的第一个数据库" />
+    <meta
+      property="og:description"
+      content="DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis 等主流数据库，内置 AI 辅助功能。本文手把手教你 5 分钟内完成下载、安装并连接第一个数据库。"
+    />
+    <meta
+      property="og:url"
+      content="https://flyxl.github.io/datazen/zh/blog-getting-started.html"
+    />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DataZen 入门指南：5 分钟连接你的第一个数据库" />
+    <meta
+      name="twitter:description"
+      content="DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis 等主流数据库，内置 AI 辅助功能。本文手把手教你 5 分钟内完成下载、安装并连接第一个数据库。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "DataZen 入门指南：5 分钟连接你的第一个数据库",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-09-18",
+        "description": "DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis 等主流数据库，内置 AI 辅助功能。本文手把手教你 5 分钟内完成下载、安装并连接第一个数据库。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-getting-started.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "DataZen 入门指南：5 分钟连接你的第一个数据库",
+            "item": "https://flyxl.github.io/datazen/zh/blog-getting-started.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>DataZen 入门指南：5 分钟连接你的第一个数据库</h1>
+        <p>
+          DataZen 是免费开源的跨平台桌面数据库管理工具，支持 PostgreSQL、MySQL、SQLite、Redis
+          等主流数据库，内置 AI 辅助功能。本文手把手教你 5 分钟内完成下载、安装并连接第一个数据库。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 9 月 18 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>DataZen 入门指南：5 分钟连接你的第一个数据库</h1>
+        <p>
+          你是否厌倦了在终端和 GUI
+          之间反复切换来管理数据库？是否在寻找一款免费、跨平台、开箱即用的数据库管理工具？DataZen
+          就是为了解决这些问题而生的。
+        </p>
+        <p>本文将带你从零开始，在 5 分钟内完成下载安装，并成功连接你的第一个数据库。</p>
+        <h2>为什么选择 DataZen？</h2>
+        <p>市面上的数据库管理工具不少，但 DataZen 有几个鲜明的特点：</p>
+        <ul>
+          <li>
+            <strong>完全免费开源</strong> — 不需要付费许可证，不需要注册账号，下载即用。源码托管在
+            GitHub，你可以审计、参与贡献。
+          </li>
+          <li>
+            <strong>跨平台</strong> — macOS（Intel 和 Apple Silicon）、Windows、Linux
+            全覆盖。切换系统不用重新学习工具。
+          </li>
+          <li>
+            <strong>内置 AI 辅助</strong> — 写 SQL 不顺畅？AI Chat
+            可以帮你生成查询、优化语句、解释错误信息。支持 OpenAI、Anthropic、DeepSeek、Ollama
+            等多种 Provider。
+          </li>
+          <li>
+            <strong>支持主流数据库</strong> —
+            PostgreSQL、MySQL、MariaDB、SQLite、Redis、ClickHouse、MongoDB……开箱即连。
+          </li>
+          <li>
+            <strong>现代技术栈</strong> — 基于 Tauri v2（Rust + React），启动快、占用低，不是
+            Electron 那种&quot;吃内存大户&quot;。
+          </li>
+        </ul>
+        <p>简单说，DataZen 把&quot;好用&quot;和&quot;免费&quot;这两件事同时做到了。</p>
+        <h2>第一步：下载安装</h2>
+        <p>
+          访问
+          <a href="https://flyxl.github.io/datazen/download.html">DataZen 官网下载页</a
+          >，根据你的操作系统选择对应安装包：
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>操作系统</th>
+              <th>安装包格式</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>macOS (Apple Silicon)</td>
+              <td><code>.dmg</code></td>
+              <td>原生 ARM，性能最佳</td>
+            </tr>
+            <tr>
+              <td>macOS (Intel)</td>
+              <td><code>.dmg</code></td>
+              <td>Intel Mac 专用</td>
+            </tr>
+            <tr>
+              <td>Windows</td>
+              <td><code>.msi</code> / <code>.exe</code></td>
+              <td>标准安装程序</td>
+            </tr>
+            <tr>
+              <td>Linux</td>
+              <td><code>.deb</code> / <code>.AppImage</code></td>
+              <td>支持 Ubuntu/Debian 系，AppImage 通用</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>macOS 安装</h3>
+        <p>
+          打开 <code>.dmg</code> 文件，将 DataZen 图标拖入 Applications
+          文件夹。首次启动时，系统可能会提示&quot;无法验证开发者&quot;——前往
+          <strong>系统设置 → 隐私与安全性</strong>，点击 <strong>仍要打开</strong> 即可。
+        </p>
+        <h3>Windows 安装</h3>
+        <p>
+          双击 <code>.msi</code> 安装包，按照向导一路
+          Next。安装完成后，从开始菜单或桌面快捷方式启动。
+        </p>
+        <h3>Linux 安装</h3>
+        <p>如果你用 Ubuntu/Debian，直接安装 <code>.deb</code> 包：</p>
+        <pre><code class="language-bash">sudo dpkg -i datazen_*.deb
+</code></pre>
+        <p>如果选择 <code>.AppImage</code>，添加执行权限后直接运行：</p>
+        <pre><code class="language-bash">chmod +x datazen_*.AppImage
+./datazen_*.AppImage
+</code></pre>
+        <p>安装完毕后，你会看到 DataZen 的欢迎页面——简洁、现代、没有多余的广告。</p>
+        <h2>第二步：连接你的第一个数据库</h2>
+        <p>我们以 PostgreSQL 为例，演示如何创建并连接一个数据库。</p>
+        <h3>打开连接管理器</h3>
+        <p>
+          点击左侧导航栏的 <strong>+</strong> 按钮，或者在欢迎页面选择 <strong>新建连接</strong>。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/getting-started-02-new-connection.png"
+            alt="新建连接入口"
+          />
+        </p>
+        <h3>选择数据库类型</h3>
+        <p>
+          在数据库类型下拉菜单中选择 <strong>PostgreSQL</strong>。DataZen
+          会自动显示该数据库特有的连接字段。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/getting-started-03-select-db-type.png"
+            alt="选择数据库类型"
+          />
+        </p>
+        <h3>填写连接信息</h3>
+        <p>填入以下信息：</p>
+        <ul>
+          <li><strong>主机</strong>：<code>localhost</code>（本地数据库）或远程 IP 地址</li>
+          <li><strong>端口</strong>：<code>5432</code>（PostgreSQL 默认端口）</li>
+          <li><strong>用户名</strong>：你的数据库用户名</li>
+          <li><strong>密码</strong>：你的数据库密码</li>
+          <li><strong>数据库</strong>：要连接的数据库名</li>
+        </ul>
+        <p>你还可以点击左侧的标签页，配置 SSL、SSH 隧道等高级选项——不过入门阶段保持默认就好。</p>
+        <h3>测试并保存</h3>
+        <p>
+          点击
+          <strong>测试连接</strong>
+          按钮，如果一切正常，会显示绿色的&quot;连接成功&quot;提示。确认无误后，点击
+          <strong>保存</strong>。
+        </p>
+        <p>恭喜！你已经成功创建了第一个数据库连接。</p>
+        <h2>第三步：基本操作</h2>
+        <p>连接成功后，DataZen 的主工作区就呈现在你面前了。我们来做几个基本操作。</p>
+        <h3>浏览 Schema</h3>
+        <p>
+          左侧的连接树展示了数据库的完整结构：表、视图、存储过程、触发器等。展开
+          <code>public</code> schema，你能看到所有表的列表，包括字段名、类型和主键标记。
+        </p>
+        <h3>执行 SQL 查询</h3>
+        <p>点击顶部的 <strong>查询</strong> 标签页，打开 SQL 编辑器。输入一条简单的查询：</p>
+        <pre><code class="language-sql">SELECT * FROM users LIMIT 10;
+</code></pre>
+        <p>
+          按 <code>Ctrl + Enter</code>（或
+          <code>Cmd + Enter</code>）执行。查询结果会以表格形式呈现在下方，支持排序、筛选、导出。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/getting-started-06-query-result.png"
+            alt="SQL 查询执行结果"
+          />
+        </p>
+        <h3>一些实用小功能</h3>
+        <ul>
+          <li>
+            <strong>自动补全</strong>：输入 <code>SELECT</code> 后按空格，表名和字段名会自动弹出。
+          </li>
+          <li>
+            <strong>格式化 SQL</strong>：选中一段 SQL，按
+            <code>Shift + Alt + F</code>，自动美化排版。
+          </li>
+          <li>
+            <strong>安全模式</strong>：默认开启，防止误操作。在只读模式下执行 <code>DELETE</code> 或
+            <code>UPDATE</code> 会被拦截，需要手动关闭只读开关后才能执行写操作。
+          </li>
+        </ul>
+        <h2>下一步：探索更多功能</h2>
+        <p>连接数据库只是开始。DataZen 还有一系列强大功能等你发掘：</p>
+        <ul>
+          <li>
+            <strong>AI Chat</strong> — 用自然语言描述你的需求，AI 会帮你生成对应的 SQL
+            语句。也可以选中一段 SQL，让 AI 解释它在做什么。
+          </li>
+          <li>
+            <strong>数据导出</strong> — 将查询结果导出为 CSV、JSON、SQL 等格式，方便与其他工具协作。
+          </li>
+          <li><strong>ER 图</strong> — 可视化数据库的表关系，一眼看清外键和关联。</li>
+          <li><strong>Schema Diff</strong> — 对比两个数据库的结构差异，快速生成迁移 SQL。</li>
+          <li>
+            <strong>图表可视化</strong> — 对查询结果生成柱状图、折线图、饼图等，数据一目了然。
+          </li>
+          <li>
+            <strong>Workflow</strong> — 用 YAML 定义自动化工作流，批量执行
+            SQL、定时备份、跨库同步等。
+          </li>
+          <li>
+            <strong>MCP Server</strong> — 将 DataZen 作为 MCP 服务器运行，让 AI
+            助手直接访问你的数据库。
+          </li>
+        </ul>
+        <p>
+          建议从
+          <a href="https://flyxl.github.io/datazen/features.html">功能页面</a>
+          开始，逐步探索这些能力。
+        </p>
+        <h2>写在最后</h2>
+        <p>
+          数据库管理工具的选择很多，但 DataZen 用&quot;免费开源 + 跨平台 + AI
+          辅助&quot;这个组合，给出了一个很有吸引力的答案。无论你是开发者、DBA、还是数据分析师，5
+          分钟的上手时间，换来的是一整套高效的数据库工作流。
+        </p>
+        <p>现在就试试吧——完全免费，无需注册。</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

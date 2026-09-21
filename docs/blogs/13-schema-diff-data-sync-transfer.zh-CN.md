@@ -1,6 +1,6 @@
 # DataZen 架构设计（十三）：Schema Diff、Data Sync 与 Transfer 的边界
 
-> “同步数据库”是一个容易误导的产品词。只改结构、比较同族数据、把异构数据搬过去，前置条件、风险和执行模型都不同。DataZen 将它们拆成 Structure Sync、Data Synchronization 和 Data Transfer。
+> “同步数据库”是一个容易误导的产品词。只改结构、比较同族数据、把异构数据搬过去，前置条件、风险和执行模型都不同。DataZen 将它们拆成 Schema Diff、Data Synchronization 和 Data Transfer。
 
 ## 三个产品问题
 
@@ -36,7 +36,7 @@ keyset 不依赖越来越昂贵的 offset，且能在 `jobId` 取消标志下停
 
 Apply 阶段使用专用执行通道，遵循目标连接的 read_only、事务和取消策略。执行完可以重新 Compare，直到差异为零，形成可验证闭环。
 
-## Structure Sync 的 DDL 计划
+## Schema Diff 的 DDL 计划
 
 Schema Diff 比较表、列、索引、约束等结构，生成可审核的 DDL Plan。用户确认后再部署；它不读取或复制行数据，也不应该复用 Data Sync 的 ChangeSet。
 

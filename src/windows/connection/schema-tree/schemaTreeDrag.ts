@@ -22,7 +22,7 @@ export interface SchemaObjectDragPayloadV1 {
   /** Fully-qualified namespace of the object. */
   namespace: {
     database: string;
-    schema?: string;
+    schema: string | null;
     table: string;
   };
   /** Connection that owns this object. */
@@ -38,7 +38,7 @@ export interface SchemaObjectDragPayloadV1 {
  * Kept for backward-compatibility until the editor migrates to the versioned MIME.
  */
 export interface LegacyTableDragPayload {
-  tables: Array<{ tableName: string; schema?: string }>;
+  tables: Array<{ tableName: string; schema: string | null }>;
   connectionId: string;
   databaseType: string;
 }
@@ -46,7 +46,7 @@ export interface LegacyTableDragPayload {
 export interface DragPayloadOptions {
   kind: 'table' | 'view';
   database: string;
-  schema?: string;
+  schema: string | null;
   table: string;
   connectionId: string;
   dbSessionId?: string;

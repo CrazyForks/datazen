@@ -9,6 +9,16 @@ import type {
   WidgetRun,
 } from '../types/dashboard';
 
+function runDashboardWidgetsOnce(dashboard: Dashboard): void {
+  void Promise.all(
+    dashboard.widgets
+      .filter((widget) => widget.enabled)
+      .map((widget) =>
+        dashboardCommands.runDashboardWidget(dashboard.id, widget.id).catch(() => undefined),
+      ),
+  );
+}
+
 export const dashboardCommands = {
   listDashboards: () => invoke<Dashboard[]>('list_dashboards'),
 
@@ -33,22 +43,30 @@ export const dashboardCommands = {
   runDashboardWidget: (dashboardId: string, widgetId: string) =>
     invoke<WidgetRun>('run_dashboard_widget', { dashboardId, widgetId }),
 
-  createWidgetFromSql: (params: {
+  createWidgetFromSql: async (params: {
     dashboardId: string;
     connectionId: string;
     sql: string;
     title?: string;
     viewMode: ViewMode;
     chartConfig?: ChartConfig;
-  }) => invoke<CreateWidgetResult>('create_widget_from_sql', { params }),
+  }) => {
+    const result = await invoke<CreateWidgetResult>('create_widget_from_sql', { params });
+    runDashboardWidgetsOnce(result.dashboard);
+    return result;
+  },
 
-  createWidgetFromWorkflow: (params: {
+  createWidgetFromWorkflow: async (params: {
     dashboardId: string;
     workflowId: string;
     title?: string;
     viewMode: ViewMode;
     chartConfig?: ChartConfig;
-  }) => invoke<CreateWidgetResult>('create_widget_from_workflow', { params }),
+  }) => {
+    const result = await invoke<CreateWidgetResult>('create_widget_from_workflow', { params });
+    runDashboardWidgetsOnce(result.dashboard);
+    return result;
+  },
 
   updateHiddenWidgetSql: (params: { workflowId: string; connectionId: string; sql: string }) =>
     invoke<void>('update_hidden_widget_sql', { params }),
@@ -56,5 +74,9 @@ export const dashboardCommands = {
   exportWithDialog: (dashboardId: string, defaultFileName: string) =>
     invoke<boolean>('export_dashboard_with_dialog', { dashboardId, defaultFileName }),
 
-  importWithDialog: () => invoke<Dashboard | null>('import_dashboard_with_dialog'),
+  importWithDialog: async () => {
+    const dashboard = await invoke<Dashboard | null>('import_dashboard_with_dialog');
+    if (dashboard) runDashboardWidgetsOnce(dashboard);
+    return dashboard;
+  },
 };

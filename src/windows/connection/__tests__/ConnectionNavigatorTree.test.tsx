@@ -141,15 +141,15 @@ vi.mock('../../../extensions/generated', () => {
   };
   return {
     DRIVER_DB_ENTRIES,
-    PLUGIN_DB_ENTRIES: DRIVER_DB_ENTRIES,
+    DRIVER_DB_ENTRIES: DRIVER_DB_ENTRIES,
     DRIVER_ICON_ENTRIES: {},
     DRIVER_ICON_PARENTS: {},
-    PLUGIN_SQL_DIALECTS: {},
-    getPluginSchemaTree: () => undefined,
-    getPluginConnectionForm: () => undefined,
-    getPluginConnectionAdvanced: () => undefined,
-    getPluginValidator: () => undefined,
-    getPluginClipboardParsers: () => [],
+    DRIVER_SQL_DIALECTS: {},
+    getDriverSchemaTree: () => undefined,
+    getDriverConnectionForm: () => undefined,
+    getDriverConnectionAdvanced: () => undefined,
+    getDriverValidator: () => undefined,
+    getDriverClipboardParsers: () => [],
   };
 });
 
@@ -298,6 +298,8 @@ const panelStoreState = {
 const mockSetPendingQueryHistory = vi.fn((id: string | null) => {
   panelStoreState.pendingQueryHistoryConnectionId = id;
 });
+const mockRemovePanelsForDatabase = vi.fn();
+const mockRemovePanelsForRelation = vi.fn();
 vi.mock('../../../stores/panelStore', () => ({
   usePanelStore: Object.assign(
     (sel: (s: typeof panelStoreState) => unknown) => sel(panelStoreState),
@@ -305,6 +307,8 @@ vi.mock('../../../stores/panelStore', () => ({
       getState: () => ({
         pendingQueryHistoryConnectionId: panelStoreState.pendingQueryHistoryConnectionId,
         setPendingQueryHistory: mockSetPendingQueryHistory,
+        removePanelsForDatabase: mockRemovePanelsForDatabase,
+        removePanelsForRelation: mockRemovePanelsForRelation,
       }),
     },
   ),
@@ -624,7 +628,7 @@ describe('ConnectionNavigatorTree multi-db table selection', () => {
       // F1: no use_database IPC — activation only moves the local context.
       expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
     });
-    expect(onSelectTable).toHaveBeenCalledWith('users', undefined, 'db_a');
+    expect(onSelectTable).toHaveBeenCalledWith('users', null, 'db_a');
   });
 
   it('passes postgresql schema when opening a table under a schema node', async () => {
@@ -827,7 +831,6 @@ describe('ConnectionNavigatorTree drop database', () => {
     await triggerDropDatabase(findByText, 'db_a');
 
     await waitFor(() => {
-      expect(mockGetTables).toHaveBeenCalledWith('conn-1', 'postgres');
       expect(useSchemaStore.getState().currentDatabase).toBe('postgres');
       expect(mockDriverExecute).toHaveBeenCalledWith({
         dbSessionId: 'conn-1',
@@ -855,7 +858,6 @@ describe('ConnectionNavigatorTree drop database', () => {
     await triggerDropDatabase(findByText, 'db_a');
 
     await waitFor(() => {
-      expect(mockGetTables).toHaveBeenCalledWith('conn-1', 'postgres');
       expect(mockDriverExecute).toHaveBeenCalledWith({
         dbSessionId: 'conn-1',
         command: 'drop_database',
@@ -878,6 +880,46 @@ describe('ConnectionNavigatorTree drop database', () => {
     await waitFor(() => {
       expect(onShowMessage).toHaveBeenCalledWith('permission denied', 'error');
     });
+  });
+
+  it('closes tabs bound to the dropped database after a successful drop', async () => {
+    mockRemovePanelsForDatabase.mockClear();
+    const { findByText, queryAllByText } = render(<ConnectionNavigatorTree {...baseProps} />);
+
+    await ensureDbTableVisible(findByText, queryAllByText, 'db_a', 'users');
+    await waitFor(() => {
+      expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
+    });
+
+    await triggerDropDatabase(findByText, 'db_a');
+
+    await waitFor(() => {
+      expect(mockDriverExecute).toHaveBeenCalledWith({
+        dbSessionId: 'conn-1',
+        command: 'drop_database',
+        input: { name: 'db_a' },
+      });
+    });
+    await waitFor(() => {
+      expect(mockRemovePanelsForDatabase).toHaveBeenCalledWith('cfg-mysql', 'db_a', 'db_a');
+    });
+  });
+
+  it('keeps tabs open when the drop fails', async () => {
+    mockRemovePanelsForDatabase.mockClear();
+    mockDriverExecute.mockRejectedValueOnce(new Error('permission denied'));
+    const onShowMessage = vi.fn();
+    const { findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} onShowMessage={onShowMessage} />,
+    );
+
+    await waitFor(() => findByText('db_a'));
+    await triggerDropDatabase(findByText, 'db_a');
+
+    await waitFor(() => {
+      expect(onShowMessage).toHaveBeenCalledWith('permission denied', 'error');
+    });
+    expect(mockRemovePanelsForDatabase).not.toHaveBeenCalled();
   });
 });
 
@@ -1695,7 +1737,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
         '/data/app.db',
       );
     });
-    expect(onSelectTable).toHaveBeenCalledWith('settings', undefined, '/data/app.db');
+    expect(onSelectTable).toHaveBeenCalledWith('settings', null, '/data/app.db');
   });
 
   it('refresh paths reload expanded categories and single-db tables', async () => {
@@ -2091,7 +2133,6 @@ describe('ConnectionNavigatorTree multi-db tree variants', () => {
     await triggerDropDatabase(findByText, 'db_a');
 
     await waitFor(() => {
-      expect(mockGetTables).toHaveBeenCalledWith('conn-1', 'postgres');
       expect(mockDriverExecute).toHaveBeenCalledWith({
         dbSessionId: 'conn-1',
         command: 'drop_database',
@@ -2320,6 +2361,7 @@ describe('ConnectionNavigatorTree schema context menu', () => {
     });
     await activateDatabaseContext(findByText, 'db_a', 'users');
     mockExecuteQuery.mockClear();
+    mockRemovePanelsForRelation.mockClear();
 
     await openMenuAndPick((await findByText('orders')).closest('button')!, 'drop');
 
@@ -2331,6 +2373,9 @@ describe('ConnectionNavigatorTree schema context menu', () => {
         'db_b',
         null,
       );
+    });
+    await waitFor(() => {
+      expect(mockRemovePanelsForRelation).toHaveBeenCalledWith('cfg-mysql', 'orders', 'db_b');
     });
   });
 
@@ -2755,7 +2800,7 @@ describe('ConnectionNavigatorTree path-hierarchy namespace trees', () => {
     // Re-query mv1: the virtual list recreates row nodes on every render.
     fireEvent.click(container.querySelector('[data-item-name="users"]')!);
     await waitFor(() => {
-      expect(onSelectTable).toHaveBeenCalledWith('users', undefined, 'public');
+      expect(onSelectTable).toHaveBeenCalledWith('users', null, 'public');
     });
 
     const mvButton = container.querySelector('[data-item-name="mv1"]')!.closest('button')!;
@@ -2835,7 +2880,7 @@ describe('ConnectionNavigatorTree key-value stores', () => {
     await findByText('db0');
     fireEvent.click(container.querySelector('[data-tree-node="kv-db"]')!);
     expect(baseProps.onSelectConnection).toHaveBeenCalledWith('cfg-kv');
-    expect(onSelectTable).toHaveBeenCalledWith('db0');
+    expect(onSelectTable).toHaveBeenCalledWith('db0', null, 'db0');
   });
 
   it('shows a loading placeholder while the database list is pending', async () => {

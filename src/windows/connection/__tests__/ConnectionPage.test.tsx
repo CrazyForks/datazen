@@ -407,10 +407,11 @@ describe('ConnectionPage', () => {
     });
 
     render(<ConnectionPage />);
-    await waitFor(() => expect(screen.getByTestId('mock-content-view')).toBeInTheDocument(), {
+    await waitFor(() => expect(screen.getByText('conn.connecting')).toBeInTheDocument(), {
       timeout: 2000,
     });
-    expect(screen.getByText('conn.connecting')).toBeInTheDocument();
+    // ContentView is hidden while connecting to avoid duplicate loading indicators
+    expect(screen.queryByTestId('mock-content-view')).not.toBeInTheDocument();
     resolveConnect('conn-slow');
     await waitFor(() => expect(screen.getByTestId('mock-content-view')).toBeInTheDocument());
   });
@@ -427,8 +428,10 @@ describe('ConnectionPage', () => {
     expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('workspace-nav-dashboard'));
-    await waitFor(() => expect(fetchDashboardsMock).toHaveBeenCalledOnce());
-    expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument();
+    // Sidebar icon is a plain mode switch; the real DashboardPanel fetches on
+    // its own mount (here mocked, so just assert the panel appears).
+    await waitFor(() => expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument());
+    expect(screen.queryByTestId('workflow-window')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('workspace-nav-databases'));
     expect(screen.getByTestId('navigator-tree')).toBeInTheDocument();
@@ -443,6 +446,27 @@ describe('ConnectionPage', () => {
 
     fireEvent.click(screen.getByTestId('dashboard-open-workflow'));
     await waitFor(() => expect(screen.getByTestId('workflow-window')).toBeInTheDocument());
+  });
+
+  it('unmounts inactive mode panels (conditional render) and remounts on return', async () => {
+    const { useDashboardStore } = await import('../../../stores/dashboardStore');
+    useDashboardStore.setState({
+      list: [{ id: 'dash-1', name: 'Ops Board' }],
+    });
+    render(<ConnectionPage />);
+
+    fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
+    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+
+    // Switching away unmounts the inactive panel: only one mode's DOM exists.
+    fireEvent.click(screen.getByTestId('workspace-nav-dashboard'));
+    await waitFor(() => expect(screen.getByTestId('dashboard-panel')).toBeInTheDocument());
+    expect(screen.queryByTestId('workflow-window')).not.toBeInTheDocument();
+
+    // Switching back remounts the panel (view state restores from snapshot).
+    fireEvent.click(screen.getByTestId('workspace-nav-workflow'));
+    expect(screen.getByTestId('workflow-window')).toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-panel')).not.toBeInTheDocument();
   });
 
   it('TC-window: menu:open-settings shows SettingsPage with section', async () => {

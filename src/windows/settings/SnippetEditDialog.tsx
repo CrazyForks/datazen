@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Dialog } from '../../components/ui/Dialog';
 import { Button } from '../../components/ui/Button';
+import { SettingHint } from './SettingHint';
 import { useI18n } from '../../hooks/useI18n';
 import type { SqlSnippetItem } from '../../components/sql-editor/snippets/types';
 
@@ -110,11 +111,15 @@ export function SnippetEditDialog({
         )}
 
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-fg-secondary">
-            {t('query.snippets.prefix')} <span className="text-destructive">*</span>
-          </label>
+          <div className="text-xs font-medium text-fg-secondary">
+            <label htmlFor="snippet-prefix">
+              {t('query.snippets.prefix')} <span className="text-destructive">*</span>
+            </label>
+            <SettingHint label={t('query.snippets.prefix')} text={t('query.snippets.prefixHint')} />
+          </div>
           <input
             type="text"
+            id="snippet-prefix"
             value={prefix}
             onChange={(e) => {
               setPrefix(e.target.value);
@@ -123,7 +128,6 @@ export function SnippetEditDialog({
             placeholder={t('query.snippets.prefixPlaceholder')}
             className="h-9 w-full rounded-md border border-edge bg-surface px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/25"
           />
-          <p className="text-[11px] text-fg-muted">{t('query.snippets.prefixHint')}</p>
         </div>
 
         <div className="space-y-1.5">
@@ -140,10 +144,17 @@ export function SnippetEditDialog({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-fg-secondary">
-            {t('query.snippets.template')} <span className="text-destructive">*</span>
-          </label>
+          <div className="text-xs font-medium text-fg-secondary">
+            <label htmlFor="snippet-template">
+              {t('query.snippets.template')} <span className="text-destructive">*</span>
+            </label>
+            <SettingHint
+              label={t('query.snippets.template')}
+              text={`${t('query.snippets.syntaxGuideTitle')}\n${t('query.snippets.syntaxGuide')}`}
+            />
+          </div>
           <textarea
+            id="snippet-template"
             value={template}
             onChange={(e) => {
               setTemplate(e.target.value);
@@ -153,12 +164,6 @@ export function SnippetEditDialog({
             rows={6}
             className="w-full resize-y rounded-md border border-edge bg-surface p-2.5 font-mono text-xs text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/25"
           />
-          <div className="rounded border border-edge bg-surface-alt/70 p-2 text-[11px] text-fg-muted">
-            <span className="font-semibold text-fg-secondary">
-              {t('query.snippets.syntaxGuideTitle')}{' '}
-            </span>
-            {t('query.snippets.syntaxGuide')}
-          </div>
         </div>
       </div>
     </Dialog>

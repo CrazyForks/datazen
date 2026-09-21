@@ -17,8 +17,8 @@ const MAIN_WINDOW_MIN_H: f64 = 640.0;
 const MAIN_WINDOW_LEGACY_W: f64 = 800.0;
 const MAIN_WINDOW_LEGACY_H: f64 = 600.0;
 
-/// Built-in dark `--c-surface` / splash fallback (`#0b1220`).
-const WINDOW_BG_DARK: Color = Color(0x0b, 0x12, 0x20, 0xff);
+/// Built-in dark `--c-surface` / splash fallback (`#0b0e14`).
+const WINDOW_BG_DARK: Color = Color(0x0b, 0x0e, 0x14, 0xff);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +42,9 @@ pub struct CreateWindowOptions {
     /// Last-resolved `--c-surface` hex from the opener (`#rgb` / `#rrggbb`).
     #[serde(default)]
     pub background_color: Option<String>,
+    /// Override native decorations. `None` = platform default (macOS true, others false).
+    #[serde(default)]
+    pub decorations: Option<bool>,
 }
 
 fn default_title() -> String {
@@ -135,6 +138,7 @@ pub async fn create_sub_window(
 
     let is_mac = cfg!(target_os = "macos");
     let transparent = options.transparent.unwrap_or(false);
+    let use_decorations = options.decorations.unwrap_or(is_mac);
     let label_for_log = options.label.clone();
 
     let mut builder = WebviewWindowBuilder::new(
@@ -144,7 +148,7 @@ pub async fn create_sub_window(
     )
     .title(&options.title)
     .inner_size(options.width, options.height)
-    .decorations(is_mac)
+    .decorations(use_decorations)
     .transparent(transparent)
     .visible(false)
     .background_color(resolved_window_background(
@@ -152,6 +156,10 @@ pub async fn create_sub_window(
         options.background_color.as_deref(),
     ))
     .accept_first_mouse(options.accept_first_mouse)
+    // HTML5 drag & drop (connection reordering, dropping tables into the SQL
+    // editor / Visual Builder canvas) only reaches the WebView when the native
+    // file-drop handler is off. See `create_main_window`.
+    .disable_drag_drop_handler()
     // Show after HTML (theme + splash) has loaded — not immediately after
     // build() (white/light flash), and not only via frontend show() (ACL /
     // module load failures leave the window permanently invisible).
@@ -245,6 +253,119 @@ fn ensure_main_window_size(window: &WebviewWindow) {
         to_h = MAIN_WINDOW_DEFAULT_H,
         "main window resized to configured default"
     );
+}
+
+/// Create the main application window programmatically.
+///
+/// Called from bootstrap when onboarding is already completed (normal launch).
+/// The window starts hidden and is shown after page-load to avoid a white flash.
+pub fn create_main_window(app: &AppHandle) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let is_mac = cfg!(target_os = "macos");
+    let bg = resolved_window_background(app, None);
+
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("DataZen")
+        .inner_size(MAIN_WINDOW_DEFAULT_W, MAIN_WINDOW_DEFAULT_H)
+        .min_inner_size(MAIN_WINDOW_MIN_W, MAIN_WINDOW_MIN_H)
+        .decorations(is_mac)
+        .transparent(false)
+        .visible(false)
+        .background_color(bg)
+        .accept_first_mouse(true)
+        .center()
+        // HTML5 drag & drop contract for the whole workspace (WebKit/WKWebView on
+        // macOS, WebView2 on Windows): Tauri's native drag-drop callback always
+        // returns `true`, so Wry never forwards draggingUpdated / drop to the
+        // WebView and every HTML5 drop silently dies. Windows are created
+        // programmatically (tauri.conf.json has no static windows), so the old
+        // `dragDropEnabled: false` config no longer applies — the flag must be
+        // set here. Host code has no `onDragDropEvent` listener, so disabling the
+        // native file-drop notification costs nothing.
+        .disable_drag_drop_handler()
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                tracing::info!("main window shown after page load");
+            }
+        });
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0));
+    }
+
+    let win = builder.build()?;
+    prepare_main_window(&win);
+    Ok(win)
+}
+
+/// Create the onboarding wizard window.
+///
+/// Called from bootstrap when onboarding has not yet been completed.
+/// The wizard gets native decorations on all platforms (no frameless hacks).
+pub fn create_onboarding_window(
+    app: &AppHandle,
+) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let bg = resolved_window_background(app, None);
+
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        "onboarding",
+        WebviewUrl::App("window.html?window=onboarding".into()),
+    )
+    .title("DataZen")
+    .inner_size(960.0, 720.0)
+    .min_inner_size(640.0, 480.0)
+    .decorations(true)
+    .transparent(false)
+    .visible(false)
+    .background_color(bg)
+    .accept_first_mouse(true)
+    .center()
+    // Same HTML5 drag & drop contract as the main window (see create_main_window).
+    .disable_drag_drop_handler()
+    .on_page_load(|window, payload| {
+        if payload.event() == PageLoadEvent::Finished {
+            let _ = window.show();
+            let _ = window.set_focus();
+            tracing::info!("onboarding window shown after page load");
+        }
+    });
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0));
+    }
+
+    let win = builder.build()?;
+    Ok(win)
+}
+
+/// Called by the onboarding wizard frontend after settings have been persisted.
+/// Creates the main window and closes the wizard window.
+#[tauri::command]
+pub async fn onboarding_complete(app: AppHandle) -> Result<(), CommandError> {
+    // Close the wizard window.
+    if let Some(wizard) = app.get_webview_window("onboarding") {
+        let _ = wizard.close();
+    }
+
+    // Create the main window (ignore error if it already exists).
+    if app.get_webview_window("main").is_none() {
+        if let Err(e) = create_main_window(&app) {
+            tracing::error!(error = %e, "failed to create main window after onboarding");
+        }
+    }
+
+    Ok(())
 }
 
 /// Labels of open windows excluding the main window.
@@ -389,6 +510,7 @@ pub async fn open_migration_sub_window(
             accept_first_mouse: true,
             transparent: None,
             background_color: None,
+            decorations: None,
         },
     )
     .await
@@ -397,6 +519,41 @@ pub async fn open_migration_sub_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HTML5 drag & drop regression guard.
+    ///
+    /// Windows are built programmatically, so `tauri.conf.json`'s
+    /// `dragDropEnabled: false` (removed when windows moved into Rust) can no
+    /// longer reach them. Without `disable_drag_drop_handler` every HTML5 drop —
+    /// including dragging a table from the connection navigator onto the Visual
+    /// Query Builder canvas — is swallowed by Tauri's native drag-drop callback.
+    /// Needle parts are assembled at runtime so this test's own source does not
+    /// self-match `include_str!`.
+    #[test]
+    fn every_window_builder_disables_native_drag_drop() {
+        const SOURCE: &str = include_str!("window.rs");
+        let needle = concat!("WebviewWindowBuilder", "::new");
+        let opt_in = "disable_drag_drop_handler";
+
+        let builders: Vec<&str> = SOURCE.split(needle).skip(1).collect();
+        assert!(
+            builders.len() >= 3,
+            "expected at least the main / onboarding / sub-window builders, found {}",
+            builders.len()
+        );
+        for (index, segment) in builders.iter().enumerate() {
+            let chain = match segment.find(".build()") {
+                Some(end) => &segment[..end],
+                None => segment,
+            };
+            assert!(
+                chain.contains(opt_in),
+                "window builder #{} must call `{}` so HTML5 drag & drop works",
+                index,
+                opt_in
+            );
+        }
+    }
 
     #[test]
     fn main_window_needs_default_size_for_legacy_and_too_small() {

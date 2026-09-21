@@ -1,4 +1,10 @@
-export type WindowKind = 'main' | 'data-sync' | 'data-transfer' | 'schema-diff' | 'backup';
+export type WindowKind =
+  | 'main'
+  | 'onboarding'
+  | 'data-sync'
+  | 'data-transfer'
+  | 'schema-diff'
+  | 'backup';
 
 let cachedKind: WindowKind | null = null;
 
@@ -18,7 +24,8 @@ export function getWindowKind(): WindowKind {
   const params = new URLSearchParams(window.location.search);
   const w = params.get('window');
 
-  if (w === 'data-sync') cachedKind = 'data-sync';
+  if (w === 'onboarding') cachedKind = 'onboarding';
+  else if (w === 'data-sync') cachedKind = 'data-sync';
   else if (w === 'data-transfer') cachedKind = 'data-transfer';
   else if (w === 'schema-diff') cachedKind = 'schema-diff';
   else if (w === 'backup') cachedKind = 'backup';

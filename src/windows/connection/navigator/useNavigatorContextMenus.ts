@@ -35,7 +35,7 @@ import type { ConnectionOpenTarget } from '../../../lib/connectionViews/types';
 import { databaseCommands } from '../../../commands/database';
 import { driverCommands } from '../../../commands/driver';
 import { queryCommands } from '../../../commands/query';
-import { shouldUseMultiDatabaseTree } from '../schema-tree/SchemaTree';
+import { shouldUseMultiDatabaseTree } from './utils';
 import type { I18nKey } from '../../../locales';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
@@ -438,7 +438,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -481,17 +481,46 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                       kind: 'warning',
                     });
                     if (!ok || !conn) return;
+
+                    // The DROP is the atomic step: only its failure is a "drop failed".
+                    // The driver (`drop_database`) already moves the connection pool off
+                    // the target and terminates lingering backends itself, so nothing
+                    // else needs to happen (or can be allowed to fail) before it runs.
                     try {
-                      const schemaData = useSchemaStore.getState().schemas.get(dbSessionId);
-                      const activeDb = schemaData?.currentDatabase;
-                      const fallback = resolveDropDatabaseFallback(
-                        schemaData?.databases ?? [],
-                        dbName,
-                        conn.database,
+                      await driverCommands.execute({
+                        dbSessionId,
+                        command: 'drop_database',
+                        input: { name: dbName },
+                      });
+                    } catch (err) {
+                      onShowMessage?.(
+                        extractErrorMessage(err, t('schemaTree.dropDatabaseFailed')),
+                        'error',
                       );
-                      if (fallback) {
-                        await databaseCommands.getTables(dbSessionId, fallback);
-                        if (activeDb === dbName && schemaData) {
+                      return;
+                    }
+
+                    // Drop succeeded. Refresh + repoint the UI, best-effort only: a
+                    // failure here must not be reported as a failed drop.
+                    void (async () => {
+                      try {
+                        const schemaData = useSchemaStore.getState().schemas.get(dbSessionId);
+                        // Close tabs opened on the dropped database before the
+                        // session fallback rewrites currentDatabase below.
+                        usePanelStore
+                          .getState()
+                          .removePanelsForDatabase(
+                            connectionId,
+                            dbName,
+                            schemaData?.currentDatabase ?? undefined,
+                          );
+                        const activeDb = schemaData?.currentDatabase;
+                        const fallback = resolveDropDatabaseFallback(
+                          schemaData?.databases ?? [],
+                          dbName,
+                          conn.database,
+                        );
+                        if (fallback && activeDb === dbName && schemaData) {
                           const cached = dbTablesMap[`${dbSessionId}::${fallback}`];
                           if (cached) {
                             useSchemaStore
@@ -519,23 +548,16 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                             });
                           }
                         }
+                        clearDbLocalCache(connectionId, dbSessionId, dbName);
+                        await loadForConnection(dbSessionId, {
+                          databaseType: conn.databaseType,
+                          skipLoadTables: true,
+                        });
+                      } catch {
+                        // Intentionally swallow refresh errors: the database was already
+                        // dropped successfully, so a refresh hiccup is not a drop failure.
                       }
-                      await driverCommands.execute({
-                        dbSessionId,
-                        command: 'drop_database',
-                        input: { name: dbName },
-                      });
-                      clearDbLocalCache(connectionId, dbSessionId, dbName);
-                      await loadForConnection(dbSessionId, {
-                        databaseType: conn.databaseType,
-                        skipLoadTables: true,
-                      });
-                    } catch (err) {
-                      onShowMessage?.(
-                        extractErrorMessage(err, t('schemaTree.dropDatabaseFailed')),
-                        'error',
-                      );
-                    }
+                    })();
                   })();
                 }
               : undefined,
@@ -603,7 +625,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onNewQuery: () => {
               onSelectConnection(connectionId);
               useSchemaStore.setState({ currentDatabase: dbName });
-              viewActions?.newQuery?.();
+              viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
               onSelectConnection(connectionId);
@@ -694,7 +716,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
       args: {
         kind: 'table' | 'view';
         name: string;
-        schema?: string;
+        schema: string | null;
         dbName: string;
         connectionId: string;
         dbSessionId: string;
@@ -745,7 +767,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
           tableName: name,
           tableRefLabel: tableRef,
         });
-        viewActions?.newQuery?.(sql, { database: dbName, schema });
+        viewActions?.newQuery?.(sql, { database: dbName, schema: schema ?? null });
       };
 
       const handleGenerateDdl = async () => {
@@ -759,22 +781,28 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             const dialect = getSqlDialect(conn?.databaseType ?? 'postgresql');
             if (dialect) {
               const { sql, extractColumnIndex } = dialect.ddl.getTableDdlQuery(name);
-              ddl = await getCachedDDL(dbSessionId, name, sql, (rows) => {
-                const row = rows[0];
-                const val = row?.[extractColumnIndex];
-                return typeof val === 'string' ? val : val != null ? String(val) : '';
-              });
+              ddl = await getCachedDDL(
+                dbSessionId,
+                name,
+                sql,
+                (rows) => {
+                  const row = rows[0];
+                  const val = row?.[extractColumnIndex];
+                  return typeof val === 'string' ? val : val != null ? String(val) : '';
+                },
+                dbName,
+              );
             }
           }
           viewActions?.newQuery?.(ddl || `/* No DDL found for ${name} */`, {
             database: dbName,
-            schema,
+            schema: schema ?? null,
           });
         } catch (err) {
           console.warn('Failed to generate DDL:', err);
           viewActions?.newQuery?.(`/* Failed to get DDL for ${name} */`, {
             database: dbName,
-            schema,
+            schema: schema ?? null,
           });
         }
       };
@@ -807,6 +835,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                   const ddl = await fetchRelationDdl(
                     dbSessionId,
                     name,
+                    dbName,
                     conn?.databaseType ?? 'postgresql',
                     isView,
                     schema,
@@ -836,14 +865,16 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                     dbSessionId,
                     databaseType: conn?.databaseType ?? 'postgresql',
                     database: dbName,
-                    schema,
+                    schema: schema ?? null,
                     tableName: name,
+                    tableSchema: schema ?? null,
+                    viewSchema: null,
                   },
                   { kind: 'select', source: 'table-action' },
                 );
                 viewActions?.newQuery?.(query.initialSql, query);
               } else {
-                viewActions?.newQuery?.();
+                viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
               }
             },
             onTruncate:
@@ -901,6 +932,9 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                           dbName,
                           schema ?? null,
                         );
+                        usePanelStore
+                          .getState()
+                          .removePanelsForRelation(connectionId, name, dbName);
                         refreshAfterMutation();
                       } catch (err) {
                         onShowMessage?.(
@@ -941,15 +975,18 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
     (e: React.MouseEvent, catKey: string, catId: string, connectionId: string) => {
       e.preventDefault();
       e.stopPropagation();
+      const conn = connections.find((c) => c.id === connectionId);
+      const dbMeta = conn ? DB_REGISTRY[conn.databaseType] : undefined;
+      const readOnly = conn?.readOnly === true || dbMeta?.readOnly === true;
       showWebContextMenu(
         buildSchemaTreeContextMenuItems({
           kind: 'category',
           labels: schemaLabels,
+          readOnly,
           handlers: {
             onRefresh: () => {
               const entry = activeConnections[connectionId];
               if (!entry?.dbSessionId) return;
-              const conn = connections.find((c) => c.id === connectionId);
               if (!conn) return;
 
               const parts = catKey.split('::');
@@ -972,6 +1009,13 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                 void reloadDbObjectCategory(entry.dbSessionId, catKey, catId);
               }
             },
+            onNewTable:
+              catId === 'tables' && !readOnly && viewActions?.createTable
+                ? () => {
+                    onSelectConnection(connectionId);
+                    viewActions.createTable!();
+                  }
+                : undefined,
           },
           categoryId: catId,
         }),
@@ -982,9 +1026,11 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
       activeConnections,
       connections,
       loadForConnection,
+      onSelectConnection,
       reloadDbObjectCategory,
       reloadDbTables,
       schemaLabels,
+      viewActions,
     ],
   );
 

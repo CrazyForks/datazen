@@ -26,6 +26,7 @@ const { getConnectionViewMock, schemaState, tableDataState, MockRedisView } = vi
       loadForConnection: vi.fn(),
       loadTables: vi.fn(),
       removeRelation: vi.fn(),
+      setCurrentDatabase: vi.fn(),
     },
     tableDataState: {
       columns: [] as { name: string; dataType: string }[],
@@ -52,7 +53,9 @@ vi.mock('../../../hooks/useI18n', () => ({
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(false));
 const showNativeContextMenuMock = vi.hoisted(() =>
   vi.fn((items: Array<{ id?: string; action?: () => void }>) => {
-    items.find((item) => item.id === 'drop')?.action?.();
+    (
+      items.find((item) => item.id === 'drop') ?? items.find((item) => item.id === 'drop-view')
+    )?.action?.();
   }),
 );
 const executeQueryMock = vi.hoisted(() => vi.fn().mockResolvedValue({}));
@@ -203,10 +206,6 @@ vi.mock('../../../components/ui/Button', () => ({
   ),
 }));
 
-vi.mock('../schema-tree/SchemaTree', () => ({
-  SchemaTree: mockDiv('mock-schema-tree'),
-}));
-
 vi.mock('../TableView', () => ({ TableView: mockDiv('mock-table-view') }));
 vi.mock('../StructureView', () => ({ StructureView: mockDiv('mock-structure-view') }));
 vi.mock('../IndexesView', () => ({ IndexesView: mockDiv('mock-indexes-view') }));
@@ -316,6 +315,23 @@ describe('ContentView', () => {
     expect(screen.queryByRole('button', { name: /common.newQuery/ })).not.toBeInTheDocument();
   });
 
+  it('syncs session currentDatabase to the active panel bound database', () => {
+    schemaState.setCurrentDatabase.mockClear();
+    const panel = {
+      connectionId: 'cfg-1',
+      dbSessionId: 'conn-1',
+      connectionName: 'TestDB',
+      databaseType: 'postgresql' as const,
+      type: 'query' as const,
+      id: 'panel-q-1',
+      database: 'tradingdb',
+    };
+    panelStore.usePanelStore.setState({ panels: [panel], activePanelId: panel.id });
+
+    render(<ContentView />);
+    expect(schemaState.setCurrentDatabase).toHaveBeenCalledWith('tradingdb', 'conn-1');
+  });
+
   it('renders redis panel via getConnectionView', () => {
     const redisPanel = {
       connectionId: 'cfg-redis',
@@ -399,6 +415,55 @@ describe('ContentView', () => {
         'db_b',
         'public',
       );
+    });
+  });
+
+  it('closes view panels when dropping a view from the context menu', async () => {
+    confirmMock.mockResolvedValueOnce(true);
+    const nodeContextMenuRef = {
+      current: undefined as ((payload: unknown) => void) | undefined,
+    };
+    const viewPanel = {
+      connectionId: 'cfg-1',
+      dbSessionId: 'conn-1',
+      connectionName: 'TestDB',
+      databaseType: 'postgresql' as const,
+      type: 'view' as const,
+      id: 'panel-view-1',
+      viewName: 'v_users',
+      subTab: 'data' as const,
+    };
+    panelStore.usePanelStore.setState({
+      panels: [viewPanel],
+      activePanelId: viewPanel.id,
+    });
+    schemaState.activeDbSessionId = 'conn-1';
+    schemaState.currentDatabase = 'db_b';
+    schemaState.views = [{ name: 'v_users', schema: 'public' }];
+    schemaState.loadForConnection = vi.fn();
+
+    render(<ContentView nodeContextMenuRef={nodeContextMenuRef} />);
+    expect(nodeContextMenuRef.current).toBeTypeOf('function');
+
+    nodeContextMenuRef.current?.({
+      kind: 'view',
+      name: 'v_users',
+      schema: 'public',
+      x: 0,
+      y: 0,
+    });
+
+    await vi.waitFor(() => {
+      expect(executeQueryMock).toHaveBeenCalledWith(
+        'conn-1',
+        'DROP VIEW "v_users"',
+        undefined,
+        'db_b',
+        'public',
+      );
+    });
+    await vi.waitFor(() => {
+      expect(panelStore.usePanelStore.getState().panels).toHaveLength(0);
     });
   });
 });

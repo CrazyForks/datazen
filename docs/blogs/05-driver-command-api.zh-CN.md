@@ -17,7 +17,7 @@ DataZen 把能力拆成定义和执行两部分。Driver 暴露 `command_definit
 - 输入 JSON Schema；
 - category（query、mutate、admin、observe、stream 等）；
 - risk / permissions；
-- 是否允许在 Workflow、Extension 或 MCP 中使用；
+- 是否允许在 Workflow、Wapp 或 MCP 中使用；
 - 是否需要连接、是否支持流式传输。
 
 前端 Command Editor、Workflow 选择器和管理对话框都基于这些定义生成，而不是硬编码所有数据库命令。
@@ -48,15 +48,15 @@ DataZen 把能力拆成定义和执行两部分。Driver 暴露 `command_definit
 
 这并不意味着 UI 失去设计感。高频路径可以提供专用体验，低频或驱动专属能力则回退到通用表单。两者共享同一个执行协议，避免出现“专用 UI 一套语义、通用 UI 另一套语义”。
 
-## Workflow、MCP 与 Extension 的复用
+## Workflow、MCP 与 Wapp 的复用
 
-Workflow Command Step 在执行前解析连接、模板变量和输入 Schema，然后进入同一 Runtime。MCP Server 将工具参数转换为 Command 请求，Extension 的 `command.invoke` 也通过受控桥调用它。
+Workflow Command Step 在执行前解析连接、模板变量和输入 Schema，然后进入同一 Runtime。MCP Server 将工具参数转换为 Command 请求，Wapp 的 `command.invoke` 也通过受控桥调用它。
 
 复用 Runtime 带来的直接收益是：权限检查、查询历史、错误转换和驱动差异只实现一次。新的入口不需要重新发明“怎样连数据库”。
 
 ## Redis 为什么不需要 Host 特判
 
-Redis 的 KV、发布订阅和管理操作显然不同于 SQL，但它们可以用 Command 表达：`redis_get`、`redis_set`、`scan_keys` 等定义自己的输入 Schema 和风险级别。Host 只看到可发现的命令，不写 `pluginId === 'redis'` 的设置分支。
+Redis 的 KV、发布订阅和管理操作显然不同于 SQL，但它们可以用 Command 表达：`redis_get`、`redis_set`、`scan_keys` 等定义自己的输入 Schema 和风险级别。Host 只看到可发现的命令，不写 `driverId === 'redis'` 的设置分支。
 
 ## 兼容与演进
 
@@ -66,4 +66,4 @@ Command ID 一旦进入 Workflow、插件或 MCP 配置，就应保持稳定。�
 
 Command API 把数据库能力变成可描述、可校验、可授权的协议。Trait 仍然承担底层连接和查询抽象，但面向产品的能力通过 Definition 暴露。这样 Driver 可以持续增加能力，宿主却不必持续增加数据库类型分支。
 
-相关资料：[Driver Command API](../architecture/backend/drivers.md) · [Workflow 模块](../architecture/backend/workflow.md) · [Extension 桥接](../architecture/backend/extensions.md)
+相关资料：[Driver Command API](../architecture/backend/drivers.md) · [Workflow 模块](../architecture/backend/workflow.md) · [Wapp 桥接](../architecture/backend/wapps.md)

@@ -324,9 +324,16 @@ export function createSqlExtensions(opts: CreateSqlExtensionsOptions): Extension
  * with the dialect currently selected in the panel.
  */
 export function createFormatKeymap(databaseType?: string): Extension {
+  const formatShortcut = toCodeMirrorKeyFormat(
+    getActionShortcut(
+      'formatSql',
+      useSettingsStore.getState().settings.keymapPreset,
+      useSettingsStore.getState().settings.customKeymap,
+    ),
+  );
   return keymap.of([
     {
-      key: 'Shift-Alt-f',
+      key: formatShortcut,
       run: (view) =>
         formatEditorDocument(view, {
           databaseType,
@@ -371,6 +378,7 @@ export interface CompletionCompartmentOptions {
   databaseType?: string;
   metadataSnapshot?: EditorMetadataSnapshot;
   schema?: SQLNamespace;
+  completionIncludeTablePrefix?: boolean;
   completionQuotePolicy?: CompletionQuotePolicy;
   /** Resolves snippet description i18n keys; omitted in tests and non-UI callers. */
   translate?: (key: string) => string;
@@ -413,9 +421,18 @@ export function createCompletionExtensions(
     const match = context.matchBefore(/[A-Za-z_]\w*/);
     if (!match && !context.explicit) return null;
     const completions = sqlFunctionCompletions(opts.databaseType);
+    // Stable anchor at token start (see schemaAwareCompletionSource): lets CM
+    // reuse the function list across keystrokes via validFor instead of
+    // rebuilding it on every key.
+    let from = match?.from ?? context.pos;
+    if (match) {
+      const doc = context.state.doc.toString();
+      while (from > 0 && /[\w$]/.test(doc.charAt(from - 1))) from -= 1;
+    }
     return {
-      from: match?.from ?? context.pos,
+      from,
       options: completions,
+      validFor: /^\w*$/,
     };
   };
 
@@ -447,20 +464,55 @@ export function createCompletionExtensions(
     const isDot = pos > 0 && doc.charAt(pos - 1) === '.';
     if (!match && !isDot && !context.explicit) return null;
 
+    // Stable completion anchor: the start of the identifier token under the
+    // cursor. `match.from` shifts on every keystroke (match grows/shrinks),
+    // which breaks ActiveResult position mapping so CM can never reuse the
+    // previous result and re-runs this source on every key. Anchoring `from`
+    // at the token start lets backspace/typing reuse the cached result via
+    // `validFor` + CM-internal fuzzy filtering instead of full recompute.
+    // `to` stays at cursor so `checkValid` tests exactly the current prefix.
+    const tokenStart = (() => {
+      if (match) {
+        // Walk back over identifier chars to the token start (match may start
+        // mid-token when the cursor is inside a longer identifier).
+        let from = match.from;
+        while (from > 0 && /[\w$"']/.test(doc.charAt(from - 1))) from -= 1;
+        return from;
+      }
+      // `alias.|column` dot context: anchor after the dot.
+      if (isDot) return pos;
+      return pos;
+    })();
+
     // If we have a valid model, use the full schema-aware completion
     if (model && model.cursorIntent) {
       const completions = produceSchemaCompletions({
         model,
-        snapshot: snapshot ?? { dbSessionId: '', epoch: 0, relations: new Map() },
+        snapshot: snapshot ?? { dbSessionId: '', database: '', epoch: 0, relations: new Map() },
         schema: opts.schema,
         adapter: getDialectAdapter(opts.databaseType ?? 'standard'),
         quotePolicy: opts.completionQuotePolicy,
+        includeTablePrefix: opts.completionIncludeTablePrefix,
+        // Short-prefix hint for the all-columns fallback (implicit typing
+        // only — explicit Ctrl+Space keeps full results).
+        prefixHint: context.explicit
+          ? undefined
+          : match?.text.replace(/^["'`\[]|["'`\]]$/g, '').toLowerCase(),
       });
-      if (completions.length === 0) return null;
+      if (completions.length === 0) {
+        return null;
+      }
       return {
-        from: match?.from ?? pos,
+        from: tokenStart,
         options: completions,
-        validFor: /^[\w$"']*$/,
+        // Tightened per intent: column contexts only admit identifier chars
+        // so CM reuses the result on backspace; table contexts additionally
+        // admit dots for qualified typing. A loose class here forces recompute
+        // on every keystroke.
+        validFor:
+          model.cursorIntent.kind === 'relation' || model.cursorIntent.kind === 'join_target'
+            ? /^[\w$"'.]*$/
+            : /^[\w$"']*$/,
       };
     }
 
@@ -586,8 +638,12 @@ export function createHoverExtensions(
 /* -------------------------------------------------------------------------- */
 
 export interface LinterCompartmentOptions {
+  /** Opt-in lightbulb actions; does not disable diagnostics or Alt+Enter intentions. */
+  intentionActions?: boolean;
   databaseType?: string;
   schema?: SqlSchema;
+  /** Quote policy used when the linter renders intention Code Actions. */
+  completionQuotePolicy?: CompletionQuotePolicy;
 }
 
 export function createLinterExtensions(

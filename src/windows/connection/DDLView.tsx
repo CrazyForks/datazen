@@ -12,7 +12,7 @@ import type { DatabaseType } from '../../types';
 interface DDLViewProps {
   dbSessionId: string;
   tableName: string;
-  database?: string;
+  database: string;
   databaseType?: string;
   isView?: boolean;
 }
@@ -30,7 +30,7 @@ export function DDLView({ dbSessionId, tableName, database, databaseType, isView
     setError(null);
     setDdl('');
 
-    fetchRelationDdl(dbSessionId, tableName, databaseType, isView, undefined, database)
+    fetchRelationDdl(dbSessionId, tableName, database, databaseType, isView, undefined)
       .then((result) => {
         if (!cancelled) {
           if (!result) {

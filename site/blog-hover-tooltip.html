@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation —
+      DataZen
+    </title>
+    <meta
+      name="description"
+      content="DataZen SQL editor lets you hover over a table name to view complete Schema information — including columns, types, foreign key relationships, and table comments — without switching to the Schema tree panel."
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/blog-hover-tooltip.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-hover-tooltip.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-hover-tooltip.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta
+      property="og:title"
+      content="View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation"
+    />
+    <meta
+      property="og:description"
+      content="DataZen SQL editor lets you hover over a table name to view complete Schema information — including columns, types, foreign key relationships, and table comments — without switching to the Schema tree panel."
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/blog-hover-tooltip.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation"
+    />
+    <meta
+      name="twitter:description"
+      content="DataZen SQL editor lets you hover over a table name to view complete Schema information — including columns, types, foreign key relationships, and table comments — without switching to the Schema tree panel."
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2025-09-16",
+        "description": "DataZen SQL editor lets you hover over a table name to view complete Schema information — including columns, types, foreign key relationships, and table comments — without switching to the Schema tree panel.",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/blog-hover-tooltip.html"
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">Home</a> /
+          <a href="blog.html">Blog</a>
+        </p>
+        <h1>
+          View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation
+        </h1>
+        <p>
+          DataZen SQL editor lets you hover over a table name to view complete Schema information —
+          including columns, types, foreign key relationships, and table comments — without
+          switching to the Schema tree panel.
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">September 16, 2025</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>
+          View Schema Without Leaving the Editor: Table Structure Hover Cards and Quick Navigation
+        </h1>
+        <blockquote>
+          <p>
+            One of the most annoying things when writing SQL: you&#39;ve just typed a table name and
+            suddenly can&#39;t remember what a certain column is called, forcing you to switch to
+            the Schema tree to look it up. Your flow is broken, and your train of thought goes with
+            it.
+          </p>
+        </blockquote>
+        <h2>The &quot;Looking Up Tables&quot; Dilemma While Writing SQL</h2>
+        <p>Anyone who writes SQL has experienced this:</p>
+        <p>
+          You&#39;re writing a multi-table JOIN query. You&#39;ve figured out the logic, and the
+          table names and JOIN conditions are all set. But when you get to the SELECT list, you
+          suddenly can&#39;t remember whether the field is called <code>user_name</code>,
+          <code>username</code>, or <code>display_name</code>.
+        </p>
+        <p>What do you need to do?</p>
+        <ol>
+          <li>Move your cursor away from its current position;</li>
+          <li>Switch to the Schema tree panel on the left;</li>
+          <li>Expand the target table&#39;s column list;</li>
+          <li>Find the field name;</li>
+          <li>Switch back to the editor;</li>
+          <li>Reposition your cursor where you left off and continue writing.</li>
+        </ol>
+        <p>
+          Six steps — just to confirm a single column name. If the query involves three or four
+          tables, you might repeat this process several times. Each interruption breaks your thought
+          process, and regaining that mental context takes extra time and energy.
+        </p>
+        <p>
+          DataZen&#39;s approach:
+          <strong>let you see complete Schema information without ever leaving the editor.</strong>
+        </p>
+        <h2>Hover Cards: Information Right Where Your Cursor Is</h2>
+        <p>
+          In DataZen&#39;s SQL editor, when you hover over a table name or table alias, the editor
+          automatically displays a Schema hover card.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/04-hover-tooltip.png"
+            alt="Table Structure Hover Card"
+          />
+        </p>
+        <p>This card contains more information than you might expect:</p>
+        <p>
+          <strong>Column information</strong>: Lists all columns in the table with their names and
+          data types. You can instantly see what fields exist and what type each one is, without
+          switching to the Schema tree.
+        </p>
+        <p>
+          <strong>Nullable</strong>: Whether each column allows NULL values is shown directly next
+          to the type. This information is critical when writing INSERT or UPDATE statements.
+        </p>
+        <p>
+          <strong>Default values</strong>: If a column has a default value, it&#39;s displayed on
+          the card too — no need to look up the table structure definition.
+        </p>
+        <p>
+          <strong>Foreign key relationships</strong>: Which other tables are related to this one,
+          which table and which column each foreign key points to — all clearly visible on the card.
+          This is especially useful when writing JOIN queries: no need to memorize relationships or
+          consult documentation; the associations are right in front of you.
+        </p>
+        <p>
+          <strong>Table comments</strong>: If a COMMENT was defined when the table was created, it
+          appears at the top of the card. For business tables where column meanings aren&#39;t
+          immediately obvious, these comments help you quickly understand the table&#39;s purpose.
+        </p>
+        <h2>Cmd/Ctrl+Click Quick Navigation</h2>
+        <p>
+          Beyond hover-to-view, DataZen also supports Cmd+Click (macOS) or Ctrl+Click
+          (Windows/Linux) to jump directly to the corresponding object in the Schema tree.
+        </p>
+        <p>
+          When you Cmd+Click a table name in the editor, the Schema tree automatically expands and
+          locates that table. Clicking a column name also navigates directly to that column.
+        </p>
+        <p>
+          This feature is especially useful when you genuinely need more context — for example,
+          viewing the full DDL of a table, checking index definitions, or comparing the structure of
+          multiple tables. The hover card gives you a quick overview; Cmd+Click gives you deep
+          inspection. Together, they cover the vast majority of &quot;look up Schema&quot; needs.
+        </p>
+        <h2>Multi-Table JOIN Scenario: Hover Multiple Tables, Compare Quickly</h2>
+        <p>
+          When writing multi-table JOIN queries, you often need to reference multiple table
+          structures simultaneously. In traditional tools, you might need to expand several tables
+          in the Schema tree and switch between them.
+        </p>
+        <p>
+          DataZen&#39;s hover cards support displaying multiple at once. You can hover over each
+          table in the JOIN one by one, quickly comparing column names and types to confirm that the
+          join conditions are correct.
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/04-hover-multi-table.png"
+            alt="Multi-Table Hover Comparison"
+          />
+        </p>
+        <p>
+          For example, you&#39;re writing a query that joins <code>_blog_employee</code> JOIN
+          <code>_blog_dept</code> JOIN <code>_blog_emp_project</code>. Hover over
+          <code>_blog_employee</code> to see its foreign keys, then move to
+          <code>_blog_dept</code> to confirm the primary key column name, then move to
+          <code>_blog_emp_project</code> to verify the join column. The entire process requires no
+          cursor movement, no panel switching, and no interruption to your thought process.
+        </p>
+        <p>
+          This &quot;view in place&quot; experience lets you focus your attention on SQL logic
+          design rather than becoming an information courier between panels.
+        </p>
+        <h2>Comparing Schema Viewing with Traditional Tools</h2>
+        <p>In Navicat and DBeaver, viewing table structure typically requires the following:</p>
+        <ul>
+          <li>
+            <strong>Navicat</strong>: Double-click a table name to open the table design panel, or
+            expand the column list in the left tree. If there are multiple tables in the editor, you
+            need to look them up one by one.
+          </li>
+          <li>
+            <strong>DBeaver</strong>: Expand Table → Columns in the left Database Navigator, or
+            right-click the table name and select &quot;Properties.&quot; Information is scattered
+            across different tab pages.
+          </li>
+        </ul>
+        <p>
+          The common problem with both approaches:
+          <strong
+            >you need to leave the editor to get information, then bring that information back to
+            the editor to continue working.</strong
+          >
+          This back-and-forth switching is the root cause of broken flow.
+        </p>
+        <p>
+          DataZen&#39;s hover cards compress this process to zero switches — information appears
+          right next to your cursor when you need it, and once you&#39;ve read it, you continue
+          writing without any intermediate steps.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Operation</th>
+              <th>Traditional Tools</th>
+              <th>DataZen</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>View single table columns</td>
+              <td>Switch to Schema tree, expand table</td>
+              <td>Hover over table name</td>
+            </tr>
+            <tr>
+              <td>View foreign key relationships</td>
+              <td>Right-click table → Properties → FK Tab</td>
+              <td>Hover over table name; shown at card bottom</td>
+            </tr>
+            <tr>
+              <td>Confirm column names and types</td>
+              <td>Switch to Schema tree → expand columns</td>
+              <td>Hover over table name; columns are immediately visible</td>
+            </tr>
+            <tr>
+              <td>View table comments</td>
+              <td>Right-click table → Properties → Comment</td>
+              <td>Hover over table name; shown at card top</td>
+            </tr>
+            <tr>
+              <td>Compare multiple tables</td>
+              <td>Expand each table separately, switch between them</td>
+              <td>Hover over each one in sequence</td>
+            </tr>
+            <tr>
+              <td>Navigate to Schema tree</td>
+              <td>Manually search in the tree</td>
+              <td>Cmd+Click for automatic navigation</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>From &quot;Switching&quot; to &quot;In-Place&quot;: An Experience Upgrade</h2>
+        <p>The essence of this design philosophy is <strong>reducing context switching.</strong></p>
+        <p>
+          Writing SQL requires intense focus — you&#39;re constructing relationships between tables
+          in your head, planning query logic, and organizing column selections and aggregations.
+          Every panel switch, every search for a piece of information, interrupts this mental
+          process.
+        </p>
+        <p>
+          DataZen&#39;s hover cards and quick navigation reduce the cost of &quot;looking up Schema
+          information&quot; to a minimum. You don&#39;t need to leave the editor, remember paths, or
+          shuttle information between panels. Schema information is right next to your cursor — it
+          appears when you need it, and once you&#39;ve read it, you keep writing.
+        </p>
+        <p>
+          This isn&#39;t a &quot;fancy&quot; feature. It solves a small problem that you encounter
+          every single day and that breaks your concentration each time. And when you accumulate the
+          solutions to these &quot;small problems,&quot; the overall editor experience takes a
+          qualitative leap forward.
+        </p>
+        <h2>Try It Out</h2>
+        <p>
+          Next time you&#39;re writing a multi-table JOIN, try hovering over a table name in
+          DataZen&#39;s SQL editor — you&#39;ll find that confirming a column name can be this fast.
+        </p>
+        <p>
+          👉 <a href="https://flyxl.github.io/datazen/">Download DataZen</a> and experience the
+          seamless workflow of viewing complete Schema without leaving the editor.
+        </p>
+        <p>
+          📦 Source code is open on <a href="https://github.com/flyxl/datazen">GitHub</a> — Stars
+          and feedback are welcome.
+        </p>
+
+        <div
+          style="
+            margin-top: 32px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+          "
+        >
+          <p style="margin: 0">
+            📖
+            <a
+              href="https://flyxl.github.io/datazen/zh/blog-hover-tooltip.html"
+              style="color: var(--accent)"
+              >阅读中文版本</a
+            >
+          </p>
+        </div>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>

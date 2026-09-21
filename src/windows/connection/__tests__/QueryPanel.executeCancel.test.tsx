@@ -65,6 +65,7 @@ const schemaStoreState = vi.hoisted(() => ({
   isMultiDatabase: false,
   ensuringCount: 0,
   ensureColumns: vi.fn(),
+  loadColumnMap: vi.fn(),
   loadTables: vi.fn(),
   ensureNamespacePath: vi.fn(),
 }));

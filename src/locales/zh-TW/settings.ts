@@ -48,6 +48,16 @@ const pack = {
   'settings.autoChartOnQuery': '查詢後自動切換至圖表',
   'settings.autoChartOnQueryHint': '查詢後，若結果適合視覺化，則自動開啟圖表分頁。',
   'settings.maxRows': '最大返回行數',
+  'settings.workflowStepResultOrder': '工作流步驟結果排序',
+  'settings.workflowStepResultOrderHint': '工作流執行後所顯示之步驟結果分頁的排序方式。',
+  'settings.workflowStepOrder.asc': '依步驟遞增（第一個步驟在前）',
+  'settings.workflowStepOrder.desc': '依步驟遞減（最後一個步驟在前）',
+  'settings.sqlSyntaxTheme': 'SQL 語法主題',
+  'settings.sqlSyntaxThemeHint':
+    'SQL 關鍵字、字串與註解的配色方案。「預設」會跟隨目前應用程式主題。',
+  'settings.confirmDangerousExecution': 'Safe Mode 關閉時先確認危險 SQL',
+  'settings.confirmDangerousExecutionHint':
+    '當 Safe Mode 關閉時，執行高風險／正式環境的 SQL 前會先彈出確認對話框。關閉此選項則直接執行。',
   'settings.editor': '編輯器',
   'settings.fontSize': '字號',
   'settings.fontFamily': '字體',
@@ -217,7 +227,7 @@ const pack = {
   'settings.prompts.template': '系統 Prompt（英文）',
   'settings.prompts.langNotice':
     'Prompt 統一使用英文以保證推論和工具調用的穩定性，AI 輸出內容將自動符合目前應用程式設定的語言。',
-  'settings.mcp.title': 'MCP Server',
+  'settings.mcp.title': 'MCP 伺服器',
   'settings.mcpClient.title': '外部 MCP 服務',
 } as const;
 export default pack;

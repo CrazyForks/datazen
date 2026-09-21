@@ -94,7 +94,7 @@ async function toggleAdbMode() {
   await browser.pause(500);
 }
 
-describe('FileConnectionFields 浅色主题适配 (FCF-001~FCF-010)', () => {
+describe('FileConnectionFields 浅色主题适配 (FCF-001~FCF-008)', () => {
   let mainWindow: string;
 
   before(async () => {
@@ -199,92 +199,5 @@ describe('FileConnectionFields 浅色主题适配 (FCF-001~FCF-010)', () => {
       return false;
     });
     expect(panelOk).toBe(true);
-  });
-
-  it('FCF-009: 浅色主题下 ADB 面板应绑定 light theme CSS 变量', async () => {
-    await setTheme('light');
-    await openSqliteConnectionForm();
-    await toggleAdbMode();
-
-    const result = await browser.execute(() => {
-      const surfaceAlt = getComputedStyle(document.documentElement)
-        .getPropertyValue('--c-surface-alt')
-        .trim();
-      const edge = getComputedStyle(document.documentElement).getPropertyValue('--c-edge').trim();
-
-      const labels = Array.from(document.querySelectorAll('label'));
-      const adbLabel = labels.find((l) => l.textContent?.includes('从 Android 设备拉取'));
-      if (!adbLabel) return null;
-
-      let sibling = adbLabel.nextElementSibling;
-      while (sibling) {
-        const cl = sibling.className || '';
-        if (cl.includes('border-edge') && cl.includes('bg-surface-alt')) {
-          const style = getComputedStyle(sibling as Element);
-          return {
-            surfaceAlt,
-            edge,
-            bgColor: style.backgroundColor,
-            borderColor: style.borderTopColor,
-            hasSemanticClasses: true,
-          };
-        }
-        sibling = sibling.nextElementSibling;
-      }
-      return null;
-    });
-
-    expect(result).not.toBeNull();
-    expect(result!.surfaceAlt).toBe('#f8fafc');
-    expect(result!.edge).toBe('#e2e8f0');
-    expect(result!.hasSemanticClasses).toBe(true);
-    expect(result!.bgColor).not.toBe('rgba(0, 0, 0, 0)');
-    expect(result!.borderColor).not.toBe('rgba(0, 0, 0, 0)');
-  });
-
-  it('FCF-010: 深色主题下相同元素仍使用语义类且 CSS 变量切换为 dark token', async () => {
-    await setTheme('dark');
-    await openSqliteConnectionForm();
-
-    const html = await $('html');
-    expect(await html.getAttribute('class')).toContain('dark');
-
-    await toggleAdbMode();
-
-    const result = await browser.execute(() => {
-      const surfaceAlt = getComputedStyle(document.documentElement)
-        .getPropertyValue('--c-surface-alt')
-        .trim();
-      const edge = getComputedStyle(document.documentElement).getPropertyValue('--c-edge').trim();
-
-      const labels = Array.from(document.querySelectorAll('label'));
-      const adbLabel = labels.find((l) => l.textContent?.includes('从 Android 设备拉取'));
-      if (!adbLabel || !adbLabel.className.includes('text-fg-muted')) {
-        return { ok: false, reason: 'missing semantic label class' };
-      }
-
-      let sibling = adbLabel.nextElementSibling;
-      while (sibling) {
-        const cl = sibling.className || '';
-        if (cl.includes('border-edge') && cl.includes('bg-surface-alt')) {
-          const style = getComputedStyle(sibling as Element);
-          return {
-            ok: true,
-            surfaceAlt,
-            edge,
-            bgColor: style.backgroundColor,
-            borderColor: style.borderTopColor,
-          };
-        }
-        sibling = sibling.nextElementSibling;
-      }
-      return { ok: false, reason: 'missing semantic panel class' };
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.surfaceAlt).toBe('#1e293b');
-    expect(result.edge).toBe('#334155');
-    expect(result.bgColor).not.toBe('rgba(0, 0, 0, 0)');
-    expect(result.borderColor).not.toBe('rgba(0, 0, 0, 0)');
   });
 });

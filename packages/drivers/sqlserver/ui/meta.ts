@@ -22,9 +22,13 @@ export const sqlserverMeta = {
   connectionView: 'sql',
   sqlDialect: 'sqlserver',
   databaseFieldType: 'name',
-  connectionForm: 'standard',
+  connectionForm: 'sqlserver',
   clipboardSchemes: ['sqlserver', 'mssql'],
   supportsExplain: true,
+  // T-SQL has no `LIMIT`/`OFFSET` clause: pagination is `OFFSET n ROWS FETCH NEXT
+  // m ROWS ONLY`, which is only legal together with an `ORDER BY`. The builder
+  // cannot guarantee one, so it must not offer a row window for SQL Server.
+  supportsOffset: false,
   hasMultiDatabase: true,
   supportedObjectKinds: ['function', 'procedure', 'trigger', 'sequence', 'type'],
   supportsCreateDatabase: true,

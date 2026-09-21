@@ -18,7 +18,7 @@ Commands 是 React 前端进入 Rust backend 的 IPC 边界。Command 层负责�
 - dashboard
 - AI / MCP
 - history / export / backup
-- extensions / theme / window
+- wapps / theme / window
 
 具体目录结构以 `src-tauri/src/commands/` 为准。
 

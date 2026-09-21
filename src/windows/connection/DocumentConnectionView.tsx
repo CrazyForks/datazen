@@ -780,6 +780,8 @@ function DocumentQueryPanel({
           connectionName,
           databaseType: databaseType as import('../../types').DatabaseType,
           title: 'Query',
+          database: '',
+          schema: null,
         },
         false,
       );

@@ -6,6 +6,7 @@ export interface ExportedEditorSettings {
   editor?: {
     fontSize?: number;
     fontFamily?: string;
+    completionIncludeTablePrefix?: boolean;
     completionQuotePolicy?: 'unquoted' | 'always' | 'both';
     keymapPreset?: 'default' | 'dbeaver' | 'navicat';
     customKeymap?: Partial<Record<string, string>>;
@@ -32,6 +33,7 @@ export function exportEditorSettings(settings: AppSettings): string {
       fontSize: settings.editorFontSize,
       fontFamily: settings.editorFontFamily,
       completionQuotePolicy: settings.editorCompletionQuotePolicy,
+      completionIncludeTablePrefix: settings.editorCompletionIncludeTablePrefix,
       keymapPreset: settings.keymapPreset,
       customKeymap: settings.customKeymap,
       sqlFormatOptions: settings.sqlFormatOptions,
@@ -63,6 +65,9 @@ export function importEditorSettings(jsonStr: string): Partial<AppSettings> {
 
   if (obj.editor && typeof obj.editor === 'object') {
     const ed = obj.editor as Record<string, unknown>;
+    if (typeof ed.completionIncludeTablePrefix === 'boolean') {
+      result.editorCompletionIncludeTablePrefix = ed.completionIncludeTablePrefix;
+    }
     if (typeof ed.fontSize === 'number') result.editorFontSize = ed.fontSize;
     if (typeof ed.fontFamily === 'string') result.editorFontFamily = ed.fontFamily;
     if (

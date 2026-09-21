@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   FileSearch,
   Wand2,
+  WandSparkles,
   RefreshCw,
   CirclePlay,
   Check,
@@ -18,8 +19,9 @@ import {
 } from 'lucide-react';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
 import { useI18n } from '../../../hooks/useI18n';
-import { usePlatform } from '../../../hooks/usePlatform';
 import { cn } from '../../../lib/cn';
+import { formatShortcutForDisplay, getActionShortcut } from '../../../lib/keymap';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 export interface QueryToolbarMoreMenuProps {
   compact?: boolean;
@@ -37,6 +39,7 @@ export interface QueryToolbarMoreMenuProps {
   onRollbackTx: () => void;
   onRefreshCompletion?: () => void;
   renderSnippetButton?: () => ReactNode;
+  onToggleQb?: () => void;
 }
 
 interface MenuItemProps {
@@ -83,10 +86,11 @@ export function QueryToolbarMoreMenu({
   onRollbackTx,
   onRefreshCompletion,
   renderSnippetButton,
+  onToggleQb,
 }: QueryToolbarMoreMenuProps) {
   const { t } = useI18n();
-  const platform = usePlatform();
-  const isMac = platform === 'macos' || (platform as string) === 'ios';
+  const keymapPreset = useSettingsStore((s) => s.settings.keymapPreset);
+  const customKeymap = useSettingsStore((s) => s.settings.customKeymap);
 
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -137,7 +141,9 @@ export function QueryToolbarMoreMenu({
     });
   }, []);
 
-  const formatShortcut = isMac ? '⇧⌥F' : 'Shift+Alt+F';
+  const formatShortcut = formatShortcutForDisplay(
+    getActionShortcut('formatSql', keymapPreset, customKeymap),
+  );
 
   return (
     <div
@@ -196,6 +202,15 @@ export function QueryToolbarMoreMenu({
                 icon={<RefreshCw className="h-3.5 w-3.5" />}
                 disabled={refreshCompletionDisabled}
                 onClick={() => runAction(onRefreshCompletion)}
+              />
+            )}
+
+            {onToggleQb && (
+              <MenuItem
+                testId="more-menu-visual-builder"
+                label={t('query.visualBuilder.title')}
+                icon={<WandSparkles className="h-3.5 w-3.5" />}
+                onClick={() => runAction(onToggleQb)}
               />
             )}
 

@@ -18,6 +18,7 @@ mod file;
 mod history;
 pub mod mcp;
 mod query;
+mod sample;
 mod schema;
 mod schema_diff;
 mod structure;
@@ -47,6 +48,7 @@ pub use file::*;
 pub use history::*;
 pub use mcp::*;
 pub use query::*;
+pub use sample::*;
 pub use schema::*;
 pub use schema_diff::*;
 pub use structure::*;
@@ -157,7 +159,7 @@ pub struct AppState {
     pub query_executions: Arc<QueryExecutionRegistry>,
     pub workflow_scheduler: Arc<WorkflowScheduler>,
     pub wapps: Arc<WappManager>,
-    pub extensions: Arc<WappManager>,
+    pub cancel_registry: crate::ai::CancellationRegistry,
 }
 
 impl AppState {

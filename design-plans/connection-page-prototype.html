@@ -1,0 +1,1121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DataZen Connection Page - Optimized Prototype</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg-primary: #0f1117;
+        --bg-secondary: #161920;
+        --bg-tertiary: #1c1f28;
+        --bg-card: #1e2130;
+        --bg-hover: #252836;
+        --border: #2a2d3a;
+        --border-light: #353849;
+        --text-primary: #e4e7f0;
+        --text-secondary: #8b90a0;
+        --text-muted: #5c6070;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --accent-glow: rgba(59, 130, 246, 0.15);
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+        --mysql: #00758f;
+        --postgres: #336791;
+        --redis: #dc382d;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .app-container {
+        display: flex;
+        height: 100vh;
+      }
+
+      /* Left Rail - Icon Navigation */
+      .icon-rail {
+        width: 56px;
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px 0;
+        gap: 4px;
+      }
+
+      .rail-icon {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: all 0.15s ease;
+        position: relative;
+      }
+
+      .rail-icon:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+      }
+
+      .rail-icon.active {
+        background: var(--accent-glow);
+        color: var(--accent);
+      }
+
+      .rail-icon.active::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 3px;
+        height: 20px;
+        background: var(--accent);
+        border-radius: 0 2px 2px 0;
+      }
+
+      .rail-icon svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      .rail-divider {
+        width: 24px;
+        height: 1px;
+        background: var(--border);
+        margin: 8px 0;
+      }
+
+      .rail-spacer {
+        flex: 1;
+      }
+
+      /* Sidebar - Connection Tree */
+      .sidebar {
+        width: 260px;
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .sidebar-header {
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .sidebar-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+      }
+
+      .sidebar-search {
+        width: 100%;
+        padding: 8px 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 13px;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+
+      .sidebar-search:focus {
+        border-color: var(--accent);
+      }
+
+      .sidebar-search::placeholder {
+        color: var(--text-muted);
+      }
+
+      .sidebar-actions {
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .sidebar-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .sidebar-btn:hover {
+        background: var(--bg-hover);
+        border-color: var(--border-light);
+        color: var(--text-primary);
+      }
+
+      .sidebar-btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+
+      .sidebar-btn.primary:hover {
+        background: var(--accent-hover);
+      }
+
+      .sidebar-btn svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .tree-section {
+        padding: 8px 0;
+      }
+
+      .tree-section-header {
+        display: flex;
+        align-items: center;
+        padding: 6px 16px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+      }
+
+      .tree-section-header:hover {
+        color: var(--text-secondary);
+      }
+
+      .tree-section-header svg {
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        transition: transform 0.15s;
+      }
+
+      .tree-item {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px 8px 32px;
+        cursor: pointer;
+        transition: background 0.1s;
+        gap: 10px;
+      }
+
+      .tree-item:hover {
+        background: var(--bg-hover);
+      }
+
+      .tree-item.active {
+        background: var(--accent-glow);
+      }
+
+      .tree-item-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+      }
+
+      .tree-item-icon.mysql {
+        background: var(--mysql);
+      }
+      .tree-item-icon.postgres {
+        background: var(--postgres);
+      }
+      .tree-item-icon.redis {
+        background: var(--redis);
+      }
+
+      .tree-item-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .tree-item-name {
+        font-size: 13px;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tree-item-host {
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tree-item-status {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .tree-item-status.online {
+        background: var(--success);
+      }
+      .tree-item-status.offline {
+        background: var(--text-muted);
+      }
+
+      /* Main Content */
+      .main-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* Header */
+      .content-header {
+        padding: 24px 32px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .header-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .header-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 12px;
+      }
+
+      .header-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .header-btn.primary {
+        background: var(--accent);
+        color: white;
+      }
+
+      .header-btn.primary:hover {
+        background: var(--accent-hover);
+      }
+
+      .header-btn.secondary {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+      }
+
+      .header-btn.secondary:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .header-btn svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .header-stats {
+        display: flex;
+        gap: 20px;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .header-stats span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .header-stats strong {
+        color: var(--text-secondary);
+        font-weight: 600;
+      }
+
+      /* Connection Grid */
+      .connections-container {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 32px;
+      }
+
+      .connections-section {
+        margin-bottom: 32px;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .section-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .section-filter {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .filter-input {
+        width: 200px;
+        padding: 6px 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 12px;
+        outline: none;
+      }
+
+      .filter-input:focus {
+        border-color: var(--accent);
+      }
+
+      .filter-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      .connections-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
+      }
+
+      /* Connection Card */
+      .connection-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+
+      .connection-card:hover {
+        border-color: var(--accent);
+        box-shadow:
+          0 0 0 1px var(--accent),
+          0 4px 12px rgba(0, 0, 0, 0.3);
+        transform: translateY(-2px);
+      }
+
+      .connection-card.active {
+        border-color: var(--accent);
+        background: linear-gradient(135deg, var(--bg-card) 0%, rgba(59, 130, 246, 0.08) 100%);
+      }
+
+      .card-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+      }
+
+      .card-icon.mysql {
+        background: linear-gradient(135deg, var(--mysql) 0%, #005f73 100%);
+      }
+      .card-icon.postgres {
+        background: linear-gradient(135deg, var(--postgres) 0%, #264653 100%);
+      }
+      .card-icon.redis {
+        background: linear-gradient(135deg, var(--redis) 0%, #a4133c 100%);
+      }
+
+      .card-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .card-name-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+      }
+
+      .card-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .card-badge {
+        padding: 2px 8px;
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+
+      .card-host {
+        font-size: 13px;
+        color: var(--text-secondary);
+        font-family: 'SF Mono', 'Fira Code', monospace;
+      }
+
+      .card-meta {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+
+      .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .meta-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .meta-dot.online {
+        background: var(--success);
+      }
+      .meta-dot.offline {
+        background: var(--text-muted);
+      }
+
+      .card-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .card-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .card-btn.connect {
+        background: var(--accent);
+        color: white;
+      }
+
+      .card-btn.connect:hover {
+        background: var(--accent-hover);
+      }
+
+      .card-btn.secondary {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+      }
+
+      .card-btn.secondary:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .card-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      /* Quick Actions Section */
+      .quick-actions {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 24px;
+      }
+
+      .quick-actions-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 16px;
+      }
+
+      .quick-actions-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+
+      .quick-action {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .quick-action:hover {
+        border-color: var(--accent);
+        background: var(--bg-hover);
+      }
+
+      .quick-action-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: var(--accent-glow);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent);
+      }
+
+      .quick-action-icon svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .quick-action-info {
+        flex: 1;
+      }
+
+      .quick-action-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+      }
+
+      .quick-action-desc {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      /* Keyboard Shortcuts Footer */
+      .shortcuts-footer {
+        padding: 12px 32px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+
+      .shortcut {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .shortcut kbd {
+        padding: 2px 6px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+
+      /* Tooltip */
+      .rail-icon[data-tooltip]::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: calc(100% + 12px);
+        top: 50%;
+        transform: translateY(-50%);
+        padding: 6px 10px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text-primary);
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s;
+        z-index: 100;
+      }
+
+      .rail-icon[data-tooltip]:hover::after {
+        opacity: 1;
+      }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 4px;
+      }
+
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--border-light);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Icon Rail -->
+      <div class="icon-rail">
+        <div class="rail-icon active" data-tooltip="Databases">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <ellipse cx="12" cy="5" rx="9" ry="3" />
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+          </svg>
+        </div>
+        <div class="rail-icon" data-tooltip="Dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+          </svg>
+        </div>
+        <div class="rail-icon" data-tooltip="Workflows">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="18" r="3" />
+            <circle cx="6" cy="6" r="3" />
+            <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+            <path d="M6 9v12" />
+          </svg>
+        </div>
+        <div class="rail-divider"></div>
+        <div class="rail-icon" data-tooltip="Extensions">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path
+              d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+            />
+          </svg>
+        </div>
+        <div class="rail-spacer"></div>
+        <div class="rail-icon" data-tooltip="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+            />
+          </svg>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title">Connections</div>
+          <input type="text" class="sidebar-search" placeholder="Search connections..." />
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="sidebar-btn primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New
+          </button>
+          <button class="sidebar-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Import
+          </button>
+        </div>
+
+        <div class="tree-section">
+          <div class="tree-section-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            Recent (1)
+          </div>
+          <div class="tree-item active">
+            <div class="tree-item-icon mysql">My</div>
+            <div class="tree-item-info">
+              <div class="tree-item-name">MySQL-Local</div>
+              <div class="tree-item-host">127.0.0.1:3306</div>
+            </div>
+            <div class="tree-item-status offline"></div>
+          </div>
+        </div>
+
+        <div class="tree-section">
+          <div class="tree-section-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            All Connections (3)
+          </div>
+          <div class="tree-item">
+            <div class="tree-item-icon mysql">My</div>
+            <div class="tree-item-info">
+              <div class="tree-item-name">MySQL-Local</div>
+              <div class="tree-item-host">127.0.0.1:3306</div>
+            </div>
+            <div class="tree-item-status offline"></div>
+          </div>
+          <div class="tree-item">
+            <div class="tree-item-icon postgres">Pg</div>
+            <div class="tree-item-info">
+              <div class="tree-item-name">goecoride</div>
+              <div class="tree-item-host">127.0.0.1:5432</div>
+            </div>
+            <div class="tree-item-status offline"></div>
+          </div>
+          <div class="tree-item">
+            <div class="tree-item-icon redis">Re</div>
+            <div class="tree-item-info">
+              <div class="tree-item-name">Redis-Local</div>
+              <div class="tree-item-host">127.0.0.1:6379</div>
+            </div>
+            <div class="tree-item-status offline"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="main-content">
+        <div class="content-header">
+          <div class="header-top">
+            <h1 class="header-title">Select a connection</h1>
+            <div class="header-actions">
+              <button class="header-btn secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Import
+              </button>
+              <button class="header-btn primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                New Connection
+              </button>
+            </div>
+          </div>
+          <div class="header-stats">
+            <span><strong>3</strong> connections</span>
+            <span><strong>3</strong> database types</span>
+          </div>
+        </div>
+
+        <div class="connections-container">
+          <div class="connections-section">
+            <div class="section-header">
+              <div class="section-title">Your Connections</div>
+              <div class="section-filter">
+                <input type="text" class="filter-input" placeholder="Filter connections..." />
+              </div>
+            </div>
+
+            <div class="connections-grid">
+              <!-- MySQL Card -->
+              <div class="connection-card">
+                <div class="card-header">
+                  <div class="card-icon mysql">MySQL</div>
+                  <div class="card-info">
+                    <div class="card-name-row">
+                      <span class="card-name">MySQL-Local</span>
+                      <span class="card-badge">MySQL</span>
+                    </div>
+                    <div class="card-host">127.0.0.1:3306</div>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <div class="meta-item">
+                    <div class="meta-dot offline"></div>
+                    Offline
+                  </div>
+                  <div class="meta-item">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    Encrypted
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <button class="card-btn connect">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Connect
+                  </button>
+                  <button class="card-btn secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3" />
+                      <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                      />
+                    </svg>
+                    Edit
+                  </button>
+                </div>
+              </div>
+
+              <!-- PostgreSQL Card -->
+              <div class="connection-card">
+                <div class="card-header">
+                  <div class="card-icon postgres">Pg</div>
+                  <div class="card-info">
+                    <div class="card-name-row">
+                      <span class="card-name">goecoride</span>
+                      <span class="card-badge">PostgreSQL</span>
+                    </div>
+                    <div class="card-host">127.0.0.1:5432</div>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <div class="meta-item">
+                    <div class="meta-dot offline"></div>
+                    Offline
+                  </div>
+                  <div class="meta-item">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    Encrypted
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <button class="card-btn connect">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Connect
+                  </button>
+                  <button class="card-btn secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3" />
+                      <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                      />
+                    </svg>
+                    Edit
+                  </button>
+                </div>
+              </div>
+
+              <!-- Redis Card -->
+              <div class="connection-card">
+                <div class="card-header">
+                  <div class="card-icon redis">Re</div>
+                  <div class="card-info">
+                    <div class="card-name-row">
+                      <span class="card-name">Redis-Local</span>
+                      <span class="card-badge">Redis</span>
+                    </div>
+                    <div class="card-host">127.0.0.1:6379</div>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <div class="meta-item">
+                    <div class="meta-dot offline"></div>
+                    Offline
+                  </div>
+                  <div class="meta-item">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    Encrypted
+                  </div>
+                </div>
+                <div class="card-actions">
+                  <button class="card-btn connect">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Connect
+                  </button>
+                  <button class="card-btn secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3" />
+                      <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                      />
+                    </svg>
+                    Edit
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="quick-actions">
+            <div class="quick-actions-title">Quick Actions</div>
+            <div class="quick-actions-grid">
+              <div class="quick-action">
+                <div class="quick-action-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
+                </div>
+                <div class="quick-action-info">
+                  <div class="quick-action-name">New Query</div>
+                  <div class="quick-action-desc">Start a new SQL query</div>
+                </div>
+              </div>
+              <div class="quick-action">
+                <div class="quick-action-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div class="quick-action-info">
+                  <div class="quick-action-name">Import Connections</div>
+                  <div class="quick-action-desc">Import from file or clipboard</div>
+                </div>
+              </div>
+              <div class="quick-action">
+                <div class="quick-action-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                </div>
+                <div class="quick-action-info">
+                  <div class="quick-action-name">Schema Diff</div>
+                  <div class="quick-action-desc">Compare database structures</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shortcuts Footer -->
+        <div class="shortcuts-footer">
+          <div class="shortcut"><kbd>⌘</kbd><kbd>N</kbd> New Connection</div>
+          <div class="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>F</kbd> Format SQL</div>
+          <div class="shortcut"><kbd>⌘</kbd><kbd>K</kbd> Command Palette</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -8,36 +8,7 @@ import {
   type UpdateProgress,
 } from '../../lib/updater';
 
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="text-sm text-fg-secondary">{label}</div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
-          checked ? 'bg-accent' : 'bg-edge'
-        }`}
-      >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-            checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
-          }`}
-        />
-      </button>
-    </div>
-  );
-}
+import { SectionTitle, ToggleRow } from './settingsUi';
 
 function progressLabel(
   progress: UpdateProgress,
@@ -129,10 +100,9 @@ export function UpdateSection({
 
   return (
     <>
-      <h2 className="text-[13px] font-semibold uppercase tracking-wider text-fg-muted">
+      <SectionTitle hint={t('settings.updater.description')}>
         {t('settings.updater.title')}
-      </h2>
-      <p className="text-xs text-fg-muted">{t('settings.updater.description')}</p>
+      </SectionTitle>
 
       <ToggleRow
         label={t('settings.updater.checkOnStartup')}

@@ -75,6 +75,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     onNavigateToTable,
     onNavigateToStructure,
     onNavigateToDdl,
+    completionIncludeTablePrefix = true,
     completionQuotePolicy = 'unquoted',
   },
   ref,
@@ -118,12 +119,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const sqlSyntaxTheme = useSettingsStore((s) => s.settings.sqlSyntaxTheme);
   const editorExtensionSettings = useSettingsStore(
     (s) =>
-      (s.settings.pluginSettings?.['sql-editor-enhanced'] ??
-        s.settings.pluginSettings?.['sql-editor-pro']) as Record<string, unknown> | undefined,
+      (s.settings.driverSettings?.['sql-editor-enhanced'] ??
+        s.settings.driverSettings?.['sql-editor-pro']) as Record<string, unknown> | undefined,
   );
   const statementGutterEnabled = editorExtensionSettings?.statementGutter !== false;
   const tableHoverEnabled = editorExtensionSettings?.tableHover !== false;
   const insertValueHintsEnabled = editorExtensionSettings?.insertValueHints !== false;
+  const intentionActionsEnabled = editorExtensionSettings?.intentionActions === true;
 
   // §EP hot-plug: re-render when enhanced extension registers/unregisters at runtime
   const isSqlEditorEnhanced = useIsExtensionEnhanced(sqlEditorEnhancedEP);
@@ -259,6 +261,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
           metadataSnapshot,
           schema,
           completionQuotePolicy,
+          completionIncludeTablePrefix,
           translate,
           snippets: allSnippets,
         },
@@ -269,6 +272,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       metadataSnapshot,
       schema,
       completionQuotePolicy,
+      completionIncludeTablePrefix,
       translate,
       allSnippets,
       isSqlEditorEnhanced,
@@ -328,8 +332,12 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   );
 
   const linterExts = useMemo(
-    () => createLinterExtensions({ databaseType, schema }, { modelRef, metadataSnapshotRef }),
-    [databaseType, schema, isSqlEditorEnhanced],
+    () =>
+      createLinterExtensions(
+        { databaseType, schema, completionQuotePolicy, intentionActions: intentionActionsEnabled },
+        { modelRef, metadataSnapshotRef },
+      ),
+    [databaseType, schema, completionQuotePolicy, intentionActionsEnabled, isSqlEditorEnhanced],
   );
 
   // ── Editor mount ─────────────────────────────────────────────────
@@ -528,7 +536,15 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       ),
       annotations: Transaction.addToHistory.of(false),
     });
-  }, [schema, databaseType, namespaceLoading, defaultSchema, defaultTable]);
+  }, [
+    schema,
+    databaseType,
+    namespaceLoading,
+    defaultSchema,
+    defaultTable,
+    keymapPreset,
+    customKeymap,
+  ]);
 
   // ── §S6-D: External value replacement (with documentVersion bump) ─
   useEffect(() => {

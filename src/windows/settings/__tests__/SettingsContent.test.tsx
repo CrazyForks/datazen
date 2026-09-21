@@ -53,7 +53,7 @@ const {
     mcpDisabledTools: [],
     mcpPermissionMode: 'read_only',
     contextDir: '/tmp/context',
-    pluginSettings: {},
+    driverSettings: {},
     mcpClientServers: [],
     aiStrictEgress: true,
     monitor: {
@@ -310,8 +310,8 @@ vi.mock('../UpdateSection', () => ({
   ),
 }));
 
-vi.mock('../PluginSettingsSection', () => ({
-  PluginSettingsSection: () => <div data-testid="wapp-settings" />,
+vi.mock('../DriverSettingsSection', () => ({
+  DriverSettingsSection: () => <div data-testid="driver-settings" />,
 }));
 
 async function waitForSettingsLoad() {
@@ -387,7 +387,7 @@ beforeEach(() => {
     mcpDisabledTools: [],
     mcpPermissionMode: 'read_only',
     contextDir: '/tmp/context',
-    pluginSettings: {},
+    driverSettings: {},
     mcpClientServers: [],
     aiStrictEgress: true,
     monitor: {
@@ -447,7 +447,9 @@ describe('SettingsContent', () => {
   it('opens section from initialSection prop', async () => {
     render(<SettingsContent initialSection="ai" />);
     await waitForSettingsLoad();
-    expect(screen.getByText('settings.ai.description')).toBeInTheDocument();
+    expect(screen.queryByText('settings.ai.description')).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'settings.ai.modelsTitle' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.ai.description');
     expect(loadProvidersMock).toHaveBeenCalled();
   });
 
@@ -517,8 +519,10 @@ describe('SettingsContent', () => {
     await waitForSettingsLoad();
 
     goToSection('settings.editor');
-    const range = document.querySelector('input[type="range"]') as HTMLInputElement;
-    fireEvent.change(range, { target: { value: '16' } });
+    const slider = screen.getByRole('slider', { name: 'settings.fontSize' });
+    slider.getBoundingClientRect = () => new DOMRect(0, 0, 200, 36);
+    // ratio 0.4286 * (24-10) + 10 = 16
+    fireEvent.pointerDown(slider, { clientX: 86, button: 0, pointerId: 1 });
     expect(screen.getByText('16px')).toBeInTheDocument();
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ editorFontSize: 16 }));
 
@@ -641,7 +645,10 @@ describe('SettingsContent', () => {
     await waitFor(() => expect(promptListMock).toHaveBeenCalled());
 
     expect(screen.getByText('NL to SQL')).toBeInTheDocument();
-    expect(screen.getByText(/settings\.prompts\.variables/)).toBeInTheDocument();
+    expect(screen.queryByText(/settings\.prompts\.variables/)).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'NL to SQL' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('settings.prompts.variables');
+    fireEvent.keyDown(document, { key: 'Escape' });
 
     fireEvent.click(screen.getAllByText('settings.prompts.edit')[0]);
     const textarea = document.querySelector('textarea');
@@ -901,7 +908,10 @@ describe('SettingsContent', () => {
     const expandBtn = screen.getByRole('button', { name: /Other MCP/ });
     fireEvent.click(expandBtn);
     expect(screen.getByText('read_file')).toBeInTheDocument();
-    expect(screen.getByText('Read a file')).toBeInTheDocument();
+    expect(screen.queryByText('Read a file')).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'read_file' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Read a file');
+    fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(expandBtn);
 
     aiState.mcpTools = [];
@@ -976,7 +986,7 @@ describe('SettingsContent', () => {
     render(<SettingsContent />);
     await waitForSettingsLoad();
     goToSection('settings.extensions.title');
-    expect(screen.getByTestId('wapp-settings')).toBeInTheDocument();
+    expect(screen.getByTestId('driver-settings')).toBeInTheDocument();
   });
 
   it('shows config error in AI section', async () => {
@@ -992,6 +1002,60 @@ describe('SettingsContent', () => {
     await waitForSettingsLoad();
     goToSection('settings.editor');
     expect(screen.queryByTestId('settings-contrib-sql-editor-pro')).not.toBeInTheDocument();
+  });
+
+  it('renders generic intentionActions default off and persists off/on/off without changing sibling settings', async () => {
+    const { extensionRegistry, sqlEditorEnhancedEP } = await import('@datazen/extension-points');
+    currentSettings.driverSettings = {
+      other: { preserved: true },
+      'sql-editor-enhanced': { insertValueHints: true },
+    };
+    const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
+      settingsContributions: [
+        {
+          extensionId: 'sql-editor-enhanced',
+          targetSection: 'editor',
+          items: [
+            {
+              key: 'intentionActions',
+              label: 'Intention Actions',
+              hint: 'Show the lightbulb for available quick fixes.',
+              type: 'boolean',
+              defaultValue: false,
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      const { unmount } = render(<SettingsContent initialSection="editor" />);
+      await waitForSettingsLoad();
+      const toggle = screen.getByRole('switch', { name: 'Intention Actions' });
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      fireEvent.mouseEnter(screen.getByRole('button', { name: 'Intention Actions' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Show the lightbulb');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      for (const enabled of [true, false]) {
+        fireEvent.click(toggle);
+        await waitFor(() =>
+          expect(updateSettingsMock).toHaveBeenLastCalledWith({
+            driverSettings: {
+              other: { preserved: true },
+              'sql-editor-enhanced': { insertValueHints: true, intentionActions: enabled },
+            },
+          }),
+        );
+        expect(toggle).toHaveAttribute('aria-checked', String(enabled));
+      }
+      unmount();
+      render(<SettingsContent initialSection="editor" />);
+      expect(screen.getByRole('switch', { name: 'Intention Actions' })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      );
+    } finally {
+      unregister();
+    }
   });
 
   it('renders extension settings contribution dynamically when registered', async () => {
@@ -1022,9 +1086,15 @@ describe('SettingsContent', () => {
       goToSection('settings.editor');
 
       expect(screen.getByText('SQL Editor Pro 增强设置')).toBeInTheDocument();
-      expect(screen.getByText('高级编辑器特性开关')).toBeInTheDocument();
+      expect(screen.queryByText('高级编辑器特性开关')).not.toBeInTheDocument();
+      fireEvent.mouseEnter(screen.getByRole('button', { name: 'SQL Editor Pro 增强设置' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('高级编辑器特性开关');
+      fireEvent.keyDown(document, { key: 'Escape' });
       expect(screen.getByText('表结构悬浮卡片')).toBeInTheDocument();
-      expect(screen.getByText('鼠标悬浮时展示表列信息')).toBeInTheDocument();
+      expect(screen.queryByText('鼠标悬浮时展示表列信息')).not.toBeInTheDocument();
+      fireEvent.mouseEnter(screen.getByRole('button', { name: '表结构悬浮卡片' }));
+      expect(screen.getByRole('tooltip')).toHaveTextContent('鼠标悬浮时展示表列信息');
+      fireEvent.keyDown(document, { key: 'Escape' });
 
       const contribContainer = screen.getByTestId('settings-contrib-sql-editor-pro');
       const toggle = within(contribContainer).getByRole('switch');
@@ -1033,7 +1103,7 @@ describe('SettingsContent', () => {
       fireEvent.click(toggle);
       await waitFor(() =>
         expect(updateSettingsMock).toHaveBeenCalledWith({
-          pluginSettings: {
+          driverSettings: {
             'sql-editor-pro': {
               tableHover: false,
             },
@@ -1094,7 +1164,7 @@ describe('SettingsContent', () => {
       fireEvent.click(screen.getByTestId('custom-change-btn'));
       await waitFor(() =>
         expect(updateSettingsMock).toHaveBeenCalledWith({
-          pluginSettings: {
+          driverSettings: {
             'sql-editor-pro': {
               customLicense: 'new-license',
             },
@@ -1105,7 +1175,7 @@ describe('SettingsContent', () => {
       fireEvent.click(screen.getByTestId('custom-other-btn'));
       await waitFor(() =>
         expect(updateSettingsMock).toHaveBeenCalledWith({
-          pluginSettings: {
+          driverSettings: {
             'sql-editor-pro': {
               customLicense: 'new-license',
               otherKey: 123,
@@ -1152,7 +1222,7 @@ describe('SettingsContent', () => {
       fireEvent.click(screen.getByTestId('group-update-btn'));
       await waitFor(() =>
         expect(updateSettingsMock).toHaveBeenCalledWith({
-          pluginSettings: {
+          driverSettings: {
             'sql-editor-pro': {
               previewTheme: 'dark-pro',
             },

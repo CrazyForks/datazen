@@ -155,6 +155,7 @@ export function ContentViewDialogs({
           selectedRows={selectedRows}
           databaseType={connCtx.databaseType}
           dbSessionId={connCtx.dbSessionId}
+          database={currentDatabase ?? initialDatabase ?? ''}
           totalRows={totalRows}
           defaultScope="entire_table"
           dataExportCapability={exportCapability}
@@ -170,7 +171,7 @@ export function ContentViewDialogs({
           database={currentDatabase ?? undefined}
           tables={exportableTableNames}
           initialSelected={batchExportInitialSelected}
-          loadTableExportData={loadTableExportData(connCtx)}
+          loadTableExportData={loadTableExportData(connCtx, currentDatabase ?? '')}
           dataExportCapability={exportCapability}
         />
       )}
@@ -229,11 +230,12 @@ export function ContentViewDialogs({
 }
 
 /** Builds the `loadBatchExportTableData` closure bound to the given context. */
-function loadTableExportData(connCtx: ConnectionContext) {
+function loadTableExportData(connCtx: ConnectionContext, database: string) {
   return (name: string) =>
     loadBatchExportTableData({
       dbSessionId: connCtx.dbSessionId,
       tableName: name,
+      database,
       databaseType: connCtx.databaseType,
       includeRows: false,
     });

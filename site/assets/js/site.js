@@ -17,7 +17,11 @@
         },
         { href: 'index.html#why', label: 'Why DataZen' },
         { href: 'manual.html', label: 'Docs' },
-        { href: 'blog-architecture.html', label: 'Blog' },
+        {
+          href: 'https://github.com/flyxl/datazen/blob/main/CHANGELOG.md',
+          label: 'Changelog',
+          external: true,
+        },
         { href: 'https://github.com/flyxl/datazen', label: 'GitHub', external: true },
       ],
       downloadCta: 'Download Free',
@@ -25,7 +29,7 @@
       menuAria: 'Menu',
       productMenuAria: 'Toggle product menu',
       footerAbout:
-        'The AI-powered database workspace for developers. Query, debug, analyze and automate your databases — locally, from one lightweight desktop app. Licensed under GPLv3.',
+        'The AI-powered database workspace for developers. Query, debug, analyze and automate your databases from one lightweight desktop app. Licensed under GPLv3.',
       footerProduct: 'Product',
       footerLinks: 'Links',
       footerFeatures: 'All features',
@@ -37,6 +41,7 @@
       footerDatabases: 'Databases',
       footerGithub: 'GitHub',
       footerReleases: 'Releases',
+      footerChangelog: 'Changelog',
       footerIssues: 'Issues',
       footerContact: 'Contact',
       langSwitchLabel: '中',
@@ -58,7 +63,11 @@
         },
         { href: 'index.html#why', label: '为什么是 DataZen' },
         { href: 'manual.html', label: '使用手册' },
-        { href: 'blog-architecture.html', label: '博客' },
+        {
+          href: 'https://github.com/flyxl/datazen/blob/main/CHANGELOG.md',
+          label: '更新日志',
+          external: true,
+        },
         { href: 'https://github.com/flyxl/datazen', label: 'GitHub', external: true },
       ],
       downloadCta: '免费下载',
@@ -66,7 +75,7 @@
       menuAria: '菜单',
       productMenuAria: '展开产品菜单',
       footerAbout:
-        '面向开发者的 AI 数据库工作台：查询、排障、分析、自动化，都在一款轻量桌面应用里本地完成。GPLv3 协议开源。',
+        '面向开发者的 AI 数据库工作台：查询、排障、分析、自动化，都在一款轻量桌面应用里完成。GPLv3 协议开源。',
       footerProduct: '产品',
       footerLinks: '链接',
       footerFeatures: '功能总览',
@@ -78,6 +87,7 @@
       footerDatabases: '数据库支持',
       footerGithub: 'GitHub 仓库',
       footerReleases: '下载中心',
+      footerChangelog: '更新日志',
       footerIssues: '反馈 Issue',
       footerContact: '联系作者',
       langSwitchLabel: 'EN',
@@ -88,7 +98,11 @@
 
   function detectLocale() {
     const path = location.pathname;
-    return /\/zh(\/|$)/.test(path) ? 'zh' : 'en';
+    if (/\/zh(\/|$)/.test(path)) return 'zh';
+    // Fallback: check the html lang attribute (generated blog pages set lang="zh-CN")
+    const lang = document.documentElement.lang || '';
+    if (/^zh/i.test(lang)) return 'zh';
+    return 'en';
   }
 
   function assetBase(locale) {
@@ -299,6 +313,87 @@
     }
   }
 
+  // ── Split download button (macOS arch picker) ──
+  function initSplitDownload() {
+    document.querySelectorAll('[data-split-download]').forEach(function (wrap) {
+      var toggle = wrap.querySelector('.split-toggle');
+      var menu = wrap.querySelector('.split-menu');
+      if (!toggle || !menu) return;
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = wrap.classList.toggle('open');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      document.addEventListener('click', function () {
+        wrap.classList.remove('open');
+        toggle.setAttribute('aria-expanded', 'false');
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          wrap.classList.remove('open');
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+      });
+    });
+  }
+
+  // ── Release downloads: resolve the matching installer from the latest release ──
+  function initReleaseDownloads() {
+    var buttons = document.querySelectorAll('.platform-download');
+    if (!buttons.length) return;
+
+    var ua = navigator.userAgent || '';
+    var isArmMac =
+      /Macintosh/.test(ua) && /arm|aarch64/i.test(navigator.userAgentData?.architecture || '');
+    var platform = /Windows/.test(ua)
+      ? 'windows'
+      : /Linux/.test(ua) && !/Android/.test(ua)
+        ? 'linux'
+        : 'macos';
+    var type = platform === 'windows' ? 'nsis' : platform === 'linux' ? 'AppImage' : 'dmg';
+    var releaseUrl = 'https://api.github.com/repos/flyxl/datazen/releases/latest';
+
+    fetch(releaseUrl)
+      .then(function (response) {
+        if (!response.ok) throw new Error('Release lookup failed');
+        return response.json();
+      })
+      .then(function (release) {
+        var assets = (release.assets || []).filter(function (asset) {
+          return asset && asset.browser_download_url;
+        });
+        buttons.forEach(function (button) {
+          if (button.dataset.platform === platform) {
+            var buttonArch = button.dataset.arch || (isArmMac ? 'arm64' : 'x64');
+            var platformPattern = new RegExp(platform + '-' + buttonArch, 'i');
+            var extensionPattern =
+              platform === 'windows'
+                ? /\.exe$/i
+                : platform === 'linux'
+                  ? /\.AppImage$/i
+                  : /\.dmg$/i;
+            var candidates = assets.filter(function (asset) {
+              return (
+                platformPattern.test(asset.name) &&
+                extensionPattern.test(asset.name) &&
+                (platform !== 'windows' || !/portable/i.test(asset.name))
+              );
+            });
+            var match = candidates.sort(function (left, right) {
+              var leftVariant = /-(?:all|akulaku)(?:[-.])/i.test(left.name) ? 1 : 0;
+              var rightVariant = /-(?:all|akulaku)(?:[-.])/i.test(right.name) ? 1 : 0;
+              return leftVariant - rightVariant;
+            })[0];
+            if (!match) return;
+            button.href = match.browser_download_url;
+            button.target = '_self';
+            button.removeAttribute('rel');
+          }
+        });
+      })
+      .catch(function () {});
+  }
+
   // ── GitHub star badge ──
   function initStarBadge() {
     var navEl = document.getElementById('nav-star-count');
@@ -390,6 +485,9 @@
       '<a href="https://github.com/flyxl/datazen/releases" target="_blank" rel="noopener">' +
       t.footerReleases +
       '</a>' +
+      '<a href="https://github.com/flyxl/datazen/blob/main/CHANGELOG.md" target="_blank" rel="noopener">' +
+      t.footerChangelog +
+      '</a>' +
       '<a href="https://github.com/flyxl/datazen/issues" target="_blank" rel="noopener">' +
       t.footerIssues +
       '</a>' +
@@ -401,6 +499,31 @@
       '</div></footer>';
   }
 
+  // ── Icon library loader (Lucide for general, Simple Icons for brands) ──
+  // All icons are static `<i data-lucide="...">` in HTML; this only renders them.
+
+  /** Render static Lucide icons declared in markup */
+  function renderStaticIcons() {
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons();
+    }
+  }
+
+  /** Load Lucide from CDN */
+  function loadLucide(callback) {
+    if (typeof lucide !== 'undefined') {
+      callback();
+      return;
+    }
+    var script = document.createElement('script');
+    script.src = 'https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js';
+    script.onload = callback;
+    script.onerror = function () {
+      console.warn('[icons] Failed to load Lucide CDN, icons will remain empty');
+    };
+    document.head.appendChild(script);
+  }
+
   // ORIGIN_PATH_HINT kept for documentation of Pages base; locale detection uses /zh/ only.
   void ORIGIN_PATH_HINT;
 
@@ -409,7 +532,10 @@
     renderFooter();
     initHeroDemo();
     initPlatformDetect();
+    initSplitDownload();
+    initReleaseDownloads();
     initStarBadge();
     initLightbox();
+    loadLucide(renderStaticIcons);
   });
 })();

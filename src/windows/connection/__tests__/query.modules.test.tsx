@@ -273,6 +273,27 @@ describe('[tester] query/contracts', () => {
     expect(hasSuspiciousPostgresDoubleQuotedLiteral("WHERE name = 'John'")).toBe(false);
   });
 
+  it('does not flag quoted identifiers on the right of a comparison', () => {
+    // Regression: a generated JOIN ON clause is not a mis-quoted literal, and
+    // reporting it blocked execution of the builder's own multi-table SQL.
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral(
+        'SELECT 1 FROM "actor" INNER JOIN "film_actor" ON "actor"."id" = "film_actor"."actor_id"',
+      ),
+    ).toBe(false);
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral('WHERE "t"."a" = "t"."b" AND "t"."c" >= 2000'),
+    ).toBe(false);
+    expect(
+      hasSuspiciousPostgresDoubleQuotedLiteral('WHERE "public"."name" = "public"."other"'),
+    ).toBe(false);
+  });
+
+  it('still flags a bare quoted literal after an operator', () => {
+    expect(hasSuspiciousPostgresDoubleQuotedLiteral('WHERE name LIKE "A%"')).toBe(true);
+    expect(hasSuspiciousPostgresDoubleQuotedLiteral('WHERE a <> "b"')).toBe(true);
+  });
+
   it('builds diagnosis context from panel state', () => {
     const result = buildQueryPanelDiagnosisContext({
       execution: { sql: 'SELECT 1', error: 'syntax error at line 1' },
@@ -346,11 +367,12 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
     await handler({ tables: [{ tableName: 'users', schema: 'public' }] }, 10);
-    expect(getTableSchema).toHaveBeenCalledWith('sess-1', 'public.users', undefined);
+    expect(getTableSchema).toHaveBeenCalledWith('sess-1', 'public.users', 'app');
     expect(insertAt).toHaveBeenCalled();
   });
 
@@ -364,6 +386,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 
@@ -381,6 +404,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: '',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 
@@ -405,6 +429,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -433,6 +458,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -467,6 +493,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
       editorRef,
     });
 
@@ -495,6 +522,7 @@ describe('[tester] query/queryDropHandler', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'sqlite',
+      database: 'main',
       editorRef,
     });
 
@@ -854,6 +882,44 @@ describe('[tester] query/QueryEditorSection', () => {
     return render(<QueryEditorSection {...defaults} {...overrides} />);
   }
 
+  it('fills the editor column while the height is not pinned', () => {
+    renderSection();
+
+    // Regression: the host used to be `shrink-0` with a fixed height, so a
+    // persisted `editorHeight` taller than the column overflowed it and painted
+    // over the result pane's 表格 / 图表 toggle (the host is `relative`).
+    const host = screen.getByTestId('query-editor-host');
+    expect(host.className).not.toContain('shrink-0');
+    expect(host.className).toContain('min-h-0');
+    expect(host.className).toContain('flex-1');
+
+    // The column itself absorbs the leftover height, so before anything has
+    // been executed the editor really owns the whole panel.
+    expect(host.parentElement?.className).toContain('flex-1');
+    expect(host.style.height).toBe('');
+  });
+
+  it('pins the editor to editorHeight once the splitter has been dragged', () => {
+    renderSection({ editorHeightPinned: true });
+
+    const host = screen.getByTestId('query-editor-host');
+    expect(host.style.height).toBe('200px');
+    // Still shrinkable: an explicit height must never overflow the column.
+    expect(host.className).not.toContain('shrink-0');
+    expect(host.parentElement?.className).toContain('flex-initial');
+  });
+
+  it('shows the execute hint under the editor while idle', () => {
+    renderSection({ showIdleHint: true });
+    expect(screen.getByTestId('query-idle-hint')).toHaveTextContent('query.shortcutHint');
+  });
+
+  it('hides the splitter while there is nothing to split against', () => {
+    renderSection({ showResizeHandle: false });
+    // The handle is the only `cursor-row-resize` element the editor renders.
+    expect(document.querySelector('.cursor-row-resize')).toHaveClass('hidden');
+  });
+
   it('wires toolbar actions and editor context menu', () => {
     const onExecute = vi.fn();
     const onExplain = vi.fn();
@@ -1194,9 +1260,12 @@ describe('[tester] query/QueryResultsPane', () => {
     onAddToDashboardConfirm: vi.fn(),
   };
 
-  it('shows shortcut hint when idle with no results', () => {
+  it('keeps no idle placeholder of its own', () => {
+    // The "press ⌘+Enter" hint moved to the bottom of the editor
+    // (QueryEditorSection), so an unexecuted panel no longer reserves height
+    // for the result pane.
     render(<QueryResultsPane {...baseProps} />);
-    expect(screen.getByText('query.shortcutHint')).toBeInTheDocument();
+    expect(screen.queryByText('query.shortcutHint')).toBeNull();
   });
 
   it('renders error panel with retry and diagnosis actions', () => {
@@ -1393,5 +1462,82 @@ describe('[tester] query/useQueryContextPath', () => {
       await result.current.syncContextFromSql('SELECT * FROM other.users');
     });
     expect(switchDatabase).toHaveBeenCalled();
+  });
+
+  it('syncs the panel-bound database when switching database at level 0 (non-path)', async () => {
+    const updatePanel = vi.fn();
+    const switchDatabase = vi.fn().mockResolvedValue(undefined);
+    const ensureNamespacePath = vi.fn().mockResolvedValue(undefined);
+
+    usePanelStore.setState({ updatePanel } as Partial<ReturnType<typeof usePanelStore.getState>>);
+    schemaStoreState.switchDatabase = switchDatabase;
+    schemaStoreState.ensureNamespacePath = ensureNamespacePath;
+    schemaStoreState.databases = ['app', 'other'];
+    schemaStoreState.currentDatabase = 'app';
+
+    const { result } = renderHook(() =>
+      useQueryContextPath({
+        panelId: 'p1',
+        dbSessionId: 'sess-1',
+        isPathHierarchy: false,
+        selectedDatabase: 'app',
+        namespaceTree: [],
+        pathAliases: {},
+        databases: ['app', 'other'],
+        currentDatabase: 'app',
+      }),
+    );
+
+    await act(async () => {
+      result.current.handleSelectContextLevel(0, 'other');
+    });
+
+    // Switching the database inside the panel writes the new DB back onto the
+    // panel's bound `database`.
+    expect(updatePanel).toHaveBeenCalledWith('p1', { database: 'other' });
+  });
+
+  it('binds the full path hierarchy when switching levels inside a path-hierarchy panel', async () => {
+    const updatePanel = vi.fn();
+    const switchDatabase = vi.fn().mockResolvedValue(undefined);
+    const ensureNamespacePath = vi.fn().mockResolvedValue(undefined);
+
+    usePanelStore.setState({ updatePanel } as Partial<ReturnType<typeof usePanelStore.getState>>);
+    schemaStoreState.switchDatabase = switchDatabase;
+    schemaStoreState.ensureNamespacePath = ensureNamespacePath;
+    schemaStoreState.databases = ['hive', 'prod'];
+    schemaStoreState.currentDatabase = null;
+
+    const { result } = renderHook(() =>
+      useQueryContextPath({
+        panelId: 'p1',
+        dbSessionId: 'sess-1',
+        isPathHierarchy: true,
+        selectedDatabase: 'hive',
+        namespaceTree: [],
+        pathAliases: {},
+        databases: ['hive', 'prod'],
+        currentDatabase: null,
+      }),
+    );
+
+    await act(async () => {
+      // User picks a new root (catalog level) at level 0.
+      result.current.handleSelectContextLevel(0, 'hive');
+    });
+
+    // Level 0 writes the root onto the panel's bound database…
+    expect(updatePanel).toHaveBeenCalledWith('p1', { database: 'hive' });
+    // …and the whole selected path (root-first) is written onto the panel's
+    // bound namespacePath.
+    expect(updatePanel).toHaveBeenCalledWith('p1', { namespacePath: ['hive'] });
+
+    // Then the user drills into a nested catalog/schema level — the full path
+    // (root + deeper levels) stays bound together.
+    updatePanel.mockClear();
+    await act(async () => {
+      result.current.handleSelectContextLevel(1, 'snap');
+    });
+    expect(updatePanel).toHaveBeenCalledWith('p1', { namespacePath: ['hive', 'snap'] });
   });
 });

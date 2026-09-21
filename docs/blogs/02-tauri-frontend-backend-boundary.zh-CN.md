@@ -199,7 +199,7 @@ Rust 端收到请求后，通过 `resolve_command_driver` 找到会话对应的 
 
 这个设计把两个维度分开了：
 
-- **入口**：SQL 编辑器、Workflow、MCP、Extension 或后台任务；
+- **入口**：SQL 编辑器、Workflow、MCP、Wapp 或后台任务；
 - **能力**：`query`、`query_stream`、`list_objects`、Redis KV 或某个管理 Command。
 
 入口可以不断增加，能力也可以由 Driver 不断增加，但二者不需要互相复制一套判断逻辑。前端只负责调用协议，Driver 才负责数据库差异。
@@ -315,7 +315,7 @@ state.connection_manager
 
 **兼容成本**：每一种数据库都需要在 JavaScript 层打包驱动或协议实现，安装包、平台兼容和升级都会变复杂。DataZen 把数据库差异放进 Rust Driver，并在构建时选择需要的驱动。
 
-**一致性成本**：GUI、Workflow、MCP 和 Extension 如果各自直接访问数据库，就会产生多套权限、错误和历史记录逻辑。统一进入 Command Runtime 后，入口可以复用同一套核心能力。
+**一致性成本**：GUI、Workflow、MCP 和 Wapp 如果各自直接访问数据库，就会产生多套权限、错误和历史记录逻辑。统一进入 Command Runtime 后，入口可以复用同一套核心能力。
 
 因此，IPC 并不是额外的绕路，而是把安全、资源和一致性集中管理的成本。对于数据库工具，这个边界通常值得保留。
 

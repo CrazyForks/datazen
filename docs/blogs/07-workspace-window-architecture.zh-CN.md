@@ -4,7 +4,7 @@
 
 ## 主窗口承载上下文
 
-主窗口的路由壳是 `MainPage`：没有连接时显示 `WelcomePage`，有连接时显示 `ConnectionPage`。ConnectionPage 统一承载连接树、SQL 面板、Schema 浏览、Workflow 和 Dashboard 导航。
+主窗口的路由壳是 `MainPage`：首次启动走独立 `onboarding` 向导窗口，完成后（或升级/正常启动）直进 `ConnectionPage`。零连接时的空状态由 `ConnectionWorkspaceHome` 直接承接（新建/导入 CTA）。ConnectionPage 统一承载连接树、SQL 面板、Schema 浏览、Workflow 和 Dashboard 导航。
 
 Settings 也以内嵌 `SettingsPage` 呈现。Docs 则直接在系统浏览器打开官网手册，不再创建一个“文档子窗口”。
 
@@ -49,4 +49,4 @@ Rust 的 `create_sub_window` 负责真正创建原生窗口，设置尺寸、透
 
 窗口架构最终服务的是状态边界。主工作区负责连续的数据库工作流，少量子窗口负责隔离的专用任务，WindowKind 和 windowManager 则把平台差异集中起来。下一篇将深入主工作区内部：当连接、面板、Schema 和 AI 状态不断变化时，Zustand 如何避免一个全局 Store 失控。
 
-相关资料：[窗口管理](../architecture/windows.md) · [Extension 页面壳](../architecture/backend/extensions.md)
+相关资料：[窗口管理](../architecture/windows.md) · [Wapp 页面壳](../architecture/backend/wapps.md)

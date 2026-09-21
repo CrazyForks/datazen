@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
+import { getVersion } from '@tauri-apps/api/app';
 import { ThemedIcon } from '../../components/ThemedIcon';
 import { Button } from '../../components/ui/Button';
 import { PathInput } from '../../components/ui/PathInput';
@@ -12,7 +13,7 @@ import { settingsCommands } from '../../commands/settings';
 import type { AppSettings } from '../../types';
 import { BUILTIN_LOCALES, BUILTIN_LOCALE_LABELS, getExtensionLocales } from '../../locales';
 import { UpdateSection } from './UpdateSection';
-import { PluginSettingsSection } from './PluginSettingsSection';
+import { DriverSettingsSection } from './DriverSettingsSection';
 import { AiSettingsSection } from './AiSettingsSection';
 import { PromptSettingsSection } from './PromptSettingsSection';
 import { McpSettingsSection } from './McpSettingsSection';
@@ -23,8 +24,11 @@ import {
   type KeymapPreset,
   getActionShortcut,
   formatShortcutForDisplay,
+  normalizeShortcutInput,
 } from '../../lib/keymap';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
+import { Slider } from '../../components/ui/Slider';
 import { DataCleanupSection } from './DataCleanupSection';
 import { AppearanceSection } from './AppearanceSection';
 import { SqlSnippetsCard } from './SqlSnippetsCard';
@@ -76,6 +80,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
   const settings = localSettings;
 
   const [defaultLogPath, setDefaultLogPath] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
 
   const languageOptions = useMemo(
     () => [
@@ -140,20 +151,20 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
   const enhanced = useExtension(sqlEditorEnhancedEP);
 
-  const updatePluginSetting = async (extensionId: string, key: string, value: unknown) => {
-    const currentPluginSettings =
-      (localSettings.pluginSettings as Record<string, Record<string, unknown>>) || {};
-    const extSettings = { ...(currentPluginSettings[extensionId] || {}), [key]: value };
-    const nextPluginSettings = { ...currentPluginSettings, [extensionId]: extSettings };
+  const updateExtensionSetting = async (extensionId: string, key: string, value: unknown) => {
+    const currentDriverSettings =
+      (localSettings.driverSettings as Record<string, Record<string, unknown>>) || {};
+    const extSettings = { ...(currentDriverSettings[extensionId] || {}), [key]: value };
+    const nextDriverSettings = { ...currentDriverSettings, [extensionId]: extSettings };
 
     setLocalSettings((prev) => ({
       ...prev,
-      pluginSettings: nextPluginSettings,
+      driverSettings: nextDriverSettings,
     }));
     try {
-      await updateSettings({ pluginSettings: nextPluginSettings });
+      await updateSettings({ driverSettings: nextDriverSettings });
     } catch (error) {
-      console.error('Failed to update plugin setting:', error);
+      console.error('Failed to update extension setting:', error);
     }
   };
 
@@ -167,7 +178,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
       <div className="space-y-6 pt-4 border-t border-edge">
         {list.map((contrib) => {
           const extVals =
-            (settings.pluginSettings?.[contrib.extensionId] as
+            (settings.driverSettings?.[contrib.extensionId] as
               | Record<string, unknown>
               | undefined) ?? {};
 
@@ -180,7 +191,8 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
               >
                 {contrib.renderGroup({
                   values: extVals,
-                  updateSetting: (key, val) => updatePluginSetting(contrib.extensionId, key, val),
+                  updateSetting: (key, val) =>
+                    updateExtensionSetting(contrib.extensionId, key, val),
                   items: contrib.items,
                 })}
               </div>
@@ -195,12 +207,15 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
             >
               {(contrib.groupTitle || contrib.groupDescription) && (
                 <div>
-                  {contrib.groupTitle && (
-                    <h4 className="text-sm font-semibold text-fg">{contrib.groupTitle}</h4>
-                  )}
-                  {contrib.groupDescription && (
-                    <p className="text-xs text-fg-muted mt-0.5">{contrib.groupDescription}</p>
-                  )}
+                  <h4 className="text-sm font-semibold text-fg">
+                    {contrib.groupTitle}
+                    {contrib.groupDescription && (
+                      <SettingHint
+                        label={contrib.groupTitle || contrib.extensionId}
+                        text={contrib.groupDescription}
+                      />
+                    )}
+                  </h4>
                 </div>
               )}
               <div className="space-y-3">
@@ -212,9 +227,10 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                       <SettingRow key={item.key} label={item.label} hint={item.hint}>
                         {item.render({
                           value: currentValue,
-                          onChange: (v) => updatePluginSetting(contrib.extensionId, item.key, v),
+                          onChange: (v) => updateExtensionSetting(contrib.extensionId, item.key, v),
                           values: extVals,
-                          updateSetting: (k, v) => updatePluginSetting(contrib.extensionId, k, v),
+                          updateSetting: (k, v) =>
+                            updateExtensionSetting(contrib.extensionId, k, v),
                         })}
                       </SettingRow>
                     );
@@ -222,14 +238,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
                   if (item.type === 'boolean') {
                     return (
-                      <div key={item.key} className="space-y-1">
-                        <ToggleRow
-                          label={item.label}
-                          checked={Boolean(currentValue)}
-                          onChange={(v) => updatePluginSetting(contrib.extensionId, item.key, v)}
-                        />
-                        {item.hint && <p className="text-xs text-fg-muted pl-1">{item.hint}</p>}
-                      </div>
+                      <ToggleRow
+                        key={item.key}
+                        label={item.label}
+                        hint={item.hint}
+                        checked={Boolean(currentValue)}
+                        onChange={(v) => updateExtensionSetting(contrib.extensionId, item.key, v)}
+                      />
                     );
                   }
 
@@ -242,7 +257,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                             value: String(opt.value),
                             label: opt.label,
                           }))}
-                          onChange={(v) => updatePluginSetting(contrib.extensionId, item.key, v)}
+                          onChange={(v) => updateExtensionSetting(contrib.extensionId, item.key, v)}
                         />
                       </SettingRow>
                     );
@@ -255,7 +270,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                           type="number"
                           value={Number(currentValue)}
                           onChange={(e) =>
-                            updatePluginSetting(
+                            updateExtensionSetting(
                               contrib.extensionId,
                               item.key,
                               Number(e.target.value),
@@ -273,7 +288,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                         type="text"
                         value={String(currentValue ?? '')}
                         onChange={(e) =>
-                          updatePluginSetting(contrib.extensionId, item.key, e.target.value)
+                          updateExtensionSetting(contrib.extensionId, item.key, e.target.value)
                         }
                         className="h-9 w-full rounded-md border border-edge bg-surface px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/25"
                       />
@@ -349,6 +364,12 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 checkOnStartup={settings.checkForUpdatesOnStartup}
                 onCheckOnStartupChange={(v) => updateField('checkForUpdatesOnStartup', v)}
               />
+
+              {appVersion && (
+                <div className="pt-4 border-t border-edge">
+                  <p className="text-xs text-fg-muted">DataZen v{appVersion}</p>
+                </div>
+              )}
             </>
           )}
 
@@ -367,7 +388,10 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 />
               </SettingRow>
 
-              <SettingRow label={t('settings.connectionPoolSize')}>
+              <SettingRow
+                label={t('settings.connectionPoolSize')}
+                hint={t('settings.connectionPoolSizeHint')}
+              >
                 <input
                   type="number"
                   min={1}
@@ -382,7 +406,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   data-testid="settings-connection-pool-size"
                 />
               </SettingRow>
-              <p className="text-xs text-fg-muted -mt-2">{t('settings.connectionPoolSizeHint')}</p>
 
               <ToggleRow
                 label={t('settings.limitSelect')}
@@ -405,10 +428,26 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
               <ToggleRow
                 label={t('settings.autoChartOnQuery')}
+                hint={t('settings.autoChartOnQueryHint')}
                 checked={settings.autoChartOnQuery === true}
                 onChange={(v) => updateField('autoChartOnQuery', v)}
               />
-              <p className="text-xs text-fg-muted -mt-2">{t('settings.autoChartOnQueryHint')}</p>
+
+              <SettingRow
+                label={t('settings.workflowStepResultOrder')}
+                hint={t('settings.workflowStepResultOrderHint')}
+              >
+                <Select
+                  value={settings.workflowStepResultOrder ?? 'desc'}
+                  options={[
+                    { value: 'desc', label: t('settings.workflowStepOrder.desc') },
+                    { value: 'asc', label: t('settings.workflowStepOrder.asc') },
+                  ]}
+                  onChange={(v) =>
+                    updateField('workflowStepResultOrder', v === 'asc' ? 'asc' : 'desc')
+                  }
+                />
+              </SettingRow>
 
               {renderSectionContributions('general')}
             </>
@@ -420,14 +459,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
 
               <SettingRow label={t('settings.fontSize')}>
                 <div className="flex items-center gap-3">
-                  <input
-                    type="range"
+                  <Slider
+                    aria-label={t('settings.fontSize')}
                     min={10}
                     max={24}
                     step={1}
                     value={settings.editorFontSize}
-                    onChange={(e) => updateField('editorFontSize', Number(e.target.value))}
-                    className="flex-1 accent-accent"
+                    onChange={(v) => updateField('editorFontSize', v)}
                   />
                   <span className="w-12 text-right text-sm tabular-nums text-fg-secondary">
                     {settings.editorFontSize}px
@@ -472,6 +510,12 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   }
                 />
               </SettingRow>
+
+              <ToggleRow
+                label={t('settings.editorCompletionIncludeTablePrefix')}
+                checked={settings.editorCompletionIncludeTablePrefix ?? true}
+                onChange={(v) => updateField('editorCompletionIncludeTablePrefix', v)}
+              />
 
               <SettingRow label={t('settings.keymap.preset')}>
                 <Select
@@ -519,12 +563,12 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
-                            value={currentVal}
+                            value={formatShortcutForDisplay(currentVal)}
                             placeholder="e.g. Mod-Enter"
                             onChange={(e) => {
                               const newCustom = {
                                 ...(settings.customKeymap || {}),
-                                [action.id]: e.target.value,
+                                [action.id]: normalizeShortcutInput(e.target.value),
                               };
                               updateField('customKeymap', newCustom);
                             }}
@@ -572,13 +616,22 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 onChange={(v) => updateField('safeMode', v)}
               />
 
+              <ToggleRow
+                label={t('settings.confirmDangerousExecution')}
+                hint={t('settings.confirmDangerousExecutionHint')}
+                checked={settings.confirmDangerousExecution !== false}
+                onChange={(v) => updateField('confirmDangerousExecution', v)}
+              />
+
               <DataCleanupSection />
             </>
           )}
 
           {activeSection === 'logging' && (
             <>
-              <SectionTitle>{t('settings.logging')}</SectionTitle>
+              <SectionTitle hint={t('settings.logRestartNote')}>
+                {t('settings.logging')}
+              </SectionTitle>
 
               <SettingRow label={t('settings.logLevel')}>
                 <Select
@@ -602,8 +655,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   {t('common.viewLogs')}
                 </Button>
               </div>
-
-              <p className="text-xs text-fg-muted">{t('settings.logRestartNote')}</p>
             </>
           )}
 
@@ -617,7 +668,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
           {activeSection === 'prompts' && <PromptSettingsSection />}
           {activeSection === 'mcpServer' && <McpSettingsSection settings={settings} />}
           {activeSection === 'mcpClient' && <McpClientSection />}
-          {activeSection === 'extensions' && <PluginSettingsSection settings={settings} />}
+          {activeSection === 'extensions' && <DriverSettingsSection settings={settings} />}
         </div>
       </div>
     </div>

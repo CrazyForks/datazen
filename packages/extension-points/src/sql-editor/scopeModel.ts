@@ -196,6 +196,42 @@ function isOperatorOrPunctuation(text: string): boolean {
   );
 }
 
+/**
+ * Strip a bind-parameter suffix from a token that the scanner glued into a
+ * single `Other` token (e.g. `order_id=:orderId` or `col=$1`).
+ *
+ * The scanner does not break on `:`, `@`, `$`, `?`, or `=` — these all land
+ * inside the same `Other` run.  This function peels the bind-param portion
+ * (and any preceding `=`/operators) off so the remaining text can be treated
+ * as a column reference.
+ *
+ * Returns the column/qualifier text, or `null` when the entire token is a
+ * standalone bind param with no column prefix (e.g. just `:uid`).
+ */
+function stripBindParamSuffix(text: string): string | null {
+  // ── Standalone bind params — skip entirely ──
+  if (/^:\w+$/.test(text)) return null; // :name
+  if (/^@\w+$/.test(text)) return null; // @name
+  if (/^\$\d+$/.test(text) || /^\$\{\w+\}$/.test(text)) return null; // $N / ${name}
+  if (text === '?') return null; // ?
+
+  // ── Embedded: column<op>BindParam ──
+  // Capture group 1 = column name (must start with letter/_).
+  // Followed by optional operator chars and a trailing bind param marker.
+  const BIND = /(?::\w+|@\w+|\$\d+|\$\{\w+\}|\?)/;
+  const OP = /[=!<>]*/;
+  const COL = /([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*|\.\"[^\"]+\")*)/;
+  const re = new RegExp(`^${COL.source}${OP.source}${BIND.source}$`);
+  const m = text.match(re);
+  if (m?.[1]) return m[1].trim();
+
+  // Operators-only prefix + bind param (e.g. `=:@p`, `>=:$1`) — no column.
+  const opsAndBind = new RegExp(`^${OP.source}${BIND.source}$`);
+  if (opsAndBind.test(text)) return null;
+
+  return text;
+}
+
 function extractReferences(
   tokens: readonly SqlToken[],
   scopes: readonly SqlScope[],
@@ -230,11 +266,17 @@ function extractReferences(
     const text = t.text.trim();
     if (!text || isOperatorOrPunctuation(text)) continue;
 
-    if (/^\d+(?:\.\d+)?$/.test(text)) continue;
+    // Strip bind parameter suffix — when the scanner glues a column name and
+    // a bind param into one Other token (e.g. `order_id=:orderId`), extract
+    // just the column part.  Returns null for standalone params → skip.
+    const cleanText = stripBindParamSuffix(text);
+    if (cleanText === null) continue;
+
+    if (/^\d+(?:\.\d+)?$/.test(cleanText)) continue;
 
     // If current token is just a trailing dot prefix (e.g. `o.` or `"o".`) and next token is an identifier,
     // skip it here — it will be captured as the qualifier of the next token.
-    if (text.endsWith('.') && idx + 1 < meaningful.length) {
+    if (cleanText.endsWith('.') && idx + 1 < meaningful.length) {
       const next = meaningful[idx + 1]!;
       if (
         next.kind === SqlTokenKind.Other ||
@@ -275,7 +317,7 @@ function extractReferences(
     }
 
     if (leadingQualifier) {
-      const colName = text.replace(/^["`[]|["`\]]$/g, '').trim();
+      const colName = cleanText.replace(/^["`[]|["`\]]$/g, '').trim();
       if (colName && !NON_COLUMN_KEYWORDS.has(colName.toLowerCase())) {
         references.push({
           kind: 'column',
@@ -286,13 +328,13 @@ function extractReferences(
           resolved: true,
         });
       }
-    } else if (text.includes('.')) {
-      const dotIdx = text.lastIndexOf('.');
-      const qualifier = text
+    } else if (cleanText.includes('.')) {
+      const dotIdx = cleanText.lastIndexOf('.');
+      const qualifier = cleanText
         .slice(0, dotIdx)
         .replace(/^["`[]|["`\]]$/g, '')
         .trim();
-      const colName = text
+      const colName = cleanText
         .slice(dotIdx + 1)
         .replace(/^["`[]|["`\]]$/g, '')
         .trim();
@@ -307,11 +349,11 @@ function extractReferences(
         });
       }
     } else {
-      const lower = text.toLowerCase();
+      const lower = cleanText.toLowerCase();
       if (!NON_COLUMN_KEYWORDS.has(lower)) {
         references.push({
           kind: 'column',
-          text: text.replace(/^["`[]|["`\]]$/g, ''),
+          text: cleanText.replace(/^["`[]|["`\]]$/g, ''),
           range: { from: t.from, to: t.to },
           scopeId,
           resolved: true,

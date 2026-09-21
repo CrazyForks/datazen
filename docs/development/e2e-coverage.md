@@ -42,7 +42,8 @@
 | 用户路径 | Spec | 状态 |
 |----------|------|------|
 | 主页操作面板、搜索、分组 | `main-window.ts`, `homepage-features.ts` | Covered |
-| 首次安装 → Welcome → 取消/重新建连 → 查看连接 → 首条查询 | `journeys/welcome-query-journey.ts` | Covered（当前已实现的 PostgreSQL 首激活路径；示例 SQLite 向导仍待产品实现） |
+| 向导完成后零连接空状态 → 取消/重新建连 → 查看连接 → 首条查询 | `journeys/zero-state-query-journey.ts` | Covered（当前已实现的 PostgreSQL 首激活路径） |
+| 零连接工作区空状态（空状态文案/CTA → 首个连接保存 → 删除最后连接返回空状态） | `connection-zero-state.ts` (ZERO-001~005) | Covered |
 | 已有工作区 → 填写/测试/保存连接 → 重载持久化 | `journeys/connection-create-journey.ts` | Covered |
 | 连接列表 → 连接首页 → Schema 树 → 表数据/结构 → 返回数据 | `journeys/connection-browse-journey.ts` | Covered（具体子标签内容由 `connection-window.ts` 覆盖） |
 | 新建连接 → 打开连接 → 新建查询 → 执行 SQL | `journeys/connection-query-journey.ts` | Covered |
@@ -87,7 +88,7 @@
 
 | 状态边界 | Spec | 状态 |
 |----------|------|------|
-| 必填校验 → 连接失败 → 修正成功 → 保存 → 删除最后连接返回 Welcome | `journeys/first-run-edge-journey.ts` | Covered |
+| 必填校验 → 连接失败 → 修正成功 → 保存 → 删除最后连接返回空状态 | `journeys/first-run-edge-journey.ts` | Covered |
 | 错误 SQL → 复制错误 → 修正并重新执行 | `journeys/query-recovery-journey.ts` | Covered |
 | 查询运行中取消 → 编辑器恢复可执行 → 新 Tab 隔离 → 切回结果保留 | `journeys/query-edge-journey.ts` | Covered |
 | 慢连接 pending → 成功后精确展开；切换连接仅保留一个展开项 | `connection-navigator-expansion.ts` | Covered（主 Journey） |
@@ -141,24 +142,30 @@
 | 数据看板 | `data-dashboard-*.ts` | Covered（表格视图底部导出按钮交互见 UJ-05） |
 | 应用数据备份标签 | `app-data-backup.ts` | Covered |
 | 路径 IPC 加固 | `path-ipc-hardening.ts` | Covered |
-| 插件系统：安装（两步对话框）/ 管理卡片与权限徽标 / Workspace 导航+Tab / 桥往返（探针落盘或 shell 级降级断言，见例外）/ 双 Tab 体系独立 / 外观主题切换 / 停用联动关 Tab / 卸载确认 | `plugins.spec.ts`（J1/J2/J3/J5/J4）+ fixture `e2e/fixtures/sample-plugin/`（fixture 校验锚点：`plugins::fixture_tests` Rust 单测） | Covered（安装走 PathInput 键入路径，原生目录选择器见例外；`ui.notify` 限频、iframe 崩溃恢复与 iframe 内容加载见例外） |
+| 插件系统：安装（两步对话框）/ 管理卡片与权限徽标 / Workspace 导航+Tab / 桥往返（探针落盘或 shell 级降级断言，见例外）/ 双 Tab 体系独立 / 外观主题切换 / 停用联动关 Tab / 卸载确认 | `wapps.spec.ts`（J1/J2/J3/J5/J4）+ fixture `e2e/fixtures/sample-wapp/`（fixture 校验锚点：`wapps::fixture_tests` Rust 单测） | Covered（安装走 PathInput 键入路径，原生目录选择器见例外；`ui.notify` 限频、iframe 崩溃恢复与 iframe 内容加载见例外） |
 
 ## 例外登记（自动化限制）
 
 ### macOS 原生拖放验收
 
 `drag-drop-groups.ts` 主动构造 `DragEvent`，只能验证 DOM handler 和连接持久化，
-不能验证 NSDraggingDestination → WKWebView 的事件分发。主窗口必须配置
-`dragDropEnabled: false`：当前 Tauri runtime 的原生拖放回调始终返回 true，
-Wry 因此不调用 WKWebView 的默认 draggingEntered / draggingUpdated / performDragOperation。
-关闭后由 WebView 处理 HTML5 拖放；主窗口不再接收 Tauri 原生文件拖放通知
-（目前宿主没有使用该通知的监听器）。配置变更需要完整重启 Tauri，前端热更新不生效。
+不能验证 NSDraggingDestination → WKWebView 的事件分发。每个窗口都必须关闭原生拖放处理
+（`WebviewWindowBuilder::disable_drag_drop_handler()`，等价于旧配置项 `dragDropEnabled: false`）：
+当前 Tauri runtime 的原生拖放回调始终返回 true，Wry 因此不调用 WKWebView 的默认
+draggingEntered / draggingUpdated / performDragOperation。关闭后由 WebView 处理 HTML5 拖放；
+窗口不再接收 Tauri 原生文件拖放通知（目前宿主没有使用该通知的监听器）。
+窗口配置变更需要完整重启 Tauri，前端热更新不生效。
 
-**平台覆盖陷阱**：Tauri 使用 JSON Merge Patch，`tauri.macos.conf.json` 和
-`tauri.windows.conf.json` 的 `app.windows` 会整体替换基础配置的窗口数组，
-不是逐项合并。平台文件必须包含完整主窗口设置（尤其 `dragDropEnabled: false`），
-只修改 `tauri.conf.json` 不会修复这些平台。修改公共窗口设置时须同步平台文件；
-`scripts/__tests__/tauri-window-config.test.ts` 守护此契约，E2E 检查当前平台的有效窗口配置。
+**落点已迁移到 Rust**：自 onboarding 独立窗口改造后，所有窗口均由
+`create_main_window` / `create_onboarding_window` / `create_sub_window`
+（`src-tauri/src/commands/window.rs`）程序化创建，`app.windows` 为空数组，
+因此 `tauri.conf.json` 与平台文件里的 `dragDropEnabled` **不再对窗口生效**——
+只在配置文件里设置它不会修复任何平台。`window.rs` 内 `every_window_builder_disables_native_drag_drop`
+单测守护“每个 builder 都关闭原生拖放”这一契约，`e2e/specs/drag-drop-groups.ts`
+的配置用例检查同一份源码；`scripts/__tests__/tauri-window-config.test.ts` 继续守护
+“配置不静态定义窗口”。新增窗口创建点时必须在 builder 链上调用
+`disable_drag_drop_handler()`，否则该窗口内所有 HTML5 拖放（包括从连接树拖表到
+Visual Builder 画布）都会静默失效。
 
 每次涉及窗口配置或拖放链路变更，须在重建并重启的 macOS 应用中用真实鼠标验收：
 
@@ -166,7 +173,9 @@ Wry 因此不调用 WKWebView 的默认 draggingEntered / draggingUpdated / perf
 2. 在同组内将连接分别拖到另一连接上方和下方；出现定位线，释放后顺序正确，重启后保留。
 3. 将 Table 和 View 分别拖入同连接 SQL 编辑器；空编辑器生成查询，
    `SELECT * FROM ` 后按鼠标位置插入标识符，悬停显示光标，释放后编辑器获得焦点。
-4. 按 Escape 取消拖拽，再重新拖动；取消不修改连接或 SQL，下一次拖放仍成功。
+4. 从连接树把 Table 拖到 Visual Builder 画布：悬停时鼠标为可放置态，释放后画布出现该表卡片，
+   位置落在释放点，`SELECT` 预览包含该表。
+5. 按 Escape 取消拖拽，再重新拖动；取消不修改连接或 SQL，下一次拖放仍成功。
 
 合成事件测试通过不等于上述真机验收通过；未执行时须明确报告为待验收。
 
@@ -185,9 +194,9 @@ Wry 因此不调用 WKWebView 的默认 draggingEntered / draggingUpdated / perf
 | 数据看板表格视图：大数据量下底部导出按钮不被容器裁剪 | 依赖真实渲染高度的几何断言，跨 WebView 平台不稳定 | 布局修复（`flex flex-col` 容器约束使 DataTable `flex-1` 生效、虚拟滚动开启）；E2E UJ-05 覆盖导出按钮可见 + 点击打开导出对话框 |
 | 选区视觉样式（`::selection` 颜色、大面积选区外观） | 纯视觉外观，无法自动化断言颜色/观感 | 全局 CSS（`globals.css` A1 主题化选区 + A2 控件 `user-select: none`）；TD-SEL-001 覆盖计算样式（内容可选中/控件不可选中） |
 | 插件安装原生目录选择器（PathInput 浏览按钮） | OS 对话框不可点选（同上通用条目，此处为具体落点） | E2E 在 PathInput 键入 fixture 绝对路径走同一 UI 链路 |
-| 插件 `ui.notify` 5s 限频 / 系统通知弹出 | 依赖系统通知中心，自动化不可观测 | `extensionBridge.test.ts` 限频用例（冷却窗口内第二次回 `E_RATE_LIMIT`） |
-| 插件 iframe 崩溃恢复条（10s watchdog → 重载按钮） | 需真实加载失败时序，WebKit 自动化不稳定 | `PluginPageShell.test.tsx` watchdog/reload 用例；E2E 断言 shell 存在与重开路径 |
-| 插件 iframe 内元素自动化（J2 桥往返的帧内 DOM 断言） | macOS WebKit 自动化下 `datazen://` 子帧导航被拒（实测截图：帧内容永不渲染、fixture JS 永不执行、`.storage.json` 探针永不落盘；同 URL 顶层窗口直载则正常渲染执行——疑为宿主 CSP `default-src 'self'` 未豁免 `datazen:` 子帧或 WebKit 自定义协议子帧策略，已登记 BUG-F9-04 待宿主验证） | 补偿：fixture 经既有桥 `storage.set` 持久化三个探针（`probe.bridge`/`probe.dark`/`probe.connCount`），E2E 从 `{appData}/plugins/datazen.sample/.storage.json` 轮询对账（内容可加载的平台即全量断言）；本环境下自动降级为真实 shell 级行为断言——watchdog 失败条出现 / 重载按钮重挂 iframe / manifest entry URL 解析正确。桥逻辑另有宿主 `extensionBridge` 64 例 + SDK 69 例单测背书。iframe 存在性断言（顶层文档）保留 |
+| 插件 `ui.notify` 5s 限频 / 系统通知弹出 | 依赖系统通知中心，自动化不可观测 | `wappBridge.test.ts` 限频用例（冷却窗口内第二次回 `E_RATE_LIMIT`） |
+| 插件 iframe 崩溃恢复条（10s watchdog → 重载按钮） | 需真实加载失败时序，WebKit 自动化不稳定 | `WappPageShell.test.tsx` watchdog/reload 用例；E2E 断言 shell 存在与重开路径 |
+| 插件 iframe 内元素自动化（J2 桥往返的帧内 DOM 断言） | macOS WebKit 自动化下 `datazen://` 子帧导航被拒（实测截图：帧内容永不渲染、fixture JS 永不执行、`.storage.json` 探针永不落盘；同 URL 顶层窗口直载则正常渲染执行——疑为宿主 CSP `default-src 'self'` 未豁免 `datazen:` 子帧或 WebKit 自定义协议子帧策略，已登记 BUG-F9-04 待宿主验证） | 补偿：fixture 经既有桥 `storage.set` 持久化三个探针（`probe.bridge`/`probe.dark`/`probe.connCount`），E2E 从 `{appData}/wapps/datazen.sample/.storage.json` 轮询对账（内容可加载的平台即全量断言）；本环境下自动降级为真实 shell 级行为断言——watchdog 失败条出现 / 重载按钮重挂 iframe / manifest entry URL 解析正确。桥逻辑另有宿主 `wappBridge` 64 例 + SDK 69 例单测背书。iframe 存在性断言（顶层文档）保留 |
 | 全 locale 文件 key 对齐（逐语言 bundle parity / 源文件 key 断言） | 发版流程已覆盖：`scripts/i18n-sync-check.mjs` + i18n-sync skill；E2E 易与 locale 重构脱节 | `src/locales/locales.test.ts`（Vitest）；发版前 `i18n-sync-check` CI |
 | 只读驱动（Kiwi / Superset 等 `DB_REGISTRY.readOnly`）表单元格编辑被禁止 | 该门闸由宿主 `TableView` + `DatabaseTypeMeta.readOnly` 驱动；Kiwi/Superset 为 git 驱动，不在 basic E2E 矩阵 | `TableView.test.tsx` 只读驱动用例；Superset/Kiwi 驱动内 `plugin-meta.test.ts` 断言 `readOnly` |
 

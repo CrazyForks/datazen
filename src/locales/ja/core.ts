@@ -169,8 +169,7 @@ const pack = {
   'extensions.page.themeBadge': 'テーマ',
   'extensions.page.themeHint': 'テーマは 設定 → 外観 で切り替えます。',
   'extensions.page.apiMismatch': 'API バージョンがサポートされていません',
-  'extensions.page.apiMismatchHint':
-    'プラグイン API v{plugin} はホスト API v{host} と一致しません。',
+  'extensions.page.apiMismatchHint': 'プラグイン API v{wapp} はホスト API v{host} と一致しません。',
   'extensions.page.emptyTitle': 'プラグインが見つかりません',
   'extensions.page.emptyHint':
     'プラグインパッケージ (.zip) をインストールして、DataZen に新しいワークスペース ページやテーマを追加できます。',
@@ -178,8 +177,8 @@ const pack = {
   'extensions.install.description':
     'インストールするローカル プラグインパッケージ (.zip) を選択してください。',
   'extensions.install.pickPrompt': 'Choose how to locate the plugin package on this computer.',
-  'extensions.install.browseZip': 'Select ZIP file…',
-  'extensions.install.browseFolder': 'Select folder…',
+  'extensions.install.browseZip': 'ZIP ファイルを参照…',
+  'extensions.install.browseFolder': 'フォルダーを参照…',
   'extensions.install.back': '戻る',
   'extensions.install.inspecting': '確認中…',
   'extensions.install.permissions': '要求された権限',

@@ -2,7 +2,7 @@
 
 DataZen ships a **Basic** SKU with four core drivers (`postgres`, `mysql`, `sqlite`, `redis`). Additional database engines live as **path drivers** under `packages/drivers/` and are listed in [`drivers-registry.json`](../../drivers-registry.json) at the repo root.
 
-This document covers the four optional engines called out in the P2 roadmap: **MongoDB**, **ClickHouse**, **DuckDB**, and **SQL Server**. Git-based drivers (Kiwi, OLAP, Superset) are documented in [`driver-development.md`](independent-driver-development.en.md).
+This document covers the four optional engines called out in the P2 roadmap: **MongoDB**, **ClickHouse**, **DuckDB**, and **SQL Server**. Git-based drivers (Kiwi, OLAP, Superset) are documented in [independent driver development](independent-driver-development.en.md).
 
 ## Inventory (2026-08-21)
 
@@ -44,11 +44,11 @@ Release SKUs (see [packaging.md](packaging.md) and GitHub release notes):
 |-----|---------|
 | **Basic** | postgres, mysql, sqlite, redis |
 | **All** | all path drivers (includes the four above; **excludes** Kiwi / OLAP / Superset) |
-| **Akulaku** | Basic + mongodb + kiwi + superset |
+| **Akulaku** | Basic + mongodb + kiwi + superset (Windows / macOS only) |
 
 ## What the Host expects (zero hardcoding)
 
-The Host does **not** branch on `pluginId === 'mongodb'` (or similar). Behavior comes from each driver's `ui/meta.ts` → generated `DB_REGISTRY` and from the Driver Command API:
+The Host does **not** branch on `driverId === 'mongodb'` (or similar). Behavior comes from each driver's `ui/meta.ts` → generated `DB_REGISTRY` and from the Driver Command API:
 
 | Capability | Host entry | Driver responsibility |
 |------------|------------|------------------------|
@@ -116,10 +116,10 @@ Host E2E contract journeys intentionally target Basic SQL drivers (PostgreSQL / 
 
 ## Local driver development
 
-See [driver-development.md](independent-driver-development.en.md) — path drivers use the same `DatabaseDriver` trait and `.drivers-dev.json` symlink workflow as git plugins, but the source stays in `packages/drivers/<id>/`.
+See [independent driver development](independent-driver-development.en.md) — path drivers use the same `DatabaseDriver` trait and `.drivers-dev.json` symlink workflow as git drivers, but the source stays in `packages/drivers/<id>/`.
 
 ## Related docs
 
 - [AGENTS.md](../../AGENTS.md) — driver selection, codegen, capabilities
-- [driver-development.md](independent-driver-development.en.md) — git plugins and trait reference
+- [independent driver development](independent-driver-development.en.md) — git drivers and trait reference
 - [packaging.md](packaging.md) — release SKUs and install channels

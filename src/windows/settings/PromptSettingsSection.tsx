@@ -14,6 +14,7 @@ import {
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import type { DatabaseType } from '../../types';
 import { SectionTitle, SettingRow } from './settingsUi';
+import { SettingHint } from './SettingHint';
 
 const SCENARIO_VARIABLES: Record<PromptScenario, string[]> = {
   nl2sql: ['db_type', 'version', 'schema', 'recent'],
@@ -109,11 +110,11 @@ export function PromptSettingsSection() {
 
   return (
     <>
-      <SectionTitle>{t('settings.prompts')}</SectionTitle>
-      <p className="text-xs text-fg-muted">{t('settings.prompts.description')}</p>
-      <p className="text-xs text-fg-muted bg-surface-alt/70 border border-edge rounded px-2.5 py-1.5">
-        {t('settings.prompts.langNotice')}
-      </p>
+      <SectionTitle
+        hint={`${t('settings.prompts.description')}\n\n${t('settings.prompts.langNotice')}`}
+      >
+        {t('settings.prompts')}
+      </SectionTitle>
 
       <SettingRow label={t('settings.prompts.driver')}>
         <Select value={driverType} options={driverOptions} onChange={setDriverType} />
@@ -132,7 +133,15 @@ export function PromptSettingsSection() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-fg">{p.label}</span>
+                  <span className="text-sm font-medium text-fg">
+                    {p.label}
+                    {vars.length > 0 && (
+                      <SettingHint
+                        label={p.label}
+                        text={`${t('settings.prompts.variables')}: ${vars.map((v) => `{{${v}}}`).join(', ')}`}
+                      />
+                    )}
+                  </span>
                   <span
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[10px] font-medium',
@@ -155,12 +164,6 @@ export function PromptSettingsSection() {
                   )}
                 </div>
               </div>
-
-              {vars.length > 0 && (
-                <p className="text-[10px] text-fg-muted">
-                  {t('settings.prompts.variables')}: {vars.map((v) => `{{${v}}}`).join(', ')}
-                </p>
-              )}
 
               {isEditing ? (
                 <div className="space-y-2">

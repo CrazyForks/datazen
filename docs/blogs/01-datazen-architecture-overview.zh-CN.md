@@ -30,7 +30,7 @@ DataZen 是一款面向开发者的开源 AI 数据库客户端，运行在 macO
 - Schema Diff、同族数据库的数据同步与异构数据迁移；
 - MCP Server 与 MCP Client；
 - 可独立扩展的数据库 Driver；
-- 可安装的工作区页面和主题 Extension。
+- 可安装的工作区页面和主题 Wapp。
 
 这些功能并不是简单地堆在一个桌面壳里。DataZen 的核心目标是：让不同入口复用同一套数据库能力，让具体数据库的差异留在驱动内部，让 UI 不需要随着每一种新数据库反复修改。
 
@@ -44,7 +44,7 @@ DataZen 因此采用了清晰的前后端分工。
 
 React 前端负责用户交互和信息呈现，包括工作区、SQL 编辑器、Schema 树、DataTable、图表、AI 对话、Workflow 编辑器以及各类配置界面。Zustand 用来组织不同业务域的前端状态，CodeMirror、React Virtual 和 Recharts 等库则分别承担编辑、虚拟化与可视化能力。
 
-Rust 后端负责所有需要本地系统能力或资源安全的工作，包括数据库连接、查询执行、驱动调度、持久化、加密、日志、Workflow Runtime、AI Provider、MCP 以及运行时 Extension 管理。
+Rust 后端负责所有需要本地系统能力或资源安全的工作，包括数据库连接、查询执行、驱动调度、持久化、加密、日志、Workflow Runtime、AI Provider、MCP 以及运行时 Wapp 管理。
 
 Tauri IPC 是这两个世界之间的边界。前端不会持有数据库连接池，也不会直接加载数据库驱动；它只发送结构化命令。后端完成校验和执行后，再把结构化结果或流式事件返回给前端。
 
@@ -201,22 +201,22 @@ DataZen 有两种启动方式。
 
 ![DataZen 两种运行模式](diagrams/datazen-runtime-modes.svg)
 
-两种模式都会构建同一套核心 `AppState`，其中包含 Driver Registry、Connection Manager、Store、Schema Cache、Workflow、AI、MCP Client 和 Extension Manager 等共享服务。
+两种模式都会构建同一套核心 `AppState`，其中包含 Driver Registry、Connection Manager、Store、Schema Cache、Workflow、AI、MCP Client 和 Wapp Manager 等共享服务。
 
 这不是为了展示“两种启动方式”本身，而是为了保证 DataZen 的数据库能力不被绑定在某个按钮或页面里。GUI 是入口，MCP 也是入口；核心执行逻辑只保留一份。
 
 ## 两种扩展机制，各自解决不同问题
 
-DataZen 同时存在数据库 Driver 和运行时 Extension，二者有意保持不同。
+DataZen 同时存在数据库 Driver 和运行时 Wapp，二者有意保持不同。
 
 数据库 Driver 需要建立真实连接、持有连接池并执行数据库协议，因此在构建阶段被编译进 Rust 应用。Driver 可以来自 monorepo，也可以来自独立 Git 仓库，由 Driver Registry 在构建时选择。
 
-运行时 Extension 则面向工作区页面和主题。它通过 Manifest 声明贡献，通过沙箱 iframe 运行，并使用受控的 `postMessage` 桥调用宿主能力。Extension 默认没有数据库访问权限，只有在 Manifest 声明相应权限后，才能通过桥调用 Driver Command。
+运行时 Wapp 则面向工作区页面和主题。它通过 Manifest 声明贡献，通过沙箱 iframe 运行，并使用受控的 `postMessage` 桥调用宿主能力。Wapp 默认没有数据库访问权限，只有在 Manifest 声明相应权限后，才能通过桥调用 Driver Command。
 
 简单来说：
 
 - Driver 扩展“DataZen 能连接和操作什么”；
-- Extension 扩展“用户如何在 DataZen 中组织和呈现能力”。
+- Wapp 扩展“用户如何在 DataZen 中组织和呈现能力”。
 
 这两种机制长期并存，避免为了追求一个抽象上的“统一插件系统”，反而模糊了系统权限和执行边界。
 

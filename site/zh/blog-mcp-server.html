@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Server：让 AI Agent 安全访问你的数据库 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent 可调用的 Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过 --mcp-stdio 启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-mcp-server.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-mcp-server.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-mcp-server.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-mcp-server.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="MCP Server：让 AI Agent 安全访问你的数据库" />
+    <meta
+      property="og:description"
+      content="DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent 可调用的 Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过 --mcp-stdio 启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。"
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/zh/blog-mcp-server.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MCP Server：让 AI Agent 安全访问你的数据库" />
+    <meta
+      name="twitter:description"
+      content="DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent 可调用的 Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过 --mcp-stdio 启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "MCP Server：让 AI Agent 安全访问你的数据库",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-16",
+        "description": "DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent 可调用的 Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过 --mcp-stdio 启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-mcp-server.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "MCP Server：让 AI Agent 安全访问你的数据库",
+            "item": "https://flyxl.github.io/datazen/zh/blog-mcp-server.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>MCP Server：让 AI Agent 安全访问你的数据库</h1>
+        <p>
+          DataZen 内置 MCP Server，基于 Model Context Protocol 将数据库能力暴露为 AI Agent 可调用的
+          Tools、Resources 和 Prompts。支持 SQL 查询、Schema 浏览、安全控制，可通过 --mcp-stdio
+          启动无头模式，让 Claude、ChatGPT 等 AI 助手直接访问你的数据库。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 10 月 16 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>MCP Server：让 AI Agent 安全访问你的数据库</h1>
+        <p>
+          AI 大模型很强大，但它们有一个天然的局限：不知道你的数据在哪里。ChatGPT
+          不知道你数据库里有哪些表，Claude 不知道你订单表的结构，DeepSeek 无法直接查询你的
+          PostgreSQL。
+        </p>
+        <p>
+          Model Context Protocol（MCP）正在改变这一点。它提供了一个标准化的协议，让 AI Agent
+          能够安全地发现和调用外部工具的能力。DataZen 的 MCP Server
+          就是这个生态中的一员——它把你的数据库连接能力包装成 AI Agent 可以理解的 Tools、Resources 和
+          Prompts，让 AI 助手真正成为你的数据助手。
+        </p>
+        <h2>Model Context Protocol：AI 与工具交互的标准</h2>
+        <p>
+          在 MCP 出现之前，每个 AI
+          应用想要访问外部工具，都需要自己实现一套集成方案。没有统一的标准，每个工具的接入方式都不一样，开发者需要重复造轮子。
+        </p>
+        <p>
+          MCP 解决了这个问题。它定义了一套统一的协议，规定了 AI Agent
+          如何发现工具、如何调用工具、如何获取结果。任何实现了 MCP 的工具，都可以被任何支持 MCP 的
+          AI Agent 直接使用。
+        </p>
+        <p>DataZen 的 MCP Server 完整实现了这个协议，提供了三种核心能力：</p>
+        <ul>
+          <li><strong>Tools</strong> — AI 可以调用的数据库操作（查询、浏览、修改）。</li>
+          <li><strong>Resources</strong> — AI 可以读取的数据库元数据（连接状态、Schema 信息）。</li>
+          <li><strong>Prompts</strong> — 预定义的数据库操作模板，帮助 AI 更高效地完成任务。</li>
+        </ul>
+        <h2>Tools：AI 能调用的数据库操作</h2>
+        <p>DataZen MCP Server 暴露了以下核心 Tools：</p>
+        <h3>execute_query</h3>
+        <p>执行 SQL 查询并返回结果。这是最基础也是最常用的能力。</p>
+        <p>
+          AI Agent 可以调用这个 Tool 来执行任何 SQL 查询。DataZen
+          会在后台管理数据库连接、执行查询、返回结构化结果。
+        </p>
+        <pre><code class="language-json">{
+  &quot;tool&quot;: &quot;execute_query&quot;,
+  &quot;arguments&quot;: {
+    &quot;connection_id&quot;: &quot;my-postgres&quot;,
+    &quot;sql&quot;: &quot;SELECT COUNT(*) FROM users WHERE created_at &gt;= CURRENT_DATE&quot;
+  }
+}
+</code></pre>
+        <h3>list_tables</h3>
+        <p>
+          浏览数据库的 Schema 结构。AI Agent 可以通过这个 Tool
+          了解数据库中有哪些表、每个表有哪些字段、字段是什么类型。
+        </p>
+        <p>这个能力让 AI 能够&quot;理解&quot;你的数据库结构，从而生成更准确的查询。</p>
+        <pre><code class="language-json">{
+  &quot;tool&quot;: &quot;list_tables&quot;,
+  &quot;arguments&quot;: {
+    &quot;connection_id&quot;: &quot;my-postgres&quot;
+  }
+}
+</code></pre>
+        <h3>get_table_schema</h3>
+        <p>获取单张表的详细结构信息，包括字段名、类型、约束、索引等。</p>
+        <h3>execute_command</h3>
+        <p>执行数据库管理命令，如查看连接状态、获取数据库大小、检查复制状态等。</p>
+        <h2>Resources：AI 可读取的元数据</h2>
+        <p>Resources 是 AI Agent 可以读取的上下文信息，帮助 AI 更好地理解当前的数据库环境。</p>
+        <ul>
+          <li><strong>database://connections</strong> — 当前配置的所有数据库连接列表。</li>
+          <li><strong>database://{connection_id}/schema</strong> — 特定连接的完整 Schema 信息。</li>
+          <li><strong>database://{connection_id}/status</strong> — 连接状态和数据库服务器信息。</li>
+        </ul>
+        <p>
+          AI Agent 在开始工作前，可以先读取这些
+          Resources，了解&quot;我现在能访问哪些数据库&quot;、&quot;每个数据库里有什么&quot;，然后再决定如何调用
+          Tools。
+        </p>
+        <h2>Prompts：预定义的操作模板</h2>
+        <p>
+          Prompts 是 DataZen 为常见数据库操作预定义的模板。它们帮助 AI Agent 更高效地完成特定任务。
+        </p>
+        <p>比如，当你让 AI &quot;帮我优化这条 SQL&quot;，DataZen 的 Prompt 模板会引导 AI：</p>
+        <ol>
+          <li>先执行 EXPLAIN 分析查询计划。</li>
+          <li>检查是否有全表扫描。</li>
+          <li>检查索引使用情况。</li>
+          <li>给出具体的优化建议。</li>
+        </ol>
+        <p>
+          这些模板凝聚了数据库优化的最佳实践，让 AI 不仅能执行查询，还能以专业的方式分析和优化查询。
+        </p>
+        <h2>安全控制：能力开放的前提</h2>
+        <p>把数据库暴露给 AI Agent，安全是第一要务。DataZen MCP Server 提供了多层安全控制：</p>
+        <h3>连接权限管理</h3>
+        <p>
+          每个 MCP 连接都有明确的权限范围。你可以配置哪些数据库连接允许 AI Agent
+          访问，哪些不允许。敏感的生产库可以设置为只读，或者完全禁止 AI 访问。
+        </p>
+        <h3>只读模式</h3>
+        <p>
+          开启只读模式后，AI Agent 只能执行 SELECT
+          查询，任何写操作（INSERT、UPDATE、DELETE、DROP）都会被拦截。这对于数据分析场景非常有用——AI
+          可以自由地查询和分析数据，但不会修改任何内容。
+        </p>
+        <h3>SQL 审计</h3>
+        <p>
+          所有通过 MCP 执行的 SQL
+          都会被记录到审计日志中。谁在什么时候执行了什么查询，一清二楚。出了问题可以追溯，合规审查也有据可查。
+        </p>
+        <h2>实际场景：在 AI 助手中查询数据</h2>
+        <p>
+          假设你已经在 DataZen 中配置好了 MCP Server，现在可以在任何支持 MCP 的 AI
+          助手中使用数据库查询能力。
+        </p>
+        <h3>场景一：在 Claude 中查询数据</h3>
+        <p>你在 Claude 的对话框中输入：</p>
+        <blockquote>
+          <p>帮我查一下过去 7 天每天的新增用户数</p>
+        </blockquote>
+        <p>
+          Claude 会通过 MCP 调用 DataZen 的 <code>list_tables</code> Tool 了解数据库结构，然后调用
+          <code>execute_query</code> 执行查询，最后将结果整理成清晰的表格返回给你。
+        </p>
+        <h3>场景二：让 AI 分析数据库结构</h3>
+        <p>你问 Claude：</p>
+        <blockquote>
+          <p>我的数据库里有哪些表？表之间的关系是什么？</p>
+        </blockquote>
+        <p>
+          Claude 会先读取 DataZen 的 Schema
+          Resource，获取完整的表结构和外键关系，然后用自然语言为你梳理出一张&quot;数据库地图&quot;。
+        </p>
+        <h3>场景三：AI 辅助数据迁移</h3>
+        <p>你说：</p>
+        <blockquote>
+          <p>
+            我想把 users 表中的 email 字段从 VARCHAR(255) 改成 VARCHAR(512)，帮我生成 ALTER TABLE
+            语句，并检查有没有依赖这个字段的索引。
+          </p>
+        </blockquote>
+        <p>
+          Claude 会调用 DataZen 查询
+          <code>information_schema</code>，找到相关的索引和约束，然后给出完整的迁移方案和回滚方案。
+        </p>
+        <h2>无头模式：<code>--mcp-stdio</code> 启动纯 MCP 服务器</h2>
+        <p>
+          DataZen 支持一种特殊的启动模式——<strong>无头模式</strong>（Headless Mode）。通过
+          <code>--mcp-stdio</code> 参数启动时，DataZen 不会打开 GUI 窗口，而是作为一个纯 MCP
+          服务器运行，通过标准输入/输出（stdio）与 AI Agent 通信。
+        </p>
+        <pre><code class="language-bash">datazen --mcp-stdio
+</code></pre>
+        <p>这个模式非常适合以下场景：</p>
+        <ul>
+          <li>
+            <strong>CI/CD 流水线</strong>：在自动化流水线中，AI Agent 需要访问数据库执行检查或分析。
+          </li>
+          <li>
+            <strong>服务器部署</strong>：在无 GUI 的 Linux 服务器上运行 MCP Server，供远程 AI Agent
+            调用。
+          </li>
+          <li>
+            <strong>容器化部署</strong>：将 DataZen MCP Server 打包到 Docker
+            容器中，作为微服务运行。
+          </li>
+        </ul>
+        <p>
+          无头模式下，DataZen 的所有安全控制（权限管理、只读模式、SQL 审计）依然生效。你可以在 GUI
+          中配置好安全策略，然后切换到无头模式运行，安全性和灵活性兼得。
+        </p>
+        <h2>与其他方案的对比</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>对比维度</th>
+              <th>DataZen MCP Server</th>
+              <th>自建 MCP 实现</th>
+              <th>直连数据库</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>开发成本</td>
+              <td>零，开箱即用</td>
+              <td>需要从头开发</td>
+              <td>需要自己写集成代码</td>
+            </tr>
+            <tr>
+              <td>安全控制</td>
+              <td>内置多层安全</td>
+              <td>需要自己实现</td>
+              <td>几乎没有安全层</td>
+            </tr>
+            <tr>
+              <td>多数据库支持</td>
+              <td>PostgreSQL/MySQL/SQLite/Redis 等</td>
+              <td>需要每个数据库单独适配</td>
+              <td>只能支持一种</td>
+            </tr>
+            <tr>
+              <td>连接管理</td>
+              <td>GUI 配置，密码加密存储</td>
+              <td>需要自己管理</td>
+              <td>需要自己管理</td>
+            </tr>
+            <tr>
+              <td>维护成本</td>
+              <td>DataZen 团队维护</td>
+              <td>自己维护</td>
+              <td>自己维护</td>
+            </tr>
+          </tbody>
+        </table>
+        <h2>写在最后</h2>
+        <p>
+          MCP 正在成为 AI Agent 与外部工具交互的标准协议。DataZen 的 MCP Server
+          让你的数据库能力融入这个生态——AI
+          助手不再只是聊天机器人，而是能真正理解和操作你数据的智能伙伴。
+        </p>
+        <p>
+          无论你是想在 Claude 中直接查询数据库，还是想在 CI/CD 流水线中用 AI 分析数据，DataZen MCP
+          Server 都提供了一个安全、标准、开箱即用的解决方案。
+        </p>
+        <p>现在就试试吧——完全免费，无需注册。</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

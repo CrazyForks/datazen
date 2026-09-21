@@ -7,6 +7,7 @@ export function workflowDefinitionToDraft(workflow: WorkflowDefinition): Workflo
     name: workflow.name,
     description: workflow.description,
     connection: workflow.connection,
+    database: workflow.database,
     variables: workflow.variables.map((v) => ({
       name: v.name,
       varType: v.type || 'string',
@@ -35,6 +36,7 @@ export function workflowDraftToDefinition(draft: WorkflowDraft): WorkflowDefinit
     name: draft.name.trim(),
     description: draft.description.trim(),
     connection: draft.connection,
+    database: draft.database,
     variables: draft.variables.map((v) => ({
       name: v.name,
       type: v.varType,

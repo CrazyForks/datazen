@@ -16,7 +16,7 @@ export type {
 
 // === Database metadata ===
 export type { DatabaseTypeMeta, ConnectionMode } from '../../../src/lib/databaseMeta';
-export type { DatabaseObjectKind, TableSchema } from '../../../src/types';
+export type { DatabaseObjectKind, TableSchema, TableInfo } from '../../../src/types';
 
 // === SQL function catalog types ===
 export type { FunctionEntry, FunctionParam } from '../../../src/lib/sqlFunctionTypes';
@@ -29,10 +29,10 @@ export type {
 export type { ConnectionFormState } from '../../../src/components/connection/useConnectionForm';
 
 /**
- * Plugin form validator: receives raw field values and i18n `t()`,
+ * Driver form validator: receives raw field values and i18n `t()`,
  * returns a map of field→error message (empty = valid).
  */
-export type PluginFormValidator = (
+export type DriverFormValidator = (
   fields: {
     host: string;
     port: string;

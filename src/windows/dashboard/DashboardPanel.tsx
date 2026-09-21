@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Download,
@@ -23,6 +23,7 @@ import { openDocsWindow, openWorkflowWindow } from '../../lib/windowManager';
 import { dashboardCommands } from '../../commands/dashboard';
 import { aiCommands } from '../../commands/ai';
 import { useDashboardStore } from '../../stores/dashboardStore';
+import { useWorkspacePanelStateStore } from '../../stores/workspacePanelStateStore';
 import { DEFAULT_CHART_CONFIG } from '../../types/chart';
 import type { ChartConfig, ChartType } from '../../types/chart';
 import type { Dashboard, DashboardWidget, ViewMode } from '../../types/dashboard';
@@ -63,7 +64,12 @@ export function DashboardPanel({
 }: DashboardPanelProps) {
   const localesReady = useLocaleDomains(['dashboard']);
   const { t } = useI18n();
-  const [activeDashboardId, setActiveDashboardId] = useState(initialDashboardId ?? '');
+  const savedSnapshot = useWorkspacePanelStateStore((s) => s.dashboard);
+  // Re-mount after a mode switch restores the snapshot's board, not the
+  // stale `initialDashboardId` prop (ConnectionPage keys remounts by it).
+  const [activeDashboardId, setActiveDashboardId] = useState(
+    () => initialDashboardId ?? savedSnapshot?.activeDashboardId ?? '',
+  );
   const dashboardId = activeDashboardId;
 
   const entry = useDashboardStore((s) => s.dashboardsById[dashboardId]);
@@ -83,26 +89,71 @@ export function DashboardPanel({
   const refreshAllWidgets = useDashboardStore((s) => s.refreshAllWidgets);
   const releaseDashboard = useDashboardStore((s) => s.releaseDashboard);
 
-  const [editingWidget, setEditingWidget] = useState<DashboardWidget | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [historyWidget, setHistoryWidget] = useState<DashboardWidget | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [isNewWidget, setIsNewWidget] = useState(false);
+  const [editingWidget, setEditingWidget] = useState<DashboardWidget | null>(
+    () => savedSnapshot?.editingWidget ?? null,
+  );
+  const [editorOpen, setEditorOpen] = useState(() => savedSnapshot?.editorOpen ?? false);
+  const [historyWidget, setHistoryWidget] = useState<DashboardWidget | null>(
+    () => savedSnapshot?.historyWidget ?? null,
+  );
+  const [historyOpen, setHistoryOpen] = useState(() => savedSnapshot?.historyOpen ?? false);
+  const [isNewWidget, setIsNewWidget] = useState(() => savedSnapshot?.isNewWidget ?? false);
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [monitorPaused, setMonitorPaused] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [nameDraft, setNameDraft] = useState('');
-  const [bootstrapping, setBootstrapping] = useState(!initialDashboardId);
+  const [renaming, setRenaming] = useState(() => savedSnapshot?.renaming ?? false);
+  const [nameDraft, setNameDraft] = useState(() => savedSnapshot?.nameDraft ?? '');
+  const [bootstrapping, setBootstrapping] = useState(
+    () => !initialDashboardId && !savedSnapshot?.activeDashboardId,
+  );
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [widgetToDelete, setWidgetToDelete] = useState<string | null>(null);
   const [editorHiddenSql, setEditorHiddenSql] = useState<
     { connectionId: string; sql: string } | undefined
-  >(undefined);
-  const [userWorkflows, setUserWorkflows] = useState<WorkflowListItem[]>([]);
+  >(() => savedSnapshot?.editorHiddenSql);
+  const [userWorkflows, setUserWorkflows] = useState<WorkflowListItem[]>(
+    () => savedSnapshot?.userWorkflows ?? [],
+  );
+
+  // Conditional render: the mode's DOM tree unmounts when switching away.
+  // Persist the recreatable view state (editor/history drawers, rename draft)
+  // so switching back restores it instead of starting over.
+  const viewStateRef = useRef({
+    activeDashboardId,
+    editorOpen,
+    editingWidget,
+    isNewWidget,
+    editorHiddenSql,
+    userWorkflows,
+    historyOpen,
+    historyWidget,
+    renaming,
+    nameDraft,
+  });
+  viewStateRef.current = {
+    activeDashboardId,
+    editorOpen,
+    editingWidget,
+    isNewWidget,
+    editorHiddenSql,
+    userWorkflows,
+    historyOpen,
+    historyWidget,
+    renaming,
+    nameDraft,
+  };
+  useEffect(() => {
+    return () => {
+      useWorkspacePanelStateStore.getState().saveDashboardSnapshot(viewStateRef.current);
+    };
+    // Mount-only cleanup: snapshot on unmount, not on every state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     void fetchDashboards();
-    if (initialDashboardId) {
+    // Explicit open (snapshot cleared by ConnectionPage): honor the prop.
+    // Plain mode-switch remount (snapshot present): keep the snapshot's board.
+    if (initialDashboardId && !savedSnapshot) {
       setActiveDashboardId(initialDashboardId);
       setBootstrapping(false);
       return;
@@ -121,7 +172,9 @@ export function DashboardPanel({
     return () => {
       cancelled = true;
     };
-  }, [initialDashboardId, fetchDashboards]);
+    // Mount-only: `initialDashboardId` changes remount via ConnectionPage key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!dashboardId) return;
@@ -170,6 +223,18 @@ export function DashboardPanel({
 
   useEffect(() => {
     if (current) setNameDraft(current.name);
+  }, [current]);
+
+  // Keep the shell title in sync (rename, board switch, snapshot restore).
+  // `onDashboardChange` is an inline prop — read it via ref to avoid
+  // re-firing on every parent render.
+  const onDashboardChangeRef = useRef(onDashboardChange);
+  onDashboardChangeRef.current = onDashboardChange;
+  const lastSyncedBoardRef = useRef('');
+  useEffect(() => {
+    if (!current || lastSyncedBoardRef.current === `${current.id}:${current.name}`) return;
+    lastSyncedBoardRef.current = `${current.id}:${current.name}`;
+    onDashboardChangeRef.current?.(current.id, current.name);
   }, [current]);
 
   useEffect(() => {
@@ -407,11 +472,7 @@ export function DashboardPanel({
   // never renders raw/un-translated `t('dashboard.*')` keys before it loads.
   if (!localesReady) {
     return (
-      <LocaleDomainLoading
-        variant="section"
-        testId="dashboard-locale-loading"
-        className="h-full"
-      />
+      <LocaleDomainLoading variant="section" testId="dashboard-locale-loading" className="h-full" />
     );
   }
 

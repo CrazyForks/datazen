@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen 内置 AI Chat 面板，支持自然语言转 SQL 查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持 OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。"
+    />
+    <link rel="canonical" href="https://flyxl.github.io/datazen/zh/blog-ai-nl2sql.html" />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-ai-nl2sql.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-ai-nl2sql.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-ai-nl2sql.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解" />
+    <meta
+      property="og:description"
+      content="DataZen 内置 AI Chat 面板，支持自然语言转 SQL 查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持 OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。"
+    />
+    <meta property="og:url" content="https://flyxl.github.io/datazen/zh/blog-ai-nl2sql.html" />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解" />
+    <meta
+      name="twitter:description"
+      content="DataZen 内置 AI Chat 面板，支持自然语言转 SQL 查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持 OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2026-10-10",
+        "description": "DataZen 内置 AI Chat 面板，支持自然语言转 SQL 查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持 OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-ai-nl2sql.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解",
+            "item": "https://flyxl.github.io/datazen/zh/blog-ai-nl2sql.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解</h1>
+        <p>
+          DataZen 内置 AI Chat 面板，支持自然语言转 SQL
+          查询（NL2SQL）。输入一句中文描述，即可自动生成、解释和诊断 SQL，支持
+          OpenAI、Anthropic、DeepSeek、Ollama 等多种 AI Provider。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2026 年 10 月 10 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>AI 驱动的 SQL 编辑器：DataZen NL2SQL 功能详解</h1>
+        <p>
+          每个团队里都有那么几个人——他们清楚自己想从数据库里查什么，但面对
+          <code>SELECT ... FROM ... WHERE ...</code>
+          就犯怵。运营想知道上周新增了多少用户，产品经理想看某个功能的使用频率，老板想看本月的销售趋势。这些问题的答案都在数据库里，但
+          SQL 这道门槛，把大多数人挡在了门外。
+        </p>
+        <p>DataZen 的 AI Chat 面板，正是为此而生。</p>
+        <h2>自然语言，直接问</h2>
+        <p>
+          打开 DataZen，连接好你的数据库，在右侧找到 AI Chat
+          面板。你不需要记任何语法，直接用日常语言描述你的需求就行：
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/09-ai-chat.png"
+            alt="AI Chat 面板"
+          />
+        </p>
+        <p>比如输入：</p>
+        <blockquote>
+          <p>查询过去 7 天每天新增的用户数量，按日期倒序排列</p>
+        </blockquote>
+        <p>AI 会立刻理解你的意图，结合当前连接数据库的表结构，生成对应的 SQL：</p>
+        <pre><code class="language-sql">SELECT DATE(created_at) AS day, COUNT(*) AS new_users
+FROM users
+WHERE created_at &gt;= NOW() - INTERVAL &#39;7 days&#39;
+GROUP BY DATE(created_at)
+ORDER BY day DESC;
+</code></pre>
+        <p>
+          生成的 SQL
+          会直接显示在编辑器中，你可以一键执行，也可以根据需要微调。从&quot;我想查什么&quot;到&quot;看到结果&quot;，整个过程可能只需要
+          10 秒钟。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/09-ai-sql-generated.png"
+            alt="AI 生成的 SQL"
+          />
+        </p>
+        <h2>上下文感知：AI 懂你的数据库</h2>
+        <p>
+          这不只是一个简单的文本转 SQL 工具。DataZen 的 AI Chat
+          拥有完整的上下文感知能力——它知道你当前连接的是什么数据库（PostgreSQL 还是
+          MySQL？），知道你有哪些表、每个表有哪些字段、字段是什么类型、哪些是主键和外键。
+        </p>
+        <p>这意味着：</p>
+        <ul>
+          <li>你不需要告诉 AI 表名叫什么，它自己会去 Schema 里找。</li>
+          <li>你不需要担心语法差异，AI 会根据数据库类型生成正确的方言。</li>
+          <li>
+            你提到的业务术语（&quot;用户表&quot;、&quot;订单&quot;），AI 会尝试在你的 Schema
+            中匹配对应的表。
+          </li>
+        </ul>
+        <p>
+          举个例子，你可以说&quot;帮我统计每个客户的订单总金额&quot;，AI 会自动找到
+          <code>customers</code> 表和 <code>orders</code> 表，识别出它们的关联字段，生成正确的 JOIN
+          查询。这种能力来自于 DataZen 对数据库 Schema 的深度集成，而非通用大模型的泛化能力。
+        </p>
+        <h2>多种 AI Provider，按需选择</h2>
+        <p>DataZen 支持多种 AI Provider，你可以根据自己的偏好和需求选择：</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>特点</th>
+              <th>适用场景</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>OpenAI (GPT-4o)</td>
+              <td>综合能力强，SQL 生成准确率高</td>
+              <td>通用场景首选</td>
+            </tr>
+            <tr>
+              <td>Anthropic (Claude)</td>
+              <td>上下文理解优秀，擅长复杂查询</td>
+              <td>长 SQL、多表关联</td>
+            </tr>
+            <tr>
+              <td>DeepSeek</td>
+              <td>国内访问快，性价比高</td>
+              <td>国内用户推荐</td>
+            </tr>
+            <tr>
+              <td>Ollama (本地模型)</td>
+              <td>完全离线，数据不出本机</td>
+              <td>数据敏感场景</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          配置非常简单——在 DataZen 设置中填入 API
+          Key，选择模型即可。如果你不想把数据发送到外部服务，用 Ollama
+          跑一个本地模型就能完全离线使用。
+        </p>
+        <h2>SQL 解释：不只是生成，还能帮你理解</h2>
+        <p>AI Chat 不仅能生成 SQL，还能帮你理解已有的 SQL。</p>
+        <p>
+          选中一段 SQL，右键选择&quot;让 AI 解释&quot;，AI
+          会用通俗易懂的语言告诉你这段查询在做什么：
+        </p>
+        <ul>
+          <li>每一行的逻辑是什么？</li>
+          <li>JOIN 是怎么关联的？</li>
+          <li>WHERE 条件过滤了哪些数据？</li>
+          <li>GROUP BY 和 HAVING 的区别在这里是什么？</li>
+        </ul>
+        <p>
+          这对于接手别人的项目、理解遗留代码中的复杂查询特别有用。再也不用对着一段嵌套三层子查询的
+          SQL 逐行拆解了。
+        </p>
+        <h2>AI 诊断：找出 SQL 的性能瓶颈</h2>
+        <p>当你发现一条 SQL 执行得很慢，却不知道问题出在哪里时，AI 诊断功能就派上用场了。</p>
+        <p>
+          在 SQL 编辑器中，点击&quot;AI 诊断&quot;按钮，AI 会分析你的 SQL 执行计划（EXPLAIN
+          输出），然后给出具体的优化建议：
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/09-ai-diagnosis.png"
+            alt="AI 诊断面板"
+          />
+        </p>
+        <p>常见的诊断结果包括：</p>
+        <ul>
+          <li>
+            <strong>缺少索引</strong>：AI 会指出 WHERE 或 JOIN
+            条件中缺少索引的字段，并建议创建索引。
+          </li>
+          <li><strong>全表扫描</strong>：提醒你某张大表在没有 WHERE 条件的情况下被全量扫描。</li>
+          <li><strong>N+1 查询</strong>：检测到循环中重复执行的查询，建议用批量查询替代。</li>
+          <li><strong>SELECT *</strong>：建议明确指定字段名，避免拉取不必要的数据。</li>
+        </ul>
+        <p>这些诊断并非纸上谈兵——AI 会结合你的实际 Schema 信息，给出可直接执行的优化 SQL。</p>
+        <h2>从自然语言到执行结果：完整流程演示</h2>
+        <p>让我们走一遍完整的流程：</p>
+        <ol>
+          <li><strong>连接数据库</strong>：打开 DataZen，选择已有的 PostgreSQL 连接。</li>
+          <li><strong>打开 AI Chat</strong>：在右侧面板切换到 AI Chat。</li>
+          <li>
+            <strong>输入需求</strong>：在输入框中打字——&quot;找出过去一个月消费金额排名前 10
+            的客户，显示客户名称和总消费&quot;。
+          </li>
+          <li>
+            <strong>AI 生成 SQL</strong>：AI 分析你的 Schema，识别出 <code>customers</code> 和
+            <code>orders</code> 表，生成包含 JOIN、GROUP BY、ORDER BY 和 LIMIT 的完整查询。
+          </li>
+          <li><strong>一键执行</strong>：点击执行按钮，结果以表格形式展示。</li>
+          <li>
+            <strong>导出或继续</strong>：将结果导出为
+            CSV，或者继续用自然语言追问——&quot;把结果按地区分组看看&quot;。
+          </li>
+        </ol>
+        <p>整个过程不需要你记住一个 SQL 关键字，真正做到了&quot;用人话查数据&quot;。</p>
+        <h2>安全保障：AI 生成 ≠ 盲目信任</h2>
+        <p>DataZen 在 AI 生成 SQL 的流程中内置了安全网——<strong>SQL Guard</strong>。</p>
+        <p>
+          无论 SQL 是你手写的还是 AI 生成的，在执行前都会经过 SQL Guard 的安全检查。如果 AI
+          生成了一条包含 <code>DELETE</code> 或 <code>DROP TABLE</code> 的语句，SQL Guard
+          会拦截并提示你确认。你可以在只读模式下工作，确保任何写操作都不会意外执行。
+        </p>
+        <p>
+          此外，AI 生成的 SQL 会在编辑器中完整展示，你有机会在执行前仔细审查。AI
+          是助手，不是决策者——最终执行什么，由你说了算。
+        </p>
+        <h2>写在最后</h2>
+        <p>
+          NL2SQL
+          不是一个噱头，而是一个真正能提升效率的实用功能。它降低了数据库查询的门槛，让非技术人员也能自助获取数据，也让开发者从重复编写样板
+          SQL 中解放出来。
+        </p>
+        <p>
+          无论你是想快速验证一个业务假设的数据分析师，还是想从遗留 SQL 中理清逻辑的开发者，DataZen
+          的 AI Chat 都能帮你更快地得到答案。
+        </p>
+        <p>现在就试试吧——完全免费，无需注册。</p>
+        <hr />
+        <p>
+          <strong
+            ><a href="https://flyxl.github.io/datazen/download.html">立即下载 DataZen</a></strong
+          >
+          · <a href="https://github.com/flyxl/datazen">GitHub 源码</a>
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

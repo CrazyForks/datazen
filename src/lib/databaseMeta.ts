@@ -7,6 +7,7 @@ import type { DatabaseObjectKind, SslMode } from '../types';
 import type { StructureEditorUiConfig } from './structureEditor/types';
 import type { FunctionEntry } from './sqlFunctionTypes';
 import type { SqlDialectStrategy, SqlDialectProfile } from './sqlDialects/types';
+import type { TypeCategory } from '../components/query-builder/typeCategory';
 
 export type ConnectionMode = 'server' | 'file' | 'url';
 
@@ -94,16 +95,30 @@ export interface DatabaseTypeMeta {
    * Custom parsers registered in `generated.ts` run first and can override this.
    */
   clipboardSchemes?: string[];
-  /** Schema tree mode: 'standard' (default), 'multiDatabase', or 'custom' (plugin-provided tree) */
+  /** Schema tree mode: 'standard' (default), 'multiDatabase', or 'custom' (wapp-provided tree) */
   schemaTreeMode?: 'standard' | 'multiDatabase' | 'custom';
   /** Whether this driver is read-only (no DDL, no create/alter table, no import) */
   readOnly?: boolean;
   /** Whether this driver supports EXPLAIN query plan analysis (opt-in; omit = unsupported). */
   supportsExplain?: boolean;
+  /**
+   * Whether the driver's dialect can be given a `LIMIT`/`OFFSET` row window.
+   *
+   * `LIMIT`/`OFFSET` is standard SQL, so this is opt-*out*: a driver that does
+   * not declare it supports it, and only an explicit `false` turns it off. This
+   * mirrors the driver's Rust `supports_offset()`, which also defaults to `true`
+   * and is only overridden by the drivers that cannot paginate.
+   *
+   * The Visual Query Builder reads this to decide whether to offer row-window
+   * controls, and the SQL generator honours it, so a declared opt-out can never
+   * leak a clause into the SQL. Dialect families do not decide this — they only
+   * supply the spelling.
+   */
+  supportsOffset?: boolean;
   /** Whether this driver supports ER diagram (requires FK metadata) */
   supportsErDiagram?: boolean;
   /**
-   * On-demand SQL namespace completion strategy (host is plugin-agnostic).
+   * On-demand SQL namespace completion strategy (host is wapp-agnostic).
    * - `default-sql`: database → tables (MySQL/MariaDB/…)
    * - `postgresql`: database → schema → table (or schema → table when single-db)
    * - `path-hierarchy`: slash-path levels via `get_tables` + optional name→id aliases
@@ -117,7 +132,7 @@ export interface DatabaseTypeMeta {
   defaultSchema?: string;
   /**
    * When true, host `setLoadedTables` does not merge into `namespaceTree`
-   * (plugin owns hierarchy via SDK `syncSchemaNamespace` / aliases).
+   * (wapp owns hierarchy via SDK `syncSchemaNamespace` / aliases).
    */
   namespaceOwnedByPlugin?: boolean;
   /**
@@ -150,4 +165,17 @@ export interface DatabaseTypeMeta {
   sqlDialectStrategy?: SqlDialectStrategy;
   /** Semantic editor profile for identifier quoting, casing, alias visibility, and parameter policies. */
   sqlDialectProfile?: SqlDialectProfile;
+  /**
+   * Per-driver type-category map for the visual query builder.
+   *
+   * Maps raw database-specific dataType strings (as returned by the driver's
+   * `get_columns` / `get_columns_typed`) to a semantic {@link TypeCategory}
+   * used for operator filtering and value formatting. When omitted, the host
+   * falls back to a generic heuristic in {@link classifyColumnType}.
+   *
+   * Drivers that share a dialect (e.g. PostgreSQL, MySQL, SQLite) can share
+   * the same map; drivers with unusual type systems (Redis, MongoDB) omit it
+   * entirely — their columns are untyped and the fallback handles them.
+   */
+  qbTypeCategories?: Record<string, TypeCategory>;
 }

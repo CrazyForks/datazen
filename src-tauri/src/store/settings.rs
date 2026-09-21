@@ -3,6 +3,37 @@ use crate::mcp::permission::McpPermissionMode;
 use crate::mcp::McpServerConfig;
 use serde::{Deserialize, Serialize};
 
+/// Current first-run journey revision. Bump it only when the journey must be
+/// shown again to users who already finished an earlier revision.
+pub const ONBOARDING_VERSION: i32 = 1;
+
+/// Onboarding wizard completion state.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingState {
+    pub completed: bool,
+    pub version: i32,
+}
+
+impl OnboardingState {
+    /// Fresh installation: the journey has never been shown.
+    pub fn for_fresh_install() -> Self {
+        Self {
+            completed: false,
+            version: ONBOARDING_VERSION,
+        }
+    }
+
+    /// Existing installation that predates the journey: mark it as seen so an
+    /// upgrading user is never onboarded (requirement: upgrade ≠ first run).
+    pub fn for_existing_install() -> Self {
+        Self {
+            completed: true,
+            version: ONBOARDING_VERSION,
+        }
+    }
+}
+
 /// Light / dark / system mode plus optional installed theme pack.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +85,9 @@ pub struct AppSettings {
     /// Require WHERE on UPDATE/DELETE; also block TRUNCATE/DROP (TablePlus-style Safe Mode). Default on.
     #[serde(default = "default_true")]
     pub safe_mode: bool,
+    /// When Safe Mode is off, prompt before executing high-risk/production SQL. Default on.
+    #[serde(default = "default_true")]
+    pub confirm_dangerous_execution: bool,
     pub default_page_size: u32,
     /// Max connections per DB session pool (Postgres/MySQL). Applies on next connect.
     #[serde(default = "default_connection_pool_size")]
@@ -85,9 +119,12 @@ pub struct AppSettings {
     /// Dashboard monitor / tray / retention settings (nested for settings UI).
     #[serde(default)]
     pub monitor: MonitorSettings,
-    /// Opaque per-plugin settings keyed by plugin id (e.g. `"redis"`).
+    /// Opaque per-driver settings keyed by driver id (e.g. `"redis"`).
+    #[serde(default, alias = "plugin_settings", alias = "wapp_settings")]
+    pub driver_settings: serde_json::Map<String, serde_json::Value>,
+    /// Opaque per-wapp settings keyed by wapp id. Currently unused, reserved for future workspace app configs.
     #[serde(default)]
-    pub plugin_settings: serde_json::Map<String, serde_json::Value>,
+    pub wapp_settings: serde_json::Map<String, serde_json::Value>,
     /// Saved external MCP Client server configs (stdio). Runtime connections are separate.
     #[serde(default)]
     pub mcp_client_servers: Vec<McpServerConfig>,
@@ -97,6 +134,9 @@ pub struct AppSettings {
     /// Identifier quotation policy for SQL completion ('unquoted' | 'always' | 'both'). Default 'unquoted'.
     #[serde(default = "default_completion_quote_policy")]
     pub editor_completion_quote_policy: String,
+    /// Automatically qualify column completions. Default true for older settings.
+    #[serde(default = "default_true")]
+    pub editor_completion_include_table_prefix: bool,
     /// Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat').
     #[serde(default = "default_keymap_preset")]
     pub keymap_preset: String,
@@ -109,10 +149,13 @@ pub struct AppSettings {
     /// SQL syntax highlighting color preset ('default' follows the active theme pack).
     #[serde(default)]
     pub sql_syntax_theme: Option<String>,
+    /// Onboarding wizard state. `None` or `version < 1` → show wizard.
+    #[serde(default)]
+    pub onboarding: Option<OnboardingState>,
 }
 
 fn default_sql_execution_strategy() -> String {
-    "entire_script".to_string()
+    "current_statement".to_string()
 }
 
 fn default_completion_quote_policy() -> String {
@@ -145,11 +188,29 @@ pub fn clamp_connection_pool_size(n: u32) -> u32 {
 }
 
 impl AppSettings {
-    /// Defaults used on first install when `settings.json` is absent.
+    /// Defaults used on a brand-new installation when `settings.json` is absent.
+    ///
+    /// The onboarding state is materialized as "not completed" so the first-run
+    /// journey is shown. Writing it immediately also keeps the very next launch
+    /// from mistaking this install for an upgrade (see [`crate::store::Store::load_all`]).
     pub fn default_for_first_run() -> Self {
         let mut settings = Self::default();
         settings.language = crate::i18n_locale::default_ui_language();
+        settings.onboarding = Some(OnboardingState::for_fresh_install());
         settings
+    }
+
+    /// Resolve the onboarding state of a settings file that was already on disk.
+    ///
+    /// A file without the `onboarding` key was written by a build that predates
+    /// the first-run journey → the user is upgrading, so the journey stays
+    /// hidden. Returns `true` when the resolved state must be persisted.
+    pub fn resolve_loaded_onboarding(&mut self) -> bool {
+        if self.onboarding.is_some() {
+            return false;
+        }
+        self.onboarding = Some(OnboardingState::for_existing_install());
+        true
     }
 }
 
@@ -165,6 +226,7 @@ impl Default for AppSettings {
             confirm_on_delete: true,
             auto_commit: true,
             safe_mode: true,
+            confirm_dangerous_execution: true,
             default_page_size: 50,
             connection_pool_size: default_connection_pool_size(),
             log_level: default_log_level(),
@@ -177,14 +239,17 @@ impl Default for AppSettings {
             check_for_updates_on_startup: false,
             auto_chart_on_query: false,
             monitor: MonitorSettings::default(),
-            plugin_settings: serde_json::Map::new(),
+            driver_settings: serde_json::Map::new(),
+            wapp_settings: serde_json::Map::new(),
             mcp_client_servers: Vec::new(),
             ai_strict_egress: true,
             editor_completion_quote_policy: default_completion_quote_policy(),
+            editor_completion_include_table_prefix: true,
             keymap_preset: default_keymap_preset(),
             custom_keymap: std::collections::HashMap::new(),
             sql_execution_strategy: default_sql_execution_strategy(),
             sql_syntax_theme: None,
+            onboarding: None,
         }
     }
 }

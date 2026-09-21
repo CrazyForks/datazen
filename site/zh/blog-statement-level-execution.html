@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>告别全选再执行：SQL 编辑器的语句级运行 — DataZen</title>
+    <meta
+      name="description"
+      content="DataZen SQL 编辑器支持语句边界自动检测，每条 SQL 左侧独立运行按钮，告别全选再执行的低效操作模式。"
+    />
+    <link
+      rel="canonical"
+      href="https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="en"
+      href="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://flyxl.github.io/datazen/blog-statement-level-execution.html"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="告别全选再执行：SQL 编辑器的语句级运行" />
+    <meta
+      property="og:description"
+      content="DataZen SQL 编辑器支持语句边界自动检测，每条 SQL 左侧独立运行按钮，告别全选再执行的低效操作模式。"
+    />
+    <meta
+      property="og:url"
+      content="https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+    />
+    <meta
+      property="og:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="告别全选再执行：SQL 编辑器的语句级运行" />
+    <meta
+      name="twitter:description"
+      content="DataZen SQL 编辑器支持语句边界自动检测，每条 SQL 左侧独立运行按钮，告别全选再执行的低效操作模式。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png"
+    />
+    <link rel="icon" href="../assets/logo.png" />
+    <link rel="stylesheet" href="../assets/css/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "告别全选再执行：SQL 编辑器的语句级运行",
+        "author": { "@type": "Person", "name": "Xiaolong Wu" },
+        "publisher": { "@type": "Organization", "name": "DataZen" },
+        "datePublished": "2025-09-16",
+        "description": "DataZen SQL 编辑器支持语句边界自动检测，每条 SQL 左侧独立运行按钮，告别全选再执行的低效操作模式。",
+        "image": "https://flyxl.github.io/datazen/assets/screenshots/01-main-window.png",
+        "mainEntityOfPage": "https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "首页",
+            "item": "https://flyxl.github.io/datazen/zh/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "博客",
+            "item": "https://flyxl.github.io/datazen/zh/blog.html"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "告别全选再执行：SQL 编辑器的语句级运行",
+            "item": "https://flyxl.github.io/datazen/zh/blog-statement-level-execution.html"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header id="site-header"></header>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="breadcrumb">
+          <a href="index.html">首页</a> /
+          <a href="blog.html">博客</a>
+        </p>
+        <h1>告别全选再执行：SQL 编辑器的语句级运行</h1>
+        <p>
+          DataZen SQL 编辑器支持语句边界自动检测，每条 SQL
+          左侧独立运行按钮，告别全选再执行的低效操作模式。
+        </p>
+        <p class="muted" style="font-size: 13px; margin-top: 8px">2025 年 9 月 16 日</p>
+      </div>
+    </section>
+    <main class="wrap" style="max-width: 860px; padding-bottom: 72px">
+      <article class="docs-prose">
+        <h1>告别&quot;全选再执行&quot;：SQL 编辑器的语句级运行</h1>
+        <blockquote>
+          <p>
+            写了 10 条
+            SQL，只想跑其中一条——这个在任何编辑器里都很自然的操作，在大多数数据库工具里却变成了一场选区游戏。
+          </p>
+        </blockquote>
+        <h2>一个被忽视的日常痛点</h2>
+        <p>
+          想象一下这个场景：你正在调试一个数据修复脚本，编辑器里排了七八条
+          SQL——先查用户，再查订单，然后 UPDATE，再查一遍确认结果。你想单独执行中间那条 UPDATE
+          看看影响了多少行。
+        </p>
+        <p>
+          在大多数数据库工具里，你需要这样做：先手动选中那条 SQL 的文字范围，然后按 Ctrl+Enter
+          执行。听起来简单，但实际操作中经常出问题：
+        </p>
+        <ul>
+          <li>选多了，把上下两条无关 SQL 也带进去执行了；</li>
+          <li>选少了，漏掉了 WHERE 条件，差点把整张表清空；</li>
+          <li>多行 SQL 里嵌套了子查询，选区边界判断让人头疼；</li>
+          <li>有时候光标明明在某条语句中间，全选执行却跑了一条完全不同的语句。</li>
+        </ul>
+        <p>
+          这些问题看起来很小，但在高频使用 SQL
+          编辑器的场景下，它们会持续消耗你的注意力。你不是在思考业务逻辑，而是在和编辑器的交互方式较劲。
+        </p>
+        <h2>DataZen 的解法：让每条 SQL 都有自己的&quot;运行键&quot;</h2>
+        <p>
+          DataZen 的 SQL 编辑器从根本上换了一种交互思路：<strong
+            >不再依赖用户手动选区，而是让编辑器自己识别每条 SQL
+            的边界，并为每条语句提供独立的运行入口。</strong
+          >
+        </p>
+        <p>具体来说，这个能力包含三个层次：</p>
+        <h3>分号分隔的语句边界识别</h3>
+        <p>
+          DataZen 编辑器会实时解析编辑器中的 SQL
+          文本，以分号作为主要分隔符，自动识别出每一条独立的语句。无论你写了 3 条还是 30 条
+          SQL，编辑器都能准确地把它们区分开来。
+        </p>
+        <p>
+          这不是简单的文本分割。编辑器理解 SQL
+          的基本语法结构，能够在字符串字面量、注释块等场景中正确跳过分号，不会误把注释里的分号当成语句分隔符。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/03-statement-gutter.png"
+            alt="语句边界识别与运行按钮"
+          />
+        </p>
+        <h3>每条语句左侧的独立运行按钮</h3>
+        <p>
+          识别出语句边界之后，DataZen 会在每条 SQL 的左侧行号区域（Gutter）显示一个独立的 ▶
+          运行按钮。这个按钮只属于这一条语句——点击它，就执行这一条，不多也不少。
+        </p>
+        <p>
+          你不需要选中任何文字。光标放在哪条语句里，或者直接点击那条语句旁边的 ▶
+          按钮，就能精确执行。这就像 IDE
+          里&quot;运行当前类&quot;或&quot;运行当前测试方法&quot;一样自然。
+        </p>
+        <h3>光标所在语句自动高亮</h3>
+        <p>
+          当你把光标放在某条 SQL 中间时，DataZen
+          会自动高亮当前这条语句的背景区域。这样你能直观地看到&quot;即将被执行的是哪一段&quot;，不用再靠肉眼去数分号的位置。
+        </p>
+        <p>
+          <img
+            src="https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/blog/03-statement-highlight.png"
+            alt="光标所在语句自动高亮"
+          />
+        </p>
+        <p>这个视觉反馈和左侧的 ▶ 按钮配合起来，形成了一个非常清晰的操作闭环：</p>
+        <ol>
+          <li>光标移到目标语句 → 背景高亮确认范围；</li>
+          <li>按 Ctrl+Enter 或点击 ▶ 按钮 → 只执行高亮的这一条；</li>
+          <li>结果面板立即更新。</li>
+        </ol>
+        <h2>多语句脚本的日常调试场景</h2>
+        <p>这个功能在日常工作中真正发挥作用的场景，往往不是写一条 SELECT 那么简单。</p>
+        <p>
+          <strong>数据修复脚本调试</strong>：你写了一组修复 SQL——先 SELECT 确认问题数据，再 UPDATE
+          修复，最后再 SELECT 验证结果。调试时你想反复执行中间的 UPDATE 和最后的
+          SELECT，而不想每次都从头跑。有了语句级运行，你可以快速在几条 SQL
+          之间来回切换执行，像调试代码一样逐条验证。
+        </p>
+        <p>
+          <strong>批量 DDL 管理</strong>：改表结构时，你可能写了一组 ALTER TABLE
+          语句。想单独跑某一条看看有没有语法错误？直接点它旁边的 ▶
+          按钮就行，不用小心翼翼地去选中那几行文字。
+        </p>
+        <p>
+          <strong>数据探索</strong>：分析数据时，你可能写了 5
+          条不同维度的查询。想逐条执行看结果对比？语句级运行让你在几条查询之间无缝切换，效率比选中执行高得多。
+        </p>
+        <h2>对比传统工具的选中执行模式</h2>
+        <p>
+          说到&quot;选中再执行&quot;，大多数数据库工具——包括 Navicat 和
+          DBeaver——至今仍然采用这种模式。你需要手动选中一段 SQL 文本，然后按快捷键执行。
+        </p>
+        <p>
+          这种模式在编辑器里只有一两条 SQL
+          时没什么问题。但当你的编辑器里积累了多条语句——这在日常工作中非常常见——它的局限性就暴露出来了：
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>操作</th>
+              <th>传统选中执行</th>
+              <th>DataZen 语句级运行</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>执行单条 SQL</td>
+              <td>需要精确选中文字范围</td>
+              <td>光标放进去，Ctrl+Enter</td>
+            </tr>
+            <tr>
+              <td>切换执行不同语句</td>
+              <td>每次重新选区</td>
+              <td>移动光标即可</td>
+            </tr>
+            <tr>
+              <td>执行多行 SQL</td>
+              <td>选区容易漏掉行</td>
+              <td>按语句边界自动识别</td>
+            </tr>
+            <tr>
+              <td>确认执行范围</td>
+              <td>靠肉眼神判断</td>
+              <td>背景高亮自动提示</td>
+            </tr>
+            <tr>
+              <td>防止误执行</td>
+              <td>完全依赖用户选区准确性</td>
+              <td>▶ 按钮绑定到具体语句</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          传统模式把&quot;确认执行范围&quot;的责任完全交给了用户。DataZen
+          把这个责任接了过来，通过语法分析和视觉反馈，让你把注意力留在 SQL
+          逻辑本身，而不是和编辑器的交互细节较劲。
+        </p>
+        <h2>这不只是一个按钮的事</h2>
+        <p>
+          语句级运行看起来是一个很小的功能点，但它背后反映的是一种编辑器设计理念：<strong
+            >工具应该理解你在做什么，而不是让你去适应工具的限制。</strong
+          >
+        </p>
+        <p>
+          传统的选中执行模式本质上是把 SQL
+          编辑器当成一个纯文本编辑器——它不知道你写了什么，不知道哪些文字是一条完整的语句，所以只能让你自己去选区。DataZen
+          的编辑器理解 SQL 的结构，所以它能提供更精准的操作入口。
+        </p>
+        <p>
+          这种&quot;理解内容结构&quot;的思路也体现在 DataZen
+          编辑器的其他能力中——比如悬浮查看表结构、外键感知的智能补全、光标上下文感知的 SQL
+          生成等等。它们的共同目标是让编辑器从一个&quot;记录文字的容器&quot;变成一个&quot;理解 SQL
+          的助手&quot;。
+        </p>
+        <h2>试试看</h2>
+        <p>
+          如果你每天都会写多条
+          SQL——调试脚本、数据修复、批量查询——语句级运行会帮你省下不少反复选区的时间。
+        </p>
+        <p>
+          👉 <a href="https://flyxl.github.io/datazen/">下载 DataZen</a>，打开 SQL 编辑器，粘贴几条
+          SQL，感受一下光标移到哪条就执行哪条的流畅体验。
+        </p>
+        <p>
+          📦 源码开放在 <a href="https://github.com/flyxl/datazen">GitHub</a>，欢迎 Star 和反馈。
+        </p>
+      </article>
+    </main>
+    <footer id="site-footer"></footer>
+    <script src="../assets/js/site.js"></script>
+  </body>
+</html>

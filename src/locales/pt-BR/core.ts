@@ -173,15 +173,15 @@ const pack = {
   'extensions.page.themeHint': 'Alterne temas em Configurações → Aparência.',
   'extensions.page.apiMismatch': 'Versão da API não suportada',
   'extensions.page.apiMismatchHint':
-    'A API do plugin v{plugin} não corresponde à API do host v{host}.',
+    'A API do plugin v{wapp} não corresponde à API do host v{host}.',
   'extensions.page.emptyTitle': 'Nenhum plugin encontrado',
   'extensions.page.emptyHint':
     'Instale um pacote de plugin (.zip) para estender o DataZen com novas páginas de workspace ou temas.',
   'extensions.install.title': 'Instalar plugin',
   'extensions.install.description': 'Selecione um pacote de plugin local (.zip) para instalar.',
   'extensions.install.pickPrompt': 'Choose how to locate the plugin package on this computer.',
-  'extensions.install.browseZip': 'Select ZIP file…',
-  'extensions.install.browseFolder': 'Select folder…',
+  'extensions.install.browseZip': 'Selecionar arquivo ZIP…',
+  'extensions.install.browseFolder': 'Selecionar pasta…',
   'extensions.install.back': 'Voltar',
   'extensions.install.inspecting': 'Verificando…',
   'extensions.install.permissions': 'Permissões solicitadas',

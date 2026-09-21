@@ -454,6 +454,7 @@ mod tests {
         test.connect_config("widget-cfg").await;
 
         let workflow = WorkflowDefinition {
+            database: None,
             id: "wf-run".into(),
             name: "Run".into(),
             description: String::new(),
