@@ -61,13 +61,131 @@ Wave 1~3 已把驱动侧对宿主代码的引用清零（`grep ['"]\.\./.*src/` 
 
 ## 状态
 
-- [ ] Coder 完成 → READY_FOR_TEST
+- [x] Coder 完成 → READY_FOR_TEST（commits `3e9014d91` 护栏+单测 / `b56058f46` 四处接入 / `d250e52de` 文档回扫，本报告末尾）
 - [ ] Tester 复测 → TEST_DONE
 
 ## Coder 实施记录
 
-（待填写）
+Phase：**READY_FOR_TEST**。分支 `feature/import-guard`，worktree `/Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-import-guard`（开工自检 `pwd` / `--show-toplevel` 均落在本 worktree，分支非 main）。
+
+### 1. 改动文件清单
+
+| 文件 | 性质 |
+| --- | --- |
+| `scripts/check-driver-import-boundaries.mjs` | 新增（581 行）：导出 `scanCode` / `resolveSpecifier` / `rulesForFile` / `inspectSource` / `checkDriverImportBoundaries` / `runCli` + `RULES` / `ALLOWLIST` 常量；`process.argv[1].endsWith('check-driver-import-boundaries.mjs')` main 守卫（`/* istanbul ignore next */`）；退出码 0/1/2 |
+| `scripts/__tests__/check-driver-import-boundaries.test.mjs` | 新增（386 行 / **31 例**）：内联虚拟文件树 fixture（`files` 注入，零临时目录）+ 真实仓库自证 2 例 |
+| `package.json` | `test:boundaries` script（紧邻 `test:layers`） |
+| `.github/workflows/ci.yml` | 步骤 `Guard driver/host import boundaries` → `pnpm test:boundaries`（位于 `Guard version consistency` 之后、`Guard i18n sync (warning only)` 之前） |
+| `scripts/ci-local.sh` | `step "3.4/11 Guard: driver/host import boundaries …"` + `pnpm test:boundaries \|\| fail` |
+| `scripts/run-full-automation-test.sh` | Stage 1 增 `pnpm test:boundaries \|\| fail …`，并同步覆盖范围注释第 2 条 |
+| `docs/development/driver-api-dependency-boundary.md` | 2.1.2 / 2.4 引言 / 2.4.2 / 2.4.3 表 + 配套终态 + 长 bullet 拆分 / 2.4.4 / 2.5 / 2.6 / 2.7 回扫 |
+| `docs/development/independent-driver-development.zh-CN.md`、`.en.md` | §6.2 尾句、§6.3 两条 bullet（zh/en 同步，标题零增删） |
+| 本文件 | 实施记录 |
+
+未触碰：`packages/ui/src/i18n.ts`、`src-tauri/**`、`Cargo.lock`、`packages/pro-extensions/**`、`hub.md`、他轨 progress/bugs、任何驱动/宿主业务代码（第 3 项自证除外，已还原）。
+
+### 2. 三条规则的实现要点
+
+- **R1（阻断）**：扫描范围是整个驱动包 `packages/drivers/**`（`ui/**` + `locales/**` + `e2e/**`，比任务书的 `ui/**` 略宽，仍只覆盖驱动侧）。核心是**先做一遍词法扫描收集全部字符串/模板字面量**（`scanCode`），再对每个字面量做相对路径解析，解析结果落进 `src/` 即违规——因此 `import`/`export … from`/动态 `import()`/`vi.mock`/`vi.doMock`/`require`/任何辅助函数取道同一条判定路径，**不存在「只匹配 `from`」的漏网形态**。注释与被注释掉的 import 在扫描阶段被空白化（保留行号），字符串内容同样空白化（R2 因此不会把 prose 当调用）。驱动包内部自身的 `../src/…`（解析后仍是 `packages/drivers/<id>/src/…`）明确不报，见单测「leaves driver-internal ../src/ trees alone」。模板字面量含 `${}` 者视为计算值、跳过（静态不可判）。
+- **R2（阻断）**：范围 `packages/**` 且**豁免 `packages/ui/**`**（见「开放项 A」——任务书原文只豁免 `packages/ui/src/i18n.ts` 定义与导出行，但实测 `packages/ui/src/__tests__/i18n.test.tsx` 有 7 处合法调用是这套运行时的唯一测试手段，若不排除则基准即红、且无法在不违反「allowlist 只 2 条」的前提下放行；故把豁免表达为**规则扫描范围定义**而非 allowlist 条目，并在契约 2.4.2 写明理由）。判定式 `\bsetLocale\s*\(`，随后排除契约成员声明 `setLocale(locale: string): void;`、`function setLocale(` / `declare function setLocale(`；`import { setLocale } from '@datazen/ui'` 无括号故不算调用。
+- **R3（advisory，暂不阻断）**：`src/**` 相对解析进 `packages/drivers/**` 即列出，跳过 codegen `src/extensions/generated{,-locales,-pro}.ts`。**现状实测非 0（4 处）**，按任务书要求未擅自加豁免、未搬迁代码，改为 `RULES.R3.blocking = false` 报告模式，交协调者裁定（见「开放项 B」）。
+- **allowlist**：脚本内显式常量，2 条 = `redisKeyWebContextMenu.test.tsx` 的 `WebContextMenuHost`(:5) 与 `useContextMenuStore`(:9)，字段为 `rule + file + specifier + reason + milestone`，精确三元组匹配，**无目录级/通配豁免**（单测用正则断言条目里不许出现 `*` / `?`）。**过期豁免检测**两种：条目文件不存在 / 文件存在但条目未被命中，均 exit 1（含真实 fs 路径的单测各一条）。
+
+### 3. 真实仓库自证（任务书范围第 3 条，原文输出）
+
+注入形态：R1 `from`（`packages/drivers/sqlserver/ui/ConnectionFields.tsx`）、R1 `vi.mock`（`packages/drivers/redis/ui/__tests__/useRedisGate.test.tsx`）、R2 `setLocale`（`ConnectionFields.tsx`）各一处。
+
+```console
+$ # 注入三处违规后
+$ node scripts/check-driver-import-boundaries.mjs; echo "EXIT=$?"
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R1 packages/drivers/redis/ui/__tests__/useRedisGate.test.tsx:157: resolves to host src/stores/settingsStore
+    vi.mock('../../../../../src/stores/settingsStore');
+[check-driver-import-boundaries] R1 packages/drivers/sqlserver/ui/ConnectionFields.tsx:109: resolves to host src/hooks/useI18n
+    import { useI18nProbe } from '../../../../src/hooks/useI18n';
+[check-driver-import-boundaries] R2 packages/drivers/sqlserver/ui/ConnectionFields.tsx:110: setLocale() may only be called from host src/** (src/lib/localeSync.ts)
+    export const probeFrom = () => setLocale('zh-CN') || useI18nProbe;
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] FAILED: 3 violation(s) (1403 file(s) scanned · 4 advisory finding(s))
+    see docs/development/driver-api-dependency-boundary.md §2.1.2
+    see docs/development/driver-api-dependency-boundary.md §2.4.2
+EXIT=1
+
+$ git checkout -- packages/drivers/sqlserver/ui/ConnectionFields.tsx packages/drivers/redis/ui/__tests__/useRedisGate.test.tsx
+$ git status --short
+（无输出，注入已完全还原）
+$ node scripts/check-driver-import-boundaries.mjs; echo "EXIT=$?"
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) …（同上报 4 条）
+[check-driver-import-boundaries] ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+EXIT=0
+```
+
+要点：三种注入形态**逐条点名 `文件:行`** 且退出码非 0；`vi.mock` 形态被抓住，正是要补的旧口径漏洞。
+
+### 4. 自测清单（真实命令与真实输出）
+
+前置：`node scripts/resolve-drivers.mjs --codegen-only --drivers=all` → exit 0。
+
+| 命令 | 结果 |
+| --- | --- |
+| `node scripts/check-driver-import-boundaries.mjs` | **exit 0**，`ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` + `2 allow-listed reference(s) skipped` |
+| `npx vitest run scripts` | **23 files / 239 tests 全绿**（本轨新增 1 file / **31 例**） |
+| 本轨新增逻辑覆盖（`--coverage.include='scripts/check-driver-import-boundaries.mjs'`） | **Lines 100% · Functions 100% · Statements 99.26% · Branches 95.42%**（≥80% 门槛远超；行/函数双 100% 达成目标）。未触发的 7 个分支逐个核实为：`opts.log ?? console.log` / `opts.error ?? console.error` / `opts.argv ?? process.argv` 三处默认参数回退、转义符正好落在文件末尾的 `source[i + 1] ?? ''` 两处、`lines[line - 1] ?? ''` 取行文本的兜底，以及 fs `walk` 里真实扫描未命中的 `SKIP_DIR_NAMES.has(...)` / `!entry.isFile()` 两个 continue |
+| `npx tsc --noEmit -p tsconfig.json` | **exit 0（0 错误）** |
+| `npx vite build` | **exit 0**（仅既有 chunk >500 kB 提示，非本次引入） |
+| `node scripts/check-id-terminology.mjs` | `ok (1719 files scanned)`，5 处既有豁免 |
+| `node scripts/check-ci-docs-consistency.mjs` | drivers 11 ids / window boundaries / toolchain 三项 ok |
+| `node scripts/check-module-layers.mjs` | `ok (3 rules)` |
+| `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | **27 files / 222 pass / 0 fail**（与基线一致，无回归） |
+| `npx vitest run src packages/driver-sdk packages/ui` | **412 files / 4243 pass**（与基线一致，无回归） |
+| `npx vitest run --config vitest.drivers.config.ts`（全驱动 UI，附加自查） | 33 files / 241 pass / 0 fail |
+| 两份指南标题结构 | zh `#`×1 `##`×13 `###`×7 = 21；en 同 = 21（**21:21 未变**） |
+
+### 5. 文档回扫落点（逐处 Read 代码核实，无编造符号/行号）
+
+- **2.6**：`尚未确定` 措辞删除，替换为真实脚本名 `scripts/check-driver-import-boundaries.mjs`、`pnpm test:boundaries`、CI 步骤名 `Guard driver/host import boundaries`、两处本地等价位、单测文件与覆盖数字、R1/R2/R3 语义与 0/1/2 退出码。全文再 grep `尚未确定\|同期落地` → 0 命中。
+- **2.1.2 / 2.7 基线数字**：`34 = 32 + 2` 与 `34 + 8 = 42` 的旧口径按实测改写为 **生产码 0 / 夹具 2**（`redisKeyWebContextMenu.test.tsx:5,9`，护栏输出 `2 allow-listed reference(s) skipped` 即机器口径），并显式说明**抛弃 `grep -rn "from '\.\./.*src/"` 作为清点口径**的原因（漏 mock/require 形态）。
+- **顺带关掉 decouple-docs 3 条 Nit**：① 2.4.3 超长 bullet → 拆「不对称本体 / 代价与裁定出处 / 注册≠可达 / 评审口径」3 子条（结论未改）；② 两份指南 §6.3 分例补「（如 mongodb）」并给契约同款措辞 `（如 redis，嵌套两层）`；③ 观察项 1 与 4 归并同批：2.4.2 补 `src/locales/index.ts:69-84` 的 `getTranslation()` 临时换 locale 适配器说明（实测 `:78` 交换、`:82` 复位，仍在宿主内、不违反「只有宿主调用」），§6.2 尾句补「薄再导出壳也不得被驱动 import + 已由 R1/R2 阻断」。
+- **额外事实修正（超出任务书列举，但属同一回扫的实测失配）**：
+  1. 2.4.3 两处 `scripts/i18n-sync-check.mjs:23` 的 `LOCALE_FILES` 引用 → 实际在 **`:36`**（Wave 3 重构后行号漂移；`src/locales` 目录 `:33`、`packages/drivers` 目录 `:34`、`checkDriverLocalePacks()` 调用 `:318`）。
+  2. 2.4.3 「`src/locales/index.ts:42-45` 写入 `extensionLocales`」→ 实际写入在 `registerLocale()` **`:47-50`**（`:48`）。
+  3. 2.4 引言 / 2.4.3 表 / 2.4.4 的「`i18n-drivers` 轨**同期落地、截至本文件基准尚未合并**」→ 已交付事实核实为真：`packages/drivers/{redis,mongodb}/locales/index.ts` 均存在，入口副作用行分别是 `packages/drivers/redis/ui/shared/meta.ts:4`（`import '../../locales';`）与 `packages/drivers/mongodb/ui/meta.ts:4`（`import '../locales';`），`DRIVER_LOCALES` / `generated-locales` 在 `src/ scripts/ packages/ e2e/` **0 生产命中**（仅 `AGENTS.md`、`CONTRIBUTING.md`、`.gitignore` 文字残留，越权未动，维持他轨登记），`i18n-sync-check.mjs` 已扫驱动包。相应改为「已落地」并给出实测出处。
+  4. 2.7 与两份指南中「护栏将强制 / 待落地」措辞 → 改为「已由 R1/R2 强制」。
+- 文档内新写符号/路径抽验：`src/lib/localeSync.ts:20,24`、`src/main.tsx:66`、`packages/ui/src/i18n.ts:34`、`src/lib/cn.ts`（1 行 `export { cn } from '@datazen/ui';`）、`src/commands/driver.ts:6-11`、`SettingsContent.tsx:91-100`、`lazyPacks.ts:21-34`、`domains.ts:21`、`builtinLocales.ts:9` / `:26-29`、驱动 `locales/` 各 10 语言文件 + `index.ts` → 全部 Read/ls 命中，零失配。
+
+### 6. 验收标准对照
+
+| # | 标准 | 证据 |
+| --- | --- | --- |
+| 1 | 还原态 exit 0，输出含扫描数/豁免命中数/过期豁免检测 | 上表第 1 行；过期豁免检测见单测 3 例（含真实 fs 一例） |
+| 2 | 注入 R1(from)+R1(vi.mock)+R2 → 非 0 且逐条点名 `文件:行`；还原后 exit 0 | 「真实仓库自证」原样输出（3 violation(s)、EXIT=1 → 还原 EXIT=0） |
+| 3 | `npx vitest run scripts` 全绿 + 覆盖数字如实登记 | 23 files / 239 tests；本轨 31 例；Lines 100% / Stmts 99.26% / Branches 95.42% |
+| 4 | allowlist 仅 2 条已裁定夹具、无通配 | `ALLOWLIST` 常量 + 单测「shipped allow-list is exactly …」断言长度 2 / 无 `*` `?` |
+| 5 | 四处接入齐备且拼写完全一致 | `git show b56058f46`；四处均为 `test:boundaries` / `scripts/check-driver-import-boundaries.mjs` |
+| 6 | `tsc --noEmit` = 0；`vite build` = 0 | 自测表 |
+| 7 | 既有守卫与既有测试语义不被改动 | `check-id-terminology` / `check-ci-docs-consistency` / `check-module-layers` 全绿；redis 27/222、host 412/4243、drivers 33/241 与基线一致 |
+| 8 | 文档回扫：2.6 无「尚未确定」、2.1.2/2.7 与实测一致、3 Nit 关闭、21:21、抽验零失配 | 第 5 节 + `grep -rn "尚未确定\|同期落地\|34 处\|42 处"` 0 命中 + 标题计数 |
+
+### 7. 开放项（请协调者裁定）
+
+- **A. R2 对 `packages/ui/**` 的整包豁免**：任务书原文把 R2 豁免写成「除 `packages/ui/src/i18n.ts` 的定义与自身导出行」，但实测该包的 `packages/ui/src/__tests__/i18n.test.tsx` 有 7 处**必须存在**的 `setLocale` 调用（唯一 i18n 运行时的行为测试），按原文口径基准就会红 7 条，而又禁止新增 allowlist 条目。落地选择：把豁免表达为**规则扫描范围**（`packages/**` 减去 `setLocale` 定义方所在包 `packages/ui/**`），并在契约 2.4.2 明文写出理由；驱动/扩展/driver-sdk/wapp-sdk/extension-points 全在 R2 覆盖内（含它们的测试）。若裁定应收紧到「只豁免 `i18n.ts` 一个文件」，则需允许 `packages/ui` 测试目录进 allowlist（会突破「初始只允许 2 条」口径），请明示取舍。
+- **B. R3 现状 4 处、暂为 advisory**（未擅自豁免、未搬迁代码）：
+  - `src/test/driverUiSetup.ts:25,26` —— 驱动 UI 测试装配（经 meta 入口挂词条，注释即声明这是有意设计）；
+  - `src/locales/locales.test.ts:107` —— 动态 `import('../../packages/drivers/redis/locales')` 验证驱动自注册；
+  - `src/windows/connection/DocumentConnectionView.tsx:25` —— **生产宿主码** import 驱动内部 `packages/drivers/mongodb/ui/mongodbFind`（这一条是唯一涉及产品代码的，可能需要在 mongodb 侧另立公开入口或经 SDK 暴露）。
+  另有 `src/styles/globals.css:10` 的 `@source '../../packages/drivers/*/ui';`（Tailwind 指令、非 import，R3 不覆盖，仅登记）。
+  三种候选：(1) 保持 advisory 永久；(2) 三条测试/装配豁免进 allowlist（突破 2 条口径需你点头）+ 生产那条另立 Bug；(3) `RULES.R3.blocking=true`，同时开整改 Bug。当前脚本实现为 (1) 的形态，翻 `blocking` 一行即可切到 (3)。
+- **C. 第 5 个接入点**：`scripts/run-regression.sh` 也单独跑了 `check-id-terminology.mjs`（第 218 行），任务书只要求 4 处，故未改；若希望回归脚本同步纳入 `pnpm test:boundaries`，一行即可，请裁定。
+- **D. 提交方式说明**：`3e9014d91` / `b56058f46` 两次提交的 author 为仓库 git 配置、message 与实际改动一致（护栏+单测 / 四处接入），本文件与文档回扫在 `d250e52de`。工作区现无残留改动（`git status --short` 仅本文件）。**未 push。**
 
 ## 留待 R 回归
 
-- 待登记（本轨合并后 R 阶段须把新护栏纳入全量回归清单，并复跑各轨登记的 E2E 项）。
+- **R1/R2 护栏纳入全量回归**：`pnpm test:boundaries` 已成 CI 阻断步骤，R 阶段无需额外手工验证；若 R 阶段任一轨触发它变红，属真实漂移，按本轨口径处理（不许扩豁免）。
+- **R3 裁定后的收紧**：若裁定转 blocking，需回扫 2.6/2.7 措辞（把 advisory 改回阻断）并把 `RULES.R3.blocking` 翻 true，同时补 `DocumentConnectionView.tsx:25` 的整改轨道。
+- **`scripts/run-regression.sh` 是否纳入新护栏**（开放项 C）。
+- `AGENTS.md:31/232`、`CONTRIBUTING.md:91`、`.gitignore:64` 仍描述已退役的 `src/extensions/generated-locales.ts`（`i18n-drivers` 轨已登记给 `decouple-docs`/hub，本轨无权限改，维持原登记）。
+- 两份驱动指南的 §6.2/§6.3 措辞本轮已随护栏落地更新；后续若 `WebContextMenuHost` 夹具豁免被移除（菜单挂载下沉进 SDK），须同步回扫 2.1.2 与 `ALLOWLIST`（预期从 2 条变 0 条，届时过期豁免检测会主动报错）。
