@@ -264,3 +264,13 @@ Tester 刻意未提交（会红）的三条用例全部按原文意图落地：B
 15. **redis crate 升级必查项（新增，对应 BUG-003）**：`Cargo.toml` 的 `redis = "0.27"` 允许 0.27.x 漂移，而 `req_packed_commands` 是 `#[doc(hidden)]` 内部 API（`aio/mod.rs:75-79` 自陈"Users shouldn't call it"）。升级 redis 依赖的那一轨**必须**复核：offset/count 语义、回复顺序、回复条数是否仍等于请求条数，并跑 9a/9b。判定：若 `key_object_info` 在升级后返回"全 null + `missing: false`"而无任何 warn ⇒ 属静默劣化，按 BUG-003 追修。
     〔**修复第 1 轮更新**：该静默面现已收口 —— 条数不等于 6 时 `warn!` + 整条 `Err("key_object_info: expected 6 replies for 6 commands, got N")`（`ops_workbench.rs:641-656`），并由 `fix_round1::key_object_info_refuses_a_truncated_reply_vector_instead_of_guessing` 锁住错误串。故升级那一轨现在只需：跑 `cargo test -p datazen-driver-redis` 看该用例是否红 + 真连跑 9a/9b；若升级后出现"命令直接报错"，那是**守卫生效**而非新 Bug，应按本项复核排布是否变化后另立条目。〕
 16. **采样与侧栏的权限/降级组合（新增）**：只读 profile 下同时禁用 `OBJECT` ⇒ `key_object_info` 应整条报"权限不足"（服务端错误）而非返回全空；`type_distribution` 在禁用 `SCAN` 的实例上应报错上抛（已有单测 `rejected_scan_aborts_the_distribution_before_typing_anything` 覆盖形状）。判定：任何"权限不足"路径都不得被读成"键不存在"或"库为空"。
+
+## 协调者裁定（三条上交项 · 2026-09-22，供 Tester 与 Wave 2 简报直接引用）
+
+1. **BUG-006 修法 3（`select_db_on` 增加 `current_db` 短路）⇒ 本轨不做，另立 P1 轨 `redis-select-shortcircuit`。**
+   理由：属全驱动行为变更（每条命令都少 1 次往返，收益面远大于本轨），与 Tester 原文"不建议在本轨顺手做"一致。
+   **Wave 2 硬口径**：命令级往返预算按 **standalone/sentinel 2 次**、**Cluster 下 `key_object_info` 7 次（1 SELECT + 6 单命令）**、**Cluster 下 `type_distribution` = 1 + 1 + SCAN 轮数 + sampled** 起算 ⇒ 上下文条自动刷新间隔与并发数必须按此量级设计，不得按 op 层的"1 次 pipeline"估预算。
+2. **BUG-003 修法 3（改用公开的 `MultiplexedConnection::send_packed_commands`，把 `#[doc(hidden)]` 依赖清零）⇒ P0 拒绝，转依赖治理条。**
+   理由：修复轮的回复条数守卫（`ops_workbench.rs:641-656`）已把"静默读成空态"变成"warn + 整条 Err"，风险等级从中降为可观测；采纳该修法要重写 `ScriptedConn` / `ShortReplyConn` / `ClusterFoldingConn` 三个进程内替身，并与 BUG-001"同一批命令、两拓扑共用一套解析器"的实现正面冲突。`redis = "0.27"` 是否锁小版本属依赖治理轨（本轨禁止碰 `Cargo.toml`，裁定正确）。落点已存于 R 项 15。
+3. **BUG-002 修法 4 / R 项 9e（既有 `list_children` 在 Cluster 下同形报 `CrossSlot`）⇒ 同意另立基线缺陷轨 `redis-cluster-list-children`，不并入本轨整改面。**
+   理由：`ops_tree.rs:148-156` 与本轨无关，并入会污染 diff。**Wave 2 硬口径**：键树/层级浏览在 Cluster 上**不得假定可用**；先由 R 阶段 9e 确认可复现再定级，若成立则该轨优先级提到 Wave 2 之前。
