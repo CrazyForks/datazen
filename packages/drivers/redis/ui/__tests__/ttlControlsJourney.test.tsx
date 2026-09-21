@@ -12,6 +12,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 // Components take `useI18n` from the single @datazen/ui runtime; keep the
 // assertions locale-independent by overriding only that hook.
+//
+// The map below exists ONLY so `t()` returns something renderable — no
+// assertion in this file reads a rendered copy. Locating and state checks go
+// through the `data-*` contract on TtlControls (see
+// docs/development/interaction-and-testing-principles.md, "断言与 i18n 文案解耦").
 vi.mock('@datazen/ui', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
@@ -40,8 +45,27 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: render TtlControls with a mock invoke function
+// Helpers: render TtlControls with a mock invoke function + data-* locators
 // ---------------------------------------------------------------------------
+
+/** The TTL read-out slot; state is `no-expiry` | `seconds`, never rendered copy. */
+function ttlValueSlot() {
+  return screen.getByTestId('redis-ttl-value');
+}
+
+function expectNoExpiryState() {
+  const slot = ttlValueSlot();
+  expect(slot.getAttribute('data-ttl-state')).toBe('no-expiry');
+  // Slot must render a resolved label, not an empty hole.
+  expect((slot.textContent ?? '').trim().length).toBeGreaterThan(0);
+}
+
+function expectSecondsState(seconds: number) {
+  const slot = ttlValueSlot();
+  expect(slot.getAttribute('data-ttl-state')).toBe('seconds');
+  // The numeric TTL is data, not copy — pinning it keeps the real intent.
+  expect(slot.textContent).toContain(String(seconds));
+}
 function setupJourney(opts: {
   keyName: string;
   ttl: number;
@@ -75,16 +99,17 @@ describe('Journey: Set relative TTL on key without expiry', () => {
       ttl: -1,
     });
 
-    // Verify initial state: "No expiry" displayed
-    expect(screen.getByText('No expiry')).toBeTruthy();
+    // Verify initial state: the TTL slot reports the no-expiry state
+    expect(screen.getByTestId('redis-ttl-value')).toBeTruthy();
+    expectNoExpiryState();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
     // Type a relative TTL value
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
+    const ttlInput = screen.getByTestId('redis-ttl-input');
     fireEvent.change(ttlInput, { target: { value: '3600' } });
 
-    // Click "Set TTL" button
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
+    // Click the relative-TTL apply action
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
     fireEvent.click(setTtlBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -116,8 +141,8 @@ describe('Journey: Set absolute expiry via EXPIREAT', () => {
       ttl: 600,
     });
 
-    // Verify initial TTL display shows "600 s"
-    expect(screen.getByText('600 s')).toBeTruthy();
+    // Verify initial TTL state carries the numeric TTL
+    expectSecondsState(600);
 
     // ── 2. Act ───────────────────────────────────────────────────────────
     // Find the datetime-local input specifically by its type attribute
@@ -127,8 +152,8 @@ describe('Journey: Set absolute expiry via EXPIREAT', () => {
     // Use a fixed future time: 2030-01-15T12:00
     fireEvent.change(datetimeInput, { target: { value: '2030-01-15T12:00' } });
 
-    // Click "Set expire at" button
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
+    // Click the absolute-expiry apply action
+    const expireAtBtn = screen.getByTestId('redis-ttl-expire-at');
     fireEvent.click(expireAtBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -170,12 +195,12 @@ describe('Journey: Remove TTL via PERSIST', () => {
       ttl: 120,
     });
 
-    // Verify initial TTL display shows "120 s"
-    expect(screen.getByText('120 s')).toBeTruthy();
+    // Verify initial TTL state carries the numeric TTL
+    expectSecondsState(120);
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Click "Persist" button
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    // Click the persist (remove TTL) action
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -206,10 +231,10 @@ describe('Journey: Error on invalid TTL input', () => {
     });
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
+    const ttlInput = screen.getByTestId('redis-ttl-input');
     fireEvent.change(ttlInput, { target: { value: '-5' } });
 
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
     fireEvent.click(setTtlBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -218,9 +243,11 @@ describe('Journey: Error on invalid TTL input', () => {
       expect(invoke).not.toHaveBeenCalled();
     });
 
-    // Error message should be displayed
+    // The inline error slot must appear and carry a resolved message
+    // (the copy itself is an i18n value and is deliberately not asserted).
     await waitFor(() => {
-      expect(screen.getByText('TTL (seconds)')).toBeTruthy();
+      const errorSlot = screen.getByTestId('redis-ttl-error');
+      expect((errorSlot.textContent ?? '').trim().length).toBeGreaterThan(0);
     });
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
@@ -248,15 +275,20 @@ describe('Journey: Error on invalid datetime', () => {
     // Set a value that Date.parse cannot parse
     fireEvent.change(datetimeInput, { target: { value: 'not-a-date' } });
 
-    // Click "Set expire at" button
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
+    // Click the absolute-expiry apply action
+    const expireAtBtn = screen.getByTestId('redis-ttl-expire-at');
     fireEvent.click(expireAtBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
-    // Button should be disabled when expireAtLocal is empty/invalid, so no invoke
+    // jsdom normalises an unparsable `datetime-local` value to '', so the real
+    // contract here is "the apply action stays disabled ⇒ nothing is sent".
+    // [tester] That used to be proven only through the absence of the invoke,
+    // which stays green even if the guard on the button is dropped — pin the
+    // disabled property itself (a DOM-state anchor, no rendered copy).
     await waitFor(() => {
       expect(invoke).not.toHaveBeenCalled();
     });
+    expect(screen.getByTestId('redis-ttl-expire-at')).toBeDisabled();
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
     cleanup();
@@ -273,10 +305,10 @@ describe('Journey: TTL set → persist → set again cycle', () => {
       keyName: 'journey6:lifecycle-key',
       ttl: -1,
     });
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
+    const ttlInput = screen.getByTestId('redis-ttl-input');
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
+    const expireAtBtn = screen.getByTestId('redis-ttl-expire-at');
     // Find datetime-local by type attribute
     const datetimeInput = document.querySelector(
       'input[type="datetime-local"]',
@@ -344,7 +376,7 @@ describe('Journey: Different session and db index', () => {
     });
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -366,7 +398,7 @@ describe('Journey: Different session and db index', () => {
 // Journey 8: TTL = -1 (no expiry) shows correct display
 // ============================================================================
 describe('Journey: No-expiry display and persist when already expired', () => {
-  it('shows "No expiry" for ttl=-1, and persist resets input fields', async () => {
+  it('reports the no-expiry TTL state for ttl=-1, and persist resets input fields', async () => {
     // ── 1. Prepare ───────────────────────────────────────────────────────
     const { invoke, onChanged } = setupJourney({
       keyName: 'journey8:no-expiry-key',
@@ -374,11 +406,11 @@ describe('Journey: No-expiry display and persist when already expired', () => {
     });
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Verify "No expiry" text
-    expect(screen.getByText('No expiry')).toBeTruthy();
+    // Verify the TTL slot is in the no-expiry state
+    expectNoExpiryState();
 
     // Persist should still work (noop but verify command)
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────

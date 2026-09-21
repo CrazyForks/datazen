@@ -98,5 +98,6 @@
 - **前端测试**：写在对应的 `__tests__/` 目录中，使用 Vitest，可通过 `--coverage` 获取精确覆盖率。
 - **E2E 测试**：按 AGENTS.md 约定，Host E2E 在 `e2e/specs/`，驱动 E2E 在 `packages/drivers/<id>/e2e/`。
 - **测试命名**：新增测试函数名前缀 `test_tester_` 或描述块标注 `[tester]`，便于区分来源。
+- **零文案断言**：新写的 UI / i18n 测试禁止把 `t()` 渲染出的英文字面量钉进断言或定位器，一律用 `data-*` / role / i18n key（必要时从同一份字典回读期望值）；规则与正反例见 [interaction-and-testing-principles.md 原则六](../interaction-and-testing-principles.md)。
 - **不修改业务代码**：如果发现现有代码不可测试（如缺少公共接口），登记为 Bug 而非擅自修改。
 - **不追求数量**：避免为凑测试数写冗余或无意义的测试，每个测试必须覆盖真实的未测路径。

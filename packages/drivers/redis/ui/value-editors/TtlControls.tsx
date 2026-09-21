@@ -66,7 +66,15 @@ export function TtlControls({
       <div className="flex flex-wrap items-center gap-2">
         {/* Current TTL display */}
         <span className="font-medium text-fg-muted">{t('redis.ttl')}:</span>
-        <span className="text-fg-secondary">{ttlText}</span>
+        {/* `data-ttl-state` is the locale-independent contract tests assert on:
+            the rendered copy itself is an i18n value and must never be pinned. */}
+        <span
+          className="text-fg-secondary"
+          data-testid="redis-ttl-value"
+          data-ttl-state={ttl < 0 ? 'no-expiry' : 'seconds'}
+        >
+          {ttlText}
+        </span>
 
         {/* Relative TTL input */}
         <div className="flex min-w-[100px] flex-col gap-1">
@@ -142,7 +150,11 @@ export function TtlControls({
         </Button>
       </div>
 
-      {error && <p className="mt-1 text-[10px] text-danger">{error}</p>}
+      {error && (
+        <p className="mt-1 text-[10px] text-danger" data-testid="redis-ttl-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
