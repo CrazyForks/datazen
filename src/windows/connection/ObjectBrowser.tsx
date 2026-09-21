@@ -14,23 +14,13 @@ import {
 } from '../../lib/objectBrowserContextMenu';
 import { formatSql } from '../../lib/sqlFormat';
 import { copyToClipboard } from '../../lib/fetchRelationDdl';
+import { databaseObjectIdentityKey } from '../../lib/databaseObjectIdentity';
 import type { DatabaseObject, DatabaseObjectKind } from '../../types';
 
 const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence'];
 
-function objectIdentityKey(object: DatabaseObject): string {
-  return JSON.stringify([
-    object.kind,
-    object.schema ?? null,
-    object.name,
-    object.signature ?? null,
-    object.targetSchema ?? null,
-    object.targetName ?? null,
-  ]);
-}
-
 function sameObjectIdentity(left: DatabaseObject | null, right: DatabaseObject): boolean {
-  return left !== null && objectIdentityKey(left) === objectIdentityKey(right);
+  return left !== null && databaseObjectIdentityKey(left) === databaseObjectIdentityKey(right);
 }
 
 interface ObjectBrowserProps {
@@ -248,7 +238,7 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
           )}
           {objects.map((obj) => (
             <button
-              key={objectIdentityKey(obj)}
+              key={databaseObjectIdentityKey(obj)}
               type="button"
               data-testid="object-browser-item"
               className={cn(

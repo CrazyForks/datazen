@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_FOR_TEST
 
 ## Scope
 
@@ -16,12 +16,12 @@ FAILED
 ## Self validation
 
 - `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-api --lib`: 140 passed.
-- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-postgres --test schema_objects_sql`: 8 passed.
+- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-postgres --test schema_objects_sql`: 10 passed.
 - `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-mysql --test schema_objects_sql`: 6 passed.
-- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-sqlite --test schema_object_commands`: 5 passed.
+- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-sqlite --test schema_object_commands`: 6 passed.
 - `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-sqlite --test schema_objects_sql`: 5 passed.
 - `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib commands::schema::tests::`: 14 passed.
-- `npx --no-install vitest run src/windows/connection/__tests__/ObjectBrowser.test.tsx src/windows/connection/__tests__/ConnectionNavigatorTree.test.tsx`: 87 passed.
+- `npx --no-install vitest run src/windows/connection/__tests__/ObjectBrowser.test.tsx src/windows/connection/__tests__/ConnectionNavigatorTree.test.tsx src/windows/connection/__tests__/usePanelHandlers.test.tsx`: 99 passed.
 - `npx --no-install tsc --noEmit`: passed.
 - `rustfmt --edition 2021` on changed Rust files: passed.
 - `git diff --check`: passed.
@@ -38,6 +38,11 @@ FAILED
 - ObjectBrowser now keys rows and compares selected/copy state by the complete object identity: kind, schema, name, routine signature, and trigger target schema/name.
 - Overload and trigger identity journeys remain covered by the focused ObjectBrowser, navigator, PostgreSQL, and SQLite tests.
 
+## Follow-up BUG-002
+
+- Navigator object row keys now reuse the shared complete object identity key, including category, schema, routine signature, and trigger target relation fields.
+- Routine overload and same-name trigger collision journeys are covered by navigator tests.
+
 ## Commit
 
 - Coding commit: e15d81c9
@@ -45,9 +50,10 @@ FAILED
 ## Tester round 2
 
 - Tester test additions: ObjectBrowser overload copy, navigator key uniqueness, and panel identity journeys.
-- Focused Vitest: 97 passed, 2 failed; both failures are migration-object-catalog-BUG-001.
+- Focused Vitest after BUG-002 repair: 99 passed, 0 failed.
 - ObjectBrowser coverage with focused suite: 96.05% statements, 84.74% branches, 96% functions, 97.33% lines.
 - Driver/API/Host checks: Driver API 140 passed; PostgreSQL object SQL 10 passed; MySQL object SQL 6 passed; SQLite object command 6 passed; SQLite object SQL 5 passed; Host schema tests 14 passed.
 - TypeScript, Prettier, rustfmt, and `git diff --check`: passed.
 - Live DB limitation: PostgreSQL and MySQL live-server integration was unavailable; SQL contracts and Host mock IPC were used.
-- Tester commit: 0ec82dfa
+- Tester commits: 0ec82dfa, de8412ef, 00339a67
+- Follow-up coding commit: current repair commit (reported in handoff)

@@ -1,5 +1,6 @@
 import { isLeaf, pathKey, type SqlNamespace } from '../../../lib/sqlNamespace';
 import { escapeIdent } from '../../../lib/databaseTypes';
+import { databaseObjectIdentityKey } from '../../../lib/databaseObjectIdentity';
 import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { UnifiedRow } from './types';
@@ -201,7 +202,7 @@ export function getUnifiedRowKey(row: UnifiedRow, index: number): string {
     case 'table':
       return `tbl:${row.connectionId}:${row.dbName}:${row.item.schema ?? ''}:${row.item.name}`;
     case 'object':
-      return `obj:${row.catId}:${row.obj.name}`;
+      return `obj:${row.catId}:${databaseObjectIdentityKey(row.obj)}`;
     case 'kv-db':
       return `kv:${row.connectionId}:${row.dbName}`;
     case 'db-loading':
