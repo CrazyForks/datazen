@@ -109,6 +109,8 @@
    | `expect(screen.getByText('Cancel')).click()` | `screen.getByTestId('confirm-dialog-cancel')` |
    | `getByRole('button', { name: 'Close' })`（宿主 `Dialog` 包装层已把 `t('common.close')` 灌进 `closeLabel`） | `getByRole('button', { name: enCopy('common.close') })` + 一条用测试自造 locale 证明"名称确实来自 `t()`"的接线用例 |
    | `getByRole('heading', { name: en['common.error'] })`（裸查表；miss 即 `name: undefined` ⇒ 永真退化） | `getByRole('heading', { name: enCopy('common.error') })`（miss / 空值当场抛错） |
+   | `expect(showMessageDialog).toHaveBeenCalledWith('Missing value for :uid', 'error')`（把 `t(key, params)` 渲染出的**整句**钉进断言参数） | 断 **i18n key + params 对象**（`expect(i18nCalls).toContainEqual({ key: 'query.editor.param.missingValue', params: { token: ':uid' } })`）+ 测试自造 stub 串；token 是数据可留，句子归字典（redis-assert-policy BUG-006） |
+   | `if (body.includes('Structure')) { … }`（WDIO 规格里的单语钉死，改文案当场红） | 用 `t()` 运行时回读再比较（`e2e/specs/export-import.ts` 是整套里最密的正例，含 `t('export.willExport', { rows, cols })` 插值回读）；双语或然串 `includes('中文') \|\| includes('English')` 只推迟爆炸，不消除耦合 |
 
 5. **不在本原则范围内**（不要顺手改，改了反而丢信息）：
    - 断言**数据**：Redis 回包 `(nil)` / `OK` / `42`、SQL 原文与关键字（`SELECT`、`LEFT JOIN`、`AND`）、`INFO` 段名 `Server` / `Memory`、类型与拓扑枚举 `string` / `cluster`、日期与数字；
@@ -117,9 +119,7 @@
    - ⚠ **同名组件不可按库层默认值豁免**：宿主 `src/components/ui/*` 包装层普遍注入 `t()`（`src/components/ui/Dialog.tsx:8` 就是 `closeLabel={props.closeLabel ?? t('common.close')}`），经它渲染出的可访问名称**确实是 i18n 文案**，落在本原则范围内。本轨第一版把 `Dialog.test.tsx` 的 `getByRole('button', { name: 'Close' })` 定性成"库层默认值、无 i18n 参与"是**误判**：实测只改宿主 `common.close` 一个 key 就能让该文件恰好 2 条转红（redis-assert-policy BUG-001，已按字典回读 + `enCopy()` 改写）。判定办法：先确认测试 `import` 的是包装层还是库组件，再改一个 key 做单点探针，不要靠"值恰好同串"归因。
    - 测试自带的 `t()` stub 字典（它只是让 `t()` 有返回值）—— 前提是没有任何断言去读它的值。
 6. **边界不变量 ≠ 文案**：例如"宿主快照里不得出现 `redis.*` 词条"（`getHostTranslations('en')['redis.batchDelete'] === undefined`）是包边界契约，必须原样保留；驱动 ui 测试"必须能解析出真串而不是回显 key"同理。
-7. **护栏**：`node scripts/check-i18n-copy-assertions.mjs`（`pnpm test:i18n-assertions`）对**驱动 ui 测试目录**里 `getByText('Two Word Copy')` 这类形态报警。当前为 **warning（报而不拦）**，退出码恒 0；`--strict` 可临时升级为阻断，用于新提交自查。
-   - **能力边界（绿灯不等于干净）**：默认降噪要求"首字母大写 + 含空格 + 确实是字典值"，因此**单词文案**（`Console` / `Wrap` / `Size` / `Persist`）被钉进断言时默认面**不报**；默认扫描面只有 `packages/drivers`，**宿主测试与 `e2e/specs/*.ts` 交互规格都不在内**（后者既不带 `.test.ts` 也不在 `__tests__/` 下）。裁定 8-4 的四个落刀口里三个是单词，正好落在失明区，所以"跑过护栏"不能替代人工 grep。
-   - **两个 opt-in 开关补齐**：`--dirs src,packages,e2e` 加宽扫描面（含 `specs/` 交互规格与 `$('button[aria-label="…"]')` 形态）；`--terms redis.noExpiry,redis.view.wrap,redis.size` 传一份 **i18n key 观察名单**，护栏从字典回读这些 key 的**当前值**再匹配（含单词、绕开双词门槛），因此调用串本身也不钉文案；改文案后无需改名单。名单里解析不到的 key 会**显式报警并在 `--strict` 下失败**——typo 的 term 保护不了任何东西（实测 `redis.discard` 当前不存在于字典，正确位是 `redis.persist`）。
+7. **执行方式：靠评审口径，不建静态护栏。** 本轨曾实现过一个 `scripts/check-i18n-copy-assertions.mjs` 字面量扫描器（含 `--dirs` / `--terms` 两个 opt-in 与 687 行自测），2026-09-22 由协调者裁定**整体删除**：判据是"首字母大写 + 含空格 + 恰等于字典值"的启发式对**单词文案**（`Console` / `Wrap` / `Size` / `Persist`）与**插值组合**（`'Size: 42 B'`）结构性失明，`e2e/specs/**` 主流的双语或然写法（`includes('中文') || includes('English')`）改文案也不会红，而 R-3 数据型假阳性与测试自造 stub 字典值（第 4 类豁免）又必须逐条人读——**维护成本高于它提供的保护**。规则由 Coder/Tester 简报的验收口径与本节正反例执行，新增测试出现下列形态时按人工评审拦下：`get|query|find[All]By{Text,LabelText,Title,PlaceholderText}('…')`、`getByRole(…, { name: '…' })`、`toHaveTextContent('…')`、`aria-label="…"` 选择器、带翻译语境的 `.toBe('…')` 字典回读、**断言参数** `toHaveBeenCalledWith('…')`（redis-assert-policy BUG-006）、**子串匹配** `.toContain/.toContainEqual/.includes/.startsWith/.endsWith('…')`、**文案型 helper 传参**（`findAndClickButton([...])` / `openDbContextMenu(_, '…')`）、以及**变量间接**（`const label = 'Console'; getByRole(…, { name: label })`）。
 
 ---
 

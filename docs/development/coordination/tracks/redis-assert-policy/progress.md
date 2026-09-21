@@ -328,3 +328,19 @@
 
 
 
+
+---
+
+## 协调者裁定（第 2 轮 · 护栏整体撤销）
+
+**裁定（2026-09-22 07:50，用户原话）**：「不需要做这个护栏，完全无意义，浪费了大量时间」⇒ `scripts/check-i18n-copy-assertions.mjs` **不作为本轨交付物**，连同其自测与 npm 脚本一并删除。第 2 轮修复实例在裁定下达时停止（其 BUG-007 提交 `d6fac564c` 一并撤销）。
+
+**理由（协调者复述，供后续轨道不再重蹈）**：判据是"首字母大写 + 含空格 + 恰等于字典值"的启发式，对单词文案与插值组合结构性失明；`e2e/specs/**` 双语或然写法改文案永不转红；R-3 数据型假阳性与 stub 字典值必须逐条人读。也就是**绿灯无意义、红灯要人肉**，420 行脚本 + 687 行自测的维护成本高于其保护。原则六本身不变，只撤掉工具。
+
+**撤销范围**：`scripts/check-i18n-copy-assertions.mjs`、`scripts/__tests__/check-i18n-copy-assertions.test.ts`、`package.json` 两条 `test:i18n-assertions*`、`interaction-and-testing-principles.md` 原则六第 7 条内的护栏说明书（改写成人工评审形态清单）。
+
+**保留范围（本轨真实交付）**：`locales.test.ts` / `Dialog` / `MenuBar` / `ErrorBoundary` / `ConfirmDialog` / `useConfirmDialog` / `ttlControlsJourney` / `queryExecutionJourney` / `retest-round1-fixes.tester` 等文案断言改写、`src/test/enCopy.ts` + 其单测、`TtlControls.tsx` 三个 `data-*`、原则六正文与正反例、`tester.md` 的「零文案断言」条目。
+
+**Bug 状态影响**：BUG-004 / 005 / 007（皆为护栏自身缺陷）随载体删除而**撤销**，不再计入未关闭项；BUG-003（台账数字口径）撤销；BUG-001 / 002 / 006 已修复且复证通过，维持不变。
+
+**流程裁定**：撤销后**不再开第 3 轮**，也不再派新 Tester 复测已删除的护栏。合流前只做一次全量门禁复跑（宿主 vitest + 驱动 vitest + `tsc`），确认删除无悬挂引用；`--strict` 相关的 R 阶段接线项从任务 #44 中移除。

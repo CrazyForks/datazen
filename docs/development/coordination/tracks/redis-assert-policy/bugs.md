@@ -154,6 +154,9 @@
 - **状态**: **已修复**（Tester #3 复测通过，HEAD `47b9a4a9f`；D 表第 5 行已改写为"4 条命中，全部为 R-3 已定性假阳性，真钉死词条 0 条"，矛盾消除）
   - **但同一行的文件数在 HEAD 已失真**：D 段照抄的 `457` 实跑为 **`561`**（本 commit 后 `TEST_FILE_RE` 放宽了 `specs/` ⇒ 面变大），
     且"真钉死词条 0 条"这句在全量字典探针下被证伪（至少 1 条真耦合，见 **BUG-006**）。二者另立新条，见 **BUG-008**。
+  - **Round-2 更新（HEAD `d6fac564c`）**：BUG-006 已修 ⇒ 全量字典探针（15 文件 / 2483 条改值）重跑为 Host **4623/4623 全绿** +
+    驱动 **233/233 全绿**，"真钉死词条 0 条"这句**重新成立**（且现在可复算，不再是推断）；
+    `457` 与 `561` 经口径对账确认**都是各自 HEAD 下的正确实跑**，当前口径为 **587**（见 BUG-008 第 1 点的三行对账表）。
   - 复现口径核对：`node -e "…checkI18nCopyAssertions({dirs:['src','packages','e2e'],…})"` → `scanned=561 hits=4 code=0`；
     四条命中位置与本条登记时**逐字相同**（`BuildStatement.test.tsx:198,220` / `ChartWidgetTile.test.tsx:139` / `RunHistoryDrawer.test.tsx:161`），
     四条所在文件仍不在 `git diff ae65ae375..HEAD` 的 20 文件名单内（未被"顺手修掉"，符合任务书 §5.5）。
@@ -268,7 +271,30 @@
 
 ## redis-assert-policy-BUG-006：残留 1 条"插值整串钉死"未被清点（全量字典探针在 4622 例中唯一暴露的真耦合），护栏对 `toHaveBeenCalledWith` 与插值形态全盲，台账"真钉死词条 0 条"结论被证伪
 
-- **状态**: **待修复**（Tester #3 本轮新登记）
+- **状态**: **已修复**（Round-2 Coder，HEAD `d6fac564c`；测试改写 = `0c3f20848`，护栏断言参数形态 = `d6fac564c`。
+  自验全程见 [progress.md](progress.md)「Round-2 Coder 记录」§1）
+  - **建议修法 1 落地**（同目录 `useQueryExecutionGate.test.tsx:44` 的 stub 正例改法）：
+    `queryExecutionJourney.test.tsx` 以 `vi.mock('../../../hooks/useI18n')` 注入**测试自造字典**
+    （`'query.editor.param.missingValue'` ⇒ `` `stub-missing-param token=${p?.token ?? ''}` ``，第 4 类豁免），
+    两处断言改**断契约**：`expect(i18nCalls).toContainEqual({ key: 'query.editor.param.missingValue', params: { token: ':uid' } })`
+    + 自造串 + `executeQuery`/`executeSelection` 未被调用 ⇒ token 这一**数据**仍然敏感，句子归字典。
+    另加 1 条常驻用例 `'keeps the block message owned by the dictionary, so the stub above stays honest'`
+    （`enCopy('query.editor.param.missingValue')` 必含 `{token}`），防止"整句被摘成字面量"回退。用例 5 → **6**（只增不减）。
+  - **建议修法 2 落地**：`COPY_MATCHERS` 增第 6 条 `toHaveBeenCalledWith\(\s*(['"])([^'"]+)\1`，并**额外**把 `--terms`
+    的比对从"逐字相等"升级为"逐字相等 ∪ 有界短语包含（含 `{占位符}` 词条取静态片段）"——否则加了匹配器仍钉不住插值串
+    （本条原判断"含占位符的词条值连逐字相等这条路也走不通"由此收口）。常驻反证：`needles` 变异（摘掉短语）⇒ 恰 2 条红。
+  - **建议修法 3 落地**：D 表第 5 行与 R 项 3 改写；原则六第 7 条"形态清单"补齐并新增对照表 2 组（含本条的断言参数正反例）。
+  - **实跑证据**（本机，探针跑完即还原，收尾 `git status -- src/locales packages/drivers` **空**）：
+    1. 单键探针 `query.editor.param.missingValue` → `'Zqx query-editor-param-missingvalue blorp {token}'`
+       ⇒ `queryExecutionJourney.test.tsx` **6 passed / 0 failed**（修复前正是这一句让全宿主套件唯一转红）。
+    2. **全量字典探针**（前任判据 5 的最强形态，本机重跑）：脚本 `/tmp/r2-fullprobe.mjs` 一次改写
+       **15 个字典文件 / 2483 条英文字面值**（`Zqx <key-slug> blorp`，`{占位符}` 原样保留）⇒
+       Host `npx vitest run` **444 文件 / 4623 例 / 0 failed**、驱动 `redis/ui + mongodb/ui` **29 文件 / 233 例 / 0 failed**；
+       `git restore -- src/locales packages/drivers` 后词典零 diff。
+       ⇒ 判据 1 从"4621/4622"提升为 **4623/4623 + 233/233**，"真钉死词条 0 条"这句在 HEAD 成立（无需再改结论）。
+  - **红线核对**：本条修复**纯测试**——`git diff --name-only ae65ae375..HEAD` 中
+    `src/locales/en/query.ts` 与 `src/windows/connection/query/useQueryExecutionGate.tsx` **均无 diff**
+    （前任 Coder 现场里这两文件的改动是探针残留，已如实回滚，未留下半成品；生产码零改动）。
 - **严重度**: 中（本轨判据 1"改文案不牵动测试"在宿主面**仍有 1 处不成立**；且它同时是本轨两条结论——
   「`src` 扩扫真钉死词条 0 条」与「护栏已能守住的形态清单」——的反例，属于"缺口 + 守卫盲区"叠加，不是纯台账问题）
 - **位置**:
@@ -353,7 +379,24 @@
 
 ## redis-assert-policy-BUG-007：`--dirs e2e` 只加"面"不加"形态" ⇒ WDIO 实际钉文案写法 0 命中，"e2e 现状干净"是一盏绿灯假象（若日后接入 `--strict` 发布门即为危险假信心）
 
-- **状态**: **待修复**（Tester #3 本轮新登记；由 BUG-005 的修复**派生**，非既有修复被推翻）
+- **状态**: **已修复**（Round-2 Coder，HEAD `d6fac564c`；由 BUG-005 的修复**派生**，非既有修复被推翻。
+  前任 Coder 于 07:16 服务中断时该条为**在途脏文件**，本轮**原样继承**其 `COPY_MATCHERS` / `TEST_FILE_RE` /
+  去重 / 措辞改动（`2157f602c`，未推翻任何改法），再补其缺失的"常驻测试 + 口径 + 短语匹配"（`d6fac564c`））
+  - **修法 1（纠口径，必做）已落地**：原则六第 7 条重写为"八种形态清单 + 能力边界 + 哨兵非普查 + `--dirs e2e` 绿灯含义"四段，
+    并写死一条禁令：**严禁把 `--strict` 与 `--dirs e2e` / `--dirs src` 一起接线为发布门**（接线即把"须人读"的命中变成常红灯 = 用假信心替换真检查）。
+    护栏**仍是 report-only**：`git diff --name-only ae65ae375..HEAD -- .github .githooks .husky scripts/ci-local.sh vitest.config.ts vitest.drivers.config.ts package.json`
+    ⇒ 只有 round-1 那 2 条显式 `test:i18n-assertions*` 脚本，`pretest` / pre-commit / CI 均未接。
+  - **修法 2（再加形态）已落地**：`COPY_MATCHERS` 5 → **8** 条（断言参数 / 子串 `.toContain|toContainEqual|includes|startsWith|endsWith` /
+    文案型 helper 传参，helper 名以脚本内 `COPY_HELPER_NAMES = ['findAndClickButton','openDbContextMenu']` 作配置点，不膨胀正则）；
+    `TEST_FILE_RE` 的 specs 分支由单层 `specs/[^/]+` 改递归 `specs/.+` ⇒ `e2e/specs/journeys/**` **26** 个文件进面（`e2e` 面 106 → **132**）。
+  - **命中增量已量**（原要求"补完必须先量一次再决定报/拦"）：
+    `--dirs src,packages,e2e` 报 **11** 条（修复前 4 条 = R-3；e2e 贡献 7 条，含 `'NOT NULL'` ×2 这类 SQL 数据同串 ⇒ 报而不拦的依据）；
+    把钉死点用到的 **102** 个 i18n key 喂给 `--terms` 后，`--dirs e2e` 由**修复前 0 条 / exit=0** 变为 **62 条 / exit=1**（`/tmp/r2-e2e-pinscan.mjs` 产名单，本机实跑）。
+  - **常驻测试**：护栏 `19 → 28` 例（+9：断言参数、子串族、helper 逐字面判定、嵌套 specs 进面、观察名单组合串/插值串、
+    词边界与最短长度、同行去重、**默认面不放宽**）。三组变异精确转红：截断 `COPY_MATCHERS` ⇒ 7 红 /
+    回退单层 specs ⇒ 恰 1 红 / 摘掉有界短语 ⇒ 恰 2 红（见 progress.md §3）。
+  - **修法 3（收敛站点）按建议不进本轨 diff**：`e2e/specs/**` 的钉死点**一条未改**（只登记）。B 类单语钉死会否当场红，
+    仍需能跑 WDIO 的一次实跑给名单；A/B 判读本轮仍为静态判读。数字对账（本条 57 vs 本轮自动重跑 143）见 **BUG-008** 第 4 点。
 - **严重度**: 中（护栏是**建议性**的、且 `--dirs`/`--terms` 都需显式传参 ⇒ 今天不阻断任何东西；
   但它给读者的正是"e2e 扫过了、干净"，而真实情况是"扫了 106 个文件、0 命中、57 处真钉死"。
   台账把这条绿灯留到 Wave 2 / 发布门接线时，就会变成"有门禁而无保护"）
@@ -432,7 +475,30 @@
 
 ## redis-assert-policy-BUG-008：台账数字随修复失真（`457` → 实跑 `561`）+ `--terms` 两处未写进能力边界的判读坑（测试自造 stub 字典假阳性、组合串/变量间接完全不报）
 
-- **状态**: **待修复**（Tester #3 本轮新登记；BUG-003 的"数字口径"同类问题在修复后**以新数字复发**）
+- **状态**: **已修复**（Round-2 Coder，HEAD `d6fac564c`；BUG-003 的"数字口径"同类问题在修复后**以新数字复发**，本轮把**口径**而不是数字本身定死）
+  1. **`457` 与 `561` 都不是错数**（`/tmp/r2-face-audit.mjs` 用 `git ls-tree` 在三个 HEAD 上重算三种 `TEST_FILE_RE` 形态，可复算）：
+
+     | `--dirs src,packages,e2e` 的 `scanned` | HEAD | 面定义（`TEST_FILE_RE` 形态） | 分解 |
+     |---|---|---|---|
+     | **457** | `4cdc0c023`（Tester #2 关账） | pre-BUG-005：**无** `specs/` 分支 | src 401 + packages 53 + e2e 3 |
+     | **561** | `47b9a4a9f`（Tester #3/4 复测） | BUG-005：单层 `specs/[^/]+\.tsx?` | src 402 + packages 53 + e2e 106 |
+     | **587** | `d6fac564c`（本轮） | BUG-007：递归 `specs/.+\.tsx?` | src 402 + packages 53 + e2e 132 |
+
+     457 → 561 的差 = `src/test/__tests__/enCopy.test.ts` **+1** 文件（`47b9a4a9f` 新增）与 `e2e` 面 3 → 106（`075d2a10c` 加 `specs/` 分支）**+103**；
+     561 → 587 的差 = `e2e/specs/journeys/**` **+26**（BUG-007 修的面）。⇒ 真正的缺陷是**台账只贴数字、没贴它的两个自变量**。
+     **规则升级（已写进 progress.md 关账 checklist）**：引用实跑数字必须同行记
+     ① HEAD、② `--dirs` 清单、③ `TEST_FILE_RE` 形态（或等价的"哪个 commit 起面变宽"）、④ 是否带 `--terms`。
+     D 表第 5 行已按此改写为 **587（HEAD `d6fac564c`；src 402 / packages 53 / e2e 132，无 `--terms`，命中 11 条）**。
+  2. **`--terms` 的 stub 字典假阳性**：已写进原则六第 7 条"`--terms` 仍是目标词哨兵，不是普查"段——命中判据不看字面值来自哪本字典，
+     故**会**报测试自造假字典值（第 4 类豁免，如 `packages/ui/src/__tests__/i18n.test.tsx` 的假 `'Console'`）与"词条原样当数据"的 fixture，
+     并明确"名单喂得越宽（上百键）噪声越多，命中一律人读"。本轮实测的量化：同一棵干净树上 `--dirs packages --terms redis.console` 仍 1 条（该行为不变，属判读前提而非实现缺陷）。
+  3. **`--terms` 的两类不报**：**组合/插值串已收口**（有界短语 + `{占位符}` 静态片段 ⇒ `'Size: 42 B'`、`'Missing value for :uid'` 现在会报，
+     常驻单测 2 条 + `needles` 变异恰 2 红为证）；**变量间接仍不报**，已作为"按行扫描"能力边界写进原则六第 7 条与脚本头注释。
+  4. **顺带把"钉死点计数"的三个口径分清**（BUG-007 的 57 与本台账的 11 / 62 / 143 不是同一件事，混用即本条根因的第二次发作）：
+     **143 处 / 45 文件**＝本轮自动重跑"字面值逐字等于任一英文字典值、不限形态"（同 Tester 的 57 判据，但**未**人工剔除 `'string'`/`'DDL'`/`'Host'`/`'NOT NULL'` 这类数据同串；Tester 记的 **57 / 25** 是剔除后的人工子集，二者是"自动面 vs 人工判读"之差，非互相推翻）；
+     **11 条**＝护栏默认启发式（形态 ∧ 双词 ∧ 字典值）在 `--dirs src,packages,e2e` 的命中；**62 条**＝再加 102 键观察名单后 `--dirs e2e` 的命中。
+  5. **输出措辞**：summary 行已改为中性的 `ok (N test files scanned, 0 copy literals pinned)`（`2157f602c`）。
+     round-1 台账与 bugs.md 里引旧措辞的行**保留为历史事实不回改**（它们是当时那次实跑的逐字记录）。
 - **严重度**: 低（纯台账/文档准确性与可读性；不影响运行时与测试红绿。但 BUG-003 的根因正是"不同轮次实跑数字没在关账时对齐"，
   这次是同一个坑的第二跌 ⇒ 值得顺手在关账模板里加一条"引用实跑数字必须带 HEAD"）
 - **位置**:
