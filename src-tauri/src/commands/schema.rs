@@ -270,6 +270,17 @@ pub(crate) async fn get_er_data_impl(
 ) -> Result<Vec<TableSchema>, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, %database, "get_er_data");
+    // `get_table_schema` reads through the session's active database (unqualified
+    // `SHOW FULL COLUMNS`), so pin it first like every other schema command;
+    // otherwise the per-table reads fail for *every* table and the caller receives
+    // an empty list that the UI renders as "this database has no tables".
+    super::query::ensure_session_database(
+        state,
+        &db_session_id,
+        Some(database.as_str()),
+        "get_er_data",
+    )
+    .await?;
     let (driver, handle) = state
         .connection_manager
         .get_session(&db_session_id)
@@ -293,6 +304,14 @@ pub(crate) async fn get_er_data_impl(
                 tracing::warn!(table = %table.name, error = %e, "get_er_data: skipping table");
             }
         }
+    }
+
+    if !tables.is_empty() && schemas.is_empty() {
+        return Err(CommandError::Internal(format!(
+            "get_er_data: failed to read column metadata for all {} tables in {}",
+            tables.len(),
+            database
+        )));
     }
 
     tracing::info!(
@@ -619,6 +638,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(er.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_er_data_pins_session_database_before_reading_tables() {
+        let test = TestAppState::with_tables().await;
+        let (_, conn_id) = test.save_and_connect("er-db-cfg").await;
+        // Sample config pins database = "app"; diagramming another database must
+        // switch the live session first, otherwise the per-table reads run against
+        // the wrong (or no) default database and the result is silently empty.
+        let er = get_er_data_impl(&test.state, conn_id.clone(), "analytics".into())
+            .await
+            .unwrap();
+        assert_eq!(er.len(), 1);
+        assert_eq!(
+            test.mock.use_database_calls(),
+            vec!["analytics".to_string()]
+        );
+        let config = test
+            .state
+            .connection_manager
+            .get_session_config(&conn_id)
+            .await
+            .unwrap();
+        assert_eq!(config.database.as_deref(), Some("analytics"));
     }
 
     #[tokio::test]
