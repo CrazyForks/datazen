@@ -55,6 +55,7 @@ Backend data_sync/profile.rs, store/sync_profiles.rs, commands/sync/*; frontend 
 - Stage B: `cargo test -p datazen --lib` — 1520 passed, 0 failed, 3 ignored; changed Vitest files — 43 passed; `npx tsc --noEmit` — passed; `cargo fmt --all -- --check` and `git diff --check` — passed.
 - Stage C: added a regression assertion covering mixed malformed records followed by save and delete. Changed frontend coverage remains 78.40% statements, 69.25% branches, 77.44% functions, 81.08% lines under the existing targeted coverage command; the global 80% statement/function and 75% branch thresholds remain unmet because `DataSyncWindow.tsx` and `sync.ts` include unrelated wizard paths. Core profile save/load/delete and fresh-inspect restoration paths are covered.
 - Stage D: `migration-sync-profiles-BUG-001` marked 已修复; this track is `READY_TO_MERGE`.
+- Tester commit: `1256a4bd`.
 
 ## BUG-001 fix
 
