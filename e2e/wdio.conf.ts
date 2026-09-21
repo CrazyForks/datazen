@@ -342,6 +342,10 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/data-sync-journey.ts',
       './specs/data-sync-real.ts',
     ],
+    // Real scheduled/unattended migration workflow journeys. Opt in with
+    // E2E_MIGRATION_LIVE=1; PostgreSQL/MySQL are skipped explicitly when the
+    // live fixture is unavailable.
+    'migration-live-workflow': ['./specs/migration-live-workflow.ts'],
   },
   // Always 1 per WDIO process; multi-process parallelism via run.mjs --instances N.
   maxInstances: 1,
