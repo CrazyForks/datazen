@@ -165,12 +165,15 @@ fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
         );
 
         assert!(plan.statements.is_empty(), "{table:?}");
-        assert!(plan.requirements.iter().any(|requirement| {
-            matches!(
-                requirement,
-                super::super::types::PlanRequirement::Unsupported { .. }
-            )
-        }), "{table:?}");
+        assert!(
+            plan.requirements.iter().any(|requirement| {
+                matches!(
+                    requirement,
+                    super::super::types::PlanRequirement::Unsupported { .. }
+                )
+            }),
+            "{table:?}"
+        );
     }
 }
 
