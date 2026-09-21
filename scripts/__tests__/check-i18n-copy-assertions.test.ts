@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -150,5 +150,140 @@ describe('checkI18nCopyAssertions', () => {
     const { hits } = run();
     expect(hits).toHaveLength(1);
     expect(hits[0].literal).toBe('Import Connections');
+  });
+});
+
+/**
+ * [tester] Branch coverage for the guard's own surface: the walker's missing-root
+ * and skip-list paths, the shipped defaults (including the real repository), and
+ * the wider text-query alternation.
+ *
+ * Deliberately NOT asserted: the hit count of the real repository. The guard is
+ * advisory by ruling (PRD §8.2 — no dev-time release gate on i18n), so a test
+ * that demanded `hits.length === 0` would re-introduce exactly the blocking gate
+ * this track refused to build.
+ */
+describe('[tester] checkI18nCopyAssertions walker and default-option branches', () => {
+  let root: string;
+  const REL_TEST_DIR = 'packages/drivers/redis/ui/__tests__';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'check-i18n-branches-'));
+    mkdirSync(join(root, 'packages/drivers/redis/locales/en'), { recursive: true });
+    mkdirSync(join(root, REL_TEST_DIR), { recursive: true });
+    // `'redis.empty': ''` exercises the "ignore empty dictionary values" path.
+    writeFileSync(
+      join(root, 'packages/drivers/redis/locales/en.ts'),
+      "export const redisEn = {\n  'redis.setTtl': 'Set TTL',\n  'redis.empty': '',\n};\n",
+    );
+    // Host-style domain pack under locales/en/<domain>.ts (nested vocabulary path).
+    writeFileSync(
+      join(root, 'packages/drivers/redis/locales/en/nested.ts'),
+      "export default { 'redis.hostOnly': 'Host Only Copy' };\n",
+    );
+    writeFileSync(
+      join(root, REL_TEST_DIR, 'sample.test.tsx'),
+      "it('ok', () => {});\n",
+    );
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const writeTest = (source: string) =>
+    writeFileSync(join(root, REL_TEST_DIR, 'sample.test.tsx'), source);
+
+  const probe = (dirs: string[], strict = false) => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const result = checkI18nCopyAssertions({
+      root,
+      dirs,
+      strict,
+      log: (msg) => logs.push(String(msg)),
+      warn: (msg) => warnings.push(String(msg)),
+    });
+    return { ...result, logs, warnings };
+  };
+
+  it('survives a scan root that does not exist (git driver not cloned here)', () => {
+    const present = probe(['packages/drivers']);
+    const withMissing = probe(['packages/drivers', 'packages/drivers/mysql']);
+    // A worktree without an optional driver must not throw and must not change
+    // the scan result for the drivers that are present.
+    expect(withMissing.scanned).toBe(present.scanned);
+    expect(withMissing.hits).toEqual(present.hits);
+    expect(withMissing.code).toBe(0);
+  });
+
+  it('skips build/vendor directories and non-source files while walking', () => {
+    writeTest("it('ok', () => {\n  screen.getByText('Set TTL');\n});\n");
+    for (const skipped of ['node_modules', 'dist', 'coverage', '.git', 'icons']) {
+      mkdirSync(join(root, 'packages/drivers/redis/ui', skipped, '__tests__'), { recursive: true });
+      writeFileSync(
+        join(root, 'packages/drivers/redis/ui', skipped, '__tests__', 'vendored.test.tsx'),
+        "it('vendored', () => {\n  screen.getByText('Set TTL');\n});\n",
+      );
+    }
+    writeFileSync(
+      join(root, REL_TEST_DIR, 'sample.test.tsx.bak'),
+      "it('backup', () => {\n  screen.getByText('Set TTL');\n});\n",
+    );
+    const { scanned, hits } = probe(['packages/drivers']);
+    expect(scanned).toBe(1);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].file).toBe(`${REL_TEST_DIR}/sample.test.tsx`);
+  });
+
+  it('covers the getAllBy / queryAllBy / findBy and Title/Placeholder spellings', () => {
+    writeTest(
+      "it('ok', () => {\n" +
+        "  screen.getAllByTitle('Set TTL');\n" +
+        "  screen.queryAllByText('Set TTL');\n" +
+        "  screen.findAllByPlaceholderText('Set TTL');\n" +
+        '});\n',
+    );
+    const { hits } = probe(['packages/drivers'], true);
+    expect(hits.map((h) => h.line)).toEqual([2, 3, 4]);
+    expect(hits.every((h) => h.literal === 'Set TTL')).toBe(true);
+  });
+
+  it('ignores JSDoc continuation and block-comment lines, and reads nested host packs', () => {
+    writeTest(
+      "/**\n" +
+        " * Legacy locator: screen.getByText('Set TTL') lived here.\n" +
+        " */\n" +
+        "/* screen.getByText('Set TTL') */\n" +
+        "it('ok', () => {\n" +
+        "  screen.getByText('Host Only Copy');\n" +
+        '});\n',
+    );
+    const { hits } = probe(['packages/drivers'], true);
+    // Only the executable line 6 matches: lines 2 and 4 are comments.
+    expect(hits).toHaveLength(1);
+    expect(hits[0].line).toBe(6);
+    expect(hits[0].literal).toBe('Host Only Copy');
+  });
+
+  it('falls back to the shipped roots and console output when called with no options', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { code, scanned, hits } = checkI18nCopyAssertions();
+      // Real repository, default (advisory) mode: never a non-zero exit.
+      expect(code).toBe(0);
+      expect(scanned).toBeGreaterThan(10);
+      expect(Array.isArray(hits)).toBe(true);
+      // Exactly the guard's own report channel fired (one ok line, or a warning
+      // block when the tree has hits — the repository's hit count is deliberately
+      // not asserted, see the note above).
+      const emitted = [...logSpy.mock.calls, ...warnSpy.mock.calls].map((c) => String(c[0]));
+      expect(emitted.length).toBeGreaterThan(0);
+      expect(emitted.every((line) => line.includes('check-i18n-copy-assertions'))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });

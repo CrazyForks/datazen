@@ -280,10 +280,15 @@ describe('Journey: Error on invalid datetime', () => {
     fireEvent.click(expireAtBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
-    // Button should be disabled when expireAtLocal is empty/invalid, so no invoke
+    // jsdom normalises an unparsable `datetime-local` value to '', so the real
+    // contract here is "the apply action stays disabled ⇒ nothing is sent".
+    // [tester] That used to be proven only through the absence of the invoke,
+    // which stays green even if the guard on the button is dropped — pin the
+    // disabled property itself (a DOM-state anchor, no rendered copy).
     await waitFor(() => {
       expect(invoke).not.toHaveBeenCalled();
     });
+    expect(screen.getByTestId('redis-ttl-expire-at')).toBeDisabled();
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
     cleanup();

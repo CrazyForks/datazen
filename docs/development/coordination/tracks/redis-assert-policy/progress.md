@@ -2,7 +2,7 @@
 
 - 分支: `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375）
 - 角色: Coder → Tester
-- 状态: **READY_FOR_TEST** — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ 本台账 commit
+- 状态: **TEST_FAILED（待 Coder 修 BUG-001/002 后复测）** — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）；Tester 复测记录见下方「Tester 复测记录」，Bug 见 [bugs.md](bugs.md)
 - Worktree: `.worktrees/datazen-redis-assert-policy`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §7-6、§8.2（处理决定表）
 - 接管记录: 首任 Coder 于 150 回合上限被强制中断，9 个文件改写完毕但**零提交**；Rescuer（全新实例）接管，复核其设计后原样落盘（未推翻任何改写），仅补齐门禁、脚本词表缺陷与文档台账。
@@ -118,4 +118,87 @@
 2. **`Dialog.test.tsx` 的 `closeLabel`（低优先，非缺陷）**：`@datazen/ui` `Dialog` 的默认 `'Close'` 与宿主 `common.close` 恰好同串。当前判定为豁免项（无 i18n 参与）。若哪天 `Dialog` 改为接 `t()`，需按原则六同步改该测试；R 阶段顺手确认即可。
 3. **扫描器词表启发式的假阳性类（已文档化，勿"修断言"）**：把词条原样当**数据**注入的用例会命中 —— 实测扩扫 `src` 后 4 条：`BuildStatement.test.tsx:198,220`（`'LEFT JOIN'`，SQL 原文，词表里 `dashboard`/`query` 恰好也有该词）、`ChartWidgetTile.test.tsx:139` 与 `RunHistoryDrawer.test.tsx:161`（`error: 'Query failed'` 是 fixture 数据，与 `dashboard.runError` 同串）。这 4 条**都不该改**（改了反而丢信息），正是该护栏必须"报而不拦"、命中须人读不可自动化的理由；默认 `SCAN_DIRS` 不含 `src`，日常 0 命中。若将来要把 `--strict` 升为发布前门禁，需先给扫描器加"同串也出现在本文件数据位置"降噪或显式白名单。
 4. **无头/E2E 面**：本轨纯单测与文档，未新增 E2E；`ttlControlsJourney` 的 8 段击键旅程保持完整（用例数 8→8），无需 R 阶段补旅程，只需在 GUI 清单里顺手确认 TTL 区四按钮可点、错误行可见。
+
+---
+
+## Tester 复测记录（全新实例，HEAD `4cdc0c023`；本段由 Tester 撰写，不复用 Coder 结论）
+
+前置：`node scripts/generate-builtin-locales.mjs` 已跑（写 `src/locales/builtinLocales.ts`，gitignored）；全程未 `pnpm install` / `pnpm e2e` / 裸 `pnpm build`；检索一律走 Grep/Glob 工具；所有探针与变异均 `git restore` 复原（每步后 `git status --short` 实测为空）。
+
+### 1. 核心判据：两条同时成立
+
+| 判据 | 自证手段 | 结果 |
+|---|---|---|
+| 测试不再对**文案值**敏感 | 独立 8 键探针（redis pack 5 键 + 宿主 `menu.file`/`common.importConnections`/`connWin.home.queries.minutesAgo`，后者含 `{count}` 占位符；每 key 唯一串、单空格，刻意避开 `common.close`/`common.retry` 同值造串） | 探针态 Host **443 文件 / 4609 例全绿**、redis+mongodb **29 / 233 全绿**、`src/locales` **19 / 19 全绿** ⇒ 与还原态逐项相同 |
+| 测试仍对**行为**敏感 | 变异检验 M1~M9（下表） | 9 组破坏中 **8 组按预期转红**；1 组（M6b `ErrorBoundary`）**破坏后仍绿** ⇒ 登记 BUG-002 |
+
+### 2. 变异检验逐条（破坏了什么 → 是否变红 → 复原确认）
+
+| # | 破坏了什么 | 期望 | 实测（原文摘录） | 复原 |
+|---|---|---|---|---|
+| M1 | `TtlControls.tsx:74` 把 `data-ttl-state` 两态判定写反为 `ttl >= 0 ? 'no-expiry' : 'seconds'` | ttlControlsJourney 转红 | **`Tests 4 failed \| 7 passed (8)`**，报错双向齐备：`expected 'seconds' to be 'no-expiry'` ×2 + `expected 'no-expiry' to be 'seconds'` ×2 ⇒ 断的是**状态**而非"元素存在" | `git restore` ✓ status 空 |
+| M2 | 删掉错误分支效果：注释 `catch` 里的 `setError(...)`（错误永不显示） | 错误用例转红 | **`1 failed \| 7 passed (8)`** — `shows error message when negative TTL is entered` → `TestingLibraryElementError: Unable to find an element by: [data-testid="redis-ttl-error"]` | ✓ |
+| M2 副产物 | 同上，看 invalid-datetime 那条 | 期望也红 | **仍绿**。读基准 `ae65ae375` 版该用例确认：它**本来**只断 `invoke` 未被调用；jsdom 会把非法 `datetime-local` 值归一化为 `''` ⇒ 按钮 `disabled` ⇒ 错误分支按设计不触发。属既有测试强度问题，**非本轨回归**；阶段 C 已按同一口径补 `toBeDisabled()` 断言（见 §4） | ✓ |
+| M3 | `packages/ui/src/i18n.ts:87` `t()` 改为无条件回显 key（`formatMessage(key, params)`） | `locales.test.ts` 改写后三条"解析成功且不回显 key"转红 | `src/locales` **12 failed**，含 `redis.batchDelete: expected 'redis.batchDelete' not to be 'redis.batchDelete'`；另 retest/MenuBar/ErrorBoundary **`8 failed \| 8 passed (16)`**、redis+mongo `localePackRegistration` 各 1 红（`expected 'redis.batchDelete' to be 'Delete selected'`） | ✓ |
+| M4 | 把驱动 key 泄进宿主 eager 包（`src/locales/en/core.ts` 加 `'redis.batchDelete': 'Delete selected'`） | `locales.test.ts:119`（任务书所称 `:112`）边界不变量转红 | **`AssertionError: expected 'Delete selected' to be undefined`**，且**仅** `sees driver packs that registered themselves in the shared registry` 一条红，同文件其余 18 例全绿 ⇒ 不变量在位且是该场景唯一拦截者 | ✓（`diff` 对基准零差异） |
+| M5 | `packages/drivers/redis/locales/index.ts` 的 `registerTranslations` 摘掉 `en` | "读回字典值"不得是空断言 | **`expected 'redis.batchDelete' to be 'Delete selected'`** → `1 failed`（伴随 `registers every key…` 的 340 键缺失红）⇒ 读回真实生效 | ✓ |
+| M6a | `MenuBar.test.tsx` 派生源 `en['menu.file']` → `en['menu.fileZZZ']` | 转红、不退化永真 | 3 例全红，但报错是 `Found multiple elements with the role "menuitem"` ⇒ **靠多元素歧义偶然兜住**（记入 BUG-002） | ✓ |
+| M6b | `ErrorBoundary.test.tsx` 派生源 `en['common.error']` → typo | 转红 | **`Tests 1 passed (1)` = 永真退化命中**：`getByRole('heading', { name: undefined })` 退化为无 name 约束，页面上只有 1 个 heading 就照样绿；把 `common.close` 也 typo 后才因 `Found multiple elements with the role "button"` 偶然红 | ✓ → **BUG-002（中）** |
+| M6c | `retest-round1-fixes` 的 `JUST_NOW` key → typo；`ConfirmDialog`/`useConfirmDialog` 的 `confirm-dialog-cancel` testid → typo | 转红 | retest **4 例红**；ConfirmDialog **1 例红**、useConfirmDialog **1 例红**（`Unable to find an element by: [data-testid="confirm-dialog-cancelZZZ"]`）⇒ 三处字典/testid 派生均未退化 | ✓ |
+| M7 | 护栏自身修复的往返自证：临时在 `settingsHelpers.test.ts` 追加 `getByText('Import Connections')`（宿主 `src/locales/en/core.ts` 真词条）+ `getByRole('button', { name: 'Set TTL' })`（驱动真词条） | HEAD 报命中；`1f7965677` 版须看不见 | HEAD：`2 copy-literal assertion(s) … "Import Connections" / "Set TTL"`，**`exit=0`（有命中仍不拦，CLI 级实证"报而不拦"，强于 D 段的 0 命中演示）**；同一棵树跑首任版护栏：**`ok (33 driver test files scanned, 0 copy literals pinned)`** ⇒ 首任"宿主词条全盲（`endsWith('en.ts')`）+ 无 `getByRole({name})` 形态"两点诊断成立、修复有效 | ✓ |
+| M9 | 单词文案探针（`getByRole('tab',{name:'Console'})` + `{name:'Persist'}`，均为真词条） | 记录护栏能力边界 | **0 hits、`--strict` 仍 `exit=0`** ⇒ 空格门槛使单词文案结构性失明 | ✓ → **BUG-005（低）** |
+
+### 3. 阶段 A 实现审查（逐条对任务书 §5）
+
+1. **用例数零减少**：逐文件 `it(` 计数 基准 `ae65ae375` vs HEAD ⇒ `ttlControlsJourney 8→8`、`redis localePackRegistration 4→4`、`mongodb 4→4`、`locales.test 19→19`、`MenuBar 3→3`、`ErrorBoundary 1→1`、`ConfirmDialog 11→11`、`useConfirmDialog 6→6`、`retest-round1-fixes 12→12`，护栏 `0→10`。**任一条用例消失＝无**。
+2. **探针往返**：见 §1（独立 8 键小样本，含 1 个 `{count}`），并复核其记录的"双空格 / 同值造串"两个坑确属探针造串缺陷而非断言缺陷（本轮通过 `common.close` 单键微探针复现了同值坑的另一面，见下条 7）。
+3. **零 locale 词典改动（红线）**：`git diff ae65ae375..HEAD --name-only` 16 文件，`locales/**` 词典**一条都没有**（只有 `src/locales/locales.test.ts`）；复测结束时 `git status --short` 仅剩本 Tester 新增/修改的测试与台账文件。
+4. **护栏口径**：默认与 `--strict` 均 `exit=0` 且输出逐字为 `ok (33 driver test files scanned, 0 copy literals pinned)`；strict 命中态非 0 由单测锁死；M7 证明其自身修复正确。
+5. **4 条假阳性未被"顺手修掉"**：`dirs=['src','packages','e2e']` 实跑 **scanned=457 / hits=4 / code=0**，四条文件（`BuildStatement.test.tsx:198,220`、`ChartWidgetTile.test.tsx:139`、`RunHistoryDrawer.test.tsx:161`）全部**不在本轨 diff 内**，且读源码确认为数据（SQL 原文、fixture `error:`）。但台账 D 段第 5 行写的"0 条"与此矛盾 ⇒ **BUG-003（低）**。
+6. **`TtlControls.tsx` 只加属性**：`git show ae65ae375` 已含 `redis-ttl-input/-set/-expire-at/-persist` 四个 testid（**基准已有，非本轨新增**）；HEAD 净增**恰好 3 个属性**：`data-testid="redis-ttl-value"`、`data-ttl-state={ttl < 0 ? 'no-expiry' : 'seconds'}`、`data-testid="redis-ttl-error"`，零结构 / 零逻辑变化 ⇒ 声称成立。
+7. **文档交付物**：原则六 + **10 组**正反例表 + 自检清单第 6 条已落 `interaction-and-testing-principles.md`；`tester.md` 加"零文案断言"指针 ✓；`coder.md` 实测只有 4 节、无"测试写法"小节 ⇒ **未改该文件符合规格，不判缺陷**。⚠ 但豁免清单第 5 条（`@datazen/ui` `Dialog` 的 `closeLabel = 'Close'`"无 i18n 参与"）**与实现不符**：宿主 `src/components/ui/Dialog.tsx:8` 把 `t('common.close')` 灌进 `closeLabel`，实测只改 `common.close` 一个 key 即可让 `Dialog.test.tsx` 恰好 2 条转红 ⇒ 那 2 条是真·钉死词条断言、在本轨清点范围内却被漏改并反向定性为豁免 ⇒ **BUG-001（中）**；`packages/ui` 那个硬编码默认值另列"上游发现"（见 bugs.md），建议独立立项、不并入本轨。
+8. **接管一致性**（首任死于 150 回合、Rescuer 收尾）：3 个 commit 分工清晰（改写 / 护栏修复 / 台账），`56ae62cf2` 的 commit message 与 bugs.md M7 实测一致（确实修了两处盲区）；工作树无 ad-hoc 残留文件；`package.json` 仅 +2 条脚本。接管未留下"半改未提交"痕迹。
+
+### 4. 阶段 B 独立复跑 vs 声称值
+
+| 命令 | 声称 | 实测 | 判定 |
+|---|---|---|---|
+| `npx vitest run src/locales` | 19/19 | **19 passed / 0 failed** | ✓ |
+| `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | 27 files / 222 / 0 failed | **27 / 222 / 0 failed** | ✓ 逐字 |
+| 同上 + `mongodb/ui` | 29 / 233 全绿 | **29 / 233 / 0 failed** | ✓ |
+| `npx tsc --noEmit -p tsconfig.json` | 0 错误（两次独立） | **0 错误，`tsc-exit=0`（本轮跑了两次：改写态 + 本 Tester 增量态，均 0）** | ✓ |
+| `npx vitest run`（Host 全量） | 443 / 4609 / 0 failed；基线 443 / 4608 | **443 / 4609 / 0 failed** | ✓ 数字一致；基线口径见下 |
+| `node scripts/check-i18n-copy-assertions.mjs; echo exit=$?` | `ok (33 …, 0 copy literals pinned)` / 0 | **逐字一致 / `exit=0`**（`--strict` 亦 0） | ✓ |
+| Grep 自证 | redis ui 命中 0；`locales.test.ts` 英文值 `toBe` 0；扩扫 457 → 0 条 | redis ui 全目录 `getByText\|getByRole(name)\|getByPlaceholderText\|toHaveTextContent` 字面量枚举：只剩数据（`(nil)`/`OK`/`42`/`John`）与 **i18n key 形态**（`redis.pubsub*`、`redis.wizard.*`、`redis.view.noData`）⇒ **真词条 0**；`locales.test.ts` 全部 `.toBe('…')` 仅 2 处 = `not.toBe('redis.console')`（断不回显 key，正例）与 `'TestOK'`（测试自造字典）⇒ **英文值 0**；扩扫 **457 文件 / 4 条命中**（=已定性假阳性，见 §3.5 / BUG-003） | ✓（数字口径以"真词条 0"为准） |
+
+**"用例数差 = 新增数"论证独立复核（实跑，非推算）**：`npx vitest run --exclude scripts/__tests__/check-i18n-copy-assertions.test.ts` → **442 文件 / 4599 例全绿**。结合 §3.1 的逐文件 `it()` 相等 ⇒ 基准 `ae65ae375` 即 **442 / 4599**；本轨净增 = 护栏 10 例 ⇒ **4609**，与 HEAD 实跑逐项吻合。Coder 声称的"443 / 4608 全绿"是 `1f7965677` 之后、`56ae62cf2` 之前的**中间态**（该 commit 里护栏 9 例 → 4599+9=4608），`56ae62cf2` 恰 +1 例（`it()` 计数实测 9→10）⇒ 差值论证成立，只是基线口径应写 442/4599（基准）而非 443/4608（中间态）。
+
+### 5. 阶段 C 覆盖率（护栏脚本，本轮唯一生产逻辑改动面）
+
+逐分支枚举公开行为：驱动 `locales/en.ts` 取词 / 宿主 `locales/en/<domain>.ts` 取词 / `getByRole({name})` 形态 / `get\|query\|find + All + Text\|LabelText\|Title\|PlaceholderText` 形态 / 注释行豁免 / 数据豁免（非词典值）/ key 形态豁免 / `walk` 缺失目录 / 跳过目录名与非源码扩展名 / 空词条值 / `strict` 与非 `strict` 退出码 / 无参默认（真仓库 + console 通道）。
+
+| 指标 | 本轮前（Coder 10 例） | 本轮后（本 Tester 15 例） |
+|---|---|---|
+| Branch | 84.61%（33/39，未覆盖 2、3、8~12、20） | **98.07%**（38/39） |
+| Statements | 97.5% | **98.75%** |
+| Lines / Functions | 100% / 100% | **100% / 100%** |
+
+新增 5 例（均在 `scripts/__tests__/check-i18n-copy-assertions.test.ts` 的 `[tester] checkI18nCopyAssertions walker and default-option branches` describe）：缺失扫描根不抛错（worktree 未克隆 git driver 的真实场景）、`node_modules\|dist\|coverage\|.git\|icons` 与 `.bak` 跳过、`getAllByTitle\|queryAllByText\|findAllByPlaceholderText` 形态、JSDoc 续行与块注释豁免 + 嵌套 `locales/en/<domain>.ts` 取词、无参默认（真仓库 advisory 恒 `code=0`，**故意不断 `hits.length===0`**，以免把发布门禁偷偷变回开发期门禁）。剩余 1 条未覆盖分支为**不可达死代码**（`:157` `KEY_SHAPE_RE`，见 BUG-004）。
+
+另补 1 条行为断言：`ttlControlsJourney` Journey 5 加 `expect(getByTestId('redis-ttl-expire-at')).toBeDisabled()`（M2 副产物暴露的"只断 invoke"脱靶点），并已用变异验证其敏感性——把 `disabled={busy || !expireAtLocal}` 改成 `disabled={busy}` ⇒ 该用例转红，还原后 8/8 全绿。用例总数不变（8→8），未新增文案字面值。
+
+### 6. 阶段 D E2E 登记核实
+
+- **"无需补 E2E"成立**：本轨对生产码的净改动只有 `TtlControls.tsx` 的 3 个 `data-*` 属性（零结构 / 零逻辑），无任何新 UI 路径或行为跃迁；E2E 可断的东西与单测完全同构。附带实测支持：`e2e/specs/export-import.ts:249,285` 已经在用 `t('common.close')` 运行时回读而非钉死串。
+- 4 条留待 R 回归项**逐条复核**：R-1（Wave 2 落刀口）本记录 §1 已独立复现，成立；R-3（4 条假阳性）成立但数字口径需改（BUG-003）；R-4（无头/E2E 面）成立；**R-2（`Dialog.closeLabel` 低优先、非缺陷）不成立** → 升级为 BUG-001，需 Coder 处理。
+- **给协调者的门禁裁定项（新增）**：建议把 `pnpm test:i18n-assertions:strict` 挂进 **R 阶段 / `scripts/ci-local.sh` 的发布前段**，而**不是** pre-commit 或 `pnpm test`（后者会被 4 条数据型假阳性天天骚扰）。当前默认 `SCAN_DIRS` 不含 `src`，挂 `--strict` 前需先落 BUG-001（否则宿主 `Close` 仍不在面内）与 BUG-003（数字口径）。另建议按 BUG-005 给护栏加 `--terms <keys>` 观察名单，Wave 2 用它精确护住 `redis.noExpiry,redis.view.wrap,redis.size,redis.discard`——否则 4 个落刀口里 3 个单词文案在静态护栏**完全失明**（M9 已实证）。
+
+### 7. 判定
+
+**TEST_FAILED**（Bug 5 条：BUG-001/002 中、BUG-003/004/005 低；见 [bugs.md](bugs.md)）。
+
+核心验收标准 1~5 **全部达标**（含验收标准 5 的口径自证：8 键探针下 4609 + 233 + 19 全绿，与还原态逐项相同），"改写而非删除"与"零 locale 词典改动"两条红线均未破。回炉范围很小：2 条宿主测试断言（`Dialog.test.tsx`、`ErrorBoundary.test.tsx`）+ 1 处文档归因 + 台账 1 个数字 + 护栏 1 条死分支，均不触碰驱动侧已验证的解耦成果。
+
+本 Tester 新增/修改：`scripts/__tests__/check-i18n-copy-assertions.test.ts`（+5 例）、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx`（+1 条 DOM 状态断言，用例数不变）、本台账、`bugs.md`。
+
 
