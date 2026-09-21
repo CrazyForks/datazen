@@ -1,7 +1,7 @@
 //! PostgreSQL dialect SQL for schema object browser queries (list / DDL / privileges).
 
 use datazen_driver_api::schema_objects::{
-    list_objects_sql, list_privileges_sql, object_ddl_sql, ObjectKind,
+    list_objects_sql, list_privileges_sql, object_ddl_sql, object_ddl_sql_with_metadata, ObjectKind,
 };
 
 #[test]
@@ -31,6 +31,40 @@ fn view_queries_return_schema_and_query_body_metadata() {
 fn trigger_ddl_uses_pg_get_triggerdef() {
     let sql = object_ddl_sql("postgresql", ObjectKind::Trigger, "trg", Some("public")).unwrap();
     assert!(sql.contains("pg_get_triggerdef"));
+}
+
+#[test]
+fn routine_catalog_and_ddl_use_overload_signature() {
+    let list = list_objects_sql("postgresql", ObjectKind::Procedure).unwrap();
+    assert!(list.contains("pg_get_function_identity_arguments"));
+    assert!(list.contains("p.prokind = 'p'"));
+    let ddl = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Procedure,
+        "rebuild",
+        Some("ops"),
+        Some("uuid, text"),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(ddl.contains("'uuid, text'"));
+    assert!(ddl.contains("p.prokind = 'p'"));
+}
+
+#[test]
+fn trigger_ddl_can_filter_attached_relation() {
+    let sql = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Trigger,
+        "audit_trigger",
+        Some("app"),
+        None,
+        Some("app"),
+        Some("orders"),
+    )
+    .unwrap();
+    assert!(sql.contains("c.relname = 'orders'"));
 }
 
 #[test]

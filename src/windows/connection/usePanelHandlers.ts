@@ -45,6 +45,9 @@ export interface PanelHandlers {
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
     name: string,
     schema?: string,
+    signature?: string,
+    targetSchema?: string,
+    targetName?: string,
   ) => void;
   handleOpenPrivileges: () => void;
   handleOpenServerStatus: (ctx?: ConnectionOpenTarget) => void;
@@ -323,13 +326,20 @@ export function usePanelHandlers({
       kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
       name: string,
       schema?: string,
+      signature?: string,
+      targetSchema?: string,
+      targetName?: string,
     ) => {
       if (!sidebarConnCtx) return;
       const existing = connPanels.find(
         (p) =>
           p.type === 'db-object' &&
           (p as DatabaseObjectPanel).objectName === name &&
-          (p as DatabaseObjectPanel).objectKind === kind,
+          (p as DatabaseObjectPanel).objectKind === kind &&
+          (p as DatabaseObjectPanel).objectSchema === (schema ?? null) &&
+          (p as DatabaseObjectPanel).objectSignature === (signature ?? null) &&
+          (p as DatabaseObjectPanel).objectTargetSchema === (targetSchema ?? null) &&
+          (p as DatabaseObjectPanel).objectTargetName === (targetName ?? null),
       );
       if (existing) {
         setActivePanel(existing.id);
@@ -342,6 +352,9 @@ export function usePanelHandlers({
         objectKind: kind,
         objectName: name,
         objectSchema: schema ?? null,
+        objectSignature: signature ?? null,
+        objectTargetSchema: targetSchema ?? null,
+        objectTargetName: targetName ?? null,
       };
       addPanel(panel);
     },

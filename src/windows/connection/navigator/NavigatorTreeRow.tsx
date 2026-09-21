@@ -98,6 +98,9 @@ export interface NavigatorTreeRowProps {
       kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
       name: string,
       schema?: string,
+      signature?: string,
+      targetSchema?: string,
+      targetName?: string,
     ) => void;
   };
 }
@@ -464,7 +467,30 @@ export function NavigatorTreeRow({
           onClick={() => {
             const kind = row.obj.kind ?? row.catId;
             if (kind === 'function' || kind === 'procedure' || kind === 'trigger') {
-              viewActions?.openObject?.(kind, row.obj.name, row.obj.schema ?? undefined);
+              const signature = row.obj.signature ?? undefined;
+              const targetSchema = row.obj.targetSchema ?? undefined;
+              const targetName = row.obj.targetName ?? undefined;
+              const hasTargetIdentity = row.obj.targetSchema != null || row.obj.targetName != null;
+              const hasSignature = row.obj.signature != null;
+              if (hasTargetIdentity) {
+                viewActions?.openObject?.(
+                  kind,
+                  row.obj.name,
+                  row.obj.schema ?? undefined,
+                  signature,
+                  targetSchema,
+                  targetName,
+                );
+              } else if (hasSignature) {
+                viewActions?.openObject?.(
+                  kind,
+                  row.obj.name,
+                  row.obj.schema ?? undefined,
+                  signature,
+                );
+              } else {
+                viewActions?.openObject?.(kind, row.obj.name, row.obj.schema ?? undefined);
+              }
             }
           }}
           onContextMenu={(e) => handleObjectContextMenu(e, row.obj.name)}

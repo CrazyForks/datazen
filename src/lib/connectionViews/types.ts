@@ -42,6 +42,9 @@ export interface ConnectionViewActions {
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
     name: string,
     schema?: string,
+    signature?: string,
+    targetSchema?: string,
+    targetName?: string,
   ) => void;
   openQueryHistory?: () => void;
   /** 打开目标连接的服务器仪表盘；ctx 由右键菜单显式传入被点击的连接。 */

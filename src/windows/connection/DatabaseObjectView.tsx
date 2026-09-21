@@ -14,6 +14,9 @@ interface DatabaseObjectViewProps {
   objectKind: DatabaseObjectKind;
   objectName: string;
   objectSchema: string | null;
+  objectSignature?: string | null;
+  objectTargetSchema?: string | null;
+  objectTargetName?: string | null;
 }
 
 export function DatabaseObjectView({
@@ -23,6 +26,9 @@ export function DatabaseObjectView({
   objectKind,
   objectName,
   objectSchema,
+  objectSignature,
+  objectTargetSchema,
+  objectTargetName,
 }: DatabaseObjectViewProps) {
   const { t } = useI18n();
   const [ddl, setDdl] = useState('');
@@ -40,6 +46,9 @@ export function DatabaseObjectView({
         objectKind,
         objectName,
         objectSchema,
+        objectSignature,
+        objectTargetSchema,
+        objectTargetName,
       );
       setDdl(text);
     } catch (e) {
@@ -47,7 +56,15 @@ export function DatabaseObjectView({
     } finally {
       setLoading(false);
     }
-  }, [dbSessionId, objectKind, objectName, objectSchema]);
+  }, [
+    dbSessionId,
+    objectKind,
+    objectName,
+    objectSchema,
+    objectSignature,
+    objectTargetSchema,
+    objectTargetName,
+  ]);
 
   useEffect(() => {
     void loadDdl();
@@ -72,7 +89,9 @@ export function DatabaseObjectView({
       ? t('objects.function')
       : objectKind === 'procedure'
         ? t('objects.procedure')
-        : t('objects.trigger');
+        : objectKind === 'trigger'
+          ? t('objects.trigger')
+          : objectKind;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

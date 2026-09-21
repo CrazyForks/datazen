@@ -104,6 +104,31 @@ async fn list_objects_and_get_ddl_for_sqlite_trigger() {
     .unwrap();
     assert!(empty.data["objects"].as_array().unwrap().is_empty());
 
+    let unsupported_sequence = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "list_objects",
+        json!({ "kind": "sequence" }),
+    )
+    .await
+    .unwrap();
+    assert!(unsupported_sequence.data["objects"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let missing = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({ "kind": "trigger", "name": "missing_trigger" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(missing.to_string().contains("not found"));
+
     let privs =
         execute_schema_object_command(&driver, "sqlite", &handle, "list_privileges", json!({}))
             .await

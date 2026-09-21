@@ -50,11 +50,12 @@ pub use schema_migration::{
     MigrationRequirement, MigrationRisk, MigrationStatement, MigrationView, TypeNormalizer,
 };
 pub use schema_object_commands::{
-    execute_schema_object_command, is_schema_object_command, schema_object_command_definitions,
+    execute_schema_object_command, extract_object_ddl_checked, is_schema_object_command,
+    schema_object_command_definitions,
 };
 pub use schema_objects::{
-    dialect_family, list_objects_sql, list_privileges_sql, object_ddl_sql, DatabaseObject,
-    ObjectKind, PrivilegeGrant,
+    dialect_family, list_objects_sql, list_privileges_sql, object_ddl_sql,
+    object_ddl_sql_with_metadata, DatabaseObject, ObjectKind, PrivilegeGrant,
 };
 pub use sql_dump::{RestoreSession, RestoreStatementGuard};
 pub use sql_split::{SqlStatementScanner, Utf8ChunkDecoder};

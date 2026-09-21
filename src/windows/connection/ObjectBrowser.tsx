@@ -16,7 +16,7 @@ import { formatSql } from '../../lib/sqlFormat';
 import { copyToClipboard } from '../../lib/fetchRelationDdl';
 import type { DatabaseObject, DatabaseObjectKind } from '../../types';
 
-const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger'];
+const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence'];
 
 interface ObjectBrowserProps {
   dbSessionId: string;
@@ -35,6 +35,26 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
   const [running, setRunning] = useState(false);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const editorRef = useRef<SqlEditorHandle>(null);
+
+  const fetchObjectDdl = useCallback(
+    (obj: DatabaseObject) => {
+      const hasMetadata =
+        obj.signature != null || obj.targetSchema != null || obj.targetName != null;
+      if (!hasMetadata) {
+        return databaseCommands.getObjectDdl(dbSessionId, obj.kind, obj.name, obj.schema);
+      }
+      return databaseCommands.getObjectDdl(
+        dbSessionId,
+        obj.kind,
+        obj.name,
+        obj.schema,
+        obj.signature,
+        obj.targetSchema,
+        obj.targetName,
+      );
+    },
+    [dbSessionId],
+  );
 
   const load = useCallback(
     async (nextKind: DatabaseObjectKind) => {
@@ -62,33 +82,33 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
       setSelected(obj);
       setRunMessage(null);
       try {
-        const text = await databaseCommands.getObjectDdl(
-          dbSessionId,
-          obj.kind,
-          obj.name,
-          obj.schema,
-        );
+        const text = await fetchObjectDdl(obj);
         setDdl(text);
       } catch (e) {
         setDdl(`-- ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [dbSessionId],
+    [fetchObjectDdl],
   );
 
   const copyObjectDdl = useCallback(
     async (obj: DatabaseObject) => {
       try {
         const text =
-          selected?.name === obj.name && selected?.schema === obj.schema && ddl
+          selected?.name === obj.name &&
+          selected?.schema === obj.schema &&
+          selected?.signature === obj.signature &&
+          selected?.targetSchema === obj.targetSchema &&
+          selected?.targetName === obj.targetName &&
+          ddl
             ? ddl
-            : await databaseCommands.getObjectDdl(dbSessionId, obj.kind, obj.name, obj.schema);
+            : await fetchObjectDdl(obj);
         await copyToClipboard(text);
       } catch (e) {
         setRunMessage(e instanceof Error ? e.message : String(e));
       }
     },
-    [dbSessionId, ddl, selected],
+    [ddl, fetchObjectDdl, selected],
   );
 
   const handleExecute = useCallback(async () => {
@@ -192,7 +212,9 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
                 ? t('objects.function')
                 : k === 'procedure'
                   ? t('objects.procedure')
-                  : t('objects.trigger')}
+                  : k === 'trigger'
+                    ? t('objects.trigger')
+                    : t('schemaTree.sequences')}
             </button>
           ))}
         </div>
