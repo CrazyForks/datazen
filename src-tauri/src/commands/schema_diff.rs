@@ -14,12 +14,74 @@ use crate::schema_diff::types::{
     normalize_dialect, resolve_table_for_dialect, ColumnTypeOverride, SchemaDiffDeployResult,
     SchemaDiffPlan,
 };
+use crate::schema_diff::SchemaDiffProfile;
 use crate::services::job_registry::{cancel_job, ensure_job, remove_job};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::full_types::fetch_full_column_types;
 use std::sync::Arc;
 use tauri::State;
+
+#[tauri::command]
+pub async fn get_schema_diff_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<SchemaDiffProfile>, CommandError> {
+    Ok(state.store.get_schema_diff_profiles().await)
+}
+
+#[tauri::command]
+pub async fn save_schema_diff_profile(
+    state: State<'_, AppState>,
+    mut profile: SchemaDiffProfile,
+) -> Result<(), CommandError> {
+    profile.validate().map_err(CommandError::Validation)?;
+    validate_schema_diff_profile_connections(&state, &profile).await?;
+    profile.updated_at = chrono::Utc::now();
+    state
+        .store
+        .save_schema_diff_profile(profile)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
+async fn validate_schema_diff_profile_connections(
+    state: &AppState,
+    profile: &SchemaDiffProfile,
+) -> Result<(), CommandError> {
+    if state
+        .store
+        .get_connection(&profile.source_connection_id)
+        .await
+        .is_none()
+    {
+        return Err(CommandError::Validation(
+            "schema diff profile source connection no longer exists".into(),
+        ));
+    }
+    if state
+        .store
+        .get_connection(&profile.target_connection_id)
+        .await
+        .is_none()
+    {
+        return Err(CommandError::Validation(
+            "schema diff profile target connection no longer exists".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_schema_diff_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<(), CommandError> {
+    state
+        .store
+        .delete_schema_diff_profile(&profile_id)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
 
 fn is_table_missing_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
@@ -491,6 +553,28 @@ pub async fn compare_table_schemas(
 mod tests {
     use super::*;
 
+    fn test_profile() -> SchemaDiffProfile {
+        let now = chrono::Utc::now();
+        SchemaDiffProfile {
+            version: SchemaDiffProfile::CURRENT_VERSION,
+            id: "profile-1".into(),
+            name: "profile".into(),
+            source_connection_id: "source".into(),
+            target_connection_id: "target".into(),
+            source_database: "app".into(),
+            target_database: "app".into(),
+            source_schema: None,
+            target_schema: None,
+            tables: vec!["users".into()],
+            allow_destructive: false,
+            include_indexes: true,
+            require_rollback: false,
+            type_overrides: vec![],
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[test]
     fn is_table_missing_error_detects_various_patterns() {
         assert!(is_table_missing_error(
@@ -503,5 +587,23 @@ mod tests {
         assert!(is_table_missing_error("Table not found: users"));
         assert!(!is_table_missing_error("Connection refused"));
         assert!(!is_table_missing_error("Syntax error in SQL statement"));
+    }
+
+    #[tokio::test]
+    async fn schema_diff_profile_save_requires_existing_connections() {
+        let test = crate::testing::app_state::TestAppState::new().await;
+        test.save_connection("source").await;
+        let profile = test_profile();
+        let error = validate_schema_diff_profile_connections(&test.state, &profile)
+            .await
+            .expect_err("missing target should be rejected");
+        assert!(error.to_string().contains("target connection"));
+
+        test.save_connection("target").await;
+        assert!(
+            validate_schema_diff_profile_connections(&test.state, &profile)
+                .await
+                .is_ok()
+        );
     }
 }
