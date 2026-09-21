@@ -446,7 +446,8 @@ $ bash scripts/run-regression.sh     # EXIT=0（日志 /tmp/rphase2-regression.l
   `setLocale` 是其单测合法用法，暂不动。R 阶段只核对这两项仍如实出现在 advisory 输出与契约文档里。
 - editor-pro 子仓 commit `c60f7fc` 已本地提交但**未 push**。
 - **Pro EP 词条命名空间移交项（BUG-004，Wave 4-B 新发现）**：`packages/pro-extensions/sql-editor-pro` 自带 26 个
-  `query.*` key，其中 5 个与宿主同名（en 3 异值 / zh-CN 5 全异值；宿主当前 0 消费方）；按
+  自有 key（实测 **24 个 `query.*` + 2 个 `settings.editor.intention*`**），其中 5 个 `query.*` 与宿主同名
+  （en 3 异值 / zh-CN 5 全异值；宿主当前 0 消费方）；按
   `registerTranslations` 后写覆盖语义，装 Pro 的构建取 EP 文案、Community 取宿主文案 ⇒ 需在 editor-pro
   自身仓库裁定是否改 `pro.*` 前缀（契约 §2.4.4 的「前缀互斥」目前只对驱动强制）。
 - 既有翻译债（宿主 8 语言合计缺 2400 / 冗余 1650；redis 9 语言各缺 139、zh-CN 缺 72）是否立独立翻译回合。
@@ -454,3 +455,26 @@ $ bash scripts/run-regression.sh     # EXIT=0（日志 /tmp/rphase2-regression.l
   与 `ConfirmOptions`(宿主) 去重；③ 移除 `getTranslation` 的跨语言临时 `setLocale` 交换适配器；
   ④ `DocumentConnectionView` 的 `mongo.*` 归属宿主还是 mongodb 驱动（实测口径 = **21 处出现 / 15 个不同 key**，
   非任务书初稿的「20 处」）。
+
+## 关账补记（协调者 · 2026-09-21）
+
+- **合流**：`feature/r-phase` 以 `--no-ff` 合入 `feat/driver-decoupling` = **`1c293cc00`**
+  （7 文件 / +1597 −109，零冲突；分支尖端 `1be4de89c` 已全量并入）。
+- **主检出终局门禁**（合并后实跑；含外部树的口径只有主检出算数）：
+  - `bash scripts/run-regression.sh` = **7/7 全绿**（护栏 0m01s → cargo 1m01s → host vitest 1m27s →
+    驱动 vitest 0m06s → ID 0m01s → tsc 0m08s → vite 0m05s）；
+  - `node scripts/check-driver-import-boundaries.mjs` = `ok (1489 file(s) scanned · 0 blocking violation(s) ·
+    12 advisory finding(s))`，与 A-8 基线逐条一致（R1×2 superset / R2×6 editor-pro 单测 / R3×4 宿主引驱动内部）；
+  - `git status` 仅剩会话外既有改动 `src-tauri/src/commands/ai/integration_tests.rs`；`git diff --quiet Cargo.lock` 通过。
+- **all 档 `npx vite build` 干净值 = 1,603.30 kB / gzip 466.45 kB**（basic 档 1,572.84 / 459.96）：与任务书参考值
+  1,605.12 的 **−1.82 kB** 属 BUG-005 修复的确定性结果——旧基线是在 `src/extensions/generated-pro.ts` 被脚本单测
+  改写为 `Edition: pro`（含 builtin-ep loader 片段）的**污染态**下测得；修复后该产物恢复 clean community，
+  且 basic / all 两档差值一致（各 −1.82 kB）⇒ 差异只来自共享的 generated-pro 片段。**非体积回退**，
+  O-1 十语言量级不受影响，后续以干净值为准（与 BUG-005「后果 3」呼应）。
+- **缺陷终局**：BUG-001/002/003/005/006/007 = `已修复`（2 个修复回合 + 3 个复测回合，含 BUG-003 的
+  mutation 红证与「删目录 → codegen → cargo」三场景）；BUG-004 = 契约侧观察项完成 + **移交 editor-pro
+  外部仓**（是否改 `pro.*` 前缀由其自行裁定）。
+- **清理**：worktree `.worktrees/datazen-r-phase` 已移除、分支 `feature/r-phase` 已删除。
+- **交用户**：§3 人工验收清单 GUI-1~GUI-9（GUI-5 依赖未 push 的 editor-pro `c60f7fc`）；开放项见文末。
+- **口径校正（关账例行）**：文末开放项中原写「自带 26 个 `query.*` key」，据复测实测（24 个 `query.*` +
+  2 个 `settings.editor.intention*`）校正为现文，与该契约 §2.4.4 现文一致；不涉及任何已复测结论的改动。
