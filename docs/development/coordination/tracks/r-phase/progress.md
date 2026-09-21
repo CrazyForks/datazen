@@ -87,7 +87,9 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 ## 状态
 
 - [x] 派发 Tester → 回归执行（协调者已按任务书派出独立 Tester 实例，worktree `.worktrees/datazen-r-phase` @ `feature/r-phase`）
-- [ ] TEST_DONE / 关账汇报
+- [x] TEST_DONE / 关账汇报 → **TEST_DONE(PASSED)**（Wave 4-B 收尾实例：A-1~A-15 独立复跑、
+  B 表 17 行终态、GUI-1~GUI-9 人工验收清单见 §1~§3；缺陷全部明确移交——BUG-001/002/006 属文档/口径、
+  BUG-003/005 需 Coder、BUG-004 属外部仓，见 §4；待裁定 5 条见 §5；本 commit）
 
 ## 执行记录
 
