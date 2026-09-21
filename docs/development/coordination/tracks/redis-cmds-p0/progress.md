@@ -416,3 +416,76 @@ Tester 刻意未提交（会红）的三条用例全部按原文意图落地：B
 7. 每改完一条先 commit，禁止攒到最后（本轨已连续两任死在 turn 上限）。
 
 **BUG-008（低）**：把 `MAX_SCAN_ROUNDS=64`、`MAX_STALLED_SCAN_ROUNDS=16`、`CLUSTER_TYPE_SAMPLE_LIMIT=200` 三个预算数字各用**字面量**钉进用例（对照 `MAX_TYPE_SAMPLE_LIMIT=5000` 那条真被钉住的写法），使"改数字零反馈"消失。
+
+## Tester 复测轮 · 第 3 实例（修复第 3 轮复测 · 2026-09-22 · 起始 HEAD `e8582e71f` · 结论 **TEST_DONE**）
+
+接手现场：起始 `git status --porcelain` **干净**、工作区零改动 —— 第 3 轮 Tester 第 1 实例死时**零 commit、零脏文件**（本轨第四次同类事故），其任务清单自称的"阶段 B 226+4 预期"**没有任何落盘证据**，本实例按"未验证"处理并全部重跑，下表数字全部是本实例自己的实测。构建目录 `/tmp/w1a-r3t-target`（门禁）与 `/tmp/w1a-r3t-cov-target`（覆盖率，单独目录以免争锁），临时脚本与日志全在 `/tmp/w1a-r3t-mut/`、`/tmp/w1a-r3t-logs/`；共享 `target/` 与主检出全程未碰。**只测不修**：生产码 `ops_workbench.rs` 结束态 md5 `466cbae5e91c1064e42ea3de52fd4db1` 与起始逐次一致，`commands.rs` 零改动，本回合唯一提交是测试（`a6304a4fb`）。
+
+**派发书的一处事实更正（复测者必读，别照着找）**：任务书把审阅范围写成 `873ffc5da` + `32403ea0d`，这两笔分别是"收尾轮测试用例"与"台账文档"，**不含 BUG-007 / BUG-008 的任何生产码修复**；按哈希审阅会得出"没有可审的修复"。真实范围是 `ed6bec976..e8582e71f`：**`81cc58a90`（BUG-007 生产码）+ `286d917c4`（BUG-008 测试面）+ `873ffc5da`（收尾轮测试侧）+ 两笔台账 commit**，本实例按整段审阅。
+
+### 阶段 A · 代码审阅（`ops_workbench.rs` +237/−54、`commands.rs` +26/−3、测试面 +817/−111）
+
+1. **协调者第 3 轮七条裁定逐条对到行**：裁定 1/2 ⇒ 局部 trait `SlotRoutedConnection::command_at_slot`（`:471-480` 默认实现 = `req_packed_command`，`:484-495` Cluster 实现 = `self.route_command(cmd, master_route(slot))`），`master_route:500-505` 只用**公开**类型（`RoutingInfo::SingleNode(SpecificNode(Route::new(slot, SlotAddr::Master)))`）⇒ 裁定 2 设的 `BLOCKED` 前置条件确实不成立，未退化为"逐条发 + 容忍 MOVED 风暴"；三条通道确实全部改走它（`issue_batch:615 → routed_sequential:580 → routed_single:575`、`scan_round:663`、`sample_types:743+746`、`key_object_info:823`）。裁定 3 ⇒ `CLUSTER_SCAN_ANCHOR:127` + `cluster_scan_anchor_slot():132`。裁定 4 ⇒ `fetch_dbsize` **故意不寻址**、`from_sharded_view` 已删除（全 crate grep 零命中）、`truncated` 统一由 `is_sample_truncated`（`sampled < dbsize`）决定，"重判后仍几乎恒真但理由换成 scope 不同"这一表述与本实例对 redis 表的理解一致，**不是因循旧结论**。裁定 5 ⇒ 见下第 5 项。裁定 6 ⇒ standalone/sentinel 仍一条 pipeline（`M-sentinel-off` 复跑红 1 条钉着）。
+2. **两条"疑似缺陷"经核对排除**（登记方法与结论，免得后续重复怀疑）：
+   - "cluster 的 `SCAN` 轮与 standalone 用了不同解析器 ⇒ 同一坏回复两拓扑行为不一致"？⇒ `scan_round:658` 非 cluster 分支直接 `return crate::ops::scan_batch(...)`，cluster 分支末尾走 `parse_scan_result(&raw)`，与 `ops.rs:96-107` 的 `scan_batch` **同一个宽松解析器** ⇒ 无不对称，**不开 Bug**。
+   - "`get_slot(key)` 对 `{tag}key` 失聪"？⇒ `cluster_routing.rs:250` 的 `get_slot` 先 `get_hashtag` 再 CRC ⇒ **生产寻址正确**。但"没有任何用例使用带标签的键"成立 ⇒ 转为**测试面空档**，本实例自行补两条并在阶段 C 用变异证明其独有价值（见下）。
+3. **文案 nit（不判 Bug）**：`commands.rs:484-491` 的 "so a call is 2 round trips on a single node and {} on Cluster" 里 **7 由 `KEY_INFO_PIPELINE_LEN + 1` 派生、2 是字面量**；该 2 对应"1 次 `SELECT` + 1 次 pipeline"，本就不依赖那个常量，且 `fix_round1::the_ui_descriptions_still_promise_those_same_numbers` 同时以字面量核对 `2` 与 `7` ⇒ **无漂移面**，仅记为可读性问题（若要统一，需先给"命令层 SELECT 次数"一个常量，属 Coder 面）。
+4. **测试完整性（本轨高危项，逐文件核）**：`git diff --numstat ed6bec976 e8582e71f` ⇒ `ops_workbench/tests.rs` **7 增 / 0 删**、`tests/fix_round1.rs` **89/0**、`tests/fix_round1_retest.rs` **6/0** —— 前两轮 Tester 的断言**一行未动**；`tests/cluster_topology.rs` 的 **111 删除行**逐条读为旧"最后一个参数即键"乐观替身被 `RoutingInfo::for_routable` 版本整体替换（同一替身体重写，非断言删除）；`#[ignore]` / `#[should_panic]` 增删 **0**；`test_tester_` 前缀用例现 **21 条**（`tests.rs` 12 + `fix_round1_retest.rs` 7 + 本回合 2），无一条被降级或删除。
+5. **契约面（对 Wave 2 冻结 TS 类型直接负责）**：用**已提交 blob** 比较（不受工作区变异影响）。声明面抽取（属性行 + 字段行，剔除 doc 注释与空行）后 `TypeDistribution` **138 B / 5 行**、`KeyObjectInfo` **267 B / 9 行**，`b1e1f4010` ↔ HEAD 的 md5 分别 `d5879e81902b7c707455cbebee9e8699` / `23793ef5cd8a00559f090526f2f909c6`，`cmp` **逐字节相同**；本实例口径与收尾轮自报的 209 B / 358 B 相差的是"是否把 `#[derive]` 整块算入"（本实例算入后是 208/8 与 357/12，差一个行尾换行），**结论一致**。`commands.rs` 的 3 删除行全部是 description 文案 ⇒ **Wave 2 无需因本轮返工 TS 类型**。
+6. 生产路径裸 `unwrap()` / `expect()`：`ops_workbench.rs` 与 `commands.rs` 分别 `grep -c` 两种形态，均 **0 命中**（`#[cfg(test)]` 替身不计）。
+
+### 阶段 B · 门禁独立复跑（全部本机真跑，`CARGO_TARGET_DIR=/tmp/w1a-r3t-target`）
+
+| 门禁 | 本实例实测 | 与收尾轮自报 |
+| --- | --- | --- |
+| `cargo test -p datazen-driver-redis` | lib **226 / 0 失败 / 1 ignored** + 集成 `tests/workbench_commands.rs` **4 / 0** + doc-test **0**；`ignored` 恰 1 且是 `connect::tests::local_live_connect_prefer_plaintext_require_times_out`（需本机 6379） | **逐字一致** ⇒ 上一任"226+4"的说法本实例独立复现成立 |
+| `cargo fmt -p datazen-driver-redis -- --check` | **exit 0，零 diff** | 一致 |
+| `cargo fmt --all -- --check` | **exit 1**，3 个 Diff 块全在 `src-tauri/`：`src/commands/ai/integration_tests.rs:1244`、gitignored codegen `src-tauri/src/driver_init.rs:4` 与 `:19` | 与「环境性既有红」登记逐字一致，本轨零改动面 |
+| `cargo clippy -p datazen-driver-redis --all-targets` | **exit 101**：`(lib) 17 warnings`、`(lib test) 18 (17 duplicates)`、`datazen-driver-api (lib) 3`、**2 条 deny** `approx_constant`（`ops.rs:905:38`、`ops_exec.rs:260:57`）；`--message-format short` 命中点全枚举（`redis_driver.rs` 5、`decode/pickle.rs` 3、`ops_value_search.rs` 3、`redis_driver_on.rs` 2、`ops_io.rs`/`redis_value_preview.rs` 各 1 + 2 deny），**`ops_workbench*` 与 `commands.rs` 零命中** | **不劣于基线**（17/18/3 + 2 deny 逐字一致） |
+| `npx tsc --noEmit -p tsconfig.json` | **exit 0** | 一致（本轨零 TS 改动） |
+| `node scripts/check-driver-import-boundaries.mjs` | **exit 0** · 1403 files · **0 blocking** · 4 advisory · 2 allow-listed | 逐字一致 ⇒ 边界护栏保持 |
+
+### 阶段 C-1 · 变异复证（派发书点名的 64/16/200 与 cluster 顺序路径，共 13 项复跑 + 2 项新变异 + 2 项反向对照）
+
+方法（沿用本轨已栽过坑的有效性闸门）：施加前 `git diff --quiet` 确认起点干净、模式命中数必须**恰为 1**（否则判 `BAD-PATTERN` 不记录结果）、施加后必须产生 diff（否则判 `NO-OP`）、跑完 `git checkout --` 复原并核对 md5 回到基线 `466cbae5e91c1064e42ea3de52fd4db1`。三组结果：`/tmp/w1a-r3t-logs/C-set1.log`、`C-set2.log`、`E-set3.log`、`E-negative-control.log`，全部 `RESTORED-OK`。
+
+| 变异（打在生产码） | 本实例实测（passed / failed） | 变红用例 | 与收尾轮声称 |
+| --- | --- | --- | --- |
+| **BUG-008 三项**：`MAX_SCAN_ROUNDS` 64→65 / `MAX_STALLED_SCAN_ROUNDS` 16→8 / `CLUSTER_TYPE_SAMPLE_LIMIT` 200→201 | 225/1 · 225/1 · 224/2 | `fix_round1::scan_budgets_are_the_numbers_the_docs_quoted`（前两项）+ `cluster_sample_window_is_bounded_…`、`the_ui_descriptions_still_promise_those_same_numbers`（第三项） | **同向同数** ⇒ 上轮 M8b/M8d/M8e 的"全绿"确已闭合 |
+| 对照：`TYPE_PIPELINE_CHUNK` 500→600、`MAX_TYPE_SAMPLE_LIMIT` 5000→5001 | 各 224/2 | `the_ui_descriptions_…` + `type_distribution_clamps_an_oversized_window_instead_of_erroring` | 一致 |
+| `is_sample_truncated` 恒 `false`（M-trunc） | 215/11 | 两拓扑采样/普查用例成片（含 `test_tester_type_distribution_json_shape_is_the_wave2_contract`） | 一致（红 11） |
+| **cluster 顺序路径**：`issue_batch` Cluster 臂退回统一 pipeline（M-seq） | 224/2 | `cluster_key_object_info_degrades_per_field_over_six_addressed_singles`、`…keeps_working_when_the_key_is_gone` | 一致 |
+| 寻址三处：M-scanaddress / M-callslot / M-typeslot | 224/2 · 224/2 · 221/5 | 依次：`cluster_type_distribution_types_keys_one_at_a_time_…` + `every_cluster_scan_round_shares_one_shard_and_cursor_space`；同 M-seq 两条；含 `a_transport_failure_on_the_addressed_path_aborts_the_probe` 等 5 条 | **一致** |
+| `master_route` 的 `SlotAddr::Master`→`ReplicaOptional`（M-slotaddr） | 225/1 | `the_address_we_build_names_exactly_the_master_of_the_given_slot` | 一致 |
+| `DBSIZE` 改为按槽寻址（M-dbsize-addressed） | 224/2 | `dbsize_is_left_to_the_clients_all_master_fan_out`、`rejected_dbsize_aborts_the_distribution_instead_of_reading_zero` | 一致 |
+| 两守卫关闭：轮帽 / 停滞（M-roundcap-off、M-stalled-off） | 各 225/1 | `type_distribution_stops_at_the_round_cap_on_a_spinning_cursor`、`…stops_when_the_cursor_stops_making_progress` | 一致 |
+| 回复条数守卫 / 连接级失败分类 / Sentinel 臂 关掉 | 219/7 · 223/3 · 225/1 | 含 `fix_round1::key_object_info_refuses_a_truncated_reply_vector_instead_of_guessing`、`test_tester_keys_is_issued_in_neither_shape_on_either_path`、`test_tester_connection_failure_classifier_matches_real_reply_kinds`、`sentinel_uses_the_single_node_batch_and_its_per_item_errors` | 一致 |
+| **M-addr（Cluster 实现体退回 `req_packed_command`）** | **226 / 0 全绿** | 无 | **负面事实复现** ⇒ `:493` 那一行进程内不可证伪，唯一防线仍是 R 项 9a（本实例在阶段 C-2 从覆盖率侧独立佐证了同一件事，见下） |
+| **新：`key_object_info` 的 `get_slot(key)` 改为手工剥左括号（M-tagblind-keyinfo）** | 227/1 | `cluster_topology::test_tester_cluster_addressing_follows_the_hash_tag_not_the_whole_key` | 上轮无用例 ⇒ 本回合新增防线 |
+| **新：`sample_types` 的 `get_slot(key)` 同样失聪（M-tagblind-sample）** | 227/1 | `cluster_topology::test_tester_a_hash_tagged_sample_is_typed_at_the_tag_slot` | 同上 |
+| **反向对照（把上面两条变异各跑一次，但 `--skip` 掉本回合两条新用例）** | **226/0 全绿 ×2** | 无 | ⇒ 旧套件对"标签失聪"**零证伪能力**，新用例提供的是**独有**能力而非重复劳动 |
+
+### 阶段 C-2 · 覆盖率与"缺 3 个函数"落点（收尾轮第 343 行留给 Tester 的自由核验点）
+
+- `cargo llvm-cov -p datazen-driver-redis --lib`（`CARGO_TARGET_DIR=/tmp/w1a-r3t-cov-target`）⇒ `ops_workbench.rs` **区域 545 中缺 83 = 84.77% · 函数 47 中缺 3 = 93.62% · 行 382 中缺 49 = 87.17%**，与收尾轮自报**逐字一致** ⇒ ≥80% 硬标准满足。
+- 用同一份 profdata 手工导出（`llvm-profdata merge -sparse` + `llvm-cov show`，本机 LLVM 20.1.8-rust-1.90.0；收尾轮没跑通的就是这一步的 profdata 路径）⇒ **逐行**列出 count=0 的可执行行 **31 条**（`/tmp/w1a-r3t-logs/D-show.txt`、行号清单见 `/tmp/w1a-r3t-logs/D-funcs.txt`）。归位后：**整段一次都进不去的函数体只有两处** —— `SlotRoutedConnection::command_at_slot` 的**默认实现体**（`:473-479`）与 `impl SlotRoutedConnection for ClusterConnection` 的**实现体**（`:488-494`）。原因可复算：只有 Cluster 通道调用 `command_at_slot`（`routed_single:575`），而唯一在跑的替身 `ClusterFoldingConn` 自己覆盖了它（`tests/cluster_topology.rs:332`）⇒ 默认实现体在 lib 套件内 0 次进入；Cluster 实现体则是替身根本不存在的那个类型。其余行全部落在**已执行**的函数体内部：`341`（`parse_type_token` 的 `RValue::Int` 臂，前三轮同一项）、`420/431-432/559/591-592/712/758-760/799-804/833-834`（全部是 `tracing` 宏的**字段闭包/字段表达式**，含 `type_distribution` 汇总日志里的 `anchor_slot = match topology { … }` —— 它在 `tracing::info!` 的字段表内，**不是逻辑分支**）。
+- **诚实边界**：文件列"函数 47 中缺 3"按 llvm 的 coverage-mapping record（合并泛型实例）计，而 `report --show-functions` 打印的是**逐实例化**的 134 条记录（62 条 0 计数，绝大多数是 `ClusterConnection` / `MultiplexedConnection` 两型连接在进程内压根不存在的实例化 + tracing 调用点闭包记录）⇒ 两套口径不能一一对映，本实例**不把"3"硬编成 3 个名字**。能钉死的是：**整段不可进入的生产函数体只有那两个 `command_at_slot`，且它与 M-addr 盲区是同一件事**；真连防线分别是 R 项 **9a**（Cluster 是否真按槽投递）与 **9c**（`MultiplexedConnection` 取默认实现未被绕过）。⇒ **不据此开新 Bug**，收尾轮"下降全部由 BUG-007 新增行数造成"的归因**成立**，本回合未见新增未覆盖逻辑分支。
+
+### 阶段 C-3 · 本回合新增测试（唯一改动面，`a6304a4fb`）
+
+1. `cluster_topology::test_tester_cluster_addressing_follows_the_hash_tag_not_the_whole_key` —— 键 `{tenant7}:profile`：六条探测必须**全部寻址在标签槽**（`get_slot(b"tenant7")`）、`misrouted` 空、`slot_refreshes == 0`、返回值与无标签键同形；并带**fixture 守卫** `assert_ne!(tag_slot, brace_strip_slot)`（否则本用例会因fixture太弱而假绿）。
+2. `cluster_topology::test_tester_a_hash_tagged_sample_is_typed_at_the_tag_slot` —— `SCAN` 页返回两个同标签键 + 一个无标签键：两个同标签键的 `TYPE` 必须寻址到**同一槽**（标签的共址承诺），无标签键必须在**别的槽**，`SCAN` 仍锚在 `cluster_scan_anchor_slot()`。
+3. 复跑：`cargo fmt -p datazen-driver-redis` 后 `--check` **exit 0**；`cargo test -p datazen-driver-redis --lib` ⇒ **228 passed / 0 failed / 1 ignored**（226 + 本回合 2）；`cargo clippy --all-targets` 诊断集**逐字不变**（17 / 18(17 dup) / 3 + 同 2 条 deny，`ops_workbench*` 仍零命中）⇒ 未引入新的 lint 回归（收尾轮第 299 行那类问题）。
+
+### 阶段 D · 裁定 **TEST_DONE**
+
+- **BUG-008（低）⇒ 已修复**：四条修法全部落地，本实例用自己的变异独立复证上轮三项"全绿"（64/16/200）**全部转红**，且文案与常量同源渲染的正反对照成立。
+- **BUG-007（中）⇒ 进程内复测通过**：七条裁定逐条对到行、契约面逐字节未动、寻址**决策 / 形状 / 回退路径 / DBSIZE 不寻址 / SCAN 定桩**五面各自有可证伪用例（本回合又补上"标签感知"一面），变异方向与红条数与收尾轮台账**全部一致**。**但 `route_command` 那一行（`:493`）的闭合仍系于 R 项 9a 真连**（本实例从覆盖率侧独立确认它就是 0-count 函数体，不是遗漏而是结构性盲区）⇒ 本实例**不代为关闭**，`bugs.md` 状态写"已修复（进程内复测通过）· 真连 9a 未过不关闭"。
+- 门禁：除两项既有环境性红（workspace fmt、2 条 deny）外全绿；**无新增 Bug**，故本回合 `bugs.md` 只做状态流转，未新增分节。
+
+### 交回协调者 / Wave 2（本回合新增，不重复已登记项）
+
+1. **派发书写错审阅范围**属流程问题、值得进 playbook：点 commit 哈希时必须点到**生产码那一笔**（本轨是 `81cc58a90` / `286d917c4`），否则复测者按哈希核对会得出"无可审对象"。
+2. 两条新用例把"hash-tag 感知"从**未测**变成**可证伪** ⇒ R 项 9a/9b 的 MONITOR 判据建议加一句"键名带 `{}` 标签时同样只落在标签所属分片"（属 R 正文，本实例**未代改**，避免与 Coder 的台账面冲突）。
+3. 文件规模：`tests/cluster_topology.rs` 现 **1164 行**（收尾轮登记 1017 + 本回合 147），已过千行的测试文件两个（`tests.rs` 1200）⇒ 拆分条仍等协调者裁定，本实例按"不开新文件、不新增文档"执行。
+4. 纪律自查：未跑 `pnpm install` / `pnpm build` / `pnpm e2e` / webdriver 构建；未碰 `hub.md`、他轨文档、`ui/**`、`locales/**`、宿主 `src/**`、`driver-sdk/**`、`Cargo.toml`、`scripts/resolve-drivers.mjs`；未提交任何 gitignored codegen / `target/`；`git status --porcelain` 结束时仅本台账文件待提交。

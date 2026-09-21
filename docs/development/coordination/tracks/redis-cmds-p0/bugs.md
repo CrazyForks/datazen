@@ -93,8 +93,8 @@ BUG-007 是"关于 redis 路由表的事实断言"，因此可被任何人用本
 | redis-cmds-p0-BUG-004 | 低 | `is_unusable_reply` 的 `_ => false` 兜底与模块文档承诺相反：未知回复形状会被静默读成"键已过期" | **已修复**（复测通过） |
 | redis-cmds-p0-BUG-005 | 低 | `collect_sample` 无轮次上界/进展守卫：异常服务端（游标不归零 + 空批）可让一次高频上下文条调用无界 SCAN | **已修复**（复测通过；真连仍挂 R 项 13） |
 | redis-cmds-p0-BUG-006 | 低 | "侧栏恰 1 次往返"断言口径夸大：`ScriptedConn` 只喂 op 层，把 `with_live_op!` 每次必发的 `SELECT` mock 掉了 ⇒ 命令级真实成本 2 次往返 | **已修复**（修法 1+2 复测通过；修法 3 另立 `redis-select-shortcircuit` 轨） |
-| **redis-cmds-p0-BUG-007** | **中** | 修复轮新写的三条 Cluster 口径被 redis 0.27.6 **自己的路由表**证伪：两词探测命令按**子命令 token** 而非键路由（⇒ 每次侧栏探测必吃 `-MOVED` 重发 + 全集群槽位刷新，"7 次往返"是低估）；Cluster 的 `DBSIZE` 是**所有主节点之和**而非"该分片数字"；`SCAN` 无路由 ⇒ 每轮可能换分片（"分片视图"应为"随机多分片混合视图"）。现有 `ClusterFoldingConn` 用"最后一个参数即键"建模路由，比真实客户端**更乐观** ⇒ 修复轮用例结构上测不到这件事 | **待复测**（`81cc58a90` + 收尾轮：三条探测通道改为**按槽位显式寻址**（走 redis **公开**的 `route_command` + `get_slot`，裁定 2 设的 `BLOCKED` 前置条件经源码核实**不成立**）、`SCAN` 定桩单一分片、`DBSIZE` **有意不寻址**、`from_sharded_view` **删除**、三条口径与 description 全部重写；替身路由改从 `RoutingInfo::for_routable` 取，不再比客户端乐观。**闭合判据移交 R 项 9a 真连**：production 里 `route_command` 那一行**进程内不可证伪**（收尾轮 M-addr 变异 226 条全绿），真连须见"`-MOVED` 计数 0 + 任何分片零 `CLUSTER SLOTS` + 6 条探测全部落在键所属分片"） |
-| **redis-cmds-p0-BUG-008** | **低** | 三个预算常量 `MAX_SCAN_ROUNDS = 64` / `MAX_STALLED_SCAN_ROUNDS = 16` / `CLUSTER_TYPE_SAMPLE_LIMIT = 200` 在测试里**只以常量自身出现**，无字面量锁定 ⇒ 变异实测（64→65、16→8、200→201）**全绿零反馈**，而这些数字正是面向 UI 的 description（"clamps further to 200"）、协调者裁定 1 的往返预算与 R 项 13 真连判据（"`SCAN` ≤ 64"）的字面依据；同一轮里 `MAX_TYPE_SAMPLE_LIMIT = 5000` 反倒被字面量钉住（5001 即红）⇒ 属可修缺口而非普遍现象 | **待复测**（`286d917c4` + 收尾轮：修法 1 字面量锁定（64 / 16 / 200 各一条 `assert_eq!` + 两条守卫次序 + "最大窗口 10 轮可填满"标定）+ 修法 2 改为"description 由常量 `format!` 渲染"再叠一条字面量核对文案用例；修法 3 措辞已收窄；修法 4 遵守（未碰生产配置面）。**收尾轮复跑本条四项数值变异：64→65 / 16→8 / 200→201 / 500→600 全部由绿转红**（红条数 1 / 1 / 2 / 2），对照项 5000→5001 仍红 ⇒ Tester 复测只需复跑这四项） |
+| **redis-cmds-p0-BUG-007** | **中** | 修复轮新写的三条 Cluster 口径被 redis 0.27.6 **自己的路由表**证伪：两词探测命令按**子命令 token** 而非键路由（⇒ 每次侧栏探测必吃 `-MOVED` 重发 + 全集群槽位刷新，"7 次往返"是低估）；Cluster 的 `DBSIZE` 是**所有主节点之和**而非"该分片数字"；`SCAN` 无路由 ⇒ 每轮可能换分片（"分片视图"应为"随机多分片混合视图"）。现有 `ClusterFoldingConn` 用"最后一个参数即键"建模路由，比真实客户端**更乐观** ⇒ 修复轮用例结构上测不到这件事 | **已修复（进程内复测通过）** —— Tester 第 3 实例 @ `a6304a4fb`：七条裁定逐条对到行、契约面 `cmp` 逐字节相同、六项寻址变异各红 1~5 条与台账同向同数；`route_command` 那一行经覆盖率独立确认为 0-count 函数体（结构性盲区，非漏测）⇒ **真连 R 项 9a 未过不关闭**。本条另补 2 条 hash-tag 用例，使"标签失聪"由**完全不可证伪**（反向对照 226 全绿）转为各红 1 条。〔原状态 **待复测** 及其正文如下，照档保留〕（`81cc58a90` + 收尾轮：三条探测通道改为**按槽位显式寻址**（走 redis **公开**的 `route_command` + `get_slot`，裁定 2 设的 `BLOCKED` 前置条件经源码核实**不成立**）、`SCAN` 定桩单一分片、`DBSIZE` **有意不寻址**、`from_sharded_view` **删除**、三条口径与 description 全部重写；替身路由改从 `RoutingInfo::for_routable` 取，不再比客户端乐观。**闭合判据移交 R 项 9a 真连**：production 里 `route_command` 那一行**进程内不可证伪**（收尾轮 M-addr 变异 226 条全绿），真连须见"`-MOVED` 计数 0 + 任何分片零 `CLUSTER SLOTS` + 6 条探测全部落在键所属分片"） |
+| **redis-cmds-p0-BUG-008** | **低** | 三个预算常量 `MAX_SCAN_ROUNDS = 64` / `MAX_STALLED_SCAN_ROUNDS = 16` / `CLUSTER_TYPE_SAMPLE_LIMIT = 200` 在测试里**只以常量自身出现**，无字面量锁定 ⇒ 变异实测（64→65、16→8、200→201）**全绿零反馈**，而这些数字正是面向 UI 的 description（"clamps further to 200"）、协调者裁定 1 的往返预算与 R 项 13 真连判据（"`SCAN` ≤ 64"）的字面依据；同一轮里 `MAX_TYPE_SAMPLE_LIMIT = 5000` 反倒被字面量钉住（5001 即红）⇒ 属可修缺口而非普遍现象 | **已修复（复测通过 @ Tester 第 3 实例 `a6304a4fb`）** —— 本实例自行复跑四项数值变异：64→65 红 1、16→8 红 1、200→201 红 2、500→600 红 2，对照项 5000→5001 红 2 ⇒ 上轮 M8b/M8d/M8e 的"全绿零反馈"确已闭合，且红的是**字面量锁定用例**（不是碰巧被别的行为用例带红）。〔原状态 **待复测** 及其正文如下，照档保留〕（`286d917c4` + 收尾轮：修法 1 字面量锁定（64 / 16 / 200 各一条 `assert_eq!` + 两条守卫次序 + "最大窗口 10 轮可填满"标定）+ 修法 2 改为"description 由常量 `format!` 渲染"再叠一条字面量核对文案用例；修法 3 措辞已收窄；修法 4 遵守（未碰生产配置面）。**收尾轮复跑本条四项数值变异：64→65 / 16→8 / 200→201 / 500→600 全部由绿转红**（红条数 1 / 1 / 2 / 2），对照项 5000→5001 仍红 ⇒ Tester 复测只需复跑这四项） |
 
 ---
 
@@ -327,7 +327,14 @@ async fn type_distribution_stops_after_the_round_cap() {
 - **建议修法 1（口径）全部落地**：`progress.md`「契约偏离」三条 Cluster bullet 按事实重写（往返成本改为"1 SELECT + 6 条**已寻址**单命令 ⇒ 7 次，且不再有 MOVED/刷新项"、`dbsize` 明确"全集群所有主节点之和"、"分片视图"改为"**锚定单分片采样**"），面向 UI 的两条 description 与 `sampleLimit` description 改为**常量 `format!` 渲染**；R 项 4 的 MONITOR 表按分片重写、9a/9b/9b-补/9d 全部改写（**9d 的"空分片"判据按裁定 4 换成"整个集群为空"**）。
 - **`SCAN` 定桩（裁定 3）**：`CLUSTER_SCAN_ANCHOR`（`:127`）+ `cluster_scan_anchor_slot()`（`:132`）⇒ 每轮同一分片同一游标空间（`every_cluster_scan_round_shares_one_shard_and_cursor_space`）；锚定分片为空时 `sampled = 0` 且命令**成功**属正常形态（已写进 R 项 9b/9d，避免误判回归）。
 - **`DBSIZE` 有意不寻址（裁定 4）**：`fetch_dbsize:631` 仍走 `query_async` ⇒ 吃 redis 表里的 `MultiNode(AllMasters, Aggregate(Sum))`；`dbsize_is_left_to_the_clients_all_master_fan_out` 断言 `conn.addressed` 为空 + `slot_refreshes == 0`。`from_sharded_view` **已删除**，三拓扑统一 `TypeDistribution::from_sample:225` + `is_sample_truncated:191 = sampled < dbsize`（M-trunc 反转后红 **11** 条 ⇒ 该位不是装饰）。**"cluster 上 `truncated` 几乎恒真"这一结论按裁定 4 重判后不变，但理由换成"分子是单分片采样、分母是全集群求和"两个 scope 不同**，不再依赖"分片视图"这个已被证伪的说法。
-- **状态**：代码与口径已闭合，但**真连 9a 未过之前不自行关闭** ⇒ 维持严重级"中"、状态 **待复测**（Bug 循环 2/5 之修复轮完成）。
+- **状态**：代码与口径已闭合，但**真连 9a 未过之前不自行关闭** ⇒ 维持严重级"中"、状态 **已修复（进程内复测通过）· 真连挂 R 项 9a**（原 **待复测**）。
+
+**复测备注（Tester 第 3 实例 · 2026-09-22 · 起始 HEAD `e8582e71f` · 代码 `a6304a4fb`）· 状态 → 已修复（进程内复测通过）**
+
+- 复跑本条全部六项寻址变异：M-scanaddress 红 2、M-callslot 红 2、M-typeslot 红 5、M-slotaddr 红 1、M-dbsize-addressed 红 2、M-seq 红 2，与「Coder 修复记录（第 3 轮）」变异表**同向同数**；M-addr（Cluster 实现体退回 `req_packed_command`）**再次 226 全绿** ⇒ 负面事实成立。
+- 覆盖率侧独立佐证（收尾轮没跑通的 profdata 手工导出）：`ops_workbench.rs` 里**整段 count=0 的函数体只有两处**，正是 `:473-479`（trait 默认实现）与 `:488-494`（Cluster 实现体）⇒ 与 M-addr 是同一件事，防线归 R 项 9a（Cluster 投递）与 9c（默认实现未被绕过）；除此之外**无新增未覆盖逻辑分支**。
+- **本条新发现的测试面空档（已自行闭合，未另开 Bug）**：既有 cluster 用例**无一使用带 `{}` 标签的键**，而 BUG-007 的全部寻址都建在"`get_slot` 先 `get_hashtag` 再 CRC"这一行上 ⇒ 手工剥括号 / 整键 CRC 一类的标签失聪改动在旧套件下**226 全绿**（本实例反向对照实测）。已补 `test_tester_cluster_addressing_follows_the_hash_tag_not_the_whole_key` 与 `test_tester_a_hash_tagged_sample_is_typed_at_the_tag_slot` 各钉一处调用点，两个对应变异现**各红 1 条**（且只红这两条 ⇒ 独有证伪能力）。
+- 排除项（登记以免重复怀疑）：`scan_round` 的非 cluster 分支直接委托 `crate::ops::scan_batch`，cluster 分支与它共用同一个宽松 `parse_scan_result` ⇒ **不存在**"两拓扑 SCAN 回复解析不对称"；`commands.rs` 文案里 "2 round trips" 的 `2` 是字面量但被 `the_ui_descriptions_still_promise_those_same_numbers` 一并核对 ⇒ 无漂移面，仅 nit。
 
 **修复后新增的对外硬口径（Wave 2 必读）**：Cluster 下 `type_distribution` 的 `counts` 只描述**锚定分片**，`dbsize` 描述**整个集群** ⇒ "采样 N/M"的分子分母不同 scope，UI 文案必须显式带 Cluster 限定语；`truncated: false` 在 Cluster 上只在"整个集群为空/全被扫完"时才成立。
 
@@ -386,7 +393,13 @@ git checkout -- packages/drivers/redis/src/ops_workbench.rs
 - **修法 3（措辞收窄）已做**：`progress.md` R 项 13 与「契约偏离 · Cluster 采样窗」两条按"数字由字面量锁定、原用例钉的是守卫身份"改写，并注明 Cluster 侧 MONITOR 必须打在**锚定分片**上才数得到 `SCAN`。
 - **修法 4（不为此改生产码）遵守**：未新增配置面、未动 `Cargo.toml`、未扩契约。
 - **收尾轮补的一处回归**：前任在本文件写入的 `assert!(true)` 形态触发 clippy `assertions_on_constants`，使 `(lib test)` 诊断从基线 18 涨到 19 ⇒ 收尾轮改为先把两常量绑定为局部变量再断言，语义不变，诊断集回到基线（`(lib) 17` / `(lib test) 18 (17 dup)` / `driver-api (lib) 3` / 2 条 deny 均在 `ops_workbench*` 之外）。
-- **状态 → 待复测**：本条为纯测试面缺口，Tester 只需复跑 `cargo test -p datazen-driver-redis --lib` 与上表四项数值变异（64→65、16→8、200→201、500→600）即可判定；四项**全部应由绿转红**，若仍绿则本条未闭合。
+- **状态 → 已修复（复测通过）**：本条为纯测试面缺口，Tester 只需复跑 `cargo test -p datazen-driver-redis --lib` 与上表四项数值变异（64→65、16→8、200→201、500→600）即可判定；四项**全部应由绿转红**，若仍绿则本条未闭合。
+
+**复测备注（Tester 第 3 实例 · 2026-09-22 · 起始 HEAD `e8582e71f` · 代码 `a6304a4fb`）· 状态 → 已修复**
+
+- 按本条自设的判据逐项执行：`cargo test -p datazen-driver-redis --lib` ⇒ **226 / 0 / 1 ignored**（与门禁表一致），四项变异实测 **64→65 红 1、16→8 红 1、200→201 红 2、500→600 红 2**，对照项 `MAX_TYPE_SAMPLE_LIMIT` 5000→5001 红 2 ⇒ **四项全部由绿转红**，本条闭合。
+- 红的是哪条用例也核了：64/16 两项红 `fix_round1::scan_budgets_are_the_numbers_the_docs_quoted`（**字面量** `assert_eq!`，非行为副作用），200 与 500/5000 三项红 `the_ui_descriptions_still_promise_those_same_numbers` + 各自的行为用例 ⇒ 修法 1 与修法 2 各自按其设计的机制生效，不是"随便改什么都红"的假阳性。
+- 本条不再需要测试面补强；R 项 13 的措辞（"钉死守卫身份"）经核对已是修法 3 收窄后的版本，无需再改。
 
 
 ## 环境性既有红（非本轨缺陷，不计入 Bug）
