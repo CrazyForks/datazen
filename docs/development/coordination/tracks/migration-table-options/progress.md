@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_RETEST
+PASSED
 
 ## Scope
 
@@ -15,8 +15,12 @@ READY_FOR_RETEST
 
 - `cargo test -p datazen-driver-api --lib`: 141 passed.
 - `cargo test -p datazen-driver-mysql --lib migration`: 17 passed.
-- Injected Host Schema Diff focused tests: 100 passed; full Host lib regression: 1598 passed, 52 pre-existing AI wiremock tests failed because the sandbox denied mock-server ports, 3 ignored.
-- Schema Diff Vitest focused files: 34 passed.
+- `cargo test -p datazen-driver-postgres --lib migration`: 17 passed.
+- `cargo test -p datazen-driver-sqlite --lib`: 58 passed.
+- `cargo test -p datazen-driver-redis --lib`: 126 passed, 1 ignored.
+- Injected basic Host Schema Diff tests: 101 passed; Redis now compiles through the Host injection path.
+- Schema Diff Vitest focused files: 9 files / 66 passed.
+- `SchemaDiffPanel.tsx` targeted coverage: 97.5% statements, 81.15% branches, 100% functions, 100% lines.
 - `npx --no-install tsc --noEmit`: passed.
 - `cargo fmt --all -- --check` and `git diff --check`: passed.
 
@@ -30,8 +34,8 @@ READY_FOR_RETEST
 ## Commit
 
 - Coding commit: 03644d70.
-- Bug-fix commit: pending.
-- Independent Tester verification: prior round FAILED on BUG-001; fix is ready for a fresh retest.
+- Bug-fix commit: `e693b7fa`.
+- Independent Tester verification: PASSED after the Redis `TableSchema` initializer fix.
 
 ## Tester verification
 
@@ -39,8 +43,9 @@ READY_FOR_RETEST
 - MySQL migration: 17 passed.
 - PostgreSQL migration: 17 passed.
 - SQLite driver: 58 passed.
-- Schema Diff Vitest focused suite: 7 files / 46 passed.
+- Schema Diff Vitest focused suite: 9 files / 66 passed.
+- Redis driver suite: 126 passed, 1 ignored.
 - Added `test_tester` coverage for table-option UI rendering and text export.
 - `SchemaDiffPanel.tsx` targeted coverage: 97.5% statements, 81.15% branches, 100% functions, 100% lines.
 - TypeScript check, rustfmt check, and diff check passed.
-- Host injected Schema Diff build is blocked by `migration-table-options-BUG-001`.
+- Host injected Schema Diff suite: 101 passed; the Redis compile blocker is resolved.
