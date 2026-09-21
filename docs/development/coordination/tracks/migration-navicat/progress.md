@@ -22,7 +22,7 @@ PASSED / READY_TO_MERGE
 - Integration Rust regression: 1525 passed / 3 ignored.
 - Integration frontend regression: 59 passed; `npx tsc --noEmit` passed.
 - Integration Schema Diff foreign-key regression: 78 focused Host tests; PostgreSQL 10, MySQL 10, SQLite 5, and Driver API 5 migration tests passed.
-- Latest integration Host Rust regression: 1624 passed / 3 ignored.
+- Latest integration Host Rust regression after both new tracks: 1630 passed / 3 ignored.
 - Formal `CI=true pnpm tauri:build:webdriver`: App and DMG built successfully with Postgres/MySQL/SQLite/Redis injection; generated files restored afterwards.
 - View migration integration regression: Host Schema Diff 84 passed; SQLite object-command journey 5, SQLite object SQL 4, Driver API object/type tests 11, PostgreSQL object/migration tests 18, MySQL object/migration tests 16, SQLite migration 6, Vitest 15, TypeScript, rustfmt, and diff checks passed.
 - Live workflow Tester: gate-off journey 10 skipped with explicit opt-in messaging; provisioned PostgreSQL/MySQL journey 10 passed, including real scheduler trigger after a clean WebDriver build.
