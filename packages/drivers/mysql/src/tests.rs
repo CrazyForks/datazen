@@ -24,6 +24,17 @@ fn quote_identifier_escapes_backticks() {
 }
 
 #[test]
+fn parses_named_and_unnamed_checks_from_show_create() {
+    let checks = MysqlDriver::parse_check_from_create_table(
+        "CREATE TABLE `users` (\n  `age` int,\n  CONSTRAINT `users_age_check` CHECK ((`age` >= 0)),\n  CHECK (`age` < 150)\n)",
+    );
+    assert_eq!(checks.len(), 2);
+    assert_eq!(checks[0].name, "check_1");
+    assert_eq!(checks[1].name, "users_age_check");
+    assert_eq!(checks[1].expression, "(`age` >= 0)");
+}
+
+#[test]
 fn build_use_database_sql_quotes_and_trims() {
     assert_eq!(
         MysqlDriver::build_use_database_sql("mydb").unwrap(),

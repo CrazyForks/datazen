@@ -763,6 +763,11 @@ export interface ChangedColumnDiff {
   changes: string[];
 }
 
+export interface CheckConstraintDiffEntry {
+  name: string;
+  expression: string;
+}
+
 export interface TableSchemaDiff {
   table: string;
   /** The selected table exists only on the target and is planned as DROP TABLE. */
@@ -776,6 +781,8 @@ export interface TableSchemaDiff {
   /** Alias of extraOnTarget (legacy). */
   removed: ColumnDiffEntry[];
   changed: ChangedColumnDiff[];
+  missingCheckConstraints?: CheckConstraintDiffEntry[];
+  extraCheckConstraints?: CheckConstraintDiffEntry[];
   sourceDdl?: string;
   targetDdl?: string;
 }

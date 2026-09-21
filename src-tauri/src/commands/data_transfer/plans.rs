@@ -369,6 +369,7 @@ mod tests {
                     primary_keys: vec![],
                     indexes: vec![],
                     foreign_keys: vec![],
+                    check_constraints: vec![],
                 }),
             ),
         ])
@@ -394,6 +395,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let mut schemas: HashMap<String, TableSchema> = HashMap::new();
         schemas.insert("users".into(), users_schema.clone());
@@ -427,6 +429,7 @@ mod tests {
                     primary_keys: vec![],
                     indexes: vec![],
                     foreign_keys: vec![],
+                    check_constraints: vec![],
                 }
             },
         );

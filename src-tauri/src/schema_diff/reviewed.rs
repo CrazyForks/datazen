@@ -213,6 +213,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         assert!(validate_snapshot("t", &old, &old).is_ok());
         let mut current = old.clone();
@@ -245,6 +246,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let disappeared = TableSchema {
             table_name: "archive".into(),
@@ -252,6 +254,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
 
         assert!(validate_snapshot("archive", &reviewed, &reviewed).is_ok());

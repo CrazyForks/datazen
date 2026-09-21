@@ -1,7 +1,7 @@
 //! Dialect-neutral schema migration contracts exposed by the driver API.
 
 use crate::schema_objects::ObjectKind;
-use crate::{ColumnSchema, ForeignKeyInfo, IndexInfo};
+use crate::{CheckConstraint, ColumnSchema, ForeignKeyInfo, IndexInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationColumn {
@@ -101,6 +101,14 @@ pub enum MigrationOperation {
         table: String,
         foreign_key: ForeignKeyInfo,
     },
+    AddCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
+    DropCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
     CreateView {
         view: MigrationView,
     },
@@ -150,6 +158,27 @@ pub fn validate_view_definition(definition: &str) -> Result<(), String> {
         .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
     {
         return Err("view definition contains control characters".into());
+    }
+    Ok(())
+}
+
+/// Validate a CHECK predicate before it is embedded into a reviewed DDL
+/// statement.  The predicate is intentionally kept as SQL because only the
+/// target driver can render its dialect, but it must remain one expression
+/// and cannot terminate the reviewed statement.
+pub fn validate_check_expression(expression: &str) -> Result<(), String> {
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return Err("check constraint expression must not be empty".into());
+    }
+    if trimmed.contains(';') {
+        return Err("check constraint expression must not contain semicolons".into());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
+    {
+        return Err("check constraint expression contains control characters".into());
     }
     Ok(())
 }

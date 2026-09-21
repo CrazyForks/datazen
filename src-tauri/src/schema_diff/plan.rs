@@ -200,6 +200,21 @@ fn plan_single_table(
         for op in &mut operations {
             strip_dialect_specific_defaults(op, warnings);
         }
+        operations.retain(|op| {
+            if matches!(
+                op,
+                super::operations::MigrationOperation::AddCheckConstraint { .. }
+                    | super::operations::MigrationOperation::DropCheckConstraint { .. }
+            ) {
+                requirements.push(PlanRequirement::Unsupported {
+                    operation: op.key(),
+                    reason: "CHECK expressions are dialect-specific; compare and migrate them on the same database family".into(),
+                });
+                false
+            } else {
+                true
+            }
+        });
     }
 
     let mut destructive_narrowing = HashSet::new();

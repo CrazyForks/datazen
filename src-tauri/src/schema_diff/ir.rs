@@ -160,6 +160,25 @@ pub fn diff_to_operations(
         }
     }
 
+    for constraint in &diff.missing_check_constraints {
+        ops.push(MigrationOperation::AddCheckConstraint {
+            table: table.into(),
+            constraint: crate::db::CheckConstraint {
+                name: constraint.name.clone(),
+                expression: constraint.expression.clone(),
+            },
+        });
+    }
+    for constraint in &diff.extra_check_constraints {
+        ops.push(MigrationOperation::DropCheckConstraint {
+            table: table.into(),
+            constraint: crate::db::CheckConstraint {
+                name: constraint.name.clone(),
+                expression: constraint.expression.clone(),
+            },
+        });
+    }
+
     ops
 }
 
@@ -202,6 +221,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 
@@ -375,6 +395,31 @@ mod tests {
             op,
             MigrationOperation::AddForeignKey { foreign_key, .. }
                 if foreign_key.on_delete == "CASCADE"
+        )));
+    }
+
+    #[test]
+    fn check_constraint_add_and_change_generate_reviewable_operations() {
+        let mut source = schema(vec![col("id")]);
+        source.check_constraints.push(crate::db::CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "age >= 0".into(),
+        });
+        let mut target = schema(vec![col("id")]);
+        target.check_constraints.push(crate::db::CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "age > 0".into(),
+        });
+        let ops = diff_to_operations("users", &source, &target, None);
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::DropCheckConstraint { constraint, .. }
+                if constraint.expression == "age > 0"
+        )));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::AddCheckConstraint { constraint, .. }
+                if constraint.expression == "age >= 0"
         )));
     }
 }

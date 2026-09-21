@@ -221,6 +221,7 @@ async fn fetch_target_table_schema(
                     primary_keys: Vec::new(),
                     indexes: Vec::new(),
                     foreign_keys: Vec::new(),
+                    check_constraints: Vec::new(),
                 })
             } else {
                 Err(CommandError::Driver(e))

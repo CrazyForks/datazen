@@ -60,7 +60,13 @@ function tableDiffHasChanges(diff: TableSchemaDiff): boolean {
   if (diff.targetOnly) return true;
   const missing = diff.missingOnTarget ?? diff.added;
   const extra = diff.extraOnTarget ?? diff.removed;
-  return missing.length > 0 || extra.length > 0 || diff.changed.length > 0;
+  return (
+    missing.length > 0 ||
+    extra.length > 0 ||
+    diff.changed.length > 0 ||
+    (diff.missingCheckConstraints?.length ?? 0) > 0 ||
+    (diff.extraCheckConstraints?.length ?? 0) > 0
+  );
 }
 
 export function SchemaDiffWindow() {

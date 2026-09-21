@@ -45,10 +45,10 @@ pub use schema_catalog_commands::{
     try_execute_schema_catalog_command,
 };
 pub use schema_migration::{
-    format_type, migration_object_kind, parse_type_parts, validate_migration_identifier,
-    validate_view_definition, MigrationCapabilities, MigrationColumn, MigrationOperation,
-    MigrationRenderer, MigrationRequirement, MigrationRisk, MigrationStatement, MigrationView,
-    TypeNormalizer,
+    format_type, migration_object_kind, parse_type_parts, validate_check_expression,
+    validate_migration_identifier, validate_view_definition, MigrationCapabilities,
+    MigrationColumn, MigrationOperation, MigrationRenderer, MigrationRequirement, MigrationRisk,
+    MigrationStatement, MigrationView, TypeNormalizer,
 };
 pub use schema_object_commands::{
     execute_schema_object_command, extract_object_ddl_checked, is_schema_object_command,

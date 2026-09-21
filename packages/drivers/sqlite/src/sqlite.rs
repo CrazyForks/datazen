@@ -14,6 +14,90 @@ pub struct SqliteDriver {
     pools: RwLock<HashMap<String, SqlitePool>>,
 }
 
+fn parse_sqlite_check_constraints(create_sql: &str) -> Vec<CheckConstraint> {
+    let bytes = create_sql.as_bytes();
+    let mut checks = Vec::new();
+    let mut index = 0usize;
+    let mut quote = None;
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        if let Some(active) = quote {
+            if ch == active {
+                if index + 1 < bytes.len() && bytes[index + 1] as char == active {
+                    index += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(ch, '\'' | '"' | '`') {
+            quote = Some(ch);
+            index += 1;
+            continue;
+        }
+        let is_check = index + 5 <= bytes.len()
+            && bytes[index..index + 5].eq_ignore_ascii_case(b"CHECK")
+            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
+            && (index + 5 == bytes.len() || !bytes[index + 5].is_ascii_alphanumeric());
+        if !is_check {
+            index += 1;
+            continue;
+        }
+        let mut open = index + 5;
+        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+            open += 1;
+        }
+        if open >= bytes.len() || bytes[open] != b'(' {
+            index += 5;
+            continue;
+        }
+        let mut cursor = open;
+        let mut depth = 0usize;
+        let mut inner_quote = None;
+        let mut close = None;
+        while cursor < bytes.len() {
+            let current = bytes[cursor] as char;
+            if let Some(active) = inner_quote {
+                if current == active {
+                    if cursor + 1 < bytes.len() && bytes[cursor + 1] as char == active {
+                        cursor += 2;
+                        continue;
+                    }
+                    inner_quote = None;
+                }
+                cursor += 1;
+                continue;
+            }
+            if matches!(current, '\'' | '"' | '`') {
+                inner_quote = Some(current);
+            } else if current == '(' {
+                depth += 1;
+            } else if current == ')' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(cursor);
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        let Some(close) = close else {
+            break;
+        };
+        let expression = create_sql[open + 1..close].trim();
+        if !expression.is_empty() {
+            checks.push(CheckConstraint {
+                name: format!("check_{}", checks.len()),
+                expression: expression.to_string(),
+            });
+        }
+        index = close + 1;
+    }
+    checks
+}
+
 impl SqliteDriver {
     pub fn new() -> Self {
         Self {
@@ -400,12 +484,24 @@ impl DatabaseDriver for SqliteDriver {
 
         let foreign_keys: Vec<ForeignKeyInfo> = fk_map.into_values().collect();
 
+        let sqlite_table_name = table.rsplit('.').next().unwrap_or(table);
+        let create_sql =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .bind(sqlite_table_name)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+                .and_then(|row| row.try_get::<Option<String>, _>("sql").ok().flatten())
+                .unwrap_or_default();
+        let check_constraints = parse_sqlite_check_constraints(&create_sql);
+
         Ok(TableSchema {
             table_name: table.to_string(),
             columns,
             primary_keys,
             indexes,
             foreign_keys,
+            check_constraints,
         })
     }
 
@@ -817,6 +913,17 @@ mod tests {
         let (sql, cap) = apply_sqlite_select_limit("WITH x AS (SELECT 1) SELECT * FROM x", Some(2));
         assert_eq!(sql, "WITH x AS (SELECT 1) SELECT * FROM x LIMIT 3");
         assert_eq!(cap, Some(2));
+    }
+
+    #[test]
+    fn parses_nested_sqlite_check_constraints_without_strings() {
+        let checks = parse_sqlite_check_constraints(
+            "CREATE TABLE users (age INTEGER CHECK (age >= 0), note TEXT CHECK (length(note) > 0), marker TEXT DEFAULT 'CHECK (ignored)')",
+        );
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].name, "check_0");
+        assert_eq!(checks[0].expression, "age >= 0");
+        assert_eq!(checks[1].expression, "length(note) > 0");
     }
 
     fn collect_events() -> (

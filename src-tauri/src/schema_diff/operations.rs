@@ -1,7 +1,7 @@
 //! Dialect-neutral schema migration operations.
 
 use super::types::{ColumnSnapshot, StatementRisk};
-use crate::db::{ForeignKeyInfo, IndexInfo};
+use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
 use datazen_driver_api::MigrationView;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +79,14 @@ pub enum MigrationOperation {
         table: String,
         foreign_key: ForeignKeyInfo,
     },
+    AddCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
+    DropCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
     CreateView {
         view: MigrationView,
     },
@@ -99,6 +107,7 @@ impl MigrationOperation {
             | Self::DropPrimaryKey { .. }
             | Self::DropIndex { .. }
             | Self::DropForeignKey { .. }
+            | Self::DropCheckConstraint { .. }
             | Self::DropView { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
@@ -130,6 +139,10 @@ impl MigrationOperation {
             Self::AddForeignKey { table, foreign_key }
             | Self::DropForeignKey { table, foreign_key } => {
                 format!("foreign-key:{table}.{}", foreign_key.name)
+            }
+            Self::AddCheckConstraint { table, constraint }
+            | Self::DropCheckConstraint { table, constraint } => {
+                format!("check:{table}.{}", constraint.name)
             }
             Self::CreateView { view }
             | Self::ReplaceView { desired: view, .. }
@@ -311,6 +324,14 @@ impl MigrationOperation {
             Self::DropForeignKey { table, foreign_key } => O::DropForeignKey {
                 table: table.clone(),
                 foreign_key: foreign_key.clone(),
+            },
+            Self::AddCheckConstraint { table, constraint } => O::AddCheckConstraint {
+                table: table.clone(),
+                constraint: constraint.clone(),
+            },
+            Self::DropCheckConstraint { table, constraint } => O::DropCheckConstraint {
+                table: table.clone(),
+                constraint: constraint.clone(),
             },
             Self::CreateView { view } => O::CreateView { view: view.clone() },
             Self::ReplaceView { current, desired } => O::ReplaceView {

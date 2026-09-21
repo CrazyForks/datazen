@@ -867,6 +867,7 @@ mod structure_defaults_tests {
                 primary_keys: vec![],
                 indexes: vec![],
                 foreign_keys: vec![],
+                check_constraints: vec![],
             })
         }
 
@@ -1096,6 +1097,7 @@ mod structure_defaults_tests {
                     primary_keys: vec![], // intentionally empty to test fallback
                     indexes: vec![],
                     foreign_keys: vec![],
+                    check_constraints: vec![],
                 })
             }
 

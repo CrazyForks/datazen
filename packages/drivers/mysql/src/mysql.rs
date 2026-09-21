@@ -232,6 +232,69 @@ impl MysqlDriver {
         fks
     }
 
+    /// Parse CHECK clauses from SHOW CREATE TABLE.  The expression scanner
+    /// tracks nested parentheses and quoted strings so function calls and
+    /// string literals cannot truncate the predicate.
+    fn parse_check_from_create_table(create_sql: &str) -> Vec<CheckConstraint> {
+        let mut checks = Vec::new();
+        for line in create_sql.lines() {
+            let Some(check_pos) = line.find("CHECK") else {
+                continue;
+            };
+            let after = &line[check_pos + "CHECK".len()..];
+            let Some(open) = after.find('(') else {
+                continue;
+            };
+            let bytes = after.as_bytes();
+            let mut depth = 0usize;
+            let mut quote = None;
+            let mut close = None;
+            for (index, byte) in bytes.iter().enumerate().skip(open) {
+                let ch = *byte as char;
+                if let Some(active) = quote {
+                    if ch == active && (index == 0 || bytes[index - 1] != b'\\') {
+                        quote = None;
+                    }
+                    continue;
+                }
+                if matches!(ch, '\'' | '"' | '`') {
+                    quote = Some(ch);
+                    continue;
+                }
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            close = Some(index);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else {
+                continue;
+            };
+            let expression = after[open + 1..close].trim();
+            if expression.is_empty() {
+                continue;
+            }
+            let name = Self::extract_backtick_after(&line[..check_pos], "CONSTRAINT");
+            let name = if name.is_empty() {
+                format!("check_{}", checks.len())
+            } else {
+                name
+            };
+            checks.push(CheckConstraint {
+                name,
+                expression: expression.to_string(),
+            });
+        }
+        checks.sort_by(|a, b| a.name.cmp(&b.name));
+        checks
+    }
+
     /// Extract the first backtick-quoted identifier after a keyword.
     fn extract_backtick_after(s: &str, keyword: &str) -> String {
         if let Some(pos) = s.find(keyword) {
@@ -679,6 +742,7 @@ impl DatabaseDriver for MysqlDriver {
                         primary_keys: Vec::new(),
                         indexes: Vec::new(),
                         foreign_keys: Vec::new(),
+                        check_constraints: Vec::new(),
                     });
                 }
                 return Err(DriverError::QueryFailed(err_msg));
@@ -781,8 +845,9 @@ impl DatabaseDriver for MysqlDriver {
         // ── foreign keys parsed from SHOW CREATE TABLE output ──
         let create_sql = decode_mysql_text_idx(&create_row, 1);
         let foreign_keys = Self::parse_fk_from_create_table(&create_sql);
+        let check_constraints = Self::parse_check_from_create_table(&create_sql);
 
-        tracing::info!(%table, cols = columns.len(), indexes = indexes.len(), fks = foreign_keys.len(),
+        tracing::info!(%table, cols = columns.len(), indexes = indexes.len(), fks = foreign_keys.len(), checks = check_constraints.len(),
             total_ms = t0.elapsed().as_millis() as u64, "mysql get_table_schema: complete");
 
         Ok(TableSchema {
@@ -791,6 +856,7 @@ impl DatabaseDriver for MysqlDriver {
             primary_keys,
             indexes,
             foreign_keys,
+            check_constraints,
         })
     }
 

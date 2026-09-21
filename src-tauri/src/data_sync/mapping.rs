@@ -195,6 +195,7 @@ mod tests {
             primary_keys: pks,
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 

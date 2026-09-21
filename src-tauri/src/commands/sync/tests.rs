@@ -41,6 +41,7 @@ fn table(name: &str, columns: Vec<ColumnSchema>, primary_keys: Vec<String>) -> T
         primary_keys,
         indexes: vec![],
         foreign_keys: vec![],
+        check_constraints: vec![],
     }
 }
 
@@ -247,6 +248,7 @@ fn raw_diff_still_flags_native_string_mismatch() {
         primary_keys: vec![],
         indexes: vec![],
         foreign_keys: vec![],
+        check_constraints: vec![],
     };
     let tgt = TableSchema {
         table_name: "t".into(),
@@ -262,6 +264,7 @@ fn raw_diff_still_flags_native_string_mismatch() {
         primary_keys: vec![],
         indexes: vec![],
         foreign_keys: vec![],
+        check_constraints: vec![],
     };
 
     let diff = diff_table_schemas("t", &src, &tgt, None);
