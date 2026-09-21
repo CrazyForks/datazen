@@ -1,4 +1,6 @@
-use super::{ActiveSession, ConnectionError, ConnectionManager};
+#[cfg(test)]
+use super::ActiveSession;
+use super::{ConnectionError, ConnectionManager};
 use crate::db::ConnectionConfig;
 use crate::tunnel::Tunnel;
 use std::sync::Arc;
@@ -79,7 +81,21 @@ impl ConnectionManager {
                 .collect::<Vec<_>>()
         };
         for id in to_remove {
-            let _ = self.disconnect(&id).await;
+            // Evict the live session but keep its `session_owner_map` entry:
+            // that entry is what lets `reconnect()` rebuild the session under
+            // the original `db_session_id`. Routing through `disconnect()`
+            // here would clear it and permanently lose the auto-reconnect path.
+            let active = self.connections.write().await.remove(&id);
+            if let Some(active) = active {
+                tracing::info!(
+                    db_session_id = %id,
+                    name = %active.config.name,
+                    "Evicting idle db session (session_owner_map entry kept for auto-reconnect)"
+                );
+                if let Some(driver) = self.registry.get(&active.config.database_type).await {
+                    let _ = driver.disconnect(active.handle).await;
+                }
+            }
         }
     }
 

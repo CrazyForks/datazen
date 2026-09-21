@@ -154,22 +154,24 @@ describe('隧道连接完整用户旅程 (TUNNEL-CONNECTION-JOURNEY)', () => {
     await expect(await $('[data-testid="new-conn-http-proxy-fields"]')).toBeDisplayed();
   });
 
-  (HTTP_PROXY_HOST
-    ? it
-    : it.skip)('可选：经 HTTP CONNECT 代理测试连接（需 E2E_HTTP_PROXY_*）', async () => {
-    await openNewConnectionDialogFromUi();
-    await fillPostgresConnectionForm(`E2E Tunnel HTTP live ${Date.now().toString(36)}`, TUNNEL_DB);
-    await selectTunnelKind('newConn.tunnelHttpProxy');
-    await fillHttpProxyFromEnv();
-    await captureJourneyStep('tunnel-http-proxy-filled');
-    await clickNewConnectionTest();
-    await waitForConnectionTestResult('success', 60000);
-    await captureJourneyStep('tunnel-http-proxy-test-ok');
-  });
+  (HTTP_PROXY_HOST ? it : it.skip)(
+    '可选：经 HTTP CONNECT 代理测试连接（需 E2E_HTTP_PROXY_*）',
+    async () => {
+      await openNewConnectionDialogFromUi();
+      await fillPostgresConnectionForm(
+        `E2E Tunnel HTTP live ${Date.now().toString(36)}`,
+        TUNNEL_DB,
+      );
+      await selectTunnelKind('newConn.tunnelHttpProxy');
+      await fillHttpProxyFromEnv();
+      await captureJourneyStep('tunnel-http-proxy-filled');
+      await clickNewConnectionTest();
+      await waitForConnectionTestResult('success', 60000);
+      await captureJourneyStep('tunnel-http-proxy-test-ok');
+    },
+  );
 
-  (WS_URL
-    ? it
-    : it.skip)('可选：经 WebSocket 隧道测试连接（需 E2E_WS_TUNNEL_*）', async () => {
+  (WS_URL ? it : it.skip)('可选：经 WebSocket 隧道测试连接（需 E2E_WS_TUNNEL_*）', async () => {
     await openNewConnectionDialogFromUi();
     await fillPostgresConnectionForm(`E2E Tunnel WS live ${Date.now().toString(36)}`, TUNNEL_DB);
     await selectTunnelKind('newConn.tunnelWebSocket');
@@ -180,9 +182,7 @@ describe('隧道连接完整用户旅程 (TUNNEL-CONNECTION-JOURNEY)', () => {
     await captureJourneyStep('tunnel-ws-test-ok');
   });
 
-  (SSH_HOST
-    ? it
-    : it.skip)('可选：经 SSH 隧道测试连接（需 E2E_SSH_*）', async () => {
+  (SSH_HOST ? it : it.skip)('可选：经 SSH 隧道测试连接（需 E2E_SSH_*）', async () => {
     await openNewConnectionDialogFromUi();
     await fillPostgresConnectionForm(`E2E Tunnel SSH live ${Date.now().toString(36)}`, TUNNEL_DB);
     await selectTunnelKind('newConn.tunnelSsh');

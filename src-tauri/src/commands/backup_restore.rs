@@ -46,7 +46,7 @@ async fn drop_existing_restore_targets(
     app: Option<&tauri::AppHandle>,
 ) -> Result<(), CommandError> {
     let tables = driver
-        .get_tables(handle, database)
+        .get_tables(handle, database, None)
         .await
         .cmd_err("restore_database")?;
     if tables.is_empty() {
@@ -78,7 +78,10 @@ async fn drop_existing_restore_targets(
         },
     );
 
-    let _ = driver.execute(handle, "SET FOREIGN_KEY_CHECKS=0").await;
+    let target = SqlTarget::new(Some(database), None);
+    let _ = driver
+        .execute_at(handle, "SET FOREIGN_KEY_CHECKS=0", target)
+        .await;
     for (i, table) in ordered.iter().enumerate() {
         let ident = qualify_restore_ident(driver.as_ref(), table);
         emit_restore_progress(
@@ -97,10 +100,12 @@ async fn drop_existing_restore_targets(
             format!("DROP VIEW IF EXISTS {ident}"),
             format!("DROP TABLE IF EXISTS {ident}"),
         ] {
-            let _ = driver.execute(handle, &sql).await;
+            let _ = driver.execute_at(handle, &sql, target).await;
         }
     }
-    let _ = driver.execute(handle, "SET FOREIGN_KEY_CHECKS=1").await;
+    let _ = driver
+        .execute_at(handle, "SET FOREIGN_KEY_CHECKS=1", target)
+        .await;
     Ok(())
 }
 

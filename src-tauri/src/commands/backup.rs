@@ -2,7 +2,7 @@ use super::error::{resolve_override_path, CmdExt, CommandError, OVERRIDE_DISABLE
 use super::AppState;
 use crate::db::{
     BackupDumpOptions, BackupRestoreOptions, ConnectionHandle, DatabaseDriver, DriverError,
-    DumpPhase, DumpProgress, RestoreSession, TableInfo, TableType, Utf8ChunkDecoder,
+    DumpPhase, DumpProgress, RestoreSession, SqlTarget, TableInfo, TableType, Utf8ChunkDecoder,
 };
 use std::io::Read;
 use std::path::PathBuf;

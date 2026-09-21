@@ -26,9 +26,7 @@ export function ConnectionAdvancedSettings({
   const { t } = useI18n();
   const isWindow = variant === 'window';
   const DriverAdvanced = getDriverConnectionAdvanced(form.formVariant);
-  const [showTunnel, setShowTunnel] = useState(
-    form.tunnelKind !== 'none' || form.sshEnabled,
-  );
+  const [showTunnel, setShowTunnel] = useState(form.tunnelKind !== 'none' || form.sshEnabled);
 
   useEffect(() => {
     if (form.tunnelKind !== 'none' || form.sshEnabled) setShowTunnel(true);

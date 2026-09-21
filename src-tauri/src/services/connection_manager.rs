@@ -21,6 +21,10 @@ pub(super) struct ActiveSession {
     #[allow(dead_code)]
     pub(super) created_at: Instant,
     pub(super) last_used: Instant,
+    /// Keeps the SSH / HTTP-proxy / WebSocket tunnel alive for as long as the
+    /// session is open: the handle owns the forwarder, so dropping the session
+    /// tears the tunnel down. Never read directly — that is the point.
+    #[allow(dead_code)]
     pub(super) tunnel: Option<Tunnel>,
 }
 
@@ -71,3 +75,7 @@ pub enum ConnectionError {
     #[error("Internal error: {0}")]
     Internal(String),
 }
+
+#[cfg(test)]
+#[path = "connection_manager/tests.rs"]
+mod tests;

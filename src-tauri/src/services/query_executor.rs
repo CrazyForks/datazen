@@ -2,7 +2,7 @@
 
 use crate::cache::SchemaCache;
 use crate::db::{
-    ColumnSchema, ConnectionHandle, DatabaseDriver, DriverError, TableDataResult, Value,
+    ColumnSchema, ConnectionHandle, DatabaseDriver, DriverError, SqlTarget, TableDataResult, Value,
 };
 use std::sync::Arc;
 
@@ -61,8 +61,12 @@ impl QueryExecutor {
         driver: &Arc<dyn DatabaseDriver>,
         handle: &ConnectionHandle,
         sql: &str,
+        database: Option<&str>,
+        schema: Option<&str>,
     ) -> Result<crate::db::QueryResult, DriverError> {
-        driver.query(handle, sql).await
+        driver
+            .query_at(handle, sql, SqlTarget::new(database, schema))
+            .await
     }
 
     pub async fn get_table_data(
@@ -71,6 +75,7 @@ impl QueryExecutor {
         handle: &ConnectionHandle,
         db_session_id: &str,
         database: &str,
+        schema: Option<&str>,
         table: &str,
         page: u32,
         page_size: u32,
@@ -81,7 +86,7 @@ impl QueryExecutor {
     ) -> Result<TableDataResult, DriverError> {
         let cached = self
             .schema_cache
-            .get_columns(db_session_id, database, table, driver, handle)
+            .get_columns(db_session_id, database, schema, table, driver, handle)
             .await?;
 
         let qi = |name: &str| driver.quote_ident(name);
@@ -100,9 +105,11 @@ impl QueryExecutor {
             filter_logic,
         );
 
+        let target = SqlTarget::new(Some(database), schema);
+
         if skip_count {
             tracing::debug!(%table, "query_executor: skip_count, SELECT only");
-            let result = driver.query(handle, &data_sql).await?;
+            let result = driver.query_at(handle, &data_sql, target).await?;
             return Ok(TableDataResult {
                 columns: cached.columns,
                 rows: result.rows,
@@ -128,8 +135,8 @@ impl QueryExecutor {
         );
 
         let (count_res, data_res) = tokio::try_join!(
-            driver.query(handle, &count_sql),
-            driver.query(handle, &data_sql),
+            driver.query_at(handle, &count_sql, target),
+            driver.query_at(handle, &data_sql, target),
         )?;
 
         let total_rows = count_res
@@ -724,7 +731,7 @@ mod tests {
 
         let result = executor
             .get_table_data(
-                &driver, &handle, "conn1", "db1", "users", 0, 50, None, None, false, None,
+                &driver, &handle, "conn1", "db1", None, "users", 0, 50, None, None, false, None,
             )
             .await
             .unwrap();

@@ -149,19 +149,6 @@ impl ConnectionManager {
             .ok_or_else(|| ConnectionError::DbSessionNotFound(db_session_id.to_string()))
     }
 
-    pub async fn set_active_database(
-        &self,
-        db_session_id: &str,
-        database: &str,
-    ) -> Result<(), ConnectionError> {
-        let mut connections = self.connections.write().await;
-        let active = connections
-            .get_mut(db_session_id)
-            .ok_or_else(|| ConnectionError::DbSessionNotFound(db_session_id.to_string()))?;
-        active.config.database = Some(database.to_string());
-        Ok(())
-    }
-
     pub async fn list_sessions(&self) -> Vec<String> {
         self.connections.read().await.keys().cloned().collect()
     }

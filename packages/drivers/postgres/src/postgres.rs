@@ -9,6 +9,7 @@ use datazen_driver_api::*;
 use sqlx::pool::PoolConnection;
 use sqlx::{PgPool, Postgres};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 use tokio::sync::{Mutex, RwLock};
 
 pub struct PostgresDriver {
@@ -17,6 +18,13 @@ pub struct PostgresDriver {
     pub(crate) connect_configs: RwLock<HashMap<String, ConnectionConfig>>,
     /// Database the handle's pool is currently connected to, keyed by pool_id.
     pub(crate) active_databases: RwLock<HashMap<String, String>>,
+    /// Pools for databases **other than** the handle's active one, keyed by
+    /// `(pool_id, database)`. PostgreSQL cannot reference another catalog from a
+    /// query, so reading a foreign database means selecting the pool connected
+    /// to it — never re-pointing the handle's session (BUG-003).
+    pub(crate) database_pools: RwLock<HashMap<(String, String), DatabasePoolEntry>>,
+    /// Monotonic clock backing the LRU eviction of [`Self::database_pools`].
+    pub(crate) database_pool_clock: AtomicU64,
     /// Open transactions: connection held for the lifetime of BEGIN…COMMIT/ROLLBACK, keyed by handle.id.
     pub(crate) transactions: Mutex<HashMap<String, PoolConnection<Postgres>>>,
     /// Exact execution target registry.
@@ -26,12 +34,20 @@ pub struct PostgresDriver {
     pub(crate) control_pools: RwLock<HashMap<String, PgPool>>,
 }
 
+/// A cached pool for one non-active database, plus its LRU stamp.
+pub(crate) struct DatabasePoolEntry {
+    pub(crate) pool: PgPool,
+    pub(crate) last_used: u64,
+}
+
 impl PostgresDriver {
     pub fn new() -> Self {
         Self {
             pools: RwLock::new(HashMap::new()),
             connect_configs: RwLock::new(HashMap::new()),
             active_databases: RwLock::new(HashMap::new()),
+            database_pools: RwLock::new(HashMap::new()),
+            database_pool_clock: AtomicU64::new(0),
             transactions: Mutex::new(HashMap::new()),
             query_executions: Mutex::new(HashMap::new()),
             control_pools: RwLock::new(HashMap::new()),
@@ -80,8 +96,9 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     /// F7: qualify unqualified table references with the target schema
-    /// (`"schema"."t"`). The database dimension is not inlined — PG resolves
-    /// it through the host pool switch (`ensure_session_database`); parse
+    /// (`"schema"."t"`). The database dimension is **not** inlined — PG cannot
+    /// reference another database in one statement — so the `*_at` methods
+    /// below serve it by routing to that database's pool instead. Parse
     /// failures pass SQL through unchanged. See `sql_target::qualify_sql`.
     fn qualify_sql_target(
         &self,
@@ -90,6 +107,55 @@ impl DatabaseDriver for PostgresDriver {
         schema: Option<&str>,
     ) -> Option<String> {
         Some(crate::sql_target::qualify_sql(sql, database, schema))
+    }
+
+    async fn query_at(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        target: SqlTarget<'_>,
+    ) -> Result<QueryResult, DriverError> {
+        Self::query_at_impl(self, handle, sql, target).await
+    }
+
+    async fn query_multi_at(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        limit: Option<u32>,
+        target: SqlTarget<'_>,
+    ) -> Result<MultiQueryResult, DriverError> {
+        Self::query_multi_at_impl(self, handle, sql, limit, target).await
+    }
+
+    async fn execute_at(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        target: SqlTarget<'_>,
+    ) -> Result<u64, DriverError> {
+        Self::execute_at_impl(self, handle, sql, target).await
+    }
+
+    async fn query_with_params_at(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+        target: SqlTarget<'_>,
+    ) -> Result<QueryResult, DriverError> {
+        Self::query_with_params_at_impl(self, handle, sql, params, target).await
+    }
+
+    async fn query_stream_at(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        limit: Option<u32>,
+        target: SqlTarget<'_>,
+        on_event: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        Self::query_stream_at_impl(self, handle, sql, limit, target, on_event).await
     }
 
     async fn test_connection(&self, config: &ConnectionConfig) -> Result<ServerInfo, DriverError> {
@@ -108,36 +174,66 @@ impl DatabaseDriver for PostgresDriver {
         Self::get_databases_impl(self, handle).await
     }
 
+    /// PostgreSQL addresses relations as `schema.table`, so an explicit schema
+    /// is mandatory whenever a single table is resolved.
+    fn has_schema_level(&self) -> bool {
+        true
+    }
+
+    /// PostgreSQL resolves unqualified names in the first schema of
+    /// `search_path`, which defaults to `public`.
+    fn default_schema(&self) -> Option<&'static str> {
+        Some("public")
+    }
+
+    async fn close_database(
+        &self,
+        handle: &ConnectionHandle,
+        database: &str,
+    ) -> Result<bool, DriverError> {
+        Self::close_database_pool(self, handle, database).await
+    }
+
+    async fn open_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
+        Self::open_databases_impl(self, handle).await
+    }
+
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,
         database: &str,
+        schema: Option<&str>,
     ) -> Result<Vec<TableInfo>, DriverError> {
-        Self::get_tables_impl(self, handle, database).await
+        Self::get_tables_impl(self, handle, database, schema).await
     }
 
     async fn get_columns(
         &self,
         handle: &ConnectionHandle,
         table: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<(Vec<ColumnSchema>, Vec<String>), DriverError> {
-        Self::get_columns_impl(self, handle, table).await
+        Self::get_columns_impl(self, handle, table, database, schema).await
     }
 
     async fn get_all_columns(
         &self,
         handle: &ConnectionHandle,
         database: &str,
+        schema: Option<&str>,
     ) -> Result<HashMap<String, (Vec<ColumnSchema>, Vec<String>)>, DriverError> {
-        Self::get_all_columns_impl(self, handle, database).await
+        Self::get_all_columns_impl(self, handle, database, schema).await
     }
 
     async fn get_table_schema(
         &self,
         handle: &ConnectionHandle,
         table: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<TableSchema, DriverError> {
-        Self::get_table_schema_impl(self, handle, table).await
+        Self::get_table_schema_impl(self, handle, table, database, schema).await
     }
 
     async fn query(
@@ -257,14 +353,6 @@ impl DatabaseDriver for PostgresDriver {
         true
     }
 
-    async fn use_database(
-        &self,
-        handle: &ConnectionHandle,
-        database: &str,
-    ) -> Result<(), DriverError> {
-        Self::use_database_impl(self, handle, database).await
-    }
-
     async fn get_server_info(&self, handle: &ConnectionHandle) -> Result<ServerInfo, DriverError> {
         Self::get_server_info_impl(self, handle).await
     }
@@ -273,16 +361,20 @@ impl DatabaseDriver for PostgresDriver {
         &self,
         handle: &ConnectionHandle,
         table: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<String, DriverError> {
-        Self::dump_table_ddl_impl(self, handle, table).await
+        Self::dump_table_ddl_impl(self, handle, table, database, schema).await
     }
 
     async fn dump_view_ddl(
         &self,
         handle: &ConnectionHandle,
         view: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<String, DriverError> {
-        Self::dump_view_ddl_impl(self, handle, view).await
+        Self::dump_view_ddl_impl(self, handle, view, database, schema).await
     }
 
     async fn dump_routines(

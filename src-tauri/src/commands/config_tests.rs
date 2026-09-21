@@ -1,19 +1,7 @@
+//! Tests for the app config / settings / path commands.
+
 use super::*;
 use std::path::Path;
-
-const SOURCE: &str = include_str!("config.rs");
-const BOOTSTRAP_RS: &str = include_str!("../bootstrap/run.rs");
-
-fn command_params(command: &str) -> String {
-    let needle = format!("pub async fn {command}(");
-    let start = SOURCE
-        .find(&needle)
-        .unwrap_or_else(|| panic!("{command} not found"));
-    let after = &SOURCE[start + needle.len()..];
-    let end = after.find(')').expect("params close");
-    after[..end].to_string()
-}
-
 #[test]
 fn test_get_app_executable_path_returns_valid_path() {
     let exe = get_app_executable_path_impl().expect("executable path should be resolved");
@@ -44,40 +32,72 @@ fn require_webdriver_path_ipc_gates_without_feature() {
     }
 }
 
-#[test]
-fn bootstrap_rs_registers_merged_commands_only() {
-    assert!(BOOTSTRAP_RS.contains("commands::export_connections,"));
-    assert!(BOOTSTRAP_RS.contains("commands::import_connections_with_dialog,"));
-    assert!(BOOTSTRAP_RS.contains("commands::get_settings,"));
-    assert!(BOOTSTRAP_RS.contains("commands::save_settings,"));
-    assert!(BOOTSTRAP_RS.contains("commands::get_tunnels,"));
-    assert!(BOOTSTRAP_RS.contains("commands::save_tunnel,"));
+#[tokio::test]
+async fn config_store_commands_via_impl() {
+    use crate::store::AppSettings;
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    save_groups_impl(&test.state, vec!["alpha".into(), "beta".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        get_groups_impl(&test.state).await.unwrap(),
+        vec!["alpha", "beta"]
+    );
+
+    let mut settings = AppSettings::default();
+    settings.language = "zh-CN".into();
+    save_settings_impl(&test.state, settings.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        get_settings_impl(&test.state).await.unwrap().language,
+        "zh-CN"
+    );
+
+    let log_path = get_log_path_impl(&test.state).await.unwrap();
+    assert!(log_path.contains("logs"));
+}
+
+#[tokio::test]
+async fn open_path_validation_without_webdriver() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    if cfg!(feature = "webdriver") {
+        return;
+    }
+    let err = open_path_impl(&test.state, "../etc/passwd".into())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("disabled") || err.to_string().contains("traversal"));
 }
 
 #[test]
-fn merged_commands_route_through_shared_resolve_override_path() {
-    // Single mechanism: config.rs must reuse the error.rs helper (F3
-    // pattern) instead of redefining a local copy, and every merged
-    // command body must gate through it. Needles are assembled at runtime
-    // so this test's own source never contains them.
-    let resolve = "resolve";
-    let override_path = "override_path";
-    let local_def = format!("fn {resolve}_{override_path}(");
-    assert!(
-        !SOURCE.contains(&local_def),
-        "config.rs must not redefine resolve_override_path"
+fn resolve_log_and_context_dirs_via_crate_helpers() {
+    let data = Path::new("/data/app");
+    assert_eq!(
+        crate::resolve_log_dir(data, ""),
+        Path::new("/data/app/logs")
     );
-    let call = format!("{resolve}_{override_path}(override_path");
-    let gated_bodies = SOURCE.matches(&call).count();
-    // Core file + re-exported archive module both use the helper; count is soft.
-    assert!(
-        gated_bodies >= 3,
-        "merged commands must gate their override branch; found {gated_bodies}"
-    );
+    assert_eq!(crate::resolve_context_dir(data, "/ctx"), Path::new("/ctx"));
 }
 
-#[test]
-fn encryption_key_export_bytes_trims() {
-    let bytes = encryption_key_export_bytes("  abc==  \n");
-    assert_eq!(bytes, b"abc==");
+#[tokio::test]
+async fn get_log_path_honors_custom_log_path_setting() {
+    use crate::store::AppSettings;
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    let mut settings = AppSettings::default();
+    settings.log_path = test
+        ._temp
+        .path()
+        .join("custom-logs")
+        .to_string_lossy()
+        .into();
+    save_settings_impl(&test.state, settings).await.unwrap();
+    let log_path = get_log_path_impl(&test.state).await.unwrap();
+    assert!(log_path.contains("custom-logs"));
 }

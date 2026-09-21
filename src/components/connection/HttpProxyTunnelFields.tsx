@@ -12,10 +12,7 @@ export function HttpProxyTunnelFields({ form }: HttpProxyTunnelFieldsProps) {
   const { t } = useI18n();
 
   return (
-    <div
-      className="grid grid-cols-1 gap-3 md:grid-cols-2"
-      data-testid="new-conn-http-proxy-fields"
-    >
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2" data-testid="new-conn-http-proxy-fields">
       <div>
         <Label required>{t('newConn.httpProxyHost')}</Label>
         <Input
