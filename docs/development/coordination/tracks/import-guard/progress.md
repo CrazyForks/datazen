@@ -61,7 +61,7 @@ Wave 1~3 已把驱动侧对宿主代码的引用清零（`grep ['"]\.\./.*src/` 
 
 ## 状态
 
-- [x] Coder 完成 → READY_FOR_TEST（commits `3e9014d91` 护栏+单测 / `b56058f46` 四处接入 / `d250e52de` 文档回扫，本报告末尾）
+- [x] Coder 完成 → READY_FOR_TEST（commits `3e9014d91` 护栏+单测 / `b56058f46` 四处接入 / `d250e52de` 文档回扫 / `1a64ca904` 本实施记录 / `43e042341` 回扫口径修正，本报告末尾）
 - [ ] Tester 复测 → TEST_DONE
 
 ## Coder 实施记录
@@ -87,7 +87,7 @@ Phase：**READY_FOR_TEST**。分支 `feature/import-guard`，worktree `/Users/wu
 ### 2. 三条规则的实现要点
 
 - **R1（阻断）**：扫描范围是整个驱动包 `packages/drivers/**`（`ui/**` + `locales/**` + `e2e/**`，比任务书的 `ui/**` 略宽，仍只覆盖驱动侧）。核心是**先做一遍词法扫描收集全部字符串/模板字面量**（`scanCode`），再对每个字面量做相对路径解析，解析结果落进 `src/` 即违规——因此 `import`/`export … from`/动态 `import()`/`vi.mock`/`vi.doMock`/`require`/任何辅助函数取道同一条判定路径，**不存在「只匹配 `from`」的漏网形态**。注释与被注释掉的 import 在扫描阶段被空白化（保留行号），字符串内容同样空白化（R2 因此不会把 prose 当调用）。驱动包内部自身的 `../src/…`（解析后仍是 `packages/drivers/<id>/src/…`）明确不报，见单测「leaves driver-internal ../src/ trees alone」。模板字面量含 `${}` 者视为计算值、跳过（静态不可判）。
-- **R2（阻断）**：范围 `packages/**` 且**豁免 `packages/ui/**`**（见「开放项 A」——任务书原文只豁免 `packages/ui/src/i18n.ts` 定义与导出行，但实测 `packages/ui/src/__tests__/i18n.test.tsx` 有 7 处合法调用是这套运行时的唯一测试手段，若不排除则基准即红、且无法在不违反「allowlist 只 2 条」的前提下放行；故把豁免表达为**规则扫描范围定义**而非 allowlist 条目，并在契约 2.4.2 写明理由）。判定式 `\bsetLocale\s*\(`，随后排除契约成员声明 `setLocale(locale: string): void;`、`function setLocale(` / `declare function setLocale(`；`import { setLocale } from '@datazen/ui'` 无括号故不算调用。
+- **R2（阻断）**：范围 `packages/**`，豁免是脚本内 `R2_FILE_CARVEOUTS` 的**两个精确文件**——`packages/ui/src/i18n.ts`（`setLocale` 唯一定义处，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（实测 7 处调用是该运行时的唯一行为测试手段，任务书原文只写「定义与自身导出行」，若不豁免该测试则基准即红、又不允许新增 allowlist 条目）。**不是 `packages/ui/**` 整包/目录级豁免**：`@datazen/ui` 其它组件出现 `setLocale(...)` 调用照样红，符合任务书「禁止目录级/通配级豁免」的口径；驱动/扩展/driver-sdk/wapp-sdk/extension-points 全在覆盖内。判定式 `\bsetLocale\s*\(`，随后排除契约成员声明 `setLocale(locale: string): void;`、`function setLocale(`；`import { setLocale } from '@datazen/ui'` 无括号故不算调用。实测 `packages/**` 中 `setLocale(` 仅命中上述两文件，其余 0。（本条措辞由 `43e042341` 修正为已落地实现，此前 `d250e52de` 的文档误写成整包豁免。）
 - **R3（advisory，暂不阻断）**：`src/**` 相对解析进 `packages/drivers/**` 即列出，跳过 codegen `src/extensions/generated{,-locales,-pro}.ts`。**现状实测非 0（4 处）**，按任务书要求未擅自加豁免、未搬迁代码，改为 `RULES.R3.blocking = false` 报告模式，交协调者裁定（见「开放项 B」）。
 - **allowlist**：脚本内显式常量，2 条 = `redisKeyWebContextMenu.test.tsx` 的 `WebContextMenuHost`(:5) 与 `useContextMenuStore`(:9)，字段为 `rule + file + specifier + reason + milestone`，精确三元组匹配，**无目录级/通配豁免**（单测用正则断言条目里不许出现 `*` / `?`）。**过期豁免检测**两种：条目文件不存在 / 文件存在但条目未被命中，均 exit 1（含真实 fs 路径的单测各一条）。
 
@@ -172,7 +172,7 @@ EXIT=0
 
 ### 7. 开放项（请协调者裁定）
 
-- **A. R2 对 `packages/ui/**` 的整包豁免**：任务书原文把 R2 豁免写成「除 `packages/ui/src/i18n.ts` 的定义与自身导出行」，但实测该包的 `packages/ui/src/__tests__/i18n.test.tsx` 有 7 处**必须存在**的 `setLocale` 调用（唯一 i18n 运行时的行为测试），按原文口径基准就会红 7 条，而又禁止新增 allowlist 条目。落地选择：把豁免表达为**规则扫描范围**（`packages/**` 减去 `setLocale` 定义方所在包 `packages/ui/**`），并在契约 2.4.2 明文写出理由；驱动/扩展/driver-sdk/wapp-sdk/extension-points 全在 R2 覆盖内（含它们的测试）。若裁定应收紧到「只豁免 `i18n.ts` 一个文件」，则需允许 `packages/ui` 测试目录进 allowlist（会突破「初始只允许 2 条」口径），请明示取舍。
+- **A. R2 对 `packages/ui/src/__tests__/i18n.test.tsx` 的文件级豁免**（原「整包 `packages/ui/**` 豁免」的表述已随 `43e042341` 收回，实现自始是文件级）：任务书原文把 R2 豁免写成「除 `packages/ui/src/i18n.ts` 的定义与自身导出行」，但实测该包单测 `packages/ui/src/__tests__/i18n.test.tsx` 有 7 处**必须存在**的 `setLocale` 调用（唯一 i18n 运行时的行为测试），按原文口径基准就会红 7 条，而又禁止新增 allowlist 条目。落地选择：把这**一个测试文件**与定义文件一起放进 `R2_FILE_CARVEOUTS`（精确文件清单，不是目录级豁免，也不占 allowlist 的 2 条额度）。若裁定连这一个文件也不该豁免，则需允许它进 `ALLOWLIST`（会突破「初始只允许 2 条」口径）或改写 `@datazen/ui` 的单测（属他轨交付面），请明示取舍。
 - **B. R3 现状 4 处、暂为 advisory**（未擅自豁免、未搬迁代码）：
   - `src/test/driverUiSetup.ts:25,26` —— 驱动 UI 测试装配（经 meta 入口挂词条，注释即声明这是有意设计）；
   - `src/locales/locales.test.ts:107` —— 动态 `import('../../packages/drivers/redis/locales')` 验证驱动自注册；
