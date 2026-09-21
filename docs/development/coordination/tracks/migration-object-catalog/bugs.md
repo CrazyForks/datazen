@@ -13,4 +13,3 @@
 - 实测结果：routine 两行均为 `obj:functions:lookup`；trigger 两行均为 `obj:triggers:audit_trigger`。测试结果为 2 failed / 97 passed（该文件与 ObjectBrowser、usePanelHandlers 三文件合计 99 tests）。
 - 影响范围：ConnectionNavigatorTree 的 TanStack virtualizer 复用重复 key，可能导致同名 overload/trigger 行复用、错误选中或错误操作目标；ObjectBrowser 自身的完整 identity key 已通过独立测试。
 - 建议修复方向：navigator object row key 至少纳入 kind、schema、signature、targetSchema、targetName，并保持稳定且可序列化。
-
