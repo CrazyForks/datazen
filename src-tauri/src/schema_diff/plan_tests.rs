@@ -75,6 +75,54 @@ fn missing_target_table_plans_create_not_add_column() {
 }
 
 #[test]
+fn target_only_table_is_blocked_without_destructive_approval() {
+    let src = schema(vec![]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let plan = build_schema_diff_plan(
+        &[("archive".into(), src, tgt)],
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: false,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("table:archive")));
+}
+
+#[test]
+fn approved_target_only_table_has_no_rollback_and_requires_review() {
+    let src = schema(vec![]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let plan = build_schema_diff_plan(
+        &[("audit.events".into(), src, tgt)],
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert_eq!(plan.statements.len(), 1);
+    let statement = &plan.statements[0];
+    assert_eq!(statement.sql, "DROP TABLE \"audit\".\"events\"");
+    assert_eq!(statement.risk, StatementRisk::Destructive);
+    assert!(statement.rollback_sql.is_none());
+    assert!(!plan.rollback_completeness.complete);
+    assert!(plan.rollback_completeness.missing[0].contains("DROP TABLE"));
+}
+
+#[test]
 fn postgres_add_varchar_column() {
     let src = schema(vec![col("id", "int"), col("email", "varchar(255)")]);
     let tgt = schema(vec![col("id", "int")]);

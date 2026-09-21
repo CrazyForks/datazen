@@ -32,6 +32,14 @@ pub enum MigrationOperation {
         columns: Vec<MigrationColumn>,
         primary_keys: Vec<String>,
     },
+    /// Remove a table without a cascade clause.
+    ///
+    /// A table drop is intentionally a first-class reviewed operation. The
+    /// host marks it destructive and does not synthesize rollback SQL because
+    /// recreating a table cannot restore its rows, indexes, or constraints.
+    DropTable {
+        table: String,
+    },
     AddColumn {
         table: String,
         column: MigrationColumn,

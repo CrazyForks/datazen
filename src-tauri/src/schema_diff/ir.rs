@@ -25,6 +25,15 @@ pub fn diff_to_operations(
                 .collect(),
             primary_keys: source.effective_primary_keys(),
         });
+    } else if source.columns.is_empty() && !target.columns.is_empty() {
+        // A missing desired table is represented explicitly so a target-only
+        // table cannot be reduced to a sequence of column drops. The renderer
+        // emits plain DROP TABLE without CASCADE; the deploy gate therefore
+        // requires destructive approval and never advertises DDL rollback.
+        ops.push(MigrationOperation::DropTable {
+            table: table.into(),
+        });
+        return ops;
     } else {
         for c in diff.missing_on_target {
             ops.push(MigrationOperation::AddColumn {
@@ -236,6 +245,44 @@ mod tests {
         assert!(!ops
             .iter()
             .any(|op| matches!(op, MigrationOperation::AddPrimaryKey { .. })));
+    }
+
+    #[test]
+    fn target_only_table_is_one_explicit_drop_table_operation() {
+        let source = schema(vec![]);
+        let mut target = schema(vec![col("id")]);
+        target.primary_keys = vec!["id".into()];
+        target.indexes.push(crate::db::IndexInfo {
+            name: "idx_id".into(),
+            columns: vec!["id".into()],
+            is_unique: false,
+            is_primary: false,
+            index_type: "btree".into(),
+        });
+
+        let ops = diff_to_operations("archive", &source, &target, None);
+
+        assert_eq!(
+            ops,
+            vec![MigrationOperation::DropTable {
+                table: "archive".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn drop_table_does_not_emit_cascade_or_reconstructible_column_drops() {
+        let source = schema(vec![]);
+        let target = schema(vec![col("id"), col("payload")]);
+
+        let ops = diff_to_operations("audit", &source, &target, None);
+
+        assert!(
+            matches!(ops.as_slice(), [MigrationOperation::DropTable { table }] if table == "audit")
+        );
+        assert!(!ops
+            .iter()
+            .any(|op| matches!(op, MigrationOperation::DropColumn { .. })));
     }
 
     #[test]

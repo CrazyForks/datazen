@@ -11,6 +11,13 @@ pub enum MigrationOperation {
         columns: Vec<ColumnSnapshot>,
         primary_keys: Vec<String>,
     },
+    /// Drop a target table as an explicit destructive operation. The deploy
+    /// gate requires destructive approval and can never claim complete
+    /// rollback because table data and dependent metadata are not recoverable
+    /// from DDL alone.
+    DropTable {
+        table: String,
+    },
     AddColumn {
         table: String,
         column: ColumnSnapshot,
@@ -87,7 +94,8 @@ pub enum MigrationOperation {
 impl MigrationOperation {
     pub fn risk(&self) -> StatementRisk {
         match self {
-            Self::DropColumn { .. }
+            Self::DropTable { .. }
+            | Self::DropColumn { .. }
             | Self::DropPrimaryKey { .. }
             | Self::DropIndex { .. }
             | Self::DropForeignKey { .. }
@@ -105,6 +113,7 @@ impl MigrationOperation {
     pub fn key(&self) -> String {
         match self {
             Self::CreateTable { table, .. }
+            | Self::DropTable { table }
             | Self::AddPrimaryKey { table, .. }
             | Self::DropPrimaryKey { table, .. } => format!("table:{table}"),
             Self::AddColumn { table, column } | Self::DropColumn { table, column } => {
@@ -152,6 +161,13 @@ mod tests {
     #[test]
     fn destructive_operations_are_marked_destructive() {
         assert_eq!(
+            MigrationOperation::DropTable {
+                table: "archive".into(),
+            }
+            .risk(),
+            StatementRisk::Destructive
+        );
+        assert_eq!(
             MigrationOperation::DropColumn {
                 table: "t".into(),
                 column: crate::schema_diff::types::ColumnSnapshot {
@@ -186,6 +202,13 @@ mod tests {
             to: Some("0".into()),
         };
         assert_eq!(op.key(), "column:t.status");
+        assert_eq!(
+            MigrationOperation::DropTable {
+                table: "audit.events".into(),
+            }
+            .key(),
+            "table:audit.events"
+        );
     }
 }
 
@@ -201,6 +224,9 @@ impl MigrationOperation {
             is_auto_increment: c.is_auto_increment,
         };
         match self {
+            Self::DropTable { table } => O::DropTable {
+                table: table.clone(),
+            },
             Self::AddColumn { table, column } => O::AddColumn {
                 table: table.clone(),
                 column: col(column),

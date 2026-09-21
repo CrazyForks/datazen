@@ -5,6 +5,7 @@ use super::operations::MigrationOperation;
 fn op_table(op: &MigrationOperation) -> &str {
     match op {
         MigrationOperation::CreateTable { table, .. }
+        | MigrationOperation::DropTable { table }
         | MigrationOperation::AddColumn { table, .. }
         | MigrationOperation::DropColumn { table, .. }
         | MigrationOperation::AlterColumnType { table, .. }
@@ -93,6 +94,18 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
         {
             true
         }
+        (
+            DropForeignKey {
+                table: foreign_key_table,
+                foreign_key,
+            },
+            DropTable { table },
+        ) if op_table_name_matches(foreign_key_table, table)
+            || foreign_key_references_table(foreign_key, table) =>
+        {
+            true
+        }
+        (_, DropTable { table }) if op_table(before) == table => true,
         (
             DropForeignKey {
                 table: foreign_key_table,
@@ -265,6 +278,7 @@ fn priority(op: &MigrationOperation) -> u8 {
         | DropPrimaryKey { .. }
         | DropForeignKey { .. }
         | DropView { .. } => 4,
+        DropTable { .. } => 5,
         ReplaceView { .. } => 2,
         _ => 2,
     }
@@ -568,5 +582,15 @@ mod replacement_tests {
                 MigrationOperation::DropColumn { .. }
             ]
         ));
+    }
+
+    #[test]
+    fn dropping_referenced_table_waits_for_foreign_key_removal() {
+        let drop_table = MigrationOperation::DropTable {
+            table: "users".into(),
+        };
+        let drop_fk = fk(false);
+        let sorted = resolve_dependencies(vec![drop_table.clone(), drop_fk.clone()]);
+        assert_eq!(sorted, vec![drop_fk, drop_table]);
     }
 }
