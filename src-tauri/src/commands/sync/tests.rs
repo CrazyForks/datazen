@@ -101,6 +101,14 @@ async fn sync_profile_ipc_validates_connections_and_round_trips() {
     assert!(error
         .to_string()
         .contains("target connection no longer exists"));
+
+    let missing_source = sync_profile("missing-source", "gone", "sync-profile-target");
+    let error = super::save_sync_profile_impl(&test.state, missing_source)
+        .await
+        .expect_err("missing source must be rejected");
+    assert!(error
+        .to_string()
+        .contains("source connection no longer exists"));
 }
 
 #[test]

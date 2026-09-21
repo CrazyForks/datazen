@@ -1,7 +1,7 @@
 # migration-sync-profiles
 
 ## Phase
-READY_FOR_TEST
+FAILED
 
 ## Objective
 Add reusable Data Sync profiles with versioned persisted configuration, strict validation, Tauri IPC, and UI save/load flow. Persist connection IDs, database/schema scope, table selection, filters/recordsets, and sync options. Never persist dbSessionId, comparison rows, plan IDs, or credentials.
@@ -39,3 +39,12 @@ Backend data_sync/profile.rs, store/sync_profiles.rs, commands/sync/*; frontend 
 - `npx tsc --noEmit`: passed.
 - `cargo fmt --all`: passed after restoring generated driver files and Cargo.lock.
 - `git diff --check`: passed.
+
+## Independent tester result
+
+- Frontend changed test files: `DataSyncWindow.test.tsx` 43 passed; `syncPlan.test.ts` 7 passed.
+- Rust full host suite: 1519 passed, 3 ignored; focused profile IPC and model tests passed.
+- TypeScript: `npx tsc --noEmit` passed.
+- Formatting/diff: passed before tester additions; rerun after additions is required by coordinator.
+- Coverage with changed frontend files included: 78.40% statements, 69.25% branches, 77.44% functions, 81.08% lines. The global threshold command failed on statements/functions/branches; added profile save/load/delete, stale connection, mapping/recordset restoration, IPC, and invalid-store tests. Core profile lines are exercised, but the changed files remain below the hard 80% all-metric target.
+- **TEST_FAILED**: `migration-sync-profiles-BUG-001` blocks merge.

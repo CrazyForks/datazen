@@ -588,6 +588,41 @@ async fn sync_profiles_roundtrip_and_runtime_fields_are_not_persisted() {
 }
 
 #[tokio::test]
+async fn sync_profiles_filter_invalid_records_on_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let valid = crate::data_sync::SyncProfile {
+        version: crate::data_sync::SyncProfile::CURRENT_VERSION,
+        id: "valid-profile".into(),
+        name: "Valid sync".into(),
+        source_connection_id: "source-config".into(),
+        target_connection_id: "target-config".into(),
+        source_database: None,
+        target_database: None,
+        source_schema: None,
+        target_schema: None,
+        tables: vec![crate::data_sync::TableMapping::auto("users")],
+        options: crate::data_sync::SyncOptions::default(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let mut unknown = serde_json::to_value(&valid).unwrap();
+    unknown["unexpected"] = serde_json::json!(true);
+    let mut invalid = serde_json::to_value(&valid).unwrap();
+    invalid["version"] = serde_json::json!(99);
+    tokio::fs::write(
+        dir.path().join("sync_profiles.json"),
+        serde_json::to_vec(&serde_json::json!([valid, unknown, invalid])).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let profiles = store.get_sync_profiles().await;
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].id, "valid-profile");
+}
+
+#[tokio::test]
 async fn sync_task_persistence_drops_runtime_ids_and_blocks_offsets() {
     let dir = tempfile::tempdir().unwrap();
     let store = init_store_for_test(dir.path()).await;
