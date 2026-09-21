@@ -77,9 +77,13 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 2. 【B 表】每一行有明确终态（PASSED / N/A + 理由 / 转人工清单）。
 3. 独立复做 Wave 4-A 的「注入 R1（`from` + `vi.mock`）与 R2 → 红并点名文件:行 → 还原 → 绿」，
    结束时 `git status` 干净。
-4. 抽查解耦契约达成：`packages/drivers/*/ui/**` 内说明符字面量指向宿主 `src/` 的命中数
-   = 豁免 2 条（且仅这 2 条）；`packages/**`（除 `packages/ui/src/i18n.ts`）内 `setLocale(` 调用数 = 0；
-   宿主唯一调用点在 `src/lib/localeSync.ts`。
+4. 抽查解耦契约达成（BUG-006 校正，与契约 §2.4.2 逐字一致）：
+   ① `packages/drivers/*/ui/**` 内说明符字面量指向宿主 `src/` 的命中数 = 豁免 **2 条**
+      （`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`，且仅这 2 条）；
+   ② `packages/**` 内 `setLocale(` 仅命中 `R2_FILE_CARVEOUTS` 的**两个文件**（`packages/ui/src/i18n.ts:34`
+      定义处 + `packages/ui/src/__tests__/i18n.test.tsx` 调用处），其余为 0（旧稿「除 `i18n.ts` 外 = 0」漏了第 2 个豁免文件）；
+   ③ 宿主生产码调用点 = `src/lib/localeSync.ts`（唯一接线：`:20` 播种 / `:24` 切换）+ `src/locales/index.ts`
+      的**文档化临时适配器**（`getTranslation` 在同一次同步调用内 `:78` 换 locale、`:82` 复位，非渲染路径，契约 §2.4.2 明文允许）。
 5. 文档抽验零失配（路径/符号/行号/数字，含 Wave 4-A 回扫后的 2.1.2 / 2.6 / 2.7）。
 6. 输出「人工验收清单」小节（≥ 上表全部 GUI 项，含前置条件与判定），供用户本地打勾。
 7. 全轨 Bug 闭环或明确移交；返回 `TEST_DONE(PASSED)` 或 `ESCALATED` + 未闭环清单。
@@ -93,6 +97,9 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
   BUG-001/002/006 属文档/口径、BUG-003/005 需 Coder、BUG-004 属外部仓，见 §4；待裁定 5 条见 §5
   ——注：置位 commit 中此处曾写「A-1~A-15 独立复跑」「B 表 17 行」，与 §1/§2 实际口径不符，
   已由紧随的修正 commit 据实更正）
+- [ ] 第 2 轮修复回合（Coder，2026-09-21）：BUG-005（测试落点重定向）→ BUG-003（构建前置无条件补齐）+
+  BUG-001/002/006 文档与口径 + BUG-004 契约侧观察项 → **提交后待复测**（修复 commit 见
+  `git log feature/r-phase` 顶部；复测须由独立 Tester 实例执行，记录见「第 2 轮修复回合」节）
 
 ## 执行记录
 
@@ -219,10 +226,80 @@ R3  src/windows/connection/DocumentConnectionView.tsx:25
 ### 5. 待协调者裁定
 
 1. **BUG-001/002/006 均为「文档/口径」类**：是否派一个 docs 小回合统一修正（含任务书 R-5 改判与验收标准 4 改写）？
+   - **裁定（协调者，2026-09-21）**：派本修复回合统一修正（含 R-5 改判与验收标准 4 改写）。→ 已在第 2 轮修复回合执行。
 2. **BUG-003 与 BUG-005 是同一片区域的两面**（`builtin-ep` 资源目录）：建议一并派 Coder，先做「测试重定向到 tmp」再做「构建前置无条件补齐」，避免前者继续掩蔽后者。
+   - **裁定（协调者，2026-09-21）**：一并派 Coder，**顺序先 005 后 003**（本回合执行）。→ 已按序执行。
 3. **R-5 / BUG-004**：Pro EP 的 5 个 `query.*` 同名 key 是否要求 editor-pro 仓改 `pro.*` 前缀（属外部仓，需其自身 commit）。
+   - **裁定（协调者，2026-09-21）**：移交 editor-pro 仓；本仓只补观察项、**不强制**。→ 契约 §2.4.4 观察项已补（含 §2.4.3 交叉引用），命名空间裁定留在其自身仓库。
 4. **GUI-5 可复现性**：editor-pro 子仓 `c60f7fc` 未 push，Pro 侧 GUI 项只能在有该子仓的机器上验收。
+   - **裁定（协调者，2026-09-21）**：保持开放（等用户 push `c60f7fc`）。→ 本回合不动。
 5. 既有翻译债（A-11）是否另立翻译回合（转 exit 0）—— 不在本轨范围。
+   - **裁定（协调者，2026-09-21）**：另立翻译回合，**不在本轨**。→ 本回合不动。
+
+## 第 2 轮修复回合（Coder，2026-09-21）
+
+> 输入：本文件 §4 缺陷处置表 + §5 待裁定（协调者裁定 2026-09-21 逐条批注见 §5）。
+> 范围：BUG-005 → BUG-003（按序，避免前者继续掩蔽后者）+ BUG-001/002/006 文档口径 + BUG-004 契约侧观察项；
+> BUG-004 的命名空间裁定移交外部仓，本仓不改行为。纪律遵守：未动 `src-tauri/**` 被跟踪文件、未碰
+> `packages/pro-extensions/**`、未改护栏脚本、未跑 `pnpm install` / 裸 `pnpm build` / 真实 e2e。
+
+**BUG-005（测试隔离，代码）** —— 改 `scripts/resolve-pro.mjs`（只新增可选 path 覆写口，缺省值与改动前逐字一致）与
+`scripts/__tests__/resolve-pro.test.ts`（全部写/删落点重定向到 `mkdtempSync` 沙箱）：
+
+- 新增覆写口：`resolvePro({ codegenPath, stageDir, outDir })`、`clearBuiltinEpStaging(ext, { stageDir })`、
+  `stageProExtension({ stageDir, outDir })`、`downloadPrebuiltEp({ stageDir })`、`ensureProCheckout({ proDest, tmpFallbackDir })`
+  （后两者是同批审计发现的同类真实路径落点：`packages/pro-extensions/sql-editor-pro` 复制目标、
+  `/tmp/datazen-extension-sql-editor-pro` 回落源）。无全局可变状态、未放宽任何生产校验。
+- 修复前实测（红）：`npx vitest run scripts/__tests__/resolve-pro.test.ts` 的 stdout 打印
+  `[resolve-pro] removed staged builtin-ep at .../src-tauri/resources/builtin-ep/sql-editor-pro`；真实
+  `src/extensions/generated-pro.ts` mtime 11:16:53 → 11:27:30（被就地改写，因两态同为 pro 故 md5 未变）。
+- 修复后实测（绿）：同套件跑完后对 `src/extensions/generated-pro.ts` 与 `src-tauri/resources/builtin-ep/`
+  做 `stat`/`md5` 快照，before/after `diff` = **`IDENTICAL_ZERO_CHANGE`**。
+- 套件口径：`npx vitest run scripts` = **23 files / 246 pass / 0 fail**（244 → 246：新增 2 例——1 例只断值地
+  断言两个默认常量仍是仓库相对路径，1 例补 `ensureProCheckout` 的「处处无 checkout + codegen-only → null」分支；
+  原环境相关的旧用例改为确定性夹具用例，故净增 2，非回归）。
+
+**BUG-003（干净检出编译失败，代码）** —— 改 `scripts/resolve-drivers.mjs`：`main()` 首行**无条件、幂等**
+`mkdirSync(resolve(ROOT,'src-tauri','resources','builtin-ep'), { recursive: true })`（3 行 WHY 注释：
+`tauri.conf.json` 无条件声明该 bundle 资源、目录被 gitignore、tauri-build 在干净检出上直接失败；所有 cargo
+前路径都先跑本脚本）。未改 `src-tauri/` 被跟踪文件，未改 `clearBuiltinEpStaging` 删除语义（仍只删子目录）。
+
+- 先红：`rm -rf src-tauri/resources/builtin-ep` → `CARGO_TARGET_DIR=/tmp/datazen-rphase-target node
+  scripts/with-driver-inject.mjs --drivers=basic -- env HOME="$PWD/.regression-home" CARGO_HOME="$HOME/.cargo"
+  RUSTUP_HOME="$HOME/.rustup" cargo test -p datazen --lib` → **exit 101**，末尾
+  `resource path \`resources/builtin-ep\` doesn't exist`（热 target 下仍复现：注入改写 Cargo.toml 特性触发
+  build.rs 重跑；`HOME` 沙箱需显式带 `CARGO_HOME`/`RUSTUP_HOME`，与 `run-regression.sh` 同法）。
+- 后绿：同一 `rm -rf` → `node scripts/resolve-drivers.mjs --codegen-only --drivers=all`（exit 0）→
+  `test -d src-tauri/resources/builtin-ep` = **DIR_OK**；再跑同一 cargo 命令 → **exit 0 /
+  `test result: ok. 1453 passed; 0 failed; 3 ignored`**。
+- 追加自证：再次 `rm -rf` 后直接跑「with-driver-inject + cargo」（= `run-regression.sh` 步骤 2 的真实形态）
+  → exit 0 / 1453 passed，且目录被自动补齐（`DIR_OK_AFTER_INJECT_PATH`）。
+- 单测化说明：**未加新单测**——任何「断言该目录存在」的用例本身会在 `npx vitest run scripts` 中把该目录造出来，
+  与 BUG-005 要求的「跑完套件该目录零变化」直接冲突；该缺陷由复测 Tester 以「删目录 → codegen → cargo」
+  真实场景独立验收。
+- 副作用还原：注入跑产生的 `Cargo.lock` 单行残留（`datazen-driver-redis`）已 `git restore`，`git status` 无残留。
+
+**BUG-001（文档）** —— 契约 `:260`「仅五个 → 仅六个」+ 补第 6 行签名
+`getRegisteredTranslations(locale: string): Record<string, string>`（说明：浅拷贝只读快照、未知 locale → `{}`、
+不订阅变化、非渲染路径；定义 `packages/ui/src/i18n.ts:69`、导出 `packages/ui/src/index.ts:27`、消费方
+`src/locales/index.ts:11,108` 与 `packages/drivers/{redis,mongodb}/ui/__tests__/localePackRegistration.test.ts`）；
+§2.1.1 的 `@datazen/ui` 行 i18n 列举补该 API（标注「只读快照，供工具/测试用」）。
+
+**BUG-002（文档）** —— 契约 `:295` 措辞收敛为「**生产码** 0 命中」（对齐
+`docs/development/independent-driver-development.zh-CN.md:214`），并把
+`scripts/check-driver-import-boundaries.mjs:94`（`SKIPPED_CODEGEN_FILES` 第 2 条）登记为第 4 处已知残留
+（3 处散文 + 1 处代码内常量）；**未改护栏脚本**（避免牵动其 36 例夹具复验）。
+
+**BUG-004（契约侧观察项）** —— §2.4.4 新增观察项（**不构成**对 EP/wapp 的强制条款）：EP 自带 26 key
+（24 个 `query.*` + 2 个 `settings.editor.intention*`），其中 5 个与宿主同名且同为 `query.*`（en 3 异值/2 同值、
+zh-CN 5 全异值；宿主当前 **0 消费方**），按 `registerTranslations` 后写覆盖语义会出现 Pro/Community 文案分歧；
+命名空间归属移交 editor-pro 自身仓库裁定（本仓不代其豁免、不即刻要求整改）。§2.4.3 表格「Pro 扩展词条」行加交叉引用。
+（本回合独立复核：26 / 5 / 322 / 0 消费方与 BUG-004 登记一致；另实测 `packages/wapps/**` 内
+`registerTranslations`、`@datazen/ui` 均 0 命中，R-5 后半句对 wapp 成立。）
+
+**BUG-006（口径）** —— 本文件「验收标准 4」已按契约 §2.4.2 精确口径改写为三条：① 豁免 2 条
+（`redisKeyWebContextMenu.test.tsx:5,9`）；② `packages/**` 内 `setLocale(` 仅命中 `R2_FILE_CARVEOUTS` 两个文件；
+③ 宿主生产码调用点 = `src/lib/localeSync.ts`（唯一接线）+ `src/locales/index.ts` 的文档化临时适配器。
 
 ## 开放项（等用户，不阻塞本轨）
 

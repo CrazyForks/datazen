@@ -1106,6 +1106,11 @@ export function wantsCodegenOnly(argv = process.argv.slice(2)) {
 }
 
 function main() {
+  // tauri.conf.json declares `resources/builtin-ep` unconditionally and the
+  // directory is gitignored, so tauri-build fails on a clean checkout ("resource
+  // path ... doesn't exist"); every cargo path runs this script first — create it.
+  mkdirSync(resolve(ROOT, 'src-tauri', 'resources', 'builtin-ep'), { recursive: true });
+
   if (wantsRestoreOnly()) {
     restoreManagedFiles();
     return;

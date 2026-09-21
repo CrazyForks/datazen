@@ -7,12 +7,18 @@
 > **收尾实例复核（2026-09-21 11:11~11:20，Wave 4-B 第二个 Tester 实例）**：BUG-001 ~ BUG-004 四条逐条重取证据，
 > 全部**成立**（各条下方「收尾复核」为独立取证，非转抄前任）；本轮新发现 BUG-005 / BUG-006。
 > 复核口径：worktree 只读 + 主检出只读（仅 `check-driver-import-boundaries.mjs --root=` 例外），未改任何业务代码/契约文档。
+>
+> **第 2 轮修复回合（Coder，2026-09-21，协调者裁定 ①②③④⑤ 见 `progress.md` §5）**：按序修 BUG-005 → BUG-003，
+> 并做 BUG-001/002/006 文档口径 + BUG-004 契约侧观察项；BUG-004 的命名空间裁定移交外部仓、本仓不改行为。
+> 各条「状态」行已更新，证据/自证命令/涉及文件见各条末尾新增的「修复回合」小节。**除 BUG-004 外本轮状态为「待复测」**
+> （BUG-004 = `契约侧观察项已完成 + 外部仓移交`）：置位 ≠ PASSED，须由独立 Tester 实例复测后由协调者标记。
+> 本回合修复 commit：`<待填>`（提交后回填于本行）。
 
 ---
 
 ## r-phase-BUG-001 · 契约 2.4.1 / 2.1.1 少登记第 6 个公开 i18n API（`getRegisteredTranslations`）
 
-- **状态**：`待修复`（文档失配，验收标准 5「零失配」未达成）
+- **状态**：`待复测`（文档失配已按裁定修正；置位 ≠ PASSED，待独立 Tester 复测）
 - **严重度**：低（不影响运行时，但影响评审判断口径）
 - **量级**：契约文档 2 处表述
   1. §2.4.1（`docs/development/driver-api-dependency-boundary.md:260`）：「公开 API **仅五个**」+ 其下 5 个签名（`:263-269`）
@@ -62,11 +68,25 @@ packages/drivers/mongodb/ui/__tests__/localePackRegistration.test.ts:22   import
   驱动侧两个 `localePackRegistration.test.ts` 亦 import 该函数；本轨 R-8 新单测（`i18n.test.tsx`）同样在用。
 - 结论：**低危文档失配成立**，且属 Wave 3 `i18n-drivers` 有意新增后契约未同步，非本轨引入。
 
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定①）
+
+- **改动文件**：`docs/development/driver-api-dependency-boundary.md`
+  - `:260` 「公开 API 仅五个」→「仅六个」，代码块补第 6 行
+    `getRegisteredTranslations(locale: string): Record<string, string>;`（行内注释：只读快照（浅拷贝）；未知 locale 返回 `{}`）；
+  - 紧随其后新增一条说明 bullet：该 API 为 Wave 3 `i18n-drivers` 轨有意新增，浅拷贝只读快照、不订阅 locale 变化、
+    非渲染路径；定义 `packages/ui/src/i18n.ts:69`、导出 `packages/ui/src/index.ts:27`、宿主消费方
+    `src/locales/index.ts:11`（import）/`:108`（`getAllTranslations` 唯一调用）、驱动与包内用例
+    `packages/drivers/{redis,mongodb}/ui/__tests__/localePackRegistration.test.ts`、`packages/ui/src/__tests__/i18n.test.tsx`；
+  - §2.1.1 允许来源表 `@datazen/ui` 行 i18n 列举补 `getRegisteredTranslations`（标注「只读快照，供工具/测试用，见 2.4.1」）。
+- **自证**：文档改动，逐条 `Read` 核实定义/导出/消费方行号（`i18n.ts:69`、`index.ts:27`、`locales/index.ts:11,108` 均实读确认）；
+  护栏 `node scripts/check-driver-import-boundaries.mjs` 与 `npx vitest run scripts` 不受影响（本回合末次全绿，见 `progress.md` 修复回合节）。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
+
 ---
 
 ## r-phase-BUG-002 · 契约 2.4.3「`generated-locales` 生产引用 0 命中」的残留枚举不完整
 
-- **状态**：`待修复`（文档失配）
+- **状态**：`待复测`（文档口径已收敛 + 第 4 处残留已登记；置位 ≠ PASSED，待独立 Tester 复测）
 - **严重度**：低
 - **位置**：`docs/development/driver-api-dependency-boundary.md:295`
 
@@ -119,11 +139,26 @@ grep -rn 'generated-locales' scripts src packages e2e
 - 结论：**低危文档失配成立**；命中由 Wave 4 `import-guard` 轨自身（护栏脚本晚于 `i18n-drivers` 轨的 0 命中实测）
   引入，属基线过期，非解耦回归。护栏把已不存在的文件名留在 skip-list 是无害的防御性写法。
 
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定①）
+
+- **改动文件**：`docs/development/driver-api-dependency-boundary.md`（§2.4.3 配套终态第 1 个 bullet，原 `:295`）
+  - 措辞按「建议修复方向」第 1 条收敛：`DRIVER_LOCALES`、`generated-locales` 后加限定词 →「的**生产码**引用 **0 命中**」，
+    并显式引用同批回扫口径 `docs/development/independent-driver-development.zh-CN.md:214`「生产码已无该标识符」；
+  - 残留枚举由 3 处扩为 **4 处**：3 处散文/忽略规则（`AGENTS.md`、`CONTRIBUTING.md`、`.gitignore`）+
+    1 处代码内常量（`scripts/check-driver-import-boundaries.mjs:94` 的 `SKIPPED_CODEGEN_FILES` 第 2 条），
+    并注明该条目由 Wave 4 `import-guard` 轨晚于基线所写、属无害防御性写法。
+- **未做（按裁定）**：不改为「删掉 skip-list 条目」方案——**未修改护栏脚本本身**（改它会牵动其 36 例夹具用例的复验）；
+  脚本 `:94` 仍保留该字符串 ⇒ 本轮结束后「`generated-locales` 在四个扫描目录内仍有 1 处命中（代码内常量）」，
+  文档已如实登记，复测时应以「生产码 0 命中 + 4 处已知残留」为口径。
+- **自证**：`grep -rn 'generated-locales' scripts` 仅命中护栏 `:94`（本回合实读 `check-driver-import-boundaries.mjs:92-96` 确认）；
+  `npx vitest run scripts` 全绿（护栏 36 例夹具未受影响）。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
+
 ---
 
 ## r-phase-BUG-003 · 干净检出上 `cargo test -p datazen --lib` / `run-regression.sh` 步骤 2 直接编译失败（`builtin-ep` 资源目录缺失）
 
-- **状态**：`待修复`
+- **状态**：`待复测`（构建前置已按裁定方案 1 修复；置位 ≠ PASSED，须由独立 Tester 以真实场景复测）
 - **严重度**：中（不阻断本轨关账——已定位并绕过取证；但破坏 A 门禁第 10 行与合并门禁的**可复现性**，
   任何新 worktree / CI 干净首跑必红）
 - **类别**：构建/环境门禁；**非本专项（驱动↔宿主解耦）引入的回归**
@@ -199,13 +234,60 @@ Caused by:
   因此**任何先跑过 `npx vitest run scripts` / `npx vitest run` 的检出上该空目录已被顺带创建**，
   步骤 2 的编译失败被静默掩蔽；BUG-005 记录了同一批测试的另一面副作用。判定不受影响（BUG-003 的
   对照实验是在显式删除该目录后做的），但「新 worktree 首跑必红」的触发顺序应按此收窄为
-  「**在该目录从未被创建过的检出上**必红」。
+  「**在该目录从未被创建过的检出上**必红」。（注：该掩蔽通道随 BUG-005 修复已关闭——第 2 轮修复回合后
+  `npx vitest run scripts` 不再创建/改写任何真实仓库路径，见 BUG-005 修复回合。）
+
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定②，按序在 BUG-005 之后执行）
+
+- **改动文件**：`scripts/resolve-drivers.mjs` —— `main()` 首行新增**无条件、幂等**的
+  `mkdirSync(resolve(ROOT, 'src-tauri', 'resources', 'builtin-ep'), { recursive: true })`
+  （附 3 行 WHY 注释：`tauri.conf.json` 无条件声明 `resources/builtin-ep`、该目录被 `.gitignore` 排除、
+  tauri-build 对声明资源做存在性校验 ⇒ 干净检出直接编译失败；而所有 cargo 前路径——CI、
+  `run-regression.sh` 步骤 2（经 `with-driver-inject.mjs` 调用本脚本）、worktree bootstrap、postinstall codegen
+  ——都先跑本脚本）。放在 `main()` 顶部（`--restore` 早退之前），故对全部 CLI 调用无条件生效。
+- **硬性约束遵守**：未修改任何 `src-tauri/` 下的被跟踪文件（`tauri.conf.json` / capabilities / Cargo.toml / Cargo.lock 均未动，
+  运行期只创建 gitignored 资源空目录）；未改 `clearBuiltinEpStaging` 删除语义（仍只删子目录，保持现状）；
+  未放宽任何护栏。
+- **先红（真实输出）**：
+  ```
+  $ rm -rf src-tauri/resources/builtin-ep && test -d src-tauri/resources/builtin-ep || echo DIR_REMOVED
+  DIR_REMOVED
+  $ CARGO_TARGET_DIR=/tmp/datazen-rphase-target node scripts/with-driver-inject.mjs --drivers=basic -- \
+      env HOME="$PWD/.regression-home" CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup" \
+      cargo test -p datazen --lib
+  Compiling datazen v0.2.1 (.../src-tauri)
+  error: failed to run custom build command for `datazen v0.2.1 (...)`
+    --- stdout
+    cargo:rerun-if-changed=capabilities
+    resource path `resources/builtin-ep` doesn't exist
+  EXIT=101
+  ```
+  （热 target 下**仍复现**：注入了驱动特性导致 Cargo.toml 变化，build.rs 被重跑 ⇒ 无需 cargo clean。
+  注意 `HOME` 沙箱必须同时显式传 `CARGO_HOME` / `RUSTUP_HOME`，否则 rustup 找不到默认工具链、报的会是
+  「rustup could not choose a version of cargo」而非真实缺陷——本回合首次尝试即踩到此点，已在命令中修正。）
+- **后绿（真实输出）**：
+  ```
+  $ rm -rf src-tauri/resources/builtin-ep
+  $ node scripts/resolve-drivers.mjs --codegen-only --drivers=all      # exit 0
+  $ test -d src-tauri/resources/builtin-ep && echo DIR_OK
+  DIR_OK
+  $ <同一 cargo 命令>
+  test result: ok. 1453 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.88s
+  EXIT=0
+  ```
+- **追加自证（覆盖 `run-regression.sh` 步骤 2 的真实形态）**：再次 `rm -rf` 后**直接**跑
+  `with-driver-inject --drivers=basic … cargo test -p datazen --lib`（不预跑 codegen）⇒ exit 0 /
+  `1453 passed; 0 failed; 3 ignored`，且目录被脚本自动补齐（`DIR_OK_AFTER_INJECT_PATH`）。
+- **单测化说明（非强制项，如实说明未做）**：未新增单测。原因：任何「断言该目录存在」的用例本身会在
+  `npx vitest run scripts` 期间把该目录造出来，与 BUG-005 修复要求「跑完套件该目录零变化」直接冲突；
+  且本缺陷的判定场景是「删目录 → codegen → cargo」，由复测 Tester 以真实场景独立验收更可靠。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
 ---
 
 ## r-phase-BUG-004 · 任务书 B 表 R-5 前提失实：Pro EP **确有**自带词条，且与宿主共用 `query.*` 前缀（非 N/A）
 
-- **状态**：`待修复`（本轨任务书/契约登记修正）+ **待裁定**（前缀共用是否收敛，属 editor-pro 外部仓）
+- **状态**：`契约侧观察项已完成 + 外部仓移交`（契约 §2.4.4 观察项 + §2.4.3 交叉引用均已登记；命名空间是否收敛为 `pro.*` 移交 `sql-editor-pro` 外部仓裁定；本仓行为零改动）
 - **严重度**：低（当前无用户可见后果），但直接导致 R-5 若按 N/A 关账会漏掉一个真实观察项
 
 ### 断言原文（`tracks/r-phase/progress.md:48`，B 表 R-5 行）
@@ -293,11 +375,21 @@ Community 构建里拿到宿主文案 ⇒ 同一 UI 双版本不一致，且无�
   （比前任证据更宽：主检出含全部 wapp 包）。
 - 结论：**R-5 的 N/A 前提失实成立**，须按「建议处置」改判。
 
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定③：契约侧观察项 + 外部仓移交）
+
+- **涉及文件（均为文档，零行为改动）**：
+  - `docs/development/driver-api-dependency-boundary.md` §2.4.4「key 命名与类型」：新增**观察项**条目（26 key = 24 `query.*` + 2 `settings.editor.intention*`；5 个同名 key 列名；en 3 异值/2 同值、zh-CN 5 全部异值；宿主侧 0 消费方；`registerTranslations` 后写覆盖语义下的 Pro/Community 分歧风险；处置=移交 editor-pro 仓裁定是否收敛 `pro.*`，本契约对 EP/wapp **不加**强制前缀要求；wapp 侧 0 命中）。
+  - 同文件 §2.4.3 表格「Pro 扩展词条」行：追加交叉引用「与宿主 key 同名时的覆盖语义与处置见 2.4.4 观察项（BUG-004）」。
+  - `tracks/r-phase/progress.md` §5 裁定⑤：R-5 终态由 `N/A` 改为「Pro EP 侧：实测已存在自带词条 + 5 个 `query.*` 与宿主共用命名空间（宿主 0 消费方，暂无后果），移交 editor-pro 仓裁定；wapp 侧：N/A」。
+- **数字独立复取**（Grep 工具 + 主检出只读）：EP `en.ts` 自有 key 26（含 2 个非 `query.*`，同时修正原报告「26 个 key 全部落在 `query.*`」的措辞，结论不变）；宿主 `src/locales/**` 去重后 `query.*` = 322；5 个同名 key 在宿主 `src/**`（除 `src/locales`）消费 = 0 命中；`packages/wapps/**` 内 `registerTranslations` / `@datazen/ui` = 0 命中。
+- **明确不做**：不改本仓任何运行时代码/词条；不代外部仓决定是否加 `pro.*` 前缀；不因该观察项给 EP/wapp 增加强制条款（在契约中已明文写「不构成强制条款」）。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
+
 ---
 
 ## r-phase-BUG-005 · `scripts/__tests__/resolve-pro.test.ts` 直接读写**真实仓库路径**（`src-tauri/resources/builtin-ep/` 与 `src/extensions/generated-pro.ts`）
 
-- **状态**：`待修复`（测试隔离/卫生问题；**非本专项引入**）
+- **状态**：`待复测`（已按裁定方案 1 修复：测试全部落点重定向到 `mkdtempSync` 沙箱，跑套件对仓库零写入；置位 ≠ PASSED，待独立 Tester 复测）
 - **严重度**：中（不阻断门禁，但会静默破坏他人工作区状态、并让 `run-regression.sh` 后续步骤跑在与干净检出不同的 edition 态上）
 - **归属**：既有提交 `9a9da0bbb test(ep-packaging-ci): verify pack-ep and resolve-pro with coverage tests`（本分支祖先，非 Wave 1~4 任一轨）
 
@@ -342,11 +434,40 @@ git status： 无新增（两处产物均 gitignored）
    并在 Pro 构建文档里提示「跑脚本单测前先备份 staging」；
 3. 最低成本：把 `GENERATED_PRO_TS` 与 `DEFAULT_BUILTIN_EP_ROOT` 在测试内 stub 到 tmp（vitest `vi.mock` 已有先例）。
 
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定④，本回合第一项）
+
+- **涉及文件**：
+  - `scripts/resolve-pro.mjs`：新增显式 path 覆写参数（省略时**逐字节等价历史默认值**，无全局可变状态、不放松任何生产校验）：
+    - `clearBuiltinEpStaging(extension = 'sql-editor-pro', { stageDir } = {})` → 默认 `builtin-ep/<extension>`，删除语义不变（仍只删该子目录，`{recursive,force}`）；
+    - `downloadPrebuiltEp({ ..., stageDir })` → 默认同上；
+    - `stageProExtension({ ..., stageDir, outDir })` → 透传 pack-ep 既有的 `stageDir` / `outDir`（`scripts/pack-ep.mjs:314/:445` 原本就支持，故 `pack-ep.mjs` **无需改动**）；
+    - `ensureProCheckout({ ..., proDest = DEFAULT_PRO_DEST, tmpFallbackDir = '/tmp/datazen-extension-sql-editor-pro' })` → 内部所有 `DEFAULT_PRO_DEST` 引用改走 `proDest`；
+    - `resolvePro({ ..., codegenPath, stageDir, outDir })` → `codegenPath` 默认 `GENERATED_PRO_TS`（`resolve-pro.mjs` 内常量，即 `src/extensions/generated-pro.ts`），`stageDir` 默认 `null` ⇒ 回落 `builtin-ep/sql-editor-pro`；所有 `GENERATED_PRO_TS` / `DEFAULT_BUILTIN_EP_ROOT` 内部引用点均改走参数，默认分支行为与修复前完全一致（已逐行复核 diff）。
+  - `scripts/__tests__/resolve-pro.test.ts`：
+    - 模块级 `makeSandbox()`：`mkdtempSync(join(tmpdir(), 'resolve-pro-sandbox-'))`，派生 `stageDir`（`<tmp>/builtin-ep/sql-editor-pro`）、`codegenPath`（`<tmp>/generated-pro.ts`）、`outDir`（`<tmp>/artifacts`）与 `rm()`；
+    - 「staging and edition flows」`describe` 下全部 9 个用例（community/restore/clear/stage/pro-codegenOnly/已暂存树/真实 fixture staging/preserve/ensureProCheckout×2）的读写删目标全部改为沙箱路径，`finally { sb.rm() }` 清理；
+    - 新增 2 例（计数 24 → 26）：`test_tester_default_staging_and_codegen_paths_stay_repo_relative`（**纯值断言**：`GENERATED_PRO_TS` / `DEFAULT_BUILTIN_EP_ROOT` 为绝对路径且分别以 `src/extensions/generated-pro.ts`、`src-tauri/resources/builtin-ep` 结尾，不做任何写操作）与 `test_tester_ensureProCheckout_returns_null_in_codegen_only_without_checkout`（用 `proDest` / `tmpFallbackDir` 覆写构造确定性分支，替代原「依赖本机是否恰好存在主检出」的环境相关分支）。
+- **修复前实测（red，2026-09-21）**：
+  ```
+  $ npx vitest run scripts/__tests__/resolve-pro.test.ts        # 24 passed
+  # stdout 含： [resolve-pro] removed staged builtin-ep at
+  #   /Users/.../datazen-r-phase/src-tauri/resources/builtin-ep/sql-editor-pro   ← 删除真实暂存树
+  # src/extensions/generated-pro.ts mtime 11:15:37 → 11:16:53（被就地覆写为 pro）
+  ```
+- **修复后实测（green）**：快照对比（跑前/跑后分别对 `src/extensions/generated-pro.ts`（stat + md5）与 `src-tauri/resources/builtin-ep/` 全树（stat + 逐文件 md5）取样）⇒ `IDENTICAL_ZERO_CHANGE`（逐字段 diff 为空）；目录/文件跑前跑后均为**存在且逐字节不变**。
+  ```
+  $ npx vitest run scripts
+  Test Files  23 passed (23)
+       Tests  246 passed (246)      ← 与修复基线 244 相比 +2 为本回合新增的 2 例值断言/确定性分支用例
+  ```
+- **不放松保障的说明**：`ensureProCheckout` 的 `proDest` 覆写只在调用方显式传入时生效，`resolvePro` 的主流程（clone / prebuilt 下载 / staging / codegen 写入）在所有 CLI 与 CI 调用点均不传这些新参数，路径与修复前相同；`clearBuiltinEpStaging` 删除范围仍严格限定为 `stageDir/<extension>` 子目录。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
+
 ---
 
 ## r-phase-BUG-006 · 任务书验收标准 4 的静态口径与契约 §2.4.2 的精确豁免/调用点不一致（口径校正，非契约缺陷）
 
-- **状态**：`待修复`（任务书口径；契约本身**无误**）
+- **状态**：`待复测`（任务书验收标准 4 已按契约 §2.4.2 精确口径改写；契约本身**无误**、未改；置位 ≠ PASSED，待独立 Tester 复测）
 - **严重度**：低（照字面执行会得到 2 处「假阳性」，与 §2.4.2 明文冲突，影响评审判断）
 
 ### 断言原文（`tracks/r-phase/progress.md` 验收标准 4）
@@ -366,3 +487,13 @@ git status： 无新增（两处产物均 gitignored）
 - 结论：**契约无需修改**；建议协调者把验收标准 4 改写成与 §2.4.2 一致的精确口径
   （「`packages/**` 内 `setLocale(` 仅命中 `R2_FILE_CARVEOUTS` 两个文件；宿主生产码调用点 =
   `src/lib/localeSync.ts`（唯一接线）+ `src/locales/index.ts` 的文档化临时适配器」）。
+
+### 修复回合（第 2 轮 Coder，2026-09-21；协调者裁定⑤：与 BUG-004 同批）
+
+- **涉及文件**：`docs/development/coordination/tracks/r-phase/progress.md`「验收标准 4」逐条改写为三句精确口径（对齐契约 §2.4.2 原文）：
+  1. `packages/drivers/*/ui/**` 内 `@datazen/host` / `@/` 宿主源说明符命中 = 2 条（`ALLOWLIST` 两条三元组，保留），引用 `redisKeyWebContextMenu.test.tsx:5,9`；
+  2. `packages/**` 内 `setLocale(` 命中仅限 `R2_FILE_CARVEOUTS` 两个文件（`packages/ui/src/i18n.ts:34` 与 `packages/ui/src/__tests__/i18n.test.tsx`）；
+  3. 宿主**生产码**调用点 = `src/lib/localeSync.ts`（`:20`/`:24`，唯一接线）+ `src/locales/index.ts`（`:78`/`:82`，§2.4.2 文档化的临时换 locale 适配器，非渲染路径）。
+- **明确不做**：不改契约文档（本缺陷契约无误）；不改 `src/locales/index.ts` 行为。
+- **自证**：改写后的三条口径与 `scripts/check-driver-import-boundaries.mjs` 实测输出一一对应（R1 = 2 条 allowlist 命中；R2 非豁免命中 = 0），见 `progress.md`「第 2 轮修复回合」节所载命令与输出。
+- **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
