@@ -18,7 +18,9 @@ fn op_table(op: &MigrationOperation) -> &str {
         | MigrationOperation::CreateIndex { table, .. }
         | MigrationOperation::DropIndex { table, .. }
         | MigrationOperation::AddForeignKey { table, .. }
-        | MigrationOperation::DropForeignKey { table, .. } => table,
+        | MigrationOperation::DropForeignKey { table, .. }
+        | MigrationOperation::AddCheckConstraint { table, .. }
+        | MigrationOperation::DropCheckConstraint { table, .. } => table,
         MigrationOperation::CreateView { view }
         | MigrationOperation::ReplaceView { desired: view, .. }
         | MigrationOperation::DropView { view } => &view.name,
@@ -239,6 +241,8 @@ pub fn retain_dependency_closed(
                     (MigrationOperation::DropIndex { index: a, .. }, MigrationOperation::CreateIndex { index: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency))
                 || matches!((op, dependency),
                     (MigrationOperation::DropForeignKey { foreign_key: a, .. }, MigrationOperation::AddForeignKey { foreign_key: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
+            let replacement = replacement || matches!((op, dependency),
+                (MigrationOperation::DropCheckConstraint { constraint: a, .. }, MigrationOperation::AddCheckConstraint { constraint: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
             !(precedes(dependency, op) || replacement) || previous.iter().any(|present| std::mem::discriminant(present) == std::mem::discriminant(dependency) && present.key() == dependency.key())
         }));
         if selected.len() == previous.len() {
@@ -272,11 +276,12 @@ fn priority(op: &MigrationOperation) -> u8 {
     match op {
         CreateTable { .. } | CreateView { .. } => 0,
         AddColumn { .. } | AddPrimaryKey { .. } => 1,
-        CreateIndex { .. } | AddForeignKey { .. } => 3,
+        CreateIndex { .. } | AddForeignKey { .. } | AddCheckConstraint { .. } => 3,
         DropColumn { .. }
         | DropIndex { .. }
         | DropPrimaryKey { .. }
         | DropForeignKey { .. }
+        | DropCheckConstraint { .. }
         | DropView { .. } => 4,
         DropTable { .. } => 5,
         ReplaceView { .. } => 2,

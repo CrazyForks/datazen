@@ -576,6 +576,7 @@ mod tests {
                 primary_keys: vec![],
                 indexes: vec![],
                 foreign_keys: vec![],
+                check_constraints: vec![],
             })
         }
 

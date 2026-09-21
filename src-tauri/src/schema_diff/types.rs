@@ -16,6 +16,13 @@ pub struct ColumnSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CheckConstraintSnapshot {
+    pub name: String,
+    pub expression: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum ColumnChange {
     DataType,
     Nullable,
@@ -106,6 +113,10 @@ pub struct TableColumnDiff {
     pub changed: Vec<ChangedColumnDiff>,
     pub added: Vec<ColumnSnapshot>,
     pub removed: Vec<ColumnSnapshot>,
+    #[serde(default)]
+    pub missing_check_constraints: Vec<CheckConstraintSnapshot>,
+    #[serde(default)]
+    pub extra_check_constraints: Vec<CheckConstraintSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

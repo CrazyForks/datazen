@@ -5,8 +5,15 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
   const { t } = useI18n();
   const missing = diff.missingOnTarget ?? diff.added;
   const extra = diff.extraOnTarget ?? diff.removed;
+  const missingChecks = diff.missingCheckConstraints ?? [];
+  const extraChecks = diff.extraCheckConstraints ?? [];
   const identical =
-    !diff.targetOnly && missing.length === 0 && extra.length === 0 && diff.changed.length === 0;
+    !diff.targetOnly &&
+    missing.length === 0 &&
+    extra.length === 0 &&
+    diff.changed.length === 0 &&
+    missingChecks.length === 0 &&
+    extraChecks.length === 0;
 
   return (
     <div className="space-y-4 text-xs">
@@ -66,6 +73,26 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
           ))}
         </section>
       )}
+      {missingChecks.length > 0 && (
+        <section>
+          <h4 className="mb-1.5 font-semibold text-success">{t('schemaDiff.checkMissing')}</h4>
+          {missingChecks.map((constraint) => (
+            <div key={constraint.name} className="mb-1 font-mono text-fg-secondary">
+              + {constraint.name}: CHECK ({constraint.expression})
+            </div>
+          ))}
+        </section>
+      )}
+      {extraChecks.length > 0 && (
+        <section>
+          <h4 className="mb-1.5 font-semibold text-danger">{t('schemaDiff.checkExtra')}</h4>
+          {extraChecks.map((constraint) => (
+            <div key={constraint.name} className="mb-1 font-mono text-fg-secondary">
+              - {constraint.name}: CHECK ({constraint.expression})
+            </div>
+          ))}
+        </section>
+      )}
       {identical && <div className="text-fg-muted">{t('schemaDiff.schemaIdentical')}</div>}
     </div>
   );
@@ -75,6 +102,8 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
 export function formatSchemaDiffText(diff: TableSchemaDiff): string {
   const missing = diff.missingOnTarget ?? diff.added;
   const extra = diff.extraOnTarget ?? diff.removed;
+  const missingChecks = diff.missingCheckConstraints ?? [];
+  const extraChecks = diff.extraCheckConstraints ?? [];
   const lines: string[] = [`-- Schema diff: ${diff.table}`];
   for (const col of missing) {
     lines.push(`+ ${col.name} ${col.dataType}${col.nullable ? '' : ' NOT NULL'}`);
@@ -86,6 +115,12 @@ export function formatSchemaDiffText(diff: TableSchemaDiff): string {
     lines.push(
       `~ ${col.name}: ${col.target.dataType} -> ${col.source.dataType} (${col.changes.join(', ')})`,
     );
+  }
+  for (const constraint of missingChecks) {
+    lines.push(`+ ${constraint.name}: CHECK (${constraint.expression})`);
+  }
+  for (const constraint of extraChecks) {
+    lines.push(`- ${constraint.name}: CHECK (${constraint.expression})`);
   }
   if (lines.length === 1) lines.push('(identical)');
   return lines.join('\n');

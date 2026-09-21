@@ -102,6 +102,7 @@ impl PostgresDriver {
                 primary_keys: Vec::new(),
                 indexes: Vec::new(),
                 foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
             });
         }
 
@@ -241,12 +242,36 @@ impl PostgresDriver {
             })
             .collect();
 
+        let check_rows = sqlx::query(
+            r#"
+            SELECT conname::text AS name, pg_get_constraintdef(oid)::text AS definition
+            FROM pg_constraint
+            WHERE conrelid = $1::regclass AND contype = 'c'
+            ORDER BY conname
+            "#,
+        )
+        .bind(&regclass)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let check_constraints = check_rows
+            .iter()
+            .filter_map(|row| {
+                let definition: String = row.get("definition");
+                parse_pg_check_definition(&definition).map(|expression| CheckConstraint {
+                    name: row.get("name"),
+                    expression,
+                })
+            })
+            .collect();
+
         Ok(TableSchema {
             table_name: table.to_string(),
             columns,
             primary_keys: pk_names,
             indexes,
             foreign_keys,
+            check_constraints,
         })
     }
 
@@ -364,9 +389,15 @@ pub(crate) fn normalise_fk_columns(
     Some((from, to))
 }
 
+fn parse_pg_check_definition(definition: &str) -> Option<String> {
+    let expression = definition.trim().strip_prefix("CHECK ")?.trim();
+    let expression = expression.strip_prefix('(')?.strip_suffix(')')?.trim();
+    (!expression.is_empty()).then(|| expression.to_string())
+}
+
 #[cfg(test)]
 mod schema_tests {
-    use super::normalise_fk_columns;
+    use super::{normalise_fk_columns, parse_pg_check_definition};
 
     fn owned(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -415,5 +446,14 @@ mod schema_tests {
     fn unreconcilable_sides_are_rejected_rather_than_guessed() {
         assert!(normalise_fk_columns(owned(&["a", "b"]), owned(&["x"])).is_none());
         assert!(normalise_fk_columns(Vec::new(), Vec::new()).is_none());
+    }
+
+    #[test]
+    fn parses_postgres_check_definition_without_wrapper() {
+        assert_eq!(
+            parse_pg_check_definition("CHECK ((amount >= 0))").as_deref(),
+            Some("(amount >= 0)")
+        );
+        assert!(parse_pg_check_definition("UNIQUE (id)").is_none());
     }
 }

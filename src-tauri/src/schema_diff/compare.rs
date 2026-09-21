@@ -1,7 +1,7 @@
 //! Column (and index) comparison with source = desired.
 
-use super::types::{ChangedColumnDiff, ColumnSnapshot, TableColumnDiff};
-use crate::db::{ColumnSchema, IndexInfo, TableSchema};
+use super::types::{ChangedColumnDiff, CheckConstraintSnapshot, ColumnSnapshot, TableColumnDiff};
+use crate::db::{CheckConstraint, ColumnSchema, IndexInfo, TableSchema};
 use datazen_driver_api::TypeNormalizer;
 use std::collections::HashMap;
 
@@ -81,6 +81,9 @@ pub fn diff_table_schemas(
         }
     }
 
+    let (missing_check_constraints, extra_check_constraints) =
+        diff_check_constraints(&src.check_constraints, &tgt.check_constraints);
+
     TableColumnDiff {
         table: table.to_string(),
         added: missing_on_target.clone(),
@@ -88,7 +91,67 @@ pub fn diff_table_schemas(
         missing_on_target,
         extra_on_target,
         changed,
+        missing_check_constraints,
+        extra_check_constraints,
     }
+}
+
+fn normalize_check_expression(expression: &str) -> String {
+    expression
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+pub fn diff_check_constraints(
+    source: &[CheckConstraint],
+    target: &[CheckConstraint],
+) -> (Vec<CheckConstraintSnapshot>, Vec<CheckConstraintSnapshot>) {
+    let source_by_name = source
+        .iter()
+        .map(|constraint| (constraint.name.as_str(), constraint))
+        .collect::<HashMap<_, _>>();
+    let target_by_name = target
+        .iter()
+        .map(|constraint| (constraint.name.as_str(), constraint))
+        .collect::<HashMap<_, _>>();
+    let mut missing = Vec::new();
+    let mut extra = Vec::new();
+
+    for (name, source_constraint) in &source_by_name {
+        match target_by_name.get(name) {
+            None => missing.push(CheckConstraintSnapshot {
+                name: source_constraint.name.clone(),
+                expression: source_constraint.expression.clone(),
+            }),
+            Some(target_constraint)
+                if normalize_check_expression(&source_constraint.expression)
+                    != normalize_check_expression(&target_constraint.expression) =>
+            {
+                extra.push(CheckConstraintSnapshot {
+                    name: target_constraint.name.clone(),
+                    expression: target_constraint.expression.clone(),
+                });
+                missing.push(CheckConstraintSnapshot {
+                    name: source_constraint.name.clone(),
+                    expression: source_constraint.expression.clone(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (name, target_constraint) in &target_by_name {
+        if !source_by_name.contains_key(name) {
+            extra.push(CheckConstraintSnapshot {
+                name: target_constraint.name.clone(),
+                expression: target_constraint.expression.clone(),
+            });
+        }
+    }
+    missing.sort_by(|left, right| left.name.cmp(&right.name));
+    extra.sort_by(|left, right| left.name.cmp(&right.name));
+    (missing, extra)
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +216,7 @@ pub fn diff_indexes(src: &TableSchema, tgt: &TableSchema) -> IndexDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::ColumnSchema;
+    use crate::db::{CheckConstraint, ColumnSchema};
 
     fn col(name: &str, ty: &str) -> ColumnSchema {
         ColumnSchema {
@@ -174,6 +237,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 
@@ -284,5 +348,27 @@ mod tests {
         let diff = diff_indexes(&src, &tgt);
         assert!(diff.missing_on_target.is_empty());
         assert!(diff.extra_on_target.is_empty());
+    }
+
+    #[test]
+    fn check_constraints_are_diffed_by_name_and_normalized_expression() {
+        let mut src = schema(vec![col("id", "int")]);
+        src.check_constraints.push(CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "age >= 0".into(),
+        });
+        let mut tgt = schema(vec![col("id", "int")]);
+        tgt.check_constraints.push(CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "  AGE   >=  0  ".into(),
+        });
+        assert!(diff_table_schemas("users", &src, &tgt, None)
+            .missing_check_constraints
+            .is_empty());
+
+        tgt.check_constraints[0].expression = "age > 0".into();
+        let diff = diff_table_schemas("users", &src, &tgt, None);
+        assert_eq!(diff.missing_check_constraints[0].name, "users_age_check");
+        assert_eq!(diff.extra_check_constraints[0].expression, "age > 0");
     }
 }

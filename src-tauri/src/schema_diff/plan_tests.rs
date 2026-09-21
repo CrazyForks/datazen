@@ -20,6 +20,7 @@ fn schema(cols: Vec<ColumnSchema>) -> TableSchema {
         primary_keys: vec![],
         indexes: vec![],
         foreign_keys: vec![],
+        check_constraints: vec![],
     }
 }
 
@@ -45,6 +46,33 @@ fn pg_to_mysql_strips_schema_prefix_in_ddl() {
         .expect("ADD COLUMN for email");
     assert!(add.sql.contains("`users`"));
     assert!(!add.sql.contains("public."));
+}
+
+#[test]
+fn cross_dialect_check_constraints_are_blocked_without_expression_translation() {
+    let mut src = schema(vec![col("age", "integer")]);
+    src.check_constraints.push(crate::db::CheckConstraint {
+        name: "users_age_check".into(),
+        expression: "age >= 0".into(),
+    });
+    let tgt = schema(vec![col("age", "integer")]);
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "postgresql",
+        "mysql",
+        PlanOptions {
+            allow_destructive: true,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation.contains("users_age_check") && reason.contains("dialect-specific")
+    )));
 }
 
 #[test]

@@ -31,6 +31,7 @@ fn build_create_table_sql_includes_pk_and_not_null() {
         primary_keys: vec!["id".into()],
         indexes: vec![],
         foreign_keys: vec![],
+        check_constraints: vec![],
     };
     let sql = build_create_table_sql(&|n| format!("\"{}\"", n), &schema);
     assert!(sql.contains("CREATE TABLE IF NOT EXISTS \"users\""));
@@ -217,6 +218,7 @@ impl DatabaseDriver for TableListingDriver {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         })
     }
 
@@ -448,6 +450,7 @@ async fn restore_feed_rejects_write_sql_when_guard_read_only() {
                 primary_keys: vec![],
                 indexes: vec![],
                 foreign_keys: vec![],
+                check_constraints: vec![],
             })
         }
 

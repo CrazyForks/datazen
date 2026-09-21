@@ -134,5 +134,7 @@ pub(crate) fn diff_table_schemas_ir(
         missing_on_target,
         extra_on_target,
         changed,
+        missing_check_constraints: Vec::new(),
+        extra_check_constraints: Vec::new(),
     }
 }

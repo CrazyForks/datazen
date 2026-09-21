@@ -332,6 +332,8 @@ pub struct TableSchema {
     pub primary_keys: Vec<String>,
     pub indexes: Vec<IndexInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
+    #[serde(default)]
+    pub check_constraints: Vec<CheckConstraint>,
 }
 
 impl TableSchema {
@@ -380,6 +382,19 @@ pub struct ForeignKeyInfo {
     pub referenced_columns: Vec<String>,
     pub on_update: String,
     pub on_delete: String,
+}
+
+/// A table-level CHECK constraint captured from a database catalog.
+///
+/// The expression is the database's SQL predicate without the surrounding
+/// `CHECK (...)` wrapper.  Names are required in the migration IR so unnamed
+/// constraints must be given a deterministic driver-generated name before
+/// they enter schema diff planning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckConstraint {
+    pub name: String,
+    pub expression: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -769,6 +784,7 @@ mod tests {
             primary_keys: primary_keys.into_iter().map(str::to_string).collect(),
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 

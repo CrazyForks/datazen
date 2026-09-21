@@ -200,6 +200,7 @@ impl MockDriver {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 }

@@ -213,6 +213,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         assert!(validate_snapshot("t", &old, &old).is_ok());
         let mut current = old.clone();
@@ -226,6 +227,25 @@ mod tests {
             is_primary: false,
             index_type: "btree".into(),
         });
+        assert!(validate_snapshot("t", &old, &current).is_err());
+    }
+
+    #[test]
+    fn test_tester_target_snapshot_detects_check_constraint_changed_after_review() {
+        let old = TableSchema {
+            table_name: "t".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![datazen_driver_api::CheckConstraint {
+                name: "t_positive_id".into(),
+                expression: "id > 0".into(),
+            }],
+        };
+        assert!(validate_snapshot("t", &old, &old).is_ok());
+        let mut current = old.clone();
+        current.check_constraints[0].expression = "id >= 0".into();
         assert!(validate_snapshot("t", &old, &current).is_err());
     }
 
@@ -245,6 +265,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let disappeared = TableSchema {
             table_name: "archive".into(),
@@ -252,6 +273,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
 
         assert!(validate_snapshot("archive", &reviewed, &reviewed).is_ok());

@@ -281,6 +281,7 @@ mod tests {
             primary_keys: primary_keys.iter().map(|v| (*v).into()).collect(),
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         }
     }
 

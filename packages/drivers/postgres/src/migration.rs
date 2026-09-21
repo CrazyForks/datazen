@@ -355,6 +355,46 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 rollback_sql: None,
                 summary: format!("DROP FOREIGN KEY {}.{}", table, foreign_key.name),
             }),
+            MigrationOperation::AddCheckConstraint { table, constraint } => {
+                validate_migration_identifier(table)?;
+                validate_migration_identifier(&constraint.name)?;
+                validate_check_expression(&constraint.expression)?;
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({})",
+                        qi(table),
+                        qi(&constraint.name),
+                        constraint.expression.trim()
+                    ),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "ALTER TABLE {} DROP CONSTRAINT {}",
+                        qi(table),
+                        qi(&constraint.name)
+                    )),
+                    summary: format!("ADD CHECK {}.{}", table, constraint.name),
+                })
+            }
+            MigrationOperation::DropCheckConstraint { table, constraint } => {
+                validate_migration_identifier(table)?;
+                validate_migration_identifier(&constraint.name)?;
+                validate_check_expression(&constraint.expression)?;
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "ALTER TABLE {} DROP CONSTRAINT {}",
+                        qi(table),
+                        qi(&constraint.name)
+                    ),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!(
+                        "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({})",
+                        qi(table),
+                        qi(&constraint.name),
+                        constraint.expression.trim()
+                    )),
+                    summary: format!("DROP CHECK {}.{}", table, constraint.name),
+                })
+            }
             MigrationOperation::CreateView { view } => {
                 validate_view_definition(&view.definition)?;
                 let ident = pg_view_ident(view);
@@ -418,6 +458,8 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             | MigrationOperation::DropIndex { .. }
             | MigrationOperation::AddForeignKey { .. }
             | MigrationOperation::DropForeignKey { .. }
+            | MigrationOperation::AddCheckConstraint { .. }
+            | MigrationOperation::DropCheckConstraint { .. }
             | MigrationOperation::CreateView { .. }
             | MigrationOperation::ReplaceView { .. }
             | MigrationOperation::DropView { .. } => true,
@@ -472,6 +514,40 @@ mod tests {
             .unwrap()
             .sql
             .contains("Bob''s name"));
+    }
+
+    #[test]
+    fn renders_named_check_constraint_and_rollback() {
+        let statement = PostgresMigrationRenderer
+            .render(&MigrationOperation::AddCheckConstraint {
+                table: "users".into(),
+                constraint: CheckConstraint {
+                    name: "users_age_check".into(),
+                    expression: "age >= 0".into(),
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            statement.sql,
+            "ALTER TABLE \"users\" ADD CONSTRAINT \"users_age_check\" CHECK (age >= 0)"
+        );
+        assert_eq!(
+            statement.rollback_sql.as_deref(),
+            Some("ALTER TABLE \"users\" DROP CONSTRAINT \"users_age_check\"")
+        );
+    }
+
+    #[test]
+    fn rejects_check_expression_with_statement_terminator() {
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::AddCheckConstraint {
+                table: "users".into(),
+                constraint: CheckConstraint {
+                    name: "bad".into(),
+                    expression: "age >= 0); DROP TABLE users; --".into(),
+                },
+            })
+            .is_err());
     }
     #[test]
     fn capabilities_mark_type_change_as_rewrite() {

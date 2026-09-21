@@ -389,6 +389,8 @@ const pack = {
   'schemaDiff.executed': 'executed',
   'schemaDiff.missingOnTarget': 'Missing on target (ADD)',
   'schemaDiff.extraOnTarget': 'Extra on target (DROP)',
+  'schemaDiff.checkMissing': 'CHECK constraints missing on target (ADD)',
+  'schemaDiff.checkExtra': 'CHECK constraints extra on target (DROP)',
   'schemaDiff.limitations.title': 'Current limitations',
   'schemaDiff.limitations.noViews':
     'Does not sync views, functions, triggers, or stored procedures',

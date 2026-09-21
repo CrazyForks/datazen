@@ -253,6 +253,7 @@ impl DatabaseDriver for VectorDriver {
             primary_keys: vec!["id".to_string()],
             indexes: Vec::new(),
             foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
         })
     }
 

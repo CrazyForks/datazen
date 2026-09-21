@@ -403,6 +403,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
 
         struct SrcAdapter;
@@ -456,6 +457,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let mut schemas = HashMap::new();
         schemas.insert("reviews".into(), schema);

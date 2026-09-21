@@ -140,6 +140,10 @@ impl MigrationRenderer for SqliteMigrationRenderer {
             MigrationOperation::ReplaceView { .. } => {
                 Err("SQLite view replacement requires an explicit drop/create rebuild".into())
             }
+            MigrationOperation::AddCheckConstraint { .. }
+            | MigrationOperation::DropCheckConstraint { .. } => Err(
+                "SQLite CHECK constraint changes require a table rebuild; refusing an unsafe direct ALTER".into(),
+            ),
             _ => Err(format!(
                 "SQLite renderer does not yet support {:?}; table rebuild may be required",
                 op
@@ -304,6 +308,19 @@ mod tests {
                 column: col("name", "TEXT"),
             })
         );
+    }
+
+    #[test]
+    fn check_constraint_changes_fail_closed_until_table_rebuild_is_available() {
+        let op = MigrationOperation::AddCheckConstraint {
+            table: "users".into(),
+            constraint: CheckConstraint {
+                name: "check_age".into(),
+                expression: "age >= 0".into(),
+            },
+        };
+        assert!(!SqliteMigrationCapabilities.supports(&op));
+        assert!(SqliteMigrationRenderer.render(&op).is_err());
     }
 
     #[test]

@@ -326,6 +326,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("users", &schema);
         assert!(ddl.starts_with("users ("));
@@ -351,6 +352,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("settings", &schema);
         assert!(ddl.contains("DEFAULT 'light'"));
@@ -386,6 +388,7 @@ mod tests {
                 on_update: "NO ACTION".into(),
                 on_delete: "CASCADE".into(),
             }],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("orders", &schema);
         assert!(ddl.contains("FK: user_id -> users.id"));
@@ -400,6 +403,7 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("empty", &schema);
         assert_eq!(ddl, "empty ()");
@@ -421,6 +425,7 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("t", &schema);
         assert!(ddl.contains("id int PK"));
@@ -449,6 +454,7 @@ mod tests {
                 index_type: "btree".into(),
             }],
             foreign_keys: vec![],
+            check_constraints: vec![],
         };
         let ddl = format_compact_ddl("t", &schema);
         // PK index should NOT appear in the Indexes section

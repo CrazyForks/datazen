@@ -516,6 +516,7 @@ impl DatabaseDriver for SqlServerDriver {
             primary_keys,
             indexes: Vec::new(),
             foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
         })
     }
 
