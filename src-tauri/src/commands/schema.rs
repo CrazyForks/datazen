@@ -366,7 +366,6 @@ pub(crate) async fn get_er_data_impl(
 ) -> Result<Vec<TableSchema>, CommandError> {
     let start = Instant::now();
     tracing::info!(%db_session_id, %database, schema = ?schema, "get_er_data");
-
     let (driver, handle) = state
         .connection_manager
         .get_session(&db_session_id)
@@ -407,6 +406,14 @@ pub(crate) async fn get_er_data_impl(
                 tracing::warn!(table = %table.name, error = %e, "get_er_data: skipping table");
             }
         }
+    }
+
+    if !tables.is_empty() && schemas.is_empty() {
+        return Err(CommandError::Internal(format!(
+            "get_er_data: failed to read column metadata for all {} tables in {}",
+            tables.len(),
+            database
+        )));
     }
 
     tracing::info!(
@@ -753,6 +760,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(er.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_er_data_errors_when_no_table_metadata_is_readable() {
+        use crate::db::{TableInfo, TableType};
+
+        // Schema-level driver that never supplies a schema (no explicit filter,
+        // table schema None, no default): every ExactSchema metadata read fails
+        // while `get_tables` still lists tables.
+        let opts = MockDriverOptions {
+            has_schema_level: true,
+            tables: vec![TableInfo {
+                name: "users".into(),
+                schema: None,
+                table_type: TableType::Table,
+                row_count: None,
+            }],
+            ..Default::default()
+        };
+        let test = TestAppState::with_options(opts).await;
+        let (_, conn_id) = test.save_and_connect("er-all-fail").await;
+        // When tables exist but every per-table column read fails, an empty Vec
+        // would be rendered as "this database has no tables". Fail loudly instead.
+        let err = get_er_data_impl(&test.state, conn_id, "app".into(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to read column metadata for all"),
+            "expected the all-tables-failed error, got: {err}"
+        );
     }
 
     #[tokio::test]
