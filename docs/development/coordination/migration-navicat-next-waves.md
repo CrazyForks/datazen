@@ -278,3 +278,11 @@ Destructive approval remains required, and reviewed plans retain target snapshot
 Independent verification passed 6 Vitest files/49 tests, including picker defaults, qualified selectors, destructive reject/allow, reviewed snapshots, profile round-trip and workflow-compatible validation; focused Schema Diff Rust passed 96/96, TypeScript, changed-file rustfmt and diff checks passed, and the integrated full Host Rust suite passed 1645 with 3 ignored. Live database/WebDriver coverage for this slice remains deferred.
 
 This gate closes explicit target-only table selection for Schema Diff. CHECK constraints, table options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
+
+## Schema Diff CHECK constraint release gate (2026-09-21)
+
+The CHECK constraint wave is integrated after implementation `d60ab3d5`, parser hardening `2426b710`, and independent verification `300e91f9`. The dialect-neutral schema IR now carries named CHECK constraints through comparison, reviewed snapshots and migration operations. PostgreSQL and MySQL read and render safe add/drop statements with rollback metadata; changed predicates become a reviewed drop/add pair. SQLite reads CHECK metadata accurately but fails closed for direct changes because applying them requires a table rebuild. Cross-dialect predicate changes are rejected until expression translation exists.
+
+The independent first pass found two parser boundary defects: MySQL default string literals and SQLite comments could be mistaken for CHECK clauses. Both were fixed by skipping quoted text, identifiers and comments before recognition, then verified by a fresh second tester. Final verification passed MySQL 98/98, SQLite 58/58, PostgreSQL 119/119, Driver API 141/141, Host Schema Diff 100/100 and frontend Schema Diff 49/49; the integrated full Host Rust suite passed 1649 with 3 ignored, plus TypeScript, rustfmt and diff checks.
+
+This gate closes CHECK comparison and safe same-dialect rendering for the covered drivers. SQLite table-rebuild support, table-level engine/charset/collation/comment/partition options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
