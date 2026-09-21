@@ -1,0 +1,3360 @@
+<!doctype html>
+<html lang="zh" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DataZen · Redis 工作区 UI/UX 原型 · REDIS_WORKSPACE_UX</title>
+    <style>
+      /* Tokens copied from src/styles/themes.css (light = :root, dark = .dark)
+   so the prototype stays faithful to the real host palette. */
+      :root {
+        --c-surface: #f6f8fb;
+        --c-surface-alt: #f1f5f9;
+        --c-surface-raised: #e8eef6;
+        --c-surface-inset: #ffffff;
+        --c-edge: #e1e8f1;
+        --c-edge-hi: #c6d2e1;
+        --c-fg: #26364d;
+        --c-fg-secondary: #58708d;
+        --c-fg-muted: #8498af;
+        --c-accent: #2f9fd4;
+        --c-accent-dim: rgba(79, 195, 247, 0.14);
+        --c-on-accent: #ffffff;
+        --c-success: #18b77a;
+        --c-warning: #e39a27;
+        --c-danger: #e05252;
+        --c-titlebar: #ffffff;
+        --shadow-card: 0 8px 24px -14px rgba(38, 54, 77, 0.22);
+        --radius-sm: 7px;
+        --radius-md: 9px;
+        --radius-lg: 11px;
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei',
+          sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --t-string: #2f7fa6;
+        --t-hash: #18b77a;
+        --t-list: #e39a27;
+        --t-set: #8b5cf6;
+        --t-zset: #e05252;
+        --t-stream: #0ea5e9;
+      }
+      .dark {
+        --c-surface: #0b0e14;
+        --c-surface-alt: #0e121b;
+        --c-surface-raised: #161b28;
+        --c-surface-inset: #0a0d14;
+        --c-edge: #1e2534;
+        --c-edge-hi: #2a3549;
+        --c-fg: #e6eaf2;
+        --c-fg-secondary: #8b94a7;
+        --c-fg-muted: #5f6879;
+        --c-accent: #4fc3f7;
+        --c-accent-dim: rgba(79, 195, 247, 0.12);
+        --c-on-accent: #04121b;
+        --c-success: #5fd08a;
+        --c-warning: #fbbf24;
+        --c-danger: #ff7b72;
+        --c-titlebar: #0a0d14;
+        --shadow-card: 0 8px 24px -14px rgba(0, 0, 0, 0.6);
+        --t-string: #4fc3f7;
+        --t-hash: #5fd08a;
+        --t-list: #fbbf24;
+        --t-set: #a78bfa;
+        --t-zset: #ff7b72;
+        --t-stream: #38bdf8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        background: var(--c-surface-alt);
+        color: var(--c-fg);
+        font: 13px/1.5 var(--font-sans);
+        display: flex;
+        flex-direction: column;
+        -webkit-font-smoothing: antialiased;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      input,
+      textarea,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      svg {
+        width: 1em;
+        height: 1em;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      .mono {
+        font-family: var(--font-mono);
+      }
+      .spacer {
+        flex: 1;
+      }
+      sup.ref {
+        color: var(--c-accent);
+        font-size: 9.5px;
+        font-weight: 600;
+        margin-left: 3px;
+        white-space: nowrap;
+      }
+
+      /* ── prototype chrome ───────────────────────────────────────── */
+      .proto {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 14px;
+        height: 46px;
+        flex: none;
+        background: var(--c-surface);
+        border-bottom: 1px solid var(--c-edge);
+      }
+      .proto h1 {
+        font-size: 13px;
+        margin: 0;
+        white-space: nowrap;
+      }
+      .proto h1 small {
+        color: var(--c-fg-muted);
+        font-weight: 400;
+      }
+      .screens {
+        display: flex;
+        gap: 4px;
+        margin-left: auto;
+      }
+      .screens button {
+        padding: 5px 11px;
+        border-radius: var(--radius-sm);
+        color: var(--c-fg-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .screens button[aria-selected='true'] {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+        font-weight: 600;
+      }
+      .ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border-radius: var(--radius-sm);
+        color: var(--c-fg-secondary);
+        font-size: 12px;
+      }
+      .ghost:hover {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .stage {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+      section.screen {
+        display: none;
+        flex: 1;
+        min-height: 0;
+      }
+      section.screen.on {
+        display: flex;
+      }
+      .demo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 7px 14px;
+        flex: none;
+        background: var(--c-surface-raised);
+        border-bottom: 1px dashed var(--c-edge-hi);
+        font-size: 11.5px;
+      }
+      .demo .lbl {
+        color: var(--c-fg-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 10px;
+      }
+      .pill {
+        padding: 3px 9px;
+        border: 1px solid var(--c-edge);
+        border-radius: 999px;
+        color: var(--c-fg-secondary);
+        font-size: 11.5px;
+      }
+      .pill[aria-pressed='true'] {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+        background: var(--c-accent-dim);
+      }
+
+      /* ── app frame ──────────────────────────────────────────────── */
+      .frame {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--c-surface);
+      }
+      .titlebar {
+        height: 34px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px;
+        background: var(--c-titlebar);
+        border-bottom: 1px solid var(--c-edge);
+      }
+      .traffic {
+        display: flex;
+        gap: 7px;
+      }
+      .traffic i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: block;
+      }
+      .crumb {
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+      }
+      .split {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 228px 1fr;
+      }
+      .nav {
+        border-right: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        overflow: auto;
+        padding: 8px 6px;
+        min-width: 0;
+      }
+      .nav .h {
+        display: flex;
+        padding: 4px 6px;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+      }
+      .navrow {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 25px;
+        padding: 0 6px;
+        border-radius: var(--radius-sm);
+        color: var(--c-fg-secondary);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .navrow:hover {
+        background: var(--c-surface-raised);
+      }
+      .navrow.sel {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .navrow .cnt {
+        margin-left: auto;
+        font-size: 10.5px;
+        color: var(--c-fg-muted);
+        font-family: var(--font-mono);
+      }
+      .ws {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+
+      /* ── KV context bar (fixes P-1) ─────────────────────────────── */
+      .kvbar {
+        height: 48px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+      }
+      .dbpick {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 9px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-md);
+        background: var(--c-surface-inset);
+        font-size: 12.5px;
+      }
+      .metric {
+        font-size: 11.5px;
+        color: var(--c-fg-secondary);
+        white-space: nowrap;
+      }
+      .metric b {
+        color: var(--c-fg);
+        font-weight: 600;
+      }
+      .dist {
+        display: flex;
+        gap: 4px;
+        overflow: hidden;
+      }
+      .dist span {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+        font-size: 11px;
+        padding: 2px 7px;
+        border-radius: var(--radius-sm);
+        background: var(--c-surface-raised);
+        color: var(--c-fg-secondary);
+        border: 1px solid var(--c-edge);
+        white-space: nowrap;
+      }
+      .dist i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        display: block;
+      }
+      .scanmini {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        color: var(--c-fg-muted);
+        white-space: nowrap;
+      }
+      .bar {
+        width: 84px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--c-edge);
+        overflow: hidden;
+        display: inline-block;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        background: var(--c-accent);
+        transition: width 0.25s;
+      }
+      .iconbtn {
+        width: 26px;
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        border-radius: var(--radius-sm);
+        color: var(--c-fg-secondary);
+        font-size: 12px;
+      }
+      .iconbtn:hover {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .iconbtn.on {
+        background: var(--c-surface-raised);
+        color: var(--c-accent);
+        border: 1px solid var(--c-edge);
+      }
+      .iconbtn.danger:hover {
+        background: rgba(224, 82, 82, 0.14);
+        color: var(--c-danger);
+      }
+      .smode {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(95, 208, 138, 0.4);
+        color: var(--c-success);
+        white-space: nowrap;
+      }
+
+      /* ── strips ─────────────────────────────────────────────────── */
+      .tabstrip {
+        height: 32px;
+        flex: none;
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        padding: 0 8px;
+        border-bottom: 1px solid var(--c-edge);
+        overflow-x: auto;
+      }
+      .tabstrip .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 11px;
+        font-size: 12px;
+        color: var(--c-fg-muted);
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+      .tabstrip .tab.on {
+        color: var(--c-accent);
+        border-bottom-color: var(--c-accent);
+      }
+      .content {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+      .statusbar {
+        height: 25px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 12px;
+        border-top: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        font-size: 11px;
+        color: var(--c-fg-muted);
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .statusbar b {
+        color: var(--c-fg-secondary);
+        font-weight: 500;
+      }
+      .statusbar .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--c-success);
+      }
+
+      /* ── 屏 A overview ──────────────────────────────────────────── */
+      .home {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 14px 16px 20px;
+      }
+      .banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 56px;
+        padding: 0 14px;
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-lg);
+        background:
+          linear-gradient(90deg, var(--c-accent-dim), transparent 55%), var(--c-surface-alt);
+        margin-bottom: 12px;
+      }
+      .logo {
+        width: 26px;
+        height: 26px;
+        border-radius: var(--radius-sm);
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        background: #d82c20;
+        flex: none;
+      }
+      .banner .nm {
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .banner .ok {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--c-success);
+      }
+      .banner .pills {
+        margin-left: auto;
+        display: flex;
+        gap: 6px;
+      }
+      .banner .pills button {
+        font-size: 11.5px;
+        padding: 4px 9px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--c-edge-hi);
+        color: var(--c-fg-secondary);
+      }
+      .banner .pills button:hover {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (max-width: 1080px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-lg);
+        background: var(--c-surface-alt);
+        overflow: hidden;
+      }
+      .card > header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--c-edge);
+        font-size: 11px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+      }
+      .card > header .src {
+        margin-left: auto;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 10.5px;
+        font-family: var(--font-mono);
+        opacity: 0.75;
+      }
+      .card .bd {
+        padding: 10px 12px 12px;
+      }
+      .kvlist {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 3px 18px;
+      }
+      .kvlist > div {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 12px;
+        padding: 3px 0;
+      }
+      .kvlist span {
+        color: var(--c-fg-muted);
+      }
+      .kvlist b {
+        margin-left: auto;
+        font-weight: 600;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+      }
+      .kvlist b.warn {
+        color: var(--c-warning);
+      }
+      .kvlist b.bad {
+        color: var(--c-danger);
+      }
+      .memrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .memrow .bar {
+        flex: 1;
+        height: 8px;
+        border-radius: 4px;
+      }
+      table.t {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      table.t th {
+        text-align: left;
+        font-weight: 500;
+        color: var(--c-fg-muted);
+        font-size: 10.5px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--c-edge);
+      }
+      table.t td {
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--c-edge);
+        color: var(--c-fg-secondary);
+      }
+      table.t tr:last-child td {
+        border-bottom: none;
+      }
+      tbody.click tr:hover td {
+        background: var(--c-surface-raised);
+        cursor: pointer;
+      }
+      .num {
+        text-align: right;
+        font-family: var(--font-mono);
+      }
+      .dbgrid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .dbcell {
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-md);
+        padding: 7px 9px;
+        background: var(--c-surface-inset);
+        cursor: pointer;
+      }
+      .dbcell:hover {
+        border-color: var(--c-accent);
+      }
+      .dbcell.empty {
+        opacity: 0.4;
+      }
+      .dbcell .n {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11.5px;
+      }
+      .dbcell .n b {
+        font-family: var(--font-mono);
+      }
+      .dbcell .bar {
+        margin-top: 5px;
+        height: 3px;
+        width: 100%;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      .actions button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 12px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-md);
+        background: var(--c-surface-alt);
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+      }
+      .actions button:hover {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+      }
+      .actions button.primary {
+        background: var(--c-accent);
+        border-color: var(--c-accent);
+        color: var(--c-on-accent);
+        font-weight: 600;
+      }
+      .hist {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .hist > button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 6px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+        text-align: left;
+      }
+      .hist > button:hover {
+        background: var(--c-surface-raised);
+      }
+      .hist code {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        color: var(--c-fg);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hist time,
+      .hist .n {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--c-fg-muted);
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 1.5px 6px;
+        border-radius: 5px;
+        border: 1px solid currentColor;
+        white-space: nowrap;
+      }
+      .empty {
+        font-size: 12px;
+        color: var(--c-fg-muted);
+        padding: 8px 2px;
+      }
+      .sec {
+        font-size: 10.5px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+        margin: 0 0 6px;
+      }
+      /* ── 屏 B workbench ─────────────────────────────────────────── */
+      .wb {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 36% minmax(0, 1fr);
+      }
+      .col-l {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        border-right: 1px solid var(--c-edge);
+      }
+      .hdrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        height: 34px;
+        flex: none;
+        border-bottom: 1px solid var(--c-edge);
+      }
+      .hdrow.r1 {
+        background: var(--c-surface);
+      }
+      .hdrow.r2 {
+        height: 38px;
+      }
+      .hdrow.r3 {
+        height: 29px;
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .seg button {
+        padding: 3px 9px;
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .seg button[aria-pressed='true'] {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+        font-weight: 600;
+      }
+      .cnt {
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+        white-space: nowrap;
+      }
+      .search {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex: 1;
+        min-width: 0;
+        height: 25px;
+        padding: 0 8px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-sm);
+        background: var(--c-surface-inset);
+      }
+      .search input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        outline: none;
+        background: none;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 2.5px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--c-edge);
+        color: var(--c-fg-muted);
+        white-space: nowrap;
+      }
+      .chip[aria-pressed='true'] {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+        background: var(--c-accent-dim);
+      }
+      .dd {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--c-edge);
+        color: var(--c-fg-secondary);
+        font-size: 11px;
+      }
+      .tree {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        background: var(--c-surface);
+      }
+      .trow {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 30px;
+        padding-right: 8px;
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+        cursor: pointer;
+      }
+      .trow:hover {
+        background: var(--c-surface-raised);
+      }
+      .trow.sel {
+        background: var(--c-accent-dim);
+        color: var(--c-fg);
+      }
+      .trow .chev {
+        color: var(--c-fg-muted);
+        transition: transform 0.15s;
+      }
+      .trow.closed .chev {
+        transform: rotate(-90deg);
+      }
+      .trow .lbl {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+      }
+      .trow.folder .lbl {
+        font-family: var(--font-sans);
+        font-size: 12px;
+        color: var(--c-fg);
+      }
+      .trow .n {
+        color: var(--c-fg-muted);
+        font-size: 11px;
+      }
+      .trow .ttl {
+        font-size: 10.5px;
+        color: var(--c-fg-muted);
+        font-family: var(--font-mono);
+      }
+      .trow .ttl.p {
+        color: var(--c-warning);
+      }
+      .trow .del {
+        margin-left: auto;
+        opacity: 0;
+        color: var(--c-danger);
+      }
+      .trow:hover .del {
+        opacity: 1;
+      }
+      .trow:hover .ttl {
+        display: none;
+      }
+      .trow input.cb {
+        width: 12px;
+        height: 12px;
+        accent-color: var(--c-accent);
+        margin-left: 4px;
+      }
+      .sticky {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        height: 23px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        background: var(--c-surface-raised);
+        border: 1px solid var(--c-edge);
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+      }
+      .treefoot {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-top: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        font-size: 11.5px;
+      }
+      .btn {
+        padding: 4px 10px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-sm);
+        font-size: 11.5px;
+        color: var(--c-fg-secondary);
+      }
+      .btn:hover {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+      }
+      .btn.stop {
+        border-color: rgba(255, 123, 114, 0.5);
+        color: var(--c-danger);
+      }
+      .btn.p {
+        border-color: var(--c-accent);
+        background: var(--c-accent);
+        color: var(--c-on-accent);
+        font-weight: 600;
+      }
+      .batch {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: var(--c-accent-dim);
+        border-top: 1px solid var(--c-edge);
+        font-size: 11.5px;
+        color: var(--c-accent);
+      }
+      .col-r {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .rtabs {
+        flex: none;
+        height: 32px;
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        padding: 0 8px;
+        border-bottom: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        font-size: 12px;
+      }
+      .rtabs .tab {
+        padding: 0 11px;
+        color: var(--c-fg-muted);
+        border-bottom: 2px solid transparent;
+      }
+      .rtabs .tab.on {
+        color: var(--c-accent);
+        border-bottom-color: var(--c-accent);
+        font-weight: 600;
+      }
+      .detail {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--c-surface);
+      }
+      .dhead {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--c-edge);
+      }
+      .dhead .key {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--c-fg);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .split-btn {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .split-btn button {
+        padding: 3px 7px;
+        color: var(--c-fg-secondary);
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11.5px;
+      }
+      .split-btn button + button {
+        border-left: 1px solid var(--c-edge);
+      }
+      .split-btn button:hover {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .badgerow {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--c-edge);
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+      }
+      .ttl-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2.5px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--c-edge-hi);
+        color: var(--c-fg-secondary);
+        font-size: 11.5px;
+        cursor: pointer;
+      }
+      .ttl-pill:hover {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
+      }
+      .ttl-pill.pe {
+        border-color: rgba(251, 191, 36, 0.45);
+        color: var(--c-warning);
+      }
+      .ttle {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 12px;
+        border-bottom: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+      }
+      .ttle input {
+        width: 104px;
+        height: 23px;
+        padding: 0 7px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-sm);
+        background: var(--c-surface-inset);
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        outline: none;
+      }
+      .coderow {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 12px;
+        border-bottom: 1px solid var(--c-edge);
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+        flex-wrap: wrap;
+      }
+      .coderow .v {
+        padding: 2.5px 8px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--c-edge);
+        color: var(--c-fg-secondary);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .coderow .v[aria-pressed='true'] {
+        border-color: var(--c-accent);
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .valuewrap {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 10px 12px 0;
+        gap: 8px;
+      }
+      .notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(251, 191, 36, 0.4);
+        background: rgba(251, 191, 36, 0.09);
+        color: var(--c-warning);
+        font-size: 11.5px;
+      }
+      .notice.info {
+        border-color: var(--c-edge-hi);
+        background: var(--c-surface-alt);
+        color: var(--c-fg-secondary);
+      }
+      .notice .act {
+        margin-left: auto;
+        text-decoration: underline;
+        white-space: nowrap;
+        color: inherit;
+      }
+      textarea.val {
+        flex: 1;
+        min-height: 110px;
+        resize: none;
+        padding: 10px 12px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-md) var(--radius-md) 0 0;
+        background: var(--c-surface-inset);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.65;
+        outline: none;
+        color: var(--c-fg);
+      }
+      textarea.val:focus {
+        border-color: var(--c-accent);
+      }
+      textarea.val[readonly] {
+        color: var(--c-fg-secondary);
+        background: var(--c-surface-alt);
+      }
+      .dfoot {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-top: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        font-size: 11.5px;
+      }
+      .dirty-flag {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--c-warning);
+      }
+      .keytable {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-md) var(--radius-md) 0 0;
+        background: var(--c-surface-inset);
+      }
+      .keytable td.edit {
+        cursor: text;
+      }
+      .keytable td.edit:hover {
+        background: var(--c-accent-dim);
+      }
+      .keytable input {
+        width: 90px;
+        border: 1px solid var(--c-accent);
+        background: var(--c-surface);
+        outline: none;
+        padding: 2px 4px;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        border-radius: 4px;
+      }
+      .props {
+        width: 262px;
+        flex: none;
+        border-left: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        overflow: auto;
+      }
+      .props h4 {
+        margin: 0;
+        padding: 9px 12px;
+        font-size: 11px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+        border-bottom: 1px solid var(--c-edge);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .props .bd {
+        padding: 10px 12px 14px;
+      }
+      .props dl {
+        margin: 0 0 12px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 5px 10px;
+        font-size: 11.5px;
+      }
+      .props dt {
+        color: var(--c-fg-muted);
+        font-family: var(--font-mono);
+        font-size: 11px;
+      }
+      .props dd {
+        margin: 0;
+        text-align: right;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+      }
+
+      /* ── console / 屏 D / 诊断 ──────────────────────────────────── */
+      .console {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 10px 12px;
+        gap: 8px;
+      }
+      .out {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-md);
+        background: var(--c-surface-inset);
+        padding: 10px 12px;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        line-height: 1.75;
+        white-space: pre-wrap;
+      }
+      .out .cmd {
+        color: var(--c-accent);
+      }
+      .out .err {
+        color: var(--c-danger);
+      }
+      .out .cm {
+        color: var(--c-fg-muted);
+      }
+      .cmdbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 29px;
+        padding: 0 10px;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-sm);
+        background: var(--c-surface-inset);
+      }
+      .cmdbar input {
+        flex: 1;
+        border: none;
+        outline: none;
+        background: none;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .spec {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 372px minmax(0, 1fr);
+      }
+      .spec .l {
+        border-right: 1px solid var(--c-edge);
+        overflow: auto;
+      }
+      .spec .r {
+        overflow: auto;
+        padding: 14px 16px;
+      }
+      .state {
+        border-bottom: 1px solid var(--c-edge);
+        padding: 10px 12px;
+        cursor: pointer;
+      }
+      .state.on {
+        background: var(--c-accent-dim);
+      }
+      .state .t {
+        font-size: 12.5px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .state p {
+        margin: 5px 0 0;
+        font-size: 11.5px;
+        color: var(--c-fg-secondary);
+      }
+      .tl {
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-md);
+        padding: 8px 12px;
+        margin-top: 10px;
+        background: var(--c-surface-alt);
+      }
+      .tl .ev {
+        display: flex;
+        gap: 10px;
+        font-size: 11.5px;
+        padding: 3px 0;
+      }
+      .tl .ev time {
+        font-family: var(--font-mono);
+        color: var(--c-fg-muted);
+        width: 58px;
+        flex: none;
+      }
+      .diag {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 14px 16px 22px;
+      }
+      .diag .intro {
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+        max-width: 82ch;
+        margin-bottom: 12px;
+      }
+      .prob {
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-lg);
+        background: var(--c-surface-alt);
+        margin-bottom: 12px;
+        overflow: hidden;
+      }
+      .prob > header {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--c-edge);
+        font-size: 12.5px;
+      }
+      .prob > header .id {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--c-on-accent);
+        background: var(--c-danger);
+        border-radius: 5px;
+        padding: 1.5px 6px;
+      }
+      .prob .bd {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+        padding: 12px;
+      }
+      @media (max-width: 980px) {
+        .prob .bd {
+          grid-template-columns: 1fr;
+        }
+      }
+      .mock {
+        border: 1px dashed var(--c-danger);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        background: var(--c-surface);
+        position: relative;
+      }
+      .mock.fixed {
+        border-color: var(--c-success);
+      }
+      .mock .cap {
+        display: block;
+        padding: 4px 8px;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--c-danger);
+      }
+      .mock.fixed .cap {
+        color: var(--c-success);
+      }
+      .mock .band {
+        min-height: 38px;
+        border-bottom: 1px solid var(--c-edge);
+        background: var(--c-surface-alt);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 10px;
+        font-size: 11.5px;
+        color: var(--c-fg-muted);
+        flex-wrap: wrap;
+      }
+      .mock .pad {
+        padding: 8px 10px 12px;
+        font-size: 11.5px;
+        color: var(--c-fg-secondary);
+      }
+      .mock .hero {
+        margin: 16px auto;
+        width: 76%;
+        border: 1px solid var(--c-edge);
+        border-radius: var(--radius-lg);
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--c-surface-alt);
+        color: var(--c-fg-secondary);
+      }
+      .why {
+        font-size: 11.5px;
+        color: var(--c-fg-secondary);
+        margin: 0 0 7px;
+      }
+      .why code,
+      .pad code {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--c-accent);
+      }
+      .pad ul {
+        margin: 4px 0 0;
+        padding-left: 16px;
+      }
+      .pad li {
+        margin: 3px 0;
+      }
+
+      /* ── toast / modal / menu ───────────────────────────────────── */
+      #toast {
+        position: fixed;
+        bottom: 36px;
+        left: 50%;
+        transform: translate(-50%, 14px);
+        padding: 9px 16px;
+        border-radius: var(--radius-md);
+        background: var(--c-surface-raised);
+        border: 1px solid var(--c-edge-hi);
+        box-shadow: var(--shadow-card);
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+        transition: 0.18s;
+        z-index: 60;
+        max-width: 72vw;
+      }
+      #toast.on {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      #modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        place-items: center;
+        background: rgba(4, 8, 14, 0.55);
+        z-index: 70;
+      }
+      #modal.on {
+        display: grid;
+      }
+      #modal .box {
+        width: 420px;
+        max-width: 90vw;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-lg);
+        background: var(--c-surface);
+        box-shadow: var(--shadow-card);
+        overflow: hidden;
+      }
+      #modal h3 {
+        margin: 0;
+        padding: 11px 14px;
+        font-size: 13px;
+        border-bottom: 1px solid var(--c-edge);
+      }
+      #modal .bd {
+        padding: 12px 14px;
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+      }
+      #modal .ft {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 10px 14px;
+        border-top: 1px solid var(--c-edge);
+      }
+      #modal .ft button {
+        padding: 6px 13px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--c-edge-hi);
+        font-size: 12px;
+      }
+      #modal .ft .p {
+        background: var(--c-accent);
+        border-color: var(--c-accent);
+        color: var(--c-on-accent);
+        font-weight: 600;
+      }
+      .menu {
+        position: fixed;
+        z-index: 55;
+        min-width: 186px;
+        max-height: 60vh;
+        overflow: auto;
+        border: 1px solid var(--c-edge-hi);
+        border-radius: var(--radius-md);
+        background: var(--c-surface-raised);
+        box-shadow: var(--shadow-card);
+        padding: 4px;
+        display: none;
+      }
+      .menu.on {
+        display: block;
+      }
+      .menu button {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 8px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--c-fg-secondary);
+        text-align: left;
+      }
+      .menu button:hover {
+        background: var(--c-accent-dim);
+        color: var(--c-accent);
+      }
+      .menu .sep {
+        height: 1px;
+        margin: 4px 2px;
+        background: var(--c-edge);
+      }
+      .menu .lbl {
+        padding: 5px 8px 3px;
+        font-size: 10px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <svg style="display: none">
+      <symbol id="i-chevd" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 16 16">
+        <path d="M13.5 8a5.5 5.5 0 11-1.7-4M13.5 2v3h-3" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 16 16">
+        <rect x="5.5" y="5.5" width="7" height="7" rx="1.5" />
+        <path
+          d="M10.5 5.5v-2a1.5 1.5 0 00-1.5-1.5H4A1.5 1.5 0 002.5 3.5V9A1.5 1.5 0 004 10.5h1.5"
+        />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 16 16">
+        <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9.1A1 1 0 005.6 14h4.8a1 1 0 001-.9L12 4" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></symbol>
+      <symbol id="i-more" viewBox="0 0 16 16">
+        <circle cx="3.5" cy="8" r="1" />
+        <circle cx="8" cy="8" r="1" />
+        <circle cx="12.5" cy="8" r="1" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 16 16">
+        <circle cx="7" cy="7" r="4" />
+        <path d="M10 10l3.5 3.5" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 16 16">
+        <path d="M1.5 4.5a1 1 0 011-1h3l1.2 1.5h6.8a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1z" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 16 16">
+        <circle cx="5.5" cy="10.5" r="2.5" />
+        <path d="M7.3 8.7L13 3M11 5l1.5 1.5M9.5 6.5L11 8" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="5.5" />
+        <path d="M8 5v3.2l2 1.3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></symbol>
+      <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.5 3.5L13 5" /></symbol>
+      <symbol id="i-db" viewBox="0 0 16 16">
+        <ellipse cx="8" cy="4" rx="5.5" ry="2.2" />
+        <path
+          d="M2.5 4v8c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V4M2.5 8c0 1.2 2.5 2.2 5.5 2.2S13.5 9.2 13.5 8"
+        />
+      </symbol>
+      <symbol id="i-console" viewBox="0 0 16 16"><path d="M3 4l3.5 4L3 12M8.5 12h4.5" /></symbol>
+      <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 8h3l2-4.5 3 9 2-4.5h3" /></symbol>
+      <symbol id="i-mail" viewBox="0 0 16 16">
+        <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+        <path d="M2 5l6 4 6-4" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 16 16">
+        <path d="M8 1.8l5 2v4c0 3-2.2 5.2-5 6.4-2.8-1.2-5-3.4-5-6.4v-4z" />
+      </symbol>
+      <symbol id="i-export" viewBox="0 0 16 16">
+        <path d="M8 10.5V2.5M5 5.5L8 2.5l3 3M2.5 10.5v2a1 1 0 001 1h9a1 1 0 001-1v-2" />
+      </symbol>
+      <symbol id="i-sliders" viewBox="0 0 16 16">
+        <path d="M2.5 5h11M2.5 11h11M6 5v-2.5M10 11v2.5" />
+      </symbol>
+      <symbol id="i-braces" viewBox="0 0 16 16">
+        <path d="M6 2.5C4 2.5 4.5 6 3 6s-.5 3.5 3 3.5M10 2.5c2 0 1.5 3.5 3 3.5s.5 3.5-3 3.5" />
+      </symbol>
+      <symbol id="i-panel" viewBox="0 0 16 16">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M10 2.5v11" />
+      </symbol>
+      <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2.5 3.5h11v8h-6l-3 2.5v-2.5h-2z" /></symbol>
+      <symbol id="i-book" viewBox="0 0 16 16">
+        <path
+          d="M8 4.2C6.7 3 4.7 2.8 2.5 3v9c2.2-.2 4.2 0 5.5 1.2 1.3-1.2 3.3-1.4 5.5-1.2V3c-2.2-.2-4.2 0-5.5 1.2zM8 4.2v8.3"
+        />
+      </symbol>
+      <symbol id="i-warn" viewBox="0 0 16 16">
+        <path d="M8 2.5l6 11H2zM8 6.5v3.5M8 11.8v.1" />
+      </symbol>
+      <symbol id="i-stop" viewBox="0 0 16 16">
+        <rect x="4" y="4" width="8" height="8" rx="1" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 16 16">
+        <path d="M8 2.5v8M5 8l3 3 3-3M2.5 13.5h11" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.5 2.5l2 2L5 13l-3 1 1-3z" /></symbol>
+      <symbol id="i-tree" viewBox="0 0 16 16"><path d="M3 3h10M3 3v10M3 8h6M3 12h6" /></symbol>
+      <symbol id="i-list" viewBox="0 0 16 16">
+        <path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01" />
+      </symbol>
+    </svg>
+
+    <header class="proto">
+      <h1>Redis 工作区原型 <small>· REDIS_WORKSPACE_UX v1.0.0 · 对应 PRD §1–§4</small></h1>
+      <nav class="screens" role="tablist">
+        <button role="tab" data-screen="diag" aria-selected="true">① 现状诊断</button>
+        <button role="tab" data-screen="home">② 屏 A 连接总览</button>
+        <button role="tab" data-screen="browse">③ 屏 B 双栏工作区</button>
+        <button role="tab" data-screen="scan">④ 扫描预算模型</button>
+      </nav>
+      <button
+        class="ghost"
+        id="theme"
+        style="
+          margin-left: 10px;
+          border-left: 1px solid var(--c-edge);
+          padding-left: 14px;
+          border-radius: 0;
+        "
+      >
+        <svg><use href="#i-db" /></svg><span>明/暗</span>
+      </button>
+    </header>
+
+    <div class="stage">
+      <!-- ① 现状诊断 -->
+      <section class="screen on" data-screen="diag">
+        <div class="diag" id="diag"></div>
+      </section>
+
+      <!-- ② 屏 A -->
+      <section class="screen" data-screen="home">
+        <div class="frame">
+          <div class="demo">
+            <span class="lbl">状态机 §3.0</span>
+            <span
+              ><b>进入</b>：连接已建立且无 db 面板 · <b>退出</b>：任一选 db 动作（左树 / 上下文条 /
+              Key Space 格子 / 大 key / 最近浏览）→ 直接进键树</span
+            >
+          </div>
+          <div class="titlebar">
+            <div class="traffic">
+              <i style="background: #ff5f57"></i><i style="background: #febc2e"></i
+              ><i style="background: #28c840"></i>
+            </div>
+            <span class="crumb">DataZen — local-dev</span>
+          </div>
+          <div class="split">
+            <aside class="nav" id="nav-a"></aside>
+            <div class="ws">
+              <div class="kvbar" id="kvbar-a"></div>
+              <div class="tabstrip"><span class="tab on">local-dev</span></div>
+              <div
+                class="content"
+                id="home-body"
+                style="flex-direction: column; overflow: auto"
+              ></div>
+              <div class="statusbar" id="status-a"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ 屏 B -->
+      <section class="screen" data-screen="browse">
+        <div class="frame">
+          <div class="demo">
+            <span class="lbl">可切状态</span>
+            <button class="pill" data-toggle="props">键属性侧栏 §3.4</button>
+            <button class="pill" data-toggle="wrap">自动换行</button>
+            <button class="pill" data-toggle="dirty">模拟 dirty I-1</button>
+            <button class="pill" data-toggle="big">大 value 只读 §3.3</button>
+            <button class="pill" data-toggle="hex">Hex 只读 I-5</button>
+            <button class="pill" data-toggle="sticky">sticky 分组头</button>
+            <button class="pill" data-toggle="scanning">扫描中 I-2</button>
+          </div>
+          <div class="titlebar">
+            <div class="traffic">
+              <i style="background: #ff5f57"></i><i style="background: #febc2e"></i
+              ><i style="background: #28c840"></i>
+            </div>
+            <span class="crumb">DataZen — local-dev · <span id="crumb-db">db0</span></span>
+          </div>
+          <div class="split">
+            <aside class="nav" id="nav-b"></aside>
+            <div class="ws">
+              <div class="kvbar" id="kvbar-b"></div>
+              <div class="tabstrip" id="tabstrip-b"></div>
+              <div class="content">
+                <div class="wb">
+                  <div class="col-l" id="col-l"></div>
+                  <div class="col-r" id="col-r"></div>
+                </div>
+                <aside class="props" id="props" style="display: none"></aside>
+              </div>
+              <div class="statusbar" id="status-b"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 扫描预算模型 -->
+      <section class="screen" data-screen="scan">
+        <div class="frame">
+          <div class="demo">
+            <span class="lbl">交互</span
+            ><span>左列点任一状态 → 右侧展示该状态下的列头计数、页脚、请求序列与不变量</span>
+          </div>
+          <div class="titlebar">
+            <div class="traffic">
+              <i style="background: #ff5f57"></i><i style="background: #febc2e"></i
+              ><i style="background: #28c840"></i>
+            </div>
+            <span class="crumb">DataZen — 扫描预算模型（§3.2 / I-2 / I-3 / I-4）</span>
+          </div>
+          <div class="spec">
+            <aside class="l" id="scan-states"></aside>
+            <div class="r" id="scan-detail"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast"></div>
+    <div id="modal">
+      <div class="box">
+        <h3 id="modal-t"></h3>
+        <div class="bd" id="modal-b"></div>
+        <div class="ft" id="modal-f"></div>
+      </div>
+    </div>
+    <div class="menu" id="menu"></div>
+
+    <script>
+      'use strict';
+      /* Mock data shaped like the driver command payloads: `info` / `db_sizes` /
+     `memory_sample` / `slowlog_get` / `list_children` / `get_key`. */
+      const INFO = {
+        redis_version: '7.2.4',
+        mode: 'standalone',
+        arch_bits: '64',
+        os: 'Linux 5.15.0 x86_64',
+        uptime_days: '12d 6h',
+        connected_clients: 7,
+        blocked_clients: 0,
+        instantaneous_ops_per_sec: 431,
+        total_commands_processed: 1284993,
+        used_memory: 862144,
+        maxmemory: 0,
+        mem_fragmentation_ratio: 1.62,
+        evicted_keys: 0,
+        expired_keys: 48211,
+        keyspace_hits: 1102884,
+        keyspace_misses: 33102,
+        maxmemory_policy: 'noeviction',
+        rdb_last_save: '09-21 03:12',
+      };
+      const DBSIZES = [52, 1284, 0, 7, 0, 0, 216, 0, 0, 0, 0, 0, 0, 0, 1, 0];
+      const BIGKEYS = [
+        { key: 'app:report:2026-09:blob', type: 'string', bytes: 4404019, ttl: -1, db: 0 },
+        { key: 'queue:email:dead', type: 'list', bytes: 524108, ttl: 3600, db: 0 },
+        { key: 'cache:catalog:full', type: 'hash', bytes: 325944, ttl: -1, db: 1 },
+        { key: 'metrics:hourly:20260920', type: 'zset', bytes: 98304, ttl: 86400, db: 0 },
+        { key: 'events:order-created', type: 'stream', bytes: 45122, ttl: -1, db: 6 },
+      ];
+      const SLOWLOG = [
+        { id: 91, us: 4218003, cmd: 'KEYS app:report:*', client: 'app-svc:44821' },
+        { id: 90, us: 982140, cmd: 'HGETALL cache:catalog:full', client: 'web-01:51204' },
+        { id: 88, us: 411882, cmd: 'SMEMBERS feature:flags', client: 'web-02:53310' },
+      ];
+      const TC = {
+        string: 'var(--t-string)',
+        hash: 'var(--t-hash)',
+        list: 'var(--t-list)',
+        set: 'var(--t-set)',
+        zset: 'var(--t-zset)',
+        stream: 'var(--t-stream)',
+      };
+      const KEYS = {
+        'app:cache:session:1': {
+          type: 'string',
+          ttl: 468,
+          bytes: 92,
+          enc: 'raw',
+          value:
+            '{\n  "uid": 1001,\n  "role": "admin",\n  "ip": "10.4.1.22",\n  "loginAt": "2026-09-21T02:14:09Z"\n}',
+        },
+        'app:cache:session:2': {
+          type: 'string',
+          ttl: 61,
+          bytes: 78,
+          enc: 'raw',
+          value:
+            '{\n  "uid": 1002,\n  "role": "viewer",\n  "ip": "10.4.1.37",\n  "loginAt": "2026-09-21T02:15:33Z"\n}',
+        },
+        'app:report:2026-09:blob': {
+          type: 'string',
+          ttl: -1,
+          bytes: 4404019,
+          enc: 'gzip',
+          big: true,
+          value:
+            '‹binary› 1f 8b 08 00 00 00 00 00 00 ff ec bd eb 72 db 36 b2 3f c7 ff 7f 8d 7d 2c 5b a5 64 cb 92 c5 4d f2 9c b4 db 6c 2c b2 a4 b9 4d a9 e4 bc 8d b9 c5 c1 dd 95',
+        },
+        'users:1001': {
+          type: 'hash',
+          ttl: -1,
+          bytes: 412,
+          enc: 'listpack',
+          fields: [
+            ['id', '1001', -1],
+            ['name', '张三', -1],
+            ['email', 'zhangsan@example.com', -1],
+            ['role', 'admin', 7200],
+            ['last_login', '2026-09-21T01:44:02Z', -1],
+          ],
+        },
+        'users:1002': {
+          type: 'hash',
+          ttl: -1,
+          bytes: 388,
+          enc: 'listpack',
+          fields: [
+            ['id', '1002', -1],
+            ['name', '李四', -1],
+            ['email', 'lisi@example.com', 86400],
+            ['role', 'viewer', -1],
+          ],
+        },
+        'queue:email:dead': {
+          type: 'list',
+          ttl: 3600,
+          bytes: 524108,
+          enc: 'quicklist',
+          total: 148,
+          rows: [
+            [0, '{"to":"a@example.com","tpl":"welcome"}'],
+            [1, '{"to":"b@example.com","tpl":"reset"}'],
+            [2, '{"to":"c@example.com","tpl":"invoice"}'],
+          ],
+        },
+        'feature:flags': {
+          type: 'set',
+          ttl: -1,
+          bytes: 244,
+          enc: 'intset',
+          members: ['new-editor', 'redis-tree-v2', 'schema-diff-v2', 'mcp-client'],
+        },
+        'metrics:hourly:20260920': {
+          type: 'zset',
+          ttl: 86400,
+          bytes: 98304,
+          enc: 'skiplist',
+          total: 2411,
+          rows: [
+            ['qps:gateway', 9812.5],
+            ['qps:billing', 3241],
+            ['qps:search', 1908.75],
+          ],
+        },
+        'events:order-created': {
+          type: 'stream',
+          ttl: -1,
+          bytes: 45122,
+          enc: 'stream-listpack',
+          entries: [
+            ['1727048233-0', '{orderId:"O-8821",amount:199.00}'],
+            ['1727048511-0', '{orderId:"O-8822",amount:42.50}'],
+            ['1727049002-0', '{orderId:"O-8823",amount:1280.00}'],
+          ],
+          groups: [
+            ['grp-payments', 2, 3, 12],
+            ['grp-shipping', 1, 0, 4],
+          ],
+          consumers: [
+            ['c-1', 1, 2, '2s'],
+            ['c-2', 0, 1, '41s'],
+          ],
+        },
+      };
+      const FLAT = [
+        { g: 'app', k: 'app:cache:session:1' },
+        { g: 'app', k: 'app:cache:session:2' },
+        { g: 'app', k: 'app:report:2026-09:blob' },
+        { g: 'users', k: 'users:1001' },
+        { g: 'users', k: 'users:1002' },
+        { g: 'misc', k: 'queue:email:dead' },
+        { g: 'misc', k: 'feature:flags' },
+        { g: 'misc', k: 'metrics:hourly:20260920' },
+        { g: 'misc', k: 'events:order-created' },
+      ];
+      const OPEN = new Set(['app:cache', 'users']);
+      const CODECS = [
+        'none',
+        'gzip',
+        'zlib',
+        'deflate',
+        'base64',
+        'msgpack',
+        'pickle',
+        'php',
+        'java',
+      ];
+      const VIEWS = [
+        'utf8',
+        'ascii',
+        'binary',
+        'json',
+        'unicode-json',
+        'yaml',
+        'xml',
+        'hex',
+        'base64',
+      ];
+      const RTABS = [
+        ['detail', '键详情'],
+        ['console', '命令行'],
+        ['pubsub', '发布订阅'],
+        ['monitor', '监控'],
+        ['slow', '慢日志'],
+      ];
+
+      const S = {
+        screen: 'diag',
+        db: null,
+        selected: 'app:cache:session:1',
+        sel: new Set(),
+        props: false,
+        wrap: true,
+        dirty: false,
+        big: false,
+        hex: false,
+        sticky: true,
+        rtab: 'detail',
+        codec: 'gzip',
+        view: 'utf8',
+        mode: 'key',
+        noexp: false,
+        typeFilter: null,
+        rules: false,
+        pattern: '',
+        scan: 'idle',
+        loaded: 9,
+        auto: 'off',
+        ttlEdit: false,
+        ttlMode: 'rel',
+        streamSub: 'entries',
+        rowEdit: null,
+      };
+      let BUDGET = 50000;
+
+      const $ = (s, r = document) => r.querySelector(s);
+      const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+      const el = (t, c, h) => {
+        const n = document.createElement(t);
+        if (c) n.className = c;
+        if (h != null) n.innerHTML = h;
+        return n;
+      };
+      const ic = (id, cls = '') => `<svg class="${cls}"><use href="#i-${id}" /></svg>`;
+      const fb = (n) =>
+        n == null
+          ? '—'
+          : n < 1024
+            ? `${n} B`
+            : n < 1048576
+              ? `${(n / 1024).toFixed(1)} KB`
+              : `${(n / 1048576).toFixed(2)} MB`;
+      const ft = (t) =>
+        t == null || t < 0
+          ? '永不过期'
+          : t < 90
+            ? `${t}s`
+            : t < 5400
+              ? `${Math.round(t / 60)}m`
+              : t < 86400
+                ? `${(t / 3600).toFixed(1)}h`
+                : `${(t / 86400).toFixed(1)}d`;
+      const badge = (t) =>
+        `<span class="badge" style="color:${TC[t] || 'var(--c-fg-muted)'}">${t}</span>`;
+      let tt;
+      const toast = (m) => {
+        const n = $('#toast');
+        n.textContent = m;
+        n.classList.add('on');
+        clearTimeout(tt);
+        tt = setTimeout(() => n.classList.remove('on'), 2600);
+      };
+      const modal = (title, body, actions) => {
+        $('#modal-t').textContent = title;
+        $('#modal-b').innerHTML = body;
+        const f = $('#modal-f');
+        f.innerHTML = '';
+        actions.forEach((a) => {
+          const b = el('button', a.primary ? 'p' : '', a.label);
+          b.onclick = () => {
+            $('#modal').classList.remove('on');
+            a.onClick && a.onClick();
+          };
+          f.append(b);
+        });
+        $('#modal').classList.add('on');
+      };
+      const menu = (anchor, items) => {
+        const m = $('#menu');
+        m.innerHTML = '';
+        items.forEach((it) => {
+          if (it.sep) return m.append(el('div', 'sep'));
+          if (it.lbl) return m.append(el('div', 'lbl', it.lbl));
+          const b = el(
+            'button',
+            '',
+            `${it.icon ? ic(it.icon) : '<span style="width:1em"></span>'}<span>${it.label}</span>`,
+          );
+          b.onclick = () => {
+            m.classList.remove('on');
+            it.onClick && it.onClick();
+          };
+          m.append(b);
+        });
+        const r = anchor.getBoundingClientRect();
+        m.style.left = Math.min(r.left, innerWidth - 210) + 'px';
+        m.style.top = Math.min(r.bottom + 6, Math.max(60, innerHeight - 300)) + 'px';
+        m.classList.add('on');
+      };
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#menu')) $('#menu').classList.remove('on');
+      });
+
+      /* I-1 — every action that could drop a draft goes through this gate. */
+      const guard = (label, proceed) => {
+        if (!S.dirty) return proceed();
+        modal(
+          `未保存的更改 · ${S.selected}`,
+          `切换将丢弃编辑区内的草稿。确认执行：<b>${label}</b>？`,
+          [
+            { label: '继续编辑' },
+            {
+              label: '放弃更改',
+              primary: true,
+              onClick: () => {
+                S.dirty = false;
+                proceed();
+                render();
+              },
+            },
+          ],
+        );
+      };
+
+      /* §3.0 — 唯一的状态跃迁入口：选中某个 db 即从屏 A 进入屏 B（键树）。 */
+      function openDb(i, why) {
+        const target = `db${i}`;
+        const go2 = () => {
+          S.db = target;
+          S.loaded = 9;
+          S.rtab = 'detail';
+          if (S.screen !== 'browse') go('browse');
+          else render();
+          if (why) toast(why);
+        };
+        if (S.screen === 'browse') guard(`切换到 ${target}`, go2);
+        else go2();
+      }
+
+      function renderNav(host) {
+        host.innerHTML = '';
+        host.append(
+          el('div', 'h', '连接'),
+          el('div', 'navrow', `${ic('db')}<span>local-dev</span>${ic('chevd', 'chev')}`),
+        );
+        DBSIZES.forEach((n, i) => {
+          const row = el(
+            'div',
+            'navrow' + (S.db === `db${i}` ? ' sel' : ''),
+            `<span style="width:1em"></span><span>db${i}</span><span class="cnt">${n ? n.toLocaleString() : ''}</span>`,
+          );
+          row.onclick = () => openDb(i);
+          host.append(row);
+        });
+        if (!S.db)
+          host.append(
+            el(
+              'div',
+              'navrow',
+              `<span style="width:1em"></span><span style="color:var(--c-fg-muted);font-style:italic">未选择数据库</span>`,
+            ),
+          );
+        host.append(
+          el('div', 'h', '宿主插件'),
+          el('div', 'navrow', `${ic('braces')}<span>SQL 编辑器</span>`),
+        );
+      }
+
+      /* §3.4 — KV context bar (replaces the P-1 empty band) */
+      function renderKvbar(host, minimal) {
+        if (!S.db) {
+          const nonEmpty = DBSIZES.filter((n) => n > 0).length;
+          host.innerHTML = `<button class="dbpick" id="dbp">${ic('db')}<b style="color:var(--c-fg-muted);font-weight:400">选择数据库 ▾</b></button>
+            <span class="metric">redis <b>${INFO.redis_version}</b> · ${INFO.mode}</span>
+            <span class="metric"><b>16</b> db / 非空 <b>${nonEmpty}</b></span>
+            <span class="metric">used <b>${fb(INFO.used_memory)}</b> / max <b>0</b></span>
+            <span class="metric" style="color:var(--c-fg-muted)">连接级概览 · 零 SCAN 开销<sup class="ref">§3.1</sup></span>
+            <span class="spacer"></span>
+            <span class="smode">${ic('shield')}SafeMode 开<sup class="ref">I-6</sup></span>
+            <button class="iconbtn" id="knw" title="新建键">${ic('plus')}</button>
+            <button class="iconbtn" id="kai" title="AI">${ic('msg')}</button>
+            <button class="iconbtn" id="kdoc" title="文档">${ic('book')}</button>
+            <button class="iconbtn" id="kmo" title="更多">${ic('more')}</button>`;
+          $('#dbp', host).onclick = (e) =>
+            menu(e.currentTarget, [
+              { lbl: '选择数据库 → 进入键树' },
+              ...DBSIZES.map((n, i) => ({
+                label: `db${i}${n ? ' · ' + n.toLocaleString() : ' · 空'}`,
+                onClick: () => openDb(i, `已进入 db${i} 键树`),
+              })),
+            ]);
+          $('#knw', host).onclick = () => openDb(0, '新建键需要先选 db → 已进入 db0 键树');
+          $('#kai', host).onclick = () =>
+            toast('P-3：需注入 key/类型/TTL/值摘要，否则 KV 面板下不渲染');
+          $('#kdoc', host).onclick = () =>
+            toast('openDocsWindow("ai") — 与 Redis 无关但无害，保留');
+          $('#kmo', host).onclick = (e) =>
+            menu(e.currentTarget, [
+              {
+                label: '监控子页',
+                icon: 'pulse',
+                onClick: () => {
+                  openDb(0);
+                  S.rtab = 'monitor';
+                  render();
+                },
+              },
+              {
+                label: '慢日志',
+                icon: 'clock',
+                onClick: () => {
+                  openDb(0);
+                  S.rtab = 'slow';
+                  render();
+                },
+              },
+              { sep: true },
+              { label: '驱动设置', icon: 'sliders' },
+            ]);
+          return;
+        }
+        const total = DBSIZES[+S.db.slice(2)] || 0;
+        const pct =
+          S.scan === 'scanning' ? 24 : S.scan === 'budget' ? 100 : S.scan === 'fetchall' ? 61 : 0;
+        const txt =
+          S.scan === 'scanning'
+            ? '扫描中 12k/50k 预算'
+            : S.scan === 'budget'
+              ? '预算耗尽 50k/50k'
+              : S.scan === 'fetchall'
+                ? 'Fetch all 中'
+                : '游标 0 · 已完成';
+        const dist = `<div class="dist"><span><i style="background:var(--t-string)"></i>string 30</span><span><i style="background:var(--t-hash)"></i>hash 12</span><span><i style="background:var(--t-list)"></i>list 6</span><span><i style="background:var(--t-set)"></i>set 2</span><span><i style="background:var(--t-zset)"></i>zset 1</span><span><i style="background:var(--t-stream)"></i>stream 1</span><sup class="ref">§6&nbsp;P2</sup></div>`;
+        host.innerHTML = `<button class="dbpick" id="dbp">${ic('db')}<b>${S.db}</b>${ic('chevd')}</button>
+          <span class="metric"><b>${total.toLocaleString()}</b> keys<sup class="ref">§3.4</sup></span>
+          <span class="metric">used <b>${fb(INFO.used_memory)}</b> / max <b>0</b></span>
+          ${minimal ? '' : dist + `<div class="scanmini"><span>${txt}</span><span class="bar"><i style="width:${pct}%"></i></span><sup class="ref">I-2</sup></div>`}
+          <span class="spacer"></span>
+          <span class="smode">${ic('shield')}SafeMode 开<sup class="ref">I-6</sup></span>
+          <button class="iconbtn" id="krf" title="刷新">${ic('refresh')}</button>
+          <button class="iconbtn" id="knw" title="新建键">${ic('plus')}</button>
+          <button class="iconbtn" id="kex" title="导入导出">${ic('export')}</button>
+          <button class="iconbtn${S.props ? ' on' : ''}" id="kpp" title="键属性侧栏（死按钮的新用途）">${ic('panel')}</button>
+          <button class="iconbtn" id="kai" title="AI">${ic('msg')}</button>
+          <button class="iconbtn" id="kdoc" title="文档">${ic('book')}</button>
+          <button class="iconbtn" id="kmo" title="更多">${ic('more')}</button>`;
+        $('#dbp', host).onclick = (e) =>
+          menu(e.currentTarget, [
+            { lbl: '数据库（切换 = 换键树）' },
+            ...DBSIZES.map((n, i) => ({
+              label: `db${i}${n ? ' · ' + n.toLocaleString() : ' · 空'}`,
+              onClick: () => openDb(i),
+            })),
+          ]);
+        $('#krf', host).onclick = () =>
+          guard('刷新', () => toast('刷新：list_children + pipeline TYPE/TTL（一次往返）'));
+        $('#knw', host).onclick = () => toast('新建键对话框（类型段控件 + TTL + 值）');
+        $('#kex', host).onclick = () => toast('导入导出（dump_keys / restore_keys）');
+        $('#kpp', host).onclick = () => {
+          S.props = !S.props;
+          render();
+          toast(S.props ? 'P-3 修法 M：死按钮 → 键属性侧栏' : 'P-3 修法 N：KV 面板下不渲染该按钮');
+        };
+        $('#kai', host).onclick = () =>
+          toast('P-3：需注入 key/类型/TTL/值摘要，否则 KV 面板下不渲染');
+        $('#kdoc', host).onclick = () => toast('openDocsWindow("ai") — 与 Redis 无关但无害，保留');
+        $('#kmo', host).onclick = (e) =>
+          menu(e.currentTarget, [
+            {
+              label: '监控子页',
+              icon: 'pulse',
+              onClick: () => {
+                S.rtab = 'monitor';
+                render();
+              },
+            },
+            {
+              label: '慢日志',
+              icon: 'clock',
+              onClick: () => {
+                S.rtab = 'slow';
+                render();
+              },
+            },
+            {
+              label: '发布订阅',
+              icon: 'mail',
+              onClick: () => {
+                S.rtab = 'pubsub';
+                render();
+              },
+            },
+            { sep: true },
+            { lbl: '扫描预算（单次动作累计 COUNT）' },
+            {
+              label: '10k',
+              onClick: () => {
+                BUDGET = 10000;
+                render();
+                toast('预算 → 10k');
+              },
+            },
+            {
+              label: '50k（默认）',
+              onClick: () => {
+                BUDGET = 50000;
+                render();
+                toast('预算 → 50k');
+              },
+            },
+            {
+              label: '200k',
+              onClick: () => {
+                BUDGET = 200000;
+                render();
+                toast('预算 → 200k');
+              },
+            },
+            {
+              label: '1M（硬上限）',
+              onClick: () => {
+                BUDGET = 1000000;
+                render();
+                toast('预算 → 1M');
+              },
+            },
+            { sep: true },
+            { label: '驱动设置', icon: 'sliders' },
+            {
+              label: 'FLUSHDB（危险）',
+              icon: 'warn',
+              onClick: () => toast('SafeMode 开 → 硬阻断（I-6）'),
+            },
+          ]);
+      }
+
+      /* §3.4 — KV status bar (the bottom band is empty today as well) */
+      function renderStatus(host, kind) {
+        if (kind === 'home') {
+          host.innerHTML = `<span class="dot"></span><span><b>local-dev</b> redis ${INFO.redis_version} · ${INFO.mode}</span><span>db_sizes 16 / 非空 4</span><span>memory_sample 5 rows</span><span>slowlog 3 rows</span><span class="spacer"></span><span>概览由 INFO 聚合，零 SCAN 开销</span>`;
+          return;
+        }
+        const total = DBSIZES[+S.db.slice(2)] || 0;
+        host.innerHTML = `<span class="dot"></span><span><b>${S.db}</b> · ${total.toLocaleString()} keys</span><span>loaded <b>${S.loaded}</b></span><span>扫描游标 <b>${S.scan === 'budget' ? '7421' : '0'}</b></span><span>选中 <b>${S.sel.size}</b></span><span class="spacer"></span><span>最后写操作 <b class="mono">SET app:cache:session:1 KEEPTTL</b> (12ms)</span><span>预算 ${(BUDGET / 1000).toFixed(0)}k</span>`;
+      }
+
+      /* ── ① 现状诊断（PRD §1，全部定位到代码行） ─────────────────── */
+      function renderDiag() {
+        $('#diag').innerHTML = `
+        <p class="intro">左栏 = 当前渲染结果（对应你给的三张截图），右栏 = 本方案给出的替代。红框是问题槽位，绿框是目标态。</p>
+        <div class="prob"><header><span class="id">P-1</span><b>顶部 48px 空带</b><span class="cnt mono">ContentToolbar.tsx:105 · useConnectionWorkspaceMeta.ts:98-107</span></header>
+          <div class="bd">
+            <div class="mock"><span class="cap">现状</span>
+              <div class="band"><span class="spacer"></span>${ic('book')}${ic('msg')}${ic('panel')}</div>
+              <div class="pad">左侧 5 组动作的开关全被 <code>isKvPanel</code> 置 false ⇒ 整条只渲染右侧簇，中间靠 <code>flex-1</code> 撑开 ⇒ 纯空白带。1440px 窗口下浪费约 7% 可视高度，且压在键树上方。</div>
+            </div>
+            <div class="mock fixed"><span class="cap">目标 · KV 上下文条 §3.4</span>
+              <div class="band" style="border-color: var(--c-success)"><span class="mono">db0 ▾</span><span class="mono">·</span><span class="mono">52 keys</span><span class="mono">·</span><span class="mono">used 842 KB</span><span class="chip">string 30</span><span class="chip">hash 12</span><span class="chip">list 6</span><span class="spacer"></span><span class="chip">SafeMode</span>${ic('refresh')}${ic('plus')}${ic('export')}${ic('more')}</div>
+              <div class="pad">每个槽位换成 KV 语义：db 选择器、库内计数、内存、类型分布 chips、扫描状态进度、SafeMode 徽标、动作组。底部状态带同步换成 KV 版（现在也是空的）。</div>
+            </div>
+          </div>
+        </div>
+        <div class="prob"><header><span class="id">P-2</span><b>未选 db 的默认页密度过低</b><span class="cnt mono">ConnectionWorkspaceHome.tsx:272-385</span></header>
+          <div class="bd">
+            <div class="mock"><span class="cap">现状</span>
+              <div class="hero"><div class="logo">R</div><div><div style="font-size:13px;color:var(--c-fg)">local-dev</div><div style="font-size:11px">Connected · 选择左侧数据库开始浏览</div></div></div>
+              <div class="pad" style="text-align:center;padding-bottom:22px"><code>quickActions</code> 由四个 SQL 开关拼成 ⇒ Redis 下长度为 0 不渲染；<code>recentPanels</code> 新会话为空；<code>recentQueries</code> 是 SQL 执行历史 ⇒ 只剩一张横幅卡。</div>
+            </div>
+            <div class="mock fixed"><span class="cap">目标 · 屏 A §3.1</span>
+              <div class="pad" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 10px 12px">
+                <div class="card" style="padding:7px"><b style="font-size:11.5px">Server 概览</b><div class="mono" style="font-size:10.5px;color:var(--c-fg-muted)">7.2.4 · 12d · 431 ops/s</div></div>
+                <div class="card" style="padding:7px"><b style="font-size:11.5px">内存 + 大 key</b><div class="bar" style="margin-top:7px;width:100%"><i style="width:41%"></i></div></div>
+                <div class="card" style="padding:7px"><b style="font-size:11.5px">Key Space 16 库</b><div class="mono" style="font-size:10.5px;color:var(--c-fg-muted)">db0 52 · db1 1284 · db3 7 · db6 216</div></div>
+                <div class="card" style="padding:7px"><b style="font-size:11.5px">慢查询 Top5</b><div class="mono" style="font-size:10.5px;color:var(--c-fg-muted)">3 rows · 4218.0 ms max</div></div>
+              </div>
+              <div class="pad">数据全部来自已有命令 <code>info / db_sizes / memory_sample / slowlog_get</code> ⇒ 零后端改动。见「② 屏 A」。</div>
+            </div>
+          </div>
+        </div>
+        <div class="prob"><header><span class="id">P-3</span><b>右上角两枚按钮在 Redis 下的行为</b><span class="cnt mono">ContentToolbar.tsx:187-196 · ContentViewDrawers.tsx:81-111</span></header>
+          <div class="bd">
+            <div class="mock"><span class="cap">现状</span>
+              <div class="pad">
+                <table class="t"><tbody>
+                  <tr><td style="width:110px">${ic('msg')} AI</td><td>能打开 <code>AiChatPanel</code>，但上下文只取 SQL schema（表/列）⇒ Redis 的键空间、当前 key、类型/TTL/值摘要<b>一律不注入</b>。<b>半残</b>。</td></tr>
+                  <tr><td>${ic('panel')} 详情</td><td>KV 面板下 <code>detailPanelApplicable === true</code>，但抽屉内容 <code>detailColumnDefs/detailRow</code> 只从表格列/查询结果推导 ⇒ KV 下为 <code>[]</code>/<code>null</code>，<b>点开是空白右抽屉 = 死按钮</b>。</td></tr>
+                  <tr><td>${ic('book')} 文档</td><td><code>openDocsWindow('ai')</code>，与 Redis 无关但无害 ⇒ 保留。</td></tr>
+                </tbody></table>
+              </div>
+            </div>
+            <div class="mock fixed"><span class="cap">目标 · 采纳修法 M（已裁定 §8-3）</span>
+              <div class="pad">
+                <p class="why"><b>修法 M（已采纳）</b>：把死按钮改造成<b>键属性侧栏</b> —— <code>MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / maxmemory_policy</code> 一次 pipeline。代价是一行判定改动 + 一个新命令 <code>key_object_info</code>（§6 P1），把死槽位变成 P1 功能。见「③ 屏 B」右上角第 4 枚图标。</p>
+                <p class="why" style="opacity:.65"><b>修法 N（未采纳 · 备查）</b>：<code>detailPanelApplicable &amp;&amp; !isKeyValue</code>，一行修掉死按钮，但槽位仍空。</p>
+                <p class="why"><b>AI 按钮</b>：补 KV 上下文注入（当前 key + 类型 + TTL + 值摘要 + Console 最近 N 条）；做不到就在 KV 面板下不渲染 —— 不要保留"能点开但没上下文"的半残态。</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      /* ── ② 屏 A：连接总览 ───────────────────────────────────────── */
+      function renderHome() {
+        renderKvbar($('#kvbar-a'), true);
+        renderNav($('#nav-a'));
+        renderStatus($('#status-a'), 'home');
+        const max = Math.max(...DBSIZES);
+        const w = el('div', 'home');
+        w.innerHTML = `
+        <div class="banner"><div class="logo">R</div>
+          <div><div class="nm">local-dev</div><div class="ok">${ic('check')} Connected · ${INFO.os} · <b>选择数据库即进入键树</b><sup class="ref">§3.0</sup></div></div>
+          <div class="pills"><button data-tab="server">redis_version ${INFO.redis_version}</button><button data-tab="server">mode ${INFO.mode}</button><button data-tab="memory">used_memory ${fb(INFO.used_memory)}</button></div>
+        </div>
+        <div class="grid">
+          <div class="card"><header>${ic('pulse')} Server 概览<span class="src">info server/clients/stats</span></header><div class="bd"><div class="kvlist">
+            <div><span>version</span><b>${INFO.redis_version}</b></div><div><span>mode</span><b>${INFO.mode}</b></div>
+            <div><span>arch</span><b>${INFO.arch_bits}-bit</b></div><div><span>uptime</span><b>${INFO.uptime_days}</b></div>
+            <div><span>connected_clients</span><b>${INFO.connected_clients}</b></div><div><span>blocked_clients</span><b>${INFO.blocked_clients}</b></div>
+            <div><span>ops/sec</span><b>${INFO.instantaneous_ops_per_sec}</b></div><div><span>total_commands</span><b>${INFO.total_commands_processed.toLocaleString()}</b></div>
+            <div><span>evicted_keys</span><b class="${INFO.evicted_keys ? 'bad' : ''}">${INFO.evicted_keys}</b></div><div><span>expired_keys</span><b>${INFO.expired_keys.toLocaleString()}</b></div>
+            <div><span>hits / misses</span><b>${(INFO.keyspace_hits / 1000) | 0}k / ${(INFO.keyspace_misses / 1000) | 0}k</b></div><div><span>maxmemory_policy</span><b>${INFO.maxmemory_policy}</b></div>
+          </div></div></div>
+          <div class="card"><header>${ic('db')} 内存与大 key<span class="src">info memory + memory_sample</span></header><div class="bd">
+            <div class="memrow"><span class="metric" style="width:118px">used <b>${fb(INFO.used_memory)}</b></span><span class="bar"><i style="width:41%"></i></span><span class="metric">max <b>0（不限）</b></span></div>
+            <div class="kvlist" style="margin-bottom:8px"><div><span>fragmentation</span><b class="${INFO.mem_fragmentation_ratio > 1.5 ? 'warn' : ''}">${INFO.mem_fragmentation_ratio}</b></div><div><span>rdb_last_save</span><b>${INFO.rdb_last_save}</b></div></div>
+            <p class="sec">Top5 大 key · memory_sample<sup class="ref">§6 P1</sup></p>
+            <table class="t"><tbody>${BIGKEYS.map((b, i) => `<tr data-big="${i}" style="cursor:pointer"><td>${badge(b.type)} <span class="mono">${b.key}</span></td><td class="num">${fb(b.bytes)}</td><td class="num">${ft(b.ttl)}</td></tr>`).join('')}</tbody></table>
+          </div></div>
+          <div class="card"><header>${ic('list')} Key Space · 16 库<span class="src">db_sizes + INFO keyspace · 点格子 = 进入该 db 键树</span></header><div class="bd"><div class="dbgrid">
+            ${DBSIZES.map((n, i) => `<div class="dbcell ${n ? '' : 'empty'}" data-db="${i}"><div class="n"><span>db${i}</span><b>${n ? n.toLocaleString() : '—'}</b></div><div class="bar"><i style="width:${n ? Math.max(5, (n / max) * 100) : 0}%"></i></div></div>`).join('')}
+          </div></div></div>
+          <div class="card"><header>${ic('clock')} 慢查询 Top5<span class="src">slowlog_get 10</span></header><div class="bd">
+            <table class="t"><thead><tr><th style="width:32px">#</th><th style="width:78px">耗时</th><th>命令</th><th style="width:120px">客户端</th></tr></thead><tbody>
+            ${SLOWLOG.map((s) => `<tr><td class="mono">${s.id}</td><td class="num" style="color:${s.us > 1000000 ? 'var(--c-danger)' : 'var(--c-warning)'}">${(s.us / 1000).toFixed(1)} ms</td><td class="mono">${s.cmd}</td><td class="mono">${s.client}</td></tr>`).join('')}
+            </tbody></table>
+            <p class="empty">空态（I-11）：「暂无慢查询。阈值由 <span class="mono">slowlog-log-slower-than</span> 决定，默认 10ms。」</p>
+          </div></div>
+        </div>
+        <div class="actions">
+          <button class="primary" data-open="0">${ic('list')} 打开键树 · db0（52 keys）</button>
+          <button data-open="1">${ic('list')} 打开键树 · db1（1.28k keys）</button>
+          <button data-go="console">${ic('console')} 命令行</button>
+          <button data-go="pubsub">${ic('mail')} 发布订阅</button>
+          <button data-go="monitor">${ic('pulse')} 监控</button>
+          <button data-go="slow">${ic('clock')} 慢日志</button>
+        </div>
+        <div class="grid" style="margin-top:12px">
+          <div class="card"><header>${ic('clock')} 最近浏览键<span class="src">redisBrowseHistory.ts</span></header><div class="bd"><div class="hist">
+            ${Object.keys(KEYS)
+              .slice(0, 5)
+              .map(
+                (k, i) =>
+                  `<button data-hist="${k}">${badge(KEYS[k].type)}<code>${k}</code><time>${(i + 1) * 3} 分钟前</time></button>`,
+              )
+              .join('')}
+          </div></div></div>
+          <div class="card"><header>${ic('search')} 搜索历史与键模板<span class="src">redisKeyTemplates.ts §5</span></header><div class="bd"><div class="hist">
+            <button data-pat="app:cache:*"><code>app:cache:*</code><span class="n">pattern</span></button>
+            <button data-pat="users:*"><code>users:*</code><span class="n">pattern</span></button>
+            <button data-pat="*report*"><code>*report*</code><span class="n">fuzzy</span></button>
+            <p class="empty">键模板在连接设置里配置（<span class="mono">app:cache:{id}</span> 之类占位），下拉可直接选。</p>
+          </div></div></div>
+        </div>`;
+        const body = $('#home-body');
+        body.innerHTML = '';
+        body.append(w);
+        $$('[data-db]', w).forEach(
+          (n) => (n.onclick = () => openDb(+n.dataset.db, `已进入 db${n.dataset.db} 键树`)),
+        );
+        $$('[data-open]', w).forEach(
+          (n) => (n.onclick = () => openDb(+n.dataset.open, `已进入 db${n.dataset.open} 键树`)),
+        );
+        $$('[data-big]', w).forEach(
+          (n) =>
+            (n.onclick = () => {
+              const b = BIGKEYS[+n.dataset.big];
+              S.selected = b.key;
+              S.big = !!KEYS[b.key]?.big;
+              openDb(b.db, `从大 key 跳转到 ${b.key}`);
+            }),
+        );
+        $$('[data-hist]', w).forEach(
+          (n) =>
+            (n.onclick = () => {
+              S.selected = n.dataset.hist;
+              S.big = !!KEYS[S.selected].big;
+              openDb(0, `从最近浏览跳转到 ${n.dataset.hist}`);
+            }),
+        );
+        $$('[data-pat]', w).forEach(
+          (n) =>
+            (n.onclick = () => {
+              S.pattern = n.dataset.pat;
+              openDb(0, `带 pattern 进入 db0 键树`);
+            }),
+        );
+        $$('[data-go]', w).forEach(
+          (n) =>
+            (n.onclick = () => {
+              S.rtab = n.dataset.go;
+              openDb(0);
+            }),
+        );
+        $$('[data-tab]', w).forEach(
+          (n) =>
+            (n.onclick = () => {
+              S.rtab = 'monitor';
+              openDb(0);
+              toast('pill 点击 → 打开监控对应子页');
+            }),
+        );
+      }
+
+      /* ── ③ 屏 B：双栏工作区 ─────────────────────────────────────── */
+      function renderTabstrip() {
+        const host = $('#tabstrip-b');
+        host.innerHTML = `<button class="tab on">${S.db} · 键<span style="opacity:.6" id="closetab">${ic('x')}</span></button><span class="tab">db1 · 键</span><button class="tab" id="newtab">+ 新页签${ic('chevd')}</button><span class="spacer"></span><span class="cnt" style="align-self:center">页签 = 已打开的 db 面板（keep-alive）· 关掉全部页签才回到屏 A<sup class="ref">§3.0</sup></span>`;
+        host
+          .querySelectorAll('.tab:not(.on):not(#newtab)')
+          .forEach(
+            (t) => (t.onclick = () => openDb(1, '切回 db1 页签：不重新 SCAN，复用分组游标')),
+          );
+        $('#newtab', host).onclick = (e) =>
+          menu(e.currentTarget, [
+            { lbl: '打开数据库面板' },
+            ...DBSIZES.map((n, i) => ({
+              label: `db${i}${n ? ' · ' + n.toLocaleString() : ' · 空'}`,
+              onClick: () => openDb(i),
+            })),
+          ]);
+        $('#closetab', host).onclick = (e) => {
+          e.stopPropagation();
+          S.db = null;
+          go('home');
+          toast('关闭该 db 页签 → 无剩余面板 → 回到屏 A 总览（退出条件）');
+        };
+      }
+
+      function renderLeft() {
+        const host = $('#col-l');
+        const total = DBSIZES[+S.db.slice(2)] || 0;
+        const cnt =
+          S.scan === 'exact'
+            ? '1 / 1'
+            : S.scan === 'scanning' || S.scan === 'fetchall'
+              ? `已加载 ${S.loaded} / ${total.toLocaleString()}+`
+              : S.scan === 'budget'
+                ? `已加载 ${S.loaded} / ${total.toLocaleString()}+ · 结果不完整`
+                : `已加载 ${S.loaded} / 共 ${total.toLocaleString()} 个 key`;
+        host.innerHTML = `
+        <div class="hdrow r1">
+          <div class="seg"><button data-mode="key" aria-pressed="${S.mode === 'key'}">键</button><button data-mode="value" aria-pressed="${S.mode === 'value'}">值</button><button data-mode="all" aria-pressed="${S.mode === 'all'}">全部</button></div>
+          <span class="cnt">${cnt}<sup class="ref">R1 / I-3</sup></span><span class="spacer"></span>
+          <button class="iconbtn" id="sa" title="全选已加载 ⌘A">${ic('check')}</button>
+          <button class="iconbtn" id="sc" title="取消选择">${ic('x')}</button>
+          <button class="iconbtn" id="bt" title="批量 TTL">${ic('clock')}</button>
+          <button class="iconbtn danger" id="bd" title="批量删除">${ic('trash')}${S.sel.size ? `<b class="mono" style="font-size:9.5px">${S.sel.size}</b>` : ''}</button>
+          <button class="iconbtn" id="tr" title="刷新 ⌘R">${ic('refresh')}</button>
+          <button class="iconbtn" id="tn" title="新建键">${ic('plus')}</button>
+        </div>
+        <div class="hdrow r2"><label class="search">${ic('search')}<input id="pat" placeholder="app:cache:* — 无 glob 字符时短路为 EXISTS+TYPE+TTL" value="${S.pattern}"><button class="iconbtn" id="pdd" style="width:20px;height:20px">${ic('chevd')}</button></label></div>
+        <div class="hdrow" style="height:29px;gap:5px;border-bottom:1px solid var(--c-edge)">
+          <button class="chip" data-chip="fuzzy" aria-pressed="true">* 模糊</button>
+          <button class="chip" data-chip="noexp" aria-pressed="${S.noexp}">${ic('clock')} 仅无过期</button>
+          <button class="chip" data-chip="type" aria-pressed="${!!S.typeFilter}">类型 ${S.typeFilter ? '· ' + S.typeFilter : '▾'}</button>
+          <span class="cnt" style="margin-left:auto">dbx 无类型/无过期过滤<sup class="ref">§5</sup></span>
+        </div>
+        <div class="hdrow r3">
+          <div class="seg"><button>${ic('tree')} 树</button><button>${ic('list')} 列表</button></div>
+          <span class="dd">分隔符 <b class="mono">:</b> ▾</span>
+          <button class="chip" data-chip="rules" aria-pressed="${S.rules}">规则分组</button>
+          <span class="cnt" style="margin-left:auto">sticky 头 ${S.sticky ? 'on' : 'off'}<sup class="ref">R3</sup></span>
+        </div>
+        <div class="tree" id="tree"></div>
+        ${S.sel.size ? `<div class="batch"><b>已选 ${S.sel.size}</b><button class="btn" id="q1">批量 TTL</button><button class="btn" id="q2">批量删除</button><span style="color:var(--c-fg-secondary)">成功 12 / 失败 3 · 失败键保持选中<sup class="ref">I-8</sup></span></div>` : ''}
+        <div class="treefoot" id="foot"></div>`;
+        $$('[data-mode]', host).forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.mode = b.dataset.mode;
+              render();
+              toast(
+                S.mode === 'value'
+                  ? '值搜索：scan_values 服务端游标 + 进度/取消（dbx 无此能力）'
+                  : '键名搜索',
+              );
+            }),
+        );
+        $$('[data-chip]', host).forEach(
+          (b) =>
+            (b.onclick = () => {
+              const k = b.dataset.chip;
+              if (k === 'type')
+                return menu(b, [
+                  { lbl: '类型过滤（服务端 pipeline TYPE 聚合）' },
+                  ...Object.keys(TC).map((t) => ({
+                    label: t,
+                    onClick: () => {
+                      S.typeFilter = S.typeFilter === t ? null : t;
+                      render();
+                    },
+                  })),
+                  { sep: true },
+                  {
+                    label: '清除',
+                    onClick: () => {
+                      S.typeFilter = null;
+                      render();
+                    },
+                  },
+                ]);
+              if (k === 'fuzzy') return toast('模糊：pattern 自动包裹 *…');
+              if (k === 'rules')
+                return menu(b, [
+                  { lbl: '规则分组 · glob ≤64 条（纯前端）' },
+                  { label: 'includes app:* → 「应用」' },
+                  { label: 'excludes *:tmp' },
+                  { label: '+ 新增规则', icon: 'plus' },
+                ]);
+              S[k] = !S[k];
+              render();
+            }),
+        );
+        host
+          .querySelectorAll('.seg button')
+          .forEach(
+            (b) =>
+              (b.onclick = () =>
+                toast(
+                  /树/.test(b.textContent)
+                    ? '树：list_children 服务端层级取数（比 dbx 客户端 split 省流量）'
+                    : '列表：scan_keys 平铺 + 客户端分组',
+                )),
+          );
+        $('#pdd', host).onclick = (e) =>
+          menu(e.currentTarget, [
+            { lbl: '本连接本 db 历史 pattern' },
+            {
+              label: 'app:cache:*',
+              onClick: () => {
+                S.pattern = 'app:cache:*';
+                render();
+              },
+            },
+            {
+              label: '*report*',
+              onClick: () => {
+                S.pattern = '*report*';
+                render();
+              },
+            },
+            { sep: true },
+            { lbl: '键模板' },
+            {
+              label: 'users:{id}',
+              onClick: () => {
+                S.pattern = 'users:*';
+                render();
+              },
+            },
+            {
+              label: 'sess:{uid}:timeline',
+              onClick: () => {
+                S.pattern = 'sess:*';
+                render();
+              },
+            },
+          ]);
+        $('#pat', host).oninput = (e) => {
+          S.pattern = e.target.value;
+          S.scan =
+            S.pattern && !/[*?[\]]/.test(S.pattern)
+              ? 'exact'
+              : S.scan === 'exact'
+                ? 'idle'
+                : S.scan;
+          render();
+        };
+        $('#sa', host).onclick = () => {
+          FLAT.forEach((r) => S.sel.add(r.k));
+          render();
+          toast('⌘A 全选已加载 ' + FLAT.length + ' 个键');
+        };
+        $('#sc', host).onclick = () => {
+          S.sel.clear();
+          render();
+        };
+        const bt = () =>
+          S.sel.size
+            ? toast('批量 TTL：pipeline PEXPIRE，失败键保持选中（I-8）')
+            : toast('先在左列选择键');
+        const bd = () =>
+          S.sel.size
+            ? modal(
+                '批量删除',
+                `将删除 <b>${S.sel.size}</b> 个键（pipeline DEL）。SafeMode 开启时硬阻断。`,
+                [
+                  { label: '取消' },
+                  {
+                    label: '确认删除',
+                    primary: true,
+                    onClick: () => {
+                      toast('SafeMode 开 → 硬阻断（I-6）');
+                      S.sel.clear();
+                      render();
+                    },
+                  },
+                ],
+              )
+            : toast('先在左列选择键');
+        $('#bt', host).onclick = bt;
+        $('#bd', host).onclick = bd;
+        $('#tr', host).onclick = () =>
+          guard('刷新键树', () => toast('刷新：保留每分组游标与已加载子集（I-4）'));
+        $('#tn', host).onclick = () => toast('新建键对话框');
+        $('#q1', host) && ($('#q1', host).onclick = bt);
+        $('#q2', host) && ($('#q2', host).onclick = bd);
+        renderTree();
+        renderFoot();
+      }
+
+      function rowOf(k, depth) {
+        const d = KEYS[k],
+          isSel = S.selected === k,
+          checked = S.sel.has(k);
+        const n = el('div', 'trow leaf' + (isSel ? ' sel' : ''));
+        n.style.paddingLeft = 8 + (4 + depth * 10) + 'px';
+        n.innerHTML = `${ic('key')}<span class="lbl">${k}</span>${badge(d.type)}${d.ttl < 0 ? '' : `<span class="ttl${d.ttl < 120 ? ' p' : ''}">${ft(d.ttl)}</span>`}<input type="checkbox" class="cb" ${checked ? 'checked' : ''}><span class="del">${ic('trash')}</span>`;
+        n.onclick = (e) => {
+          if (e.target.classList.contains('cb')) {
+            S.sel.has(k) ? S.sel.delete(k) : S.sel.add(k);
+            render();
+            return;
+          }
+          if (e.target.classList.contains('del')) {
+            bdConfirm(k);
+            return;
+          }
+          guard(`打开 ${k}`, () => {
+            S.selected = k;
+            S.big = !!d.big;
+            S.hex = false;
+            S.dirty = false;
+            S.rtab = 'detail';
+            render();
+          });
+        };
+        return n;
+      }
+      function bdConfirm(k) {
+        modal('删除键', `将删除 <b class="mono">${k}</b>。子树/集合类元素一并删除，不可撤销。`, [
+          { label: '取消' },
+          { label: '删除', primary: true, onClick: () => toast('SafeMode 开 → 硬阻断（I-6）') },
+        ]);
+      }
+
+      function renderTree() {
+        const host = $('#tree');
+        if (!host) return;
+        host.innerHTML = '';
+        const groups = [
+          ['app', ['app:cache:session:1', 'app:cache:session:2'], 'app:report:2026-09:blob'],
+          ['users', ['users:1001', 'users:1002'], null],
+          ['misc', [], null],
+        ];
+        const folder = (label, id, depth, n) => {
+          const open = OPEN.has(id);
+          const row = el('div', 'trow folder' + (open ? '' : ' closed'));
+          row.style.paddingLeft = 8 + (4 + depth * 10) + 'px';
+          row.innerHTML = `${ic('chevd', 'chev')}${ic('folder')}<span class="lbl" style="color:var(--c-warning)">${label}</span><span class="n">(${n})</span>`;
+          row.onclick = () => {
+            OPEN.has(id) ? OPEN.delete(id) : OPEN.add(id);
+            renderTree();
+            toast(`分组游标已记忆（I-4）：折叠不清空 ${id}`);
+          };
+          return row;
+        };
+        if (S.sticky)
+          host.append(
+            el(
+              'div',
+              'sticky',
+              `<span>app</span><span class="n">(8+)</span><span class="spacer"></span><span>游标 7421 · 记忆</span>`,
+            ),
+          );
+        host.append(folder('cache', 'app:cache', 0, '8+'));
+        if (OPEN.has('app:cache'))
+          ['app:cache:session:1', 'app:cache:session:2'].forEach((k) => host.append(rowOf(k, 1)));
+        host.append(rowOf('app:report:2026-09:blob', 0));
+        if (S.sticky)
+          host.append(
+            el(
+              'div',
+              'sticky',
+              `<span>users</span><span class="n">(1.2k+)</span><span class="spacer"></span><span>游标 0 · 未完成</span>`,
+            ),
+          );
+        host.append(folder('users', 'users', 0, '1.2k+'));
+        if (OPEN.has('users'))
+          ['users:1001', 'users:1002'].forEach((k) => host.append(rowOf(k, 1)));
+        if (S.sticky)
+          host.append(el('div', 'sticky', '<span>其他</span><span class="n">(5)</span>'));
+        [
+          'queue:email:dead',
+          'feature:flags',
+          'metrics:hourly:20260920',
+          'events:order-created',
+        ].forEach((k) => host.append(rowOf(k, 0)));
+      }
+
+      function renderFoot() {
+        const host = $('#foot');
+        if (!host) return;
+        const map = {
+          idle: `<span class="cnt">全部已加载 · 游标 0</span><span class="spacer"></span><button class="btn">Load more</button><button class="btn">Fetch all</button>`,
+          loading: `<span class="cnt">已加载 ${S.loaded} / 52+</span><span class="bar"><i style="width:35%"></i></span><span class="spacer"></span><button class="btn">Load more</button><button class="btn">Fetch all</button>`,
+          scanning: `<span class="cnt">扫描中 12k / ${(BUDGET / 1000).toFixed(0)}k</span><span class="bar"><i style="width:24%"></i></span><span class="spacer"></span><button class="btn stop">${ic('stop')} Stop fetching</button>`,
+          budget: `<span class="cnt" style="color:var(--c-warning)">预算耗尽 ${(BUDGET / 1000).toFixed(0)}k / ${(BUDGET / 1000).toFixed(0)}k · 结果可能不完整<sup class="ref">I-2</sup></span><span class="spacer"></span><button class="btn">提高预算 ▾</button><button class="btn">Fetch all</button>`,
+          fetchall: `<span class="cnt">Fetch all · 25k 分片 + rAF · 保持视口锚点</span><span class="bar"><i style="width:61%"></i></span><span class="spacer"></span><button class="btn stop">Stop fetching</button>`,
+          exact: `<span class="cnt">无 glob → EXISTS+TYPE+TTL 短路，不走 SCAN<sup class="ref">I-3</sup></span><span class="spacer"></span><button class="btn">1 / 1</button>`,
+        };
+        host.innerHTML = map[S.scan] || map.idle;
+        host.querySelectorAll('button.btn').forEach(
+          (b) =>
+            (b.onclick = () => {
+              const t = b.textContent;
+              if (/Stop/.test(t)) {
+                S.scan = 'loading';
+                render();
+                return toast('scan_abort：已停，游标保留（I-4）');
+              }
+              if (/Load more/.test(t)) {
+                S.scan = 'loading';
+                render();
+                setTimeout(() => {
+                  S.scan = 'idle';
+                  S.loaded = Math.min(52, S.loaded + 40);
+                  render();
+                }, 500);
+                return toast('下一批：list_children + pipeline TYPE/TTL');
+              }
+              if (/Fetch all/.test(t)) {
+                S.scan = 'fetchall';
+                render();
+                return toast('25k 分片 + rAF 让出主线程');
+              }
+              if (/预算/.test(t)) {
+                BUDGET = 200000;
+                S.scan = 'scanning';
+                render();
+                return toast('预算 → 200k，续用当前游标');
+              }
+            }),
+        );
+      }
+
+      /* ── 右列：键详情（§3.3，去掉 查看/编辑 切换） ───────────────── */
+      function renderRight() {
+        const host = $('#col-r');
+        host.innerHTML = `<div class="rtabs">${RTABS.map(([id, label]) => `<button class="tab${S.rtab === id ? ' on' : ''}" data-rtab="${id}">${label}</button>`).join('')}</div><div class="detail" id="detail"></div>`;
+        host.querySelectorAll('[data-rtab]').forEach(
+          (b) =>
+            (b.onclick = () =>
+              guard(`切换到「${b.textContent}」`, () => {
+                S.rtab = b.dataset.rtab;
+                render();
+              })),
+        );
+        const d = $('#detail');
+        if (S.rtab !== 'detail') return renderOther(d);
+        const k = S.selected,
+          o = KEYS[k];
+        if (!o) {
+          d.innerHTML = k
+            ? `<div class="empty" style="padding:22px">已选中 <b class="mono">${k}</b>（原型未内置该键的 mock 值；实际由 <span class="mono">get_key</span> 取数后渲染同一套键详情）。</div>`
+            : `<div class="empty" style="padding:22px">左列选择一个键开始。空态（I-11）：「当前 db 无匹配键」。</div>`;
+          return;
+        }
+        const big = S.big || o.big;
+        const ro = S.hex || big;
+        d.innerHTML = `
+        <div class="dhead">
+          <span class="key" title="${k}">${k}</span>
+          <div class="split-btn"><button id="rf">${ic('refresh')}<span class="cnt">刷新</span></button><button id="ar" title="自动刷新间隔">${ic('chevd')}</button></div>
+          <button class="iconbtn" id="ck" title="复制键名">${ic('copy')}</button>
+          <button class="iconbtn" id="cs" title="复制插入语句">${ic('braces')}</button>
+          <button class="iconbtn" id="rn" title="重命名">${ic('pencil')}</button>
+          <button class="iconbtn danger" id="dk" title="删除">${ic('trash')}</button>
+          <span class="spacer"></span>
+          <button class="iconbtn${S.props ? ' on' : ''}" id="pp2" title="键属性侧栏">${ic('panel')}</button>
+        </div>
+        <div class="badgerow">
+          ${badge(o.type)}<span>大小: ${fb(o.bytes)}</span><span class="mono" style="opacity:.7">enc ${o.enc}</span>
+          <button class="ttl-pill ${o.ttl < 0 ? '' : 'pe'}" id="ttl">${ic('clock')}${o.ttl < 0 ? '永不过期' : '剩余 ' + ft(o.ttl)}</button><sup class="ref">§3.3</sup>
+          ${o.ttl > 0 && o.ttl < 120 ? '<span class="cnt" style="color:var(--c-warning)">即将过期</span>' : ''}
+          <span class="spacer"></span><span class="cnt">db ${S.db} · ${o.type === 'string' ? '1 值' : '见下方'}</span>
+        </div>
+        ${S.ttlEdit ? ttlEditor(o) : ''}
+        <div class="coderow"><span>编解码</span>${CODECS.map((c) => `<button class="v" data-codec="${c}" aria-pressed="${S.codec === c}">${c}</button>`).join('')}<sup class="ref">§3.3</sup></div>
+        <div class="coderow"><span>视图</span>${VIEWS.map((v) => `<button class="v" data-view="${v}" aria-pressed="${S.view === v}">${v}</button>`).join('')}
+          <button class="chip" id="wr" aria-pressed="${S.wrap}" style="margin-left:auto">自动换行</button></div>
+        <div class="valuewrap">
+          ${big ? `<div class="notice">${ic('warn')}<span>大 value：哨兵 <span class="mono">GETRANGE 0 65537</span> 判定已截断（实际 ${fb(o.bytes)}），编辑器只读。<span class="mono">Codec</span> 行仍可用于按分片预览。</span><button class="act" id="lz">按需加载分片</button></div>` : ''}
+          ${S.hex ? `<div class="notice">${ic('warn')}<span>只读（I-5）：Hex/Binary 视图不可原样回写，避免破坏字节序列。</span><button class="act" id="uh">切回 UTF-8</button></div>` : ''}
+          ${S.codec !== 'none' && !big && !S.hex ? `<div class="notice info">${ic('check')}<span>已按 <b>${S.codec}</b> 解码显示；保存时会自动重新编码回写原格式。</span></div>` : ''}
+          ${o.type === 'string' ? stringEditor(o, ro) : collectionEditor(o)}
+        </div>
+        <div class="dfoot">
+          ${S.dirty ? `<span class="dirty-flag">${ic('warn')} 有未保存更改</span><button class="btn" id="discard">放弃</button><button class="btn p" id="save">保存</button><span class="cnt">SET … KEEPTTL（服务端拒绝时回退 PTTL+PX）<sup class="ref">§3.3</sup></span>` : `<span class="cnt">无更改 · 编辑器常驻可写（查看/编辑 切换按钮已删除）<sup class="ref">§3.3</sup></span>`}
+          <span class="spacer"></span><span class="cnt">⌘S 保存 · Esc 放弃</span>
+        </div>`;
+        bindDetail(o, k);
+      }
+
+      function ttlEditor(o) {
+        const seg = ['none', 'rel', 'at']
+          .map(
+            (m) =>
+              `<button class="v" data-ttlmode="${m}" aria-pressed="${S.ttlMode === m}" style="padding:2.5px 8px;border:1px solid var(--c-edge);border-radius:var(--radius-sm);font-size:11px;${S.ttlMode === m ? 'border-color:var(--c-accent);background:var(--c-accent-dim);color:var(--c-accent)' : ''}">${m === 'none' ? '永不过期' : m === 'rel' ? '相对 TTL' : '绝对时间'}</button>`,
+          )
+          .join('');
+        return `<div class="ttle"><span class="cnt">过期策略<sup class="ref">§3.3</sup></span>${seg}
+          ${S.ttlMode === 'none' ? '<span class="cnt">→ PERSIST</span>' : S.ttlMode === 'rel' ? '<input value="3600" placeholder="秒"><span class="cnt">秒 → PEXPIRE</span>' : '<input value="2026-09-22 00:00" class="mono" style="width:150px"><span class="cnt">→ EXPIREAT</span>'}
+          <button class="btn p" id="ttl-apply">应用</button><button class="btn" id="ttl-cancel">取消</button></div>`;
+      }
+      function stringEditor(o, ro) {
+        return `<textarea class="val" id="v" ${ro ? 'readonly' : ''} wrap="${S.wrap ? 'soft' : 'off'}" spellcheck="false">${o.value}</textarea>`;
+      }
+      function collectionEditor(o) {
+        const head = `<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span class="cnt">${o.total ? `已加载 ${o.rows.length} / ${o.total.toLocaleString()} · Load more` : `共 ${(o.fields || o.members || []).length} 项`}</span><label class="search" style="max-width:230px">${ic('search')}<input placeholder="服务端成员/字段搜索（非过滤已加载行）"></label><button class="btn">+ 新增</button><span class="spacer"></span><span class="cnt">列可排序 · hash field TTL<sup class="ref">§6 P2</sup></span></div>`;
+        if (o.type === 'hash')
+          return (
+            head +
+            `<div class="keytable"><table class="t"><thead><tr><th>field</th><th>value</th><th style="width:90px">field TTL</th><th style="width:44px"></th></tr></thead><tbody>${o.fields.map(([f, v, t]) => `<tr><td class="mono">${f}</td><td class="mono edit">${v}</td><td class="mono num">${t < 0 ? '—' : ft(t)}</td><td>${ic('trash')}</td></tr>`).join('')}</tbody></table></div>`
+          );
+        if (o.type === 'list')
+          return (
+            head +
+            `<div class="keytable"><table class="t"><thead><tr><th style="width:56px">index</th><th>value</th><th style="width:44px"></th></tr></thead><tbody>${o.rows.map(([i, v]) => `<tr><td class="mono">${i}</td><td class="mono edit">${v}</td><td>${ic('trash')}</td></tr>`).join('')}</tbody></table></div>`
+          );
+        if (o.type === 'set')
+          return (
+            head +
+            `<div class="keytable"><table class="t"><tbody>${o.members.map((m) => `<tr><td class="mono edit">${m}</td><td style="width:44px">${ic('trash')}</td></tr>`).join('')}</tbody></table></div>`
+          );
+        if (o.type === 'zset')
+          return (
+            head +
+            `<div class="keytable"><table class="t"><thead><tr><th style="width:96px">score</th><th>member</th><th style="width:44px"></th></tr></thead><tbody>${o.rows.map(([m, s], i) => `<tr><td class="mono num edit" data-score="${i}">${s}</td><td class="mono">${m}</td><td>${ic('trash')}</td></tr>`).join('')}</tbody></table></div><p class="empty">zset 内联行编辑：点 score 单元格 → 输入 → Enter 保存 / Esc 取消<sup class="ref">§3.3</sup></p>`
+          );
+        return streamEditor(o);
+      }
+      function streamEditor(o) {
+        return `<div class="coderow" style="border-bottom:1px solid var(--c-edge)"><button class="v" data-sub="entries" aria-pressed="${S.streamSub === 'entries'}">Entries</button><button class="v" data-sub="groups" aria-pressed="${S.streamSub === 'groups'}">Groups</button><span class="cnt" style="margin-left:auto">length 12.4k · last-id 1727049002-0</span></div>
+        ${
+          S.streamSub === 'entries'
+            ? `<div class="keytable"><table class="t"><thead><tr><th style="width:140px">id</th><th>fields</th></tr></thead><tbody>${o.entries.map(([i, v]) => `<tr><td class="mono">${i}</td><td class="mono">${v}</td></tr>`).join('')}</tbody></table></div>`
+            : `<div style="padding:6px 0" class="cnt">${ic('tree')} ${o.key || 'events:order-created'} › <b>${S.group || 'grp-payments'}</b> › consumer</div><div class="keytable"><table class="t"><thead><tr><th>group</th><th style="width:70px">pel</th><th style="width:80px">lag</th><th style="width:90px">consumers</th></tr></thead><tbody>${o.groups.map(([g, pel, lag, c], i) => `<tr style="cursor:pointer" data-grp="${i}"><td class="mono">${g}</td><td class="num">${pel}</td><td class="num">${lag}</td><td class="num">${c}</td></tr>`).join('')}</tbody></table><table class="t" style="margin-top:6px"><thead><tr><th>consumer</th><th style="width:70px">pel</th><th style="width:80px">pending</th><th style="width:80px">idle</th></tr></thead><tbody>${o.consumers.map(([c, p, pe, idl]) => `<tr><td class="mono">${c}</td><td class="num">${p}</td><td class="num">${pe}</td><td class="num">${idl}</td></tr>`).join('')}</tbody></table></div>`
+        }`;
+      }
+
+      function bindDetail(o, k) {
+        const d = $('#detail');
+        $('#rf', d).onclick = () =>
+          guard('刷新', () => toast('get_key 重新取数（含 memBytes / TTL）'));
+        $('#ar', d).onclick = (e) =>
+          menu(e.currentTarget, [
+            { lbl: '自动刷新间隔' },
+            ...['off', '1s', '5s', '10s', '30s'].map((v) => ({
+              label: v === 'off' ? '关闭' : v,
+              onClick: () => {
+                S.auto = v;
+                render();
+                toast(S.auto === 'off' ? '自动刷新已关闭' : `自动刷新 ${v} · dirty 时暂停（I-1）`);
+              },
+            })),
+          ]);
+        $('#ck', d).onclick = () => toast('已复制键名（navigator.clipboard）');
+        $('#cs', d).onclick = () => toast('已复制插入语句：SET/JSON.SET/HSET 模板 + 当前值');
+        $('#rn', d).onclick = () => toast('内联重命名（RENAME，保留 TTL）');
+        $('#dk', d).onclick = () => bdConfirm(k);
+        $('#pp2', d).onclick = () => {
+          S.props = !S.props;
+          render();
+        };
+        $('#ttl', d).onclick = () => {
+          S.ttlEdit = !S.ttlEdit;
+          render();
+        };
+        $('#ttl-apply', d) &&
+          ($('#ttl-apply', d).onclick = () => {
+            S.ttlEdit = false;
+            render();
+            toast(
+              `${S.ttlMode === 'none' ? 'PERSIST' : S.ttlMode === 'rel' ? 'PEXPIRE' : 'EXPIREAT'} 已发送`,
+            );
+          });
+        $('#ttl-cancel', d) &&
+          ($('#ttl-cancel', d).onclick = () => {
+            S.ttlEdit = false;
+            render();
+          });
+        d.querySelectorAll('[data-ttlmode]').forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.ttlMode = b.dataset.ttlmode;
+              render();
+            }),
+        );
+        d.querySelectorAll('[data-codec]').forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.codec = b.dataset.codec;
+              render();
+              if (S.codec !== 'none' && o.enc === 'raw')
+                toast('解码失败 → 回退原始字节，建议「按 DEFLATE 重试」');
+            }),
+        );
+        d.querySelectorAll('[data-view]').forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.view = b.dataset.view;
+              S.hex = S.view === 'hex' || S.view === 'binary';
+              render();
+            }),
+        );
+        $('#wr', d).onclick = () => {
+          S.wrap = !S.wrap;
+          render();
+        };
+        $('#lz', d) &&
+          ($('#lz', d).onclick = () => toast('GETRANGE 分片加载（0-64KB / 64KB-128KB …）'));
+        $('#uh', d) &&
+          ($('#uh', d).onclick = () => {
+            S.view = 'utf8';
+            S.hex = false;
+            render();
+          });
+        const v = $('#v', d);
+        if (v) {
+          v.oninput = () => {
+            if (!S.dirty) {
+              S.dirty = true;
+              render();
+              const nv = $('#v');
+              if (nv) {
+                nv.value = v.value;
+                nv.focus();
+              }
+            }
+          };
+        }
+        d.querySelectorAll('[data-score]').forEach(
+          (c) =>
+            (c.onclick = () => {
+              const old = c.textContent;
+              c.innerHTML = `<input value="${old}">`;
+              const i = c.querySelector('input');
+              i.focus();
+              i.select();
+              i.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                  toast(`ZADD ${k} ${i.value} …  · Enter 保存`);
+                  render();
+                }
+                if (e.key === 'Escape') render();
+              };
+              i.onblur = () => render();
+            }),
+        );
+        d.querySelectorAll('[data-grp]').forEach(
+          (r) =>
+            (r.onclick = () => {
+              S.group = KEYS[k].groups[+r.dataset.grp][0];
+              render();
+            }),
+        );
+        d.querySelectorAll('[data-sub]').forEach(
+          (b) =>
+            (b.onclick = () => {
+              S.streamSub = b.dataset.sub;
+              render();
+            }),
+        );
+        $('#save', d) &&
+          ($('#save', d).onclick = () => {
+            S.dirty = false;
+            render();
+            toast('保存成功 · SET … KEEPTTL (12ms)');
+          });
+        $('#discard', d) &&
+          ($('#discard', d).onclick = () => {
+            S.dirty = false;
+            render();
+            toast('已放弃草稿');
+          });
+      }
+
+      function renderOther(d) {
+        if (S.rtab === 'console') {
+          d.innerHTML = `<div class="console">
+            <div class="out"><span class="cm">; local-dev · ${S.db} · SafeMode 开（写命令阻断）</span>
+<span class="cmd">127.0.0.1:6379[0]&gt; MEMORY USAGE app:cache:session:1</span>
+(integer) 216
+<span class="cmd">127.0.0.1:6379[0]&gt; OBJECT ENCODING app:cache:session:1</span>
+"raw"
+<span class="cmd">127.0.0.1:6379[0]&gt; KEYS app:report:*</span>
+<span class="err">(error) ERR 'KEYS' 已被安全策略阻断（fail-closed，未知命令按 blocked 处理）<sup class="ref">I-7</sup></span> <span class="cmd">→ 建议 SCAN</span>
+<span class="cmd">127.0.0.1:6379[0]&gt; SET app:cache:session:1 ...</span>
+<span class="err">(error) ERR SafeMode 已开启，写操作被阻断<sup class="ref">I-6</sup></span></div>
+            <div class="cmdbar"><span class="mono" style="color:var(--c-fg-muted)">${S.db}&gt;</span><input placeholder="SCAN 0 MATCH app:* COUNT 500  ·  ⌘⏎ 执行"><span class="chip">补全：命令 / 键名<sup class="ref">R11-R12</sup></span><button class="btn p">执行</button></div>
+          </div>`;
+          return;
+        }
+        if (S.rtab === 'pubsub') {
+          d.innerHTML = `<div class="console"><div class="out"><span class="cm">; PUBLISH/SUBSCRIBE 走独立连接，避免阻塞取数</span>
+channel "events:order" -&gt; {"orderId":"O-8823","amount":1280.00}   <span class="cm">[14:02:11]</span>
+channel "events:order" -&gt; {"orderId":"O-8824","amount":18.00}    <span class="cm">[14:02:13]</span></div>
+            <div class="cmdbar"><input placeholder="订阅频道模式 events:*"><button class="btn p">订阅</button><button class="btn">发布</button></div></div>`;
+          return;
+        }
+        if (S.rtab === 'monitor') {
+          d.innerHTML = `<div class="coderow" style="border-bottom:1px solid var(--c-edge);height:34px"><span>子页</span>${['info', 'monitor', 'memory', 'slowlog', 'streams'].map((x) => `<button class="v" aria-pressed="${x === 'info'}">${x}</button>`).join('')}</div>
+            <div class="console"><div class="out"><span class="cm">; monitor_start 独立连接 + ring 上限（超出丢最旧）<sup class="ref">§5</sup></span>
+[14:02:11.204] "GET" "app:cache:session:1"      <span class="cm">client=web-01:51204 db=0</span>
+[14:02:11.288] "HGETALL" "users:1001"           <span class="cm">client=web-02:53310 db=0</span>
+[14:02:12.001] "EXPIRE" "queue:email:dead" 3600 <span class="cm">client=app-svc:44821 db=0</span></div>
+            <div class="cmdbar"><span class="chip">暂停</span><span class="chip">清空</span><span class="cnt">ring 1000 条 · 已用 3</span><span class="spacer"></span><input placeholder="过滤：命令 / client addr"></div></div>`;
+          return;
+        }
+        d.innerHTML = `<div class="console"><div class="out"><span class="cm">; SLOWLOG GET 10</span></div>
+          <div class="keytable" style="border-radius:var(--radius-md)"><table class="t"><thead><tr><th style="width:44px">#</th><th style="width:96px">耗时</th><th style="width:60px">时间</th><th>命令</th><th style="width:140px">客户端</th></tr></thead><tbody>
+          ${SLOWLOG.map((s) => `<tr><td class="mono">${s.id}</td><td class="num" style="color:${s.us > 1e6 ? 'var(--c-danger)' : 'var(--c-warning)'}">${(s.us / 1000).toFixed(1)} ms</td><td class="mono">2m 前</td><td class="mono">${s.cmd}</td><td class="mono">${s.client}</td></tr>`).join('')}</tbody></table></div>
+          <div class="cmdbar"><span class="cnt">阈值 slowlog-log-slower-than = 10ms</span><span class="spacer"></span><button class="btn">SLOWLOG RESET</button></div></div>`;
+      }
+
+      /* ── 键属性侧栏（把 P-3 死按钮变成 P1 功能） ─────────────────── */
+      function renderProps() {
+        const host = $('#props');
+        host.style.display = S.props ? 'block' : 'none';
+        if (!S.props) return;
+        const o = KEYS[S.selected] || KEYS['app:cache:session:1'];
+        host.innerHTML = `<h4>${ic('panel')} 键属性<span class="src mono" style="margin-left:auto;font-size:10px">key_object_info</span></h4><div class="bd">
+          <p class="sec">MEMORY<sup class="ref">§6 P1</sup></p>
+          <dl><dt>MEMORY USAGE</dt><dd>${(o.bytes + 124).toLocaleString()} B</dd><dt>含 overhead</dt><dd>+124 B</dd><dt>sample 占比</dt><dd>0.15%</dd></dl>
+          <p class="sec">OBJECT</p>
+          <dl><dt>ENCODING</dt><dd>${o.enc}</dd><dt>IDLETIME</dt><dd>42 s</dd><dt>FREQ</dt><dd>7<sup class="ref">需 LFU</sup></dd><dt>REFCOUNT</dt><dd>1</dd><dt>HELPERTTL</dt><dd>-1</dd></dl>
+          <p class="sec">TTL</p>
+          <dl><dt>TTL</dt><dd>${o.ttl < 0 ? '永不过期' : o.ttl + ' s'}</dd><dt>PTTL</dt><dd>${o.ttl < 0 ? 'no expire' : (o.ttl * 1000).toLocaleString() + ' ms'}</dd><dt>EXPIRE 时间</dt><dd>${o.ttl < 0 ? '—' : '09-21 14:10'}</dd></dl>
+          <p class="sec">服务端策略</p>
+          <dl><dt>maxmemory_policy</dt><dd>${INFO.maxmemory_policy}</dd><dt>notify-keyspace</dt><dd>gx$</dd><dt>db</dt><dd>${S.db}</dd></dl>
+          <p class="empty" style="padding-top:0">一次 pipeline 取回；FREQ 仅在 <span class="mono">maxmemory-policy=*</span>lfu 时有值，否则不渲染该行（I-11）。</p>
+        </div>`;
+      }
+
+      /* ── ④ 扫描预算模型（本轮最重要的一次借鉴） ─────────────────── */
+      const SCAN_STATES = [
+        {
+          id: 'idle',
+          t: 'S0 · 空闲（首屏）',
+          p: '进入 db 只取一层 <span class="mono">list_children</span> + DBSIZE 一次，不做全库 SCAN。',
+          head: '已加载 9 / 共 52 个 key',
+          foot: 'Load more · Fetch all',
+          pct: 0,
+          req: [
+            ['0ms', 'DBSIZE → 52（全程只取一次，缓存在会话内）'],
+            ['3ms', 'list_children db0 prefix="" COUNT=200 → 分组 + 键'],
+            ['6ms', 'pipeline TYPE ×9 / PTTL ×9（同一次往返）'],
+          ],
+          inv: 'DBSIZE 一次；TYPE/TTL 必批量；无 MATCH 时绝不发 SCAN 全库。',
+        },
+        {
+          id: 'scanning',
+          t: 'S1 · 扫描中（累计预算）',
+          p: '一次用户动作 = 一个累计 COUNT 预算（默认 50k，按 DBSIZE 缩放，硬上限 1M）。稀疏 MATCH 不再变成无界扫描。',
+          head: '已加载 412 / 1.284k+ · 扫描中 12k/50k',
+          foot: 'Stop fetching',
+          pct: 24,
+          req: [
+            ['0ms', 'SCAN 0 MATCH app:report:* COUNT 1000 → cursor 7421, 3 keys'],
+            ['31ms', 'SCAN 7421 … COUNT 1000 → cursor 913, 1 key（累计 2000/50k）'],
+            ['…', '每页结束即 pipeline TYPE/PTTL 并增量渲染（25k 分片 + rAF）'],
+          ],
+          inv: '预算耗尽才停；期间任意时刻可中断；folder 分组游标各自独立记忆。',
+        },
+        {
+          id: 'budget',
+          t: 'S2 · 预算耗尽',
+          p: '达到预算即停止并<b>如实标注结果不完整</b>（计数带 <span class="mono">+</span>），提供「提高预算」续用当前游标，而不是静默截断。',
+          head: '已加载 512 / 1.284k+ · 结果不完整',
+          foot: '提高预算 ▾ · Fetch all',
+          pct: 100,
+          req: [
+            ['4.2s', '累计 SCAN COUNT 已达 50000 → 停止，保留 cursor 7421'],
+            ['4.2s', 'UI：计数后缀 "+"，页脚 warning 文案，不显示"全部已加载"'],
+          ],
+          inv: '绝不把"部分结果"显示成"完整结果" —— 这是 dbx 最值得抄的一条诚实性设计。',
+        },
+        {
+          id: 'exact',
+          t: 'S3 · 精确键名短路',
+          p: 'pattern 不含 <span class="mono">* ? [ \\</span> 时不走 SCAN，直接 <span class="mono">EXISTS + TYPE + PTTL</span>，计数显示 <span class="mono">1 / 1</span>。',
+          head: '1 / 1',
+          foot: '1 / 1（无分页）',
+          pct: 0,
+          req: [
+            ['0ms', 'EXISTS app:cache:session:1 → 1'],
+            ['1ms', 'TYPE → string · PTTL → 468000 · MEMORY USAGE → 216'],
+          ],
+          inv: '零游标、零预算消耗；输入过程中从"模糊"平滑切到"精确"，无跳变。',
+        },
+        {
+          id: 'fetchall',
+          t: 'S4 · Fetch all（可中断批量）',
+          p: '25k 键为一片，片间 <span class="mono">requestAnimationFrame</span> 让出主线程，并保持视口锚点，不滚动到顶。',
+          head: '已加载 8.2k / 12.4k+ · Fetch all 中',
+          foot: 'Stop fetching',
+          pct: 61,
+          req: [
+            ['0ms', '片 1：25000 次 TYPE/PTTL pipeline → 25k 行 → rAF'],
+            ['…', '片 N：同上；Stop 按钮调 scan_abort 并保留已加载子集'],
+          ],
+          inv: '大数据量下输入不掉帧；中断后不丢已加载键。',
+        },
+        {
+          id: 'group',
+          t: 'S5 · 分组游标（folder 展开）',
+          p: '展开 folder = 该子树独立 <span class="mono">SCAN prefix:*</span> + 每分组游标记忆；折叠不清空，刷新时保留已加载子集。',
+          head: 'app:cache 展开中 · 游标 7421',
+          foot: '继续该分组 · 放弃该分组',
+          pct: 41,
+          req: [
+            ['0ms', 'list_children prefix="app:cache:" COUNT=500 → 子节点 + 部分计数 "8+"'],
+            ['9ms', '游标存入 map["app:cache"] = 7421（I-4）'],
+            ['折叠再展开', '直接复用 map，不重新 SCAN'],
+          ],
+          inv: '我们已有服务端 list_children，比 dbx 的客户端 split 分组省流量 —— 只补"每分组游标记忆"与 <span class="mono">n+</span> 部分计数。',
+        },
+      ];
+      function renderScan() {
+        const l = $('#scan-states'),
+          r = $('#scan-detail');
+        l.innerHTML = SCAN_STATES.map(
+          (s) =>
+            `<div class="state${s.id === S.scan ? ' on' : ''}" data-st="${s.id}"><div class="t">${ic('search')}${s.t}</div><p>${s.p}</p></div>`,
+        ).join('');
+        l.querySelectorAll('[data-st]').forEach(
+          (n) =>
+            (n.onclick = () => {
+              S.scan = n.dataset.st;
+              render();
+            }),
+        );
+        const s = SCAN_STATES.find((x) => x.id === S.scan) || SCAN_STATES[0];
+        r.innerHTML = `
+          <p class="sec">该状态下的真实 UI（同一份组件，不同状态机取值）</p>
+          <div class="card" style="overflow:hidden">
+            <div class="hdrow r1" style="background:var(--c-surface)"><div class="seg"><button aria-pressed="true">键</button><button>值</button><button>全部</button></div><span class="cnt">${s.head}</span><span class="spacer"></span>${ic('check')}${ic('clock')}${ic('trash')}${ic('refresh')}${ic('plus')}</div>
+            <div style="height:96px;overflow:auto;background:var(--c-surface)">
+              <div class="sticky">app<span class="n">(8+)</span><span class="spacer"></span><span>游标 ${s.id === 'group' || s.id === 'scanning' ? '7421 · 记忆' : '0'}</span></div>
+              ${rowOf('app:cache:session:1', 1)}${rowOf('app:cache:session:2', 1)}${rowOf('app:report:2026-09:blob', 0)}
+            </div>
+            <div class="treefoot"><span class="cnt">${s.id === 'budget' ? '<span style="color:var(--c-warning)">预算耗尽 50k/50k · 结果可能不完整</span>' : s.id === 'exact' ? 'EXISTS+TYPE+PTTL 短路，零 SCAN' : s.id === 'scanning' ? '扫描中 12k / 50k' : s.id === 'fetchall' ? 'Fetch all · 25k 分片 + rAF' : '全部已加载 · 游标 0'}</span><span class="bar"><i style="width:${s.pct}%"></i></span><span class="spacer"></span><button class="btn">Load more</button><button class="btn">Fetch all</button>${/scan|fetch/i.test(s.id) ? '<button class="btn stop">Stop fetching</button>' : ''}</div>
+          </div>
+          <p class="sec" style="margin-top:14px">请求序列（一次用户动作内的往返）</p>
+          <div class="tl">${s.req.map(([t, x]) => `<div class="ev"><time>${t}</time><span>${x}</span></div>`).join('')}</div>
+          <p class="sec" style="margin-top:14px">不变量</p>
+          <p class="why" style="font-size:12px">${s.inv}</p>
+          <p class="sec" style="margin-top:14px">纯逻辑模块（拆 dbx 巨石组件的做法，PRD §5）</p>
+          <div class="coderow" style="padding:6px 0;border:none">${['redisScanBudget.ts', 'redisKeyTemplates.ts', 'redisBrowseHistory.ts', 'redisExpiryPolicy.ts', 'redisBigValue.ts', 'redisStickyGroups.ts', 'redisBatchOutcome.ts'].map((m) => `<span class="chip mono">${m}</span>`).join('')}</div>
+          <p class="why" style="font-size:11.5px;margin-top:6px">dbx 的 <span class="mono">RedisKeyBrowser.vue</span> 3937 行 / <span class="mono">RedisValueViewer.vue</span> 3768 行是<b>反面教材</b>：真正该抄的是它把逻辑抽进 <span class="mono">lib/redis/*.ts</span> 并配 co-located <span class="mono">*.spec.ts</span>。我们的 800 行红线要求「组件薄 + 纯逻辑模块厚」。</p>`;
+      }
+
+      /* ── render / 路由 ──────────────────────────────────────────── */
+      function render() {
+        if (S.screen === 'diag') return renderDiag();
+        if (S.screen === 'home') return renderHome();
+        if (S.screen === 'scan') return renderScan();
+        $('#crumb-db').textContent = S.db;
+        renderKvbar($('#kvbar-b'), false);
+        renderNav($('#nav-b'));
+        renderTabstrip();
+        renderLeft();
+        renderRight();
+        renderProps();
+        renderStatus($('#status-b'), 'kv');
+        $$('.demo .pill').forEach((b) =>
+          b.setAttribute('aria-pressed', String(!!S[b.dataset.toggle])),
+        );
+      }
+      function go(name) {
+        if (name === 'browse' && !S.db) S.db = 'db0';
+        S.screen = name;
+        document
+          .querySelectorAll('.screens [data-screen]')
+          .forEach((b) => b.setAttribute('aria-selected', String(b.dataset.screen === name)));
+        document
+          .querySelectorAll('section.screen')
+          .forEach((s) => s.classList.toggle('on', s.dataset.screen === name));
+        render();
+      }
+      document
+        .querySelectorAll('.screens [data-screen]')
+        .forEach((b) => (b.onclick = () => go(b.dataset.screen)));
+      document.querySelectorAll('.demo .pill').forEach(
+        (b) =>
+          (b.onclick = () => {
+            const k = b.dataset.toggle;
+            if (k === 'scanning') {
+              S.scan = S.scan === 'scanning' ? 'idle' : 'scanning';
+              return render();
+            }
+            if (k === 'dirty') {
+              S.dirty = !S.dirty;
+              if (S.dirty) S.rtab = 'detail';
+              return render();
+            }
+            S[k] = !S[k];
+            if (k === 'big' && S.big) S.rtab = 'detail';
+            if (k === 'hex' && S.hex) S.rtab = 'detail';
+            render();
+          }),
+      );
+      $('#theme').onclick = () => {
+        document.documentElement.classList.toggle('dark');
+        toast(
+          document.documentElement.classList.contains('dark')
+            ? 'dark（默认主题）'
+            : 'light（:root）',
+        );
+      };
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          $('#menu').classList.remove('on');
+          if ($('#modal').classList.contains('on')) $('#modal').classList.remove('on');
+          else if (S.ttlEdit) {
+            S.ttlEdit = false;
+            render();
+          }
+          return;
+        }
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+        if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+          e.preventDefault();
+          FLAT.forEach((r) => S.sel.add(r.k));
+          render();
+          toast('⌘A 全选已加载（I-9）');
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+          e.preventDefault();
+          guard('⌘R 刷新', () => toast('⌘R 刷新：保留分组游标（I-4）'));
+        }
+        if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+        }
+      });
+      render();
+    </script>
+  </body>
+</html>
