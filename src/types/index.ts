@@ -123,6 +123,7 @@ export interface TableSchema {
   primaryKeys: string[];
   indexes: IndexInfo[];
   foreignKeys: ForeignKeyInfo[];
+  tableOptions?: TableOptionsSnapshot;
 }
 
 export type Value = string | number | boolean | null | Record<string, unknown> | unknown[];
@@ -768,6 +769,18 @@ export interface CheckConstraintDiffEntry {
   expression: string;
 }
 
+export interface TableOptionsSnapshot {
+  comment?: string | null;
+  engine?: string | null;
+  charset?: string | null;
+}
+
+export interface TableOptionsDiff {
+  source: TableOptionsSnapshot;
+  target: TableOptionsSnapshot;
+  changes: string[];
+}
+
 export interface TableSchemaDiff {
   table: string;
   /** The selected table exists only on the target and is planned as DROP TABLE. */
@@ -783,6 +796,7 @@ export interface TableSchemaDiff {
   changed: ChangedColumnDiff[];
   missingCheckConstraints?: CheckConstraintDiffEntry[];
   extraCheckConstraints?: CheckConstraintDiffEntry[];
+  tableOptions?: TableOptionsDiff;
   sourceDdl?: string;
   targetDdl?: string;
 }

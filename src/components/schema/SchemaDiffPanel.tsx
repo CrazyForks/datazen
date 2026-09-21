@@ -7,13 +7,15 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
   const extra = diff.extraOnTarget ?? diff.removed;
   const missingChecks = diff.missingCheckConstraints ?? [];
   const extraChecks = diff.extraCheckConstraints ?? [];
+  const tableOptions = diff.tableOptions;
   const identical =
     !diff.targetOnly &&
     missing.length === 0 &&
     extra.length === 0 &&
     diff.changed.length === 0 &&
     missingChecks.length === 0 &&
-    extraChecks.length === 0;
+    extraChecks.length === 0 &&
+    !tableOptions;
 
   return (
     <div className="space-y-4 text-xs">
@@ -93,6 +95,20 @@ export function SchemaDiffPanel({ diff }: { diff: TableSchemaDiff }) {
           ))}
         </section>
       )}
+      {tableOptions && (
+        <section>
+          <h4 className="mb-1.5 font-semibold text-warning">{t('schemaDiff.tableOptions')}</h4>
+          {tableOptions.changes.map((change) => {
+            const source = tableOptions.source[change as keyof typeof tableOptions.source];
+            const target = tableOptions.target[change as keyof typeof tableOptions.target];
+            return (
+              <div key={change} className="mb-1 font-mono text-fg-secondary">
+                ~ {change}: {String(target ?? '')} -&gt; {String(source ?? '')}
+              </div>
+            );
+          })}
+        </section>
+      )}
       {identical && <div className="text-fg-muted">{t('schemaDiff.schemaIdentical')}</div>}
     </div>
   );
@@ -104,6 +120,7 @@ export function formatSchemaDiffText(diff: TableSchemaDiff): string {
   const extra = diff.extraOnTarget ?? diff.removed;
   const missingChecks = diff.missingCheckConstraints ?? [];
   const extraChecks = diff.extraCheckConstraints ?? [];
+  const tableOptions = diff.tableOptions;
   const lines: string[] = [`-- Schema diff: ${diff.table}`];
   for (const col of missing) {
     lines.push(`+ ${col.name} ${col.dataType}${col.nullable ? '' : ' NOT NULL'}`);
@@ -121,6 +138,13 @@ export function formatSchemaDiffText(diff: TableSchemaDiff): string {
   }
   for (const constraint of extraChecks) {
     lines.push(`- ${constraint.name}: CHECK (${constraint.expression})`);
+  }
+  if (tableOptions) {
+    for (const change of tableOptions.changes) {
+      const source = tableOptions.source[change as keyof typeof tableOptions.source];
+      const target = tableOptions.target[change as keyof typeof tableOptions.target];
+      lines.push(`~ table ${change}: ${String(target ?? '')} -> ${String(source ?? '')}`);
+    }
   }
   if (lines.length === 1) lines.push('(identical)');
   return lines.join('\n');

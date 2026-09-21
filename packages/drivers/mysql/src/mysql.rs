@@ -193,6 +193,40 @@ impl MysqlDriver {
         Ok(result)
     }
 
+    async fn fetch_table_options_with_db<'e, E>(
+        executor: E,
+        current_db: &str,
+        table: &str,
+    ) -> Result<TableOptions, DriverError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::MySql>,
+    {
+        let row = sqlx::query(
+            r#"
+            SELECT t.ENGINE, t.TABLE_COMMENT, c.CHARACTER_SET_NAME
+            FROM information_schema.TABLES AS t
+            LEFT JOIN information_schema.COLLATIONS AS c
+              ON c.COLLATION_NAME = t.TABLE_COLLATION
+            WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?
+            "#,
+        )
+        .bind(current_db)
+        .bind(table)
+        .fetch_optional(executor)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let Some(row) = row else {
+            return Ok(TableOptions::default());
+        };
+        let normalize = |value: Option<String>| value.filter(|value| !value.is_empty());
+        Ok(TableOptions {
+            engine: normalize(decode_mysql_text_opt(&row, "ENGINE")),
+            comment: normalize(decode_mysql_text_opt(&row, "TABLE_COMMENT")),
+            charset: normalize(decode_mysql_text_opt(&row, "CHARACTER_SET_NAME")),
+        })
+    }
+
     pub(crate) fn quote_identifier(name: &str) -> String {
         format!("`{}`", name.replace('`', "``"))
     }
@@ -799,6 +833,7 @@ impl DatabaseDriver for MysqlDriver {
                         indexes: Vec::new(),
                         foreign_keys: Vec::new(),
                         check_constraints: Vec::new(),
+                        table_options: TableOptions::default(),
                     });
                 }
                 return Err(DriverError::QueryFailed(err_msg));
@@ -812,6 +847,23 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let current_db = {
+            let tracked = self.active_databases.read().await;
+            tracked.get(&handle.pool_id).cloned()
+        };
+        let current_db = match current_db {
+            Some(db) if !db.is_empty() => db,
+            _ => {
+                let row = sqlx::query("SELECT DATABASE()")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                row.try_get::<String, _>(0).unwrap_or_default()
+            }
+        };
+        let table_options =
+            Self::fetch_table_options_with_db(&mut *conn, &current_db, table).await?;
 
         tracing::info!(%table, col_rows = col_rows.len(), idx_rows = idx_rows.len(),
             ms = t0.elapsed().as_millis() as u64,
@@ -913,6 +965,7 @@ impl DatabaseDriver for MysqlDriver {
             indexes,
             foreign_keys,
             check_constraints,
+            table_options,
         })
     }
 

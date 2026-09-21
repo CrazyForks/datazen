@@ -303,6 +303,9 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 rollback_sql: None,
                 summary: format!("ALTER COMMENT {}.{}", table, column),
             }),
+            MigrationOperation::SetTableOptions { .. } => Err(
+                "PostgreSQL table engine/charset options are outside the portable migration contract".into(),
+            ),
             MigrationOperation::SetAutoIncrement { .. } => {
                 Err("PostgreSQL auto-increment changes require identity/sequence metadata".into())
             }
@@ -444,6 +447,7 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
     fn supports(&self, operation: &MigrationOperation) -> bool {
         match operation {
             MigrationOperation::SetAutoIncrement { .. } => false,
+            MigrationOperation::SetTableOptions { .. } => false,
             MigrationOperation::CreateTable { .. }
             | MigrationOperation::DropTable { .. }
             | MigrationOperation::AddColumn { .. }

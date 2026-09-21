@@ -1102,6 +1102,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let table = TableInspectResult {
             source_table: "users".into(),
@@ -1426,6 +1427,7 @@ mod tests {
             indexes: Vec::new(),
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            table_options: Default::default(),
         };
         let inspected = TableInspectResult {
             source_table: source.into(),

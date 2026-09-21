@@ -222,6 +222,7 @@ async fn fetch_target_table_schema(
                     indexes: Vec::new(),
                     foreign_keys: Vec::new(),
                     check_constraints: Vec::new(),
+                    table_options: datazen_driver_api::TableOptions::default(),
                 })
             } else {
                 Err(CommandError::Driver(e))

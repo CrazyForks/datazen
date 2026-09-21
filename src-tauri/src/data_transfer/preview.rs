@@ -421,6 +421,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let inspected = vec![TableInspectResult {
             source_table: "users".into(),
@@ -480,6 +481,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("users".into(), schema);
@@ -552,6 +554,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("users".into(), schema);
@@ -674,6 +677,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("reviews".into(), schema);

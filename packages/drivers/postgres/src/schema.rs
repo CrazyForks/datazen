@@ -103,6 +103,7 @@ impl PostgresDriver {
                 indexes: Vec::new(),
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+                table_options: TableOptions::default(),
             });
         }
 
@@ -272,6 +273,7 @@ impl PostgresDriver {
             indexes,
             foreign_keys,
             check_constraints,
+            table_options: TableOptions::default(),
         })
     }
 

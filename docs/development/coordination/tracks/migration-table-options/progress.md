@@ -1,0 +1,33 @@
+# migration-table-options
+
+## Phase
+
+READY_FOR_TEST
+
+## Scope
+
+- Add a dialect-neutral `TableOptions` snapshot for table comment, storage engine, and default character set.
+- Read these values from MySQL/MariaDB information schema metadata and carry them through Schema Diff compare, reviewed snapshots, and deploy plans.
+- Render safe MySQL `ALTER TABLE` option changes with rollback metadata; PostgreSQL, SQLite, and cross-dialect plans fail closed because translation is not implemented.
+- Show table option changes in Schema Diff UI and plain-text export.
+
+## Validation
+
+- `cargo test -p datazen-driver-api --lib`: 141 passed.
+- `cargo test -p datazen-driver-mysql --lib migration`: 17 passed.
+- Injected Host Schema Diff focused tests: 100 passed; full Host lib regression: 1598 passed, 52 pre-existing AI wiremock tests failed because the sandbox denied mock-server ports, 3 ignored.
+- Schema Diff Vitest focused files: 34 passed.
+- `npx --no-install tsc --noEmit`: passed.
+- `cargo fmt --all -- --check` and `git diff --check`: passed.
+
+## Safety boundary
+
+- MySQL engine and charset tokens accept only ASCII alphanumeric/underscore identifiers; unknown or removed values fail closed.
+- Table comments use SQL literal escaping and preserve rollback metadata.
+- PostgreSQL/SQLite renderers reject table options; cross-dialect plans record an unsupported requirement instead of copying source syntax.
+- Collation, partitioning, table-level compression, and live MySQL integration coverage remain future work.
+
+## Commit
+
+- Coding commit: ad07a025.
+- Independent Tester verification: pending.

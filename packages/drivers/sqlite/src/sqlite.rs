@@ -531,6 +531,7 @@ impl DatabaseDriver for SqliteDriver {
             indexes,
             foreign_keys,
             check_constraints,
+            table_options: TableOptions::default(),
         })
     }
 

@@ -205,10 +205,18 @@ fn plan_single_table(
                 op,
                 super::operations::MigrationOperation::AddCheckConstraint { .. }
                     | super::operations::MigrationOperation::DropCheckConstraint { .. }
+                    | super::operations::MigrationOperation::SetTableOptions { .. }
             ) {
                 requirements.push(PlanRequirement::Unsupported {
                     operation: op.key(),
-                    reason: "CHECK expressions are dialect-specific; compare and migrate them on the same database family".into(),
+                    reason: if matches!(
+                        op,
+                        super::operations::MigrationOperation::SetTableOptions { .. }
+                    ) {
+                        "Table engine/charset/comment options are dialect-specific; compare and migrate them on the same database family".into()
+                    } else {
+                        "CHECK expressions are dialect-specific; compare and migrate them on the same database family".into()
+                    },
                 });
                 false
             } else {

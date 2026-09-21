@@ -1,7 +1,7 @@
 //! Dialect-neutral schema migration contracts exposed by the driver API.
 
 use crate::schema_objects::ObjectKind;
-use crate::{CheckConstraint, ColumnSchema, ForeignKeyInfo, IndexInfo};
+use crate::{CheckConstraint, ColumnSchema, ForeignKeyInfo, IndexInfo, TableOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationColumn {
@@ -70,6 +70,14 @@ pub enum MigrationOperation {
         column: String,
         from: Option<String>,
         to: Option<String>,
+    },
+    /// Change table-level metadata that the driver can represent without
+    /// inventing a dialect translation. MySQL currently supports the
+    /// comment, storage engine, and default character set fields.
+    SetTableOptions {
+        table: String,
+        from: TableOptions,
+        to: TableOptions,
     },
     SetAutoIncrement {
         table: String,

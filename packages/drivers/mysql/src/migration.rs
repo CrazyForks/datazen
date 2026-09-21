@@ -55,6 +55,24 @@ fn mysql_view_ident(view: &MigrationView) -> String {
     }
 }
 
+fn mysql_option_token(value: &str, field: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+    {
+        return Err(format!("MySQL table {field} is not a safe identifier"));
+    }
+    Ok(value.to_string())
+}
+
+fn mysql_table_comment(value: Option<&String>) -> String {
+    value
+        .map(|value| format!("'{}'", value.replace('\'', "''")))
+        .unwrap_or_else(|| "''".into())
+}
+
 pub struct MysqlMigrationRenderer;
 
 impl MigrationRenderer for MysqlMigrationRenderer {
@@ -221,6 +239,72 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 rollback_sql: None,
                 summary: format!("ALTER COMMENT {}.{}", table, column),
             }),
+            MigrationOperation::SetTableOptions { table, from, to } => {
+                validate_migration_identifier(table)?;
+                let mut clauses = Vec::new();
+                if from.engine != to.engine {
+                    let Some(engine) = to.engine.as_deref() else {
+                        return Err("MySQL table engine removal is not representable".into());
+                    };
+                    clauses.push(format!(
+                        "ENGINE = {}",
+                        mysql_option_token(engine, "engine")?
+                    ));
+                }
+                if from.charset != to.charset {
+                    let Some(charset) = to.charset.as_deref() else {
+                        return Err("MySQL table charset removal is not representable".into());
+                    };
+                    clauses.push(format!(
+                        "DEFAULT CHARACTER SET = {}",
+                        mysql_option_token(charset, "charset")?
+                    ));
+                }
+                if from.comment != to.comment {
+                    clauses.push(format!(
+                        "COMMENT = {}",
+                        mysql_table_comment(to.comment.as_ref())
+                    ));
+                }
+                if clauses.is_empty() {
+                    return Err("table options are unchanged".into());
+                }
+                let mut rollback_clauses = Vec::new();
+                if from.engine != to.engine {
+                    let Some(engine) = from.engine.as_deref() else {
+                        return Err("MySQL table engine rollback is unavailable".into());
+                    };
+                    rollback_clauses.push(format!(
+                        "ENGINE = {}",
+                        mysql_option_token(engine, "engine")?
+                    ));
+                }
+                if from.charset != to.charset {
+                    let Some(charset) = from.charset.as_deref() else {
+                        return Err("MySQL table charset rollback is unavailable".into());
+                    };
+                    rollback_clauses.push(format!(
+                        "DEFAULT CHARACTER SET = {}",
+                        mysql_option_token(charset, "charset")?
+                    ));
+                }
+                if from.comment != to.comment {
+                    rollback_clauses.push(format!(
+                        "COMMENT = {}",
+                        mysql_table_comment(from.comment.as_ref())
+                    ));
+                }
+                Ok(MigrationStatement {
+                    sql: format!("ALTER TABLE {} {}", qi(table), clauses.join(", ")),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!(
+                        "ALTER TABLE {} {}",
+                        qi(table),
+                        rollback_clauses.join(", ")
+                    )),
+                    summary: format!("ALTER TABLE OPTIONS {}", table),
+                })
+            }
             MigrationOperation::SetAutoIncrement {
                 table, column, to, ..
             } => Ok(MigrationStatement {
@@ -394,6 +478,7 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
         match operation {
             MigrationOperation::SetNullable { .. } => false,
             MigrationOperation::SetAutoIncrement { to, .. } if !*to => false,
+            MigrationOperation::SetTableOptions { .. } => true,
             MigrationOperation::CreateTable { .. }
             | MigrationOperation::DropTable { .. }
             | MigrationOperation::AddColumn { .. }
@@ -421,6 +506,7 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
             MigrationOperation::SetAutoIncrement { .. }
                 | MigrationOperation::AlterColumnType { .. }
                 | MigrationOperation::SetComment { .. }
+                | MigrationOperation::SetTableOptions { .. }
         )
     }
 }
@@ -479,6 +565,67 @@ mod tests {
         let stmt = MysqlMigrationRenderer.render(&op).unwrap();
         assert!(stmt.sql.contains("AUTO_INCREMENT"));
         assert!(stmt.sql.contains("COMMENT 'primary id'"));
+    }
+
+    #[test]
+    fn table_options_render_with_safe_tokens_and_rollback() {
+        let statement = MysqlMigrationRenderer
+            .render(&MigrationOperation::SetTableOptions {
+                table: "orders".into(),
+                from: TableOptions {
+                    engine: Some("InnoDB".into()),
+                    charset: Some("latin1".into()),
+                    comment: Some("old note".into()),
+                },
+                to: TableOptions {
+                    engine: Some("InnoDB".into()),
+                    charset: Some("utf8mb4".into()),
+                    comment: Some("owner's orders".into()),
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            statement.sql,
+            "ALTER TABLE `orders` DEFAULT CHARACTER SET = utf8mb4, COMMENT = 'owner''s orders'"
+        );
+        assert_eq!(
+            statement.rollback_sql.as_deref(),
+            Some("ALTER TABLE `orders` DEFAULT CHARACTER SET = latin1, COMMENT = 'old note'")
+        );
+        assert!(
+            MysqlMigrationCapabilities.supports(&MigrationOperation::SetTableOptions {
+                table: "orders".into(),
+                from: TableOptions::default(),
+                to: TableOptions {
+                    engine: Some("InnoDB".into()),
+                    charset: None,
+                    comment: None,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn table_options_fail_closed_for_unsafe_engine_or_unknown_charset() {
+        let unsafe_engine = MigrationOperation::SetTableOptions {
+            table: "orders".into(),
+            from: TableOptions::default(),
+            to: TableOptions {
+                engine: Some("InnoDB; DROP TABLE users".into()),
+                ..TableOptions::default()
+            },
+        };
+        assert!(MysqlMigrationRenderer.render(&unsafe_engine).is_err());
+
+        let unknown_charset = MigrationOperation::SetTableOptions {
+            table: "orders".into(),
+            from: TableOptions {
+                charset: Some("utf8mb4".into()),
+                ..TableOptions::default()
+            },
+            to: TableOptions::default(),
+        };
+        assert!(MysqlMigrationRenderer.render(&unknown_charset).is_err());
     }
 
     #[test]

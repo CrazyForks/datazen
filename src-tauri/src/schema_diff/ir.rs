@@ -179,6 +179,14 @@ pub fn diff_to_operations(
         });
     }
 
+    if let Some(table_options) = diff.table_options {
+        ops.push(MigrationOperation::SetTableOptions {
+            table: table.into(),
+            from: table_options.target,
+            to: table_options.source,
+        });
+    }
+
     ops
 }
 
@@ -222,6 +230,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         }
     }
 

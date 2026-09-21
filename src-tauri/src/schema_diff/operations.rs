@@ -3,6 +3,7 @@
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
 use datazen_driver_api::MigrationView;
+use datazen_driver_api::TableOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -48,6 +49,11 @@ pub enum MigrationOperation {
         column: String,
         from: Option<String>,
         to: Option<String>,
+    },
+    SetTableOptions {
+        table: String,
+        from: TableOptions,
+        to: TableOptions,
     },
     SetAutoIncrement {
         table: String,
@@ -114,6 +120,7 @@ impl MigrationOperation {
                 nullable: false, ..
             }
             | Self::SetAutoIncrement { .. }
+            | Self::SetTableOptions { .. }
             | Self::ReplaceView { .. } => StatementRisk::Rewrite,
             _ => StatementRisk::Additive,
         }
@@ -133,6 +140,7 @@ impl MigrationOperation {
             | Self::SetDefault { table, column, .. }
             | Self::SetComment { table, column, .. }
             | Self::SetAutoIncrement { table, column, .. } => format!("column:{table}.{column}"),
+            Self::SetTableOptions { table, .. } => format!("table-options:{table}"),
             Self::CreateIndex { table, index } | Self::DropIndex { table, index } => {
                 format!("index:{table}.{}", index.name)
             }
@@ -300,6 +308,11 @@ impl MigrationOperation {
                 column: column.clone(),
                 from: *from,
                 to: *to,
+            },
+            Self::SetTableOptions { table, from, to } => O::SetTableOptions {
+                table: table.clone(),
+                from: from.clone(),
+                to: to.clone(),
             },
             Self::AddPrimaryKey { table, columns } => O::AddPrimaryKey {
                 table: table.clone(),

@@ -12,6 +12,7 @@ fn op_table(op: &MigrationOperation) -> &str {
         | MigrationOperation::SetNullable { table, .. }
         | MigrationOperation::SetDefault { table, .. }
         | MigrationOperation::SetComment { table, .. }
+        | MigrationOperation::SetTableOptions { table, .. }
         | MigrationOperation::SetAutoIncrement { table, .. }
         | MigrationOperation::AddPrimaryKey { table, .. }
         | MigrationOperation::DropPrimaryKey { table, .. }

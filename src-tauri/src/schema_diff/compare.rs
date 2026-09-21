@@ -1,7 +1,10 @@
 //! Column (and index) comparison with source = desired.
 
-use super::types::{ChangedColumnDiff, CheckConstraintSnapshot, ColumnSnapshot, TableColumnDiff};
-use crate::db::{CheckConstraint, ColumnSchema, IndexInfo, TableSchema};
+use super::types::{
+    ChangedColumnDiff, CheckConstraintSnapshot, ColumnSnapshot, TableColumnDiff, TableOptionChange,
+    TableOptionsDiff,
+};
+use crate::db::{CheckConstraint, ColumnSchema, IndexInfo, TableOptions, TableSchema};
 use datazen_driver_api::TypeNormalizer;
 use std::collections::HashMap;
 
@@ -84,6 +87,22 @@ pub fn diff_table_schemas(
     let (missing_check_constraints, extra_check_constraints) =
         diff_check_constraints(&src.check_constraints, &tgt.check_constraints);
 
+    let mut table_option_changes = Vec::new();
+    if src.table_options.comment != tgt.table_options.comment {
+        table_option_changes.push(TableOptionChange::Comment);
+    }
+    if src.table_options.engine != tgt.table_options.engine {
+        table_option_changes.push(TableOptionChange::Engine);
+    }
+    if src.table_options.charset != tgt.table_options.charset {
+        table_option_changes.push(TableOptionChange::Charset);
+    }
+    let table_options = (!table_option_changes.is_empty()).then(|| TableOptionsDiff {
+        source: src.table_options.clone(),
+        target: tgt.table_options.clone(),
+        changes: table_option_changes,
+    });
+
     TableColumnDiff {
         table: table.to_string(),
         added: missing_on_target.clone(),
@@ -93,6 +112,7 @@ pub fn diff_table_schemas(
         changed,
         missing_check_constraints,
         extra_check_constraints,
+        table_options,
     }
 }
 
@@ -238,6 +258,7 @@ mod tests {
             indexes: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            table_options: Default::default(),
         }
     }
 
@@ -370,5 +391,28 @@ mod tests {
         let diff = diff_table_schemas("users", &src, &tgt, None);
         assert_eq!(diff.missing_check_constraints[0].name, "users_age_check");
         assert_eq!(diff.extra_check_constraints[0].expression, "age > 0");
+    }
+
+    #[test]
+    fn table_options_are_diffed_without_fabricating_unsupported_values() {
+        let mut src = schema(vec![col("id", "int")]);
+        src.table_options = TableOptions {
+            comment: Some("orders".into()),
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+        };
+        let mut tgt = schema(vec![col("id", "int")]);
+        tgt.table_options = TableOptions {
+            comment: None,
+            engine: Some("InnoDB".into()),
+            charset: Some("latin1".into()),
+        };
+        let diff = diff_table_schemas("orders", &src, &tgt, None);
+        let options = diff.table_options.expect("table option diff");
+        assert_eq!(options.source.comment.as_deref(), Some("orders"));
+        assert_eq!(options.target.charset.as_deref(), Some("latin1"));
+        assert!(options.changes.contains(&TableOptionChange::Comment));
+        assert!(options.changes.contains(&TableOptionChange::Charset));
+        assert!(!options.changes.contains(&TableOptionChange::Engine));
     }
 }
