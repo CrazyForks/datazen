@@ -278,6 +278,19 @@ fn plan_single_table(
         });
     }
 
+    if opts.cross_dialect {
+        for op in &mut operations {
+            match op {
+                super::operations::MigrationOperation::AddForeignKey { foreign_key, .. }
+                | super::operations::MigrationOperation::DropForeignKey { foreign_key, .. } => {
+                    foreign_key.referenced_table =
+                        resolve_table_for_dialect(target_dialect, &foreign_key.referenced_table);
+                }
+                _ => {}
+            }
+        }
+    }
+
     if normalize_dialect(target_dialect) == "mysql" {
         adjust_mysql_index_columns(&mut operations, src, tgt, warnings);
     }
@@ -479,6 +492,26 @@ fn rollback_completeness(statements: &[super::types::PlanStatement]) -> Rollback
     }
 }
 
+fn reorder_foreign_key_statements(
+    statements: Vec<super::types::PlanStatement>,
+) -> Vec<super::types::PlanStatement> {
+    let mut drops = Vec::new();
+    let mut regular = Vec::new();
+    let mut adds = Vec::new();
+    for statement in statements {
+        if statement.summary.starts_with("DROP FOREIGN KEY ") {
+            drops.push(statement);
+        } else if statement.summary.starts_with("ADD FOREIGN KEY ") {
+            adds.push(statement);
+        } else {
+            regular.push(statement);
+        }
+    }
+    drops.extend(regular);
+    drops.extend(adds);
+    drops
+}
+
 pub fn is_source_unbounded_text(data_type: &str) -> bool {
     let lower = data_type.trim().to_ascii_lowercase();
     let base = lower.split('(').next().unwrap_or("").trim();
@@ -613,6 +646,7 @@ pub fn build_schema_diff_plan(
         );
     }
 
+    statements = reorder_foreign_key_statements(statements);
     let primary = tables.first().cloned().unwrap_or_default();
     let completeness = rollback_completeness(&statements);
     let type_suggestions = detect_type_suggestions(pairs, source_dialect, target_dialect, &opts);

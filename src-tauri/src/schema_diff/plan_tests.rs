@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::{ColumnSchema, IndexInfo};
+use crate::db::{ColumnSchema, ForeignKeyInfo, IndexInfo};
 
 fn col(name: &str, ty: &str) -> ColumnSchema {
     ColumnSchema {
@@ -134,6 +134,67 @@ fn multi_table_concatenates() {
     );
     assert_eq!(plan.tables.len(), 2);
     assert!(plan.statements.len() >= 2);
+}
+
+#[test]
+fn foreign_keys_are_emitted_after_all_table_definitions() {
+    let mut orders = schema(vec![col("id", "int"), col("user_id", "int")]);
+    orders.foreign_keys.push(ForeignKeyInfo {
+        name: "orders_user_id_fk".into(),
+        columns: vec!["user_id".into()],
+        referenced_table: "users".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "CASCADE".into(),
+        on_delete: "RESTRICT".into(),
+    });
+    let users = schema(vec![col("id", "int")]);
+    let plan = build_schema_diff_plan(
+        &[
+            ("orders".into(), orders, schema(vec![])),
+            ("users".into(), users, schema(vec![])),
+        ],
+        "postgresql",
+        "postgresql",
+        PlanOptions::default(),
+    );
+    let fk = plan
+        .statements
+        .iter()
+        .position(|statement| statement.summary.starts_with("ADD FOREIGN KEY"))
+        .expect("foreign key statement");
+    assert!(
+        plan.statements[..fk]
+            .iter()
+            .filter(|statement| statement.sql.starts_with("CREATE TABLE"))
+            .count()
+            >= 2
+    );
+}
+
+#[test]
+fn cross_dialect_foreign_key_reference_uses_target_relation_name() {
+    let mut source = schema(vec![col("user_id", "int")]);
+    source.foreign_keys.push(ForeignKeyInfo {
+        name: "orders_user_id_fk".into(),
+        columns: vec!["user_id".into()],
+        referenced_table: "public.users".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+    });
+    let plan = build_schema_diff_plan(
+        &[("public.orders".into(), source, schema(vec![]))],
+        "postgresql",
+        "mysql",
+        PlanOptions::default(),
+    );
+    let fk = plan
+        .statements
+        .iter()
+        .find(|statement| statement.summary.starts_with("ADD FOREIGN KEY"))
+        .expect("foreign key statement");
+    assert!(fk.sql.contains("REFERENCES `users`"), "{}", fk.sql);
+    assert!(!fk.sql.contains("public"), "{}", fk.sql);
 }
 
 #[test]

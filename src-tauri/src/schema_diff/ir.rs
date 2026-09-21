@@ -1,7 +1,7 @@
 //! Schema Diff IR: convert snapshots into dialect-neutral operations.
 
 use super::{compare::diff_indexes, operations::MigrationOperation, types::ColumnChange};
-use crate::db::TableSchema;
+use crate::db::{ForeignKeyInfo, TableSchema};
 use datazen_driver_api::TypeNormalizer;
 
 pub fn diff_to_operations(
@@ -109,7 +109,66 @@ pub fn diff_to_operations(
         });
     }
 
+    let source_by_name = source
+        .foreign_keys
+        .iter()
+        .map(|foreign_key| (foreign_key.name.as_str(), foreign_key))
+        .collect::<std::collections::HashMap<_, _>>();
+    let target_by_name = target
+        .foreign_keys
+        .iter()
+        .map(|foreign_key| (foreign_key.name.as_str(), foreign_key))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for (name, source_foreign_key) in &source_by_name {
+        match target_by_name.get(name) {
+            None => ops.push(MigrationOperation::AddForeignKey {
+                table: table.into(),
+                foreign_key: (*source_foreign_key).clone(),
+            }),
+            Some(target_foreign_key)
+                if !foreign_key_definition_equal(source_foreign_key, target_foreign_key) =>
+            {
+                ops.push(MigrationOperation::DropForeignKey {
+                    table: table.into(),
+                    foreign_key: (*target_foreign_key).clone(),
+                });
+                ops.push(MigrationOperation::AddForeignKey {
+                    table: table.into(),
+                    foreign_key: (*source_foreign_key).clone(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+
+    for (name, target_foreign_key) in &target_by_name {
+        if !source_by_name.contains_key(name) {
+            ops.push(MigrationOperation::DropForeignKey {
+                table: table.into(),
+                foreign_key: (*target_foreign_key).clone(),
+            });
+        }
+    }
+
     ops
+}
+
+fn foreign_key_definition_equal(left: &ForeignKeyInfo, right: &ForeignKeyInfo) -> bool {
+    left.columns == right.columns
+        && left.referenced_table == right.referenced_table
+        && left.referenced_columns == right.referenced_columns
+        && normalize_action(&left.on_update) == normalize_action(&right.on_update)
+        && normalize_action(&left.on_delete) == normalize_action(&right.on_delete)
+}
+
+fn normalize_action(action: &str) -> String {
+    let normalized = action.trim().to_ascii_uppercase();
+    if normalized.is_empty() {
+        "NO ACTION".into()
+    } else {
+        normalized
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +303,31 @@ mod tests {
         let ops = diff_to_operations("t", &s, &t, None);
         assert!(ops.iter().any(|op| matches!(op, MigrationOperation::DropIndex { index, .. } if index.columns == vec!["id", "email"])));
         assert!(ops.iter().any(|op| matches!(op, MigrationOperation::CreateIndex { index, .. } if index.columns == vec!["email"])));
+    }
+
+    #[test]
+    fn foreign_key_definition_change_generates_drop_and_create_ops() {
+        let mut source = schema(vec![col("user_id")]);
+        source.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_user".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "CASCADE".into(),
+            on_delete: "CASCADE".into(),
+        });
+        let mut target = source.clone();
+        target.foreign_keys[0].on_delete = "RESTRICT".into();
+        let ops = diff_to_operations("orders", &source, &target, None);
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::DropForeignKey { foreign_key, .. }
+                if foreign_key.on_delete == "RESTRICT"
+        )));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::AddForeignKey { foreign_key, .. }
+                if foreign_key.on_delete == "CASCADE"
+        )));
     }
 }
