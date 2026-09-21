@@ -445,6 +445,15 @@ impl RedisDriver {
         })
     }
 
+    // Workbench KV context bar: cursor-sampled type distribution. The sample
+    // window is clamped inside the op, so an oversized `sampleLimit` never
+    // turns into an error. (Plain comment: rustdoc ignores macro invocations.)
+    plugin_on_db!(plugin_type_distribution, (sample_limit: Option<u64>) -> crate::ops_workbench::TypeDistribution, |conn| crate::ops_workbench::type_distribution(conn, sample_limit));
+
+    // Key-attribute sidebar: every attribute in one pipeline; a missing key is
+    // a successful reply with `missing: true`.
+    plugin_on_db!(plugin_key_object_info, (key: &str) -> crate::ops_workbench::KeyObjectInfo, |conn| crate::ops_workbench::key_object_info(conn, key));
+
     pub async fn plugin_slowlog_get(
         &self,
         connection_id: &str,

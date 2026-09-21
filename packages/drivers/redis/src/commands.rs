@@ -22,7 +22,9 @@ fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
         "scan_keys" | "get_key" | "get_key_raw" | "db_sizes" | "list_children" | "info"
         | "memory_sample" | "slowlog_get" | "modules_list" | "cluster_nodes" | "count_matching"
         | "scan_values" | "scan_abort" | "decode_value" | "monitor_start" | "monitor_stop"
-        | "monitor_get_buffer" => CommandCategory::Observe,
+        | "monitor_get_buffer" | "type_distribution" | "key_object_info" => {
+            CommandCategory::Observe
+        }
         _ => CommandCategory::Mutate,
     };
     let mut metadata = DriverCommandMetadata {
@@ -447,6 +449,29 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "MEMORY USAGE for a specific key",
             "redis:allow-memory-sample",
             object_schema(serde_json::json!({ "key": { "type": "string" } }), &["key"]),
+        ),
+        cmd(
+            "type_distribution",
+            "Type distribution",
+            "SCAN-sampled key type counts with pipelined TYPE (never KEYS); reports sampled/dbsize/truncated",
+            "redis:allow-info",
+            object_schema(
+                serde_json::json!({
+                    "dbIndex": db,
+                    "sampleLimit": { "type": "integer", "minimum": 0, "description": "Sample window in keys. Defaults to 1000; values above 5000 are clamped to 5000, never rejected" }
+                }),
+                &[],
+            ),
+        ),
+        cmd(
+            "key_object_info",
+            "Key object info",
+            "One pipeline of MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE; a missing key replies missing=true instead of failing",
+            "redis:allow-memory-sample",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key }),
+                &["key"],
+            ),
         ),
         cmd(
             "info_filtered",

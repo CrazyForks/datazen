@@ -19,6 +19,7 @@ mod ops_pubsub;
 mod ops_stream;
 mod ops_tree;
 mod ops_value_search;
+mod ops_workbench;
 mod ops_write;
 mod redis_driver;
 mod redis_driver_db;

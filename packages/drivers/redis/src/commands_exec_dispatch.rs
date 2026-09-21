@@ -384,6 +384,20 @@ match command {
                 .plugin_memory_usage_key(id, req_str(&input, "key")?)
                 .await?,
         ),
+        "type_distribution" => {
+            // Absent / zero => the driver's own default; oversized values are
+            // clamped inside the op, never rejected here.
+            let sample_limit = input
+                .get("sampleLimit")
+                .or_else(|| input.get("sample_limit"))
+                .and_then(JsonValue::as_u64);
+            json_ok(driver.plugin_type_distribution(id, db, sample_limit).await?)
+        }
+        "key_object_info" => json_ok(
+            driver
+                .plugin_key_object_info(id, db, req_str(&input, "key")?)
+                .await?,
+        ),
         "info_filtered" => json_ok(
             driver
                 .plugin_info_filtered(
