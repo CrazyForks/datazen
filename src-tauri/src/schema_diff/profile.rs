@@ -137,4 +137,12 @@ mod tests {
         assert!(value.validate().is_err());
         assert!(profile().validate().is_ok());
     }
+
+    #[test]
+    fn accepts_target_only_tables_without_source_tables() {
+        let mut value = profile();
+        value.tables.clear();
+        value.target_only_tables = vec!["public.archive".into()];
+        assert!(value.validate().is_ok());
+    }
 }

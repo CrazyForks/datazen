@@ -6,7 +6,7 @@ import { SchemaDiffPlanPanel } from '../SchemaDiffPlanPanel';
 import { SchemaDiffDeployPanel } from '../SchemaDiffDeployPanel';
 import { SchemaDiffTableListPanel } from '../SchemaDiffTableListPanel';
 import { SchemaDiffObjectsStep } from '../SchemaDiffObjectsStep';
-import { SchemaDiffPanel } from '../../../components/schema/SchemaDiffPanel';
+import { formatSchemaDiffText, SchemaDiffPanel } from '../../../components/schema/SchemaDiffPanel';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -113,6 +113,111 @@ describe('SchemaDiffPanel target-only review', () => {
 
     expect(screen.getByTestId('schema-diff-target-only-detail')).toBeInTheDocument();
     expect(screen.queryByText('schemaDiff.schemaIdentical')).not.toBeInTheDocument();
+  });
+
+  it('renders source additions, target extras and changed column details', () => {
+    render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'users',
+          missingOnTarget: [
+            { name: 'email', dataType: 'text', nullable: true, isPrimaryKey: true },
+          ],
+          extraOnTarget: [
+            { name: 'legacy', dataType: 'integer', nullable: false, isPrimaryKey: true },
+          ],
+          added: [],
+          removed: [],
+          changed: [
+            {
+              name: 'name',
+              source: {
+                name: 'name',
+                dataType: 'varchar(128)',
+                nullable: true,
+                isPrimaryKey: true,
+              },
+              target: {
+                name: 'name',
+                dataType: 'text',
+                nullable: false,
+                isPrimaryKey: true,
+              },
+              changes: ['type', 'nullable'],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('schemaDiff.missingOnTarget')).toBeInTheDocument();
+    expect(screen.getByText('+ email (text, PK)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.extraOnTarget')).toBeInTheDocument();
+    expect(screen.getByText('- legacy (integer, NOT NULL, PK)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.colChanged')).toBeInTheDocument();
+    expect(screen.getByText('name')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.source: varchar(128), PK')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.target: text, NOT NULL, PK')).toBeInTheDocument();
+    expect(screen.getByText('type, nullable')).toBeInTheDocument();
+    expect(screen.queryByText('schemaDiff.schemaIdentical')).not.toBeInTheDocument();
+  });
+
+  it('formats a reviewed diff summary with all selected column changes', () => {
+    expect(
+      formatSchemaDiffText({
+        table: 'users',
+        missingOnTarget: [
+          { name: 'email', dataType: 'text', nullable: false, isPrimaryKey: false },
+        ],
+        extraOnTarget: [
+          { name: 'legacy', dataType: 'integer', nullable: true, isPrimaryKey: false },
+        ],
+        added: [],
+        removed: [],
+        changed: [
+          {
+            name: 'name',
+            source: {
+              name: 'name',
+              dataType: 'varchar(128)',
+              nullable: true,
+              isPrimaryKey: false,
+            },
+            target: {
+              name: 'name',
+              dataType: 'text',
+              nullable: true,
+              isPrimaryKey: false,
+            },
+            changes: ['type'],
+          },
+        ],
+      }),
+    ).toBe(
+      '-- Schema diff: users\n+ email text NOT NULL\n- legacy integer\n~ name: text -> varchar(128) (type)',
+    );
+  });
+
+  it('supports legacy aliases and identifies an unchanged schema', () => {
+    const { rerender } = render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'legacy_users',
+          added: [{ name: 'email', dataType: 'text', nullable: true, isPrimaryKey: false }],
+          removed: [{ name: 'old_id', dataType: 'integer', nullable: true, isPrimaryKey: false }],
+          changed: [],
+        }}
+      />,
+    );
+    expect(screen.getByText('+ email (text)')).toBeInTheDocument();
+    expect(screen.getByText('- old_id (integer)')).toBeInTheDocument();
+
+    rerender(
+      <SchemaDiffPanel
+        diff={{ table: 'same', added: [], removed: [], changed: [] }}
+      />,
+    );
+    expect(screen.getByText('schemaDiff.schemaIdentical')).toBeInTheDocument();
   });
 });
 

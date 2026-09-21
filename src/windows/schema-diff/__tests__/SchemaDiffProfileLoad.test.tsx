@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SchemaDiffWindow } from '../SchemaDiffWindow';
 
 const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hoisted(() => {
@@ -21,6 +21,7 @@ const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hois
     targetDatabase: 'profile-db',
     sourceSchema: 'public',
     targetSchema: 'public',
+    targetOnlyTables: [],
     tables: ['public.users'],
     allowDestructive: true,
     includeIndexes: false,
@@ -160,6 +161,7 @@ describe('SchemaDiffWindow profile loading', () => {
     endpointState.targetDatabase = 'initial-db';
     endpointState.sourceSchema = '';
     endpointState.targetSchema = '';
+    profile.targetOnlyTables = [];
     vi.clearAllMocks();
     schemaDiffCommands.getProfiles.mockResolvedValue([profile]);
     schemaDiffCommands.compareTableSchemas.mockResolvedValue({
@@ -228,5 +230,58 @@ describe('SchemaDiffWindow profile loading', () => {
         }),
       );
     });
+  });
+
+  it('[tester] restores a target-only profile row and forwards separate selectors', async () => {
+    profile.targetOnlyTables = ['public.archive'];
+    databaseCommands.getTables.mockImplementation(async (sessionId: string) =>
+      sessionId === 'source-session'
+        ? [{ name: 'users', schema: 'public', tableType: 'table' }]
+        : [
+            { name: 'users', schema: 'public', tableType: 'table' },
+            { name: 'archive', schema: 'public', tableType: 'table' },
+          ],
+    );
+    render(<SchemaDiffWindow />);
+
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-step-compare')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-step-plan')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByTestId('schema-diff-profile-select'), {
+      target: { value: profile.id },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument());
+
+    const archive = screen
+      .getAllByTestId('schema-diff-table-row')
+      .find((row) => row.getAttribute('data-table-name') === 'public.archive');
+    expect(archive).toBeDefined();
+    expect(archive).toHaveAttribute('data-table-origin', 'target-only');
+    expect(within(archive!).getByRole('checkbox')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-step-compare')).toBeInTheDocument());
+    expect(schemaDiffCommands.compareTableSchemas).toHaveBeenCalledWith(
+      'source-session',
+      'target-session',
+      'public.users',
+    );
+    expect(schemaDiffCommands.compareTableSchemas).not.toHaveBeenCalledWith(
+      'source-session',
+      'target-session',
+      'public.archive',
+    );
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        tableNames: ['public.users'],
+        targetOnlyTableNames: ['public.archive'],
+      }),
+    ));
   });
 });
