@@ -59,6 +59,8 @@
 | redis-pr4-stream-groups | — | 未开始 | — | — | — |
 | redis-pr6-console-danger | — | 未开始 | — | — | — |
 | redis-pr8-pubsub-enhance | — | 未开始 | — | — | — |
+| migration-object-catalog | — | 未开始 | — | — | — |
+| migration-schema-safety | — | `FAILED` | — | — | — |
 
 ## 写锁台账
 
@@ -115,6 +117,8 @@
 | redis-pr4-stream-groups | — | — | feature/redis-pr4-stream-groups | 未开始 | — |
 | redis-pr6-console-danger | — | — | feature/redis-pr6-console-danger | 未开始 | — |
 | redis-pr8-pubsub-enhance | — | — | feature/redis-pr8-pubsub-enhance | 未开始 | — |
+| migration-object-catalog | — | — | feature/migration-object-catalog | 未开始 | — |
+| migration-schema-safety | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-safety` | `feature/migration-schema-safety` | `FAILED` | — |
 
 ## 波次记录
 
