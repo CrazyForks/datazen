@@ -1,0 +1,253 @@
+# Track: redis-host-slots — 宿主 KV 槽位与能力判定（去硬编码）
+
+- 分支: `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375）
+- 角色: Coder → Tester
+- 状态: READY_FOR_TEST
+- Worktree: `.worktrees/datazen-redis-host-slots`
+- 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.0、§3.4、§7-1/2/4、§8-1（P0 ⑥）
+
+## 背景
+
+Redis 面板下顶部 48px 工具栏只剩右侧簇、中间被 `flex-1` 撑成空带（P-1），底部状态栏同样空（`ContentView.tsx` 传 `tableName/columnCount/totalRows` 在 KV 下为空），右上角 `DetailPanelToggle` 在 KV 下判定为 applicable 但抽屉内容是空数组 ⇒ 死按钮（P-3）。根因是**这些槽位是为 SQL 面板设计的，没有 KV 对应内容**，而且判定掺了驱动专属字面量。
+
+本轨只做一件事：**把宿主从"不知道有 KV 这回事"改成"按能力开槽位"**，并修掉死按钮判定。驱动的槽位内容（上下文条长什么样、屏 A 有哪些卡）属 Wave 2，**本轨不写**。
+
+## 范围
+
+1. **能力判定归一**：宿主 KV 判定改为读 `DatabaseTypeMeta` 能力位，不再靠 `activePanel?.type === 'redis-db'` 这类驱动专属字面量做主判定（现况 `useConnectionWorkspaceMeta.ts:98`）。若因面板生命周期必须先有 panel 才能拿 meta 而不得不保留字面量兜底，需就地注释说明为何不可省（AGENTS.md 状态机/三维影响度自查）。
+2. **meta 新增能力位**（**唯一真源在 `src/lib/databaseMeta.ts`**，`packages/driver-sdk/src/index.ts:18` 是它的再导出，加字段只改一处）：
+   - 建议形如 `kvWorkspace?: { contextBar?: boolean; statusBar?: boolean; keyPropsSidebar?: boolean; home?: boolean }`，全部可选、默认 `false` ⇒ 未声明的驱动行为与今天完全一致（**这是本轨的向后兼容判据**）。
+   - 字段名可由你定，但必须满足：① 语义是"能力"而非"驱动 id"；② redis 之外零驱动受影响；③ 在 `redisMeta` 声明处（`packages/drivers/redis/ui/shared/meta.ts`，Wave 2 会补 true，本轨可先只加类型 + 在测试里用 fixture）留清晰 doc 注释。
+3. **驱动贡献新槽位**（走既有 codegen 机制，**不得**在宿主 import 具体驱动组件）：
+   - 现有机制：`scripts/resolve-drivers.mjs:184`（配置注释）、`:266-268`（redis 的 `connectionView` 声明）、`:391,463-468`（生成 import 与注册行）、`:653-660`（`DRIVER_CONNECTION_VIEWS` + `getDriverConnectionView`）。
+   - 按同一形态扩展新槽位（`kvContextBar` / `kvStatusBar` / `keyPropsSidebar` / `connectionHome`），生成对应注册表 + lookup。**`src/extensions/generated.ts` 是 gitignored codegen，禁止提交**，只改生成器与模板。
+4. **渲染接线**：
+   - 上下文条槽位：KV 能力为真时，用驱动贡献的组件填满 `ContentToolbar.tsx:105` 那条 48px（左簇），右侧动作簇保留；未贡献 ⇒ 保持现状且不报错。
+   - 状态条槽位：`ContentView.tsx` 的 `ContentStatusBar` 区（约 `:491-499`）同理。
+   - **死按钮修正**：`detailPanelApplicable`（`ContentView.tsx` 约 `:143-146`、`ContentViewDrawers.tsx:21,41,131-134`、`ContentToolbar.tsx:48,196`）在 KV 能力为真时 ⇒ 抽屉内容切换为驱动贡献的**键属性侧栏**，而不是空表格；能力为假时行为不变。
+   - 屏 A 让位：`ConnectionWorkspaceHome.tsx` 的 KV 分支（`quickActions` 在 `:273`、空区块门控在 `:337`）在驱动声明 `connectionHome` 能力时让位给驱动贡献组件；未声明 ⇒ 现有横幅页保持不动。
+5. **测试**：宿主单测（`src/windows/connection/__tests__/**`、`src/lib/__tests__/**`）覆盖"能力真/假"两态 + "驱动未贡献槽位组件"的降级路径。**用测试 fixture 假组件，不引入真 redis UI。**
+
+## 已侦察落点（仅供参考，务必自行核实）
+
+- `src/windows/connection/useConnectionWorkspaceMeta.ts:24-29,94,98-107,155-160`
+- `src/windows/connection/ContentToolbar.tsx:25-48,57-63,76-105,106,163,196`（`h-12 min-h-[48px]` 在 `:105`）
+- `src/windows/connection/ContentView.tsx`（工具栏调用点、`detailPanelApplicable` 计算、`ContentStatusBar` 传参 —— 行号需自查，PRD 记为 `:143-146 / :397-416 / :491-499`）
+- `src/windows/connection/ContentViewDrawers.tsx:21,41,81-111,131-134,145`
+- `src/windows/connection/ConnectionWorkspaceHome.tsx:37,105,273-307,316-334,337-343,358,388`
+- `src/lib/databaseMeta.ts:48-61`（`isKeyValue` / `connectionView`）、`:94`（`dbCountsCommand?: string` —— **能力位驱动的既有先例，照它的形态加新位**）
+- `packages/driver-sdk/src/index.ts:18`（meta 类型的再导出）
+- `scripts/resolve-drivers.mjs:184,266-268,391,463-468,653-660`
+- `src/windows/connection/navigator/{buildFlatRows.ts:299, types.ts:69, NavigatorTreeRow.tsx:154, useKvDbCounts.ts:38}`（`dbCountsCommand` 全链路，作为"meta 声明 → 宿主查表执行"的参照实现）
+
+## 禁止事项（防跨轨冲突）
+
+- **不碰 `packages/drivers/redis/src/**`**（redis-cmds-p0 轨范围）。
+- **不碰 `packages/drivers/redis/ui/**` 与 `locales/**`**（Wave 2 轨范围；本轨只加 meta 类型位与生成器配置，redis 侧的实际组件由 Wave 2 提供）。
+  - 例外：若 codegen 要求 `ui/<path>` 必须存在才能生成，改为在**生成器里声明为可选贡献**，不要去 redis 包里造占位组件；确有阻碍时停下上报 BLOCKED。
+- 不碰 `src/locales/locales.test.ts`、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx`（redis-assert-policy 轨范围）。
+- 不提交 codegen：`src/extensions/generated.ts`、`src/extensions/generated-locales.ts`、`src-tauri/src/driver_init.rs`、`src-tauri/capabilities/default.json`、`Cargo.lock`、被注入的 `src-tauri/Cargo.toml`。
+- 边界护栏：驱动侧不得 import 宿主 `src/**`（R1 blocking）；本轨若需要宿主能力（对话框/右键/设置读写）一律走 `@datazen/driver-sdk` 的 `bind*`/`useBound*` 桥，缺桥就先扩 driver-sdk。
+- 单文件 800 行红线；`RedisWorkbench.tsx` 本轨不改。
+
+## 验收标准
+
+1. 能力位缺省（任何驱动未声明）⇒ 全站行为与本轨之前**逐像素一致**（现有宿主单测零红）。
+2. 能力位为真 + fixture 贡献 ⇒ 上下文条/状态条/键属性侧栏/首页四处槽位分别渲染驱动组件，且 KV 下 `DetailPanelToggle` 不再是空白抽屉。
+3. `npx tsc --noEmit -p tsconfig.json` 0 错误。
+4. `npx vitest run src/windows/connection src/lib` 全绿（含本轨新增用例）；`npx vitest run` 整体不引入新红。
+5. `node scripts/check-driver-import-boundaries.mjs`（`pnpm test:boundaries`）0 blocking；`pnpm test:ids`、`pnpm test:layers`、`pnpm test:ci-docs`、`pnpm test:version` 全绿。
+6. `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` 后可用 `getDriverConnectionView` 同风格的 lookup 取到各槽位组件（本地验证生成结果，**不提交** generated 文件）。
+7. 新增测试**零可见英文字面量断言**（PRD §7-6）：按 `data-*` / role / key 断言。
+
+## 契约冻结（Wave 2 依赖，改动须回报协调者）
+
+> 本节是 Wave 2 两个 UI 轨（redis-workbench-ui / redis-kv-slots-ui）的**开工前置**，逐字照抄即可。
+> 类型真源：`src/lib/databaseMeta.ts`（meta）+ `packages/driver-sdk/src/types/kv-slots.ts`（props）。
+> `packages/driver-sdk/src/index.ts` 只做再导出，**不存在第二份定义**；驱动侧一律 `from '@datazen/driver-sdk'` 取类型。
+
+### F-1 meta 能力位（唯一真源 `src/lib/databaseMeta.ts`）
+
+```ts
+export interface KvWorkspaceCapabilities {
+  contextBar?: boolean;        // 48px 内容工具栏左簇
+  statusBar?: boolean;         // 底部状态栏中心簇
+  keyPropsSidebar?: boolean;   // 详情抽屉 → 键属性侧栏
+  home?: boolean;              // 屏 A：已连接无面板的落地页
+}
+// DatabaseTypeMeta 挂载点（全部可选，缺省 = false）
+kvWorkspace?: KvWorkspaceCapabilities;
+```
+
+- **槽位名 ↔ 能力位映射只有一处不对称**：槽位 `connectionHome` ← 能力位 `home`（其余三个同名）。
+  真源是 `src/lib/kvWorkspaceCapabilities.ts` 的 `capabilityKeyForSlot()`，宿主代码里**不存在**手写字面量分支。
+- 判据：`hasKvSlotCapability(meta, slot)` / `hasAnyKvSlotCapability(meta)`；`meta` 为 `undefined`（未知驱动）
+  与 `kvWorkspace` 缺省都返回 `false` ⇒ mysql / postgresql / sqlite / mongodb / clickhouse… 行为逐位不变。
+- **Wave 2 声明位置**：`packages/drivers/redis/ui/shared/meta.ts`（该文件已声明 `isKeyValue: true` /
+  `dbCountsCommand` / `databaseFieldType: 'index'`），加 `kvWorkspace: { contextBar: true, statusBar: true, keyPropsSidebar: true, home: true }`。
+  **禁止**在宿主 `src/lib/databaseMeta.ts` 的 redis 条目上写能力位。
+- 宿主 KV 判定已去字面量：`useConnectionWorkspaceMeta.ts:102` 现在是
+  `const isKvPanel = toolbarDbMeta?.isKeyValue === true;`（原 `activePanel?.type === 'redis-db' ||` 已删）。
+
+### F-2 槽位 props 契约（`packages/driver-sdk/src/types/kv-slots.ts`）
+
+**面板内三槽共享的基座**（宿主 `useKvWorkspaceSlots` 一次性冻结，`React.memo` 安全）：
+
+```ts
+export interface KvPanelSlotProps {
+  connectionId: string;        // 持久化配置 id
+  dbSessionId: string;         // 运行时会话 id
+  connectionName: string;
+  databaseType: DatabaseType;  // 注册表 key
+  database: string | null;     // 面板绑定的逻辑库（如 'db5'）；未解析出 ⇒ null
+  dbIndex?: number;            // 仅 databaseFieldType: 'index' 的驱动有值（Redis）
+  state: KvSlotState;          // 宿主持有的 per-panel 中继，见下
+}
+```
+
+| 槽位（`KvSlotName`） | props 类型 | = 基座 + 宿主独有字段 | 渲染落点 |
+| --- | --- | --- | --- |
+| `contextBar` | `KvContextBarProps` | `+ compact: boolean` | `ContentToolbar.tsx` 48px 左簇（`h-12 min-h-[48px]`） |
+| `statusBar` | `KvStatusBarProps` | 基座原样（`= KvPanelSlotProps`） | `ContentStatusBar.tsx` 中心簇 |
+| `keyPropsSidebar` | `KeyPropsSidebarProps` | `+ open: boolean` `+ onClose: () => void` | `ContentViewDrawers.tsx` 详情抽屉 |
+| `connectionHome` | `ConnectionHomeSlotProps` | **不用基座**（屏 A 无面板） | `ConnectionWorkspaceHome.tsx` State 3b |
+
+屏 A 独立形状（无面板 ⇒ 无 `database` / `dbIndex` / `state`）：
+
+```ts
+export interface ConnectionHomeSlotProps {
+  connectionId: string;
+  dbSessionId: string;
+  connectionName: string;
+  databaseType: DatabaseType;
+  initialDatabase?: string;    // 连接配置里保存的 database
+}
+```
+
+**选中 key / dirty 的传递方式（本轨最重要的裁定）**：当前选中 key 与未保存标志**不是 prop**，
+而是宿主持有的 `KvSlotState` 中继（getter + `subscribe`，故意做成 `useSyncExternalStore` 形状）：
+
+```ts
+export interface KvSlotState {
+  subscribe(listener: () => void): () => void;
+  getSelectedKey(): string | null;
+  selectKey(key: string | null): void;   // 驱动 workbench/键树发布
+  getDirty(): boolean;
+  setDirty(dirty: boolean): void;        // 驱动编辑器发布（PRD I-1 dirty 门闸）
+}
+```
+
+- 为什么不塞进 props：workbench（知道选中哪个 key、有没有脏草稿）与工具栏 / 状态栏 / 侧栏
+  渲染在**三棵不同 React 子树**，而宿主决定面板何时死 ⇒ 驱动侧模块级缓存会活过面板。
+  宿主自身**不在渲染路径上订阅**（选中频率太高，不能整工作区重渲染），故 `getSelectedKey()` 只经
+  `useSyncExternalStore(state.subscribe, state.getSelectedKey)` 消费。
+- **同一个对象**同时交给面板内三槽**和**驱动的 connection view：
+  `ConnectionViewProps.kvSlotState?: KvSlotState`（`packages/driver-sdk/src/types/connection-view.ts`）。
+  Wave 2 的 `RedisConnectionView` 用它发布，槽位用它读取，两侧无需任何新桥。
+- 原子生命周期（`src/lib/kvSlotState.ts`）：`getKvSlotState(panelId)` **按面板 id** 键控
+  （同一连接的多个面板可能开在不同 db，选中态不得串台）；`pruneKvSlotStates(livePanelIds)` 由
+  `ContentView` 在面板列表变化时回收；`disposeKvSlotState` / `createKvSlotState` /
+  `resetKvSlotStatesForTests`（仅测试）可用。
+
+**几何归属约定（Wave 2 必须遵守）**：宿主只拥有容器与 `data-slot` / `data-testid` 包装层；
+驱动组件拥有自己的内部布局。`keyPropsSidebar` 自己负责宽度/边框/滚动（与 `DetailPanel` 同构），
+且 **`open === false` 时必须渲染 `null`**（宿主不卸载它，只翻 `open`）。
+
+Wave 2 E2E 可直接依赖的宿主标记：
+
+| 槽位 | `data-slot` | 包装层 `data-testid` |
+| --- | --- | --- |
+| contextBar | `kv-context-bar` | `conn-toolbar-kv-context-bar` |
+| statusBar | `kv-status-bar` | `conn-status-kv-bar` |
+| keyPropsSidebar | `kv-key-props-sidebar` | `conn-kv-key-props-sidebar` |
+| connectionHome | `kv-connection-home` | `home-kv-connection-home` |
+
+### F-3 lookup 函数名与生成表名
+
+| 层 | 符号 | 位置 |
+| --- | --- | --- |
+| codegen 生成表 | `const DRIVER_KV_SLOTS: DriverKvSlotEntry[]` | `src/extensions/generated.ts`（gitignored） |
+| codegen 条目类型 | `interface DriverKvSlotEntry { dbType; slot; component }` / `type DriverKvSlotName` | 同上 |
+| **lookup** | **`getDriverKvSlot(dbType: string, slot: DriverKvSlotName): ComponentType<any> \| undefined`** | 同上，与 `getDriverConnectionView` 同风格 |
+| 宿主双门闸封装 | `getKvSlotComponent<T>(databaseType, slot)` | `src/lib/kvWorkspaceSlots.ts` |
+| 能力读取 | `hasKvSlotCapability(meta, slot)` / `hasAnyKvSlotCapability(meta)` / `KV_SLOT_NAMES` | `src/lib/kvWorkspaceCapabilities.ts` |
+| 绑定 hook | `useKvWorkspaceSlots(args): KvWorkspaceSlots`（含 `resolveKvDatabaseIndex`） | `src/windows/connection/useKvWorkspaceSlots.ts` |
+
+- 宿主**只调 `getKvSlotComponent`**：能力位与"本次构建确实注册了组件"两道闸都过才返回，
+  任一道失败返回 `undefined` ⇒ 调用方按"渲染今天的默认 UI"处理，**永不抛错**。
+- 生成器槽位名单 `export const KV_SLOT_NAMES`（`scripts/resolve-drivers.mjs`）已被单测
+  **钉死等于** `kv-slots.ts` 里的 `KvSlotName` 联合（`scripts/__tests__/resolve-drivers.test.mjs`），两侧不可能漂移。
+
+**Wave 2 在 codegen 里的声明形状**（`scripts/resolve-drivers.mjs` → `BASIC_PATH_FRONTEND.redis`）：
+
+```js
+kvSlots: {
+  contextBar:      { component: 'RedisKvContextBar', path: '../../packages/drivers/redis/ui/kvSlots' },
+  statusBar:       { component: 'RedisKvStatusBar',  path: '../../packages/drivers/redis/ui/kvSlots' },
+  keyPropsSidebar: { component: 'RedisKeyPropsSidebar', path: '../../packages/drivers/redis/ui/kvSlots' },
+  connectionHome:  { component: 'RedisConnectionHome',  path: '../../packages/drivers/redis/ui/kvSlots' },
+},
+```
+
+- **每个槽位彼此独立且可选**：未声明的槽位既不生成 import 也不生成注册行 ⇒ 磁盘上**不需要**存在任何文件；
+  因此本轨**没有**在 `packages/drivers/redis/ui/**` 造占位组件（禁止事项已守）。缺 `component` 或缺 `path`
+  的半声明按"未声明"处理。
+- 同一 `path` 的多个槽位会**合并成一条 import 语句**（已实测：3 槽 1 import）。
+- 未贡献的槽位 ⇒ `getDriverKvSlot` 返回 `undefined`（已实测 `keyPropsSidebar` 与 `postgresql` 两种未注册路径）。
+
+## 自验记录
+
+接管后全部实跑（worktree `.worktrees/datazen-redis-host-slots`，非主检出）：
+
+| # | 门禁 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| 1 | 类型 | `npx tsc --noEmit -p tsconfig.json` | **0 错误**（exit 0） |
+| 2 | 定向单测 | `npx vitest run src/windows/connection src/lib` | **203 files / 2068 tests 全绿**（接管时 202/2061 → 本轨新增 1 文件 7 用例） |
+| 3 | Host 全量 | `npx vitest run` | **448 files / 4646 tests 全绿，exit 0** |
+| 4a | 边界 | `node scripts/check-driver-import-boundaries.mjs` | **0 blocking**（1413 files，4 advisory，全部为本轨之前既有：`locales.test.ts` / `driverUiSetup.ts` ×2 / `DocumentConnectionView.tsx`） |
+| 4b | ID 术语 | `node scripts/check-id-terminology.mjs` | ok（1730 files，5 allow-listed） |
+| 4c | 模块分层 | `node scripts/check-module-layers.mjs` | ok（3 rules） |
+| 4d | CI 文档 | `node scripts/check-ci-docs-consistency.mjs` | ok（11 driver ids / window boundaries / toolchain） |
+| 4e | 版本 | `node scripts/check-version-consistency.mjs` | ok（all sources at 0.2.1） |
+| 4f | 脚本单测 | `npx vitest run scripts/__tests__` | **23 files / 254 tests 全绿** |
+| 5 | codegen | `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | ok，生成表为空（无驱动声明 `kvSlots`）⇒ 与今日一致；**generated 未提交** |
+
+**门禁 3 的红/绿比对方法**：改后 `npx vitest run` 以 **exit 0 / 0 失败** 结束，失败集合为空，
+因此"是否引入新红"无需与基线求差集（零元素集合的任何子集都是零）；基线数字（同一 worktree、
+`9b073ed46` 落地前实跑）为 **447 files / 4634 tests 全绿**，两者差值恰为本轨新增的
+1 个测试文件 / 12 个用例（`ContentViewDrawers.test.tsx` +5、`ConnectionWorkspaceHome.test.tsx` +2、
+`resolve-drivers.test.mjs` +5）。未做 `git stash -u` 取基线，因为改后全绿已蕴含"无新红"。
+
+**门禁 5 的 lookup 实取证明**（不留在提交里）：临时给 `redis` 配置注入 `kvSlots`
+（contextBar / statusBar / connectionHome 三项，指向尚不存在的 `ui/kvSlots`）→ 重跑 codegen ⇒
+`generated.ts` 生成 **1 条合并 import + 3 条注册行**；把生成的 `DRIVER_KV_SLOTS` /
+`getDriverKvSlot` 段抽出来实跑 ⇒ `contextBar → CtxBar`、`statusBar → StatBar`、
+`connectionHome → Home`、`keyPropsSidebar → undefined`（未声明）、`postgresql → undefined`（整块未声明）。
+随后 `git checkout -- scripts/resolve-drivers.mjs` 并重新 codegen 复原，工作区干净。
+
+提交：`9b073ed46`（能力位 + 契约 + codegen + 宿主四槽接线 + 接管成果落盘，22 files / +1644）、
+`9b878e609`（抽屉与屏 A 渲染位单测 + 生成器槽位名单钉死，3 files）。
+
+## 留待 R 回归
+
+1. **未声明能力的其它驱动槽位不出现**（验收 1）：单测已覆盖"能力假"与"能力真但未贡献组件"两态，
+   但 mysql / postgresql / sqlite / mongodb / clickhouse 的真实 meta 均未声明 `kvWorkspace` ⇒
+   需 GUI 走一遍确认工具栏左簇、状态栏中心簇、详情抽屉、屏 A 四处与本轨之前逐像素一致。
+2. **redis 面板在本轨之后仍是今日外观**（预期，非缺陷）：redis meta 尚无 `kvWorkspace: true`、
+   codegen 尚无 `kvSlots` 声明 ⇒ P-1（48px 空带）与 P-3（死按钮空抽屉）**要到 Wave 2 才真正在 UI 上消失**。
+   R 阶段验证这两处必须等 Wave 2 合入后做。
+3. **能力真但组件未贡献时的死按钮**：`detailPanelApplicable` 未额外门控在 `hasAnyKvSlotCapability` 上
+   （任务书裁定"能力为假时行为不变"）。若 Wave 2 出现"meta 写了 `keyPropsSidebar: true` 但漏了 codegen
+   声明"，KV 面板会退回空白抽屉 ⇒ 建议 R 阶段把这条列入 Wave 2 checklist，或裁定改为门控 toggle 可见性。
+4. **`isKvPanel` 去字面量的回归面**：现在完全依赖 `DB_REGISTRY[databaseType ?? sidebarConnCtx.databaseType].isKeyValue`。
+   已核实 `packages/drivers/redis/ui/shared/meta.ts:22` 有 `isKeyValue: true`；Host 全量单测零红。
+   仍需 GUI 确认：从连接树新建 redis 面板时 `panel.databaseType` 确已赋值（面板创建早于会话就绪的时序）。
+5. **worktree 外部树盲区**：本 worktree 缺 gitignored 的 git 驱动（kiwi / superset / olap）与 pro 扩展 ⇒
+   `test:boundaries` / `test:ids` / codegen 是 path-only 结果。合并时请在主检出或
+   `--drivers=all` 下复跑一次（`resolve-drivers.mjs` 的 `kvSlots` 分支对 git 驱动同样生效，
+   git 驱动若要在 `drivers-registry.json` 侧声明槽位需另行验证）。
+6. **KV 面板状态原子的回收**：`pruneKvSlotStates(livePanelIds)` 挂在 `ContentView` 的面板同步 effect 上，
+   与 store 面板剪枝共用 `liveIds` ⇒ 建议 GUI 验证"关掉 KV 面板再开 ⇒ 选中 key 不残留"。
+7. 本轨未触碰 `RedisWorkbench.tsx`、`packages/drivers/redis/{src,ui}/**`、任何 `locales/**`、
+   `src/locales/locales.test.ts`、`ttlControlsJourney.test.tsx`、`check-i18n-copy-assertions.mjs`、
+   `package.json`（含 `test:i18n-assertions*`）⇒ 与 redis-cmds-p0 / redis-assert-policy / Wave 2 三轨零冲突。
