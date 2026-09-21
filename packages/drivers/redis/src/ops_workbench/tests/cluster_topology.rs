@@ -776,6 +776,15 @@ async fn cluster_type_distribution_types_keys_one_at_a_time_on_their_own_shards(
 async fn cluster_sample_window_is_bounded_because_every_key_costs_a_round_trip() {
     // 500 keys on the first SCAN page: standalone would type them in one batch,
     // a cluster connection may not be left with 500 sequential round trips.
+    //
+    // BUG-008: 200 is pinned by its literal, not by the constant, because the
+    // number is quoted outside this crate — `commands.rs` advertises it in the
+    // `sampleLimit` description and Wave 2 budgets `sampled ≤ 200` from it.
+    assert_eq!(
+        CLUSTER_TYPE_SAMPLE_LIMIT, 200,
+        "changing the cluster budget means re-deriving the UI wording and the \
+         per-key round-trip cost the clamp exists to bound"
+    );
     let page: Vec<String> = (0..500).map(|i| format!("k{i}")).collect();
     let flat: Vec<&str> = page.iter().map(String::as_str).collect();
 

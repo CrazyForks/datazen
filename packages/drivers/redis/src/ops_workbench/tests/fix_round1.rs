@@ -8,6 +8,90 @@
 
 use super::*;
 
+/// BUG-008: the two budget numbers are quoted outside this crate — `MAX_SCAN_ROUNDS`
+/// is the literal judgement in `progress.md` R 项 13 ("`SCAN` 条数 ≤ 64") and both
+/// size the worst case the context bar holds the connection — so each is pinned by
+/// its **value**, not by the constant (an assertion written as
+/// `count == MAX_SCAN_ROUNDS` drifts with any edit to it and answers nothing). The
+/// behavioural assertions below stay: together they pin which guard ends a scan and
+/// what each of the two numbers is worth.
+#[test]
+fn scan_budgets_are_the_numbers_the_docs_quoted() {
+    assert_eq!(
+        MAX_SCAN_ROUNDS, 64,
+        "raising this widens the worst-case time `type_distribution` holds the \
+         connection's write lock, and R 项 13's MONITOR bound is written as 64"
+    );
+    assert_eq!(
+        MAX_STALLED_SCAN_ROUNDS, 16,
+        "lowering it shrinks `sampled` on a sparse keyspace with no other signal"
+    );
+    // The two guards must stay ordered: the stall guard is the one meant to fire
+    // first (16 empty rounds is already conclusive), and the cap is the backstop.
+    assert!(
+        MAX_STALLED_SCAN_ROUNDS < MAX_SCAN_ROUNDS,
+        "the round cap would swallow the stall guard"
+    );
+    // Sizing relation the docs lean on: the largest window needs 10 rounds, so the
+    // cap is 6.4x the progress-making case.
+    assert_eq!(
+        MAX_TYPE_SAMPLE_LIMIT / TYPE_SCAN_COUNT as u64,
+        10,
+        "the sample ceiling and the SCAN count are calibrated together"
+    );
+    assert!(
+        MAX_SCAN_ROUNDS > (MAX_TYPE_SAMPLE_LIMIT / TYPE_SCAN_COUNT as u64) as u32,
+        "a full window must be reachable without ever hitting the round cap"
+    );
+}
+
+#[test]
+fn the_ui_descriptions_still_promise_those_same_numbers() {
+    // BUG-008's other half: `commands.rs` renders these numbers *from* the
+    // constants, so a description can no longer drift away from the code — which
+    // is exactly why the check has to be spelled with literals. Change a budget
+    // and both this test and the constant pin above fail together, forcing the
+    // wording and the value to be re-agreed rather than silently diverging.
+    let defs = crate::commands::redis_command_definitions();
+    let described = |id: &str| -> (String, String) {
+        let def = defs
+            .iter()
+            .find(|def| def.id == id)
+            .unwrap_or_else(|| panic!("'{id}' must be registered"));
+        (
+            def.description.clone().unwrap_or_default(),
+            def.input_schema["properties"]["sampleLimit"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        )
+    };
+
+    let (distribution, sample_limit) = described("type_distribution");
+    assert!(
+        distribution.contains("one pipeline per 500 keys"),
+        "the standalone TYPE budget is quoted to the UI: {distribution}"
+    );
+    assert!(
+        sample_limit.contains("Defaults to 1000")
+            && sample_limit.contains("clamped to 5000")
+            && sample_limit.contains("further to 200"),
+        "the sample window contract must stay spelled out: {sample_limit}"
+    );
+
+    let (object_info, _) = described("key_object_info");
+    assert!(
+        object_info.contains("2 round trips on a single node and 7 on Cluster"),
+        "the round-trip claim is the one Wave 2 sizes its refresh interval by: {object_info}"
+    );
+    // The same fact this file's constants encode, in prose.
+    assert_eq!(
+        KEY_INFO_PIPELINE_LEN + 1,
+        7,
+        "1 SELECT + one addressed command per probe"
+    );
+}
+
 #[test]
 fn only_an_explicit_none_answers_that_the_key_is_absent() {
     // BUG-004: "cannot parse a type" and "the server says the key is gone" are
