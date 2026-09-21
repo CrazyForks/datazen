@@ -267,8 +267,15 @@ pub fn object_ddl_sql(
             sql_string(name),
         )),
         ("sqlite", ObjectKind::View) => Some(format!(
-            "SELECT trim(substr(sql, instr(lower(replace(replace(replace(sql, char(13), ' '), char(10), ' '), char(9), ' ')), ' as ') + 4)) AS ddl \
-             FROM sqlite_master WHERE type = 'view' AND name = {}",
+            "WITH view_source AS ( \
+             SELECT sql, instr(lower(replace(replace(replace(sql, char(13), ' '), char(10), ' '), char(9), ' ')), ' as ') AS as_marker \
+             FROM sqlite_master WHERE type = 'view' AND name = {} \
+             ) \
+             SELECT trim(substr(sql, as_marker + 3 \
+                 + length(substr(sql, as_marker + 3)) \
+                 - length(ltrim(substr(sql, as_marker + 3), char(9) || char(10) || char(13) || ' '))), \
+                 char(9) || char(10) || char(13) || ' ') AS ddl \
+             FROM view_source",
             sql_string(name),
         )),
         ("sqlite", ObjectKind::Trigger) => Some(format!(
