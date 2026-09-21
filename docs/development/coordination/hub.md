@@ -32,6 +32,33 @@
 | migration-transfer-recordsets | — | PASSED | — | — | — |
 | migration-transfer-sql-dependencies | — | 未开始 | — | — | — |
 | migration-transfer-sql-target | — | TEST_DONE | — | — | — |
+| ai-api-base | — | 未开始 | — | — | — |
+| ai-cancel | — | 未开始 | — | — | — |
+| ai-capability | — | 未开始 | — | — | — |
+| ai-context-picker | — | 未开始 | — | — | — |
+| ai-egress | — | 未开始 | — | — | — |
+| ai-feedback | — | 未开始 | — | — | — |
+| ai-frontend | — | 未开始 | — | — | — |
+| ai-prompt-async | — | 未开始 | — | — | — |
+| ai-safety-prompt | — | 未开始 | — | — | — |
+| ai-timeout | — | 未开始 | — | — | — |
+| ai-ui | — | 未开始 | — | — | — |
+| ai-workflow-mcp | — | 未开始 | — | — | — |
+| intention-settings | — | 未开始 | — | — | — |
+| migration-live-workflow-e2e | — | READY_TO_MERGE | — | — | — |
+| migration-profile-workflow-runner | — | READY_FOR_TEST | — | — | — |
+| migration-run-history | — | READY_FOR_TEST | — | — | — |
+| migration-schema-foreign-keys | — | 未开始 | — | — | — |
+| migration-schema-objects | — | 未开始 | — | — | — |
+| qb-canvas | — | 未开始 | — | — | — |
+| qb-core | — | 未开始 | — | — | — |
+| qb-grid | — | 未开始 | — | — | — |
+| qb-int | — | 未开始 | — | — | — |
+| qb-ui | — | 未开始 | — | — | — |
+| redis-pr3-collection-editors | — | 未开始 | — | — | — |
+| redis-pr4-stream-groups | — | 未开始 | — | — | — |
+| redis-pr6-console-danger | — | 未开始 | — | — | — |
+| redis-pr8-pubsub-enhance | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -61,6 +88,33 @@
 | migration-transfer-recordsets | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-recordsets` | `codex/migration-transfer-recordsets` | PASSED | — |
 | migration-transfer-sql-dependencies | — | — | feature/migration-transfer-sql-dependencies | 未开始 | — |
 | migration-transfer-sql-target | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-sql-target` | `codex/migration-transfer-sql-target` | TEST_DONE | — |
+| ai-api-base | — | — | feature/ai-api-base | 未开始 | — |
+| ai-cancel | — | — | feature/ai-cancel | 未开始 | — |
+| ai-capability | — | — | feature/ai-capability | 未开始 | — |
+| ai-context-picker | — | — | feature/ai-context-picker | 未开始 | — |
+| ai-egress | — | — | feature/ai-egress | 未开始 | — |
+| ai-feedback | — | — | feature/ai-feedback | 未开始 | — |
+| ai-frontend | — | — | feature/ai-frontend | 未开始 | — |
+| ai-prompt-async | — | — | feature/ai-prompt-async | 未开始 | — |
+| ai-safety-prompt | — | — | feature/ai-safety-prompt | 未开始 | — |
+| ai-timeout | — | — | feature/ai-timeout | 未开始 | — |
+| ai-ui | — | — | feature/ai-ui | 未开始 | — |
+| ai-workflow-mcp | — | — | feature/ai-workflow-mcp | 未开始 | — |
+| intention-settings | — | — | feature/intention-settings | 未开始 | — |
+| migration-live-workflow-e2e | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-live-workflow-e2e` | `feature/migration-live-workflow-e2e` | READY_TO_MERGE | — |
+| migration-profile-workflow-runner | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-profile-workflow-runner` | `feature/migration-profile-workflow-runner` | READY_FOR_TEST | — |
+| migration-run-history | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-run-history` | `feature/migration-run-history` | READY_FOR_TEST | — |
+| migration-schema-foreign-keys | — | — | feature/migration-schema-foreign-keys | 未开始 | — |
+| migration-schema-objects | — | — | feature/migration-schema-objects | 未开始 | — |
+| qb-canvas | — | — | feature/qb-canvas | 未开始 | — |
+| qb-core | — | — | feature/qb-core | 未开始 | — |
+| qb-grid | — | — | feature/qb-grid | 未开始 | — |
+| qb-int | — | — | feature/qb-int | 未开始 | — |
+| qb-ui | — | — | feature/qb-ui | 未开始 | — |
+| redis-pr3-collection-editors | — | — | feature/redis-pr3-collection-editors | 未开始 | — |
+| redis-pr4-stream-groups | — | — | feature/redis-pr4-stream-groups | 未开始 | — |
+| redis-pr6-console-danger | — | — | feature/redis-pr6-console-danger | 未开始 | — |
+| redis-pr8-pubsub-enhance | — | — | feature/redis-pr8-pubsub-enhance | 未开始 | — |
 
 ## 波次记录
 
