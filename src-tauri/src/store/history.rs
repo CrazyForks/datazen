@@ -1,7 +1,32 @@
 use super::models::{FavoriteQuery, QueryHistoryEntry};
-use super::{Store, StoreError};
+use super::{MigrationRunFilter, MigrationRunPage, MigrationRunRecord, Store, StoreError};
 
 impl Store {
+    pub async fn save_migration_run(&self, run: &MigrationRunRecord) -> Result<(), StoreError> {
+        self.history_db
+            .save_migration_run(run)
+            .map_err(|error| StoreError::WriteError(error.to_string()))
+    }
+
+    pub async fn get_migration_run(
+        &self,
+        id: &str,
+    ) -> Result<Option<MigrationRunRecord>, StoreError> {
+        self.history_db
+            .get_migration_run(id)
+            .map_err(|error| StoreError::ReadError(error.to_string()))
+    }
+
+    pub async fn list_migration_runs(
+        &self,
+        filter: &MigrationRunFilter,
+        offset: u64,
+        limit: u64,
+    ) -> Result<MigrationRunPage, StoreError> {
+        self.history_db
+            .list_migration_runs(filter, offset, limit)
+            .map_err(|error| StoreError::ReadError(error.to_string()))
+    }
     pub async fn add_query_history(&self, entry: QueryHistoryEntry) -> Result<(), StoreError> {
         self.history_db
             .add_query_history(entry)

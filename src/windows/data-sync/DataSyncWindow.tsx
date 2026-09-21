@@ -44,6 +44,7 @@ import {
 } from '../../lib/dedicatedDbSession';
 import { useSyncPairingState } from '../../lib/syncPairing';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
+import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
 import type { ConnectionConfig } from '../../types';
 import { pickDefaultSchema, uniqueSchemasFromTables } from './utils';
 import { CompareSummary } from './CompareSummary';
@@ -1353,8 +1354,14 @@ export function DataSyncWindow() {
             targetDatabase,
             selectedRows,
             tableSelections,
+            syncProfiles.find((profile) => profile.id === selectedProfileId)
+              ? { id: selectedProfileId, revision: syncProfiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
+              : undefined,
           )
-        : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+        : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase, undefined, undefined,
+            syncProfiles.find((profile) => profile.id === selectedProfileId)
+              ? { id: selectedProfileId, revision: syncProfiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
+              : undefined);
       setLastExecutionResult(result);
       if (result.rolledBack) {
         setErrorMsg(t('sync.rolledBack'));
@@ -1843,7 +1850,7 @@ export function DataSyncWindow() {
       data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
-      <TitleBar title={t('common.dataSyncTitle')} />
+      <TitleBar title={t('common.dataSyncTitle')} rightContent={<MigrationRunHistoryDialog operation="dataSync" />} />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">

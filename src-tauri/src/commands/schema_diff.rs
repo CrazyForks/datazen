@@ -305,7 +305,17 @@ pub async fn execute_schema_diff_deploy(
     require_rollback: Option<bool>,
     confirm_destructive: Option<String>,
     job_id: Option<String>,
+    profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<SchemaDiffDeployResult, CommandError> {
+    crate::commands::history::validate_migration_profile_ref(
+        &state,
+        "schemaDiff",
+        profile.as_ref(),
+    )
+    .await?;
+    let mut history_run =
+        crate::commands::history::start_migration_run(&state, "schemaDiff", profile.as_ref()).await;
+    history_run.selected_count = plan.statements.len() as u64;
     tracing::info!(
         %target_db_session_id,
         statements = plan.statements.len(),
@@ -328,6 +338,7 @@ pub async fn execute_schema_diff_deploy(
         .owner_connection_id(&target_db_session_id)
         .await
         .ok_or_else(|| CommandError::Validation("Target connection owner is unavailable".into()))?;
+    history_run.target_connection_id = Some(owner.clone());
     let persisted = state
         .store
         .get_connection(&owner)
@@ -395,6 +406,26 @@ pub async fn execute_schema_diff_deploy(
         executed = result.executed_count,
         "execute_schema_diff_deploy OK"
     );
+    let cancelled_outcome = matches!(result.status, crate::schema_diff::DeployStatus::Cancelled);
+    let success_outcome = matches!(result.status, crate::schema_diff::DeployStatus::Committed);
+    let rollback_outcome = match result.status {
+        crate::schema_diff::DeployStatus::RolledBack => "completed",
+        crate::schema_diff::DeployStatus::Unknown | crate::schema_diff::DeployStatus::Mixed => {
+            "unknown"
+        }
+        _ => "notRequired",
+    };
+    crate::commands::history::finish_migration_run(
+        &state,
+        history_run,
+        success_outcome,
+        cancelled_outcome,
+        result.executed_count as u64,
+        result.errors.len() as u64,
+        0,
+        rollback_outcome,
+    )
+    .await;
     Ok(result)
 }
 

@@ -171,8 +171,50 @@ pub async fn inspect_data_sync(
 pub async fn execute_data_sync(
     state: State<'_, AppState>,
     request: SyncRunRequest,
+    profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<crate::data_sync::ExecutionResult, CommandError> {
-    execute_data_sync_plan_impl(&state, request).await
+    crate::commands::history::validate_migration_profile_ref(&state, "dataSync", profile.as_ref())
+        .await?;
+    let mut run =
+        crate::commands::history::start_migration_run(&state, "dataSync", profile.as_ref()).await;
+    run.selected_count = request.selection.rows.len() as u64;
+    if let Ok(plan) = plans::peek_plan(&request.plan_id) {
+        run.source_connection_id = state
+            .connection_manager
+            .owner_connection_id(&plan.source_db_session_id)
+            .await;
+        run.target_connection_id = state
+            .connection_manager
+            .owner_connection_id(&plan.target_db_session_id)
+            .await;
+    }
+    let result = execute_data_sync_plan_impl(&state, request).await;
+    match &result {
+        Ok(value) => {
+            crate::commands::history::finish_migration_run(
+                &state,
+                run,
+                !value.rolled_back,
+                false,
+                value.applied as u64,
+                0,
+                value.conflicts.len() as u64,
+                if value.rolled_back {
+                    "completed"
+                } else {
+                    "notRequired"
+                },
+            )
+            .await
+        }
+        Err(_) => {
+            crate::commands::history::finish_migration_run(
+                &state, run, false, false, 0, 1, 0, "unknown",
+            )
+            .await
+        }
+    }
+    result
 }
 
 #[tauri::command]

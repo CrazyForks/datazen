@@ -1,5 +1,12 @@
 /** Auto-split domain: sync (zh-CN) — unified sync / transfer / schemaDiff */
 const pack = {
+  'migrationHistory.open': '运行历史',
+  'migrationHistory.title': '数据迁移运行历史',
+  'migrationHistory.empty': '暂无运行记录。',
+  'migrationHistory.outcome': '结果',
+  'migrationHistory.counts': '已提交 / 失败 / 冲突',
+  'migrationHistory.rollback': '回滚',
+  'migrationHistory.profile': '配置版本',
   // --- Data Sync ---
   'sync.executionUnknown': '无法确认写入结果。请重新比较后再重试。',
   'sync.cancellingExecution': '已请求取消，正在等待事务结果…',

@@ -44,6 +44,7 @@ import {
   MigrationEndpointsBar,
   TransferPairingNote,
 } from '../../components/migration/MigrationEndpointsBar';
+import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
 import { normalizeColumnMappings, tableHasActiveMappings } from './transferMappingView';
 import { SqlCodeBlock } from '../../components/SqlCodeBlock';
 import {
@@ -691,12 +692,13 @@ export function DataTransferWindow() {
               .map((table) => table.sourceTable),
           };
     try {
+      const selectedProfile = transferProfiles.find((profile) => profile.id === selectedProfileId);
       const execResult = await transferCommands.execute({
         planId,
         selection,
         options: { confirmedDestructive },
         jobId,
-      });
+      }, selectedProfile ? { id: selectedProfile.id, revision: selectedProfile.updatedAt } : undefined);
       setResult(execResult);
       setStep('result');
     } catch (e) {
@@ -902,7 +904,7 @@ export function DataTransferWindow() {
 
   return (
     <div data-testid="data-transfer-window" className="flex h-screen flex-col bg-surface text-fg">
-      <TitleBar title={t('common.dataTransfer')} />
+      <TitleBar title={t('common.dataTransfer')} rightContent={<MigrationRunHistoryDialog operation="dataTransfer" />} />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">

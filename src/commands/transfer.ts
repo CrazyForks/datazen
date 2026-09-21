@@ -250,9 +250,10 @@ export const transferCommands = {
 
   preview: (job: TransferJob) => invoke<TransferPreview>('preview_data_transfer', { job }),
 
-  execute: (request: TransferRunRequest) =>
+  execute: (request: TransferRunRequest, profile?: { id: string; revision: string }) =>
     invoke<TransferExecutionResult>('execute_data_transfer', {
       request,
+      ...(profile ? { profile } : {}),
     }),
 
   cancel: (jobId: string) => invoke<boolean>('cancel_data_transfer', { jobId }),

@@ -18,7 +18,10 @@ pub use app_db::{
     AppDb, AppDbError, DashboardRecord, DashboardWorkflowRef, WidgetRecord, WidgetRunRecord,
     WorkflowRecord, WorkflowVisibility, APP_DB_FILE,
 };
-pub use history_db::{HistoryDb, HistoryEntry, HistoryListItem, HistoryScope};
+pub use history_db::{
+    HistoryDb, HistoryEntry, HistoryListItem, HistoryScope, MigrationProfileRef,
+    MigrationRunFilter, MigrationRunPage, MigrationRunRecord,
+};
 pub use models::{FavoriteQuery, QueryHistoryEntry, SyncTask};
 pub use settings::{clamp_connection_pool_size, AppSettings, OnboardingState};
 

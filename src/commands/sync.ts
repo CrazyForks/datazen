@@ -352,6 +352,7 @@ export const syncCommands = {
     targetDatabase?: string,
     selectedRows?: DataSyncSelectedRow[],
     tableSelections?: DataSyncTableSelection[],
+    profile?: { id: string; revision: string },
   ) => {
     void targetDbSessionId;
     void targetDatabase;
@@ -374,7 +375,7 @@ export const syncCommands = {
       options: activeExecutionOptions,
       jobId: jobId ?? null,
     };
-    return invoke<DataSyncExecutionResult>('execute_data_sync', { request });
+    return invoke<DataSyncExecutionResult>('execute_data_sync', { request, ...(profile ? { profile } : {}) });
   },
 
   cancelDataSync: (jobId: string) => invoke<boolean>('cancel_data_sync', { jobId }),
