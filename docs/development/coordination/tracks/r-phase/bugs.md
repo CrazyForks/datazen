@@ -788,4 +788,4 @@ $ git show 5328cd5e0:packages/ui/src/__tests__/i18n.test.tsx | grep -c "setLocal
   - `grep -n "setLocale(" packages/ui/src/i18n.ts` → `:34` 恰 1 行（定义处，未变）；
   - 契约现文复核：`grep -n "单测调用" docs/development/driver-api-dependency-boundary.md` → 1 命中且为「单测调用 **15** 行」。
 - **自证**：`node scripts/check-ci-docs-consistency.mjs` → exit 0（三类检查全绿）；`npx vitest run scripts` → **23 files / 246 pass / 0 fail**（不降）；`git status --porcelain` 干净（本回合仅契约 + 本文件 + `progress.md` 三处文档）。
-- **提交 hash**：`<待回填>`（本回合修复 commit 提交后，由紧随的 hash 回填 commit 于本行回填）。
+- **提交 hash**：`a5eed7b57`（`fix(r-phase): BUG-007 契约 §2.4.2 单测调用行数同步为 15 并补防漂移口径`；本行 hash 由紧随的 hash 回填 commit 记录，见 `git log feature/r-phase`）。
