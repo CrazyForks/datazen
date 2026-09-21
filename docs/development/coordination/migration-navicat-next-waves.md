@@ -268,3 +268,13 @@ The host exposes get/save/delete profile IPC with connection-existence validatio
 Independent verification passed profile-focused Rust command/store tests 24/24, Data Transfer command/frontend tests 37/37, TypeScript, formatting and diff checks. The formal `CI=true pnpm tauri:build:webdriver` pipeline passed with PostgreSQL/MySQL/SQLite/Redis injection and macOS App/DMG packaging. Profiles currently cover Data Transfer; Data Sync/Schema Diff profiles and run-history reconciliation remain open, as do live database and Windows-specific checks in this environment.
 
 This gate closes repeatable Data Transfer setup persistence. It does not add unattended scheduling, resumable checkpoints, per-run history, profile sharing/encryption beyond the existing local store, or profiles for the other migration windows.
+
+## Schema Diff target-only table picker release gate (2026-09-21)
+
+The target-only picker wave is integrated after implementation `d02f0e0f` and independent verification `ac0a124c`/`94049488`. Schema Diff now merges source and target table inventories by qualified relation identity, keeps target-only tables unchecked by default, and carries the exact target endpoint selector through the picker, comparison, profile, workflow and plan IPC contracts. An explicitly selected target-only table reads its real target schema and produces one reviewed `DropTable` operation; it never fabricates an empty source schema.
+
+Destructive approval remains required, and reviewed plans retain target snapshots so review and deploy revalidate the target before execution. Invalid identifiers, unknown drivers, missing targets and stale target snapshots fail closed. Existing source-only and mixed table flows retain their endpoint-qualified selectors.
+
+Independent verification passed 6 Vitest files/49 tests, including picker defaults, qualified selectors, destructive reject/allow, reviewed snapshots, profile round-trip and workflow-compatible validation; focused Schema Diff Rust passed 96/96, TypeScript, changed-file rustfmt and diff checks passed, and the integrated full Host Rust suite passed 1645 with 3 ignored. Live database/WebDriver coverage for this slice remains deferred.
+
+This gate closes explicit target-only table selection for Schema Diff. CHECK constraints, table options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.

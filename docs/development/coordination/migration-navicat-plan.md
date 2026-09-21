@@ -25,6 +25,8 @@ Independent fresh Tester after each coder READY_FOR_TEST. Driver-specific tests 
 
 ## Progress
 
-Wave 1 independent testing in progress. Sync code `a0919eeb` (handoff `4ae9bb32`) and Schema code `f6a1b473` (handoff `99f54d41`) have fresh independent testers assigned. Transfer remains in coding/self-validation. No business track has passed independent acceptance or been merged yet.
+The integration branch now contains the immutable plan, stable key/recordset, source-filter, lossless export, SQL-file target, object catalog, view, safety, live workflow and profile waves for the migration trio. The latest target-only Schema Diff picker wave is independently verified and integrated. The post-merge full Host Rust suite passed 1645 tests with 3 ignored; the focused Schema Diff suite passed 96/96 and the related frontend/type checks passed.
 
-Local PostgreSQL and MySQL are running; separate `dz_mig_0910_{sync,transfer,schema}_{src,tgt}` databases were created for isolated tests. Integration baseline passed the regular basic-driver WebDriver build. Baseline window-only smoke: Schema 2, Sync 8, Transfer 3 tests passed; these 13 tests do not validate new migration writes. Detailed continuation contracts and isolated testing instructions are in [migration-navicat-next-waves.md](migration-navicat-next-waves.md).
+Remaining parity work is concrete rather than a claim of full Navicat equivalence: CHECK constraints and table options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, stable snapshot and bounded comparison storage, conflict force/skip/recompare policy, broader object dependency preservation, Sync profiles/run history, Windows packaging/publication validation, live database journeys unavailable in this environment, and drivers outside the currently registered set. Main checkout changes remain untouched; the preserved transfer-plan and FK-prediction worktrees are not part of this integration branch.
+
+Detailed continuation contracts and isolated testing instructions are in [migration-navicat-next-waves.md](migration-navicat-next-waves.md).

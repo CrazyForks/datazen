@@ -61,6 +61,7 @@
 | redis-pr8-pubsub-enhance | — | 未开始 | — | — | — |
 | migration-object-catalog | — | 未开始 | — | — | — |
 | migration-schema-safety | — | `FAILED` | — | — | — |
+| migration-target-table-picker | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -119,6 +120,7 @@
 | redis-pr8-pubsub-enhance | — | — | feature/redis-pr8-pubsub-enhance | 未开始 | — |
 | migration-object-catalog | — | — | feature/migration-object-catalog | 未开始 | — |
 | migration-schema-safety | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-safety` | `feature/migration-schema-safety` | `FAILED` | — |
+| migration-target-table-picker | — | — | feature/migration-target-table-picker | 未开始 | — |
 
 ## 波次记录
 
