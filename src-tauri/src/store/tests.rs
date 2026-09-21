@@ -549,6 +549,107 @@ async fn sync_tasks_crud() {
 }
 
 #[tokio::test]
+async fn sync_profiles_roundtrip_and_runtime_fields_are_not_persisted() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let now = Utc::now();
+    let profile = crate::data_sync::SyncProfile {
+        version: crate::data_sync::SyncProfile::CURRENT_VERSION,
+        id: "sync-profile-1".into(),
+        name: "Nightly sync".into(),
+        source_connection_id: "source-config".into(),
+        target_connection_id: "target-config".into(),
+        source_database: Some("app".into()),
+        target_database: Some("app".into()),
+        source_schema: Some("public".into()),
+        target_schema: Some("public".into()),
+        tables: vec![crate::data_sync::TableMapping::auto("users")],
+        options: crate::data_sync::SyncOptions::default(),
+        created_at: now,
+        updated_at: now,
+    };
+    store.save_sync_profile(profile.clone()).await.unwrap();
+    assert_eq!(store.get_sync_profiles().await, vec![profile]);
+
+    let persisted = tokio::fs::read_to_string(dir.path().join("sync_profiles.json"))
+        .await
+        .unwrap();
+    assert!(!persisted.contains("dbSessionId"));
+    assert!(!persisted.contains("planId"));
+    assert!(!persisted.contains("credentials"));
+
+    let reloaded = init_store_for_test(dir.path()).await;
+    assert_eq!(reloaded.get_sync_profiles().await.len(), 1);
+    reloaded
+        .delete_sync_profile("sync-profile-1")
+        .await
+        .unwrap();
+    assert!(reloaded.get_sync_profiles().await.is_empty());
+}
+
+#[tokio::test]
+async fn sync_profiles_filter_invalid_records_on_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = init_store_for_test(dir.path()).await;
+    let valid = crate::data_sync::SyncProfile {
+        version: crate::data_sync::SyncProfile::CURRENT_VERSION,
+        id: "valid-profile".into(),
+        name: "Valid sync".into(),
+        source_connection_id: "source-config".into(),
+        target_connection_id: "target-config".into(),
+        source_database: None,
+        target_database: None,
+        source_schema: None,
+        target_schema: None,
+        tables: vec![crate::data_sync::TableMapping::auto("users")],
+        options: crate::data_sync::SyncOptions::default(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let mut unknown = serde_json::to_value(&valid).unwrap();
+    unknown["unexpected"] = serde_json::json!(true);
+    let mut invalid = serde_json::to_value(&valid).unwrap();
+    invalid["version"] = serde_json::json!(99);
+    tokio::fs::write(
+        dir.path().join("sync_profiles.json"),
+        serde_json::to_vec(&serde_json::json!([
+            valid,
+            unknown,
+            invalid,
+            null,
+            "malformed-profile-record"
+        ]))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let profiles = store.get_sync_profiles().await;
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].id, "valid-profile");
+
+    let replacement = crate::data_sync::SyncProfile {
+        id: "replacement-profile".into(),
+        name: "Replacement sync".into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        ..profiles[0].clone()
+    };
+    store.save_sync_profile(replacement.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .get_sync_profiles()
+            .await
+            .iter()
+            .map(|profile| profile.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["valid-profile", "replacement-profile"]
+    );
+    store.delete_sync_profile("valid-profile").await.unwrap();
+    assert_eq!(store.get_sync_profiles().await, vec![replacement]);
+}
+
+#[tokio::test]
 async fn sync_task_persistence_drops_runtime_ids_and_blocks_offsets() {
     let dir = tempfile::tempdir().unwrap();
     let store = init_store_for_test(dir.path()).await;

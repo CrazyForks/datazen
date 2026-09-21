@@ -12,6 +12,9 @@ const {
   executeDataSyncMock,
   generateDataSyncSqlMock,
   cancelDataSyncMock,
+  getSyncProfilesMock,
+  saveSyncProfileMock,
+  deleteSyncProfileMock,
   getDatabasesMock,
   getTablesMock,
   aiChatMock,
@@ -31,6 +34,9 @@ const {
     executeDataSyncMock: vi.fn(),
     generateDataSyncSqlMock: vi.fn(),
     cancelDataSyncMock: vi.fn().mockResolvedValue(true),
+    getSyncProfilesMock: vi.fn(),
+    saveSyncProfileMock: vi.fn(),
+    deleteSyncProfileMock: vi.fn(),
     getDatabasesMock: vi.fn(),
     getTablesMock: vi.fn(),
     aiChatMock: vi.fn(),
@@ -76,6 +82,9 @@ vi.mock('../../../commands/sync', () => ({
     executeDataSync: (...args: unknown[]) => executeDataSyncMock(...args),
     generateDataSyncSql: (...args: unknown[]) => generateDataSyncSqlMock(...args),
     cancelDataSync: (...args: unknown[]) => cancelDataSyncMock(...args),
+    getSyncProfiles: () => getSyncProfilesMock(),
+    saveSyncProfile: (...args: unknown[]) => saveSyncProfileMock(...args),
+    deleteSyncProfile: (...args: unknown[]) => deleteSyncProfileMock(...args),
   },
   DEFAULT_SYNC_OPTIONS: { insert: true, update: true, delete: false },
 }));
@@ -277,6 +286,12 @@ describe('DataSyncWindow wizard', () => {
     executeDataSyncMock.mockReset();
     cancelDataSyncMock.mockReset();
     cancelDataSyncMock.mockResolvedValue(true);
+    getSyncProfilesMock.mockReset();
+    getSyncProfilesMock.mockResolvedValue([]);
+    saveSyncProfileMock.mockReset();
+    saveSyncProfileMock.mockResolvedValue(undefined);
+    deleteSyncProfileMock.mockReset();
+    deleteSyncProfileMock.mockResolvedValue(undefined);
     generateDataSyncSqlMock.mockReset();
     generateDataSyncSqlMock.mockImplementation(async (_source, _target, tables, options) =>
       tables.flatMap((table: { targetTable: string; rows?: DataSyncRowChange[] }) =>
@@ -1436,5 +1451,154 @@ describe('DataSyncWindow wizard', () => {
     finish([]);
     await waitFor(() => expect(executeDataSyncMock).toHaveBeenCalledTimes(1));
     expect(applyDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('[tester] saves the reviewed endpoint and option configuration as a profile', async () => {
+    render(<DataSyncWindow />);
+    await selectEndpoints();
+
+    fireEvent.change(screen.getByTestId('data-sync-profile-name'), {
+      target: { value: 'Nightly users' },
+    });
+    fireEvent.click(screen.getByTestId('data-sync-profile-save'));
+
+    await waitFor(() => expect(saveSyncProfileMock).toHaveBeenCalledTimes(1));
+    const [profile] = saveSyncProfileMock.mock.calls[0] as [{
+      version: number;
+      name: string;
+      sourceConnectionId: string;
+      targetConnectionId: string;
+      tables: unknown[];
+      options: { insert: boolean; update: boolean; delete: boolean };
+    }];
+    expect(profile).toMatchObject({
+      version: 1,
+      name: 'Nightly users',
+      sourceConnectionId: 'pg-src',
+      targetConnectionId: 'pg-tgt',
+      tables: [],
+      options: { insert: true, update: true, delete: false },
+    });
+    expect(profile).not.toHaveProperty('sourceDbSessionId');
+    expect(profile).not.toHaveProperty('targetDbSessionId');
+    expect(profile).not.toHaveProperty('planId');
+  });
+
+  it('[tester] loads a profile and passes mappings with recordsets to a fresh inspect', async () => {
+    const sourceFilter = {
+      filters: [{ column: 'id', operator: 'gte', value: '10' }],
+      logic: 'and' as const,
+      recordset: {
+        orderBy: 'id',
+        start: { value: '10', inclusive: true },
+        end: { value: '20', inclusive: false },
+        limit: 25,
+      },
+    };
+    const profile = {
+      version: 1,
+      id: 'profile-1',
+      name: 'Scoped users',
+      sourceConnectionId: 'pg-src',
+      targetConnectionId: 'pg-tgt',
+      sourceDatabase: 'src',
+      targetDatabase: 'tgt',
+      sourceSchema: null,
+      targetSchema: null,
+      tables: [
+        { sourceTable: 'users', targetTable: 'users', enabled: false, sourceFilter },
+      ],
+      options: {
+        insert: true,
+        update: false,
+        delete: true,
+        matchingStrategy: 'primaryKey' as const,
+        batchSize: 25,
+        largeValueMode: 'hash' as const,
+        conflictPolicy: 'skip' as const,
+      },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    getSyncProfilesMock.mockResolvedValue([profile]);
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', sourceFilter },
+    ]);
+
+    render(<DataSyncWindow />);
+    await selectEndpoints();
+    await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
+    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
+      target: { value: profile.id },
+    });
+    fireEvent.click(screen.getByTestId('data-sync-profile-load'));
+    expect(await screen.findByText('sync.profile.loaded')).toBeTruthy();
+
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-step-setup')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(inspectDataSyncMock).toHaveBeenCalledTimes(1));
+
+    expect(inspectDataSyncMock.mock.calls[0]).toEqual([
+      expect.stringContaining('dedicated-pg-src'),
+      expect.stringContaining('dedicated-pg-tgt'),
+      'src',
+      'tgt',
+      undefined,
+      undefined,
+      profile.tables,
+    ]);
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'idle');
+    expect(screen.getByTestId('data-sync-mapping-row')).toHaveClass('opacity-60');
+  });
+
+  it('[tester] reports a missing connection when loading a stale profile', async () => {
+    getSyncProfilesMock.mockResolvedValue([
+      {
+        version: 1,
+        id: 'stale-profile',
+        name: 'Stale',
+        sourceConnectionId: 'deleted-source',
+        targetConnectionId: 'pg-tgt',
+        tables: [],
+        options: { insert: true, update: true, delete: false },
+        createdAt: '2026-09-21T00:00:00.000Z',
+        updatedAt: '2026-09-21T00:00:00.000Z',
+      },
+    ]);
+    render(<DataSyncWindow />);
+    await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
+    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
+      target: { value: 'stale-profile' },
+    });
+    fireEvent.click(screen.getByTestId('data-sync-profile-load'));
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(
+      'sync.profile.missingConnection',
+    );
+    expect(inspectDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('[tester] deletes the selected profile and refreshes the profile list', async () => {
+    const profile = {
+      version: 1,
+      id: 'profile-delete',
+      name: 'Delete me',
+      sourceConnectionId: 'pg-src',
+      targetConnectionId: 'pg-tgt',
+      tables: [],
+      options: { insert: true, update: true, delete: false },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    getSyncProfilesMock.mockResolvedValue([profile]);
+    render(<DataSyncWindow />);
+    await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
+    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
+      target: { value: profile.id },
+    });
+    fireEvent.click(screen.getByTestId('data-sync-profile-delete'));
+    await waitFor(() => expect(deleteSyncProfileMock).toHaveBeenCalledWith(profile.id));
+    expect(await screen.findByText('sync.profile.deleted')).toBeTruthy();
   });
 });

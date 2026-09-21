@@ -16,7 +16,9 @@ import {
   type DataSyncSelectionExclusion,
   type DataSyncTableSelection,
   type DataSyncSourceFilter,
+  type DataSyncTableMapping,
   type DataSyncTableResult,
+  type SyncProfile,
   type SyncOptions,
 } from '../../commands/sync';
 import { databaseCommands } from '../../commands/database';
@@ -125,6 +127,9 @@ export function DataSyncWindow() {
   const [targetSchemas, setTargetSchemas] = useState<string[]>([]);
   const [sourceSchema, setSourceSchema] = useState('');
   const [targetSchema, setTargetSchema] = useState('');
+  const [syncProfiles, setSyncProfiles] = useState<SyncProfile[]>([]);
+  const [profileName, setProfileName] = useState('');
+  const [selectedProfileId, setSelectedProfileId] = useState('');
   const {
     syncOptions,
     setSyncOptions,
@@ -178,6 +183,7 @@ export function DataSyncWindow() {
   const selectedRowsRef = useRef<DataSyncSelectedRow[]>([]);
   const tableSelectionsRef = useRef<DataSyncTableSelection[]>([]);
   const loadedPageRef = useRef<Set<string>>(new Set());
+  const pendingProfileMappingsRef = useRef<DataSyncTableMapping[] | null>(null);
   selectedRowsRef.current = selectedRows;
   tableSelectionsRef.current = tableSelections;
   syncStateRef.current = syncState;
@@ -555,6 +561,7 @@ export function DataSyncWindow() {
   }, [sourceId, targetId, sourceDatabase, targetDatabase, sourceSchema, targetSchema]);
 
   const handleSwap = useCallback(() => {
+    pendingProfileMappingsRef.current = null;
     setSourceId(targetId);
     setTargetId(sourceId);
     setSourceDatabase(targetDatabase);
@@ -582,6 +589,7 @@ export function DataSyncWindow() {
 
   const handleSourceChange = useCallback(
     (id: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceId(id);
       resetCompareState();
     },
@@ -590,6 +598,7 @@ export function DataSyncWindow() {
 
   const handleTargetChange = useCallback(
     (id: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetId(id);
       resetCompareState();
     },
@@ -598,6 +607,7 @@ export function DataSyncWindow() {
 
   const handleSourceDatabaseChange = useCallback(
     (db: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceDatabase(db);
       resetCompareState();
     },
@@ -606,6 +616,7 @@ export function DataSyncWindow() {
 
   const handleTargetDatabaseChange = useCallback(
     (db: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetDatabase(db);
       resetCompareState();
     },
@@ -614,6 +625,7 @@ export function DataSyncWindow() {
 
   const handleSourceSchemaChange = useCallback(
     (schema: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceSchema(schema);
       resetCompareState();
     },
@@ -622,11 +634,125 @@ export function DataSyncWindow() {
 
   const handleTargetSchemaChange = useCallback(
     (schema: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetSchema(schema);
       resetCompareState();
     },
     [resetCompareState],
   );
+
+  const loadSyncProfiles = useCallback(() => {
+    void syncCommands
+      .getSyncProfiles()
+      .then(setSyncProfiles)
+      .catch(() => setSyncProfiles([]));
+  }, []);
+
+  const currentProfileTables = useCallback((): DataSyncTableMapping[] => {
+    if (mappingResults.length === 0) return pendingProfileMappingsRef.current ?? [];
+    return mappingResults
+      .filter((row) => row.sourceTable.trim() && row.targetTable.trim())
+      .map((row) => ({
+        sourceTable: row.sourceTable,
+        targetTable: row.targetTable,
+        enabled: !disabledTables.has(row.sourceTable) && row.status !== 'DISABLED',
+        sourceFilter: row.sourceFilter,
+      }));
+  }, [disabledTables, mappingResults]);
+
+  const saveCurrentProfile = useCallback(async () => {
+    const name = profileName.trim();
+    if (!name || !sourceId || !targetId) {
+      setErrorMsg(t('sync.profile.missingFields'));
+      setErrorOpen(true);
+      return;
+    }
+    const existing = syncProfiles.find((profile) => profile.id === selectedProfileId);
+    const now = new Date().toISOString();
+    const profile: SyncProfile = {
+      version: 1,
+      id: existing?.id ?? crypto.randomUUID(),
+      name,
+      sourceConnectionId: sourceId,
+      targetConnectionId: targetId,
+      sourceDatabase: sourceDatabase || null,
+      targetDatabase: targetDatabase || null,
+      sourceSchema: sourceSchema || null,
+      targetSchema: targetSchema || null,
+      tables: currentProfileTables(),
+      options: syncOptions,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    try {
+      await syncCommands.saveSyncProfile(profile);
+      setSelectedProfileId(profile.id);
+      setProfileName(profile.name);
+      loadSyncProfiles();
+      setStatusMsg(t('sync.profile.saved'));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : String(error));
+      setErrorOpen(true);
+    }
+  }, [
+    currentProfileTables,
+    loadSyncProfiles,
+    profileName,
+    selectedProfileId,
+    sourceDatabase,
+    sourceId,
+    sourceSchema,
+    syncOptions,
+    syncProfiles,
+    t,
+    targetDatabase,
+    targetId,
+    targetSchema,
+  ]);
+
+  const loadSelectedProfile = useCallback(() => {
+    const profile = syncProfiles.find((candidate) => candidate.id === selectedProfileId);
+    if (!profile) return;
+    const sourceExists = connections.some((connection) => connection.id === profile.sourceConnectionId);
+    const targetExists = connections.some((connection) => connection.id === profile.targetConnectionId);
+    if (!sourceExists || !targetExists) {
+      setErrorMsg(t('sync.profile.missingConnection'));
+      setErrorOpen(true);
+      return;
+    }
+    pendingProfileMappingsRef.current = profile.tables;
+    setProfileName(profile.name);
+    setSourceId(profile.sourceConnectionId);
+    setTargetId(profile.targetConnectionId);
+    setSourceDatabase(profile.sourceDatabase ?? '');
+    setTargetDatabase(profile.targetDatabase ?? '');
+    setSourceSchema(profile.sourceSchema ?? '');
+    setTargetSchema(profile.targetSchema ?? '');
+    setSyncOptions(profile.options);
+    resetCompareState();
+    setSelectedRows([]);
+    setTableSelections([]);
+    setStep('endpoints');
+    setStatusMsg(t('sync.profile.loaded'));
+  }, [connections, resetCompareState, selectedProfileId, setSyncOptions, setStep, syncProfiles, t]);
+
+  const deleteSelectedProfile = useCallback(async () => {
+    if (!selectedProfileId) return;
+    try {
+      await syncCommands.deleteSyncProfile(selectedProfileId);
+      setSelectedProfileId('');
+      setProfileName('');
+      loadSyncProfiles();
+      setStatusMsg(t('sync.profile.deleted'));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : String(error));
+      setErrorOpen(true);
+    }
+  }, [loadSyncProfiles, selectedProfileId, t]);
+
+  useEffect(() => {
+    loadSyncProfiles();
+  }, [loadSyncProfiles]);
 
   const validateEndpoints = useCallback((): boolean => {
     if (!sourceId || !targetId) {
@@ -671,17 +797,34 @@ export function DataSyncWindow() {
         return false;
       }
 
-      const inspected = await syncCommands.inspectDataSync(
-        srcConnId,
-        tgtConnId,
-        sourceDatabase,
-        targetDatabase,
-        sourceSchema || undefined,
-        targetSchema || undefined,
-      );
+      const profileMappings = pendingProfileMappingsRef.current;
+      const profileDisabled = profileMappings
+        ? new Set(profileMappings.filter((mapping) => !mapping.enabled).map((mapping) => mapping.sourceTable))
+        : disabledTables;
+
+      const inspected = profileMappings
+        ? await syncCommands.inspectDataSync(
+            srcConnId,
+            tgtConnId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            profileMappings,
+          )
+        : await syncCommands.inspectDataSync(
+            srcConnId,
+            tgtConnId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+          );
       if (generation !== compareGenerationRef.current) return false;
-      const withDisabled = markDisabledTables(inspected, disabledTables);
+      if (profileMappings) setDisabledTables(profileDisabled);
+      const withDisabled = markDisabledTables(inspected, profileDisabled);
       setMappingResults(withDisabled);
+      pendingProfileMappingsRef.current = null;
       setInspectionComplete(true);
       setSyncState('idle');
       return true;
@@ -702,6 +845,7 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     disabledTables,
+    setDisabledTables,
     writeOutcomeUncertain,
   ]);
 
@@ -1736,37 +1880,95 @@ export function DataSyncWindow() {
           )}
         >
           {step === 'endpoints' && (
-            <EndpointsBar
-              layout="grid"
-              showSwap={false}
-              showCompare={false}
-              sourceId={sourceId}
-              targetId={targetId}
-              sourceDatabase={sourceDatabase}
-              targetDatabase={targetDatabase}
-              sourceSchema={sourceSchema}
-              targetSchema={targetSchema}
-              sourceDatabases={sourceDatabases}
-              targetDatabases={targetDatabases}
-              sourceSchemas={sourceSchemas}
-              targetSchemas={targetSchemas}
-              connOptions={connOptions}
-              targetOptions={targetOptions}
-              activePairing={activePairing}
-              busy={busy}
-              compareDisabled={compareDisabled}
-              sourceSessionError={sourceSessionError}
-              targetSessionError={targetSessionError}
-              targetReadOnly={targetReadOnly}
-              onSourceChange={handleSourceChange}
-              onTargetChange={handleTargetChange}
-              onSourceDatabaseChange={handleSourceDatabaseChange}
-              onTargetDatabaseChange={handleTargetDatabaseChange}
-              onSourceSchemaChange={handleSourceSchemaChange}
-              onTargetSchemaChange={handleTargetSchemaChange}
-              onSwap={handleSwap}
-              onCompare={() => void handleCompare()}
-            />
+            <div className="space-y-4">
+              <div
+                data-testid="data-sync-profile-controls"
+                className="flex flex-wrap items-end gap-2 rounded-lg border border-edge bg-surface-alt p-3"
+              >
+                <label className="min-w-48 flex-1 text-xs text-fg-muted">
+                  <span className="mb-1 block">{t('sync.profile.name')}</span>
+                  <input
+                    data-testid="data-sync-profile-name"
+                    value={profileName}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    placeholder={t('sync.profile.namePlaceholder')}
+                    className="h-8 w-full rounded border border-edge bg-surface px-2 text-sm text-fg"
+                  />
+                </label>
+                <label className="min-w-48 text-xs text-fg-muted">
+                  <span className="mb-1 block">{t('sync.profile.load')}</span>
+                  <select
+                    data-testid="data-sync-profile-select"
+                    value={selectedProfileId}
+                    onChange={(event) => setSelectedProfileId(event.target.value)}
+                    className="h-8 w-full rounded border border-edge bg-surface px-2 text-sm text-fg"
+                  >
+                    <option value="">{t('sync.profile.select')}</option>
+                    {syncProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button
+                  size="sm"
+                  data-testid="data-sync-profile-save"
+                  onClick={() => void saveCurrentProfile()}
+                >
+                  {t('sync.profile.save')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="data-sync-profile-load"
+                  disabled={!selectedProfileId}
+                  onClick={loadSelectedProfile}
+                >
+                  {t('sync.profile.load')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="data-sync-profile-delete"
+                  disabled={!selectedProfileId}
+                  onClick={() => void deleteSelectedProfile()}
+                >
+                  {t('sync.profile.delete')}
+                </Button>
+              </div>
+              <EndpointsBar
+                layout="grid"
+                showSwap={false}
+                showCompare={false}
+                sourceId={sourceId}
+                targetId={targetId}
+                sourceDatabase={sourceDatabase}
+                targetDatabase={targetDatabase}
+                sourceSchema={sourceSchema}
+                targetSchema={targetSchema}
+                sourceDatabases={sourceDatabases}
+                targetDatabases={targetDatabases}
+                sourceSchemas={sourceSchemas}
+                targetSchemas={targetSchemas}
+                connOptions={connOptions}
+                targetOptions={targetOptions}
+                activePairing={activePairing}
+                busy={busy}
+                compareDisabled={compareDisabled}
+                sourceSessionError={sourceSessionError}
+                targetSessionError={targetSessionError}
+                targetReadOnly={targetReadOnly}
+                onSourceChange={handleSourceChange}
+                onTargetChange={handleTargetChange}
+                onSourceDatabaseChange={handleSourceDatabaseChange}
+                onTargetDatabaseChange={handleTargetDatabaseChange}
+                onSourceSchemaChange={handleSourceSchemaChange}
+                onTargetSchemaChange={handleTargetSchemaChange}
+                onSwap={handleSwap}
+                onCompare={() => void handleCompare()}
+              />
+            </div>
           )}
 
           {step === 'setup' && (

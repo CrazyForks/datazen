@@ -100,6 +100,30 @@ export interface SyncOptions {
   conflictPolicy?: 'abort' | 'skip' | 'force';
 }
 
+export interface SyncProfile {
+  version: number;
+  id: string;
+  name: string;
+  sourceConnectionId: string;
+  targetConnectionId: string;
+  sourceDatabase?: string | null;
+  targetDatabase?: string | null;
+  sourceSchema?: string | null;
+  targetSchema?: string | null;
+  tables: DataSyncTableMapping[];
+  options: SyncOptions;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DataSyncTableMapping {
+  sourceTable: string;
+  targetTable: string;
+  enabled: boolean;
+  matchingColumns?: Array<{ sourceColumn: string; targetColumn: string }>;
+  sourceFilter?: DataSyncSourceFilter;
+}
+
 export interface DataSyncSqlStatement {
   table: string;
   operation: DataSyncOperation;
@@ -305,6 +329,14 @@ export const syncCommands = {
 
   getSyncTasks: () => invoke<SyncTask[]>('get_sync_tasks'),
 
+  getSyncProfiles: () => invoke<SyncProfile[]>('get_sync_profiles'),
+
+  saveSyncProfile: (profile: SyncProfile) =>
+    invoke<void>('save_sync_profile', { profile }),
+
+  deleteSyncProfile: (profileId: string) =>
+    invoke<void>('delete_sync_profile', { profileId }),
+
   deleteSyncTask: (taskId: string) => invoke<void>('delete_sync_task', { taskId }),
 
   checkSyncConflicts: (taskId: string) =>
@@ -426,15 +458,20 @@ export const syncCommands = {
     targetDatabase?: string,
     sourceSchema?: string,
     targetSchema?: string,
+    mappings?: DataSyncTableMapping[],
   ) =>
-    invoke<DataSyncTableResult[]>('inspect_data_sync', {
-      sourceDbSessionId,
-      targetDbSessionId,
-      sourceDatabase: sourceDatabase ?? null,
-      targetDatabase: targetDatabase ?? null,
-      sourceSchema: sourceSchema ?? null,
-      targetSchema: targetSchema ?? null,
-    }),
+    invoke<DataSyncTableResult[]>(
+      'inspect_data_sync',
+      {
+        sourceDbSessionId,
+        targetDbSessionId,
+        sourceDatabase: sourceDatabase ?? null,
+        targetDatabase: targetDatabase ?? null,
+        sourceSchema: sourceSchema ?? null,
+        targetSchema: targetSchema ?? null,
+        ...(mappings ? { tables: mappings } : {}),
+      },
+    ),
 
   /** Generate only the selected rows; failures never trigger another write path. */
   generateDataSyncSql: (

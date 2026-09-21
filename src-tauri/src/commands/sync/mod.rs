@@ -17,7 +17,8 @@ mod tests;
 use super::error::CommandError;
 use super::AppState;
 use crate::data_sync::{
-    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncPairingView, SyncSourceFilter,
+    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncPairingView, SyncProfile,
+    SyncSourceFilter, TableMapping,
 };
 use crate::store::SyncTask;
 #[cfg(test)]
@@ -54,6 +55,79 @@ pub async fn get_sync_tasks(state: State<'_, AppState>) -> Result<Vec<SyncTask>,
 }
 
 #[tauri::command]
+pub async fn get_sync_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<SyncProfile>, CommandError> {
+    get_sync_profiles_impl(&state).await
+}
+
+pub(crate) async fn get_sync_profiles_impl(
+    state: &AppState,
+) -> Result<Vec<SyncProfile>, CommandError> {
+    Ok(state.store.get_sync_profiles().await)
+}
+
+#[tauri::command]
+pub async fn save_sync_profile(
+    state: State<'_, AppState>,
+    profile: SyncProfile,
+) -> Result<(), CommandError> {
+    save_sync_profile_impl(&state, profile).await
+}
+
+pub(crate) async fn save_sync_profile_impl(
+    state: &AppState,
+    mut profile: SyncProfile,
+) -> Result<(), CommandError> {
+    profile.validate().map_err(CommandError::Validation)?;
+    if state
+        .store
+        .get_connection(&profile.source_connection_id)
+        .await
+        .is_none()
+    {
+        return Err(CommandError::Validation(
+            "sync profile source connection no longer exists".into(),
+        ));
+    }
+    if state
+        .store
+        .get_connection(&profile.target_connection_id)
+        .await
+        .is_none()
+    {
+        return Err(CommandError::Validation(
+            "sync profile target connection no longer exists".into(),
+        ));
+    }
+    profile.updated_at = chrono::Utc::now();
+    state
+        .store
+        .save_sync_profile(profile)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn delete_sync_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<(), CommandError> {
+    delete_sync_profile_impl(&state, &profile_id).await
+}
+
+pub(crate) async fn delete_sync_profile_impl(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<(), CommandError> {
+    state
+        .store
+        .delete_sync_profile(profile_id)
+        .await
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
+#[tauri::command]
 pub async fn save_sync_task_direct(
     state: State<'_, AppState>,
     task: SyncTask,
@@ -78,6 +152,7 @@ pub async fn inspect_data_sync(
     target_database: Option<String>,
     source_schema: Option<String>,
     target_schema: Option<String>,
+    tables: Option<Vec<TableMapping>>,
 ) -> Result<Vec<crate::data_sync::TableResult>, CommandError> {
     inspect_data_sync_impl(
         &state,
@@ -87,7 +162,7 @@ pub async fn inspect_data_sync(
         target_database,
         source_schema,
         target_schema,
-        &[],
+        &tables.unwrap_or_default(),
     )
     .await
 }

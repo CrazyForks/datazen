@@ -44,6 +44,73 @@ fn table(name: &str, columns: Vec<ColumnSchema>, primary_keys: Vec<String>) -> T
     }
 }
 
+fn sync_profile(id: &str, source: &str, target: &str) -> crate::data_sync::SyncProfile {
+    crate::data_sync::SyncProfile {
+        version: crate::data_sync::SyncProfile::CURRENT_VERSION,
+        id: id.into(),
+        name: "Nightly sync".into(),
+        source_connection_id: source.into(),
+        target_connection_id: target.into(),
+        source_database: Some("app".into()),
+        target_database: Some("app".into()),
+        source_schema: Some("public".into()),
+        target_schema: Some("public".into()),
+        tables: vec![crate::data_sync::TableMapping::auto("users")],
+        options: crate::data_sync::SyncOptions::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    }
+}
+
+#[tokio::test]
+async fn sync_profile_ipc_validates_connections_and_round_trips() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    test.save_connection("sync-profile-source").await;
+    test.save_connection("sync-profile-target").await;
+    let profile = sync_profile(
+        "sync-profile-1",
+        "sync-profile-source",
+        "sync-profile-target",
+    );
+
+    super::save_sync_profile_impl(&test.state, profile.clone())
+        .await
+        .expect("profile should save");
+    let loaded = super::get_sync_profiles_impl(&test.state)
+        .await
+        .expect("profiles should load");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].id, profile.id);
+    assert_eq!(loaded[0].tables, profile.tables);
+    assert_eq!(loaded[0].options, profile.options);
+
+    super::delete_sync_profile_impl(&test.state, "sync-profile-1")
+        .await
+        .expect("profile should delete");
+    assert!(super::get_sync_profiles_impl(&test.state)
+        .await
+        .expect("profiles should load")
+        .is_empty());
+
+    let missing_target = sync_profile("missing", "sync-profile-source", "gone");
+    let error = super::save_sync_profile_impl(&test.state, missing_target)
+        .await
+        .expect_err("missing target must be rejected");
+    assert!(error
+        .to_string()
+        .contains("target connection no longer exists"));
+
+    let missing_source = sync_profile("missing-source", "gone", "sync-profile-target");
+    let error = super::save_sync_profile_impl(&test.state, missing_source)
+        .await
+        .expect_err("missing source must be rejected");
+    assert!(error
+        .to_string()
+        .contains("source connection no longer exists"));
+}
+
 #[test]
 fn ir_diff_treats_equivalent_varchar_as_same() {
     // Postgres `character varying(100)` and MySQL `varchar(100)` both map to

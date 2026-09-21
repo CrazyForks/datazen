@@ -15,6 +15,7 @@ pub mod legacy;
 pub mod mapping;
 pub mod model;
 pub mod pairing;
+pub mod profile;
 pub mod session;
 pub mod sql;
 pub mod state;
@@ -46,6 +47,7 @@ pub use model::{
     SyncOptions, SyncTask, TableMapping, TableMappingStatus, TableResult,
 };
 pub use pairing::{classify_data_sync_pair, require_data_sync_family, DataSyncPairingView};
+pub use profile::SyncProfile;
 pub use session::SyncSession;
 pub use sql::{
     generate_table_sql, generate_table_sql_with_preview_formatter,
