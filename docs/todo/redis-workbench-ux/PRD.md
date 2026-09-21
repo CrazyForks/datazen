@@ -209,7 +209,7 @@ Redis 连接窗口（宿主薄壳）
 1. 所有新组件/逻辑落 `packages/drivers/redis/ui/**`，**禁止** import 宿主 `src/**`（护栏 R1 blocking）。
 2. 需要宿主能力（确认对话框、右键菜单、设置读写）只能走 `@datazen/driver-sdk` 的 `bind*` / `useBound*` 桥；缺能力就先扩展 driver-sdk 并保留宿主薄再导出，不得相对路径回宿主。
 3. 文案只改 `packages/drivers/redis/locales/en.ts`，其余 9 语言由 i18n-sync 回合补。`i18n-sync-check` 在开发期**不构成门禁**（§8.2 已核实：pre-commit 不跑、CI `continue-on-error`、`release.yml` 不跑），所以"改英文会红"的从来不是完整性检查，而是**钉死英文值的测试断言**。
-4. 屏 A 若要宿主在"未选 db"时让位给驱动渲染，需走 `DatabaseTypeMeta.connectionView` / 新 EP 契约，由 `@datazen/extension-points` 承载 —— **禁止**宿主硬编码 `databaseType === 'redis'` 分支（当前 `ConnectionWorkspaceHome` 的 KV 判定应改为能力判定）。
+4. 屏 A 让位、上下文条/状态条/键属性侧栏三处槽位，一律走 **codegen 驱动贡献槽位**（`scripts/resolve-drivers.mjs` 的 `kvSlots` 声明 + `getDriverKvSlot` lookup + `DatabaseTypeMeta.kvWorkspace` 能力位），**不走 `@datazen/extension-points`**。分层理由：EP 是宿主**特权扩展点**（SQL Editor Pro 那类需要 CodeMirror Compartment 与 <5ms 键入延迟的扩展），驱动贡献 UI 属**驱动贡献通道**，把驱动槽位塞进 EP 是错误分层。**禁止**宿主硬编码 `databaseType === 'redis'` 分支（`ConnectionWorkspaceHome` 的 KV 判定已改为能力判定）。契约细节以 `docs/development/coordination/tracks/redis-host-slots/progress.md` §契约冻结 F-1/F-2/F-3 为准。
 5. 单文件 800 行红线；`RedisWorkbench.tsx` 现 680 行，本轮必须**先拆再改**（拆出 `KeyTreeColumn.tsx`、`DetailColumn.tsx`）。
 6. **禁止在测试中断言可见文案字符串**（本轮裁定新增）：组件测试一律按 `data-*` 标识 / `role` / i18n **key** 断言，不得写 `getByText('No expiry')` 这类字面量。理由：`en.ts` 是唯一的翻译 source，术语随时会因产品口径改写（本轮 8-4 就是），把英文串钉进断言等于把文案变更成本从 1 个 locale 文件放大到 N 个测试文件。
    - 本轮需清点的存量：`src/locales/locales.test.ts:108-109`（`redis.batchDelete === 'Delete selected'`、`redis.console === 'Console'`）、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx:21,79,378`（`getByText('No expiry')`）。**处理方式 = 改写为 key/属性断言后删掉字面量**，不是把断言整条删掉（删掉会丢覆盖，Tester 按覆盖率补回来）。
@@ -266,7 +266,7 @@ Redis 连接窗口（宿主薄壳）
 | Wave | 轨道 | 范围 | 独占文件面 | 依赖 |
 |---|---|---|---|---|
 | W1 | `redis-cmds-p0` | `type_distribution` + `key_object_info`（Rust，pipeline + 采样位 + 键不存在空态） | `packages/drivers/redis/src/**` | — |
-| W1 | `redis-host-slots` | 宿主 KV **能力判定**改造（去 `databaseType==='redis'` 硬编码）+ 上下文条/状态条**槽位** + `detailPanelApplicable` 修正 + `connectionView` 让位 + driver-sdk/EP 契约补口 | `src/windows/connection/ContentToolbar.tsx`、`ContentView.tsx`、`ContentViewDrawers.tsx`、`ConnectionWorkspaceHome.tsx`、`packages/driver-sdk/**`、`packages/extension-points/**` | — |
+| W1 | `redis-host-slots` | 宿主 KV **能力判定**改造（去 `databaseType==='redis'` 硬编码）+ 上下文条/状态条/键属性侧栏/屏 A **四个 codegen 驱动贡献槽位** + `detailPanelApplicable` 修正 + driver-sdk 槽位契约 | `src/windows/connection/ContentToolbar.tsx`、`ContentView.tsx`、`ContentViewDrawers.tsx`、`ConnectionWorkspaceHome.tsx`、`src/lib/databaseMeta.ts`、`packages/driver-sdk/**`、`scripts/resolve-drivers.mjs` | — |
 | W1 | `redis-assert-policy` | §7-6 断言口径清理 + 约定落笔进文档 | `src/locales/locales.test.ts`、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx` | — |
 | W2 | `redis-kvbar-ui` | 驱动侧 KV 上下文条（全量）+ 状态条内容 + 键属性侧栏 UI | `packages/drivers/redis/ui/kv-bar/**`（新目录） | W1 三轨 |
 | W2 | `redis-overview` | 屏 A 七区块 + `redisBrowseHistory.ts` + KV 快捷动作 | `packages/drivers/redis/ui/overview/**`（新目录） | W1 `redis-host-slots` |
