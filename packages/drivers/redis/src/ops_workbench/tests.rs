@@ -513,6 +513,8 @@ async fn key_object_info_reports_missing_over_the_wire() {
         .await
         .expect("a missing key is a success case");
     assert_eq!(info, KeyObjectInfo::missing());
+    // Op-level count again (see the scope note on the round-trip test above):
+    // the command layer pays one more round trip for `with_live_op!`'s SELECT.
     assert_eq!(conn.journal().round_trips(), 1);
 }
 

@@ -453,12 +453,12 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "type_distribution",
             "Type distribution",
-            "SCAN-sampled key type counts with pipelined TYPE (never KEYS); reports sampled/dbsize/truncated",
+            "SCAN-sampled key type counts, TYPE resolved one pipeline per 500 keys (one command per key on Cluster); never KEYS; reports sampled/dbsize/truncated",
             "redis:allow-info",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
-                    "sampleLimit": { "type": "integer", "minimum": 0, "description": "Sample window in keys. Defaults to 1000; values above 5000 are clamped to 5000, never rejected" }
+                    "sampleLimit": { "type": "integer", "minimum": 0, "description": "Sample window in keys. Defaults to 1000; values above 5000 are clamped to 5000, never rejected. A Cluster connection clamps further to 200 because typing a key there costs a round trip" }
                 }),
                 &[],
             ),
@@ -466,7 +466,7 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "key_object_info",
             "Key object info",
-            "One pipeline of MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE; a missing key replies missing=true instead of failing",
+            "MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE in one pipeline (issued one at a time on Cluster); the command layer adds one SELECT per call, so a call is two round trips. A missing key replies missing=true instead of failing",
             "redis:allow-memory-sample",
             object_schema(
                 serde_json::json!({ "dbIndex": db, "key": key }),
