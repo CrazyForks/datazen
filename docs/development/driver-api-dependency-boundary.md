@@ -138,7 +138,7 @@ When developing an API change before publication, an independent extension can t
 
 | 允许来源 | 包名 / 形态 | 提供内容（以各包 `index.ts` 实际导出为准） |
 | --- | --- | --- |
-| 公共设计系统 | `@datazen/ui`（`packages/ui/src/index.ts`） | 基础组件 `Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`；工具 `cn`；i18n 运行时 `t` / `useI18n` / `registerTranslations` / `getLocale` / `setLocale`（`setLocale` 的调用约束见 2.4）与类型 `I18nParams` |
+| 公共设计系统 | `@datazen/ui`（`packages/ui/src/index.ts`） | 基础组件 `Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`；工具 `cn`；i18n 运行时 `t` / `useI18n` / `registerTranslations` / `getRegisteredTranslations`（只读快照，供工具/测试用，见 2.4.1） / `getLocale` / `setLocale`（`setLocale` 的调用约束见 2.4）与类型 `I18nParams` |
 | 驱动前端 SDK | `@datazen/driver-sdk`（`packages/driver-sdk/src/index.ts`） | 元数据契约 `DatabaseTypeMeta` / `ConnectionMode`；方言类型与 `BaseTableSqlGenerator`；下沉共享类型（`types/`：`ConnectionFormState`、`KeyEntry` / `KeyScanResult`、`NativeMenuItemDef` / `NativeMenuPredefined`、`ConnectionViewProps` 及配套）；Command IPC 封装 `driverCommands` / `fileCommands`；纯函数 `mergeDriverSettings` / `readBooleanField` / `applySchemaDefaults` / `listBooleanSchemaFields` / `listSchemaPropertyEntries` / `resolveEditorFontFamily` / `HOST_DEFAULT_EDITOR_FONT`；右键菜单 `showNativeContextMenu` / `hideNativeContextMenu` / `normalizeNativeMenuItems` / `nativeEditMenuItems` / `createNativeContextMenuHandler`；注入桥 `bind*` / `useBound*`（见 2.3）；Schema 同步 `syncSchemaTables` / `syncSchemaNamespace` / `registerPathAliases` / `getCachedPathItems` / `cachePathItems` / `subscribeSchemaPathItems` |
 | 特权扩展点契约 | `@datazen/extension-points` | **仅 EP 契约类型**（扩展点定义 / 生命周期 / SQL Editor 增强契约）。普通数据库驱动通常不需要 import 它；该包**不导出任何 i18n 能力** |
 | npm 依赖 | 驱动仓库自行声明的第三方包 | `react`、`react-dom` 及必要的 UI/工具库（自行承担版本与体积决策） |
@@ -257,7 +257,7 @@ async function gateWrite(): Promise<boolean> {
 
 ### 2.4.1 唯一运行时（已由 i18n-core 轨落地）
 
-全部查表 / 回落 / 插值逻辑只存在于一处：`packages/ui/src/i18n.ts`（经 `@datazen/ui` 导出），公开 API 仅五个：
+全部查表 / 回落 / 插值逻辑只存在于一处：`packages/ui/src/i18n.ts`（经 `@datazen/ui` 导出），公开 API 仅六个：
 
 ```ts
 setLocale(locale: string): void;                       // 切换语言并通知订阅者
@@ -267,8 +267,10 @@ registerTranslations(
 ): void;                                                // 唯一词条注册入口（重复注册为后写覆盖合并）
 t(key: string, params?: I18nParams): string;            // registry[locale] ?? registry['en'] ?? key，再做 {param} 插值
 useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 订阅 locale 变化的 React hook
+getRegisteredTranslations(locale: string): Record<string, string>;  // 只读快照（浅拷贝）；未知 locale 返回 {}
 ```
 
+- 第 6 个 API `getRegisteredTranslations` 由 Wave 3 `i18n-drivers` 轨有意新增（定义 `packages/ui/src/i18n.ts:69`，导出 `packages/ui/src/index.ts:27`）：返回该 locale 当前注册表的**浅拷贝**（宿主 eager + 已加载 lazy 域包 + 各驱动/扩展自注册词条），未知 locale 返回 `{}`，**不订阅** locale 变化 ⇒ 只服务工具 / 导出快照 / 测试，不是渲染路径。宿主消费方为 `src/locales/index.ts:11`（import）与 `:108`（`getAllTranslations` 唯一调用）；驱动侧与包内用例见 `packages/drivers/{redis,mongodb}/ui/__tests__/localePackRegistration.test.ts`、`packages/ui/src/__tests__/i18n.test.tsx`。
 - 没有任何 Host↔包 locale bridge、没有第二套引擎、没有兼容 re-export 层（历史上 `@datazen/extension-points` 的 i18n bridge 模型已整体删除，该包不再导出任何 i18n 符号）。
 - 宿主内部 `src/hooks/useI18n.ts` 是**宿主消费点别名**（re-export 自 `@datazen/ui`），仅宿主自身组件使用；驱动/扩展一律直接 `import { useI18n } from '@datazen/ui'`。
 
@@ -278,7 +280,7 @@ useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 
 
 同一约束在宿主内部还有**一处**、且仅限非渲染路径的用法，读者易把它误读成「第二个接线点」：`src/locales/index.ts:69-84` 的 `getTranslation(locale, key, params)` 适配器，为查外语字典在同一次同步调用内临时 `setLocale(locale)`（`:78`）并在 `finally` 复位（`:82`）。它只服务工具/测试快照、不在 React 渲染路径，且**仍在宿主内**，因此不违反「只有宿主调用 `setLocale`」；驱动与扩展不得效仿这种临时换 locale 的写法（要换语言就走宿主设置）。
 
-驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏的 **R2** 规则 lint 兜底（见 2.6）：R2 扫描 `packages/**` 的全部 `.ts/.tsx/.js/.jsx/.mjs/.cjs`，豁免表是脚本内 `R2_FILE_CARVEOUTS` 的**精确文件清单**（**不是目录级豁免**）——`packages/ui/src/i18n.ts`（`setLocale` 唯一实现所在文件，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（必须能调用才能测）。也就是说 `@datazen/ui` 包内**其它**组件出现 `setLocale(...)` 调用同样红。宿主 `src/**` 天然不在 R2 范围内，因为宿主正是唯一合法调用方。注释文字、字符串与契约声明（`setLocale(locale: string): void;`）都不算调用。当前实测：**本仓跟踪的** `packages/**` 源码中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 7 行），其余为 **0**。
+驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏的 **R2** 规则 lint 兜底（见 2.6）：R2 扫描 `packages/**` 的全部 `.ts/.tsx/.js/.jsx/.mjs/.cjs`，豁免表是脚本内 `R2_FILE_CARVEOUTS` 的**精确文件清单**（**不是目录级豁免**）——`packages/ui/src/i18n.ts`（`setLocale` 唯一实现所在文件，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（必须能调用才能测）。也就是说 `@datazen/ui` 包内**其它**组件出现 `setLocale(...)` 调用同样红。宿主 `src/**` 天然不在 R2 范围内，因为宿主正是唯一合法调用方。注释文字、字符串与契约声明（`setLocale(locale: string): void;`）都不算调用。当前实测：**本仓跟踪的** `packages/**` 源码中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 **15** 行），其余为 **0**。该单测调用行数会随用例扩写而增长，**行数的权威落点即该文件本身**（`packages/ui/src/__tests__/i18n.test.tsx`），上列 15 为本次回扫（2026-09-21）快照值；复核口径：`grep -c "setLocale(" packages/ui/src/__tests__/i18n.test.tsx` 的命中数须扣除注释提及行（当前 16 − `:100` 的 JSDoc 注释 1 = **15** 个调用行；`:7` 的 `import` 引用行不计）——R2 豁免是文件级清单，该文件内行数变化不触发规则。
 
 R2 的阻断范围与 R1 同为「本仓跟踪的源码」（BUG-008 裁定，机制见 2.1.2 末段与 2.6）：gitignored 外部树中的违规降级为 advisory、不阻断门禁，也不进 `ALLOWLIST`。当前外部漂移登记：已 stage 的 Pro EP `packages/pro-extensions/sql-editor-pro` 共 **6 处 R2 advisory**——`src/intentions/__tests__/intentionCodeActions.test.ts:119,141` 与 `src/locales/__tests__/locales.test.ts:28,32,36,39`（均为该 EP 自身单测切语言的合法用法；是否收敛由 editor-pro 仓库自行裁定，本仓不代其豁免、也不要求即刻整改）。
 
@@ -288,11 +290,11 @@ R2 的阻断范围与 R1 同为「本仓跟踪的源码」（BUG-008 裁定，�
 | --- | --- | --- |
 | 宿主 UI 词条 | `src/locales/*`（领域包结构） | `src/locales/index.ts` 模块加载时把 eager 字典 `registerTranslations` 灌入共享注册表；lazy 域包经 `useLocaleDomains` / `ensureLocaleDomains` 按需注册 |
 | 驱动词条 | `packages/drivers/<id>/locales/`（如 redis、mongodb 各语言文件） | **自注册（已落地）**：纯副作用模块 `packages/drivers/<id>/locales/index.ts` 静态 import 本目录全部语言字典后一次性 `registerTranslations({...})`；由该驱动 UI 的入口模块（即 `generated.ts` 实际 import 的首个驱动 UI 模块）挂一行指向本包 `locales/` 目录的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts`（如 mongodb）写 `import '../locales';`（`packages/drivers/mongodb/ui/meta.ts:4`），入口在 `ui/shared/meta.ts`（如 redis，嵌套两层）写 `import '../../locales';`（`packages/drivers/redis/ui/shared/meta.ts:4`）。驱动一经装载即完成注册，宿主不需要知道驱动有哪些语言包 |
-| Pro 扩展词条 | `packages/pro-extensions/*` 各自 locales | 直接 `import { registerTranslations } from '@datazen/ui'`（EP 经 `globalThis.__DATAZEN_HOST__['@datazen/ui']` 与宿主共享同一单例，见 `src/main.tsx`） |
+| Pro 扩展词条 | `packages/pro-extensions/*` 各自 locales | 直接 `import { registerTranslations } from '@datazen/ui'`（EP 经 `globalThis.__DATAZEN_HOST__['@datazen/ui']` 与宿主共享同一单例，见 `src/main.tsx`）；与宿主 key 同名时的覆盖语义与处置见 2.4.4 观察项（BUG-004） |
 
 配套终态（**已随 Wave 3 合并落地**，Wave 4 回扫时按实测改写）：
 
-- 宿主端 `DRIVER_LOCALES` 聚合链路**已整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——实测 `scripts/` / `src/` / `packages/` / `e2e/` 中 `DRIVER_LOCALES`、`generated-locales` 生产引用 **0 命中**（仅 `AGENTS.md`、`CONTRIBUTING.md`、`.gitignore` 仍留文字残留，属他轨文档/忽略规则，已登记交协调者）——不存在「宿主替驱动收集词条」这一步。
+- 宿主端 `DRIVER_LOCALES` 聚合链路**已整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——实测 `scripts/` / `src/` / `packages/` / `e2e/` 中 `DRIVER_LOCALES`、`generated-locales` 的**生产码**引用 **0 命中**（口径与同批回扫的 `docs/development/independent-driver-development.zh-CN.md:214`「生产码已无该标识符」一致）；仍留 **4 处已知残留**——3 处散文/忽略规则（`AGENTS.md`、`CONTRIBUTING.md`、`.gitignore`，属他轨文档，已登记交协调者）与 1 处代码内常量（`scripts/check-driver-import-boundaries.mjs:94` 的 `SKIPPED_CODEGEN_FILES` 仍列着已不存在的 `src/extensions/generated-locales.ts`；该条目由 Wave 4 `import-guard` 轨晚于本行基线所写，属无害的防御性写法，本仓不改护栏以免牵动其 36 例夹具复验）——不存在「宿主替驱动收集词条」这一步。
 - 语言 code 字面量与宿主保持一致（`zh-CN`、`zh-TW`、`pt-BR` 一律带连字符）。核对时注意**「仓库里有语言文件」≠「宿主已接线该语言」**，真值分三层各取不同出处：
   - **宿主实际接线的内置语言只有 `en` 与 `zh-CN`**：`src/locales/builtinLocales.ts:9` 的 `BUILTIN_LOCALES = ['en', 'zh-CN']`（真值源 `src/locales/builtin-locales.json`；`BUILTIN_LOCALE_LABELS` 同文件 :26-29 亦只有这两项；`src/locales/fullLocales.ts` 供测试/工具用，同样只含这两个）。
   - **其余 8 个语言目前只做 parity 校验、未进 `BUILTIN_LOCALES`**：`de`、`es`、`fr`、`ja`、`ko`、`pt-BR`、`ru`、`zh-TW`，以文件形态存在于 `src/locales/`（如 `src/locales/pt-BR.ts` + `src/locales/pt-BR/`），由 `scripts/i18n-sync-check.mjs:36` 的 `LOCALE_FILES` 逐个列表做词条校验；**就宿主 `src/locales/` 的这 8 个语言文件而言**，除 `src/locales/` 内部再导出外生产路径无运行时 import（此限定只描述宿主词条，不适用于驱动包，见下条不对称说明）。
@@ -305,6 +307,7 @@ R2 的阻断范围与 R1 同为「本仓跟踪的源码」（BUG-008 裁定，�
 ### 2.4.4 key 命名与类型
 
 - 驱动词条 key 必须带**驱动自有前缀**（现状：`redis.*`、`mongo.*`），与宿主前缀互斥，保证合并进同一注册表不碰撞；新增 key 只改本包 `en.ts`（唯一 source of truth），其余语言由同步工具补齐。
+- **观察项（BUG-004，Wave 4-B 全量回归实测；本条不构成对 EP/wapp 的强制条款，仅留档 + 交叉引用）**：`packages/pro-extensions/sql-editor-pro` 自带 **26 个 key**（24 个 `query.*` + 2 个 `settings.editor.intention*`），其中 **5 个与宿主同名且同为 `query.*`**：`query.params`、`query.paramValue`、`query.editor.param.historyLabel`、`query.editor.param.clearHistory`、`query.editor.drop.crossConnection`（en 侧 3 异值 + 2 同值，zh-CN 侧 5 个全部异值；宿主侧这 5 个 key 当前 **0 消费方**，实为宿主字典里的孤儿条目）。EP 的 `src/locales/index.ts:11` 在宿主 eager 注册**之后**才 `registerTranslations({ en, 'zh-CN': zhCN })`，按 2.4.1 的「后写覆盖 + 逐 key 合并」语义，装了 Pro 的构建对这 5 个 key 取 EP 文案、Community 构建取宿主文案 ⇒ 一旦宿主新增任一同名 `query.editor.param.*` 消费点，同一 UI 会在两个版本间出现文案分歧，且没有任何静态检查会红。**处置**：命名空间归属（是否收敛为 `pro.*` 前缀）移交 `sql-editor-pro` 自身仓库裁定（本仓不代其豁免、也不即刻要求整改），本契约为 EP/wapp 明确**不加**强制前缀要求；触发条件出现前无用户可见后果。该观察项同时说明 2.4.3「Pro 扩展词条」行的注册方式目前只约束「谁注册」，不约束「key 归属」。（wapp 侧同批实测：`packages/wapps/**` 内 `registerTranslations` / `@datazen/ui` 均 **0 命中**，即 R-5 的后半句「wapp 尚无自带词条」成立。）
 - 驱动侧 `t()` 的 key 是**普通 `string`**：没有编译期 `I18nKey` 字面量联合约束（宿主 `I18nKey` 是宿主内部编译期约束，与驱动无关），驱动组件中不得出现 `as I18nKey` 之类宿主类型断言。
 - 词条完整性（parity）由脚本扫描保证（**已落地**）：`node scripts/i18n-sync-check.mjs`（`scripts/__tests__/i18n-sync-check.test.mjs` 覆盖其分支）以各包 `en.ts` 为 source 校验其余语言文件 key 集合一致，扫描**两类**集合——宿主 `src/locales/`（`scripts/i18n-sync-check.mjs:33`）与驱动包 `packages/drivers/<id>/locales/`（同文件 `:34` 的 `driversDir`，经导出的 `checkDriverLocalePacks()` 在 `:318` 汇入报告）；驱动包缺 `locales/index.ts`、或 `index.ts` 漏 import 某个语言文件，都计为结构性问题并让脚本非零退出。开发期间只改本包 `en.ts`，其余语言由 i18n-sync 流程补齐。
 
