@@ -90,7 +90,7 @@
 1. **规则**：测试严禁把「由 i18n `t()` 渲染出来的可见文案字面量」当作断言目标或定位依据。允许的三类锚点，按优先级：
    1. **`data-*` 契约（首选）**：`getByTestId('redis-ttl-set')`、`slot.dataset.ttlState === 'no-expiry'` —— 状态用枚举属性表达，文案换了照样绿；
    2. **i18n key**：驱动 ui 测试统一 `useI18n: () => ({ t: (key) => key })`，随后 `getByText('redis.pubsubSubscribe')`；
-   3. **字典回读**：仅当"可访问名称 / 解析结果本身"就是被测意图时（a11y 契约、locale 注册链、翻译链路），期望值从**同一份字典**取——`getByRole('menuitem', { name: en['menu.file'] })`、`expect(t('redis.console')).toBe(en['redis.console'])`——绝不硬编码英文字面量。
+   3. **字典回读**：仅当"可访问名称 / 解析结果本身"就是被测意图时（a11y 契约、locale 注册链、翻译链路），期望值从**同一份字典**取——`getByRole('menuitem', { name: enCopy('menu.file') })`、`expect(t('redis.console')).toBe(en['redis.console'])`——绝不硬编码英文字面量。宿主测试的回读**必须**走 `src/test/enCopy.ts` 的 `enCopy(key)`，不得裸写 `en[key]`：查表 miss 得到 `undefined`，而 testing-library 把 `getByRole('button', { name: undefined })` 理解成"不加 name 约束"，定位器当场退化成永真匹配，断言看着在、契约已经没了（它是否偶然变红只取决于页面上同类元素有几个，而不是被测行为 —— redis-assert-policy BUG-002）。`tsconfig.json` 把 `__tests__` 排除在 `npx tsc --noEmit` 之外、vitest 又不做类型检查，所以这道收敛只能放在运行期、且只能有这一处入口。
 2. **改写，不是删除**：去掉字面量的同时必须以锚点形式保留**被测意图**。改写完必须仍能证明：元素存在、状态正确（`data-*` 取值）、参数确实被插值（`toContain(param)` + 无 `{` 残留）、不回显原始 key（`text !== key`）、跨语言不串味（zh 渲染里找不到 en 的解析值）。整条删掉等于丢覆盖率，Tester 会按 ≥80% 补回来。
 3. **为什么这是真问题**：`locales/en.ts` 是唯一的翻译 source of truth，术语会因产品口径随时改写（Redis 工作台裁定 8-4 就是把 `No expiry` / `Wrap` / `Size: N B` / `Discard` 四处对齐参考图）。i18n **完整性**在开发期从来不是门禁（pre-commit 不跑、CI `i18n-sync-check` 带 `continue-on-error: true`、`release.yml` 不跑、运行时 `packages/ui/src/i18n.ts` 缺 key 回落 en），真正拦人的只有被钉进断言的英文字面量 —— 它把一次文案改动的成本从 1 个 locale 文件放大到 N 个测试文件，并且会诱导开发者"为了测试绿"去回退正确的产品口径。
 4. **正例 / 反例对照**：
@@ -107,14 +107,19 @@
    | `expect(getTranslation('en', 'panel.closeTab', { title: 'Query' })).toBe('Close Query')` | `toContain('Query')` + `not.toContain('{')` |
    | `expect(screen.getByText('just now')).toBeInTheDocument()` | `expect(screen.getByText(relativeLabel(locale, JUST_NOW))).toBeInTheDocument()` |
    | `expect(screen.getByText('Cancel')).click()` | `screen.getByTestId('confirm-dialog-cancel')` |
+   | `getByRole('button', { name: 'Close' })`（宿主 `Dialog` 包装层已把 `t('common.close')` 灌进 `closeLabel`） | `getByRole('button', { name: enCopy('common.close') })` + 一条用测试自造 locale 证明"名称确实来自 `t()`"的接线用例 |
+   | `getByRole('heading', { name: en['common.error'] })`（裸查表；miss 即 `name: undefined` ⇒ 永真退化） | `getByRole('heading', { name: enCopy('common.error') })`（miss / 空值当场抛错） |
 
 5. **不在本原则范围内**（不要顺手改，改了反而丢信息）：
    - 断言**数据**：Redis 回包 `(nil)` / `OK` / `42`、SQL 原文与关键字（`SELECT`、`LEFT JOIN`、`AND`）、`INFO` 段名 `Server` / `Memory`、类型与拓扑枚举 `string` / `cluster`、日期与数字；
    - 断言**测试自己造的数据**：作为 props 传入的 `label="Refresh"`、`badge="Production"`、测试自行 `registerLocale` 的 `TestOK`、store 里的 `title: 'Daily'`；
-   - `@datazen/ui` 组件库里**没有 i18n 参与**的默认值（如 `Dialog` 的 `closeLabel = 'Close'`）；
+   - **直连** `@datazen/ui` 组件、且**不传**覆盖参数时，库层那个没有 i18n 参与的默认值（`packages/ui/src/Dialog.tsx` 的 `closeLabel = 'Close'`）—— 豁免的前提确实是"该文案不由任何 `t()` 渲染"；
+   - ⚠ **同名组件不可按库层默认值豁免**：宿主 `src/components/ui/*` 包装层普遍注入 `t()`（`src/components/ui/Dialog.tsx:8` 就是 `closeLabel={props.closeLabel ?? t('common.close')}`），经它渲染出的可访问名称**确实是 i18n 文案**，落在本原则范围内。本轨第一版把 `Dialog.test.tsx` 的 `getByRole('button', { name: 'Close' })` 定性成"库层默认值、无 i18n 参与"是**误判**：实测只改宿主 `common.close` 一个 key 就能让该文件恰好 2 条转红（redis-assert-policy BUG-001，已按字典回读 + `enCopy()` 改写）。判定办法：先确认测试 `import` 的是包装层还是库组件，再改一个 key 做单点探针，不要靠"值恰好同串"归因。
    - 测试自带的 `t()` stub 字典（它只是让 `t()` 有返回值）—— 前提是没有任何断言去读它的值。
 6. **边界不变量 ≠ 文案**：例如"宿主快照里不得出现 `redis.*` 词条"（`getHostTranslations('en')['redis.batchDelete'] === undefined`）是包边界契约，必须原样保留；驱动 ui 测试"必须能解析出真串而不是回显 key"同理。
 7. **护栏**：`node scripts/check-i18n-copy-assertions.mjs`（`pnpm test:i18n-assertions`）对**驱动 ui 测试目录**里 `getByText('Two Word Copy')` 这类形态报警。当前为 **warning（报而不拦）**，退出码恒 0；`--strict` 可临时升级为阻断，用于新提交自查。
+   - **能力边界（绿灯不等于干净）**：默认降噪要求"首字母大写 + 含空格 + 确实是字典值"，因此**单词文案**（`Console` / `Wrap` / `Size` / `Persist`）被钉进断言时默认面**不报**；默认扫描面只有 `packages/drivers`，**宿主测试与 `e2e/specs/*.ts` 交互规格都不在内**（后者既不带 `.test.ts` 也不在 `__tests__/` 下）。裁定 8-4 的四个落刀口里三个是单词，正好落在失明区，所以"跑过护栏"不能替代人工 grep。
+   - **两个 opt-in 开关补齐**：`--dirs src,packages,e2e` 加宽扫描面（含 `specs/` 交互规格与 `$('button[aria-label="…"]')` 形态）；`--terms redis.noExpiry,redis.view.wrap,redis.size` 传一份 **i18n key 观察名单**，护栏从字典回读这些 key 的**当前值**再匹配（含单词、绕开双词门槛），因此调用串本身也不钉文案；改文案后无需改名单。名单里解析不到的 key 会**显式报警并在 `--strict` 下失败**——typo 的 term 保护不了任何东西（实测 `redis.discard` 当前不存在于字典，正确位是 `redis.persist`）。
 
 ---
 

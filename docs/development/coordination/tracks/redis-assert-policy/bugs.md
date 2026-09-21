@@ -9,7 +9,11 @@
 
 ## redis-assert-policy-BUG-001：`Dialog.test.tsx` 的 `Close` 归因错误——它其实由 i18n 渲染，是真·钉死词条断言，却被写进治理文档当豁免项
 
-- **状态**: 待修复
+- **状态**: 待验证(修复后) — 建议修法 1+2+3 全部落地于 commit `075d2a10c`（Rescuer 接管续做）
+  - 修法 1：`Dialog.test.tsx` 两处 `getByRole('button', { name: 'Close' })` 与 `getAllByRole('button')[0]` 改 `enCopy('common.close')`；**另加 1 条接线用例**（`registerLocale('zz-assert-probe', …)` 注入测试自造串，证明名称确实由 `t()` 渲染而非库层默认值），该类 `it()` 数 7 → 8。
+  - 修法 2：`interaction-and-testing-principles.md` 原则六第 5 类豁免改为"**直连** `UiDialog` 且不传 `closeLabel`"这一真实前提，并加"同名宿主包装层普遍注入 `t()`，不可按库层默认值豁免"警示；对照表补 1 组正反例。
+  - 修法 3：`progress.md` D 段定性与 R 项 2 已改写（"非缺陷/恰好同串"结论撤销）。
+  - 实跑证据：临时只改 `src/locales/en/core.ts` 的 `'common.close'` → `'Zqx Closeonly blorp'` 后 `Dialog + ErrorBoundary` **9 passed / 0 failed**（修复前该场景恰好 2 红）；`git restore` 后词典零 diff。
 - **严重度**: 中（不阻断运行时行为；阻断本轨目的本身——`common.close` 一旦改名，测试仍会红，且文档把错误理由固化，会被后续轮次反复引用）
 - **位置**:
   - 误判出处：`docs/development/interaction-and-testing-principles.md:114`（原则六第 5 条示例）、`tracks/redis-assert-policy/progress.md:97`（D 段定性）、`:118`（留待 R 项 2「低优先，非缺陷」）
@@ -74,7 +78,9 @@
 
 ## redis-assert-policy-BUG-002：`ErrorBoundary.test.tsx` 的字典回读定位器在查表 miss 时静默通过（永真退化），违反本轨"不得退化成永真匹配"口径
 
-- **状态**: 待修复
+- **状态**: 待验证(修复后) — commit `075d2a10c`；按建议修法新增查表即断言取值器 `src/test/enCopy.ts` 的 `enCopy(key)`（miss / 空白值直接抛错，仍零英文字面值），并把 **三个宿主测试文件的全部裸 `en[...]` 定位**换过去：`ErrorBoundary.test.tsx`（3 条）、`MenuBar.test.tsx`（`APP_NAME`/`FILE`/`IMPORT_CONNECTIONS` 三个派生源）、`Dialog.test.tsx`（3 条，随 BUG-001 一并改）。原"三份词条非空"前置守卫已由 `enCopy` 承担（不再另设硬编码 key 列表，消除守卫与定位不共享 key 的漏洞）。口径同步写进原则六第 3 类。
+  - 实跑证据（M6b 反证）：`enCopy('common.errorZZZ')` ⇒ `Error: en dictionary miss: "common.errorZZZ" …` + `Tests 1 failed (1)`（原为 `1 passed` 永真）；`enCopy('common.closeZZZ')` ⇒ Dialog `3 failed`。两次变异后 `git restore`，`git status -- src/components` 空。
+  - 建议修法里的"可选加固"（`tsconfig` 给 `src/locales/en` 导 `as const` + `keyof` 收窄）属 i18n-core 面，**本轨未做**，仍留给协调者裁定。
 - **严重度**: 中（"改写而非删除"最典型失败模式的现形：断言看似在，实则查表失败也绿）
 - **位置**: `src/components/__tests__/ErrorBoundary.test.tsx:29-33`；同类风险 `src/components/__tests__/MenuBar.test.tsx:20-22,32,44,61`
 - **描述（含量级）**:
@@ -126,7 +132,8 @@
 
 ## redis-assert-policy-BUG-003：台账 D 段"扩扫 457 文件 / 0 条"与 R 项 3"4 条假阳性"互相矛盾，实跑为 4 条
 
-- **状态**: 待修复
+- **状态**: 待验证(修复后) — 本 commit 已把 `progress.md` D 表第 5 行改为"457 文件 / **4 条命中，全部为 R-3 已定性假阳性**，真钉死词条 0 条"，并在 Rescuer 续做段记录复跑口径。四条所在文件未被"顺手修掉"（仍不在本轨 diff 内）。
+  - 复跑数字与 Tester 声称一致但入口已换：`node scripts/check-i18n-copy-assertions.mjs --dirs src,packages,e2e` → 同样 4 条 `BuildStatement.test.tsx:198,220`、`ChartWidgetTile.test.tsx:139`、`RunHistoryDrawer.test.tsx:161`（原 `node -e` 内联调用仍可用，两条路径结论相同）。
 - **严重度**: 低（纯台账准确性；但它是 Wave 2 / R 阶段的交接依据）
 - **位置**: `tracks/redis-assert-policy/progress.md:96`（D 表第 5 行"…457 个测试文件 / 0 条钉死词条断言"）↔ `:119`（R 项 3：实测扩扫 `src` 后 4 条）
 - **描述（含量级）**: 同一条"扩扫"结论在两处给了相反的数字。实测 `dirs = ['src','packages','e2e']`：**scanned = 457（与声称完全一致）、hits = 4、code = 0**，
@@ -153,7 +160,9 @@
 
 ## redis-assert-policy-BUG-004：护栏 `KEY_SHAPE_RE` 短路不可达（死分支），对应单测名称夸大了它实际证明的东西
 
-- **状态**: 待修复
+- **状态**: 待验证(修复后) — commit `075d2a10c`；采建议修法 **(a)**（删掉 `KEY_SHAPE_RE` 与该 `continue`），未采 (b)：把空格门槛挪到 key 规则之后属改动默认口径方向，仍留协调者裁定。
+  - 单测 `'does not treat an untranslated i18n key as copy'` 的注释已改为诚实口径：真正排除 `redis.noExpiry` 的是 `COPY_SHAPE_RE`（要求首字母大写）+ 空格门槛，key 形态本身不可能匹配；该用例保留为"门槛若被放宽，key 形态仍不得算文案"的回归守卫（**未删除**）。
+  - 实跑覆盖率：`npx vitest run scripts/__tests__/check-i18n-copy-assertions.test.ts --coverage --coverage.include='scripts/check-i18n-copy-assertions.mjs'` → Stmts / Branch / Funcs / Lines **全部 100%**，`Uncovered` 行为空（修复前 Branch 98.07% = 38/39、唯一未覆盖即该死分支）；该文件用例 15 → **19 passed**。
 - **严重度**: 低（无行为影响；属"测试名不副实"，正是本轨要消灭的类别）
 - **位置**: `scripts/check-i18n-copy-assertions.mjs:156-157`；`scripts/__tests__/check-i18n-copy-assertions.test.ts:122`（`'does not treat an untranslated i18n key as copy'`）
 - **描述（含量级）**: 第 156 行已 `if (!COPY_SHAPE_RE.test(literal) || !literal.includes(' ')) continue;`，
@@ -170,7 +179,12 @@
 
 ## redis-assert-policy-BUG-005：护栏的能力边界未写进"为什么"——单词文案与 `e2e/specs/**` 结构性看不见，而 8-4 落刀口 4 个词里 3 个是单词
 
-- **状态**: 待修复
+- **状态**: 待验证(修复后) — commit `075d2a10c`；按建议修法加了两条 opt-in，**默认口径一字未改**（默认仍 `SCAN_DIRS=['packages/drivers']` + 双词词典启发式，默认/`--strict` 无命中即 0）：
+  1. `--terms <逗号分隔 i18n key>`：从字典回读这些 key 的**当前值**再匹配，绕开双词门槛 ⇒ 单词文案可见；观察名单以 key 表达，调用串本身零文案；解析不到的 key 显式 `warn` 并在 `--strict` 下计入非 0（"typo 的 term 保护不了任何东西"）。
+  2. `--dirs <根清单>`：加宽扫描面；`TEST_FILE_RE` 增 `(^|/)specs/[^/]+\.tsx?$`，使 WebdriverIO 交互规格真正进面，并新增 `aria-label="…"` 选择器形态（读回式 `` aria-label="${t('…')}" `` 只截到 `${t(` ⇒ 不误报，已单测锁住）。
+  3. 能力边界写进原则六第 7 条（新增"能力边界（绿灯不等于干净）"+"两个 opt-in 开关"两段）与本台账 R 项 3。
+  - 实跑证据：`--dirs src,packages,e2e --terms redis.noExpiry,redis.view.wrap,redis.size,redis.discard --strict` → watchlist 回读行 `redis.noExpiry="No expiry", redis.view.wrap="Wrap", redis.size="Size"`、`redis.discard` 报"protects nothing"、4 条 R-3 假阳性、`exit=1`；默认 `node scripts/check-i18n-copy-assertions.mjs` 仍逐字 `ok (33 driver test files scanned, 0 copy literals pinned)` / `exit=0`。
+  - **给 Tester 的更正**：本条建议的 `--terms redis.noExpiry,redis.view.wrap,redis.size,redis.discard` 里 **`redis.discard` 不是真实 key**（`packages/drivers/redis/locales/en.ts` 全文无 `discard`；8-4 的 `放弃` 现由 `redis.persist:135 = 'Persist'` 承载，宿主侧另有 `common.discard`）。护栏把这个 typo 如实报出来了 —— Wave 2 名单应写 `redis.persist`，或在真正落 `放弃` 文案时补上新 key。
 - **严重度**: 低（当前无实际漏网：本 Tester 手工 grep 确认 redis ui 测试目录 0 条钉死词条；但护栏对本轮目标词的保护力低于台账给读者的印象）
 - **位置**: `scripts/check-i18n-copy-assertions.mjs:39`（`SCAN_DIRS=['packages/drivers']`）、`:45`（`TEST_FILE_RE`）、`:156`（要求含空格）
 - **描述（含量级）**:

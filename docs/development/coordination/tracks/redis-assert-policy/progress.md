@@ -2,7 +2,8 @@
 
 - 分支: `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375）
 - 角色: Coder → Tester
-- 状态: **TEST_FAILED（待 Coder 修 BUG-001/002 后复测）** — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）；Tester 复测记录见下方「Tester 复测记录」，Bug 见 [bugs.md](bugs.md)
+- 状态: **READY_FOR_TEST（第二次接管：Rescuer 续做完 BUG-001~005 全部 5 条，待 Tester 复测）** — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）+ `8fe2a4f66`（Tester 变异检验）+ `acd1c6486`（台账）；回炉修复：`075d2a10c`（BUG-001/002/004/005 码改，第二任 Coder 失联时原样落盘）+ 本 commit（BUG-003 数字 + 三处文档口径 + 实跑台账）。Tester 复测记录见下方「Tester 复测记录」，Bug 处置见 [bugs.md](bugs.md)
+- 接管记录 2: 第二任 Coder（回炉 5 条 Bug）在 BUG-004 处失联，遗留 6 个脏文件（含新文件 `src/test/enCopy.ts`）零提交。第三任 Rescuer 逐文件盘点 diff 后**原样提交**（`075d2a10c`，未推翻任何改法），续做 BUG-003 与三处文档口径，并补跑探针与覆盖率自验（见「Rescuer 第二轮续做记录」）。
 - Worktree: `.worktrees/datazen-redis-assert-policy`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §7-6、§8.2（处理决定表）
 - 接管记录: 首任 Coder 于 150 回合上限被强制中断，9 个文件改写完毕但**零提交**；Rescuer（全新实例）接管，复核其设计后原样落盘（未推翻任何改写），仅补齐门禁、脚本词表缺陷与文档台账。
@@ -75,7 +76,7 @@
 
 ### C. 口径落笔与可选护栏（范围项 3、4）
 
-- `docs/development/interaction-and-testing-principles.md`：新增**原则六「断言与 i18n 文案解耦」**（原"五大原则"→"六大"），含三类允许锚点优先级（`data-*` > i18n key > 字典回读）、"改写不是删除"、为什么（8-4 案例 + §8.2 门禁核实链）、**10 组正反例对照表**、6 类不在范围内（数据/自造 props/@datazen/ui 无 i18n 默认值/测试 stub 字典/边界不变量），并加了自检清单第 6 条。
+- `docs/development/interaction-and-testing-principles.md`：新增**原则六「断言与 i18n 文案解耦」**（原"五大原则"→"六大"），含三类允许锚点优先级（`data-*` > i18n key > 字典回读）、"改写不是删除"、为什么（8-4 案例 + §8.2 门禁核实链）、**10 组正反例对照表**（回炉后 +2 组 = 12 组：`{name:'Close'}` ⇒ `enCopy('common.close')`、裸 `en[key]` ⇒ `enCopy(key)`，见 BUG-001/002）、6 类不在范围内（数据/自造 props/@datazen/ui 无 i18n 默认值/测试 stub 字典/边界不变量），并加了自检清单第 6 条。
 - `docs/development/subagent/tester.md`：「测试写法」小节加一行"零文案断言"指针。`coder.md` **无**"测试写法"小节（只有工作区/搜索纪律/心跳/完成标准四节），按规格"无则不新增"处理，**未改该文件**。
 - `scripts/check-i18n-copy-assertions.mjs` + `scripts/__tests__/check-i18n-copy-assertions.test.ts`（10 例）+ `package.json` 两条脚本 `test:i18n-assertions`（默认）/ `test:i18n-assertions:strict`。
   - **Rescuer 修复首任版本的真实盲区**：词表采集用 `file.endsWith('en.ts')` 过滤，而宿主英文源是 `src/locales/en/<domain>.ts` 领域包 ⇒ 宿主词条**完全进不了词表**，护栏对宿主文案全盲。改为 `locales/en.ts` ∪ `locales/en/*.ts`（`isEnglishDictionary`）。
@@ -91,10 +92,10 @@
 | 2b | 同上 + `packages/drivers/mongodb/ui` | 233 passed | **29 文件 / 233 例 passed** | = 首任 Coder 口头报的 233，已独立复核 |
 | 3 | `npx tsc --noEmit -p tsconfig.json` | — | **0 错误（`tsc-exit=0`）** | — |
 | 4 | `npx vitest run`（Host 全量） | 443 文件 4609 例：**2 failed** | **443 文件 / 4609 例 / 0 failed** | 比对方法：本轨首次提交后、脚本改动前的全量运行为 443/4608 全绿；最终 4609 = 4608 + 护栏新增 1 例；红色数 **2 → 0**（那 2 条见下方判定），故"不引入新红"成立 |
-| 5 | Grep 自证 | — | redis ui 目录 `getByText('英文字面量')`/`getByRole({name:'…'})`/`getByPlaceholderText('…')` 命中：仅 `consoleResultRenderer.test.tsx:80 getByText('John')`（测试自造数据，非词条）⇒ **词典命中 0**；`src/locales/locales.test.ts` 剩余 `.toBe('<str>')` 仅 `not.toBe('redis.console')`（key）与 `'TestOK'`（测试自造字典）⇒ **英文字面值为 0** | 扩扫：把扫描器 `dirs` 指到 `src packages e2e` 共 **457 个测试文件 / 0 条钉死词条断言** |
+| 5 | Grep 自证 | — | redis ui 目录 `getByText('英文字面量')`/`getByRole({name:'…'})`/`getByPlaceholderText('…')` 命中：仅 `consoleResultRenderer.test.tsx:80 getByText('John')`（测试自造数据，非词条）⇒ **词典命中 0**；`src/locales/locales.test.ts` 剩余 `.toBe('<str>')` 仅 `not.toBe('redis.console')`（key）与 `'TestOK'`（测试自造字典）⇒ **英文字面值为 0** | 扩扫：把扫描器 `dirs` 指到 `src packages e2e` 共 **457 个测试文件 / 4 条命中，全部为 R-3 已定性假阳性（数据），真钉死词条 0 条**（BUG-003 更正：原写"0 条"与 R 项 3 自相矛盾）|
 | 6 | 还原后复跑 1、2 | — | 19/19 与 233/233，**与探针态逐项相同** ⇒ 绿与文案无关 | 见 A 段 |
 
-**探针态那 2 条 Host 红的定性（非本轨缺陷、非存量待清）**：`src/components/ui/__tests__/Dialog.test.tsx:98,102` 断 `getByRole('button',{name:'Close'})`，该 `Close` 来自 `@datazen/ui` `Dialog` 的**无 i18n 参与默认属性** `closeLabel = 'Close'`（原则六第 5 条明确豁免），只是**恰好**与宿主词条 `common.close` 同串，被探针连带改坏；还原后复跑该类 **11 例全绿**。扫描器默认 `SCAN_DIRS=['packages/drivers']` 看不见该文件，故本轨 0 命中结论不受影响。
+**探针态那 2 条 Host 红的定性（已撤销，改写为本轨漏网缺陷 → 已修）**：原判"该 `Close` 来自 `@datazen/ui` `Dialog` 的无 i18n 参与默认属性 `closeLabel = 'Close'`，只是**恰好**与宿主词条 `common.close` 同串，属原则六第 5 条豁免"**不成立**：`src/components/ui/__tests__/Dialog.test.tsx:5` 导入的是宿主包装层 `src/components/ui/Dialog.tsx`，其第 8 行 `closeLabel={props.closeLabel ?? t('common.close')}` 已把 i18n 文案灌进可访问名。Tester 的单键探针（只改宿主 `common.close`、不碰库层默认值）实测令该类恰好 2 条转红 ⇒ 归因被证伪，这 2 条是真·钉死词条断言，在本轨 §2 清点范围内却漏改并被反向固化为豁免理由（BUG-001）。修复：改 `enCopy('common.close')` 回读 + 新增 1 条"自造 locale 证明接线"用例（`it()` 7 → 8），同时修正原则六第 5 条示例与本条。原记"还原后复跑该类 **11 例全绿**"数字亦误，实为 **7 例**（基准）→ 现 **8 例**。`packages/ui/src/Dialog.tsx:30` 那个硬编码默认值仍在（对直连 `UiDialog` 的消费方是真 i18n 缺口），按 bugs.md「上游发现」交协调者独立立项，未并入本轨。
 
 ### E. 两项风险核查（协调者点名）
 
@@ -115,8 +116,9 @@
 ## 留待 R 回归
 
 1. **Wave 2 落刀口**：8-4 真正改 `redis.noExpiry` / `redis.view.wrap` / `redis.size` / 及 `redis.ttl*` 文案时，本轨已证明**驱动侧 233 例 + host 4609 例无需连带修改**（27 键探针实跑为证）。若届时仍有测试变红，即为新引入的钉死断言，直接按原则六处理并回登记。
-2. **`Dialog.test.tsx` 的 `closeLabel`（低优先，非缺陷）**：`@datazen/ui` `Dialog` 的默认 `'Close'` 与宿主 `common.close` 恰好同串。当前判定为豁免项（无 i18n 参与）。若哪天 `Dialog` 改为接 `t()`，需按原则六同步改该测试；R 阶段顺手确认即可。
+2. **`Dialog.test.tsx` 的 `closeLabel`（R-2 已撤销 → BUG-001，已修）**：原记"低优先、非缺陷、当前判定为豁免项"**不成立** —— 宿主包装层 `src/components/ui/Dialog.tsx:8` 注入 `t('common.close')`，那 2 条断言由 i18n 渲染，属本轨范围。已在 `075d2a10c` 按字典回读（`enCopy`）改写并补接线用例。**R 阶段仍需确认的只剩一件**：`packages/ui/src/Dialog.tsx:30` 的硬编码默认值是否独立立项（bugs.md「上游发现」），以及是否有新测试**直连** `UiDialog` 且不传 `closeLabel` 从而合法落入第 5 类豁免。
 3. **扫描器词表启发式的假阳性类（已文档化，勿"修断言"）**：把词条原样当**数据**注入的用例会命中 —— 实测扩扫 `src` 后 4 条：`BuildStatement.test.tsx:198,220`（`'LEFT JOIN'`，SQL 原文，词表里 `dashboard`/`query` 恰好也有该词）、`ChartWidgetTile.test.tsx:139` 与 `RunHistoryDrawer.test.tsx:161`（`error: 'Query failed'` 是 fixture 数据，与 `dashboard.runError` 同串）。这 4 条**都不该改**（改了反而丢信息），正是该护栏必须"报而不拦"、命中须人读不可自动化的理由；默认 `SCAN_DIRS` 不含 `src`，日常 0 命中。若将来要把 `--strict` 升为发布前门禁，需先给扫描器加"同串也出现在本文件数据位置"降噪或显式白名单。
+   **能力边界补记（BUG-005，已落进原则六第 7 条）**：默认口径还看不见两类东西——**单词文案**（空格门槛把 `Console` / `Wrap` / `Size` / `Persist` 全放过，而 8-4 四个落刀口里 3 个是单词）与 **`e2e/specs/**` 交互规格**（既不带 `.test.ts` 也不在 `__tests__/` 下，原"扩扫 e2e"实际只命中 `e2e/contract/__tests__/` 那 3 个规划器单测）。现已提供两个 opt-in：`--dirs src,packages,e2e`（`TEST_FILE_RE` 已认 `specs/` 并新增 `aria-label="…"` 形态）与 `--terms redis.noExpiry,redis.view.wrap,redis.size,redis.persist`（按 key 从字典回读当前值匹配，含单词，名单本身零文案；解析不到的 key 显式报警并在 `--strict` 下非 0）。**未加开关时的结论一律不得写成"已护栏覆盖"**，仍需人工 grep（本轮已做一次，redis ui 测试目录 0 条钉死词条）。注：bugs.md 原建议名单里的 `redis.discard` 并非真实 key（`redis.persist` 才是 `放弃`/`Persist` 的现值位），护栏如实报 typo。
 4. **无头/E2E 面**：本轨纯单测与文档，未新增 E2E；`ttlControlsJourney` 的 8 段击键旅程保持完整（用例数 8→8），无需 R 阶段补旅程，只需在 GUI 清单里顺手确认 TTL 区四按钮可点、错误行可见。
 
 ---
@@ -203,5 +205,63 @@
 核心验收标准 1~5 **全部达标**（含验收标准 5 的口径自证：8 键探针下 4609 + 233 + 19 全绿，与还原态逐项相同），"改写而非删除"与"零 locale 词典改动"两条红线均未破。回炉范围很小：2 条宿主测试断言（`Dialog.test.tsx`、`ErrorBoundary.test.tsx`）+ 1 处文档归因 + 台账 1 个数字 + 护栏 1 条死分支，均不触碰驱动侧已验证的解耦成果。
 
 本 Tester 新增/修改：`scripts/__tests__/check-i18n-copy-assertions.test.ts`（+5 例）、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx`（+1 条 DOM 状态断言，用例数不变）、本台账、`bugs.md`。
+
+---
+
+## Rescuer 第二轮续做记录（第三任实例，接管失联的 BUG-004 现场；全程未推翻前任改法）
+
+### 1. 接管现场盘点
+
+- 接管时 `git status --short` = 6 项：`scripts/check-i18n-copy-assertions.mjs`、`scripts/__tests__/check-i18n-copy-assertions.test.ts`、`src/components/{__tests__/ErrorBoundary,__tests__/MenuBar,ui/__tests__/Dialog}.test.tsx` 四改 + 新文件 `src/test/enCopy.ts`（未 add，**零提交**）。
+- 逐文件审计结论：**BUG-001 / 002 / 004 / 005 的码改已完整落地且方向与 bugs.md 原方案一致**（`enCopy()` 正是 BUG-002 建议修法的取值器；BUG-004 采 (a) 删死分支；BUG-005 加 `--terms` / `--dirs` 两个 opt-in），未做**任何**重新设计。
+- 未落地项：**BUG-003**（纯台账数字，无文件改动）与 **BUG-001 修法 2/3、BUG-005 修法后半**（三处文档口径）。
+- 处置：先 `075d2a10c` 把 6 个文件**原样提交**（wip，防止再次失联丢工），再补剩余缺口。接管前已核 `src/locales/index.ts:47,52`（`registerLocale` / `unregisterLocale`）、`packages/ui/src/i18n.ts:34,44`（`setLocale` / `getLocale`）、`src/locales/zh-CN.ts:2`（`TranslationKey` 再导出）三个被引用 API 确实存在。
+
+### 2. 本轮补齐（本 commit）
+
+| Bug | 补齐动作 | 落点 |
+|---|---|---|
+| BUG-003 | D 表第 5 行"457 文件 / 0 条"→"457 文件 / **4 条命中，全部为 R-3 已定性假阳性**，真钉死词条 0 条" | `progress.md` D 段 |
+| BUG-001 修法 2 | 原则六第 5 类豁免改为"**直连** `UiDialog` 且**不传** `closeLabel`"真实前提 + 新增"宿主 `src/components/ui/*` 包装层普遍注入 `t()`，同名组件不可按库层默认值豁免"警示与判定办法 | `interaction-and-testing-principles.md` 第 5 类 |
+| BUG-001 修法 3 | D 段定性段整段撤销重写（含原"11 例全绿"数字纠正为 7 → 8）；R 项 2 由"非缺陷"改为"已撤销 → BUG-001 已修"，仅留上游立项确认 | `progress.md` D 段 / R-2 |
+| BUG-002 口径 | 原则六第 3 类"字典回读"由裸 `en[key]` 改为**必须** `enCopy(key)`，并写明永真退化机理与"为何只能运行期收敛"（`__tests__` 不进 `tsc`、vitest 不做类型检查）；对照表 +2 组 | 原则六第 3 类 / 对照表 |
+| BUG-005 口径 | 原则六第 7 条加"能力边界（绿灯不等于干净）"+"两个 opt-in 开关"两小段；R 项 3 补同一边界说明 | 原则六第 7 条 / R-3 |
+
+- **正例/反例对照表 10 组 → 12 组**；`package.json` 未再改动（仍为本轨那 2 条脚本）。
+
+### 3. 实跑数字（最终态，全部本会话实跑）
+
+| # | 命令 | 结果 |
+|---|---|---|
+| 1 | `npx tsc --noEmit -p tsconfig.json` | **`tsc-exit=0`，0 错误**（接管态与本轮终态各跑一次，均 0） |
+| 2 | `npx vitest run src/locales scripts` | **25 文件 / 287 例 passed / 0 failed**；其中 `src/locales/locales.test.ts` **19 passed**（不减）、`scripts/__tests__/check-i18n-copy-assertions.test.ts` **19 passed**（Tester 15 → +4） |
+| 3 | `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | **27 文件 / 222 例 passed / 0 failed**，与 D 段基线"27 / 222"**逐字相同** ⇒ 驱动侧解耦成果未被回炉触碰 |
+| 4 | `node scripts/check-i18n-copy-assertions.mjs` | 逐字 `[check-i18n-copy-assertions] ok (33 driver test files scanned, 0 copy literals pinned)` / **`exit=0`**（默认口径未变 ⇒ 验收"报而不拦"仍成立） |
+| 5 | Host 全量 `npx vitest run` | **444 文件 / 4622 例 passed / 0 failed**。账目可逐条对上：关账态 4609 + Tester 护栏 5 + 本轮护栏 4 + 本轮 `Dialog` 接线用例 1 + `enCopy` 单测 3 = **4622**（文件 443 → 444 即新增的 `src/test/__tests__/enCopy.test.ts`）⇒ 零红、零用例流失 |
+| 6 | 三个被改宿主文件 | `Dialog 8` + `ErrorBoundary 1` + `MenuBar 3` = **12 passed / 0 failed**（`Dialog` 基准 7 → 8） |
+| 7 | `npx vitest run src/test/__tests__/enCopy.test.ts` | **3 passed**（新文件；`enCopy` 是本轮为 BUG-002 新增的生产码 helper，前任未留常驻用例 → 补：真 key 回读相等且非空 / 改名 key 必须抛（防被回退成裸 `en[key]`）/ 空白值必须抛（`vi.doMock` 造字典，不碰词典）） |
+| 8 | 扩扫 strict：`--dirs src,packages,e2e --strict` | 命中仍是 R-3 那 **4 条**数据型假阳性，本轮新增/改写的测试**零新命中** ⇒ 未把文案钉回去 |
+
+### 4. 变异与探针自证（每条跑完立即 `git restore`，收尾 `git status` 词典零 diff）
+
+| # | 破坏 / 探针 | 修复前（Tester 实测） | 本轮实测 | 复原 |
+|---|---|---|---|---|
+| P1 | 只改宿主 `'common.close': 'Close'` → `'Zqx Closeonly blorp'`（= BUG-001 重现步骤） | `Dialog.test.tsx` **恰好 2 红** | `Dialog + ErrorBoundary` **9 passed / 0 failed** ⇒ 断言已与 `common.close` 字面值脱钩 | `git restore src/locales/en/core.ts` ⇒ `git status -- src/locales` **空** |
+| P2 | `enCopy('common.error')` → `'common.errorZZZ'`（M6b 原为永真退化 1 passed） | `Tests 1 passed`（缺陷） | **`Tests 1 failed (1)`** + `Error: en dictionary miss: "common.errorZZZ" is not in src/locales/en …` ⇒ 查表 miss 当场炸，不再退化成无约束查询 | ✓ |
+| P3 | `enCopy('common.close')` → `'common.closeZZZ'`（Dialog 3 处定位） | — | **`Failed Tests 3`**，同为 `en dictionary miss` ⇒ 新改写的 Dialog 定位器同样带守卫 | ✓ |
+| P4 | BUG-004 覆盖率：`npx vitest run scripts/__tests__/check-i18n-copy-assertions.test.ts --coverage --coverage.include='scripts/check-i18n-copy-assertions.mjs'` | Branch 98.07%（38/39，`:157` 不可达） | **Stmts / Branch / Funcs / Lines 全 100%**，`Uncovered` 空 ⇒ 死分支已删，护栏脚本无"名义覆盖"残留 | n/a（只读） |
+| P5 | BUG-005 观察名单实跑：`--dirs src,packages,e2e --terms redis.noExpiry,redis.view.wrap,redis.size,redis.discard --strict` | 单词文案结构性 0 命中（M9） | 回读行 `redis.noExpiry="No expiry", redis.view.wrap="Wrap", redis.size="Size"`；`redis.discard` 报 `protects nothing`；命中恰为 R-3 那 4 条假阳性；**`exit=1`** ⇒ 加宽面 + 单词可见 + typo 名单不静默 | n/a |
+
+> **顺带纠一处 bugs.md 用词**：BUG-005 建议名单里的 `redis.discard` **不是真实 key** —— `packages/drivers/redis/locales/en.ts` 全文无 `discard`，8-4 的 `放弃` 现由 `redis.persist:135 = 'Persist'` 承载（宿主侧另有 `common.discard` / `settings.discardChanges`）。护栏如实把这个 typo 报成"保护不了任何东西"，正是该设计的目的；Wave 2 名单请写 `redis.persist`。
+
+### 5. 红线与越界自查（本轮）
+
+- **词典零改动（硬红线）**：P1 探针只落在 `src/locales/en/core.ts` 且同一条命令链内 `git restore`，收尾 `git status --porcelain -- src/locales 'packages/drivers/*/locales'` **输出为空**；`git diff --name-only ae65ae375` 全量名单中 `locales/**` 词典文件**仍为 0 条**。
+- **红线与越界**：本轮码改只新增 `src/test/__tests__/enCopy.test.ts`（`vitest.config.ts` 的 `src/**/*.test.ts` 自动收编，未改任何配置），其余为 3 个 `.md`；`packages/drivers/redis/src/**`、宿主 connection 槽位五文件、`scripts/resolve-drivers.mjs`、`hub.md`、其它 track 文档与其它 worktree 全程未碰。
+- 未提交 codegen / `Cargo.lock` / 注入的 `src-tauri/Cargo.toml` / `capabilities/default.json`；未执行 `pnpm install` / `pnpm e2e` / 裸 `pnpm build`；检索一律 Grep/Glob 工具。
+- **测试只增不减**：全轨 `it()` 计数无任何下降（`Dialog 7 → 8`、护栏 `15 → 19`、新增 `enCopy` 3 例、其余逐文件与 base 相等），断言全部按 key / `data-*` / role，未新增英文字面量（P1 的探针串只存在于临时工作区，未入库；`enCopy` 单测断的是 key 与抛错，字典值通过 `en[key]` 回读比对）。
+- 本轨累计入库文件 **20 个**（`4cdc0c023` 时 16 + `8fe2a4f66` 的 `bugs.md` + 本轮 `Dialog.test.tsx`、`src/test/enCopy.ts`、`src/test/__tests__/enCopy.test.ts`）。
+
+
 
 
