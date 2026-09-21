@@ -92,6 +92,7 @@ export function SchemaDiffWindow() {
   const [profileName, setProfileName] = useState('');
   const [profileError, setProfileError] = useState('');
   const [pendingProfileLoad, setPendingProfileLoad] = useState<SchemaDiffProfile | null>(null);
+  const profileLoadEndpointRef = useRef<SchemaDiffProfile | null>(null);
   const planAutoRequestedRef = useRef(false);
 
   const { size: tableListWidth, handleRef: tableListResizeRef } = useResizable({
@@ -130,6 +131,19 @@ export function SchemaDiffWindow() {
   }, []);
 
   useEffect(() => {
+    const profile = profileLoadEndpointRef.current;
+    const endpointMatchesProfile =
+      profile &&
+      endpoints.sourceId === profile.sourceConnectionId &&
+      endpoints.targetId === profile.targetConnectionId &&
+      endpoints.sourceDatabase === profile.sourceDatabase &&
+      endpoints.targetDatabase === profile.targetDatabase &&
+      endpoints.sourceSchema === (profile.sourceSchema ?? '') &&
+      endpoints.targetSchema === (profile.targetSchema ?? '');
+    if (pendingProfileLoad || endpointMatchesProfile) {
+      if (endpointMatchesProfile) profileLoadEndpointRef.current = null;
+      return;
+    }
     setTablePicks([]);
     setDiffs([]);
     setPlan(null);
@@ -524,6 +538,7 @@ export function SchemaDiffWindow() {
   const handleLoadProfile = useCallback(() => {
     const profile = profiles.find((item) => item.id === selectedProfileId);
     if (!profile) return;
+    profileLoadEndpointRef.current = profile;
     endpoints.setSourceId(profile.sourceConnectionId);
     endpoints.setTargetId(profile.targetConnectionId);
     endpoints.setSourceDatabase(profile.sourceDatabase);

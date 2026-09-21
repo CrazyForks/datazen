@@ -157,4 +157,36 @@ mod tests {
             .expect("reload store");
         assert_eq!(fresh.get_schema_diff_profiles().await.len(), 1);
     }
+
+    #[tokio::test]
+    async fn test_tester_round_trip_preserves_scope_options_and_type_overrides() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::init_with_path(temp.path()).await.expect("store");
+        let mut expected = profile("with-override");
+        expected.source_schema = Some("source_schema".into());
+        expected.target_schema = Some("target_schema".into());
+        expected.allow_destructive = true;
+        expected.include_indexes = false;
+        expected.require_rollback = true;
+        expected.type_overrides = vec![crate::schema_diff::types::ColumnTypeOverride {
+            table: "source_schema.users".into(),
+            column: "name".into(),
+            target_type: "VARCHAR(64)".into(),
+        }];
+
+        store
+            .save_schema_diff_profile(expected.clone())
+            .await
+            .expect("save profile");
+        let fresh = Store::init_with_path(temp.path())
+            .await
+            .expect("reload store");
+        let actual = fresh
+            .get_schema_diff_profiles()
+            .await
+            .into_iter()
+            .find(|item| item.id == expected.id)
+            .expect("profile survives reload");
+        assert_eq!(actual, expected);
+    }
 }

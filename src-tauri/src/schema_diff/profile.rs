@@ -106,6 +106,12 @@ mod tests {
         value["dbSessionId"] = serde_json::json!("runtime-session");
         value["plan"] = serde_json::json!({"statements": []});
         assert!(serde_json::from_value::<SchemaDiffProfile>(value).is_err());
+
+        let encoded = serde_json::to_string(&profile()).expect("profile serializes");
+        assert!(!encoded.contains("dbSessionId"));
+        assert!(!encoded.contains("plan"));
+        assert!(!encoded.contains("ddl"));
+        assert!(!encoded.contains("password"));
     }
 
     #[test]
