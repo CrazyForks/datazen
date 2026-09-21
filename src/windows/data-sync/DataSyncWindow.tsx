@@ -1346,22 +1346,23 @@ export function DataSyncWindow() {
       setExecuteProgress(t('sync.executingSql', { count: selected.length }));
       writeStarted = true;
       writeInFlightRef.current = true;
+      const selectedProfile = syncProfiles.find((profile) => profile.id === selectedProfileId);
+      const profileRef = selectedProfile
+        ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
+        : undefined;
       const result = tableSelections.length
-        ? await syncCommands.executeDataSync(
-            tgtConnId,
-            selected,
-            jobId,
-            targetDatabase,
-            selectedRows,
-            tableSelections,
-            syncProfiles.find((profile) => profile.id === selectedProfileId)
-              ? { id: selectedProfileId, revision: syncProfiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
-              : undefined,
-          )
-        : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase, undefined, undefined,
-            syncProfiles.find((profile) => profile.id === selectedProfileId)
-              ? { id: selectedProfileId, revision: syncProfiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
-              : undefined);
+        ? profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections, profileRef,
+            )
+          : await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections,
+            )
+        : profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId, selected, jobId, targetDatabase, undefined, undefined, profileRef,
+            )
+          : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
       setLastExecutionResult(result);
       if (result.rolledBack) {
         setErrorMsg(t('sync.rolledBack'));

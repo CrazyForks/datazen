@@ -693,12 +693,18 @@ export function DataTransferWindow() {
           };
     try {
       const selectedProfile = transferProfiles.find((profile) => profile.id === selectedProfileId);
-      const execResult = await transferCommands.execute({
+      const request = {
         planId,
         selection,
         options: { confirmedDestructive },
         jobId,
-      }, selectedProfile ? { id: selectedProfile.id, revision: selectedProfile.updatedAt } : undefined);
+      };
+      const profileRef = selectedProfile
+        ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
+        : undefined;
+      const execResult = profileRef
+        ? await transferCommands.execute(request, profileRef)
+        : await transferCommands.execute(request);
       setResult(execResult);
       setStep('result');
     } catch (e) {

@@ -540,6 +540,9 @@ impl HistoryDb {
                  ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
                  ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status, outcome=excluded.outcome, phase=excluded.phase,
+                    profile_id=excluded.profile_id, profile_revision=excluded.profile_revision,
+                    source_connection_id=excluded.source_connection_id,
+                    target_connection_id=excluded.target_connection_id,
                     finished_at=excluded.finished_at, selected_count=excluded.selected_count,
                     committed_count=excluded.committed_count, failed_count=excluded.failed_count,
                     conflict_count=excluded.conflict_count, cancelled=excluded.cancelled,
@@ -1160,6 +1163,50 @@ mod tests {
         assert_eq!(recovered.status, "interrupted");
         assert_eq!(recovered.outcome, "unknown");
         assert_eq!(recovered.rollback_outcome, "unknown");
+    }
+
+    #[test]
+    fn test_tester_migration_run_upsert_persists_resolved_connections_and_filters_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = HistoryDb::open(dir.path()).unwrap();
+        let mut run = migration_run("run-resolved", "running");
+        run.source_connection_id = None;
+        run.target_connection_id = None;
+        db.save_migration_run(&run).unwrap();
+
+        run.status = "completed".into();
+        run.outcome = "success".into();
+        run.source_connection_id = Some("source-resolved".into());
+        run.target_connection_id = Some("target-resolved".into());
+        db.save_migration_run(&run).unwrap();
+
+        let stored = db.get_migration_run("run-resolved").unwrap().unwrap();
+        assert_eq!(
+            stored.source_connection_id.as_deref(),
+            Some("source-resolved")
+        );
+        assert_eq!(
+            stored.target_connection_id.as_deref(),
+            Some("target-resolved")
+        );
+
+        for connection_id in ["source-resolved", "target-resolved"] {
+            let page = db
+                .list_migration_runs(
+                    &MigrationRunFilter {
+                        connection_id: Some(connection_id.into()),
+                        ..Default::default()
+                    },
+                    0,
+                    25,
+                )
+                .unwrap();
+            assert_eq!(
+                page.total, 1,
+                "history must be filterable by {connection_id}"
+            );
+            assert_eq!(page.items[0].id, "run-resolved");
+        }
     }
     use crate::workflow::workflows::{StepExecutionResult, StepStatus};
     use chrono::Utc;
