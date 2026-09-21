@@ -665,6 +665,7 @@ async fn run_schema(
             source.db_session_id.clone(),
             target.db_session_id.clone(),
             profile.tables.clone(),
+            profile.target_only_tables.clone(),
             profile.allow_destructive,
             Some(profile.include_indexes),
             Some(profile.type_overrides.clone()),

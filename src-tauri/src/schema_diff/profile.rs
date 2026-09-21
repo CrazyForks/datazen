@@ -22,6 +22,8 @@ pub struct SchemaDiffProfile {
     pub source_schema: Option<String>,
     #[serde(default)]
     pub target_schema: Option<String>,
+    #[serde(default)]
+    pub target_only_tables: Vec<String>,
     pub tables: Vec<String>,
     pub allow_destructive: bool,
     pub include_indexes: bool,
@@ -57,11 +59,18 @@ impl SchemaDiffProfile {
                 "schema diff profile sourceDatabase and targetDatabase are required".into(),
             );
         }
-        if self.tables.is_empty() {
+        if self.tables.is_empty() && self.target_only_tables.is_empty() {
             return Err("schema diff profile requires at least one table".into());
         }
         if self.tables.iter().any(|table| table.trim().is_empty()) {
             return Err("schema diff profile tables must not be empty".into());
+        }
+        if self
+            .target_only_tables
+            .iter()
+            .any(|table| table.trim().is_empty())
+        {
+            return Err("schema diff profile target-only tables must not be empty".into());
         }
         if self.type_overrides.iter().any(|override_| {
             override_.table.trim().is_empty()
@@ -90,6 +99,7 @@ mod tests {
             target_database: "app".into(),
             source_schema: Some("public".into()),
             target_schema: Some("public".into()),
+            target_only_tables: vec![],
             tables: vec!["public.users".into()],
             allow_destructive: false,
             include_indexes: true,
@@ -126,5 +136,13 @@ mod tests {
         value.source_database.clear();
         assert!(value.validate().is_err());
         assert!(profile().validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_target_only_tables_without_source_tables() {
+        let mut value = profile();
+        value.tables.clear();
+        value.target_only_tables = vec!["public.archive".into()];
+        assert!(value.validate().is_ok());
     }
 }

@@ -251,6 +251,27 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('forwards explicit target-only selectors without changing source selectors', async () => {
+    invokeMock.mockResolvedValueOnce(samplePlan({ tables: ['users', 'archive'] }));
+    await schemaDiffCommands.preparePlan({
+      sourceDbSessionId: 'src-target-picker',
+      targetDbSessionId: 'tgt-target-picker',
+      tableNames: ['users'],
+      targetOnlyTableNames: ['archive'],
+      allowDestructive: false,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_diff_plan', {
+      sourceDbSessionId: 'src-target-picker',
+      targetDbSessionId: 'tgt-target-picker',
+      tableNames: ['users'],
+      allowDestructive: false,
+      includeIndexes: undefined,
+      typeOverrides: undefined,
+      targetOnlyTableNames: ['archive'],
+    });
+  });
+
   it('prepareViewPlan forwards qualified selectors and normalizes requirements', async () => {
     invokeMock.mockResolvedValueOnce({
       ...samplePlan({ table: 'public.active_users', tables: ['public.active_users'] }),

@@ -230,6 +230,36 @@ mod tests {
     }
 
     #[test]
+    fn target_only_snapshot_detects_table_disappearing_after_review() {
+        let reviewed = TableSchema {
+            table_name: "archive".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "id".into(),
+                data_type: "integer".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec!["id".into()],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let disappeared = TableSchema {
+            table_name: "archive".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+
+        assert!(validate_snapshot("archive", &reviewed, &reviewed).is_ok());
+        let error = validate_snapshot("archive", &reviewed, &disappeared).unwrap_err();
+        assert!(error.contains("Target schema changed for archive"));
+    }
+
+    #[test]
     fn target_object_snapshot_detects_definition_or_identity_changes() {
         let old =
             SchemaObjectSnapshot::view(Some("public"), "active_users", "SELECT id FROM users");

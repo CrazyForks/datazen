@@ -354,6 +354,11 @@ const pack = {
   'schemaDiff.step.deploy': 'Deploy',
   'schemaDiff.noTablesFound': 'No tables found in the selected source database or schema.',
   'schemaDiff.objectsSelected': '{count} of {total} tables selected',
+  'schemaDiff.sourceOnly': 'Source only (ADD)',
+  'schemaDiff.targetOnly': 'Target only (DROP)',
+  'schemaDiff.sourceAndTarget': 'Both',
+  'schemaDiff.targetOnlyDetail':
+    'This table exists only on the target. Selecting it adds an explicit DROP TABLE operation and requires destructive approval.',
   'schemaDiff.selectTableHint': 'Select a table on the left to view schema differences.',
   'schemaDiff.reviewTarget': 'Target',
   'schemaDiff.reviewTables': 'Tables',

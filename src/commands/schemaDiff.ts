@@ -143,6 +143,7 @@ export interface SchemaDiffConfigJson {
   sourceConnectionId: string;
   targetConnectionId: string;
   tables: string[];
+  targetOnlyTables?: string[];
   allowDestructive: boolean;
   includeIndexes?: boolean;
   requireRollback?: boolean;
@@ -160,6 +161,7 @@ export interface SchemaDiffProfile {
   sourceSchema?: string | null;
   targetSchema?: string | null;
   tables: string[];
+  targetOnlyTables?: string[];
   allowDestructive: boolean;
   includeIndexes: boolean;
   requireRollback: boolean;
@@ -212,18 +214,24 @@ export const schemaDiffCommands = {
     sourceDbSessionId: string;
     targetDbSessionId: string;
     tableNames: string[];
+    targetOnlyTableNames?: string[];
     allowDestructive: boolean;
     includeIndexes?: boolean;
     typeOverrides?: ColumnTypeOverride[];
-  }) =>
-    invoke<SchemaDiffPlanIpc>('prepare_schema_diff_plan', {
+  }) => {
+    const request = {
       sourceDbSessionId: params.sourceDbSessionId,
       targetDbSessionId: params.targetDbSessionId,
       tableNames: params.tableNames,
       allowDestructive: params.allowDestructive,
       includeIndexes: params.includeIndexes,
       typeOverrides: params.typeOverrides,
-    }).then(normalizePlan),
+      ...(params.targetOnlyTableNames && params.targetOnlyTableNames.length > 0
+        ? { targetOnlyTableNames: params.targetOnlyTableNames }
+        : {}),
+    };
+    return invoke<SchemaDiffPlanIpc>('prepare_schema_diff_plan', request).then(normalizePlan);
+  },
 
   prepareViewPlan: (params: {
     sourceDbSessionId: string;

@@ -69,10 +69,27 @@ export function SchemaDiffObjectsStep({
             key={row.name}
             data-testid="schema-diff-table-row"
             data-table-name={row.name}
+            data-table-origin={row.origin}
             className="flex items-center gap-2 px-3 py-2 text-sm"
           >
             <input type="checkbox" checked={row.enabled} onChange={() => onToggle(row.name)} />
             <span className="flex-1 font-mono text-xs">{row.name}</span>
+            <span
+              data-testid={`schema-diff-table-origin-${row.name}`}
+              className={
+                row.origin === 'target-only'
+                  ? 'text-[10px] font-medium uppercase text-danger'
+                  : 'text-[10px] font-medium uppercase text-fg-muted'
+              }
+            >
+              {t(
+                row.origin === 'target-only'
+                  ? 'schemaDiff.targetOnly'
+                  : row.origin === 'source-only'
+                    ? 'schemaDiff.sourceOnly'
+                    : 'schemaDiff.sourceAndTarget',
+              )}
+            </span>
           </li>
         ))}
       </ul>

@@ -116,6 +116,7 @@ mod tests {
             target_database: "app".into(),
             source_schema: None,
             target_schema: None,
+            target_only_tables: vec![],
             tables: vec!["users".into()],
             allow_destructive: false,
             include_indexes: true,
@@ -167,6 +168,7 @@ mod tests {
         let mut expected = profile("with-override");
         expected.source_schema = Some("source_schema".into());
         expected.target_schema = Some("target_schema".into());
+        expected.target_only_tables = vec!["target_schema.archive".into()];
         expected.allow_destructive = true;
         expected.include_indexes = false;
         expected.require_rollback = true;

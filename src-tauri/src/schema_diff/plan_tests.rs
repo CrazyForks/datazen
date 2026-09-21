@@ -178,6 +178,56 @@ fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
 }
 
 #[test]
+fn explicit_target_only_picker_does_not_invent_source_snapshot() {
+    let source = schema(vec![col("id", "integer")]);
+    let target = schema(vec![col("id", "integer")]);
+    let plan = build_schema_diff_plan_with_target_only(
+        &[("users".into(), source, target)],
+        &["archive".into()],
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert_eq!(plan.tables, vec!["users", "archive"]);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql == "DROP TABLE \"archive\""));
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP TABLE \"users\"")));
+}
+
+#[test]
+fn explicit_target_only_picker_keeps_drop_rejected_by_default() {
+    let plan = build_schema_diff_plan_with_target_only(
+        &[],
+        &["archive".into()],
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: false,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("table:archive")));
+}
+
+#[test]
 fn test_tester_target_only_unknown_driver_is_not_executable() {
     let src = schema(vec![]);
     let tgt = schema(vec![col("id", "integer")]);

@@ -31,7 +31,14 @@ vi.mock('../../../commands/database', () => ({ databaseCommands: { getTables: vi
 vi.mock('../../../commands/file', () => ({ fileCommands: { saveTextWithDialog: vi.fn() } }));
 vi.mock('../../../commands/schemaDiff', async (original) => ({
   ...await original<typeof import('../../../commands/schemaDiff')>(),
-  schemaDiffCommands: { compareTableSchemas: vi.fn(), preparePlan: vi.fn(), executeDeploy: vi.fn() },
+  schemaDiffCommands: {
+    getProfiles: vi.fn().mockResolvedValue([]),
+    saveProfile: vi.fn().mockResolvedValue(undefined),
+    deleteProfile: vi.fn().mockResolvedValue(undefined),
+    compareTableSchemas: vi.fn(),
+    preparePlan: vi.fn(),
+    executeDeploy: vi.fn(),
+  },
 }));
 
 function plan(overrides: Partial<SchemaDiffPlan> = {}): SchemaDiffPlan {
@@ -70,6 +77,89 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('complete schema migration wizard journeys', () => {
+  it('selects a target-only table without sending it through source comparison', async () => {
+    vi.mocked(databaseCommands.getTables).mockImplementation(async (sessionId) =>
+      sessionId === 'source-session'
+        ? [{ name: 'users', tableType: 'table' }]
+        : [
+            { name: 'users', tableType: 'table' },
+            { name: 'archive', tableType: 'table' },
+          ],
+    );
+    render(<SchemaDiffWindow />);
+    next();
+    await screen.findByTestId('schema-diff-table-origin-archive');
+    const archiveRow = screen
+      .getAllByTestId('schema-diff-table-row')
+      .find((row) => row.getAttribute('data-table-name') === 'archive');
+    expect(archiveRow).toBeDefined();
+    expect(within(archiveRow!).getByRole('checkbox')).not.toBeChecked();
+    fireEvent.click(within(archiveRow!).getByRole('checkbox'));
+
+    next();
+    await screen.findByTestId('schema-diff-detail-panel');
+    expect(schemaDiffCommands.compareTableSchemas).toHaveBeenCalledExactlyOnceWith(
+      'source-session',
+      'target-session',
+      'users',
+    );
+    expect(screen.getByTestId('schema-diff-target-only-detail')).toBeInTheDocument();
+
+    next();
+    await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalled());
+    expect(schemaDiffCommands.preparePlan).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        tableNames: ['users'],
+        targetOnlyTableNames: ['archive'],
+        allowDestructive: false,
+      }),
+    );
+  });
+
+  it('exports and saves target-only selections as destructive profile state', async () => {
+    vi.mocked(databaseCommands.getTables).mockImplementation(async (sessionId) =>
+      sessionId === 'source-session'
+        ? [{ name: 'users', tableType: 'table' }]
+        : [
+            { name: 'users', tableType: 'table' },
+            { name: 'archive', tableType: 'table' },
+          ],
+    );
+    vi.mocked(fileCommands.saveTextWithDialog).mockResolvedValue(true);
+    render(<SchemaDiffWindow />);
+    next();
+    await screen.findByTestId('schema-diff-table-origin-archive');
+    const archiveRow = screen
+      .getAllByTestId('schema-diff-table-row')
+      .find((row) => row.getAttribute('data-table-name') === 'archive');
+    fireEvent.click(within(archiveRow!).getByRole('checkbox'));
+    next();
+    await screen.findByTestId('schema-diff-detail-panel');
+    next();
+    await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId('schema-diff-export-config'));
+    await waitFor(() => expect(fileCommands.saveTextWithDialog).toHaveBeenCalled());
+    const config = JSON.parse(vi.mocked(fileCommands.saveTextWithDialog).mock.calls[0][0]);
+    expect(config).toMatchObject({
+      tables: ['archive', 'users'],
+      targetOnlyTables: ['archive'],
+    });
+
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save'));
+    fireEvent.change(screen.getByTestId('schema-diff-profile-name'), {
+      target: { value: 'Drop archive' },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save-confirm'));
+    await waitFor(() => expect(schemaDiffCommands.saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tables: ['users'],
+        targetOnlyTables: ['archive'],
+        allowDestructive: false,
+      }),
+    ));
+  });
+
   it('honors footer confirmation and rollback transitions, then prevents replay after result', async () => {
     render(<SchemaDiffWindow />);
     await reachDeploy();

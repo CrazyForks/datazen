@@ -615,9 +615,87 @@ fn detect_type_suggestions(
     suggestions
 }
 
-/// Build a plan for one or more tables. `pairs` is (table_name, source_schema, target_schema).
-pub fn build_schema_diff_plan(
+fn plan_target_only_table(
+    table: &str,
+    target_dialect: &str,
+    allow_destructive: bool,
+    statements: &mut Vec<PlanStatement>,
+    warnings: &mut Vec<String>,
+    requirements: &mut Vec<PlanRequirement>,
+) {
+    let table = match datazen_driver_api::validate_migration_identifier(table) {
+        Ok(value) => value,
+        Err(reason) => {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: table.to_string(),
+                reason: format!("Invalid target table identifier: {reason}"),
+            });
+            return;
+        }
+    };
+    let Some(driver) = datazen_driver_api::create_driver(target_dialect) else {
+        requirements.push(PlanRequirement::Unsupported {
+            operation: table.to_string(),
+            reason: format!("No registered driver for target database: {target_dialect}"),
+        });
+        return;
+    };
+    let operation = super::operations::MigrationOperation::DropTable {
+        table: table.to_string(),
+    };
+    if !allow_destructive {
+        warnings.push(format!("Skipped destructive operation {}", operation.key()));
+        return;
+    }
+    let Some(capabilities) = driver.migration_capabilities() else {
+        requirements.push(PlanRequirement::Unsupported {
+            operation: operation.key(),
+            reason: format!(
+                "Driver {} does not expose schema migration capabilities",
+                target_dialect
+            ),
+        });
+        return;
+    };
+    let driver_operation = operation.to_driver_api();
+    if !capabilities.supports(&driver_operation) {
+        requirements.push(PlanRequirement::Unsupported {
+            operation: operation.key(),
+            reason: format!("Operation is not supported by {target_dialect}"),
+        });
+        return;
+    }
+    let Some(renderer) = driver.migration_renderer() else {
+        requirements.push(PlanRequirement::Unsupported {
+            operation: operation.key(),
+            reason: format!(
+                "Driver {} does not expose schema migration rendering",
+                target_dialect
+            ),
+        });
+        return;
+    };
+    match renderer.render(&driver_operation) {
+        Ok(statement) => statements.push(PlanStatement {
+            sql: statement.sql,
+            risk: StatementRisk::Destructive,
+            rollback_sql: statement.rollback_sql,
+            summary: statement.summary,
+        }),
+        Err(reason) => requirements.push(PlanRequirement::Unsupported {
+            operation: operation.key(),
+            reason,
+        }),
+    }
+}
+
+/// Build a plan for source tables plus explicitly selected target-only tables.
+/// `pairs` is (table_name, source_schema, target_schema). Target-only entries
+/// are rendered as DropTable operations and never represented by an invented
+/// empty source snapshot.
+pub fn build_schema_diff_plan_with_target_only(
     pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
     source_dialect: &str,
     target_dialect: &str,
     opts: PlanOptions<'_>,
@@ -657,6 +735,19 @@ pub fn build_schema_diff_plan(
         );
     }
 
+    for table in target_only_tables {
+        let deploy_table = resolve_table_for_dialect(&tgt_d, table);
+        tables.push(deploy_table.clone());
+        plan_target_only_table(
+            &deploy_table,
+            &tgt_d,
+            opts.allow_destructive,
+            &mut statements,
+            &mut warnings,
+            &mut requirements,
+        );
+    }
+
     statements = reorder_foreign_key_statements(statements);
     let primary = tables.first().cloned().unwrap_or_default();
     let completeness = rollback_completeness(&statements);
@@ -675,6 +766,17 @@ pub fn build_schema_diff_plan(
         requirements,
         type_suggestions,
     }
+}
+
+/// Build a plan for one or more source tables. `pairs` is
+/// (table_name, source_schema, target_schema).
+pub fn build_schema_diff_plan(
+    pairs: &[(String, TableSchema, TableSchema)],
+    source_dialect: &str,
+    target_dialect: &str,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_only(pairs, &[], source_dialect, target_dialect, opts)
 }
 
 /// Convenience for single-table same-dialect plans (P1 tests).
