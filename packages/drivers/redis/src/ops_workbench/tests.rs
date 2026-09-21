@@ -1187,3 +1187,7 @@ async fn test_tester_keys_is_issued_in_neither_shape_on_either_path() {
 
 mod cluster_topology;
 mod fix_round1;
+
+// [tester] 第 1 轮修复后的复测新增面：错误分类表逐类覆盖 + redis 真实 cluster
+// 路由的事实钉板（BUG-007 证据）+ `sample_window_for` 的 Sentinel 臂。
+mod fix_round1_retest;
