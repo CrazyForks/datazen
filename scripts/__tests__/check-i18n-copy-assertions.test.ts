@@ -135,4 +135,20 @@ describe('checkI18nCopyAssertions', () => {
     );
     expect(run().hits).toHaveLength(1);
   });
+
+  it('also reads the host domain packs under locales/en/', () => {
+    // The host dictionary is split into `src/locales/en/<domain>.ts` and merged
+    // by `en.ts`, so a guard that only reads `en.ts` is blind to every host term.
+    mkdirSync(join(root, 'src/locales/en'), { recursive: true });
+    writeFileSync(
+      join(root, 'src/locales/en/core.ts'),
+      "export default { 'common.importConnections': 'Import Connections' };\n",
+    );
+    writeTest(
+      "it('ok', () => {\n  screen.getByRole('menuitem', { name: 'Import Connections' });\n});\n",
+    );
+    const { hits } = run();
+    expect(hits).toHaveLength(1);
+    expect(hits[0].literal).toBe('Import Connections');
+  });
 });

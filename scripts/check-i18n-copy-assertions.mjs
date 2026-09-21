@@ -8,17 +8,24 @@
  * truth and product terminology is rewritten on demand, so an English literal
  * inside an assertion turns one copy change into N test-file changes.
  *
- * What it reports: in every `packages/drivers/<id>/ui` test file, a text query
- * (`getByText('No expiry')`), `toHaveTextContent('…')` or a translation lookup
- * compared with `.toBe('…')` whose literal is (a) English copy shaped — starts
- * uppercase, contains a space — and (b) actually present as a value in some
- * shipped dictionary (driver pack or host `src/locales`). Condition (b) keeps
- * real *data* assertions out of the report: Redis replies (`OK`, `(nil)`,
- * `ERR wrong number of arguments`), SQL text, `INFO` section names and
- * test-supplied props are not dictionary values and stay green.
+ * What it reports: in every scanned test file (default: `packages/drivers/**`),
+ * a text query (`getByText('No expiry')`), an accessible name
+ * (`getByRole('button', { name: 'Set TTL' })`), `toHaveTextContent('…')` or a
+ * translation lookup compared with `.toBe('…')` whose literal is (a) English copy
+ * shaped — starts uppercase, contains a space — and (b) actually present as a
+ * value in some shipped English dictionary: a driver pack `locales/en.ts` or a
+ * host domain pack `locales/en/<domain>.ts`. Condition (b) keeps most real *data*
+ * assertions out of the report: Redis replies (`OK`, `(nil)`, `ERR wrong number
+ * of arguments`), SQL text and `INFO` section names are not dictionary values.
  *
- * Exit code is 0 by design (advisory, not a gate). Pass `--strict` to fail on
- * hits — useful as a self-check before committing new tests.
+ * Known false-positive class, by construction of heuristic (b): a fixture that
+ * happens to reuse a dictionary wording as *data* (e.g. a dashboard run seeded
+ * with `error: 'Query failed'`, then asserted back) reads as copy. That is why
+ * this guard is advisory and why hits are reviewed, never auto-fixed.
+ *
+ * Exit code is 0 by design (advisory, not a gate) — there is no dev-time release
+ * gate on i18n (PRD §8.2). Pass `--strict` to fail on hits; useful as a
+ * self-check before committing new tests.
  */
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, resolve, dirname } from 'path';
@@ -43,6 +50,13 @@ const KEY_SHAPE_RE = /^[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+$/;
 
 const COPY_MATCHERS = [
   { re: /(?:get|query|find)(?:All)?By(?:Text|LabelText|Title|PlaceholderText)\(\s*(['"])([^'"]+)\1/ },
+  {
+    // `getByRole('button', { name: 'Set TTL' })` — an accessible name is rendered
+    // copy, so a string literal here pins the wording just as hard as getByText.
+    // The role argument is matched non-capturing so group 2 is the literal, like
+    // every other matcher below.
+    re: /(?:get|query|find)(?:All)?ByRole\(\s*['"][^'"]*['"]\s*,\s*\{\s*name:\s*(['"])([^'"]+)\1/,
+  },
   { re: /toHaveTextContent\(\s*(['"])([^'"]+)\1/ },
   {
     // `expect(getTranslation('en', key)).toBe('…')` / `expect(en[key]).toBe('…')`:
@@ -55,6 +69,15 @@ const COPY_MATCHERS = [
 ];
 
 
+/**
+ * English source-of-truth dictionaries: driver packs (`locales/en.ts`) and the
+ * host domain packs (`locales/en/<domain>.ts`, merged by `locales/en.ts`). Both
+ * ship the copy a test must not pin, so both feed the vocabulary.
+ */
+function isEnglishDictionary(rel) {
+  return /(^|\/)locales\/en\.ts$/.test(rel) || /(^|\/)locales\/en\/[^/]+\.ts$/.test(rel);
+}
+
 /** Collect every value shipped in every dictionary so only real copy is flagged. */
 function collectDictionaryValues(root) {
   const values = new Set();
@@ -64,8 +87,8 @@ function collectDictionaryValues(root) {
   }
   const entryRe = /(['"])([A-Za-z0-9_.-]+)\1\s*:\s*(['"])((?:[^'"\\]|\\.)*)\3/g;
   for (const file of files) {
-    if (!/(^|\/)locales\/|locales\//.test(relative(root, file).split('\\').join('/'))) continue;
-    if (!file.endsWith('en.ts')) continue;
+    const rel = relative(root, file).split('\\').join('/');
+    if (!isEnglishDictionary(rel)) continue;
     const source = readFileSync(file, 'utf-8');
     let m;
     while ((m = entryRe.exec(source))) {
