@@ -17,10 +17,36 @@ import { useConnectionStore } from '../../../stores/connectionStore';
 import { applyQueryStreamEvent } from '../../../lib/queryStream';
 import type { StatementResult } from '../../../types';
 import type { QueryPanel } from '../../../stores/panelTypes';
+import { enCopy } from '../../../test/enCopy';
+
+// ── i18n 解耦（原则六 第 4 类豁免 · redis-assert-policy BUG-006）─────────────
+// `useQueryExecutionGate` renders the bind-param block message through
+// `t('query.editor.param.missingValue', { token })` and hands the *rendered*
+// string to `showMessageDialog`. Pinning that whole interpolated string
+// (`'Missing value for :uid'`) re-couples a journey test to product wording, so
+// here i18n is replaced by a test-owned stub dictionary plus a key/params
+// recorder — the same idiom as the sibling `useQueryExecutionGate.test.tsx`.
+// Assertions therefore pin the i18n **key + params object** (the contract) and
+// the token (data); the English sentence is owned by the dictionary.
+const i18nCalls = vi.hoisted(() => [] as Array<{ key: string; params?: Record<string, string | number> }>);
+
+vi.mock('../../../hooks/useI18n', () => ({
+  useI18n: () => ({
+    t: (key: string, params?: Record<string, string | number>) => {
+      i18nCalls.push({ key, params });
+      const stub: Record<string, string> = {
+        // Test-owned fiction, deliberately distinct from any shipped copy.
+        'query.editor.param.missingValue': `stub-missing-param token=${params?.token ?? ''}`,
+      };
+      return stub[key] ?? `stub:${key}`;
+    },
+  }),
+}));
 
 describe('Query Execution & Asset Experience Journeys', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    i18nCalls.length = 0;
     useSettingsStore.setState({
       settings: {
         ...useSettingsStore.getState().settings,
@@ -201,10 +227,18 @@ describe('Query Execution & Asset Experience Journeys', () => {
       await act(async () => {
         result.current.handleExecute();
       });
-      expect(showMessageDialog).toHaveBeenCalledWith('Missing value for :uid', 'error');
+      // The contractual part of the block message is the i18n key + its params
+      // (which token the gate blames); the sentence is owned by the dictionary
+      // and is resolved through the test-owned stub above.
+      expect(i18nCalls).toContainEqual({
+        key: 'query.editor.param.missingValue',
+        params: { token: ':uid' },
+      });
+      expect(showMessageDialog).toHaveBeenCalledWith('stub-missing-param token=:uid', 'error');
       expect(executeQuery).not.toHaveBeenCalled();
       expect(executeSelection).not.toHaveBeenCalled();
       showMessageDialog.mockClear();
+      i18nCalls.length = 0;
 
       // Step 2: User fills only :uid, leaves :st blank
       paramValues = { 'named:uid': '1001' };
@@ -213,10 +247,15 @@ describe('Query Execution & Asset Experience Journeys', () => {
       await act(async () => {
         result.current.handleExecute();
       });
-      expect(showMessageDialog).toHaveBeenCalledWith('Missing value for :st', 'error');
+      expect(i18nCalls).toContainEqual({
+        key: 'query.editor.param.missingValue',
+        params: { token: ':st' },
+      });
+      expect(showMessageDialog).toHaveBeenCalledWith('stub-missing-param token=:st', 'error');
       expect(executeQuery).not.toHaveBeenCalled();
       expect(executeSelection).not.toHaveBeenCalled();
       showMessageDialog.mockClear();
+      i18nCalls.length = 0;
 
       // Step 3: User fills both :uid and :st -> gate opens and executes cleanly
       paramValues = { 'named:uid': '1001', 'named:st': 'active' };
@@ -231,6 +270,15 @@ describe('Query Execution & Asset Experience Journeys', () => {
         "SELECT * FROM orders WHERE user_id = 1001 AND status = 'active';",
         undefined,
       );
+    });
+
+    it('keeps the block message owned by the dictionary, so the stub above stays honest', () => {
+      // The journey asserts the key + params contract, never the sentence — this
+      // is what binds it back to the shipped entry: the key must still exist and
+      // must still interpolate the token it is handed (BUG-006).
+      const copy = enCopy('query.editor.param.missingValue');
+      expect(copy).toContain('{token}');
+      expect(copy).not.toBe('query.editor.param.missingValue');
     });
   });
 
