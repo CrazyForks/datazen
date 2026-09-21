@@ -100,6 +100,10 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 - [ ] 第 2 轮修复回合（Coder，2026-09-21）：BUG-005（测试落点重定向）→ BUG-003（构建前置无条件补齐）+
   BUG-001/002/006 文档与口径 + BUG-004 契约侧观察项 → **提交后待复测**（修复 commit `29a0698d1`；
   复测须由独立 Tester 实例执行，记录见「第 2 轮修复回合」节）
+- [x] 第 2 轮复测（独立 Tester 实例，2026-09-21）：BUG-001/002/003/005/006 复测**通过**（状态 → `已修复`，各条证据见
+  `bugs.md`）；`bash scripts/run-regression.sh` **7/7 全绿**（实跑，耗时见「第 2 轮复测记录」）；BUG-004 维持
+  契约侧观察项完成 + 外部仓移交（26 key 命名空间经主检出只读清点与契约现文一致）；**新登记 BUG-007**（契约 §2.4.2
+  `:283` 行内数字漂移，低危非阻断）→ 待协调者裁定派修；复测判定 = `TEST_DONE(PASSED)` + 未闭环清单
 
 ## 执行记录
 
@@ -222,6 +226,7 @@ R3  src/windows/connection/DocumentConnectionView.tsx:25
 | BUG-004 Pro EP 自带词条与宿主共用 `query.*`（R-5 前提失实） | 低 | 否（观察项 + 外部仓） | 任务书 R-5 改判（本记录已改）；契约 §2.4.4 补 EP/wapp 前缀要求或明确豁免；移交 editor-pro 仓裁定前缀 |
 | BUG-005 `resolve-pro.test.ts` 读写真实仓库路径（删 Pro staging、改写 `generated-pro.ts`） | 中 | **是**（测试隔离） | 把落点改到 `mkdtempSync`（`stageDir`/`proPath` 已具备覆写能力），否则本地 Pro staging 会被静默删除 |
 | BUG-006 验收标准 4 静态口径与 §2.4.2 不一致 | 低 | 否（任务书口径） | 按本记录 §1 A-15 的精确口径改写（契约无错） |
+| BUG-007 契约 §2.4.2 行内数字漂移（「单测调用 7 行」实测 15 行） | 低 | 否（文档，1 处数字） | 第 2 轮复测新登记；派 docs 改契约 `:283` 数字或改为不带行数的写法（避免 R-8 类单测扩写再次漂移） |
 
 ### 5. 待协调者裁定
 
@@ -300,6 +305,126 @@ zh-CN 5 全异值；宿主当前 **0 消费方**），按 `registerTranslations`
 **BUG-006（口径）** —— 本文件「验收标准 4」已按契约 §2.4.2 精确口径改写为三条：① 豁免 2 条
 （`redisKeyWebContextMenu.test.tsx:5,9`）；② `packages/**` 内 `setLocale(` 仅命中 `R2_FILE_CARVEOUTS` 两个文件；
 ③ 宿主生产码调用点 = `src/lib/localeSync.ts`（唯一接线）+ `src/locales/index.ts` 的文档化临时适配器。
+
+## 第 2 轮复测记录（独立 Tester 实例，2026-09-21 11:36~11:43）
+
+> 输入：修复回合 commit `29a0698d1` + hash 回填 `1b22d428a`（复测起点 HEAD `1b22d428a`，diff 基准 `da5ffc2aa`）；
+> 复测实例 = **全新 Tester**（未复用编码代理），`pwd` 自检 worktree 后执行。只测不修；唯一例外 = checklist
+> 第 3 步的可选 mutation test（`cp` 备份 → 摘除修复行 → 红 → `cp` 还原 → `git diff` 空证，见 §3）。
+> 本实例日志：`/tmp/rphase2-*.log`（`vitest-scripts` / `cargo-bug003` / `mutation-cargo` / `mutation-codegen` /
+> `regression` / `guard` / `codegen-a|b|c` / `a3` / `a5` / `tsc-all` / `vite-all` / `cidocs` / `sdk-suites`）。
+
+### 1. 变更面与边界审查（checklist 1）
+
+- 实测 `git diff --numstat da5ffc2aa..HEAD`：`scripts/resolve-pro.mjs` +68/-27、`scripts/resolve-drivers.mjs` +5/-0、
+  `scripts/__tests__/resolve-pro.test.ts` +189/-69、契约 `driver-api-dependency-boundary.md` +7/-4、
+  `bugs.md` +139/-7、`progress.md` +80/-3（后两者 = 修复回合记录，非代码）。复测起点 `git status --porcelain` = 空。
+- **`src-tauri/**` 被跟踪文件零改动**：`git diff --name-only da5ffc2aa..HEAD -- src-tauri` = 空；
+  `clearBuiltinEpStaging` 删除语义未变（仍只删 `<root>/<extension>` 子目录：`:273` / `:289` 的 `target` 计算）。
+- **resolve-pro.mjs 五个覆写口逐口对表（缺省行为与修复前逐字一致）**：
+
+| 覆写口 | 缺省回退（实测行） | 等价性判定 |
+| --- | --- | --- |
+| `clearBuiltinEpStaging(ext,{stageDir})` | `stageDir ? resolve(stageDir) : resolve(DEFAULT_BUILTIN_EP_ROOT, extension)`（`:273`） | 不传 ⇒ 原表达式逐字 |
+| `downloadPrebuiltEp({…,stageDir})` | 同上（`:289`） | 不传 ⇒ 原表达式逐字 |
+| `stageProExtension({…,stageDir,outDir})` | 透传 `packEp`；`pack-ep.mjs:445` `resolve(opts.stageDir ?? join(DEFAULT_BUILTIN_EP_ROOT, extension))` | `null ?? default` ⇒ `stageDir:null` 与不传等价 |
+| `ensureProCheckout({proDest,tmpFallbackDir})` | `proDest = DEFAULT_PRO_DEST`（`:391`）、`tmpFallbackDir = '/tmp/datazen-extension-sql-editor-pro'`（`:392`） | 原常量逐字迁为默认参数 |
+| `resolvePro({codegenPath,stageDir,outDir})` | `:473-475` `opts.codegenPath ? resolve(…) : GENERATED_PRO_TS` / `… : null` / `… : undefined` | 不传 ⇒ 原值；`writeCommunity/ProCodegen(dest=GENERATED_PRO_TS)` 本就参数化 |
+
+- 模块级 `let/var` = **0**（无全局可变状态）；生产调用方无一处传新参数；未放宽任何生产校验。
+- **resolve-drivers.mjs（BUG-003 修复）**：`mkdirSync(resolve(ROOT,'src-tauri','resources','builtin-ep'),{recursive:true})`
+  为 `main()` 首行（`:1108-1112`，先于 `wantsRestoreOnly()` 早退），无条件幂等；diff 全量 = 3 行 WHY 注释 + 1 空行
+  + 1 行 `mkdirSync`（该函数原文件已 import，无新 import 面）。文件尾自执行守卫（`:1225`）⇒ **import 无副作用**，
+  独立自证 `IMPORT_DID_NOT_CREATE_DIR`（见 §3-e）。覆盖全部 pre-cargo 路径：CI（`.github/workflows/ci.yml:119`）、
+  `with-driver-inject.mjs:123`（回归步骤 2 真实形态）、`--codegen-only`（本轮 3 次）、`--restore-only` 早退前。
+
+### 2. BUG-005 复测（测试落点重定向）
+
+- 跑前/跑后快照 `diff` = **`IDENTICAL_ZERO_CHANGE`**：`src/extensions/generated-pro.ts` size/mtime/md5 逐字段一致；
+  `src-tauri/resources/builtin-ep/` 全树一致（跑前存在且为空，filecount=0）。
+- `npx vitest run scripts` = **23 files / 246 pass / 0 fail**（基线 244 + 本回合新增 2 例，与 Coder 自报一致）。
+- stdout 真实路径泄漏检查：只剩沙箱 `…/T/resolve-pro-sandbox-*/builtin-ep/sql-editor-pro` 两处删除行；
+  `grep /Users/…` 仅命中 vitest 自带 RUN 头 ⇒ **无真实仓库路径写入**。
+- 测试源码落点审计：`GENERATED_PRO_TS` / `DEFAULT_BUILTIN_EP_ROOT` 仅纯值断言（`:215-219`）；`process.cwd()`
+  仅 `:384` 用例的只读 `existsSync` 探测（worktree 无外部树 ⇒ 早退）；其余 flow 用例写删全部落 `mkdtempSync` 沙箱。
+- 长程零变化：该快照在整轮 `run-regression.sh`（含步骤 3 全量 442 files）之后仍逐字段一致。
+
+### 3. BUG-003 复测（构建前置无条件补齐）
+
+| 场景（本实例实跑） | 命令 | 关键输出 |
+| --- | --- | --- |
+| a. codegen 路径 | `rm -rf src-tauri/resources/builtin-ep` → `node scripts/resolve-drivers.mjs --codegen-only --drivers=all` → `test -d …` | exit 0 / `DIR_OK` |
+| b. 注入路径 | 再 `rm -rf` → `node scripts/with-driver-inject.mjs --drivers=basic -- echo INJECT_PATH_OK` | `DIR_OK_AFTER_INJECT_PATH` |
+| c. cargo 全链（回归步骤 2 同形） | 再 `rm -rf` → `… with-driver-inject --drivers=basic -- env HOME=… CARGO_HOME=… RUSTUP_HOME=… cargo test -p datazen --lib` | exit 0 / `test result: ok. 1453 passed; 0 failed; 3 ignored` |
+| d. mutation（授权例外） | `cp` 备份 → 摘除 mkdir 行 → `rm -rf` → codegen → 目录仍缺失 → 同形 cargo | 红（exit 101，运行记录）：日志 `:22` `process didn't exit successfully … (exit status: 1)` + 末段原文 ``resource path `resources/builtin-ep` doesn't exist`` |
+| e. import 边界 | `import scripts/resolve-drivers.mjs` 后断言目录 | `IMPORT_DID_NOT_CREATE_DIR` |
+
+- d 还原证据：`cp` 还原后 `git diff --stat -- scripts/resolve-drivers.mjs` = 空；md5 = `845a999b60918a8724f7b606d5d45d79`
+  （与备份一致，亦与当前 HEAD 一致）⇒ 文件逐字节还原。
+- 结论：三场景全绿 + mutation 红证修复行**必要**（且红为原始报错 `resource path … doesn't exist`，非新错误）⇒ BUG-003 通过。
+
+### 4. BUG-004 独立清点（主检出只读：`packages/pro-extensions/sql-editor-pro/src/locales/en.ts`）
+
+| 项 | 实测 | 与契约/登记比对 |
+| --- | --- | --- |
+| EP 自带 key 总数 | **26** | = 契约 §2.4.4 现文 |
+| 命名空间分布 | `query.*` **24**（`:2-25`）+ `settings.editor.intention*` **2**（`:26-27`） | 契约现文「24 + 2」✔（原报告「全部落在 `query.*`」措辞已由修复回合明示修正） |
+| 与宿主同名 key | 5（全在 `query.*`）；en 3 异值/2 同值、zh-CN 5 全异值 | 与登记一致 |
+| 宿主 `query.*` 总量 / 宿主消费方 | 322 / **0** | 与登记一致 |
+| wapp 侧 `registerTranslations` / `@datazen/ui` | **0 命中** | R-5 后半句对 wapp 成立 |
+
+⇒ 契约 §2.4.4（`:310`）与实测一致、**无新缺陷**；命名空间裁定维持外部仓移交。
+
+### 5. 文档核对（checklist 4）与新增发现
+
+- §2.4.1（`:260`）「仅六个」+ 第 6 签名 `getRegisteredTranslations(locale: string): Record<string, string>`
+  vs `packages/ui/src/i18n.ts:69` / `index.ts:27` ✔；§2.1.1（`:141`）`@datazen/ui` 行已列该 API ✔。
+- §2.4.3（`:297`）「**生产码** 0 命中」+ 4 处残留（含护栏 `check-driver-import-boundaries.mjs:94`）✔；
+  §2.4.4 有 EP 观察项（`:310`，明示「不构成强制条款」）且 §2.4.3 表格 `:293` 有交叉引用 ✔；**无 EP/wapp 新增强制条款** ✔。
+- 任务书侧：验收标准 4 已改写为三条（`:80-86`，与 §2.4.2 对齐）✔；§5 五条裁定在文 ✔；「第 2 轮修复回合」节存在 ✔。
+- **新发现（已登记 BUG-007）**：契约 `:283` 括号内「单测调用 7 行」实测 **15 行**（`packages/ui/src/__tests__/i18n.test.tsx`；
+  数字在 `d250e52de` 写入时准确（7 行全为调用），R-8 commit `5328cd5e0` 扩写后未同步）——低危非阻断，详见 `bugs.md`。
+- 其余行号锚点（`:279`/`:281`/`:283`、`localeSync.ts:20,24`、`locales/index.ts:78,82`、`R2_FILE_CARVEOUTS`
+  两文件、`ALLOWLIST` 两条三元组）逐条 Read/Grep 复核一致。
+
+### 6. 全量回归 7/7（本实例实跑一次）与数字对表
+
+```text
+$ bash scripts/run-regression.sh     # EXIT=0（日志 /tmp/rphase2-regression.log）
+1  node scripts/check-driver-import-boundaries.mjs  PASS  0m00s
+2  cargo test -p datazen --lib [注入+HOME包装+复跑] PASS  0m58s（1453 passed; 0 failed; 3 ignored）
+3  npx vitest run                                   PASS  1m17s（442 files / 4572 tests）
+4  npx vitest run --config vitest.drivers.config.ts PASS  0m06s（33 / 241）
+5  node scripts/check-id-terminology.mjs            PASS  0m00s
+6  npx tsc --noEmit                                 PASS  0m08s
+7  npx vite build                                   PASS  0m06s（main-iWjiAdIb.js 1,574.66 kB）
+全量回归门禁通过 ✔
+```
+
+- 步骤顺序口径：1 秒级护栏 → 2 分钟级 cargo，**不再出现 BUG-003 首跑红**；步骤 2 目录被自动补齐（§3-c）。
+- 数字对表（对任务书/前任基线，差异全部解释）：
+  - 步骤 3 = 442/4572 = 本实例 `npx vitest run src packages/driver-sdk packages/ui`（**412/4247**，本轮实跑）
+    + `npx vitest run scripts`（**23/246**）+ wapp-sdk（5 文件/69）+ extension-points 根（2 文件/10）
+    ⇒ 442 文件 / 4572 例；extension-points/src（2 文件/34 例）已被 `src` 过滤含在 412 内，不重复计。
+  - 步骤 4 = **33/241**，与基线逐字一致；其中 redis UI 单跑 = **27/222**（本轮复跑，同基线）。
+  - tsc：all 档本轮实跑 0 error（日志 0 字节）；basic 档由回归步骤 6 覆盖（exit 0）。
+  - vite：步骤 7（basic）main chunk = **1,574.66 kB**（与基线同 hash `main-iWjiAdIb.js`）；all 档本轮另跑 =
+    **1,605.12 kB / gzip 467.15 kB**（`main-rSNK-HW9.js`，与任务书参考值一致，无体积回退）。
+- 收尾核对：`git diff --quiet Cargo.lock` = 通过（注入残留已还原）；`.driver-file-stash/` 无残留。
+- 秒级补跑：worktree 护栏 = exit 0 · **1403 files / 0 blocking / 4 advisory**（与 A-7 逐项一致）；
+  `node scripts/check-ci-docs-consistency.mjs` = exit 0（契约文档本轮改动后仍绿）。
+
+### 7. 本实例实测 vs 未做
+
+- **实测**：§1 变更面/边界逐项（含 5 覆写口对表、`src-tauri` 零改动、import 无副作用）；§2 BUG-005 快照+套件+日志审计；
+  §3 BUG-003 三场景 + mutation + 还原；§4 BUG-004 主检出只读清点；§5 文档逐行取数（含新发现 BUG-007）；
+  §6 全量回归 7/7 实跑 + 412/4247、27/222、两档 tsc/vite 抽验 + 护栏 + ci-docs。日志均在 `/tmp/rphase2-*.log`。
+- **未做（范围外/不适用，非遗留缺陷）**：GUI-1~GUI-9 真实 e2e（`pnpm e2e` / `pnpm tauri:build:webdriver`
+  本专项明令禁止，仍留给用户本地打勾）；`sql-editor-pro` 6 条 R2 advisory 的收敛（外部仓裁定）；
+  既有翻译债（已另立翻译回合，不在本轨）。
+- **判定**：BUG-001/002/003/005/006 复测**通过**（→ `已修复`）；BUG-004 维持「契约侧观察项已完成 + 外部仓移交」；
+  **新登记 BUG-007**（低危非阻断，待协调者裁定派修）；全量回归 7/7 全绿 ⇒ **`TEST_DONE(PASSED)`**，
+  未闭环清单 = BUG-007（文档数字）+ BUG-004 外部仓项 + GUI 人工项。
 
 ## 开放项（等用户，不阻塞本轨）
 

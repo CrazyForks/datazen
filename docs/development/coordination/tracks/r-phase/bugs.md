@@ -14,12 +14,20 @@
 > （BUG-004 = `契约侧观察项已完成 + 外部仓移交`）：置位 ≠ PASSED，须由独立 Tester 实例复测后由协调者标记。
 > 本回合修复 commit：`29a0698d1`（`fix(r-phase): BUG-005 测试落点重定向 + BUG-003 构建前置补齐，含契约/任务书口径修正`；
 > 本行 hash 由紧随的 hash 回填 commit 记录，见 `git log feature/r-phase`）。
+>
+> **第 2 轮复测（独立 Tester 实例，2026-09-21 11:36~11:43，worktree @ HEAD `1b22d428a`）**：BUG-001/002/003/005/006
+> 五条逐条复测**全部通过**，状态由 `待复测` 置 `已修复`（各条末尾「第 2 轮复测」小节 = 本实例真实命令与关键输出，
+> 非转抄）；BUG-004 维持「契约侧观察项已完成 + 外部仓移交」，并对其「26 key 命名空间」争议做**主检出只读独立清点**
+> （实测 24 个 `query.*` + 2 个 `settings.editor.intention*`，契约现文与实测一致，原报告「全部落在 `query.*`」的措辞
+> 已由其「修复回合」小节明示修正 ⇒ 不新增缺陷）。同轮全量回归 `bash scripts/run-regression.sh` **7/7 全绿**
+> （真实命令、耗时与数字对表见 `progress.md`「第 2 轮复测记录」）。本轮另**新登记 BUG-007**（契约 §2.4.2
+> `:283` 行内数字漂移「单测调用 7 行」→ 实测 15 行；低危、非阻断、待协调者派 docs 修，见文末）。
 
 ---
 
 ## r-phase-BUG-001 · 契约 2.4.1 / 2.1.1 少登记第 6 个公开 i18n API（`getRegisteredTranslations`）
 
-- **状态**：`待复测`（文档失配已按裁定修正；置位 ≠ PASSED，待独立 Tester 复测）
+- **状态**：`已修复`（第 2 轮独立复测通过，2026-09-21）
 - **严重度**：低（不影响运行时，但影响评审判断口径）
 - **量级**：契约文档 2 处表述
   1. §2.4.1（`docs/development/driver-api-dependency-boundary.md:260`）：「公开 API **仅五个**」+ 其下 5 个签名（`:263-269`）
@@ -83,11 +91,35 @@ packages/drivers/mongodb/ui/__tests__/localePackRegistration.test.ts:22   import
   护栏 `node scripts/check-driver-import-boundaries.mjs` 与 `npx vitest run scripts` 不受影响（本回合末次全绿，见 `progress.md` 修复回合节）。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
+### 第 2 轮复测（独立 Tester 实例，2026-09-21）
+
+复测命令与关键输出（worktree `.worktrees/datazen-r-phase` @ `feature/r-phase` HEAD `1b22d428a`，codegen `--drivers=all`）：
+
+```text
+$ grep -n "仅六个\|getRegisteredTranslations" docs/development/driver-api-dependency-boundary.md
+141: | 公共设计系统 | `@datazen/ui` … i18n 运行时 `t` / `useI18n` / `registerTranslations` / `getRegisteredTranslations`（只读快照，供工具/测试用，见 2.4.1） / `getLocale` / `setLocale` …
+260: 全部查表 / 回落 / 插值逻辑只存在于一处：…，公开 API 仅六个：
+270: getRegisteredTranslations(locale: string): Record<string, string>;  // 只读快照（浅拷贝）；未知 locale 返回 {}
+273: - 第 6 个 API `getRegisteredTranslations` 由 Wave 3 `i18n-drivers` 轨有意新增（定义 `packages/ui/src/i18n.ts:69`，导出 `packages/ui/src/index.ts:27`）…
+
+$ grep -n "export function getRegisteredTranslations" packages/ui/src/i18n.ts
+69: export function getRegisteredTranslations(locale: string): Record<string, string> {
+
+$ sed -n '23,31p' packages/ui/src/index.ts      # 导出块 = 6 函数 + 1 类型
+export {  setLocale,  getLocale,  registerTranslations,  getRegisteredTranslations,  t,  useI18n,  type I18nParams } from './i18n';
+# grep -n getRegisteredTranslations packages/ui/src/index.ts  →  27:  getRegisteredTranslations,
+```
+
+- 逐条核验：`:260` 已是「仅六个」；代码块第 6 行签名与 `i18n.ts:69` **逐字一致**；`index.ts:27` 导出行确为
+  `getRegisteredTranslations,`（`:23-31` 导出块共 6 个函数 + `I18nParams` 类型）；§2.1.1 `:141` 已补该 API 并标注
+  「只读快照，供工具/测试用，见 2.4.1」；新增 bullet（`:273`）的消费方行号 `locales/index.ts:11,108` 与驱动/包内用例路径均实读存在。
+- 判定：**通过**（无失配）。
+
 ---
 
 ## r-phase-BUG-002 · 契约 2.4.3「`generated-locales` 生产引用 0 命中」的残留枚举不完整
 
-- **状态**：`待复测`（文档口径已收敛 + 第 4 处残留已登记；置位 ≠ PASSED，待独立 Tester 复测）
+- **状态**：`已修复`（第 2 轮独立复测通过，2026-09-21）
 - **严重度**：低
 - **位置**：`docs/development/driver-api-dependency-boundary.md:295`
 
@@ -155,11 +187,34 @@ grep -rn 'generated-locales' scripts src packages e2e
   `npx vitest run scripts` 全绿（护栏 36 例夹具未受影响）。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
+### 第 2 轮复测（独立 Tester 实例，2026-09-21）
+
+```text
+$ grep -n "生产码\|4 处已知残留" docs/development/driver-api-dependency-boundary.md
+297: … 实测 `scripts/` / `src/` / `packages/` / `e2e/` 中 `DRIVER_LOCALES`、`generated-locales` 的**生产码**引用 **0 命中**（口径与 … `independent-driver-development.zh-CN.md:214`「生产码已无该标识符」一致）；仍留 **4 处已知残留**——3 处散文/忽略规则（`AGENTS.md`、`CONTRIBUTING.md`、`.gitignore`，…）与 1 处代码内常量（`scripts/check-driver-import-boundaries.mjs:94` 的 `SKIPPED_CODEGEN_FILES` …）
+
+$ grep -rn "generated-locales" scripts src packages e2e
+scripts/check-driver-import-boundaries.mjs:94:  'src/extensions/generated-locales.ts',      ← 唯一命中，与文档登记的「第 4 处」一致
+$ grep -rn "DRIVER_LOCALES" scripts src packages e2e
+（0 命中）
+$ sed -n '92,96p' scripts/check-driver-import-boundaries.mjs
+export const SKIPPED_CODEGEN_FILES = new Set([
+  'src/extensions/generated.ts',
+  'src/extensions/generated-locales.ts',
+  'src/extensions/generated-pro.ts',
+]);
+```
+
+- 判定：**通过**——现文口径为「生产码 0 命中 + 4 处已知残留」，与实测逐条一致（护栏脚本本身按裁定未改）。
+- 附带独立复核：`package.json` / `.github/workflows/release.yml` / `scripts/tauri-dev.mjs` / `scripts/resolve-drivers.mjs`
+  等 `resolve-pro.mjs` 全部生产调用点均**不传**新增 path 覆写参数（只传 `codegenOnly` / `restore` / `edition` / `proPath` / `proGit`），
+  与「默认分支行为不变」一致。
+
 ---
 
 ## r-phase-BUG-003 · 干净检出上 `cargo test -p datazen --lib` / `run-regression.sh` 步骤 2 直接编译失败（`builtin-ep` 资源目录缺失）
 
-- **状态**：`待复测`（构建前置已按裁定方案 1 修复；置位 ≠ PASSED，须由独立 Tester 以真实场景复测）
+- **状态**：`已修复`（构建前置已按裁定方案 1 修复并经独立复测，2026-09-21）
 - **严重度**：中（不阻断本轨关账——已定位并绕过取证；但破坏 A 门禁第 10 行与合并门禁的**可复现性**，
   任何新 worktree / CI 干净首跑必红）
 - **类别**：构建/环境门禁；**非本专项（驱动↔宿主解耦）引入的回归**
@@ -284,6 +339,75 @@ Caused by:
   且本缺陷的判定场景是「删目录 → codegen → cargo」，由复测 Tester 以真实场景独立验收更可靠。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
+### 第 2 轮复测（独立 Tester 实例，2026-09-21）
+
+**（1）干净态 → codegen → 绿**（`rm -rf` 后逐条实测）：
+
+```text
+$ rm -rf src-tauri/resources/builtin-ep && test -d src-tauri/resources/builtin-ep || echo DIR_REMOVED
+DIR_REMOVED
+$ node scripts/resolve-drivers.mjs --codegen-only --drivers=all        # EXIT=0
+$ test -d src-tauri/resources/builtin-ep && echo DIR_OK
+DIR_OK                       # 空目录（total 0）
+```
+
+**（2）注入路径（`run-regression.sh` 步骤 2 的真实形态）**：
+
+```text
+$ rm -rf src-tauri/resources/builtin-ep && echo DIR_REMOVED_AGAIN
+$ node scripts/with-driver-inject.mjs --drivers=basic -- echo INJECT_PATH_OK    # EXIT=0
+INJECT_PATH_OK
+$ test -d src-tauri/resources/builtin-ep && echo DIR_OK_AFTER_INJECT_PATH
+DIR_OK_AFTER_INJECT_PATH
+$ git status --porcelain ; git diff --quiet Cargo.lock ; ls -d .driver-file-stash
+（全干净 / Cargo.lock_CLEAN / NO_STASH_RESIDUE）
+```
+
+**（3）与步骤 2 同形的 cargo 命令（独立 target + HOME 沙箱）**：
+
+```text
+$ rm -rf src-tauri/resources/builtin-ep
+$ CARGO_TARGET_DIR=/tmp/datazen-rphase-target node scripts/with-driver-inject.mjs --drivers=basic -- \
+    env HOME="$PWD/.regression-home" CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup" cargo test -p datazen --lib
+EXIT=0
+test result: ok. 1453 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.61s
+$ test -d src-tauri/resources/builtin-ep && echo DIR_OK_AFTER_CARGO_PATH
+DIR_OK_AFTER_CARGO_PATH
+```
+
+**（4）可选红证（mutation test，与 Wave 4-A A-14 同法；已备份 + 还原 + 空证）**：
+
+```text
+$ cp scripts/resolve-drivers.mjs /tmp/resolve-drivers.mjs.bak && md5 -q scripts/resolve-drivers.mjs   # 845a999b60918a8724f7b606d5d45d79
+$ <临时删除 main() 首行 mkdirSync（改为注释标记）>
+$ rm -rf src-tauri/resources/builtin-ep
+$ node scripts/resolve-drivers.mjs --codegen-only --drivers=all      # CODEGEN_EXIT=0
+$ test -d src-tauri/resources/builtin-ep && echo PRESENT || echo DIR_STILL_MISSING
+DIR_STILL_MISSING (expected under mutation)                          ← 目录不再被补齐
+$ CARGO_TARGET_DIR=/tmp/datazen-rphase-target node scripts/with-driver-inject.mjs --drivers=basic -- \
+    env HOME="$PWD/.regression-home" CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup" cargo test -p datazen --lib
+MUTATION_CARGO_EXIT=101
+  resource path `resources/builtin-ep` doesn't exist                 ← 原缺陷逐字复现（热 target 下仍红）
+$ cp /tmp/resolve-drivers.mjs.bak scripts/resolve-drivers.mjs && md5 -q scripts/resolve-drivers.mjs
+845a999b60918a8724f7b606d5d45d79                                    ← 与备份逐字节一致
+$ grep -c MUTATION-TEST scripts/resolve-drivers.mjs                 # 0（标记已消失）
+$ git diff --stat                                                    # 空（Cargo.lock 注入残留已 git restore）
+```
+
+**（5）边界补充（本实例新增检查）**：
+
+- **覆盖所有 cargo 前路径**：`mkdirSync` 位于 `main()` **首行**，先于 `wantsRestoreOnly()` 早退 ⇒ 对
+  `--drivers=…`（CI `.github/workflows/ci.yml:119` 的 `node scripts/resolve-drivers.mjs --drivers=basic`）、
+  `--codegen-only`、`--restore`、无参调用一律生效；`with-driver-inject.mjs:119-127` 的 `runResolve` 正是以
+  `node scripts/resolve-drivers.mjs ${args}` 调用它，故 `run-regression.sh` 步骤 2 与 CI 均被覆盖。
+- **幂等 / 无其他副作用**：`mkdirSync(..., { recursive: true })` 幂等；本实例共触发 6 次（codegen×3、注入×2、cargo×1、
+  mutation×2）后 `git status` 始终干净、该目录仍在 `.gitignore:69` 覆盖下，未产生任何被跟踪文件。
+- **import 无副作用**（排除「vitest 导入即造目录」的掩蔽通道）：`rm -rf` 该目录后
+  `node --input-type=module -e "await import('./scripts/resolve-drivers.mjs')"` ⇒ `IMPORT_OK` 且
+  `IMPORT_DID_NOT_CREATE_DIR`（`main()` 由文件尾 `import.meta.url === pathToFileURL(process.argv[1])` 守卫）。
+  即 BUG-005 修复后的测试套件导入本模块**不会**创建该真实目录，两条修复互不冲突。
+- 判定：**通过**（真实场景绿 + mutation 红证 + 还原空证）。
+
 ---
 
 ## r-phase-BUG-004 · 任务书 B 表 R-5 前提失实：Pro EP **确有**自带词条，且与宿主共用 `query.*` 前缀（非 N/A）
@@ -386,11 +510,44 @@ Community 构建里拿到宿主文案 ⇒ 同一 UI 双版本不一致，且无�
 - **明确不做**：不改本仓任何运行时代码/词条；不代外部仓决定是否加 `pro.*` 前缀；不因该观察项给 EP/wapp 增加强制条款（在契约中已明文写「不构成强制条款」）。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
+### 第 2 轮复测（独立 Tester 实例，2026-09-21；**主检出只读清点** + worktree 只读）
+
+本缺陷原证据称「EP 的 26 个 key **全部**落在 `query.*`」，而修复回合报告称「24 个 `query.*` + 2 个 `settings.editor.intention*`」——
+两者矛盾，故本实例对 `packages/pro-extensions/sql-editor-pro/src/locales/en.ts` 做**独立逐行清点**（主检出
+`/Users/wuxiaolong/code/rust-projects/datazen`，`sql-editor-pro` 仓 @ `c60f7fc`，只读）：
+
+```text
+Read en.ts（28 行）：
+  第  2-27 行 = 26 个 key 条目
+  其中第  2-25 行 = `query.*` ……………………………………………………… 24 个
+  其中第 26-27 行 = `settings.editor.intentionActions` / `settings.editor.intentionActionsHint` … 2 个
+⇒ 实测分布 = 24 个 `query.*` + 2 个 `settings.editor.intention*`（修复回合报告正确，原「全部落 query.*」措辞错误）
+```
+
+交叉复核（同一只读口径）：
+
+| 核对项 | 实测 | 与现文一致性 |
+| --- | --- | --- |
+| EP key 总数 / 命名空间 | 26 = 24 `query.*` + 2 `settings.editor.intention*` | ✅ 契约 §2.4.4（`:310`）现文一致 |
+| 5 个同名 key 在 EP 中存在 | `query.params` / `query.paramValue` / `query.editor.param.historyLabel` / `query.editor.param.clearHistory` / `query.editor.drop.crossConnection` 全部命中（`en.ts:2-6`） | ✅ |
+| 宿主 `src/locales/en/**` 去重后 `query.*` 数 | **322**（`grep -rhoE "^\s*'query\.[A-Za-z0-9_.]+':" src/locales/en/ \| sort -u \| wc -l`） | ✅ |
+| en 侧同名取值 | 宿主 `Parameters`/`Value`/`Recent values`/`Clear history for this parameter`/`Cannot drop objects from a different connection`；EP `Parameters`/`Value`/`Recent values:`/`Clear parameter history`/`Cannot drop table from a different connection` ⇒ **3 异值 + 2 同值** | ✅ |
+| zh-CN 侧同名取值 | 宿主 `绑定参数`/`值`/`最近使用的值`/`清除此参数的历史记录`/`不能从其他连接拖入对象`；EP `参数`/`参数值`/`最近使用：`/`清除参数历史`/`无法从不同连接拖放表或列` ⇒ **5 个全部异值** | ✅ |
+| 宿主侧 5 key 消费方（`src/**` 除 `src/locales`） | 逐个精确 grep = **0**（邻近的 `query.editor.param.missingValue` 是另一个 key，不构成消费） | ✅ |
+| wapp 侧 | worktree 与主检出 `packages/wapps/**` 内 `registerTranslations` / `@datazen/ui` 均 **0 命中**（主检出含全部 wapp 包） | ✅ |
+| EP 自注册行 | `src/locales/index.ts:5` import `@datazen/ui`、`:11` `registerTranslations({ en, 'zh-CN': zhCN })` | ✅ |
+
+- 契约侧复核：§2.4.4 `:310` 观察项含「本条**不构成**对 EP/wapp 的强制条款」「本契约为 EP/wapp 明确**不加**强制前缀要求」，
+  未新增硬性条款；§2.4.3 表格 `:293` 交叉引用存在。
+- 判定：**复测通过，不新增缺陷**——契约现文与实测一致；原「全部落 `query.*`」仅存于本文件的历史证据块，且已被其
+  「修复回合」小节（见上）明示修正，结论（5 个同名 key、3 异值/2 同值、0 消费方）不受影响。BUG-004 维持
+  「契约侧观察项已完成 + 外部仓移交」，命名空间归属仍待 `sql-editor-pro` 自身仓库裁定。
+
 ---
 
 ## r-phase-BUG-005 · `scripts/__tests__/resolve-pro.test.ts` 直接读写**真实仓库路径**（`src-tauri/resources/builtin-ep/` 与 `src/extensions/generated-pro.ts`）
 
-- **状态**：`待复测`（已按裁定方案 1 修复：测试全部落点重定向到 `mkdtempSync` 沙箱，跑套件对仓库零写入；置位 ≠ PASSED，待独立 Tester 复测）
+- **状态**：`已修复`（测试落点已按裁定方案 1 重定向并快照证明零变化，2026-09-21）
 - **严重度**：中（不阻断门禁，但会静默破坏他人工作区状态、并让 `run-regression.sh` 后续步骤跑在与干净检出不同的 edition 态上）
 - **归属**：既有提交 `9a9da0bbb test(ep-packaging-ci): verify pack-ep and resolve-pro with coverage tests`（本分支祖先，非 Wave 1~4 任一轨）
 
@@ -464,11 +621,65 @@ git status： 无新增（两处产物均 gitignored）
 - **不放松保障的说明**：`ensureProCheckout` 的 `proDest` 覆写只在调用方显式传入时生效，`resolvePro` 的主流程（clone / prebuilt 下载 / staging / codegen 写入）在所有 CLI 与 CI 调用点均不传这些新参数，路径与修复前相同；`clearBuiltinEpStaging` 删除范围仍严格限定为 `stageDir/<extension>` 子目录。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
 
+### 第 2 轮复测（独立 Tester 实例，2026-09-21）
+
+**（1）跑前快照 → 跑套件 → 跑后快照比对（真实输出）**：
+
+```text
+# 跑前（11:36:25）
+$ stat -f '%N size=%z mtime=%m' src/extensions/generated-pro.ts ; md5 -q src/extensions/generated-pro.ts
+src/extensions/generated-pro.ts size=5264 mtime=1789961250
+70cf057b44a0451625f8c1937602f4c4
+$ find src-tauri/resources/builtin-ep | sort
+src-tauri/resources/builtin-ep          ← 存在且为空（filecount=0）
+
+$ npx vitest run scripts
+ Test Files  23 passed (23)
+      Tests  246 passed (246)           ← 修复基线 244 + 本回合新增 2 例，与 Coder 自报一致
+   Duration  2.33s      EXIT=0
+
+# 跑后（11:36:3x）：同一组命令
+$ diff /tmp/rphase2-bug005-before.txt /tmp/rphase2-bug005-after.txt && echo IDENTICAL_ZERO_CHANGE
+IDENTICAL_ZERO_CHANGE                   ← generated-pro.ts 的 size / mtime / md5 与 builtin-ep 全树逐字段一致
+$ git status --porcelain
+（空）
+```
+
+**（2）stdout 真实路径泄漏检查**：
+
+```text
+$ grep -n "removed staged builtin-ep" /tmp/rphase2-vitest-scripts.log
+65: [resolve-pro] removed staged builtin-ep at /var/folders/2y/…/T/resolve-pro-sandbox-H1Aia2/builtin-ep/sql-editor-pro
+81: [resolve-pro] removed staged builtin-ep at /var/folders/2y/…/T/resolve-pro-sandbox-fWIYPW/builtin-ep/sql-editor-pro
+$ grep -n "datazen-r-phase\|/Users/wuxiaolong" /tmp/rphase2-vitest-scripts.log
+2: RUN  v4.1.10 /Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-r-phase      ← vitest 自带 RUN 头，非脚本输出
+```
+
+即：**不再出现**指向真实仓库的 `[resolve-pro] removed staged builtin-ep at /Users/...` 行，两处删除均落在 `mkdtempSync` 沙箱。
+
+**（3）测试源码落点抽查（`grep DEFAULT_BUILTIN_EP_ROOT / process.cwd() / GENERATED_PRO_TS`）**：
+
+| 符号 | 用例中的用法 | 是否有仓库写入 |
+| --- | --- | --- |
+| `GENERATED_PRO_TS` | 仅 `:215-216` 的**纯值断言**（`isAbsolute` + `endsWith(src/extensions/generated-pro.ts)`） | 无（只读常量） |
+| `DEFAULT_BUILTIN_EP_ROOT` | 仅 `:217-219` 的**纯值断言**（`isAbsolute` + `endsWith(src-tauri/resources/builtin-ep)`） | 无（只读常量） |
+| `process.cwd()` | 仅 `:384` 可选夹具用例 `test_tester_resolvePro_pro_stages_builtin_ep_for_runtime_loading`：`existsSync(process.cwd()/packages/pro-extensions/sql-editor-pro/package.json)` | 无仓库写入 |
+
+- 其余 11 个 flow 用例的 codegen / stage / out / 删除落点全部来自 `makeSandbox()`（`mkdtempSync(join(tmpdir(),'resolve-pro-sandbox-'))`），`finally { sb.rm(); }` 清理。
+- 关于 `:384` 的**范围说明（非缺陷）**：该用例只**读** `process.cwd()` 定位外部 EP 源，随后 `resolvePro` 的
+  `codegenPath` / `stageDir` / `outDir` 三者均为沙箱路径；唯一落在真实磁盘上的是 `pack-ep` 在 `proPath` 内执行的
+  `npx vite build`（写该 EP **自身仓库**的 `dist/`，属其自有构建产物，非宿主仓路径），且本 worktree 无该外部树 ⇒
+  该用例直接早退（`existsSync` 为假）。BUG-005 点名的两条宿主仓路径（`src-tauri/resources/builtin-ep/` 与
+  `src/extensions/generated-pro.ts`）已确认零写入，故不构成缺陷或回归。
+- **长程零变化**：该快照在随后整轮 `bash scripts/run-regression.sh`（含步骤 3 的 `npx vitest run` = 442 files 全量）之后**仍未变化**
+  （mtime `1789961250` / md5 `70cf057b44a0451625f8c1937602f4c4` 逐字段一致），证明修复在合并门禁全链路上有效。
+- 判定：**通过**（零变化快照 + 沙箱落点 + 无真实路径输出）。
+
 ---
 
 ## r-phase-BUG-006 · 任务书验收标准 4 的静态口径与契约 §2.4.2 的精确豁免/调用点不一致（口径校正，非契约缺陷）
 
-- **状态**：`待复测`（任务书验收标准 4 已按契约 §2.4.2 精确口径改写；契约本身**无误**、未改；置位 ≠ PASSED，待独立 Tester 复测）
+- **状态**：`已修复`（验收标准 4 已按契约 §2.4.2 精确口径改写并经独立复测，2026-09-21）
 - **严重度**：低（照字面执行会得到 2 处「假阳性」，与 §2.4.2 明文冲突，影响评审判断）
 
 ### 断言原文（`tracks/r-phase/progress.md` 验收标准 4）
@@ -498,3 +709,71 @@ git status： 无新增（两处产物均 gitignored）
 - **明确不做**：不改契约文档（本缺陷契约无误）；不改 `src/locales/index.ts` 行为。
 - **自证**：改写后的三条口径与 `scripts/check-driver-import-boundaries.mjs` 实测输出一一对应（R1 = 2 条 allowlist 命中；R2 非豁免命中 = 0），见 `progress.md`「第 2 轮修复回合」节所载命令与输出。
 - **提交 hash**：见本文件顶部「第 2 轮修复回合」节所载修复 commit。
+
+### 第 2 轮复测（独立 Tester 实例，2026-09-21）
+
+**（1）改写后的验收标准 4 逐句对表（`tracks/r-phase/progress.md:80-86` 现文）**：
+
+| 口径（现文） | 独立实测（worktree @ HEAD `1b22d428a`） | 判定 |
+| --- | --- | --- |
+| ① `packages/drivers/*/ui/**` 内指向宿主 `src/` 的说明符 = 豁免 **2 条**（`redisKeyWebContextMenu.test.tsx:5,9`，且仅这 2 条） | 护栏 stdout `2 allow-listed reference(s) skipped`；`ALLOWLIST` 恰 2 条三元组（同文件 `:5` → `src/components/ui/WebContextMenu`、`:9` → `src/stores/contextMenuStore`，与实测行逐字一致）；护栏汇总 `0 blocking violation(s)` ⇒ 非豁免命中 0 | ✔ |
+| ② `packages/**` 内 `setLocale(` 仅命中 `R2_FILE_CARVEOUTS` 两个文件（其余 0） | `R2_FILE_CARVEOUTS` 字面量恰 2 个文件（护栏 `:107-110` = `packages/ui/src/i18n.ts` + `packages/ui/src/__tests__/i18n.test.tsx`）；Grep 全 `packages/**` 的 `setLocale(` 命中文件 = 恰这 2 个；护栏 `ok (1403 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` exit 0 | ✔（文件级口径成立） |
+| ③ 宿主生产码调用点 = `src/lib/localeSync.ts:20,24`（唯一接线）+ `src/locales/index.ts:78,82`（§2.4.2 文档化适配器） | `grep -n setLocale src/lib/localeSync.ts` → `:20` / `:24`；`grep -n setLocale src/locales/index.ts` → `:78` / `:82`（另有 `:13` import 与 `:34` 注释提及，按契约口径不算调用） | ✔ |
+
+**（2）契约 §2.4.2 本体行号锚点复核**：`:279`（`startLocaleSync` `:20` 播种 / `:24` 切换）、`:281`（`getTranslation` 适配器 `:78` 换 locale / `:82` 复位）、`:283`（R2 豁免两文件、`i18n.ts:34` 定义处）与实测逐行一致 ✔；契约未新增 EP/wapp 强制条款（§2.4.4 明示「不构成强制」）✔。
+
+**（3）边界遗漏（新发现 ⇒ 已登记 BUG-007，不改本条判定）**：`:283` 括号内「单测调用 7 行」现实测 15 行（R-8 单测扩写所致）；该数字只影响「行数级」口径，不影响本条 ② 的**文件级**口径，故 BUG-006 仍判通过。
+
+**判定：通过**（三条口径与护栏 / 源码实测逐项吻合；契约无需修改）。
+
+---
+
+## r-phase-BUG-007 · 契约 §2.4.2 行内计数漂移（「单测调用 7 行」实测 15 行；文档数字失配，低危非阻断）
+
+- **状态**：`待修复`（第 2 轮复测新登记，2026-09-21；只登记不修）
+- **严重度**：低（不影响运行时与门禁；但验收标准 5 要求文档抽验「路径/符号/行号/数字」零失配，该数字现为失配）
+- **发现方式**：第 2 轮复测实例的边界遗漏审查（**非** Coder 修复 diff 引入；属 Wave 4-B「契约回扫早于 R-8 单测落地」的时间差产物）
+- **位置**：`docs/development/driver-api-dependency-boundary.md:283`（§2.4.2 末段）
+
+### 断言原文（`:283`）
+
+> …当前实测：**本仓跟踪的** `packages/**` 源码中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 7 行），其余为 **0**。
+
+### 实测（worktree @ HEAD `1b22d428a`）
+
+```text
+$ grep -n "setLocale(" packages/ui/src/i18n.ts
+34:export function setLocale(locale: string): void {        # 定义处 1 行 ✔
+
+$ grep "setLocale" packages/ui/src/__tests__/i18n.test.tsx | wc -l
+17                                                          # = 1 行 import（:7 `setLocale,`，非调用）
+                                                            # + 15 行调用（:29/34/40/56/68/79/82/142/146/153/170/179/192/200/208）
+                                                            # + 1 行 JSDoc 注释提及（:100；契约自身口径「注释文字…不算调用」）
+⇒「单测调用 7 行」实测 **15 行** ✘（「其余为 0」部分仍成立）
+```
+
+### 漂移溯源（数字写入时准确，后由本轨 R-8 单测扩写放大）
+
+```text
+$ git log --oneline -S "单测调用 7 行" -- docs/development/driver-api-dependency-boundary.md
+d250e52de docs(boundaries): 回扫契约与两份驱动指南到 Wave 4 落地事实        ← 该数字写入处
+$ git show d250e52de:packages/ui/src/__tests__/i18n.test.tsx | grep -n "setLocale("
+:29 :34 :40 :56 :68 :79 :82                              ← 恰好 7 行、全为调用 ⇒ 写入时准确
+$ git merge-base --is-ancestor d250e52de 5328cd5e0 && echo BEFORE
+BEFORE                                                   ← 顺序：先写契约数字、后 R-8 单测
+$ git log --oneline -1 -- packages/ui/src/__tests__/i18n.test.tsx
+5328cd5e0 test(coordination): r-phase R-8 单测 + 缺陷登记（Wave 4-B 独立 Tester 接手收尾）   ← 该文件最后一次变更（+129/-1）
+$ git show 5328cd5e0:packages/ui/src/__tests__/i18n.test.tsx | grep -c "setLocale("
+16                                                       ← R-8 后；契约数字未同步 ⇒ 漂移
+```
+
+### 影响与边界
+
+- 不影响运行时、护栏与任何门禁：R2 豁免是**文件级**清单（护栏 `:107-110`），文件内行数增加不触发规则；护栏本轮实跑 exit 0。
+- 与第 2 轮修复回合无关：修复 diff 未触及 `:283`（BUG-002 的改写点在 `:297`）；本实例不修文档，仅登记。
+- 实际影响 = 验收标准 5「数字零失配」字面判定 + 评审者按该数字推算「残余调用规模」时的误导。
+
+### 建议修复方向（协调者裁定）
+
+- 派 docs 将 `:283` 的「（定义处 1 行 + 单测调用 7 行）」改为当前实测值（1 + 15）；
+- 或改为**不含具体行数的写法**（如「定义处 1 行 + 若干单测调用行，均在上述两文件内」），从根源上消除单测后续扩写再次漂移的隐患（更稳，推荐）。
