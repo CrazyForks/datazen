@@ -87,9 +87,12 @@ worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`ch
 ## 状态
 
 - [x] 派发 Tester → 回归执行（协调者已按任务书派出独立 Tester 实例，worktree `.worktrees/datazen-r-phase` @ `feature/r-phase`）
-- [x] TEST_DONE / 关账汇报 → **TEST_DONE(PASSED)**（Wave 4-B 收尾实例：A-1~A-15 独立复跑、
-  B 表 17 行终态、GUI-1~GUI-9 人工验收清单见 §1~§3；缺陷全部明确移交——BUG-001/002/006 属文档/口径、
-  BUG-003/005 需 Coder、BUG-004 属外部仓，见 §4；待裁定 5 条见 §5；本 commit）
+- [x] TEST_DONE / 关账汇报 → **TEST_DONE(PASSED)**（Wave 4-B 收尾实例：A-1~A-15 逐项复核——
+  本实例复跑与引用前任日志严格分列见 §1；B 表 **16 行**（末行合并 fix-redis-tests / types-to-sdk
+  两轨，共 17 个轨道项）终态见 §2；GUI-1~GUI-9 人工验收清单见 §3；缺陷全部明确移交——
+  BUG-001/002/006 属文档/口径、BUG-003/005 需 Coder、BUG-004 属外部仓，见 §4；待裁定 5 条见 §5
+  ——注：置位 commit 中此处曾写「A-1~A-15 独立复跑」「B 表 17 行」，与 §1/§2 实际口径不符，
+  已由紧随的修正 commit 据实更正）
 
 ## 执行记录
 
