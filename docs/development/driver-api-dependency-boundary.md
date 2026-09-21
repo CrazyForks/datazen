@@ -181,6 +181,8 @@ import type { KeyEntry } from '@datazen/driver-sdk';
 
   清点**不再使用** `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/`：该形态只匹配 `from`，会漏掉 `vi.mock(...)` / 动态 `import(...)` / `require(...)` 的字符串参数（Wave 2 就是这样漏掉了 8 处 mock）。唯一口径是护栏脚本 `node scripts/check-driver-import-boundaries.mjs`（`pnpm test:boundaries`，见 2.6），它扫描全部说明符字面量，并把它上面这 2 处写死为脚本内 `ALLOWLIST` 的精确三元组（规则 + 文件 + 说明符，各带原因与归属里程碑）。**新增任何一条宿主 `src/` 引用即 exit 1 阻断 CI；豁免条目失效（文件被删或违规已被修）同样报错**，防止白名单腐烂。**除这 2 处外不存在任何豁免**（禁止目录级/通配级豁免）。
 
+**阻断范围 = 本仓跟踪的源码（BUG-008 裁定）**：R1 只对**本仓 git 跟踪的源码**红。本地全量检出可能携带 gitignored 的外部仓库树——git 驱动 clone（`.gitignore` `/packages/drivers/*` 覆盖，如 `packages/drivers/superset/`）与已 stage 的 Pro EP（`packages/pro-extensions/`，每个子包是独立 git 仓库）——它们不是本仓代码。护栏在**发现违规时**对该文件逐个执行 `git check-ignore` 判定归属（绝不在遍历热路径上调用）：属外部树 → 降级为 **advisory**（仍逐条点名 `文件:行`、计入 advisory 总数，但**不影响 exit code**），输出追加 `external (untracked) repo — contract drift to be fixed in that repo, not here`，漂移由该仓库自行整改；git 不可用或报错一律按本仓跟踪处理（fail-closed，口子不会因环境损坏而放松）。**外部漂移不占 `ALLOWLIST` 额度**（上面 2 条夹具仍是唯一豁免）。当前外部漂移登记（本地 `--drivers=all` + Pro 检出实测）：**superset R1 ×2** —— `packages/drivers/superset/ui/SupersetConnectionFields.tsx:3` 与 `packages/drivers/superset/ui/SupersetSchemaTree.tsx:19`（均相对 import 宿主 `src/hooks/useI18n`，须在 superset 自身仓库换源 `@datazen/ui`，已移交、不属本轨整改范围）。
+
 ## 2.2 宿主能力取用模式（落点决策表）
 
 驱动需要「宿主侧的东西」时，按下表决策，**按顺序**问自己：
@@ -276,7 +278,9 @@ useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 
 
 同一约束在宿主内部还有**一处**、且仅限非渲染路径的用法，读者易把它误读成「第二个接线点」：`src/locales/index.ts:69-84` 的 `getTranslation(locale, key, params)` 适配器，为查外语字典在同一次同步调用内临时 `setLocale(locale)`（`:78`）并在 `finally` 复位（`:82`）。它只服务工具/测试快照、不在 React 渲染路径，且**仍在宿主内**，因此不违反「只有宿主调用 `setLocale`」；驱动与扩展不得效仿这种临时换 locale 的写法（要换语言就走宿主设置）。
 
-驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏的 **R2** 规则 lint 兜底（见 2.6）：R2 扫描 `packages/**` 的全部 `.ts/.tsx/.js/.jsx/.mjs/.cjs`，豁免表是脚本内 `R2_FILE_CARVEOUTS` 的**精确文件清单**（**不是目录级豁免**）——`packages/ui/src/i18n.ts`（`setLocale` 唯一实现所在文件，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（必须能调用才能测）。也就是说 `@datazen/ui` 包内**其它**组件出现 `setLocale(...)` 调用同样红。宿主 `src/**` 天然不在 R2 范围内，因为宿主正是唯一合法调用方。注释文字、字符串与契约声明（`setLocale(locale: string): void;`）都不算调用。当前实测：`packages/**` 中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 7 行），其余为 **0**。
+驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏的 **R2** 规则 lint 兜底（见 2.6）：R2 扫描 `packages/**` 的全部 `.ts/.tsx/.js/.jsx/.mjs/.cjs`，豁免表是脚本内 `R2_FILE_CARVEOUTS` 的**精确文件清单**（**不是目录级豁免**）——`packages/ui/src/i18n.ts`（`setLocale` 唯一实现所在文件，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（必须能调用才能测）。也就是说 `@datazen/ui` 包内**其它**组件出现 `setLocale(...)` 调用同样红。宿主 `src/**` 天然不在 R2 范围内，因为宿主正是唯一合法调用方。注释文字、字符串与契约声明（`setLocale(locale: string): void;`）都不算调用。当前实测：**本仓跟踪的** `packages/**` 源码中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 7 行），其余为 **0**。
+
+R2 的阻断范围与 R1 同为「本仓跟踪的源码」（BUG-008 裁定，机制见 2.1.2 末段与 2.6）：gitignored 外部树中的违规降级为 advisory、不阻断门禁，也不进 `ALLOWLIST`。当前外部漂移登记：已 stage 的 Pro EP `packages/pro-extensions/sql-editor-pro` 共 **6 处 R2 advisory**——`src/intentions/__tests__/intentionCodeActions.test.ts:119,141` 与 `src/locales/__tests__/locales.test.ts:28,32,36,39`（均为该 EP 自身单测切语言的合法用法；是否收敛由 editor-pro 仓库自行裁定，本仓不代其豁免、也不要求即刻整改）。
 
 ### 2.4.3 词条归属：各 package 自注册
 
@@ -338,19 +342,20 @@ function RedisConsole() {
 | 脚本 | `scripts/check-driver-import-boundaries.mjs`（导出纯函数 + `runCli()` + `process.argv[1].endsWith(...)` main 守卫，与 `check-id-terminology.mjs` / `check-module-layers.mjs` 同构） |
 | npm script | `pnpm test:boundaries` |
 | CI | `.github/workflows/ci.yml` 步骤 **`Guard driver/host import boundaries`**（位于 `Guard version consistency` 之后、`Guard i18n sync (warning only)` 之前） |
-| 本地等价 | `scripts/ci-local.sh` 步骤 `3.4/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries` |
-| 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（31 例：内联虚拟文件树 fixture 覆盖三条规则与豁免路径 + 真实仓库 `runCli` 用例。本轨新增脚本实测覆盖：行 **100%** / 语句 99.26% / 分支 95.42% / 函数 100%，未覆盖部分全部位于 `walk()` 的真实文件系统目录遍历过滤器，不影响规则与豁免逻辑） |
+| 本地等价 | `scripts/ci-local.sh` 步骤 `3.3/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries` |
+| 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（**36 例**：内联虚拟文件树 fixture 覆盖三条规则、豁免路径与 BUG-008 跟踪域分类〔ignored 外部树降 advisory / tracked 照样 blocking / 虚拟树默认全 tracked / 真实仓 predicate 命中并缓存 / git 不可用 fail-closed〕 + 真实仓库 `runCli` 用例。本轨新增脚本实测覆盖：行 **100%** / 语句 99.31% / 分支 95.72% / 函数 100%。未覆盖语句仅 2 处，位于 `walk()` 的真实文件系统目录遍历过滤器（`:444` 的 `SKIP_DIR_NAMES` continue、`:450` 的 `!entry.isFile()` continue）；其余 6 处未触发分支是 `??`/默认参数兜底（`:275`/`:305` 转义符恰在文件末尾、`:379` 取行文本兜底、`:524`/`:525` `opts.log`/`opts.error` 默认值、`:630` `opts.argv` 默认值），均非规则与豁免逻辑） |
 
 三条规则与退出码：
 
+- **阻断范围（BUG-008）**：`blocking: true` 的规则（R1/R2）**只对本仓 git 跟踪的源码红**。分类在发现违规时对单个文件执行 `git check-ignore`（`createGitIgnorePredicate`，带缓存；绝不在遍历 1400+ 文件的热路径上调用），命中 gitignored 外部树（git 驱动 clone、`packages/pro-extensions/*`）即降级为 advisory，逐条点名并追加 `external (untracked) repo — contract drift to be fixed in that repo, not here`，不影响 exit code；漂移由该仓库自行整改，**不新增 `ALLOWLIST` 条目**。git 不可用/报错一律按 tracked 处理（fail-closed，门禁不会因环境损坏被放松）。虚拟文件树（单测）默认全部视为 tracked，除非测试注入 `isIgnored`。本地 `--drivers=all` + Pro 全量检出的当前外部漂移：superset R1 ×2 + editor-pro R2 ×6（文件:行见 2.1.2 / 2.4.2），连同 R3 基线 4 处共 **12 条 advisory、exit 0**。
 - **R1**（阻断）驱动包禁引宿主：扫描 `packages/drivers/**`（`ui/**`、`locales/**`、`e2e/**` 全含）内**所有说明符字面量**并做相对路径解析——`import` / `export … from` / 动态 `import()` / `vi.mock` / `vi.doMock` / `require` 以及任何以模块路径为参数的辅助函数一律同等对待，解析结果落进宿主 `src/` 即违规。这是 2.1.2 那条 `grep "from '…'"` 口径被抛弃的原因：只匹配 `from` 会漏掉 mock/require 形态。
 - **R2**（阻断）非宿主禁调 `setLocale(`：扫描 `packages/**`，豁免只有脚本内 `R2_FILE_CARVEOUTS` 列出的**两个精确文件**——`setLocale` 的定义文件 `packages/ui/src/i18n.ts` 与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（不是整包 `packages/ui/**` 目录级豁免，`@datazen/ui` 其它组件调用照样红，见 2.4.2）；注释、字符串、契约成员声明（`setLocale(locale: string): void;`）与 `import { setLocale }` 这类不带括号的引用均不算调用。
 - **R3**（**advisory，暂不阻断**）宿主禁引驱动内部：`src/**` 相对解析进 `packages/drivers/**` 即列出，跳过 gitignored codegen `src/extensions/generated{,-locales,-pro}.ts`（那是唯一被允许的宿主→驱动边，见 2.2 第 4 行）。**现状基线非 0**（4 处：`src/locales/locales.test.ts:107`、`src/test/driverUiSetup.ts:25,26`、`src/windows/connection/DocumentConnectionView.tsx:25`），是否收紧（改造或另立豁免）已交协调者裁定；裁定前 R3 只报告不失败，`RULES.R3.blocking` 翻为 `true` 即收紧。
-- 退出码：`0` 干净 · `1` 存在阻断违规或**过期豁免** · `2` 一个文件都没扫到（防「扫描器失效却报成功」）。豁免写在脚本内 `ALLOWLIST` 常量里，形如 `(规则, 文件, 说明符)` 精确三元组 + 原因 + 归属里程碑，**禁止目录级/通配级豁免**；条目所指文件消失或违规已修，同样按过期豁免报错。
+- 退出码：`0` 干净（含「仅外部树 advisory / R3 advisory」的情形） · `1` 存在阻断违规（限本仓跟踪源码，见上条 BUG-008 阻断范围）或**过期豁免** · `2` 一个文件都没扫到（防「扫描器失效却报成功」）。豁免写在脚本内 `ALLOWLIST` 常量里，形如 `(规则, 文件, 说明符)` 精确三元组 + 原因 + 归属里程碑，**禁止目录级/通配级豁免**；条目所指文件消失或违规已修，同样按过期豁免报错。
 
 ## 2.7 契约自查清单（Reviewer / CI 预备）
 
-- [ ] `pnpm test:boundaries` 绿：驱动可见面无任何 `.../src/` 形态宿主 import。现网基线（Wave 4 护栏实测口径，非 `grep "from '…'"` 那种会漏 mock 的旧口径）= **生产码 0 处 + 夹具 2 处**（`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`，见 2.1.2）；**护栏 ALLOWLIST 只允许这 2 条，出现第 3 条即新增违规**。
+- [ ] `pnpm test:boundaries` 绿：驱动可见面无任何 `.../src/` 形态宿主 import。现网基线（Wave 4 护栏实测口径，非 `grep "from '…'"` 那种会漏 mock 的旧口径）= **生产码 0 处 + 夹具 2 处**（`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`，见 2.1.2）；**护栏 ALLOWLIST 只允许这 2 条，出现第 3 条即新增违规**。阻断只看本仓跟踪的源码：gitignored 外部树（git 驱动 clone、`packages/pro-extensions/*`）的命中以 advisory 报告、由该仓库自行整改（BUG-008，见 2.1.2 末段与 2.6），评审时既不得借此在外部树上放行新违规，也不得因外部漂移红本仓门禁。
 - [ ] 驱动 UI 的组件/工具/类型仅来自 `@datazen/ui`、`@datazen/driver-sdk`、`@datazen/extension-points`（仅 EP 类型）、npm 依赖。
 - [ ] 新共享类型为移动而非复制，宿主存量 import 零改动（薄 re-export）。
 - [ ] 新 bridge 具备：宿主模块加载期 bind、未绑定抛错文案、消费侧类型收窄、SDK 侧单测。
