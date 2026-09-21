@@ -19,13 +19,18 @@ Wave 1~4 中间各次合入只做「合并健全性校验」，完整回归统�
 | `npx vitest run --config vitest.drivers.config.ts` | **33 files / 241 pass / 0 fail** |
 | `npx vitest run src packages/driver-sdk packages/ui` | **412 files / 4243 pass / 0 fail** |
 | `npx vitest run scripts` | **22 files / 208 pass / 0 fail**（Wave 4-A 后会增加本轨新增护栏用例） |
-| `node scripts/check-driver-import-boundaries.mjs` | exit 0（Wave 4-A 新增；含 2 条夹具豁免命中） |
+| `node scripts/check-driver-import-boundaries.mjs` | exit 0（**必须在主检出跑**：worktree 缺外部树会假绿）；2 条夹具豁免命中 + 12 条 advisory（R1×2 superset / R2×6 editor-pro 单测 / R3×4 宿主引驱动内部） |
 | `node scripts/check-id-terminology.mjs` / `check-module-layers.mjs` / `check-ci-docs-consistency.mjs` | 全绿 |
 | `node scripts/i18n-sync-check.mjs` | 结构与 Wave 3 实测一致（**既有翻译债，非本专项回归**：宿主缺 1216 / 冗余 1650；redis 9 语言各缺 139、1 语言缺 72；CI 该步 `continue-on-error: true`） |
 | `cargo test -p datazen --lib`（独立 `CARGO_TARGET_DIR`） | **1453 pass / 0 fail** |
 | `npx vite build`（禁止裸 `pnpm build`，会自触发 install） | exit 0；main chunk 参考值 **1,605.12 kB / gzip 467.15 kB**（O-1 裁定「全 10 语言注册」后量级，勿因体积回退） |
 
 任何数字与基线不符都必须在报告里点名解释（新增用例数？回归？），不得默写。
+
+**硬性口径（Wave 4-A 合流门禁刚踩过的坑）**：worktree 里**不存在** gitignored 的外部树
+（`packages/drivers/{kiwi,olap,superset}` 这类 `source: git` 驱动、`packages/pro-extensions/*` 独立 git 仓），
+CI 又用 `--drivers=basic` 且 Guard 先于 codegen，所以**任何全仓静态检查必须在主检出复跑一次**才算数，
+worktree 绿不构成证据。只读脚本用 `--root=` 指主检出即可（`check-driver-import-boundaries.mjs` 已支持）。
 
 ## B. 各轨留待 R 回归项（逐项闭环，标注 PASSED / BLOCKED-需人工 / N/A）
 
@@ -90,6 +95,10 @@ Wave 1~4 中间各次合入只做「合并健全性校验」，完整回归统�
 
 ## 开放项（等用户，不阻塞本轨）
 
+- **外部仓漂移移交项**（BUG-008 裁定为 advisory，不在本专项修复）：`packages/drivers/superset`（git driver，
+  独立仓库）仍有 2 处宿主 `src/hooks/useI18n` 引用（`ui/SupersetConnectionFields.tsx:3`、
+  `ui/SupersetSchemaTree.tsx:19`），需在其**自身仓库**换源 `@datazen/ui`；`sql-editor-pro` 的 6 处
+  `setLocale` 是其单测合法用法，暂不动。R 阶段只核对这两项仍如实出现在 advisory 输出与契约文档里。
 - editor-pro 子仓 commit `c60f7fc` 已本地提交但**未 push**。
 - 既有翻译债（宿主缺 1216 / 冗余 1650；驱动 9 语言各缺 139）是否立独立翻译回合。
 - 延后里程碑：① `WebContextMenuHost` 下沉 `@datazen/ui`；② `ConfirmDialogOptions`(driver-sdk)
