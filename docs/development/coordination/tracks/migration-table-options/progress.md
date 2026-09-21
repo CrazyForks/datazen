@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+FAILED
 
 ## Scope
 
@@ -30,4 +30,16 @@ READY_FOR_TEST
 ## Commit
 
 - Coding commit: ad07a025.
-- Independent Tester verification: pending.
+- Independent Tester verification: FAILED; see `bugs.md`.
+
+## Tester verification
+
+- Driver API: 141 passed.
+- MySQL migration: 17 passed.
+- PostgreSQL migration: 17 passed.
+- SQLite driver: 58 passed.
+- Schema Diff Vitest focused suite: 7 files / 46 passed.
+- Added `test_tester` coverage for table-option UI rendering and text export.
+- `SchemaDiffPanel.tsx` targeted coverage: 97.5% statements, 81.15% branches, 100% functions, 100% lines.
+- TypeScript check, rustfmt check, and diff check passed.
+- Host injected Schema Diff build is blocked by `migration-table-options-BUG-001`.
