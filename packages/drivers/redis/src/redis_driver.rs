@@ -21,14 +21,22 @@ pub(crate) struct RedisConn {
     pub(crate) live: RedisLiveConn,
 }
 
-macro_rules! with_live_op {
-    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident| $body:expr) => {{
+/// Like [`with_live_op!`], but hands the operation the connection topology.
+///
+/// Some batch shapes are only safe on a single-node transport: a cluster
+/// connection re-folds per-command errors and pins a pipeline to one slot, so
+/// `ops_workbench` has to issue those probes command by command. The topology is
+/// read once up front — Sentinel failover swaps the connection but not the
+/// variant, so it stays valid across the retry below.
+macro_rules! with_live_op_topo {
+    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident, $topo:ident| $body:expr) => {{
         let handle = ConnectionHandle {
             id: $connection_id.to_string(),
             pool_id: $connection_id.to_string(),
         };
         let mut conns = $self.connections.write().await;
         let rc = RedisDriver::get_conn(&mut conns, &handle)?;
+        let $topo = rc.live.topology();
         RedisDriver::select_db(&mut rc.live, $db_index)
             .await
             .map_err(DriverError::QueryFailed)?;
@@ -44,6 +52,12 @@ macro_rules! with_live_op {
             result = with_redis_conn!(&mut rc.live, |$conn| $body);
         }
         result.map_err(DriverError::QueryFailed)
+    }};
+}
+
+macro_rules! with_live_op {
+    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident| $body:expr) => {{
+        with_live_op_topo!($self, $connection_id, $db_index, |$conn, _topology| $body)
     }};
 }
 
@@ -76,6 +90,21 @@ macro_rules! plugin_on_db {
             $($arg: $arg_ty,)*
         ) -> Result<$ret, DriverError> {
             with_live_op!(self, connection_id, db_index, |$conn| ($body).await)
+        }
+    };
+}
+
+/// [`plugin_on_db!`] for operations whose request shape depends on the
+/// topology; they receive it as the second closure argument.
+macro_rules! plugin_on_db_topo {
+    ($name:ident, ($($arg:ident: $arg_ty:ty),*) -> $ret:ty, |$conn:ident, $topo:ident| $body:expr) => {
+        pub async fn $name(
+            &self,
+            connection_id: &str,
+            db_index: u32,
+            $($arg: $arg_ty,)*
+        ) -> Result<$ret, DriverError> {
+            with_live_op_topo!(self, connection_id, db_index, |$conn, $topo| ($body).await)
         }
     };
 }
@@ -444,6 +473,19 @@ impl RedisDriver {
             crate::ops_observe::memory_sample(conn, limit).await
         })
     }
+
+    // Workbench KV context bar: cursor-sampled type distribution. The sample
+    // window is clamped inside the op, so an oversized `sampleLimit` never
+    // turns into an error; the topology is passed in because a cluster
+    // connection cannot carry the cross-key TYPE batch.
+    // (Plain comment: rustdoc ignores macro invocations.)
+    plugin_on_db_topo!(plugin_type_distribution, (sample_limit: Option<u64>) -> crate::ops_workbench::TypeDistribution, |conn, topology| crate::ops_workbench::type_distribution(conn, sample_limit, topology));
+
+    // Key-attribute sidebar: every attribute in one batch, degraded per field;
+    // a missing key is a successful reply with `missing: true`. On a cluster
+    // connection the same six commands are sent one at a time, which is what
+    // keeps `OBJECT FREQ` from failing the whole probe there.
+    plugin_on_db_topo!(plugin_key_object_info, (key: &str) -> crate::ops_workbench::KeyObjectInfo, |conn, topology| crate::ops_workbench::key_object_info(conn, key, topology));
 
     pub async fn plugin_slowlog_get(
         &self,

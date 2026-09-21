@@ -10,6 +10,11 @@ use datazen_driver_api::{
 };
 use serde_json::Value as JsonValue;
 
+use crate::ops_workbench::{
+    CLUSTER_TYPE_SAMPLE_LIMIT, DEFAULT_TYPE_SAMPLE_LIMIT, KEY_INFO_PIPELINE_LEN,
+    MAX_TYPE_SAMPLE_LIMIT, TYPE_PIPELINE_CHUNK,
+};
+
 fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
     let category = match id {
         id if id.starts_with("pubsub_") => CommandCategory::PubSub,
@@ -22,7 +27,9 @@ fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
         "scan_keys" | "get_key" | "get_key_raw" | "db_sizes" | "list_children" | "info"
         | "memory_sample" | "slowlog_get" | "modules_list" | "cluster_nodes" | "count_matching"
         | "scan_values" | "scan_abort" | "decode_value" | "monitor_start" | "monitor_stop"
-        | "monitor_get_buffer" => CommandCategory::Observe,
+        | "monitor_get_buffer" | "type_distribution" | "key_object_info" => {
+            CommandCategory::Observe
+        }
         _ => CommandCategory::Mutate,
     };
     let mut metadata = DriverCommandMetadata {
@@ -447,6 +454,47 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "MEMORY USAGE for a specific key",
             "redis:allow-memory-sample",
             object_schema(serde_json::json!({ "key": { "type": "string" } }), &["key"]),
+        ),
+        cmd(
+            "type_distribution",
+            "Type distribution",
+            &format!(
+                "SCAN-sampled key type counts, TYPE resolved one pipeline per {} keys \
+                 (on Cluster every key is one command, addressed to the shard that owns it, \
+                 and the sample covers one pinned shard while dbsize sums all masters); \
+                 never KEYS; reports sampled/dbsize/truncated",
+                TYPE_PIPELINE_CHUNK
+            ),
+            "redis:allow-info",
+            object_schema(
+                serde_json::json!({
+                    "dbIndex": db,
+                    "sampleLimit": { "type": "integer", "minimum": 0, "description": format!(
+                        "Sample window in keys. Defaults to {}; values above {} are clamped to {}, never rejected. \
+                         A Cluster connection clamps further to {} because it sends one command per sampled key",
+                        DEFAULT_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, CLUSTER_TYPE_SAMPLE_LIMIT
+                    ) }
+                }),
+                &[],
+            ),
+        ),
+        cmd(
+            "key_object_info",
+            "Key object info",
+            &format!(
+                "MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE in one pipeline \
+                 (on Cluster the same {} commands go one at a time, each addressed to the shard \
+                 that owns the key); the command layer adds one SELECT per call, so a call is 2 \
+                 round trips on a single node and {} on Cluster. A missing key replies \
+                 missing=true instead of failing",
+                KEY_INFO_PIPELINE_LEN,
+                KEY_INFO_PIPELINE_LEN + 1
+            ),
+            "redis:allow-memory-sample",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key }),
+                &["key"],
+            ),
         ),
         cmd(
             "info_filtered",
