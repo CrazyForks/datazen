@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_RETEST
+PASSED
 
 ## Implemented slice
 
@@ -48,9 +48,20 @@ READY_FOR_RETEST
 - Focused SQLite parser regressions and the existing nested CHECK parser test passed.
 - Focused Host Schema Diff comparison test passed.
 
+## Independent Tester retest
+
+- Retest covered the two reported boundary bugs and added test-only cases for MySQL block/line comments, quoted identifiers, SQLite line comments, and comments containing a closing parenthesis inside a CHECK predicate.
+- MySQL driver unit suite: **97 passed**; focused boundary tests: **2 passed**.
+- SQLite driver unit suite: **57 passed**; focused boundary tests: **2 passed**.
+- Driver API unit suite: **141 passed**; PostgreSQL driver unit suite: **119 passed**.
+- Injected Host Schema Diff suite: **100 passed**.
+- Schema Diff frontend suites (`schemaDiff`, panels, profile load, wizard, table names): **49 passed**.
+- Focused `SchemaDiffPanel` coverage: **96.66% statements, 83.92% branches, 100% functions, 100% lines**.
+- `npx tsc --noEmit`, `cargo fmt --all -- --check`, and `git diff --check`: passed.
+- No live PostgreSQL/MySQL journey or destructive migration was run.
+
 ## Known limits
 
-- Independent Tester must review this worktree and run the full required verification; coder self-validation is not a pass verdict.
 - SQLite CHECK add/drop requires a future table-rebuild implementation and is intentionally unsupported today.
 - CHECK expressions are not translated between database families; cross-dialect plans record an unsupported requirement.
 - Table-level engine, charset/collation, table comments, and partition metadata remain a separate follow-up slice.
@@ -59,8 +70,9 @@ READY_FOR_RETEST
 ## Tester verdict
 
 - Previous verdict: **TEST_FAILED** for `migration-schema-constraints-options-BUG-001` and `migration-schema-constraints-options-BUG-002`.
-- Current handoff: **READY_FOR_RETEST** after fixing both parser boundary cases. Independent tester retest is required.
+- Current verdict: **PASSED** after independent retest of both fixes and the focused regression suites.
 
 ## Commit
 
-- Coding commit: recorded in the READY_FOR_RETEST handoff.
+- Coding commit: `2426b710`.
+- Tester verification commit: recorded below after committing the test-only coverage and verdict.

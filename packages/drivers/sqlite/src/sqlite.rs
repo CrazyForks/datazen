@@ -964,6 +964,15 @@ mod tests {
         assert_eq!(checks[0].expression, "id > 0");
     }
 
+    #[test]
+    fn test_tester_check_parser_ignores_line_comments_and_nested_comments() {
+        let checks = parse_sqlite_check_constraints(
+            "CREATE TABLE users (id INTEGER,\n-- CHECK (line_only)\nCHECK (id > 0 /* ) fake_close */))",
+        );
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].expression, "id > 0 /* ) fake_close */");
+    }
+
     fn collect_events() -> (
         QueryStreamCallback,
         std::sync::Arc<std::sync::Mutex<Vec<QueryStreamEvent>>>,

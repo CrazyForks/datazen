@@ -4,7 +4,7 @@
 
 - 描述：MySQL `SHOW CREATE TABLE` CHECK 解析器按行直接寻找大写 `CHECK`，没有在寻找关键字前跳过 SQL 字符串。列默认值中包含 `CHECK (...)` 时会被错误识别为一个额外的 CHECK 约束。
 - 量级：P1，Schema Diff 会展示不存在的约束，并可能生成错误的 DROP CHECK 计划；真实数据库结构比对结果不正确。
-- 状态：待复测
+- 状态：已修复
 - 重现步骤：
   1. 调用 `MysqlDriver::parse_check_from_create_table`，输入 `CREATE TABLE users (\n  note varchar(64) DEFAULT 'CHECK (literal)',\n  CONSTRAINT users_age_check CHECK (age >= 0)\n)` 的 SHOW CREATE TABLE 形态。
   2. 观察解析结果。
@@ -15,7 +15,7 @@
 
 - 描述：SQLite CHECK 解析器没有跳过 SQL 注释。建表 SQL 注释中包含 `CHECK (...)` 时会被错误识别为约束。
 - 量级：P1，Schema Diff 会展示错误的 CHECK 约束；SQLite 迁移虽然当前对 CHECK 变更 fail-closed，但比较结果仍然错误。
-- 状态：待复测
+- 状态：已修复
 - 重现步骤：
   1. 调用 `parse_sqlite_check_constraints`，输入 `CREATE TABLE users (id INTEGER /* CHECK (comment_only) */, CHECK (id > 0))`。
   2. 观察解析结果。
