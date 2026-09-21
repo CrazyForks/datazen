@@ -23,7 +23,7 @@ Backend data_sync/profile.rs, store/sync_profiles.rs, commands/sync/*; frontend 
 
 ## Implementation
 
-- Commit: 83cc1d70972373c1fd6ee336cb6503ae21378519
+- Commit: 2ee43c4f21b61d5fc75e924524f128e88fb0618f
 - Added strict versioned `SyncProfile` model and `sync_profiles.json` store CRUD.
 - Added `get_sync_profiles`, `save_sync_profile`, and `delete_sync_profile` IPC with
   source/target connection existence validation and bootstrap registration.
