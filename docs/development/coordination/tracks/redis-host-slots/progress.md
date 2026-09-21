@@ -1,8 +1,8 @@
 # Track: redis-host-slots — 宿主 KV 槽位与能力判定（去硬编码）
 
 - 分支: `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375）
-- 角色: Coder → Tester
-- 状态: READY_FOR_TEST
+- 角色: Coder → Tester（已复测）
+- 状态: **PASSED**（Tester 全新实例复测，测试提交 `cbcf49cf9`；3 条非阻断登记见 `bugs.md`，F-1/F-2/F-3 可冻结）
 - Worktree: `.worktrees/datazen-redis-host-slots`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.0、§3.4、§7-1/2/4、§8-1（P0 ⑥）
 
@@ -271,3 +271,120 @@ kvSlots: {
     `src/windows/connection/__tests__/ConnectionWorkspaceHomeKvSlot.test.tsx`（112 行），
     存量 `ConnectionWorkspaceHome.test.tsx` 保持基准 687 行不变。Wave 2 若还要加屏 A 用例，
     请续写这个新文件，不要再往 687 行的存量文件里堆。
+11. **（Tester 补）E2E 不得用 wrapper 存在性判抽屉开合**：`keyPropsSidebar` 的宿主包裹层
+    `data-testid="conn-kv-key-props-sidebar"` 在 `open === false` 时**常驻 DOM**（本轨有意不卸载，
+    保驱动内部状态），收起与否由驱动组件自身返回 `null` 体现。Wave 2 的 `toHaveCount(0)` 类断言
+    必须落在驱动根节点上。详见 `bugs.md` BUG-003。
+12. **（Tester 补）`ConnectionPage.tsx:388` 仍在写 `type: 'redis-db'` 字面量**：本轨范围禁止触碰该文件，
+    R-4 的 `isKvPanel` 判定链已不依赖它，但 Wave 2 若再引入"按面板类型分支"就会重新长回字面量。
+    建议 Wave 2 任务书显式禁用 `panel.type` 上的驱动字面量。
+
+## Tester 复测记录（全新实例，测试提交 `cbcf49cf9`）
+
+判定：**PASSED**。7 项验收标准全部独立复现，F-1 / F-2 / F-3 **可按现状冻结**（建议随冻结补两句文字，
+见 BUG-001 / BUG-003）。非阻断登记 3 条 + 环境性既有红 6 条，全部记在 `bugs.md`。
+本轮未修改任何生产码，只新增/补齐测试与本文档。
+
+### 阶段 B：自报数字 vs 独立实测
+
+| 门禁 | 命令 | Coder 自报 | Tester 实测 | 判定 |
+| --- | --- | --- | --- | --- |
+| 类型 | `npx tsc --noEmit -p tsconfig.json` | 0 错误 | 0 错误（exit 0） | 一致 |
+| 定向单测 | `npx vitest run src/windows/connection src/lib` | 204 / 2068 | **205 / 2076** | 一致（+1 文件 +8 用例全为 Tester 新增） |
+| Host 全量 | `npx vitest run` | 449 / 4646，exit 0 | 合入前 **449 / 4646 exit 0**（复现）；含 Tester 测试后 **450 / 4654 exit 0** | 一致，零红 |
+| 边界 | `node scripts/check-driver-import-boundaries.mjs` | 0 blocking（1413 files / 4 advisory） | **0 blocking（1416 files / 4 advisory）**，exit 0 | 一致（文件数随新增测试文件漂移） |
+| ID 术语 | `node scripts/check-id-terminology.mjs` | ok（1730 files，5 allow-listed） | ok（**1732 files**，5 allow-listed） | 一致 |
+| 分层 / CI 文档 / 版本 | 三个 `check-*.mjs` | ok | ok（3 rules / window boundaries + toolchain / 0.2.1） | 一致 |
+| 脚本单测 | `npx vitest run scripts/__tests__` | 23 / 254 | 23 / 254 | 一致 |
+| codegen | `--codegen-only --drivers=basic` | 生成表为空 | 复现，`DRIVER_KV_SLOTS = []`，工作区干净 | 一致 |
+
+**基线数字不可复现**：自报"基线 447 / 4634、本轨新增 2 文件 / 12 用例"与 git 事实不符
+（`9b073ed46` 之父即 `ae65ae375`；`git diff --name-status` 显示 **7 新增 + 2 修改测试文件、+47 用例**
+⇒ 真实基线 442 / 4599）。"无新红"的结论仍成立，但成立理由是**改后全量 exit 0、失败集合为空**，
+不是与基线求差集。登记为 BUG-002（文档准确性，非阻断）。
+
+**codegen 探针由 Tester 自行重做**（不沿用自报结论）：临时给 `redis` 注入 3 个 `kvSlots`
+（contextBar / statusBar / connectionHome，指向**不存在**的 `packages/drivers/redis/ui/kvSlots`）
+⇒ `--codegen-only --drivers=basic` 后 `src/extensions/generated.ts:15` 为**一条合并 import**
+（3 个符号）+ 3 条注册行；再把生成的 `getDriverKvSlot` 段抽出来**实跑**：
+`redis:contextBar→CtxBar`、`redis:statusBar→StatBar`、`redis:connectionHome→Home`、
+`redis:keyPropsSidebar→undefined`（未声明槽位）、`postgresql:contextBar→undefined`、
+`mysql:connectionHome→undefined`（未声明驱动的整条路径）、空 `dbType→undefined`。
+随后 `git checkout -- scripts/resolve-drivers.mjs` + 重新 codegen 复原：`DRIVER_KV_SLOTS` 回到 `[]`、
+`git status --short` 为空、生成文件由 `.gitignore:63` 忽略 ⇒ **codegen 未进提交**。
+
+### 阶段 A：契约冻结级审阅结论
+
+- **F-1（能力位唯一真源）成立**：`KvWorkspaceCapabilities` 仅在 `src/lib/databaseMeta.ts` 定义一处，
+  `packages/driver-sdk/src/index.ts` 只做 type-only 再导出（无第二份形状）；
+  `meta` 为 `undefined` / 无 `kvWorkspace` / 位不为 `true` 三态实测均判 false；
+  `connectionHome`（槽位名）↔ `home`（能力位名）的不对称**只有一处转换**
+  （`kvWorkspaceCapabilities.ts` 的 `capabilityKeyForSlot`），`'home'` 字面量在生产码中命中 1 次；
+  新增源文本钉死断言（`kvWorkspaceCapabilities.test.ts`）⇒ 改一边必红。
+- **F-2（状态中继，本轮最重要裁定）成立**：宿主渲染路径**无裸 `getSelectedKey()`**
+  （仅 `useSyncExternalStore` 的 `getSnapshot`，测试夹具除外）；订阅/退订对称，无单向死锁；
+  两侧收到**同一个对象** —— 新增 `PanelContentRendererKvSlotState.test.tsx` 直接以
+  `createKvSlotState()` 实例穿过宿主转发链，驱动侧回显的 `data-selected-key` / `data-dirty`
+  与原子状态一致，证明中继不是复制品；原子按 `panelId` 分键，`nextPanelId` 单调
+  ⇒ 关闭重开不复用旧原子、两面板不共享；`pruneKvSlotStates` 挂在 `ContentView.tsx:206-213`
+  的 `[allPanels]` effect、与 tableData store 共用 `liveIds` ⇒ 无泄漏；
+  新增"同连接 db5/db7 双面板"反例证明切换面板不串味、回到 parked 面板复用同一原子。
+- **F-3（生成表 + 双闸）成立**：per-slot 可选性（不 import、磁盘文件不必存在）由上述探针实测；
+  同 `path` 多槽合并 1 条 import 实测；未注册槽位 / 未注册驱动均 `undefined` 实测；
+  `DRIVER_KV_SLOTS` / `DriverKvSlotEntry` / `getDriverKvSlot` / `getKvSlotComponent` /
+  `hasKvSlotCapability` / `KV_SLOT_NAMES` / `useKvWorkspaceSlots` 命名与本表一致；
+  `ComponentType<any>` **只出现在生成模板**，5 个手写新文件 `any` 计数为 0
+  （`getKvSlotComponent<T extends object>` 公开签名干净）⇒ 不立 Bug。
+- **P-3 死按钮**：能力真 ⇒ fixture 侧栏渲染；能力假 ⇒ 与今日一致（不注入任何节点）；
+  `open === false` ⇒ 驱动自身 `null`、宿主只翻 `open`（wrapper 常驻，见 BUG-003）。
+- **三态降级**：`getKvSlotComponent` 的"能力 + 贡献"双闸三态均不抛错，全部有 fixture 用例。
+- **4 个 DOM 标记真实出现在渲染输出**：`ContentToolbar.tsx:123/124`、`ContentStatusBar.tsx:50/51`、
+  `ContentViewDrawers.tsx:152/153`、`ConnectionWorkspaceHome.tsx:292/293`，每处均有断言。
+- **救援一致性**：无 TODO / FIXME / `console.log` 残留；无两套并存机制
+  （能力真源一处、槽位解析只走 `getKvSlotComponent` 一条路径、原子"增 `getKvSlotState` / 减
+  `pruneKvSlotStates`"成对）；唯一"写了没接线"= `hasAnyKvSlotCapability` / `disposeKvSlotState`
+  零生产调用者 ⇒ BUG-001（低，非阻断，可与 R-3 一并裁定）。
+
+### 阶段 C：补测清单与覆盖率
+
+Tester 新增 **1 个测试文件 + 8 个用例**（全部标注 `[tester]`）：
+
+| 文件 | 用例 | 补的是哪条未测路径 |
+| --- | --- | --- |
+| `src/windows/connection/__tests__/PanelContentRendererKvSlotState.test.tsx`（新建，2） | 中继原子身份跨宿主转发不变；`kvSlotState` 为 `undefined` 时的降级 | 宿主 → `PanelContentRenderer` → `KvView` 的透传此前无人验证 |
+| `src/windows/connection/__tests__/useKvWorkspaceSlots.test.tsx`（+4 用例 + 1 断言） | 双面板切原子不串味并复用 parked 原子；面板缺 `databaseType` 时不开面板内绑定；无 `id` 面板不建原子；capable 未贡献时屏 A 保持宿主页；`resolveKvDatabaseIndex` 非安全整数 | 原 93.61% branch 未覆盖的 102-116 / 170 行 |
+| `src/lib/__tests__/kvWorkspaceCapabilities.test.ts`（+1） | `KV_SLOT_NAMES` 与 SDK `KvSlotName` union 的源文本双向钉死 | F-1 名单漂移无人抓 |
+| `src/windows/connection/__tests__/ConnectionWorkspaceHomeKvSlot.test.tsx`（+1） | 无 `connectionContext` 时不让位 | State 3b 的空上下文分支 |
+
+**覆盖率（v8，全量 450 文件套件下实测，非子集）**：
+
+| 新增文件 | Stmts | Branch | Funcs | Lines |
+| --- | --- | --- | --- | --- |
+| `src/lib/kvSlotState.ts` | 100 | **100** | 100 | 100 |
+| `src/lib/kvWorkspaceCapabilities.ts` | 100 | **100** | 100 | 100 |
+| `src/lib/kvWorkspaceSlots.ts` | 100 | **100** | 100 | 100 |
+| `src/windows/connection/useKvWorkspaceSlots.ts` | 100 | **100**（补测前 93.61） | 100 | 100 |
+| `packages/driver-sdk/src/types/kv-slots.ts` | 纯类型文件，运行期 0 语句 / 0 分支 | — | — | — |
+
+估算方法：先逐条枚举 5 个新文件的公开行为分支（能力判定 4 态、槽位解析 3 态、
+原子生命周期 5 态、双闸降级 3 态、index 解析 5 态，共 20 条），再以 v8 的 branch 计数为准对照用例；
+补测后新增码分支覆盖 **100%**（≥80% 达标）。
+宿主 delta 文件的低分（`ContentView` 56.56 / `ContentViewDrawers` 62.31 / `PanelContentRenderer` 36.52 /
+`ConnectionWorkspaceHome` 71.64 / `ContentToolbar` 85.29 / `ContentStatusBar` 87.5）**全部来自本轨未触碰的
+存量分支**：例如 `ContentStatusBar` 未覆盖行 62-63 是既有 fallback 文本拼接、`ContentToolbar` 未覆盖行 207
+是既有 docs 按钮；本轨在 6 个宿主文件里新增的槽位分支两侧都有用例。
+
+### 阶段 D：留待 R 项可执行性核对
+
+- **①（对应 R-1）其它驱动四槽不出现**：本机可执行到"渲染输出无该节点 / 与今日一致"层
+  （能力假三态 + 4 个宿主位 fixture 断言已覆盖）；逐像素判定留 R 的 GUI 走查 —— 可执行。
+- **②（对应 R-2）Wave 2 后 P-1 填满、P-3 不再是空表**：本机**不可**验证，
+  前置条件必须写进任务书：redis meta 声明 `kvWorkspace: true` + `drivers-registry.json` 加 `kvSlots`
+  + 重新 codegen + 驱动侧真实组件落地，四者缺一则该条无从谈起。
+- **③（对应 R-6/§3.0）一连接多面板不串 selected key**：本机**已由 Tester 新用例在单元层锁住**，
+  R 阶段只需 GUI 复核 keep-alive tab 的实际切换手感 —— 已从"待验证"降级为"已验证 + GUI 复核"。
+- R-3 / R-4 / R-7 / R-8 / R-10 文字与代码事实相符，可执行；R-5（外部树盲区）与 R-9（1338 行存量债）
+  非本轨可闭环项。
+- 新增 R-11（E2E 判据不得用 wrapper 存在性）、R-12（禁止再在 `panel.type` 上写驱动字面量），见上表。
+- 本轨未跑 `pnpm e2e`（子代理不跑），未触碰 `RedisWorkbench.tsx` / `packages/drivers/**` /
+  任何 `locales/**` / `package.json`；`git diff --name-only ae65ae375..HEAD` 命中禁止路径数为 0（Tester 复核）。
