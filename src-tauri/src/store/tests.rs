@@ -612,7 +612,14 @@ async fn sync_profiles_filter_invalid_records_on_load() {
     invalid["version"] = serde_json::json!(99);
     tokio::fs::write(
         dir.path().join("sync_profiles.json"),
-        serde_json::to_vec(&serde_json::json!([valid, unknown, invalid])).unwrap(),
+        serde_json::to_vec(&serde_json::json!([
+            valid,
+            unknown,
+            invalid,
+            null,
+            "malformed-profile-record"
+        ]))
+        .unwrap(),
     )
     .await
     .unwrap();
@@ -620,6 +627,26 @@ async fn sync_profiles_filter_invalid_records_on_load() {
     let profiles = store.get_sync_profiles().await;
     assert_eq!(profiles.len(), 1);
     assert_eq!(profiles[0].id, "valid-profile");
+
+    let replacement = crate::data_sync::SyncProfile {
+        id: "replacement-profile".into(),
+        name: "Replacement sync".into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        ..profiles[0].clone()
+    };
+    store.save_sync_profile(replacement.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .get_sync_profiles()
+            .await
+            .iter()
+            .map(|profile| profile.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["valid-profile", "replacement-profile"]
+    );
+    store.delete_sync_profile("valid-profile").await.unwrap();
+    assert_eq!(store.get_sync_profiles().await, vec![replacement]);
 }
 
 #[tokio::test]
