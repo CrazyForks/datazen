@@ -1,15 +1,25 @@
 # Track: redis-assert-policy — Bug 清单
 
-> Tester 独立复测（HEAD `4cdc0c023`，基准 `ae65ae375`；本轨 3 commit / 16 文件）一次性登记。
-> 核心判据**两条都成立**：改文案不再牵动测试（8 键独立探针 ⇒ Host 443/4609 + 驱动 29/233 + `src/locales` 19/19 **全绿**），
-> 且测试仍对行为敏感（变异检验 M1~M6 逐条转红，见 progress.md「Tester 复测记录」§2）。
-> 下列 5 条均为「只测不修」登记，**不阻断 Wave 2 落刀口**；BUG-001/002 与本轨自设口径直接冲突，建议优先处理。
+> 第 1 轮登记（Tester #2，HEAD `4cdc0c023`）：核心判据**两条都成立**（改文案不再牵动测试 + 测试仍对行为敏感），
+> 下列 5 条均为「只测不修」登记。
+> **第 1 轮修复后复测（Tester #3 全新实例，HEAD `47b9a4a9f`）：判定 **TEST_FAILED（回炉）**——
+> BUG-001 / 002 / 003 / 004 四条**闭环**（逐条独立复证见 [progress.md](progress.md)「Tester 第 1 轮修复后复测记录」），
+> BUG-005 **部分闭环**（开关可用，但"加面未加形态"派生新缺陷）。
+> 同轮以「全量字典探针」（本仓**全部** 2470 个英文字面值一次性改写 → 4622 例宿主测试只红 **1** 例）
+> 与「护栏形态反证」两种新手段，另登记 BUG-006 / 007 / 008 三条**新**缺陷（见本文件末尾）。**
+> **接续复测（Tester #4，同 HEAD `47b9a4a9f`）**：前任 Tester #3 于 150 回合上限失联、其 `bugs.md` 改写与新增三条缺陷为**未提交现场**，本实例接手后**原样保留该现场**并对其每一条断言做**独立零信任复证**（本机重跑四条门禁真数字、三组反装饰变异、护栏两态与 `--dirs src,packages,e2e` 的 `scanned=561`，并逐字读取 BUG-006/007 引用的源码站点）。复证**全部与前任结论一致**，未推翻任何一条；判定维持 **TEST_FAILED（回炉）**。实跑证据见 [progress.md](progress.md)「Tester 第 1 轮修复后复测记录」。
 
 ---
 
 ## redis-assert-policy-BUG-001：`Dialog.test.tsx` 的 `Close` 归因错误——它其实由 i18n 渲染，是真·钉死词条断言，却被写进治理文档当豁免项
 
-- **状态**: 待验证(修复后) — 建议修法 1+2+3 全部落地于 commit `075d2a10c`（Rescuer 接管续做）
+- **状态**: **已修复**（Tester #3 复测通过，HEAD `47b9a4a9f`；见本条末尾"T1/T2"与 progress.md 复测记录）——
+  T1：只改宿主 `'common.close'` 值 ⇒ `Dialog(8) + ErrorBoundary(1)` **9 passed / 0 failed**（修复前该场景恰好 2 红）；
+  T2（新增的反证）：把 `src/components/ui/Dialog.tsx:8` 的 `t('common.close')` 注入摘成字面量 `'Close'`
+  ⇒ **恰好 1 红**（`× takes the close button label from i18n, not from the library default`，
+  `Unable to find an accessible element with the role "button" and name "Zqx dialog close probe"`），其余 7 条仍绿
+  ⇒ 那条"接线用例"确实有牙，不是装饰性绿；`it()` 7 → 8 与原则六第 5 类改写均已核实落盘。
+  原建议修法 1+2+3 落地于 commit `075d2a10c` + `47b9a4a9f`（Rescuer 接管续做）
   - 修法 1：`Dialog.test.tsx` 两处 `getByRole('button', { name: 'Close' })` 与 `getAllByRole('button')[0]` 改 `enCopy('common.close')`；**另加 1 条接线用例**（`registerLocale('zz-assert-probe', …)` 注入测试自造串，证明名称确实由 `t()` 渲染而非库层默认值），该类 `it()` 数 7 → 8。
   - 修法 2：`interaction-and-testing-principles.md` 原则六第 5 类豁免改为"**直连** `UiDialog` 且不传 `closeLabel`"这一真实前提，并加"同名宿主包装层普遍注入 `t()`，不可按库层默认值豁免"警示；对照表补 1 组正反例。
   - 修法 3：`progress.md` D 段定性与 R 项 2 已改写（"非缺陷/恰好同串"结论撤销）。
@@ -78,7 +88,16 @@
 
 ## redis-assert-policy-BUG-002：`ErrorBoundary.test.tsx` 的字典回读定位器在查表 miss 时静默通过（永真退化），违反本轨"不得退化成永真匹配"口径
 
-- **状态**: 待验证(修复后) — commit `075d2a10c`；按建议修法新增查表即断言取值器 `src/test/enCopy.ts` 的 `enCopy(key)`（miss / 空白值直接抛错，仍零英文字面值），并把 **三个宿主测试文件的全部裸 `en[...]` 定位**换过去：`ErrorBoundary.test.tsx`（3 条）、`MenuBar.test.tsx`（`APP_NAME`/`FILE`/`IMPORT_CONNECTIONS` 三个派生源）、`Dialog.test.tsx`（3 条，随 BUG-001 一并改）。原"三份词条非空"前置守卫已由 `enCopy` 承担（不再另设硬编码 key 列表，消除守卫与定位不共享 key 的漏洞）。口径同步写进原则六第 3 类。
+- **状态**: **已修复**（Tester #3 复测通过，HEAD `47b9a4a9f`）——
+  T3：`enCopy('common.errorZZZ')` ⇒ **`Tests 1 failed (1)`** + `Error: en dictionary miss: "common.errorZZZ" …`
+  （修复前同破坏为 `1 passed` 永真）；
+  T4：MenuBar 模块级派生源 `enCopy('menu.fileZZZ')` ⇒ **`Test Files 1 failed (1)` / `Tests no tests`**
+  （查表 miss 在 import 期即炸，响亮失败；原 M6a 的"靠 `Found multiple elements` 偶然兜住"已不再是拦截来源）；
+  T5（同类残留排查）：驱动侧 `en['redis.batchDeleteZZZ']` 与 `t('redis.batchDeleteZZZ')` **双向** typo 各 ⇒ `1 failed`
+  （`expected 'Delete selected' to be undefined` / `expected 'redis.batchDeleteZZZ' to be 'Delete selected'`），
+  因 `t()` 未注册即回显 key，故 `packages/drivers/*/ui/__tests__/localePackRegistration.test.ts` 里保留的裸 `en[...]`
+  **不会**退化成永真，本条不追加"同类漏网"；宿主三文件已无任何裸 `en[...]` 定位（Grep 全仓确认）。
+  原修法落地于 commit `075d2a10c`；按建议修法新增查表即断言取值器 `src/test/enCopy.ts` 的 `enCopy(key)`（miss / 空白值直接抛错，仍零英文字面值），并把 **三个宿主测试文件的全部裸 `en[...]` 定位**换过去：`ErrorBoundary.test.tsx`（3 条）、`MenuBar.test.tsx`（`APP_NAME`/`FILE`/`IMPORT_CONNECTIONS` 三个派生源）、`Dialog.test.tsx`（3 条，随 BUG-001 一并改）。原"三份词条非空"前置守卫已由 `enCopy` 承担（不再另设硬编码 key 列表，消除守卫与定位不共享 key 的漏洞）。口径同步写进原则六第 3 类。
   - 实跑证据（M6b 反证）：`enCopy('common.errorZZZ')` ⇒ `Error: en dictionary miss: "common.errorZZZ" …` + `Tests 1 failed (1)`（原为 `1 passed` 永真）；`enCopy('common.closeZZZ')` ⇒ Dialog `3 failed`。两次变异后 `git restore`，`git status -- src/components` 空。
   - 建议修法里的"可选加固"（`tsconfig` 给 `src/locales/en` 导 `as const` + `keyof` 收窄）属 i18n-core 面，**本轨未做**，仍留给协调者裁定。
 - **严重度**: 中（"改写而非删除"最典型失败模式的现形：断言看似在，实则查表失败也绿）
@@ -132,8 +151,12 @@
 
 ## redis-assert-policy-BUG-003：台账 D 段"扩扫 457 文件 / 0 条"与 R 项 3"4 条假阳性"互相矛盾，实跑为 4 条
 
-- **状态**: 待验证(修复后) — 本 commit 已把 `progress.md` D 表第 5 行改为"457 文件 / **4 条命中，全部为 R-3 已定性假阳性**，真钉死词条 0 条"，并在 Rescuer 续做段记录复跑口径。四条所在文件未被"顺手修掉"（仍不在本轨 diff 内）。
-  - 复跑数字与 Tester 声称一致但入口已换：`node scripts/check-i18n-copy-assertions.mjs --dirs src,packages,e2e` → 同样 4 条 `BuildStatement.test.tsx:198,220`、`ChartWidgetTile.test.tsx:139`、`RunHistoryDrawer.test.tsx:161`（原 `node -e` 内联调用仍可用，两条路径结论相同）。
+- **状态**: **已修复**（Tester #3 复测通过，HEAD `47b9a4a9f`；D 表第 5 行已改写为"4 条命中，全部为 R-3 已定性假阳性，真钉死词条 0 条"，矛盾消除）
+  - **但同一行的文件数在 HEAD 已失真**：D 段照抄的 `457` 实跑为 **`561`**（本 commit 后 `TEST_FILE_RE` 放宽了 `specs/` ⇒ 面变大），
+    且"真钉死词条 0 条"这句在全量字典探针下被证伪（至少 1 条真耦合，见 **BUG-006**）。二者另立新条，见 **BUG-008**。
+  - 复现口径核对：`node -e "…checkI18nCopyAssertions({dirs:['src','packages','e2e'],…})"` → `scanned=561 hits=4 code=0`；
+    四条命中位置与本条登记时**逐字相同**（`BuildStatement.test.tsx:198,220` / `ChartWidgetTile.test.tsx:139` / `RunHistoryDrawer.test.tsx:161`），
+    四条所在文件仍不在 `git diff ae65ae375..HEAD` 的 20 文件名单内（未被"顺手修掉"，符合任务书 §5.5）。
 - **严重度**: 低（纯台账准确性；但它是 Wave 2 / R 阶段的交接依据）
 - **位置**: `tracks/redis-assert-policy/progress.md:96`（D 表第 5 行"…457 个测试文件 / 0 条钉死词条断言"）↔ `:119`（R 项 3：实测扩扫 `src` 后 4 条）
 - **描述（含量级）**: 同一条"扩扫"结论在两处给了相反的数字。实测 `dirs = ['src','packages','e2e']`：**scanned = 457（与声称完全一致）、hits = 4、code = 0**，
@@ -160,8 +183,13 @@
 
 ## redis-assert-policy-BUG-004：护栏 `KEY_SHAPE_RE` 短路不可达（死分支），对应单测名称夸大了它实际证明的东西
 
-- **状态**: 待验证(修复后) — commit `075d2a10c`；采建议修法 **(a)**（删掉 `KEY_SHAPE_RE` 与该 `continue`），未采 (b)：把空格门槛挪到 key 规则之后属改动默认口径方向，仍留协调者裁定。
-  - 单测 `'does not treat an untranslated i18n key as copy'` 的注释已改为诚实口径：真正排除 `redis.noExpiry` 的是 `COPY_SHAPE_RE`（要求首字母大写）+ 空格门槛，key 形态本身不可能匹配；该用例保留为"门槛若被放宽，key 形态仍不得算文案"的回归守卫（**未删除**）。
+- **状态**: **已修复**（Tester #3 复测通过，HEAD `47b9a4a9f`；采建议修法 (a)）
+  - Grep 确认 `KEY_SHAPE_RE` 与那条不可达 `continue` 已从 `scripts/check-i18n-copy-assertions.mjs` 全文消失（0 处引用），
+    第 221-225 行注释亦改为诚实口径（真正排除类 key 串的是 `COPY_SHAPE_RE` 的首字母大写要求 + 空格门槛，key 形态本身不可能匹配）。
+  - 覆盖率独立复跑：`npx vitest run scripts/__tests__/check-i18n-copy-assertions.test.ts --coverage --coverage.include='scripts/check-i18n-copy-assertions.mjs'`
+    ⇒ **19 passed**，`Uncovered Line` 列为空（默认 reporter 显示 `All files 100%` 四列）。
+  - 该用例 `'does not treat an untranslated i18n key as copy'` **未删除**，作为"门槛若被放宽，key 形态仍不得算文案"的回归守卫保留；
+    原重跑证据保留：
   - 实跑覆盖率：`npx vitest run scripts/__tests__/check-i18n-copy-assertions.test.ts --coverage --coverage.include='scripts/check-i18n-copy-assertions.mjs'` → Stmts / Branch / Funcs / Lines **全部 100%**，`Uncovered` 行为空（修复前 Branch 98.07% = 38/39、唯一未覆盖即该死分支）；该文件用例 15 → **19 passed**。
 - **严重度**: 低（无行为影响；属"测试名不副实"，正是本轨要消灭的类别）
 - **位置**: `scripts/check-i18n-copy-assertions.mjs:156-157`；`scripts/__tests__/check-i18n-copy-assertions.test.ts:122`（`'does not treat an untranslated i18n key as copy'`）
@@ -179,7 +207,25 @@
 
 ## redis-assert-policy-BUG-005：护栏的能力边界未写进"为什么"——单词文案与 `e2e/specs/**` 结构性看不见，而 8-4 落刀口 4 个词里 3 个是单词
 
-- **状态**: 待验证(修复后) — commit `075d2a10c`；按建议修法加了两条 opt-in，**默认口径一字未改**（默认仍 `SCAN_DIRS=['packages/drivers']` + 双词词典启发式，默认/`--strict` 无命中即 0）：
+- **状态**: **部分闭环**（Tester #3 复测，HEAD `47b9a4a9f`）——**开关本身可用（判据 1 通过）**，
+  但"加宽的面"没带上"加宽的形态"，`--dirs e2e` 对 WebdriverIO 实际钉文案写法 **0 命中** ⇒ 本条 D 段第 2 点
+  原结论"e2e 现状干净"**不成立**，真实结论见 **BUG-007**；`--terms` 另有两处未写进能力边界的形态盲区，见 **BUG-008**。
+
+  T8（`--terms` 独立复证，用**临时新建探针文件**跑完即 `rm`，词典零 diff）：
+  - 驱动侧（单词文案，修复前 0 命中的那一类）：临时 `packages/drivers/redis/ui/__tests__/zzGuardProbe.test.ts`
+    写 `screen.getByRole('tab', { name: 'Console' })` ⇒ `--terms redis.console --strict`
+    → `1 copy-literal assertion(s) pinned` + `exit=1`；**同一探针文件存在时不带 `--terms` 仍**
+    `ok (34 driver test files scanned, 0 copy literals pinned)` / `exit=0` ⇒ 开关确实穿透了双词门槛，而不是靠面变宽。
+  - 宿主侧 + e2e 侧：同法各注入一条（`src/components/__tests__/zzGuardProbe.test.ts` 的
+    `getByRole('button', { name: 'Persist' })` 与 `e2e/specs/zzGuardProbe.ts` 的 `$('button[aria-label="Persist"]')`）
+    ⇒ `--dirs src,packages,e2e --terms redis.console,redis.persist --strict` 把**三处探针全部报出**（均带 `(watchlist: …)` 标注）。
+  - 读回式不误报：`` aria-label="${t('common.close')}" `` 在 watchlist 命中路径下保持安静（单测已锁，实测亦核对）。
+  - 默认口径核对（零 diff）：`node scripts/check-i18n-copy-assertions.mjs` 与加 `--strict` 均逐字
+    `ok (33 driver test files scanned, 0 copy literals pinned)` / `exit=0` ⇒ "默认口径一字未改"声称属实。
+  - T9（`--terms` 假阳性面，属 BUG-008）：watchlist 含 `redis.console` 时，`--dirs packages` 会命中
+    `packages/ui/src/__tests__/i18n.test.tsx:151` 的 `'Console'` —— 那是**测试自造的 stub 字典值**（原则六第 4 类豁免），
+    护栏无法区分"字典里的值"与"测试自己写的假字典里的值"。
+  原建议修法 1+2+3 落地于 commit `075d2a10c`：按建议修法加了两条 opt-in，**默认口径一字未改**（默认仍 `SCAN_DIRS=['packages/drivers']` + 双词词典启发式，默认/`--strict` 无命中即 0）：
   1. `--terms <逗号分隔 i18n key>`：从字典回读这些 key 的**当前值**再匹配，绕开双词门槛 ⇒ 单词文案可见；观察名单以 key 表达，调用串本身零文案；解析不到的 key 显式 `warn` 并在 `--strict` 下计入非 0（"typo 的 term 保护不了任何东西"）。
   2. `--dirs <根清单>`：加宽扫描面；`TEST_FILE_RE` 增 `(^|/)specs/[^/]+\.tsx?$`，使 WebdriverIO 交互规格真正进面，并新增 `aria-label="…"` 选择器形态（读回式 `` aria-label="${t('…')}" `` 只截到 `${t(` ⇒ 不误报，已单测锁住）。
   3. 能力边界写进原则六第 7 条（新增"能力边界（绿灯不等于干净）"+"两个 opt-in 开关"两段）与本台账 R 项 3。
@@ -194,6 +240,11 @@
   2. **`e2e/specs/**` 不在扫描面**：`e2e` 面实测只有 **3 个文件**通过 `TEST_FILE_RE`（`e2e/contract/__tests__/{fixtures,plan,scripts}.test.ts`，纯规划器单测）；
      WebdriverIO 真实交互规格 `e2e/specs/*.ts` 既不带 `.test.ts` 也不在 `__tests__/` 下 ⇒ **0 命中**。台账 D 段"扩扫 `src packages e2e`"给出的印象是 e2e 交互面被覆盖，实际恰好是没有交互断言的那 3 个文件。
      本轮实测 e2e 现状是**干净的**：`e2e/specs/export-import.ts:249,285` 已经用 `t('common.close')` 运行时回读，没有钉死串（属正例，无需登记缺陷，也进一步支持"无需补 E2E"的论证）。
+     **【Tester #3 更正：该"干净"结论撤销】** —— 修好 `TEST_FILE_RE` 后 `e2e` 面实测从 3 个文件涨到 **106 个**，
+     但护栏只认 `getByRole({name:'…'})` / `aria-label="…"` / `.toBe('…')` 三种形态，而 WDIO 规格里钉文案的真实写法是
+     `.includes('English')` / `findAndClickButton(['执行记录','History'])` / `openDbContextMenu(…, 'Compare Data')` 这类
+     helper 传参与子串断言 ⇒ **命中仍是 0 条，而真实钉死点实测 57 处 / 25 个文件**（判据：字面值与英文字典值逐字相等，已剔去
+     `SELECT` / `INSERT` / `NOT NULL` 这类 SQL 数据串），量级与文件清单见 **BUG-007**。
 - **重现步骤**（Tester 实测已执行并还原，`git status` 干净）:
 
   ```bash
@@ -215,6 +266,228 @@
 
 ---
 
+## redis-assert-policy-BUG-006：残留 1 条"插值整串钉死"未被清点（全量字典探针在 4622 例中唯一暴露的真耦合），护栏对 `toHaveBeenCalledWith` 与插值形态全盲，台账"真钉死词条 0 条"结论被证伪
+
+- **状态**: **待修复**（Tester #3 本轮新登记）
+- **严重度**: 中（本轨判据 1"改文案不牵动测试"在宿主面**仍有 1 处不成立**；且它同时是本轨两条结论——
+  「`src` 扩扫真钉死词条 0 条」与「护栏已能守住的形态清单」——的反例，属于"缺口 + 守卫盲区"叠加，不是纯台账问题）
+- **位置**:
+  - 钉死处：`src/windows/connection/__tests__/queryExecutionJourney.test.tsx:204`、`:216`
+    （`expect(showMessageDialog).toHaveBeenCalledWith('Missing value for :uid', 'error')` / `('Missing value for :st', 'error')`）
+  - 被钉的生产来源：`src/windows/connection/query/useQueryExecutionGate.tsx:175`、`:397`
+    （`t('query.editor.param.missingValue', { token: … })`）
+  - 词条本体：`src/locales/en/query.ts:153` `'query.editor.param.missingValue': 'Missing value for {token}'`
+  - 同目录已有正例（修法模板）：`src/windows/connection/__tests__/useQueryExecutionGate.test.tsx:44`
+    用**测试自造 stub 字典** `'query.editor.param.missingValue': \`Missing param: ${params?.token ?? ''}\``，
+    再在 `:318` 断言自己那句 `Missing param: :id` ⇒ 与真字典彻底脱钩
+  - 护栏盲区代码：`scripts/check-i18n-copy-assertions.mjs:72-98`（`COPY_MATCHERS` 五条：`getBy*Text/Label/Title/Placeholder`、
+    `getByRole({name})`、`toHaveTextContent`、`aria-label="…"`、带翻译语境的 `.toBe('…')`；**无 `toHaveBeenCalledWith`**，
+    且 `COPY_SHAPE_RE`（`:70`）的允许字符集不含 `{}` ⇒ 含占位符的词条值连"逐字相等"这条路也走不通）
+- **描述（含量级）**:
+
+  **量级：宿主面 1 条测试用例 / 2 个断言点**（`:204`、`:216` 同属 `Journey 2 > blocks execution when unassigned, guides remediation, and passes when complete`
+  一条 `it()`，vitest 只报第一个失败点，故探针总数是 1 红而非 2 红）。**驱动面 0 条**（见下方探针仅及 `src/locales` + redis/mongo 两包）。
+
+  这不是"没扫到"，而是**两层扫描口径都不覆盖这种形态**：
+
+  1. **静态护栏全盲**（T10 实证）：临时新建 `src/windows/connection/__tests__/zzGuardProbe.test.tsx`，
+     故意把三句都写成 `expect(spy).toHaveBeenCalledWith(…)`，其中两句的字面值 **逐字等于真字典值** 并已放进观察名单：
+     ```ts
+     expect(showMessageDialog).toHaveBeenCalledWith('Missing value for :uid', 'error'); // 插值整串
+     expect(showMessageDialog).toHaveBeenCalledWith('Delete selected', 'error');        // = redis.batchDelete
+     expect(showMessageDialog).toHaveBeenCalledWith('No expiry', 'error');              // = redis.noExpiry
+     ```
+     ⇒ `node scripts/check-i18n-copy-assertions.mjs --dirs src --terms redis.batchDelete,redis.noExpiry --strict`
+     只报出**已知的 4 条 R-3 假阳性**，探针三句 **0 命中**（`exit=1` 完全来自那 4 条既有命中）。
+     即：`toHaveBeenCalledWith` 家族（jest/vitest 里断"组件把文案交给谁"的主流写法）根本不在 `COPY_MATCHERS` 里；
+     而插值整串 `'Missing value for :uid'` 更甚——它**不是任何字典值**，`dictionaryValues.has(literal)` 与
+     `--terms` 回读比对都结构性不可能命中，只有"改字典跑测试"能发现。
+  2. **台账结论被证伪**：`progress.md` D 表第 5 行现写"…4 条命中，全部为 R-3 已定性假阳性，**真钉死词条 0 条**"。
+     本轮**全量字典探针**（判据 5 的最强形态）给出反例 ⇒ 正确表述是"真钉死词条 **1** 条（插值整串形态，静态护栏不可见）"。
+     D 段与 R 项 3 若不改，Wave 2 一旦有人改名 `query.editor.param.missingValue` 就会撞到一条"台账说不存在"的红。
+
+  **为什么它是判据 1 的真违例而不是豁免**：该断言钉的是 `t()` **渲染结果**（生产码经 `useQueryExecutionGate` 调 `t()` 得到整串后传给
+  `showMessageDialog`），不是数据、不是 `data-*`、也不是测试自造串 ⇒ 原则六三类锚点一个都不占，第 4 类（测试自造 stub 字典）恰恰是
+  同目录 `useQueryExecutionGate.test.tsx:44` 已经采用的正确写法。同一 hook 的两个调用点（`:175`/`:397`）都只被这一条 journey 用例钉住。
+
+- **重现步骤**（Tester 实测已执行并还原；探针脚本在仓库外 `/tmp`，`git status` 已回到仅文档改动）:
+
+  ```bash
+  # A. 全量字典探针：一次性改写**全部**英文字典值（17 个文件 / 2470 条，保留 {占位符}）
+  node /tmp/zen-i18n-fullprobe.mjs "$PWD"        # → { files: 17, changed: 2470 }
+  npx vitest run                                  # 全宿主套件
+  # ←  Test Files  1 failed | 443 passed (444)
+  # ←       Tests  1 failed | 4621 passed (4622)
+  # ←  FAIL src/windows/connection/__tests__/queryExecutionJourney.test.tsx > … > blocks execution when unassigned, …
+  #    AssertionError: expected "vi.fn()" to be called with arguments: [ 'Missing value for :uid', 'error' ]
+  #    -   "Missing value for :uid"
+  #    +   "Zqx query-editor-param-missingvalue blorp :uid"
+  #    ❯ src/windows/connection/__tests__/queryExecutionJourney.test.tsx:204:33
+  git restore -- src/locales packages/drivers     # 词典零 diff（红线）
+
+  # B. 护栏形态盲区（同 BUG-005 T8 的临时探针文件法）
+  node scripts/check-i18n-copy-assertions.mjs --dirs src --terms redis.batchDelete,redis.noExpiry --strict
+  # ← 4 条命中全为既有 R-3 假阳性；探针三句 0 命中
+  ```
+
+  **判据 1 在探针下的量化结论（值得写进台账）**：改写 **2470** 条英文文案，4622 例宿主测试里只红 **1** 例
+  ⇒ 本轨"改文案不牵动测试"的达成度是 **4621/4622**，比"扫出来的命中数"更硬；但也正因为只剩这 1 条，
+  它不该被"真钉死词条 0 条"这句话抹平。
+
+- **根因推断**: 本轨清点口径以"定位器里的英文字面值"为主（`getBy*` / `name:` / `aria-label`），
+  即"选择器钉文案"；而 `toHaveBeenCalledWith(<整串>)` 是"断言参数钉文案"，属另一族，既没进 `COPY_MATCHERS`，
+  也没进 D 段的人工 grep 关键词表 ⇒ 双向漏网。它偏偏又是 mock 型 hook 测试最自然的写法。
+- **建议修法**（任一项都不改生产码）:
+  1. 按同目录正例改 `queryExecutionJourney.test.tsx`：在该文件的 i18n mock 里为
+      `query.editor.param.missingValue` 注册**测试自造串**（如 `` `Missing param: ${p?.token ?? ''}` ``），
+      两处断言改成自造串 ⇒ 与真字典彻底脱钩（原则六第 4 类豁免），保留 `:uid` / `:st` 两个 token 的**行为**敏感；
+      或改断第二参 `'error'` + `expect.stringContaining(':uid')`（token 是数据，整串不是）。
+  2. 给 `COPY_MATCHERS` 增一条 `toHaveBeenCalledWith\(\s*(['"])([^'"]+)\1`，并**同步放宽 `COPY_SHAPE_RE` 以允许 `{}` 占位符**、
+      或改走"剥占位符后与字典值比对"（否则加了匹配器也钉不住插值串）；
+      该形态误报风险低（`toHaveBeenCalledWith` 的首参是文案而非数据的场景，本就是本轨要抓的对象），
+      但必须先重跑 `--dirs src,packages,e2e` 给出命中增量再定默认/`--strict` 归属。
+  3. 台账：D 表第 5 行"真钉死词条 0 条"改为"真钉死 **1** 条（插值整串，见 BUG-006）"，
+      并在原则六第 7 条能力边界补一句"静态护栏只认选择器形态，不认断言参数形态"。
+
+---
+
+## redis-assert-policy-BUG-007：`--dirs e2e` 只加"面"不加"形态" ⇒ WDIO 实际钉文案写法 0 命中，"e2e 现状干净"是一盏绿灯假象（若日后接入 `--strict` 发布门即为危险假信心）
+
+- **状态**: **待修复**（Tester #3 本轮新登记；由 BUG-005 的修复**派生**，非既有修复被推翻）
+- **严重度**: 中（护栏是**建议性**的、且 `--dirs`/`--terms` 都需显式传参 ⇒ 今天不阻断任何东西；
+  但它给读者的正是"e2e 扫过了、干净"，而真实情况是"扫了 106 个文件、0 命中、57 处真钉死"。
+  台账把这条绿灯留到 Wave 2 / 发布门接线时，就会变成"有门禁而无保护"）
+- **位置**:
+  - `scripts/check-i18n-copy-assertions.mjs:66`（`TEST_FILE_RE` 已认 `specs/`，但第三条分支只认**单层** `specs/xxx.ts`
+    ⇒ `e2e/specs/journeys/**` 26 个文件仍漏面）、`:72-98`（`COPY_MATCHERS` 只有 5 条选择器/`toBe` 形态）
+  - 台账出处：`tracks/redis-assert-policy/progress.md` BUG-005 修复记录与 D 段"扩扫 `src packages e2e`"、
+    `docs/development/interaction-and-testing-principles.md` 原则六第 7 条"能力边界"段（只写了"单词文案看不见"，没写"e2e 形态看不见"）
+  - 典型未命中站点（全部为真实 `e2e/specs/**`，本轮逐条读过上下文）：
+    - `e2e/specs/ai-ask-question.ts:281,371` `text.includes('提交回答') || text.includes('Submit Answers')` ← `chat.questions.submit`
+    - `e2e/specs/connection-edge-cases.ts:122` `text.includes('测试连接') || text.includes('Test Connection')` ← `newConn.testConnection`
+    - `e2e/specs/journeys/visualQueryBuilderHelpers.ts:173,184` `['放弃更改', 'Discard'].includes(...)` ← `common.discard`
+    - `e2e/specs/schema-tree-completeness.ts:63,91,93,138` `body.includes('Tables')` / `'Data'` / `'Structure'` / `title.includes('Refresh')`
+    - `e2e/specs/settings.ts:372,373`、`e2e/specs/hotkeys.ts:62`、`e2e/specs/data-dashboard-widget-ux.ts:127`、`e2e/specs/editor-pro-screenshots.ts:493` …
+  - 唯一命中的 `aria-label="…"` 写法已经是**第 2 类锚点**（key 串，不是文案）：
+    `e2e/specs/conn-ctx-menu-submenus.ts:183` `'[role="dialog"] button[aria-label="common.close"]'`
+    ⇒ 新增的那条匹配器在真实代码里的命中数是 **0**，而那 0 命中里还包含一个本就该安静的正例。
+- **描述（含量级）**:
+
+  **量级：`e2e/specs/**` 共 129 个 `.ts`，护栏 `--dirs e2e` 实扫 106 个 = 103 个 `e2e/specs/*.ts` + 3 个
+  `e2e/contract/__tests__/*.test.ts`；余下 **26 个 `e2e/specs/journeys/*.ts` 仍不在面内**
+  （`TEST_FILE_RE` 第三条分支 `(^|/)specs\/[^/]+\.tsx?$` 只认**单层** `specs/`，嵌套一层即漏，本轮实测确认漏的正好是那 26 个 journeys）。
+  进面的 103 个 spec 里，**25 个文件 / 57 个站点**的字面值与英文字典值逐字相等**（探针法见下方"重现步骤"，已剔除
+  `SELECT`/`INSERT`/`NOT NULL`/`JSON` 这类 SQL 数据串，也剔掉了 `i18n-10-locales.ts:18` `en: 'English'` 这类测试自造语言表）；
+  这些站点 **护栏 0 命中**（同一条 watchlist 喂给 `--terms` 后仍 `ok … 0 copy literals pinned` / `exit=0`）。
+  其中 **4 处 / 3 文件**（`journeys/visualQueryBuilderHelpers.ts:173,184`、`journeys/query-row-limit-journey.ts:129`、
+  `journeys/visual-query-builder-complex-journey.ts:317`）落在漏掉的 journeys 里 ⇒ 即使将来补齐形态，**面本身还得再修一次**。
+
+  两种性质要分清：
+
+  - **A 类（多数，约 4/5）**：双语或然断言 `x.includes('中文') || x.includes('English')`。e2e 跑中文界面时英文分支只是兜底 ⇒
+    **改英文文案今天不会立刻红**，属"未来埋雷"而不是"当下回归"。这正是它该被记为**中**而非**高**的原因。
+  - **B 类（少数）**：单语钉死（`e2e/specs/schema-tree-completeness.ts:93` 的 `body.includes('Structure')` 无中文分支、
+    `e2e/specs/homepage-features.ts:92` / `i18n-menu.ts:64,79` 的 `expect(text).toContain('DataZen')`、
+    `e2e/specs/wapps.spec.ts` / `window-operations.ts` / `ui-window-ops.ts` 的 helper 传参）。改文案**会**直接红。
+
+  两个既有事实使本条不至于升级成"高危"：
+  (1) `e2e/specs/**` 里 **75/129** 个文件已在用 `t()` 运行时回读（`e2e/specs/export-import.ts:47,53,64,99,103,152,158,159,169` 是整套里最密的正例），
+  说明 WDIO 侧的正确写法在本仓是**既有惯例**，缺的是把余下 25 个文件迁过去；
+  (2) `pnpm e2e` 需真机 webdriver、Tester 不得运行 ⇒ **本轮未实跑 e2e**，A/B 类之分是按 locale 与分支结构静态判读，
+  未经 WDIO 执行验证。关账前须由能跑 e2e 的一次性实跑给出 B 类到底会不会红的确定名单。
+- **重现步骤**（Tester 实测已执行并还原；`git status` 已回到仅文档改动）:
+
+  ```bash
+  # 1. 面确实变宽了（BUG-005 的 `TEST_FILE_RE` 修复生效）
+  node scripts/check-i18n-copy-assertions.mjs --dirs e2e
+  # ← ok (106 driver test files scanned, 0 copy literals pinned)   exit=0     （修复前是 3）
+
+  # 2. 把"真实钉死点用到的全部 key"喂给观察名单，仍然 0 命中
+  node /tmp/zen-e2e-pin-scan2.mjs "$PWD" e2e/specs        # 探针：字典值逐字相等扫描 → 57 sites / 25 files
+  TERMS=$(node /tmp/zen-e2e-pin-scan2.mjs "$PWD" e2e/specs | grep -oE '<- [A-Za-z0-9_.]+' | sed 's/^<- //' | sort -u | paste -sd, -)
+  node scripts/check-i18n-copy-assertions.mjs --dirs e2e --terms "$TERMS" --strict
+  # ← watchlist: 33 keys（含 chat.questions.submit="Submit Answers"、common.discard="Discard"、newConn.testConnection="Test Connection" …）
+  # ← ok (106 driver test files scanned, 0 copy literals pinned)   exit=0     （缺陷点：57 处真钉死，护栏全盲）
+
+  # 3. 反证：同一条 33 键名单换到能认的形态上立刻有牙（证明不是 `--terms` 坏了，是形态没接）
+  #    临时 e2e/specs/zzGuardProbe.ts 写 `$('button[aria-label="Persist"]')` ⇒ 立刻命中该 1 条 / exit=1；
+  #    同文件里 `.includes('Delete selected')` / `findAndClickButton(['执行记录','History'])` / `openDbContextMenu(…, 'Compare Data')` 三句 0 命中
+  rm e2e/specs/zzGuardProbe.ts
+  ```
+- **根因推断**: BUG-005 的修法把"看不见"拆成"面"和"形态"两个原因，但只修了**面**（`TEST_FILE_RE`）+ 补了**一种**形态
+  （`aria-label="…"`，恰好是 WDIO 里唯一没人用的那种）。真正占满 e2e 面的形态族是
+  "helper 传文案参数"与"`.includes()` / `.toContain()` 或然匹配"，两者都不是选择器字面值 ⇒ 静态正则天然不在一条路上。
+- **建议修法**（不改业务码，按增量给选择）:
+  1. **先纠口径**（零风险，必做）：把原则六第 7 条与 R 项 3 里"e2e 已进面"改成
+      "`e2e/specs/**` 已进面，但护栏只认 5 种选择器/`toBe` 形态；WDIO 主流的 helper 传参与 `.includes()`/`.toContain()` 或然匹配**不在其列**，
+      实测 57 处真钉死 0 命中 ⇒ `--dirs e2e` 的绿灯**不等于** e2e 干净"；
+      并在台账明确 **`--strict` 不得与 `--dirs e2e` 一起接线为发布门**（接线只会产生假信心）。
+  2. **再加形态**（需要设计，Wave 2 前）：`COPY_MATCHERS` 补两条——`expect\([^)]*\)\s*\.(?:toContain|includes)\(\s*(['"])([^'"]+)\1`
+      与"已知文案型 helper 名单"（`findAndClickButton([...])` / `openDbContextMenu(_, '…')` 之类，名单本身放配置文件，避免正则无限膨胀）；
+      补完必须先量一次 `--dirs e2e --strict` 的命中增量（预期 ≥57），再决定是"报而不拦"还是"分批豁免"。
+  3. **再谈收敛**：A/B 类分开处理——B 类单语钉死先迁 `t()` 回读（`export-import.ts` 已有可抄的整套写法，含 `t('export.willExport', {rows, cols})` 的插值回读），
+      A 类双语或然串留待英文文案真改名时按红名单逐个清；两条都不进本轨 diff（e2e 不在本轨范围内，只登记）。
+
+---
+
+## redis-assert-policy-BUG-008：台账数字随修复失真（`457` → 实跑 `561`）+ `--terms` 两处未写进能力边界的判读坑（测试自造 stub 字典假阳性、组合串/变量间接完全不报）
+
+- **状态**: **待修复**（Tester #3 本轮新登记；BUG-003 的"数字口径"同类问题在修复后**以新数字复发**）
+- **严重度**: 低（纯台账/文档准确性与可读性；不影响运行时与测试红绿。但 BUG-003 的根因正是"不同轮次实跑数字没在关账时对齐"，
+  这次是同一个坑的第二跌 ⇒ 值得顺手在关账模板里加一条"引用实跑数字必须带 HEAD"）
+- **位置**:
+  - 失真数字：`tracks/redis-assert-policy/progress.md` D 表第 5 行的 `457`（BUG-003 修复时**照抄**进台账并被写成本轨最终口径）
+  - 未写进能力边界的判读坑：`docs/development/interaction-and-testing-principles.md` 原则六第 7 条"能力边界（绿灯不等于干净）"段
+    只列了"单词文案"与"`e2e/specs/**`"两条，没有下面这两条
+  - 顺带的输出措辞：`scripts/check-i18n-copy-assertions.mjs` 的 summary 行固定说 `"driver test files scanned"`，
+    即便 `--dirs src,packages,e2e` 已扫到 561 个非驱动文件，措辞仍写 "driver"（本轮实测：`ok (106 driver test files scanned…)` 扫的是 e2e）
+- **描述（含量级）**:
+  1. **数字失真（可复算）**：HEAD `47b9a4a9f` 实跑 `--dirs src,packages,e2e` 的 `scanned` = **561**（`src` 402 + `packages` 53 + `e2e` 106），
+     台账写的是 **457**。差异来自 BUG-005 修复本身（`TEST_FILE_RE` 新增 `(^|/)specs/[^/]+\.tsx?$` ⇒ `e2e` 面从 3 涨到 106），
+     即**修复把数字改大了，台账没跟着改**。命中的 4 条 R-3 假阳性**逐字未变**（`BuildStatement.test.tsx:198,220`、
+     `ChartWidgetTile.test.tsx:139`、`RunHistoryDrawer.test.tsx:161`）⇒ 本条只纠分母，不纠结论。
+  2. **`--terms` 的假阳性面（测试自造 stub 字典）**：watchlist 命中走的是"字面值逐字相等"，护栏**不看这个字面值来自哪本字典**。
+     实测：`--dirs packages --terms redis.console` 命中 `packages/ui/src/__tests__/i18n.test.tsx:151` 的 `'Console'`——
+     那是该用例**自己写的假字典值**，按原则六第 4 类属豁免（本轮实测该行为 `1 copy-literal assertion(s) pinned … (warning only, not blocking)`
+     / `exit=0`；一旦 `--strict` 接线成门禁，这条合法豁免就会把门撞红）
+     ⇒ `--terms` 越宽，越会把合法测试当违规报，
+     与 BUG-005 修复说明"绕开双词门槛 ⇒ 单词文案可见"配在一起，容易被当成"报出来的都要改"。
+  3. **`--terms` 的两类不报（除 BUG-006 的 `toHaveBeenCalledWith` 之外）**：
+     - **组合/前后缀串**：`getByText('Size: 42 B')`（`redis.size = 'Size'` 只是前缀）⇒ 字面值 ≠ 字典值 ⇒ 不报；
+       `COPY_SHAPE_RE` 允许 `:` 与数字，所以形态像文案，但比对是逐字相等，插值/拼接一律漏过（与 BUG-006 的 `Missing value for :uid` 同根）。
+     - **变量间接**：`const label = 'Console'; getByRole('tab', { name: label })` ⇒ 匹配器作用在单行字面值上，
+       跨行/跨变量的字面值不进面（本轨现有实现按行扫描，`code: strict && hits.length + unresolvedTerms.length > 0` 一侧无感知）。
+     这三条合起来意味着：**`--terms` 是"目标词哨兵"，不是"文案钉死普查"**。原则六第 7 条现在给的印象偏向后者。
+- **重现步骤**（全部只读实跑，无需改动仓库）:
+
+  ```bash
+  node -e "import('$PWD/scripts/check-i18n-copy-assertions.mjs').then(m=>{
+    for (const d of [['src'],['packages'],['e2e'],['src','packages','e2e']]) {
+      const r = m.checkI18nCopyAssertions({dirs:d, log(){}, warn(){}});
+      console.log(d.join('+'), '→ scanned=' + r.scanned, 'hits=' + r.hits.length, 'code=' + r.code);
+    }});"
+  # src → scanned=402 hits=4 code=0
+  # packages → scanned=53 hits=0 code=0
+  # e2e → scanned=106 hits=0 code=0
+  # src+packages+e2e → scanned=561 hits=4 code=0      （台账 D 段写 457）
+
+  # stub 字典假阳性：
+  node scripts/check-i18n-copy-assertions.mjs --dirs packages --terms redis.console
+  # ← packages/ui/src/__tests__/i18n.test.tsx:151: "Console" (watchlist: redis.console)   —— 该串是该用例自造假字典的值
+  ```
+- **根因推断**: 与 BUG-003 同一类——台账里的实跑数字是**贴**进去的，不是关账时重跑的；
+  能力边界段写的是"本轮已知会瞎的两件事"，而不是"这套正则比对的判读前提"（逐字相等 / 单行字面值 / 不分真假字典）。
+- **建议修法**:
+  1. `progress.md` D 表第 5 行的 `457` 改为 **`561`（HEAD `47b9a4a9f` 实跑；其中 `src` 402 / `packages` 53 / `e2e` 106）**，
+     并规定"台账引用实跑数字必须同记 HEAD"，关账 checklist 加一条"数字与 HEAD 同行"。
+  2. 原则六第 7 条"能力边界"补三行：`--terms` **会**命中测试自造 stub 字典值（第 4 类豁免需人工判读）、
+     **不报**组合/插值串（`'Size: 42 B'`、`'Missing value for :uid'`）、**不报**变量间接；
+     并加一句定性"`--terms` 是目标词哨兵，不是普查"。
+  3. 可选（1 行）：summary 文案里的 `driver test files scanned` 改成中性 `test files scanned`，
+     避免 `--dirs` 加宽后措辞与事实不符（本轮实测该行为 `ok (106 driver test files scanned…)` 扫的其实是 e2e）。
+
+---
+
 ## 上游发现（交协调者裁定是否独立立项，非本轨缺陷）
 
 `packages/ui/src/Dialog.tsx:30` 的 `closeLabel = 'Close'` 是**共享基础组件里的硬编码英文字面量**，
@@ -225,6 +498,29 @@
 建议独立小立项（1 处组件 + 1 处默认值语义）：`closeLabel` 默认改为在组件内部走 `useI18n().t('ui.dialog.close')`
 （或在 `@datazen/ui` 注册一份内置兜底词条），并保留显式传参覆盖；同时按原则六补一条不钉字面值的常驻用例。
 **不要**顺手塞进 Wave 2 的 redis 文案轮——会与本轨 BUG-001 的修复相互踩脚，且面不止 redis。
+
+**Tester #3 补充：同类缺口在 `@datazen/ui` 里不止 `Dialog` 一处**（同一立项范围内，逐条实扫确认）：
+
+- `packages/ui/src/TemporalValueInput.tsx:205` `aria-label="Open calendar"`
+- `packages/ui/src/TemporalValueInput.tsx:295` `aria-label="Previous month"`
+- `packages/ui/src/TemporalValueInput.tsx:305` `aria-label="Next month"`
+
+三条都是**共享基础组件里硬编码的英文可访问名**，与 `closeLabel` 同性质（消费方拿不到宿主 `t()` ⇒ 中文界面上读屏/无障碍标签仍是英文）。
+两点差异要记：(1) 它们落在**日期时间输入**上，比对话框关闭按钮更难被用户注意到，因此不会像 `Close` 那样被视觉文案轮捞出来；
+(2) **当前全仓没有任何测试钉这三条串**（`grep -rn "Open calendar|Previous month|Next month" packages src e2e` 除组件自身外 0 命中，
+`packages/ui/src/__tests__/primitives.test.tsx:64,88` 的 `aria-label="Font size"/"Rows"` 是消费方**自己传入的测试串**，属原则六第 2 类，不算缺陷），
+⇒ 修它们**不会**触碰本轨任何测试，可独立排期，也不需要走本轨的"改写不是删除"流程。
+
+---
+
+## 环境性既有红
+
+**无**。Tester #2 与 Tester #3 两轮实跑均未观察到与本轨无关的既有红。Tester #3 在 HEAD `47b9a4a9f`（工作树干净）的基线口径：
+Host `npx vitest run` **444 files / 4622 passed（0 failed）**、redis 驱动 `27/222`、redis+mongodb `29/233`、
+全部驱动配置 `33 files passed`、`e2e-contract 3 files passed`、`npx tsc --noEmit` **0 错**、
+护栏默认与 `--strict` 均 `ok (33 driver test files scanned, 0 copy literals pinned)` / `exit=0`、
+其余仓内护栏（boundaries / layers / ids / ci-docs / version）全部 `exit=0`。
+（Tester #2 记的 `443/4609` 与本轮 `444/4622` 之差 = 本轨修复新增的 1 个测试文件与 13 条用例，属预期增量，非红。）
 
 ---
 

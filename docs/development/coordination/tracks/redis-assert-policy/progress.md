@@ -2,7 +2,7 @@
 
 - 分支: `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375）
 - 角色: Coder → Tester
-- 状态: **READY_FOR_TEST（第二次接管：Rescuer 续做完 BUG-001~005 全部 5 条，待 Tester 复测）** — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）+ `8fe2a4f66`（Tester 变异检验）+ `acd1c6486`（台账）；回炉修复：`075d2a10c`（BUG-001/002/004/005 码改，第二任 Coder 失联时原样落盘）+ 本 commit（BUG-003 数字 + 三处文档口径 + 实跑台账）。Tester 复测记录见下方「Tester 复测记录」，Bug 处置见 [bugs.md](bugs.md)
+- 状态: **FAILED（第 1 轮修复后复测，Tester 独立复证 HEAD `47b9a4a9f`）→ 回炉** — BUG-001/002/003/004 四条闭环、BUG-005 部分闭环（复测记录见下方「Tester 第 1 轮修复后复测记录」）；四条门禁真数字与三组反装饰变异均本机实跑通过、修复未引入回归。但新登记 BUG-006/007/008 三条待修复缺陷（详见 [bugs.md](bugs.md)），故本轮不置 PASSED — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）+ `8fe2a4f66`（Tester 变异检验）+ `acd1c6486`（台账）；回炉修复：`075d2a10c`（BUG-001/002/004/005 码改，第二任 Coder 失联时原样落盘）+ 本 commit（BUG-003 数字 + 三处文档口径 + 实跑台账）。Tester 复测记录见下方「Tester 复测记录」，Bug 处置见 [bugs.md](bugs.md)
 - 接管记录 2: 第二任 Coder（回炉 5 条 Bug）在 BUG-004 处失联，遗留 6 个脏文件（含新文件 `src/test/enCopy.ts`）零提交。第三任 Rescuer 逐文件盘点 diff 后**原样提交**（`075d2a10c`，未推翻任何改法），续做 BUG-003 与三处文档口径，并补跑探针与覆盖率自验（见「Rescuer 第二轮续做记录」）。
 - Worktree: `.worktrees/datazen-redis-assert-policy`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §7-6、§8.2（处理决定表）
@@ -261,6 +261,69 @@
 - 未提交 codegen / `Cargo.lock` / 注入的 `src-tauri/Cargo.toml` / `capabilities/default.json`；未执行 `pnpm install` / `pnpm e2e` / 裸 `pnpm build`；检索一律 Grep/Glob 工具。
 - **测试只增不减**：全轨 `it()` 计数无任何下降（`Dialog 7 → 8`、护栏 `15 → 19`、新增 `enCopy` 3 例、其余逐文件与 base 相等），断言全部按 key / `data-*` / role，未新增英文字面量（P1 的探针串只存在于临时工作区，未入库；`enCopy` 单测断的是 key 与抛错，字典值通过 `en[key]` 回读比对）。
 - 本轨累计入库文件 **20 个**（`4cdc0c023` 时 16 + `8fe2a4f66` 的 `bugs.md` + 本轮 `Dialog.test.tsx`、`src/test/enCopy.ts`、`src/test/__tests__/enCopy.test.ts`）。
+
+---
+
+## Tester 第 1 轮修复后复测记录（HEAD `47b9a4a9f`；本段由复测 Tester 独立撰写，不复用 Coder/前任结论）
+
+> 接管现场：接手时 `git status` 仅有 `bugs.md` 一处**未提交**改动（前任 Tester 已写入 BUG-001~005 状态更新与 BUG-006/007/008 新登记，但**未写本 progress.md 复测段、未提交**）。本 Tester 保留该现场、对其中每一条断言做**独立零信任复证**，并在下方逐项给出本机实跑证据。前置：`node scripts/generate-builtin-locales.mjs` 已跑（`builtinLocales.ts` gitignored）；全程未 `pnpm install` / `pnpm e2e` / 裸 `pnpm build`；检索一律 Grep/Glob；所有变异/探针每次跑完立即 `git restore`，每步后核 `git status` 仅剩 `bugs.md`（词典零 diff）。
+
+### 1. 红线（复测重点 1）
+
+- **词典零改动**：`git diff acd1c6486..HEAD --name-only` = 10 文件，全部为测试/护栏脚本/文档/`enCopy.ts`，**零命中**任何 `locales/**` 词典、`src/locales/en/**`、`packages/ui/src/i18n.ts`（`grep -Ei 'locales/|/en/|i18n\.ts'` 结果为空）。两次 fix commit（`075d2a10c` / `47b9a4a9f`）的文件清单逐条核对，无一处词条值改动。
+- **测试只增不减**（逐文件 `it()` 对基准 `acd1c6486`，本机 grep 计数；vitest 报告为权威）：`ErrorBoundary 1→1`、`MenuBar 3→3`、`locales.test 19→19`、`Dialog 7→8`、`enCopy 0→3`、护栏 `check-i18n-copy-assertions.test.ts` 实跑 **19 passed**（较 Tester #2 的 15 净增）。任一条**均无下降**；Host 全量由 #2 的 4609 升至 **4622**（预期增量，非红）。
+- **探针/变异后还原**：本轮 P1/变异 c 触碰 `src/locales/en/core.ts`，`git restore` 后 `git status --porcelain -- src/locales packages/drivers` **输出为空**。
+
+### 2. 反装饰变异检验（复测重点 2，本机实跑）
+
+| # | 破坏 | 期望 | 实测（原文摘录） | 复原 |
+|---|---|---|---|---|
+| M-a1 | `ErrorBoundary` 定位键 `common.error`→`common.error__T`、`MenuBar` 派生源 `menu.file`→`menu.file__T`（保持**真** `enCopy`） | 二者转红 | **`Test Files 2 failed (2)`**；报错均为 `Error: en dictionary miss: "…__T" is not in src/locales/en`（MenuBar 在 **import 期**即抛，退化为 0 例，响亮失败） | ✓ |
+| M-a2 | 在 M-a1 的同一改名基础上，把 `enCopy` 的 miss 抛错**改成静默回落**（`return value as string`，即修复前的裸 `en[key]`） | 证明 redness 归因于 `enCopy` 的抛错 | `ErrorBoundary` **✓ 转绿（永真退化）**——`getByRole('heading',{name:undefined})` 命中页面上唯一的 heading，正是 BUG-002 的装饰性失败；`MenuBar` 3 例仍红，但报错全为 `Found multiple elements with the role "menuitem"`（**靠多元素歧义偶然兜住**，非 name 契约） | ✓ |
+| M-b | 把护栏 `check-i18n-copy-assertions.mjs` 的 `--terms` 观察名单旁路摘掉（`const term = undefined`） | 对应单测转红 | **`Tests 3 failed \| 16 passed (19)`**，三条红恰为依赖 `--terms` 者：`sees a pinned single-word term only when it is on the watchlist` / `follows the dictionary when the wording changes…` / `scans WebdriverIO interaction specs once their root is on the face`；其余 16（默认双词词典启发式）不受影响 ⇒ `--terms` 能力**有牙**、非装饰 | ✓ |
+| M-c | 把 `Dialog.test.tsx` 三处 `enCopy('common.close')` 改回钉 `'Close'` 字面量，**且只改** `common.close` 一个词条值为 `'Zqx closeonly probe'` | 恰好该几条变红、不误伤 | `Dialog` **`3 failed \| 5 passed (8)`**：红的恰是 3 条按 Close 定位的用例（`:57` 头部关闭按钮点击、`:92` 焦点恢复、`:111` Tab 环绕），报错 `Unable to find … name "Close"`；接线探针用例（自造 `zz-assert-probe` locale）与 title/backdrop/escape 三条仍绿 | ✓ |
+| M-c 正对照 | 同一次 `common.close` 改值下运行 `ErrorBoundary`（其定位走 `enCopy`） | 不得受累 | `ErrorBoundary` **✓ 1 passed** —— 回读字典拿到新串并匹配渲染结果 ⇒ **同一次文案改动，钉字面值的 3 条红、走 `enCopy` 的兄弟用例绿**，正面证明解耦成立 | — |
+
+**结论**：`enCopy` 的抛错、护栏的 `--terms`、`Dialog` 的字典回读定位**均为承重件**，破坏后按预期暴露（M-a2 尤其复现了 BUG-002 的"去掉抛错即退化为永真"病灶）。注：任务书 M-a 的口语"改 `enCopy` 静默回落 ⇒ ErrorBoundary/MenuBar 变红"需**配一次键改名**方能触发 miss 分支（有效键走的是成功路径，仅弱化 miss 分支不影响它们）；本 Tester 据此把该检验拆为 M-a1（真抛错→红）与 M-a2（去抛错→ErrorBoundary 反绿）两段，因果归因清晰。
+
+### 3. 护栏口径（复测重点 3）
+
+- 默认：`node scripts/check-i18n-copy-assertions.mjs` → `[check-i18n-copy-assertions] ok (33 driver test files scanned, 0 copy literals pinned)` / **`exit=0`**。
+- `--strict`：逐字同上 / **`exit=0`**（当前默认面 0 命中）。
+- `pnpm test:i18n-assertions` = 裸 `node …check-i18n-copy-assertions.mjs`，**报而不拦**未被改成开发期门禁：`git diff acd1c6486..HEAD --stat -- .github .husky .githooks scripts/ci-local.sh vitest.config.ts vitest.drivers.config.ts package.json` **输出为空**；该脚本仅被两条显式 `test:i18n-assertions*` 引用，**不出现在** `.husky/pre-commit` / CI / `pretest` 中。
+
+### 4. 门禁真数字（本机实跑，禁用他人值）
+
+| # | 命令 | 声称（Rescuer 台账） | 本 Tester 实测 | 判定 |
+|---|---|---|---|---|
+| 1 | `npx tsc --noEmit -p tsconfig.json` | 0 错误 | **`tsc-exit=0`** | ✓ |
+| 2 | `npx vitest run src/locales scripts` | 25 文件 / 287 | **25 files / 287 passed / 0 failed** | ✓ |
+| 3 | `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui` | 27 / 222 | **27 files / 222 passed / 0 failed** | ✓ |
+| 4 | `npx vitest run`（Host 全量） | 444 / 4622 | **444 files / 4622 passed / 0 failed**（exit 0，无 FAIL 行） | ✓ |
+| 5 | 扩扫 `--dirs src,packages,e2e` | `457`（D 段，BUG-008 指其失真） | **`scanned=561`（src 402 / packages 53 / e2e 106）、hits=4、code=0**；四条命中逐字为 R-3 假阳性（`BuildStatement.test.tsx:198,220` `'LEFT JOIN'`、`ChartWidgetTile.test.tsx:139`/`RunHistoryDrawer.test.tsx:161` `'Query failed'`） | ✓ 复核 BUG-008 的"561 非 457"成立 |
+
+### 5. Bug 处置判定
+
+- **BUG-001 已修复**（复证）：`Dialog.test.tsx` 两处 `Close` 定位改 `enCopy('common.close')` 并 +1 条 `zz-assert-probe` 接线用例（`it()` 7→8）；M-c 显示同一 `common.close` 改值下钉字面值会红、走 `enCopy` 会绿，解耦属实；原则六第 5 类豁免口径已在 `interaction-and-testing-principles.md` 修正（前任已改，本轮 Grep 核对其文本）。
+- **BUG-002 已修复且为承重件**（复证）：M-a1/M-a2 双向证明 `enCopy` 抛错是"键改名不再退化为永真"的唯一拦截者；`enCopy.test.ts` 3 例常驻锁住"miss 抛错 / 空值抛错"。
+- **BUG-003 已修复**：D 段第 5 行矛盾（"0 条" vs "4 条"）已改为"4 条命中、真钉死 0 条"；其"457"数字由 **BUG-008** 独立承接为"561（HEAD 实跑）"。
+- **BUG-004 已修复**：护栏脚本 Grep 确认 `KEY_SHAPE_RE` 与不可达 `continue` 全文消失；该测试文件 19/19 绿，无死分支名义覆盖。
+- **BUG-005 部分闭环**：`--terms`/`--dirs` 两个开关可用（M-b 证 `--terms` 有牙；扩扫 `--dirs` 面由 3→106 生效），但"加面未加形态"派生 **BUG-007**。
+- **BUG-006/007 独立复证为真**：
+  - BUG-006：`queryExecutionJourney.test.tsx:204/216` 实读为 `toHaveBeenCalledWith('Missing value for :uid'/'…:st', 'error')`，钉的是 `t('query.editor.param.missingValue')` 的插值整串渲染结果 → 判据 1 在宿主面仍有 1 处不成立，静态护栏 `toHaveBeenCalledWith` 家族全盲（属选择器形态之外的"断言参数"形态）。
+  - BUG-007：Grep `e2e/specs` 实到 `schema-tree-completeness.ts:93 body.includes('Structure')`、`connection-edge-cases.ts:122 includes('测试连接')||includes('Test Connection')`、`workflow-window.ts:340…findAndClickButton(['执行记录','History'])`、`i18n-menu.ts:64,79 toContain('DataZen')`、`zz-screenshots.ts:1685 openDbContextMenu(…,'Compare Data')`；这些 `.includes()/.toContain()/helper 传参` 形态均不在 `COPY_MATCHERS` 五条之内 → `--dirs e2e` 的绿灯不等于 e2e 干净，结论"e2e 现状干净"撤销。
+  - BUG-008：本轮 §4.5 已独立复算 `561`，四条命中未变，属纯台账数字失真。
+- **上游发现**（`@datazen/ui` `Dialog.closeLabel` 与 `TemporalValueInput` 三处硬编码英文可访问名）：非本轨范围，交协调者独立立项，本轮不改不判。
+
+### 6. 阶段 C/D 与越界自查
+
+- **覆盖率/补齐**：本 Tester 为**只测不修**复测，未新增生产码或测试用例（前任 Tester #2 的 5 例护栏 + Journey 5 状态断言已在基准，本轮 19/19 护栏、222 驱动、4622 宿主全绿即证覆盖面无回退）。**未编写新用例**（复测轮，缺口以 Bug 形式登记而非自行补测，符合 tester.md §1.3）。
+- **E2E**：本轨对生产码净改动仍是 `TtlControls.tsx` 三个 `data-*`（零结构/逻辑）；无需新增 E2E。BUG-007 属 `e2e/specs/**` 既有写法清点缺口，非本轨引入。
+- **红线与越界**：本轮仅新增/修改本 `progress.md` 复测段与保留的 `bugs.md`；`packages/drivers/redis/src/**`、宿主 connection 五文件、`scripts/resolve-drivers.mjs`、`hub.md`、其它 track/worktree 全程未碰；未提交 codegen / `Cargo.lock` / 注入的 `src-tauri/Cargo.toml`。临时脚本仅 `/tmp/t3-*`。
+
+### 7. 判定
+
+**TEST_DONE — FAILED（回炉）**。核心验收标准 1~5 与四条红线**全部达标**，BUG-001~005 四条修复**独立复证通过**（005 部分），修复**未引入任何回归**（4622 宿主 + 222 驱动 + 287 全量护栏全绿，`tsc` 0 错）。但第 1 轮以"全量字典探针 + 形态反证"新暴露 **BUG-006（中，判据 1 宿主面唯一残留真耦合）/ BUG-007（中，护栏加面未加形态致 e2e 绿灯假象）/ BUG-008（低，台账数字失真）** 三条**待修复**新缺陷 ⇒ 本轮不能置 `PASSED`。回炉范围小且清晰：`queryExecutionJourney.test.tsx` 一处（按同目录 `useQueryExecutionGate.test.tsx:44` stub 正例改法）、护栏 `COPY_MATCHERS` 增两族形态 + 文档口径、台账数字对齐 HEAD。见 [bugs.md](bugs.md)。
 
 
 
