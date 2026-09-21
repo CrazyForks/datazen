@@ -12,6 +12,22 @@ fn function_list_sql_excludes_catalog() {
 }
 
 #[test]
+fn view_queries_return_schema_and_query_body_metadata() {
+    let list = list_objects_sql("postgresql", ObjectKind::View).unwrap();
+    assert!(list.contains("pg_views"));
+    assert!(list.contains("viewname AS name"));
+    let ddl = object_ddl_sql(
+        "postgresql",
+        ObjectKind::View,
+        "active_users",
+        Some("public"),
+    )
+    .unwrap();
+    assert!(ddl.contains("pg_get_viewdef"));
+    assert!(ddl.contains("'public'"));
+}
+
+#[test]
 fn trigger_ddl_uses_pg_get_triggerdef() {
     let sql = object_ddl_sql("postgresql", ObjectKind::Trigger, "trg", Some("public")).unwrap();
     assert!(sql.contains("pg_get_triggerdef"));

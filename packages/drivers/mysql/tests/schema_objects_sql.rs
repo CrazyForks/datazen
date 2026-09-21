@@ -27,6 +27,16 @@ fn list_and_ddl_cover_all_kinds() {
 }
 
 #[test]
+fn view_queries_return_view_body_metadata_contract() {
+    let list = list_objects_sql("mysql", ObjectKind::View).unwrap();
+    assert!(list.contains("information_schema.VIEWS"));
+    assert!(list.contains("TABLE_SCHEMA AS schema"));
+    let ddl = object_ddl_sql("mysql", ObjectKind::View, "active_users", None).unwrap();
+    assert!(ddl.contains("VIEW_DEFINITION AS ddl"));
+    assert!(ddl.contains("TABLE_NAME = 'active_users'"));
+}
+
+#[test]
 fn ddl_quotes_backtick_in_ident() {
     let sql = object_ddl_sql("mysql", ObjectKind::Function, "foo`bar", None).unwrap();
     assert!(sql.contains("`foo``bar`"));

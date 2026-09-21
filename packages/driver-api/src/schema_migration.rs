@@ -1,5 +1,6 @@
 //! Dialect-neutral schema migration contracts exposed by the driver API.
 
+use crate::schema_objects::ObjectKind;
 use crate::{ColumnSchema, ForeignKeyInfo, IndexInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,6 +11,18 @@ pub struct MigrationColumn {
     pub default_value: Option<String>,
     pub comment: Option<String>,
     pub is_auto_increment: bool,
+}
+
+/// A view definition captured from a source database.
+///
+/// `definition` is the query body returned by the driver's object metadata
+/// API. It excludes the `CREATE VIEW ... AS` wrapper so the target renderer
+/// can quote the target identifier and choose dialect syntax.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationView {
+    pub schema: Option<String>,
+    pub name: String,
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +93,40 @@ pub enum MigrationOperation {
         table: String,
         foreign_key: ForeignKeyInfo,
     },
+    CreateView {
+        view: MigrationView,
+    },
+    ReplaceView {
+        current: MigrationView,
+        desired: MigrationView,
+    },
+    DropView {
+        view: MigrationView,
+    },
+}
+
+/// Validate a query body before it is embedded into one reviewed DDL
+/// statement. Definitions containing a semicolon are rejected so a source
+/// object cannot turn a single plan statement into an arbitrary script.
+pub fn validate_view_definition(definition: &str) -> Result<(), String> {
+    let trimmed = definition.trim();
+    if trimmed.is_empty() {
+        return Err("view definition must not be empty".into());
+    }
+    if trimmed.contains(';') {
+        return Err("view definition must contain one query without semicolons".into());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
+    {
+        return Err("view definition contains control characters".into());
+    }
+    Ok(())
+}
+
+pub fn migration_object_kind() -> ObjectKind {
+    ObjectKind::View
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,5 +300,13 @@ mod type_parts_tests {
             format_type(&base, args.as_deref(), &suffix),
             "TIMESTAMP(6) WITH TIME ZONE"
         );
+    }
+
+    #[test]
+    fn view_definition_validation_rejects_empty_scripts_and_controls() {
+        assert!(validate_view_definition("SELECT 1").is_ok());
+        assert!(validate_view_definition("  ").is_err());
+        assert!(validate_view_definition("SELECT 1; DROP TABLE users").is_err());
+        assert!(validate_view_definition("SELECT '\0'").is_err());
     }
 }

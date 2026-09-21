@@ -1,4 +1,4 @@
-//! Dialect SQL for routines, triggers, and privilege listings.
+//! Dialect SQL for views, routines, triggers, and privilege listings.
 //!
 //! Dialect SQL helpers used by driver `list_objects` / `get_object_ddl` /
 //! `list_privileges` commands. Host must not execute these SQL strings directly.
@@ -84,6 +84,13 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
              ORDER BY 1, 2"
                 .into(),
         ),
+        ("postgresql", ObjectKind::View) => Some(
+            "SELECT schemaname AS schema, viewname AS name \
+             FROM pg_views \
+             WHERE schemaname NOT IN ('pg_catalog','information_schema') \
+             ORDER BY 1, 2"
+                .into(),
+        ),
         ("postgresql", ObjectKind::Sequence) => Some(
             "SELECT schemaname AS schema, sequencename AS name \
              FROM pg_sequences \
@@ -106,6 +113,17 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
             Some("SHOW PROCEDURE STATUS WHERE Db = DATABASE()".into())
         }
         ("mysql", ObjectKind::Trigger) => Some("SHOW TRIGGERS".into()),
+        ("mysql", ObjectKind::View) => Some(
+            "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name \
+             FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() \
+             ORDER BY 1, 2"
+                .into(),
+        ),
+        ("sqlite", ObjectKind::View) => Some(
+            "SELECT NULL AS schema, name FROM sqlite_master \
+             WHERE type = 'view' ORDER BY name"
+                .into(),
+        ),
         ("sqlite", ObjectKind::Trigger) => {
             Some("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name".into())
         }
@@ -236,7 +254,11 @@ pub fn object_ddl_sql(
             ))
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
-        ("mysql", ObjectKind::View) => Some(format!("SHOW CREATE VIEW {qualified}")),
+        ("mysql", ObjectKind::View) => Some(format!(
+            "SELECT VIEW_DEFINITION AS ddl FROM information_schema.VIEWS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = {}",
+            sql_string(name)
+        )),
         ("mysql", ObjectKind::Function) => Some(format!("SHOW CREATE FUNCTION {ident}")),
         ("mysql", ObjectKind::Procedure) => Some(format!("SHOW CREATE PROCEDURE {ident}")),
         ("mysql", ObjectKind::Trigger) => Some(format!("SHOW CREATE TRIGGER {ident}")),
@@ -245,7 +267,8 @@ pub fn object_ddl_sql(
             sql_string(name),
         )),
         ("sqlite", ObjectKind::View) => Some(format!(
-            "SELECT sql AS ddl FROM sqlite_master WHERE type = 'view' AND name = {}",
+            "SELECT substr(sql, instr(lower(sql), ' as ') + 4) AS ddl \
+             FROM sqlite_master WHERE type = 'view' AND name = {}",
             sql_string(name),
         )),
         ("sqlite", ObjectKind::Trigger) => Some(format!(

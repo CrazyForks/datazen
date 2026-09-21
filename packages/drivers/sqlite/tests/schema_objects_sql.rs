@@ -20,6 +20,15 @@ fn trigger_ddl_reads_sqlite_master() {
 }
 
 #[test]
+fn view_queries_return_query_body_from_sqlite_master() {
+    let list = list_objects_sql("sqlite", ObjectKind::View).unwrap();
+    assert!(list.contains("type = 'view'"));
+    let ddl = object_ddl_sql("sqlite", ObjectKind::View, "active_users", None).unwrap();
+    assert!(ddl.contains("substr(sql"));
+    assert!(ddl.contains("name = 'active_users'"));
+}
+
+#[test]
 fn function_list_returns_none_so_host_skips_query() {
     // Host IPC returns empty when list_objects_sql is None; assert dialect contract here.
     assert!(list_objects_sql("sqlite", ObjectKind::Function).is_none());

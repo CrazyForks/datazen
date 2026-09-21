@@ -64,6 +64,14 @@ fn pg_fk_action(raw: &str, clause: &str) -> Result<String, String> {
     ))
 }
 
+fn pg_view_ident(view: &MigrationView) -> String {
+    let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+    match view.schema.as_deref().filter(|schema| !schema.is_empty()) {
+        Some(schema) => format!("{}.{}", quote(schema), quote(&view.name)),
+        None => quote(&view.name),
+    }
+}
+
 pub struct PostgresMigrationRenderer;
 
 impl MigrationRenderer for PostgresMigrationRenderer {
@@ -338,6 +346,46 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 rollback_sql: None,
                 summary: format!("DROP FOREIGN KEY {}.{}", table, foreign_key.name),
             }),
+            MigrationOperation::CreateView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = pg_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("CREATE VIEW {ident} AS {}", view.definition.trim()),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP VIEW {ident}")),
+                    summary: format!("CREATE VIEW {}", view.name),
+                })
+            }
+            MigrationOperation::ReplaceView { current, desired } => {
+                validate_view_definition(&desired.definition)?;
+                validate_view_definition(&current.definition)?;
+                let ident = pg_view_ident(desired);
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "CREATE OR REPLACE VIEW {ident} AS {}",
+                        desired.definition.trim()
+                    ),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!(
+                        "CREATE OR REPLACE VIEW {ident} AS {}",
+                        current.definition.trim()
+                    )),
+                    summary: format!("REPLACE VIEW {}", desired.name),
+                })
+            }
+            MigrationOperation::DropView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = pg_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("DROP VIEW {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!(
+                        "CREATE VIEW {ident} AS {}",
+                        view.definition.trim()
+                    )),
+                    summary: format!("DROP VIEW {}", view.name),
+                })
+            }
         }
     }
 }
@@ -359,7 +407,10 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             | MigrationOperation::CreateIndex { .. }
             | MigrationOperation::DropIndex { .. }
             | MigrationOperation::AddForeignKey { .. }
-            | MigrationOperation::DropForeignKey { .. } => true,
+            | MigrationOperation::DropForeignKey { .. }
+            | MigrationOperation::CreateView { .. }
+            | MigrationOperation::ReplaceView { .. }
+            | MigrationOperation::DropView { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -543,5 +594,63 @@ mod tests {
             Some("ALTER TABLE \"orders\" DROP CONSTRAINT \"orders_user_id_fkey\"")
         );
         assert!(PostgresMigrationCapabilities.supports(&op));
+    }
+
+    #[test]
+    fn renders_view_create_replace_and_drop_with_rollback() {
+        let current = MigrationView {
+            schema: Some("reporting".into()),
+            name: "active_users".into(),
+            definition: "SELECT id FROM users WHERE active".into(),
+        };
+        let desired = MigrationView {
+            definition: "SELECT id, email FROM users WHERE active".into(),
+            ..current.clone()
+        };
+        let create = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateView {
+                view: desired.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            create.sql,
+            "CREATE VIEW \"reporting\".\"active_users\" AS SELECT id, email FROM users WHERE active"
+        );
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP VIEW \"reporting\".\"active_users\"")
+        );
+
+        let replace = PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceView {
+                current: current.clone(),
+                desired: desired.clone(),
+            })
+            .unwrap();
+        assert!(replace
+            .sql
+            .starts_with("CREATE OR REPLACE VIEW \"reporting\".\"active_users\""));
+        assert!(replace
+            .rollback_sql
+            .as_deref()
+            .is_some_and(|sql| sql.contains("SELECT id FROM users WHERE active")));
+
+        let drop = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropView { view: desired })
+            .unwrap();
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        assert!(drop.rollback_sql.is_some());
+    }
+
+    #[test]
+    fn view_definition_rejects_script_injection() {
+        let op = MigrationOperation::CreateView {
+            view: MigrationView {
+                schema: None,
+                name: "v".into(),
+                definition: "SELECT 1; DROP TABLE users".into(),
+            },
+        };
+        assert!(PostgresMigrationRenderer.render(&op).is_err());
     }
 }

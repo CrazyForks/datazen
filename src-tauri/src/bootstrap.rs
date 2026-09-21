@@ -538,6 +538,7 @@ pub fn run() {
             crate::commands::backup_database,
             crate::commands::restore_sql_file,
             crate::commands::prepare_schema_diff_plan,
+            crate::commands::prepare_schema_view_plan,
             crate::commands::execute_schema_diff_deploy,
             crate::commands::cancel_schema_diff_deploy,
             crate::commands::compare_table_schemas,

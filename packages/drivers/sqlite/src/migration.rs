@@ -13,6 +13,14 @@ fn format_sqlite_column_def(c: &MigrationColumn, qi: &impl Fn(&str) -> String) -
     def
 }
 
+fn sqlite_view_ident(view: &MigrationView) -> String {
+    let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+    match view.schema.as_deref().filter(|schema| !schema.is_empty()) {
+        Some(schema) => format!("{}.{}", quote(schema), quote(&view.name)),
+        None => quote(&view.name),
+    }
+}
+
 pub struct SqliteMigrationRenderer;
 
 impl MigrationRenderer for SqliteMigrationRenderer {
@@ -97,6 +105,32 @@ impl MigrationRenderer for SqliteMigrationRenderer {
             MigrationOperation::DropColumn { .. } => {
                 Err("SQLite DROP COLUMN requires version/capability validation".into())
             }
+            MigrationOperation::CreateView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = sqlite_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("CREATE VIEW {ident} AS {}", view.definition.trim()),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP VIEW {ident}")),
+                    summary: format!("CREATE VIEW {}", view.name),
+                })
+            }
+            MigrationOperation::DropView { view } => {
+                validate_view_definition(&view.definition)?;
+                let ident = sqlite_view_ident(view);
+                Ok(MigrationStatement {
+                    sql: format!("DROP VIEW {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!(
+                        "CREATE VIEW {ident} AS {}",
+                        view.definition.trim()
+                    )),
+                    summary: format!("DROP VIEW {}", view.name),
+                })
+            }
+            MigrationOperation::ReplaceView { .. } => {
+                Err("SQLite view replacement requires an explicit drop/create rebuild".into())
+            }
             _ => Err(format!(
                 "SQLite renderer does not yet support {:?}; table rebuild may be required",
                 op
@@ -114,6 +148,8 @@ impl MigrationCapabilities for SqliteMigrationCapabilities {
                 | MigrationOperation::AddColumn { .. }
                 | MigrationOperation::CreateIndex { .. }
                 | MigrationOperation::DropIndex { .. }
+                | MigrationOperation::CreateView { .. }
+                | MigrationOperation::DropView { .. }
         )
     }
     fn requires_table_rebuild(&self, _operation: &MigrationOperation) -> bool {
@@ -218,5 +254,44 @@ mod tests {
                 column: col("name", "TEXT"),
             })
         );
+    }
+
+    #[test]
+    fn views_support_create_and_drop_but_replacement_fails_closed() {
+        let view = MigrationView {
+            schema: None,
+            name: "active_users".into(),
+            definition: "SELECT id FROM users".into(),
+        };
+        let create = SqliteMigrationRenderer
+            .render(&MigrationOperation::CreateView { view: view.clone() })
+            .unwrap();
+        assert_eq!(
+            create.sql,
+            "CREATE VIEW \"active_users\" AS SELECT id FROM users"
+        );
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP VIEW \"active_users\"")
+        );
+        assert!(SqliteMigrationCapabilities
+            .supports(&MigrationOperation::CreateView { view: view.clone() }));
+        assert!(SqliteMigrationCapabilities
+            .supports(&MigrationOperation::DropView { view: view.clone() }));
+        assert!(
+            !SqliteMigrationCapabilities.supports(&MigrationOperation::ReplaceView {
+                current: view.clone(),
+                desired: MigrationView {
+                    definition: "SELECT id, email FROM users".into(),
+                    ..view.clone()
+                }
+            })
+        );
+        assert!(SqliteMigrationRenderer
+            .render(&MigrationOperation::ReplaceView {
+                current: view.clone(),
+                desired: view,
+            })
+            .is_err());
     }
 }
