@@ -1,9 +1,9 @@
 # Track: redis-host-slots — 宿主 KV 槽位与能力判定（去硬编码）
 
 - 分支: `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375）
-- 角色: Coder → Tester（已复测）→ Coder（第 1 轮修复）→ Tester（待复测）
-- 状态: **READY_FOR_TEST**（Tester 复测 PASSED 后，3 条非阻断 Bug 由第 1 轮 Coder 修复完成，见 §修复记录；
-  等待全新 Tester 实例复测确认后方可合流。F-1/F-2/F-3 保留符号与 4 个 DOM 标记未改名，仍可按现状冻结）
+- 角色: Coder → Tester（已复测 PASSED）→ Coder（第 1 轮修复）→ Tester（第 1 轮修复复测：**PASSED**）
+- 状态: **READY_TO_MERGE**（3 条非阻断 Bug 已全部复测确认为"已修复"；F-1/F-2/F-3 与 4 个 DOM 标记
+  未改名，Wave 2 可逐字照抄契约段。复测细节见 §复测记录（第 1 轮修复后））
 - Worktree: `.worktrees/datazen-redis-host-slots`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.0、§3.4、§7-1/2/4、§8-1（P0 ⑥）
 
@@ -457,3 +457,73 @@ Tester 新增 **1 个测试文件 + 8 个用例**（全部标注 `[tester]`）�
 | codegen | `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | ok，`DRIVER_KV_SLOTS = []`（无驱动声明 `kvSlots`）⇒ 与今日一致；`generated.ts` / `driver_init.rs` 经 `git check-ignore` 确认未跟踪，**未提交** |
 
 **零残留确认**：`rg hasAnyKvSlotCapability|disposeKvSlotState`（排除 `docs/**`）命中 0。
+
+## 复测记录（第 1 轮修复后，全新 Tester 实例，被测提交 `d4469185e`）
+
+判定：**PASSED → READY_TO_MERGE**。三条 Bug 逐条独立复验通过，全部门禁零新红，**未发现新 Bug**。
+本轮为修复轮窄口径复测：完整重跑全部门禁 + 逐条核对修复事实与契约文字，未重复上一轮的整体覆盖率补齐工程。
+
+### 阶段 B：独立门禁实跑（worktree `.worktrees/datazen-redis-host-slots`，`d4469185e`，工作区起始干净）
+
+| 门禁 | 命令 | Coder 修复轮自报 | Tester 实测 | 判定 |
+| --- | --- | --- | --- | --- |
+| 类型 | `npx tsc --noEmit -p tsconfig.json` | 0 错误 | 0 错误（exit 0） | 一致 |
+| 定向单测 | `npx vitest run src/windows/connection src/lib` | 205 / 2075 | **205 / 2075** 全绿 | 一致 |
+| Host 全量 | `npx vitest run` | 450 / 4653，exit 0 | **450 / 4653** 全绿，exit 0（修复前、补强后各跑一次，同数） | 一致，零红 |
+| 边界 | `node scripts/check-driver-import-boundaries.mjs` | 0 blocking（1416 / 4 advisory） | 0 blocking（1416 / 4 advisory，advisory 四条同上一轮） | 一致 |
+| ID 术语 / 分层 / CI 文档 / 版本 | 四个 `check-*.mjs` | ok | ok（1732 files·5 allow-listed / 3 rules / 11 driver ids + window + toolchain / 0.2.1） | 一致 |
+| 脚本单测 | `npx vitest run scripts/__tests__` | 23 / 254 | 23 / 254（`KV_SLOT_NAMES` ↔ `KvSlotName` 钉死仍绿） | 一致 |
+| codegen | `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | `DRIVER_KV_SLOTS = []` | 复现：`generated.ts:192` 表体为空、`git status --short` 生成后仍为空 ⇒ **generated 未进提交** | 一致 |
+
+### 阶段 A：逐条修复事实核验
+
+- **BUG-001（删除未接线导出）— 通过**。`git show --name-only d4469185e` =
+  2 篇本轨文档 + `kvSlotState.ts` / `kvWorkspaceCapabilities.ts` / 两个对应测试文件，**未越界**；
+  `rg hasAnyKvSlotCapability|disposeKvSlotState`（排除 `docs/**`）命中 **0**；
+  删除未丢判定的说法独立核实为真 —— `detailPanelApplicable`（`ContentView.tsx:147-150`）
+  只按面板类型/subTab 收窄，**不含任何聚合能力位**；真实能力判定仍只有
+  `hasKvSlotCapability(meta, slot)` 一条路径，生产消费者 `kvWorkspaceSlots.ts:33`（`getKvSlotComponent` 双闸）。
+  原子回收只剩 `pruneKvSlotStates` 一条路径（`kvSlotState.ts` 内 `atoms` 仅由
+  `getKvSlotState` / `pruneKvSlotStates` / `resetKvSlotStatesForTests` 三处改动，注释与实现一致）。
+- **BUG-002（自验数字）— 通过**，且新数字由 Tester 独立按 git 重算吻合：
+  Coder 侧 7 个新增测试文件用例数 11+7+5+2+3+5+7 = **40**，
+  两个修改文件 `resolve-drivers.test.mjs` 13→18（+5）、`ContentStatusBar.test.tsx` 4→6（+2）⇒ **+47**；
+  449/4646 − 7 文件/47 用例 ⇒ 基线 **442 / 4599** ✓；
+  今日 4653 = 4599 + 47 + 8（上一轮 Tester）− 1（本轮 BUG-001 删除的 dispose 整例）✓。
+- **BUG-003（F-2 对偶事实）— 通过**：新增引用块的行号与代码逐字一致
+  （`ContentViewDrawers.tsx:152-153` 的 `data-slot` / `data-testid`），
+  行为由 `ContentViewDrawers.test.tsx:122-123` 钉住（`open=false` ⇒ wrapper 在、驱动根不在）；
+  4 个 DOM 标记全部仍在渲染输出上（`ContentToolbar.tsx:123/124`、`ContentStatusBar.tsx:50/51`、
+  `ContentViewDrawers.tsx:152/153`、`ConnectionWorkspaceHome.tsx:292/293`），未改名。
+  另记一处精度补充（不立 Bug）：wrapper 常驻的前提是 `detailPanelApplicable` 为真，
+  见 `bugs.md` BUG-003 状态段。
+
+### 阶段 C：本轮补强（1 个既有用例内新增 2 条断言，用例数不变）
+
+- `src/lib/__tests__/kvSlotState.test.ts` 的 "prunes every atom whose panel is gone …" 用例
+  补 `reopened.getSelectedKey()` 为 `null` 与 `getDirty()` 为 `false` 两条断言（标注 `[tester]`）。
+  动机：BUG-001 删掉的 `disposeKvSlotState` 用例是**唯一**断言"面板 id 回收后拿回干净原子"的地方，
+  §修复记录 BUG-001 第 3 点称"其反例用例（prune 后返回全新干净原子）仍在"——实际只剩
+  `not.toBe` 的"全新"，"干净"半句无人钉。补齐后该说法逐字成立，脏草稿门闸（PRD I-1）
+  在"关掉再开同一面板 id"这条路径上重新有回归保护。用例数与文件数均未变（450 / 4653 不变）。
+- 变异敏感性抽查（临时改业务码后已还原，工作区最终只余本补强测试文件）：
+  把 `pruneKvSlotStates` 的判据取反 ⇒ 该文件 2 个 prune 用例立即变红（`expected {…} not to be {…}`），
+  证明断言真实咬住回收语义，非空跑。
+- 覆盖率复核（v8，针对本轮唯一改动的三个 `src/lib` 文件）：
+  `kvSlotState.ts` / `kvWorkspaceCapabilities.ts` / `kvWorkspaceSlots.ts` 仍 **Stmts / Branch / Funcs / Lines 全 100%**
+  ⇒ 删除未接线面后覆盖不降，≥80% 硬标准继续满足。
+
+### 阶段 D：收尾
+
+- 禁止路径复核：`git diff --name-only ae65ae375..d4469185e` 命中
+  `packages/drivers/redis/**` **0**、任何 `locales/**` **0**、`package.json` **0**、
+  `RedisWorkbench.tsx` **0**、codegen 产物 **0**（`src/extensions/generated.ts` 由 `.gitignore:63` 忽略）。
+  改动面仅宿主 `src/lib` + `src/windows/connection` + `packages/driver-sdk` 类型 + 生成器 + 本轨文档。
+- 增量行调试残留扫描：唯一命中是 `src/windows/connection/__tests__/ContentToolbar.test.tsx:14`
+  的一条 `eslint-disable-next-line @typescript-eslint/no-unnecessary-condition`（测试内有意防御），
+  无 TODO / FIXME / `console.log` / `debugger`。
+- 三条 Bug 状态已在 `bugs.md` 更新为"已修复并经第 1 轮复测确认"；新增 2 条**不登记为 Bug** 的观察
+  （O-1 `KV_SLOT_NAMES` doc 注释"in render order"名不副实；O-2 F-1 的聚合判定提示只对宿主成立，
+  驱动侧须改用 SDK 的 `KvSlotName` 联合，否则撞边界护栏 R1）。
+- 合流前置不变：R-1 / R-2 / R-4 / R-5 / R-6 仍留 R 阶段 GUI 与主检出复跑（本 worktree 缺 git 驱动与 pro 扩展）。
+

@@ -102,6 +102,7 @@ describe('panel-scoped KV slot atoms', () => {
     const closed = getKvSlotState('panel-closed');
     const live = getKvSlotState('panel-live');
     closed.selectKey('x');
+    closed.setDirty(true);
     live.selectKey('y');
 
     pruneKvSlotStates(new Set(['panel-live']));
@@ -109,6 +110,15 @@ describe('panel-scoped KV slot atoms', () => {
     expect(getKvSlotState('panel-closed')).not.toBe(closed);
     expect(getKvSlotState('panel-live')).toBe(live);
     expect(getKvSlotState('panel-live').getSelectedKey()).toBe('y');
+
+    // [tester] BUG-001 deleted the single-panel `disposeKvSlotState` case, which was
+    // the only place asserting that a recycled panel id comes back *clean*. Since
+    // `pruneKvSlotStates` is now the only recycling path, it must carry that
+    // guarantee itself: reopening a closed panel id must not inherit the old
+    // selection or the old dirty flag (PRD I-1 dirty gate).
+    const reopened = getKvSlotState('panel-closed');
+    expect(reopened.getSelectedKey()).toBeNull();
+    expect(reopened.getDirty()).toBe(false);
   });
 
   it('prunes nothing when every panel is still live', () => {
