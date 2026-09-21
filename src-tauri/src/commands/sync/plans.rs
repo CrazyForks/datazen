@@ -166,6 +166,51 @@ pub(crate) struct SyncRunRequest {
     pub job_id: Option<String>,
 }
 
+/// Build the unattended profile selection from a server-owned comparison.
+///
+/// Persisted profiles do not carry row payloads or SQL.  A profile run applies
+/// every enabled operation for every matched table in the immutable plan;
+/// the plan registry remains the only source of table and row identities.
+pub(crate) fn default_profile_selection(
+    plan_id: &str,
+    revision: u64,
+    options: &SyncOptions,
+) -> Result<SyncRunSelection, String> {
+    let plan = peek_plan(plan_id)?;
+    if plan.selection_revision != revision {
+        return Err("selection revision is stale; return to comparison".into());
+    }
+    let comparison = load_comparison(&plan)?;
+    let operations = [
+        ChangeOperation::Insert,
+        ChangeOperation::Update,
+        ChangeOperation::Delete,
+    ]
+    .into_iter()
+    .filter(|operation| options.allows(*operation))
+    .collect::<Vec<_>>();
+    if operations.is_empty() {
+        return Err("profile has no enabled Data Sync operations".into());
+    }
+    let scopes = comparison
+        .tables
+        .into_iter()
+        .filter(|table| table.status == TableMappingStatus::Matched)
+        .map(|table| SyncTableSelection {
+            source_table: table.source_table,
+            target_table: table.target_table,
+            selection_mode: SyncSelectionMode::All,
+            operations: operations.clone(),
+            excluded_rows: Vec::new(),
+        })
+        .collect();
+    Ok(SyncRunSelection {
+        revision,
+        rows: Vec::new(),
+        scopes,
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SyncComparisonTableSummary {

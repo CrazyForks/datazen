@@ -22,8 +22,9 @@ pub(crate) mod executor;
 pub use super::registry::WorkflowRegistry;
 pub use crate::workflow::model::{
     ErrorHandlingConfig, ErrorStrategy, ErrorStrategyKind, StepExecutionResult, StepStatus,
-    WorkflowDefinition, WorkflowExecutionResult, WorkflowListItem, WorkflowOutput,
-    WorkflowSchedule, WorkflowStep, WorkflowVariable, WorkflowVisibility,
+    UnattendedDestructivePolicy, WorkflowDefinition, WorkflowExecutionResult, WorkflowListItem,
+    WorkflowMigrationOperation, WorkflowOutput, WorkflowSchedule, WorkflowStep, WorkflowVariable,
+    WorkflowVisibility,
 };
 pub use command::WorkflowCommandStep;
 pub use executor::{

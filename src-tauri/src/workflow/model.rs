@@ -46,6 +46,22 @@ pub struct WorkflowSchedule {
     pub interval_secs: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkflowMigrationOperation {
+    DataTransfer,
+    DataSync,
+    SchemaDiff,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UnattendedDestructivePolicy {
+    #[default]
+    Reject,
+    Allow,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowVariable {
     pub name: String,
@@ -143,6 +159,29 @@ pub enum WorkflowStep {
         #[serde(default)]
         on_error: Option<ErrorHandlingConfig>,
     },
+    /// Execute a persisted migration profile through the host-owned migration
+    /// services. This is intentionally separate from Driver Commands because
+    /// it owns profile revision checks, fresh sessions, immutable plans, and
+    /// migration run history.
+    #[serde(rename = "migration")]
+    Migration {
+        id: String,
+        operation: WorkflowMigrationOperation,
+        #[serde(alias = "profileId")]
+        profile_id: String,
+        #[serde(default, alias = "profileRevision")]
+        profile_revision: Option<String>,
+        #[serde(default, alias = "destructivePolicy")]
+        destructive_policy: UnattendedDestructivePolicy,
+        /// Name of the per-run variable containing a native-dialog-issued
+        /// SQL-file token. The token itself is never persisted in a profile.
+        #[serde(default, alias = "sqlFileTokenVariable")]
+        sql_file_token_variable: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+        #[serde(default)]
+        on_error: Option<ErrorHandlingConfig>,
+    },
 }
 
 /// One input group feeding a `merge` step.
@@ -174,7 +213,8 @@ impl WorkflowStep {
             | Self::Condition { id, .. }
             | Self::ForEach { id, .. }
             | Self::Merge { id, .. }
-            | Self::Transform { id, .. } => id,
+            | Self::Transform { id, .. }
+            | Self::Migration { id, .. } => id,
         }
     }
     pub(crate) fn step_type_str(&self) -> &'static str {
@@ -186,6 +226,7 @@ impl WorkflowStep {
             Self::ForEach { .. } => "foreach",
             Self::Merge { .. } => "merge",
             Self::Transform { .. } => "transform",
+            Self::Migration { .. } => "migration",
         }
     }
     pub(crate) fn on_error_strategy(&self) -> Option<ErrorStrategy> {
@@ -194,7 +235,8 @@ impl WorkflowStep {
             | Self::Command { on_error, .. }
             | Self::Ai { on_error, .. }
             | Self::Merge { on_error, .. }
-            | Self::Transform { on_error, .. } => on_error.as_ref().map(|c| c.to_strategy()),
+            | Self::Transform { on_error, .. }
+            | Self::Migration { on_error, .. } => on_error.as_ref().map(|c| c.to_strategy()),
             _ => None,
         }
     }
@@ -204,7 +246,8 @@ impl WorkflowStep {
             | Self::Command { timeout_secs, .. }
             | Self::Ai { timeout_secs, .. }
             | Self::Merge { timeout_secs, .. }
-            | Self::Transform { timeout_secs, .. } => *timeout_secs,
+            | Self::Transform { timeout_secs, .. }
+            | Self::Migration { timeout_secs, .. } => *timeout_secs,
             _ => None,
         }
     }
@@ -342,5 +385,41 @@ mod tests {
         let json = r#"{"id":"w","name":"W","description":"d","steps":[],"schedule":{"enabled":true,"intervalSecs":45}}"#;
         let workflow: WorkflowDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(workflow.schedule.unwrap().interval_secs, Some(45));
+    }
+
+    #[test]
+    fn migration_step_is_host_owned_and_defaults_to_reject() {
+        let step: WorkflowStep = serde_yaml::from_str(
+            "type: migration\nid: nightly-sync\noperation: dataSync\nprofile_id: profile-1\n",
+        )
+        .unwrap();
+        match step {
+            WorkflowStep::Migration {
+                destructive_policy,
+                sql_file_token_variable,
+                ..
+            } => {
+                assert_eq!(destructive_policy, UnattendedDestructivePolicy::Reject);
+                assert_eq!(sql_file_token_variable, None);
+            }
+            other => panic!("expected migration step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_step_serialization_does_not_contain_a_file_token() {
+        let step = WorkflowStep::Migration {
+            id: "export".into(),
+            operation: WorkflowMigrationOperation::DataTransfer,
+            profile_id: "profile-1".into(),
+            profile_revision: None,
+            destructive_policy: UnattendedDestructivePolicy::Allow,
+            sql_file_token_variable: Some("outputToken".into()),
+            timeout_secs: None,
+            on_error: None,
+        };
+        let encoded = serde_json::to_string(&step).unwrap();
+        assert!(encoded.contains("outputToken"));
+        assert!(!encoded.contains("fileToken"));
     }
 }

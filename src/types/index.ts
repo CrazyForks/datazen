@@ -567,6 +567,7 @@ export type WorkflowStepType =
   | 'query'
   | 'command'
   | 'ai'
+  | 'migration'
   | 'condition'
   | 'foreach'
   | 'merge'
@@ -605,6 +606,11 @@ export interface WorkflowStep {
   sortBy?: string;
   offset?: number;
   limit?: number;
+  operation?: 'dataTransfer' | 'dataSync' | 'schemaDiff';
+  profileId?: string;
+  profileRevision?: string;
+  destructivePolicy?: 'reject' | 'allow';
+  sqlFileTokenVariable?: string;
 }
 
 export interface MergeSource {
