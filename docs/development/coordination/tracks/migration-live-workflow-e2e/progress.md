@@ -1,6 +1,6 @@
 # Migration live workflow E2E track
 
-- Phase: READY_FOR_TEST
+- Phase: READY_TO_MERGE
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-live-workflow-e2e`
 - Branch: `feature/migration-live-workflow-e2e`
 - Base: `codex/migration-navicat` (`aac8ff5c`)
@@ -40,3 +40,15 @@
 
 - CI without provisioned PostgreSQL/MySQL runs the suite as skipped unless `E2E_MIGRATION_LIVE=1` is set and the fixtures are reachable. The live command is available locally/CI after `e2e/setup-e2e-env.sh` provisions the databases.
 - Existing demo-data setup emits unrelated idempotent schema warnings/errors on this checkout; the migration fixture and all 10 live assertions still passed.
+
+## Independent tester verification
+
+- Tester bootstrap: worktree `feature/migration-live-workflow-e2e` at coder commit `624c6fd5`; no coder changes were present in the worktree.
+- `node scripts/generate-builtin-locales.mjs`: passed.
+- `CI=true pnpm exec prettier --check e2e/specs/migration-live-workflow.ts e2e/wdio.conf.ts package.json docs/development/coordination/tracks/migration-live-workflow-e2e/progress.md`: passed.
+- `CI=true pnpm exec tsc --noEmit`: passed.
+- `CI=true pnpm tauri:build:webdriver`: passed; frontend build and webdriver bundle completed.
+- `CI=true E2E_MIGRATION_LIVE=0 E2E_MIGRATION_SCHEDULED=0 pnpm e2e --skip-build -- --suite migration-live-workflow`: passed with exactly 10 skipped (5 PostgreSQL, 5 MySQL), each gated by the explicit live flag.
+- `CI=true E2E_MIGRATION_LIVE=1 E2E_MIGRATION_SCHEDULED=1 pnpm e2e --skip-build -- --suite migration-live-workflow`: passed with exactly 10 passing (5 PostgreSQL, 5 MySQL) in 1m 23.2s, including real scheduler trigger and target row verification.
+- Journey coverage: 10/10 declared cases exercised live (100% behavioral case coverage); no additional test case was needed after the live run. Source line coverage is not instrumented for WebdriverIO specs by this repository's Vitest coverage configuration.
+- No BUG-* entries: no defects reproduced. Build-generated `Cargo.lock` noise was restored before handoff.
