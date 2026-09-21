@@ -63,6 +63,7 @@
 | migration-schema-safety | — | `FAILED` | — | — | — |
 | migration-target-table-picker | — | 未开始 | — | — | — |
 | migration-schema-constraints-options | — | 未开始 | — | — | — |
+| migration-table-options | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -123,6 +124,7 @@
 | migration-schema-safety | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-schema-safety` | `feature/migration-schema-safety` | `FAILED` | — |
 | migration-target-table-picker | — | — | feature/migration-target-table-picker | 未开始 | — |
 | migration-schema-constraints-options | — | — | feature/migration-schema-constraints-options | 未开始 | — |
+| migration-table-options | — | — | feature/migration-table-options | 未开始 | — |
 
 ## 波次记录
 
