@@ -112,3 +112,49 @@ async fn list_objects_and_get_ddl_for_sqlite_trigger() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn test_tester_view_ddl_preserves_query_body_when_as_is_multiline() {
+    let dir = std::env::temp_dir().join(format!(
+        "datazen-sqlite-schema-view-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("schema_views.db");
+    let path_str = path.to_string_lossy().to_string();
+    std::fs::File::create(&path).unwrap();
+
+    let driver = SqliteDriver::new();
+    let handle = driver.connect(&test_config(&path_str)).await.unwrap();
+    driver
+        .execute(
+            &handle,
+            "CREATE TABLE source_rows (id INTEGER PRIMARY KEY); CREATE VIEW active_rows AS\nSELECT id\nFROM source_rows",
+        )
+        .await
+        .unwrap();
+
+    let list = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "list_objects",
+        json!({ "kind": "view" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.data["objects"][0]["name"], "active_rows");
+
+    let ddl = execute_schema_object_command(
+        &driver,
+        "sqlite",
+        &handle,
+        "get_object_ddl",
+        json!({ "kind": "view", "name": "active_rows" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ddl.data["ddl"], "SELECT id\nFROM source_rows");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
