@@ -120,6 +120,14 @@ describe('checkI18nCopyAssertions', () => {
   });
 
   it('does not treat an untranslated i18n key as copy', () => {
+    // What actually excludes a key such as `redis.noExpiry` is COPY_SHAPE_RE:
+    // it demands an uppercase first letter *and* (see the gate in the guard) a
+    // space, while i18n keys are lowercase dotted identifiers. Locating by key
+    // is 原则六 第 2 类锚点, i.e. the fix. An earlier revision also carried a
+    // separate `KEY_SHAPE_RE` short-circuit; it could never be reached, so it
+    // was deleted rather than "covered" (redis-assert-policy BUG-004). This
+    // case is the regression guard for that behaviour: if the copy-shape gate
+    // is ever loosened, a key-shaped locator must still not read as copy.
     writeTest("it('ok', () => {\n  expect(screen.getByText('redis.noExpiry')).toBeTruthy();\n});\n");
     expect(run(true).hits).toEqual([]);
   });
@@ -270,11 +278,15 @@ describe('[tester] checkI18nCopyAssertions walker and default-option branches', 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const { code, scanned, hits } = checkI18nCopyAssertions();
+      const { code, scanned, hits, watchedTerms, unresolvedTerms } = checkI18nCopyAssertions();
       // Real repository, default (advisory) mode: never a non-zero exit.
       expect(code).toBe(0);
       expect(scanned).toBeGreaterThan(10);
       expect(Array.isArray(hits)).toBe(true);
+      // No options means no watchlist: the default face must stay exactly the
+      // two-word dictionary heuristic, with nothing resolved or unresolved.
+      expect(watchedTerms).toEqual([]);
+      expect(unresolvedTerms).toEqual([]);
       // Exactly the guard's own report channel fired (one ok line, or a warning
       // block when the tree has hits — the repository's hit count is deliberately
       // not asserted, see the note above).
@@ -285,5 +297,156 @@ describe('[tester] checkI18nCopyAssertions walker and default-option branches', 
       logSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * [coder] redis-assert-policy-BUG-005: the two structural blind spots the
+ * default heuristics cannot see — single-word copy (`Console`, `Wrap`, `Size`,
+ * `Discard`: 3 of the 4 copy strings 裁定 8-4 is about to change) and the
+ * WebdriverIO interaction specs under `e2e/specs/` — are closed by the two
+ * opt-in flags `--terms` (i18n-key watchlist, values read back from the
+ * dictionaries) and `--dirs` (widened scan face).
+ */
+describe('[coder] checkI18nCopyAssertions watchlist and scan-face options', () => {
+  let root: string;
+  const DRIVER_TESTS = 'packages/drivers/redis/ui/__tests__';
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'check-i18n-terms-'));
+    mkdirSync(join(root, 'packages/drivers/redis/locales'), { recursive: true });
+    mkdirSync(join(root, DRIVER_TESTS), { recursive: true });
+    mkdirSync(join(root, 'e2e/specs'), { recursive: true });
+    writeFileSync(
+      join(root, 'packages/drivers/redis/locales/en.ts'),
+      "export const redisEn = {\n  'redis.console': 'Console',\n  'redis.alias': 'Console',\n  'redis.view.wrap': 'Wrap',\n  'redis.noExpiry': 'No expiry',\n};\n",
+    );
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const writeAt = (rel: string, source: string) => writeFileSync(join(root, rel), source);
+
+  const probe = (opts: { dirs?: string[]; terms?: string[]; strict?: boolean } = {}) => {
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const result = checkI18nCopyAssertions({
+      root,
+      dirs: opts.dirs ?? ['packages/drivers'],
+      terms: opts.terms,
+      strict: opts.strict ?? false,
+      log: (msg) => logs.push(String(msg)),
+      warn: (msg) => warnings.push(String(msg)),
+    });
+    return { ...result, logs, warnings };
+  };
+
+  it('sees a pinned single-word term only when it is on the watchlist', () => {
+    writeAt(
+      `${DRIVER_TESTS}/sample.test.tsx`,
+      "it('ok', () => {\n  screen.getByRole('tab', { name: 'Console' });\n});\n",
+    );
+    // Default heuristics (space gate) — the BUG-005 blindness, kept as evidence.
+    expect(probe().hits).toEqual([]);
+    const { hits, watchedTerms, logs } = probe({ terms: ['redis.console', 'redis.view.wrap'] });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      file: `${DRIVER_TESTS}/sample.test.tsx`,
+      line: 2,
+      literal: 'Console',
+      term: 'redis.console',
+    });
+    // The watchlist is expressed in keys and resolved at run time, and it says
+    // so out loud, so a reviewer can see which value each term currently has.
+    expect(watchedTerms).toEqual([
+      { key: 'redis.console', value: 'Console' },
+      { key: 'redis.view.wrap', value: 'Wrap' },
+    ]);
+    expect(logs.join('\n')).toContain('watchlist: redis.console="Console"');
+
+    // Two keys may carry the same wording (the real repository has exactly that
+    // with `common.close` / `common.retry`): both stay listed, the first one
+    // resolved is the one named on the hit.
+    const aliased = probe({ terms: ['redis.alias', 'redis.console'] });
+    expect(aliased.watchedTerms).toEqual([
+      { key: 'redis.alias', value: 'Console' },
+      { key: 'redis.console', value: 'Console' },
+    ]);
+    expect(aliased.hits).toHaveLength(1);
+    expect(aliased.hits[0].term).toBe('redis.alias');
+  });
+
+  it('follows the dictionary when the wording changes instead of pinning it', () => {
+    // Rewording 8-4 must not require touching the watchlist or the invocation:
+    // the guard looks for whatever the key says *now*. (`No expiry` on line 3 is
+    // the two-word baseline behaviour, present in both runs, and carries no
+    // term — only the watchlisted `Wrap` does.)
+    writeAt(
+      `${DRIVER_TESTS}/sample.test.tsx`,
+      "it('ok', () => {\n  screen.getByText('Wrap');\n  screen.getByText('No expiry');\n});\n",
+    );
+    const before = probe({ terms: ['redis.view.wrap'] }).hits;
+    expect(before.map((h) => h.literal)).toEqual(['Wrap', 'No expiry']);
+    expect(before[0].term).toBe('redis.view.wrap');
+    expect(before[1].term).toBeUndefined();
+
+    writeFileSync(
+      join(root, 'packages/drivers/redis/locales/en.ts'),
+      "export const redisEn = {\n  'redis.console': 'Console',\n  'redis.view.wrap': 'Wrap lines',\n  'redis.noExpiry': 'No expiry',\n};\n",
+    );
+    // Same term key, same invocation: after the copy change the old literal is
+    // no longer protected copy, and the multi-word pin still trips the heuristics.
+    const after = probe({ terms: ['redis.view.wrap'] }).hits;
+    expect(after.map((h) => h.literal)).toEqual(['No expiry']);
+    expect(after[0].term).toBeUndefined();
+  });
+
+  it('fails loudly for a watchlist term that resolves to nothing', () => {
+    writeAt(`${DRIVER_TESTS}/sample.test.tsx`, "it('ok', () => {});\n");
+    const advisory = probe({ terms: ['redis.discard'] });
+    expect(advisory.unresolvedTerms).toEqual(['redis.discard']);
+    expect(advisory.hits).toEqual([]);
+    // Advisory mode still exits 0 (PRD §8.2: no dev-time release gate)…
+    expect(advisory.code).toBe(0);
+    expect(advisory.warnings.join('\n')).toContain('protects nothing');
+    // …while --strict treats "the protection is not there" as a failure.
+    expect(probe({ terms: ['redis.discard'], strict: true }).code).toBe(1);
+    // A real key alongside the typo still resolves: only the bad term is flagged.
+    const mixed = probe({ terms: ['redis.console', 'redis.discard'] });
+    expect(mixed.watchedTerms).toEqual([{ key: 'redis.console', value: 'Console' }]);
+    expect(mixed.unresolvedTerms).toEqual(['redis.discard']);
+  });
+
+  it('scans WebdriverIO interaction specs once their root is on the face', () => {
+    writeAt(`${DRIVER_TESTS}/sample.test.tsx`, "it('ok', () => {});\n");
+    writeAt(
+      'e2e/specs/redis-console.ts',
+      'export async function journey(browser) {\n' +
+        "  await $('button[aria-label=\"No expiry\"]').click();\n" +
+        "  await $('button[aria-label=\"Console\"]').click();\n" +
+        // Positive form: the selector reads the copy back from i18n, so only a
+        // `${t(` fragment reaches the matcher and the guard stays quiet.
+        '  await $(`button[aria-label="${t(\'redis.noExpiry\')}"]`).click();\n' +
+        '}\n',
+    );
+    // `e2e/specs/*.ts` is neither `*.test.ts` nor under `__tests__/`: before the
+    // specs pattern this root contributed 0 interaction files (BUG-005).
+    const face = probe({ dirs: ['e2e', 'packages/drivers'] });
+    expect(face.scanned).toBe(2);
+    // A two-word pin trips the default heuristics on the widened face…
+    expect(face.hits).toEqual([{ file: 'e2e/specs/redis-console.ts', line: 2, literal: 'No expiry' }]);
+    // …and the watchlist additionally catches the single-word pin on line 3,
+    // while the read-back form on line 4 stays out of the report.
+    expect(probe({ dirs: ['e2e'], terms: ['redis.console'] }).hits).toEqual([
+      { file: 'e2e/specs/redis-console.ts', line: 2, literal: 'No expiry' },
+      {
+        file: 'e2e/specs/redis-console.ts',
+        line: 3,
+        literal: 'Console',
+        term: 'redis.console',
+      },
+    ]);
   });
 });

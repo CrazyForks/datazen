@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MenuBar } from '../MenuBar';
-import en from '../../locales/en';
+import { enCopy } from '../../test/enCopy';
 
 vi.mock('../../hooks/usePlatform', () => ({
   usePlatform: () => 'windows',
@@ -16,16 +16,17 @@ afterEach(cleanup);
 
 // Menu titles are i18n copy (`menu.*`), so the accessible names asserted below
 // are read from the dictionary rather than hard-coded: what this suite locks
-// down is the menubar role / aria state / focus order, not the wording.
-const APP_NAME = en['menu.appName'];
-const FILE = en['menu.file'];
-const IMPORT_CONNECTIONS = en['common.importConnections'];
+// down is the menubar role / aria state / focus order, not the wording. enCopy()
+// keeps that read-back honest — a renamed or emptied `menu.*` key fails the run
+// instead of quietly turning `{ name: … }` into an unbounded query.
+const APP_NAME = enCopy('menu.appName');
+const FILE = enCopy('menu.file');
+const IMPORT_CONNECTIONS = enCopy('common.importConnections');
 
 describe('MenuBar accessibility and keyboard navigation', () => {
   it('exposes an application menubar and menu item state', () => {
     render(<MenuBar />);
 
-    expect(APP_NAME.trim().length).toBeGreaterThan(0);
     expect(screen.getByRole('menubar', { name: APP_NAME })).toBeInTheDocument();
     const file = screen.getByRole('menuitem', { name: FILE });
     expect(file).toHaveAttribute('aria-haspopup', 'menu');
