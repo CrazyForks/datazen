@@ -9,6 +9,8 @@ import {
 import { useSchemaStore } from '../../../stores/schemaStore';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import { showWebContextMenu } from '../../../stores/contextMenuStore';
+import { getUnifiedRowKey } from '../navigator/utils';
+import type { UnifiedRow } from '../navigator/types';
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const mockGetDatabaseObjects = vi.hoisted(() => vi.fn());
@@ -557,6 +559,54 @@ beforeEach(() => {
   mockGetDriverCommands.mockResolvedValue([]);
   useSchemaStore.getState().reset();
   useSchemaStore.getState().setActiveConnection('conn-1');
+});
+
+describe('[tester] navigator object identity keys', () => {
+  it('keeps routine overloads unique', () => {
+    const routineInteger: UnifiedRow = {
+      type: 'object',
+      obj: { kind: 'function', schema: 'public', name: 'lookup', signature: 'integer' },
+      depth: 0,
+      catId: 'functions',
+    };
+    const routineText: UnifiedRow = {
+      type: 'object',
+      obj: { kind: 'function', schema: 'public', name: 'lookup', signature: 'text' },
+      depth: 0,
+      catId: 'functions',
+    };
+
+    expect(getUnifiedRowKey(routineInteger, 0)).not.toBe(getUnifiedRowKey(routineText, 1));
+  });
+
+  it('keeps same-name trigger targets unique', () => {
+    const triggerOrders: UnifiedRow = {
+      type: 'object',
+      obj: {
+        kind: 'trigger',
+        schema: 'public',
+        name: 'audit_trigger',
+        targetSchema: 'public',
+        targetName: 'orders',
+      },
+      depth: 0,
+      catId: 'triggers',
+    };
+    const triggerUsers: UnifiedRow = {
+      type: 'object',
+      obj: {
+        kind: 'trigger',
+        schema: 'public',
+        name: 'audit_trigger',
+        targetSchema: 'public',
+        targetName: 'users',
+      },
+      depth: 0,
+      catId: 'triggers',
+    };
+
+    expect(getUnifiedRowKey(triggerOrders, 2)).not.toBe(getUnifiedRowKey(triggerUsers, 3));
+  });
 });
 
 describe('ConnectionNavigatorTree active connection highlight', () => {

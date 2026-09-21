@@ -217,7 +217,9 @@ async fn test_tester_trigger_identity_journey_preserves_targets_and_escapes_name
     )
     .await
     .unwrap_err();
-    assert!(unsupported.to_string().contains("does not expose object DDL"));
+    assert!(unsupported
+        .to_string()
+        .contains("does not expose object DDL"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

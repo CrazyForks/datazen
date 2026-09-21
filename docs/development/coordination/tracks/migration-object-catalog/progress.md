@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+FAILED
 
 ## Scope
 
@@ -40,4 +40,14 @@ READY_FOR_TEST
 
 ## Commit
 
-- Coding commit: to be recorded in the READY_FOR_TEST handoff.
+- Coding commit: e15d81c9
+
+## Tester round 2
+
+- Tester test additions: ObjectBrowser overload copy, navigator key uniqueness, and panel identity journeys.
+- Focused Vitest: 97 passed, 2 failed; both failures are migration-object-catalog-BUG-001.
+- ObjectBrowser coverage with focused suite: 96.05% statements, 84.74% branches, 96% functions, 97.33% lines.
+- Driver/API/Host checks: Driver API 140 passed; PostgreSQL object SQL 10 passed; MySQL object SQL 6 passed; SQLite object command 6 passed; SQLite object SQL 5 passed; Host schema tests 14 passed.
+- TypeScript, Prettier, rustfmt, and `git diff --check`: passed.
+- Live DB limitation: PostgreSQL and MySQL live-server integration was unavailable; SQL contracts and Host mock IPC were used.
+- Tester commit: 564dad6e

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, screen, waitFor } from '@testing-library/react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { ObjectBrowser } from '../ObjectBrowser';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -15,13 +16,20 @@ vi.mock('../../../components/SqlEditor', async () => {
           value,
           onChange,
           placeholder,
-        }: { value: string; onChange: (v: string) => void; placeholder?: string },
+          onContextMenu,
+        }: {
+          value: string;
+          onChange: (v: string) => void;
+          placeholder?: string;
+          onContextMenu?: (e: ReactMouseEvent<HTMLTextAreaElement>, sqlText: string) => void;
+        },
         _ref: unknown,
       ) => (
         <textarea
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onContextMenu={(event) => onContextMenu?.(event, value)}
         />
       ),
     ),
@@ -35,6 +43,7 @@ const executeQuery = vi.fn();
 
 vi.mock('../../../lib/nativeContextMenu', () => ({
   showNativeContextMenu: (...args: unknown[]) => showNativeContextMenu(...args),
+  nativeEditMenuItems: () => [],
 }));
 
 vi.mock('../../../commands/database', () => ({
@@ -194,5 +203,86 @@ describe('ObjectBrowser', () => {
     fireEvent.click(items[1]!);
     await waitFor(() => expect(items[1]!.className).toContain('bg-surface-raised'));
     expect(items[0]!.className.split(/\s+/)).not.toContain('bg-surface-raised');
+  });
+
+  it('[tester] copies the independently addressed overload when another overload is selected', async () => {
+    getDatabaseObjects.mockResolvedValueOnce([
+      { kind: 'function', schema: 'public', name: 'lookup', signature: 'integer' },
+      { kind: 'function', schema: 'public', name: 'lookup', signature: 'text' },
+    ]);
+    getObjectDdl
+      .mockResolvedValueOnce('CREATE FUNCTION lookup(integer) RETURNS int AS $$ SELECT 1 $$;')
+      .mockResolvedValueOnce('CREATE FUNCTION lookup(text) RETURNS int AS $$ SELECT 2 $$;');
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
+    const items = await screen.findAllByTestId('object-browser-item');
+    fireEvent.click(items[0]!);
+    await waitFor(() => expect(screen.getByDisplayValue(/lookup\(integer\)/)).toBeInTheDocument());
+
+    showNativeContextMenu.mockClear();
+    getObjectDdl.mockClear();
+    fireEvent.contextMenu(items[1]!);
+    await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalledTimes(1));
+
+    const menuItems = showNativeContextMenu.mock.calls[0]![0] as Array<{
+      id?: string;
+      action?: () => void | Promise<void>;
+    }>;
+    const copyDdl = menuItems.find((item) => item.id === 'copy-ddl');
+    expect(copyDdl?.action).toBeDefined();
+    await copyDdl!.action!();
+
+    expect(getObjectDdl).toHaveBeenCalledWith(
+      'c1',
+      'function',
+      'lookup',
+      'public',
+      'text',
+      undefined,
+      undefined,
+    );
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('lookup(text)'));
+  });
+
+  it('[tester] exercises list and editor context actions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
+    const row = await screen.findByText('fn_ok');
+    fireEvent.contextMenu(row);
+    await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalledTimes(1));
+
+    const listItems = showNativeContextMenu.mock.calls[0]![0] as Array<{
+      id?: string;
+      action?: () => void | Promise<void>;
+    }>;
+    await listItems.find((item) => item.id === 'open')!.action!();
+    await listItems.find((item) => item.id === 'copy-name')!.action!();
+    await listItems.find((item) => item.id === 'copy-ddl')!.action!();
+    await listItems.find((item) => item.id === 'refresh')!.action!();
+    await waitFor(() => expect(getDatabaseObjects).toHaveBeenCalledTimes(2));
+    expect(writeText).toHaveBeenCalledWith('fn_ok');
+
+    showNativeContextMenu.mockClear();
+    fireEvent.contextMenu(screen.getByDisplayValue(/CREATE FUNCTION/));
+    await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalledTimes(1));
+    const editorItems = showNativeContextMenu.mock.calls[0]![0] as Array<{
+      id?: string;
+      action?: () => void | Promise<void>;
+    }>;
+    await editorItems.find((item) => item.id === 'execute')!.action!();
+    await waitFor(() => expect(executeQuery).toHaveBeenCalled());
+    await editorItems.find((item) => item.id === 'format')!.action!();
+    await editorItems.find((item) => item.id === 'comment')!.action!();
   });
 });

@@ -107,7 +107,9 @@ fn test_tester_routine_identity_filters_prokind_and_escapes_query_literals() {
     assert!(function_ddl.contains("p.proname = 'lookup''name'"));
     assert!(function_ddl.contains("n.nspname = 'ops''schema'"));
     assert!(function_ddl.contains("p.prokind = 'f'"));
-    assert!(function_ddl.contains("pg_get_function_identity_arguments(p.oid) = 'text, uuid''suffix'"));
+    assert!(
+        function_ddl.contains("pg_get_function_identity_arguments(p.oid) = 'text, uuid''suffix'")
+    );
 
     let procedure_ddl = object_ddl_sql_with_metadata(
         "postgresql",
