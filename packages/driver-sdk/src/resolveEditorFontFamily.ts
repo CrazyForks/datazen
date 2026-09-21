@@ -1,5 +1,4 @@
-export const HOST_DEFAULT_EDITOR_FONT =
-  'Menlo, Monaco, Consolas, "Courier New", monospace';
+export const HOST_DEFAULT_EDITOR_FONT = 'Menlo, Monaco, Consolas, "Courier New", monospace';
 
 /**
  * Resolve SQL editor font: explicit user setting wins over theme `--font-editor`.

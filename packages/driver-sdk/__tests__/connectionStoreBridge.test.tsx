@@ -37,15 +37,12 @@ function makeInitial(): ConnectionBridgeState {
 /** Callable zustand-shaped fake store whose selector form runs outside React render. */
 function makeCallableStore(initial: ConnectionBridgeState): BoundConnectionStore {
   let state = initial;
-  return Object.assign(
-    <T,>(selector: (s: ConnectionBridgeState) => T): T => selector(state),
-    {
-      getState: (): ConnectionBridgeState => state,
-      setState: (partial: Partial<ConnectionBridgeState>) => {
-        state = { ...state, ...partial };
-      },
+  return Object.assign(<T,>(selector: (s: ConnectionBridgeState) => T): T => selector(state), {
+    getState: (): ConnectionBridgeState => state,
+    setState: (partial: Partial<ConnectionBridgeState>) => {
+      state = { ...state, ...partial };
     },
-  ) as unknown as BoundConnectionStore;
+  }) as unknown as BoundConnectionStore;
 }
 
 afterEach(() => {

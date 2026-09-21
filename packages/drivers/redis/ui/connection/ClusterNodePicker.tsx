@@ -33,7 +33,9 @@ export function ClusterNodePicker({
   onChange,
 }: ClusterNodePickerProps) {
   const { t } = useI18n();
-  const connection = useBoundConnectionStore((s) => s.connections.find((c) => c.id === dbSessionId));
+  const connection = useBoundConnectionStore((s) =>
+    s.connections.find((c) => c.id === dbSessionId),
+  );
   const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
   const clusterRouting = readClusterRouting(driverSettings?.redis);
 

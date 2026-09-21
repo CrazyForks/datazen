@@ -3,16 +3,18 @@ import { resolveEditorFontFamily, HOST_DEFAULT_EDITOR_FONT } from '@datazen/driv
 
 describe('resolveEditorFontFamily', () => {
   it('prefers explicit user setting over theme', () => {
-    expect(
-      resolveEditorFontFamily('Comic Sans MS', '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT),
-    ).toBe('Comic Sans MS');
+    expect(resolveEditorFontFamily('Comic Sans MS', '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT)).toBe(
+      'Comic Sans MS',
+    );
   });
 
   it('uses theme when user setting is host default or empty', () => {
-    expect(resolveEditorFontFamily(HOST_DEFAULT_EDITOR_FONT, '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT)).toBe(
+    expect(
+      resolveEditorFontFamily(HOST_DEFAULT_EDITOR_FONT, '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT),
+    ).toBe('"Theme Mono"');
+    expect(resolveEditorFontFamily('', '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT)).toBe(
       '"Theme Mono"',
     );
-    expect(resolveEditorFontFamily('', '"Theme Mono"', HOST_DEFAULT_EDITOR_FONT)).toBe('"Theme Mono"');
   });
 
   it('falls back to host default when theme empty', () => {

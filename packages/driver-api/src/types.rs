@@ -108,6 +108,14 @@ pub struct ConnectionConfig {
     #[serde(default = "default_max_pool_size")]
     pub max_pool_size: u32,
     pub ssh_tunnel: Option<SshTunnelConfig>,
+    /// Preferred tunnel strategy. Legacy tunnel fields remain supported when absent.
+    #[serde(default)]
+    pub tunnel_kind: Option<crate::TunnelKind>,
+    /// Reference to an independently stored tunnel definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_id: Option<String>,
+    pub http_proxy_tunnel: Option<crate::HttpProxyTunnelConfig>,
+    pub websocket_tunnel: Option<crate::WebSocketTunnelConfig>,
     pub color_tag: Option<String>,
     pub group: Option<String>,
     pub last_connected_at: Option<String>,
@@ -158,6 +166,10 @@ mod connection_config_tests {
             connection_timeout: 30,
             max_pool_size: 10,
             ssh_tunnel: None,
+            tunnel_kind: None,
+            tunnel_id: None,
+            http_proxy_tunnel: None,
+            websocket_tunnel: None,
             color_tag: None,
             group: None,
             last_connected_at: None,
@@ -587,6 +599,12 @@ pub enum DriverError {
 
     #[error("SSH tunnel error: {0}")]
     SshTunnelError(String),
+
+    #[error("HTTP proxy tunnel error: {0}")]
+    HttpProxyTunnelError(String),
+
+    #[error("WebSocket tunnel error: {0}")]
+    WebSocketTunnelError(String),
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),

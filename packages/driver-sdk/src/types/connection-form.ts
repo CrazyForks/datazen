@@ -6,13 +6,19 @@
  * host implementation and this contract fails host type-checking.
  */
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from 'react';
-import type { DatabaseType, SshAuthMethod, SslMode } from '../../../../src/types';
+import type {
+  DatabaseType,
+  SavedTunnel,
+  SshAuthMethod,
+  SslMode,
+  TunnelKind,
+} from '../../../../src/types';
 
 export interface ConnectionFormState {
   name: string;
   setName: Dispatch<SetStateAction<string>>;
   databaseType: DatabaseType;
-  setDatabaseType: Dispatch<SetStateAction<DatabaseType>>;
+  setDatabaseType: (newType: DatabaseType) => void;
   host: string;
   setHost: Dispatch<SetStateAction<string>>;
   port: string;
@@ -35,8 +41,14 @@ export interface ConnectionFormState {
   driverReadOnly: boolean;
   setReadOnly: (value: boolean) => void;
 
+  tunnelKind: TunnelKind;
+  setTunnelKind: (kind: TunnelKind) => void;
+  tunnelId: string | null;
+  setTunnelId: (id: string | null) => void;
+  savedTunnels: SavedTunnel[];
+
   sshEnabled: boolean;
-  setSshEnabled: Dispatch<SetStateAction<boolean>>;
+  setSshEnabled: (v: boolean) => void;
   sshHost: string;
   setSshHost: Dispatch<SetStateAction<string>>;
   sshPort: string;
@@ -67,6 +79,28 @@ export interface ConnectionFormState {
   setSshJumpKeyPath: Dispatch<SetStateAction<string>>;
   sshJumpPassphrase: string;
   setSshJumpPassphrase: Dispatch<SetStateAction<string>>;
+
+  httpProxyHost: string;
+  setHttpProxyHost: Dispatch<SetStateAction<string>>;
+  httpProxyPort: string;
+  setHttpProxyPort: Dispatch<SetStateAction<string>>;
+  httpProxyScheme: 'http' | 'https';
+  setHttpProxyScheme: Dispatch<SetStateAction<'http' | 'https'>>;
+  httpProxyUsername: string;
+  setHttpProxyUsername: Dispatch<SetStateAction<string>>;
+  httpProxyPassword: string;
+  setHttpProxyPassword: Dispatch<SetStateAction<string>>;
+  httpProxyTimeout: string;
+  setHttpProxyTimeout: Dispatch<SetStateAction<string>>;
+
+  wsUrl: string;
+  setWsUrl: Dispatch<SetStateAction<string>>;
+  wsMode: 'datazen_v1' | 'raw_binary';
+  setWsMode: Dispatch<SetStateAction<'datazen_v1' | 'raw_binary'>>;
+  wsAuthToken: string;
+  setWsAuthToken: Dispatch<SetStateAction<string>>;
+  wsTimeout: string;
+  setWsTimeout: Dispatch<SetStateAction<string>>;
 
   formVariant: string;
   hasUsername: boolean;

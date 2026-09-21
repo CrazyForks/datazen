@@ -40,13 +40,10 @@ function makeCallableStore(initial: SettingsBridgeState) {
         : (partial as Partial<SettingsBridgeState>);
     state = { ...state, ...next };
   });
-  const store = Object.assign(
-    <T,>(selector: (s: SettingsBridgeState) => T): T => selector(state),
-    {
-      getState: (): SettingsBridgeState => state,
-      setState: setStateSpy,
-    },
-  );
+  const store = Object.assign(<T,>(selector: (s: SettingsBridgeState) => T): T => selector(state), {
+    getState: (): SettingsBridgeState => state,
+    setState: setStateSpy,
+  });
   return { store: store as unknown as BoundSettingsStore, setStateSpy };
 }
 

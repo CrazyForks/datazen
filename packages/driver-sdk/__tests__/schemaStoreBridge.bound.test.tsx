@@ -25,9 +25,7 @@ async function importFreshBridge(): Promise<SchemaStoreBridgeModule> {
   return import('../src/schemaStoreBridge');
 }
 
-const TABLES: TableInfo[] = [
-  { name: 'users', tableType: 'table', schema: 'public', rowCount: 10 },
-];
+const TABLES: TableInfo[] = [{ name: 'users', tableType: 'table', schema: 'public', rowCount: 10 }];
 
 function makeSchemaState(overrides?: Partial<SchemaStoreState>): SchemaStoreState {
   return {
@@ -49,14 +47,11 @@ function makeCallableStore(initial: SchemaStoreState) {
   const setStateSpy = vi.fn((partial: Record<string, unknown>) => {
     state = { ...state, ...partial };
   });
-  const store = Object.assign(
-    <T,>(selector: (s: SchemaStoreState) => T): T => selector(state),
-    {
-      getState: (): SchemaStoreState => state,
-      setState: setStateSpy,
-      subscribe: () => () => undefined,
-    },
-  );
+  const store = Object.assign(<T,>(selector: (s: SchemaStoreState) => T): T => selector(state), {
+    getState: (): SchemaStoreState => state,
+    setState: setStateSpy,
+    subscribe: () => () => undefined,
+  });
   return { store: store as unknown as BoundSchemaStore, setStateSpy };
 }
 
