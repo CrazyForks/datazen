@@ -11,8 +11,11 @@
  *   buckets, the >7d locale-date fallback, and invalid-timestamp omission.
  * - BUG-001 substance: real zh-CN rendering through the real
  *   settingsStore -> localeSync -> @datazen/ui engine -> useI18n chain (no
- *   hook mocks) asserting 「刚刚 / N 分钟前 / N 小时前 / N 天前」, the en
- *   counterparts, and key parity in both locale packs.
+ *   hook mocks). The expected wording is read back from the shipped
+ *   dictionaries instead of being hard-coded here — copy belongs to the locale
+ *   packs (locales/<lang>/connection.ts), while what this file locks down is
+ *   the chain (active locale renders the resolved value), count interpolation
+ *   and key parity across packs, plus cross-locale non-leakage.
  */
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -83,6 +86,24 @@ function historyEntry(offsetMs: number, id: string): QueryHistoryEntry {
     success: true,
   };
 }
+
+// Relative-time copy is owned by the dictionaries, so this file asserts against
+// the resolved values instead of pinning English/Chinese strings (renaming a
+// term must not ripple into tests).
+const JUST_NOW = 'connWin.home.queries.justNow';
+const MINUTES_AGO = 'connWin.home.queries.minutesAgo';
+const HOURS_AGO = 'connWin.home.queries.hoursAgo';
+const DAYS_AGO = 'connWin.home.queries.daysAgo';
+
+function relativeLabel(locale: 'en' | 'zh-CN', key: string, count?: number): string {
+  return getTranslation(locale, key, count === undefined ? undefined : { count });
+}
+
+/** Every relative bucket resolved for both packs — used as an absence check. */
+const ALL_RELATIVE_LABELS = (count: number): string[] =>
+  (['en', 'zh-CN'] as const).flatMap((locale) =>
+    [JUST_NOW, MINUTES_AGO, HOURS_AGO, DAYS_AGO].map((key) => relativeLabel(locale, key, count)),
+  );
 
 describe('[tester][retest-1] ConnectionCardList row keyboard activation (BUG-002 regression guard)', () => {
   const onConnect = vi.fn();
@@ -164,13 +185,14 @@ describe('[tester][retest-1] RecentQueriesList localized relative-time labels (B
         onOpenHistory={onOpenHistory}
       />,
     );
-    expect(screen.getByText('刚刚')).toBeInTheDocument();
-    expect(screen.getByText('2 分钟前')).toBeInTheDocument();
-    expect(screen.getByText('3 小时前')).toBeInTheDocument();
-    expect(screen.getByText('2 天前')).toBeInTheDocument();
-    // No English leakage in the relative-time segments.
-    expect(screen.queryByText('just now')).not.toBeInTheDocument();
-    expect(screen.queryByText(/min ago/)).not.toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('zh-CN', JUST_NOW))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('zh-CN', MINUTES_AGO, 2))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('zh-CN', HOURS_AGO, 3))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('zh-CN', DAYS_AGO, 2))).toBeInTheDocument();
+    // No English leakage in the relative-time segments: if the zh pack ever
+    // loses a key it silently falls back to en, and these go red.
+    expect(screen.queryByText(relativeLabel('en', JUST_NOW))).not.toBeInTheDocument();
+    expect(screen.queryByText(relativeLabel('en', MINUTES_AGO, 2))).not.toBeInTheDocument();
   });
 
   it('[tester] renders en labels through the real i18n chain', () => {
@@ -188,11 +210,11 @@ describe('[tester][retest-1] RecentQueriesList localized relative-time labels (B
         onOpenHistory={onOpenHistory}
       />,
     );
-    expect(screen.getByText('just now')).toBeInTheDocument();
-    expect(screen.getByText('2 min ago')).toBeInTheDocument();
-    expect(screen.getByText('3 hr ago')).toBeInTheDocument();
-    expect(screen.getByText('2 d ago')).toBeInTheDocument();
-    expect(screen.queryByText('刚刚')).not.toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('en', JUST_NOW))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('en', MINUTES_AGO, 2))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('en', HOURS_AGO, 3))).toBeInTheDocument();
+    expect(screen.getByText(relativeLabel('en', DAYS_AGO, 2))).toBeInTheDocument();
+    expect(screen.queryByText(relativeLabel('zh-CN', JUST_NOW))).not.toBeInTheDocument();
   });
 
   it('[tester] falls back to a locale date beyond the 7-day window without i18n key leakage', () => {
@@ -207,7 +229,9 @@ describe('[tester][retest-1] RecentQueriesList localized relative-time labels (B
     // Short locale date (contains a numeric year), not a relative label.
     const dateSegment = screen.getByText(/\d{4}/);
     expect(dateSegment.textContent).not.toContain('connWin.');
-    expect(screen.queryByText(/min ago|分钟前/)).not.toBeInTheDocument();
+    for (const label of ALL_RELATIVE_LABELS(8)) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 
   it('[tester] omits the relative segment for invalid timestamps', () => {
@@ -230,8 +254,9 @@ describe('[tester][retest-1] RecentQueriesList localized relative-time labels (B
       />,
     );
     expect(screen.getByTestId('home-query-source-h-bad')).toBeInTheDocument();
-    expect(screen.queryByText('just now')).not.toBeInTheDocument();
-    expect(screen.queryByText(/min ago/)).not.toBeInTheDocument();
+    for (const label of ALL_RELATIVE_LABELS(1)) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 
   it('[tester] omits the segment without crashing when getRelativeTimeParts returns null', () => {
@@ -248,26 +273,45 @@ describe('[tester][retest-1] RecentQueriesList localized relative-time labels (B
       />,
     );
     expect(screen.getByTestId('home-query-source-h-null')).toBeInTheDocument();
-    expect(screen.queryByText(/min ago/)).not.toBeInTheDocument();
-    expect(screen.queryByText('just now')).not.toBeInTheDocument();
+    for (const label of ALL_RELATIVE_LABELS(2)) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
     vi.mocked(getRelativeTimeParts).mockRestore();
   });
 });
 
 describe('[tester][retest-1] relative-time i18n key parity via getTranslation (BUG-001)', () => {
+  // Contract asserted: the four keys exist in both packs, resolve to real copy
+  // (no raw-key echo), interpolate {count}, and are genuinely translated rather
+  // than silently identical to en. The wording itself belongs to the
+  // dictionaries and is not pinned here.
+  const COUNTED_KEYS = [MINUTES_AGO, HOURS_AGO, DAYS_AGO] as const;
+
   it('[tester] exposes the four keys with zh-CN copy and {count} interpolation', () => {
-    expect(getTranslation('zh-CN', 'connWin.home.queries.justNow')).toBe('刚刚');
-    expect(getTranslation('zh-CN', 'connWin.home.queries.minutesAgo', { count: 5 })).toBe(
-      '5 分钟前',
-    );
-    expect(getTranslation('zh-CN', 'connWin.home.queries.hoursAgo', { count: 5 })).toBe('5 小时前');
-    expect(getTranslation('zh-CN', 'connWin.home.queries.daysAgo', { count: 5 })).toBe('5 天前');
+    for (const key of [JUST_NOW, ...COUNTED_KEYS]) {
+      const text = getTranslation('zh-CN', key);
+      expect(text.length, `zh-CN:${key}`).toBeGreaterThan(0);
+      expect(text, `zh-CN:${key}`).not.toBe(key);
+    }
+    for (const key of COUNTED_KEYS) {
+      const text = getTranslation('zh-CN', key, { count: 5 });
+      expect(text).toContain('5');
+      expect(text).not.toContain('{');
+      // Actually translated: identical to en would mean the zh pack lost it.
+      expect(text).not.toBe(getTranslation('en', key, { count: 5 }));
+    }
   });
 
   it('[tester] exposes the four keys with en copy and {count} interpolation', () => {
-    expect(getTranslation('en', 'connWin.home.queries.justNow')).toBe('just now');
-    expect(getTranslation('en', 'connWin.home.queries.minutesAgo', { count: 5 })).toBe('5 min ago');
-    expect(getTranslation('en', 'connWin.home.queries.hoursAgo', { count: 5 })).toBe('5 hr ago');
-    expect(getTranslation('en', 'connWin.home.queries.daysAgo', { count: 5 })).toBe('5 d ago');
+    for (const key of [JUST_NOW, ...COUNTED_KEYS]) {
+      const text = getTranslation('en', key);
+      expect(text.length, `en:${key}`).toBeGreaterThan(0);
+      expect(text, `en:${key}`).not.toBe(key);
+    }
+    for (const key of COUNTED_KEYS) {
+      const text = getTranslation('en', key, { count: 5 });
+      expect(text).toContain('5');
+      expect(text).not.toContain('{');
+    }
   });
 });

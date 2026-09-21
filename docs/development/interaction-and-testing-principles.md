@@ -21,7 +21,7 @@
 
 ---
 
-## 五大核心开发原则
+## 六大核心开发原则
 
 ### 原则一：状态机思维（State Transition）优先于局部切片思维
 
@@ -85,6 +85,39 @@
 
 ---
 
+### 原则六：断言与 i18n 文案解耦（Copy-Free Assertions）
+
+1. **规则**：测试严禁把「由 i18n `t()` 渲染出来的可见文案字面量」当作断言目标或定位依据。允许的三类锚点，按优先级：
+   1. **`data-*` 契约（首选）**：`getByTestId('redis-ttl-set')`、`slot.dataset.ttlState === 'no-expiry'` —— 状态用枚举属性表达，文案换了照样绿；
+   2. **i18n key**：驱动 ui 测试统一 `useI18n: () => ({ t: (key) => key })`，随后 `getByText('redis.pubsubSubscribe')`；
+   3. **字典回读**：仅当"可访问名称 / 解析结果本身"就是被测意图时（a11y 契约、locale 注册链、翻译链路），期望值从**同一份字典**取——`getByRole('menuitem', { name: en['menu.file'] })`、`expect(t('redis.console')).toBe(en['redis.console'])`——绝不硬编码英文字面量。
+2. **改写，不是删除**：去掉字面量的同时必须以锚点形式保留**被测意图**。改写完必须仍能证明：元素存在、状态正确（`data-*` 取值）、参数确实被插值（`toContain(param)` + 无 `{` 残留）、不回显原始 key（`text !== key`）、跨语言不串味（zh 渲染里找不到 en 的解析值）。整条删掉等于丢覆盖率，Tester 会按 ≥80% 补回来。
+3. **为什么这是真问题**：`locales/en.ts` 是唯一的翻译 source of truth，术语会因产品口径随时改写（Redis 工作台裁定 8-4 就是把 `No expiry` / `Wrap` / `Size: N B` / `Discard` 四处对齐参考图）。i18n **完整性**在开发期从来不是门禁（pre-commit 不跑、CI `i18n-sync-check` 带 `continue-on-error: true`、`release.yml` 不跑、运行时 `packages/ui/src/i18n.ts` 缺 key 回落 en），真正拦人的只有被钉进断言的英文字面量 —— 它把一次文案改动的成本从 1 个 locale 文件放大到 N 个测试文件，并且会诱导开发者"为了测试绿"去回退正确的产品口径。
+4. **正例 / 反例对照**：
+
+   | 反例（钉死文案） | 正例（同一意图，零文案） |
+   | --- | --- |
+   | `expect(screen.getByText('No expiry')).toBeTruthy()` | `expect(screen.getByTestId('redis-ttl-value').dataset.ttlState).toBe('no-expiry')` + 文本非空 |
+   | `expect(screen.getByText('600 s')).toBeTruthy()` | `expect(getByTestId('redis-ttl-value').textContent).toContain('600')`（数字是数据，单位是文案） |
+   | `getByRole('button', { name: 'Set TTL' })` | `getByTestId('redis-ttl-set')` |
+   | `getByPlaceholderText('TTL (seconds)')` | `getByTestId('redis-ttl-input')` |
+   | `expect(getAllTranslations('en')['redis.batchDelete']).toBe('Delete selected')` | `text.length > 0` + `text !== key`（词条归驱动包 `en.ts` 所有） |
+   | `expect(t('redis.console')).toBe('Console')` | `expect(t('redis.console')).toBe(en['redis.console'])` + `not.toBe('redis.console')` |
+   | `expect(getTranslation('en', 'query.snippets.add')).toBe('Add Snippet')` | 逐 key 断言"解析成功且不回显 key" |
+   | `expect(getTranslation('en', 'panel.closeTab', { title: 'Query' })).toBe('Close Query')` | `toContain('Query')` + `not.toContain('{')` |
+   | `expect(screen.getByText('just now')).toBeInTheDocument()` | `expect(screen.getByText(relativeLabel(locale, JUST_NOW))).toBeInTheDocument()` |
+   | `expect(screen.getByText('Cancel')).click()` | `screen.getByTestId('confirm-dialog-cancel')` |
+
+5. **不在本原则范围内**（不要顺手改，改了反而丢信息）：
+   - 断言**数据**：Redis 回包 `(nil)` / `OK` / `42`、SQL 原文与关键字（`SELECT`、`LEFT JOIN`、`AND`）、`INFO` 段名 `Server` / `Memory`、类型与拓扑枚举 `string` / `cluster`、日期与数字；
+   - 断言**测试自己造的数据**：作为 props 传入的 `label="Refresh"`、`badge="Production"`、测试自行 `registerLocale` 的 `TestOK`、store 里的 `title: 'Daily'`；
+   - `@datazen/ui` 组件库里**没有 i18n 参与**的默认值（如 `Dialog` 的 `closeLabel = 'Close'`）；
+   - 测试自带的 `t()` stub 字典（它只是让 `t()` 有返回值）—— 前提是没有任何断言去读它的值。
+6. **边界不变量 ≠ 文案**：例如"宿主快照里不得出现 `redis.*` 词条"（`getHostTranslations('en')['redis.batchDelete'] === undefined`）是包边界契约，必须原样保留；驱动 ui 测试"必须能解析出真串而不是回显 key"同理。
+7. **护栏**：`node scripts/check-i18n-copy-assertions.mjs`（`pnpm test:i18n-assertions`）对**驱动 ui 测试目录**里 `getByText('Two Word Copy')` 这类形态报警。当前为 **warning（报而不拦）**，退出码恒 0；`--strict` 可临时升级为阻断，用于新提交自查。
+
+---
+
 ## 快速自检清单（Checklist）
 
 所有提交前端交互、编辑器与补全代码的 PR / 变更必须满足：
@@ -93,3 +126,4 @@
 - [ ] **3. 中间态测试**：是否为该功能的输入全生命周期补充了连续的 Journey Test（如 `sqlTypingJourney.test.ts`）？
 - [ ] **4. DOM/环境解耦**：涉及点击与选择时，是否直接绑定了 Data 属性，而非依赖脆弱的坐标计算？
 - [ ] **5. 三维自查**：该修改修了什么？有没有误伤同类？下一步正常操作是否顺畅？
+- [ ] **6. 零文案断言**：新增/改动的测试是否只用 `data-*` / role / i18n key（必要时字典回读）表达意图，没有任何"由 `t()` 渲染出的英文字面量"被钉进断言或定位器？改写时是否保留了原被测意图（没有靠删用例蒙混过关）？

@@ -89,6 +89,8 @@
     "test:unit:e2e-contract:coverage": "vitest run --coverage --config vitest.e2e-contract.config.ts",
     "test:unit:coverage": "vitest run --coverage",
     "test:ids": "node scripts/check-id-terminology.mjs",
+    "test:i18n-assertions": "node scripts/check-i18n-copy-assertions.mjs",
+    "test:i18n-assertions:strict": "node scripts/check-i18n-copy-assertions.mjs --strict",
     "test:ci-docs": "node scripts/check-ci-docs-consistency.mjs",
     "test:layers": "node scripts/check-module-layers.mjs",
     "test:boundaries": "node scripts/check-driver-import-boundaries.mjs",
