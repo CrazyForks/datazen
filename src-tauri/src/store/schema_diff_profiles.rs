@@ -128,6 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn encrypted_round_trip_filters_invalid_records() {
+        let _keyring = crate::testing::FileKeyringGuard::set();
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::init_with_path(temp.path()).await.expect("store");
         store
@@ -160,6 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tester_round_trip_preserves_scope_options_and_type_overrides() {
+        let _keyring = crate::testing::FileKeyringGuard::set();
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::init_with_path(temp.path()).await.expect("store");
         let mut expected = profile("with-override");

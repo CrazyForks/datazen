@@ -4,7 +4,7 @@
 
 - **级别**：P1
 - **描述**：从不同端点加载 Schema Diff profile 时，profile 中的 `typeOverrides` 会在端点变更清理 effect 中被无条件清空，导致重新生成计划时不再传递用户确认的类型覆盖。
-- **状态**：READY_FOR_TEST
+- **状态**：FIXED / READY_FOR_TEST
 - **重现步骤**：
   1. 保存一个包含 `public.users.name -> VARCHAR(64)` 类型覆盖、`allowDestructive=true`、`includeIndexes=false` 的 profile。
   2. 在 Schema Diff 计划步骤切换到该 profile，并点击加载，使 source/target connection 或 database 与当前端点不同。
@@ -24,3 +24,4 @@
 
 - **修复**：profile 加载期间保留端点 transition 标记，端点变化清理 effect 仅清理普通手动切换；profile 端点匹配并完成 fresh inspect 后恢复普通清理行为。
 - **回归测试**：`src/windows/schema-diff/__tests__/SchemaDiffProfileLoad.test.tsx` 验证跨端点加载后 `preparePlan` 仍收到 `typeOverrides`。
+- **存储测试隔离**：加密 profile 往返测试使用 `FileKeyringGuard` 覆盖整个测试生命周期，避免并发测试修改 `DATAZEN_KEYRING` 后导致 fresh store 无法解密而错误返回空 profile。
