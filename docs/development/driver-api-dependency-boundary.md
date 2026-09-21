@@ -175,18 +175,11 @@ import type { KeyEntry } from '@datazen/driver-sdk';
 
 - **唯一实现原则**：某能力一旦下沉到 `@datazen/ui` / `@datazen/driver-sdk`，宿主原路径（如 `src/lib/cn.ts`、`src/lib/nativeContextMenu.ts`、`src/commands/driver.ts`）只允许保留**薄再导出**（re-export 指向 SDK 单实现），不允许出现第二份实现；驱动永远 import 包名，不 import 宿主薄再导出路径。**薄再导出只为存量宿主消费方而留**：下沉时若全仓已无宿主 import 该路径，则宿主文件**直接删除、不留空壳**（`driverSettings` 即此例——`packages/driver-sdk/src/driverSettings.ts` 是唯一实现，宿主旧路径已不存在），消费点一并改为直接 import SDK。
 - **SDK 的宿主防腐层**：`packages/driver-sdk/src/index.ts` 内部仍会以相对路径包装少量宿主模块（如方言与 `src/types` 的部分 type-only 出口）。这是 SDK 作为防腐层的允许行为，但**驱动侧不得效仿**——驱动可见面只有两个包的公开导出。
-- **过渡期例外（截至本文件基准，实测全量清点）**：基线由下列命令得到，`packages/drivers/*/ui/**` 下指向宿主 `src/` 的相对 import 共 **34 处**：
+- **过渡期例外（Wave 3 `i18n-drivers` 合并后已清零；本条为 Wave 4 护栏落地时的实测基线）**：`packages/drivers/**` 中指向宿主 `src/` 的**说明符字面量**共 **2 处 / 1 个文件**：
+  1. **生产码：0 处**。历史上（基准 `8b66586e4` 之前）此处登记过 32 处宿主 `useI18n` 相对 import（redis 31 + `sqlserver/ui/ConnectionFields.tsx` 1）与 8 处 `vi.mock('<rel>/src/hooks/useI18n')`；`i18n-drivers` 轨已把它们全部换源为 `@datazen/ui` 的 `useI18n`（mock 改 partial-mock `@datazen/ui`），实测现网 `packages/drivers/**` 生产码零命中。
+  2. **宿主集成测试夹具：2 处**——`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5`（渲染宿主 `WebContextMenuHost`）与 `:9`（断言宿主 `contextMenuStore`，import 该模块同时触发 `bindContextMenuBridge`），协调者已裁决豁免、留待宿主菜单挂载经 SDK 桥下沉后移除。
 
-  ```bash
-  grep -rn "from '\.\./.*src/" packages/drivers/*/ui/
-  ```
-
-  1. **宿主 `useI18n` 相对 import：32 处 / 32 个文件**（**跨两个驱动，不止 redis**）——`packages/drivers/redis/ui/**` **31 处**（`connection/`、`value-editors/`、`key-browser/`、`observe/`、`console/`、`shared/` 等）+ `packages/drivers/sqlserver/ui/ConnectionFields.tsx:2` **1 处**。全部由并行轨 **`i18n-drivers`** 统一换源为 `@datazen/ui` 的 `useI18n`（见 2.4.5，同期落地），换源完成前该 32 处是唯一存量豁免，且**不得新增**。
-  2. **宿主集成测试夹具：2 处 / 1 个文件**——`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`（渲染宿主 `WebContextMenuHost`、断言宿主 `contextMenuStore`），协调者已裁决豁免、留待后续里程碑。
-
-  另有 **8 处** `vi.mock` 指向宿主 `src/hooks/useI18n` 的相对路径（`packages/drivers/redis/ui/__tests__/` 下 8 个测试文件各 1 处）：因形态是 `vi.mock(...)` 而非 `from ...`，**不被上面那条命令命中**，但同属 `i18n-drivers` 换源范围。Wave 4 import 护栏若同时扫描 mock 路径，其白名单基线应为 **34 + 8 = 42 处**。
-
-  **除上述登记范围（32 处 `useI18n` import + 2 处测试夹具 import + 8 处 `useI18n` mock）外不存在任何豁免。**
+  清点**不再使用** `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/`：该形态只匹配 `from`，会漏掉 `vi.mock(...)` / 动态 `import(...)` / `require(...)` 的字符串参数（Wave 2 就是这样漏掉了 8 处 mock）。唯一口径是护栏脚本 `node scripts/check-driver-import-boundaries.mjs`（`pnpm test:boundaries`，见 2.6），它扫描全部说明符字面量，并把它上面这 2 处写死为脚本内 `ALLOWLIST` 的精确三元组（规则 + 文件 + 说明符，各带原因与归属里程碑）。**新增任何一条宿主 `src/` 引用即 exit 1 阻断 CI；豁免条目失效（文件被删或违规已被修）同样报错**，防止白名单腐烂。**除这 2 处外不存在任何豁免**（禁止目录级/通配级豁免）。
 
 ## 2.2 宿主能力取用模式（落点决策表）
 
@@ -258,7 +251,7 @@ async function gateWrite(): Promise<boolean> {
 
 ## 2.4 i18n 契约（单一运行时 + 词条自注册）
 
-> 本节描述**终态契约**。其中「驱动词条自注册」与「驱动 UI 换源 `@datazen/ui` 的 `useI18n`」由并行轨 **`i18n-drivers` 同期落地**（截至本文件基准尚未合并）；已落地部分（单一运行时、宿主 `setLocale` 接线）在 2.4.1 / 2.4.2 标注。设计红线：**`@datazen/ui` 是唯一 i18n 实现；没有 bridge 概念、没有兼容 re-export；只有宿主调用 `setLocale`；词条由各 package 自己提供并自注册；驱动侧 `t()` key 是普通 `string`。**
+> 本节描述**终态契约**，且**已全部落地**：单一运行时与宿主 `setLocale` 接线由 `i18n-core` 轨交付，「驱动词条自注册」与「驱动 UI 换源 `@datazen/ui` 的 `useI18n`」由 `i18n-drivers` 轨交付（Wave 3 已合入 `feat/driver-decoupling`，实测：`packages/drivers/{redis,mongodb}/locales/index.ts` 存在、入口副作用行分别是 `packages/drivers/redis/ui/shared/meta.ts:4` 的 `import '../../locales';` 与 `packages/drivers/mongodb/ui/meta.ts:4` 的 `import '../locales';`、宿主 `DRIVER_LOCALES` 聚合链路已删）。设计红线：**`@datazen/ui` 是唯一 i18n 实现；没有 bridge 概念、没有兼容 re-export；只有宿主调用 `setLocale`；词条由各 package 自己提供并自注册；驱动侧 `t()` key 是普通 `string`。**
 
 ### 2.4.1 唯一运行时（已由 i18n-core 轨落地）
 
@@ -279,30 +272,37 @@ useI18n(): { t: typeof t; language: string };           // useSyncExternalStore 
 
 ### 2.4.2 `setLocale` 只有宿主调用（已落地）
 
-宿主唯一接线点：`src/lib/localeSync.ts` 的 `startLocaleSync()`——以 `settingsStore.settings.language` 播种并在其变化时调用 `setLocale`；由 `src/main.tsx` 启动时调用一次。驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏（2.6）lint 兜底。
+宿主**运行时接线**唯一入口：`src/lib/localeSync.ts` 的 `startLocaleSync()`——以 `settingsStore.settings.language` 播种（`:20`）并在其变化时调用 `setLocale`（`:24`）；由 `src/main.tsx` 启动时调用一次。
+
+同一约束在宿主内部还有**一处**、且仅限非渲染路径的用法，读者易把它误读成「第二个接线点」：`src/locales/index.ts:69-84` 的 `getTranslation(locale, key, params)` 适配器，为查外语字典在同一次同步调用内临时 `setLocale(locale)`（`:78`）并在 `finally` 复位（`:82`）。它只服务工具/测试快照、不在 React 渲染路径，且**仍在宿主内**，因此不违反「只有宿主调用 `setLocale`」；驱动与扩展不得效仿这种临时换 locale 的写法（要换语言就走宿主设置）。
+
+驱动、扩展（含 Pro EP）生产路径出现任何 `setLocale` 调用即违规。编译期无法强制此约束，由 Wave 4 import 护栏的 **R2** 规则 lint 兜底（见 2.6）：R2 扫描 `packages/**` 的全部 `.ts/.tsx/.js/.jsx/.mjs/.cjs`，豁免表是脚本内 `R2_FILE_CARVEOUTS` 的**精确文件清单**（**不是目录级豁免**）——`packages/ui/src/i18n.ts`（`setLocale` 唯一实现所在文件，`:34`）与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（必须能调用才能测）。也就是说 `@datazen/ui` 包内**其它**组件出现 `setLocale(...)` 调用同样红。宿主 `src/**` 天然不在 R2 范围内，因为宿主正是唯一合法调用方。注释文字、字符串与契约声明（`setLocale(locale: string): void;`）都不算调用。当前实测：`packages/**` 中 `setLocale(` 只命中上述两个文件（定义处 1 行 + 单测调用 7 行），其余为 **0**。
 
 ### 2.4.3 词条归属：各 package 自注册
 
 | 词条集合 | 拥有者 | 注册方式 |
 | --- | --- | --- |
 | 宿主 UI 词条 | `src/locales/*`（领域包结构） | `src/locales/index.ts` 模块加载时把 eager 字典 `registerTranslations` 灌入共享注册表；lazy 域包经 `useLocaleDomains` / `ensureLocaleDomains` 按需注册 |
-| 驱动词条 | `packages/drivers/<id>/locales/`（如 redis、mongodb 各语言文件） | **自注册（`i18n-drivers` 轨同期落地）**：新增纯副作用模块 `packages/drivers/<id>/locales/index.ts`，静态 import 本目录全部语言字典后一次性 `registerTranslations({...})`；由该驱动 UI 的入口模块（即 `generated.ts` 实际 import 的首个驱动 UI 模块）挂一行指向本包 `locales/` 目录的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts`（如 mongodb）写 `import '../locales';`，入口在 `ui/shared/meta.ts`（如 redis，嵌套两层）写 `import '../../locales';`。驱动一经装载即完成注册，宿主不需要知道驱动有哪些语言包 |
+| 驱动词条 | `packages/drivers/<id>/locales/`（如 redis、mongodb 各语言文件） | **自注册（已落地）**：纯副作用模块 `packages/drivers/<id>/locales/index.ts` 静态 import 本目录全部语言字典后一次性 `registerTranslations({...})`；由该驱动 UI 的入口模块（即 `generated.ts` 实际 import 的首个驱动 UI 模块）挂一行指向本包 `locales/` 目录的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts`（如 mongodb）写 `import '../locales';`（`packages/drivers/mongodb/ui/meta.ts:4`），入口在 `ui/shared/meta.ts`（如 redis，嵌套两层）写 `import '../../locales';`（`packages/drivers/redis/ui/shared/meta.ts:4`）。驱动一经装载即完成注册，宿主不需要知道驱动有哪些语言包 |
 | Pro 扩展词条 | `packages/pro-extensions/*` 各自 locales | 直接 `import { registerTranslations } from '@datazen/ui'`（EP 经 `globalThis.__DATAZEN_HOST__['@datazen/ui']` 与宿主共享同一单例，见 `src/main.tsx`） |
 
-配套终态（同由 `i18n-drivers` 轨落地，勿提前按旧链路开发）：
+配套终态（**已随 Wave 3 合并落地**，Wave 4 回扫时按实测改写）：
 
-- 宿主端 `DRIVER_LOCALES` 聚合链路**整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——不存在「宿主替驱动收集词条」这一步。
+- 宿主端 `DRIVER_LOCALES` 聚合链路**已整体删除**：`src/extensions/generated-locales.ts` 及其在 `scripts/resolve-drivers.mjs` 中的 codegen、相关脚本引用一并移除——实测 `scripts/` / `src/` / `packages/` / `e2e/` 中 `DRIVER_LOCALES`、`generated-locales` 生产引用 **0 命中**（仅 `AGENTS.md`、`CONTRIBUTING.md`、`.gitignore` 仍留文字残留，属他轨文档/忽略规则，已登记交协调者）——不存在「宿主替驱动收集词条」这一步。
 - 语言 code 字面量与宿主保持一致（`zh-CN`、`zh-TW`、`pt-BR` 一律带连字符）。核对时注意**「仓库里有语言文件」≠「宿主已接线该语言」**，真值分三层各取不同出处：
   - **宿主实际接线的内置语言只有 `en` 与 `zh-CN`**：`src/locales/builtinLocales.ts:9` 的 `BUILTIN_LOCALES = ['en', 'zh-CN']`（真值源 `src/locales/builtin-locales.json`；`BUILTIN_LOCALE_LABELS` 同文件 :26-29 亦只有这两项；`src/locales/fullLocales.ts` 供测试/工具用，同样只含这两个）。
-  - **其余 8 个语言目前只做 parity 校验、未进 `BUILTIN_LOCALES`**：`de`、`es`、`fr`、`ja`、`ko`、`pt-BR`、`ru`、`zh-TW`，以文件形态存在于 `src/locales/`（如 `src/locales/pt-BR.ts` + `src/locales/pt-BR/`），由 `scripts/i18n-sync-check.mjs:23` 的 `LOCALE_FILES` 逐个列表做词条校验；**就宿主 `src/locales/` 的这 8 个语言文件而言**，除 `src/locales/` 内部再导出外生产路径无运行时 import（此限定只描述宿主词条，不适用于驱动包，见下条不对称说明）。
-  - 因此 **`zh-CN` 的连字符以 `BUILTIN_LOCALES` 为出处，`pt-BR` 的连字符以 `LOCALE_FILES`（`scripts/i18n-sync-check.mjs:23`）与语言文件名（`src/locales/pt-BR.ts`、`packages/drivers/redis/locales/pt-BR.ts`、`packages/drivers/mongodb/locales/pt-BR.ts`）为出处**。驱动包 `locales/` 现覆盖 10 个语言文件（redis、mongodb 各 10），其文件名必须与宿主同名同分隔符；新增语言只加文件，不改宿主 `BUILTIN_LOCALES`（除非该语言确已接线）。
-- **上述三层全部只是宿主侧口径；驱动侧的注册集合有意与之不对称，不是越界**。宿主运行时接线的可选语言是 `en` / `zh-CN`（第 ① 层），而驱动 `locales/index.ts` 是静态 import 本目录**全部**语言字典后一次性灌入共享注册表（redis、mongodb 各 10 语言），驱动一经装载即在应用启动时全部进入 main chunk——不存在「驱动跟着宿主只注册 2 语言」这一形态；本契约同样不要求、不建议驱动改走惰性 / 按需注册——O-1 裁定明令禁止引入该机制，全量 eager 注册即终态。该包体代价已由并行轨 `i18n-drivers` 的 **O-1 裁定**接受并写为终态（该轨 `docs/development/coordination/tracks/i18n-drivers/bugs.md` 观察项 O-1，同一 config、仅切换 locale 装配的三档 `vite build` 实测：完全不装配驱动词条 1,501.93 kB min / 仅 `en` + `zh-CN` 1,528.55 kB / 全部 10 语言 1,605.12 kB，净增 **+76.57 kB min、+6.59 kB gzip**，均在 main chunk）。**要区分两件不同的事**：词条「是否被注册进共享注册表」由驱动自己决定（全量注册、eager）；某语言「在运行时是否可达」则由宿主的**可选语言集合**决定，与驱动注册了多少语言无关——该集合是 `BUILTIN_LOCALES`（第 ① 层）并上宿主扩展经 `registerLocale()` 注册的语言（`src/locales/index.ts:42-45` 写入 `extensionLocales`，经 `getExtensionLocales()` 汇入设置页语言下拉，见 `src/windows/settings/SettingsContent.tsx:91-100`）。注意宿主的惰性域包机制（`src/locales/lazyPacks.ts:21-34`，域清单 `src/locales/domains.ts:21` 的 `sync` / `workflows` / `dashboard` / `mcp`）只服务**宿主词条**、且只覆盖 `en` / `zh-CN`，**驱动词条不经它装载**。因此驱动多出的 8 个语言在当前宿主集合下运行时不可达，其字典常驻注册表，属为「未来经 `registerLocale()` 接入第 3 语言」预付的容量（O-1 裁定接受代价时的收益侧）。两者不等价：评审驱动包时不得据宿主接线集合判定驱动注册了多余语言，也不得据驱动注册集合推断宿主已支持该语言。
+  - **其余 8 个语言目前只做 parity 校验、未进 `BUILTIN_LOCALES`**：`de`、`es`、`fr`、`ja`、`ko`、`pt-BR`、`ru`、`zh-TW`，以文件形态存在于 `src/locales/`（如 `src/locales/pt-BR.ts` + `src/locales/pt-BR/`），由 `scripts/i18n-sync-check.mjs:36` 的 `LOCALE_FILES` 逐个列表做词条校验；**就宿主 `src/locales/` 的这 8 个语言文件而言**，除 `src/locales/` 内部再导出外生产路径无运行时 import（此限定只描述宿主词条，不适用于驱动包，见下条不对称说明）。
+  - 因此 **`zh-CN` 的连字符以 `BUILTIN_LOCALES` 为出处，`pt-BR` 的连字符以 `LOCALE_FILES`（`scripts/i18n-sync-check.mjs:36`）与语言文件名（`src/locales/pt-BR.ts`、`packages/drivers/redis/locales/pt-BR.ts`、`packages/drivers/mongodb/locales/pt-BR.ts`）为出处**。驱动包 `locales/` 现覆盖 10 个语言文件（redis、mongodb 各 10），其文件名必须与宿主同名同分隔符；新增语言只加文件，不改宿主 `BUILTIN_LOCALES`（除非该语言确已接线）。
+- **上述三层全部只是宿主侧口径；驱动侧的注册集合有意与之不对称，不是越界**。宿主运行时接线的可选语言是 `en` / `zh-CN`（第 ① 层），而驱动 `locales/index.ts` 是静态 import 本目录**全部**语言字典后一次性灌入共享注册表（redis、mongodb 各 10 语言），驱动一经装载即在应用启动时全部进入 main chunk——不存在「驱动跟着宿主只注册 2 语言」这一形态；本契约同样不要求、不建议驱动改走惰性 / 按需注册——O-1 裁定明令禁止引入该机制，全量 eager 注册即终态。
+  - **代价与裁定出处**：该包体代价已由并行轨 `i18n-drivers` 的 **O-1 裁定**接受并写为终态（该轨 `docs/development/coordination/tracks/i18n-drivers/bugs.md` 观察项 O-1，同一 config、仅切换 locale 装配的三档 `vite build` 实测：完全不装配驱动词条 1,501.93 kB min / 仅 `en` + `zh-CN` 1,528.55 kB / 全部 10 语言 1,605.12 kB，净增 **+76.57 kB min、+6.59 kB gzip**，均在 main chunk）。
+  - **「是否注册」与「运行时是否可达」是两件事**：词条「是否被注册进共享注册表」由驱动自己决定（全量注册、eager）；某语言「在运行时是否可达」则由宿主的**可选语言集合**决定，与驱动注册了多少语言无关——该集合是 `BUILTIN_LOCALES`（第 ① 层）并上宿主扩展经 `registerLocale()` 注册的语言（`src/locales/index.ts:47-50` 写入 `extensionLocales`，经 `getExtensionLocales()` 汇入设置页语言下拉，见 `src/windows/settings/SettingsContent.tsx:91-100`）。注意宿主的惰性域包机制（`src/locales/lazyPacks.ts:21-34`，域清单 `src/locales/domains.ts:21` 的 `sync` / `workflows` / `dashboard` / `mcp`）只服务**宿主词条**、且只覆盖 `en` / `zh-CN`，**驱动词条不经它装载**。因此驱动多出的 8 个语言在当前宿主集合下运行时不可达，其字典常驻注册表，属为「未来经 `registerLocale()` 接入第 3 语言」预付的容量（O-1 裁定接受代价时的收益侧）。
+  - **评审口径（两句结论）**：两者不等价——评审驱动包时不得据宿主接线集合判定驱动注册了多余语言，也不得据驱动注册集合推断宿主已支持该语言。
 
 ### 2.4.4 key 命名与类型
 
 - 驱动词条 key 必须带**驱动自有前缀**（现状：`redis.*`、`mongo.*`），与宿主前缀互斥，保证合并进同一注册表不碰撞；新增 key 只改本包 `en.ts`（唯一 source of truth），其余语言由同步工具补齐。
 - 驱动侧 `t()` 的 key 是**普通 `string`**：没有编译期 `I18nKey` 字面量联合约束（宿主 `I18nKey` 是宿主内部编译期约束，与驱动无关），驱动组件中不得出现 `as I18nKey` 之类宿主类型断言。
-- 词条完整性（parity）改由脚本扫描保证（`i18n-drivers` 轨同期落地）：`node scripts/i18n-sync-check.mjs` 以各包 `en.ts` 为 source 校验其余语言文件 key 集合一致（该脚本当前仅扫描宿主 `src/locales`，驱动目录扫描随该轨加入）。
+- 词条完整性（parity）由脚本扫描保证（**已落地**）：`node scripts/i18n-sync-check.mjs`（`scripts/__tests__/i18n-sync-check.test.mjs` 覆盖其分支）以各包 `en.ts` 为 source 校验其余语言文件 key 集合一致，扫描**两类**集合——宿主 `src/locales/`（`scripts/i18n-sync-check.mjs:33`）与驱动包 `packages/drivers/<id>/locales/`（同文件 `:34` 的 `driversDir`，经导出的 `checkDriverLocalePacks()` 在 `:318` 汇入报告）；驱动包缺 `locales/index.ts`、或 `index.ts` 漏 import 某个语言文件，都计为结构性问题并让脚本非零退出。开发期间只改本包 `en.ts`，其余语言由 i18n-sync 流程补齐。
 
 ### 2.4.5 驱动 UI 消费写法
 
@@ -327,17 +327,33 @@ function RedisConsole() {
 2. 若下沉纯函数/IPC：**移动**实现进 SDK（禁止复制），宿主原路径**有存量消费方则改薄再导出、无消费方则连文件一并删除**，全仓保持单实现；
 3. 若建注入桥：SDK 新增 `xxxBridge.ts`（`bindX` + 未绑定抛错 + `useBoundX` 收窄类型），宿主在对应 store/hook 定义处 bind，并为桥补 SDK 侧单测（先例：`packages/driver-sdk/__tests__/`）；
 4. 驱动侧只 import 包名并更新本文件 2.3.1 清单表；
-5. 生产代码零 `../../../src/` 新增（Wave 4 护栏将强制，见 2.6）。
+5. 生产代码零 `../../../src/` 新增（已由 Wave 4 护栏 **R1** 强制，见 2.6；确属宿主集成测试夹具而必须保留时，须在 2.1.2 与护栏 `ALLOWLIST` 同步登记精确三元组）。
 
-## 2.6 Wave 4 import 护栏（预告）
+## 2.6 Wave 4 import 护栏（已落地）
 
-上述禁止项将由 Wave 4 的构建期 import 护栏脚本强制执行（扫描 `packages/drivers/*/ui/**` 与 EP 包中的宿主相对 import、驱动侧 `setLocale` 调用等）。**具体脚本文件名与 CI 位置尚未确定（待 Wave 4 落地）**；在其出现之前，本文件 2.1–2.4 的约束以代码评审 + 2.5 自查清单执行。
+上述禁止项已由构建期护栏脚本强制执行：
+
+| 落点 | 值 |
+| --- | --- |
+| 脚本 | `scripts/check-driver-import-boundaries.mjs`（导出纯函数 + `runCli()` + `process.argv[1].endsWith(...)` main 守卫，与 `check-id-terminology.mjs` / `check-module-layers.mjs` 同构） |
+| npm script | `pnpm test:boundaries` |
+| CI | `.github/workflows/ci.yml` 步骤 **`Guard driver/host import boundaries`**（位于 `Guard version consistency` 之后、`Guard i18n sync (warning only)` 之前） |
+| 本地等价 | `scripts/ci-local.sh` 步骤 `3.4/11 Guard: driver/host import boundaries`；`scripts/run-full-automation-test.sh` Stage 1 的 `pnpm test:boundaries` |
+| 单测 | `scripts/__tests__/check-driver-import-boundaries.test.mjs`（31 例：内联虚拟文件树 fixture 覆盖三条规则与豁免路径 + 真实仓库 `runCli` 用例。本轨新增脚本实测覆盖：行 **100%** / 语句 99.26% / 分支 95.42% / 函数 100%，未覆盖部分全部位于 `walk()` 的真实文件系统目录遍历过滤器，不影响规则与豁免逻辑） |
+
+三条规则与退出码：
+
+- **R1**（阻断）驱动包禁引宿主：扫描 `packages/drivers/**`（`ui/**`、`locales/**`、`e2e/**` 全含）内**所有说明符字面量**并做相对路径解析——`import` / `export … from` / 动态 `import()` / `vi.mock` / `vi.doMock` / `require` 以及任何以模块路径为参数的辅助函数一律同等对待，解析结果落进宿主 `src/` 即违规。这是 2.1.2 那条 `grep "from '…'"` 口径被抛弃的原因：只匹配 `from` 会漏掉 mock/require 形态。
+- **R2**（阻断）非宿主禁调 `setLocale(`：扫描 `packages/**`，豁免只有脚本内 `R2_FILE_CARVEOUTS` 列出的**两个精确文件**——`setLocale` 的定义文件 `packages/ui/src/i18n.ts` 与它自己的单测 `packages/ui/src/__tests__/i18n.test.tsx`（不是整包 `packages/ui/**` 目录级豁免，`@datazen/ui` 其它组件调用照样红，见 2.4.2）；注释、字符串、契约成员声明（`setLocale(locale: string): void;`）与 `import { setLocale }` 这类不带括号的引用均不算调用。
+- **R3**（**advisory，暂不阻断**）宿主禁引驱动内部：`src/**` 相对解析进 `packages/drivers/**` 即列出，跳过 gitignored codegen `src/extensions/generated{,-locales,-pro}.ts`（那是唯一被允许的宿主→驱动边，见 2.2 第 4 行）。**现状基线非 0**（4 处：`src/locales/locales.test.ts:107`、`src/test/driverUiSetup.ts:25,26`、`src/windows/connection/DocumentConnectionView.tsx:25`），是否收紧（改造或另立豁免）已交协调者裁定；裁定前 R3 只报告不失败，`RULES.R3.blocking` 翻为 `true` 即收紧。
+- 退出码：`0` 干净 · `1` 存在阻断违规或**过期豁免** · `2` 一个文件都没扫到（防「扫描器失效却报成功」）。豁免写在脚本内 `ALLOWLIST` 常量里，形如 `(规则, 文件, 说明符)` 精确三元组 + 原因 + 归属里程碑，**禁止目录级/通配级豁免**；条目所指文件消失或违规已修，同样按过期豁免报错。
 
 ## 2.7 契约自查清单（Reviewer / CI 预备）
 
-- [ ] 驱动 UI 无任何 `.../src/` 形态宿主 import（2.1.2 登记的过渡期例外除外；现网基线 = `grep -rn "from '\.\./.*src/" packages/drivers/*/ui/` 命中 **34 处**（32 宿主 `useI18n` + 2 测试夹具）+ 8 处 `vi.mock` 宿主 `useI18n` 路径；**命中数超过该基线即为新增违规**，少于基线说明换源有进展应同步更新 2.1.2）。
+- [ ] `pnpm test:boundaries` 绿：驱动可见面无任何 `.../src/` 形态宿主 import。现网基线（Wave 4 护栏实测口径，非 `grep "from '…'"` 那种会漏 mock 的旧口径）= **生产码 0 处 + 夹具 2 处**（`packages/drivers/redis/ui/__tests__/redisKeyWebContextMenu.test.tsx:5,9`，见 2.1.2）；**护栏 ALLOWLIST 只允许这 2 条，出现第 3 条即新增违规**。
 - [ ] 驱动 UI 的组件/工具/类型仅来自 `@datazen/ui`、`@datazen/driver-sdk`、`@datazen/extension-points`（仅 EP 类型）、npm 依赖。
 - [ ] 新共享类型为移动而非复制，宿主存量 import 零改动（薄 re-export）。
 - [ ] 新 bridge 具备：宿主模块加载期 bind、未绑定抛错文案、消费侧类型收窄、SDK 侧单测。
 - [ ] 驱动词条带自有前缀，只改本包 `en.ts`，经本包 `locales/index.ts` 自注册（不新增宿主聚合 codegen）。
-- [ ] 驱动/扩展代码零 `setLocale` 调用；i18n 一律 `import { t | useI18n } from '@datazen/ui'`。
+- [ ] 驱动/扩展代码零 `setLocale` 调用（同一 `pnpm test:boundaries` 的 **R2** 阻断，豁免仅 2.4.2 所列两个精确文件）；i18n 一律 `import { t | useI18n } from '@datazen/ui'`。
+- [ ] 宿主侧不新增对 `packages/drivers/**` 的相对 import（R3 目前为 advisory 报告项，见 2.6；已列出的 4 处基线等待协调者裁定，评审时不得默认放行新命中）。

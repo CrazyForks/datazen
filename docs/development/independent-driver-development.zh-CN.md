@@ -205,14 +205,14 @@ const safeMode = useBoundSettingsStore((s) => s.settings.safeMode); // 组件内
 const [confirm, dialog] = useBoundConfirmDialog(); // dialog 渲染一次，confirm 返回 Promise<boolean>
 ```
 
-需要新的宿主能力时，**不要从宿主直接 import**，按契约文档 2.5 的流程下沉或建桥。
+需要新的宿主能力时，**不要从宿主直接 import**，按契约文档 2.5 的流程下沉或建桥。这条禁令覆盖宿主的**薄再导出路径**（如 `src/lib/cn.ts`、`src/commands/driver.ts`）：它们只是给存量宿主消费方看的兼容壳，驱动一律 import 包名。约束已由 Wave 4 护栏静态阻断：`pnpm test:boundaries`（规则 R1 扫描驱动包内所有说明符字面量并解析是否爬进宿主 `src/`，规则 R2 阻断 `packages/**` 里的 `setLocale` 调用——仅 i18n 运行时定义文件与其自身单测豁免），详见契约文档 2.6。
 
 ### 6.3 i18n：单一运行时与词条自注册
 
 - `@datazen/ui` 是**全应用唯一** i18n 实现（查表 / `{param}` 插值 / `en` 回落），无 bridge、无第二套引擎；Driver 侧统一 `import { useI18n } from '@datazen/ui'`（非 React 路径如表单校验器，由 SDK 契约把 `t` 作为参数注入，见 `DriverFormValidator`）。
 - **只有宿主调用 `setLocale`**（语言偏好由宿主 settingsStore 持久化并同步）；Driver 生产代码出现 `setLocale` 调用即违规。
-- **词条由 Driver 包自己提供并自注册**：词条放 `locales/`（各语言一个文件，key 带 Driver 自有前缀如 `redis.*` / `mongo.*`），由纯副作用模块 `locales/index.ts` 静态 import 本目录**全部**语言字典后调用一次 `registerTranslations` 注册（注册集合不随宿主接线的可选语言集合收缩，两者不对称是有意终态，见契约文档 2.4.3）；挂载点在 Driver UI 入口模块（即 `generated.ts` 实际 import 的首个 UI 模块）加一行指向本包 `locales/` 的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts` 写 `import '../locales';`，入口在 `ui/shared/meta.ts`（如 redis）写 `import '../../locales';`。**此自注册链路由 `i18n-drivers` 轨同期落地**（宿主端 `DRIVER_LOCALES` 聚合 codegen 同期删除），落地前请勿依赖旧的宿主聚合方式新增词条。
-- Driver 侧 `t()` 的 key 是普通 `string`，没有编译期 `I18nKey` 校验；词条完整性由 `node scripts/i18n-sync-check.mjs` 扫描各包 `locales/` 保证（驱动目录扫描同由 `i18n-drivers` 轨加入）。开发期间只改本包 `en.ts`（唯一 source of truth）。
+- **词条由 Driver 包自己提供并自注册**：词条放 `locales/`（各语言一个文件，key 带 Driver 自有前缀如 `redis.*` / `mongo.*`），由纯副作用模块 `locales/index.ts` 静态 import 本目录**全部**语言字典后调用一次 `registerTranslations` 注册（注册集合不随宿主接线的可选语言集合收缩，两者不对称是有意终态，见契约文档 2.4.3）；挂载点在 Driver UI 入口模块（即 `generated.ts` 实际 import 的首个 UI 模块）加一行指向本包 `locales/` 的副作用 import，**相对层级随入口目录深度而定**：入口在 `ui/meta.ts`（如 mongodb）写 `import '../locales';`，入口在 `ui/shared/meta.ts`（如 redis，嵌套两层）写 `import '../../locales';`。**此自注册链路已随 Wave 3 `i18n-drivers` 合并落地**（宿主端 `DRIVER_LOCALES` 聚合 codegen 同批删除，生产码已无该标识符），新增词条一律走本包 `locales/` 自注册，不要再依赖任何宿主聚合方式。
+- Driver 侧 `t()` 的 key 是普通 `string`，没有编译期 `I18nKey` 校验；词条完整性由 `node scripts/i18n-sync-check.mjs` 扫描保证——它同时扫宿主 `src/locales/` 与各驱动包 `locales/`（驱动包缺 `locales/index.ts` 或 index 漏 import 某语言文件按结构性问题失败）。开发期间只改本包 `en.ts`（唯一 source of truth）。
 
 ## 7. 迭代开发循环
 
