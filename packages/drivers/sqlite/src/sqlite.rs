@@ -14,6 +14,20 @@ pub struct SqliteDriver {
     pools: RwLock<HashMap<String, SqlitePool>>,
 }
 
+fn skip_sqlite_block_comment(bytes: &[u8], start: usize) -> usize {
+    bytes[start + 2..]
+        .windows(2)
+        .position(|pair| pair == b"*/")
+        .map_or(bytes.len(), |offset| start + 2 + offset + 2)
+}
+
+fn skip_sqlite_line_comment(bytes: &[u8], start: usize) -> usize {
+    bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |offset| start + offset + 1)
+}
+
 fn parse_sqlite_check_constraints(create_sql: &str) -> Vec<CheckConstraint> {
     let bytes = create_sql.as_bytes();
     let mut checks = Vec::new();
@@ -35,6 +49,14 @@ fn parse_sqlite_check_constraints(create_sql: &str) -> Vec<CheckConstraint> {
         if matches!(ch, '\'' | '"' | '`') {
             quote = Some(ch);
             index += 1;
+            continue;
+        }
+        if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            index = skip_sqlite_block_comment(bytes, index);
+            continue;
+        }
+        if bytes[index..].starts_with(b"--") {
+            index = skip_sqlite_line_comment(bytes, index);
             continue;
         }
         let is_check = index + 5 <= bytes.len()
@@ -72,6 +94,13 @@ fn parse_sqlite_check_constraints(create_sql: &str) -> Vec<CheckConstraint> {
             }
             if matches!(current, '\'' | '"' | '`') {
                 inner_quote = Some(current);
+            } else if cursor + 1 < bytes.len() && bytes[cursor] == b'/' && bytes[cursor + 1] == b'*'
+            {
+                cursor = skip_sqlite_block_comment(bytes, cursor);
+                continue;
+            } else if bytes[cursor..].starts_with(b"--") {
+                cursor = skip_sqlite_line_comment(bytes, cursor);
+                continue;
             } else if current == '(' {
                 depth += 1;
             } else if current == ')' {

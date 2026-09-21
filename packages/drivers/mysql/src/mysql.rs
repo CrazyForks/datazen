@@ -233,66 +233,122 @@ impl MysqlDriver {
     }
 
     /// Parse CHECK clauses from SHOW CREATE TABLE.  The expression scanner
-    /// tracks nested parentheses and quoted strings so function calls and
-    /// string literals cannot truncate the predicate.
+    /// tracks nested parentheses and quoted strings so literals containing
+    /// the word CHECK cannot become false constraints.
     fn parse_check_from_create_table(create_sql: &str) -> Vec<CheckConstraint> {
         let mut checks = Vec::new();
-        for line in create_sql.lines() {
-            let Some(check_pos) = line.find("CHECK") else {
-                continue;
-            };
-            let after = &line[check_pos + "CHECK".len()..];
-            let Some(open) = after.find('(') else {
-                continue;
-            };
-            let bytes = after.as_bytes();
-            let mut depth = 0usize;
-            let mut quote = None;
-            let mut close = None;
-            for (index, byte) in bytes.iter().enumerate().skip(open) {
-                let ch = *byte as char;
-                if let Some(active) = quote {
-                    if ch == active && (index == 0 || bytes[index - 1] != b'\\') {
-                        quote = None;
-                    }
-                    continue;
-                }
-                if matches!(ch, '\'' | '"' | '`') {
-                    quote = Some(ch);
-                    continue;
-                }
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            close = Some(index);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let Some(close) = close else {
-                continue;
-            };
-            let expression = after[open + 1..close].trim();
-            if expression.is_empty() {
+        let bytes = create_sql.as_bytes();
+        let mut index = 0usize;
+        while index + 5 <= bytes.len() {
+            let ch = bytes[index] as char;
+            if matches!(ch, '\'' | '"' | '`') {
+                index = Self::skip_quoted_sql(bytes, index, ch);
                 continue;
             }
-            let name = Self::extract_backtick_after(&line[..check_pos], "CONSTRAINT");
-            let name = if name.is_empty() {
-                format!("check_{}", checks.len())
-            } else {
-                name
+            if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                index = Self::skip_block_comment(bytes, index);
+                continue;
+            }
+            if bytes[index..].starts_with(b"--") || bytes[index] == b'#' {
+                index = Self::skip_line_comment(bytes, index);
+                continue;
+            }
+            let is_check = bytes[index..index + 5].eq_ignore_ascii_case(b"CHECK")
+                && (index == 0 || !Self::is_sql_identifier_byte(bytes[index - 1]))
+                && (index + 5 == bytes.len() || !Self::is_sql_identifier_byte(bytes[index + 5]));
+            if !is_check {
+                index += 1;
+                continue;
+            }
+            let mut open = index + 5;
+            while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+                open += 1;
+            }
+            if open >= bytes.len() || bytes[open] != b'(' {
+                index += 5;
+                continue;
+            }
+            let Some(close) = Self::scan_sql_parentheses(bytes, open) else {
+                break;
             };
-            checks.push(CheckConstraint {
-                name,
-                expression: expression.to_string(),
-            });
+            let expression = create_sql[open + 1..close].trim();
+            if !expression.is_empty() {
+                let line_start = create_sql[..index].rfind('\n').map_or(0, |pos| pos + 1);
+                let name =
+                    Self::extract_backtick_after(&create_sql[line_start..index], "CONSTRAINT");
+                checks.push(CheckConstraint {
+                    name: if name.is_empty() {
+                        format!("check_{}", checks.len())
+                    } else {
+                        name
+                    },
+                    expression: expression.to_string(),
+                });
+            }
+            index = close + 1;
         }
         checks.sort_by(|a, b| a.name.cmp(&b.name));
         checks
+    }
+
+    fn skip_quoted_sql(bytes: &[u8], start: usize, quote: char) -> usize {
+        let mut index = start + 1;
+        while index < bytes.len() {
+            if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                index += 2;
+            } else if bytes[index] as char == quote {
+                if index + 1 < bytes.len() && bytes[index + 1] as char == quote {
+                    index += 2;
+                } else {
+                    return index + 1;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        bytes.len()
+    }
+
+    fn skip_block_comment(bytes: &[u8], start: usize) -> usize {
+        bytes[start + 2..]
+            .windows(2)
+            .position(|pair| pair == b"*/")
+            .map_or(bytes.len(), |offset| start + 2 + offset + 2)
+    }
+
+    fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
+        bytes[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |offset| start + offset + 1)
+    }
+
+    fn is_sql_identifier_byte(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }
+
+    fn scan_sql_parentheses(bytes: &[u8], open: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut index = open;
+        while index < bytes.len() {
+            let ch = bytes[index] as char;
+            if matches!(ch, '\'' | '"' | '`') {
+                index = Self::skip_quoted_sql(bytes, index, ch);
+                continue;
+            }
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(index);
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        None
     }
 
     /// Extract the first backtick-quoted identifier after a keyword.

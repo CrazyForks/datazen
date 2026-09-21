@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_FOR_RETEST
 
 ## Implemented slice
 
@@ -40,6 +40,14 @@ FAILED
 - No live PostgreSQL/MySQL database journey or destructive migration was run.
 - Tester added only tests and this track's bug/progress records; no business implementation was changed.
 
+## Bug fixes
+
+- BUG-001: MySQL CHECK scanning now skips SQL string literals, quoted identifiers, and comments before recognizing `CHECK`, so a default literal such as `'CHECK (literal)'` is not reported as a constraint.
+- BUG-002: SQLite CHECK scanning now skips block and line comments at both the table-definition and predicate-scanning levels, so comment text containing `CHECK (...)` is ignored while real constraints remain visible.
+- Focused MySQL parser regressions and the existing named/unnamed CHECK parser test passed.
+- Focused SQLite parser regressions and the existing nested CHECK parser test passed.
+- Focused Host Schema Diff comparison test passed.
+
 ## Known limits
 
 - Independent Tester must review this worktree and run the full required verification; coder self-validation is not a pass verdict.
@@ -50,8 +58,9 @@ FAILED
 
 ## Tester verdict
 
-- **TEST_FAILED**: `migration-schema-constraints-options-BUG-001` and `migration-schema-constraints-options-BUG-002` block merge until the two catalog parsers ignore SQL literals/comments.
+- Previous verdict: **TEST_FAILED** for `migration-schema-constraints-options-BUG-001` and `migration-schema-constraints-options-BUG-002`.
+- Current handoff: **READY_FOR_RETEST** after fixing both parser boundary cases. Independent tester retest is required.
 
 ## Commit
 
-- Coding commit: recorded in the READY_FOR_TEST handoff.
+- Coding commit: recorded in the READY_FOR_RETEST handoff.
