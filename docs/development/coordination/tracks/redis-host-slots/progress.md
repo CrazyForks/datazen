@@ -202,8 +202,8 @@ kvSlots: {
 | # | 门禁 | 命令 | 结果 |
 | --- | --- | --- | --- |
 | 1 | 类型 | `npx tsc --noEmit -p tsconfig.json` | **0 错误**（exit 0） |
-| 2 | 定向单测 | `npx vitest run src/windows/connection src/lib` | **203 files / 2068 tests 全绿**（接管时 202/2061 → 本轨新增 1 文件 7 用例） |
-| 3 | Host 全量 | `npx vitest run` | **448 files / 4646 tests 全绿，exit 0** |
+| 2 | 定向单测 | `npx vitest run src/windows/connection src/lib` | **204 files / 2068 tests 全绿**（接管时 202/2061 → 本轨新增 2 文件 7 用例） |
+| 3 | Host 全量 | `npx vitest run` | **449 files / 4646 tests 全绿，exit 0** |
 | 4a | 边界 | `node scripts/check-driver-import-boundaries.mjs` | **0 blocking**（1413 files，4 advisory，全部为本轨之前既有：`locales.test.ts` / `driverUiSetup.ts` ×2 / `DocumentConnectionView.tsx`） |
 | 4b | ID 术语 | `node scripts/check-id-terminology.mjs` | ok（1730 files，5 allow-listed） |
 | 4c | 模块分层 | `node scripts/check-module-layers.mjs` | ok（3 rules） |
@@ -215,8 +215,9 @@ kvSlots: {
 **门禁 3 的红/绿比对方法**：改后 `npx vitest run` 以 **exit 0 / 0 失败** 结束，失败集合为空，
 因此"是否引入新红"无需与基线求差集（零元素集合的任何子集都是零）；基线数字（同一 worktree、
 `9b073ed46` 落地前实跑）为 **447 files / 4634 tests 全绿**，两者差值恰为本轨新增的
-1 个测试文件 / 12 个用例（`ContentViewDrawers.test.tsx` +5、`ConnectionWorkspaceHome.test.tsx` +2、
-`resolve-drivers.test.mjs` +5）。未做 `git stash -u` 取基线，因为改后全绿已蕴含"无新红"。
+2 个测试文件 / 12 个用例（`ContentViewDrawers.test.tsx` +5、
+`ConnectionWorkspaceHomeKvSlot.test.tsx` +2、`scripts/__tests__/resolve-drivers.test.mjs` +5）。
+未做 `git stash -u` 取基线，因为改后全绿已蕴含"无新红"。
 
 **门禁 5 的 lookup 实取证明**（不留在提交里）：临时给 `redis` 配置注入 `kvSlots`
 （contextBar / statusBar / connectionHome 三项，指向尚不存在的 `ui/kvSlots`）→ 重跑 codegen ⇒
@@ -225,8 +226,14 @@ kvSlots: {
 `connectionHome → Home`、`keyPropsSidebar → undefined`（未声明）、`postgresql → undefined`（整块未声明）。
 随后 `git checkout -- scripts/resolve-drivers.mjs` 并重新 codegen 复原，工作区干净。
 
-提交：`9b073ed46`（能力位 + 契约 + codegen + 宿主四槽接线 + 接管成果落盘，22 files / +1644）、
-`9b878e609`（抽屉与屏 A 渲染位单测 + 生成器槽位名单钉死，3 files）。
+提交（分支 `feature/redis-host-slots`，基准 `ae65ae375`）：
+
+| hash | 内容 |
+| --- | --- |
+| `9b073ed46` | 接管前任未提交现场：能力位 + 契约类型 + codegen 分支 + 宿主四槽接线 + 6 个测试文件（22 files / +1644） |
+| `9b878e609` | 补齐抽屉与屏 A 两个渲染位单测 + 生成器槽位名单对 `KvSlotName` 的钉死断言（3 files） |
+| `e4f020b70` | 本文件：契约冻结 + 自验记录 + 留待 R 回归 |
+| （末条收尾提交） | 屏 A 测试拆分到 `ConnectionWorkspaceHomeKvSlot.test.tsx`（避免把 687 行存量测试文件推到 775 行，给 Wave 2 留出独立 KV 用例落点）+ 门禁数字修正 + R 项 8~10 |
 
 ## 留待 R 回归
 
@@ -251,3 +258,16 @@ kvSlots: {
 7. 本轨未触碰 `RedisWorkbench.tsx`、`packages/drivers/redis/{src,ui}/**`、任何 `locales/**`、
    `src/locales/locales.test.ts`、`ttlControlsJourney.test.tsx`、`check-i18n-copy-assertions.mjs`、
    `package.json`（含 `test:i18n-assertions*`）⇒ 与 redis-cmds-p0 / redis-assert-policy / Wave 2 三轨零冲突。
+8. **请协调者裁定一处规范措辞差**：PRD §7-4 写「屏 A 让位需走 `DatabaseTypeMeta.connectionView` /
+   新 EP 契约，由 `@datazen/extension-points` 承载」，而本轨任务书 §范围-3 指定「走既有 codegen 机制」。
+   实现按任务书执行：屏 A 走驱动槽位注册表（`resolve-drivers.mjs` → `getDriverKvSlot`），
+   **与 `getDriverConnectionView` 同一机制、同一文件、同一风格**，宿主零 `databaseType === 'redis'` 分支、
+   零具体驱动 import（边界 0 blocking）。若协调者认为 §7-4 字面上必须落 EP 承载，本轨的
+   `connectionHome` 一个槽位可平移，其余三槽（面板内）与本条无关。
+9. `scripts/resolve-drivers.mjs` 现 **1338 行**，基准 `ae65ae375` 已是 1239 行（本轨 +99）⇒
+   该构建脚本在本轨之前就已越过 AGENTS.md 推荐的 800 行线，属存量债，**本轨未拆分**（拆分必然改动
+   所有驱动配置段，与 redis-cmds-p0 / Wave 2 的 codegen 改动高冲突）。建议单独立项处理。
+10. **屏 A 测试落点已拆分**：新增用例放在
+    `src/windows/connection/__tests__/ConnectionWorkspaceHomeKvSlot.test.tsx`（112 行），
+    存量 `ConnectionWorkspaceHome.test.tsx` 保持基准 687 行不变。Wave 2 若还要加屏 A 用例，
+    请续写这个新文件，不要再往 687 行的存量文件里堆。
