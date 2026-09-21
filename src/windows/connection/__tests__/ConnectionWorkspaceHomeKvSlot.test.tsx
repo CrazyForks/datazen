@@ -109,4 +109,33 @@ describe('ConnectionWorkspaceHome connection-home slot', () => {
     expect(screen.queryByTestId('home-kv-connection-home')).not.toBeInTheDocument();
     expect(screen.getByText('common.newQuery')).toBeInTheDocument();
   });
+
+  // [tester] The takeover is gated on a *live session*, not just on a binding
+  // existing: `useKvWorkspaceSlots` only builds one from `connectionContext`, but a
+  // stale/mismatched caller must never swap the driver home onto the connection
+  // picker (State 3) or the empty state (State 1).
+  it('[tester] does not hand over the landing screen without a connection context', () => {
+    render(
+      <ConnectionWorkspaceHome
+        hasConnections
+        connectionContext={null}
+        recentPanels={[]}
+        showNewQuery
+        showNewTable={false}
+        showErDiagram={false}
+        showObjects={false}
+        onNewConnection={vi.fn()}
+        onNewQuery={vi.fn()}
+        onCreateTable={vi.fn()}
+        onOpenErDiagram={vi.fn()}
+        onOpenObjects={vi.fn()}
+        onOpenPanel={vi.fn()}
+        connectionHomeSlot={homeSlot}
+      />,
+    );
+
+    expect(screen.queryByTestId('home-kv-connection-home')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fixture-connection-home')).not.toBeInTheDocument();
+    expect(screen.getByTestId('connection-workspace-home')).toBeInTheDocument();
+  });
 });

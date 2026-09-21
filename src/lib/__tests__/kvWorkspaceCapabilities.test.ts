@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseTypeMeta, KvWorkspaceCapabilities } from '../databaseMeta';
 import {
@@ -48,6 +51,28 @@ describe('kvWorkspaceCapabilities', () => {
     expect([...KV_SLOT_NAMES].sort()).toEqual(
       ['connectionHome', 'contextBar', 'keyPropsSidebar', 'statusBar'].sort(),
     );
+  });
+
+  // [tester] The generator side of the list is pinned against the same union by
+  // `scripts/__tests__/resolve-drivers.test.mjs`; this closes the other direction.
+  // `KV_SLOT_NAMES` is typed `readonly KvSlotName[]`, so a slot added to the union
+  // but forgotten here would compile fine and silently drop out of
+  // `hasAnyKvSlotCapability` — only a source-text pin can catch it.
+  it('[tester] keeps the host slot list in sync with the frozen KvSlotName union', () => {
+    const src = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../packages/driver-sdk/src/types/kv-slots.ts',
+      ),
+      'utf8',
+    );
+    const match = /export type KvSlotName = ([^;]+);/.exec(src);
+    expect(match).not.toBeNull();
+    const sdkSlots = match![1]
+      .split('|')
+      .map((s) => s.trim().replace(/'/g, ''))
+      .filter(Boolean);
+    expect([...KV_SLOT_NAMES]).toEqual(sdkSlots);
   });
 
   it('treats a meta without kvWorkspace as "no capability" for every slot', () => {

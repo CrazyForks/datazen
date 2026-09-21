@@ -231,6 +231,45 @@ describe('useKvWorkspaceSlots', () => {
     expect(withPanel.result.current.connectionHome).toBeUndefined();
   });
 
+  // [tester] PRD §3.0 keep-alive tabs: two panels of the *same* connection on two
+  // databases must never share a selection. Switching the active panel has to swap
+  // the relay wholesale (atom + every slot props bundle), otherwise the context bar
+  // of db5 keeps showing the key selected in db7.
+  it('[tester] swaps to a fresh atom when the active panel changes on one connection', () => {
+    registerMeta('kvfull', { kvWorkspace: { contextBar: true, statusBar: true } });
+    contributeAll('kvfull');
+    const panelDb5 = { ...PANEL, id: 'panel-kv-5', dbName: 'db5' } as unknown as Panel;
+    const panelDb7 = { ...PANEL, id: 'panel-kv-7', dbName: 'db7' } as unknown as Panel;
+
+    const { result, rerender } = renderHook(
+      ({ panel }: { panel: Panel }) =>
+        useKvWorkspaceSlots(args({ activePanel: panel, database: panel.dbName ?? null })),
+      { initialProps: { panel: panelDb5 } },
+    );
+
+    const db5State = result.current.panelState!;
+    db5State.selectKey('session:in:db5');
+    const db5Props = result.current.contextBar!.props;
+
+    rerender({ panel: panelDb7 });
+
+    const db7State = result.current.panelState!;
+    expect(db7State).not.toBe(db5State);
+    // No bleed-through: the new panel starts with nothing selected, and the
+    // previous panel's selection stays parked on its own atom.
+    expect(db7State.getSelectedKey()).toBeNull();
+    expect(db5State.getSelectedKey()).toBe('session:in:db5');
+    expect(result.current.contextBar!.props).not.toBe(db5Props);
+    expect(result.current.contextBar!.props.database).toBe('db7');
+    expect(result.current.contextBar!.props.dbIndex).toBe(7);
+    expect(result.current.contextBar!.props.state).toBe(db7State);
+
+    // Coming back reuses the parked atom (keep-alive tab, not a fresh panel).
+    rerender({ panel: panelDb5 });
+    expect(result.current.panelState).toBe(db5State);
+    expect(result.current.panelState!.getSelectedKey()).toBe('session:in:db5');
+  });
+
   it('resolves dbIndex from index-addressed databases only', () => {
     const indexMeta = { databaseFieldType: 'index' } as DatabaseTypeMeta;
     const nameMeta = { databaseFieldType: 'name' } as DatabaseTypeMeta;
@@ -243,5 +282,56 @@ describe('useKvWorkspaceSlots', () => {
     // A name-addressed driver is not indexed, even if the name looks numeric.
     expect(resolveKvDatabaseIndex(nameMeta, 'db7')).toBeUndefined();
     expect(resolveKvDatabaseIndex(undefined, 'db7')).toBeUndefined();
+    // [tester] A pathological label must not reach the driver as a rounded float.
+    expect(resolveKvDatabaseIndex(indexMeta, 'db99999999999999999999')).toBeUndefined();
+  });
+
+  // [tester] Panels are created before their `databaseType` is known in some
+  // flows (PRD R-4); the hook must then hand over the atom but no bindings, so a
+  // driver component never renders against a half-resolved panel.
+  it('[tester] opens no in-panel binding while the active panel has no database type', () => {
+    registerMeta('kvfull', { kvWorkspace: { contextBar: true, statusBar: true } });
+    contributeAll('kvfull');
+
+    const { result } = renderHook(() => useKvWorkspaceSlots(args({ databaseType: undefined })));
+
+    expect(result.current.panelState).toBeDefined();
+    expect(result.current.contextBar).toBeUndefined();
+    expect(result.current.statusBar).toBeUndefined();
+    expect(result.current.keyPropsSidebar).toBeUndefined();
+  });
+
+  // [tester] `panelId` is the atom key; a panel without one must not mint an atom
+  // under `undefined` that every such panel would then share.
+  it('[tester] creates no state atom for a panel without an id', () => {
+    registerMeta('kvfull', { kvWorkspace: { contextBar: true } });
+    contributeAll('kvfull');
+
+    const { result } = renderHook(() =>
+      useKvWorkspaceSlots(args({ activePanel: { ...PANEL, id: '' } as unknown as Panel })),
+    );
+
+    expect(result.current.panelState).toBeUndefined();
+    expect(result.current.contextBar).toBeUndefined();
+  });
+
+  // [tester] Degradation state 2 on the landing screen (the generator-side twin of
+  // `kvWorkspaceSlots.test.ts`): capability declared, nothing contributed ⇒ the
+  // host keeps its own banner page and must not throw.
+  it('[tester] keeps the host landing screen when the home slot is capable but uncontributed', () => {
+    registerMeta('kvhome-capable-only', { kvWorkspace: { home: true } });
+
+    const { result } = renderHook(() =>
+      useKvWorkspaceSlots(
+        args({
+          activePanel: null,
+          databaseType: 'kvhome-capable-only' as DatabaseType,
+          connectionContext: { ...HOME_CONTEXT, databaseType: 'kvhome-capable-only' },
+        }),
+      ),
+    );
+
+    expect(result.current.connectionHome).toBeUndefined();
+    expect(result.current.panelState).toBeUndefined();
   });
 });
