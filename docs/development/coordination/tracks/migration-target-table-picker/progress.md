@@ -38,4 +38,4 @@ READY_TO_MERGE
 
 ## Commit
 
-Tester commit SHA: `95672649`.
+Tester verification commit: `ac0a124c`.
