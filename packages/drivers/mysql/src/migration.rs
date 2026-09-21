@@ -497,6 +497,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tester_drop_table_rejects_empty_identifier() {
+        assert!(MysqlMigrationRenderer
+            .render(&MigrationOperation::DropTable {
+                table: String::new()
+            })
+            .is_err());
+    }
+
+    #[test]
     fn capabilities_mark_type_change_as_rewrite() {
         let op = MigrationOperation::AlterColumnType {
             table: "users".into(),

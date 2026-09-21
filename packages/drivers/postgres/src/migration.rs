@@ -585,6 +585,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tester_drop_table_rejects_empty_identifier() {
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::DropTable {
+                table: String::new()
+            })
+            .is_err());
+    }
+
+    #[test]
     fn capabilities_reject_set_auto_increment() {
         let op = MigrationOperation::SetAutoIncrement {
             table: "users".into(),

@@ -256,6 +256,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tester_drop_table_rejects_empty_identifier() {
+        assert!(SqliteMigrationRenderer
+            .render(&MigrationOperation::DropTable {
+                table: String::new()
+            })
+            .is_err());
+    }
+
+    #[test]
     fn capabilities_only_support_renderer_ops() {
         assert!(
             SqliteMigrationCapabilities.supports(&MigrationOperation::CreateTable {

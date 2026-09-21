@@ -123,6 +123,57 @@ fn approved_target_only_table_has_no_rollback_and_requires_review() {
 }
 
 #[test]
+fn test_tester_target_only_empty_identifier_is_not_executable() {
+    let src = schema(vec![]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let plan = build_schema_diff_plan(
+        &[(String::new(), src, tgt)],
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| {
+        matches!(
+            requirement,
+            super::super::types::PlanRequirement::Unsupported { .. }
+        )
+    }));
+}
+
+#[test]
+fn test_tester_target_only_unknown_driver_is_not_executable() {
+    let src = schema(vec![]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let plan = build_schema_diff_plan(
+        &[("archive".into(), src, tgt)],
+        "postgresql",
+        "unknown-driver",
+        PlanOptions {
+            allow_destructive: true,
+            include_indexes: true,
+            type_mapper: None,
+            cross_dialect: false,
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| {
+        matches!(
+            requirement,
+            super::super::types::PlanRequirement::Unsupported { reason, .. }
+            if reason.contains("No registered driver")
+        )
+    }));
+}
+
+#[test]
 fn postgres_add_varchar_column() {
     let src = schema(vec![col("id", "int"), col("email", "varchar(255)")]);
     let tgt = schema(vec![col("id", "int")]);
