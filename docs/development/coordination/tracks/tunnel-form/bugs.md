@@ -9,10 +9,34 @@ Tester 复测轮次：Round 1（独立全新实例）
 
 ---
 
+## Round 2 复测结论（2026-09-22，全新 Tester 实例）
+
+被验 HEAD：**`cfb63354`**（`c9777246` = BUG-001 + BUG-002 修复；`cfb63354` = 协调者批准的
+同族范围扩展「内联隧道必填校验对驱动校验表单同样生效」）。
+
+**两个 Bug 均判定「已修复」**，范围扩展经独立复验**成立且未误伤合法保存**。本轮**零新增 Bug**。
+
+| Bug | 修复 commit | Round 2 判定 | 关键独立证据 |
+| --- | --- | --- | --- |
+| BUG-001 | `c9777246` | **已修复** | redis + 悬空引用 → `validate()===false`、`validationErrors.tunnelId==='newConn.tunnelMissing'`、`onSave()` 后 `saveConnection` 零调用；**负对照**：同一用例在 `aaad6ca2` 上失败 |
+| BUG-002 | `c9777246` | **已修复** | 悬空态 `new-conn-tunnel-unbind` **不在文档中**；`tunnelMissingAlt` 仅在 `savedTunnels.length>0` 时出现；`unbindTunnel()` 仍拒绝回填；切「无（直连）」后 `validate()` 转真且 `tunnelId` 清空、**实际落盘**。**负对照**：同一断言在 `aaad6ca2` 组件上失败 |
+
+范围扩展（`cfb63354`）：`redis` + `inline` 的 httpProxy/websocket/ssh 必填校验均生效；
+**等价性矩阵**（`standard` / `file` / `redis` 三个变体 × 无隧道 / 填全 / `saved` 有效引用）全部通过，
+`tunnelSource==='none'` 的普通 Redis 连接保存**未被误拦**。
+
+### 记录偏差（非 Bug，仅存档）
+
+上一轮记录的 `useConnectionForm.ts` 行覆盖率 **91.41%** 经本轮回放 `aaad6ca2`（源码 + 当轮测试）
+**不可复现**：同一命令实测为 **90.99%**。其余 4 个文件的基线数字（100/100/100/83.87）逐项吻合。
+本轮 HEAD 同口径实测仍为 **90.99%**，故覆盖率**未因本轮改动下降**，但上一轮 91.41% 应视为高报。
+
+---
+
 ## tunnel-form-BUG-001 — 悬空 `tunnelId` 在「驱动自定义校验表单」上不阻止保存
 
 - **量级**：中（静默持久化一个必然连接失败的引用；用户侧已看到告警却仍能保存）
-- **状态**：`待复测`
+- **状态**：`已修复`（Round 2 复测通过，修复 commit `c9777246`）
 - **影响范围**：所有 `getDriverValidator(formVariant)` 命中的表单变体，当前构建即 **Redis**（`redisMeta.connectionForm = 'redis'` 且 `supportsSSH: true`，`DRIVER_VALIDATORS = { redis: redisValidate }`）。未来任何注册了驱动校验器的驱动（如 sqlserver 若接入）同样中招。后端 `resolve_tunnel_ref` 找不到 id 时抛 `ConnectionError::Internal("tunnel id '{tid}' not found")`，即保存成功但连接必失败。
 
 ### 描述
@@ -74,7 +98,7 @@ saveConnection 未被调用
 ## tunnel-form-BUG-002 — 悬空引用态下「解绑为内联」是死路，且引导文案指向该不可达动作
 
 - **量级**：低（无数据丢失，存在可用替代出口；但恰好在本功能主场景下误导用户并形成无效循环）
-- **状态**：`待复测`
+- **状态**：`已修复`（Round 2 复测通过，修复 commit `c9777246`）
 - **影响范围**：所有「引用的隧道已被删除」的表单（任意数据库类型），即 P1-8 专门设计的场景。
 
 ### 描述

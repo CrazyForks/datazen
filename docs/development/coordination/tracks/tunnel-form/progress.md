@@ -37,11 +37,13 @@ testTunnel: (id: string, targetHost: string, targetPort: number) => invoke<numbe
 
 ## 状态
 
+**Phase: `PASSED`**（Round 2 复测通过，零新增 Bug；测试 commit hash 见下方「Tester 复测记录（Round 2）」）
+
 - [x] Coder 完成 → **READY_FOR_TEST**（`27ad8a88`）
 - [x] Tester Round 1 复测（阶段 A/B/C/D 全部完成）→ **FAILED**（2 Bug，见 [bugs.md](./bugs.md)）
 - [x] Coder 修复 Round 1（BUG-001 / BUG-002）→ **READY_FOR_TEST**（修复 commit 见「Coder 修复记录」）
 - [x] Coder 追加提交：**协调者批准的范围扩展**（内联隧道必填校验提前，同族缺陷）→ **READY_FOR_TEST**
-- [ ] Tester Round 2 复测（全新实例）→ 待复测
+- [x] Tester Round 2 复测（全新实例，被验 HEAD `cfb63354`）→ **PASSED**（2 Bug 均置「已修复」）
 
 ## Coder 修复记录（Round 1，2026-09-22）
 
@@ -310,3 +312,132 @@ BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」�
 - 追加 `[tester]` 描述块：`src/components/connection/__tests__/useTunnelFormState.test.ts`、`src/components/connection/__tests__/ConnectionAdvancedSettings.test.tsx`、`src/stores/__tests__/tunnelStore.test.ts`
 - 协调文件：本 `progress.md` + `bugs.md`
 - 测试后全量实测：`456 文件 / 4753 passed / 1 failed（跨轨 pathIpcWiring）/ 1 expected fail`；`pnpm typecheck` 0 error；`pnpm test:unit:drivers` 33 文件 / 241 passed
+
+---
+
+## Tester 复测记录（Round 2，2026-09-22）
+
+- 被验 HEAD：**`cfb63354`**（`c9777246` = BUG-001 + BUG-002 修复；`cfb63354` = 协调者批准的范围扩展）
+- 复测实例：**全新 Tester 实例**（与 Round 1 Tester 不同实例，亦与 Coder 不同）；仅写入本 worktree，未触碰 `hub.md` / 主检出 / 其他 worktree
+- 测试 commit：`<本提交，hash 见交接回报>`（message：`test(tunnel-form): re-verify tunnel-form after fix round 1`）
+- **结论：PASSED** — 2 个 Bug 均置「已修复」，**零新增 Bug**；范围扩展成立且未误伤合法保存
+
+### 阶段 A：修复实现审查
+
+- **BUG-001 修复正确**（`useConnectionForm.ts:546-595`）：`errors` 提到最前，悬空引用校验与三条内联隧道必填校验都进入 driver 分支之前的**共享序言**；driver 结果经 `Object.assign(errors, …)` **合并**；driver 分支与非 driver 分支各自 `setValidationErrors(errors)` 后返回 `Object.keys(errors).length === 0`。`onSave()`（:695-699）为 `if (!validate()) return; await saveConnection(buildIpcConfig())` —— **结构上确实不会调用 `saveConnection`**（并有运行时断言佐证）。
+- **键名碰撞审查（对抗性核心）**：`Object.assign` 的方向是**驱动结果覆盖隧道域**（隧道域先写）。逐一枚举本构建唯一注册的驱动校验器 `validateRedisConnection`（`packages/drivers/redis/ui/connection/connectionWizardValidate.ts`）全部可达键：
+  `host` / `port`（standalone、cluster 无节点）、`clusterNodes`（cluster 非法节点）、`sentinelMasterName` / `sentinelNodes`（sentinel）。
+  **与隧道域 6 键（`tunnelId`/`httpProxyHost`/`httpProxyPort`/`wsUrl`/`sshHost`/`sshUsername`）完全不相交** → 当前无碰撞、无覆盖。
+  反向（隧道域覆盖驱动键）不成立：隧道域先写，driver 后写，且键不相交。
+- **范围扩展审查正确**：三条内联必填校验均带 `!tunnelId` 守卫 → 只对 `inline` 生效；`meta?.connectionMode === 'file'` 与 `!isDriverForm` 的通用 host/port/database 校验**原样留在 driver 分支之后**（未被搬走，`else if` 作用域保持）。
+- **BUG-002 修复正确**：`newConn.tunnelMissing` 只指向可达出口；`newConn.tunnelMissingAlt` 由 `form.savedTunnels.length > 0 &&` 前置守卫；`new-conn-tunnel-unbind` 由 `!form.tunnelRefMissing &&` 包裹（**隐藏**而非禁用）；`unbindTunnel()` → `refillFromSaved()` 的「实体不可读则拒绝回填并保留引用」**未被削弱**。
+- **文案面**：全仓 `grep` 确认 `tunnelMissing` 仅存在于 `src/locales/en/connection.ts`（其他语言包尚未补齐，符合「开发期只改 en」规则），**无任何残留文案宣称「解绑为内联」**。
+
+### 阶段 B：独立复验（零信任重跑，自报 vs 独立实测）
+
+| 套件 | Coder 自报 | Tester Round 2 独立实测 | 判定 |
+| --- | --- | --- | --- |
+| `pnpm typecheck` | 0 error | **0 error** | 一致 |
+| `pnpm test:unit src/components/connection src/stores` | 38 文件 / 596 用例 | **40 文件 / 626 passed / 0 failed**（含本轮新增 30 例） | 一致（差额 = 本轮新增） |
+| `pnpm test:unit`（全量） | 456 文件 / 4758 passed / 1 failed | **458 文件 / 4788 passed / 1 failed**（含本轮新增 30 例） | 一致（差额 = 本轮新增） |
+| `pnpm test:unit:drivers` | 未报 | **33 文件 / 241 passed / 0 failed** | 无回归（与 Round 1 的 241 一致） |
+| `wc -l useConnectionForm.ts` | 759（< 800） | **759** | 一致 |
+
+- 全量唯一失败 = `src/commands/__tests__/pathIpcWiring.test.ts`「every statically-invoked IPC is registered in the host handler list」，缺失项**恰好 3 条**（`get_tunnel_summaries` / `get_tunnel_usage` / `test_tunnel`，均来自 `commands/tunnel.ts`），**无夹带**其他 IPC 或别的错误 → **跨轨集成时序，非本轨 Bug**（见下）。
+- 测试命令全程未用 `npx`、未执行 `pnpm install`；每次运行前 `scripts/generate-builtin-locales.mjs` 就绪。
+
+### 负对照（证明修复「真的解决了问题」而非「把测试改绿」）
+
+用 `git show <commit>:<path>` 把生产文件临时换回旧版（仅工作区，未提交，事后逐字节还原并校验 md5）：
+
+| 换回版本 | 受影响用例 | 结果 |
+| --- | --- | --- |
+| `aaad6ca2`（两 Bug 均在）`useConnectionForm.ts` | `blocks saving a dangling reference on a driver-validator form (redis) [BUG-001]`（Round 1 证据用例，已由 `it.fails` 转普通 `it`） | **失败** ✓ 证明该用例是有效回归守卫，非空断言 |
+| `aaad6ca2` | 本轮新增矩阵中的 redis 内联三型 + 隧道/驱动键共存 + redis 出口 | **5 例失败** ✓ |
+| `c9777246`（BUG-001 已修、范围扩展未做） | 本轮新增矩阵的 redis 内联 httpProxy / websocket / ssh | **恰好 3 例失败** ✓ 证明这 3 例精确守卫 `cfb63354` 的范围扩展 |
+| `aaad6ca2` `ConnectionAdvancedSettings.tsx` | `warns when the referenced tunnel no longer exists`、`does not offer another tunnel when the collection is empty…`、本轮 2 例 DOM 断言 | **4 例失败** ✓ 证明 BUG-002 修复被有效守卫 |
+| — | `still renders the unbind button for a resolvable reference`（本轮新增对照） | 在**两个版本上均通过** ✓ 证明修复不是「无条件删按钮」 |
+
+### (a) BUG-001 逐项结论
+
+1. `formVariant==='redis'` + `tunnelRefMissing===true` → `validate()===false` 且 `validationErrors.tunnelId==='newConn.tunnelMissing'` —— **通过**（既有用例 + 本轮 `aaad6ca2` 负对照）。
+2. 键名碰撞：**不存在**（唯一驱动校验器键集与隧道域 6 键不相交，已用可执行断言钉住键集）。**潜在风险（非当前 Bug）**：合并方向是 driver-wins，若未来某驱动校验器返回 `tunnelId`/`sshHost` 等隧道域键，会**覆盖**隧道域错误、静默放行悬空引用。已用合成校验器用例把该语义钉死，供后续契约评审。
+3. `onSave()` 在 `validate()===false` 时**未调用** `saveConnection` —— **通过**（`saveConnectionMock` 零调用，运行时断言）。
+
+### (b) BUG-002 逐项结论
+
+1. 文案不再宣称可解绑，指向可达出口 —— **通过**（`src/locales/en/connection.ts:116-117`）。
+2. `new-conn-tunnel-unbind` 在 `tunnelRefMissing` 时**不渲染**（隐藏，非禁用）—— **通过**（真实 hook + 真实组件渲染断言 `queryByTestId(...)===null`）。
+3. `newConn.tunnelMissingAlt` **仅在** `savedTunnels.length > 0` 时渲染 —— **通过**（空集合不含该 key；有另一条隧道时含该 key）。
+4. 「拒绝静默丢参」设计**未被削弱** —— **通过**（悬空态 `unbindTunnel()` 后 `tunnelSource==='saved'`、`tunnelId==='tun_gone'`、`tunnelError==='newConn.tunnelUnbindKept'`）。
+5. 真正出口可用 —— **通过且加强**：切「无（直连）」后 `tunnelId===null`、`tunnelRefMissing===false`、`validate()===true`，并**实际落盘** `saveConnection` 调用 1 次、`saved.tunnelId===undefined`、`saved.tunnelKind===undefined`（三个变体各验一遍）。
+
+### (c) 范围扩展 + 等价性矩阵
+
+- **变体穷尽性（可执行守卫）**：本构建 `DB_REGISTRY` 的 `connectionForm` 取值集合 = `{standard, file, redis}`，与本轮矩阵覆盖集合**逐项相等**；唯一注册驱动校验器 = `redis`。故「只测 redis 就下结论」的风险已被断言排除（未来新增 `sqlserver` 等会在此翻红）。
+- **内联必填生效**：`redis` + `inline` + `httpProxy`（空 host/port）、`websocket`（空 `wsUrl`）、`ssh`（空 `sshHost`/`sshUsername`）→ 均 `validate()===false` 且报出对应键 —— **通过**。
+- **等价性矩阵（三变体 × 五场景，全绿）**：
+
+| 场景 | `standard`(postgresql) | `file`(sqlite) | `redis`（驱动校验） |
+| --- | --- | --- | --- |
+| 未配置隧道 → 可保存（`validate()===true`、errors 空） | ✓ | ✓ | ✓（**普通 Redis 连接未被误拦**） |
+| 内联隧道字段填全 → 可保存 | ✓ | ✓ | ✓ |
+| `saved` 有效引用 + 内联字段**故意清空** → 仍可保存（`!tunnelId` 守卫，内联校验不生效、悬空校验不误报） | ✓ | ✓ | ✓ |
+| 内联字段留空 → 被拦（httpProxy/websocket/ssh 各一条） | ✓ | ✓ | ✓ |
+| 悬空引用 → 切「无（直连）」→ 可保存并落盘无 `tunnelId` | ✓ | ✓ | ✓ |
+
+- **通用校验未被搬走**：`standard` 空 host/port → 报 `host`/`port`（非驱动分支）；`file` 空 database → 只报 `database`，**不报** host/port（`else if` 作用域保持）—— 本轮新增 2 例专门覆盖。
+
+### (d) 回归覆盖未被削弱
+
+- `git diff aaad6ca2 HEAD --stat`：仅 7 个文件（3 生产/文案 + 2 测试 + 2 轨道文档），**零测试删除**。
+- 测试改动逐条审查：`ConnectionAdvancedSettings.test.tsx` 的唯一断言被**加强**（新增 `tunnelMissingAlt` 必须出现、`tunnelUnbind` 必须不出现、按钮必须不在文档中）+ 新增 1 例；`tester_tunnelRefIntegrity.test.ts` 的 `it.fails` → 普通 `it` 且**加强**断言（新增 `validationErrors.tunnelId` 精确值校验）+ 新增 3 例。**未发现**任何把精确值断言降级为 `toBeDefined()`、`toThrow` 改 `toBeTruthy`、加 `skip`/`todo` 的弱化。
+- 全仓 `grep`：**已无** `it.fails` / `test.fails` 残留（仅剩一处解释性注释）；无本轨新增的 `it.skip`/`it.todo`；Rust 侧 `#[ignore]` 均为与本轨无关的既有条目。
+
+### (e) 常规
+
+- **覆盖率（改动前 vs 改动后，同一命令、同一 `--coverage.include`）**：
+
+| 改动文件 | Round 1 记录基线 | 本轮实测「改动前」（回放 `aaad6ca2` 源码+当轮测试） | 本轮实测「改动后」（HEAD + 本轮测试） | 判定 |
+| --- | --- | --- | --- | --- |
+| `src/stores/tunnelStore.ts` | 100% | **100.00%** | **100.00%** | 未下降 |
+| `src/components/connection/useTunnelFormState.ts` | 100% | **100.00%** | **100.00%** | 未下降 |
+| `src/components/connection/SaveTunnelDialog.tsx` | 100% | **100.00%** | **100.00%** | 未下降 |
+| `src/components/connection/ConnectionAdvancedSettings.tsx` | 83.87% | **83.87%** | **83.87%** | 未下降 |
+| `src/components/connection/useConnectionForm.ts` | 91.41% | **90.99%** | **90.99%** | 未下降（但基线高报，见下） |
+
+  - 5 个含逻辑的改动文件**行覆盖率全部 ≥ 83.87%**，全部达标（≥80%）。
+  - **`validate()` 全函数（两修复 commit 唯一改动的代码）行覆盖 100%**；剩余未覆盖行均为**本轨未改动的既有路径**：`168-170`（`setOptions`）、`271-274`（`tabFill`）、`438-451`（`handleDatabaseTypeChange` 编辑态分支）、`684/690`（`onTest` 错误滚动）。
+  - **基线偏差存档**：Round 1 记录的 `useConnectionForm.ts` = 91.41% 经**原样回放** `aaad6ca2`（源码 + 当轮测试 + 全量套件）实测为 **90.99%**，不可复现；其余 4 个文件基线逐项吻合。故本轮**未造成覆盖率下降**，但 91.41% 应视为上一轮高报（已记入 `bugs.md` 存档，非 Bug）。
+- **文件规模**：`useConnectionForm.ts` = **759 行**（< 800 红线 ✓，较 Round 1 的 742 行 +17）。已接近红线，建议下一轮优先按「连接字段域 / 快照与类型切换 / 校验域」拆分（改进项，非 Bug）。
+- **代码卫生**：改动生产/文案文件零 `any`、零 `@ts-ignore`；无裸 `unwrap`/`expect`；6 处 `void` 发后不理的 Promise 全部落在**内部已 catch 且不可能 reject** 的函数上（`tunnelStore.load` / `refillFromSaved` / `unbindTunnel` / `SaveTunnelDialog.handleSubmit` 的 `onSubmit`=`saveAsTunnel` 自带 try/catch），无未处理 rejection。
+
+### 阶段 C：本轮新增测试（30 例，全部 `test_tester_` / `[tester]` 标注）
+
+| 文件 | 用例数 | 覆盖的对抗性路径 |
+| --- | --- | --- |
+| `src/components/connection/__tests__/tester_tunnelValidationMatrix.test.tsx`（新） | 29 | 变体穷尽性守卫（`DB_REGISTRY` 变体集合 == 矩阵集合；唯一驱动校验器 == redis）；三变体 × {无隧道 / 内联填全 / 内联留空(httpProxy,websocket,ssh) / `saved` 有效引用 + 内联清空 / 悬空→切 none 落盘}；驱动校验器键集与隧道域键集**不相交**（键集精确钉住）；隧道域错误与驱动错误**并存**（双向不被覆盖）；通用 host/port（standard）与 file database 校验仍留在非驱动分支且作用域正确；真实 hook + 真实 `ConnectionAdvancedSettings` 的悬空态 DOM 断言（隐藏死路按钮、`tunnelMissingAlt` 集合门槛、可解析引用仍渲染解绑按钮） |
+| `src/components/connection/__tests__/tester_tunnelValidationMerge.test.ts`（新） | 1 | 以**合成校验器**（键故意与隧道域重叠）钉住 `Object.assign` 的 **driver-wins** 合并方向，作为「未来碰撞即缺陷」的可执行存档 |
+
+- 本轮**未修改任何业务代码**；新增文件均为测试。
+- 既有 Round 1 交付物（`tester_tunnelRefIntegrity.test.ts` 9 例、`tester_SaveTunnelDialog.test.tsx` 6 例、各文件 `[tester]` 块）**全部保留**。
+
+### 跨轨集成时序说明（不计入 bugs.md）
+
+并行轨道 `tunnel-backend` 的 worktree `/Users/flyxl/code/datazen/.worktrees/datazen-tunnel-backend` 中
+`src-tauri/src/bootstrap/run.rs` **已注册**这三条命令（只读核对）：
+
+```
+262:            crate::commands::get_tunnel_summaries,
+263:            crate::commands::get_tunnel_usage,
+266:            crate::commands::test_tunnel,
+```
+
+本轨 worktree 的 `run.rs` 仅有既有 4 条。两轨合流到集成分支后 `pathIpcWiring.test.ts` 应自动转绿，**不登记为 Bug**。
+
+### 改进建议（非 Bug，承接 Round 1 的 1–7 项，本轮按指示全部不修）
+
+1–7. 同 Round 1「改进建议」小节（`useTunnelFormState.ts` 拆分、store 失败态可见性/重试、「管理已保存的隧道」文案过度承诺、另存为无重名校验、`unbindTunnel()` 无引用分支、驱动 UI 类型检查外溢面、冻结契约未接线）。
+8. **（本轮新增）`useConnectionForm.ts` 759 行接近 800 红线**：建议下一轮拆分（快照/类型切换 `captureSnapshot`+`applyTypeDefaults`+`handleDatabaseTypeChange` 约 130 行可独立成模块）。
+9. **（本轮新增）校验域合并的契约硬化**：`Object.assign` 为 driver-wins，建议给 `DriverFormValidator` 的返回键加「不得使用隧道域键」的契约注释/类型约束，或把隧道域错误改为**在合并后强制重写**，使悬空引用的拦截不依赖「当前无碰撞」这一经验事实。
+
