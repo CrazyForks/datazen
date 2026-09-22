@@ -91,29 +91,39 @@ function binding(
   };
 }
 
+/**
+ * The full prop set as a *value*, so a journey test can rerender the very same
+ * toolbar while the active panel changes underneath it (keep-alive tab switch)
+ * instead of only ever testing fresh mounts.
+ */
+function toolbarProps(
+  contextBarSlot?: KvContextBarBinding,
+  kvPanelState?: KvSlotState,
+): Parameters<typeof ContentToolbar>[0] {
+  return {
+    showNewQuery: false,
+    showNewTable: false,
+    showErDiagram: false,
+    showObjects: false,
+    showBatchExport: false,
+    aiChatOpen: false,
+    detailPanelApplicable: false,
+    detailOpen: false,
+    contextBarSlot,
+    kvPanelState,
+    onNewQuery: vi.fn(),
+    onCreateTable: vi.fn(),
+    onOpenErDiagram: vi.fn(),
+    onOpenObjects: vi.fn(),
+    onOpenPrivileges: vi.fn(),
+    onBatchExport: vi.fn(),
+    onToggleAiChat: vi.fn(),
+    onToggleDetail: vi.fn(),
+  };
+}
+
 function renderToolbar(contextBarSlot?: KvContextBarBinding, kvPanelState?: KvSlotState) {
-  return render(
-    <ContentToolbar
-      showNewQuery={false}
-      showNewTable={false}
-      showErDiagram={false}
-      showObjects={false}
-      showBatchExport={false}
-      aiChatOpen={false}
-      detailPanelApplicable={false}
-      detailOpen={false}
-      contextBarSlot={contextBarSlot}
-      kvPanelState={kvPanelState}
-      onNewQuery={vi.fn()}
-      onCreateTable={vi.fn()}
-      onOpenErDiagram={vi.fn()}
-      onOpenObjects={vi.fn()}
-      onOpenPrivileges={vi.fn()}
-      onBatchExport={vi.fn()}
-      onToggleAiChat={vi.fn()}
-      onToggleDetail={vi.fn()}
-    />,
-  );
+  return render(<ContentToolbar {...toolbarProps(contextBarSlot, kvPanelState)} />);
 }
 
 afterEach(() => {
@@ -219,5 +229,31 @@ describe('ContentToolbar AI button on a KV panel (W3-A §1.3)', () => {
     const button = screen.getByTestId('conn-toolbar-ai');
     // No KV tooltip is claimed for a panel whose facts are `contextTables`.
     expect(button.getAttribute('title')).not.toBe('redis.ai.context.tooltip');
+  });
+
+  // [tester] Panel switching is a rerender, not a fresh mount (keep-alive tabs,
+  // PRD §3.0). An entry condition without its exit transitions would be a
+  // one-way deadlock, so the §1.3 state machine is driven live here: KV panel
+  // with a key → another KV panel without one → a relational panel.
+  it('[tester] follows a live panel switch: keyed KV → empty KV → relational', () => {
+    const kvA = createKvSlotState();
+    kvA.selectKey('user:42');
+    const { rerender } = renderToolbar(binding(kvA), kvA);
+    expect(screen.getByTestId('conn-toolbar-ai').getAttribute('title')).toBe(
+      'redis.ai.context.tooltip',
+    );
+
+    // Another KV panel whose tree has nothing selected ⇒ the affordance leaves.
+    const kvB = createKvSlotState();
+    rerender(<ContentToolbar {...toolbarProps(binding(kvB), kvB)} />);
+    expect(screen.queryByTestId('conn-toolbar-ai')).not.toBeInTheDocument();
+
+    // A SQL panel ⇒ no relay at all; the pre-track default entry comes back
+    // untouched (default title, no KV tooltip claim, context bar gone).
+    rerender(<ContentToolbar {...toolbarProps(undefined, undefined)} />);
+    const button = screen.getByTestId('conn-toolbar-ai');
+    expect(button).toBeInTheDocument();
+    expect(button.getAttribute('title')).not.toBe('redis.ai.context.tooltip');
+    expect(screen.queryByTestId('conn-toolbar-kv-context-bar')).not.toBeInTheDocument();
   });
 });

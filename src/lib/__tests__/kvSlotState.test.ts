@@ -324,3 +324,47 @@ describe('panel-scoped KV slot atoms', () => {
     expect(getKvSlotState('panel-live')).toBe(live);
   });
 });
+
+// [tester] The notify loop iterates a *copy* of the listener set (W3-A §1.1 relay
+// hygiene). None of the 46 contract cases pin what that copy exists for, so these
+// two cover the mutation-during-notify edges a live workspace produces: a slot
+// unsubscribing while reacting to a change (panel switch unmounting the context
+// bar) and a slot subscribing in the same tick (second consumer mounting).
+describe('[tester] notification snapshot safety (W3-A §1.1)', () => {
+  it('still notifies the remaining listeners when one unsubscribes mid-notify', () => {
+    const state = createKvSlotState();
+    const remaining = vi.fn();
+    let unsubscribeFirst: () => void = () => {};
+    const first = vi.fn(() => unsubscribeFirst());
+    unsubscribeFirst = state.subscribe(first);
+    state.subscribe(remaining);
+
+    state.selectKey('k1');
+
+    expect(first).toHaveBeenCalledTimes(1);
+    // The snapshot still held `remaining`: removal mid-loop must not swallow it.
+    expect(remaining).toHaveBeenCalledTimes(1);
+
+    // The removal took effect for every later change — no ghost notifications.
+    state.setDirty(true);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(remaining).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves a listener that subscribes mid-notify for the following change', () => {
+    const state = createKvSlotState();
+    const late = vi.fn();
+    const first = vi.fn(() => void state.subscribe(late));
+    state.subscribe(first);
+
+    state.selectKey('k1');
+    expect(first).toHaveBeenCalledTimes(1);
+    // Not in the snapshot this round: a consumer may not observe a change that
+    // predates its own subscription.
+    expect(late).not.toHaveBeenCalled();
+
+    // But it is live from the next change on.
+    state.setDirty(true);
+    expect(late).toHaveBeenCalledTimes(1);
+  });
+});

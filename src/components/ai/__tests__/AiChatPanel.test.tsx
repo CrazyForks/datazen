@@ -517,4 +517,34 @@ describe('AiChatPanel — KV panel context (W3-A §1.3)', () => {
       contextTables: undefined,
     });
   });
+
+  // [tester] The drawer stays open across a key switch (keep-alive tabs): every
+  // send must carry the block for the key in scope *now*, and the chip must
+  // name that key — not the one from when the panel was first opened.
+  it('[tester] follows a key switch between sends', () => {
+    const ctxOrders = buildKvAiContext({
+      connectionName: 'KV Local',
+      dbSessionId: 'sess-1',
+      database: 'db7',
+      selectedKey: 'orders:99',
+    });
+    const { getByTestId, rerender } = render(
+      <AiChatPanel dbSessionId="sess-1" database="db7" kvContext={kvContext} />,
+    );
+
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'first' } });
+    fireEvent.click(getByTestId('chat-send'));
+
+    rerender(<AiChatPanel dbSessionId="sess-1" database="db7" kvContext={ctxOrders} />);
+    expect(getByTestId('ai-kv-context-chip').getAttribute('data-key-name')).toBe('orders:99');
+
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'second' } });
+    fireEvent.click(getByTestId('chat-send'));
+
+    const first = aiState.sendChatMessage.mock.calls[0]?.[0];
+    const second = aiState.sendChatMessage.mock.calls[1]?.[0];
+    expect(aiState.sendChatMessage).toHaveBeenCalledTimes(2);
+    expect(first?.content as string).toContain('selected_key=user:42');
+    expect(second?.content as string).toContain('selected_key=orders:99');
+  });
 });

@@ -446,3 +446,95 @@ kvContext?: KvAiContext | null;
    或裁定让驱动侧自带上下文，本轨按 BUG-005 未擅自扩面。
 3. Wave 4 的 contextBar / statusBar 消费端尚未渲染这些事实（本轨明确不做）。
 4. 真连 Redis 的键树/状态条数字正确性属 R 回归项，单测与门禁证明不了。
+
+---
+
+## 测试轮记录（Tester · 2026-09-22 · 独立复核，只测不修）
+
+### 四道门禁独立复跑（前置 `node scripts/generate-builtin-locales.mjs` 正常产出）
+
+| # | 门禁 | 命令 | 基准 | 实测 | 判定 |
+|---|---|---|---|---|---|
+| 1 | 类型 | `npx tsc --noEmit` | 0 错 | **0 错**（exit 0，两轮复跑均 0 行输出） | ✅ |
+| 2 | Host 单测 | `npx vitest run` | 基线 451/4658；coder 自报 453/4730 | **453 files / 4734 tests，0 失败**（exit 0；4734 = 4730 + Tester 新增 4） | ✅ 只增不红 |
+| 3 | Drivers 单测 | `npx vitest run --config vitest.drivers.config.ts` | 47/456，`kvSlotRegistration`/`kvSlotRelay` 必须绿 | **47 files / 456 tests，0 失败**（exit 0，三轮复跑一致） | ✅ 持平 |
+| 4 | 覆盖率 | `npx vitest run --coverage --coverage.include=<本轨变更文件>` | 核心文件 ≥80% | 核心五件 **100%**，整体阈值全过（exit 0），表见下 | ✅ |
+| + | 边界护栏 | `node scripts/check-driver-import-boundaries.mjs` | 0 blocking | **1458 files · 0 blocking · 4 advisory**（既有 R3，与接管轮一致） | ✅ |
+
+> 口径说明：覆盖率首轮与另外三条门禁并行执行，两个 SQL-editor 计时 smoke
+> （`statementRanges.test.ts`，本轨未触碰）因负载超时 2 例 —— **孤立重跑 453/4734 全绿**，
+> 判定为并行负载 flake，非回归；最终覆盖率数字取孤立重跑。
+
+### 本轨变更文件覆盖率实测（v8，全量 Host 测试之下）
+
+| 文件 | Stmts | Branch | Funcs | Lines |
+|---|---|---|---|---|
+| `src/lib/kvSlotState.ts` | 100 | 100 | 100 | 100 |
+| `src/lib/kvAiContext.ts` | 100 | 100 | 100 | 100 |
+| `src/windows/connection/useKvSlotActions.ts`（dispatcher） | 100 | 100 | 100 | 100 |
+| `src/windows/connection/useKvWorkspaceSlots.ts` | 100 | 100 | 100 | 100 |
+| `src/hooks/useKvSlotSelectedKey.ts` | 100 | 100 | 100 | 100 |
+| `src/windows/connection/ContentToolbar.tsx` | 90.9 | 87.5 | 66.66 | 94.11 |
+| `src/windows/connection/ContentViewDrawers.tsx` | 73.46 | 68.11 | 66.66 | 75.55 |
+| `src/components/ai/AiChatPanel.tsx` | 82.05 | 67.26 | 68.96 | 83.21 |
+| **合计（本轨 include 集）** | **87.81** | **77.03** | **80.99** | **88.74** |
+
+三个 UI 壳的未覆盖行均为**非本轨既有路径**（`ContentToolbar:225` = 文档按钮 onClick；
+`ContentViewDrawers` ~154-162 = 行内单元格编辑、216-217 = 抽屉把手；`AiChatPanel`
+= 聊天流 UI），§1.1–§1.3 的接线行（`showAiChat` / `useKvSlotSelectedKey` /
+`useMemo` 块 / `kvContext` chip 与 compose）全部在覆盖内。
+
+### Tester 新增测试（仅测试文件，`[tester]` 标注，4 例）
+
+- `src/lib/__tests__/kvSlotState.test.ts` **+2**（46 → 48）：通知快照安全 ——
+  ① 通知中途有监听者退订，不吞掉其余监听者，且退订对后续通知即刻生效；
+  ② 通知中途新订阅的监听者本轮不收、下一轮起开始收。钉住 `[...listeners]`
+  快照拷贝的存在理由（46 例契约矩阵未覆盖此边）。
+- `src/windows/connection/__tests__/ContentToolbar.test.tsx` **+1**（7 → 8）：
+  §1.3 状态机的**活体跃迁旅程**（rerender 不重挂载）：带键 KV 面板 → 无键 KV 面板
+  （按钮消失）→ 关系型面板（按钮回默认态、KV tooltip 撤回、context bar 消失）。
+  配套将 props 抽为 `toolbarProps()` 值以支持 rerender（纯测试重构）。
+- `src/components/ai/__tests__/AiChatPanel.test.tsx` **+1**（18 → 19）：抽屉开着时
+  切键的**连续发送旅程**：第一发块带 `selected_key=user:42`，rerender 切到
+  `orders:99` 后 chip 的 `data-key-name` 与第二发的块同步换键。
+- 三文件定向先行跑 75/75 绿；终跑全量 4734 绿。断言全部走
+  `data-testid` / `data-*` / i18n **key**，无英文字面量 UI 文案。
+
+### Stage A 审查判定（候选观察均**不构成缺陷**，依据如下）
+
+1. **§1.1 冻结形状**与源码逐字一致；5 个既有成员零改名零删除；标量 / 同值静默 /
+   成对单通知三条硬约束实测成立（表驱动 8 字段 × 4 断言 + recordWrite 同命令换时长仍通知）。
+2. **§1.2** `request` 只在 `KvContextBarProps`（`KvPanelSlotProps` 无该通道，测试钉死
+   statusBar/keyPropsSidebar 不带 `request`）；未知与未接线动作一律 warn 不抛；
+   `flushDb` 门闸用宿主 `bindConfirmDialog(useConfirmDialog)` + `settingsStore.safeMode`
+   —— 与驱动 `useRedisGate` 绑定的是**同一对 store**（`bindSettingsStore(useSettingsStore)`
+   单点绑定、`bindConfirmDialog` 同理），不存在第二套确认逻辑，符合「复用 I-6 既有门闸」。
+3. **§1.3** 注入面 = 连接名 / 会话 / 库 / 选中键 4 项；`key_object_info` 侧栏字段
+   （type/memory/encoding/ttl）**按契约明文不注入**（未尽事项 #2 + BUG-005 + 冻结形状，
+   要拿只能重复发命令或造缓存，双被禁止）—— 属已登记的裁定，非缺陷；console 缓冲区
+   未注入；空白键经 trim 视为无键；空态二元规则双向跃迁（含活体切换）实测成立；
+   块随 `content` 出仓，未新增任何 KV 线字段（无新后端命令）。
+4. 新增测试未改任何生产代码；`git status --short` 收尾仅 3 个测试文件 + 2 个本轨台账文件。
+
+### 留待 R 回归（需真 Redis / 真 GUI，本轨按任务书禁 live e2e / tauri build）
+
+1. **§1.3 全旅程（GUI + 真 Redis）**：无键时 AI 按钮不可见 → 键树选键 → 按钮出现
+   （`title` = `redis.ai.context.tooltip`）→ 开抽屉 `ai-kv-context-chip` 报键名 →
+   发问，转录消息体含 `[kv-context]` 块且 `connection/session/database/selected_key`
+   逐字正确 → 清空选键 → 按钮与 chip 再次消失（双向，非单向死锁）。
+2. **flushDb 门闸（GUI）**：SafeMode 关 → 确认框（`redis.kvSlot.flushTitle/flushMessage`）
+   → 拒绝零副作用、同意仅到 warn（无执行器，符合契约）；SafeMode 开 →
+   `redis.kvSlot.flushBlocked` 硬拦、无确认路径可点穿。真执行 `flush_db` 留待执行器轨接通后补测。
+3. **双面板隔离（GUI）**：同一连接开两个 KV 面板（不同 db）各自选键互不串；
+   关闭其一再开，选键与 dirty 均为干净默认（`pruneKvSlotStates` 回收路径）。
+4. **面板切换往返（GUI，keep-alive）**：带键 Redis 面板 ↔ SQL 面板 ↔ 另一 KV 面板
+   往返，AI 按钮 / tooltip / context bar / 状态事实随 relay 正确切换，无残留。
+5. **中继数值正确性（真 Redis）**：SCAN 期间 `loadedCount` / `scanCursor` /
+   `scanBudget*` / `selectionCount` 与键树实际一致，`recordWrite` 时长量级合理
+   （未尽事项 #4 的正主，单测证明不了）。
+
+### 测试轮提交
+
+- `test(kv-contract): verify redis-kv-contract with integration tests`：
+  3 个测试文件（+4 例）+ `progress.md` 本节 + `bugs.md`（**无缺陷**）。
+- 未碰任何生产代码、`hub.md`、他轨 `tracks/**`、gitignored codegen、`Cargo.lock`。
