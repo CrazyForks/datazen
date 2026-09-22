@@ -2,10 +2,11 @@ import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import { Label } from './shared';
-import type { ConnectionFormState } from './useConnectionForm';
+import type { HttpProxyTunnelFieldsValue } from './tunnelFieldContracts';
 
 export interface HttpProxyTunnelFieldsProps {
-  form: ConnectionFormState;
+  /** Structural subset of `ConnectionFormState` (see `tunnelFieldContracts`). */
+  form: HttpProxyTunnelFieldsValue;
 }
 
 export function HttpProxyTunnelFields({ form }: HttpProxyTunnelFieldsProps) {
