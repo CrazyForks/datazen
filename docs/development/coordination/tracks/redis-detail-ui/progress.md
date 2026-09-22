@@ -224,3 +224,50 @@
 4. **步骤 2 的「仅接线」预期不成立**（§3）：`ui/key-browser/` 有 1 处必要行为改动（`reloadDetail` 不再清 selection）
    与 1 处等价早退（同库重点击）。D 轨并行修复若也改 `RedisWorkbench.tsx`，**合流冲突面在此**，
    但改动均为局部 hunk、无重写，按符号名合并即可。
+
+---
+
+## 第 1 轮 Tester 复验记录（w3e-tester-r1 · 全新实例 · 只测不修）
+
+工作目录 `.worktrees/datazen-redis-detail-ui`，起点 HEAD `3919307ce`，工作树干净，分支 `feature/redis-detail-ui`。
+心跳：见本节各小节时间戳。**边测边 commit**。
+
+### T-0 BOOTSTRAP
+
+- `git status --porcelain` 空；`git log --oneline -1` = `3919307ce`。
+- 本轨 diff 范围：`git diff --name-status 8981d3078..HEAD` = **28 个文件**（1 台账 + 1 locale + 9 测试(5 新 4 改) + 生产码 17 个文件/新建 8 个）。
+- **禁改面零 diff 实测通过**：`git diff 8981d3078..HEAD -- ui/key-browser/BatchBar* ui/key-browser/ImportExport* ui/shared/redisInvoke.ts ui/console/** src/** packages/driver-sdk/** packages/drivers/redis/src/**` → **空输出**（exit 0）。`KeyWorkbenchDialogs.tsx` / `DetailColumn.tsx` / `KeyTreeColumn.tsx` 等 key-browser 其余 13 个文件同样零 diff（改动集中在 `RedisWorkbench.tsx` 一枚）。
+
+### T-1 阶段 B · 门禁独立重跑（严格串行，一次一条）
+
+| # | 命令 | 自报 | **Tester 实测** | 判定 |
+| - | ---- | ---- | --------------- | ---- |
+| 1 | `npx vitest run --config vitest.drivers.config.ts` | 55 files / 525 passed / 0 skipped · 9.79s | **55 files / 525 passed / 0 skipped** · 10.35s（`Test Files 55 passed (55)` / `Tests 525 passed (525)`） | ✅ 数字一致 |
+| 2 | `npx tsc --noEmit` | exit 0 | **exit 0**，无输出 | ✅ |
+| 3 | `npx vite build` | exit 0 · 4.76s | **exit 0** · `✓ built in 4.75s`；仅既有 chunk >500 kB advisory（`main` 1.64 MB / `MainPage` 2.26 MB），非本轨引入 | ✅ |
+| 4 | `node scripts/check-driver-import-boundaries.mjs` | 1469 files · 0 blocking · 4 advisory | **1469 files · 0 blocking · 4 advisory**（exit 0） | ✅ 逐字一致 |
+
+复现注记（非缺陷）：简报 §5「Grep 工具搜索」与门禁无冲突；首轮我误用 `--reporter=basic`（vitest 4 已移除该 reporter）导致 startup error，改回默认 reporter 后一次全绿 —— 属测试代理命令姿势问题，与被测代码无关。
+
+### T-2 阶段 A · E-1 五枚页签（裁定 8-1）
+
+- `RedisConnectionView.tsx:16` `ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor' | 'slowlog'`；`:19` `TABS` 恰 5 枚，顺序 = 键详情/命令行/发布订阅/监控/慢日志 ✅
+- 页签条暴露 `data-testid="redis-tab-bar"` + `data-tab-count`，每枚 `redis-tab-${tab}` + `data-active` ⇒ 断言口径为 data-*，无英文字面量 ✅
+- `visitedTabs` keep-alive：`slowlog` 首次访问才挂载，之后 `hidden` 保活（与既有 4 枚一致，无泄漏）✅
+- `SlowlogPanel.tsx`（新 263 行）取数**只走既有** `redisCommandInvoke('redis','slowlog_get',{dbSessionId,count:100})`，零新增后端 ✅（`grep slowlog_get` 无新命令名）
+- I-11 具名空态：状态机 5 值 `loading|ready|empty|unauthorized|failed`，经 `data-slowlog-state` 暴露；`unauthorized` 分支复用 `redis.overview.slowlog.unauthorized` + `.unauthorizedHint`（两枚 key 实测存在于 `en.ts`），**不是**渲染 0 条、**不是**留白 ✅
+- `resolveSlowlogState` 是导出的纯函数（error ⇒ classifyOverviewError；entries 空 ⇒ empty），可直接单测 ✅
+- 附带核对：`SLOWLOG RESET` 走 `gateWrite('write-op', …)` 门闸（I-6）+ 二次确认 Dialog，未绕过既有安全约定 ✅
+- 文案面：本轨未新增 slowlog 文案 key（全复用既有），符合 §3 冲突面「只追加 `redis.detail.*`」的约束（见 T-7 locale 审查）。
+
+**E-1 判定：通过，无 Bug。**
+
+### T-3 阶段 A · E-2 常驻编辑（删查看/编辑切换）
+
+- 生产码残骸 grep（`redis-string-mode-toggle` / `stringModeView` / `stringModeEdit`）：**零命中**，仅 `en.ts:218` 注释里提到 key 已删（属交付说明，不是死代码）✅
+- `en.ts` 中 `'redis.stringModeView'` / `'redis.stringModeEdit'` 两枚 key **已随删除移除**（diff 显示 `-` 两行），非仅隐藏 ⇒ 无孤儿 key ✅
+- `KeyEditors.tsx` `useState<` 实测仅剩 `error` / `frame` 两枚；`StringEditor.tsx` 内 `useState<` 为 `jsonError/jsonDisplay/decomp/decompError/view/codec` —— **无任何 `mode: 'view'|'edit'` state 残留** ✅
+- 反向断言存在且不是摆设：`kvSlotRelay.test.tsx:215` 与 `stringValueReadOnlyJourney.test.tsx:165` 均 `expect(queryByTestId('redis-string-mode-toggle')).toBeNull()` —— 即旧形状回归会被测红 ✅
+- `getByText('No expiry')` 全仓 `__tests__/` **零命中** ⇒ PRD §7-6 + 简报 §4-6 的「改写不是删除」达成（改写后的断言见 `ttlControlsJourney.test.tsx`，用 data-* 定位）✅
+
+**E-2 判定：通过，无 Bug。**
