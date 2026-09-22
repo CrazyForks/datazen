@@ -9,6 +9,7 @@ import { MonitorPanel } from '../observe/MonitorPanel';
 import { PubSubPanel } from '../observe/PubSubPanel';
 import { SlowlogPanel } from '../observe/SlowlogPanel';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
+import { requestDraftLeave } from '../shared/draftGuard';
 
 /**
  * 右列一级页签（裁定 8-1 = **5 枚**：键详情 / 命令行 / 发布订阅 / 监控 / 慢日志）。
@@ -84,9 +85,16 @@ export function RedisConnectionView({
   }, [selectTableRef, handleSelectDatabase, isActive]);
 
   const handleTabClick = useCallback((tab: ActiveTab) => {
-    setActiveTab(tab);
-    setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
-  }, []);
+    if (tab === activeTab) return;
+    // I-1: switching tabs hides the workbench, so an unsaved draft would be
+    // stranded. Ask first; the leave dialog lives inside the dirty editor and
+    // portals to `document.body`, so it stays visible on the hidden tab.
+    void (async () => {
+      if (!(await requestDraftLeave())) return;
+      setActiveTab(tab);
+      setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
+    })();
+  }, [activeTab]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

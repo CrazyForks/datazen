@@ -1,14 +1,22 @@
-//! String 键的**常驻可编辑**编辑面（PRD §3.3 屏 B 右列 / §4 I-5，本轨 E-2 + E-3）。
+//! String 键的**常驻可编辑**编辑面（PRD §3.3 屏 B 右列 / §4 I-5+E-5，本轨 E-2/E-3/E-5）。
 //!
 //! 形状：Codec / View 两行「渲染预检」（`ValueViewer` 的 `showOutput={false}` 档）
-//! → 编辑区 → 动作行。没有「查看 / 编辑」两态开关：编辑区一直在，值就显示在编辑区里。
+//! → 编辑区 → 动作行 → **脏底栏**（只有 dirty 时出现：放弃 / 保存）。没有
+//! 「查看 / 编辑」两态开关：编辑区一直在，值就显示在编辑区里。
 //! 只保留 I-5 穷举出的两种真只读态（字节视图 / 大 value），二者都必须带原因文案。
+//! I-1：`jsonDirty` 同时喂宿主契约 `onDirtyChange` 与 `shared/draftGuard`
+//! （切键/切页签/刷新前的拦截真值源），保存时**先**发布 clean 再 `onSaved()`。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, useI18n } from '@datazen/ui';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { formatSize } from '../shared/formatSize';
 import type { GateWriteFn } from '../shared/useRedisGate';
+import {
+  isLeavePending,
+  publishDraftDirty,
+  settleDraftLeave,
+} from '../shared/draftGuard';
 import {
   initialStringEditorValue,
   looksLikeJsonText,
@@ -26,6 +34,7 @@ import {
 } from './jsonModes';
 import { invokeSetString } from './keyEditorsInvokes';
 import { ValueViewer } from './ValueViewer';
+import { DraftLeaveDialog } from './DraftLeaveDialog';
 import { resolveReadOnlyPolicy } from './keyReadOnlyPolicy';
 import type { Codec } from './valueView/codecs';
 import type { ViewMode } from './valueView/views';
@@ -68,7 +77,6 @@ export function StringEditor({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonDisplay, setJsonDisplay] = useState<JsonTextMode>('pretty');
   const [jsonDirty, setJsonDirty] = useState(false);
-  const [keepTtl, setKeepTtl] = useState(detail.ttl >= 0);
   const [decomp, setDecomp] = useState<DecompressResult | null>(null);
   const [decompBusy, setDecompBusy] = useState(false);
   const [decompError, setDecompError] = useState<string | null>(null);
@@ -88,11 +96,34 @@ export function StringEditor({
   // `jsonDirty`) is not a data-loss risk either.
   useEffect(() => {
     onDirtyChange?.(jsonDirty);
+    publishDraftDirty(jsonDirty);
     return () => {
       // An unmounted editor cannot have a draft — never publish a stale flag.
       onDirtyChange?.(false);
+      publishDraftDirty(false);
     };
   }, [jsonDirty, onDirtyChange]);
+
+  // E-5: `reloadDetail` refetches `detail` on purpose (it stays unguarded so a
+  // save never trips the leave dialog), so the server-value sync must skip
+  // while a draft is live — refetch updates the clean editor, never the draft.
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    dirtyRef.current = jsonDirty;
+  }, [jsonDirty]);
+  const serverValue = initialStringEditorValue(detail.value);
+  const restoreServerValue = () => {
+    // Same shape a clean editor would show: pretty vs. the active text mode.
+    setValue(jsonDisplay === 'pretty' ? serverValue : formatJson(serverValue, jsonDisplay));
+    setJsonDirty(false);
+    setJsonError(null);
+    publishDraftDirty(false);
+    onDirtyChange?.(false);
+  };
+  useEffect(() => {
+    if (dirtyRef.current) return;
+    setValue(jsonDisplay === 'pretty' ? serverValue : formatJson(serverValue, jsonDisplay));
+  }, [serverValue, jsonDisplay]);
 
   const selectJsonMode = (next: JsonDisplayMode) => {
     if (next === 'tree') return;
@@ -118,10 +149,16 @@ export function StringEditor({
         setSaving(false);
         return;
       }
-      await invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl)
+      await invokeSetString(dbSessionId, dbIndex, detail.key, value)
         .then(() => {
-          // Saved: the draft no longer exists, so the dirty relay must drop.
+          // E-5 ordering: publish clean FIRST (and settle any leave request —
+          // the draft is now committed, not discarded), and only then let
+          // `onSaved()` refetch. `reloadDetail`'s server-value sync above
+          // checks `dirtyRef`, so a late publish would keep a stale draft.
           setJsonDirty(false);
+          if (isLeavePending()) settleDraftLeave(true);
+          publishDraftDirty(false);
+          onDirtyChange?.(false);
           onSaved();
         })
         .finally(() => setSaving(false));
@@ -205,16 +242,6 @@ export function StringEditor({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-fg-secondary">
-          <input
-            type="checkbox"
-            checked={keepTtl}
-            onChange={(e) => setKeepTtl(e.target.checked)}
-            className="rounded border-edge"
-          />
-          {t('redis.keepTtl')}
-        </label>
-        <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
         {jsonMode && (
           <JsonModeBar modes={JSON_TEXT_MODES} active={jsonDisplay} onSelect={selectJsonMode} />
         )}
@@ -228,17 +255,34 @@ export function StringEditor({
             {t('redis.decompressView')}
           </Button>
         )}
-        <Button
-          variant="primary"
-          className="h-7 px-2 text-xs"
-          disabled={saving || readOnly}
-          onClick={save}
-          data-testid="redis-string-save"
-          data-save-blocked-by={readOnly ? 'readonly' : 'none'}
-        >
-          {t('common.save')}
-        </Button>
       </div>
+      {/* E-5 dirty bottom bar: only a live draft can be discarded or saved. */}
+      {jsonDirty && (
+        <div
+          className="flex items-center justify-end gap-2 border-t border-edge pt-2"
+          data-testid="redis-string-dirty-bar"
+        >
+          <Button
+            variant="secondary"
+            className="h-7 px-2 text-xs"
+            data-testid="redis-string-discard"
+            onClick={restoreServerValue}
+          >
+            {t('redis.detail.discard')}
+          </Button>
+          <Button
+            variant="primary"
+            className="h-7 px-2 text-xs"
+            disabled={saving || readOnly}
+            onClick={save}
+            data-testid="redis-string-save"
+            data-save-blocked-by={readOnly ? 'readonly' : 'none'}
+          >
+            {t('common.save')}
+          </Button>
+        </div>
+      )}
+      <DraftLeaveDialog onDiscard={restoreServerValue} />
       {decompError && (
         <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
           {decompError}

@@ -502,6 +502,13 @@ const locale = {
   // TTL pill: 3-state inline editor (永不过期 reuses `redis.noExpiry`).
   'redis.detail.ttl.modeRelative': 'Relative TTL',
   'redis.detail.ttl.modeAbsolute': 'Absolute time (EXPIREAT)',
+  // I-1 dirty interception (E-5): the bottom bar's discard action and the
+  // 放弃更改 / 继续编辑 leave dialog shown before any draft-destroying jump.
+  'redis.detail.discard': 'Discard',
+  'redis.detail.leave.title': 'Unsaved changes',
+  'redis.detail.leave.description': 'This key has unsaved changes.',
+  'redis.detail.leave.discard': 'Discard changes',
+  'redis.detail.leave.keepEditing': 'Keep editing',
 } as const;
 
 export default locale;

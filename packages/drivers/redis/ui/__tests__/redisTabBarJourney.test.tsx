@@ -8,7 +8,7 @@
  * 路由行为与 IPC 无关。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('../key-browser/RedisWorkbench', async () => {
   const { forwardRef } = await import('react');
@@ -49,7 +49,9 @@ describe('Journey: 五枚一级页签（裁定 8-1）', () => {
     expect(TABS).toEqual(['items', 'console', 'pubsub', 'monitor', 'slowlog']);
   });
 
-  it('activates the clicked tab, keeps visited panels mounted and exits cleanly', () => {
+  it('activates the clicked tab, keeps visited panels mounted and exits cleanly', async () => {
+    // E-5: tab clicks pass the I-1 draft guard first (a microtask even when
+    // clean), so every click must be flushed through `act` before asserting.
     render(
       <RedisConnectionView
         dbSessionId="sess-tabs"
@@ -68,12 +70,16 @@ describe('Journey: 五枚一级页签（裁定 8-1）', () => {
     expect(screen.getByTestId('stub-workbench')).toBeTruthy();
 
     // 慢日志现在是一级页签（此前只能进监控二极子页）。
-    fireEvent.click(screen.getByTestId('redis-tab-slowlog'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('redis-tab-slowlog'));
+    });
     expect(onlyActive()).toEqual(['slowlog']);
     expect(screen.getByTestId('stub-slowlog')).toBeTruthy();
 
     // keep-alive：切到命令行后，两个已访问面板仍挂在 DOM（只是 hidden）。
-    fireEvent.click(screen.getByTestId('redis-tab-console'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('redis-tab-console'));
+    });
     expect(onlyActive()).toEqual(['console']);
     expect(screen.getByTestId('stub-workbench')).toBeTruthy();
     expect(screen.getByTestId('stub-slowlog')).toBeTruthy();
@@ -82,12 +88,16 @@ describe('Journey: 五枚一级页签（裁定 8-1）', () => {
     expect(screen.queryByTestId('stub-monitor')).toBeNull();
     expect(screen.queryByTestId('stub-pubsub')).toBeNull();
 
-    fireEvent.click(screen.getByTestId('redis-tab-monitor'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('redis-tab-monitor'));
+    });
     expect(onlyActive()).toEqual(['monitor']);
     expect(screen.getByTestId('stub-monitor')).toBeTruthy();
 
     // 退出跃迁：点回键详情 ⇒ 键详情独占激活，没有任何页签残留高亮。
-    fireEvent.click(screen.getByTestId('redis-tab-items'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('redis-tab-items'));
+    });
     expect(onlyActive()).toEqual(['items']);
   });
 });

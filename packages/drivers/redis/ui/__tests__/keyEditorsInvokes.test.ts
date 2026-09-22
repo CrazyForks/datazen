@@ -11,29 +11,32 @@ import {
   type PluginInvokeFn,
 } from '../value-editors/keyEditorsInvokes';
 
-describe('invokeSetString (PR-1 KEEPTTL)', () => {
-  it('passes keepTtl=false by default', async () => {
+describe('invokeSetString (E-5: keepTtl removed — backend owns the default)', () => {
+  it('sends exactly four payload fields and never a keepTtl switch', async () => {
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
-    await invokeSetString('sess-1', 0, 'k1', 'v1', false, invoke);
+    await invokeSetString('sess-1', 0, 'k1', 'v1', invoke);
     expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
       dbSessionId: 'sess-1',
       dbIndex: 0,
       key: 'k1',
       value: 'v1',
-      keepTtl: false,
     });
+    expect(invoke.mock.calls[0]?.[2]).not.toHaveProperty('keepTtl');
   });
 
-  it('passes keepTtl=true for KEEPTTL path', async () => {
+  it('does not resurrect keepTtl for a key that already has a TTL', async () => {
+    // Pre-W3-C the backend default (`unwrap_or(false)`) drops the TTL; the
+    // coordinator accepted that rather than a second frontend switch.
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
-    await invokeSetString('sess-2', 3, 'cache:tmp', 'payload', true, invoke);
-    expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
+    await invokeSetString('sess-2', 3, 'cache:tmp', 'payload', invoke);
+    const payload = invoke.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(payload).toEqual({
       dbSessionId: 'sess-2',
       dbIndex: 3,
       key: 'cache:tmp',
       value: 'payload',
-      keepTtl: true,
     });
+    expect(payload).not.toHaveProperty('keepTtl');
   });
 });
 
@@ -79,15 +82,13 @@ describe('invokeCreateKey', () => {
   it('creates string key via set_string', async () => {
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
     await invokeCreateKey('sess-1', 0, 'new:str', 'string', 'hello', invoke);
-    expect(invoke).toHaveBeenCalledWith(
-      'redis',
-      'set_string',
-      expect.objectContaining({
-        key: 'new:str',
-        value: 'hello',
-        keepTtl: false,
-      }),
-    );
+    expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'new:str',
+      value: 'hello',
+    });
+    expect(invoke.mock.calls[0]?.[2]).not.toHaveProperty('keepTtl');
   });
 
   it('creates hash key via hash_set', async () => {

@@ -36,6 +36,7 @@ import { useValueSearch } from '../value-search/useValueSearch';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTree } from './useKeyTree';
 import { useRedisGate } from '../shared/useRedisGate';
+import { requestDraftLeave } from '../shared/draftGuard';
 import { buildServerTreeRows } from './keyTree';
 import {
   KeyWorkbenchDialogs,
@@ -247,8 +248,13 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     }, [modules]);
 
     const handleSelectDb = useCallback(
-      (db: string) => {
+      async (db: string) => {
         const idx = parseInt(db.replace('db', ''), 10) || 0;
+        // Same-db re-click (including the initial auto-select) is not a 切db —
+        // never route it through the I-1 leave dialog.
+        if (selectedDb === db && dbIndex === idx) return;
+        // I-1: switching databases drops the selection, i.e. the live draft.
+        if (!(await requestDraftLeave())) return;
         setSelectedDb(db);
         setDbIndex(idx);
         onDbIndexChange?.(idx);
@@ -261,7 +267,15 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         resetSelectionState();
         void loadKeys(idx, '*', 0, true);
       },
-      [loadKeys, resetSelectionState, setSearchPattern, onDatabaseChange, onDbIndexChange],
+      [
+        selectedDb,
+        dbIndex,
+        loadKeys,
+        resetSelectionState,
+        setSearchPattern,
+        onDatabaseChange,
+        onDbIndexChange,
+      ],
     );
 
     useEffect(() => {
@@ -273,25 +287,29 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         const initial = initialDatabase
           ? (databases.find((d) => d === initialDatabase) ?? initialDatabase)
           : databases[0];
-        if (initial) handleSelectDb(initial);
+        if (initial) void handleSelectDb(initial);
       }
     }, [databases, initialDatabase, selectedDb, handleSelectDb]);
 
-    const refreshKeys = useCallback(() => {
-      if (selectedDb) {
-        setSelectedKey(null);
-        setSelectedKeys(new Set());
-        setKeyDetail(null);
-        setEditorDirty(false);
-        scanRefresh();
-        tree.refresh();
-      }
+    const refreshKeys = useCallback(async () => {
+      if (!selectedDb) return;
+      // I-1: this body drops the selection (the draft with it), so every
+      // refresh — toolbar, delete-row, rename, batch, import — asks first.
+      if (!(await requestDraftLeave())) return;
+      setSelectedKey(null);
+      setSelectedKeys(new Set());
+      setKeyDetail(null);
+      setEditorDirty(false);
+      scanRefresh();
+      tree.refresh();
     }, [selectedDb, scanRefresh, tree]);
 
-    const handleRefresh = useCallback(() => {
+    const handleRefresh = useCallback(async () => {
+      // Toolbar 刷新 is a named I-1 interception point: refuse ⇒ nothing reloads.
+      if (!(await requestDraftLeave())) return;
       void loadForConnection(dbSessionId, { skipLoadTables: true });
-      refreshKeys();
-      loadDbSizes();
+      void refreshKeys();
+      void loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
 
     useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb }), [
@@ -299,7 +317,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       handleSelectDb,
     ]);
 
-    const handleSearch = useCallback(() => {
+    const handleSearch = useCallback(async () => {
+      // I-1: a search replaces the selection ⇒ the draft. Ask before running.
+      if (!(await requestDraftLeave())) return;
       setSelectedKey(null);
       setSelectedKeys(new Set());
       setKeyDetail(null);
@@ -333,11 +353,36 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       [dbSessionId, dbIndex],
     );
 
+    /**
+     * Tree-row click (I-1 切键): switching to ANOTHER key must pass the leave
+     * dialog first. Re-clicking the selected key is a plain refetch — the
+     * selection (and therefore the draft) survives by construction, and
+     * `reloadDetail`'s editor-side dirty-skip sync keeps the draft across it,
+     * so there is nothing to ask. `handleSelectKey` itself stays raw because
+     * `reloadDetail` and post-write flows must bypass the guard on purpose.
+     */
+    const handleSelectKeyGuarded = useCallback(
+      async (key: string) => {
+        if (key === selectedKey) {
+          await handleSelectKey(key);
+          return;
+        }
+        if (!(await requestDraftLeave())) return;
+        await handleSelectKey(key);
+      },
+      [selectedKey, handleSelectKey],
+    );
+
     const reloadDetail = useCallback(async () => {
       if (!selectedKey) return;
+      // E-5 fix: refetch the DETAIL only. The old `refreshKeys()` cleared the
+      // selection — its I-1 body drops the draft — so every save used to close
+      // the panel. The list gets a direct scan/tree refresh instead (unguarded:
+      // this runs after a successful save, when the draft is already gone).
       await handleSelectKey(selectedKey);
-      refreshKeys();
-    }, [selectedKey, handleSelectKey, refreshKeys]);
+      scanRefresh();
+      tree.refresh();
+    }, [selectedKey, handleSelectKey, scanRefresh, tree]);
 
     /* ── host KV relay ───────────────────────────────────────────────────────
      * Contract F-2: the host-rendered KV slots never ask the workbench for
@@ -437,7 +482,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
               ? (await invokeBatchDeletePattern(dbSessionId, dbIndex, `${target.prefix}*`)).deleted
               : await invokeDeleteKeys(dbSessionId, dbIndex, [target.key]);
           setBatchSummary(t('redis.deleted').replace('{count}', String(deleted)));
-          refreshKeys();
+          void refreshKeys();
         } catch (e) {
           setBatchSummary(e instanceof Error ? e.message : String(e));
         }
@@ -459,7 +504,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                   value={searchPattern}
                   onChange={(e) => setSearchPattern(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSearch();
+                    if (e.key === 'Enter') void handleSearch();
                   }}
                   placeholder={
                     searchMode === 'key'
@@ -609,7 +654,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     onToggleFolder={tree.toggleFolder}
                     selectedKey={selectedKey}
                     selectedKeys={selectedKeys}
-                    onSelectKey={handleSelectKey}
+                    onSelectKey={handleSelectKeyGuarded}
                     onToggleKey={toggleKeySelection}
                     onToggleKeys={toggleKeysSelection}
                     onKeyContextMenu={handleKeyContextMenu}
@@ -641,13 +686,19 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     onRefresh={reloadDetail}
                     onRenamed={(newKey) => {
                       setSelectedKey(newKey);
-                      refreshKeys();
+                      // Draft already settled upstream (rename passes the I-1
+                      // guard before it runs), so this refresh sails through.
+                      void refreshKeys();
                     }}
                     onDirtyChange={setEditorDirty}
                     onClose={() => {
-                      setSelectedKey(null);
-                      setKeyDetail(null);
-                      setEditorDirty(false);
+                      // I-1: closing the panel drops the draft ⇒ ask first.
+                      void (async () => {
+                        if (!(await requestDraftLeave())) return;
+                        setSelectedKey(null);
+                        setKeyDetail(null);
+                        setEditorDirty(false);
+                      })();
                     }}
                   />
                 </div>
@@ -683,8 +734,12 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
           onRefreshKeys={refreshKeys}
           onSelectKey={handleSelectKey}
           onClearSelectedKey={() => {
-            setSelectedKey(null);
-            setKeyDetail(null);
+            // I-1: clearing the selection drops the draft ⇒ ask first.
+            void (async () => {
+              if (!(await requestDraftLeave())) return;
+              setSelectedKey(null);
+              setKeyDetail(null);
+            })();
           }}
           onUpdateSelectedKey={setSelectedKey}
           onUpdateSelectedKeys={setSelectedKeys}

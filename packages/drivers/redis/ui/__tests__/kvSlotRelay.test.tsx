@@ -91,6 +91,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail } from '../shared/types';
 import { DetailColumn } from '../key-browser/DetailColumn';
 import { RedisWorkbench, type RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
+import { __resetDraftGuard } from '../shared/draftGuard';
 
 // Harness capability bindings (the host injects the real ones at startup).
 bindSettingsStore(
@@ -180,6 +181,9 @@ function stringEditor() {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  // E-5: the I-1 draft guard is a module singleton — never let one case's
+  // dirty flag or pending leave request bleed into the next.
+  __resetDraftGuard();
 });
 
 beforeEach(() => {
@@ -323,7 +327,7 @@ describe('RedisWorkbench → host KV relay (contract F-2)', () => {
     expect(relay.getDirty()).toBe(false);
   });
 
-  it('clears selection and dirty on refresh, so a stale key is never shown', async () => {
+  it('intercepts a refresh while the draft is live, and only clears it on 放弃更改 (I-1)', async () => {
     const relay = makeRelay();
     const ref = renderWorkbench(relay);
 
@@ -332,11 +336,31 @@ describe('RedisWorkbench → host KV relay (contract F-2)', () => {
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft' } });
     await waitFor(() => expect(relay.getDirty()).toBe(true));
 
+    // 进入条件：脏 + 刷新 ⇒ 对话框先出，刷新动作尚未执行——既不清 dirty 也不清选择
+    // （旧缺陷：refreshKeys 直接静默清 dirty）。
     act(() => {
-      ref.current?.refreshKeys();
+      void ref.current?.refreshKeys();
     });
+    await screen.findByTestId('redis-draft-discard');
+    expect(relay.getDirty()).toBe(true);
+    expect(relay.getSelectedKey()).toBe('user:1');
+    expect(stringEditor().getAttribute('data-string-dirty')).toBe('true');
+
+    // 退出跃迁 A：继续编辑 ⇒ 动作取消，草稿与选择原样保留。
+    fireEvent.click(screen.getByTestId('redis-draft-keep'));
+    await waitFor(() => expect(screen.queryByTestId('redis-draft-discard')).toBeNull());
+    expect(relay.getDirty()).toBe(true);
+    expect(relay.getSelectedKey()).toBe('user:1');
+
+    // 退出跃迁 B：放弃更改 ⇒ 草稿失效，刷新继续执行，脏与选择都落 false。
+    act(() => {
+      void ref.current?.refreshKeys();
+    });
+    await screen.findByTestId('redis-draft-discard');
+    fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() => expect(relay.getDirty()).toBe(false));
     expect(relay.getSelectedKey()).toBeNull();
+    expect(screen.queryByTestId('redis-draft-discard')).toBeNull();
   });
 
   it('publishes a clean slate when the workbench unmounts', async () => {
@@ -409,7 +433,12 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     await draftOnRelay(relay);
 
     fireEvent.click(screen.getByTestId('redis-detail-close'));
+    // I-1: the close asks first; nothing has been cleared yet.
+    await screen.findByTestId('redis-draft-discard');
+    expect(relay.getDirty()).toBe(true);
+    expect(relay.getSelectedKey()).toBe('user:1');
 
+    fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() => expect(relay.getDirty()).toBe(false));
     expect(relay.getSelectedKey()).toBeNull();
     expect(screen.getByTestId('redis-detail-column').getAttribute('data-detail-state')).toBe(
@@ -426,6 +455,13 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     fireEvent.change(input, { target: { value: 'user:*' } });
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
 
+    // I-1: Enter asks before the search wipes the draft…
+    await screen.findByTestId('redis-draft-discard');
+    expect(relay.getDirty()).toBe(true);
+    expect(relay.getSelectedKey()).toBe('user:1');
+
+    // …放弃更改 lets the search run and the stale state go.
+    fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() => expect(relay.getDirty()).toBe(false));
     expect(relay.getSelectedKey()).toBeNull();
   });

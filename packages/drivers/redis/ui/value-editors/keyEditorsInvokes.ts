@@ -7,15 +7,17 @@ export async function invokeSetString(
   dbIndex: number,
   key: string,
   value: string,
-  keepTtl = false,
   invoke: PluginInvokeFn = redisCommandInvoke,
 ) {
+  // E-5 / coordinator ruling: no `keepTtl` field. The backend defaults it
+  // (W3-C: `unwrap_or(false)` in `commands_exec_mutate.rs`); before W3-C lands
+  // that default means the TTL is dropped, which the coordinator accepted —
+  // a second frontend default switch would fork the contract.
   await invoke('redis', 'set_string', {
     dbSessionId: dbSessionId,
     dbIndex: dbIndex,
     key,
     value,
-    keepTtl,
   });
 }
 
@@ -348,7 +350,7 @@ export async function invokeCreateKey(
 ) {
   switch (keyType) {
     case 'string':
-      await invokeSetString(dbSessionId, dbIndex, key, initialValue, false, invoke);
+      await invokeSetString(dbSessionId, dbIndex, key, initialValue, invoke);
       break;
     case 'hash':
       await invokeHashSet(dbSessionId, dbIndex, key, 'field', initialValue || '', invoke);

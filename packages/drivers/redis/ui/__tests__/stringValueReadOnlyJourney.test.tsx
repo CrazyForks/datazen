@@ -91,7 +91,8 @@ function editor(overrides: { detail?: KeyDetail; onDirtyChange?: (d: boolean) =>
 
 const surface = () => screen.getByTestId('redis-string-editor');
 const input = () => screen.getByTestId('redis-string-input') as HTMLTextAreaElement;
-const save = () => screen.getByTestId('redis-string-save');
+const save = () => screen.queryByTestId('redis-string-save');
+const dirtyBar = () => screen.queryByTestId('redis-string-dirty-bar');
 const reason = () => screen.queryByTestId('redis-string-readonly-reason');
 
 function expectEditable(reasonId = 'none') {
@@ -99,10 +100,28 @@ function expectEditable(reasonId = 'none') {
   expect(surface().getAttribute('data-readonly-reason')).toBe(reasonId);
   expect(reason()).toBeNull();
   expect(input().readOnly).toBe(false);
-  expect(save()).not.toBeDisabled();
+  // E-5: a CLEAN editor has no save affordance at all — the dirty bottom bar
+  // (discard + save) only mounts while a draft is live — and the old keepTtl
+  // checkbox is gone for good (the backend owns that default since W3-C).
+  expect(dirtyBar()).toBeNull();
+  expect(save()).toBeNull();
+  expect(surface().querySelector('input[type="checkbox"]')).toBeNull();
 }
 
-function expectReadOnly(reasonId: 'binary-view' | 'big-value', i18nKey: string) {
+/** Dirty AND editable: the bottom bar is up, save enabled and unblocked. */
+function expectEditableDraft(reasonId = 'none') {
+  expect(surface().getAttribute('data-string-readonly')).toBe('false');
+  expect(surface().getAttribute('data-readonly-reason')).toBe(reasonId);
+  expect(reason()).toBeNull();
+  expect(input().readOnly).toBe(false);
+  expect(dirtyBar()).not.toBeNull();
+  expect(save()).not.toBeNull();
+  expect(save()).not.toBeDisabled();
+  expect(save()!.getAttribute('data-save-blocked-by')).toBe('none');
+}
+
+/** Read-only facts, valid clean or dirty (no save-affordance claims). */
+function expectReadOnlyState(reasonId: 'binary-view' | 'big-value', i18nKey: string) {
   expect(surface().getAttribute('data-string-readonly')).toBe('true');
   expect(surface().getAttribute('data-readonly-reason')).toBe(reasonId);
   const banner = reason();
@@ -113,8 +132,18 @@ function expectReadOnly(reasonId: 'binary-view' | 'big-value', i18nKey: string) 
   // 只读用 readOnly 而非 disabled：截断载荷还得让用户选中、复制来看。
   expect(input().readOnly).toBe(true);
   expect(input().disabled).toBe(false);
+}
+
+/**
+ * Read-only WHILE dirty: the draft keeps the bar up (the draft can still be
+ * discarded), but save stays disabled with its blocked-by marker.
+ */
+function expectReadOnlyBlocked(reasonId: 'binary-view' | 'big-value', i18nKey: string) {
+  expectReadOnlyState(reasonId, i18nKey);
+  expect(dirtyBar()).not.toBeNull();
+  expect(save()).not.toBeNull();
   expect(save()).toBeDisabled();
-  expect(save().getAttribute('data-save-blocked-by')).toBe('readonly');
+  expect(save()!.getAttribute('data-save-blocked-by')).toBe('readonly');
 }
 
 beforeEach(() => {
@@ -152,9 +181,12 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
     fireEvent.change(input(), { target: { value: 'edited' } });
     expect(surface().getAttribute('data-string-dirty')).toBe('true');
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    // E-5: first keystroke of the draft mounts the bottom bar.
+    expect(dirtyBar()).not.toBeNull();
+    expect(save()).not.toBeNull();
 
     fireEvent.click(screen.getByTestId('redis-view-hex'));
-    expectReadOnly('binary-view', 'redis.detail.readonly.binaryView');
+    expectReadOnlyBlocked('binary-view', 'redis.detail.readonly.binaryView');
     // 只读档才把字节投影渲染出来（预检档不花这次渲染）。
     await waitFor(() => expect(screen.getByTestId('redis-value-hex')).toBeTruthy());
     // 草稿没丢：只读只是不许再改，不是清空。
@@ -163,13 +195,16 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
     fireEvent.click(screen.getByTestId('redis-view-utf8'));
-    expectEditable();
+    expectEditableDraft();
     expect(input().value).toBe('edited');
 
-    fireEvent.click(save());
+    fireEvent.click(screen.getByTestId('redis-string-save'));
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+    // E-5: a successful save retires the bar — no save affordance when clean.
+    await waitFor(() => expect(dirtyBar()).toBeNull());
+    expect(save()).toBeNull();
     expect(setString).toHaveBeenCalledTimes(1);
-    // `invokeSetString(dbSessionId, dbIndex, key, value, keepTtl)` — 位置参数。
+    // `invokeSetString(dbSessionId, dbIndex, key, value)` — E-5: no keepTtl arg.
     const [sessionId, dbIndex, key, draft] = setString.mock.calls[0] as unknown as [
       string,
       number,
@@ -180,6 +215,7 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
     expect(dbIndex).toBe(0);
     expect(key).toBe('user:1');
     expect(draft).toBe('edited');
+    expect(setString.mock.calls[0]).toHaveLength(4);
   });
 
   it('treats every codec choice as a preview, never as a third read-only state', async () => {
@@ -203,7 +239,7 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
     for (const view of VIEWS) {
       fireEvent.click(screen.getByTestId(`redis-view-${view}`));
       if (byteOnly.has(view)) {
-        expectReadOnly('binary-view', 'redis.detail.readonly.binaryView');
+        expectReadOnlyState('binary-view', 'redis.detail.readonly.binaryView');
       } else {
         expectEditable();
       }
@@ -220,7 +256,7 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
     );
     editor();
 
-    await waitFor(() => expectReadOnly('big-value', 'redis.detail.readonly.bigValue'));
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
     expect(reason()!.querySelector('[data-big-value-bytes]')!.getAttribute('data-big-value-bytes')).toBe(
       String(bytes),
     );
@@ -232,7 +268,7 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
   it('reports the backend truncation flag as the same read-only state', async () => {
     getKeyRaw.mockResolvedValue(frame({ truncated: true, logicalLen: 6_000_000, rawB64: null }));
     editor();
-    await waitFor(() => expectReadOnly('big-value', 'redis.detail.readonly.bigValue'));
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
     expect(screen.getByTestId('redis-key-badge-truncated')).toBeTruthy();
   });
 
@@ -241,12 +277,12 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
       frame({ truncated: true, logicalLen: 6_000_000, rawB64: null }),
     );
     editor();
-    await waitFor(() => expectReadOnly('big-value', 'redis.detail.readonly.bigValue'));
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
     // 用户当场能切回去的那个原因更可操作。
     fireEvent.click(screen.getByTestId('redis-view-binary'));
-    expectReadOnly('binary-view', 'redis.detail.readonly.binaryView');
+    expectReadOnlyState('binary-view', 'redis.detail.readonly.binaryView');
     fireEvent.click(screen.getByTestId('redis-view-utf8'));
-    expectReadOnly('big-value', 'redis.detail.readonly.bigValue');
+    expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue');
   });
 });
 
