@@ -1,12 +1,12 @@
 - 任务: KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3）
 - 状态: TEST_FAILED（**第 2 轮 Tester 复测**：BUG-001~004 四条判为**真已修掉**并置 `已修复`，五项门禁独立复跑全绿 + `ui/kv-bar/**` 覆盖率 100×4 + 15 项变异零存活；但复核“刻意保留形状”时**新登记 1 条 `待修复`：`redis-kvbar-ui-BUG-005`（Low，会话切换后驱逐策略行保留上一会话值）** ⇒ 仍需第 2 轮修复回合）
-- 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`
-- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ **第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）**
-- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；**第 2 轮 = 本次提交（`docs(coordination): redis-kvbar-ui 第 2 轮 Tester 判定 TEST_FAILED + BUG-005 登记`）**，门禁数字先行提交为 `3242800b4`
-- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → **第 2 轮 Tester（全新实例，本次关账）**
+- 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`；**第 2 轮修复（只修 BUG-005）= `010c6b406`**
+- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ **第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）**
+- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；**本轮为修复回合，未改判：状态行仍 `TEST_FAILED`，改判权在第 3 轮 Tester**
+- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ **第 2 轮修复回合 Coder（本次，BUG-005 单条，Phase = READY_FOR_TEST）**
 - Worktree: .worktrees/datazen-redis-kvbar-ui
 - 分支: feature/redis-kvbar-ui
-- 心跳: 2026-09-22 13:35（第 2 轮 Tester 关账）
+- 心跳: 2026-09-22 14:06（第 2 轮修复回合关账，`010c6b406` + 本台账提交；门禁与变异表在 14:00~14:05 全项复跑一遍）
 
 # redis-kvbar-ui 轨道台账
 
@@ -530,4 +530,128 @@ R1~R9 **一条未消**：本轮 15 项注入与 10 条新用例全部在进程�
   `tsc` exit 0。那 1 条 skip 是 BUG-005 的红测登记（解开即红，实测日志见 `bugs.md`）。
 - 覆盖率：`ui/kv-bar/**` 仍 **100 / 100 / 100 / 100**（本轮只增测试，未动生产码）。
 - 只测不修：生产代码零改动，全部变异均还原；未跑任何 e2e / cargo / `pnpm build` / `pnpm install`。
+
+---
+
+# 第 2 轮修复回合（Coder，只修 BUG-005 一条）
+
+> 现场：`feature/redis-kvbar-ui` @ `7e809bc1c`（第 2 轮 Tester 判定 `TEST_FAILED`），开工
+> `git status --porcelain` 为空、分支非 `main`、路径在本轨 worktree。
+> **Phase = `READY_FOR_TEST`**；文件头 `- 状态:` 按任务书**保持 `TEST_FAILED` 一字未动**，
+> 改判权在第 3 轮 Tester。BUG-001~004 的产物一行未碰。
+> 编码 + 测试 = 单个 commit `010c6b406`；本台账 = 紧随其后的第二个 commit。
+
+## 修法：让策略行的归属与它的数据来源同轴
+
+- `KeyPropsSidebar.tsx` 的 `policy` 由裸字符串改为**带身份的值**
+  `{ session, value } | null`，回包时把当次 `dbSessionId` 一起写入（`:67` 声明、`:80` 写入），
+  渲染侧在 **render 期**过滤：`const policyValue = policy?.session === dbSessionId ? policy.value : null`
+  （`:91-93`）。这与 BUG-001 的修法同形（`useKeyObjectInfo` 就是
+  `publishRead(read, ownerOf(...))` 的渲染期过滤），所以：
+  **没有**"记得清一下"的旁路旗标、**没有**新增缓存层（未建 Map、未扩 `KvSlotState`、未动宿主 `src/**`），
+  会话跃迁当帧即失效，新会话自己回答才上色。
+- `stale` 守卫原样保留（`:76-85`，写侧半边规则），**两侧防线各自测过而不是互相顶替**：
+  注入 V8（拆守卫、只留 tag）红 1 条（`kvBarSlotTesterGaps` 的
+  `drops a policy reply that lands after the session switched`），注入 V1/V2/V6（拆归属、留守卫）
+  各红 2 条 ⇒ 单槽 state 里守卫负责"迟到回包不得挤掉当前值"，tag 负责"旧值不得挂到新会话"，
+  删任一侧都留活口，故不合并、也不请第 3 轮裁"等价冗余"。
+- 注释按实现改正（未删注释）：`:62-65` 那句被证伪的"cannot mis-attribute anything"改为
+  把论证范围**收窄到键维度**并写明会话维度必须空态（现整段 `:59-66`）；文件头 `:8-10` 与
+  `keyObjectInfo.ts:129-133` 的 "Server-wide" 补"跨该服务器的键、不跨会话"口径。
+
+## 测试落点
+
+| 文件 | 变更 |
+|---|---|
+| `kvBarRound2Tester.test.tsx`（Tester 的文件，按 `bugs.md` 建议修法 3 就地改） | 登记的 `it.skip` BUG-005 **解开转绿** + 加断 `data-fallback-key`；同节 evidence 绿测**改写**为 `paints the eviction row only from the session that is on screen`（断另一臂），文件头"one case here is `it.skip` by design"一段同步改为成对说明。**改写口径逐项交代**：用例数 10 → 10、`it.skip` → `it`，未删整例、未留 skip；被替换掉的只有那两条把缺陷钉成绿断言的 `expect(sideValue(…, 'maxmemory-policy')).toBe('noeviction')`，原位各改写成一条新断言（`''` + `data-fallback-key` + 旧会话回包先到也不上屏 + 只有被问过的会话上色），全文件 `expect(` 行数 10 增 / 2 删（净 +8）⇒ 属"改写断言"而非"删断言换绿" |
+| `kvBarRound2Fixes.test.tsx`（**新增**，Coder 自带电池，283 行 / 3 例） | 钉住过度失效方向：`attempt` 与 `dbIndex` 均非失效轴；换会话必须重新问、且不得从 remembered value 上色 |
+
+## 门禁实跑数字（首轮 13:47~13:51；写台账后 14:00~14:04 全五项复跑一遍，结论一致，下列为复跑原始输出）
+
+| 门禁 | 命令 | 实测原始结果 |
+|---|---|---|
+| 类型 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0，0 条诊断** |
+| 驱动 UI 全量 | `npx vitest run --config vitest.drivers.config.ts` | **Test Files 40 passed (40) · Tests 325 passed (325) · 0 failed · 0 skipped**（Duration 7.39s；首轮 6.49s） |
+| 前端构建 | `npx vite build` | **exit 0**，`✓ built in 5.03s`（首轮 4.63s；仅既有 chunk >500 kB 告警 `main` / `MainPage`，非本轨引入） |
+| `ui/kv-bar/**` 覆盖率 | `npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.provider=v8 --coverage.include='packages/drivers/redis/ui/kv-bar/**'` | **exit 0**；`All files 100 / 100 / 100 / 100`；逐文件 `KeyPropsSidebar.tsx` 100×4、`KvStatusBar.tsx` 100×4、`keyObjectInfo.ts` 100×4、`useKeyObjectInfo.ts` 100×4、`useKvSelection.ts` 100×4、`index.ts` 0/0/0/0（纯再导出桶，与上一轮同口径）；同次运行 40 files / 325 tests 全绿 |
+| import 边界护栏 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0**，`ok (1433 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` + `2 allow-listed reference(s) skipped`；4 条 advisory 与上一轮**同一集合**（存量宿主侧），本回合未新增 |
+| Rust | — | **不适用**：`git diff --stat 7e809bc1c..HEAD -- '*.rs' 'Cargo.toml' 'Cargo.lock'` 输出为空，4 个文件全为 `.ts/.tsx`；未跑 cargo（任务书禁止裸 `cargo build`） |
+| 附：格式 / ID 术语 | `npx prettier --check`（4 个改动文件）· `node scripts/check-id-terminology.mjs` | Prettier `All matched files use Prettier code style!`（printWidth 100 收敛了一行 `useState` 泛型，故下方代码引用按收敛后的行号）· `ok (1755 files scanned)` |
+
+### 与第 2 轮 Tester 基线的对照
+
+| 项 | 上一基线（`3242800b4` + `257017096`） | 本轮实测 | 差异归因 |
+|---|---|---|---|
+| vitest | 39 files / 321 passed + 1 skipped (322) | 40 files / 325 passed (325) / **0 skipped** | **+1 file / +3 例**全部来自新电池；那 1 条 skip 解开转绿；**无任何存量用例变红或改写口径**（唯一被改写的两条在 `kvBarRound2Tester.test.tsx` 的 BUG-005 成对里，属登记要求） |
+| `tsc` | exit 0 | exit 0 | 一致 |
+| kv-bar 覆盖率 | 100×4 | 100×4 | 一致（新增的渲染期三元分支两臂各有用例） |
+| `vite build` | ok 4.99s | ok 5.03s | 一致（机器波动） |
+| import 护栏 | `1431 · 0 blocking · 4 advisory` | `1433 · 0 blocking · 4 advisory` | +2 文件 = 第 2 轮 Tester 的 `kvBarRound2Tester.test.tsx`（其门禁跑在自己那个文件之前）+ 本轮 `kvBarRound2Fixes.test.tsx`；advisory 集合未变 |
+
+## 变异自证（阶段 C 口径；基线 = 本轨 5 个 kv-bar 文件 62 例全绿）
+
+脚本 `/tmp/mut_bug005.py`（V1~V6，每种注入跑"全 5 文件"与"去掉 `kvBarRound2Fixes`"两遍）、
+`/tmp/mut_bug005_v7.py`、`/tmp/mut_bug005_v8.py`（窄分母）与 `/tmp/mut_bug005_names.py`（逐条归因），
+注入点全在 `KeyPropsSidebar.tsx`，**`/tmp` 快照还原、未使用 `git checkout`**（写台账时修复尚未提交，
+`git checkout` 会吃掉本轮工作），每次注入前断言 pattern 唯一命中（否则 `APPLY-FAILED`），每次还原后
+逐字比对快照（八次注入全部 `restored clean: True`）。基线复跑：全 5 文件 62 绿 / 去掉新电池 59 绿。
+
+| # | 注入 | 红 / 62 | 去掉新电池后 | 归因 |
+|---|---|---|---|---|
+| V1 | 退回缺陷形态（状态不带会话 + 渲染取 `policy`） | **2** | 1 | Tester 解开的那条 + `asks each session it lands on…` |
+| V2 | 保留 tag 但拆掉渲染期过滤 | **2** | 1 | 同 V1（缺陷不在"忘了写 tag"，在"归属没被消费"） |
+| V3 | 会话比较两臂互换（`!==`） | **29** | 26 | 策略行全部正向断言 |
+| V4 | 每次触发都清值（旁路旗标式过度修正） | **1** | **0** | 仅 `keeps the current session policy … while a refresh re-read is open` |
+| V5 | `dbIndex` 进 policy effect 依赖（在错误的轴上过度失效） | **1** | **0** | 仅 `is not invalidated by a database switch inside the same session` |
+| V6 | 换会话时继承旧值、套上新 tag（作弊修法） | **2** | 1 | Tester 解开的那条 + `asks each session it lands on…` |
+| V7 | 策略行永不上色（`policyValue = null`；只跑 2 个 r2 文件，分母 13） | **7** | 4 | 成对两条 + 新电池 3 条 + r2 Tester 的键切换/刷新计数各一条（去掉新电池只剩该文件，分母 10） |
+| V8 | 拆掉 `stale` 写侧守卫、只留会话 tag | **1** | 1 | `kvBarSlotTesterGaps` 的 `drops a policy reply that lands after the session switched`（单槽 state 被迟到回包挤掉当前值） |
+
+⇒ 任务书要求的"注入'策略行不按 `dbSessionId` 失效'至少一条红"由 **V1 / V2 / V3 / V6** 满足；
+**V4 / V5 去掉新电池后红数为 0**，即"过度失效"这一侧此前无人守，新电池是唯一守门人；
+V8 反过来证明读侧过滤顶不掉写侧守卫（两侧各有一条独立红测），不存在"等价冗余"可裁。
+全部还原后 `git status --porcelain -- packages src scripts` 为空。
+
+## 三维影响度自查
+
+1. **是否彻底解决**：策略行的失效轴与其数据源同轴（会话），V1/V2/V6 三条反向注入各红、V8 另证
+   写侧守卫未被读侧过滤顶掉，缺陷形态（旧会话值挂在新会话屏上）不再可达。
+2. **是否误伤合法同类**：同会话刷新（BUG-003 裁定保留的形状）与同会话换库两条均由新电池正向钉住
+   （V4/V5 一注即红），未引入额外往返：`info_filtered` 次数在键切换 / 换库路径不变（用例计数）。
+3. **用户下一步**：重连后策略行显示空态而非旧服务器答案，新服务器一旦回答即上色，无需再点刷新。
+
+## 本轮收到的两条外部消息与处置（登记以免重复推演）
+
+1. 一条"redis-overview 轨文件被越界覆盖、按 `1731f14e4` 重建"的通报：文件清单全在
+   `packages/drivers/redis/ui/overview/**` 与 `tracks/redis-overview/`，**与本轨零交集**；
+   处置 = 未动任何 overview 文件，只核验本 worktree HEAD 仍为 `010c6b406`、四个改动文件完好、
+   `git status --porcelain -- packages src scripts` 为空（`git stash list` 另有 3 条**存量**条目，
+   分属 `v0.2.2` ×2 与 `feat/redis-pr1-keepttl-expireat-decompress` ×1，均非本轨本轮产生、未触碰）。
+   判定属 redis-overview 轨自己的收编工作。
+2. 一条"修 `packages/drivers/redis/README.md` 第 133 / 204 行的覆盖率假口径"的指派：**未执行，因前提不成立**，
+   实测证据：该 README 在主检出、本 worktree、`datazen-redis-overview` / `datazen-redis-p0-integrate` /
+   `datazen-qb-stash-recovery` 四个 worktree 与 `git log --all --diff-filter=A` 下**均不存在**
+   （`git ls-files --error-unmatch` 报"未匹配任何 git 已知文件"）；主检出 `AGENTS.md` 内
+   `grep -ni "coverage|覆盖"` 无覆盖率条款，所谓"95% 硬红线"查无出处；真实配置是
+   `vitest.config.ts` 的 `thresholds: lines/functions/statements 80 · branches 75`，
+   `include` 全为宿主 `src/**`，`vitest.drivers.config.ts` **完全没有 coverage 块** ⇒ driver-ui 不在任何覆盖率门禁内；
+   另外 `.github/workflows/ci.yml:67-68` 明确在跑 `pnpm test:boundaries` ⇒ 指派里"护栏已撤销、不再阻断构建"
+   的说法与 CI 相反。**新建该 README 去写这些口径 = 把未经确认的政策写进仓库**，故不擅自开工，交协调者裁定。
+
+## 明确未做
+
+- `contextBar` 全量版（Rescuer-B）、`KvSlotState` 加宽（W2-C）一行未动；
+  `packages/drivers/redis/ui/overview/**`、宿主 `src/**`、`docs/development/coordination/hub.md` 零改动。
+- 未扩缓存层 / 未改 `useKeyObjectInfo` / 未动 `invokeMaxmemoryPolicy` 的取数与降级链（只补 docblock 口径）。
+- i18n 零改动：空态复用既有 `redis.keyProps.unavailable`，未新增词条（故 `locales/en.ts` 未动）。
+- 未跑 e2e / `pnpm tauri:build:webdriver` / cargo / `pnpm build` / `pnpm install`；未提交任何 gitignored codegen 或 `Cargo.lock`。
+- 【留待 R 回归】新增一行同形条目：真机重连 / 切实例时策略行空态是否肉眼可见（V1~V8 全为进程内证据），
+  与第 2 轮 R5 行的"真连复证"合并，本轨未跑任何 e2e。
+
+## 结论
+
+- BUG-005 → `待复测`（`bugs.md` 已附「修复备注（Coder 第 2 轮 · `010c6b406`）」）；
+  BUG-001~004 维持 `已修复`，一行未动。
+- 新基线：**40 files / 325 passed (325) / 0 skipped**、`tsc` exit 0、kv-bar 覆盖率 100×4、护栏 0 blocking。
+- 返回 `READY_FOR_TEST`，等第 3 轮全新 Tester 复测与改判。
 

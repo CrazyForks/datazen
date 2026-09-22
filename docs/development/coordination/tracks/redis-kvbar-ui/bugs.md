@@ -12,7 +12,7 @@
 | redis-kvbar-ui-BUG-002 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
 | redis-kvbar-ui-BUG-003 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
 | redis-kvbar-ui-BUG-004 | Low | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
-| **redis-kvbar-ui-BUG-005** | Low | **待修复**（第 2 轮 Tester 登记） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
+| **redis-kvbar-ui-BUG-005** | Low | **待复测**（第 2 轮修复回合 Coder @ `010c6b406`） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
 
 > **修复第 1 轮（Coder @ `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）**：四条全部改到生产码
 > 并各带回归用例 ⇒ 全部置 **待复测**，每条下方新增「修复备注（Coder 第 1 轮 · sha）」给出落点与复测入口。
@@ -24,6 +24,14 @@
 > **真缺陷已消失**（非“有无红测”），四条状态 → 已修复；阶段 A/C 判定、15 项变异复验
 > （零存活）与新 Bug 见同目录 `progress.md`「第 2 轮 Tester 复测」。**BUG-005 为本轮新登记**，
 > 故本轨判定为 `TEST_FAILED`（1 条 Low `待修复`）。
+>
+> **修复第 2 轮（Coder @ `010c6b406`，只修 BUG-005 这一条）**：策略值改为**带会话身份**
+> （`{ session, value }` + 渲染期按 `dbSessionId` 过滤），登记的 `it.skip` 已解开转绿、
+> 同节 evidence 绿测按 BUG-004 成对口径**改写**为断言另一臂（用例一条未删，只把钉住缺陷的
+> 那两条 `toBe('noeviction')` 原位改成新行为断言），并新增
+> `kvBarRound2Fixes.test.tsx` 3 例钉住“不许过度失效”一侧。BUG-005 状态 → **待复测**，
+> 落点、变异表（V1~V8）与门禁原始数字见该节「修复备注」与 `progress.md`「第 2 轮修复回合」。
+> 第 1 轮已判 `已修复` 的四条一行未动。
 
 
 ---
@@ -320,7 +328,7 @@ ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps
 
 - **严重度**：Low（单行、窄窗口的一行错叙述；与 BUG-004 同量级 —— 不伪造数字、不影响写路径，
   但把**另一台服务器**的事实挂在当前会话上）
-- **状态**：`待修复`（第 2 轮 Tester 全新实例登记）
+- **状态**：`待复测`（第 2 轮 Tester 登记 → 第 2 轮修复回合 Coder @ `010c6b406` 修完，见本节末「修复备注」）
 - **量级**：需要 (1) 面板存活期内 `dbSessionId` 跃迁（重连、切实例、会话重建），
   (2) 新会话的 `key_object_info`（1 条 SELECT + 1 条 pipeline）**先于** `info_filtered` 落地。
   一次跃迁最多一个窗口，时长 = 两条命令的时差；顺序不常但确定可达
@@ -340,6 +348,9 @@ ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps
   以 `dbSessionId` 为作用域 ⇒ 该值恰恰**不是**“与会话无关”的事实，上述注释的前提不成立
 
 ### 重现步骤
+
+> **第 2 轮修复后本节的 `it.skip` 演示已失效**：那条红测已解开并成为常驻绿测，同节
+> evidence 绿测亦改写为断言新行为的另一臂。复测入口与变异清单见本节末「修复备注」。
 
 常驻用例（绿测记录当前行为，配对红测按 BUG 登记规程 skip）：
 
@@ -394,6 +405,62 @@ AssertionError: expected 'noeviction' to be '' // Object.is equality
    并写明会话维度必须清值，否则下一轮还会拿这句话当挡箭牌。
 3. 修好后解开 `kvBarRound2Tester.test.tsx` 里那条 `FIXME(redis-kvbar-ui-BUG-005)` 的 `it.skip`，
    并把同节 evidence 绿测改断言新行为（参照 BUG-004 的成对改写口径，**勿删断言**）。
+
+**修复备注（Coder 第 2 轮 · `010c6b406`）· 状态 → 待复测**
+
+- **状态归属（建议修法 1 的第二种形状，即带身份的状态）**：`policy` 从
+  `useState<string | null>` 改为 `useState<{ session: string; value: string | null } | null>`，
+  回包写入时把当次的 `dbSessionId` 一起存进状态（`KeyPropsSidebar.tsx:67` 声明、`:80` 写入），渲染侧
+  `const policyValue = policy?.session === dbSessionId ? policy.value : null`（`:91-93`）
+  在 **render 期**按身份过滤 —— 与 BUG-001 的修法同轴（`useKeyObjectInfo` 就是
+  `publishRead(read, ownerOf(...))` 的渲染期过滤），因此：会话跃迁当帧即失效，无需"记得清一下"
+  的旁路旗标；也**没有新增任何缓存层**（未建 Map、未扩 `KvSlotState`、未动宿主 `src/**`）。
+- **`stale` 守卫原样保留**（`:76-85`）：它是同一条规则的**写侧半边**，与读侧过滤互为独立防线，
+  本轮两侧各自测过 —— 注入 V8（拆掉 `stale` 守卫、只留 tag）红 **1** 条
+  （`kvBarSlotTesterGaps` 的 `drops a policy reply that lands after the session switched`：
+  state 只有一个槽位，迟到回包即便带着旧 tag 不上屏，也会把当前会话已给的值**挤掉**），
+  而注入 V1/V2/V6（只留守卫、拆掉归属）各红 2 条。两侧缺一侧都留活口，故不合并。
+- **注释改正（建议修法 2，未删注释）**：`:62-65` 原来那句"it is a server-wide fact, not another
+  key's attribute, so keeping it cannot mis-attribute anything"改为**把论证范围明确收窄到键维度**、
+  并写明会话维度必须为空态（现 `:59-66`）；同时把文件头 `:8-10` 与 `keyObjectInfo.ts:129-133` 里的
+  "Server-wide" 补上"跨该服务器的键、不跨会话"的口径，免得第三次复测又拿这个词当挡箭牌。
+- **成对自证（建议修法 3，用例一条未删、断言按新行为改写）**：
+  - 登记的 `it.skip('clears the eviction-policy row … (FIXME redis-kvbar-ui-BUG-005)')` 解开转绿，
+    并加断 `data-fallback-key === redis.keyProps.unavailable`（证明是"命名空态"而不是空字符串）；
+  - 同节 evidence 绿测 `pins the previous session policy on screen …` **改写**为
+    `paints the eviction row only from the session that is on screen`，**改断另一臂**：
+    两会话各自未答时为空 → 旧会话的回包先到也不上屏 → 只有被真正问过的那个会话上色。
+    于是两类反向变异各有归宿："按旧会话上色"（V1/V2/V6）红在解开的那条，
+    "永不上色"（V7）让成对的两条同时红 —— 成对非空跑。
+- **新增 Coder 自带电池** `packages/drivers/redis/ui/__tests__/kvBarRound2Fixes.test.tsx`（3 例），
+  钉住**过度失效**这一侧（协调者坐标系里"不要修成局部补丁"的反面）：`attempt` 与 `dbIndex`
+  都**不是**失效轴 —— 同会话刷新期间本会话已给过的事实必须留在屏上，同会话换库既不清值
+  也不该多花一次 `info_filtered` 往返。
+- **变异自证（阶段 C 口径）**：基线 = 本轨 5 个 kv-bar 测试文件 **62 例全绿**
+  （`kvBarSlots` 17 + `kvBarSlotTesterGaps` 16 + `kvBarRound1Fixes` 16 +
+  `kvBarRound2Tester` 10 + 本轮新增 `kvBarRound2Fixes` 3；"去掉新电池后"那一列 = 同一批扣掉
+  `kvBarRound2Fixes`，分母 59）。注入点全部在 `KeyPropsSidebar.tsx`，
+  脚本 `/tmp/mut_bug005.py`（V1~V6，两种电池各跑一次）+ `/tmp/mut_bug005_v7.py` +
+  `/tmp/mut_bug005_v8.py`，一律用 `/tmp` 快照还原（**未用 `git checkout`**，因为写台账时修复
+  尚未提交），每次注入前断言 pattern 唯一命中，每次还原后逐字比对快照（`restored clean: True`）。
+
+  | # | 注入 | 红数 / 62 | 去掉 `kvBarRound2Fixes` 后 | 主要变红项 |
+  |---|---|---|---|---|
+  | V1 | 退回缺陷形态（状态不带会话 + `setPolicy(value)` + 渲染取 `policy`） | **2** | 1 | Tester 解开的那条 + 本轮"asks each session it lands on" |
+  | V2 | 保留 tag 但**拆掉渲染期过滤**（`policy?.value ?? null`） | **2** | 1 | 同 V1（证明缺陷不是"忘了写 tag"而是"归属没被消费"） |
+  | V3 | 会话比较两臂互换（`!==`） | **29** | 26 | 策略行的所有正向断言 + 侧栏属性表多路 |
+  | V4 | 每次触发都清值（旁路旗标式过度修正） | **1** | **0** | 仅"keeps the current session policy … while a refresh re-read is open" |
+  | V5 | `dbIndex` 进 policy effect 依赖（在错误的轴上过度失效） | **1** | **0** | 仅"is not invalidated by a database switch inside the same session" |
+  | V6 | 换会话时**继承旧值套上新 tag**（"聪明"作弊修法） | **2** | 1 | Tester 解开的那条 + 本轮"asks each session…" |
+  | V7 | 策略行永不上色（`policyValue = null`；只跑 2 个 r2 文件，分母 13） | **7** | 4 | 成对两条 + 本轮 3 条 + r2 Tester 的键切换/刷新计数各一条（去掉新电池后只剩 Tester 文件，分母 10 → 4 红） |
+  | V8 | 拆掉 `stale` 写侧守卫、只留会话 tag（两侧防线的另一半） | **1** | 1 | `kvBarSlotTesterGaps` 的"drops a policy reply that lands after the session switched"（本轮未新增用例即已守住，见上"守卫原样保留"条） |
+
+  ⇒ **任务书要求的"注入'策略行不按 `dbSessionId` 失效'应至少一条红"由 V1/V2/V3/V6 满足**；
+  V4/V5 在去掉本轮新文件后红数为 **0**，即这两条只有新电池抓得到（补测有效性自证）。
+- **门禁原始数字**：见同目录 `progress.md`「第 2 轮修复回合（Coder，BUG-005 单条）」。
+  新基线 **40 files / 325 passed (325) / 0 skipped**（上一基线 39 / 321 + 1 skipped (322)：
+  +3 例来自新文件、+1 来自解开的那条 skip），`ui/kv-bar/**` 覆盖率仍 **100 / 100 / 100 / 100**。
+- 本条只改渲染侧状态归属与注释：`.rs` 零改动，未跑 cargo / e2e / `pnpm build`。
 
 ---
 
