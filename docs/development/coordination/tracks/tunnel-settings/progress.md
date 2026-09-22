@@ -256,3 +256,18 @@ Tester 已独立证实该隐患并评估其影响：见下节「既有隐患登�
 - 可用定位方式：`button[aria-haspopup="listbox"]`（本轨与新增测试采用），或 `<Select triggerDataAttrs={{...}}>`。
 - 已由 `tester_SelectTestIdHazard.test.tsx` 固化为可见守卫；若上游让 `Select` 转发任意 props，
   该测试的负向断言需翻转为正向。
+
+---
+
+## 聚合元数据
+
+> 供 `scripts/aggregate-hub.mjs` 解析。该脚本只认「`- Key: value`」形式的 ASCII 冒号条目，
+> 且同名键**后者覆盖前者**，因此本块必须保持在文件末尾，新增内容请插在本块之前。
+
+- Phase: PASSED
+- 编码 commit: `9ed6604d`
+- 测试 commit: `06187efc`
+- 合并 commit: `d55008d2`
+- 代理: Coder → Tester（1 轮复测）
+- worktree: `.worktrees/datazen-tunnel-settings`
+- branch: `feature/tunnel-settings`

@@ -653,3 +653,18 @@ CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --exact \
 </details>
 
 > **Tester 复测（第 2 轮）终判：`FAILED`** —— BUG-001 / BUG-002 已确认修复（BUG-002 经 in-process bastion 在真实路径上动态验证），附带修正 #2 / #6 落实且 11 个回归用例逐字节未改；但复测新登记 **BUG-003**（HTTP 探针无超时 → 永久挂起）与 **BUG-004**（`https`/`wss` TLS 路径 panic，既存但本轨拥有该代码）两个阻断项。详见上方「Tester 复测轮（第 2 轮）」。
+
+---
+
+## 聚合元数据
+
+> 供 `scripts/aggregate-hub.mjs` 解析。该脚本只认「`- Key: value`」形式的 ASCII 冒号条目，
+> 且同名键**后者覆盖前者**，因此本块必须保持在文件末尾，新增内容请插在本块之前。
+
+- Phase: PASSED
+- 编码 commit: `1398bd7d`
+- 测试 commit: `c008cb3b`
+- 合并 commit: `9ae7113e`
+- 代理: Coder → Tester（3 轮修复 + 复测）
+- worktree: `.worktrees/datazen-tunnel-backend`
+- branch: `feature/tunnel-backend`

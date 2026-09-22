@@ -441,3 +441,18 @@ BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」�
 8. **（本轮新增）`useConnectionForm.ts` 759 行接近 800 红线**：建议下一轮拆分（快照/类型切换 `captureSnapshot`+`applyTypeDefaults`+`handleDatabaseTypeChange` 约 130 行可独立成模块）。
 9. **（本轮新增）校验域合并的契约硬化**：`Object.assign` 为 driver-wins，建议给 `DriverFormValidator` 的返回键加「不得使用隧道域键」的契约注释/类型约束，或把隧道域错误改为**在合并后强制重写**，使悬空引用的拦截不依赖「当前无碰撞」这一经验事实。
 
+
+---
+
+## 聚合元数据
+
+> 供 `scripts/aggregate-hub.mjs` 解析。该脚本只认「`- Key: value`」形式的 ASCII 冒号条目，
+> 且同名键**后者覆盖前者**，因此本块必须保持在文件末尾，新增内容请插在本块之前。
+
+- Phase: PASSED
+- 编码 commit: `cfb63354`
+- 测试 commit: `d84d73cb`
+- 合并 commit: `6e4df9a3`
+- 代理: Coder → Tester（1 轮修复 + 复测）
+- worktree: `.worktrees/datazen-tunnel-form`
+- branch: `feature/tunnel-form`
