@@ -1034,12 +1034,11 @@ async fn test_tester_websocket_probe_never_echoes_a_url_embedded_token() {
 /// [tester] (协调者追加项 1) — `scheme = "https"` must report a TLS failure as
 /// `Err`, never panic or hang.
 ///
-/// Ignored because it **fails today**: `tunnel-backend-BUG-004` makes the rustls
-/// `ClientConfig::builder()` call panic before any TLS handshake can happen.
-/// Remove `#[ignore]` once BUG-004 is fixed; the body is the ready-made
-/// regression guard (plain TCP listener that never speaks TLS → must be `Err`).
+/// `#[ignore]` removed after the BUG-004 fix (process-wide rustls
+/// `CryptoProvider` installed in `main()` and at every tunnel TLS construction
+/// site); the body is unchanged and now runs as the standing regression guard
+/// (plain TCP listener that never speaks TLS → must be `Err`).
 #[tokio::test]
-#[ignore = "blocked by tunnel-backend-BUG-004 (rustls CryptoProvider panic); un-ignore after the fix"]
 async fn test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1075,10 +1074,9 @@ async fn test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking(
 /// [tester] (协调者追加项 1) — the `wss://` variant of the same defect: a
 /// `wss` relay probe must return `Err` on TLS failure, not panic.
 ///
-/// Ignored for the same reason as the `https` case (`tunnel-backend-BUG-004`);
-/// remove `#[ignore]` after the fix.
+/// `#[ignore]` removed after the BUG-004 fix, same as the `https` case; the body
+/// is unchanged and now runs as the standing regression guard.
 #[tokio::test]
-#[ignore = "blocked by tunnel-backend-BUG-004 (rustls CryptoProvider panic); un-ignore after the fix"]
 async fn test_tester_wss_relay_probe_reports_tls_failure_instead_of_panicking() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

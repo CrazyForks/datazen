@@ -136,8 +136,10 @@ pub struct SshTunnel {
 
 ## tunnel-backend-BUG-003 — `test_tunnel` 对「接受 TCP 但不回应 CONNECT」的 HTTP 代理**无限挂起**（探针无超时）
 
+> **状态变更（Coder 第 3 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 3 轮）」。
+
 - **量级**: 中（管理面「测试隧道」永久无响应；探针与生产数据路径的超时语义不一致）
-- **状态**: 待修复
+- **状态**: 待复测（已修复）
 - **引入**: `db6fc822`（本轮新增的探针路径）。根因：`verify_upstream` 只对 `dial_proxy` / `tls_connect` 加了超时，**没有**对 `perform_connect` 的 CONNECT 响应读取加超时。
 - **影响范围**: `src-tauri/src/tunnel/http_proxy.rs::verify_upstream` → `ConnectionManager::test_tunnel` → IPC `test_tunnel`。对比：生产数据路径 `establish_and_copy` 用 `tokio::time::timeout(timeout, perform_connect(...))` 包住了同一次握手，因此**只有探针**会挂死。
 
@@ -182,8 +184,10 @@ test commands::tunnel::tests::zz_temp_silent_proxy_probe_outcome ... ok (3.04s)
 
 ## tunnel-backend-BUG-004 — `https` 代理 / `wss` 中继的 TLS 路径**运行时 panic**（rustls CryptoProvider 未安装）
 
+> **状态变更（Coder 第 3 轮）**: 已修复，待 Tester 复测。修复说明、provider 选择理由与主证测试见同目录 `progress.md`「Coder 修复轮（第 3 轮）」。两条 `#[ignore]` 守卫已转正（`cargo test -p datazen --lib` 的 ignored 数由 5 回到 3）。
+
 - **量级**: 中高（加密隧道变体直接 panic；生产转发任务静默 panic → 连接静默失败，无用户可见错误）
-- **状态**: 待修复
+- **状态**: 待复测（已修复）
 - **引入**: **既存缺陷**（非本轮引入）：`ClientConfig::builder()` 早在 `7fc55501 feat: complete HTTP/HTTPS and WebSocket tunnels (#37)` 就存在（`git show 6689cbe0:src-tauri/src/tunnel/http_proxy.rs` 第 156 行）。但本轮把**探针**也接到同一 TLS 路径，使其首次在 `test_tunnel` 上暴露；上一轮 Tester 的用例只覆盖 `http`/`ws` 明文变体，故未发现。
 - **影响范围**: `tunnel/http_proxy.rs::tls_connect`（`https` 代理，探针 + 数据路径）、`tunnel/websocket.rs::verify_upstream` → `connect_ws`（`wss://` 中继，走 tungstenite 0.26 的 `ClientConfig::builder()`）。
 

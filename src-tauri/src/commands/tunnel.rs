@@ -148,121 +148,9 @@ pub async fn test_tunnel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::tunnel_summary_tests::saved_ssh_tunnel;
     use crate::db::{SshTunnelConfig, TunnelKind};
-    use crate::testing::app_state::{sample_postgres_config, TestAppState};
-
-    const SSH_PASSWORD: &str = "ssh-password-secret";
-    const SSH_PASSPHRASE: &str = "ssh-passphrase-secret";
-    const SSH_HOST: &str = "bastion.internal";
-
-    fn saved_ssh_tunnel(id: &str, name: &str) -> SavedTunnel {
-        SavedTunnel {
-            id: id.into(),
-            name: name.into(),
-            kind: TunnelKind::Ssh,
-            ssh: Some(SshTunnelConfig {
-                enabled: true,
-                host: SSH_HOST.into(),
-                port: 2222,
-                username: "ubuntu".into(),
-                auth_method: "password".into(),
-                password: Some(SSH_PASSWORD.into()),
-                private_key_path: None,
-                passphrase: Some(SSH_PASSPHRASE.into()),
-                jump: None,
-            }),
-            http_proxy: None,
-            websocket: None,
-        }
-    }
-
-    fn assert_no_secret_leak(json: &str) {
-        for needle in [
-            SSH_PASSWORD,
-            SSH_PASSPHRASE,
-            SSH_HOST,
-            "ubuntu",
-            "password",
-            "passphrase",
-            "authToken",
-            "auth_token",
-            "privateKeyPath",
-        ] {
-            assert!(
-                !json.contains(needle),
-                "IPC payload leaked `{needle}`: {json}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn summaries_drop_every_tunnel_secret() {
-        let test = TestAppState::new().await;
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t1", "Prod Bastion"))
-            .await
-            .unwrap();
-
-        let summaries = get_tunnel_summaries_impl(&test.state).await.unwrap();
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].id, "t1");
-        assert_eq!(summaries[0].name, "Prod Bastion");
-        assert_eq!(summaries[0].kind, TunnelKind::Ssh);
-
-        let json = serde_json::to_string(&summaries).unwrap();
-        assert_no_secret_leak(&json);
-        let value: serde_json::Value = serde_json::to_value(&summaries).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!([{ "id": "t1", "name": "Prod Bastion", "kind": "ssh" }]),
-            "the summary must expose exactly id/name/kind"
-        );
-    }
-
-    #[tokio::test]
-    async fn usage_lists_referencing_connections_in_order() {
-        let test = TestAppState::new().await;
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t1", "Prod Bastion"))
-            .await
-            .unwrap();
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t2", "Other Bastion"))
-            .await
-            .unwrap();
-
-        let mut hit = sample_postgres_config("conn-hit");
-        hit.name = "Hit".into();
-        hit.tunnel_id = Some("t1".into());
-        test.store.save_connection(hit).await.unwrap();
-
-        let mut other = sample_postgres_config("conn-other");
-        other.name = "Other".into();
-        other.tunnel_id = Some("t2".into());
-        test.store.save_connection(other).await.unwrap();
-
-        let usage = get_tunnel_usage_impl(&test.state, "t1".into())
-            .await
-            .unwrap();
-        assert_eq!(usage.connection_ids, vec!["conn-hit".to_string()]);
-        assert_eq!(usage.connection_names, vec!["Hit".to_string()]);
-
-        let json = serde_json::to_string(&usage).unwrap();
-        assert_no_secret_leak(&json);
-
-        // Miss path: a stored tunnel nobody references returns empty arrays.
-        let miss = get_tunnel_usage_impl(&test.state, "t2-missing".into())
-            .await
-            .unwrap();
-        assert!(miss.connection_ids.is_empty());
-        assert!(miss.connection_names.is_empty());
-
-        let miss_unknown = get_tunnel_usage_impl(&test.state, "no-such-tunnel".into())
-            .await
-            .unwrap();
-        assert!(miss_unknown.connection_ids.is_empty());
-        assert!(miss_unknown.connection_names.is_empty());
-    }
+    use crate::testing::app_state::TestAppState;
 
     #[tokio::test]
     async fn test_tunnel_rejects_unknown_tunnel_id() {
@@ -306,170 +194,6 @@ mod tests {
     }
 
     // ── [tester] independent verification additions ──────────────────
-
-    #[tokio::test]
-    async fn test_tester_summaries_are_empty_for_an_empty_store() {
-        let test = TestAppState::new().await;
-        let summaries = get_tunnel_summaries_impl(&test.state).await.unwrap();
-        assert!(
-            summaries.is_empty(),
-            "an empty store must project to an empty summary list"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_tester_summaries_keep_store_order_and_drop_secrets_for_every_kind() {
-        use crate::db::{HttpProxyTunnelConfig, WebSocketTunnelConfig};
-
-        let test = TestAppState::new().await;
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t1", "Bastion"))
-            .await
-            .unwrap();
-        test.store
-            .save_tunnel(SavedTunnel {
-                id: "t2".into(),
-                name: "Corp proxy".into(),
-                kind: TunnelKind::HttpProxy,
-                ssh: None,
-                http_proxy: Some(HttpProxyTunnelConfig {
-                    enabled: true,
-                    host: "proxy.corp".into(),
-                    port: 8080,
-                    scheme: "http".into(),
-                    username: Some("proxy-user".into()),
-                    password: Some("proxy-password-secret".into()),
-                    headers: None,
-                    connect_timeout_secs: 30,
-                }),
-                websocket: None,
-            })
-            .await
-            .unwrap();
-        test.store
-            .save_tunnel(SavedTunnel {
-                id: "t3".into(),
-                name: "Relay".into(),
-                kind: TunnelKind::WebSocket,
-                ssh: None,
-                http_proxy: None,
-                websocket: Some(WebSocketTunnelConfig {
-                    enabled: true,
-                    url: "wss://relay.corp/v1".into(),
-                    auth_token: Some("ws-auth-token-secret".into()),
-                    headers: None,
-                    connect_timeout_secs: 30,
-                    ping_interval_secs: 30,
-                    mode: "datazen_v1".into(),
-                }),
-            })
-            .await
-            .unwrap();
-
-        let summaries = get_tunnel_summaries_impl(&test.state).await.unwrap();
-        assert_eq!(
-            summaries.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-            vec!["t1", "t2", "t3"],
-            "summaries must preserve store order"
-        );
-        assert_eq!(
-            summaries.iter().map(|s| s.kind).collect::<Vec<_>>(),
-            vec![
-                TunnelKind::Ssh,
-                TunnelKind::HttpProxy,
-                TunnelKind::WebSocket
-            ]
-        );
-
-        // Every kind's secrets must be gone, not just SSH's.
-        let json = serde_json::to_string(&summaries).unwrap();
-        for needle in [
-            SSH_PASSWORD,
-            SSH_PASSPHRASE,
-            SSH_HOST,
-            "proxy-password-secret",
-            "proxy-user",
-            "proxy.corp",
-            "ws-auth-token-secret",
-            "relay.corp",
-        ] {
-            assert!(!json.contains(needle), "summary leaked `{needle}`: {json}");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_tester_usage_is_positionally_aligned_across_multiple_hits() {
-        let test = TestAppState::new().await;
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t1", "Bastion"))
-            .await
-            .unwrap();
-
-        // Deliberately insert in an order where the ids and the names do not
-        // sort alike, so a positional mix-up cannot cancel out.
-        for (id, name) in [("c-b", "Bravo"), ("c-a", "Alpha"), ("c-c", "Charlie")] {
-            let mut conn = sample_postgres_config(id);
-            conn.name = name.into();
-            conn.tunnel_id = Some("t1".into());
-            test.store.save_connection(conn).await.unwrap();
-        }
-
-        // Non-matching neighbours: one direct connection (`None`) and one on a
-        // different tunnel.
-        let mut direct = sample_postgres_config("c-direct");
-        direct.name = "Direct".into();
-        direct.tunnel_id = None;
-        test.store.save_connection(direct).await.unwrap();
-
-        let mut other = sample_postgres_config("c-other");
-        other.name = "Other".into();
-        other.tunnel_id = Some("t-other".into());
-        test.store.save_connection(other).await.unwrap();
-
-        let usage = get_tunnel_usage_impl(&test.state, "t1".into())
-            .await
-            .unwrap();
-        assert_eq!(
-            usage.connection_ids,
-            vec!["c-b".to_string(), "c-a".to_string(), "c-c".to_string()],
-            "ids must come back in store order"
-        );
-        assert_eq!(
-            usage.connection_names,
-            vec![
-                "Bravo".to_string(),
-                "Alpha".to_string(),
-                "Charlie".to_string()
-            ],
-            "each name must stay aligned with its own id"
-        );
-        assert_eq!(usage.connection_ids.len(), usage.connection_names.len());
-    }
-
-    #[tokio::test]
-    async fn test_tester_usage_with_empty_id_matches_no_real_reference() {
-        let test = TestAppState::new().await;
-        test.store
-            .save_tunnel(saved_ssh_tunnel("t1", "Bastion"))
-            .await
-            .unwrap();
-
-        let mut referenced = sample_postgres_config("c-ref");
-        referenced.tunnel_id = Some("t1".into());
-        test.store.save_connection(referenced).await.unwrap();
-
-        let mut direct = sample_postgres_config("c-direct");
-        direct.tunnel_id = None;
-        test.store.save_connection(direct).await.unwrap();
-
-        // `None` must never match; an empty query must not sweep in every
-        // direct connection (none of them carries an empty-string reference).
-        let usage = get_tunnel_usage_impl(&test.state, String::new())
-            .await
-            .unwrap();
-        assert!(usage.connection_ids.is_empty(), "{usage:?}");
-        assert!(usage.connection_names.is_empty(), "{usage:?}");
-    }
 
     #[tokio::test]
     async fn test_tester_test_tunnel_rejects_ssh_kind_without_ssh_config() {
@@ -805,5 +529,70 @@ mod tests {
             err.to_string().contains("SSH connect"),
             "unexpected error: {err}"
         );
+    }
+
+    // ── tunnel-backend-BUG-003: the CONNECT probe must be bounded ─────
+
+    /// BUG-003 regression: a proxy that **accepts TCP but never answers** the
+    /// `CONNECT` request used to hang the probe forever, so the IPC future never
+    /// settled and the management UI spun indefinitely.
+    ///
+    /// `saved_proxy_tunnel` pins `connect_timeout_secs = 2`. The probe is itself
+    /// wrapped in a generous test-level timeout so that, if the fix regresses,
+    /// this case fails instead of wedging the whole suite.
+    #[tokio::test]
+    async fn test_tunnel_times_out_against_a_proxy_that_never_answers_connect() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent proxy");
+        let port = listener.local_addr().expect("fixture addr").port();
+        let fixture = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // Consume the CONNECT request, then deliberately never reply.
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    drop(stream);
+                });
+            }
+        });
+
+        let test = TestAppState::new().await;
+        test.store
+            .save_tunnel(saved_proxy_tunnel("t-silent-proxy", port))
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            test_tunnel_impl(
+                &test.state,
+                "t-silent-proxy".into(),
+                "127.0.0.1".into(),
+                5432,
+            ),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        let result = outcome.expect(
+            "the probe must not hang against a silent proxy: BUG-003 regression \
+             (CONNECT handshake not bounded by connect_timeout_secs)",
+        );
+        let err = result.expect_err("a proxy that never answers CONNECT must fail the probe");
+        assert!(
+            err.to_string().contains("timed out"),
+            "the timeout must be identifiable in the error: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "the probe must be bounded by connect_timeout_secs (2s), took {elapsed:?}"
+        );
+
+        fixture.abort();
     }
 }

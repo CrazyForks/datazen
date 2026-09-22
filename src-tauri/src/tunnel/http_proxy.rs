@@ -175,6 +175,12 @@ async fn tls_connect<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    // `ClientConfig::builder()` panics when both provider features are compiled
+    // in and no process default exists (tunnel-backend-BUG-004). Installing one
+    // is idempotent, so this is safe on every connection and also covers library
+    // and test embedders that never go through `main()`.
+    crate::tls::install_default_crypto_provider();
+
     let roots = RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
     };
@@ -202,6 +208,10 @@ where
 /// spawns the accept loop — so on its own it reports success even for an
 /// unreachable proxy. This is the step that actually establishes the upstream
 /// leg, and it is what the standalone tunnel connectivity probe uses.
+///
+/// Every stage is bounded by `connect_timeout_secs`: dial, TLS handshake and the
+/// CONNECT handshake itself ([`perform_connect_within`]). A proxy that accepts
+/// TCP but never answers must yield `Err` instead of hanging the caller forever.
 pub(crate) async fn verify_upstream(
     proxy: &HttpProxyTunnelConfig,
     remote_host: &str,
@@ -215,22 +225,24 @@ pub(crate) async fn verify_upstream(
     let socket = dial_proxy(&proxy.host, proxy.port, timeout).await?;
     if scheme == "https" {
         let mut upstream = tls_connect(&proxy.host, socket, timeout).await?;
-        perform_connect(
+        perform_connect_within(
             &mut upstream,
             remote_host,
             remote_port,
             auth_header.as_deref(),
             &extra_headers,
+            timeout,
         )
         .await
     } else {
         let mut upstream = socket;
-        perform_connect(
+        perform_connect_within(
             &mut upstream,
             remote_host,
             remote_port,
             auth_header.as_deref(),
             &extra_headers,
+            timeout,
         )
         .await
     }
@@ -292,18 +304,15 @@ async fn establish_and_copy<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    tokio::time::timeout(
+    perform_connect_within(
+        upstream,
+        remote_host,
+        remote_port,
+        auth_header,
+        extra_headers,
         timeout,
-        perform_connect(
-            upstream,
-            remote_host,
-            remote_port,
-            auth_header,
-            extra_headers,
-        ),
     )
-    .await
-    .map_err(|_| DriverError::HttpProxyTunnelError("CONNECT handshake timed out".into()))??;
+    .await?;
 
     tokio::select! {
         _ = cancel.cancelled() => Ok(()),
@@ -348,6 +357,36 @@ fn base64_encode(bytes: &[u8]) -> String {
         });
     }
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// Send the `CONNECT` request and read its status line, bounded by `timeout`.
+///
+/// [`perform_connect`] has no internal deadline — it reads the status line byte
+/// by byte — so **every** caller must bound it. A proxy that accepts the TCP
+/// connection but never answers (a half-dead squid, a port forwarded to a dead
+/// backend, a SYN-only firewall) would otherwise hang the caller forever; for
+/// the standalone probe that means an IPC command whose future never settles.
+///
+/// This is the single place where the handshake is bounded, so the data path
+/// ([`establish_and_copy`]) and the probe ([`verify_upstream`]) provably share
+/// the same timeout semantics.
+async fn perform_connect_within<S>(
+    stream: &mut S,
+    remote_host: &str,
+    remote_port: u16,
+    auth_header: Option<&str>,
+    extra_headers: &[(String, String)],
+    timeout: Duration,
+) -> Result<(), DriverError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    tokio::time::timeout(
+        timeout,
+        perform_connect(stream, remote_host, remote_port, auth_header, extra_headers),
+    )
+    .await
+    .map_err(|_| DriverError::HttpProxyTunnelError("CONNECT handshake timed out".into()))?
 }
 
 async fn perform_connect<S>(
@@ -591,5 +630,65 @@ mod tests {
             headers: None,
             connect_timeout_secs: 3,
         }
+    }
+
+    /// `tunnel-backend-BUG-004` evidence ②: the **data path** must surface a TLS
+    /// failure as `Err` instead of panicking.
+    ///
+    /// `connect_and_copy` is the exact function the accept loop's per-connection
+    /// task runs, so before the fix `ClientConfig::builder()` panicked inside
+    /// that spawned task: the forwarder died silently and the tunnel still looked
+    /// alive. A panic here would fail this test instead of being swallowed by a
+    /// detached `JoinHandle`.
+    #[tokio::test]
+    async fn https_data_path_reports_tls_failure_without_panicking() {
+        // A plain TCP "https proxy": it accepts, then never speaks TLS.
+        let proxy = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let proxy_port = proxy.local_addr().expect("fixture addr").port();
+        let proxy_task = tokio::spawn(async move {
+            let (stream, _) = proxy.accept().await.expect("accept");
+            // Hold the connection open without answering the ClientHello.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(stream);
+        });
+
+        // The inbound (client) half of the local listener. `connect_and_copy`
+        // only touches it after the CONNECT succeeds, so any live stream works.
+        let inbound_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind inbound");
+        let inbound_addr = inbound_listener.local_addr().expect("inbound addr");
+        let (connected, accepted) =
+            tokio::join!(TcpStream::connect(inbound_addr), inbound_listener.accept());
+        let mut inbound = connected.expect("connect inbound");
+        let _server_side = accepted.expect("accept inbound");
+
+        let cancel = CancellationToken::new();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            connect_and_copy(
+                &mut inbound,
+                "https",
+                "127.0.0.1",
+                proxy_port,
+                "db.internal",
+                5432,
+                None,
+                &[],
+                Duration::from_secs(1),
+                &cancel,
+            ),
+        )
+        .await
+        .expect("the https data path must be bounded, not hang");
+
+        assert!(
+            outcome.is_err(),
+            "a non-TLS endpoint under scheme=https must fail, got {outcome:?}"
+        );
+
+        proxy_task.abort();
     }
 }

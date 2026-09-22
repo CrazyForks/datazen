@@ -250,6 +250,11 @@ async fn connect_ws(
     extra_headers: &[(String, String)],
     timeout: Duration,
 ) -> Result<WsStream, DriverError> {
+    // `wss://` hands off to rustls inside tungstenite; install the process-wide
+    // provider first so its `ClientConfig::builder()` cannot panic
+    // (tunnel-backend-BUG-004). Idempotent, so it is safe per connection.
+    crate::tls::install_default_crypto_provider();
+
     let mut request = url
         .into_client_request()
         .map_err(|e| DriverError::WebSocketTunnelError(format!("invalid WebSocket URL: {e}")))?;

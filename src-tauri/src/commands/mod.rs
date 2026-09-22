@@ -287,3 +287,7 @@ mod ipc_surface_tests;
 #[cfg(test)]
 #[path = "tunnel_probe_tests.rs"]
 mod tunnel_probe_tests;
+
+#[cfg(test)]
+#[path = "tunnel_summary_tests.rs"]
+mod tunnel_summary_tests;
