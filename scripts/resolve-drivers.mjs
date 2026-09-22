@@ -308,6 +308,20 @@ const BASIC_PATH_FRONTEND = {
       path: '../../packages/drivers/redis/ui/connection/RedisConnectionView',
       viewMode: 'keyvalue',
     },
+    // KV workspace slots (host contract F-3). Declared slot by slot, in
+    // `KV_SLOT_NAMES` order, and only for the surfaces this package ships:
+    // an undeclared slot generates neither an import nor a registry row, so the
+    // host keeps its default rendering there instead of importing a placeholder.
+    kvSlots: {
+      statusBar: {
+        component: 'RedisKvStatusBar',
+        path: '../../packages/drivers/redis/ui/kv-bar',
+      },
+      keyPropsSidebar: {
+        component: 'RedisKeyPropsSidebar',
+        path: '../../packages/drivers/redis/ui/kv-bar',
+      },
+    },
     settings: {
       driverId: 'redis',
       label: 'Redis',
