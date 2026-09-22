@@ -326,3 +326,51 @@ fn the_outcome_reports_camel_case_keys() {
     assert!(value.get("keep_ttl").is_none());
     assert!(value.get("keep_ttl_fallback").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// `[tester]` W3-C 第 1 轮补测（阶段 C）—— 只加断言，不改生产代码。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_tester_the_camel_case_spelling_wins_when_both_are_present() {
+    // The command schema (commands.rs:199/214) names `keepTtl`; the snake_case
+    // form is a convenience for headless callers. If a request carries both,
+    // the documented spelling must be the one the write honours — otherwise a
+    // Workflow step could clear a live expiry through a field nobody reads.
+    assert_eq!(
+        keep_ttl_policy(&serde_json::json!({ "keepTtl": true, "keep_ttl": false })),
+        Some(true)
+    );
+    assert_eq!(
+        keep_ttl_policy(&serde_json::json!({ "keepTtl": false, "keep_ttl": true })),
+        Some(false)
+    );
+}
+
+/// `[tester]` BUG-004 复现载体（今日为红，故 `#[ignore]`，见 bugs.md）。
+///
+/// 契约 C-4（progress.md:159）：回退的前提是「**被服务端拒绝**（旧版本 Redis / 代理）」，
+/// `keepTtlFallback` 就是这一事件的可断言位（progress.md:160）。当前实现的分诊口径是
+/// 「SET 报错了」而非「SET 因 KEEPTTL 报错」，于是 `WRONGTYPE` / `READONLY` /
+/// 连接类失败也会走二次写入，并把「本服务器不支持 KEEPTTL」这个结论报给 UI（W3-E 已
+/// 按此位决定是否提示）。C-3 末段明确「传输/权限类失败仍按通用 IPC 错误抛出」。
+#[ignore = "redis-codec-write-BUG-004: any SET error is classified as a KEEPTTL rejection"]
+#[tokio::test]
+async fn test_tester_a_non_keepttl_rejection_must_not_reissue_the_write() {
+    let mut conn = Scripted::new();
+    conn.push_err("SET", "sentinel-wrongtype");
+    conn.push_int("PTTL", 5_000);
+    conn.push_ok("SET");
+
+    let result = write_with(&mut conn, None).await;
+    assert!(
+        result.is_err(),
+        "a non-KEEPTTL rejection must be reported, not rescued: {result:?}"
+    );
+    assert_eq!(
+        conn.journal().len(),
+        1,
+        "only the rejected SET may reach the server, got {:?}",
+        conn.journal()
+    );
+}

@@ -273,3 +273,192 @@ fn aliases_map_onto_the_same_codec() {
     assert!(!Codec::Msgpack.is_byte_codec());
     assert_eq!(Codec::from(compress::Framing::Deflate).name(), "deflate");
 }
+
+// ---------------------------------------------------------------------------
+// [tester] Stage-C additions: branches the shipped suite left unexercised.
+// Assertions stay on stable codes / structural keys, never on `message` prose.
+// ---------------------------------------------------------------------------
+
+/// `[tester]` A stored payload that is not base64 fails as `decode-failed`
+/// (the codec rejected the bytes) — distinct from `invalid-base64`, which is
+/// the *transport* envelope being malformed.
+#[test]
+fn test_tester_base64_codec_rejects_non_base64_payload() {
+    let r = decode("base64", b"definitely not base64 !!!");
+    assert_eq!(reason_of(&r), Some("decode-failed"));
+    assert_eq!(r["codec"], serde_json::json!("base64"));
+    assert_eq!(r["ok"], serde_json::json!(false));
+}
+
+/// `[tester]` C-1 promises wrapped/multi-line base64 payloads still decode.
+#[test]
+fn test_tester_base64_codec_tolerates_wrapped_whitespace() {
+    let wrapped = b"QUJD\r\nRA==\n";
+    let r = decode("b64", wrapped);
+    assert!(decoded(&r), "wrapped base64 text must decode: {r}");
+    assert_eq!(r["text"], serde_json::json!("ABCD"));
+    assert_eq!(r["inBytes"], serde_json::json!(wrapped.len()));
+    assert_eq!(r["bytes"], serde_json::json!(4));
+}
+
+/// `[tester]` A missing / non-string `codec` is `unknown-codec`, and the echo
+/// carries exactly what the caller sent (empty string when absent).
+#[test]
+fn test_tester_missing_or_non_string_codec_is_unknown_codec() {
+    let absent = decode_input(serde_json::json!({ "data": "QUJD" }));
+    assert_eq!(reason_of(&absent), Some("unknown-codec"));
+    assert_eq!(absent["codec"], serde_json::json!(""));
+    assert_eq!(absent["retryable"], serde_json::json!(false));
+
+    let numeric = decode_input(serde_json::json!({ "codec": 7, "data": "QUJD" }));
+    assert_eq!(reason_of(&numeric), Some("unknown-codec"));
+
+    // Whitespace/case are normalised before the lookup, so a padded but valid
+    // name is never mistaken for an unknown codec.
+    let padded = decode_input(serde_json::json!({ "codec": "  GzIp  ", "data": "QUJD" }));
+    assert_eq!(reason_of(&padded), Some("decode-failed"));
+    assert_eq!(padded["codec"], serde_json::json!("gzip"));
+}
+
+/// `[tester]` `data` must be a string: a structured value is `missing-data`,
+/// not a panic and not a silently empty payload.
+#[test]
+fn test_tester_non_string_data_is_missing_data() {
+    for data in [
+        serde_json::json!(null),
+        serde_json::json!(42),
+        serde_json::json!({ "b64": "QUJD" }),
+    ] {
+        let r = decode_input(serde_json::json!({ "codec": "none", "data": data }));
+        assert_eq!(reason_of(&r), Some("missing-data"), "for data={data}");
+    }
+}
+
+/// `[tester]` The bare-DEFLATE probe must not fire when the user already chose
+/// `deflate`: a retry of the same framing is not a suggestion.
+#[test]
+fn test_tester_failed_deflate_attempt_suggests_nothing() {
+    let r = decode("deflate", b"clearly not a deflate stream at all");
+    assert_eq!(reason_of(&r), Some("decode-failed"));
+    assert_eq!(suggested_of(&r), None);
+    assert_eq!(r["retryable"], serde_json::json!(false));
+}
+
+/// `[tester]` A byte-codec rejection never points at a structured format: the
+/// user must not be bounced from "gzip" to "php" on a coincidence.
+#[test]
+fn test_tester_byte_codec_failure_never_suggests_structured_codec() {
+    // Payload opens with `a:` (a PHP serialize tag) but is not compressed.
+    let phpish = b"a:1:{s:1:\"a\";i:1;}";
+    for codec in ["gzip", "zlib", "base64", "none"] {
+        let r = decode(codec, phpish);
+        if decoded(&r) {
+            continue; // `none` succeeds by contract; nothing to suggest.
+        }
+        let suggested = suggested_of(&r).unwrap_or("");
+        assert!(
+            !matches!(suggested, "php" | "java" | "pickle" | "msgpack"),
+            "{codec} must not be bounced to structured codec {suggested}"
+        );
+    }
+}
+
+/// `[tester]` One-byte payloads reach the sniffing helpers without underflow
+/// (`sniff_structured` and `sniff_framing` both need >= 2 bytes) and every
+/// codec still answers a well-formed envelope. Gzip is the one framing that
+/// stays strict here, because its CRC32 + ISIZE trailer cannot be satisfied.
+#[test]
+fn test_tester_single_byte_payloads_answer_a_well_formed_envelope() {
+    for codec in [
+        "gzip", "zlib", "deflate", "msgpack", "java", "pickle", "php", "base64", "none",
+    ] {
+        let r = decode(codec, &[0x80]);
+        assert!(
+            r.get("ok").is_some() && r.get("codec").is_some(),
+            "{codec} answered without ok/codec: {r}"
+        );
+    }
+    let g = decode("gzip", &[0x80]);
+    assert!(!decoded(&g), "gzip must reject a one-byte stream, got: {g}");
+    assert_eq!(reason_of(&g), Some("decode-failed"));
+}
+
+/// `[tester]` **BUG-002 reproduction (run with `-- --ignored`).**
+///
+/// Contract C-1 promises a zlib selection is validated against RFC 1950
+/// (`CM == 8` plus the `% 31` header check) and that a wrong framing "must
+/// fail, not helpfully succeed". `flate2::read::{ZlibDecoder,DeflateDecoder}`
+/// instead read a truncated stream as end-of-input, so one- and two-byte
+/// payloads — including a bare `78 9c` zlib header — come back as
+/// `ok: true, bytes: 0`: an empty success the viewer cannot distinguish from a
+/// genuinely empty value. The gzip leg of this loop already passes (see
+/// [`Framing::Gzip`]'s trailer), which is why the shipped
+/// `truncated_container_is_an_error_not_a_short_success` case only covers gzip.
+#[test]
+#[ignore = "redis-codec-write-BUG-002: zlib/deflate answer truncated streams as empty success"]
+fn test_tester_truncated_deflate_streams_must_not_succeed() {
+    for (codec, stored) in [
+        ("zlib", vec![0x78u8, 0x9c]),
+        ("deflate", vec![0x78u8, 0x9c]),
+        ("zlib", vec![0x80u8]),
+        ("deflate", vec![b'A']),
+    ] {
+        let r = decode(codec, &stored);
+        assert!(
+            !decoded(&r),
+            "{codec} reported success for a {}-byte truncated stream: {r}",
+            stored.len()
+        );
+        assert_eq!(reason_of(&r), Some("decode-failed"));
+    }
+}
+
+/// `[tester]` **BUG-003 reproduction (run with `-- --ignored`).**
+///
+/// `flate2::read::GzDecoder` defaults to single-member mode, so a concatenated
+/// gzip stream — what `cat a.gz b.gz` and most log shippers produce, and what
+/// `gunzip` decodes in full — silently decodes to the first member only. The
+/// answer is `ok: true` with a `bytes` count that is short by the remaining
+/// members, and no residual-byte signal for the UI to warn with.
+#[test]
+#[ignore = "redis-codec-write-BUG-003: multi-member gzip decodes only the first member as a success"]
+fn test_tester_multi_member_gzip_is_not_silently_truncated() {
+    let first = b"FIRST-MEMBER".to_vec();
+    let second = b"+SECOND".to_vec();
+    let mut stream = compress::test_support::gzip(&first);
+    stream.extend_from_slice(&compress::test_support::gzip(&second));
+
+    let r = decode("gzip", &stream);
+    assert!(decoded(&r), "a valid gzip stream must decode: {r}");
+    assert_eq!(
+        r["bytes"].as_u64(),
+        Some((first.len() + second.len()) as u64),
+        "gunzip semantics: every member has to reach the viewer"
+    );
+}
+
+/// `[tester]` C-2: the JSON kind carries the shared key set with explicit
+/// nulls, so the viewer can read every field unconditionally.
+#[test]
+fn test_tester_json_kind_envelope_has_the_full_key_set() {
+    let r = decode("msgpack", &[0x81, 0xa1, b'a', 0x01]);
+    for key in [
+        "ok", "codec", "kind", "inBytes", "bytes", "data", "text", "json",
+    ] {
+        assert!(r.get(key).is_some(), "json envelope missing key {key}: {r}");
+    }
+    assert_eq!(r["data"], serde_json::Value::Null);
+    assert_eq!(r["text"], serde_json::Value::Null);
+    assert_eq!(r["bytes"], r["inBytes"]);
+
+    let b = decode("none", b"hi");
+    for key in [
+        "ok", "codec", "kind", "inBytes", "bytes", "data", "text", "json",
+    ] {
+        assert!(
+            b.get(key).is_some(),
+            "bytes envelope missing key {key}: {b}"
+        );
+    }
+    assert_eq!(b["kind"], serde_json::json!("bytes"));
+}
