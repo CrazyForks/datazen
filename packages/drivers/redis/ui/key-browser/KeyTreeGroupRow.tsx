@@ -11,8 +11,8 @@ import type { TreeViewMode } from './treePreferences';
  *    hatch for a keyspace whose names legitimately contain the separator;
  *  - 分隔符 `:` / `.` / `/` — the one character `list_children` groups on. It is
  *    sent to the server *and* used to fold the flat fallback list, so a change
- *    re-computes the whole tree immediately (asserted as a state machine in
- *    `keyTreeJourney.test.tsx`).
+ *    re-computes the whole tree immediately (state machine asserted in
+ *    `keyTree.test.ts`, DOM journey in `keyTreeInteractionsJourney.test.tsx`).
  *
  * `规则分组` (regex grouping) is P2 and deliberately absent (task book §1 D-3).
  */
