@@ -308,6 +308,12 @@ const BASIC_PATH_FRONTEND = {
       path: '../../packages/drivers/redis/ui/connection/RedisConnectionView',
       viewMode: 'keyvalue',
     },
+    kvSlots: {
+      connectionHome: {
+        component: 'RedisOverviewHome',
+        path: '../../packages/drivers/redis/ui/overview/RedisOverviewHome',
+      },
+    },
     settings: {
       driverId: 'redis',
       label: 'Redis',
