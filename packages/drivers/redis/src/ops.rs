@@ -164,30 +164,6 @@ where
     Ok(total)
 }
 
-/// SET a string value. When `keep_ttl` is true, uses Redis `SET … KEEPTTL`
-/// so an existing expiry is preserved (Redis ≥ 6.0).
-pub async fn set_string_with_options<C>(
-    conn: &mut C,
-    key: &str,
-    value: &str,
-    keep_ttl: bool,
-) -> Result<(), String>
-where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
-{
-    if keep_ttl {
-        redis::cmd("SET")
-            .arg(key)
-            .arg(value)
-            .arg("KEEPTTL")
-            .query_async::<()>(conn)
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        conn.set(key, value).await.map_err(|e| e.to_string())
-    }
-}
-
 pub async fn hash_set<C>(conn: &mut C, key: &str, field: &str, value: &str) -> Result<(), String>
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,

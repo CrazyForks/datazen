@@ -189,14 +189,14 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "set_string",
             "Set string",
-            "SET a string key (optional KEEPTTL)",
+            "SET a string key; keeps the existing TTL by default (SET … KEEPTTL, PTTL+PX fallback) and answers { ok, keepTtl, keepTtlFallback }",
             "redis:allow-set-string",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
                     "key": key,
                     "value": { "type": "string" },
-                    "keepTtl": { "type": "boolean" }
+                    "keepTtl": { "type": "boolean", "description": "Defaults to true; pass false to clear the expiry" }
                 }),
                 &["key", "value"],
             ),
@@ -204,14 +204,14 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "set_string_raw",
             "Set string (binary)",
-            "SET a string key from base64 raw bytes (binary-safe; optional KEEPTTL)",
+            "SET a string key from base64 raw bytes (binary-safe); same TTL default as set_string",
             "redis:allow-set-string",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
                     "key": key,
                     "dataB64": { "type": "string", "description": "base64-encoded raw bytes" },
-                    "keepTtl": { "type": "boolean" }
+                    "keepTtl": { "type": "boolean", "description": "Defaults to true; pass false to clear the expiry" }
                 }),
                 &["key", "dataB64"],
             ),

@@ -63,12 +63,8 @@ match command {
             )
         }
         "set_string" => {
-            let keep_ttl = input
-                .get("keepTtl")
-                .or_else(|| input.get("keep_ttl"))
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(false);
-            driver
+            let keep_ttl = crate::ops_write::keep_ttl_policy(&input);
+            let outcome = driver
                 .plugin_set_string(
                     id,
                     db,
@@ -77,14 +73,10 @@ match command {
                     keep_ttl,
                 )
                 .await?;
-            Ok(ok())
+            json_ok(outcome)
         }
         "set_string_raw" => {
-            let keep_ttl = input
-                .get("keepTtl")
-                .or_else(|| input.get("keep_ttl"))
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(false);
+            let keep_ttl = crate::ops_write::keep_ttl_policy(&input);
             let b64 = req_str(&input, "dataB64")
                 .or_else(|_| req_str(&input, "data_b64"))?;
             let bytes = base64::Engine::decode(
@@ -92,10 +84,10 @@ match command {
                 b64.trim(),
             )
             .map_err(|e| DriverError::InvalidConfig(format!("invalid base64 payload: {e}")))?;
-            driver
+            let outcome = driver
                 .plugin_set_string_bytes(id, db, req_str(&input, "key")?, &bytes, keep_ttl)
                 .await?;
-            Ok(ok())
+            json_ok(outcome)
         }
         "hash_scan" => {
             let cursor = input.get("cursor").and_then(JsonValue::as_u64).unwrap_or(0);
