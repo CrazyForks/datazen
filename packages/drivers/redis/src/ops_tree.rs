@@ -287,9 +287,7 @@ where
         // the surviving leaves are exactly the ones the server described, so
         // `noTtlOnly` can no longer shift properties across keys.
         children.retain(|child| match child {
-            ChildEntry::Key { key, ttl, .. } => {
-                !gone.contains(key) && (!no_ttl_only || *ttl == -1)
-            }
+            ChildEntry::Key { key, ttl, .. } => !gone.contains(key) && (!no_ttl_only || *ttl == -1),
             ChildEntry::Folder { .. } => true,
         });
     }

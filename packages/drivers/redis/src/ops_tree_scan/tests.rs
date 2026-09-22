@@ -103,7 +103,10 @@ impl TreeState {
             return RValue::Nil;
         };
         match name {
-            "DBSIZE" => self.dbsize_reply.clone().unwrap_or(RValue::Int(self.dbsize)),
+            "DBSIZE" => self
+                .dbsize_reply
+                .clone()
+                .unwrap_or(RValue::Int(self.dbsize)),
             "SCAN" => match self.scan_script.pop_front() {
                 Some((cursor, keys)) => scan_reply(cursor, &keys),
                 None => scan_reply(0, &[]),
@@ -921,18 +924,23 @@ async fn count_star_verifies_with_a_scan_when_dbsize_is_refused() {
     // Keyspace with two keys, one round, cursor wraps.
     conn.seed_string("app:a", 1, "x");
     conn.seed_string("app:b", 2, "y");
-    conn.state().scan_script.push_back((
-        0,
-        vec!["app:a".to_string(), "app:b".to_string()],
-    ));
+    conn.state()
+        .scan_script
+        .push_back((0, vec!["app:a".to_string(), "app:b".to_string()]));
 
     let outcome = count_budgeted(&mut conn, "*", None, Topology::Standalone)
         .await
         .expect("counting must survive a refused DBSIZE");
 
     assert_eq!(outcome.dbsize, 0, "the unfilled display value stays 0");
-    assert_eq!(outcome.count, 2, "the census comes from the scan, not from 0");
-    assert!(!outcome.truncated, "the cursor wrapped: this is a full count");
+    assert_eq!(
+        outcome.count, 2,
+        "the census comes from the scan, not from 0"
+    );
+    assert!(
+        !outcome.truncated,
+        "the cursor wrapped: this is a full count"
+    );
     assert_eq!(outcome.consumed, TREE_SCAN_MIN_ROUND_COUNT as u64);
     {
         let st = conn.state();
@@ -941,7 +949,11 @@ async fn count_star_verifies_with_a_scan_when_dbsize_is_refused() {
             .filter(|line| line.starts_with("SCAN"))
             .cloned()
             .collect();
-        assert_eq!(scan_lines.len(), 1, "exactly one verification round is spent");
+        assert_eq!(
+            scan_lines.len(),
+            1,
+            "exactly one verification round is spent"
+        );
         assert!(
             !scan_lines[0].contains("MATCH"),
             "counting everything needs no filter argument: {}",
@@ -962,7 +974,9 @@ async fn count_star_verifies_with_a_scan_when_dbsize_is_refused() {
     let mut bare = TreeConn::new();
     bare.state().dbsize_refused = true;
     bare.seed_string("k", 1, "x");
-    bare.state().scan_script.push_back((0, vec!["k".to_string()]));
+    bare.state()
+        .scan_script
+        .push_back((0, vec!["k".to_string()]));
     let outcome = count_budgeted(&mut bare, "", None, Topology::Standalone)
         .await
         .expect("count with an empty pattern");
@@ -981,7 +995,10 @@ async fn count_star_still_short_circuits_when_dbsize_answers() {
         .expect("count *");
 
     assert_eq!(outcome.count, 42);
-    assert_eq!(outcome.consumed, 0, "no scan round is spent on the fast path");
+    assert_eq!(
+        outcome.consumed, 0,
+        "no scan round is spent on the fast path"
+    );
     {
         let st = conn.state();
         assert_eq!(joined(&st.singles), ["DBSIZE"]);
