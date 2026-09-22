@@ -15,12 +15,19 @@
 //! retry hint instead of a guess baked into the decoder.
 //!
 //! Decompression output is capped by the caller-supplied `max_output`
-//! (zip-bomb guard): the reader is wrapped in [`Read::take`] so a 4-byte
+//! (zip-bomb guard): the gzip reader is wrapped in [`Read::take`], and the
+//! zlib/raw DEFLATE drivers are fed through a bounded window so a 4-byte
 //! payload can never materialise an unbounded allocation.
+//!
+//! Truncation is an error on every framing: `flate2`'s `Read` adapters answer
+//! `Ok(0)` for a stream that merely ran out of input, so each framing is
+//! required to reach *its own* end (gzip: CRC32/ISIZE via the decoder, zlib/
+//! DEFLATE: a literal `Status::StreamEnd`) before `decode` may return `Ok`.
 
 use std::io::Read;
 
-use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
+use flate2::read::MultiGzDecoder;
+use flate2::{Decompress, FlushDecompress, Status};
 
 /// One concrete DEFLATE wiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,28 +77,115 @@ impl Framing {
         bytes: &[u8],
         max_output: usize,
     ) -> Result<Vec<u8>, DecompressFailure> {
-        let mut out = Vec::new();
-        // Read one byte past the cap so "exactly at the cap" stays accepted
-        // while any larger expansion is detectable after the read.
-        let limit = max_output.saturating_add(1) as u64;
-        let read = match self {
+        // Entry gates (C-1): a framing is only entered through its own header
+        // and minimum size, so a foreign payload fails before a single byte is
+        // inflated instead of "succeeding" with a short output.
+        match self {
+            // gzip validates its own `1f 8b` magic on construction.
+            Framing::Gzip => {}
+            Framing::Zlib if !looks_like_zlib_header(bytes) => {
+                return Err(DecompressFailure::Failed(
+                    "not a zlib stream: RFC 1950 header check failed".to_string(),
+                ));
+            }
+            Framing::Deflate if bytes.len() < MIN_DEFLATE_BYTES => {
+                return Err(DecompressFailure::Failed(
+                    "not a DEFLATE stream: shorter than the smallest possible block".to_string(),
+                ));
+            }
+            Framing::Zlib | Framing::Deflate => {}
+        }
+
+        let out = match self {
             Framing::Gzip => {
-                let mut reader = GzDecoder::new(bytes).take(limit);
-                reader.read_to_end(&mut out)
+                // Read one byte past the cap so "exactly at the cap" stays
+                // accepted while any larger expansion is detectable after.
+                let limit = max_output.saturating_add(1) as u64;
+                // `multi(true)` semantics: every concatenated member is
+                // decoded, so neither a second member nor trailing garbage is
+                // silently dropped (BUG-003).
+                let mut reader = MultiGzDecoder::new(bytes).take(limit);
+                let mut out = Vec::new();
+                match reader.read_to_end(&mut out) {
+                    Ok(_) if out.len() > max_output => {
+                        return Err(DecompressFailure::TooLarge(out.len()))
+                    }
+                    Ok(_) => out,
+                    Err(err) => return Err(DecompressFailure::Failed(err.to_string())),
+                }
             }
-            Framing::Zlib => {
-                let mut reader = ZlibDecoder::new(bytes).take(limit);
-                reader.read_to_end(&mut out)
-            }
-            Framing::Deflate => {
-                let mut reader = DeflateDecoder::new(bytes).take(limit);
-                reader.read_to_end(&mut out)
-            }
+            Framing::Zlib => inflate_stream(Decompress::new(true), bytes, max_output)?,
+            Framing::Deflate => inflate_stream(Decompress::new(false), bytes, max_output)?,
         };
-        match read {
-            Ok(_) if out.len() > max_output => Err(DecompressFailure::TooLarge(out.len())),
-            Ok(_) => Ok(out),
-            Err(err) => Err(DecompressFailure::Failed(err.to_string())),
+
+        // Non-empty input that produced nothing is a truncated or foreign
+        // stream that never reached its end — never a legitimately empty value
+        // (BUG-002: this used to answer "success, 0 bytes").
+        if !bytes.is_empty() && out.is_empty() {
+            return Err(DecompressFailure::Failed(
+                "stream ended without producing output".to_string(),
+            ));
+        }
+        Ok(out)
+    }
+}
+
+/// Smallest possible raw DEFLATE stream: a final fixed-Huffman block needs the
+/// three header bits plus a 7-bit end-of-block code — more than one byte.
+const MIN_DEFLATE_BYTES: usize = 2;
+
+/// Output window size handed to a single [`Decompress::decompress`] call.
+const INFLATE_CHUNK: usize = 32 * 1024;
+
+/// Drive a zlib (`zlib_header = true`) or raw DEFLATE (`false`) stream to its
+/// real `StreamEnd`.
+///
+/// The `Read` adapters treat "input ran out before the stream finished" as a
+/// clean `Ok(0)`, which is exactly how truncated payloads used to surface as a
+/// successful empty value (BUG-002). Driving [`Decompress`] directly makes
+/// `Status::StreamEnd` an explicit requirement: a call that moves neither
+/// input nor output while the stream is unfinished means the bytes ended
+/// mid-stream (truncated) or are not this framing at all → `Failed`.
+fn inflate_stream(
+    mut dec: Decompress,
+    bytes: &[u8],
+    max_output: usize,
+) -> Result<Vec<u8>, DecompressFailure> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; INFLATE_CHUNK];
+    let mut pos = 0usize;
+    loop {
+        // `out` never exceeds `max_output` on entry (the TooLarge check below
+        // trips first), so this stays >= 1 and a zero-length window never
+        // deadlocks the loop.
+        let allowed = max_output.saturating_add(1).saturating_sub(out.len());
+        let window = allowed.min(chunk.len());
+        // Mirror `flate2`'s own read loop: `Finish` only once the input is
+        // exhausted; otherwise the decoder may still see more bytes.
+        let flush = if pos >= bytes.len() {
+            FlushDecompress::Finish
+        } else {
+            FlushDecompress::None
+        };
+        let before_in = dec.total_in();
+        let before_out = dec.total_out();
+        let status = dec
+            .decompress(&bytes[pos..], &mut chunk[..window], flush)
+            .map_err(|err| DecompressFailure::Failed(err.to_string()))?;
+        let consumed = dec.total_in().wrapping_sub(before_in) as usize;
+        let produced = dec.total_out().wrapping_sub(before_out) as usize;
+        out.extend_from_slice(&chunk[..produced]);
+        if out.len() > max_output {
+            return Err(DecompressFailure::TooLarge(out.len()));
+        }
+        pos += consumed;
+        if matches!(status, Status::StreamEnd) {
+            return Ok(out);
+        }
+        if consumed == 0 && produced == 0 {
+            return Err(DecompressFailure::Failed(
+                "stream ended before its final block (truncated, or not this framing)".to_string(),
+            ));
         }
     }
 }
@@ -247,6 +341,62 @@ mod tests {
             Framing::Gzip.decode(&gz, CAP),
             Err(DecompressFailure::Failed(_))
         ));
+    }
+
+    /// BUG-002 green twin: the gzip case above never covered zlib/raw DEFLATE,
+    /// whose `Read` adapters end a truncated stream with a clean `Ok(0)`. No
+    /// prefix of a real stream may decode — every cut drops the final block or
+    /// (zlib) the Adler-32 trailer, so `StreamEnd` is unreachable.
+    #[test]
+    fn no_prefix_of_a_zlib_or_deflate_stream_decodes_as_a_success() {
+        let payload = b"a value that can be cut mid-stream".to_vec();
+        for (framing, stored) in [
+            (Framing::Zlib, zlib(&payload)),
+            (Framing::Deflate, raw_deflate(&payload)),
+        ] {
+            for keep in 1..stored.len() {
+                assert!(
+                    framing.decode(&stored[..keep], CAP).is_err(),
+                    "{:?} accepted the first {keep} of {} bytes",
+                    framing,
+                    stored.len()
+                );
+            }
+        }
+    }
+
+    /// BUG-002 entry gates: a headerless 1–2 byte payload is rejected before
+    /// any inflate runs, never "succeeded" with zero output.
+    #[test]
+    fn headerless_tiny_payloads_fail_at_the_entry_gate() {
+        assert!(matches!(
+            Framing::Zlib.decode(&[0x80], CAP),
+            Err(DecompressFailure::Failed(_))
+        ));
+        assert!(matches!(
+            Framing::Zlib.decode(&[0x78, 0x9c], CAP),
+            Err(DecompressFailure::Failed(_))
+        ));
+        assert!(matches!(
+            Framing::Deflate.decode(b"A", CAP),
+            Err(DecompressFailure::Failed(_))
+        ));
+        assert!(matches!(
+            Framing::Deflate.decode(&[0x78, 0x9c], CAP),
+            Err(DecompressFailure::Failed(_))
+        ));
+    }
+
+    /// BUG-003 green twin: `gunzip` semantics at the framing level — every
+    /// concatenated member is decoded, so the byte count is never short.
+    #[test]
+    fn gzip_decodes_every_concatenated_member() {
+        let mut stream = gzip(b"FIRST-MEMBER");
+        stream.extend_from_slice(&gzip(b"+SECOND-MEMBER"));
+        let out = Framing::Gzip
+            .decode(&stream, CAP)
+            .expect("a valid multi-member stream must decode");
+        assert_eq!(out, b"FIRST-MEMBER+SECOND-MEMBER");
     }
 
     #[test]
