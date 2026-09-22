@@ -203,6 +203,8 @@
 
 判定：**TEST_DONE**。门禁见上方「第 2 轮 Tester 门禁实测」（五项全绿、Coder 自述数字逐项吻合、0 虚报）。三条 Bug 的复测结论与证据写在 `bugs.md` 对应条目下（BUG-001/002/003 → `已修复`，BUG-004 → 复跑绿确认闭环）。测试 commit：`b9361b9aa`（TTL 四态 + 徽标 tone class，5 例）、`cc826c5ec`（maxmemory 无 human 形制回退，1 例）⇒ 套件 **369 例 / 39 files 全绿**。
 
+补测后关账复跑（HEAD 上原样重跑五项）：`tsc --noEmit` **exit 0**｜`cargo test -p datazen-driver-redis`（`CARGO_TARGET_DIR=/tmp/ct-w2b-t2`）**lib 239 passed / 0 failed / 1 ignored + 集成 4 passed + doc 0**｜`npx vitest run --config vitest.drivers.config.ts` **39 files / 369 tests 全绿**｜`npx vite build` **exit 0**（`✓ built in 6.07s`）｜同范围覆盖率 **All files 98.73 / 95.01 / 100 / 99.69**（branch 94.55 → **95.01**；`MemoryCard.tsx` branch **96.34 → 98.78**，残留 139 是 `maxHuman ?? (maxBytes === null …)` 中在生产不可达的纯防御臂，因 `unlimited === false` 已蕴含 `maxBytes` 非空）。
+
 ### 变异复验（6 项：Coder 点名 3 + 本 Tester 自选 3；每次注入后 `git checkout HEAD --` 还原，全程 `git diff` 最终为空）
 
 | # | 注入的破坏 | 目标 | 实测 | 结论 |
