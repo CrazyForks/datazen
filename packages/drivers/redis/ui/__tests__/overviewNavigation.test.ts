@@ -4,6 +4,7 @@ import {
   parseDbIndex,
   planOverviewJump,
   requestOverviewJump,
+  typeBadgeClass,
   typeTone,
   type OverviewJumpTarget,
 } from '../overview/overviewNavigation';
@@ -116,6 +117,23 @@ describe('typeTone', () => {
     expect(typeTone(undefined)).toBe('neutral');
     expect(typeTone('')).toBe('neutral');
     expect(typeTone('HASH')).toBe('success');
+  });
+});
+
+describe('typeBadgeClass', () => {
+  it('renders the typeTone vocabulary as Tailwind classes for the 屏 A badges', () => {
+    // BUG-001: the big-key row and the recent-key chip colour themselves here —
+    // assert the tone tokens, not translated copy.
+    expect(typeBadgeClass('string')).toContain('text-accent');
+    expect(typeBadgeClass('hash')).toContain('text-success');
+    expect(typeBadgeClass('list')).toContain('text-warning');
+    expect(typeBadgeClass('set')).toContain('text-danger');
+  });
+
+  it('degrades an unreadable type to the neutral outline instead of a guessed colour', () => {
+    expect(typeBadgeClass(null)).toContain('text-fg-muted');
+    expect(typeBadgeClass(undefined)).toContain('border-edge');
+    expect(typeBadgeClass('tairString')).toBe(typeBadgeClass(null));
   });
 });
 

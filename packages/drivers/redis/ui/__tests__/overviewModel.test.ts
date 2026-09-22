@@ -261,6 +261,22 @@ describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
     // A legacy `{ key, bytes }`-only sample degrades to null/absent, never a lie.
     expect(unknown).toMatchObject({ key: 'unknown', keyType: null, ttlMs: null, missing: false });
   });
+
+  it('normalises malformed type / ttl / missing payloads to the unreadable state', () => {
+    const [row] = buildBigKeyRows({
+      samples: [
+        {
+          key: 'junk',
+          bytes: 5,
+          type: '',
+          ttlMs: Number.NaN,
+          missing: 'yes',
+        },
+      ],
+    });
+    // Empty/non-string types, non-finite TTLs and non-true flags never fabricate.
+    expect(row).toMatchObject({ keyType: null, ttlMs: null, missing: false });
+  });
 });
 
 describe('buildSlowlogRows — PRD 卡 4', () => {
