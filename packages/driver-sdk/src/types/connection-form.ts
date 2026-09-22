@@ -9,9 +9,11 @@ import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from 'react';
 import type {
   DatabaseType,
   SavedTunnel,
+  SavedTunnelSummary,
   SshAuthMethod,
   SslMode,
   TunnelKind,
+  TunnelSource,
 } from '../../../../src/types';
 
 export interface ConnectionFormState {
@@ -41,11 +43,38 @@ export interface ConnectionFormState {
   driverReadOnly: boolean;
   setReadOnly: (value: boolean) => void;
 
+  /**
+   * Tunnel source state machine (`none` / `saved` / `inline`). Single master
+   * control: `tunnelId` is only cleared by an explicit transition, never as a
+   * side effect of changing the tunnel type.
+   */
+  tunnelSource: TunnelSource;
+  setTunnelSource: (source: TunnelSource) => void;
+  /** Inline sub-selector value; read-only derived value while `saved`. */
   tunnelKind: TunnelKind;
   setTunnelKind: (kind: TunnelKind) => void;
   tunnelId: string | null;
   setTunnelId: (id: string | null) => void;
-  savedTunnels: SavedTunnel[];
+  /** Secret-free summaries from `tunnelStore` (app-wide, always fresh). */
+  savedTunnels: SavedTunnelSummary[];
+  /** Resolved summary for the current `tunnelId` (null when unset or missing). */
+  savedTunnel: SavedTunnelSummary | null;
+  /** True when `tunnelId` is set but no longer resolves to a saved tunnel. */
+  tunnelRefMissing: boolean;
+  /** True when the inline tunnel configuration passes tunnel-level validation. */
+  tunnelInlineValid: boolean;
+  tunnelBusy: boolean;
+  tunnelError: string | null;
+  /** Inline kind actually in effect (SSH with its toggle off counts as `none`). */
+  effectiveTunnelKind: TunnelKind;
+  /** `saved` → `inline`: fetch the entity and refill inline fields; never drops parameters. */
+  unbindTunnel: () => Promise<void>;
+  /** `inline` → `saved`: persist the current inline config; resolves to the entity or null. */
+  saveAsTunnel: (name: string) => Promise<SavedTunnel | null>;
+  /** Load an existing connection's tunnel reference without triggering an unbind. */
+  hydrateTunnelRef: (id: string | null, kind: TunnelKind) => void;
+  /** Reset the whole tunnel slice (database type switch). */
+  resetTunnel: () => void;
 
   sshEnabled: boolean;
   setSshEnabled: (v: boolean) => void;
