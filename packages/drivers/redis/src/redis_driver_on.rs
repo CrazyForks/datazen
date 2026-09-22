@@ -3,13 +3,8 @@
 use base64::Engine;
 use datazen_driver_api::*;
 use redis::AsyncCommands;
-use std::time::Instant;
 
 use crate::types::{KeyDetail, ValueFrame};
-
-use crate::redis_value::{preview_value_to_string, truncate_preview};
-
-const PREVIEW_MAX: usize = 120;
 
 pub(crate) async fn select_db_on<C>(conn: &mut C, db_index: u32) -> Result<(), String>
 where
@@ -71,79 +66,10 @@ where
     Ok(tables)
 }
 
-/// One SCAN page with per-key TYPE / TTL / size / preview.
-///
-/// - `key_type`: optional Redis type filter (`string`, `hash`, …) via `SCAN … TYPE`
-///   (Redis ≥ 6.0). Empty / "*" / "all" means no filter.
-/// - `with_memory`: when true, prefer `MEMORY USAGE` for the size column (bytes);
-///   otherwise use logical length (STRLEN / LLEN / …).
-pub(crate) async fn scan_keys_with_info_on<C>(
-    conn: &mut C,
-    _db_index: u32,
-    pattern: &str,
-    cursor: u64,
-    count: u32,
-    key_type: Option<&str>,
-    with_memory: bool,
-    no_ttl_only: bool,
-    t0: Instant,
-) -> Result<(u64, Vec<KeyEntry>, u64), DriverError>
-where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
-{
-    let match_pat = if !pattern.is_empty() && pattern != "*" {
-        Some(pattern)
-    } else {
-        None
-    };
-    let (next, keys) = crate::ops::scan_batch(
-        conn,
-        cursor,
-        count,
-        match_pat,
-        normalize_type_filter(key_type),
-    )
-    .await
-    .map_err(DriverError::QueryFailed)?;
-    let mut entries = Vec::with_capacity(keys.len());
-    for key in &keys {
-        let ty = type_of_key_on(conn, key)
-            .await
-            .unwrap_or_else(|_| "none".into());
-        let ttl: i64 = redis::cmd("TTL")
-            .arg(key)
-            .query_async(conn)
-            .await
-            .unwrap_or(-2);
-        if no_ttl_only && ttl != -1 {
-            continue;
-        }
-        let size = if with_memory {
-            match memory_usage_on(conn, key).await {
-                Ok(n) => n,
-                Err(_) => value_len_on(conn, key, &ty).await.unwrap_or(0),
-            }
-        } else {
-            value_len_on(conn, key, &ty).await.unwrap_or(0)
-        };
-        let preview = preview_on(conn, key, &ty).await.unwrap_or_default();
-        entries.push(KeyEntry {
-            key: key.clone(),
-            key_type: ty,
-            ttl,
-            size: size as u64,
-            preview,
-        });
-    }
-    let db_size: i64 = redis::cmd("DBSIZE").query_async(conn).await.unwrap_or(0);
-    tracing::info!(
-        elapsed_ms = t0.elapsed().as_millis() as u64,
-        keys = entries.len(),
-        with_memory,
-        "redis scan_keys_with_info_on done"
-    );
-    Ok((next, entries, db_size.max(0) as u64))
-}
+// `scan_keys_with_info_on` moved to `crate::ops_tree_scan::scan_keys_page`,
+// which reads DBSIZE once per call instead of once per page and resolves a
+// page's attributes in two batches instead of one round trip per key per
+// attribute. What stays here are the single-key reads the value frame needs.
 
 /// Normalize UI/command type filter to a Redis TYPE token, or None for no filter.
 pub(crate) fn normalize_type_filter(key_type: Option<&str>) -> Option<&'static str> {
@@ -204,71 +130,6 @@ where
     }
     .map_err(|e| e.to_string())?;
     Ok(n.max(0) as usize)
-}
-
-async fn preview_on<C>(conn: &mut C, key: &str, ty: &str) -> Result<String, String>
-where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
-{
-    match ty {
-        "string" => {
-            let v: redis::Value = redis::cmd("GET")
-                .arg(key)
-                .query_async(conn)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(truncate_preview(
-                &preview_value_to_string(&v, "string"),
-                PREVIEW_MAX,
-            ))
-        }
-        "list" => {
-            let vals: Vec<String> = redis::cmd("LRANGE")
-                .arg(key)
-                .arg(0)
-                .arg(2)
-                .query_async(conn)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
-        }
-        "hash" => {
-            // Use HSCAN COUNT 3 instead of HGETALL to avoid loading large hashes.
-            let raw: redis::Value = redis::cmd("HSCAN")
-                .arg(key)
-                .arg(0)
-                .arg("COUNT")
-                .arg(3)
-                .query_async(conn)
-                .await
-                .map_err(|e| e.to_string())?;
-            // HSCAN returns [cursor, [field, value, ...]]
-            let vals = extract_hscan_preview(&raw);
-            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
-        }
-        "set" => {
-            let vals: Vec<String> = redis::cmd("SRANDMEMBER")
-                .arg(key)
-                .arg(3)
-                .query_async(conn)
-                .await
-                .unwrap_or_default();
-            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
-        }
-        "zset" => {
-            let vals: Vec<String> = redis::cmd("ZRANGE")
-                .arg(key)
-                .arg(0)
-                .arg(2)
-                .arg("WITHSCORES")
-                .query_async(conn)
-                .await
-                .unwrap_or_default();
-            Ok(truncate_preview(&format!("{vals:?}"), PREVIEW_MAX))
-        }
-        "stream" => Ok("(stream)".into()),
-        _ => Ok(String::new()),
-    }
 }
 
 pub(crate) async fn get_key_detail_on<C>(conn: &mut C, key: &str) -> Result<KeyDetail, DriverError>
@@ -449,40 +310,9 @@ where
     }
 }
 
-/// Extract field-value pairs from an HSCAN result for preview.
-/// HSCAN returns a two-element array: [cursor, [field, value, field, value, ...]]
-fn extract_hscan_preview(raw: &redis::Value) -> Vec<String> {
-    if let redis::Value::Array(items) = raw {
-        if items.len() >= 2 {
-            if let redis::Value::Array(members) = &items[1] {
-                let mut result = Vec::new();
-                for chunk in members.chunks(2) {
-                    if chunk.len() == 2 {
-                        let field = redis_value_to_string(&chunk[0]);
-                        let value = redis_value_to_string(&chunk[1]);
-                        result.push(format!("{field}: {value}"));
-                    }
-                }
-                return result;
-            }
-        }
-    }
-    Vec::new()
-}
-
-fn redis_value_to_string(v: &redis::Value) -> String {
-    match v {
-        redis::Value::BulkString(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        redis::Value::SimpleString(s) => s.clone(),
-        redis::Value::Int(n) => n.to_string(),
-        redis::Value::Okay => "OK".into(),
-        _ => format!("{v:?}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{extract_hscan_preview, normalize_type_filter, redis_value_to_string};
+    use super::normalize_type_filter;
 
     #[test]
     fn type_filter_none_for_empty_or_all() {
@@ -505,55 +335,5 @@ mod tests {
     #[test]
     fn type_filter_rejects_unknown() {
         assert_eq!(normalize_type_filter(Some("foo")), None);
-    }
-
-    #[test]
-    fn redis_value_to_string_bulk_string() {
-        let v = redis::Value::BulkString(b"hello".to_vec());
-        assert_eq!(redis_value_to_string(&v), "hello");
-    }
-
-    #[test]
-    fn redis_value_to_string_int() {
-        let v = redis::Value::Int(42);
-        assert_eq!(redis_value_to_string(&v), "42");
-    }
-
-    #[test]
-    fn redis_value_to_string_okay() {
-        let v = redis::Value::Okay;
-        assert_eq!(redis_value_to_string(&v), "OK");
-    }
-
-    #[test]
-    fn extract_hscan_preview_basic() {
-        let raw = redis::Value::Array(vec![
-            redis::Value::BulkString(b"0".to_vec()),
-            redis::Value::Array(vec![
-                redis::Value::BulkString(b"f1".to_vec()),
-                redis::Value::BulkString(b"v1".to_vec()),
-                redis::Value::BulkString(b"f2".to_vec()),
-                redis::Value::BulkString(b"v2".to_vec()),
-            ]),
-        ]);
-        let result = extract_hscan_preview(&raw);
-        assert_eq!(result, vec!["f1: v1", "f2: v2"]);
-    }
-
-    #[test]
-    fn extract_hscan_preview_empty() {
-        let raw = redis::Value::Array(vec![
-            redis::Value::BulkString(b"0".to_vec()),
-            redis::Value::Array(vec![]),
-        ]);
-        let result = extract_hscan_preview(&raw);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn extract_hscan_preview_malformed() {
-        let raw = redis::Value::Int(0);
-        let result = extract_hscan_preview(&raw);
-        assert!(result.is_empty());
     }
 }

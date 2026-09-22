@@ -19,11 +19,14 @@ impl KeyValueDriver for RedisDriver {
         cursor: u64,
         count: u32,
     ) -> Result<(u64, Vec<KeyEntry>, u64), DriverError> {
-        // Trait path: no type filter, logical size (not MEMORY USAGE).
-        // Full options (keyType / withMemory) are available via the scan_keys command.
-        RedisDriver::scan_keys_with_info(
-            self, handle, db_index, pattern, cursor, count, None, false, false,
+        // Trait path: no type filter, logical size (not MEMORY USAGE), no budget
+        // override. Full options (keyType / withMemory / budget) are available
+        // via the scan_keys command; this projection keeps only what the host
+        // trait has slots for.
+        let page = RedisDriver::scan_keys_with_info(
+            self, handle, db_index, pattern, cursor, count, None, false, false, None,
         )
-        .await
+        .await?;
+        Ok((page.next_cursor, page.entries, page.dbsize))
     }
 }

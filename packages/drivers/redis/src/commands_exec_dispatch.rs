@@ -17,10 +17,25 @@ match command {
                 .or_else(|| input.get("no_ttl_only"))
                 .and_then(JsonValue::as_bool)
                 .unwrap_or(false);
-            let (next, keys, db_size) = driver
-                .scan_keys_with_info(handle, db, pattern, cursor, count, key_type, with_memory, no_ttl_only)
+            // Cumulative COUNT cap for this action; absent/0 means the driver
+            // derives it from the DBSIZE it reads anyway (ops_tree_budget).
+            let budget = input.get("budget").and_then(JsonValue::as_u64).filter(|v| *v > 0);
+            let page = driver
+                .scan_keys_with_info(handle, db, pattern, cursor, count, key_type, with_memory, no_ttl_only, budget)
                 .await?;
-            json_ok(serde_json::json!({ "cursor": next, "keys": keys, "dbSize": db_size }))
+            // `dbSize` is the established spelling and must keep working as-is;
+            // `dbsize` is additionally appended so all three key-tree commands
+            // (scan_keys / list_children / count_matching) carry the same
+            // `consumed`/`truncated`/`dbsize` budget trio (PRD §3.2, 契约冻结).
+            json_ok(serde_json::json!({
+                "cursor": page.next_cursor,
+                "keys": page.entries,
+                "dbSize": page.dbsize,
+                "consumed": page.consumed,
+                "truncated": page.truncated,
+                "dbsize": page.dbsize,
+                "exact": page.exact
+            }))
         }
         "db_sizes" => json_ok(driver.db_sizes(handle).await?),
         "list_children" => {
@@ -37,14 +52,48 @@ match command {
                 .and_then(JsonValue::as_bool)
                 .unwrap_or(false);
             let key_type = opt_str(&input, "keyType").or_else(|| opt_str(&input, "key_type"));
-            let (children, next_cursor) = driver
-                .list_children(handle, db, prefix, cursor, count, sep, no_ttl_only, key_type)
+            // `withMemory` adds MEMORY USAGE to the page's TYPE/TTL batch, so it
+            // costs no extra round trip; `budget` is the same cumulative COUNT
+            // cap as scan_keys (PRD §3.2).
+            let with_memory = input
+                .get("withMemory")
+                .or_else(|| input.get("with_memory"))
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
+            let budget = input.get("budget").and_then(JsonValue::as_u64).filter(|v| *v > 0);
+            let page = driver
+                .list_children(
+                    handle,
+                    db,
+                    prefix,
+                    cursor,
+                    count,
+                    sep,
+                    no_ttl_only,
+                    key_type,
+                    with_memory,
+                    budget,
+                )
                 .await?;
-            json_ok(serde_json::json!({ "children": children, "cursor": next_cursor }))
+            json_ok(serde_json::json!({
+                "children": page.entries,
+                "cursor": page.next_cursor,
+                "consumed": page.consumed,
+                "truncated": page.truncated,
+                "dbsize": page.dbsize
+            }))
         }
         "get_key" => json_ok(
             driver
                 .get_key_detail(handle, db, req_str(&input, "key")?)
+                .await?,
+        ),
+        // Read-only attribute probe (PRD §4 I-3): permission / write口径
+        // identical to `get_key` (observe category, `redis:allow-info`), and it
+        // never reads a value — EXISTS + TYPE + PTTL + MEMORY USAGE only.
+        "key_probe" => json_ok(
+            driver
+                .plugin_key_probe(id, db, req_str(&input, "key")?)
                 .await?,
         ),
         "scan_values" => json_ok(driver.scan_values(handle, db, &input).await?),
@@ -336,11 +385,16 @@ match command {
             driver.plugin_flush_all(id).await?;
             Ok(ok())
         }
-        "count_matching" => json_ok(
-            driver
-                .plugin_count_matching(id, db, req_str(&input, "pattern")?)
-                .await?,
-        ),
+        "count_matching" => {
+            // Same cumulative COUNT budget as scan_keys / list_children (PRD
+            // §3.2); `truncated` means the count is a floor the UI shows `n+`.
+            let budget = input.get("budget").and_then(JsonValue::as_u64).filter(|v| *v > 0);
+            json_ok(
+                driver
+                    .plugin_count_matching(id, db, req_str(&input, "pattern")?, budget)
+                    .await?,
+            )
+        }
         "cluster_nodes" => json_ok(driver.plugin_cluster_nodes(id).await?),
         "info" => json_ok(
             driver

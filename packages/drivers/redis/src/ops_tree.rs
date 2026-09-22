@@ -2,10 +2,23 @@
 //!
 //! `list_children` splits SCAN results by separator to produce a flat list
 //! of direct children (leaf keys + virtual folder nodes) for one tree level.
+//!
+//! The scan itself, the per-page batches and the COUNT ledger live in
+//! [`ops_tree_scan`]; this module owns only the separator splitting and the
+//! `ChildEntry` shape. Splitting stays a pure function ([`split_children`])
+//! because it is the whole contract of a tree level and is tested without a
+//! connection.
+//!
+//! [`ops_tree_scan`]: crate::ops_tree_scan
 
 use datazen_driver_api::DriverError;
 use redis::AsyncCommands;
 use std::collections::HashMap;
+use std::time::Instant;
+
+use crate::connect::Topology;
+use crate::ops_tree_budget::{tree_scan_budget, ScanBudget};
+use crate::ops_tree_scan::{fetch_key_meta, fetch_key_values, read_dbsize, scan_budgeted, PageKey};
 
 /// Default separator: colon.
 const DEFAULT_SEP: &str = ":";
@@ -100,12 +113,42 @@ fn split_children(keys: &[String], prefix: &str, seps: &[&str]) -> Vec<ChildEntr
     result
 }
 
-/// Execute a hierarchical `list_children` scan.
+/// One level of the tree, as the reply needs it.
 ///
-/// Scans keys matching `{prefix}*` using SCAN, splits by separator, and
-/// returns the direct children (leaf keys + virtual folder nodes) with
-/// their metadata.
-pub(crate) async fn list_children_on<C>(
+/// `entries` / `cursor` keep the established meaning and nesting (the driver UI
+/// reads `children` + `cursor` today); `consumed` / `truncated` / `dbsize` are
+/// the budget fields of PRD §3.2 and are appended, never replacing anything.
+#[derive(Debug, Clone)]
+pub struct ChildrenPage {
+    /// Direct children of `prefix`: folders first, then leaves.
+    pub entries: Vec<ChildEntry>,
+    /// Resume cursor (`0` = this level was walked to the end).
+    pub next_cursor: u64,
+    /// Cumulative `COUNT` actually spent on this action.
+    pub consumed: u64,
+    /// The budget or the round guard was hit while the cursor was still open,
+    /// so this level has children the caller has not seen and the folder counts
+    /// are a floor, not a census.
+    pub truncated: bool,
+    /// `DBSIZE`, read exactly once for this call.
+    pub dbsize: u64,
+}
+
+/// Execute a hierarchical, budgeted `list_children` scan.
+///
+/// Scans keys matching `{prefix}*` under one [`ScanBudget`], splits the page by
+/// separator, then resolves the leaf keys' attributes in **two batches for the
+/// whole page** ([`fetch_key_meta`] for `TYPE`/`TTL` (+`MEMORY USAGE`),
+/// [`fetch_key_values`] for the logical length). The previous shape typed only
+/// TYPE/TTL — and left `logicalLen` at `0` and `memBytes` at `null` always —
+/// because both were produced by the same per-key round trips this replaces.
+///
+/// `with_memory` also decides whether `MEMORY USAGE` joins the meta batch; on a
+/// cluster each key is one addressed batch of its own (see
+/// [`crate::ops_tree_scan`]'s module docs), which is what keeps a page that
+/// crosses shards from failing on a `CROSSSLOT`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn list_children_page<C>(
     conn: &mut C,
     prefix: &str,
     cursor: u64,
@@ -113,30 +156,42 @@ pub(crate) async fn list_children_on<C>(
     sep: Option<&str>,
     no_ttl_only: bool,
     key_type: Option<&str>,
-) -> Result<(Vec<ChildEntry>, u64), DriverError>
+    with_memory: bool,
+    budget: Option<u64>,
+    topology: Topology,
+    t0: Instant,
+) -> Result<ChildrenPage, DriverError>
 where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+    C: AsyncCommands
+        + redis::aio::ConnectionLike
+        + Send
+        + crate::ops_workbench::SlotRoutedConnection,
 {
     let pattern = format!("{prefix}*");
     let sep_str = sep.unwrap_or(DEFAULT_SEP);
     let sep_chars: Vec<String> = sep_str.chars().map(|c| c.to_string()).collect();
     let seps: Vec<&str> = sep_chars.iter().map(|s| s.as_str()).collect();
 
-    // SCAN with the pattern; optional TYPE filter (Redis >= 6.0).
-    let (next_cursor, keys) = crate::ops::scan_batch(
+    // DBSIZE first: the budget is scaled off it, so it cannot be read later.
+    let dbsize = read_dbsize(conn).await.map_err(DriverError::QueryFailed)?;
+    let mut ledger = ScanBudget::new(tree_scan_budget(budget, dbsize));
+    let page = scan_budgeted(
         conn,
         cursor,
-        count,
+        count.max(1),
+        usize::try_from(count.max(1)).unwrap_or(usize::MAX),
         Some(&pattern),
         crate::redis_driver_on::normalize_type_filter(key_type),
+        &mut ledger,
+        topology,
     )
     .await
     .map_err(DriverError::QueryFailed)?;
 
-    // Split into children (folders + leaf keys).
-    let mut children = split_children(&keys, prefix, &seps);
-
-    // Enrich leaf keys with TYPE + TTL via a real client-side pipeline.
+    // Split into children (folders + leaf keys) before spending anything on
+    // attributes: a folder's keys are never typed, which is the whole point of a
+    // virtual node.
+    let mut children = split_children(&page.keys, prefix, &seps);
     let leaf_keys: Vec<String> = children
         .iter()
         .filter_map(|e| match e {
@@ -146,59 +201,72 @@ where
         .collect();
 
     if !leaf_keys.is_empty() {
-        let mut pipe = redis::pipe();
-        for k in &leaf_keys {
-            pipe.cmd("TYPE").arg(k);
-            pipe.cmd("TTL").arg(k);
-        }
-        let results: Vec<redis::Value> = pipe
-            .query_async(conn)
+        let metas = fetch_key_meta(conn, &leaf_keys, with_memory, topology)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
-        // results come back in 2*leaf_keys order: [TYPE, TTL, TYPE, TTL, ...]
-        let mut enriched: Vec<(String, String, i64)> = Vec::with_capacity(leaf_keys.len());
-        for (i, key) in leaf_keys.iter().enumerate() {
-            let type_val = results.get(i * 2);
-            let ttl_val = results.get(i * 2 + 1);
-            let key_type = type_val
-                .map(crate::redis_value_preview::value_to_string)
-                .unwrap_or_default();
-            let ttl: i64 = match ttl_val {
-                Some(redis::Value::Int(n)) => *n,
-                Some(redis::Value::BulkString(b)) => {
-                    String::from_utf8_lossy(b).parse::<i64>().unwrap_or(-1)
-                }
-                _ => -1,
-            };
-            enriched.push((key.clone(), key_type, ttl));
+            .map_err(DriverError::QueryFailed)?;
+        let mut rows: Vec<(String, crate::ops_tree_scan::KeyMeta)> =
+            leaf_keys.into_iter().zip(metas).collect();
+        // A key the server now says is gone is not a child; an *unreadable*
+        // reply is (`KeyMeta::absent`), so a degraded batch can never shrink a
+        // level.
+        rows.retain(|(_, meta)| !meta.absent);
+        if no_ttl_only {
+            rows.retain(|(_, meta)| meta.ttl == -1);
         }
 
-        // Rebuild the leaf entries in place (folders keep their positions first).
-        let mut leaf_iter = enriched.into_iter();
+        let items: Vec<PageKey> = rows
+            .iter()
+            .map(|(key, meta)| PageKey {
+                key: key.clone(),
+                key_type: meta.key_type.clone(),
+            })
+            .collect();
+        let values = fetch_key_values(conn, &items, topology)
+            .await
+            .map_err(DriverError::QueryFailed)?;
+
+        let mut leaf_iter = rows.into_iter().zip(values.into_iter());
         for child in children.iter_mut() {
             if let ChildEntry::Key {
-                key, key_type, ttl, ..
+                key,
+                key_type,
+                ttl,
+                logical_len,
+                mem_bytes,
             } = child
             {
-                if let Some((_, t, n)) = leaf_iter.next() {
-                    *key_type = t;
-                    *ttl = n;
-                } else {
-                    let _ = key;
+                if let Some(((row_key, meta), value)) = leaf_iter.next() {
+                    debug_assert_eq!(&row_key, key, "leaf rows must keep page order");
+                    *key_type = meta.key_type;
+                    *ttl = meta.ttl;
+                    *logical_len = value.logical_len;
+                    *mem_bytes = meta.mem_bytes;
                 }
             }
         }
-
-        if no_ttl_only {
-            children.retain(|e| match e {
-                ChildEntry::Key { ttl, .. } => *ttl == -1,
-                ChildEntry::Folder { .. } => true,
-            });
+        // More resolved rows than leaf slots can only mean a bug above; an
+        // unfilled row keeps its placeholder shape rather than a wrong value.
+        if leaf_iter.next().is_some() {
+            tracing::warn!("redis list_children: resolved more leaves than child slots");
         }
     }
 
-    Ok((children, next_cursor))
+    tracing::info!(
+        elapsed_ms = t0.elapsed().as_millis() as u64,
+        children = children.len(),
+        with_memory,
+        consumed = page.consumed,
+        truncated = page.truncated,
+        dbsize,
+        "redis list_children page done"
+    );
+    Ok(ChildrenPage {
+        entries: children,
+        next_cursor: page.next_cursor,
+        consumed: page.consumed,
+        truncated: page.truncated,
+        dbsize,
+    })
 }
 
 #[cfg(test)]
