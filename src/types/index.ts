@@ -2,6 +2,14 @@
 export type { DatabaseType } from '../extensions/generated';
 import type { DatabaseType } from '../extensions/generated';
 
+export type {
+  TunnelKind,
+  HttpProxyTunnelConfig,
+  WebSocketTunnelConfig,
+  SavedTunnel,
+  SavedTunnelSshConfig,
+} from './tunnel';
+
 export type SslMode = 'disable' | 'prefer' | 'require' | 'verifyCa' | 'verifyFull';
 
 export type SshAuthMethod = 'password' | 'private_key' | 'agent';
@@ -35,6 +43,10 @@ export interface ConnectionConfig {
   /** Host-injected pool size; not typically set in the connection form. */
   maxPoolSize?: number;
   sshTunnel?: SshTunnelConfig;
+  tunnelKind?: import('./tunnel').TunnelKind;
+  tunnelId?: string;
+  httpProxyTunnel?: import('./tunnel').HttpProxyTunnelConfig;
+  websocketTunnel?: import('./tunnel').WebSocketTunnelConfig;
   colorTag?: string;
   group?: string;
   lastConnectedAt?: string;
@@ -59,6 +71,10 @@ export interface DriverCapabilities {
   supportsQueryExecutionCancel: boolean;
   supportsExplain: boolean;
   supportsStreamingResults: boolean;
+  /** Whether the dialect accepts OFFSET in pagination. */
+  supportsOffset: boolean;
+  /** Whether the engine has a real second namespace level (schema). */
+  hasSchemaLevel: boolean;
 }
 
 export type TableType = 'table' | 'view' | 'materializedView' | 'systemTable';
@@ -298,6 +314,8 @@ export interface AppSettings {
   aiStrictEgress: boolean;
   /** Automatically qualify column completions with a table name or alias. Default true. */
   editorCompletionIncludeTablePrefix?: boolean;
+  /** Infer foreign keys from structure and naming when the schema declares none. */
+  enableFkPrediction?: boolean;
   /** Identifier quotation policy in SQL autocomplete ('unquoted' | 'always' | 'both'). Default 'unquoted'. */
   editorCompletionQuotePolicy?: 'unquoted' | 'always' | 'both';
   /** Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat'). Default 'default'. */
