@@ -452,6 +452,29 @@ const locale = {
   'redis.overview.recent.title': 'Recently browsed keys',
   'redis.overview.recent.empty': 'Keys you open will be listed here for quick access.',
   'redis.overview.recent.clear': 'Clear history',
+
+  // ── KV workspace slots (PRD §3.4) ───────────────────────────────────────────
+  // Bottom status bar. The db label and the key name are server data, not copy;
+  // only the two placeholders below are translated.
+  'redis.contextBar.status.noKey': 'No key selected',
+  'redis.contextBar.status.unsaved': 'Unsaved changes',
+  // Key-props sidebar (ruling 8-3 = M). `redis.ttl` / `redis.noExpiry` above are
+  // reused here so the wording matches the key tree and the detail editor.
+  'redis.keyProps.title': 'Key Attributes',
+  'redis.keyProps.noKey': 'No key selected',
+  'redis.keyProps.noKeyHint': 'Select a key in the tree to read its server attributes.',
+  'redis.keyProps.loading': 'Reading key attributes…',
+  'redis.keyProps.failed': 'Could not read key attributes',
+  'redis.keyProps.missing': 'Key expired or was deleted',
+  'redis.keyProps.unavailable': 'Unavailable',
+  'redis.keyProps.freqUnavailable': 'Unavailable (LFU eviction off)',
+  'redis.keyProps.type': 'Type',
+  'redis.keyProps.memory': 'Memory',
+  'redis.keyProps.encoding': 'Encoding',
+  'redis.keyProps.idle': 'Idle time',
+  'redis.keyProps.freq': 'Access frequency',
+  'redis.keyProps.maxmemoryPolicy': 'Eviction policy',
+  'redis.keyProps.refresh': 'Reload key attributes',
 } as const;
 
 export default locale;
