@@ -55,7 +55,10 @@ export function MemoryCard({
 }: MemoryCardProps) {
   const { t } = useI18n();
   const jumpState = jumpStateAttribute(jumpHandler);
-  const barPercent = model.usedPercent === null ? 0 : Math.max(0, Math.min(100, model.usedPercent));
+  // `buildMemoryModel` already clamps `usedPercent` to [0,100] (null when the
+  // instance has no maxmemory); the unlimited gauge shape is driven off
+  // `model.unlimited` below, so the view only needs the null→0 fallback here.
+  const barPercent = model.usedPercent ?? 0;
   const nothingToReport =
     infoStatus === 'ready' &&
     model.usedBytes === null &&

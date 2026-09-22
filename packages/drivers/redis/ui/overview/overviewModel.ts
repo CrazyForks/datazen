@@ -255,11 +255,6 @@ export function buildMemoryModel(fields: Record<string, string>): MemoryModel {
   };
 }
 
-/** 无上限时的进度条仍要有形状：退化成 used_memory 的自指示条（不谎报百分比）。 */
-export function memoryBarPercent(model: MemoryModel): number | null {
-  return model.usedPercent;
-}
-
 // ---------------------------------------------------------------------------
 // Card 3 — Key space
 // ---------------------------------------------------------------------------
