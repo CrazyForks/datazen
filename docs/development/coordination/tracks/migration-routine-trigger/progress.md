@@ -19,7 +19,7 @@ Phase: READY_FOR_TEST
 
 ## Commit
 
-`PENDING` until the commit is created below.
+`add22767` (amended once to record the final commit hash).
 
 ## Self-validation
 
