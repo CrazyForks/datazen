@@ -10,7 +10,16 @@
  *  - the status bar's database label when the host has not resolved an index;
  *  - the sidebar's `null` arms for memory / idle / a real remaining TTL;
  *  - an INFO reply whose section list carries no `maxmemory_policy` at all, and
- *    a policy reply that lands after `dbSessionId` has moved on.
+ *    a policy reply that lands after `dbSessionId` has moved on;
+ *  - the `PTTL -2` / `missing:false` combination, which `describeTtl` separates
+ *    but no renderer consumes (BUG-004).
+ *
+ * Three cases here are `it.skip` by design, each marked
+ * `FIXME(redis-kvbar-ui-BUG-00N)` and registered in
+ * `docs/development/coordination/tracks/redis-kvbar-ui/bugs.md`. None of them is
+ * vacuous: each was run with the `skip` removed and failed on the asserted
+ * `data-*` marker (the measured failure text is quoted next to it), and the
+ * BUG-004 pair additionally pins today's wrong label in a case that passes.
  *
  * Assertion policy (PRD §7-6): `data-*` markers and i18n keys only — no rendered
  * English copy is pinned anywhere in this file.
@@ -331,6 +340,50 @@ describe('[tester] KeyPropsSidebar stale payload — sidebar half of redis-kvbar
     expect(aside.getAttribute('data-props-state')).toBe('loading');
     expect(aside.querySelector('[data-attr="type"]')).toBeNull();
     expect(aside.querySelector('[data-i18n-key="redis.keyProps.loading"]')).not.toBeNull();
+  });
+});
+
+describe('[tester] PTTL -2 while the key still answered (BUG-004)', () => {
+  // FIXME(redis-kvbar-ui-BUG-004): `key_object_info` can answer `missing:false`
+  // together with `ttlMs:-2` — TYPE succeeds and PTTL reports the key gone inside
+  // the same pipeline (`ops_workbench.rs:425` takes `ttl_ms` from the reply while
+  // `:439` hard-codes `missing:false`). `describeTtl` separates that as
+  // `kind:'missing'`, but no renderer consumes the distinction, so the ttl row
+  // prints `redis.noExpiry` — the one thing certainly not true of a key the
+  // server just reported as absent. Red by design; un-skip with the fix.
+  it.skip('labels a gone-by-PTTL key as gone, never as "no expiry"', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ missing: false, ttlMs: -2 }));
+    render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+    act(() => relay.selectKey('racing'));
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-props-state]')?.getAttribute('data-props-state'),
+      ).toBe('ready'),
+    );
+    expect(document.querySelector('[data-attr="ttl"] dd')?.getAttribute('data-fallback-key')).toBe(
+      'redis.keyProps.missing',
+    );
+  });
+
+  it('pins today behaviour so the BUG-004 fix is visible from both sides', async () => {
+    // Green on purpose: it records the current (wrong) label. When the fix lands
+    // this case flips and the skipped one above is what to un-skip — together they
+    // prove neither assertion is vacuous.
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ missing: false, ttlMs: -2 }));
+    render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+    act(() => relay.selectKey('racing'));
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-props-state]')?.getAttribute('data-props-state'),
+      ).toBe('ready'),
+    );
+    expect(
+      document.querySelector('[data-attr="ttl"] dd')?.getAttribute('data-fallback-key'),
+    ).toBe('redis.noExpiry');
   });
 });
 
