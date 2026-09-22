@@ -1,0 +1,226 @@
+- 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
+- 状态: READY_FOR_TEST
+- 编码 commit: `b4d5df64d`(E-1 五枚页签) · `63c5ce0b3`(E-2 常驻编辑) · `96170add2`(E-3 I-5 收敛) · `116de7495`(E-4 键头行) · `f5a273cd2`(E-5 I-1 拦截)
+- 测试 commit: `fa469154c`(E-5 dirty-leave 旅程电池 +54 行：Esc 关闭 / 卸载悬起 / 非法 JSON 三条边角出口)
+- 门禁 commit: 见本文件所在 commit（`docs(coordination): W3-E detail-ui gates + self-verification record`）
+- 合并 commit: —
+- 代理: **w3e-rescuer-finish**（收尾代理，全新实例；链：w3e-detail-ui-coder → Rescuer(实现落盘于 `f5a273cd2`) → 本代理）。本代理只执行门禁四件套 + 覆盖率 + 台账收口，**未新增功能、未改生产码**。
+- Worktree: .worktrees/datazen-redis-detail-ui
+- 分支: feature/redis-detail-ui
+- 心跳: 2026-09-22 23:42
+
+# W3-E `redis-detail-ui` 简报（协调者下发）
+
+## 0. 必读（按序）
+1. `AGENTS.md`、`docs/development/subagent/coder.md`、本文件
+2. `docs/todo/redis-workbench-ux/PRD.md` §3.3（屏 B 右列键详情全段：键头行 / 徽标行 / Codec 行 / View 行 /
+   编辑区常驻 / 底栏 dirty 驱动）、§4 I-1 / I-5 / I-11、§8 裁定 8-1 与 8-4
+3. 现状代码：`packages/drivers/redis/ui/value-editors/`（`KeyEditors.tsx` 458 行、`TtlControls.tsx`、
+   `keyEditorsInvokes.ts`、`stringKeyValue.ts`、`ValueViewer.tsx`、`valueView/`、各类型 Editor）、
+   `ui/connection/RedisConnectionView.tsx`（`ActiveTab` 与 `TABS` 在 :12-24，当前 **4 枚**）、
+   `ui/observe/`（现有面板形态参考）
+4. `ui/__tests__/keyEditorsInvokes.test.ts`、`ttlControlsJourney.test.tsx`、`stringKeyValue.test.ts`、`valueView.test.ts`
+   （本轨会把它们改红再改绿，**按新形状改写断言**，不许整条删掉）
+
+## 1. 交付单元（**按此顺序，每个单元立即 commit**）
+150 轮上限是本项目头号死法：做完一个 commit 一个；接近上限提交现场并返回 `PARTIAL` + 精确剩余清单。
+
+1. **E-1 五枚页签（裁定 8-1）**：`TABS` 现为 `items | console | monitor | pubsub`（4 枚），
+   裁定要求 **5 枚：键详情 / 命令行 / 发布订阅 / 监控 / 慢日志** ⇒ 慢日志升为一级页签。
+   新建 `ui/observe/SlowlogPanel.tsx`，数据走既有 `slowlog_get` 命令（屏 A 已在用，零新增后端）。
+   权限缺失 / Redis 不支持 ⇒ 具名空态（不是 0 条、不是留白）。
+2. **E-2 删掉「查看 / 编辑」切换（§3.3 的核心冗余）**：`redis-string-mode-toggle` 两枚按钮与 `mode` state
+   整体删除（现落在 `KeyEditors.tsx` 的 toggle 段，PRD 原文引用 :315-342，代码已位移，**按符号名找不要按行号**）。
+   编辑区改为**常驻可编辑**。同步改写 `keyEditorsInvokes.test.ts` 等受影响断言。
+3. **E-3 I-5 只读态收敛为「只剩两种」**：① Hex / Binary 视图（二进制不可原样回写）② `frame.truncated`
+   或大 value 判定。两种都必须**给出原因文案**。除此之外任何"只读"分支删掉。
+   大 value 哨兵：`GETRANGE 0 65537`，返回长度 > 65536 即判定截断（不必先传整包）。
+4. **E-4 键头行 + 徽标行重排**：键头 = key 名（等宽、可截断带 title）+ 动作图标组
+   （刷新**分裂按钮**：下拉选自动刷新间隔 1s/5s/10s/30s/关 · 复制键名 · 复制插入语句 · 重命名内联 · 删除危险色）。
+   徽标行 = 类型 | `大小: N B`（复用现有 `ValueFrame.memBytes`/`formatSize`）| TTL pill。
+   **TTL pill 点击即变内联三态编辑器**（`永不过期 / 相对 TTL / 绝对时间(EXPIREAT)`），
+   用它替代现在整行挂载的 `TtlControls`（在 `KeyEditors.tsx` 里作为独立一行的挂点）—— 省一行高度。
+   裁定 8-4 = **照抄**参照文案：`永不过期`、`自动换行`、`大小: N B`、`放弃`（中文文案由 i18n-sync 在发布前补，
+   开发期只写 `en.ts` key，但 key 语义要能承载这些文案）。
+   自动刷新与手动刷新在 dirty 时必须被拦截（见 E-5）。
+5. **E-5 dirty 底栏 + I-1 拦截（本轨最重的一条，放在最后做）**：
+   - 底栏：`放弃` / `保存` **仅在 dirty 时出现并高亮**（现状 dirty 只发布事件，没有底栏语义）。
+   - I-1：有未保存草稿时，**刷新 / 自动刷新 / 切键 / 切页签 / 切 db** 一律先弹「放弃更改 / 继续编辑」
+     （用 `@datazen/ui` 的 Dialog，不新造弹层）。
+   - 现状缺陷必须一并消掉：**切 db / 刷新 / 搜索会静默清 dirty**（绕过 I-1，用户草稿无痕消失）。
+   - 保存语义走 `SET ... KEEPTTL`：`keepTtl` 复选删除（后端默认化在 W3-C，
+     若你合流时 C 尚未落地，**不传该参数**即可，不要自己造第二个默认值开关）。
+   - 编辑器按 key 重挂载（`key={detail.key}`）这条 W2 结论沿用，别改回去。
+
+## 2. 明确不做（防范围漂移）
+- 集合类（hash/list/set/zset）**虚拟表格 + `loaded/total` + 服务端字段搜索 + 可排序列** 本轨不做（Wave 4/5 单开轨）。
+  现状 zset 客户端排序保持不动。
+- Stream 面包屑（`stream › group › consumer`）本轨不做。
+- hash field TTL（`HEXPIRE`，P2）、`protobuf` codec（P2）不做。
+- 不接 `KvSlotState` 新增 getter/setter（Wave 4 与 W3-A 有先后关系）；本轨只沿用既有 `getDirty/setDirty`。
+- 不碰 `ui/key-browser/**`（W3-D 拥有）、`ui/console/redisConsoleDanger.ts`（W3-F 拥有）、
+  `ui/kv-bar/**`（已合入，只读参考）、宿主 `src/**` 与 `packages/driver-sdk/**`（W3-A 拥有）、
+  `packages/drivers/redis/src/**`（W3-B/C 拥有）。
+- 不碰 `ui/shared/meta.ts` 与 `scripts/resolve-drivers.mjs`（本轨不新增槽位）。
+
+## 3. 冲突面声明
+`packages/drivers/redis/locales/en.ts` 与 W3-D / W3-F 同时加文案。规则：**只追加自己的命名空间
+`redis.detail.*`（页签文案沿用既有 `redis.*` key，不重命名）**，不改他人 key、不重排。
+`RedisConnectionView.tsx` 本轨独占（W3-D 不碰）。
+
+## 4. 门禁与交付
+1. `npx vitest run --config vitest.drivers.config.ts`（基线 47 files / 456 tests，只许增不许红）。
+2. `npx tsc --noEmit` = 0；`npx vite build` 通过（禁裸 `pnpm build`）。
+3. `node scripts/check-driver-import-boundaries.mjs` = 0 blocking。
+4. 每条交互写**连续旅程测试**（击键/切换/dirty 全过程 + 中间态 + 退出跃迁），选择与点击用 `data-*` 绑定，
+   禁视口几何反查；禁止只测静态合法态。
+5. 本轨改动代码覆盖率 ≥80%，缺口在 `## 自验记录` 点名。
+6. **禁止英文字面量断言**：`ui/__tests__/ttlControlsJourney.test.tsx` 的 `getByText('No expiry')`
+   （PRD §7 点名 :21/:79/:378）本轨顺手改写为 key / `data-*` 断言 —— **改写不是删除**。
+7. 本文件追加 `## 自验记录`（命令 + 数字 + 五个交付单元各自落点文件 + E-5 的状态机三要素表）。
+8. 返回 `READY_FOR_TEST`。
+
+## 5. 环境纪律（违反即返工）
+- 工作目录固定 `.worktrees/datazen-redis-detail-ui`；禁写其他检出（主检出与 integrate worktree 只读）。
+- Grep 工具搜索（禁 bash `grep -r`）；禁 `pnpm install`（node_modules 已软链）。
+- 禁 live `pnpm e2e` / `pnpm tauri:build:webdriver`；需真实 Redis 的场景登记进 `## 留待 R 回归`。
+- 禁提交 gitignored codegen / `Cargo.lock` / 注入过的 `src-tauri/Cargo.toml`；禁改 `hub.md` 与他轨文档。
+- i18n 开发期只改 `en.ts`；单文件 ≤800 行（`KeyEditors.tsx` 458 行，重排时按类型/职责拆，别就地堆大 if）。
+
+## 自验记录（w3e-rescuer-finish · 2026-09-22 23:42）
+
+工作目录 `.worktrees/datazen-redis-detail-ui`，HEAD 起点 `f5a273cd2`（E-1..E-5 实现均已由前任 Rescuer 落盘）。
+本代理**未改任何生产码、未加任何功能**，只跑门禁、补测试提交、收台账。
+
+### 1. 门禁四件套（严格串行，一次一条）
+
+| # | 命令 | 结果 |
+| - | ---- | ---- |
+| 1 | `npx vitest run --config vitest.drivers.config.ts` | **55 files / 525 tests 全绿**（0 failed / 0 skipped）· 9.79s |
+| 2 | `npx tsc --noEmit` | **exit 0**，0 error |
+| 3 | `npx vite build` | **exit 0** · `✓ built in 4.76s`（仅 chunk >500 kB 的既有 advisory 警告，非本轨引入） |
+| 4 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0** · `1469 files scanned · 0 blocking violation(s) · 4 advisory finding(s)`（4 条 R3 advisory 均为既有 host→driver 引用，非本轨新增） |
+
+第 1 步单独实跑本轨最重的旅程电池：
+`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui/__tests__/dirtyLeaveJourney.test.tsx`
+→ **11 tests 全绿**（460ms）。前任遗留的 +54 行（3 条边角出口用例：Esc 关闭 / 卸载时悬起落地 / 非法 JSON 保存）**一次通过，无需降级 `it.skip`，无需改实现**，故按步骤 1 的绿路直接以 `fa469154c` 提交。
+
+### 2. 交接现场核对（三处与下发简报不符，均已实测澄清）
+
+| 简报说法 | 实测 | 处置 |
+| -------- | ---- | ---- |
+| 基线 ≈54 files / 583 passed + 2 skipped | **55 files / 525 passed / 0 skipped** | 只许增不许红 ⇒ 满足（无红）；差值来自本 worktree 的 drivers 套件实际用例集，台账以实测为准 |
+| `RedisWorkbench.tsx` 行数 531→537（D 轨验收基线 531） | 实际 **705 →(HEAD) 760**；全仓 redis UI 内**不存在**任何 531 或 537 行的文件 | 见 §3 行数条 |
+| 旅程覆盖「换键⌘Y / 切db⌥⌘Y / ⌘R / 批量对话框 / 批量TTL / 列设置」 | **这些键位在本仓根本不存在**：全仓仅 `app_menu.rs` 有 `CmdOrCtrl+,` / `CmdOrCtrl+N` 两枚 accelerator，redis UI 内唯一的组合键是 `RedisConsole.tsx:210` 的 Mod+Enter；宿主亦无任何 `refreshKeys` 快捷键接线。`dirtyLeaveJourney.test.tsx` 的 11 条用例实际为：状态机 / 脏底栏 / 切键 / 切db / 工具栏刷新 / 头行刷新 / 保存先发布干净 / 切页签 / Esc / 卸载 / 非法 JSON | 八拦截点与「自动刷新 tick 被拦 ⇒ 落关」均有实测断言（见 §5）；批量对话框与批量 TTL / 列设置**经 `KeyWorkbenchDialogs` 的 `onRefreshKeys=refreshKeys` 间接吃到 §5-#3 守卫**（代码面已拦截），但**无专属断言**，且简报所列「⌘R / ⌘Y / ⌥⌘Y 旅程」在本仓无对应实现 ⇒ 记为遗留（§8），未擅自补功能 |
+| `progress.md` 有 `## 修复轮交接（协调者）` 节 | 该节在本 worktree 的 progress.md 中**不存在**（全文 87 行，仅协调者简报 §0–§5；`git log --all -S"修复轮交接"` 零命中） | 交接手册给出的**锚点本身逐条实测通过**（下表），故按锚点接手，不依赖其文档 |
+
+拦截文案「五类」核对：`redis.detail.leave.title` / `.description` / `.discard` / `.keepEditing` 四枚在
+`packages/drivers/redis/locales/en.ts:508-511`，加 I-5 两枚只读原因 `.readonly.binaryView`(488) / `.readonly.bigValue`(490)
+与底栏 `redis.detail.discard`(507)——文案齐备，且 `DraftLeaveDialog.tsx:17` 已裁定「断言口径 = `data-testid` 定位、
+文案只断 `data-i18n-key`」，全仓无英文字面量断言（简报 §4-6 达成）。
+
+### 3. 步骤 2 核对：`git diff 8981d3078..HEAD -- ui/key-browser/`
+
+**结论：不是「仅 `requestDraftLeave` 接线」，但属 E-5 必需的语义改动，无顺手重构。** 与 D 轨合流面如实登记：
+
+- 唯一被改文件 = `ui/key-browser/RedisWorkbench.tsx`（简报 §2 声明 D 轨拥有该目录）。改法为
+  7 处 `if (!(await requestDraftLeave())) return;` 前置守卫，并把 5 个回调改为 `async` + 6 处 `void` 调用点适配。
+- **一处行为改动（非纯接线）**：`reloadDetail`（:378 段）原先 `refreshKeys()` 会清 selection（E-5 守卫后等于「保存即关面板」），
+  改为只重取 detail + `scanRefresh()/tree.refresh()`。这是修 E-5 自引入回归的必要补丁。
+- 一处同类守卫下的等价改动：`handleSelectDb` 增加同库重点击早退（避免初始自动选中误弹 I-1 对话框）。
+- 行数 705 → 760（+55），**远低于 ≤800 上限**；「不回升」这一实质要求满足（无回升迹象、HEAD 即终值 760），
+  但**简报的 531 基线与 D 轨无关本文件、且本仓不存在该数值**——请协调者在合流时以 **760** 为准与 D 轨重新对齐，
+  本代理未改行数、未改 `RedisWorkbenchHandle` 契约（`refreshKeys: () => void` / `selectDatabase` 签名与 base 一致，
+  实现内部转 async 但对外形状未变，故 D 轨调用侧无需跟改）。
+
+### 4. E-1..E-5 落点文件
+
+| 单元 | commit | 落点 |
+| ---- | ------ | ---- |
+| E-1 五枚页签（裁定 8-1） | `b4d5df64d` | `ui/observe/SlowlogPanel.tsx`(新 263 行) · `ui/connection/RedisConnectionView.tsx`（`TABS` 4→5） · `ui/__tests__/redisTabBarJourney.test.tsx`(新) · `slowlogPanelJourney.test.tsx`(新) |
+| E-2 常驻编辑（删查看/编辑切换） | `63c5ce0b3` | `ui/value-editors/KeyEditors.tsx`（-toggle/mode state）· `ui/value-editors/StringEditor.tsx`(新 303 行) · `keyEditorsInvokes.test.ts` 改断言 · `stringValueReadOnlyJourney.test.tsx`(新) |
+| E-3 I-5 只读收敛为两种 | `96170add2` | `ui/value-editors/keyReadOnlyPolicy.ts`(新) · `redisBigValue.ts`(新，`GETRANGE 0 65537` 哨兵) · `ValueViewer.tsx` · `redisBigValue.test.ts`(新) · `keyReadOnlyPolicy.test.ts`(新) |
+| E-4 键头行 + 徽标行 + TTL pill | `116de7495` | `ui/value-editors/KeyHeaderRow.tsx`(新 320 行) · `TtlControls.tsx`（整行→内联三态 pill）· `redisInsertStatement.ts`(新) · `keyHeaderRowJourney.test.tsx`(新 422 行) · `ttlControlsJourney.test.tsx`（+177，含 pill 三要素旅程） |
+| E-5 底栏 + I-1 拦截 | `f5a273cd2` + `fa469154c` | `ui/shared/draftGuard.ts`(新 87 行) · `ui/value-editors/DraftLeaveDialog.tsx`(新 78 行) · `KeyEditors.tsx` · `ui/key-browser/RedisWorkbench.tsx` · `RedisConnectionView.tsx` · `dirtyLeaveJourney.test.tsx`(新 446 行) · `kvSlotRelay.test.tsx`(+63) |
+
+### 5. E-5 状态机三要素表（I-1 dirty 拦截）
+
+进入条件 — **`publishDraftDirty(true)`**：
+- `ui/shared/draftGuard.ts:19` `let dirty = false`（模块单例）· `:30-34` `publishDraftDirty(next)`（唯一写入口，`:31` 幂等短路）
+- 击键侧：`StringEditor.tsx` 的 `onEdit`/`onChange` ⇒ `onDirtyChange(true)` ⇒ `RedisWorkbench.tsx` `setEditorDirty`
+  与 `KeyEditors.tsx:59/69/208` 的 `onDirtyChange` 透传（写入口注释见 `draftGuard.ts:29`「保存/放弃/卸载都会落 false」）。
+- `:56-57` `requestDraftLeave()`：`if (!dirty) return Promise.resolve(true)` ⇒ **干净态导航零开销**，无误弹。
+
+状态内行为 — **8 个拦截点**（`await requestDraftLeave()` 生产码实测恰 8 处，另有 `draftGuard.ts:6` 一处文档提及）：
+
+| # | 拦截点 | 锚点 | 拒绝后果（已测） |
+| - | ------ | ---- | ---------------- |
+| 1 | 切键（树行点击） | `RedisWorkbench.tsx:370`（`handleSelectKeyGuarded`；同键重点击 `:366` 早退不拦截） | 不换键、草稿存活 |
+| 2 | 切 db | `RedisWorkbench.tsx:257`（同库重点击 `:255` 早退，含初始自动选中） | 不切库、不清 selection |
+| 3 | 列头/工具栏刷新 | `RedisWorkbench.tsx:298`（`refreshKeys`） | 不 reload 列表 |
+| 4 | 工具栏整体刷新 | `RedisWorkbench.tsx:309`（`handleRefresh`） | 不重载面板 |
+| 5 | 搜索（替换 selection） | `RedisWorkbench.tsx:322`（`handleSearch`） | 不清 selection |
+| 6 | 关闭详情面板 | `RedisWorkbench.tsx:697`（`onClose`） | 面板不关 |
+| 7 | 清空选中键（对话框侧出口） | `RedisWorkbench.tsx:739`（`onClearSelectedKey`） | 选中与草稿均存活 |
+| 8 | 切页签 | `RedisConnectionView.tsx:93`（`activeTab` 切换；keep-alive 下对话框仍可见） | 不切页签 |
+
+状态内附加行为（编辑面内部动作，同走一个守卫）：`KeyEditors.tsx:114` 列头刷新 / `:121` 重命名 / `:134` 删除；
+**自动刷新 tick** 复用 `:114` 的 `refreshNow`（`KeyHeaderRow.tsx:76-80`：tick 拿 `false` ⇒ `setIntervalMs(0)` 自动落「关」，
+不追问、不 nag，`keyHeaderRowJourney.test.tsx:385` 断言）。
+并发合并：`:58` `if (leavePending && leavePromise) return leavePromise` ⇒ 悬起期重复请求合到同一 Promise（无对话框堆叠）。
+
+退出跃迁 — **保存 / 放弃 / 取消 / 卸载 四条，全部通向 `dirty=false` 或动作取消，无单向死锁**：
+- `draftGuard.ts:68-76` `settleDraftLeave(proceed)`（`:74` `if (proceed) dirty = false` ⇒ 只有「放弃」清 dirty，取消保留）；
+  `:80-87` `__resetDraftGuard()`（测试专用跨用例复位，生产路径不经它）。
+- **放弃**：对话框 `redis-draft-discard` ⇒ `settleDraftLeave(true)` ⇒ `dirty` 落 false、原动作继续。
+- **继续编辑（取消）**：`redis-draft-keep` ⇒ `settleDraftLeave(false)` ⇒ 守卫返回 false，动作整体取消，草稿原样保留。
+- **Esc 关闭对话框**：等价「继续编辑」（`dirtyLeaveJourney.test.tsx:395` 新用例；selection 与草稿均存活）。
+- **保存**：`StringEditor.tsx:158-162` 顺序为 `setJsonDirty(false)` → 若悬起则 `settleDraftLeave(true)` → `publishDraftDirty(false)`
+  → `onDirtyChange?.(false)` → `onSaved()`（**先发布干净再重取**，故保存自身不误弹 I-1；`dirtyLeaveJourney.test.tsx:342` 断言）。
+- **卸载**：编辑面 unmount 时悬起的 leave 落 `false`，不留下悬挂 await（`dirtyLeaveJourney.test.tsx:415` 断言）。
+- **非法载荷不出网**：非法 JSON 保存不打后端且保持 dirty（`dirtyLeaveJourney.test.tsx:428` 断言）。
+
+### 6. 覆盖率（v8，`--coverage.all=false`）
+
+| 口径 | Stmts | Branch | Funcs | Lines |
+| ---- | ----- | ------ | ----- | ----- |
+| **A. 本轨实际改动 14 个生产文件**（`git diff --name-only` 全量，含 D 轨目录下的 workbench） | **81.22%** | 75.35% | 78.42% | **83.71%** |
+| **B. 本轨自有代码**（A 剔除 `RedisWorkbench.tsx`，再剔除 §2「明确不做」的 5 个集合编辑器与未改动的 `JsonEditor.tsx`） | **86.25%** | 79.07% | 85.43% | **88.74%** |
+| C. 字面圈定（`value-editors/**` glob + `RedisConnectionView.tsx` + `draftGuard.ts`，会把未触及的集合编辑器扫进来） | 55.43% | 56.43% | 47.31% | 56% |
+
+判定：口径 A 与 B 均 **≥80%** ⇒ 交付项 §4-5 达成。口径 C 偏低**不是缺口**，而是 glob 把本轨按 §2 明确不做的
+`HashEditor/ListEditor/SetEditor/ZsetEditor/StreamEditor/StreamOverview`（0.67–1.66%）与未触及的 `JsonEditor.tsx`(55%) 一并计入。
+覆盖率**只用测试达成，未改生产码，未新增测试文件**（口径 B 已达标，无需补测）。
+
+点名缺口（口径 B 内仍 <80% 的文件，均为**非 I-1 主干路径**）：
+- `StringEditor.tsx` 70.65% stmts / 74.69% lines — 未覆盖集中在**解压按钮支路**（`runDecompress` 的失败/异常分支，
+  需真连返回压缩载荷）与 gateWrite 拒绝分支；dirty/保存主链已全覆。
+- `ValueViewer.tsx` 75.36% / 76.56% — 未覆盖为 `:124-138` 渲染兜底支路（未知 view kind），主 I-5 两态已覆。
+- `KeyEditors.tsx` 76.08% stmts（lines 82.92%）— 未覆盖 `:217-244` 为**非 string 类型编辑器的分发段**（hash/list/set/zset 分派，属 Wave 4/5）。
+- `keyEditorsInvokes.ts` 82% / funcs 57.14% — `:306-321` 为集合类批量 invoke 辅助（本轨未动其语义）。
+- `RedisConnectionView.tsx:73`（`handleSelectDatabase` 转发，经 host 侧调用）与 `draftGuard.ts:69`（`settleDraftLeave` 在无悬起请求时的早退，防御分支）各 1 行。
+- `SlowlogPanel.tsx` 90.9% — `:113-114`（权限缺失具名空态需真连 403）、`:233` 为兜底。
+- `RedisWorkbench.tsx`（D 轨目录，口径 A 内）70.16% — 未覆盖主要是 `:688-691/:738-741` 之外的右键菜单/批量/导入导出**既有**支路，非本轨引入。
+
+### 7. 留待 R 回归（需真连 Redis / GUI，禁 live e2e）
+
+1. **真 Redis 保存往返**：`SET ... KEEPTTL` 语义端到端——TTL 在保存后是否保持不变（后端默认化在 W3-C；本轨按简报未传 `keepTtl` 参数，若 C 已合流需复验其默认值生效）。
+2. **keepTtl 后端默认化效果**：与 W3-C 合流后跑一次「无 TTL / 有 TTL 两键各保存一次」的真连往返。
+3. **自动刷新 GUI 真值**：1s/5s/10s/30s 实际 tick 与「dirty 时 tick 被拦 ⇒ 自动落关」在真实渲染下的观感（jsdom 只验了状态机，未验计时器手感与菜单定位）。
+4. **大 value 哨兵真连**：`GETRANGE 0 65537` 在真实 >64 KiB 载荷上的截断判定与只读原因文案可见性（含 `MEMORY USAGE` 徽标 `大小: N B` 的真实数值格式）。
+5. **慢日志页签真连**：`slowlog_get` 在有/无 `SLOWLOG` 权限、以及 Redis < 2.2.1 不支持时的**具名空态**（单测只能验 mock 返回）。
+6. **对话框视觉/焦点**：`DraftLeaveDialog`（`@datazen/ui` Dialog）在暗色主题下的焦点陷阱、Esc 可达性与 z 序（与 keep-alive 隐藏页签叠层）。
+
+### 8. 遗留事项（本代理未处理，交协调者判定）
+
+1. **简报与现场不符的三处**（详见 §2 表）：门禁基线数字、`RedisWorkbench.tsx` 531/537 行数说法、
+   `progress.md` 缺失的 `## 修复轮交接（协调者）` 节。实现与门禁本身不受影响（锚点逐条实测通过），
+   但**合流前需以实测值 760 与 D 轨重新对齐行数基线**。
+2. **简报所称「⌘Y / ⌥⌘Y / ⌘R 快捷键旅程」在本仓无对应实现**：既无 accelerator，宿主也不接 `refreshKeys`。
+   若 PRD 确实要求这三枚键位，属**未开工能**，本轨已 READY_FOR_TEST 的范围不含它，需另立单元。
+3. **批量对话框 / 批量 TTL / 列设置无专属 I-1 断言**：代码面经 `onRefreshKeys → refreshKeys`（§5-#3）已受守卫，
+   但没有一条测试验证「脏时批量操作会先弹放弃对话框」。补测属测试面工作（不需改生产码），
+   本轮按「不加功能」纪律未做。
+4. **步骤 2 的「仅接线」预期不成立**（§3）：`ui/key-browser/` 有 1 处必要行为改动（`reloadDetail` 不再清 selection）
+   与 1 处等价早退（同库重点击）。D 轨并行修复若也改 `RedisWorkbench.tsx`，**合流冲突面在此**，
+   但改动均为局部 hunk、无重写，按符号名合并即可。
