@@ -1007,7 +1007,10 @@ impl SlotRoutedConnection for ClusterBatchConn {
                 .expect("journal lock")
                 .batches
                 .push(journaled);
-            match values.iter().position(|v| matches!(v, RValue::ServerError(_))) {
+            match values
+                .iter()
+                .position(|v| matches!(v, RValue::ServerError(_)))
+            {
                 Some(index) => Err(format!(
                     "cluster dispatch: batch folded rejection at command {index}"
                 )),
@@ -1072,10 +1075,12 @@ async fn cluster_rejected_field_degrades_via_per_command_replay_not_batch_error(
     };
     // "denied": batch attempt (MEMORY ok, TYPE rejected, PTTL ok) + replay.
     conn.inner.push_int("MEMORY", 70);
-    conn.inner.push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner
+        .push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
     conn.inner.push_int("PTTL", -1);
     conn.inner.push_int("MEMORY", 70);
-    conn.inner.push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner
+        .push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
     conn.inner.push_int("PTTL", -1);
     // "fine": one clean batch.
     conn.inner.push_int("MEMORY", 80);
@@ -1089,12 +1094,20 @@ async fn cluster_rejected_field_degrades_via_per_command_replay_not_batch_error(
     let denied = &fields[0];
     assert!(!denied.missing, "NOPERM is a rejection, not a vanished key");
     assert_eq!(denied.key_type, None, "the rejected field alone degrades");
-    assert_eq!(denied.bytes, Some(70), "the other fields survive the replay");
+    assert_eq!(
+        denied.bytes,
+        Some(70),
+        "the other fields survive the replay"
+    );
     assert_eq!(denied.ttl_ms, Some(-1));
     assert_eq!(fields[1].key_type.as_deref(), Some("hash"));
 
     let journal = conn.inner.journal();
-    assert_eq!(journal.batches.len(), 2, "denied batch attempt + clean batch");
+    assert_eq!(
+        journal.batches.len(),
+        2,
+        "denied batch attempt + clean batch"
+    );
     assert_eq!(
         journal.singles.len(),
         MEMORY_SAMPLE_FIELDS_PER_KEY,
@@ -1171,7 +1184,10 @@ async fn memory_sample_reports_a_key_deleted_after_sampling_as_missing() {
         .iter()
         .find(|s| s.key == "gone")
         .expect("the sampled key still appears in the result");
-    assert!(gone.missing, "a vanished key is a distinguishable empty state");
+    assert!(
+        gone.missing,
+        "a vanished key is a distinguishable empty state"
+    );
     assert_eq!(gone.bytes, 0);
     assert_eq!(gone.key_type, None);
     assert_eq!(gone.ttl_ms, Some(TTL_MISSING));

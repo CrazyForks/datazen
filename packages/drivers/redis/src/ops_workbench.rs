@@ -519,7 +519,11 @@ where
         self.route_command(cmd, master_route(slot)).boxed()
     }
 
-    fn pipeline_at_slot<'a>(&'a mut self, pipe: &'a redis::Pipeline, slot: u16) -> SlotRoutedBatchFuture<'a> {
+    fn pipeline_at_slot<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        slot: u16,
+    ) -> SlotRoutedBatchFuture<'a> {
         // `route_pipeline` takes an explicit node, bypassing the
         // `route_for_pipeline` pre-check that would misread `MEMORY USAGE`
         // (see the module docs) and reject this batch with a client-side
