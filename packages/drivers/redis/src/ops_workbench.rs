@@ -89,6 +89,8 @@
 //! of any other length rather than mis-reading the slots.
 
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use futures_util::FutureExt;
 use redis::aio::ConnectionLike;
@@ -466,9 +468,15 @@ fn unreadable_key_state() -> KeyObjectInfo {
 /// table, which does not describe these probes — see the module docs for what
 /// that costs. Only [`Topology::Cluster`] asks for it.
 ///
+/// Future returned by [`SlotRoutedConnection::pipeline_at_slot`]: the raw
+/// per-command replies of the batch, or one error for the whole batch (which
+/// is also how a real `route_pipeline` dispatch reports a folded rejection).
+pub type SlotRoutedBatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<RValue>, String>> + Send + 'a>>;
+
 /// A single-node connection has exactly one node, so the slot is vacuous and the
 /// default implementation just sends the command.
-pub trait SlotRoutedConnection: ConnectionLike {
+pub trait SlotRoutedConnection: ConnectionLike + Send {
     /// Issue `cmd` against the master that owns `slot`.
     fn command_at_slot<'a>(
         &'a mut self,
@@ -476,6 +484,24 @@ pub trait SlotRoutedConnection: ConnectionLike {
         _slot: u16,
     ) -> RedisFuture<'a, RValue> {
         self.req_packed_command(cmd)
+    }
+
+    /// Issue `pipe` against the master that owns `slot` as **one addressed
+    /// batch**, answering with one value per command.
+    ///
+    /// Used by [`fetch_memory_sample_fields`], whose three probes of one key
+    /// (`MEMORY USAGE` / `TYPE` / `PTTL`) all hash to that key's slot, so the
+    /// batch can never cross slots. The default is the honest single-node
+    /// shape — one command per round trip, address vacuous.
+    fn pipeline_at_slot<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        slot: u16,
+    ) -> SlotRoutedBatchFuture<'a>
+    where
+        Self: Sized,
+    {
+        routed_sequential(self, pipe, slot).boxed()
     }
 }
 
@@ -491,6 +517,32 @@ where
         slot: u16,
     ) -> RedisFuture<'a, RValue> {
         self.route_command(cmd, master_route(slot)).boxed()
+    }
+
+    fn pipeline_at_slot<'a>(&'a mut self, pipe: &'a redis::Pipeline, slot: u16) -> SlotRoutedBatchFuture<'a> {
+        // `route_pipeline` takes an explicit node, bypassing the
+        // `route_for_pipeline` pre-check that would misread `MEMORY USAGE`
+        // (see the module docs) and reject this batch with a client-side
+        // `CROSSSLOT`. The target master owns `slot`, hence every key in the
+        // batch, so the server executes all commands. One round trip per key.
+        //
+        // The known cost of this shape: the dispatch layer re-folds the reply
+        // vector with `Value::extract_error_vec` (module docs), so a *rejected*
+        // command surfaces as one batch error rather than one error slot —
+        // [`fetch_memory_sample_fields`] re-runs the key through
+        // [`routed_sequential`] in that case, which restores per-command
+        // degradation at the price of de-batching just that key.
+        let count = pipe.cmd_iter().count();
+        (async move {
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+            let route = SingleNodeRoutingInfo::SpecificNode(Route::new(slot, SlotAddr::Master));
+            self.route_pipeline(pipe, 0, count, route)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .boxed()
     }
 }
 
@@ -936,16 +988,18 @@ pub fn parse_memory_sample_fields(values: &[RValue]) -> MemorySampleFields {
 /// screen-A Top-5 — so field reads cost at most `ceil(keys / chunk)` instead of
 /// one round trip per key. That is the improvement this bug asks for.
 ///
-/// **Cluster is the hard constraint and the documented exception.** A pipeline
-/// spanning hash slots is rejected with `CROSSSLOT`, and `ClusterConnection`
-/// additionally pins a whole pipeline to a single slot (see the module docs), so
-/// the only cluster-safe shape sends each key's three commands to the shard that
-/// owns *that* key ([`get_slot`]). The three commands of one key always hash to
-/// the same slot, so they never cross — this can never regress into a `CROSSSLOT`
-/// the way batching different keys into one pipeline would. The cost is three
-/// addressed round trips per key rather than one batch for the sample; that
-/// trade-off is recorded in the track ledger alongside `type_distribution`,
-/// which makes the same choice.
+/// **Cluster addresses each key as one batch.** A pipeline spanning hash slots
+/// is rejected with `CROSSSLOT`, but the three probes of *one* key always hash
+/// to that key's slot, so each key goes out as a single
+/// [`SlotRoutedConnection::pipeline_at_slot`] batch aimed at the shard owning
+/// it — the same N round trips the old per-key `MEMORY USAGE` loop cost, never
+/// a mixed-slot pipeline. The one cluster-specific shape to know:
+/// `route_pipeline` folds per-command rejections into one batch error (see the
+/// module docs), so a rejected `TYPE` / `PTTL` would take the whole key down
+/// with it; on a batch error this fn re-runs *that key* through
+/// [`routed_sequential`], which answers one value per command and restores the
+/// "one bad field degrades alone" contract. Connection-level failures still
+/// surface as an `Err` for the command, exactly as before.
 pub(crate) async fn fetch_memory_sample_fields<C>(
     conn: &mut C,
     keys: &[String],
@@ -958,7 +1012,29 @@ where
     if matches!(topology, Topology::Cluster) {
         for key in keys {
             let pipe = build_memory_sample_pipeline(std::slice::from_ref(key));
-            let values = routed_sequential(conn, &pipe, get_slot(key.as_bytes())).await?;
+            let slot = get_slot(key.as_bytes());
+            let values = match conn.pipeline_at_slot(&pipe, slot).await {
+                Ok(values) if values.len() == MEMORY_SAMPLE_FIELDS_PER_KEY => values,
+                // Folded batch rejection (or a malformed short vector): replay
+                // this one key command-by-command so the rejected field degrades
+                // alone instead of failing the whole sample.
+                Ok(partial) => {
+                    tracing::debug!(
+                        key,
+                        replied = partial.len(),
+                        "redis memory_sample: addressed batch answered a short vector, replaying per command"
+                    );
+                    routed_sequential(conn, &pipe, slot).await?
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        key,
+                        error = %error,
+                        "redis memory_sample: addressed batch rejected, replaying per command"
+                    );
+                    routed_sequential(conn, &pipe, slot).await?
+                }
+            };
             fields.push(parse_memory_sample_fields(&values));
         }
         return Ok(fields);

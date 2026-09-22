@@ -926,11 +926,10 @@ async fn memory_sample_field_read_scales_by_chunk_not_by_key() {
 
 #[tokio::test]
 async fn memory_sample_field_read_addresses_each_key_on_cluster() {
-    // Cluster cannot carry a cross-slot pipeline, so each key's three commands
-    // go out one at a time, addressed to that key's shard — proven by the
-    // journal showing three singles per key and NO batch. This is the
-    // CROSSSLOT-safe shape: the three commands of one key share its slot, so
-    // batching them is never a mixed-slot pipeline the coordinator rejects.
+    // `ScriptedConn` carries the trait's DEFAULT `pipeline_at_slot`, which is
+    // addressed command-by-command — this pins that fallback shape (never a
+    // mixed-slot pipeline). The real `ClusterConnection` overrides it with one
+    // addressed batch per key; `ClusterBatchConn` below simulates that shape.
     let keys: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
     let mut conn = ScriptedConn::new();
     conn.push_int("MEMORY", 50);
@@ -954,7 +953,152 @@ async fn memory_sample_field_read_addresses_each_key_on_cluster() {
     assert_eq!(
         journal.singles.len(),
         2 * MEMORY_SAMPLE_FIELDS_PER_KEY,
-        "three addressed round trips per key"
+        "the default shape replays every probe as an addressed single"
+    );
+}
+
+/// Double for the *real* `ClusterConnection::route_pipeline` shape: one
+/// addressed batch per key (one round trip), whose dispatch layer folds any
+/// per-command rejection into a single batch error — exactly the
+/// `Value::extract_error_vec` behaviour the module docs describe and the only
+/// reason [`fetch_memory_sample_fields`] needs a replay fallback.
+#[derive(Clone)]
+struct ClusterBatchConn {
+    inner: ScriptedConn,
+}
+
+impl ConnectionLike for ClusterBatchConn {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a redis::Cmd) -> RedisFuture<'a, RValue> {
+        self.inner.req_packed_command(cmd)
+    }
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<'a, Vec<RValue>> {
+        self.inner.req_packed_commands(pipe, offset, count)
+    }
+    fn get_db(&self) -> i64 {
+        self.inner.get_db()
+    }
+}
+
+impl SlotRoutedConnection for ClusterBatchConn {
+    fn pipeline_at_slot<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        _slot: u16,
+    ) -> SlotRoutedBatchFuture<'a> {
+        (async move {
+            let mut values = Vec::new();
+            let mut journaled = Vec::new();
+            for cmd in pipe.cmd_iter() {
+                let args = args_of(cmd);
+                let name = args.first().cloned().unwrap_or_default();
+                values.push(self.inner.take_reply(&name));
+                journaled.push(normalized(&args));
+            }
+            // One addressed batch, one round trip — what `route_pipeline` is
+            // for, and why cluster costs N trips and not 3N.
+            self.inner
+                .journal
+                .lock()
+                .expect("journal lock")
+                .batches
+                .push(journaled);
+            match values.iter().position(|v| matches!(v, RValue::ServerError(_))) {
+                Some(index) => Err(format!(
+                    "cluster dispatch: batch folded rejection at command {index}"
+                )),
+                None => Ok(values),
+            }
+        })
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn cluster_memory_sample_field_read_is_one_addressed_batch_per_key() {
+    // The round-trip ceiling the fix must not exceed: the original loop paid
+    // one `MEMORY USAGE` per key (N). Here two keys cost TWO trips total —
+    // one addressed batch each — never three trips per key.
+    let keys: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+    let mut conn = ClusterBatchConn {
+        inner: ScriptedConn::new(),
+    };
+    conn.inner.push_int("MEMORY", 50);
+    conn.inner.push_int("MEMORY", 60);
+    conn.inner.push_str("TYPE", "string");
+    conn.inner.push_str("TYPE", "list");
+    conn.inner.push_int("PTTL", -1);
+    conn.inner.push_int("PTTL", 700);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Cluster)
+        .await
+        .expect("cluster field read");
+    assert_eq!(fields[0].bytes, Some(50));
+    assert_eq!(fields[0].key_type.as_deref(), Some("string"));
+    assert_eq!(fields[0].ttl_ms, Some(-1), "no-expiry stays a value");
+    assert_eq!(fields[1].key_type.as_deref(), Some("list"));
+    assert_eq!(fields[1].ttl_ms, Some(700));
+
+    let journal = conn.inner.journal();
+    assert_eq!(journal.batches.len(), 2, "one batch per key");
+    assert!(journal.singles.is_empty(), "no per-command replay needed");
+    assert_eq!(
+        journal.round_trips(),
+        keys.len(),
+        "cluster trips == keys, equal to the original MEMORY USAGE loop"
+    );
+    for batch in &journal.batches {
+        assert_eq!(
+            batch.len(),
+            MEMORY_SAMPLE_FIELDS_PER_KEY,
+            "every batch stays inside the key's own slot"
+        );
+    }
+}
+
+#[tokio::test]
+async fn cluster_rejected_field_degrades_via_per_command_replay_not_batch_error() {
+    // `route_pipeline` folds the rejected TYPE into one batch error. The fix
+    // must NOT turn that into a failed `memory_sample` (acceptance: a single
+    // denied field is an empty state, not an error), so only that key replays
+    // per command while its bytes/ttl still survive.
+    let keys: Vec<String> = ["denied", "fine"].iter().map(|s| s.to_string()).collect();
+    let mut conn = ClusterBatchConn {
+        inner: ScriptedConn::new(),
+    };
+    // "denied": batch attempt (MEMORY ok, TYPE rejected, PTTL ok) + replay.
+    conn.inner.push_int("MEMORY", 70);
+    conn.inner.push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner.push_int("PTTL", -1);
+    conn.inner.push_int("MEMORY", 70);
+    conn.inner.push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner.push_int("PTTL", -1);
+    // "fine": one clean batch.
+    conn.inner.push_int("MEMORY", 80);
+    conn.inner.push_str("TYPE", "hash");
+    conn.inner.push_int("PTTL", 4_000);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Cluster)
+        .await
+        .expect("a denied TYPE must not fail the sample");
+    assert_eq!(fields.len(), 2);
+    let denied = &fields[0];
+    assert!(!denied.missing, "NOPERM is a rejection, not a vanished key");
+    assert_eq!(denied.key_type, None, "the rejected field alone degrades");
+    assert_eq!(denied.bytes, Some(70), "the other fields survive the replay");
+    assert_eq!(denied.ttl_ms, Some(-1));
+    assert_eq!(fields[1].key_type.as_deref(), Some("hash"));
+
+    let journal = conn.inner.journal();
+    assert_eq!(journal.batches.len(), 2, "denied batch attempt + clean batch");
+    assert_eq!(
+        journal.singles.len(),
+        MEMORY_SAMPLE_FIELDS_PER_KEY,
+        "only the folded key replays, one command at a time"
     );
 }
 
