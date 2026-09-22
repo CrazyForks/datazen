@@ -7,7 +7,10 @@ import { rowToRecord } from '../../lib/rowToRecord';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { DetailPanel } from '../../components/DataTable/DetailPanel';
 import { AiChatPanel } from '../../components/ai/AiChatPanel';
+import { buildKvAiContext } from '../../lib/kvAiContext';
+import { useKvSlotSelectedKey } from '../../hooks/useKvSlotSelectedKey';
 import type { ColumnSchema, DatabaseType } from '../../types';
+import type { KvSlotState } from '@datazen/driver-sdk';
 import type { AiChatDraftRequest } from './query/aiDraftBridge';
 import type { KvKeyPropsSidebarBinding } from './useKvWorkspaceSlots';
 
@@ -21,8 +24,15 @@ export interface ContentViewDrawersProps {
   aiChatOpen: boolean;
   detailPanelApplicable: boolean;
   dbSessionId: string;
+  connectionName: string;
   currentDatabase: string | null;
   databaseType: DatabaseType | undefined;
+  /**
+   * Relay of the active KV panel (`undefined` on a relational panel). Read here
+   * only through a leaf subscription, to build the assistant's KV context (§1.3);
+   * the drawer itself keeps rendering the same way either way.
+   */
+  kvPanelState?: KvSlotState;
   /** Collapse request wired to the driver's own close control. */
   onCloseDetail: () => void;
   /**
@@ -50,8 +60,10 @@ export function ContentViewDrawers({
   aiChatOpen,
   detailPanelApplicable,
   dbSessionId,
+  connectionName,
   currentDatabase,
   databaseType,
+  kvPanelState,
   onCloseDetail,
   keyPropsSidebarSlot,
   pendingDraftRequest,
@@ -65,6 +77,21 @@ export function ContentViewDrawers({
     reverse: true,
     storageKey: 'connection.aiSidebar',
   });
+
+  // W3-A §1.3: the assistant gets whatever the host really owns about this panel.
+  // Subscribing to the one scalar here — instead of the workspace passing a key
+  // down — keeps a key-tree selection from re-rendering the whole content column.
+  const kvSelectedKey = useKvSlotSelectedKey(kvPanelState);
+  const kvAiContext = useMemo(
+    () =>
+      buildKvAiContext({
+        connectionName,
+        dbSessionId,
+        database: currentDatabase,
+        selectedKey: kvSelectedKey,
+      }),
+    [connectionName, dbSessionId, currentDatabase, kvSelectedKey],
+  );
 
   const detailPanelId =
     activePanel && (activePanel.type === 'table' || activePanel.type === 'view')
@@ -190,6 +217,7 @@ export function ContentViewDrawers({
                   updateQuerySql(activePanel.id, sql);
                 }
               }}
+              kvContext={kvAiContext}
               draftRequest={pendingDraftRequest}
               onDraftConsumed={onDraftConsumed}
             />

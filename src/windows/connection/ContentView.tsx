@@ -24,6 +24,7 @@ import { usePanelHandlers } from './usePanelHandlers';
 import { useConnectionContextMenu } from './useConnectionContextMenu';
 import { useConnectionWorkspaceMeta } from './useConnectionWorkspaceMeta';
 import { useKvWorkspaceSlots } from './useKvWorkspaceSlots';
+import { useKvSlotActions } from './useKvSlotActions';
 import { pruneKvSlotStates } from '../../lib/kvSlotState';
 import { ContentViewDialogs } from './ContentViewDialogs';
 import { ContentViewDrawers } from './ContentViewDrawers';
@@ -151,22 +152,6 @@ export function ContentView({
 
   const closeDetail = useCallback(() => setDetailOpen(false), []);
 
-  // Driver-contributable KV surfaces (context bar / status bar / key-props sidebar /
-  // connection home). Every binding stays `undefined` unless the driver both declares
-  // the capability and contributed a component, so non-KV and pre-Wave-2 drivers render
-  // exactly as before.
-  const kvSlots = useKvWorkspaceSlots({
-    activePanel,
-    isKvPanel,
-    databaseType,
-    database: statusDatabase,
-    dbSessionId,
-    connectionId,
-    connectionName,
-    connectionContext: sidebarConnCtx,
-    initialDatabase,
-  });
-
   const resolveTableSchema = useCallback(
     (table: string): string | null => {
       const hit = [...schemaTables, ...schemaViews].find((tbl) => tbl.name === table);
@@ -231,6 +216,27 @@ export function ContentView({
     initialDatabase,
     lastTableSchema,
     schemaViews,
+  });
+
+  // The single KV action dispatcher sits on this side of the boundary: a context
+  // bar asks, the host decides (and ignores what it cannot do). See useKvSlotActions.
+  const kvActions = useKvSlotActions({ onRefresh: handlers.handleRefresh });
+
+  // Driver-contributable KV surfaces (context bar / status bar / key-props sidebar /
+  // connection home). Every binding stays `undefined` unless the driver both declares
+  // the capability and contributed a component, so non-KV and pre-Wave-2 drivers render
+  // exactly as before.
+  const kvSlots = useKvWorkspaceSlots({
+    activePanel,
+    isKvPanel,
+    databaseType,
+    database: statusDatabase,
+    dbSessionId,
+    connectionId,
+    connectionName,
+    connectionContext: sidebarConnCtx,
+    initialDatabase,
+    onSlotAction: kvActions.request,
   });
 
   const handleOpenSqlFile = useCallback(() => {
@@ -428,6 +434,7 @@ export function ContentView({
           detailPanelApplicable={detailPanelApplicable}
           detailOpen={detailOpen}
           contextBarSlot={kvSlots.contextBar}
+          kvPanelState={kvSlots.panelState}
           onNewQuery={() => handlers.handleNewQuery()}
           onCreateTable={handlers.handleCreateTable}
           onOpenErDiagram={() => handlers.handleOpenErDiagram()}
@@ -506,8 +513,10 @@ export function ContentView({
           aiChatOpen={aiChatOpen}
           detailPanelApplicable={detailPanelApplicable}
           dbSessionId={dbSessionId}
+          connectionName={connectionName}
           currentDatabase={currentDatabase}
           databaseType={databaseType}
+          kvPanelState={kvSlots.panelState}
           onCloseDetail={closeDetail}
           keyPropsSidebarSlot={kvSlots.keyPropsSidebar}
           pendingDraftRequest={pendingDraftRequest}
@@ -559,6 +568,7 @@ export function ContentView({
       />
 
       {confirmActionDialog}
+      {kvActions.dialog}
     </div>
   );
 }

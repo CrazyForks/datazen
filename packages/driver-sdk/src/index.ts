@@ -49,6 +49,7 @@ export type {
 // === KV workspace slot props (host shell ↔ driver KV slots) ===
 export type {
   KvSlotName,
+  KvSlotAction,
   KvSlotState,
   KvPanelSlotProps,
   KvContextBarProps,

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import type { KvSlotName } from '@datazen/driver-sdk';
 import type { DatabaseType } from '../../../types';
 import type { ConnectionContext, Panel } from '../../../stores/panelStore';
@@ -72,6 +72,9 @@ const HOME_CONTEXT: ConnectionContext = {
   databaseType: 'kvhome',
 };
 
+/** Module-level stand-in for the host dispatcher: one identity, like the real one. */
+const ON_SLOT_ACTION = () => {};
+
 function args(over: Partial<Parameters<typeof useKvWorkspaceSlots>[0]> = {}) {
   return {
     activePanel: PANEL,
@@ -83,6 +86,9 @@ function args(over: Partial<Parameters<typeof useKvWorkspaceSlots>[0]> = {}) {
     connectionName: 'KV Local',
     connectionContext: null,
     initialDatabase: undefined,
+    // Stable by default: the host dispatcher must keep one identity, so the
+    // "props stay stable" assertions below are not disturbed by a fresh mock.
+    onSlotAction: ON_SLOT_ACTION,
     ...over,
   };
 }
@@ -99,8 +105,9 @@ describe('useKvWorkspaceSlots', () => {
       kvWorkspace: { contextBar: true, statusBar: true, keyPropsSidebar: true, home: true },
     });
     contributeAll('kvfull');
+    const onSlotAction = vi.fn();
 
-    const { result } = renderHook(() => useKvWorkspaceSlots(args()));
+    const { result } = renderHook(() => useKvWorkspaceSlots(args({ onSlotAction })));
     const slots = result.current;
 
     expect(slots.contextBar?.Component).toBe(ContextBarFixture);
@@ -109,7 +116,10 @@ describe('useKvWorkspaceSlots', () => {
     // The landing screen is only handed over when no panel is open.
     expect(slots.connectionHome).toBeUndefined();
 
-    expect(slots.contextBar?.props).toEqual({
+    // The shared bundle: exactly `KvPanelSlotProps`. `request` is deliberately NOT
+    // in it (§1.2) — the context bar is the only surface allowed to ask the host
+    // for something, so the base object stays free of an action channel.
+    expect(slots.statusBar?.props).toEqual({
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       connectionName: 'KV Local',
@@ -118,12 +128,25 @@ describe('useKvWorkspaceSlots', () => {
       dbIndex: 7,
       state: slots.panelState,
     });
+    expect(slots.contextBar?.props).toEqual({
+      ...slots.statusBar?.props,
+      request: onSlotAction,
+    });
     // The frozen contract: the drawer owns `open`/`onClose`, the toolbar owns
     // `compact`, so neither leaks into the shared props bundle.
-    expect(slots.keyPropsSidebar?.props).toEqual(slots.contextBar?.props);
+    expect(slots.keyPropsSidebar?.props).toBe(slots.statusBar?.props);
     expect(slots.keyPropsSidebar?.props).not.toHaveProperty('open');
     expect(slots.keyPropsSidebar?.props).not.toHaveProperty('onClose');
     expect(slots.contextBar?.props).not.toHaveProperty('compact');
+    // `request` reaches the context bar only; the other slots stay prop-identical.
+    expect(slots.contextBar?.props.request).toBe(onSlotAction);
+    expect(slots.statusBar?.props).not.toHaveProperty('request');
+    expect(slots.keyPropsSidebar?.props).not.toHaveProperty('request');
+    // An action handed to the context bar arrives at the host dispatcher unchanged.
+    act(() => {
+      slots.contextBar?.props.request({ type: 'setScanBudget', value: 5_000 });
+    });
+    expect(onSlotAction).toHaveBeenCalledWith({ type: 'setScanBudget', value: 5_000 });
   });
 
   it('hands the same state atom to the panel slots and keeps props stable across renders', () => {
@@ -145,6 +168,29 @@ describe('useKvWorkspaceSlots', () => {
     expect(result.current.contextBar?.props.state).toBe(firstState);
     expect(result.current.statusBar?.props.state).toBe(firstState);
     expect(result.current.contextBar?.props).toBe(firstProps);
+  });
+
+  // [tester] `request` lives in the context-bar bundle only, so a dispatcher
+  // identity that churns (a caller passing an inline arrow) can at worst
+  // re-render the context bar: the status bar and the sidebar keep their object.
+  it('[tester] keeps the other slots untouched when the dispatcher identity churns', () => {
+    registerMeta('kvfull', {
+      kvWorkspace: { contextBar: true, statusBar: true, keyPropsSidebar: true },
+    });
+    contributeAll('kvfull');
+
+    const { result, rerender } = renderHook(
+      ({ onSlotAction }) => useKvWorkspaceSlots(args({ onSlotAction })),
+      { initialProps: { onSlotAction: vi.fn() } },
+    );
+    const firstBar = result.current.contextBar;
+    const firstStatus = result.current.statusBar;
+
+    rerender({ onSlotAction: vi.fn() });
+
+    expect(result.current.contextBar?.props.request).not.toBe(firstBar?.props.request);
+    expect(result.current.statusBar).toBe(firstStatus);
+    expect(result.current.keyPropsSidebar?.props).toBe(result.current.statusBar?.props);
   });
 
   it('returns no bindings when the driver declares the capability but contributed no component', () => {

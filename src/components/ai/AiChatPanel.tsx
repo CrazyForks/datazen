@@ -28,6 +28,8 @@ import { splitContextItems } from '../../lib/contextItems';
 import { AiEgressNotice } from './AiEgressNotice';
 import { detectSafetyPreset } from '../../lib/aiSafetyPresets';
 import { Select } from '../ui/Select';
+import { composeKvAiMessage } from '../../lib/kvAiContext';
+import type { KvAiContext } from '../../lib/kvAiContext';
 import type { AiChatMessage, AiQuestion, ContextItem } from '../../types';
 import type { AiChatDraftRequest } from '../../windows/connection/query/aiDraftBridge';
 
@@ -38,6 +40,13 @@ interface AiChatPanelProps {
   onInsertSql?: (sql: string) => void;
   onRunCode?: (code: string, language: string) => void;
   onNewQuery?: (code: string) => void;
+  /**
+   * Host-owned KV-panel facts for the key the panel is focused on (W3-A §1.3).
+   * Attached to every message the user sends while it is set, and shown as a chip
+   * so the egress is visible before sending. `null` (relational panels, or a KV
+   * panel with no key in scope) ⇒ plain chat, unchanged.
+   */
+  kvContext?: KvAiContext | null;
   /** S3-B2: pending draft request to prefill into the chat input. */
   draftRequest?: AiChatDraftRequest | null;
   /** S3-B2: called after the draft has been written into the textarea. */
@@ -56,6 +65,7 @@ export function AiChatPanel({
   onInsertSql,
   onRunCode,
   onNewQuery,
+  kvContext,
   draftRequest,
   onDraftConsumed,
 }: AiChatPanelProps) {
@@ -174,13 +184,15 @@ export function AiChatPanel({
     void sendMessage({
       dbSessionId,
       database,
-      content: input.trim(),
+      // KV panels ride their host-owned facts along with the question (§1.3);
+      // `composeKvAiMessage` is the identity function when there is no context.
+      content: composeKvAiMessage(input.trim(), kvContext ?? null),
       contextFiles: contextFiles.length > 0 ? contextFiles : undefined,
       contextTables: contextTables.length > 0 ? contextTables : undefined,
     });
     setInput('');
     setContextItems([]);
-  }, [input, chatSession, sendMessage, dbSessionId, database, contextItems]);
+  }, [input, chatSession, sendMessage, dbSessionId, database, contextItems, kvContext]);
 
   // BUG-01: Provide onStop so users can cancel streaming replies.
   const handleStop = useCallback(() => {
@@ -384,6 +396,22 @@ export function AiChatPanel({
             <div className="mb-2">
               <AiEgressNotice contextItems={contextItems} />
             </div>
+            {/*
+              The KV facts leave with every message while a key is in scope, so the
+              chip says so before the user sends — and names the key it is about.
+            */}
+            {kvContext && (
+              <div
+                className="mb-2 flex min-w-0 items-center gap-1.5 rounded border border-edge bg-surface-alt px-2 py-1 text-[10px] text-fg-muted"
+                data-testid="ai-kv-context-chip"
+                data-key-name={kvContext.keyName}
+              >
+                <span className="shrink-0">{t('redis.ai.context.attached')}</span>
+                <span className="min-w-0 truncate font-mono text-fg-subtle">
+                  {kvContext.keyName}
+                </span>
+              </div>
+            )}
             {/* S3-B2: Conflict resolution bar when textarea already has content */}
             {pendingConflictDraft && (
               <div
