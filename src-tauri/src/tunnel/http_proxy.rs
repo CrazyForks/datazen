@@ -506,4 +506,90 @@ mod tests {
         assert_eq!(&response, b"pong");
         proxy_task.await.unwrap();
     }
+    /// [tester] (c) — the refactor extracted these helpers out of the
+    /// production data path. Pin each one's semantics directly, including the
+    /// `connect_timeout_secs.max(1)` floor that no end-to-end test reaches.
+    #[test]
+    fn test_tester_extracted_helpers_keep_their_semantics() {
+        let base = HttpProxyTunnelConfig {
+            enabled: true,
+            host: "proxy.internal".into(),
+            port: 3128,
+            scheme: "HTTP".into(),
+            username: None,
+            password: None,
+            headers: None,
+            connect_timeout_secs: 0,
+        };
+
+        assert_eq!(normalize_scheme(&base).expect("scheme"), "http");
+        assert_eq!(
+            connect_timeout(&base),
+            Duration::from_secs(1),
+            "a zero timeout must fall back to 1s"
+        );
+
+        let mut configured = base.clone();
+        configured.connect_timeout_secs = 7;
+        assert_eq!(connect_timeout(&configured), Duration::from_secs(7));
+
+        assert!(normalize_scheme(&configured).is_ok());
+
+        let mut bad_scheme = base.clone();
+        bad_scheme.scheme = "socks5".into();
+        assert!(normalize_scheme(&bad_scheme)
+            .expect_err("socks5 must be rejected")
+            .to_string()
+            .contains("unsupported HTTP proxy scheme"));
+
+        let mut empty_host = base.clone();
+        empty_host.host = "   ".into();
+        assert!(normalize_scheme(&empty_host)
+            .expect_err("blank host must be rejected")
+            .to_string()
+            .contains("host is empty"));
+
+        assert!(proxy_headers(&base).is_empty());
+        let mut with_headers = base.clone();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Corp".to_string(), "1".to_string());
+        with_headers.headers = Some(headers);
+        assert_eq!(
+            proxy_headers(&with_headers),
+            vec![("X-Corp".to_string(), "1".to_string())]
+        );
+
+        // Explicit header wins over derived Basic credentials.
+        let mut both = with_headers.clone();
+        both.username = Some("u".into());
+        both.password = Some("p".into());
+        let mut explicit = std::collections::HashMap::new();
+        explicit.insert(
+            "proxy-authorization".to_string(),
+            "Bearer explicit".to_string(),
+        );
+        both.headers = Some(explicit);
+        let resolved = resolve_auth_header(&both, &proxy_headers(&both)).expect("explicit auth");
+        assert_eq!(resolved, "Bearer explicit");
+
+        // Basic credentials are derived when no header is present.
+        let derived = resolve_auth_header(&with_headers_with_credentials(), &[]).expect("basic");
+        assert_eq!(derived, "Basic dTpw");
+
+        // No credentials and no header -> no auth header.
+        assert!(resolve_auth_header(&base, &[]).is_none());
+    }
+
+    fn with_headers_with_credentials() -> HttpProxyTunnelConfig {
+        HttpProxyTunnelConfig {
+            enabled: true,
+            host: "proxy.internal".into(),
+            port: 3128,
+            scheme: "http".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+            headers: None,
+            connect_timeout_secs: 3,
+        }
+    }
 }

@@ -1,8 +1,10 @@
 # Track: tunnel-backend — Bug 清单
 
 - 分支: `feature/tunnel-backend`（worktree `.worktrees/datazen-tunnel-backend`）
-- 被验编码 commit: `7571d2887b027744619c5d2d4a00f52b183c8efe`
-- 发现者: Tester（独立全新实例）
+- 被验编码 commit（第 1 轮）: `7571d2887b027744619c5d2d4a00f52b183c8efe`
+- 被验编码 commit（第 2 轮复测）: `db6fc822f37290ea01348aec14ffa021c46d9640`
+- 发现者: Tester（独立全新实例，第 1 轮 / 第 2 轮为不同实例）
+- 登记 commit（第 2 轮）: `docs(coordination): record bugs for tunnel-backend`（`feature/tunnel-backend`）
 - 复测命令: `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib`
 
 ---
@@ -10,6 +12,7 @@
 ## tunnel-backend-BUG-001 — `test_tunnel` 对 HTTP 代理 / WebSocket 隧道恒报成功（假阳性）
 
 > **状态变更（Coder 第 2 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 2 轮）」。
+> **复测结论（Tester 第 2 轮）**: ✅ **已修复**。独立重跑 + 自建对抗用例（三种 kind 不可达端点全部 `Err`；`CONNECT` 请求行/`Host`/`Proxy-Authorization` 优先级/终止头逐字节断言；`407`/`502`/畸形状态行均 `Err`；`datazen_v1` `op=error` 与静默中继均 `Err`；`raw_binary` 非 WS 端点 `Err`；Ssh 成功路径经 in-process bastion 实测 `Ok`）。详见 `progress.md`「Tester 复测轮（第 2 轮）」。残留问题另登记为 BUG-003（探针无超时）与 BUG-004（TLS 路径 panic），二者**不在**原 BUG-001 的定义域内。
 
 - **量级**: 中高（G8 新功能对 3 种隧道类型中的 2 种完全失效，且是"谎报成功"而非报错）
 - **状态**: 待复测（已修复）
@@ -66,6 +69,7 @@ test commands::tunnel::tests::zz_temp_repro_dead_endpoints_report_success ... ok
 ## tunnel-backend-BUG-002 — SSH 探针 `drop(tunnel)` 不拆除隧道，每次探测泄漏一个 SSH 会话 + 任务 + 本地端口
 
 > **状态变更（Coder 第 2 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 2 轮）」。
+> **复测结论（Tester 第 2 轮）**: ✅ **已修复**。本轮自建 **in-process russh bastion 夹具**（macOS 非 root 无法跑 `sshd`：`ssh_sandbox_child: sandbox_init: Operation not permitted`），对**真实 `SshTunnel::start`** 路径动态验证：转发真实字节 → `drop` 后 `AbortHandle::is_finished()` 为真、已建立的转发连接被拆除、`127.0.0.1:<port>` 可重新 bind、**SSH 会话计数归零**（`Arc<Mutex<Handle>>` 克隆全部释放）；跳板链（`_upstream`）两跳会话同样归零。既存 `test_connection` 的同类泄漏随之修复（同一 `Drop`）。
 
 - **量级**: 中（资源泄漏，非数据损坏；但管理面可被反复点击，泄漏会累积）
 - **状态**: 待复测（已修复）
@@ -130,13 +134,130 @@ pub struct SshTunnel {
 
 ---
 
+## tunnel-backend-BUG-003 — `test_tunnel` 对「接受 TCP 但不回应 CONNECT」的 HTTP 代理**无限挂起**（探针无超时）
+
+- **量级**: 中（管理面「测试隧道」永久无响应；探针与生产数据路径的超时语义不一致）
+- **状态**: 待修复
+- **引入**: `db6fc822`（本轮新增的探针路径）。根因：`verify_upstream` 只对 `dial_proxy` / `tls_connect` 加了超时，**没有**对 `perform_connect` 的 CONNECT 响应读取加超时。
+- **影响范围**: `src-tauri/src/tunnel/http_proxy.rs::verify_upstream` → `ConnectionManager::test_tunnel` → IPC `test_tunnel`。对比：生产数据路径 `establish_and_copy` 用 `tokio::time::timeout(timeout, perform_connect(...))` 包住了同一次握手，因此**只有探针**会挂死。
+
+### 描述
+
+`perform_connect` 的响应读取循环是裸 `await`：
+
+```rust
+while response.len() < 16 * 1024 {
+    let n = stream.read(&mut byte).await.map_err(...)?;   // 无超时
+    if n == 0 { break; }
+    ...
+}
+```
+
+`verify_upstream` 直接 `perform_connect(...).await`，没有任何外层 timeout。于是当代理**接受了 TCP 连接但不写任何响应**（过载/半死的 squid、只放行 SYN 的防火墙、把端口转给死后端的转发器）时，`test_tunnel` 永不返回：IPC 命令 future 永久 pending，前端 `invoke` 永不 settle。
+
+### 重现步骤
+
+1. 夹具：`TcpListener` 绑定 127.0.0.1:0，accept 后读完请求**不回任何字节**。
+2. 保存 `kind = httpProxy` 的隧道指向该端口，`connect_timeout_secs = 2`。
+3. `test_tunnel_impl(state, id, "127.0.0.1", 5432)` 外包 3s `tokio::time::timeout`。
+4. 期望：≤2s 返回 `Err`（超时）；实际：3s 后仍未返回。
+
+### 实测错误日志
+
+Tester 临时复现用例（已从提交中移除，仅作证据）输出：
+
+```text
+REPRO silent-proxy probe STILL PENDING after 3s (connect_timeout_secs=2) -> unbounded CONNECT read
+test commands::tunnel::tests::zz_temp_silent_proxy_probe_outcome ... ok (3.04s)
+```
+
+对照：`wss`/`datazen_v1` 的 WS 探针**是有界的**（`connect_timeout_secs = 1` 时静默中继约 1s 返回 `Err("timed out waiting for WebSocket open ack")`），见新增用例 `test_tester_websocket_probe_is_bounded_when_the_relay_never_acks`。两种 kind 的对称性缺失说明这是疏漏而非有意设计。
+
+### 建议修复方向（不代改业务代码）
+
+- 在 `verify_upstream` 中把 `perform_connect` 包进 `tokio::time::timeout(timeout, ...)`（与 `establish_and_copy` 一致），或对整条探针链路设一个总超时；错误文案建议含 `timed out`。
+- 顺带为该分支补一条测试：静默代理 → `Err` 且耗时 < `connect_timeout_secs + 余量`。
+
+---
+
+## tunnel-backend-BUG-004 — `https` 代理 / `wss` 中继的 TLS 路径**运行时 panic**（rustls CryptoProvider 未安装）
+
+- **量级**: 中高（加密隧道变体直接 panic；生产转发任务静默 panic → 连接静默失败，无用户可见错误）
+- **状态**: 待修复
+- **引入**: **既存缺陷**（非本轮引入）：`ClientConfig::builder()` 早在 `7fc55501 feat: complete HTTP/HTTPS and WebSocket tunnels (#37)` 就存在（`git show 6689cbe0:src-tauri/src/tunnel/http_proxy.rs` 第 156 行）。但本轮把**探针**也接到同一 TLS 路径，使其首次在 `test_tunnel` 上暴露；上一轮 Tester 的用例只覆盖 `http`/`ws` 明文变体，故未发现。
+- **影响范围**: `tunnel/http_proxy.rs::tls_connect`（`https` 代理，探针 + 数据路径）、`tunnel/websocket.rs::verify_upstream` → `connect_ws`（`wss://` 中继，走 tungstenite 0.26 的 `ClientConfig::builder()`）。
+
+### 描述与根因
+
+本 workspace 的 feature 统一后，`rustls 0.23.43` **同时**启用了 `aws-lc-rs` 与 `ring`：
+
+```text
+rustls feature "aws-lc-rs"  <- reqwest/hyper-rustls/tokio-rustls(default)
+rustls feature "ring"       <- tauri-plugin-updater / sqlx-core(tls-rustls) / mongodb / redis / ureq
+```
+
+（`cargo tree -e features,no-dev -i rustls@0.23.43`，即**非 dev** 依赖也已如此，故 release 构建同样受影响。）
+
+`rustls::ClientConfig::builder()` 在「两个 provider feature 都开且未显式安装默认 provider」时会 panic：
+
+```text
+thread panicked at rustls-0.23.43/src/crypto/mod.rs:249:
+Could not automatically determine the process-level CryptoProvider from Rustls crate features.
+Call CryptoProvider::install_default() before this point to select a provider manually, ...
+```
+
+全仓 `grep -rn "install_default|CryptoProvider" --include=*.rs`（排除 target）**零命中**：DataZen 自己不安装 provider。唯一非测试的安装点是 `tauri-plugin-updater` 在**首次检查更新**时的 `ring::default_provider().install_default()`（`updater.rs:448`），以及 `tauri` 的 `#[cfg(all(dev, mobile))]` 分支（桌面 release 不适用）。因此：
+
+- 进程内**第一次**触发 TLS 的组件若是隧道 → **必然 panic**（单元测试进程就是这种情况，已实测）；
+- 若此前已跑过更新检查（安装了 `ring`）→ 不 panic。**即生产环境是顺序相关的潜在 panic**，而测试环境是确定性 panic。
+
+### 实测错误日志
+
+Tester 临时复现用例（已从提交中移除，仅作证据；`AssertUnwindSafe(..).catch_unwind()` 捕获）：
+
+```text
+REPRO https-proxy probe (reachable TCP endpoint) -> Err("PANIC")
+REPRO wss-probe -> Err("PANIC")
+REPRO https data-path task -> Ok("data-path tunnel alive (forwarder task panicked silently)")
+```
+
+第三条说明生产数据路径的后果：`start` 是惰性的所以能返回，但 `connect_and_copy` 的子任务 panic → 该转发器静默死掉，客户端连接无字节可通、无错误上报。
+
+注意范围：**TCP 不可达**的 `https` 代理会在 `dial_proxy` 阶段先返回 `Err`，不 panic；只有 TCP 可达的加密端点才 panic。
+
+复现已固化为两条 `#[ignore]` 用例（第 2 轮提交，随时可跑）：
+
+```bash
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --ignored test_tester_
+# test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking ... FAILED
+# test_tester_wss_relay_probe_reports_tls_failure_instead_of_panicking   ... FAILED
+#   panicked at rustls-0.23.43/src/crypto/mod.rs:249:14:
+#   Could not automatically determine the process-level CryptoProvider from Rustls crate features.
+```
+
+用例体即「明文 TCP 端口 + `scheme="https"` / `wss://` → 断言 `Err`」；**修复后请去掉 `#[ignore]`**，它们就是这两个分支的常驻回归守卫（当前覆盖率 0 的分支由此转为受保护）。
+
+### 建议修复方向（不代改业务代码）
+
+- 在 bootstrap 一次性安装默认 provider（例如 `rustls::crypto::aws_lc_rs::default_provider().install_default()`，忽略「已安装」错误），或改用 `ClientConfig::builder_with_provider(...)`；`wss` 侧需给 tungstenite 显式传入带 provider 的 `ClientConfig`。
+- 或收窄 feature（`tokio-rustls`/`reqwest` 关闭 `aws-lc-rs`，或统一到 `ring`），使 rustls 能自动选择。
+- 补测试：`https` 代理探针在「可达但 TLS 失败」时返回 `Err`（当前该分支不可测，覆盖率因此为 0——见 `progress.md` 覆盖率评估）。**第 2 轮已预置两条 `#[ignore]` 用例，修复后去掉 `#[ignore]` 即可。**
+
+---
+
 ## 非 Bug 的改进建议（不阻断）
 
-1. **`materialize_tunnel_refs` 存在 N+1 次 store 加锁**：每条连接都 `state.store.get_tunnel(tunnel_id).await` 一次读锁（`src-tauri/src/commands/connection_import/ipc.rs:194`）。可在循环前一次性 `get_tunnels()` 建 `HashMap<id, SavedTunnel>`，把 O(N) 次加锁降为 1 次。
-2. **`get_tunnel_usage` 与 `materialize_tunnel_refs` 对空串引用不一致**：前者用 `conn.tunnel_id.as_deref() == Some(id)`，若查询 id 为空串会命中 `tunnel_id = Some("")` 的连接；后者显式 `filter(|id| !id.is_empty())` 把空串当无引用（`ipc.rs:191`）。当前 UI 只可能用真实 tunnel id 调用，无用户可见影响；建议统一为同一判定。
+1. **`materialize_tunnel_refs` 存在 N+1 次 store 加锁**：每条连接都 `state.store.get_tunnel(tunnel_id).await` 一次读锁（`src-tauri/src/commands/connection_import/ipc.rs:194`）。可在循环前一次性 `get_tunnels()` 建 `HashMap<id, SavedTunnel>`，把 O(N) 次加锁降为 1 次。**（第 2 轮未处理）**
+2. ~~`get_tunnel_usage` 与 `materialize_tunnel_refs` 对空串引用不一致~~ → **第 2 轮已修复**（`get_tunnel_usage_impl` 加 `if !id.is_empty()` 守卫；Tester 复测：修复前的 Coder 用例无法区分，已补 `test_tester_usage_with_empty_id_excludes_empty_string_references`）。
 3. **摘要投影只靠投影点保证"无密钥"**：`get_tunnel_summaries_impl` 先 `store.get_tunnels()` 克隆出**完整明文实体**（含密钥）再投影（`src-tauri/src/commands/tunnel.rs:40-53`）。IPC 载荷确实无密钥，但"无密钥"是调用点约定而非存储层 API 保证。建议加 `Store::get_tunnel_summaries()` 之类只读元数据的入口，避免未来重构把整实体泄出去。
 4. **`SavedTunnelSummary` / `TunnelUsage` 的 `Deserialize` derive 未被使用**（`packages/driver-api/src/tunnel_types.rs:96,107`）：二者只作为响应载荷序列化。若有意留作双向契约，建议补一条反序列化单测；否则可去掉 `Deserialize`。
-5. **`test_tunnel` 合成 config 的占位 `database_type = "postgresql"`**（`tunnels.rs:81`）与仓库其它处惯用的 `"postgres"` 不一致。因为该函数不查 registry，当前无影响，但占位值容易误导后续维护者。
-6. **`kind = ssh` 但 `ssh.enabled == false` 的导出是静默降级**：`materialize_tunnel_refs` 只对 `saved.ssh == None` 打 warn（`ipc.rs:205-209`）；`Some(enabled=false)` 会照常写进 `conn.ssh_tunnel`，随后被 `connection_to_tableplus_json` 的 `.filter(|s| s.enabled)` 静默丢弃（`tableplus.rs:149`）。与"可观测降级"的既定策略不一致，建议一并 warn（属边界态，故未计为 Bug）。
-7. **`SshTunnel::_upstream` 命名与生命周期**：跳板链的 upstream 隧道也依赖 drop 拆除（同样 detach），修复 BUG-002 时应一并覆盖。
-8. **既存未使用代码**：`ConnectionManager::ref_count`（`src-tauri/src/services/connection_manager/tunnels.rs:196`）在编译时产生 `never used` 警告；**非本轨引入**（`7571d288^` 已存在），仅记录。
+5. **`test_tunnel` 合成 config 的占位 `database_type = "postgresql"`**（`tunnels.rs:89`）与仓库其它处惯用的 `"postgres"` 不一致。因为该函数不查 registry，当前无影响，但占位值容易误导后续维护者。
+6. ~~`kind = ssh` 但 `ssh.enabled == false` 的导出是静默降级~~ → **第 2 轮已修复**（`Some(_) => tracing::warn!("SSH tunnel is disabled; ...")` 且不物化；Coder 用例 + Tester 隔离复跑通过）。
+7. ~~`SshTunnel::_upstream` 命名与生命周期~~ → **已随 BUG-002 的 `Drop` 解决**：字段 drop 递归拆除；Tester 用两跳 in-process bastion 动态验证两个会话均归零。
+8. **既存未使用代码**：`ConnectionManager::ref_count`（`src-tauri/src/services/connection_manager/tunnels.rs:237`）在编译时产生 `never used` 警告；**非本轨引入**（`7571d288^` 已存在），仅记录。
+9. **`SshTunnel` 每连接子任务存在「非 cancel-aware 窗口」（第 2 轮新增评估）**：子任务只在 `copy_bidirectional` 阶段 `select!` 监听 `child_cancel`；其前的 `session.lock().await` 与 `channel_open_direct_tcpip(...).await` 不响应取消。若在「跳板机不回应 channel-open」时 `drop`，该子任务会卡住并继续持有 `Arc<Mutex<Handle>>` 克隆，SSH 会话不会关闭。常规 `test_tunnel`（本地端口无人连接）与 `test_connection`（连接处于 copy 阶段）都不触发；本轮 in-process bastion 实测的正常路径已完整拆除，故仅记为残余风险，非 Bug。
+10. **`test_tunnel` 的三条防御分支实际不可达**：`saved.http_proxy.ok_or_else(..)?` / `saved.websocket.ok_or_else(..)?` 以及 `TunnelKind::None => Ok(())` 永远不会执行——`start_tunnel` 已对「配置缺失/disabled」先行报错、对 `None` 返回 `tunnel = None` 并在其上提前 `Err`。属无害防御，但无法被测试覆盖，建议加注释或删除。
+11. **`commands/tunnel.rs` 体量**：生产代码约 150 行，测试模块使其达到 809 行（第 2 轮 Tester 已把自己的对抗用例拆到独立文件 `src-tauri/src/commands/tunnel_probe_tests.rs`，784 行）；仍建议把 Coder 的 12 个用例也移出，使单文件回到 800 行以内。
+12. **`raw_binary` 与 SSH 的语义边界应写进文档/UI 文案**：见 `progress.md`「语义边界判定」——两者都只证明「上游一跳可达」，不证明 `target_host:target_port` 可达。
+13. **`https` / `wss` 分支缺测试**：本轮之前两个 TLS 变体零覆盖（无任何 `https`/`wss` 建连用例），这正是 BUG-004 长期未被发现的原因；第 2 轮已预置 2 条 `#[ignore]` 用例（见 BUG-004），修复后去掉 `#[ignore]` 即可转为常驻守卫。
+14. **`raw_binary` 的「只验证中继可达」应在 UI/文档中写明**（追加项 3 结论：非 Bug）：该模式无应用层 ack，探针强度以计划钦定的 `connect_async` 为准；建议在 `tunnel-guide` 与管理面文案中声明「raw_binary 只验证中继可达，不验证目标可达」，强保证场景引导使用 `datazen_v1`。

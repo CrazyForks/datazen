@@ -283,3 +283,7 @@ pub mod test_harness {
 #[cfg(test)]
 #[path = "ipc_surface_tests.rs"]
 mod ipc_surface_tests;
+
+#[cfg(test)]
+#[path = "tunnel_probe_tests.rs"]
+mod tunnel_probe_tests;

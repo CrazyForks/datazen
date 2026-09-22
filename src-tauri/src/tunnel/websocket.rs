@@ -502,4 +502,75 @@ mod tests {
             raw_binary_url("ws://relay/tunnel?token=x&host=old", "db.internal", 5432).unwrap();
         assert_eq!(url, "ws://relay/tunnel?token=x&host=db.internal&port=5432");
     }
+    /// [tester] (c) — direct semantics of the helpers extracted out of the
+    /// production WebSocket data path.
+    #[test]
+    fn test_tester_extracted_helpers_keep_their_semantics() {
+        let base = WebSocketTunnelConfig {
+            enabled: true,
+            url: "ws://relay/tunnel".into(),
+            auth_token: None,
+            headers: None,
+            connect_timeout_secs: 0,
+            ping_interval_secs: 0,
+            mode: "DATaZen_V1".into(),
+        };
+
+        assert_eq!(validate_config(&base).expect("mode"), "datazen_v1");
+        assert_eq!(
+            ws_timeout(&base),
+            Duration::from_secs(1),
+            "a zero timeout must fall back to 1s"
+        );
+        assert_eq!(ws_ping_interval(&base), None, "0 disables keepalives");
+        assert!(ws_headers(&base).is_empty());
+        assert_eq!(
+            resolve_url(&base, "datazen_v1", "db.internal", 5432).expect("url"),
+            "ws://relay/tunnel"
+        );
+
+        let mut bad_mode = base.clone();
+        bad_mode.mode = "sse".into();
+        assert!(validate_config(&bad_mode)
+            .expect_err("unknown mode must be rejected")
+            .to_string()
+            .contains("Unknown WebSocket tunnel mode"));
+
+        let mut empty_url = base.clone();
+        empty_url.url = "   ".into();
+        assert!(validate_config(&empty_url)
+            .expect_err("blank url must be rejected")
+            .to_string()
+            .contains("URL is empty"));
+
+        let mut configured = base.clone();
+        configured.connect_timeout_secs = 9;
+        configured.ping_interval_secs = 5;
+        assert_eq!(ws_timeout(&configured), Duration::from_secs(9));
+        assert_eq!(ws_ping_interval(&configured), Some(Duration::from_secs(5)));
+
+        let mut with_headers = base.clone();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Relay".to_string(), "1".to_string());
+        with_headers.headers = Some(headers);
+        assert_eq!(
+            ws_headers(&with_headers),
+            vec![("X-Relay".to_string(), "1".to_string())]
+        );
+
+        let mut raw = base.clone();
+        raw.mode = "raw_binary".into();
+        raw.url = "ws://relay/tunnel?token=x&host=stale".into();
+        assert_eq!(
+            resolve_url(&raw, "raw_binary", "db.internal", 5432).expect("raw url"),
+            "ws://relay/tunnel?token=x&host=db.internal&port=5432"
+        );
+
+        let mut invalid = raw.clone();
+        invalid.url = "not a url".into();
+        assert!(
+            resolve_url(&invalid, "raw_binary", "db.internal", 5432).is_err(),
+            "an unparsable relay URL must be rejected"
+        );
+    }
 }

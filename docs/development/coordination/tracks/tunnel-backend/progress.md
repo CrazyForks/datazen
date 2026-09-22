@@ -239,9 +239,199 @@ impl Drop for SshTunnel {
 
 （**#7 `_upstream` 生命周期已随 BUG-002 的 `Drop` 一并解决**：字段 drop 递归拆除跳板链，不再是遗留问题。）
 
+## Tester 复测轮（第 2 轮）
+
+- 复测对象: 修复 commit `db6fc822`（基线 `4b9515b6` / `6689cbe0`）
+- 复测者: **全新 Tester 实例**（与编码代理、上一轮 Tester 均不同实例）
+- 测试 commit: 本轨 `feature/tunnel-backend` 上 `docs(coordination): record bugs for tunnel-backend`（23 个新增对抗用例 + 本文档更新；编码修复为 `db6fc822`）
+- 环境: macOS / `CARGO_TARGET_DIR=target/cargo-wt`；未使用 `npx`、未执行 `pnpm install`
+- 结论: **TEST_FAILED** —— 原 2 个 Bug 均确认修复，但复测新发现 2 个缺陷（BUG-003 / BUG-004）
+
+### (a) BUG-001 是否真的修好 —— 结论：✅ 已修复
+
+| 核验点 | 结论 | 证据 |
+|---|---|---|
+| (a)1 三种 kind 对不可达端点均 `Err` | ✅ | 自建 `test_tester_every_kind_rejects_an_unreachable_endpoint`：`httpProxy`→`connect to proxy`、`websocket`→`WebSocket connect`、`ssh`→`SSH connect`，端点用 `127.0.0.1:1`（无监听、无 bind/drop 竞态），三者均 `Err`，无一个返回 `Ok` |
+| (a)2 探针是真握手而非 TCP connect | ✅ | `verify_upstream` 调用 `perform_connect`（`http_proxy.rs:205`）解析状态行并要求 `200`。自建用例：逐字节断言 `CONNECT db.internal:5432 HTTP/1.1` / `Host` / 显式 `Proxy-Authorization` 优先于 Basic / 终止 keep-alive 头；`407`→`Err("CONNECT rejected with status 407")`、`502`→同构、`NOT-HTTP\r\n\r\n`→`Err("invalid CONNECT response status line")`；`wss`/WS 侧 `connect_async` 会校验 101 升级，非 WS 端点（`HTTP/1.1 500`）→ `Err("WebSocket connect failed")` |
+| (a)3 反向夹具不可被绕过 | ✅ | 正向：正确 `200 Connection Established` → `Ok`（Coder 用例 + 自建握手用例）；`{"op":"opened"}` → `Ok`；反向：`{"op":"error","message":"no route to host"}` → `Err("relay rejected open ...")`。**不存在「一律 Err」的假修复**；`Ssh` 成功路径另经 in-process bastion 实测 `Ok` |
+| (a)4 `raw_binary` 探针语义 | ✅ 不构成假阳性（见下「语义边界判定」） | `raw_binary` 无应用层 ack，`verify_upstream` 只完成 WS 握手 + 关闭；但 `connect_async` 是**真 HTTP 101 握手**（非 TCP connect），不可达/非 WS 端点均 `Err`；自建用例同时断言探针把 `host`/`port` 注入 query 且覆盖陈旧值 |
+| (a)5 SSH 语义一致性 | ⚠️ 语义边界，**不计 Bug**（见下） | `SshTunnel::start` eager，只证明「跳板机可达 + 认证成功」；in-process bastion 实测：`start(..., target=127.0.0.1:1)` 成功且 `channel_opens == 0`，而第一次真实转发才失败。与「验证隧道可用」的目标**部分相称**（代理/WS 侧已做到真握手），建议在 UI 文案/文档中显式声明边界 |
+
+### (b) BUG-002 是否真的修好 —— 结论：✅ 已修复（真实路径动态验证）
+
+macOS 非 root 无法运行 `sshd`（`ssh_sandbox_child: sandbox_init: Operation not permitted [preauth]`），因此自建 **in-process russh bastion 夹具**（`ssh_tunnel::test_fixture`，`#[cfg(test)]`，接受任意公钥、真实转发 `direct-tcpip`、暴露 live session / channel-open 计数）。据此对**真实 `SshTunnel::start`** 验证：
+
+| 核验点 | 结论 | 证据 |
+|---|---|---|
+| (b)1 转发任务终止 / 端口可重新 bind / SSH 会话关闭 | ✅ | `test_tester_ssh_drop_aborts_the_real_forwarder_and_closes_the_session`：真实字节 `ping→ping` 穿过 bastion → `drop` 后 `AbortHandle::is_finished()` 为真；已建立的转发连接读到 EOF/Err；`127.0.0.1:<port>` 重新 bind 成功；`live_sessions` 归 0（Handler 在会话结束时 Drop，证明 `Arc<Mutex<Handle>>` 克隆全部释放、russh 会话任务随 sender 归零退出） |
+| (b)2 accept loop 与每连接子任务都监听 cancel | ✅（含残余窗口，见改进项 9） | accept loop `select!` + `child_cancel` 已实测生效；子任务在 `copy_bidirectional` 阶段 `select!` 监听 cancel，实测 drop 后连接被拆除。**残余**：子任务在 `session.lock()` / `channel_open_direct_tcpip` 阶段不响应取消（跳板机不回应 channel-open 时 drop 会卡住并持有会话克隆）——常规 `test_tunnel`/`test_connection` 路径不触发，记为非阻断风险 |
+| (b)3 `_upstream` 递归拆除 | ✅ | `test_tester_ssh_jump_chain_drop_tears_down_every_bastion`：两跳 bastion 链转发成功，`drop` 后**两个** bastion 的 `live_sessions` 均归 0 |
+| (b)4 `test_tunnel` 所有 Err 路径不泄漏 | ✅（静态逐行） | `get_tunnel` 未命中 → 未建隧道；`start_tunnel?` → 失败前未 spawn（`HttpProxy`/`WS` 校验/绑定在 spawn 前，`Ssh` 的部分 `upstream` 由局部变量 drop 递归拆除）；`tunnel = None` → 无值可泄漏；`saved.http_proxy/websocket.ok_or_else(..)?` 与 `verified?` 均让局部 `tunnel` 在 return 前被 drop（`drop(tunnel)` 显式置于 `verified?` 之前）。Coder 的 `test_tester_test_tunnel_succeeds_against_a_real_ssh_bastion`（自建）另证明成功路径也不泄漏会话 |
+| 既存 `test_connection` 同类泄漏 | ✅ | 同一 `impl Drop`；`_tunnel` 局部变量在函数返回时 drop。静态确认，未单独动态复现（无既存泄漏断言） |
+
+### (c) 重构回归风险 —— 结论：生产数据路径**行为未变**
+
+逐函数 diff 审查 `git diff 6689cbe0 db6fc822 -- src-tauri/src/tunnel/`：
+
+- `normalize_scheme` / `proxy_headers` / `resolve_auth_header` / `connect_timeout` / `dial_proxy` / `tls_connect` / `validate_config` / `ws_headers` / `ws_timeout` / `ws_ping_interval` / `resolve_url` 均为**逐字搬移**（表达式、默认值、`max(1)` 下限、`or_else` 顺序、`raw_binary` 注入顺序完全一致），`perform_connect` / `establish_and_copy` / `connect_and_copy` / `pipe_tcp_ws` / `handle_client` / `connect_ws` / `open_datazen_channel` **零改动**。
+- 超时：数据路径 `establish_and_copy` 仍用 `timeout` 包住 CONNECT 读取；`dial_proxy` / `tls_connect` 仍带超时。**（探针路径缺该超时 → BUG-003）**
+- `https` 分支：TLS 代码等价搬移（**但该分支运行即 panic → BUG-004**）。
+- 既有数据路径测试仍在且仍通过：`tunnel::http_proxy::tests::forwards_bytes_through_connect_proxy`、`tunnel::websocket::tests::forwards_datazen_v1_bytes_and_sends_close_control`（另加 `parse_status_200` / `basic_auth_encodes` / `base64_padding` / `rejects_empty_url` / `raw_binary_url_injects_target_without_duplicate_keys`）。
+- 新增锁定用例：`test_tester_connect_proxy_data_path_keeps_auth_priority_and_forwarding`（数据路径的请求行/显式 `Proxy-Authorization` 优先级/额外 header/字节转发/**Drop 释放本地端口**）、`test_tester_websocket_data_path_still_sends_ping_frames`（`ws_ping_interval` 仍驱动 keepalive + Drop 释放端口）、两个 `test_tester_extracted_helpers_keep_their_semantics`（抽出的纯函数逐分支，含 `connect_timeout_secs = 0 → 1s` 下限）。
+- 行为漂移：**数据路径无漂移**；探针路径新增的 2 个缺陷已分别登记为 BUG-003 / BUG-004。
+
+### (d) 回归覆盖未被削弱 —— 结论：✅ 11 个 `test_tester_*` 逐字节未改
+
+`git diff 4b9515b6 db6fc822 --stat` 与逐函数体比对（脚本按大括号匹配提取函数体后 `==` 比较）：
+
+```text
+commands/tunnel.rs 7 个 + connection_import/ipc_tests.rs 4 个 = 11 个 test_tester_*
+全部 IDENTICAL（字节级），无删除、无新增 #[ignore]、无断言放宽、无 is_err() 替代
+```
+
+`git diff 4b9515b6 db6fc822` 中 `commands/tunnel.rs` 只有 2 个 hunk：`get_tunnel_usage_impl` 的空串守卫（生产）与测试模块**纯追加**；`ipc_tests.rs` 只有纯追加。
+
+### (e) 附带修正核验（简报仅批准 #2 / #6）—— 两条均已实现且有测试
+
+- **#2 空 id**：`get_tunnel_usage_impl` 加 `if !id.is_empty()` 守卫（`commands/tunnel.rs:66`）。**但 Coder 的原用例不足以证明该修复**：其夹具只有 `tunnel_id = None` 与 `Some("t1")`，两种情况在修复前后都返回空。本轮补 `test_tester_usage_with_empty_id_excludes_empty_string_references`（夹具含 `tunnel_id = Some("")`）——修复前会误命中，修复后为空。
+- **#6 `ssh.enabled == false`**：`materialize_tunnel_refs` 改为 `Some(ssh) if ssh.enabled => 物化` / `Some(_) => tracing::warn!("SSH tunnel is disabled; ...")` 且不写入导出；Coder 用例 `export_warns_and_skips_a_disabled_ssh_tunnel` 断言 payload 无隧道 + warn 同时点名 `connection_id`/`tunnel_id`。独立单测隔离运行通过（`set_default` 的线程局部订阅在单独运行该用例时同样生效，非顺序依赖）。
+
+### (f) 常规
+
+- **生产路径裸 `unwrap()`/`expect()`**：`db6fc822` 新增行中 17 处 `unwrap()/expect(` **全部**位于 `#[cfg(test)]` 模块（脚本按文件首个 `#[cfg(test)]` 行号判定，生产段命中 0）。改动文件生产段无 panic 宏。
+- **覆盖率**：见下表（逻辑分支覆盖法，本机无 llvm-tools）。
+- **死代码/可见性**：`verify_upstream` 以 `pub(crate) use` 重导出、仅 `connection_manager` 使用，可见性恰当；`test_fixture` 为 `#[cfg(test)] pub(crate)`；`test_tunnel` 的两条 `ok_or_else` 防御分支与 `TunnelKind::None` 分支实际不可达（改进项 10）；无新增冗余 import（编译告警仅既存的 `ipc_surface_tests`/`app_archive_tests` 未用 import 与 `ref_count`/`emit_task_progress` 未使用）。
+
+### 各套件实测数字（Coder 自报 vs 独立实测）
+
+| 套件 | Coder 自报 | Tester 独立实测（含本轮新增 18 个用例） | 差异 |
+|---|---|---|---|
+| `cargo test -p datazen --lib` | 1505 passed / 0 failed / 3 ignored | **1526 passed / 0 failed / 5 ignored** | +21 通过（本轮新增用例），0 failed 一致；ignored 3→5（新增 2 条 BUG-004 复现守卫，见追加项 1） |
+| `cargo test -p datazen-driver-api --lib` | 128 passed / 0 failed | **128 passed / 0 failed** | 一致 |
+| `cargo fmt --check` | 仅 gitignored `driver_init.rs` | 仅 `driver_init.rs`（2 处），改动文件全部干净 | 一致 |
+| 稳定性 | — | 新增用例连跑 5 次全绿（`test_tester_` 122 项/次，无 flake） | — |
+
+### 覆盖率评估（改动文件，逻辑分支覆盖法）
+
+| 文件 | 改动 | 估计分支覆盖 | 未覆盖路径 |
+|---|---|---|---|
+| `tunnel/http_proxy.rs` | +182 | ~95% | `dial_proxy` 超时分支（需黑洞地址，仅静态审查）；**`tls_connect` 与 `https` 数据路径 0%**（运行即 panic → BUG-004；已留 `#[ignore]` 复现守卫） |
+| `tunnel/websocket.rs` | +110 | ~95% | `connect_ws` 的 `wss` 分支 0%（同上，BUG-004；已留 `#[ignore]` 复现守卫）；其余 validate/headers/timeout/ping/resolve_url、datazen_v1 与 raw_binary 探针、error ack、超时、非 WS 端点、数据路径转发+close+ping+Drop 全覆盖 |
+| `ssh_tunnel.rs` | +112 | ~90% | 子任务 `session.lock()`/`channel_open_direct_tcpip` 的非 cancel-aware 窗口（改进项 9）；`agent` 认证分支（既存，无 agent 夹具） |
+| `services/connection_manager/tunnels.rs` | +57 | 100%（可达分支） | 两条 `ok_or_else` 防御分支不可达 |
+| `commands/tunnel.rs`（`get_tunnel_usage_impl`） | +4 | 100% | — |
+| `connection_import/ipc.rs`（disabled ssh） | +7 | 100% | — |
+
+改动模块整体 ≥ 80%；**唯一不达标的 `https`/`wss` TLS 分支，其不可覆盖性本身就是 BUG-004 的表现**。
+
+### 语义边界判定（明确结论）
+
+1. **`raw_binary` 探针不是假阳性**：该模式协议上**没有**可校验的握手语义（`host`/`port` 经 query 传给中继后直接二进制透传），因此「WS 握手完成」就是该模式能验证的全部；`connect_async` 执行的是真 HTTP 101 升级握手而非 TCP connect（非 WS 端点实测 `Err`），且中继不可达时 `Err`。**结论：语义边界，不登记 Bug**；建议 UI/文档说明「raw_binary 只验证中继可达，不验证目标可达」。
+2. **SSH 探针语义**：`start` 只证明「跳板机可达 + 认证成功」，不证明 `target_host:target_port` 经跳板可达（已动态证明：`channel_opens == 0`）。**结论：不作为 Bug 登记，作为已知语义边界**——理由：(i) 该行为由 `SshTunnel` 的 eager 语义客观决定，探针已把「能验证的部分」都验证了；(ii) 要真正验证目标可达，需要额外开一次 `direct-tcpip` 通道（可作为后续增强：探针打开并立即关闭一个到目标的通道）；(iii) 与 `httpProxy`/`websocket` 的「真握手」相比语义略弱，但不会谎报「隧道不可用」。建议写入文档并在管理面文案中体现。
+
+### 新增测试清单（18 个，前缀 `test_tester_`）
+
+`src-tauri/src/commands/tunnel_probe_tests.rs`（新文件，784 行；避免 `commands/tunnel.rs` 突破 800 行）：
+
+1. `test_tester_every_kind_rejects_an_unreachable_endpoint` —— (a)1 三 kind 不可达全 `Err`
+2. `test_tester_usage_with_empty_id_excludes_empty_string_references` —— (e)#2 真正证明空串守卫
+3. `test_tester_http_proxy_probe_performs_a_real_connect_handshake` —— (a)2 请求逐字节 + 200 通过 + 认证优先级
+4. `test_tester_http_proxy_probe_rejects_non_200_statuses` —— (a)2 407/502
+5. `test_tester_http_proxy_probe_rejects_a_malformed_status_line` —— (a)2 非 HTTP 应答
+6. `test_tester_http_proxy_probe_validates_its_config_first` —— (a)1 空 host / 非法 scheme
+7. `test_tester_websocket_probe_rejects_a_relay_that_errors_the_open` —— (a)3 反向夹具
+8. `test_tester_websocket_probe_is_bounded_when_the_relay_never_acks` —— (c) WS 探针有界（对照 BUG-003）
+9. `test_tester_raw_binary_probe_verifies_the_ws_handshake_and_carries_the_target` —— (a)4 raw_binary 契约 + query 注入
+10. `test_tester_raw_binary_probe_rejects_a_non_websocket_endpoint` —— (a)4 非 WS 端点
+11. `test_tester_connect_proxy_data_path_keeps_auth_priority_and_forwarding` —— (c) 生产路径行为锁定 + Drop 释放端口
+12. `test_tester_websocket_data_path_still_sends_ping_frames` —— (c) ping interval 仍生效 + Drop 释放端口
+13. `test_tester_test_tunnel_succeeds_against_a_real_ssh_bastion` —— (a)1 SSH 成功路径 + 不泄漏会话 + 不开目标通道
+
+`src-tauri/src/ssh_tunnel.rs`（3）：
+
+14. `test_tester_ssh_drop_aborts_the_real_forwarder_and_closes_the_session` —— (b)1 真实路径四项证据
+15. `test_tester_ssh_probe_does_not_prove_target_reachability` —— (a)5 语义边界动态证明
+16. `test_tester_ssh_jump_chain_drop_tears_down_every_bastion` —— (b)3 跳板链递归拆除
+
+`src-tauri/src/tunnel/http_proxy.rs` / `websocket.rs`（2）：
+
+17. `http_proxy::tests::test_tester_extracted_helpers_keep_their_semantics` —— (c) 抽出函数逐分支（含 `max(1)` 下限）
+18. `websocket::tests::test_tester_extracted_helpers_keep_their_semantics` —— (c) 同上 + `resolve_url` 双分支
+
+协调者追加覆盖面检查项（第 2 轮补充）新增 5 个：
+
+19. `test_tester_http_proxy_probe_sends_basic_credentials_without_echoing_them` —— 追加项 2：探针路径的 **Basic 凭据回退**（此前只在数据路径与纯函数层覆盖）+ 407 错误消息不含密码
+20. `test_tester_websocket_probe_sends_the_bearer_token_and_custom_headers` —— 追加项 2：探针路径的 `auth_token`（`Authorization: Bearer`）与自定义 header（此前探针用例 `auth_token` 全为 `None`）+ error ack 不泄露 token
+21. `test_tester_websocket_probe_never_echoes_a_url_embedded_token` —— 追加项 2：URL query 内嵌 token 在「非 WS 端点 / 不可达 / URL 畸形」三种失败下均不出现在错误消息中（RFC §5.4）
+22. `test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking` —— 追加项 1：**`#[ignore]`**，BUG-004 复现守卫（今日必 panic），修复后去掉 `#[ignore]`
+23. `test_tester_wss_relay_probe_reports_tls_failure_instead_of_panicking` —— 追加项 1：同上，`wss://` 变体
+
+临时复现用例（BUG-003 证据，**已从提交中移除**，代码片段见 `bugs.md`）：
+`zz_temp_silent_proxy_probe_outcome`；另 `zz_temp_tls_paths_panic_instead_of_erroring` 的结论已固化为上面第 22/23 条 `#[ignore]` 守卫。
+
+### 协调者追加覆盖面检查项（第 2 轮补充）—— 逐项结论
+
+**追加项 1：`https`（TLS 拨号）分支是否有覆盖？风险等级？**
+
+- **覆盖情况：完全没有。** `grep -rn '"https"' src-tauri/src` 在测试代码中零命中；`"wss://"` 仅出现在**摘要脱敏**用例（`commands/tunnel.rs:358`）与导出用例（`ipc_tests.rs:514/631`），都不建立连接。即两个 TLS 变体**从未被任何测试执行过**。
+- **风险等级：高（且不止是「未经测试」——该路径今日必然 panic）**。见 BUG-004：rustls 同时启用 `aws-lc-rs` + `ring` 且全仓无 `install_default()`，`ClientConfig::builder()` 直接 panic。这不是「TLS 失败未被断言」，而是**探针与生产数据路径都会崩**。
+- **按建议补了用例，但今日无法让它通过**：`scheme="https"` 指向纯明文 TCP 端口，期望 `Err`（而非 panic/挂起）——实测**直接 panic**：
+
+```text
+---- commands::tunnel_probe_tests::test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking stdout ----
+thread '...' panicked at rustls-0.23.43/src/crypto/mod.rs:249:14:
+Could not automatically determine the process-level CryptoProvider from Rustls crate features.
+Call CryptoProvider::install_default() before this point ...
+```
+
+  为避免把主干套件染红（Tester 不提交失败用例），两条用例以 **`#[ignore = "blocked by tunnel-backend-BUG-004 ..."]`** 落库，并在注释里写明「修复后去掉 `#[ignore]`」；`cargo test -- --ignored test_tester_` 可随时复现（今日两条均 FAILED）。
+- `https` 属**必要功能**（`docs/features/tunnel-guide.zh-CN.md`：「HTTPS scheme 会先完成 TLS」；RFC 指定 `tokio-rustls`），因此 BUG-004 列为阻断项。
+
+**追加项 2：探针路径是否覆盖「带凭据 / 带自定义 header」？**
+
+| 场景 | 复测前覆盖情况 | 处理 |
+|---|---|---|
+| 代理自定义 header + 显式 `Proxy-Authorization`（探针） | ✅ 已覆盖（本轮 `..._performs_a_real_connect_handshake` 逐字节断言，且断言显式头**胜过** Basic） | 无需补 |
+| 代理 **Basic 凭据回退**（探针，无显式头） | ❌ 未覆盖（此前只在数据路径 `..._data_path_keeps_auth_priority_and_forwarding` 与纯函数层覆盖） | 补第 19 条 |
+| WS `auth_token` + 自定义 header（探针） | ❌ **完全未覆盖**：探针用例 `auth_token` 全为 `None`；`tunnel.rs:359` 的 `Some("ws-auth-token-secret")` 属摘要脱敏用例，不建连 | 补第 20 条 |
+| 凭据是否出现在错误消息/日志（RFC §5.4「日志与 UI 不得打印代理密码 / token」） | ❌ 未覆盖 | 补第 19/20/21 条，覆盖「407 拒绝 / `op=error` 拒绝 / 非 WS 端点 / 不可达 / URL 畸形」五种失败 |
+
+- 结论：**未发现泄露**。五条失败路径的错误消息均不含密码、Basic 密文或 token（`verify_upstream` 的错误只带状态码/IO 原因；`connect_ws` 的 `WebSocket connect failed: {e}` 也未回显 URL 中的 `?token=`）。RFC §5.4 在这些路径上成立。
+- 顺带确认：`connect_ws` 对自定义 header 会**跳过** `authorization`/`host`（避免覆盖 token 与 Host），第 20 条的夹具实测 `Authorization: Bearer s3cr3t-ws-token` 与 `X-Relay: 1` 同时到达中继。
+
+**追加项 3：`raw_binary` 是否构成新的假阳性？—— 结论：不构成（语义边界），但需文档化**
+
+判定依据（不是主观裁量，而是设计文档自身的口径）：
+
+1. `design-plans/saved-tunnel-management.md:80` 规定的不变量与实现方式：「**实现须为每种隧道做真实的上游链路探测（HTTP 代理做 CONNECT 握手、WS 做 `connect_async`、或穿透本地 listener 打真实连接）**，确实无法探测的类型必须显式返回 `Err` 而非 `Ok(0)`」。→ 对 WS，**`connect_async` 就是计划钦定的探针强度**；`datazen_v1` 额外等 `opened` 属超出计划要求的加强。
+2. RFC §5.3 / tunnel-guide §4 的协议口径：「`raw_binary` 下首条连接即双向二进制，目标由 URL query 指定」且「DataZen **不**内置中继服务端；需自备兼容的中继」——该模式**不存在**应用层 ack 帧，因此「WS 101 握手成功」是协议内可验证的最大信号；中继是否打通目标**在该模式下不可观测**（不像 `datazen_v1` 有 `opened`/`error`）。
+3. 反假阳性检验通过：修复前对**任何**端点都 `Ok(0)`（BUG-001）；现在不可达中继 `Err`、非 WS 端点（`HTTP 500`）`Err`、TLS 失败 `Err`。没有「连不上也报成功」的情形。
+4. 因此与 SSH 探针（只证明跳板机可达 + 认证成功）**同类同判**：属「端点可达性已验证、目标可达性未验证」的语义边界，**不登记 Bug**。
+5. 残余风险与建议：raw_binary 下「中继活着但目标不通」会报成功。建议 (i) 在管理面文案/`tunnel-guide` 中写明该模式只验证中继可达；(ii) 可选增强：握手后留一个很短的宽限期，若中继立刻发 Close/error 帧或断开则判 `Err`（启发式，非保证）；(iii) 需要强保证时引导用户改用 `datazen_v1`。
+
+### 复现命令
+
+```bash
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib                     # 1523 / 0 / 3
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib test_tester_        # 122 项
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-api --lib          # 128 / 0
+CARGO_TARGET_DIR=target/cargo-wt cargo fmt --check                                # 仅 driver_init.rs
+```
+
+### Bug 清单（本轮）
+
+| ID | 标题 | 状态 | 阻断 |
+|---|---|---|---|
+| BUG-001 | `test_tunnel` 对 HTTP 代理 / WebSocket 恒报成功 | ✅ 已修复（复测通过） | — |
+| BUG-002 | `drop(SshTunnel)` 不拆除，泄漏任务/会话/端口 | ✅ 已修复（真实路径复测通过） | — |
+| BUG-003 | 探针对「接受 TCP 但不回应 CONNECT」的代理无限挂起 | 🆕 待修复 | 是 |
+| BUG-004 | `https` 代理 / `wss` 中继 TLS 路径运行时 panic（CryptoProvider 未安装） | 🆕 待修复（既存，非本轮引入） | 是 |
+
+> BUG-004 的复现已固化为两条 `#[ignore]` 用例（第 22/23 条）；修复后请**去掉 `#[ignore]`** 使其转为常驻回归守卫（`cargo test -- --ignored test_tester_` 可先复现 panic）。
+
 ## Phase
 
-`READY_FOR_TEST`
+`FAILED`
 
 > 第 2 轮修复完成：`tunnel-backend-BUG-001` / `tunnel-backend-BUG-002` 均已修复且各有主证测试；附带修正 #2 / #6 完成；Tester 11 个回归用例零改动、全通过。
 > 实测 `cargo test -p datazen --lib` **1505 passed / 0 failed / 3 ignored**，`cargo test -p datazen-driver-api --lib` **128 passed / 0 failed**。
@@ -249,3 +439,5 @@ impl Drop for SshTunnel {
 > （a）BUG-001 —— 是否有任何 kind 仍能对不可达端点返回 `Ok`；反向夹具（`403` / 正确 `opened`）是否被绕过；
 > （b）BUG-002 —— `drop(SshTunnel)` 是否真的释放任务、SSH 会话与本地端口（不只是取消 token）。
 > 本轨不自评 `PASSED`。
+
+> **Tester 复测（第 2 轮）终判：`FAILED`** —— BUG-001 / BUG-002 已确认修复（BUG-002 经 in-process bastion 在真实路径上动态验证），附带修正 #2 / #6 落实且 11 个回归用例逐字节未改；但复测新登记 **BUG-003**（HTTP 探针无超时 → 永久挂起）与 **BUG-004**（`https`/`wss` TLS 路径 panic，既存但本轨拥有该代码）两个阻断项。详见上方「Tester 复测轮（第 2 轮）」。
