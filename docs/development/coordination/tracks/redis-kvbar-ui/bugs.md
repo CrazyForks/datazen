@@ -8,17 +8,23 @@
 
 | Bug ID | 严重度 | 状态 | 一句话 |
 |---|---|---|---|
-| redis-kvbar-ui-BUG-001 | **Major** | 待修复 | 切键后新键读数在飞行期间，两个槽位继续打印**上一个键**的 type/大小/TTL；侧栏同时渲染 loading 提示与旧键属性表 |
-| redis-kvbar-ui-BUG-002 | Minor | 待修复 | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
-| redis-kvbar-ui-BUG-003 | Minor | 待修复 | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
-| redis-kvbar-ui-BUG-004 | Low | 待修复 | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
+| redis-kvbar-ui-BUG-001 | **Major** | 待复测 `eea7e0d0a` | 切键后新键读数在飞行期间，两个槽位继续打印**上一个键**的 type/大小/TTL；侧栏同时渲染 loading 提示与旧键属性表 |
+| redis-kvbar-ui-BUG-002 | Minor | 待复测 `2dec2f402` | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
+| redis-kvbar-ui-BUG-003 | Minor | 待复测 `90d0fb9f2` | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
+| redis-kvbar-ui-BUG-004 | Low | 待复测 `5e145f566` | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
+
+> **修复第 1 轮（Coder @ `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）**：四条全部改到生产码
+> 并各带回归用例 ⇒ 全部置 **待复测**，每条下方新增「修复备注（Coder 第 1 轮 · sha）」给出落点与复测入口。
+> 原「现象 / 重现步骤 / 建议修法」正文**保留不动**作为裁定依据存档；其中依赖 `it.skip` 的
+> 「重现步骤 · 方式一」已随解开而失效，改注为变异清单入口。数字与变异表见同目录 `progress.md`
+> 「第 1 轮修复回合」。`.rs` 零改动，未跑 cargo / e2e。
 
 ---
 
 ## redis-kvbar-ui-BUG-001 — 陈旧键属性跨键残留（两槽位均受影响）
 
 - **严重度**：Major（向用户展示**错误的事实**，且与实现自己的文档声明相反）
-- **状态**：`待修复`
+- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
 - **量级**：**每一次**“键 A → 键 B”点击都稳定复现，窗口 = B 的 `key_object_info` 往返时间
   （同一次点击要打两条相同命令，见 BUG-002，窗口因此翻倍）。人工点击快速翻键时几乎连续可见。
 
@@ -89,12 +95,27 @@ AssertionError: expected <div …(2)>…(2)</div> to be null
    contextBar 若也读该 hook，会被同一缺陷波及）。
 4. 修好后解开 `kvBarSlotTesterGaps.test.tsx` 里两条 `FIXME(redis-kvbar-ui-BUG-001)` 的 `it.skip`。
 
+**修复备注（Coder 第 1 轮 · `eea7e0d0a`）· 状态 → 待复测**
+
+- 采建议修法 **2 的加强版**（协调者裁定：绑定在状态所有权上，不是“记得清一下”）：state 携带
+  `owner = {dbSessionId, dbIndex, key}`，新增**导出的纯函数** `publishRead(read, current)`
+  （`useKeyObjectInfo.ts`）在 **render 期间**按 owner 令牌过滤，成功/失败回包落地时再各校验一次。
+  修法 1（loading 时清 info）单独采用会漏掉“切键 → effect 启动”之间那一帧，且仍是补丁，故未采。
+- 建议修法 **3 已做**：`:12-13` 那条“effect identity 会丢弃迟到回复”的错误 docblock 声明与
+  `:19` 的 `Last successful reply for the current key` 注释**均已删除重写**，
+  现声明的是不变量本身（“一次读只属于一个键”），Rescuer-B 复用该 hook 的前提已修正。
+- 建议修法 **4 已做**：`kvBarSlotTesterGaps.test.tsx` 两条 `it.skip` 解开并转绿。
+- 复测入口：新文件 `__tests__/kvBarRound1Fixes.test.tsx` 的 `[fix:BUG-001]` 两个 describe
+  （纯函数层逐身份字段各一条 + statusBar 槽位层的飞行窗口/乱序回包）。
+  上表「方式一」的 perl 解 skip 步骤**已失效**（用例常驻非 skip），改为对 `publishRead` 与
+  owner 令牌做字段删除变异（清单见 `progress.md`「变异复证表」M1~M7，全部为红）。
+
 ---
 
 ## redis-kvbar-ui-BUG-002 — 一次键选中重复读两遍同一命令
 
 - **严重度**：Minor（性能/服务端负载，非正确性）
-- **状态**：`待修复`
+- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
 - **量级**：抽屉展开时，每次键点击 **2 次** `key_object_info`；该命令自身是 `SELECT` + pipeline
   （`MEMORY USAGE`/`OBJECT ENCODING`/`OBJECT IDLETIME`/`OBJECT FREQ`/`PTTL`/`TYPE`），
   即 1 击 = 2×(1 SELECT + 1 pipeline) 往返，翻倍于必要量；快速翻键时按倍数放大。
@@ -142,12 +163,29 @@ PROBE reads-per-selection=2 keys=["k1","k1"] total=3
 若判定为“不值得为本轨引入缓存层”，请在 `useKeyObjectInfo.ts` docblock 就地写明取舍，
 并把本条降级为已裁定不修，别让它以隐性方式留在两个槽位身上。
 
+**修复备注（Coder 第 1 轮 · `2dec2f402`）· 状态 → 待复测**
+
+- 走协调者给的 **(a) 选项：in-flight 去重**，未走 (b)（不移交 W2-C，不需要新契约、未改 `KvSlotState`）。
+- 实现即建议修法描述的形状，但表载体是 **`WeakMap<KvSlotState, Map<owner令牌, Promise>>`**
+  而不是 `useRef`：宿主 `src/windows/connection/useKvWorkspaceSlots.ts` 把**同一个** `panelState`
+  对象展开给 `statusBar` 与 `keyPropsSidebar`，所以“relay 对象”天然就是面板身份，
+  面板卸载（`pruneKvSlotStates`）后 WeakMap 条目即可回收 —— **表的生命周期就是面板的生命周期**，
+  满足裁定里“若缓存，其键空间必须绑定面板/中继生命周期并在卸载或 `dbSessionId` 变更时失效”。
+- **不是值缓存**：表里只存在进行中的 Promise，`.finally()` 立即 `delete`；
+  settled 之后再点刷新或重选同一键都会真发新命令（`kvBarRound1Fixes` 有专门用例与注释）。
+  `dbSessionId` 变更由 owner 令牌进键名，天然分桶。
+- 取舍已写进 `useKeyObjectInfo.ts` docblock 的 “Two slots, one round trip” 段。
+- 已知行为细节（请复测时按此判，不要当成 BUG-001 复发）：两个槽位各自持有 `attempt`，
+  所以**侧栏的刷新按钮只重取侧栏自己那一份**（此时状态条可能仍显示上一次的 `failed`）；
+  该形状由 `kvBarRound1Fixes` 里一条显式 `expect(statusState).toBe('failed')` 钉住，
+  改成共享 `attempt` 必须故意翻转那条断言。
+
 ---
 
 ## redis-kvbar-ui-BUG-003 — 刷新动作漏刷 `maxmemory_policy` 行
 
 - **严重度**：Minor（一行数据长期陈旧，且与按钮语义不符）
-- **状态**：`待修复`
+- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
 - **量级**：策略行只在 `(open, dbSessionId)` 跃迁时取一次；面板存活期内点多少次刷新都不会再取，
   刷新 N 次 ⇒ `info_filtered` 调用 0 次。
 
@@ -185,12 +223,24 @@ PROBE refresh key_object_info 1->2 info_filtered 1->1
 或把刷新按钮改为显式的 `onRefresh={() => { reload(); void refreshPolicy(); }}`。
 注意保留“迟到回复不得覆盖新会话”的既有不变量（该不变量已由变异 M4/新会话用例钉住，勿在改动中弱化）。
 
+**修复备注（Coder 第 1 轮 · `90d0fb9f2`）· 状态 → 待复测**
+
+- 采建议第一条：`useKeyObjectInfo` 增返 `attempt`（`reload()` 即 `setAttempt(n=>n+1)`），
+  侧栏 policy effect 依赖改为 `[open, dbSessionId, attempt]`（`KeyPropsSidebar.tsx:66-75`）。
+  未新增第二个 hook 状态，也未把按钮改成显式双调用（那样会让“刷新”在两处各写一半）。
+- 不变量未弱化：`stale` 守卫原样保留，且新文件里 P2 变异（拆掉该守卫）为红。
+- 刻意保留的形状：策略**旧值在重读期间仍显示**（它是服务器级事实，不是另一个键的属性，
+  与 BUG-001 的误归属不同类），代码注释与 `progress.md` 均有记载；复测请勿按 BUG-001 口径判它。
+- 复测入口：`kvBarRound1Fixes.test.tsx` 的 `[fix:BUG-003]`（`info_filtered` 与 `key_object_info`
+  同时 `1→2`；以及“服务器改成 `allkeys-lfu` 后刷新，行值必须跟着变”）。
+  「实测日志摘录」里的 `info_filtered 1->1` 现已是 `1->2`。
+
 ---
 
 ## redis-kvbar-ui-BUG-004 — `PTTL -2` 被判成 “No expiry”
 
 - **严重度**：Low（竞态下的一行错标签；三态分离在渲染侧整体失效）
-- **状态**：`待修复`
+- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
 - **量级**：仅当同一 pipeline 内 `TYPE` 命中、随后 `PTTL` 报键已消失（毫秒级过期竞态 / 主从切换）时出现；
   低频但确定可达，且 `describeTtl` 为此专门定义的 `kind:'missing'` 在**任何**渲染分支里都没被消费。
 
@@ -236,6 +286,22 @@ document.querySelector('[data-attr="ttl"] dd').getAttribute('data-fallback-key')
 ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps.missing' : 'redis.noExpiry'}`；
 状态条同理（`'missing'` 时不渲染 TTL 段即可，但需与侧栏口径一致）。
 修好后解开该 `it.skip`，并把常驻绿测改为断言新标签，两条用例成对自证非空跑。
+
+**修复备注（Coder 第 1 轮 · `5e145f566`）· 状态 → 待复测**
+
+- 侧栏按建议原文分词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps.missing' : 'redis.noExpiry'}`
+  （`KeyPropsSidebar.tsx:165-170`，词条复用未新增 key）；状态条按建议保持不渲染 TTL 段，
+  注释写明两侧口径（`KvStatusBar.tsx:58-63`）。`describeTtl` 三分支至此全部有消费者。
+- 成对自证的落法（**未删除任何断言**）：登记的 `it.skip` 解开转绿；
+  原常驻绿测 `pins today behaviour so the BUG-004 fix is visible from both sides`
+  **改写**为 `keeps a genuinely never-expires key on the no-expiry word`
+  （断言另一臂 `-1 ⇒ redis.noExpiry`）—— 继续断言新标签只会在 Q1 变异下与解开的那条同时红，
+  是重复断言；改断言另一臂后 Q2（两臂互换）能同时红两条。
+- 追加**跨槽位一致性**用例（`kvBarRound1Fixes` 的 `[fix:BUG-004]`）：同一次选中下
+  侧栏行 = `redis.keyProps.missing` 且 `data-value` 为空、状态条无 `[data-part="ttl"]`，
+  并配一条 `ttlMs>0` 的控制用例，保证“没有 TTL 段”不是空跑。
+- 本条只改渲染侧：`ops_workbench.rs` 的 `missing:false` + `ttl_ms:-2` 形状仍在后端存在
+  （属 `redis-cmds-p0` 文件面，本轨未越界），界面现已如实叙述。
 
 ---
 

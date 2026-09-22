@@ -197,3 +197,148 @@ PRD §3.4 状态条样例含 **keys 总数 / loaded / 扫描游标 / 多选计�
 | R8 | 驱动 UI 测试必须带 `--config vitest.drivers.config.ts` | 本轮全部命令按此口径执行并写入本台账，建议后续任务书直接给全命令 |
 | **R9（新增）** | BUG-002 的重复往返在真链路（远程 / 高 RTT / 托管）上的实测延迟与 QPS 影响 | 进程内已量化为 `reads-per-selection=2`；是否值得引入 in-flight 去重需真机数据支撑裁定 |
 
+---
+
+# 第 1 轮修复回合（Coder，BUG-001~004 全部修完）
+
+> 输入：同目录 `bugs.md` 4 条 `待修复` + 协调者逐条裁定。产出：4 个 fix commit + 本节。
+> 现场：`feature/redis-kvbar-ui`（未 rebase、未合流），工作区干净。
+> **`.rs` 一行未改**（本轨纯 TS；bugs.md 对 BUG-004 的 `ops_workbench.rs:425/:439` 引用只作为
+> “该形状后端可达”的证据，修的是渲染侧消费，故未跑 `cargo test -p datazen-driver-redis`，
+> 也不存在文件面越界需要解释）。未跑任何 e2e / `pnpm build` / `pnpm install`。
+
+## 四条 commit
+
+| Bug | sha | 一句话 |
+|---|---|---|
+| BUG-001 (Major) | `eea7e0d0a` | 读数带**归属**（owner = 会话+库+键），发布前按归属过滤 ⇒ 切键即失效 |
+| BUG-002 | `2dec2f402` | 同一面板内同一键的两次读**合并为一次往返**（in-flight join，零值缓存） |
+| BUG-003 | `90d0fb9f2` | 刷新按钮同时重读 `maxmemory_policy`（`attempt` 进 policy effect 依赖） |
+| BUG-004 | `5e145f566` | `PTTL -2` 与 `-1` 在渲染侧分词；配对用例改断言另一臂 |
+
+## 逐条修法与裁定符合性
+
+### BUG-001 — 状态所有权（裁定：“让 in-flight 状态与被选中的键绑定，不是加一层记得清一下的补丁”）
+
+`packages/drivers/redis/ui/kv-bar/useKeyObjectInfo.ts` 重写：
+
+- 状态从 `{info, loading, failed}` 变为 `{owner, info, loading, failed}`，
+  `owner = {dbSessionId, dbIndex, key}`（`keyObjectInfo.ts` 层不动）。
+- 新增**导出的纯函数** `publishRead(read, current)`：owner 令牌不等 ⇒ 发布
+  `{info:null, loading:false, failed:false}`。它在 **render 期间**被调用，
+  因此“选中新键 → effect 启动下一次读”之间那一帧也不再打印旧键属性；
+  不依赖 `useEffect` 顺序，也不依赖 `stale` 闭包旗标（旧旗标已删，被 owner 校验吸收）。
+- 回复落地时二次校验：`setRead(prev => readToken(prev.owner) === readToken(owner) ? … : prev)`
+  （成功/失败两侧都校验），乱序回包不能改写新键的状态。
+- 同步删除了原 docblock 里“迟到回复会被 effect identity 丢弃”这一**与实测相反**的声明，
+  以及 `Last successful reply for the current key` 注释（bugs.md 处置项 3）。
+- 新测试文件 `__tests__/kvBarRound1Fixes.test.tsx`：归属规则在纯函数层逐字段单独钉
+  （会话 / 库号 / 键名 各一条，删任一字段只红对应那条），飞行窗口与乱序回包在 statusBar 槽位层钉。
+  原 `kvBarSlotTesterGaps.test.tsx` 两条 `it.skip`（BUG-001 侧栏半 + 状态条半）**已解开**并转绿。
+
+### BUG-002 — 选 **(a) in-flight 去重**（裁定二选一，明确不选 (b)）
+
+理由：本轨能自己闭环，不需要新契约、不需要把缺口推给 W2-C。实现
+（`useKeyObjectInfo.ts::sharedKeyObjectInfo`）：
+
+- `const openReads = new WeakMap<KvSlotState, Map<string, Promise<KeyObjectInfo>>>()`，
+  内层键是 owner 令牌（会话+库+键）。
+- **缓存的键空间就是中继对象本身**：宿主 `useKvWorkspaceSlots` 把同一个 `panelState`
+  展开给 `statusBar` / `keyPropsSidebar`（同一 relay 对象身份），所以合并只发生在
+  “同一面板内的两个槽位”之间；面板卸载 ⇒ relay 被 `pruneKvSlotStates` 丢弃 ⇒ WeakMap
+  条目随之可回收。**没有 module-level 值缓存**：表里存的是**进行中的 Promise**，
+  `.finally()` 里立刻 `delete`， settled 之后任何一次刷新/再选都会真发新命令
+  （`kvBarRound1Fixes` 里“换键与刷新各自再读一次”“失败也被遗忘，不跨重试粘住”两条为证）。
+- 失败也只共享**这一次**往返的结果：两个槽位对同一个键的同一份真相应当一致（侧栏重试成功后
+  状态条仍停在 `failed`，因为 `reload` 是**每槽位**的 attempt —— 该行为已由一条显式断言钉住，
+  将来若改成共享 attempt 必须故意翻转它）。
+- 跨面板**不**共享（不同 relay ⇒ 不同 scope，有用例）；这是刻意的，符合“不得跨面板缓存值”的裁定。
+- 未改动 `KvSlotState`、`driver-sdk` 类型、宿主任何文件，故**不移交 W2-C**。
+
+### BUG-003 — 刷新覆盖策略行
+
+`KeyPropsSidebar.tsx` 的 policy effect 依赖从 `[open, dbSessionId]` 改为
+`[open, dbSessionId, attempt]`，`attempt` 由 hook 返回（`reload()` 即 `setAttempt(n=>n+1)`）。
+保留“迟到策略回复不得覆盖新会话”的既有不变量（`stale` 旗标未动，P2 变异为红为证）。
+策略旧值在重读期间**可见**是刻意的：它是服务器级事实，不是另一个键的属性，不构成误归属
+（与 BUG-001 的口径区分写进了注释）。实测：点击刷新 `key_object_info 1→2` 且 `info_filtered 1→2`。
+
+### BUG-004 — 两个 PTTL 哨兵分词
+
+- `KeyPropsSidebar.tsx` ttl 行：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps.missing' : 'redis.noExpiry'}`
+  （词条复用，未新增 i18n key）。`describeTtl` 的三态分离至此**三个分支全部有消费者**。
+- `KvStatusBar.tsx`：`-2` 仍不渲染 TTL 段（bugs.md 建议口径），注释改为写明“侧栏用词、状态条沉默、
+  两侧都不得把它说成永不过期”。
+- 测试：解开了登记的 `it.skip('labels a gone-by-PTTL key as gone…')`；其**常驻绿测**
+  `pins today behaviour…` 按裁定从“断言旧的错词”改写为断言**另一臂**
+  （`-1` ⇒ `redis.noExpiry`），两条成对，任一臂回退都红；`kvBarRound1Fixes` 追加跨槽位一致性
+  一条 + 一条控制用例（`ttlMs>0` 时状态条**必须**出 TTL 段，防“沉默”断言空跑）。
+  **没有删除任何断言**，全部按 `data-*` / i18n key / 服务端回显值定位。
+
+## 门禁实跑数字（Coder 本机 worktree 根目录，逐条修复后各跑一次）
+
+| 时点 | `tsc --noEmit` | `vitest run --config vitest.drivers.config.ts` | `ui/kv-bar/**` v8 覆盖率 | `npx vite build` |
+|---|---|---|---|---|
+| 基线（Tester 判定后） | 0 错误 | 37 files / 293 passed \| 3 skipped (296) | — | — |
+| BUG-001 后 | 0 错误 | 38 files / 303 passed \| 1 skipped (304) | 100/100/100/100 | ok 5.37s |
+| BUG-002 后 | 0 错误 | 38 files / 307 passed \| 1 skipped (308) | 100/100/100/100 | ok 4.88s |
+| BUG-003 后 | 0 错误 | 38 files / 309 passed \| 1 skipped (310) | 100/100/100/100 | ok 5.08s |
+| BUG-004 后（**新基线**） | 0 错误 | 38 files / **312 passed \| 0 skipped (312)** | 100/100/100/100 | ok 4.63s |
+
+- 覆盖率命令：`npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.include='packages/drivers/redis/ui/kv-bar/**'`；
+  列为 Stmts / Branch / Funcs / Lines 四值。`index.ts` 那行显示 0 是**再导出桶文件无可计语句**，
+  “All files”总计仍为 100×4。
+- 覆盖率未低于第 1 轮实测的 100%（四指标全 100），且 `it.skip` 由 3 条降到 **0 条**。
+- 附带 `node scripts/check-driver-import-boundaries.mjs`：`ok (1431 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))`
+  —— 4 条 advisory 均为**既有**宿主侧发现，本回合未新增。
+- 单文件规模：`KeyPropsSidebar.tsx` 235 行、`useKeyObjectInfo.ts` 216 行、`KvStatusBar.tsx` 105 行，
+  均在 800 行红线内；新增测试文件 `kvBarRound1Fixes.test.tsx` 502 行。
+
+## 变异复证表（阶段 C 口径；注入后由 `/tmp/mutrun.py` 快照还原，**未使用 `git checkout`**）
+
+跑的是三个 kv-bar 测试文件（16 + 17 + 16 = **49** 条）；“红数”即 `Tests N failed`。
+
+| # | 注入 | 期望 | 实测 |
+|---|---|---|---|
+| M1 | effect 进入 loading 时保留 `prev.info`（即修复前代码） | 至少一条红 | **20 红** |
+| M2 | 成功回包去掉 owner 校验 | 红 | 3 红 |
+| M3 | 失败回包去掉 owner 校验 | 红 | 1 红 |
+| M4 | owner 令牌不含 `dbSessionId` | 对应那条红 | 2 红 |
+| M5 | owner 令牌不含 `dbIndex` | 对应那条红 | 2 红 |
+| M6 | `publishRead` 的过滤整个删掉 | 红 | 3 红 |
+| M7 | `ownerOf` 忽略 `dbIndex` | 红 | 1 红 |
+| M8 | hook 忽略 `enabled` 参数 | — | **存活（等价变异）**，见下注 |
+| N1 | 去掉 in-flight join（各槽位各发一次） | 红 | 3 红 |
+| N2 | 合并表按全局键名而非 relay 建键（跨面板共享） | 红 | 2 红 |
+| N3 | settled 后不 `delete`（变成值缓存） | 红 | 3 红 |
+| N4 | 合并令牌忽略键名 | 红 | 2 红 |
+| N5 | 合并令牌忽略会话 | 红 | 1 红 |
+| P1 | policy effect 依赖退回 `[open, dbSessionId]` | 红 | 2 红 |
+| P2 | 去掉“会话已切换则丢弃策略回复”守卫 | 红 | 1 红 |
+| P3 | 刷新按钮不再接 `reload` | 红 | 5 红 |
+| Q1 | ttl 行退回固定 `redis.noExpiry`（修复前） | 红 | 2 红 |
+| Q2 | ttl 行两臂互换 | 红 | 4 红 |
+| Q3 | `describeTtl` 把 `-2` 并入 no-expiry 臂 | 红 | 3 红（含纯函数层 `separates the three PTTL meanings`） |
+| Q4 | 状态条对 `-2` 也渲染 TTL 段 | 红 | 1 红 |
+
+**M8 存活注（等价变异，与 Tester 本轮 M13 同一形状）**：侧栏关闭时除 `enabled=false` 外
+**还**额外传了 `key=null`，所以拆掉 `enabled` 这一道闸门后“抽屉收起零请求”仍成立——
+该保证实际由第二道闸门守着，已由 M14/M15（Tester 表）证明它确实被用例钉住。
+两道闸门互为冗余是 §I-11 契约（`open===false ⇒ 不取数`）的显式冗余，**不再追加用例**，
+在此登记以免下一轮重复注入。
+
+## 本轮结论与遗留
+
+- **明确未做（不是漏做）**：
+  1. `contextBar` 全量版 —— 按裁定归 Rescuer-B；
+  2. `KvSlotState` 加宽（`keys` / `loaded` / 扫描游标 / 多选数 / 最后写操作）—— 归 W2-C，本回合零改动；
+  3. 跨面板 / 跨会话的**值**缓存 —— 裁定明令禁止，未做；BUG-002 只做到 in-flight 往返合并；
+  4. Rust 侧 `missing`/`ttl_ms` 的口径统一（让后端在 `-2` 时直接置 `missing:true`）—— 属 `redis-cmds-p0` 文件面，
+     本轨只在渲染侧消费，未越界；
+  5. 真连 / e2e 复证（下表 R 系列）—— 未跑。
+- **R9 口径更新**：`reads-per-selection` 已由 2 降到 **1**（进程内实测断言），
+  “是否值得引入 in-flight 去重”不再待裁定；仍待真机的是**去重后单次往返的延迟分布**，
+  以及是否需要值级缓存（本轮按裁定明确不做）。
+- **下一步入口**：全新 Tester 实例按 `bugs.md` 四条的“重现步骤 + 建议修法”逐条复测，
+  门禁以本表“BUG-004 后（新基线）”一行为对照（312 passed / 0 skipped / 覆盖率 100×4）。
+
