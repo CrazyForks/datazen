@@ -70,4 +70,76 @@ mod tests {
             .with_root_certificates(tokio_rustls::rustls::RootCertStore::empty())
             .with_no_client_auth();
     }
+
+    /// [tester] BUG-004 (b) — components that rely on rustls' **auto-detection**
+    /// (`ClientConfig::builder()`, no explicit provider) must resolve to the
+    /// installed process default instead of panicking, and must share that same
+    /// provider.
+    ///
+    /// That is precisely the call `redis 0.27` makes in
+    /// `create_rustls_config` (`src/connection.rs:891`, reachable here because
+    /// `datazen-driver-redis` enables `tokio-rustls-comp` → `tls-rustls`) and the
+    /// call `tungstenite 0.26` makes for `wss://` (`src/tls.rs:135`). It is the
+    /// compatibility claim behind choosing `aws-lc-rs` as the process default.
+    #[test]
+    fn test_tester_auto_detecting_builder_shares_the_installed_provider() {
+        install_default_crypto_provider();
+        let installed = tokio_rustls::rustls::crypto::CryptoProvider::get_default()
+            .expect("install must leave a process-wide default provider");
+        let config = tokio_rustls::rustls::ClientConfig::builder()
+            .with_root_certificates(tokio_rustls::rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        assert!(
+            std::sync::Arc::ptr_eq(config.crypto_provider(), installed),
+            "auto-detecting builders must reuse the process-wide default provider"
+        );
+    }
+
+    /// [tester] BUG-004 (b)3 — the **construction sites**, not only `main()`,
+    /// must install the provider.
+    ///
+    /// This guard is not redundant with the runtime tests: the test harness never
+    /// runs `main()`, and because the provider is process-global, one install
+    /// from any other test would keep the whole suite green even if a
+    /// construction-site call were deleted. Only a source-level assertion pins
+    /// that down (same style as `bootstrap::tests`).
+    #[test]
+    fn test_tester_every_entry_point_and_tls_construction_site_installs_the_provider() {
+        let main_rs = include_str!("main.rs");
+        let install_at = main_rs
+            .find("datazen::install_default_crypto_provider()")
+            .expect("main() must install the process-wide provider");
+        let args_at = main_rs
+            .find("let args: Vec<String> = std::env::args().collect();")
+            .expect("main() must still parse argv");
+        assert!(
+            install_at < args_at,
+            "the install must be main()'s first statement, before any TLS user"
+        );
+        // Both entry points funnel through main(): GUI and `--mcp-stdio`.
+        assert!(main_rs.contains("datazen::run_mcp_stdio()"));
+        assert!(main_rs.contains("datazen::run()"));
+
+        let lib_rs = include_str!("lib.rs");
+        assert!(lib_rs.contains("mod tls;"));
+        assert!(lib_rs.contains("pub use tls::install_default_crypto_provider;"));
+
+        // `https` proxy path: install before `ClientConfig::builder()`.
+        let http_proxy = include_str!("tunnel/http_proxy.rs");
+        let builder_at = http_proxy
+            .find("let tls_config = ClientConfig::builder()")
+            .expect("tls_connect builds a ClientConfig");
+        let call_at = http_proxy
+            .find("crate::tls::install_default_crypto_provider();")
+            .expect("tls_connect must install the provider");
+        assert!(
+            call_at < builder_at,
+            "the provider must be installed before the ClientConfig is built"
+        );
+
+        // `wss://` path: tungstenite builds its own ClientConfig internally, so
+        // the install has to happen in `connect_ws` before the handshake.
+        let websocket = include_str!("tunnel/websocket.rs");
+        assert!(websocket.contains("crate::tls::install_default_crypto_provider();"));
+    }
 }

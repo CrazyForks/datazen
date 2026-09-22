@@ -595,4 +595,136 @@ mod tests {
 
         fixture.abort();
     }
+
+    /// [tester] BUG-003 (a)1 — the **`https` branch** of `verify_upstream` must
+    /// be bounded exactly like the plaintext one.
+    ///
+    /// The Coder's guard above only covers the plaintext branch. This is the
+    /// encrypted variant: a plain TCP endpoint that accepts but never speaks
+    /// TLS. `tls_connect` is bounded by `connect_timeout_secs`, so the probe
+    /// must return `Err` inside the budget rather than hang the IPC future.
+    ///
+    /// Reaching the CONNECT-*read* stage of the `https` branch would require a
+    /// TLS server whose certificate chains to a `webpki-roots` CA, which cannot
+    /// be fabricated hermetically. That stage is therefore bounded where it is
+    /// actually implemented: `tunnel::http_proxy::tests::test_tester_connect_read_is_bounded_when_the_peer_never_answers`
+    /// exercises `perform_connect_within` — the very helper both branches call.
+    #[tokio::test]
+    async fn test_tester_https_probe_is_bounded_against_a_silent_endpoint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent https fixture");
+        let port = listener.local_addr().expect("fixture addr").port();
+        let fixture = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // Hold the TCP connection open and never answer the ClientHello.
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    drop(stream);
+                });
+            }
+        });
+
+        let test = TestAppState::new().await;
+        let mut tunnel = saved_proxy_tunnel("t-https-silent", port);
+        tunnel
+            .http_proxy
+            .as_mut()
+            .expect("fixture builds an http_proxy tunnel")
+            .scheme = "https".into();
+        test.store.save_tunnel(tunnel).await.unwrap();
+
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            test_tunnel_impl(
+                &test.state,
+                "t-https-silent".into(),
+                "127.0.0.1".into(),
+                5432,
+            ),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        let result = outcome.expect(
+            "the https probe must not hang: BUG-003 regression (the https branch \
+             has no deadline)",
+        );
+        let err = result.expect_err("a silent endpoint under scheme=https must fail the probe");
+        assert!(
+            err.to_string().contains("timed out"),
+            "the timeout must be identifiable in the error: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "the https probe must be bounded by connect_timeout_secs (2s), took {elapsed:?}"
+        );
+
+        fixture.abort();
+    }
+
+    /// [tester] BUG-003 (a)3 — the deadline must bound the **whole** CONNECT
+    /// handshake, not each individual `read`.
+    ///
+    /// `perform_connect` reads the status line byte by byte. A per-read timeout
+    /// would never fire against a proxy that keeps dribbling bytes (every read
+    /// makes progress), so the probe would still hang forever. This fixture
+    /// answers one byte every 250 ms and never terminates the header, so only an
+    /// absolute deadline can stop it.
+    #[tokio::test]
+    async fn test_tester_probe_deadline_covers_a_dribbling_proxy() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind dribbling proxy");
+        let port = listener.local_addr().expect("fixture addr").port();
+        let fixture = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    // Progress on every read, but the header terminator never arrives.
+                    loop {
+                        if stream.write_all(b"a").await.is_err() {
+                            break;
+                        }
+                        let _ = stream.flush().await;
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                });
+            }
+        });
+
+        let test = TestAppState::new().await;
+        test.store
+            .save_tunnel(saved_proxy_tunnel("t-dribble", port))
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            test_tunnel_impl(&test.state, "t-dribble".into(), "127.0.0.1".into(), 5432),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        let result = outcome.expect(
+            "a dribbling proxy must not hang the probe: the deadline must cover \
+             the whole handshake, not each read (BUG-003 regression)",
+        );
+        let err = result.expect_err("a never-terminated CONNECT response must fail the probe");
+        assert!(
+            err.to_string().contains("timed out"),
+            "the timeout must be identifiable in the error: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "the probe must stop at connect_timeout_secs (2s), took {elapsed:?}"
+        );
+
+        fixture.abort();
+    }
 }

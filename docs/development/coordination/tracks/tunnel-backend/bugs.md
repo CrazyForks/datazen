@@ -3,7 +3,8 @@
 - 分支: `feature/tunnel-backend`（worktree `.worktrees/datazen-tunnel-backend`）
 - 被验编码 commit（第 1 轮）: `7571d2887b027744619c5d2d4a00f52b183c8efe`
 - 被验编码 commit（第 2 轮复测）: `db6fc822f37290ea01348aec14ffa021c46d9640`
-- 发现者: Tester（独立全新实例，第 1 轮 / 第 2 轮为不同实例）
+- 被验编码 commit（第 3 轮复测）: `1398bd7d`（`fix(tunnel): bound the CONNECT probe and install a rustls CryptoProvider`）
+- 发现者: Tester（独立全新实例，第 1 / 2 / 3 轮各为不同实例）
 - 登记 commit（第 2 轮）: `docs(coordination): record bugs for tunnel-backend`（`feature/tunnel-backend`）
 - 复测命令: `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib`
 
@@ -137,9 +138,10 @@ pub struct SshTunnel {
 ## tunnel-backend-BUG-003 — `test_tunnel` 对「接受 TCP 但不回应 CONNECT」的 HTTP 代理**无限挂起**（探针无超时）
 
 > **状态变更（Coder 第 3 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 3 轮）」。
+> **复测结论（Tester 第 3 轮）**: ✅ **已修复**。独立重跑 `perform_connect_within` 三处调用点并自建 3 条对抗用例：①`https` 分支对静默明文端点 → `Err("TLS proxy handshake timed out")`，实测 **2.08s**（`connect_timeout_secs = 2`），不再挂起；②**持续滴字节**的代理（每次 read 都在推进、header 永不终止）→ `Err("CONNECT handshake timed out")`，实测 **2.05s**，证明约束的是**整个握手**而非单次 read；③直接对 `perform_connect_within` 用静默 peer → 0.70s 有界 `Err`。另加一条特征化守卫证明 `perform_connect` 自身确实无内部 deadline（500ms 窗口内不返回），即 wrapper 是承重的。数据路径语义逐项等价（同一 `timeout` 值、同一文案 `"CONNECT handshake timed out"`，`??` 与 `?`+直接返回等价）。**残余（非 Bug）**：`https` 分支的 CONNECT-*读*阶段无法在封闭环境中抵达（需要能链到 `webpki-roots` CA 的证书），已改由 `perform_connect_within` 的直接用例覆盖；纯 dial 超时（SYN 黑洞）仅静态核验（见 `progress.md`）。
 
 - **量级**: 中（管理面「测试隧道」永久无响应；探针与生产数据路径的超时语义不一致）
-- **状态**: 待复测（已修复）
+- **状态**: ✅ 已修复（复测通过）
 - **引入**: `db6fc822`（本轮新增的探针路径）。根因：`verify_upstream` 只对 `dial_proxy` / `tls_connect` 加了超时，**没有**对 `perform_connect` 的 CONNECT 响应读取加超时。
 - **影响范围**: `src-tauri/src/tunnel/http_proxy.rs::verify_upstream` → `ConnectionManager::test_tunnel` → IPC `test_tunnel`。对比：生产数据路径 `establish_and_copy` 用 `tokio::time::timeout(timeout, perform_connect(...))` 包住了同一次握手，因此**只有探针**会挂死。
 
@@ -185,9 +187,10 @@ test commands::tunnel::tests::zz_temp_silent_proxy_probe_outcome ... ok (3.04s)
 ## tunnel-backend-BUG-004 — `https` 代理 / `wss` 中继的 TLS 路径**运行时 panic**（rustls CryptoProvider 未安装）
 
 > **状态变更（Coder 第 3 轮）**: 已修复，待 Tester 复测。修复说明、provider 选择理由与主证测试见同目录 `progress.md`「Coder 修复轮（第 3 轮）」。两条 `#[ignore]` 守卫已转正（`cargo test -p datazen --lib` 的 ignored 数由 5 回到 3）。
+> **复测结论（Tester 第 3 轮）**: ✅ **已修复**。①两条转正守卫在**全新进程**中逐条隔离复跑通过（`--exact`，同进程内无其它用例可先行安装 provider），证明 `https`/`wss` 的修复来自 **TLS 构造点自身**而非 `main()`；`https_data_path_reports_tls_failure_without_panicking` 同样隔离通过（1.02s）。②`git diff 302cf444 1398bd7d -- commands/tunnel_probe_tests.rs` 仅 2 行 `#[ignore]` 属性删除 + 2 处 doc 注释改写（6 insertions / 8 deletions），**断言零改动**；`--ignored --list` 精确剩 3 条既存手工用例。③全仓 `#[ignore]` 属性共 3 处、无 `should_panic`、无删断言。④独立读源码复核：`redis 0.27.6 src/connection.rs:891` 确为 `ClientConfig::builder()`（自动探测，且 `datazen-driver-redis` 启用 `tokio-rustls-comp` → `tls-rustls`，该路径是活代码）；`tauri-plugin-updater 2.10.1 src/updater.rs:446` 确有 `get_default().is_none()` 守卫 + 丢弃返回值，先装 aws-lc-rs 对它只是跳过；`reqwest 0.13.4 client.rs:719` 是 `get_default().unwrap_or_else(default_rustls_crypto_provider)`，而其默认 provider 在本 workspace 就是 aws-lc-rs → **选择不冲突，且把此前"谁先装谁生效"的顺序不确定性变为确定**。⑤新增源码级守卫锁定 `main()` 首语句 + `lib.rs` 重导出 + 两个 TLS 构造点调用（进程级 provider 会被同套件其它用例掩盖，只有源码断言能防回归）。
 
 - **量级**: 中高（加密隧道变体直接 panic；生产转发任务静默 panic → 连接静默失败，无用户可见错误）
-- **状态**: 待复测（已修复）
+- **状态**: ✅ 已修复（复测通过）
 - **引入**: **既存缺陷**（非本轮引入）：`ClientConfig::builder()` 早在 `7fc55501 feat: complete HTTP/HTTPS and WebSocket tunnels (#37)` 就存在（`git show 6689cbe0:src-tauri/src/tunnel/http_proxy.rs` 第 156 行）。但本轮把**探针**也接到同一 TLS 路径，使其首次在 `test_tunnel` 上暴露；上一轮 Tester 的用例只覆盖 `http`/`ws` 明文变体，故未发现。
 - **影响范围**: `tunnel/http_proxy.rs::tls_connect`（`https` 代理，探针 + 数据路径）、`tunnel/websocket.rs::verify_upstream` → `connect_ws`（`wss://` 中继，走 tungstenite 0.26 的 `ClientConfig::builder()`）。
 

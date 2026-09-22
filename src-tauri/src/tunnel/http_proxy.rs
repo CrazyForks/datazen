@@ -691,4 +691,92 @@ mod tests {
 
         proxy_task.abort();
     }
+
+    /// [tester] BUG-003 (a)2/(a)3 — `perform_connect_within` is the single
+    /// bounded entry that **both** `verify_upstream` branches (`http` and
+    /// `https`) and the data path call for the CONNECT read. A peer that accepts
+    /// the TCP connection and then never answers (the "SYN-only firewall" /
+    /// half-dead-squid shape) must yield `Err("CONNECT handshake timed out")`
+    /// inside the budget instead of pending forever.
+    ///
+    /// This is the strongest hermetic proof available for the `https` branch's
+    /// CONNECT stage: the branch reaches this exact helper, but a `https` fixture
+    /// cannot get past `tls_connect` without a certificate that chains to a
+    /// `webpki-roots` CA.
+    #[tokio::test]
+    async fn test_tester_connect_read_is_bounded_when_the_peer_never_answers() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent peer");
+        let addr = listener.local_addr().expect("fixture addr");
+        let fixture = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            // Never write a byte, never close.
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(stream);
+        });
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect silent peer");
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            perform_connect_within(
+                &mut stream,
+                "db.internal",
+                5432,
+                None,
+                &[],
+                Duration::from_millis(700),
+            ),
+        )
+        .await
+        .expect("the CONNECT read must be bounded, not hang");
+        let elapsed = started.elapsed();
+
+        let err = outcome.expect_err("a silent peer must fail the CONNECT handshake");
+        assert!(
+            err.to_string().contains("timed out"),
+            "the timeout must be identifiable in the error: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the CONNECT read must stop at the deadline, took {elapsed:?}"
+        );
+
+        fixture.abort();
+    }
+
+    /// [tester] BUG-003 (a)3 — characterisation guard for the root cause:
+    /// `perform_connect` itself has **no** internal deadline, so the
+    /// `perform_connect_within` wrapper is load-bearing.
+    ///
+    /// If this ever starts returning inside the window, the inner function grew
+    /// its own deadline and the wrapper's rationale (and the doc comment on it)
+    /// must be revisited.
+    #[tokio::test]
+    async fn test_tester_raw_perform_connect_is_unbounded_so_the_wrapper_is_load_bearing() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent peer");
+        let addr = listener.local_addr().expect("fixture addr");
+        let fixture = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(stream);
+        });
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect silent peer");
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(500),
+            perform_connect(&mut stream, "db.internal", 5432, None, &[]),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "perform_connect must have no internal deadline (that is why \
+             perform_connect_within exists), but it returned: {outcome:?}"
+        );
+
+        fixture.abort();
+    }
 }

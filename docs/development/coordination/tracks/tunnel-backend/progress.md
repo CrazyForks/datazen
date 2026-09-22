@@ -503,15 +503,152 @@ Tester 第 2 轮新增的 14 条建议本轮**一条未动**，其中与本次�
 - **#12 / #14 `raw_binary` 与 SSH 的语义边界（只证明上游一跳可达）应写进文档/UI 文案**：本轮未动。
 - 其余（#1 N+1 加锁、#3 摘要投影约定、#4 未用 `Deserialize`、#5 `"postgresql"` 占位、#8 既存 `ref_count` 告警、#13 https/wss 覆盖）维持第 2 轮登记状态；其中 **#13 已由本轮两条转正守卫 + `tls.rs` 两条单测 + 数据路径用例实质补上**。
 
+## Tester 复测轮（第 3 轮，全新实例，零信任）
+
+- 复测对象: 修复 commit **`1398bd7d`**（`fix(tunnel): bound the CONNECT probe and install a rustls CryptoProvider`），基线 `302cf444`
+- 复测者: **全新 Tester 实例**（与编码代理、第 1 / 2 轮 Tester 均不同实例）
+- 环境: macOS / `CARGO_TARGET_DIR=target/cargo-wt`；未使用 `npx`、未执行 `pnpm install`
+- 结论: **`TEST_DONE`** —— BUG-003 / BUG-004 均确认修复，**未发现新 Bug**，未发现断言被弱化或测试丢失
+
+### (a) BUG-003 —— 探针有界性：✅ 已修复
+
+| 核验点 | 结论 | 证据 |
+|---|---|---|
+| (a)1 **`https` 分支**有界（Coder 只补了明文分支） | ✅ | 新增 `test_tester_https_probe_is_bounded_against_a_silent_endpoint`：`scheme="https"` + 静默明文端点（accept 后永不回包），`connect_timeout_secs=2` → `Err` 且错误含 `timed out`，**实测 2.08s**，外层 15s 兜底未触发。该分支三段（dial / TLS / CONNECT 读）各由同一 `timeout` 包住（`http_proxy.rs:225/227/228`） |
+| (a)1b `https` 的 CONNECT-*读*阶段能否真正抵达 | ⚠️ 技术上不可行，已用等价覆盖替代 | `tls_connect` 的根证书硬编码为 `webpki_roots::TLS_SERVER_ROOTS`（`http_proxy.rs:185`），无法为本地夹具签发可链到该根集的证书，故 TLS 握手阶段必先失败；改由 `test_tester_connect_read_is_bounded_when_the_peer_never_answers` **直接**验证两个分支共用的 `perform_connect_within`（0.70s 有界 `Err("CONNECT handshake timed out")`）。**残余风险：低**（同一函数、同一 timeout 值，明文分支另有端到端静默代理用例） |
+| (a)2 「只放行 SYN 的防火墙」（TCP 连上但不回数据） | ✅ | 即 Coder 的 `test_tunnel_times_out_against_a_proxy_that_never_answers_connect` + 本轮 (a)3 的滴字节用例；dial 阶段另由 `dial_proxy` 的 `tokio::time::timeout`（`http_proxy.rs:159`，第 2 轮起既有、本轮未改）约束 |
+| (a)2b 连不上但也不 RST（SYN 黑洞 → dial 超时） | ⚠️ 仅静态核验 | macOS 上不可路由的 TEST-NET 地址会立刻返回 `ENETUNREACH` 而非挂起，无法在封闭环境构造稳定夹具；`dial_proxy` 的超时包装与错误文案 `"connect to proxy timed out"` 逐行确认存在，本轮未改动 |
+| (a)3 **整体而非单次 read 受约束** | ✅ | `perform_connect` 逐字节读且 `while response.len() < 16*1024`；`tokio::time::timeout` 包住**整个 future**，deadline 不会因单次 read 推进而重置。新增 `test_tester_probe_deadline_covers_a_dribbling_proxy`：代理每 250ms 回 1 字节、header 永不终止 → `Err("CONNECT handshake timed out")`，**实测 2.05s**（若为 per-read 超时则永不触发）。另加特征化守卫 `test_tester_raw_perform_connect_is_unbounded_so_the_wrapper_is_load_bearing`（裸 `perform_connect` 在 500ms 窗口内不返回）证明 wrapper 承重 |
+| (a)4 数据路径语义等价 | ✅ | `establish_and_copy` 由 `timeout(perform_connect(..)).await.map_err(..)??` 改为 `perform_connect_within(..).await?`：**同一 `timeout` 值**（均由 `connect_timeout` 派生）、**同一错误文案** `"CONNECT handshake timed out"`、`??` 与「`?` 后直接返回内层 `Result`」等价；既有数据路径用例 `forwards_bytes_through_connect_proxy` 仍通过 |
+| (a)5 用例自身有测试级超时兜底 | ✅ | Coder 与本轮新增的 3 条有界用例均外包 `tokio::time::timeout(15s/10s)` + `.expect(...)`：修复失效时是 **FAILED** 而不是挂死套件（实测静默夹具下 2.0~2.1s 返回，兜底未触发） |
+
+### (b) BUG-004 —— rustls CryptoProvider：✅ 已修复
+
+| 核验点 | 结论 | 证据 |
+|---|---|---|
+| (b)1 `redis 0.27` 确用自动探测 | ✅ **独立读源码确认** | `~/.cargo/registry/.../redis-0.27.6/src/connection.rs:891` = `let config = rustls::ClientConfig::builder();`（**非** `builder_with_provider`）；且 `cargo tree -e features -i redis` 显示 `datazen-driver-redis` 启用 `tokio-rustls-comp` → `tls-rustls`，`create_rustls_config`（同文件 875 行，`#[cfg(feature = "tls-rustls")]`）是**活代码**。此前同样会 panic，现由全局安装覆盖 |
+| (b)1b 其它 TLS 使用者无新增失败 | ✅ | `cargo test -p datazen --lib` **1538 passed / 0 failed / 3 ignored**（含 reqwest/wiremock、sqlx、mongodb、ureq 相关既有用例），`-p datazen-driver-api --lib` **128 passed / 0 failed**。逐库读源码：`sqlx-core 0.8.6 tls_rustls.rs:107`、`mongodb 3.8.0 tls_rustls.rs:86`、`ureq 3.4.0 tls/rustls.rs:162` 均 `builder_with_provider`（不受全局默认影响）；`reqwest 0.13.4 client.rs:719` 是 `get_default().unwrap_or_else(default_rustls_crypto_provider)`，而 `__rustls-aws-lc-rs` 生效时其默认 provider **就是 aws-lc-rs**（`client.rs:2482`）→ 与我们的选择完全一致 |
+| (b)2 `tauri-plugin-updater` 守卫存在 | ✅ **独立读源码确认** | `tauri-plugin-updater-2.10.1/src/updater.rs:446-449`：`if rustls::crypto::CryptoProvider::get_default().is_none() { let _ = rustls::crypto::ring::default_provider().install_default(); }` —— 守卫存在且丢弃返回值。先装 aws-lc-rs 对它只是**跳过**，不构成冲突/失败风险 |
+| (b)2b provider 选择是否有行为冲突 | ✅ 无，且更确定 | 唯一受影响的是「谁先装谁生效」的顺序不确定性：修前若更新检查先跑则 reqwest 用 ring；修后恒为 aws-lc-rs（= reqwest 自身默认）。`aws-lc-rs` 与 `ring` 对 rustls 0.23 是等价后端，且本仓库最大消费者 reqwest 本就按 aws-lc-rs 构建 |
+| (b)3 `main()` 之外的入口不再 panic | ✅ 逐条隔离复跑 | 测试 harness 不执行 `main()`。在**全新进程**中 `--exact` 单跑：`test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking` ✅、`test_tester_wss_relay_probe_reports_tls_failure_instead_of_panicking` ✅、`https_data_path_reports_tls_failure_without_panicking` ✅（1.02s）。**同进程内无任何其它用例可先行安装**，故通过只能来自 TLS 构造点自身的 `install_default_crypto_provider()`。`--mcp-stdio` 与 GUI 均经 `main()` 首语句（`main.rs:8` 早于 `main.rs:11` 的 argv 解析），由新增源码守卫锁定 |
+| (b)3b 转正守卫强度复核（不看"绿"看语义） | ✅ 强度足够 | 两条守卫**内联**调用 `verify_http_proxy_upstream` / `verify_websocket_upstream`（非 spawn），panic 直接判该用例 FAILED；夹具为明文 TCP 端点 → TLS 握手必然失败 → 断言 `is_err()`。**注意**：进程级 provider 会被同套件其它用例掩盖，因此"全量套件绿"本身不足以证明构造点调用存在——本轮以**隔离复跑 + 源码守卫**补上这一层 |
+| (b)4 转正守卫未被弱化 | ✅ | `git diff 302cf444 1398bd7d -- src-tauri/src/commands/tunnel_probe_tests.rs` = **6 insertions / 8 deletions**，仅 2 行 `#[ignore = "blocked by ..."]` 删除 + 2 处 doc 注释改写；脚本按大括号提取函数体比对：该文件 18 个 `test_*` 函数**全部字节级未变**（`probe changed: []`） |
+| (b)5 无 `#[ignore]`/`should_panic`/删断言 | ✅ | 全仓 `#[ignore]` 属性**恰 3 处**（`mcp/contract.rs:96`、`store/key_store.rs:563`、`store/tests.rs:37`，均既存手工用例）；`--ignored --list` 精确输出这 3 条；全仓无 `should_panic`；本 commit 的 diff 中无任何断言行被删除 |
+| (b)6 https 数据路径不再静默 panic | ✅ 覆盖到曾经 panic 的那条调用链 | `https_data_path_reports_tls_failure_without_panicking` **内联**调用 `connect_and_copy`（accept 循环子任务执行的同一函数）→ `tls_connect` → `ClientConfig::builder()`，即原 panic 点；`scheme="https"` 指向明文端点 → `Err`，且外层 `timeout(10s).expect("...bounded, not hang")`。隔离进程复跑通过。比"观察 detach 的 `JoinHandle`"强，且不依赖 tokio 任务是否被吞 |
+
+### (c) 附带拆文件（纯搬迁）：✅ 逐字节等价，无测试丢失
+
+| 核验点 | 结论 | 证据 |
+|---|---|---|
+| 被移动测试体逐字节等价 | ✅ | 独立脚本（大括号匹配提取函数体 → 去公共缩进 → 逐行 `rstrip`）比对 `302cf444:commands/tunnel.rs` 与 `1398bd7d:commands/tunnel_summary_tests.rs`：**7 个被移动函数全部 IDENTICAL**（`assert_no_secret_leak`、`saved_ssh_tunnel`、`summaries_drop_every_tunnel_secret`、`usage_lists_referencing_connections_in_order`、4 个 `test_tester_*` 中的 4 个摘要/usage 用例）；`tunnel.rs` 中**留在原处的 13 个函数零改动**（`in-place changed: []`） |
+| 全仓测试名无丢失 | ✅ | 独立脚本比对 `302cf444` vs `1398bd7d` 的 `src-tauri/src` + `packages` 全部 `.rs`：测试函数 346 → 347，**LOST = []**；`test_tester_*` 函数数 **182 → 182**（一个未删）；新增 1 个 `test_*`（`test_tunnel_times_out_against_a_proxy_that_never_answers_connect`），其余 3 个新用例命名不以 `test_` 开头（`https_data_path_reports_tls_failure_without_panicking`、`tls::tests::install_is_idempotent_and_selects_a_provider`、`tls::tests::client_config_builder_works_after_install`） |
+| `#[path]` 注册正确、无重复定义 | ✅ | `commands/mod.rs:292-293` 单处 `#[cfg(test)] #[path = "tunnel_summary_tests.rs"] mod tunnel_summary_tests;`；`tunnel_probe_tests` 亦仅注册一次；`saved_ssh_tunnel` 定义已从 `tunnel.rs` 移除，改由 `tunnel_summary_tests::saved_ssh_tunnel`（`pub(crate)`）供 `tunnel.rs` 测试模块导入，无重复符号（编译零错误） |
+| 文件体量 | ✅ | `commands/tunnel.rs` **725 行**（598 + 本轮 127 行新增测试），仍 < 800 |
+
+### (d) 回归覆盖与常规：✅ 无弱化
+
+- **前两轮 23 个 `test_tester_*` 用例断言未被弱化**：`tunnel_probe_tests.rs` 18 个函数体字节级未变；`tunnel.rs` 中 7 个原 `test_tester_*` 中留在原处的 3 个（探针类）未变、移出的 4 个字节级等价；`ssh_tunnel.rs` 的 3 个未在 diff 中（未触碰）。无新增 `#[ignore]`、无 `should_panic`、无删除断言、无 `is_err()` 降级替身。
+- **生产路径裸 `unwrap()`/`expect()`**：对本轮改动文件逐行统计（按文件首个 `#[cfg(test)]` 行号切分）——`tls.rs` 生产段 47 行 **0**、`main.rs` 17 行 **0**、`lib.rs` 60 行 **0**、`http_proxy.rs` 472 行 **0**、`websocket.rs` 412 行 **0**、`commands/tunnel.rs` 147 行 **0**、`commands/mod.rs` 179 行 **0**；`tunnel_summary_tests.rs` 整体是 `#[cfg(test)]` 文件（其 27 处 `unwrap` 全在测试代码）。
+- **编译告警无新增**：`cargo check -p datazen --lib --tests` 共 8 条告警，**全部**落在本 commit 未改动的文件（`app_archive_tests.rs`、`ipc_surface_tests.rs`、`ai/util.rs:441 emit_task_progress`、`wapps/tests.rs`、`connection_manager/tunnels.rs:237 ref_count`）；改动文件零告警。
+- **可见性/死代码/冗余 import**：`install_default_crypto_provider` 为 `pub fn`（私有 `mod tls` + `lib.rs` `pub use` 重导出），`main.rs` 跨 crate 调用所必需，恰当；`tunnel_summary_tests::saved_ssh_tunnel` 为 `pub(crate)`（跨测试模块共享），恰当；`verify_upstream` 仍 `pub(crate)` 且仅 `connection_manager` 使用；无新增冗余 import。
+- **`cargo fmt --check`**：全仓 **零 diff**（含 codegen `driver_init.rs`）；改动文件单独 `rustfmt --check` 亦全绿。
+
+### 各套件实测数字（Coder 自报 vs 独立实测）
+
+| 套件 | Coder 自报（`1398bd7d`） | Tester 独立实测（`1398bd7d` + 本轮 6 个新用例） | 差异 |
+|---|---|---|---|
+| `cargo test -p datazen --lib` | 1532 passed / 0 failed / 3 ignored | **1538 passed / 0 failed / 3 ignored** | 0 failed 一致；+6 = 本轮新增用例 |
+| `cargo test -p datazen --lib -- test_tester_` | 122 项（第 2 轮口径） | **133 passed / 0 failed** | 口径不同，非回归 |
+| `cargo test -p datazen-driver-api --lib` | 128 passed / 0 failed / 0 ignored | **128 passed / 0 failed / 0 ignored** | 一致 |
+| `cargo check -p datazen --bins` | exit 0 | **exit 0**（仅既存 `emit_task_progress` 未用告警） | 一致（`--lib` 不编译 bin，已按要求单独验证） |
+| `cargo fmt --check` | 零 diff（全仓含 codegen） | **零 diff（全仓）** | 一致 |
+| `--ignored` 清单 | 3 条既存手工用例 | **精确 3 条**：`mcp::contract::tests::dump_mcp_contract_snapshot`、`store::key_store::tests::keyring_creates_and_reloads_master_key`、`store::tests::migrates_dot_key_into_keyring_and_deletes_file` | 一致 |
+| 新增用例稳定性 | — | 4 条含计时的用例**各连跑 5 次全绿**（2.04~2.08s / 2.04~2.05s / 0.70~0.71s / 0.51s） | — |
+
+### 覆盖率评估（改动文件，逻辑分支覆盖法；本机无 llvm-tools）
+
+| 文件 | 改动 | 估计分支覆盖 | 未覆盖路径 |
+|---|---|---|---|
+| `tls.rs`（新增 47 行生产） | + | **100%**（可达分支） | `get_default().is_none()` 真/假两支均覆盖（幂等用例第二次调用走"已安装"支）；新增 `Arc::ptr_eq` 自动探测一致性用例 + 源码级入口/构造点守卫 |
+| `tunnel/http_proxy.rs` | + | **≥95%** | `perform_connect_within` 超时/非超时**两支均覆盖**（新增静默 peer + 既有转发/握手用例）；`verify_upstream` 的 `https` 分支 dial+TLS 段由新用例覆盖，CONNECT-读段由 helper 用例等价覆盖；未覆盖：`tls_connect` 的 `ServerName::try_from` 解析失败支（需非 IP 且非法的 host，低风险） |
+| `tunnel/websocket.rs` | +5 | **≥95%** | `connect_ws` 的 install 调用由 `wss` 守卫（隔离复跑）覆盖；其余同第 2 轮 |
+| `main.rs` | +6 | 不可执行 → **源码守卫覆盖** | 测试 harness 不跑 `main()`；由新增 `test_tester_every_entry_point_and_tls_construction_site_installs_the_provider` 断言「install 早于 argv 解析」+ 两个入口调用 |
+| `lib.rs` | +2 | 编译期 | `mod tls;` + `pub use`，由源码守卫断言 |
+| `commands/tunnel.rs` | 纯搬迁 + 本轮 127 行测试 | 生产段 100%（同第 2 轮） | 3 个一行 `#[tauri::command]` 包装（`State` 无法单测构造，静态参数面守卫锁定） |
+| `commands/tunnel_summary_tests.rs` | 新增（纯搬迁） | 100%（测试文件） | — |
+
+**≥80% 结论**：改动模块整体 ≥ 95%（可达分支）；唯一不可达的 `https` CONNECT-读阶段已由共用 helper 的直接用例覆盖，属技术限制而非覆盖缺口。
+
+### 新增测试清单（6 个，前缀 `test_tester_`）
+
+| 测试 | 覆盖路径 |
+|---|---|
+| `commands::tunnel::tests::test_tester_https_probe_is_bounded_against_a_silent_endpoint` | (a)1 BUG-003 `https` 分支有界（静默明文端点 → 2.08s `Err`，外层 15s 兜底） |
+| `commands::tunnel::tests::test_tester_probe_deadline_covers_a_dribbling_proxy` | (a)3 整体 deadline（每 read 都推进、header 永不终止 → 2.05s `Err`） |
+| `tunnel::http_proxy::tests::test_tester_connect_read_is_bounded_when_the_peer_never_answers` | (a)1b/(a)2 两分支共用的 `perform_connect_within` 对静默 peer 有界（0.70s） |
+| `tunnel::http_proxy::tests::test_tester_raw_perform_connect_is_unbounded_so_the_wrapper_is_load_bearing` | (a)3 根因特征化：裸 `perform_connect` 无内部 deadline |
+| `tls::tests::test_tester_auto_detecting_builder_shares_the_installed_provider` | (b)1 redis/tungstenite 式自动探测复用进程默认 provider（`Arc::ptr_eq`） |
+| `tls::tests::test_tester_every_entry_point_and_tls_construction_site_installs_the_provider` | (b)3/b)5 源码级守卫：`main()` 首语句、`lib.rs` 重导出、`http_proxy::tls_connect` 与 `websocket::connect_ws` 两个构造点 |
+
+### E2E 用例登记（本轮追加）
+
+| # | 用例 | 覆盖目标 | 可执行性 | 前置条件 |
+|---|---|---|---|---|
+| E8 | 管理面「测试隧道」选 `https` 代理指向一个**接受 TCP 但不回应 TLS/CONNECT** 的端点 → 必须在 `connectTimeout` 秒级内报错（不得永久 pending、不得崩溃） | BUG-003 + BUG-004 端到端 | 【留待 R 回归】WebdriverIO | 需前端管理面（本轨不含）；夹具可用 `nc -l` / 静默 TCP 服务 |
+| E9 | `wss://` 中继探针指向明文 TCP 端点 → 必须报 TLS 失败而非应用崩溃 | BUG-004 端到端 | 【留待 R 回归】WebdriverIO | 同上 |
+
+### 遗留项登记（follow-up，不阻断）
+
+1. **`commands/tunnel_probe_tests.rs` = 1109 行**（> 800 推荐上限；本轮新增 127 行加在 `commands/tunnel.rs`，该文件保持 725 行）。属上一轮 Tester 的文件，Coder 未擅动，本轮亦未动 → 建议下轮按「BUG-001 对抗 / BUG-002 bastion / BUG-003+004 守卫」拆分（与 Coder 第 3 轮建议一致）。
+2. **第 2 轮 14 条改进建议本轮确实一条未动**：`git diff --stat 302cf444 1398bd7d` 仅 11 个文件（4 个 Rust 源 + 2 个测试文件 + 4 个文档 + `commands/mod.rs`），改进项涉及位置（`connection_import/ipc.rs`、`driver-api/tunnel_types.rs`、`connection_manager/tunnels.rs`、`ssh_tunnel.rs`、`ref_count`、`"postgresql"` 占位）**全部不在 diff 内**；`ref_count` 告警与 `tunnel_probe_tests.rs` 体量均保持原状。逐项状态：**#1/#3/#4/#5/#8/#9/#10/#11/#12/#14 未动；#2/#6 已在第 2 轮修复；#7 已随 BUG-002 解决；#13 已由本轮两条转正守卫 + `tls.rs` 用例实质补上。**
+3. **（本轮新增建议，非 Bug）纯 dial 超时（SYN 黑洞）缺动态用例**：`dial_proxy` 的 `tokio::time::timeout` 已存在且错误文案正确，但 macOS 上无法构造稳定夹具（不可路由地址立即 `ENETUNREACH`）。若将来引入 `socket2` 等可设 backlog 的依赖，可用「填满 accept 队列使 SYN 被丢弃」构造确定性夹具。
+4. **（本轮新增建议，非 Bug）`https` 的 CONNECT-读阶段不可端到端覆盖**：根因是 `tls_connect` 硬编码 `webpki_roots`。若希望该分支可测，可考虑把 `RootCertStore` 作为参数注入（生产传 `webpki_roots`，测试传夹具 CA）——属可测性改造，本轮不做。
+
+### Bug 清单（第 3 轮复测）
+
+| ID | 标题 | 状态 | 阻断 |
+|---|---|---|---|
+| BUG-001 | `test_tunnel` 对 HTTP 代理 / WebSocket 恒报成功 | ✅ 已修复（第 2 轮复测通过） | — |
+| BUG-002 | `drop(SshTunnel)` 不拆除，泄漏任务/会话/端口 | ✅ 已修复（第 2 轮复测通过） | — |
+| BUG-003 | 探针对「接受 TCP 但不回应 CONNECT」的代理无限挂起 | ✅ 已修复（第 3 轮复测通过） | — |
+| BUG-004 | `https` 代理 / `wss` 中继 TLS 路径运行时 panic（CryptoProvider 未安装） | ✅ 已修复（第 3 轮复测通过） | — |
+
+**第 3 轮无新增 Bug（005 起未占用）。**
+
+### 复现命令
+
+```bash
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib                        # 1538 / 0 / 3
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- test_tester_        # 133
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --ignored --list    # 3 条既存手工用例
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-api --lib             # 128 / 0
+CARGO_TARGET_DIR=target/cargo-wt cargo check -p datazen --bins                      # exit 0
+CARGO_TARGET_DIR=target/cargo-wt cargo fmt --check                                  # 零 diff
+# BUG-004 构造点隔离复跑（全新进程，无其它用例先行安装 provider）
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --exact \
+  commands::tunnel_probe_tests::test_tester_https_proxy_probe_reports_tls_failure_instead_of_panicking
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --exact \
+  commands::tunnel_probe_tests::test_tester_wss_relay_probe_reports_tls_failure_instead_of_panicking
+CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib -- --exact \
+  tunnel::http_proxy::tests::https_data_path_reports_tls_failure_without_panicking
+```
+
+
 ## Phase
 
-`READY_FOR_TEST`
+`PASSED`
+
+> **第 3 轮复测（全新 Tester 实例，零信任）全部通过**：`tunnel-backend-BUG-003` 与 `tunnel-backend-BUG-004` 均已确认修复，**未发现新 Bug**（005 起未占用），未发现断言被弱化或测试丢失。详见上方「Tester 复测轮（第 3 轮）」。
+> 实测：`cargo test -p datazen --lib` **1538 passed / 0 failed / 3 ignored**（= Coder 的 1532 + 本轮 6 个新用例）、`cargo test -p datazen-driver-api --lib` **128 passed / 0 failed**、`cargo check -p datazen --bins` **exit 0**、`cargo fmt --check` **零 diff**；`--ignored` 精确剩 3 条既存手工用例。
+> 四条 Bug 状态全部为「✅ 已修复」，`bugs.md` 已同步。
+
+<details>
+<summary>历史：Coder 第 3 轮提交时（`1398bd7d`）的自评与派测说明（已被上方复测结论取代）</summary>
 
 > 第 3 轮修复完成：`tunnel-backend-BUG-003`（CONNECT 探针无超时 → 永久挂起）与 `tunnel-backend-BUG-004`（rustls CryptoProvider 未安装 → `https`/`wss` TLS 路径 panic）均已修复，各有主证测试；`commands/tunnel.rs` 已拆到 598 行。
 > 实测 `cargo test -p datazen --lib` **1532 passed / 0 failed / 3 ignored**（ignored 由 5 回到 3，两条 BUG-004 守卫已转正并通过）、`cargo test -p datazen-driver-api --lib` **128 passed / 0 failed**、`cargo check -p datazen --bins` exit 0、`cargo fmt --check` 零 diff。
-> 两条 Bug 状态 → **待复测**（`bugs.md` 已同步）。请**全新 Tester 实例**完整复测，重点：
-> （a）BUG-003 —— 静默代理 / 只放行 SYN 的防火墙是否都在 `connect_timeout_secs + 余量` 内返回 `Err`；`https` 分支的 CONNECT 是否同样有界（本轮只加了明文分支的用例）；
-> （b）BUG-004 —— provider 选择是否与 reqwest/sqlx/mongodb/redis/ureq 全部 TLS 使用者兼容（本轮已静态核对调用方式，建议动态复跑相关 TLS 用例）；`main()` 之外的入口（如 `--mcp-stdio`、测试 harness）是否都不再 panic。
-> 本轨不自评 `PASSED`。
+> 两条 Bug 状态 → 待复测（`bugs.md` 已同步）。
+
+</details>
 
 > **Tester 复测（第 2 轮）终判：`FAILED`** —— BUG-001 / BUG-002 已确认修复（BUG-002 经 in-process bastion 在真实路径上动态验证），附带修正 #2 / #6 落实且 11 个回归用例逐字节未改；但复测新登记 **BUG-003**（HTTP 探针无超时 → 永久挂起）与 **BUG-004**（`https`/`wss` TLS 路径 panic，既存但本轨拥有该代码）两个阻断项。详见上方「Tester 复测轮（第 2 轮）」。
