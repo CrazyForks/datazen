@@ -15,13 +15,16 @@ use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
 
 use datazen_driver_api::{DatabaseDriver, TableSchema};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use uuid::Uuid;
 
 use super::error::TransferError;
 use super::execute::active_column_mappings;
 use super::model::{
-    ColumnMapping, DdlPreviewItem, DdlPreviewKind, SqlFileEncoding, TableExecutionResult,
-    TableInspectResult, TransferExecutionResult, TransferJob, TransferMode, WriteMode,
+    ColumnMapping, DdlPreviewItem, DdlPreviewKind, SqlFileCompression, SqlFileEncoding,
+    TableExecutionResult, TableInspectResult, TransferExecutionResult, TransferJob, TransferMode,
+    WriteMode,
 };
 use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, Value};
@@ -148,13 +151,9 @@ fn validate_path(path: &Path) -> Result<(), TransferError> {
             "SQL file destination must be an absolute path",
         ));
     }
-    let ext = path
-        .extension()
-        .and_then(|v| v.to_str())
-        .unwrap_or_default();
-    if !ext.eq_ignore_ascii_case("sql") {
+    if !has_supported_sql_suffix(path) {
         return Err(TransferError::validation(
-            "SQL file destination must use the .sql extension",
+            "SQL file destination must use the .sql or .sql.gz extension",
         ));
     }
     let parent = path
@@ -178,10 +177,65 @@ fn validate_path(path: &Path) -> Result<(), TransferError> {
     Ok(())
 }
 
+fn has_supported_sql_suffix(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    name.to_ascii_lowercase().ends_with(".sql") || name.to_ascii_lowercase().ends_with(".sql.gz")
+}
+
+pub(crate) fn validate_output_path(
+    path: &Path,
+    compression: SqlFileCompression,
+) -> Result<(), TransferError> {
+    validate_path(path)?;
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return Err(TransferError::validation(
+            "SQL file destination has no valid UTF-8 file name",
+        ));
+    };
+    let lower = name.to_ascii_lowercase();
+    let expected = match compression {
+        SqlFileCompression::None => lower.ends_with(".sql") && !lower.ends_with(".sql.gz"),
+        SqlFileCompression::Gzip => lower.ends_with(".sql.gz"),
+    };
+    if !expected {
+        return Err(TransferError::validation(match compression {
+            SqlFileCompression::None => "uncompressed SQL output must use the .sql extension",
+            SqlFileCompression::Gzip => "gzip SQL output must use the .sql.gz extension",
+        }));
+    }
+    Ok(())
+}
+
+enum SqlFileWriter {
+    Plain(BufWriter<File>),
+    Gzip(GzEncoder<BufWriter<File>>),
+}
+
+impl SqlFileWriter {
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Plain(writer) => writer.write_all(bytes),
+            Self::Gzip(writer) => writer.write_all(bytes),
+        }
+    }
+
+    fn finish(self) -> std::io::Result<()> {
+        let mut writer = match self {
+            Self::Plain(writer) => writer,
+            Self::Gzip(writer) => writer.finish()?,
+        };
+        writer.flush()?;
+        writer.get_ref().sync_all()
+    }
+}
+
 struct AtomicSqlFile {
     destination: PathBuf,
     temporary: PathBuf,
-    writer: BufWriter<File>,
+    encoding: SqlFileEncoding,
+    writer: Option<SqlFileWriter>,
 }
 
 #[cfg(not(windows))]
@@ -231,14 +285,23 @@ fn publish_staged_file(temporary: &Path, destination: &Path) -> std::io::Result<
 
 impl AtomicSqlFile {
     fn create(destination: PathBuf) -> Result<Self, TransferError> {
-        Self::create_with_encoding(destination, SqlFileEncoding::Utf8)
+        Self::create_with_format(destination, SqlFileEncoding::Utf8, SqlFileCompression::None)
     }
 
     fn create_with_encoding(
         destination: PathBuf,
         encoding: SqlFileEncoding,
     ) -> Result<Self, TransferError> {
+        Self::create_with_format(destination, encoding, SqlFileCompression::None)
+    }
+
+    fn create_with_format(
+        destination: PathBuf,
+        encoding: SqlFileEncoding,
+        compression: SqlFileCompression,
+    ) -> Result<Self, TransferError> {
         validate_path(&destination)?;
+        validate_output_path(&destination, compression)?;
         let parent = destination
             .parent()
             .ok_or_else(|| TransferError::validation("SQL file destination has no parent"))?;
@@ -260,9 +323,21 @@ impl AtomicSqlFile {
             }
             match options.open(&temporary) {
                 Ok(file) => {
-                    let mut writer = BufWriter::new(file);
-                    if matches!(encoding, SqlFileEncoding::Utf8Bom) {
-                        if let Err(error) = writer.write_all(&[0xEF, 0xBB, 0xBF]) {
+                    let mut writer = match compression {
+                        SqlFileCompression::None => SqlFileWriter::Plain(BufWriter::new(file)),
+                        SqlFileCompression::Gzip => SqlFileWriter::Gzip(GzEncoder::new(
+                            BufWriter::new(file),
+                            Compression::default(),
+                        )),
+                    };
+                    let marker = match encoding {
+                        SqlFileEncoding::Utf8 => None,
+                        SqlFileEncoding::Utf8Bom => Some([0xEF, 0xBB, 0xBF].as_slice()),
+                        SqlFileEncoding::Utf16Le => Some([0xFF, 0xFE].as_slice()),
+                        SqlFileEncoding::Utf16Be => Some([0xFE, 0xFF].as_slice()),
+                    };
+                    if let Some(marker) = marker {
+                        if let Err(error) = writer.write_all(marker) {
                             let _ = fs::remove_file(&temporary);
                             return Err(TransferError::validation(format!(
                                 "cannot write SQL file encoding marker: {error}"
@@ -272,7 +347,8 @@ impl AtomicSqlFile {
                     return Ok(Self {
                         destination,
                         temporary,
-                        writer,
+                        encoding,
+                        writer: Some(writer),
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -289,22 +365,46 @@ impl AtomicSqlFile {
     }
 
     fn line(&mut self, text: &str) -> Result<(), TransferError> {
+        let bytes = encode_line(text, self.encoding);
         self.writer
-            .write_all(text.as_bytes())
-            .and_then(|_| self.writer.write_all(b"\n"))
+            .as_mut()
+            .ok_or_else(|| TransferError::validation("SQL file writer is already finished"))?
+            .write_all(&bytes)
             .map_err(|error| TransferError::validation(format!("cannot write SQL file: {error}")))
     }
 
     fn finish(mut self) -> Result<(), TransferError> {
-        self.writer.flush().map_err(|error| {
-            TransferError::validation(format!("cannot flush SQL file: {error}"))
+        let writer = self
+            .writer
+            .take()
+            .ok_or_else(|| TransferError::validation("SQL file writer is already finished"))?;
+        writer.finish().map_err(|error| {
+            TransferError::validation(format!("cannot finalize SQL file: {error}"))
         })?;
-        self.writer
-            .get_ref()
-            .sync_all()
-            .map_err(|error| TransferError::validation(format!("cannot sync SQL file: {error}")))?;
         publish_staged_file(&self.temporary, &self.destination)
             .map_err(|error| TransferError::validation(format!("cannot publish SQL file: {error}")))
+    }
+}
+
+fn encode_line(text: &str, encoding: SqlFileEncoding) -> Vec<u8> {
+    match encoding {
+        SqlFileEncoding::Utf8 | SqlFileEncoding::Utf8Bom => {
+            let mut bytes = text.as_bytes().to_vec();
+            bytes.push(b'\n');
+            bytes
+        }
+        SqlFileEncoding::Utf16Le | SqlFileEncoding::Utf16Be => {
+            let mut bytes = Vec::with_capacity((text.len() + 1) * 2);
+            for unit in text.encode_utf16().chain(std::iter::once('\n' as u16)) {
+                let encoded = if matches!(encoding, SqlFileEncoding::Utf16Le) {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                };
+                bytes.extend_from_slice(&encoded);
+            }
+            bytes
+        }
     }
 }
 
@@ -668,7 +768,12 @@ pub async fn execute_with_target(
         .as_ref()
         .map(|target| target.normalized_encoding())
         .unwrap_or_default();
-    let mut output = AtomicSqlFile::create_with_encoding(destination, encoding)?;
+    let compression = job
+        .sql_file_target
+        .as_ref()
+        .map(|target| target.normalized_compression())
+        .unwrap_or_default();
+    let mut output = AtomicSqlFile::create_with_format(destination, encoding, compression)?;
     output.line("-- DataZen Data Transfer SQL export")?;
     output.line("BEGIN;")?;
     let mut results = Vec::new();
@@ -965,6 +1070,8 @@ mod tests {
     use datazen_driver_api::{ColumnSchema, TableSchema};
     use datazen_driver_mysql::MysqlSyncAdapter;
     use datazen_driver_postgres::PgSyncAdapter;
+    use flate2::read::GzDecoder;
+    use std::io::Read;
 
     #[test]
     fn path_registry_rejects_non_sql_and_resolves_opaque_token() {
@@ -973,6 +1080,26 @@ mod tests {
         let token = register_path(dir.path().join("out.sql")).unwrap();
         assert_eq!(resolve_path(&token).unwrap(), dir.path().join("out.sql"));
         assert!(resolve_path("/absolute-path-is-not-a-token").is_err());
+
+        let gzip_token = register_path(dir.path().join("out.sql.gz")).unwrap();
+        assert_eq!(
+            resolve_path(&gzip_token).unwrap(),
+            dir.path().join("out.sql.gz")
+        );
+    }
+
+    #[test]
+    fn output_suffix_is_bound_to_compression_and_unknown_enums_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("out.sql");
+        let gzip = dir.path().join("out.sql.gz");
+        assert!(validate_output_path(&sql, SqlFileCompression::None).is_ok());
+        assert!(validate_output_path(&sql, SqlFileCompression::Gzip).is_err());
+        assert!(validate_output_path(&gzip, SqlFileCompression::Gzip).is_ok());
+        assert!(validate_output_path(&gzip, SqlFileCompression::None).is_err());
+        assert!(serde_json::from_str::<SqlFileEncoding>(r#""utf16Le""#).is_ok());
+        assert!(serde_json::from_str::<SqlFileEncoding>(r#""cp936""#).is_err());
+        assert!(serde_json::from_str::<SqlFileCompression>(r#""brotli""#).is_err());
     }
 
     #[test]
@@ -991,6 +1118,7 @@ mod tests {
                 database: None,
                 schema: None,
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -1048,6 +1176,7 @@ mod tests {
                 database: None,
                 schema: None,
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1179,6 +1308,7 @@ mod tests {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         };
         let result = resolve_target_driver(source, &target);
         assert!(result.is_err(), "unknown dialect must fail");
@@ -1205,6 +1335,7 @@ mod tests {
                 database: Some("target_catalog".into()),
                 schema: None,
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Data,
             write_mode: WriteMode::Insert,
@@ -1267,6 +1398,7 @@ mod tests {
                 database: None,
                 schema: Some("target_schema".into()),
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1290,6 +1422,7 @@ mod tests {
             database: Some("tenant.public".into()),
             schema: None,
             encoding: None,
+            compression: None,
         };
         assert!(dotted.validate_qualifiers().is_err());
 
@@ -1299,6 +1432,7 @@ mod tests {
             database: None,
             schema: Some("public".into()),
             encoding: None,
+            compression: None,
         };
         let error = validate_target_scope_for_driver(&driver, &schema).unwrap_err();
         assert!(error.to_string().contains("not a separate schema"));
@@ -1312,6 +1446,7 @@ mod tests {
             database: Some("catalog".into()),
             schema: None,
             encoding: None,
+            compression: None,
         };
         let error = validate_target_scope_for_family("oracle", &target).unwrap_err();
         assert!(error.to_string().contains("does not advertise"));
@@ -1332,6 +1467,7 @@ mod tests {
                 database: None,
                 schema: Some("target".into()),
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1393,6 +1529,94 @@ mod tests {
         let bytes = fs::read(destination).unwrap();
         assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
         assert!(bytes.ends_with(b"SELECT 1;\n"));
+    }
+
+    #[test]
+    fn atomic_writer_round_trips_utf16le_and_utf16be_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "SELECT '中文 😀';";
+        for (name, encoding, marker) in [
+            ("le.sql", SqlFileEncoding::Utf16Le, [0xFF, 0xFE]),
+            ("be.sql", SqlFileEncoding::Utf16Be, [0xFE, 0xFF]),
+        ] {
+            let destination = dir.path().join(name);
+            let mut output = AtomicSqlFile::create_with_format(
+                destination.clone(),
+                encoding,
+                SqlFileCompression::None,
+            )
+            .unwrap();
+            output.line(text).unwrap();
+            output.finish().unwrap();
+            let bytes = fs::read(destination).unwrap();
+            assert_eq!(&bytes[..2], &marker);
+            let units = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| match encoding {
+                    SqlFileEncoding::Utf16Le => u16::from_le_bytes([chunk[0], chunk[1]]),
+                    SqlFileEncoding::Utf16Be => u16::from_be_bytes([chunk[0], chunk[1]]),
+                    _ => 0,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(String::from_utf16(&units).unwrap(), format!("{text}\n"));
+        }
+    }
+
+    #[test]
+    fn atomic_writer_round_trips_gzip_without_touching_destination_until_finish() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("out.sql.gz");
+        fs::write(&destination, b"old").unwrap();
+        let mut output = AtomicSqlFile::create_with_format(
+            destination.clone(),
+            SqlFileEncoding::Utf8,
+            SqlFileCompression::Gzip,
+        )
+        .unwrap();
+        let statement = "INSERT INTO t VALUES ('O''Reilly', '中文 😀', X'00FF', 'AAE=', 12345678901234567890.123456789, '2026-09-22T12:34:56Z', '{\"emoji\":\"😀\",\"value\":42}');";
+        output.line(statement).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        output.finish().unwrap();
+        let compressed = fs::read(destination).unwrap();
+        let mut decoder = GzDecoder::new(compressed.as_slice());
+        let mut decoded = String::new();
+        decoder.read_to_string(&mut decoded).unwrap();
+        assert_eq!(decoded, format!("{statement}\n"));
+    }
+
+    #[test]
+    fn test_tester_atomic_writer_round_trips_utf16_bom_inside_gzip() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "INSERT INTO t VALUES ('中文 😀', X'00FF', 12345678901234567890.123456789, '{\"ok\":true}');";
+        for (name, encoding, marker) in [
+            ("le.sql.gz", SqlFileEncoding::Utf16Le, [0xFF, 0xFE]),
+            ("be.sql.gz", SqlFileEncoding::Utf16Be, [0xFE, 0xFF]),
+        ] {
+            let destination = dir.path().join(name);
+            let mut output = AtomicSqlFile::create_with_format(
+                destination.clone(),
+                encoding,
+                SqlFileCompression::Gzip,
+            )
+            .unwrap();
+            output.line(text).unwrap();
+            output.finish().unwrap();
+
+            let compressed = fs::read(destination).unwrap();
+            let mut decoder = GzDecoder::new(compressed.as_slice());
+            let mut decoded = Vec::new();
+            decoder.read_to_end(&mut decoded).unwrap();
+            assert!(decoded.starts_with(&marker));
+            let units = decoded[2..]
+                .chunks_exact(2)
+                .map(|chunk| match encoding {
+                    SqlFileEncoding::Utf16Le => u16::from_le_bytes([chunk[0], chunk[1]]),
+                    SqlFileEncoding::Utf16Be => u16::from_be_bytes([chunk[0], chunk[1]]),
+                    _ => unreachable!(),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(String::from_utf16(&units).unwrap(), format!("{text}\n"));
+        }
     }
 
     fn structure_table(
@@ -1489,6 +1713,7 @@ mod tests {
                 database: None,
                 schema: None,
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,
@@ -1607,6 +1832,7 @@ mod tests {
                 database: None,
                 schema: None,
                 encoding: None,
+                compression: None,
             }),
             mode: TransferMode::Structure,
             write_mode: WriteMode::Insert,

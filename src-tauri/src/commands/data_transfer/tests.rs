@@ -121,6 +121,27 @@ fn transfer_profile_rejects_runtime_file_token_and_unknown_fields() {
     assert!(serde_json::from_str::<TransferProfile>(payload).is_err());
 }
 
+#[test]
+fn test_tester_legacy_transfer_profile_without_format_fields_is_compatible() {
+    let payload = r#"{
+        "version": 1,
+        "id": "legacy-profile",
+        "name": "legacy",
+        "sourceConnectionId": "src",
+        "destinationMode": "sqlFile",
+        "mode": "data",
+        "writeMode": "insert",
+        "tables": [],
+        "options": {"batchSize": 10, "stopOnError": true, "confirmedDestructive": false},
+        "createdAt": "2026-09-21T00:00:00Z",
+        "updatedAt": "2026-09-21T00:00:00Z"
+    }"#;
+    let profile = serde_json::from_str::<TransferProfile>(payload).unwrap();
+    assert_eq!(profile.sql_file_encoding, None);
+    assert_eq!(profile.sql_file_compression, None);
+    profile.validate().unwrap();
+}
+
 #[tokio::test]
 async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
     let test = crate::testing::app_state::TestAppState::new().await;
@@ -139,6 +160,7 @@ async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
         destination_mode: "sqlFile".into(),
         sql_file_dialect: Some("mysql".into()),
         sql_file_encoding: Some("utf8Bom".into()),
+        sql_file_compression: Some("gzip".into()),
         sql_file_database: Some("analytics".into()),
         sql_file_schema: None,
         mode: TransferMode::Data,
@@ -154,6 +176,12 @@ async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
         .unwrap();
     let stored = test.store.get_transfer_profiles().await;
     assert_eq!(stored, vec![profile]);
+    let mut invalid = stored[0].clone();
+    invalid.sql_file_encoding = Some("gbk".into());
+    assert!(invalid.validate().is_err());
+    invalid.sql_file_encoding = Some("utf16Le".into());
+    invalid.sql_file_compression = Some("brotli".into());
+    assert!(invalid.validate().is_err());
     let json = tokio::fs::read_to_string(test.store.data_dir().join("transfer_profiles.json"))
         .await
         .unwrap();
@@ -267,6 +295,7 @@ async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -327,6 +356,7 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -392,6 +422,7 @@ async fn sql_file_preview_honors_table_selection_renames_and_skipped_columns() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -469,6 +500,7 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::StructureAndData,
         write_mode: WriteMode::Insert,
@@ -558,6 +590,7 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Structure,
         write_mode: WriteMode::Insert,

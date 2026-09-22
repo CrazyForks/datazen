@@ -471,6 +471,7 @@ describe('DataTransferWindow', () => {
       destinationMode: 'sqlFile',
       sqlFileDialect: 'mysql',
       sqlFileEncoding: 'utf8Bom',
+      sqlFileCompression: 'gzip',
       sqlFileDatabase: 'analytics',
       sqlFileSchema: null,
       mode: 'data',
@@ -488,6 +489,9 @@ describe('DataTransferWindow', () => {
     fireEvent.click(screen.getByTestId('data-transfer-profile-load'));
     await waitFor(() =>
       expect(screen.getByTestId('data-transfer-sql-file-dialect')).toHaveTextContent(/mysql/i),
+    );
+    expect(screen.getByTestId('data-transfer-sql-file-compression')).toHaveTextContent(
+      'transfer.destination.sqlCompressionGzip',
     );
     expect(screen.getByText('transfer.profile.chooseFile')).toBeTruthy();
   });
@@ -644,6 +648,46 @@ describe('DataTransferWindow', () => {
           encoding: 'utf8Bom',
           database: 'analytics',
         },
+      }),
+    );
+  });
+
+  it('sends UTF-16 and gzip SQL-file settings into preview and clears stale preview', async () => {
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('get_connections'));
+    await dismissLimitationsDialog();
+
+    fireEvent.click(screen.getByTestId('data-transfer-destination-sql-file'));
+    await waitFor(() =>
+      expect(screen.getByTestId('data-transfer-destination-sql-file')).toHaveTextContent(
+        'transfer.destination.sqlFileSelected',
+      ),
+    );
+    await pickSelect('data-transfer-source', 'PG Src (postgresql)');
+    await waitFor(() => expect(getDatabasesMock).toHaveBeenCalled());
+    await pickSelect('data-transfer-source-database', 'src');
+    await pickSelect('data-transfer-sql-file-encoding', 'transfer.destination.sqlEncodingUtf16Le');
+    await pickSelect(
+      'data-transfer-sql-file-compression',
+      'transfer.destination.sqlCompressionGzip',
+    );
+
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mode-data')).toBeTruthy());
+    inspectSqlFileTransferMock.mockResolvedValue(sqlInspectRows);
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-table-row')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-mapping-step')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+    expect(previewTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sqlFileTarget: expect.objectContaining({
+          encoding: 'utf16Le',
+          compression: 'gzip',
+        }),
       }),
     );
   });

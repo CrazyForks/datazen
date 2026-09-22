@@ -22,9 +22,10 @@ pub use execute::{execute_transfer_data, DropCreateContext, ValueFormatter};
 pub use filter::{FilterLogic, SourceFilter};
 pub use mapping::inspect_tables;
 pub use model::{
-    DdlPreviewItem, DdlPreviewKind, SqlFileEncoding, SqlFileTarget, TableInspectResult,
-    TableMapping, TransferExecutionResult, TransferJob, TransferMode, TransferPairingView,
-    TransferPreview, TransferRecordset, TransferRecordsetBound, TransferRunRequest, WriteMode,
+    DdlPreviewItem, DdlPreviewKind, SqlFileCompression, SqlFileEncoding, SqlFileTarget,
+    TableInspectResult, TableMapping, TransferExecutionResult, TransferJob, TransferMode,
+    TransferPairingView, TransferPreview, TransferRecordset, TransferRecordsetBound,
+    TransferRunRequest, WriteMode,
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
 pub use preview::{build_preview, TransferPreviewAdapters};

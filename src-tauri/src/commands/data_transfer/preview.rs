@@ -25,7 +25,13 @@ async fn preview_sql_file_target(
         .normalize_qualifiers()
         .map_err(CommandError::from)?;
     let file_token = destination.file_token.clone();
-    crate::data_transfer::sql_file::resolve_path(&file_token).map_err(CommandError::from)?;
+    let destination_path =
+        crate::data_transfer::sql_file::resolve_path(&file_token).map_err(CommandError::from)?;
+    crate::data_transfer::sql_file::validate_output_path(
+        &destination_path,
+        destination.normalized_compression(),
+    )
+    .map_err(CommandError::from)?;
     job.source.schema = job.source.normalized_schema().map(str::to_string);
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
 

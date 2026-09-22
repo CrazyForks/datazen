@@ -83,7 +83,10 @@ export function DataTransferWindow() {
   const [destinationMode, setDestinationMode] = useState<'database' | 'sqlFile'>('database');
   const [sqlFileTarget, setSqlFileTarget] = useState<TransferSqlFileTarget | null>(null);
   const [sqlFileDialect, setSqlFileDialect] = useState('source');
-  const [sqlFileEncoding, setSqlFileEncoding] = useState<'utf8' | 'utf8Bom'>('utf8');
+  const [sqlFileEncoding, setSqlFileEncoding] = useState<
+    'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be'
+  >('utf8');
+  const [sqlFileCompression, setSqlFileCompression] = useState<'none' | 'gzip'>('none');
   const [sqlFileDatabase, setSqlFileDatabase] = useState('');
   const [sqlFileSchema, setSqlFileSchema] = useState('');
   const [availableSqlDialects, setAvailableSqlDialects] = useState<string[]>([]);
@@ -392,6 +395,7 @@ export function DataTransferWindow() {
       destinationMode,
       sqlFileDialect: destinationMode === 'sqlFile' ? sqlFileDialect : null,
       sqlFileEncoding: destinationMode === 'sqlFile' ? sqlFileEncoding : null,
+      sqlFileCompression: destinationMode === 'sqlFile' ? sqlFileCompression : null,
       sqlFileDatabase: destinationMode === 'sqlFile' ? sqlFileDatabase || null : null,
       sqlFileSchema: destinationMode === 'sqlFile' ? sqlFileSchema || null : null,
       mode,
@@ -423,6 +427,7 @@ export function DataTransferWindow() {
     targetConn?.schema,
     sqlFileDialect,
     sqlFileEncoding,
+    sqlFileCompression,
     sqlFileDatabase,
     sqlFileSchema,
     mode,
@@ -451,6 +456,7 @@ export function DataTransferWindow() {
     setDestinationMode(profile.destinationMode);
     setSqlFileDialect(profile.sqlFileDialect ?? 'source');
     setSqlFileEncoding(profile.sqlFileEncoding ?? 'utf8');
+    setSqlFileCompression(profile.sqlFileCompression ?? 'none');
     setSqlFileDatabase(profile.sqlFileDatabase ?? '');
     setSqlFileSchema(profile.sqlFileSchema ?? '');
     setSqlFileTarget(null);
@@ -516,6 +522,7 @@ export function DataTransferWindow() {
             ...sqlFileTarget,
             databaseType: sqlFileDialect === 'source' ? undefined : sqlFileDialect,
             encoding: sqlFileEncoding === 'utf8' ? undefined : sqlFileEncoding,
+            compression: sqlFileCompression === 'none' ? undefined : sqlFileCompression,
             ...(sqlFileDatabase.trim() ? { database: sqlFileDatabase.trim() } : {}),
             ...(sqlFileSchema.trim() ? { schema: sqlFileSchema.trim() } : {}),
           },
@@ -548,6 +555,7 @@ export function DataTransferWindow() {
       sqlFileTarget,
       sqlFileDialect,
       sqlFileEncoding,
+      sqlFileCompression,
       sqlFileDatabase,
       sqlFileSchema,
       mode,
@@ -1114,12 +1122,45 @@ export function DataTransferWindow() {
                           value: 'utf8Bom',
                           label: t('transfer.destination.sqlEncodingUtf8Bom'),
                         },
+                        {
+                          value: 'utf16Le',
+                          label: t('transfer.destination.sqlEncodingUtf16Le'),
+                        },
+                        {
+                          value: 'utf16Be',
+                          label: t('transfer.destination.sqlEncodingUtf16Be'),
+                        },
                       ]}
                       onChange={(value) => {
-                        setSqlFileEncoding(value as 'utf8' | 'utf8Bom');
+                        setSqlFileEncoding(
+                          value as 'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be',
+                        );
                         setPreview(null);
                       }}
                       triggerDataAttrs={{ 'data-testid': 'data-transfer-sql-file-encoding' }}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-xs font-medium text-fg">
+                      {t('transfer.destination.sqlCompression')}
+                    </span>
+                    <Select
+                      value={sqlFileCompression}
+                      options={[
+                        {
+                          value: 'none',
+                          label: t('transfer.destination.sqlCompressionNone'),
+                        },
+                        {
+                          value: 'gzip',
+                          label: t('transfer.destination.sqlCompressionGzip'),
+                        },
+                      ]}
+                      onChange={(value) => {
+                        setSqlFileCompression(value as 'none' | 'gzip');
+                        setPreview(null);
+                      }}
+                      triggerDataAttrs={{ 'data-testid': 'data-transfer-sql-file-compression' }}
                     />
                   </label>
                   <div className="grid grid-cols-2 gap-3 border-t border-edge pt-3">
