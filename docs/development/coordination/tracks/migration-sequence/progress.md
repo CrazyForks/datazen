@@ -49,6 +49,8 @@ FAILED
 - BOOTSTRAP: worktree `/Users/flyxl/code/datazen/.worktrees/datazen-migration-sequence`,
   branch `feature/migration-sequence`, clean before tester files; implementation
   under test is commit `572c0b25`.
+- Tester evidence commit: `7b450fb6` (the follow-up progress-only commit is
+  recorded by the final handoff).
 - Phase A reviewed every changed implementation file in Driver API, PostgreSQL
   and MySQL migration, Host sequence objects/dependencies/operations/reviewed
   state/IPC/bootstrap, and the TypeScript wrapper/test. The planner is same-
