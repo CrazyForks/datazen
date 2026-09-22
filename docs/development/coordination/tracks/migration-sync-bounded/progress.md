@@ -38,7 +38,7 @@ Phase: READY_FOR_TEST
   ignored `src-tauri/src/driver_init.rs` ordering differs after injection.
 - `git diff --check`: passed.
 
-Commit: pending final handoff.
+Implementation commit: `16e969f5` (`feat(sync): stream comparison rows into indexed store`).
 
 ## Limits not covered
 
