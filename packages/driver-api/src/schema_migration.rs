@@ -641,4 +641,40 @@ mod type_parts_tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn test_tester_object_definition_requires_requested_name_in_declaration() {
+        // The driver contract must not accept an unrelated routine merely
+        // because the requested identity occurs in a body literal or comment.
+        // Conversely, supported PostgreSQL and MySQL declaration envelopes
+        // remain valid when their declared name is the requested identity.
+        for definition in [
+            "CREATE OR REPLACE FUNCTION other_name() RETURNS integer AS $$ SELECT 'wanted_name' $$ LANGUAGE sql",
+            "CREATE FUNCTION other_name() RETURNS integer AS $$ SELECT 1 $$ LANGUAGE sql -- wanted_name",
+        ] {
+            assert!(
+                validate_object_definition(definition, ObjectKind::Function, "wanted_name").is_err(),
+                "{definition}"
+            );
+        }
+
+        assert!(validate_object_definition(
+            "CREATE OR REPLACE FUNCTION wanted_name() RETURNS integer AS $$ SELECT 1 $$ LANGUAGE sql",
+            ObjectKind::Function,
+            "wanted_name",
+        )
+        .is_ok());
+        assert!(validate_object_definition(
+            "CREATE DEFINER=`root`@`%` PROCEDURE wanted_name() SELECT 1",
+            ObjectKind::Procedure,
+            "wanted_name",
+        )
+        .is_ok());
+        assert!(validate_object_definition(
+            "CREATE DEFINER=`root`@`%` TRIGGER wanted_name BEFORE INSERT ON orders FOR EACH ROW SET NEW.id = NEW.id",
+            ObjectKind::Trigger,
+            "wanted_name",
+        )
+        .is_ok());
+    }
 }

@@ -1065,4 +1065,34 @@ mod tests {
         assert!(sqlite.statements.is_empty());
         assert!(!sqlite.requirements.is_empty());
     }
+
+    #[test]
+    fn test_tester_overloaded_routine_definition_must_match_requested_signature() {
+        // A catalog lookup for lookup(integer) must not accept DDL for the
+        // different lookup(text) overload. Otherwise a reviewed replacement
+        // could deploy the wrong definition while retaining the requested
+        // overload identity for later destructive operations.
+        let source = [SchemaObjectSnapshot::routine(
+            ObjectKind::Function,
+            Some("public"),
+            "lookup",
+            Some("integer"),
+            "CREATE FUNCTION lookup(text) RETURNS integer AS $$ SELECT 1 $$",
+        )];
+        let plan = build_routine_trigger_migration_plan_with_components(
+            &source,
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(plan.statements.is_empty());
+        assert!(plan.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("signature")
+        )));
+    }
 }

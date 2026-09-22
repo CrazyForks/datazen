@@ -1,6 +1,6 @@
 # migration-routine-trigger
 
-Phase: READY_FOR_RETEST
+Phase: FAILED
 
 ## Scope
 
@@ -73,13 +73,38 @@ directory were restored/removed before commit.
   configuration intentionally excludes thin `src/commands/**` wrappers; the
   added wrapper test invokes every new wrapper statement and payload field.
 
+## Second independent tester verification
+
+- Reviewed the BUG-001 fix and the routine/trigger creation, replacement,
+  drop, rollback, destructive gate, target snapshot, IPC wrapper, and
+  fail-closed paths. The declaration-kind fix correctly rejects view-shaped
+  DDL with routine/trigger words in literals, comments, or backtick-quoted
+  content. Valid PostgreSQL `CREATE OR REPLACE` and MySQL `DEFINER`
+  routine/trigger declaration envelopes remain accepted.
+- Added tester-only regressions for two independent identity checks: a
+  requested routine name that appears only in a body/comment, and a selected
+  PostgreSQL overload whose DDL declares different arguments. Both tests fail
+  and are registered as BUG-002 and BUG-003.
+- Driver API full suite: **143 passed, 1 failed** (BUG-002). PostgreSQL driver
+  full suite: **121 passed**. MySQL driver full suite: **102 passed**.
+  Injected Host Schema Diff suite: **104 passed, 1 failed** (BUG-003).
+- Frontend Schema Diff command wrapper: **17 passed**. Dedicated wrapper
+  coverage is **100% statements, 86.95% branches, 100% functions, 100%
+  lines**; it is intentionally excluded from the repository-wide gate as a
+  thin IPC wrapper. `npx tsc --noEmit`, Prettier, Rust formatting, and diff
+  checks passed after generating and then cleaning test-only driver injection
+  artifacts.
+- Live database E2E was not run because the two unit-level identity blockers
+  would permit unsafe reviewed plans. The registered journeys stay pending
+  until both defects are fixed and independently retested.
+
 ## E2E registration
 
 | Case | Journey | Status |
 | --- | --- | --- |
-| RT-001 | PostgreSQL source/target fixtures with overloaded functions: select `public.lookup(integer)`, review a replacement plan, deploy, and verify only that overload changed. | 留待 BUG-001 修复后 R 回归 |
-| RT-002 | PostgreSQL source/target fixtures with same-name triggers on different relations: select `public.audit ON public.orders`, approve destructive target-only removal, and verify the reviewed target snapshot blocks an out-of-band change. | 留待 BUG-001 修复后 R 回归 |
-| RT-003 | MySQL source/target function, procedure, and trigger fixtures: create, replace, and approved drop; verify definition and rollback SQL on the target. | 留待 BUG-001 修复后 R 回归 |
+| RT-001 | PostgreSQL source/target fixtures with overloaded functions: select `public.lookup(integer)`, review a replacement plan, deploy, and verify only that overload changed. | 留待 BUG-002/003 修复后 R 回归 |
+| RT-002 | PostgreSQL source/target fixtures with same-name triggers on different relations: select `public.audit ON public.orders`, approve destructive target-only removal, and verify the reviewed target snapshot blocks an out-of-band change. | 留待 BUG-002/003 修复后 R 回归 |
+| RT-003 | MySQL source/target function, procedure, and trigger fixtures: create, replace, and approved drop; verify definition and rollback SQL on the target. | 留待 BUG-002/003 修复后 R 回归 |
 
 No routine/trigger picker is present in this slice, so these are backend
 command/integration journeys rather than an existing Schema Diff window path.
