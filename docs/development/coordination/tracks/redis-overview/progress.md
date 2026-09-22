@@ -1,12 +1,12 @@
 - 任务: 屏 A 连接总览七区块 + connectionHome 槽位（PRD §3.1 / 裁定 8-5）
-- 状态: FAILED（第 1 轮 Tester 已交：3 条 Bug `待修复` + 1 条 Tester 已闭环，见 bugs.md）
-- 编码 commit: `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`
+- 状态: 第 1 轮修复已提交（BUG-001/002/003，5 commit），待第 2 轮 Tester 复测；第 1 轮判定见 bugs.md
+- 编码 commit: `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`；修复轮 `fc78cf4c5`(BUG-002) + `4030d27e2`(现场保全) + `1ed9e1566`(cluster 批次) + `1b864b88f`(补测) + `df2d1d93a`(PRD 8-6)
 - 测试 commit: `48a91e60c` + `0b78374aa` + `7f54bf982` + `2c151abb9`（Tester 补测 13 例）
 - 合并 commit: —
-- 代理: w2b-overview-tester-1
+- 代理: w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）
 - Worktree: .worktrees/datazen-redis-overview
 - 分支: feature/redis-overview
-- 心跳: 2026-09-22 11:35
+- 心跳: 2026-09-22 12:25
 
 # redis-overview 轨道台账
 
@@ -125,3 +125,39 @@
 1. 原 Coder resume 处理 `bugs.md` 的 **BUG-001 / BUG-002 / BUG-003**（BUG-004 已由本 Tester 补测闭环，仅需复跑）。BUG-003 需先裁定 (A) 扩 `memory_sample` payload 或 (B) 收窄 PRD §3.1 口径。
 2. 复测 Tester：重跑四项门禁 + 全量套件（含 `overviewTesterGaps.test.tsx` 13 例）+ 变异 M1/M2/M3/M4a/M4b 全套复验；覆盖率数字若因删死代码变化，以「全部门禁文件 ≥80%」为准。
 3. `pnpm test:unit:drivers` 若仍被 verify-deps 卡住，按注①的命令体执行并在报告里保留该说明。
+
+## 第 1 轮修复记录（rescuer 接手未提交现场，2026-09-22 12:05–12:30）
+
+> 现场：前任修复代理提交 `fc78cf4c5`（BUG-002）后死于 150 轮上限，留有 14 文件 / +646−37 的成形未提交实现。本棒按「盘点 → 保全 commit → 补缺口 → 分步提交」执行，未重做已入库部分。
+
+### commit 序列
+
+| sha | 内容 |
+|---|---|
+| `4030d27e2` | 现场保全：BUG-001（`OverviewJumpTarget.key.keyType?` + `RedisOverviewHome` pushBrowseEntry 透传 + `RecentKeysCard` 可见 `typeBadgeClass`/`typeTone` 徽标）+ BUG-003 (A) 主体（`MemorySample` 加 `type/ttlMs/missing`、`buildBigKeyRows`/`MemoryCard` 补齐四列、Rust 契约与前端测试） |
+| `1ed9e1566` | **验收约束 (2) 修补**：现场保全 commit 的 cluster 分支走 trait 默认 `routed_sequential`，实测为**每键 3 次寻址单发 = 3N 往返**，违反「不得比原实现（每键一次 `MEMORY USAGE`，即 N 次）更差」。新增 `SlotRoutedConnection::pipeline_at_slot`（默认=逐命令；`ClusterConnection` 覆盖为 `route_pipeline` 每键一次**同槽寻址批次**）+ 折叠拒绝回退。健康 cluster 往返 = N（与原实现持平，`ClusterBatchConn` 替身断言 `round_trips() == keys.len()`）；批次被 `extract_error_vec` 折叠拒绝时仅该键回退逐命令重放（+3 单发），保住约束 (3) 的逐字段降级 |
+| `1b864b88f` | `typeBadgeClass` 直测（5 tone→class 映射）+ `buildBigKeyRows` 畸形载荷（`type:''`/`ttlMs:NaN`/`missing:'yes'`）归一化用例 |
+| `df2d1d93a` | PRD §8.1 追加 8-6 裁定行（如实写明 cluster=**每键一次寻址批次**，非按槽分组；并注明批次折叠拒绝的重放代价） |
+
+### 修复轮门禁实测（原样命令 + 原始数字）
+
+| 门禁 | 命令 | 实测 |
+|---|---|---|
+| 类型检查 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0 / 0 错** |
+| 驱动单测 | `npx vitest run --config vitest.drivers.config.ts` | **39 files / 363 tests 全绿**（第 1 轮 Tester 基线 359，本棒 +4：新字段/徽标/畸形载荷用例；保全 commit 时 360） |
+| Rust | `CARGO_TARGET_DIR=/tmp/ct-w2b-fix2 cargo test -p datazen-driver-redis` | **lib 239 passed / 0 failed / 1 ignored + 集成 4 passed / 0 failed + doc 0**（保全 commit 时 lib 237；cluster 批次修补 +2） |
+| 构建 | `npx vite build` | **exit 0**（`✓ built in 4.83s`） |
+| 覆盖率 | 同第 1 轮 include 范围 | **All files 98.73 stmts / 94.55 branch / 100 funcs / 99.69 lines**；触碰文件：`overviewNavigation.ts` **100/100**、`MemoryCard.tsx` 100/**96.34**（139=存量 maxHuman 回退）、`overviewModel.ts` 100/**94.57**（351/356 为存量 `?? 0`/`isFinite(bytes)` 分支，新字段行 357-359 全覆盖）、`RecentKeysCard.tsx` + `RedisOverviewHome.tsx` **100/100** —— 全部 ≥80% |
+
+### Rust 往返数口径（供第 2 轮 Tester 对账）
+
+- 单节点（Standalone/Sentinel）：字段读 `ceil(keys/256)` 次 pipeline；屏 A 默认 Top 采样一次。
+- Cluster：**每键 1 次寻址批次 = N 次往返**（`route_pipeline` → 该键槽的 master；三命令同槽，客户端 `route_for_pipeline` 的 `MEMORY USAGE` 错键问题被显式路由绕过），仅在被折叠拒绝的键上重放为 3 单发。
+- 屏 A 前端命令数不变量未触碰：仍 `info`/`db_sizes`/`memory_sample`/`slowlog_get` 四条、零 `SCAN`（M1 变异面不受本修复影响，`useOverviewData` 零改动）。
+
+### 明确未做 / 留待
+
+1. **`ops_workbench.rs` 1066 行**超 800 行推荐线（保全 commit 时已 905+）；候选拆分为 `ops_workbench` 子模块（大 key 字段读一节自包含），是否拆由第 2 轮 Tester/协调者裁定，本棒未动刀（避免与复测窗口撞车）。
+2. `ClusterConnection::route_pipeline` 真集群行为与既有 `route_command` 同属【留待 R 回归】（jsdom/单测只能证形状，见 `cluster_topology.rs:421` 注记）。
+3. redis 依赖升级核查（`send_packed_commands` 迁移，hub 任务 #57）时须连带复核 `pipeline_at_slot` 的折叠回退是否仍必要。
+4. 非 en.ts 的 9 语言词条（`redis.overview.memory.bigKeyGone` / `redis.overview.typeUnknown` 两个新 key）留待发布前 i18n-sync 回合（N-3 口径）。
