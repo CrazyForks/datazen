@@ -8,23 +8,31 @@
 
 | Bug ID | 严重度 | 状态 | 一句话 |
 |---|---|---|---|
-| redis-kvbar-ui-BUG-001 | **Major** | 待复测 `eea7e0d0a` | 切键后新键读数在飞行期间，两个槽位继续打印**上一个键**的 type/大小/TTL；侧栏同时渲染 loading 提示与旧键属性表 |
-| redis-kvbar-ui-BUG-002 | Minor | 待复测 `2dec2f402` | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
-| redis-kvbar-ui-BUG-003 | Minor | 待复测 `90d0fb9f2` | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
-| redis-kvbar-ui-BUG-004 | Low | 待复测 `5e145f566` | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
+| redis-kvbar-ui-BUG-001 | **Major** | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 切键后新键读数在飞行期间，两个槽位继续打印**上一个键**的 type/大小/TTL；侧栏同时渲染 loading 提示与旧键属性表 |
+| redis-kvbar-ui-BUG-002 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
+| redis-kvbar-ui-BUG-003 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
+| redis-kvbar-ui-BUG-004 | Low | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
+| **redis-kvbar-ui-BUG-005** | Low | **待修复**（第 2 轮 Tester 登记） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
 
 > **修复第 1 轮（Coder @ `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）**：四条全部改到生产码
 > 并各带回归用例 ⇒ 全部置 **待复测**，每条下方新增「修复备注（Coder 第 1 轮 · sha）」给出落点与复测入口。
 > 原「现象 / 重现步骤 / 建议修法」正文**保留不动**作为裁定依据存档；其中依赖 `it.skip` 的
 > 「重现步骤 · 方式一」已随解开而失效，改注为变异清单入口。数字与变异表见同目录 `progress.md`
 > 「第 1 轮修复回合」。`.rs` 零改动，未跑 cargo / e2e。
+>
+> **复测第 2 轮（Tester 全新实例 @ `3242800b4` / `257017096`）**：BUG-001~004 逐条判为
+> **真缺陷已消失**（非“有无红测”），四条状态 → 已修复；阶段 A/C 判定、15 项变异复验
+> （零存活）与新 Bug 见同目录 `progress.md`「第 2 轮 Tester 复测」。**BUG-005 为本轮新登记**，
+> 故本轨判定为 `TEST_FAILED`（1 条 Low `待修复`）。
+
 
 ---
 
 ## redis-kvbar-ui-BUG-001 — 陈旧键属性跨键残留（两槽位均受影响）
 
 - **严重度**：Major（向用户展示**错误的事实**，且与实现自己的文档声明相反）
-- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
+- **状态**：`已修复`（第 2 轮 Tester 全新实例复测通过：缺陷本身消失，非“有红测即算”；
+  判据见本节「修复备注」+ `progress.md`「第 2 轮 Tester 复测」阶段 A / 阶段 C 变异复验表）
 - **量级**：**每一次**“键 A → 键 B”点击都稳定复现，窗口 = B 的 `key_object_info` 往返时间
   （同一次点击要打两条相同命令，见 BUG-002，窗口因此翻倍）。人工点击快速翻键时几乎连续可见。
 
@@ -115,7 +123,8 @@ AssertionError: expected <div …(2)>…(2)</div> to be null
 ## redis-kvbar-ui-BUG-002 — 一次键选中重复读两遍同一命令
 
 - **严重度**：Minor（性能/服务端负载，非正确性）
-- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
+- **状态**：`已修复`（第 2 轮 Tester 全新实例复测通过：缺陷本身消失，非“有红测即算”；
+  判据见本节「修复备注」+ `progress.md`「第 2 轮 Tester 复测」阶段 A / 阶段 C 变异复验表）
 - **量级**：抽屉展开时，每次键点击 **2 次** `key_object_info`；该命令自身是 `SELECT` + pipeline
   （`MEMORY USAGE`/`OBJECT ENCODING`/`OBJECT IDLETIME`/`OBJECT FREQ`/`PTTL`/`TYPE`），
   即 1 击 = 2×(1 SELECT + 1 pipeline) 往返，翻倍于必要量；快速翻键时按倍数放大。
@@ -185,7 +194,8 @@ PROBE reads-per-selection=2 keys=["k1","k1"] total=3
 ## redis-kvbar-ui-BUG-003 — 刷新动作漏刷 `maxmemory_policy` 行
 
 - **严重度**：Minor（一行数据长期陈旧，且与按钮语义不符）
-- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
+- **状态**：`已修复`（第 2 轮 Tester 全新实例复测通过：缺陷本身消失，非“有红测即算”；
+  判据见本节「修复备注」+ `progress.md`「第 2 轮 Tester 复测」阶段 A / 阶段 C 变异复验表）
 - **量级**：策略行只在 `(open, dbSessionId)` 跃迁时取一次；面板存活期内点多少次刷新都不会再取，
   刷新 N 次 ⇒ `info_filtered` 调用 0 次。
 
@@ -240,7 +250,8 @@ PROBE refresh key_object_info 1->2 info_filtered 1->1
 ## redis-kvbar-ui-BUG-004 — `PTTL -2` 被判成 “No expiry”
 
 - **严重度**：Low（竞态下的一行错标签；三态分离在渲染侧整体失效）
-- **状态**：`待复测`（第 1 轮修复回合，落点见本节末「修复备注」）
+- **状态**：`已修复`（第 2 轮 Tester 全新实例复测通过：缺陷本身消失，非“有红测即算”；
+  判据见本节「修复备注」+ `progress.md`「第 2 轮 Tester 复测」阶段 A / 阶段 C 变异复验表）
 - **量级**：仅当同一 pipeline 内 `TYPE` 命中、随后 `PTTL` 报键已消失（毫秒级过期竞态 / 主从切换）时出现；
   低频但确定可达，且 `describeTtl` 为此专门定义的 `kind:'missing'` 在**任何**渲染分支里都没被消费。
 
@@ -305,6 +316,87 @@ ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps
 
 ---
 
+## redis-kvbar-ui-BUG-005 — 会话切换后驱逐策略行仍显示上一会话的值
+
+- **严重度**：Low（单行、窄窗口的一行错叙述；与 BUG-004 同量级 —— 不伪造数字、不影响写路径，
+  但把**另一台服务器**的事实挂在当前会话上）
+- **状态**：`待修复`（第 2 轮 Tester 全新实例登记）
+- **量级**：需要 (1) 面板存活期内 `dbSessionId` 跃迁（重连、切实例、会话重建），
+  (2) 新会话的 `key_object_info`（1 条 SELECT + 1 条 pipeline）**先于** `info_filtered` 落地。
+  一次跃迁最多一个窗口，时长 = 两条命令的时差；顺序不常但确定可达
+  （`info_filtered` 走 `INFO` 文本解析，托管/ACL 受限服务器上更易慢）。
+  **键→键切换不受影响**（见「为何范围这么窄」）。
+
+### 涉及文件:行号
+
+- `packages/drivers/redis/ui/kv-bar/KeyPropsSidebar.tsx:58` —— `const [policy, setPolicy] = useState<string | null>(null)`：
+  策略值只有 `dbSessionId` 跃迁时的**新回复**能改写，跃迁本身**不清**
+- `packages/drivers/redis/ui/kv-bar/KeyPropsSidebar.tsx:66-75` —— policy effect 的 `stale` 守卫只丢弃
+  “迟到的旧会话回复”，不撤下“已经挂在屏上的旧会话值”
+- `packages/drivers/redis/ui/kv-bar/KeyPropsSidebar.tsx:62-65` —— 本轮修复新增的注释断言
+  “it is a server-wide fact, not another key's attribute, so keeping it cannot mis-attribute anything”：
+  **论证范围过宽**，只对“键”维度成立
+- `packages/drivers/redis/ui/kv-bar/keyObjectInfo.ts:136-156` —— `invokeMaxmemoryPolicy(dbSessionId)`
+  以 `dbSessionId` 为作用域 ⇒ 该值恰恰**不是**“与会话无关”的事实，上述注释的前提不成立
+
+### 重现步骤
+
+常驻用例（绿测记录当前行为，配对红测按 BUG 登记规程 skip）：
+
+```bash
+cd /Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-redis-kvbar-ui
+F=packages/drivers/redis/ui/__tests__/kvBarRound2Tester.test.tsx
+# 1) 当前行为（绿）：策略行仍写上一会话的 noeviction
+npx vitest run --config vitest.drivers.config.ts $F
+# 2) 期望行为（红，解 skip 演示，跑完还原）
+cp $F /tmp/bak.tsx
+perl -pi -e "s/it\.skip\('clears the eviction-policy/it('clears the eviction-policy/" $F
+npx vitest run --config vitest.drivers.config.ts $F
+cp /tmp/bak.tsx $F
+```
+
+### 实测日志摘录（本轮本机执行，方式 2）
+
+```text
+× clears the eviction-policy row while the next session has not answered (FIXME redis-kvbar-ui-BUG-005)
+AssertionError: expected 'noeviction' to be '' // Object.is equality
+  Tests  1 failed | 9 passed (10)
+```
+
+同文件 `pins the previous session policy on screen while the new session attributes have landed
+(redis-kvbar-ui-BUG-005 evidence)` 为**当前行为的常驻绿测**，其内已按顺序断言：
+`[data-attr="type"] dd[data-value] === 'hash'`（新会话读数）与
+`[data-attr="maxmemory-policy"] dd[data-value] === 'noeviction'`（旧会话读数）**同时成立**。
+
+### 影响范围
+
+- 只影响侧栏 `maxmemory-policy` 一行；状态条无此行，不受影响。
+- 用户可见后果：重连到另一台 Redis（或同一部署的只读副本）后，驱逐策略行仍报旧服务器策略，
+  而同一屏的 freq / 其它读数已是新服务器的 —— 与 BUG-003 修的是同一类“两行自相矛盾”，
+  只是触发条件从“点刷新”换成“换会话”。
+- **不是 BUG-001 复发，也不是 BUG-002 的缓存漏出**：本轮变异复验 T3/T4/T13 全部为红，
+  合并表确无残留值；键→键切换时整个 `<dl>` 随 `info === null` 一并卸载，旧策略值根本不上屏
+  （见 `progress.md` 阶段 A「两处刻意保留形状」裁定 1）。
+- 归属判断：**第 1 轮修复前即存在**（原 deps `[open, dbSessionId]` 同样不清值），
+  非 `90d0fb9f2` 引入；本轮登记是因为修复回合把该形状**写成了一条不成立的不变量声明**，
+  下一轮若照单复用会把它当成“已论证安全”。
+
+### 建议修法
+
+把策略值绑到它自己的作用域（会话），而不是绑到“上次显示的值”：
+
+1. 最小改动 —— policy effect 内在发请求前按会话复位一次：
+   `useEffect` 里 `setPolicy(prev => (policySession === dbSessionId ? prev : null))` 之类形状，
+   或直接 `const [policy, setPolicy] = useState<{ session: string; value: string | null } | null>(null)`，
+   渲染侧取 `policy?.session === dbSessionId ? policy.value : null`；
+   **保留 `attempt` 跃迁不清值**的现状（同一会话内旧值仍可见是有意的）。
+2. 同步改写 `:62-65` 的注释，把“不会误归属”的论证范围明确收窄到**键维度**，
+   并写明会话维度必须清值，否则下一轮还会拿这句话当挡箭牌。
+3. 修好后解开 `kvBarRound2Tester.test.tsx` 里那条 `FIXME(redis-kvbar-ui-BUG-005)` 的 `it.skip`，
+   并把同节 evidence 绿测改断言新行为（参照 BUG-004 的成对改写口径，**勿删断言**）。
+
+---
+
 ## 附：本轮判定依据与不计为缺陷的事项
 
 - 门禁四项实测数字见同目录 `progress.md`「门禁实跑数字（Tester 独立复跑）」。
@@ -319,3 +411,17 @@ ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps
      **未发现写死数字或假占位当真值**，故不构成缺陷；
   3. 75 条 `redis.overview.*` / `redis.contextBar.*` 只落 `en.ts`、其余语言为空（开发期约定）；
   4. 测试断言英文字面量：本轨新增/继承用例经复核为 0 条可见文案断言（一律 `data-*` / i18n key / 服务端回显值）。
+
+### 第 2 轮追加：核查过但**不**登记为缺陷的三项
+
+1. **`sharedKeyObjectInfo` 的 `.finally()` 微任务竞态**（`useKeyObjectInfo.ts:151-153`）：同一 owner
+   token 在极窄窗口内二次起飞（连点刷新）时，上一条 flight 的 `delete(id)` 可能摘掉新表的表项，
+   后果只是**少合并一次往返**（多一条命令），表项按身份令牌分桶 ⇒ 不可能因此误归属。不建议加锁。
+2. **BUG-002 修复后 `reload` 仍是每槽位各自 attempt**（协调者要求复核的保留形状 (2)）：
+   侧栏刷新后状态条可停在它自己上一次的读数 —— 属“**同一个键**的陈旧读数/失败态”，
+   不是“上一个键的读数”，未越 BUG-001 红线；该形状已被显式断言钉住。附带 UX 建议（非缺陷）：
+   状态条自身无刷新入口，是否在 W2-C 扩契约时补一个 affordance，交协调者裁定。
+3. **切键那一帧的状态标记**：`publishRead` 令 `info/loading/failed` 全空，
+   `attributeViewState` 因此回 `unavailable`，下一帧（effect 起飞）才是 `loading`。
+   两者都是“无已知事实”的命名空态，未伪造任何属性值，测试侧因 effect 提前 flush 而不可见；
+   仅记录，不改判。

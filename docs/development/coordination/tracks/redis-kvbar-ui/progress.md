@@ -1,12 +1,12 @@
 - 任务: KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3）
-- 状态: TEST_FAILED（第 1 轮 Tester 独立复跑：四项门禁全绿 + kv-bar 覆盖率 100%，但登记 4 条 `待修复`，其中 BUG-001 为 Major）
-- 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）
-- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ **第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）**
-- 判定 commit: 本次提交（`docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`）
-- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ **第 1 轮 Tester 第 2 任（接管收尾，本次关账）**
+- 状态: TEST_FAILED（**第 2 轮 Tester 复测**：BUG-001~004 四条判为**真已修掉**并置 `已修复`，五项门禁独立复跑全绿 + `ui/kv-bar/**` 覆盖率 100×4 + 15 项变异零存活；但复核“刻意保留形状”时**新登记 1 条 `待修复`：`redis-kvbar-ui-BUG-005`（Low，会话切换后驱逐策略行保留上一会话值）** ⇒ 仍需第 2 轮修复回合）
+- 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`
+- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ **第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）**
+- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；**第 2 轮 = 本次提交（`docs(coordination): redis-kvbar-ui 第 2 轮 Tester 判定 TEST_FAILED + BUG-005 登记`）**，门禁数字先行提交为 `3242800b4`
+- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → **第 2 轮 Tester（全新实例，本次关账）**
 - Worktree: .worktrees/datazen-redis-kvbar-ui
 - 分支: feature/redis-kvbar-ui
-- 心跳: 2026-09-22 12:40
+- 心跳: 2026-09-22 13:35（第 2 轮 Tester 关账）
 
 # redis-kvbar-ui 轨道台账
 
@@ -89,6 +89,14 @@ PRD §3.4 状态条样例含 **keys 总数 / loaded / 扫描游标 / 多选计�
   提交补测（`bb9946a56`）、去跨轨脆化并补 BUG-004 证据（`e0e0a19bb`）、独立复跑四项门禁、
   做完 15 项变异 + 4 项追加探针、登记 4 条 Bug 并关账为 `TEST_FAILED`。**只测不修**，
   生产代码零改动（每轮变异后 `git status` 均已确认干净）。
+- 第 5 棒 `w2a-kvbar-coder`（第 1 轮修复回合）：4 条修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` /
+  `5e145f566` + 台账 `a132bf5e7` / `1778f592a`；自述门禁数字与第 2 轮 Tester 独立复跑**逐项一致**。
+- 第 6 棒 `w2a-kvbar-tester-r2`（**第 2 轮 Tester，全新实例，本次关账**）：先落五项门禁原始数字
+  （`3242800b4`），再逐条判定 BUG-001~004（新测试文件 `kvBarRound2Tester.test.tsx` 10 例，`257017096`）、
+  量化复核 BUG-002 的 WeakMap 生命周期论证、独立裁定 Coder 两处“刻意保留形状”，
+  做完 15 项变异注入（零存活，含“去掉本轮新文件”对照列）、新登记 **BUG-005（Low）**
+  并关账为 `TEST_FAILED`。**只测不修**：生产代码零改动，全部注入均 `git checkout HEAD --` 还原，
+  未跑 e2e / cargo / `pnpm build` / `pnpm install`，未动 `ui/overview/**`、宿主 `src/**`、`hub.md`。
 
 ---
 
@@ -450,4 +458,76 @@ M15（两道全拆）钉住。本回合**不再为单拆任一闸门追加用例
    `expect(statusState).toBe('failed')` 钉住，翻转需故意。
    附带 UX 观察（非缺陷、不登记）：状态条自身没有刷新入口，用户只能靠再点一次键来救它 ——
    建议随 W2-C 扩 `KvSlotState` 时一并裁定是否给状态条一个 refresh  affordance。
+
+## 阶段 C：变异复验（15 项注入 = T1~T14 含 T2b，零存活；每项注入后 `git checkout HEAD --` 还原）
+
+电池：4 个 kv-bar 测试文件（`kvBarSlots` 17 + `kvBarSlotTesterGaps` 16 +
+`kvBarRound1Fixes` 16 + 本轮新文件 `kvBarRound2Tester` 10 = **59 例**，含 1 条登记用 skip）。
+**基线（无注入）：58 passed | 1 skipped | 0 failed**；注入前脚本要求 pattern 唯一命中，
+否则报 `APPLY-FAILED`（等价阴性对照，防“注了等于没注”）。
+最后一列是**同一注入去掉本轮新文件**（3 套 49 例）后的红数，用来回答第 1 轮那个
+“删 `dbSessionId` 依赖整套仍绿”式的无效补测问题。
+
+| # | 注入（生产代码） | 红数 / 59 | 去 r2 文件后 | 主要变红项（归因） |
+|---|---|---|---|---|
+| T1 | `publishRead` 的 owner 过滤整个删除（永远发布存量读数） | **3** | 3 | `[fix:BUG-001] pure` 三条全红 —— 见下方“T1 备注” |
+| T2 | `readToken` 去掉 `dbIndex`（owner 令牌去库号） | **2** | 2 | pure 逐字段那条 + statusBar 的“库号被替换”用例 |
+| T2b | `ownerOf` 把 `dbIndex` 写成常量 `0` | **12** | 3 | statusBar / 侧栏 / 合并表 / policy 多路全红（r2 独占 8 条） |
+| T3 | 合并表键**脱离 relay**（`WeakMap` 改挂 module 级共享对象 = 跨面板单例） | **4** | 2 | Coder 的“两面板不共享 scope” + r2 两条 policy + gaps 侧栏半 |
+| T4 | settled flight **不 `delete`**（退化成值缓存） | **8** | 4 | Coder 两条 + r2 三条（A→B→A / mid-flight 重开 / 粘住拒绝）+ round1Fixes BUG-003 + kvBarSlots 刷新 |
+| T5 | in-flight join 整体去掉（各槽位各发一次） | **8** | 3 | Coder 三条 + r2 四条 + 本轮合成路径那条 |
+| T6 | 合并令牌忽略**键名**（只按会话+库号合并） | **3** | 2 | r2 `keeps a late reply … share one read` + gaps 两条迟到回复 |
+| T7 | 成功回包不校验 owner | **3** | 3 | round1Fixes 两条乱序回复 + gaps 迟到成功 |
+| T8 | 失败回包不校验 owner | **1** | 1 | gaps 迟到失败 |
+| T9 | policy effect 依赖退回 `[open, dbSessionId]`（BUG-003 未修形态） | **3** | 2 | round1Fixes 两条 + r2 的“N 次点击 ⇒ N 次重读” |
+| T10 | ttl 行两臂互换（`missing ↔ no-expiry`） | **4** | 4 | BUG-004 三条 + kvBarSlots 属性表 happy path |
+| T11 | ttl 行退回固定 `redis.noExpiry`（修复前形态） | **2** | 2 | round1Fixes 跨槽位 + gaps 解开的那条 |
+| T12 | 状态条对 `-2` 也渲染 TTL 段 | **1** | 1 | round1Fixes BUG-004 跨槽位一致性 |
+| T13 | `.finally()` 改成只在成功臂 delete（失败粘在表里） | **2** | **1** | Coder 的失败共享用例 + r2 `sends a rejected read away with its promise` |
+| T14 | policy effect 依赖多加 `selectedKey`（BUG-003 的**过度修正**形态） | **5** | **2** | **只有 r2 文件抓得到额外 3 条**：`keeps the policy row for the same session across a key switch`（`info_filtered` 必须仍为 1 次）、`still costs one round trip … after a database-session swap`、`re-reads info_filtered once per click` |
+
+**结论：15 项注入（T1 / T2 / T2b / T3 ~ T14）零存活。** 任务书点名的 6 项（`publishRead` 过滤删除 / owner 令牌去 `dbIndex` /
+`WeakMap` 表键脱离 relay / `.finally()` 的 delete 去掉 / `attempt` 依赖退回 / `ttl.kind` 两臂互换）
+= T1、T2、T3、T4、T9、T10，**全部为红**。
+新补用例的有效性自证：**T14（过度修正方向）与 T13（拒绝粘滞）在去掉本轮新文件后红数从 5→2、2→1**，
+即这两类形态此前只有 `kvBarRound1Fixes` 的一半视角、无往返计数视角；
+T2b/T3/T4/T5 的红数亦从 3/2/4/3 抬到 12/4/8/8。
+
+**T1 备注（诚实登记，不是缺陷）**：删掉 render 期过滤后，**只有纯函数层的三条变红**，
+DOM 层无一条红 —— 因为 RTL 每次断言前 flush effects，`publishRead` 覆盖的那一帧
+（“选中已移动、新键的 effect 尚未起飞”）在测试里不可观测。这与 `kvBarRound1Fixes.test.tsx`
+文件头自述一致，也意味着：**该帧的正确性目前只由纯函数用例守护**。它是 BUG-001 的
+“加强版修法”相对建议修法 1 的全部增量，删除它 = 回到“侧栏/状态条在快速翻键时多画一帧旧值”，
+故三条纯函数用例即为充分守门，无需（也无法）再补 DOM 用例。
+
+**还原核验**：脚本每次注入后无条件 `git checkout HEAD -- <file>`，并在每次还原后复查
+`git status --porcelain -- packages src scripts`；全批结束时 `git status --porcelain`
+仅剩本台账目录内正在写的文档（生产码 / 测试码零残留）。
+临时产物：变异脚本 `/tmp/mut_r2.py`、`/tmp/mut_r2_nofile.py`、备份 `/tmp/kvBarRound2Tester.backup.tsx`
+均在 `/tmp`，未入库；本轮**未新增任何常驻探针文件**。
+
+## 【留待 R 回归】清单第 2 轮同步（真连 Redis / E2E 才能证；**本轮同样未跑任何 e2e**）
+
+R1~R9 **一条未消**：本轮 15 项注入与 10 条新用例全部在进程内（本地 `makeRelay()` 替身 +
+`commandInvoke` spy），没有一条触及真链路。相对第 1 轮的增量只是**口径变化**：
+
+| # | 第 2 轮状态变化 |
+|---|---|
+| R1 | 中继真写者的复用/回收语义**新增了进程内证据**（同一 `panelState` 展开给三槽、`pruneKvSlotStates` 唯一回收路径已读源码核实），但真机多面板复用仍待 e2e |
+| R3 | BUG-001 已置 `已修复`，本行从“缺陷待证”回到“真连复证”：真机快速翻键时状态条/侧栏不得闪旧值 |
+| R5 | BUG-003 已置 `已修复`（`attempt` 进依赖，1→2→3 次重读实测）；**新增 BUG-005 待真连复证**：真机切库/切连接时策略行是否肉眼可见地残留 |
+| R9 | BUG-002 采用 (a) in-flight 去重后，往返数在进程内量化为**每次选中 1 条**（两槽合并），值缓存嫌疑已用 5 种时序排除；真机延迟/QPS 影响仍待测 |
+| R2 / R4 / R6 / R7 / R8 | 本轮无变化，原样保留 |
+
+## 判定与关账
+
+- **状态 → `TEST_FAILED`**：BUG-001 / 002 / 003 / 004 四条**判为真已修掉**并置 `已修复`；
+  但阶段 A 的“刻意保留形状”复核新登记 **1 条 `待修复`：`redis-kvbar-ui-BUG-005`（Low）**
+  —— 会话切换后驱逐策略行仍显示上一会话的值（`KeyPropsSidebar.tsx:58` + `:62-65` 注释论证过宽）。
+  严重度 Low、窗口窄、第 1 轮前即存在，但属 BUG-001 同族（把另一身份下读到的事实挂在当前视图上），
+  且本轮修复回合把它写成了“不可能误归属”的声明，故不予放行到“已裁定不修”。
+- 新基线（合入本轮测试后）：**39 files / 321 passed + 1 skipped (322) / 0 failed**、
+  `tsc` exit 0。那 1 条 skip 是 BUG-005 的红测登记（解开即红，实测日志见 `bugs.md`）。
+- 覆盖率：`ui/kv-bar/**` 仍 **100 / 100 / 100 / 100**（本轮只增测试，未动生产码）。
+- 只测不修：生产代码零改动，全部变异均还原；未跑任何 e2e / cargo / `pnpm build` / `pnpm install`。
 
