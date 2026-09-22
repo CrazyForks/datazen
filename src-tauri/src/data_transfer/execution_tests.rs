@@ -56,6 +56,7 @@ impl DatabaseDriver for Driver {
         &self,
         _: &ConnectionHandle,
         _: &str,
+        _: Option<&str>,
     ) -> Result<Vec<TableInfo>, DriverError> {
         unsupported()
     }
@@ -63,12 +64,13 @@ impl DatabaseDriver for Driver {
         &self,
         _: &ConnectionHandle,
         relation: &str,
+        _: &str,
+        schema: Option<&str>,
     ) -> Result<TableSchema, DriverError> {
-        self.state
-            .lock()
-            .unwrap()
-            .metadata_refs
-            .push(relation.to_string());
+        self.state.lock().unwrap().metadata_refs.push(match schema {
+            Some(schema) => format!("{schema}.{relation}"),
+            None => relation.to_string(),
+        });
         Ok(self.schema.clone())
     }
     async fn query(&self, _: &ConnectionHandle, _: &str) -> Result<QueryResult, DriverError> {
