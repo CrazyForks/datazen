@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildKvAiContext,
-  composeKvAiMessage,
-  hasKvAiFacts,
-  type KvAiFacts,
-} from '../kvAiContext';
+import { buildKvAiContext, composeKvAiMessage, hasKvAiFacts, type KvAiFacts } from '../kvAiContext';
 
 /**
  * W3-A §1.3: the host may only inject facts it really owns, and the affordance
