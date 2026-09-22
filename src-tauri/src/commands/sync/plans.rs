@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::comparison_store::ComparisonStore;
+use super::comparison_store::{ComparisonStore, ComparisonTableMetadata};
 use crate::data_sync::{
     ChangeOperation, ComparisonResult, ConflictPolicy, RowChange, SyncOptions, SyncSourceFilter,
-    TableMappingStatus,
+    TableMappingStatus, TableResult,
 };
 
 pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
@@ -24,6 +24,10 @@ pub(crate) const SYNC_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
 /// comparison and execution always reloads it from `ComparisonStore`.
 pub(crate) const SYNC_COMPARISON_PAGE_SIZE: u32 = 100;
 pub(crate) const SYNC_COMPARISON_PAGE_MAX_LIMIT: u32 = 500;
+/// SQL preview and execution consume the persisted comparison in bounded
+/// chunks. Keep this aligned with the largest review page so one path cannot
+/// accidentally retain more row payloads than the IPC contract allows.
+pub(crate) const SYNC_COMPARISON_STREAM_PAGE_SIZE: usize = SYNC_COMPARISON_PAGE_MAX_LIMIT as usize;
 pub(crate) const SYNC_COMPARISON_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,6 +161,152 @@ pub(crate) struct SyncRunSelection {
     pub scopes: Vec<SyncTableSelection>,
 }
 
+#[derive(Debug)]
+struct SelectionScopeMatcher {
+    selection_mode: SyncSelectionMode,
+    operations: Vec<ChangeOperation>,
+    excluded_rows: HashSet<String>,
+}
+
+/// The server-owned selection contract compiled into a bounded row matcher.
+/// It contains only client supplied keys and scope metadata; row payloads
+/// remain in the ComparisonStore and are read one page at a time.
+#[derive(Debug)]
+pub(crate) struct SelectionMatcher {
+    explicit_rows: HashSet<String>,
+    scopes: HashMap<(String, String), Vec<SelectionScopeMatcher>>,
+}
+
+impl SelectionMatcher {
+    pub(crate) fn new(selection: &SyncRunSelection, options: &SyncOptions) -> Result<Self, String> {
+        let mut explicit_rows = HashSet::new();
+        for row in &selection.rows {
+            if !matches!(
+                row.operation,
+                ChangeOperation::Insert | ChangeOperation::Update | ChangeOperation::Delete
+            ) {
+                return Err("selection contains an invalid operation".into());
+            }
+            if !options.allows(row.operation) {
+                return Err(
+                    "selection contains an operation disabled by the requested options".into(),
+                );
+            }
+            let token = selection_token(
+                &row.source_table,
+                &row.target_table,
+                row.operation,
+                &row.key,
+            )?;
+            if !explicit_rows.insert(token) {
+                return Err("selection contains a duplicate row".into());
+            }
+        }
+
+        let mut scopes = HashMap::<(String, String), Vec<SelectionScopeMatcher>>::new();
+        let mut seen_scope_modes = HashSet::new();
+        let mut seen_scope_operations = HashMap::<(String, String), Vec<ChangeOperation>>::new();
+        for scope in &selection.scopes {
+            let pair = (scope.source_table.clone(), scope.target_table.clone());
+            if scope.operations.is_empty() {
+                return Err("selection scope must include at least one operation".into());
+            }
+            if !seen_scope_modes.insert((pair.0.clone(), pair.1.clone(), scope.selection_mode)) {
+                return Err("selection contains a duplicate table scope mode".into());
+            }
+            let mut operations = Vec::with_capacity(scope.operations.len());
+            for operation in &scope.operations {
+                if !matches!(
+                    operation,
+                    ChangeOperation::Insert | ChangeOperation::Update | ChangeOperation::Delete
+                ) {
+                    return Err("selection scope contains an invalid operation".into());
+                }
+                if operations.contains(operation) {
+                    return Err("selection scope contains a duplicate operation".into());
+                }
+                if !options.allows(*operation) {
+                    return Err(
+                        "selection scope contains an operation disabled by the requested options"
+                            .into(),
+                    );
+                }
+                operations.push(*operation);
+            }
+            let pair_operations = seen_scope_operations.entry(pair.clone()).or_default();
+            if operations
+                .iter()
+                .any(|operation| pair_operations.contains(operation))
+            {
+                return Err("selection contains overlapping table scope operations".into());
+            }
+            pair_operations.extend(operations.iter().copied());
+
+            let mut excluded_rows = HashSet::new();
+            for exclusion in &scope.excluded_rows {
+                if !operations.contains(&exclusion.operation) {
+                    return Err("selection exclusion is outside its table scope".into());
+                }
+                if !options.allows(exclusion.operation) {
+                    return Err(
+                        "selection exclusion contains an operation disabled by the requested options"
+                            .into(),
+                    );
+                }
+                let token = selection_token(
+                    &scope.source_table,
+                    &scope.target_table,
+                    exclusion.operation,
+                    &exclusion.key,
+                )?;
+                if !excluded_rows.insert(token) {
+                    return Err("selection contains a duplicate exclusion".into());
+                }
+            }
+            scopes.entry(pair).or_default().push(SelectionScopeMatcher {
+                selection_mode: scope.selection_mode,
+                operations,
+                excluded_rows,
+            });
+        }
+        Ok(Self {
+            explicit_rows,
+            scopes,
+        })
+    }
+
+    fn excluded_rows(&self) -> impl Iterator<Item = &String> {
+        self.scopes
+            .values()
+            .flat_map(|scopes| scopes.iter())
+            .flat_map(|scope| scope.excluded_rows.iter())
+    }
+
+    fn is_selected(
+        &self,
+        source_table: &str,
+        target_table: &str,
+        change: &RowChange,
+        options: &SyncOptions,
+    ) -> Result<bool, String> {
+        let token = selection_token(source_table, target_table, change.operation, &change.key)?;
+        if self.explicit_rows.contains(&token) {
+            return Ok(true);
+        }
+        Ok(self
+            .scopes
+            .get(&(source_table.to_string(), target_table.to_string()))
+            .into_iter()
+            .flat_map(|scopes| scopes.iter())
+            .any(|scope| {
+                scope.operations.contains(&change.operation)
+                    && (scope.selection_mode == SyncSelectionMode::All
+                        || change.operation.default_selected(options))
+                    && !scope.excluded_rows.contains(&token)
+            }))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SyncRunRequest {
@@ -180,7 +330,7 @@ pub(crate) fn default_profile_selection(
     if plan.selection_revision != revision {
         return Err("selection revision is stale; return to comparison".into());
     }
-    let comparison = load_comparison(&plan)?;
+    let summaries = plan.comparison.summaries()?;
     let operations = [
         ChangeOperation::Insert,
         ChangeOperation::Update,
@@ -192,13 +342,12 @@ pub(crate) fn default_profile_selection(
     if operations.is_empty() {
         return Err("profile has no enabled Data Sync operations".into());
     }
-    let scopes = comparison
-        .tables
+    let scopes = summaries
         .into_iter()
-        .filter(|table| table.status == TableMappingStatus::Matched)
+        .filter(|table| table.table.status == TableMappingStatus::Matched)
         .map(|table| SyncTableSelection {
-            source_table: table.source_table,
-            target_table: table.target_table,
+            source_table: table.table.source_table,
+            target_table: table.table.target_table,
             selection_mode: SyncSelectionMode::All,
             operations: operations.clone(),
             excluded_rows: Vec::new(),
@@ -596,6 +745,135 @@ pub(crate) fn claim_plan(id: &str) -> Result<StoredSyncPlan, String> {
 
 pub(crate) fn load_comparison(plan: &StoredSyncPlan) -> Result<ComparisonResult, String> {
     plan.comparison.load()
+}
+
+/// Validate a selection against the server-owned comparison without
+/// reconstructing the complete ComparisonResult. The manifest and indexed
+/// row frames are still validated by `summaries`/`load_table_page`; only one
+/// bounded page of row payloads is resident while checking membership.
+pub(crate) fn validate_selection_streaming(
+    comparison: &ComparisonStore,
+    selection: &SyncRunSelection,
+    options: &SyncOptions,
+) -> Result<SelectionMatcher, String> {
+    if selection.revision == 0 {
+        return Err("selection revision is required".into());
+    }
+    let matcher = SelectionMatcher::new(selection, options)?;
+    let summaries = comparison.summaries()?;
+    let matched_tables: HashSet<_> = summaries
+        .iter()
+        .filter(|table| table.table.status == TableMappingStatus::Matched)
+        .map(|table| {
+            (
+                table.table.source_table.clone(),
+                table.table.target_table.clone(),
+            )
+        })
+        .collect();
+    for pair in matcher.scopes.keys() {
+        if !matched_tables.contains(pair) {
+            return Err("selection scope does not belong to a matched comparison table".into());
+        }
+    }
+
+    let mut found_explicit = HashSet::new();
+    let mut found_exclusions = HashSet::new();
+    let mut scoped_rows: HashSet<String> = matcher.excluded_rows().cloned().collect();
+    for table in summaries
+        .iter()
+        .filter(|table| table.table.status == TableMappingStatus::Matched)
+    {
+        let pair = (
+            table.table.source_table.clone(),
+            table.table.target_table.clone(),
+        );
+        let mut offset = 0usize;
+        while offset < table.row_count {
+            let rows = comparison.load_table_page(
+                &table.table.source_table,
+                &table.table.target_table,
+                offset,
+                SYNC_COMPARISON_STREAM_PAGE_SIZE,
+            )?;
+            if rows.is_empty() {
+                return Err("comparison page did not advance while validating selection".into());
+            }
+            offset = offset.saturating_add(rows.len());
+            for change in rows {
+                let token = selection_token(
+                    &table.table.source_table,
+                    &table.table.target_table,
+                    change.operation,
+                    &change.key,
+                )?;
+                if matcher.explicit_rows.contains(&token) {
+                    found_explicit.insert(token.clone());
+                }
+                if let Some(scopes) = matcher.scopes.get(&pair) {
+                    for scope in scopes {
+                        if scope.excluded_rows.contains(&token) {
+                            found_exclusions.insert(token.clone());
+                        }
+                        if scope.operations.contains(&change.operation)
+                            && (scope.selection_mode == SyncSelectionMode::All
+                                || change.operation.default_selected(options))
+                            && !scope.excluded_rows.contains(&token)
+                        {
+                            scoped_rows.insert(token.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if found_explicit.len() != matcher.explicit_rows.len() {
+        return Err("selection contains a row that was not in the comparison plan".into());
+    }
+    let expected_exclusions: HashSet<_> = matcher.excluded_rows().cloned().collect();
+    if found_exclusions.len() != expected_exclusions.len() {
+        return Err("selection exclusion was not in the comparison plan".into());
+    }
+    if matcher
+        .explicit_rows
+        .iter()
+        .any(|token| scoped_rows.contains(token))
+    {
+        return Err("selection row duplicates a table scope".into());
+    }
+    Ok(matcher)
+}
+
+/// Copy only selected, option-allowed changes from a bounded page into a
+/// TableResult suitable for SQL generation. Unselected rows are discarded as
+/// soon as their page has been processed.
+pub(crate) fn selected_table_page(
+    table: &ComparisonTableMetadata,
+    rows: Vec<RowChange>,
+    matcher: &SelectionMatcher,
+    options: &SyncOptions,
+) -> Result<Option<TableResult>, String> {
+    if table.table.status != TableMappingStatus::Matched {
+        return Ok(None);
+    }
+    let mut selected = Vec::with_capacity(rows.len());
+    for mut change in rows {
+        change.selected = matcher.is_selected(
+            &table.table.source_table,
+            &table.table.target_table,
+            &change,
+            options,
+        )?;
+        if change.eligible_for_changeset(options) {
+            selected.push(change);
+        }
+    }
+    if selected.is_empty() {
+        return Ok(None);
+    }
+    let mut result = table.table.clone();
+    result.rows = selected;
+    Ok(Some(result))
 }
 
 /// Read one review page from the server-owned comparison. File-backed stores
@@ -1382,6 +1660,75 @@ mod tests {
         .unwrap();
         assert_eq!(page.rows.len(), 1);
         assert_eq!(plan.comparison.full_load_calls(), before);
+    }
+
+    #[test]
+    fn streaming_selection_reads_spilled_rows_in_pages_without_full_load() {
+        let source = MockDriver::new("postgres", MockDriverOptions::default());
+        let target = MockDriver::new("postgres", MockDriverOptions::default());
+        let options = SyncOptions::default();
+        let payload = "x".repeat(super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1);
+        let mut rows = Vec::with_capacity(501);
+        rows.push(RowChange::insert(
+            vec![Value::Integer(0)],
+            vec![Some(Value::String(payload))],
+            &options,
+        ));
+        rows.extend((1..=500).map(|key| {
+            RowChange::insert(
+                vec![Value::Integer(key)],
+                vec![Some(Value::Integer(key))],
+                &options,
+            )
+        }));
+        let comparison = ComparisonResult::new(vec![TableResult::matched("users", "users", rows)]);
+        let comparison = ComparisonStore::from_comparison(comparison).unwrap();
+        assert!(comparison.is_spilled());
+        let store = SyncPlanStore::new();
+        let preview = store
+            .issue_with_store(
+                "plan-stream".into(),
+                1,
+                "source-session".into(),
+                "target-session".into(),
+                "source-db".into(),
+                "target-db".into(),
+                None,
+                None,
+                source.as_ref(),
+                target.as_ref(),
+                "source-fingerprint".into(),
+                "target-fingerprint".into(),
+                comparison,
+                options.clone(),
+                false,
+            )
+            .unwrap();
+        let plan = store.peek(&preview.plan_id).unwrap();
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![table_scope(Vec::new())],
+        };
+        let matcher = validate_selection_streaming(&plan.comparison, &selection, &options).unwrap();
+        assert_eq!(plan.comparison.full_load_calls(), 0);
+        let table = plan
+            .comparison
+            .summaries()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let rows = plan
+            .comparison
+            .load_table_page("users", "users", 500, 1)
+            .unwrap();
+        let page = selected_table_page(&table, rows, &matcher, &options)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert!(matches!(page.rows[0].key.as_slice(), [Value::Integer(500)]));
+        assert_eq!(plan.comparison.full_load_calls(), 0);
     }
 
     #[test]

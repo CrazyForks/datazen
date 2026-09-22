@@ -3,7 +3,8 @@
 use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
 use super::apply::generate_data_sync_sql_impl;
-use super::plans::{self, StoredSyncPlan, SyncRunRequest, SyncRunSelection};
+use super::comparison_store::{ComparisonStore, ComparisonTableMetadata};
+use super::plans::{self, SelectionMatcher, StoredSyncPlan, SyncRunRequest, SyncRunSelection};
 use crate::data_sync::{
     execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
     SyncOptions,
@@ -76,7 +77,10 @@ async fn validate_plan_context(
     state: &AppState,
     plan: &StoredSyncPlan,
 ) -> Result<ValidatedSyncContext, CommandError> {
-    let comparison = plans::load_comparison(plan).map_err(CommandError::Validation)?;
+    let comparison = plan
+        .comparison
+        .summaries()
+        .map_err(CommandError::Validation)?;
     if plan.target_read_only_at_preview {
         return Err(CommandError::Validation(
             "target connection was read-only during comparison; return to comparison".into(),
@@ -182,19 +186,18 @@ async fn current_schema_fingerprint(
     _session_id: &str,
     database: &str,
     schema: Option<&str>,
-    comparison: &crate::data_sync::ComparisonResult,
+    comparison: &[ComparisonTableMetadata],
     source: bool,
 ) -> Result<String, CommandError> {
     let mut entries = Vec::new();
     for table in comparison
-        .tables
         .iter()
-        .filter(|table| table.status == crate::data_sync::TableMappingStatus::Matched)
+        .filter(|table| table.table.status == crate::data_sync::TableMappingStatus::Matched)
     {
         let relation = if source {
-            &table.source_table
+            &table.table.source_table
         } else {
-            &table.target_table
+            &table.table.target_table
         };
         let schema_snapshot = driver
             .get_table_schema(handle, relation, database, schema)
@@ -203,11 +206,72 @@ async fn current_schema_fingerprint(
         entries.push((
             relation.clone(),
             schema_snapshot,
-            table.source_filter.clone(),
+            table.table.source_filter.clone(),
         ));
     }
     plans::fingerprint_relations_with_filters(database, schema, entries)
         .map_err(CommandError::Validation)
+}
+
+/// Generate SQL from a persisted comparison without reconstructing the
+/// complete ComparisonResult. Each selected page is released after SQL for
+/// that page has been produced; the returned SQL remains the public preview
+/// contract and is therefore allowed to grow with the requested preview.
+async fn generate_data_sync_sql_from_store_pages(
+    state: &AppState,
+    target_db_session_id: &str,
+    comparison: &ComparisonStore,
+    matcher: &SelectionMatcher,
+    options: &SyncOptions,
+    target_database: Option<&str>,
+    target_schema: Option<&str>,
+) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
+    let summaries = comparison.summaries().map_err(CommandError::Validation)?;
+    let mut statements = Vec::new();
+    for table in summaries
+        .iter()
+        .filter(|table| table.table.status == crate::data_sync::TableMappingStatus::Matched)
+    {
+        let mut offset = 0usize;
+        while offset < table.row_count {
+            let rows = comparison
+                .load_table_page(
+                    &table.table.source_table,
+                    &table.table.target_table,
+                    offset,
+                    plans::SYNC_COMPARISON_STREAM_PAGE_SIZE,
+                )
+                .map_err(CommandError::Validation)?;
+            if rows.is_empty() {
+                return Err(CommandError::Validation(
+                    "comparison page did not advance while generating SQL".into(),
+                ));
+            }
+            offset = offset.saturating_add(rows.len());
+            let Some(table_page) = plans::selected_table_page(table, rows, matcher, options)
+                .map_err(CommandError::Validation)?
+            else {
+                continue;
+            };
+            statements.extend(
+                generate_data_sync_sql_impl(
+                    state,
+                    target_db_session_id.to_string(),
+                    vec![table_page],
+                    options.clone(),
+                    target_database.map(str::to_string),
+                    target_schema.map(str::to_string),
+                )
+                .await?,
+            );
+        }
+    }
+    if statements.is_empty() {
+        return Err(CommandError::Validation(
+            "change set is empty; nothing to execute".into(),
+        ));
+    }
+    Ok(statements)
 }
 
 fn validate_requested_options(
@@ -235,25 +299,23 @@ pub(crate) async fn generate_data_sync_sql_for_plan_impl(
     options: SyncOptions,
 ) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
     let plan = plans::peek_plan(&plan_id).map_err(CommandError::Validation)?;
-    let comparison = plans::load_comparison(&plan).map_err(CommandError::Validation)?;
     if selection.revision != plan.selection_revision {
         return Err(CommandError::Validation(
             "selection revision is stale; return to comparison".into(),
         ));
     }
     validate_requested_options(&plan, &options)?;
-    plans::validate_selection(&comparison, &selection, &options)
+    let matcher = plans::validate_selection_streaming(&plan.comparison, &selection, &options)
         .map_err(CommandError::Validation)?;
     let _context = validate_plan_context(state, &plan).await?;
-    let comparison = plans::apply_selection(&comparison, &selection, &options)
-        .map_err(CommandError::Validation)?;
-    generate_data_sync_sql_impl(
+    generate_data_sync_sql_from_store_pages(
         state,
-        plan.target_db_session_id,
-        comparison.tables,
-        options,
-        Some(plan.target_database),
-        plan.target_schema,
+        &plan.target_db_session_id,
+        &plan.comparison,
+        &matcher,
+        &options,
+        Some(&plan.target_database),
+        plan.target_schema.as_deref(),
     )
     .await
 }
@@ -268,26 +330,25 @@ pub(crate) async fn execute_data_sync_plan_impl(
         ));
     }
     let plan = plans::peek_plan(&request.plan_id).map_err(CommandError::Validation)?;
-    let comparison = plans::load_comparison(&plan).map_err(CommandError::Validation)?;
     if request.selection.revision != plan.selection_revision {
         return Err(CommandError::Validation(
             "selection revision is stale; return to comparison".into(),
         ));
     }
     validate_requested_options(&plan, &request.options)?;
-    plans::validate_selection(&comparison, &request.selection, &request.options)
-        .map_err(CommandError::Validation)?;
+    let matcher =
+        plans::validate_selection_streaming(&plan.comparison, &request.selection, &request.options)
+            .map_err(CommandError::Validation)?;
     let context = validate_plan_context(state, &plan).await?;
-    let comparison = plans::apply_selection(&comparison, &request.selection, &request.options)
-        .map_err(CommandError::Validation)?;
     let conflict_policy = request.options.conflict_policy;
-    let statements = generate_data_sync_sql_impl(
+    let statements = generate_data_sync_sql_from_store_pages(
         state,
-        plan.target_db_session_id.clone(),
-        comparison.tables,
-        request.options,
-        Some(plan.target_database),
-        plan.target_schema,
+        &plan.target_db_session_id,
+        &plan.comparison,
+        &matcher,
+        &request.options,
+        Some(&plan.target_database),
+        plan.target_schema.as_deref(),
     )
     .await?;
     // Claim immediately before the first transaction side effect. A failed
