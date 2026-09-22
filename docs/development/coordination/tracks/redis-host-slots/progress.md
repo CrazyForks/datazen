@@ -2,9 +2,16 @@
 
 - 分支: `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375）
 - 角色: Coder → Tester（已复测 PASSED）→ Coder（第 1 轮修复）→ Tester（第 1 轮修复复测：**PASSED**）
-- 状态: **READY_TO_MERGE**（3 条非阻断 Bug 已全部复测确认为"已修复"；F-1/F-2/F-3 与 4 个 DOM 标记
-  未改名，Wave 2 可逐字照抄契约段。复测细节见 §复测记录（第 1 轮修复后））
+- 任务: 宿主 KV 槽位与能力判定（去硬编码 + 死按钮修正）
+- 状态: MERGED（2026-09-22 · 第 1 轮修复复测 PASSED）
+- 编码 commit: `d4469185e`
+- 测试 commit: `91b12d28d`（复测确认）+ `840fd386b`（裁定台账）
+- 合并 commit: `fcf606ca2`
+- 代理: 无活跃子代理
+- 心跳: 2026-09-22 已合流至 `feat/redis-workspace-ux`
 - Worktree: `.worktrees/datazen-redis-host-slots`
+> 状态详情（历史）：**READY_TO_MERGE**（3 条非阻断 Bug 已全部复测确认为"已修复"；F-1/F-2/F-3 与 4 个 DOM 标记
+  未改名，Wave 2 可逐字照抄契约段。复测细节见 §复测记录（第 1 轮修复后））
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §3.0、§3.4、§7-1/2/4、§8-1（P0 ⑥）
 
 ## 背景

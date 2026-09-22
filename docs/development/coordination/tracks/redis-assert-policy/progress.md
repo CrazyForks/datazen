@@ -2,7 +2,14 @@
 
 - 分支: `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375）
 - 角色: Coder → Tester
-- 状态: **FAILED（第 1 轮修复后复测，Tester 独立复证 HEAD `47b9a4a9f`）→ 回炉** — BUG-001/002/003/004 四条闭环、BUG-005 部分闭环（复测记录见下方「Tester 第 1 轮修复后复测记录」）；四条门禁真数字与三组反装饰变异均本机实跑通过、修复未引入回归。但新登记 BUG-006/007/008 三条待修复缺陷（详见 [bugs.md](bugs.md)），故本轮不置 PASSED — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）+ `8fe2a4f66`（Tester 变异检验）+ `acd1c6486`（台账）；回炉修复：`075d2a10c`（BUG-001/002/004/005 码改，第二任 Coder 失联时原样落盘）+ 本 commit（BUG-003 数字 + 三处文档口径 + 实跑台账）。Tester 复测记录见下方「Tester 复测记录」，Bug 处置见 [bugs.md](bugs.md)
+- 任务: 存量"钉死英文文案"断言改写 + 原则六口径落档（i18n 文案护栏按裁定撤销）
+- 状态: MERGED（2026-09-22 · 第 3 轮由协调者裁定取消，只合改写）
+- 编码 commit: `abe72c9bb`（撤护栏留改写）+ 历史 `1f7965677` / `075d2a10c`
+- 测试 commit: 第 1 轮复测 `47b9a4a9f`（FAILED）；第 2 轮修复后未复测（裁定撤护栏，无待测代码）
+- 合并 commit: `9a194afa7`
+- 代理: 无活跃子代理（按裁定停止）
+- 心跳: 2026-09-22 已合流至 `feat/redis-workspace-ux`
+> 状态详情（历史）：**FAILED（第 1 轮修复后复测，Tester 独立复证 HEAD `47b9a4a9f`）→ 回炉** — BUG-001/002/003/004 四条闭环、BUG-005 部分闭环（复测记录见下方「Tester 第 1 轮修复后复测记录」）；四条门禁真数字与三组反装饰变异均本机实跑通过、修复未引入回归。但新登记 BUG-006/007/008 三条待修复缺陷（详见 [bugs.md](bugs.md)），故本轮不置 PASSED — 编码 commit `1f7965677`（9 文件改写 + 护栏 + 文档）+ `56ae62cf2`（护栏词表/形态修复）+ `4cdc0c023`（关账自验）+ `8fe2a4f66`（Tester 变异检验）+ `acd1c6486`（台账）；回炉修复：`075d2a10c`（BUG-001/002/004/005 码改，第二任 Coder 失联时原样落盘）+ 本 commit（BUG-003 数字 + 三处文档口径 + 实跑台账）。Tester 复测记录见下方「Tester 复测记录」，Bug 处置见 [bugs.md](bugs.md)
 - 接管记录 2: 第二任 Coder（回炉 5 条 Bug）在 BUG-004 处失联，遗留 6 个脏文件（含新文件 `src/test/enCopy.ts`）零提交。第三任 Rescuer 逐文件盘点 diff 后**原样提交**（`075d2a10c`，未推翻任何改法），续做 BUG-003 与三处文档口径，并补跑探针与覆盖率自验（见「Rescuer 第二轮续做记录」）。
 - Worktree: `.worktrees/datazen-redis-assert-policy`
 - 规格: `docs/todo/redis-workbench-ux/PRD.md` §7-6、§8.2（处理决定表）
@@ -341,6 +348,6 @@
 
 **保留范围（本轨真实交付）**：`locales.test.ts` / `Dialog` / `MenuBar` / `ErrorBoundary` / `ConfirmDialog` / `useConfirmDialog` / `ttlControlsJourney` / `queryExecutionJourney` / `retest-round1-fixes.tester` 等文案断言改写、`src/test/enCopy.ts` + 其单测、`TtlControls.tsx` 三个 `data-*`、原则六正文与正反例、`tester.md` 的「零文案断言」条目。
 
-**Bug 状态影响**：BUG-004 / 005 / 007（皆为护栏自身缺陷）随载体删除而**撤销**，不再计入未关闭项；BUG-003（台账数字口径）撤销；BUG-001 / 002 / 006 已修复且复证通过，维持不变。
+**Bug 状态影响**：BUG-004 / 005 / 007（皆为护栏自身缺陷）随载体删除而**撤销**，不再计入未关闭项；BUG-003（台账数字口径）撤销；BUG-001 / 002 / 006 已修复且复证通过，维持不变。BUG-008（`--terms` 能力边界文档口径）与 BUG-003 同类，载体既删 ⇒ 同记**撤销**（合流时补记，不另开轮次）。
 
 **流程裁定**：撤销后**不再开第 3 轮**，也不再派新 Tester 复测已删除的护栏。合流前只做一次全量门禁复跑（宿主 vitest + 驱动 vitest + `tsc`），确认删除无悬挂引用；`--strict` 相关的 R 阶段接线项从任务 #44 中移除。

@@ -2,7 +2,7 @@
 
 # Coordination Hub — 协调总览
 
-> **状态**：所有波次与轨道已全部合入主线，暂无活跃开发轨道。
+> **状态**：Redis Workbench P0（`docs/todo/redis-workbench-ux/PRD.md` v1.1.0）Wave 1 三条轨道已全部合入集成分支 `feat/redis-workspace-ux`；暂无活跃子代理，等待派发 Wave 2。上一轮（驱动解耦 `feat/driver-decoupling`）已关账，其轨道目录保留为历史台账。
 
 ## 功能总览表
 
@@ -20,8 +20,11 @@
 | cap-bridge | — | 未开始 | — | — | — |
 | decouple-docs | — | 未开始 | — | — | — |
 | i18n-drivers | — | 未开始 | — | — | — |
-| import-guard | boundaries`，一行即可，请裁定。 | 未开始 | — | — | — |
-| r-phase | 80-86`，与 §2.4.2 对齐）✔；§5 五条裁定在文 ✔；「第 2 轮修复回合」节存在 ✔。 | 未开始 | — | — | — |
+| import-guard | — | 未开始 | — | — | — |
+| r-phase | — | 未开始 | — | — | — |
+| redis-assert-policy | 存量"钉死英文文案"断言改写 + 原则六口径落档（i18n 文案护栏按裁定撤销） | MERGED（2026-09-22 · 第 3 轮由协调者裁定取消，只合改写） | `abe72c9bb`（撤护栏留改写）+ 历史 `1f7965677` / `075d2a10c` | 第 1 轮复测 `47b9a4a9f`（FAILED）；第 2 轮修复后未复测（裁定撤护栏，无待测代码） | `9a194afa7` |
+| redis-cmds-p0 | 两条 P0 后端命令（`type_distribution` / `key_object_info`） | MERGED（2026-09-22 · 第 3 轮复测 TEST_DONE） | `81cc58a90` + `286d917c4` + `a6304a4fb` | `77cec65c3`（Tester 第 3 轮裁定 + 门禁复跑台账） | `f3d396292` |
+| redis-host-slots | 宿主 KV 槽位与能力判定（去硬编码 + 死按钮修正） | MERGED（2026-09-22 · 第 1 轮修复复测 PASSED） | `d4469185e` | `91b12d28d`（复测确认）+ `840fd386b`（裁定台账） | `fcf606ca2` |
 
 ## 写锁台账
 
@@ -39,17 +42,39 @@
 | cap-bridge | — | — | `feature/cap-bridge`（基准 `feat/driver-decoupling` @ c3058fdd0） | 未开始 | — |
 | decouple-docs | — | — | `feature/decouple-docs`（基准 `feat/driver-decoupling` @ d172476fc） | 未开始 | — |
 | i18n-drivers | — | — | `feature/i18n-drivers`（基准 `feat/driver-decoupling` @ d172476fc，已含 Wave 1 全部 + i18n-core + cap-bridge） | 未开始 | — |
-| import-guard | 31/232`、`CONTRIBUTING.md:91`、`.gitignore:64` 仍描述已退役的 `src/extensions/generated-locales.ts`（`i18n-drivers` 轨已登记给 `decouple-docs`/hub，本轨无权限改，维持原登记）。 | *` 均触发 deps-check 且无 TTY 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`（既有 `pnpm test:ids` 复现完全相同）；新接线与既有 guard 同构，CI 首步 `pnpm install` 后即正常。 | 15）： | 未开始 | — |
+| import-guard | — | — | `feature/import-guard`（基准 `feat/driver-decoupling` @ 8b66586e4，Wave 1/2/3 全部已合并） | 未开始 | — |
 | r-phase | — | — | `feature/r-phase`（基准 = Wave 4-A `import-guard` 合并后的 `feat/driver-decoupling` HEAD） | 未开始 | — |
+| redis-assert-policy | 无活跃子代理（按裁定停止） | `.worktrees/datazen-redis-assert-policy` | `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 3 轮由协调者裁定取消，只合改写） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
+| redis-cmds-p0 | 无活跃子代理（Tester 第 3 轮已交付） | `.worktrees/datazen-redis-cmds-p0` | `feature/redis-cmds-p0`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 3 轮复测 TEST_DONE） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
+| redis-host-slots | 无活跃子代理 | `.worktrees/datazen-redis-host-slots` | `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 1 轮修复复测 PASSED） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
 
 ## 波次记录
 
-- 所有历史波次均已闭环并合入主集成分支。
+### Redis Workbench P0（集成分支 `feat/redis-workspace-ux`，基准 `ae65ae375`）
+
+- **Wave 0**（2026-09-21）：PRD v1.1.0 与原型落档；三条轨道 worktree 建立。
+- **Wave 1**（2026-09-22，全部合入）：
+  - `redis-host-slots` —— 宿主 KV 槽位与能力判定（`kvWorkspace` 能力位 + 4 个 codegen 槽位 + 死按钮修正）。Bug 循环 1 轮，复测 PASSED → `fcf606ca2`。
+  - `redis-cmds-p0` —— `type_distribution` / `key_object_info` 两条 P0 后端命令（三拓扑往返口径）。Bug 循环 3 轮，复测 TEST_DONE → `f3d396292`。
+  - `redis-assert-policy` —— 存量"钉死英文文案"断言改写 + 原则六口径落档 → `9a194afa7`。**中途裁定**：i18n 文案护栏脚本（420 行）+ 自测（687 行）+ 两条 npm 脚本按用户裁定整体删除，不再开第 3 轮复测（详见该轨 progress.md「协调者裁定（第 2 轮 · 护栏整体撤销）」）。
+- **Wave 2**（待派）：`redis-kvbar-ui`（KV 上下文条，消费 W1-A 两命令 + W1-B `contextBar` 槽位）+ `redis-overview`（屏 A 总览，消费 `home` 槽位）。
+- **R 阶段**（待执行）：见下方「R 阶段清单」。
 
 ## 跨轨风险
 
-- 无活跃跨轨冲突。
+- **Wave 2 契约已冻结**：`type_distribution` / `key_object_info` 的声明面（字段与类型）与 `b1e1f4010` 逐字节相同，UI 侧照 W1-A progress.md 的契约段消费，不得反向要求后端改形状。
+- **Cluster 往返预算不是"一次 pipeline"**：standalone/sentinel `key_object_info` = 2 次往返，Cluster = 7 次；`type_distribution` 在 Cluster 采样窗硬限 200。UI 必须渲染 `truncated` 的"采样 N/M"标注，否则会把采样读成精确分布。
+- **Cluster 键树仍不可用**（基线缺陷 #56）：既有 `list_children` 在 Cluster 下同形 CrossSlot，Wave 2 不要在键树里假设 Cluster 可用，需在 UI 上给出降级提示。
+- **驱动不得 import `src/**`**：`KV_SLOT_NAMES` 之类宿主常量在驱动侧不可见，用 driver-sdk 的 `KvSlotName` 或由宿主把判定结果作 props 传入（W1-B 已按此形状生成槽位）。
+- **文案改动无护栏兜底**：护栏已删，"新测试零可见英文字面量"退化为纯人工评审口径（原则六）；派单时把该口径写进 Coder/Tester 验收标准，不要再提议脚本。
 
 ## R 阶段清单
 
-- [x] 全量回归与构建健全性验证通过
+- [ ] 全量回归：`npx tsc --noEmit` + 宿主 vitest + `pnpm test:unit:drivers` + `cargo test -p datazen --lib`（Wave 1 合流时已跑过一次：tsc 0 错、宿主 451 文件 / 4658 例、驱动 33 文件 / 241 例、Rust 1454 通过 / 3 ignored）。
+- [ ] `node scripts/check-driver-import-boundaries.mjs --root` 在**主检出**复跑（worktree 缺 gitignored 的 git 驱动与 pro-extensions，结果不完整）。
+- [ ] **真连 Cluster 侧证 9a**：redis-cmds-p0 BUG-007 只有进程内复测，`route_command` 那一行不可证伪 ⇒ 需真集群 MONITOR 核对每条命令的落点，通过前该条不自关闭。
+- [ ] **真连 Cluster 9e**：`list_children` CrossSlot 基线缺陷（#56）复现并裁定归属。
+- [ ] SELECT 哨兵项：`select_db` 按 `current_db` 短路（#55，P1 候选）在真连下确认少 1 次往返。
+- [ ] Wave 2 全部 GUI 走查（上下文条 / 键属性侧栏 / 屏 A 让位）留待人工，单测不替代。
+- [ ] `RedisWorkbench.tsx`（680 行）拆分与 `cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件拆分（800 行红线）。
+- [ ] 轨道 worktree / feature 分支清理（三条已合入的可在 R 阶段末删除）。
