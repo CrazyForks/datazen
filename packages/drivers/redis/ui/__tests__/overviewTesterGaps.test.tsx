@@ -367,3 +367,120 @@ describe('[tester] 内存条 ≥90% 的 danger 着色', () => {
     expect(coolFill?.className).toContain('bg-accent');
   });
 });
+
+// ---------------------------------------------------------------------------
+// [tester] 第 2 轮：屏 A 大 key 行 TTL / 类型徽标的**可见**三态
+//
+// 变异复验 C2 证明：`bigKeyTtlText` 的四条臂（永不过期 / 正数剩余 / 键消失 /
+// 不可读）在存量 363 例里**一条都没钉**——把整个函数塌成「非正数一律 —」后全套
+// 仍绿，即 PRD §3.1 卡 2 的 TTL 列与裁定 8-6 的 `-1 / -2` 可区分空态等于没测。
+// 这里按 `data-overview-bigkey-ttl` 拿到**渲染出的单元格文本**，断言对象是
+// i18n key 与破折号（`t` 被 mock 成 key 恒等），零可见英文文案（PRD §7-6）。
+// 同一批用例并钉住类型徽标的 tone class：BUG-001 的病根是「只有 data-* 没有可见
+// 标记」，若 class 从 `cn()` 里掉出去，界面上就是一枚无色徽标，也应红。
+// ---------------------------------------------------------------------------
+
+const BIG_KEY_SAMPLES = {
+  samples: [
+    { key: 'k:expire-never', bytes: 500, type: 'string', ttlMs: -1, missing: false },
+    { key: 'k:countdown', bytes: 400, type: 'hash', ttlMs: 8_000, missing: false },
+    { key: 'k:unreadable', bytes: 300, type: 'list', ttlMs: null, missing: false },
+    { key: 'k:vanished', bytes: 200, type: null, ttlMs: -2, missing: true },
+    // PTTL 读到 -2 而 TYPE 当时仍答得出（批内竞态）：既不是永不过期也不是
+    // 已标注的消失键，只能落中性破折号，不许编造剩余时间。
+    { key: 'k:minus-two-unflagged', bytes: 100, type: 'set', ttlMs: -2, missing: false },
+  ],
+  truncated: false,
+};
+
+async function renderBigKeys() {
+  stubHome({ [OVERVIEW_COMMANDS.memorySample]: BIG_KEY_SAMPLES });
+  const view = render(<RedisOverviewHome {...homeProps()} />);
+  await waitFor(() => expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(5));
+  return view.container;
+}
+
+function ttlCell(container: HTMLElement, rank: number): Element | null {
+  return container.querySelector(`[data-overview-bigkey-ttl="${rank}"]`);
+}
+
+describe('[tester] 大 key 行 TTL 列的四态互不塌陷', () => {
+  it('renders a distinct cell for no-expiry / remaining / unreadable / gone', async () => {
+    const container = await renderBigKeys();
+
+    // rank1 PTTL=-1 ⇒ 永不过期；rank2 正数 ⇒ 秒数（8000ms → 8 + 单位 key）。
+    expect(ttlCell(container, 1)?.textContent).toBe('redis.noExpiry');
+    expect(ttlCell(container, 2)?.textContent).toBe(`8redis.seconds`);
+    // rank3 不可读、rank5 -2 但未标 missing ⇒ 同一个中性破折号，绝不显示负数。
+    expect(ttlCell(container, 3)?.textContent).toBe('—');
+    expect(ttlCell(container, 5)?.textContent).toBe('—');
+    // rank4 采样后被删 ⇒ 具名「已消失」状态，且**不等于**破折号或永不过期。
+    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
+
+    const cells = [1, 2, 3, 4].map((rank) => ttlCell(container, rank)?.textContent);
+    expect(new Set(cells).size).toBe(4);
+    expect(cells).not.toContain('-1');
+    expect(cells).not.toContain('-2');
+  });
+
+  it('keeps the gone state tied to the missing flag, not to the -2 sentinel', async () => {
+    // rank4(missing,-2) 与 rank5(未标 missing,-2) 的 ttlMs 相同，只有 missing 位
+    // 决定二者文案 ⇒ 「把 -2 直接当成已消失」这类合并实现会在此红。
+    const container = await renderBigKeys();
+    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
+    expect(ttlCell(container, 5)?.textContent).toBe('—');
+    expect(
+      container
+        .querySelector('[data-overview-bigkey="5"]')
+        ?.getAttribute('data-overview-bigkey-missing'),
+    ).toBe('false');
+  });
+
+  it('marks a gone row muted but leaves a live row on the secondary colour', async () => {
+    const container = await renderBigKeys();
+    expect(ttlCell(container, 4)?.className).toContain('text-fg-muted');
+    expect(ttlCell(container, 2)?.className).toContain('text-fg-secondary');
+  });
+});
+
+describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () => {
+  it('paints each row badge with its typeTone class, unknown stays neutral', async () => {
+    const container = await renderBigKeys();
+    const badgeOf = (rank: number) =>
+      container.querySelector(`[data-overview-bigkey="${rank}"] .text-success`);
+
+    // hash→success / list→warning / string→accent / set→danger（typeTone 词表）。
+    expect(badgeOf(2)).not.toBeNull();
+    expect(
+      container.querySelector(`[data-overview-bigkey="1"] .text-accent`),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(`[data-overview-bigkey="3"] .text-warning`),
+    ).not.toBeNull();
+    expect(container.querySelector(`[data-overview-bigkey="5"] .text-danger`)).not.toBeNull();
+    // 类型读不到 ⇒ 中性色 + 具名 unknown 占位（i18n key，非英文字面量）。
+    const goneRow = container.querySelector('[data-overview-bigkey="4"]') as Element;
+    expect(goneRow.querySelector('.border-edge')).not.toBeNull();
+    expect(goneRow.textContent).toContain('redis.overview.typeUnknown');
+  });
+
+  it('paints the recent-key badge with the same class vocabulary', () => {
+    const { container } = render(
+      <RecentKeysCard
+        entries={[
+          { key: 'user:1', dbIndex: 1, keyType: 'string', visitedAt: 1_700_000_000_000 },
+          { key: 'gone:1', dbIndex: 1, keyType: null, visitedAt: 1_700_000_000_000 },
+        ]}
+        onJump={vi.fn()}
+        onClear={vi.fn()}
+      />,
+    );
+
+    const known = container.querySelector('[data-overview-recent-key="user:1"]') as Element;
+    expect(known.querySelector('.text-accent')).not.toBeNull();
+    expect(known.textContent).toContain('string');
+    const unknown = container.querySelector('[data-overview-recent-key="gone:1"]') as Element;
+    expect(unknown.querySelector('.border-edge')).not.toBeNull();
+    expect(unknown.textContent).toContain('redis.overview.typeUnknown');
+  });
+});
