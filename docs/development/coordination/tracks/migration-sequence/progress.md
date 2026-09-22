@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+TEST_DONE
 
 ## Scope
 
@@ -102,6 +102,18 @@ READY_FOR_TEST
   quoted identities exactly while folding unquoted identities to lower case.
 - Sequence replacement no longer returns rollback SQL because recreating a
   sequence cannot restore its mutable `last_value` counter.
-- The tester regression crate passes all four repaired cases locally; the
-  focused Driver API and PostgreSQL suites remain green. A fresh independent
-  tester rerun is still required before merge.
+- Fresh independent Tester rerun after repair commit `bcbb2903`:
+  - regression crate: **4 passed, 0 failed**;
+  - Driver API: **147 passed, 0 failed**;
+  - PostgreSQL driver: **124 passed, 0 failed**;
+  - MySQL migration subset: **19 passed, 0 failed**;
+  - SQLite migration subset: **10 passed, 0 failed**;
+  - injected Host `schema_diff`: **110 passed, 0 failed**;
+  - Schema Diff wrapper Vitest: **18 passed, 0 failed**;
+  - `npx tsc --noEmit`: passed;
+  - changed-file rustfmt check and `git diff --check`: passed.
+- Both previously reported P1 bugs are closed by the fresh Tester. Live PostgreSQL
+  journeys remain registered as **【留待 R】** because no local PostgreSQL fixture
+  is available.
+- Verdict: **TEST_DONE**; ready for coordinator merge after generated files and
+  `Cargo.lock` are restored.

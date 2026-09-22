@@ -10,7 +10,7 @@
 - 量级：P1，PostgreSQL sequence create/replace/drop cannot migrate valid
   schema-qualified objects using these names, and a mismatched quoted identity
   can pass validation and reach reviewed SQL rendering.
-- 状态：已修复，待复测
+- 状态：已修复，复测通过
 - 重现步骤：
   1. Run `cargo test --offline --manifest-path tracks/migration-sequence/tests/Cargo.toml`.
   2. Observe the tester cases
@@ -28,6 +28,12 @@
   sequence planner. The affected legal names are not limited to synthetic
   client input because the catalog query uses PostgreSQL `quote_ident`.
 
+- 复测证据（fresh Tester，`bcbb2903`）：
+  `cargo test --offline --manifest-path tracks/migration-sequence/tests/Cargo.toml`
+  中 quote-ident 转义名、comment-like quoted 名和 quoted case mismatch 三个
+  回归用例均通过（4/4 总用例通过）。Driver API、PostgreSQL、Host
+  `schema_diff` 和 TypeScript wrapper focused suites 也全部通过。
+
 ## migration-sequence-BUG-002 — sequence replacement is reported as completely rollbackable
 
 - 描述：`ReplaceSequence` drops and recreates the sequence. Its renderer
@@ -40,7 +46,7 @@
 - 量级：P1，`requireRollback` can approve a destructive sequence replacement
   whose rollback loses the pre-change counter state; a failed later statement
   can therefore leave sequence values altered after rollback.
-- 状态：已修复，待复测
+- 状态：已修复，复测通过
 - 重现步骤：
   1. Run `cargo test --offline --manifest-path tracks/migration-sequence/tests/Cargo.toml`.
   2. Observe `test_tester_sequence_replace_does_not_claim_counter_state_rollback`.
@@ -53,3 +59,7 @@
   non-`None` value at `src-tauri/src/schema_diff/objects.rs:981-998`.
 - 影响范围：PostgreSQL sequence replacement, reviewed deploy rollback gate,
   and any profile or IPC deployment using `requireRollback=true`.
+
+- 复测证据（fresh Tester，`bcbb2903`）：
+  回归 crate 中 `test_tester_sequence_replace_does_not_claim_counter_state_rollback`
+  通过；PostgreSQL renderer 和 Host `schema_diff` focused suites 均通过。
