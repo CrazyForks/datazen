@@ -346,3 +346,33 @@ M15（两道全拆）钉住。本回合**不再为单拆任一闸门追加用例
 - **下一步入口**：全新 Tester 实例按 `bugs.md` 四条的“重现步骤 + 建议修法”逐条复测，
   门禁以本表“BUG-004 后（新基线）”一行为对照（312 passed / 0 skipped / 覆盖率 100×4）。
 
+---
+
+# 第 2 轮 Tester 复测（全新实例，接管第 1 轮修复回合）
+
+> 现场：`feature/redis-kvbar-ui` @ `1778f592a`，开工 `git status` 干净。被测 = 4 条修复
+> （`eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）+ 2 条台账（`a132bf5e7` / `1778f592a`）。
+> 本节按任务书要求**先落门禁原始数字**（阶段 B），阶段 A / C 判定续写在下方。
+> 本任为全新实例，未沿用第 1 轮 Tester 或任何编码代理的判断，下表数字**全部本机实跑**。
+
+## 阶段 B：五项门禁独立复跑（2026-09-22，worktree 根目录）
+
+| 门禁 | 命令 | 实测原始结果 |
+|---|---|---|
+| 类型 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0，0 条诊断** |
+| 驱动 UI 全量 | `npx vitest run --config vitest.drivers.config.ts` | **Test Files 38 passed (38) · Tests 312 passed (312) · 0 failed · 0 skipped**（Duration 15.90s） |
+| 前端构建 | `npx vite build` | **exit 0**，`✓ built in 4.99s`（仅既有 chunk >500 kB 告警：`main` 1 585 kB / `MainPage` 2 256 kB，非本轨引入） |
+| `ui/kv-bar/**` 覆盖率 | `npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.provider=v8 --coverage.include='packages/drivers/redis/ui/kv-bar/**'` | **exit 0**；`All files 100 / 100 / 100 / 100`（Stmts/Branch/Funcs/Lines）；逐文件：`KeyPropsSidebar.tsx` 100×4、`KvStatusBar.tsx` 100×4、`keyObjectInfo.ts` 100×4、`useKeyObjectInfo.ts` 100×4、`useKvSelection.ts` 100×4、`index.ts` 0/0/0/0（**纯再导出桶：2 行 `export {} from`，无可计语句**，与第 1 轮同口径） |
+| import 边界护栏 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0**，`ok (1431 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` —— 4 条 advisory 均为存量宿主侧（`src/locales/locales.test.ts`、`src/test/driverUiSetup.ts` ×2、`DocumentConnectionView.tsx`），本回合未新增 |
+| Rust | — | **不适用**：`git diff --stat 90ef95b29..HEAD -- '*.rs' 'Cargo.toml' 'Cargo.lock'` 输出为空，4 条修复全为 TS；未跑 cargo（任务书禁止裸 `cargo build`） |
+
+### 与 Coder 自述基线的对照
+
+| 项 | Coder 自述（BUG-004 后“新基线”） | Tester 独立实测 | 差异归因 |
+|---|---|---|---|
+| `tsc` | 0 错误 | 0 错误 | 一致 |
+| vitest | 38 files / 312 passed \| 0 skipped (312) | 38 files / 312 passed (312) | **一致**（第 1 轮 37 files / 293 passed + 3 skipped = 296 例；+1 file / **+16 例** 全部来自新文件 `kvBarRound1Fixes.test.tsx`（16 条 `it(`，实测单跑通过），`it.skip` 3 → **0**，无任何存量用例变红） |
+| kv-bar 覆盖率 | 100/100/100/100 | 100/100/100/100 | 一致 |
+| `vite build` | ok 4.94s | ok 4.99s（exit 0） | 一致（耗时为机器波动） |
+| import 护栏 | `1431 scanned · 0 blocking · 4 advisory` | 同 | 一致 |
+
