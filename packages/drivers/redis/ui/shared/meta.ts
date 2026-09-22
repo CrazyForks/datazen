@@ -39,4 +39,5 @@ export const redisMeta = {
     fields: {},
     indexMethods: [],
   },
+  kvWorkspace: { home: true },
 } satisfies DatabaseTypeMeta;

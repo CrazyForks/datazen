@@ -469,8 +469,11 @@ impl RedisDriver {
         limit: Option<u32>,
     ) -> Result<crate::ops_observe::MemorySampleResult, DriverError> {
         let limit = crate::ops_observe::resolve_memory_sample_limit(limit);
-        with_live_op!(self, connection_id, db_index, |conn| {
-            crate::ops_observe::memory_sample(conn, limit).await
+        // The topology is passed because the batched MEMORY/TYPE/PTTL read is a
+        // single pipeline on a single node but has to be addressed key by key on
+        // a cluster (a cross-slot pipeline is rejected with `CROSSSLOT`).
+        with_live_op_topo!(self, connection_id, db_index, |conn, topology| {
+            crate::ops_observe::memory_sample(conn, limit, topology).await
         })
     }
 

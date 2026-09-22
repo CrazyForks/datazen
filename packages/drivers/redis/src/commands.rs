@@ -441,7 +441,9 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "memory_sample",
             "Memory sample",
-            "Sample large keys",
+            "Sample large keys with type/ttl, MEMORY USAGE+TYPE+PTTL resolved one pipeline \
+             per 256 keys (on Cluster every key is one addressed batch to its own shard); \
+             reports key/type/bytes/ttlMs/missing/truncated",
             "redis:allow-memory-sample",
             object_schema(
                 serde_json::json!({ "dbIndex": db, "limit": { "type": "integer" } }),

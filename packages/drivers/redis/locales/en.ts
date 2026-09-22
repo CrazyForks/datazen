@@ -352,6 +352,106 @@ const locale = {
   'redis.monitor.memoryUsageHint': 'Enter a key to check its memory usage',
   'redis.monitor.memoryUsageBytes': '{bytes} bytes',
   'redis.monitor.infoFiltered': 'Info (filtered)',
+
+  // ── 屏 A · Redis connection overview (kvSlots.connectionHome) ──
+  // Shared shell / states (PRD I-11: every block owns a named empty state).
+  'redis.overview.loading': 'Loading…',
+  'redis.overview.connected': 'Connected',
+  'redis.overview.refresh': 'Refresh',
+  'redis.overview.retry': 'Try again',
+  'redis.overview.loadFailed': 'Could not load this block',
+  'redis.overview.empty.default': 'Nothing to show yet',
+  'redis.overview.unauthorized.default': 'Not authorized for this data source',
+  'redis.overview.jump.pendingTree':
+    'Opening a database panel from the overview is not wired to the host yet — pick the database in the left navigation tree.',
+  'redis.overview.jump.pendingPanel':
+    'This action needs an open database panel — pick a database in the left navigation tree first.',
+  'redis.overview.jump.failed': 'Could not hand the request to the workspace.',
+  'redis.overview.unit.bits': '{value}-bit',
+  'redis.overview.unit.days': '{value} days',
+  'redis.overview.unit.clients': '{value}',
+  'redis.overview.unit.opsPerSec': '{value} /s',
+  'redis.overview.unit.microseconds': '{value} µs',
+  'redis.overview.timeAgo.seconds': '{value}s ago',
+  'redis.overview.timeAgo.minutes': '{value}m ago',
+  'redis.overview.timeAgo.hours': '{value}h ago',
+  'redis.overview.timeAgo.days': '{value}d ago',
+
+  // Header banner pills (clickable → monitor sub-page).
+  'redis.overview.pill.version': 'version',
+  'redis.overview.pill.mode': 'mode',
+  'redis.overview.pill.usedMemory': 'used',
+
+  // Card 1 · Server overview
+  'redis.overview.server.title': 'Server',
+  'redis.overview.server.version': 'Redis version',
+  'redis.overview.server.mode': 'Mode',
+  'redis.overview.server.arch': 'Architecture',
+  'redis.overview.server.uptime': 'Uptime',
+  'redis.overview.server.connectedClients': 'Connected clients',
+  'redis.overview.server.blockedClients': 'Blocked clients',
+  'redis.overview.server.opsPerSec': 'Ops / sec',
+  'redis.overview.server.totalCommands': 'Commands processed',
+  'redis.overview.server.evictedKeys': 'Evicted keys',
+  'redis.overview.server.expiredKeys': 'Expired keys',
+  'redis.overview.server.empty': 'INFO reported no server fields',
+  'redis.overview.server.unauthorized': 'Not authorized to read INFO',
+  'redis.overview.mode.standalone': 'standalone',
+  'redis.overview.mode.cluster': 'cluster',
+  'redis.overview.mode.sentinel': 'sentinel',
+
+  // Card 2 · Memory + big keys
+  'redis.overview.memory.title': 'Memory',
+  'redis.overview.memory.used': 'used_memory',
+  'redis.overview.memory.max': 'maxmemory',
+  'redis.overview.memory.maxUnlimited': 'maxmemory (no limit)',
+  'redis.overview.memory.unlimited': 'unlimited',
+  'redis.overview.memory.usedPercent': 'Used of max',
+  'redis.overview.memory.fragRatio': 'Fragmentation ratio',
+  'redis.overview.memory.policy': 'Eviction policy',
+  'redis.overview.memory.bigKeys': 'Top 5 big keys',
+  'redis.overview.memory.sampledDb': 'sampled from {db}',
+  'redis.overview.memory.truncated': 'Sample window exhausted — bigger keys may exist',
+  'redis.overview.memory.empty': 'No memory stats in INFO',
+  'redis.overview.memory.unauthorized': 'Not authorized to read memory stats',
+  'redis.overview.memory.bigKeysEmpty': 'No keys found by the memory sampler',
+  'redis.overview.memory.bigKeysUnauthorized':
+    'Big-key sampling is not authorized for this connection',
+  'redis.overview.memory.bigKeysUnauthorizedHint':
+    'Grant the redis:allow-memory-sample permission to list the largest keys.',
+  'redis.overview.memory.bigKeyGone': 'gone',
+  'redis.overview.typeUnknown': 'unknown',
+
+  // Card 3 · Key space grid
+  'redis.overview.keyspace.title': 'Key Space',
+  'redis.overview.keyspace.summary': '{dbCount} databases · {nonEmpty} non-empty · {totalKeys} keys',
+  'redis.overview.keyspace.empty': 'Every database is empty on this server',
+  'redis.overview.keyspace.unauthorized': 'Not authorized to read database sizes',
+
+  // Card 4 · Slowlog
+  'redis.overview.slowlog.title': 'Slow queries',
+  'redis.overview.slowlog.duration': 'Duration',
+  'redis.overview.slowlog.command': 'Command',
+  'redis.overview.slowlog.client': 'Client',
+  'redis.overview.slowlog.noClient': 'no client info',
+  'redis.overview.slowlog.empty':
+    'SLOWLOG GET is empty — no command has crossed the slowlog threshold (slowlog-log-slower-than) since the last reset.',
+  'redis.overview.slowlog.unauthorized': 'Not authorized to read the slow log',
+  'redis.overview.slowlog.unauthorizedHint':
+    'Grant the redis:allow-slowlog-get permission to enable this block.',
+
+  // Quick actions (KV semantics, not SQL)
+  'redis.overview.actions.title': 'Quick actions',
+  'redis.overview.action.browseDb': 'Browse keys',
+  'redis.overview.action.console': 'Console',
+  'redis.overview.action.pubsub': 'Publish / Subscribe',
+  'redis.overview.action.importExport': 'Import / Export',
+  'redis.overview.action.newKey': 'New key',
+
+  // Recently browsed keys (connection-scoped localStorage)
+  'redis.overview.recent.title': 'Recently browsed keys',
+  'redis.overview.recent.empty': 'Keys you open will be listed here for quick access.',
+  'redis.overview.recent.clear': 'Clear history',
 } as const;
 
 export default locale;

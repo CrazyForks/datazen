@@ -795,6 +795,408 @@ async fn a_missing_reply_stream_is_read_as_empty_not_as_data() {
     assert!(!dist.truncated);
 }
 
+// --- memory_sample field read (BUG-003: big-key type/TTL in one round trip) --
+
+#[test]
+fn memory_sample_pipeline_is_three_commands_per_key_in_order() {
+    let pipe = build_memory_sample_pipeline(&["a".to_string(), "b".to_string()]);
+    let batch: Vec<Vec<String>> = pipe.cmd_iter().map(args_of).collect();
+    assert_eq!(batch.len(), 2 * MEMORY_SAMPLE_FIELDS_PER_KEY);
+    let names: Vec<&str> = batch.iter().map(|c| c[0].as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["MEMORY", "TYPE", "PTTL", "MEMORY", "TYPE", "PTTL"]
+    );
+    assert_eq!(batch[0], vec!["MEMORY", "USAGE", "a"]);
+    assert_eq!(batch[1], vec!["TYPE", "a"]);
+    assert_eq!(batch[2], vec!["PTTL", "a"]);
+    assert_eq!(batch[3], vec!["MEMORY", "USAGE", "b"]);
+    assert!(
+        !names.iter().any(|n| n.eq_ignore_ascii_case("KEYS")),
+        "the big-key sample must never fall back to KEYS"
+    );
+}
+
+#[test]
+fn memory_sample_fields_reads_a_present_key_and_degrades_independently() {
+    // bytes + type + ttl all present; TTL = -1 (no expiry) is a real value.
+    let full = vec![RValue::Int(4096), bulk("hash"), RValue::Int(-1)];
+    let f = parse_memory_sample_fields(&full);
+    assert!(!f.missing);
+    assert_eq!(f.bytes, Some(4096));
+    assert_eq!(f.key_type.as_deref(), Some("hash"));
+    assert_eq!(f.ttl_ms, Some(-1));
+
+    // MEMORY USAGE unavailable (Redis < 4.0): only the byte slot degrades.
+    let no_mem = vec![
+        err_reply("unknown subcommand or wrong number of args for 'USAGE'"),
+        bulk("string"),
+        RValue::Int(5000),
+    ];
+    let f = parse_memory_sample_fields(&no_mem);
+    assert!(!f.missing);
+    assert_eq!(f.bytes, None);
+    assert_eq!(f.key_type.as_deref(), Some("string"));
+    assert_eq!(f.ttl_ms, Some(5000));
+
+    // A short / absent group reads as unreadable — never as a type name, and
+    // never claimed to be gone.
+    let empty = parse_memory_sample_fields(&[]);
+    assert!(!empty.missing);
+    assert_eq!(empty.key_type, None);
+    assert_eq!(empty.bytes, None);
+    assert_eq!(empty.ttl_ms, None);
+}
+
+#[test]
+fn memory_sample_fields_marks_a_key_gone_between_scan_and_read() {
+    // TYPE == "none" after MEMORY nil / PTTL -2: a distinguishable empty state,
+    // NOT an error and NOT conflated with the "unreadable" state above.
+    let gone = parse_memory_sample_fields(&[RValue::Nil, bulk("none"), RValue::Int(-2)]);
+    assert!(gone.missing);
+    assert_eq!(gone.bytes, None);
+    assert_eq!(gone.key_type, None);
+    assert_eq!(gone.ttl_ms, Some(TTL_MISSING));
+}
+
+#[tokio::test]
+async fn memory_sample_field_read_is_one_round_trip_for_the_whole_sample() {
+    let keys: Vec<String> = ["big:1", "big:2", "big:3"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let mut conn = ScriptedConn::new();
+    // Replies are queued per command name (FIFO), consumed in key order.
+    conn.push_int("MEMORY", 300);
+    conn.push_int("MEMORY", 100);
+    conn.push_int("MEMORY", 200);
+    conn.push_str("TYPE", "string");
+    conn.push_str("TYPE", "zset");
+    conn.push_str("TYPE", "hash");
+    conn.push_int("PTTL", -1);
+    conn.push_int("PTTL", 9_000);
+    conn.push_int("PTTL", 4_000);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Standalone)
+        .await
+        .expect("field read");
+    assert_eq!(fields.len(), 3);
+    assert_eq!(fields[0].bytes, Some(300));
+    assert_eq!(fields[0].key_type.as_deref(), Some("string"));
+    assert_eq!(fields[0].ttl_ms, Some(-1), "no-expiry stays a value");
+    assert_eq!(fields[1].key_type.as_deref(), Some("zset"));
+    assert_eq!(fields[1].ttl_ms, Some(9_000));
+    assert!(fields.iter().all(|f| !f.missing));
+
+    let journal = conn.journal();
+    assert_eq!(journal.batches.len(), 1, "three keys in ONE pipeline");
+    assert_eq!(journal.batches[0].len(), 3 * MEMORY_SAMPLE_FIELDS_PER_KEY);
+    assert!(
+        journal.singles.is_empty(),
+        "no per-key round trips on a single node (was the N-trip bug)"
+    );
+    assert_eq!(journal.round_trips(), 1);
+}
+
+#[tokio::test]
+async fn memory_sample_field_read_scales_by_chunk_not_by_key() {
+    // One key past the pipeline budget adds a *second batch*, not a second
+    // round trip per key: the count is ceil(n / chunk), never n.
+    let n = MEMORY_SAMPLE_KEYS_PER_PIPELINE + 1;
+    let keys: Vec<String> = (0..n).map(|i| format!("k{i}")).collect();
+    let mut conn = ScriptedConn::new();
+    for _ in 0..n {
+        conn.push_int("MEMORY", 10);
+        conn.push_str("TYPE", "string");
+        conn.push_int("PTTL", -1);
+    }
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Standalone)
+        .await
+        .expect("field read");
+    assert_eq!(fields.len(), n);
+    let journal = conn.journal();
+    assert_eq!(journal.batches.len(), 2, "ceil(n / chunk) == 2 batches");
+    assert_eq!(journal.round_trips(), 2);
+    assert_eq!(
+        journal.batches[0].len(),
+        MEMORY_SAMPLE_KEYS_PER_PIPELINE * MEMORY_SAMPLE_FIELDS_PER_KEY
+    );
+    assert_eq!(journal.batches[1].len(), MEMORY_SAMPLE_FIELDS_PER_KEY);
+}
+
+#[tokio::test]
+async fn memory_sample_field_read_addresses_each_key_on_cluster() {
+    // `ScriptedConn` carries the trait's DEFAULT `pipeline_at_slot`, which is
+    // addressed command-by-command — this pins that fallback shape (never a
+    // mixed-slot pipeline). The real `ClusterConnection` overrides it with one
+    // addressed batch per key; `ClusterBatchConn` below simulates that shape.
+    let keys: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+    let mut conn = ScriptedConn::new();
+    conn.push_int("MEMORY", 50);
+    conn.push_int("MEMORY", 60);
+    conn.push_str("TYPE", "string");
+    conn.push_str("TYPE", "list");
+    conn.push_int("PTTL", -1);
+    conn.push_int("PTTL", 700);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Cluster)
+        .await
+        .expect("cluster field read");
+    assert_eq!(fields[0].bytes, Some(50));
+    assert_eq!(fields[1].key_type.as_deref(), Some("list"));
+    assert_eq!(fields[1].ttl_ms, Some(700));
+    let journal = conn.journal();
+    assert!(
+        journal.batches.is_empty(),
+        "cluster must never issue a mixed-slot pipeline"
+    );
+    assert_eq!(
+        journal.singles.len(),
+        2 * MEMORY_SAMPLE_FIELDS_PER_KEY,
+        "the default shape replays every probe as an addressed single"
+    );
+}
+
+/// Double for the *real* `ClusterConnection::route_pipeline` shape: one
+/// addressed batch per key (one round trip), whose dispatch layer folds any
+/// per-command rejection into a single batch error — exactly the
+/// `Value::extract_error_vec` behaviour the module docs describe and the only
+/// reason [`fetch_memory_sample_fields`] needs a replay fallback.
+#[derive(Clone)]
+struct ClusterBatchConn {
+    inner: ScriptedConn,
+}
+
+impl ConnectionLike for ClusterBatchConn {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a redis::Cmd) -> RedisFuture<'a, RValue> {
+        self.inner.req_packed_command(cmd)
+    }
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<'a, Vec<RValue>> {
+        self.inner.req_packed_commands(pipe, offset, count)
+    }
+    fn get_db(&self) -> i64 {
+        self.inner.get_db()
+    }
+}
+
+impl SlotRoutedConnection for ClusterBatchConn {
+    fn pipeline_at_slot<'a>(
+        &'a mut self,
+        pipe: &'a redis::Pipeline,
+        _slot: u16,
+    ) -> SlotRoutedBatchFuture<'a> {
+        (async move {
+            let mut values = Vec::new();
+            let mut journaled = Vec::new();
+            for cmd in pipe.cmd_iter() {
+                let args = args_of(cmd);
+                let name = args.first().cloned().unwrap_or_default();
+                values.push(self.inner.take_reply(&name));
+                journaled.push(normalized(&args));
+            }
+            // One addressed batch, one round trip — what `route_pipeline` is
+            // for, and why cluster costs N trips and not 3N.
+            self.inner
+                .journal
+                .lock()
+                .expect("journal lock")
+                .batches
+                .push(journaled);
+            match values
+                .iter()
+                .position(|v| matches!(v, RValue::ServerError(_)))
+            {
+                Some(index) => Err(format!(
+                    "cluster dispatch: batch folded rejection at command {index}"
+                )),
+                None => Ok(values),
+            }
+        })
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn cluster_memory_sample_field_read_is_one_addressed_batch_per_key() {
+    // The round-trip ceiling the fix must not exceed: the original loop paid
+    // one `MEMORY USAGE` per key (N). Here two keys cost TWO trips total —
+    // one addressed batch each — never three trips per key.
+    let keys: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+    let mut conn = ClusterBatchConn {
+        inner: ScriptedConn::new(),
+    };
+    conn.inner.push_int("MEMORY", 50);
+    conn.inner.push_int("MEMORY", 60);
+    conn.inner.push_str("TYPE", "string");
+    conn.inner.push_str("TYPE", "list");
+    conn.inner.push_int("PTTL", -1);
+    conn.inner.push_int("PTTL", 700);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Cluster)
+        .await
+        .expect("cluster field read");
+    assert_eq!(fields[0].bytes, Some(50));
+    assert_eq!(fields[0].key_type.as_deref(), Some("string"));
+    assert_eq!(fields[0].ttl_ms, Some(-1), "no-expiry stays a value");
+    assert_eq!(fields[1].key_type.as_deref(), Some("list"));
+    assert_eq!(fields[1].ttl_ms, Some(700));
+
+    let journal = conn.inner.journal();
+    assert_eq!(journal.batches.len(), 2, "one batch per key");
+    assert!(journal.singles.is_empty(), "no per-command replay needed");
+    assert_eq!(
+        journal.round_trips(),
+        keys.len(),
+        "cluster trips == keys, equal to the original MEMORY USAGE loop"
+    );
+    for batch in &journal.batches {
+        assert_eq!(
+            batch.len(),
+            MEMORY_SAMPLE_FIELDS_PER_KEY,
+            "every batch stays inside the key's own slot"
+        );
+    }
+}
+
+#[tokio::test]
+async fn cluster_rejected_field_degrades_via_per_command_replay_not_batch_error() {
+    // `route_pipeline` folds the rejected TYPE into one batch error. The fix
+    // must NOT turn that into a failed `memory_sample` (acceptance: a single
+    // denied field is an empty state, not an error), so only that key replays
+    // per command while its bytes/ttl still survive.
+    let keys: Vec<String> = ["denied", "fine"].iter().map(|s| s.to_string()).collect();
+    let mut conn = ClusterBatchConn {
+        inner: ScriptedConn::new(),
+    };
+    // "denied": batch attempt (MEMORY ok, TYPE rejected, PTTL ok) + replay.
+    conn.inner.push_int("MEMORY", 70);
+    conn.inner
+        .push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner.push_int("PTTL", -1);
+    conn.inner.push_int("MEMORY", 70);
+    conn.inner
+        .push("TYPE", err_reply("NOPERM no permission to run 'TYPE'"));
+    conn.inner.push_int("PTTL", -1);
+    // "fine": one clean batch.
+    conn.inner.push_int("MEMORY", 80);
+    conn.inner.push_str("TYPE", "hash");
+    conn.inner.push_int("PTTL", 4_000);
+
+    let fields = fetch_memory_sample_fields(&mut conn, &keys, Topology::Cluster)
+        .await
+        .expect("a denied TYPE must not fail the sample");
+    assert_eq!(fields.len(), 2);
+    let denied = &fields[0];
+    assert!(!denied.missing, "NOPERM is a rejection, not a vanished key");
+    assert_eq!(denied.key_type, None, "the rejected field alone degrades");
+    assert_eq!(
+        denied.bytes,
+        Some(70),
+        "the other fields survive the replay"
+    );
+    assert_eq!(denied.ttl_ms, Some(-1));
+    assert_eq!(fields[1].key_type.as_deref(), Some("hash"));
+
+    let journal = conn.inner.journal();
+    assert_eq!(
+        journal.batches.len(),
+        2,
+        "denied batch attempt + clean batch"
+    );
+    assert_eq!(
+        journal.singles.len(),
+        MEMORY_SAMPLE_FIELDS_PER_KEY,
+        "only the folded key replays, one command at a time"
+    );
+}
+
+#[tokio::test]
+async fn memory_sample_reads_type_and_ttl_in_the_same_single_round_trip() {
+    let mut conn = ScriptedConn::new();
+    conn.push_int("DBSIZE", 3);
+    conn.push_scan(0, &["small", "biggest", "medium"]);
+    // The single field pipeline, consumed in SCAN order (small, biggest, medium).
+    conn.push_int("MEMORY", 10);
+    conn.push_int("MEMORY", 999);
+    conn.push_int("MEMORY", 500);
+    conn.push_str("TYPE", "string");
+    conn.push_str("TYPE", "hash");
+    conn.push_str("TYPE", "list");
+    conn.push_int("PTTL", -1);
+    conn.push_int("PTTL", 8000);
+    conn.push_int("PTTL", -1);
+
+    let result = crate::ops_observe::memory_sample(&mut conn, 10, Topology::Standalone)
+        .await
+        .expect("memory_sample");
+
+    // Sorted by bytes desc: biggest(999), medium(500), small(10).
+    assert_eq!(result.samples[0].key, "biggest");
+    assert_eq!(result.samples[0].bytes, 999);
+    assert_eq!(result.samples[0].key_type.as_deref(), Some("hash"));
+    assert_eq!(result.samples[0].ttl_ms, Some(8000));
+    assert_eq!(result.samples[2].key, "small");
+    assert_eq!(result.samples[2].key_type.as_deref(), Some("string"));
+    assert_eq!(result.samples[2].ttl_ms, Some(-1));
+    assert!(result.samples.iter().all(|s| !s.missing));
+
+    let journal = conn.journal();
+    assert_eq!(journal.count_single("DBSIZE"), 1);
+    assert_eq!(journal.count_single("SCAN"), 1);
+    assert_eq!(
+        journal.batches.len(),
+        1,
+        "every sampled key's fields resolve in one pipeline"
+    );
+    let single_names = journal.single_names();
+    assert!(
+        !single_names
+            .iter()
+            .any(|n| n == "MEMORY" || n == "TYPE" || n == "PTTL"),
+        "fields must not go out one command at a time on a single node: {single_names:?}"
+    );
+    assert!(!journal.flat().iter().any(|c| c[0] == "KEYS"));
+}
+
+#[tokio::test]
+async fn memory_sample_reports_a_key_deleted_after_sampling_as_missing() {
+    let mut conn = ScriptedConn::new();
+    conn.push_int("DBSIZE", 2);
+    conn.push_scan(0, &["live", "gone"]);
+    conn.push_int("MEMORY", 40);
+    conn.push("MEMORY", RValue::Nil); // gone: MEMORY USAGE answers nil
+    conn.push_str("TYPE", "string");
+    conn.push_str("TYPE", "none"); // gone: TYPE answers "none"
+    conn.push_int("PTTL", -1);
+    conn.push_int("PTTL", -2); // gone: PTTL answers -2
+
+    let result = crate::ops_observe::memory_sample(&mut conn, 10, Topology::Standalone)
+        .await
+        .expect("a deleted key is a success case, not an error");
+
+    let gone = result
+        .samples
+        .iter()
+        .find(|s| s.key == "gone")
+        .expect("the sampled key still appears in the result");
+    assert!(
+        gone.missing,
+        "a vanished key is a distinguishable empty state"
+    );
+    assert_eq!(gone.bytes, 0);
+    assert_eq!(gone.key_type, None);
+    assert_eq!(gone.ttl_ms, Some(TTL_MISSING));
+
+    let live = result.samples.iter().find(|s| s.key == "live").unwrap();
+    assert!(!live.missing);
+    assert_eq!(live.bytes, 40);
+}
+
 // ==========================================================================
 // [tester] 覆盖率补齐（redis-cmds-p0 测试子代理，只测不修）
 //
