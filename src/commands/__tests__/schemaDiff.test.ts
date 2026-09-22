@@ -293,6 +293,31 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('[tester] prepareRoutineTriggerPlan preserves a qualified object identity and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'function:public:lookup:integer',
+        tables: ['function:public:lookup:integer'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareRoutineTriggerPlan({
+        sourceDbSessionId: 'src-routine',
+        targetDbSessionId: 'tgt-routine',
+        kind: 'function',
+        objectNames: ['public.lookup(integer)'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['function:public:lookup:integer'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_routine_trigger_plan', {
+      sourceDbSessionId: 'src-routine',
+      targetDbSessionId: 'tgt-routine',
+      kind: 'function',
+      objectNames: ['public.lookup(integer)'],
+      allowDestructive: true,
+    });
+  });
+
   it('executeDeploy forwards deploy options and confirm token', async () => {
     const plan = samplePlan();
     const result = { status: 'committed', executedCount: 1 };

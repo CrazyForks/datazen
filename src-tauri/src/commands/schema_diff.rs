@@ -1330,7 +1330,8 @@ mod tests {
     }
 
     #[test]
-    fn view_selectors_require_unambiguous_identity_and_allow_target_only_drop() {
+    fn test_tester_schema_object_selectors_require_unambiguous_identity_and_allow_target_only_drop()
+    {
         let source = vec![datazen_driver_api::DatabaseObject {
             kind: "view".into(),
             schema: Some("public".into()),
@@ -1348,11 +1349,11 @@ mod tests {
             target_name: None,
         }];
         let (source_selected, target_selected) =
-            select_view_object_pair(&source, &target, &["public.active_users".into()]).unwrap();
+            select_schema_object_pair(&source, &target, &["public.active_users".into()]).unwrap();
         assert_eq!(source_selected.len(), 1);
         assert!(target_selected.is_empty());
         let (source_selected, target_selected) =
-            select_view_object_pair(&source, &target, &["public.legacy_users".into()]).unwrap();
+            select_schema_object_pair(&source, &target, &["public.legacy_users".into()]).unwrap();
         assert!(source_selected.is_empty());
         assert_eq!(target_selected.len(), 1);
 
@@ -1374,7 +1375,65 @@ mod tests {
                 target_name: None,
             },
         ];
-        assert!(select_view_object_pair(&ambiguous, &[], &["same".into()]).is_err());
+        assert!(select_schema_object_pair(&ambiguous, &[], &["same".into()]).is_err());
+    }
+
+    #[test]
+    fn test_tester_schema_object_selectors_preserve_overloads_and_trigger_relations() {
+        let functions = vec![
+            datazen_driver_api::DatabaseObject {
+                kind: "function".into(),
+                schema: Some("public".into()),
+                name: "lookup".into(),
+                signature: Some("integer".into()),
+                target_schema: None,
+                target_name: None,
+            },
+            datazen_driver_api::DatabaseObject {
+                kind: "function".into(),
+                schema: Some("public".into()),
+                name: "lookup".into(),
+                signature: Some("text".into()),
+                target_schema: None,
+                target_name: None,
+            },
+        ];
+        let (source, target) =
+            select_schema_object_pair(&functions, &functions, &["public.lookup(integer)".into()])
+                .unwrap();
+        assert_eq!(source.len(), 1);
+        assert_eq!(target.len(), 1);
+        assert_eq!(source[0].signature.as_deref(), Some("integer"));
+        assert!(select_schema_object_pair(&functions, &functions, &["lookup".into()]).is_err());
+
+        let triggers = vec![
+            datazen_driver_api::DatabaseObject {
+                kind: "trigger".into(),
+                schema: Some("public".into()),
+                name: "audit".into(),
+                signature: None,
+                target_schema: Some("public".into()),
+                target_name: Some("orders".into()),
+            },
+            datazen_driver_api::DatabaseObject {
+                kind: "trigger".into(),
+                schema: Some("public".into()),
+                name: "audit".into(),
+                signature: None,
+                target_schema: Some("public".into()),
+                target_name: Some("invoices".into()),
+            },
+        ];
+        let (source, target) = select_schema_object_pair(
+            &triggers,
+            &triggers,
+            &["public.audit ON public.orders".into()],
+        )
+        .unwrap();
+        assert_eq!(source.len(), 1);
+        assert_eq!(target.len(), 1);
+        assert_eq!(source[0].target_name.as_deref(), Some("orders"));
+        assert!(select_schema_object_pair(&triggers, &triggers, &["audit".into()]).is_err());
     }
 
     #[tokio::test]

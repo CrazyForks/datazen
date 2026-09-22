@@ -998,8 +998,12 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert_eq!(safe.statements.len(), 1);
+        assert_eq!(safe.statements.len(), 2);
         assert!(safe.statements[0].summary.contains("REPLACE function"));
+        assert!(safe
+            .statements
+            .iter()
+            .any(|statement| statement.summary.contains("CREATE TRIGGER audit_insert")));
         assert!(safe
             .warnings
             .iter()
@@ -1014,7 +1018,7 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert_eq!(approved.statements.len(), 2);
+        assert_eq!(approved.statements.len(), 3);
         assert!(approved
             .statements
             .iter()

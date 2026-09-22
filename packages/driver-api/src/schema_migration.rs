@@ -510,4 +510,22 @@ mod type_parts_tests {
             assert!(validate_object_definition(definition, ObjectKind::Function, "x").is_err());
         }
     }
+
+    #[test]
+    fn test_tester_object_definition_requires_kind_in_create_header() {
+        // A routine/trigger token in a literal must not make a CREATE VIEW
+        // eligible for routine or trigger migration.
+        assert!(validate_object_definition(
+            "CREATE VIEW calculate_total AS SELECT 'FUNCTION' AS marker",
+            ObjectKind::Function,
+            "calculate_total",
+        )
+        .is_err());
+        assert!(validate_object_definition(
+            "CREATE VIEW audit_insert AS SELECT 'TRIGGER' AS marker",
+            ObjectKind::Trigger,
+            "audit_insert",
+        )
+        .is_err());
+    }
 }
