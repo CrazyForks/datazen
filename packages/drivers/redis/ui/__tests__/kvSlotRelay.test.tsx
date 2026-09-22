@@ -375,3 +375,104 @@ describe('RedisWorkbench → host KV relay (contract F-2)', () => {
     );
   });
 });
+
+/* ── [tester] added in the test round ──────────────────────────────────────────
+ * The four dirty-exit paths the contract requires are 切键 / 关面板 / 切
+ * `dbSessionId` / unmount. Mutation check: deleting the `dbSessionId` entry from
+ * the reset effect's dependency array left the whole suite green, i.e. that path
+ * had no coverage at all; the two cases below close it, together with the
+ * detail-column close button and the search field, which drop the selection
+ * through code paths no earlier case exercised.
+ */
+describe('[tester] RedisWorkbench relay exit paths', () => {
+  function renderWorkbench(relay: KvSlotState, dbSessionId = 'sess-1', hideSidebar = true) {
+    const ref = { current: null } as { current: RedisWorkbenchHandle | null };
+    const result = render(
+      <RedisWorkbench
+        ref={ref as React.Ref<RedisWorkbenchHandle>}
+        dbSessionId={dbSessionId}
+        initialDatabase="db0"
+        hideSidebar={hideSidebar}
+        kvSlotState={relay}
+      />,
+    );
+    return { ref, rerender: result.rerender };
+  }
+
+  async function draftOnRelay(relay: KvSlotState) {
+    fireEvent.click(await screen.findByTestId('redis-key-row-user:1'));
+    await waitFor(() => expect(stringEditor()).toBeTruthy());
+    fireEvent.click(screen.getByTestId('redis-string-edit'));
+    fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft' } });
+    await waitFor(() => expect(relay.getDirty()).toBe(true));
+    expect(relay.getSelectedKey()).toBe('user:1');
+  }
+
+  it('clears selection and dirty when the detail column is closed', async () => {
+    const relay = makeRelay();
+    renderWorkbench(relay);
+    await draftOnRelay(relay);
+
+    fireEvent.click(screen.getByTestId('redis-detail-close'));
+
+    await waitFor(() => expect(relay.getDirty()).toBe(false));
+    expect(relay.getSelectedKey()).toBeNull();
+    expect(screen.getByTestId('redis-detail-column').getAttribute('data-detail-state')).toBe(
+      'no-key',
+    );
+  });
+
+  it('clears selection and dirty when the search field drops the selection', async () => {
+    const relay = makeRelay();
+    renderWorkbench(relay, 'sess-1', false);
+    await draftOnRelay(relay);
+
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.change(input, { target: { value: 'user:*' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => expect(relay.getDirty()).toBe(false));
+    expect(relay.getSelectedKey()).toBeNull();
+  });
+
+  it('publishes a clean slate when only the database session swaps', async () => {
+    const relay = makeRelay();
+    const { rerender } = renderWorkbench(relay);
+    await draftOnRelay(relay);
+
+    rerender(
+      <RedisWorkbench
+        dbSessionId="sess-2"
+        initialDatabase="db0"
+        hideSidebar
+        kvSlotState={relay}
+      />,
+    );
+
+    await waitFor(() => expect(relay.getSelectedKey()).toBeNull());
+    expect(relay.getDirty()).toBe(false);
+  });
+
+  it('publishes a clean slate when only the relay object is swapped', async () => {
+    const first = makeRelay();
+    const second = makeRelay();
+    const { rerender } = renderWorkbench(first);
+    await draftOnRelay(first);
+
+    rerender(
+      <RedisWorkbench
+        dbSessionId="sess-1"
+        initialDatabase="db0"
+        hideSidebar
+        kvSlotState={second}
+      />,
+    );
+
+    // The dying relay must not keep a key the new panel does not show, and the
+    // new relay must not inherit the draft either.
+    await waitFor(() => expect(first.getSelectedKey()).toBeNull());
+    expect(first.getDirty()).toBe(false);
+    expect(second.getSelectedKey()).toBe('user:1');
+    expect(second.getDirty()).toBe(true);
+  });
+});
