@@ -251,3 +251,67 @@ Wave 4 树 UI 预算轨逐字引用本节。以下 JSON 为驱动 `execute_drive
   CROSSSLOT 实测（本轨环境禁 live e2e，测试替身已覆盖形状断言 + 反事实 tag 用例）。
 - 大库预算行为：真实 dbsize 下 `min(1M, max(50k, dbsize×2))` 缩放与 `n+` 展示联调（Wave 4 UI）。
 - `list_children` CrossSlot 既有缺陷 #56：挂账，未修，未加重。
+
+## 第 1 轮 Tester 复验记录
+
+> Tester 全新实例（与 Coder/Rescuer 不同会话；前任 Tester 死于并行重负载 ⇒ 本轮全程串行，一次只跑一个重型命令）。
+> 目录 `.worktrees/datazen-redis-tree-backend`，起点 HEAD `1c03f1595`，`CARGO_TARGET_DIR=/tmp/w3b2-cargo-target`。
+> 零信任复跑 + **只测不修**；缺陷见 `bugs.md`。小节按验收步骤推进，边测边 commit。
+
+### 步骤 1-3 · 门禁独立复跑（串行，实测）
+
+| 门禁 | Rescuer 自报 | **Tester 实测** | 判定 |
+|---|---|---|---|
+| `cargo test -p datazen-driver-redis` lib | 271 / 0 / 1 | **271 passed / 0 failed / 1 ignored**（272 计数；ignored = `connect::tests::local_live_connect_prefer_plaintext_require_times_out`，需本地 redis） | ✅ 逐字复现 |
+| 集成 `tree_scan_budget` | 4/4 | **4 passed / 0 failed** | ✅ |
+| 集成 `workbench_commands`（既有防回归） | 4/4 | **4 passed / 0 failed** | ✅ |
+| doctests | 0 | **0 / 0** | ✅ |
+| 编译告警 | 0 | `grep -cE "^warning\|^error"` = **0** | ✅ |
+| `cargo clippy --all-targets` | 21（基线 24） | **21 条**；本轨新文件命中 **0 条** | ✅ 0 新增 |
+| `cargo fmt -p datazen-driver-redis -- --check` | 干净 | **exit 0**（`commands_exec_dispatch.rs` 系 `include!` 片段，fmt 不覆盖，另行读 diff：只动本轨自己的行） | ✅ |
+| `npx tsc --noEmit` | 0 | **exit 0，零行输出** | ✅ |
+| `npx vitest run --config vitest.drivers.config.ts` | 47/456 | **47 files / 456 tests passed**，exit 0 | ⚠️ 绿，但见 **BUG-002**（该路径零覆盖，掩盖了真实泄漏） |
+
+clippy 21 条点名（证伪"本轨新增"）：`redis_driver.rs` 117/253/706、`redis_driver_on.rs:187`、
+`redis_value_preview.rs:28`、`ops.rs:881`（`approx_constant` 既有债）、`ops_value_search.rs` ×3、
+`ops_io.rs:285`、`decode/pickle.rs` ×3、`commands_exec_dispatch.rs` 473/480/487（冗余闭包，**非本轨行**）、
+`datazen-driver-api` ×3。`ops_tree_scan.rs` / `ops_tree_budget.rs` / `ops_key_probe.rs` / `ops_tree.rs` /
+`ops_tree_scan/tests.rs` / `tests/tree_scan_budget.rs` **零命中** ✓。
+
+### 步骤 4 · 契约冻结逐字核对
+
+| 冻结条目 | 源码出处 | 逐字核对 |
+|---|---|---|
+| `scan_keys` in 8 个字段 + 别名 `key_type`/`with_memory`/`no_ttl_only` | `commands.rs:86-99` 声明 + `commands_exec_dispatch.rs:2-35` 解析 | ✅ 名称/类型一致；三条别名 `.or_else` 双写均在 |
+| `scan_keys` out `cursor/keys/dbSize/consumed/truncated/dbsize/exact` | `commands_exec_dispatch.rs:31-39` | ✅ 7 字段逐字一致，`dbSize` 旧拼写保留并与 `dbsize` 同值同源（一次 DBSIZE 读） |
+| `keys[]` = `KeyEntry` camelCase `key/keyType/ttl/size/preview` | `driver-api/src/types.rs:428-436` `rename_all="camelCase"` | ✅ |
+| `list_children` in（含 `sep`/`withMemory`/`budget`） | `commands.rs:110-123` + 分发臂 41-90 | ✅ |
+| `list_children` out `children/cursor/consumed/truncated/dbsize` | 分发臂 76-82 | ✅ 5 字段，既有两名未动 |
+| `ChildEntry` tagged enum：`kind=folder{prefix,count}` / `kind=key{key,keyType,ttl,logicalLen,memBytes}`、`memBytes` 未请求时为 `null` | `ops_tree.rs:31-48`（`tag="kind"` + `rename_all_fields="camelCase"`）+ 单测 `child_entry_serializes_camel_case_fields` | ✅ |
+| `count_matching` in `{dbIndex,pattern,budget}` / out `{count,truncated,consumed,dbsize}` | `commands.rs:425-437` + `CountOutcome`（`ops_tree_scan.rs:877-890`，camelCase）| ✅ 4 字段逐字一致，序列化为 JSON 对象 |
+| `pattern=="*"` ⇒ `count==dbsize`、`consumed==0`、不发 SCAN | `count_budgeted` 907-915 + 单测钉线形 | ✅ |
+| 精确键 ⇒ 一次 `EXISTS`，不发 SCAN | 916-923 | ✅ |
+| `key_probe` in `{dbIndex,key}`（`key` 必填）/ 权限 `redis:allow-info` / 归类同 `get_key` | `commands.rs:134-141` + 集成 `key_probe_is_registered_like_get_key` | ✅ 与 `get_key` 同 permission 串、同 Observe 类、`Read` 级 |
+| `key_probe` out `{exists,type,ttlMs,memoryBytes}`（不存在时 4 字段俱在、`type`/`memoryBytes` 为 `null`、`ttlMs=-2`） | `KeyProbe`（`ops_key_probe.rs:79-91`）+ 单测 `probe_serializes_the_frozen_camel_case_shape` | ✅ |
+| `ttlMs` 为 PTTL 毫秒（与 `scan_keys.ttl` 秒制不同） | `build_key_probe_pipeline` 用 `PTTL`，无换算 | ✅ |
+| 预算公式：默认 50_000 / 硬上限 1_000_000 / `dbsize×2` 系数 / 命令层 `budget` 缺失或 0 ⇒ 走派生档 | `ops_tree_budget.rs:27-42,91-101` + 分发臂 `.filter(\|v\| *v > 0)` | ✅ 命令层与冻结句子一致（0 与缺失同路径）；⚠️ 但 op 函数自身对 `Some(0)` 返回 1（`ops_tree_budget.rs:94` 及其单测），与冻结句子的"0 ⇒ 派生档"表述分叉 —— 今天无调用方能走到，属**口径隐患**，记入审查发现而非缺陷 |
+| Cluster 口径 5 条 | 见步骤 6 | 部分见步骤 6 与 BUG-003 |
+
+**判定**：四条命令的 in/out JSON 原文与源码序列化**逐字段一致**（字段名、层级、camelCase、可空性均无偏差），
+Wave 4 可逐字引用。两处**口径**问题不属形状偏差，但 Wave 4 会照文施工，故必须改文档/改实现二选一：
+
+1. **`DBSIZE 不可得 ⇒ 回落默认档` 这句与代码不符 ⇒ 升级为缺陷 BUG-003**：
+   预算公式段写"`dbsize == 0`（空库或 **DBSIZE 不可得**）回落默认档，永不产生 0 预算"，
+   实际 `read_dbsize`（`ops_tree_scan.rs:436-445`）在服务端报错时直接 `Err` 上抛，
+   三条命令整条失败（实测见 BUG-003）。冻结文字承诺了一条不可达的降级路径。
+2. op 层 `tree_scan_budget(Some(0), …) == 1` 与命令层"`budget: 0` ⇒ 走派生档"语义相反
+   （`ops_tree_budget.rs:94` + 单测 `:260`），今天靠分发臂 `.filter(|v| *v > 0)` 才没被外部走到 ⇒
+   审查发现 **R-1**，不判缺陷但要求二选一收口。
+
+
+### 步骤 5-9 · 进行中
+
+append-only 审查、预算模型、cluster 纪律、红线、覆盖率、E2E 登记随后续 commit 落地。
+**已登记缺陷**：BUG-001（高，`list_children` 叶子属性错位）、BUG-002（高，`count_matching` 形状变更漏改消费端）、
+BUG-003（中，契约文档与源码不符）。
+
