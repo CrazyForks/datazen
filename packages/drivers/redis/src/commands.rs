@@ -176,11 +176,11 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "decode_value",
             "Decode value",
-            "Parse-only decode of a base64 payload (msgpack / pickle / php / java) into a JSON tree; never executes host-language objects",
+            "Parse-only decode of a base64 payload (none / base64 / gzip / zlib / deflate / msgpack / pickle / php / java) into a byte or JSON view; never executes host-language objects",
             "redis:allow-info",
             object_schema(
                 serde_json::json!({
-                    "codec": { "type": "string", "enum": ["msgpack", "pickle", "php", "java"] },
+                    "codec": { "type": "string", "enum": ["none", "base64", "gzip", "zlib", "deflate", "msgpack", "pickle", "php", "java"] },
                     "data": { "type": "string", "description": "base64-encoded raw bytes" }
                 }),
                 &["codec", "data"],
