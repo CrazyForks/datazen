@@ -655,3 +655,32 @@ V8 反过来证明读侧过滤顶不掉写侧守卫（两侧各有一条独立�
 - 新基线：**40 files / 325 passed (325) / 0 skipped**、`tsc` exit 0、kv-bar 覆盖率 100×4、护栏 0 blocking。
 - 返回 `READY_FOR_TEST`，等第 3 轮全新 Tester 复测与改判。
 
+---
+
+# 第 3 轮 Tester 复测（全新实例，接管第 2 轮修复回合，只测 BUG-005 单条）
+
+> 现场：`feature/redis-kvbar-ui` @ `e312267ef`（台账 commit），开工 `git status --porcelain` 为空，
+> 工作树干净。被测 = 第 2 轮修复 `010c6b406`（`KeyPropsSidebar.tsx` 策略值带身份 + 渲染期过滤 +
+> `keyObjectInfo.ts` docblock 口径 + 新电池 `kvBarRound2Fixes` 3 例 + r2 Tester 的 BUG-005 skip 解开与成对改写）。
+> 本任为全新实例，未沿用第 1/2 轮 Tester 或任何编码代理的判断；下表数字**全部本机实跑**。
+> 范围只有 BUG-005 一条：BUG-001~004 维持第 2 轮 Tester 已判的 `已修复`，**不重开**（本轮只确认未引入新回归）。
+
+## 阶段 B：五项门禁独立复跑（worktree 根目录）
+
+| 门禁 | 命令 | 实测原始结果 |
+|---|---|---|
+| 类型 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0，0 条诊断**（前置 `node scripts/generate-builtin-locales.mjs` 已跑，重生成 `src/locales/builtinLocales.ts`，属 gitignored codegen，未入库） |
+| 驱动 UI 全量 | `npx vitest run --config vitest.drivers.config.ts` | **Test Files 40 passed (40) · Tests 325 passed (325) · 0 failed · 0 skipped**（Duration 11.17s）—— 与 Coder 自述基线**逐项一致**（325 = 上一基线 322 例 −1 skip 解开 +3 新电池） |
+| 前端构建 | `npx vite build` | **exit 0**，`✓ built in 5.53s`（仅既有 chunk >500 kB 告警，非本轨引入） |
+| `ui/kv-bar/**` 覆盖率 | `npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.provider=v8 --coverage.include='packages/drivers/redis/ui/kv-bar/**'` | **exit 0**；`All files 100 / 100 / 100 / 100`（Stmts/Branch/Funcs/Lines）；逐文件 `KeyPropsSidebar.tsx` 100×4、`KvStatusBar.tsx` 100×4、`keyObjectInfo.ts` 100×4、`useKeyObjectInfo.ts` 100×4、`useKvSelection.ts` 100×4、`index.ts` 0/0/0/0（**纯再导出桶**，与前两轮同口径）；新增渲染期 `policy?.session === dbSessionId` 三元分支两臂各有用例，故仍 100 |
+| import 边界护栏 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0**，`ok (1433 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` + `2 allow-listed reference(s) skipped`；4 条 advisory 为存量宿主侧（`locales.test.ts`、`driverUiSetup.ts` ×2、`DocumentConnectionView.tsx`），本回合未新增 |
+| Rust | — | **不适用**：`git diff --stat 7e809bc1c..HEAD -- '*.rs' 'Cargo.toml' 'Cargo.lock'` 输出 **0 行**，`010c6b406` 全部落在 `packages/drivers/redis/ui/**`（2 源 + 2 测试），无 Rust 改动；任务书禁裸 `cargo build`，未跑 cargo |
+
+**与 Coder 自述对照**：`tsc` 0 / vitest `40·325·0·0` / 覆盖率 `100×4` / 护栏 `0 blocking·4 advisory` / `.rs` 零改动 —— **五项逐项一致**，无差异需归因。`ui/kv-bar/**` 覆盖率维持 100×4 硬达标（阶段 C 阈值 ≥80% 早已满足）。
+
+### 越界自查（阶段 A 前置，`git diff --stat 7e809bc1c..HEAD`）
+
+被测量级改动全部在轨内文件面：仅 `KeyPropsSidebar.tsx`(+29/−… 净 +23)、`keyObjectInfo.ts`(docblock +5)、
+两测试文件；`ui/overview/**`、宿主 `src/**`、`packages/driver-sdk`、`KvSlotState` 契约、`hub.md` **零改动**，
+`locales/en.ts` 零改动（空态复用既有 `redis.keyProps.unavailable`）。无越界。
+
