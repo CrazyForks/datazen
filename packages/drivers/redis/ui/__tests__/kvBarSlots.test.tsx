@@ -30,7 +30,7 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
   redisCommandInvoke: (...args: unknown[]) => commandInvoke(...(args as [])),
 }));
 
-import { RedisKeyPropsSidebar } from '../kv-bar';
+import { RedisKeyPropsSidebar, RedisKvStatusBar } from '../kv-bar';
 import {
   attributeViewState,
   describeTtl,
@@ -162,6 +162,86 @@ describe('key_object_info client (pure)', () => {
     await expect(invokeMaxmemoryPolicy('sess-1')).resolves.toBeNull();
     commandInvoke.mockRejectedValue(new Error('no permission'));
     await expect(invokeMaxmemoryPolicy('sess-1')).resolves.toBeNull();
+  });
+});
+
+describe('RedisKvStatusBar (statusBar slot)', () => {
+  it('renders the no-key state and asks the server for nothing', () => {
+    const relay = makeRelay();
+    render(<RedisKvStatusBar {...slotProps(relay)} />);
+    const bar = screen.getByTestId('redis-kv-status-bar');
+    expect(bar.getAttribute('data-status-state')).toBe('no-key');
+    expect(bar.getAttribute('data-selected-key')).toBe('');
+    expect(bar.querySelector('[data-part="selected-key"]')).not.toBeNull();
+    expect(commandInvoke).not.toHaveBeenCalled();
+  });
+
+  it('follows the relay: selection alone drives the read', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ type: 'hash', memoryBytes: 2048 }));
+    const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
+
+    act(() => relay.selectKey('user:1'));
+    await waitFor(() =>
+      expect(container.querySelector('[data-part="selected-key"]')?.textContent).toBe('user:1'),
+    );
+    expect(container.querySelector('[data-part="type"]')?.textContent).toBe('hash');
+    expect(commandInvoke).toHaveBeenCalledWith('redis', 'key_object_info', {
+      dbSessionId: 'sess-1',
+      dbIndex: 5,
+      key: 'user:1',
+    });
+  });
+
+  it('keeps the database label from the host props', () => {
+    const relay = makeRelay();
+    const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    expect(container.querySelector('[data-part="database"]')?.textContent).toBe('db5');
+  });
+
+  it('shows a TTL only when the key actually expires', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ ttlMs: 125_000, memoryBytes: 1536 }));
+    const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    act(() => relay.selectKey('session:1'));
+    await waitFor(() =>
+      expect(container.querySelector('[data-part="size"]')?.textContent).toBe('1.5 KB'),
+    );
+    expect(container.querySelector('[data-part="ttl"]')?.textContent).toBe('2m 05s');
+
+    vi.clearAllMocks();
+    const other = makeRelay();
+    commandInvoke.mockResolvedValue(info({ ttlMs: -1 }));
+    const second = render(<RedisKvStatusBar {...slotProps(other)} />);
+    act(() => other.selectKey('forever'));
+    await waitFor(() => expect(second.container.querySelector('[data-part="size"]')).not.toBeNull());
+    expect(second.container.querySelector('[data-part="ttl"]')).toBeNull();
+  });
+
+  it('renders an expired key as a state, not as an error', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ missing: true, type: null, memoryBytes: null, ttlMs: -2 }));
+    const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    act(() => relay.selectKey('gone'));
+    await waitFor(() =>
+      expect(bar.container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
+        'missing',
+      ),
+    );
+    expect(bar.container.querySelector('[data-part="type"]')).toBeNull();
+    expect(bar.container.querySelector('[data-part="size"]')).toBeNull();
+  });
+
+  it('mirrors the relay dirty flag without a re-render from the driver', async () => {
+    const relay = makeRelay();
+    const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    expect(container.querySelector('[data-dirty="true"]')).toBeNull();
+    act(() => relay.setDirty(true));
+    expect(screen.getByTestId('redis-kv-status-bar').getAttribute('data-dirty')).toBe('true');
+    const badge = container.querySelector('[data-part="dirty"]');
+    expect(badge?.getAttribute('data-i18n-key')).toBe('redis.contextBar.status.unsaved');
+    act(() => relay.setDirty(false));
+    expect(container.querySelector('[data-part="dirty"]')).toBeNull();
   });
 });
 

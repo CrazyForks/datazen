@@ -10,4 +10,5 @@
  * Props shapes are frozen in `@datazen/driver-sdk` (`KvStatusBarProps`,
  * `KeyPropsSidebarProps`) — consume them verbatim, never widen them here.
  */
+export { RedisKvStatusBar } from './KvStatusBar';
 export { RedisKeyPropsSidebar } from './KeyPropsSidebar';
