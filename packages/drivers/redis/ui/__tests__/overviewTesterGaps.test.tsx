@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 import { cleanup, fireEvent, render, renderHook, waitFor } from '@testing-library/react';
 import type { RedisInvokeFn } from '../shared/redisInvoke';
+import { formatSize } from '../shared/formatSize';
 import { BROWSE_HISTORY_STORAGE_KEY, pushBrowseEntry } from '../lib/redisBrowseHistory';
 import { OVERVIEW_COMMANDS, useOverviewData } from '../overview/useOverviewData';
 import { RecentKeysCard } from '../overview/RecentKeysCard';
@@ -482,5 +483,33 @@ describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () 
     const unknown = container.querySelector('[data-overview-recent-key="gone:1"]') as Element;
     expect(unknown.querySelector('.border-edge')).not.toBeNull();
     expect(unknown.textContent).toContain('redis.overview.typeUnknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [tester] 第 2 轮：maxmemory 有人数、无 human 形制时的回退（MemoryCard:139）
+//
+// 覆盖率报告里本轨唯一剩下的真实未覆盖分支：托管端 INFO 常只给 `maxmemory`
+// 而漏掉 `maxmemory_human`，此时上限格必须退化成 `formatSize(maxBytes)`，
+// 而不是破折号（谎报「无上限」）也不是 unlimited 文案。
+// ---------------------------------------------------------------------------
+
+describe('[tester] maxmemory 缺 maxmemory_human 时的上限回退', () => {
+  it('formats the byte ceiling itself instead of claiming unlimited or a dash', async () => {
+    stubHome({
+      info: ['# Memory', 'used_memory:1048576', 'maxmemory:4194304'].join('\r\n'),
+    });
+    const { container } = render(<RedisOverviewHome {...homeProps()} />);
+    await waitFor(() =>
+      expect(
+        container
+          .querySelector('[data-overview-memory-max]')
+          ?.getAttribute('data-overview-memory-max'),
+      ).toBe('bounded'),
+    );
+    const cell = container.querySelector('[data-overview-memory-max]') as Element;
+    expect(cell.textContent).toBe(formatSize(4194304));
+    expect(cell.textContent).not.toBe('—');
+    expect(cell.textContent).not.toBe('redis.overview.memory.unlimited');
   });
 });
