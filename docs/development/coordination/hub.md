@@ -76,6 +76,8 @@
 
 ## 跨轨风险
 
+- **根 `tsc` 对驱动 UI 全盲**（W3-B 修复轮实证，`tsconfig.json:26` include 不含 `packages/drivers/*/ui`）：驱动 UI 的形状级泄漏（如 `count_matching` out 改对象后消费端仍 `as number`）根 tsc 结构性免疫，vitest 是唯一网——既有 12 条驱动 UI 类型错误（`consoleResultRenderer.tsx` ×1、`SearchableInfoPanel.tsx` ×11）也一直被遮蔽。Wave 4 消费新形状时Tester 必须补 data-testid 断言层；发布前另立回合清存量后纳入门禁。
+- **预算口径**：BUG-003 修复后 `count_matching` 降级路径的 `consumed` 会从 0 变一轮真 SCAN——Wave 4 判"DBSIZE 快答"须用 `dbsize > 0 && consumed == 0`，不能只看 `consumed == 0`。
 - **Wave 2 契约已冻结**：`type_distribution` / `key_object_info` 的声明面（字段与类型）与 `b1e1f4010` 逐字节相同，UI 侧照 W1-A progress.md 的契约段消费，不得反向要求后端改形状。
 - **Cluster 往返预算不是"一次 pipeline"**：standalone/sentinel `key_object_info` = 2 次往返，Cluster = 7 次；`type_distribution` 在 Cluster 采样窗硬限 200。UI 必须渲染 `truncated` 的"采样 N/M"标注，否则会把采样读成精确分布。
 - **Cluster 键树仍不可用**（基线缺陷 #56）：既有 `list_children` 在 Cluster 下同形 CrossSlot，Wave 2 不要在键树里假设 Cluster 可用，需在 UI 上给出降级提示。
@@ -91,5 +93,6 @@
 - [ ] **真连 Cluster 9e**：`list_children` CrossSlot 基线缺陷（#56）复现并裁定归属。
 - [ ] SELECT 哨兵项：`select_db` 按 `current_db` 短路（#55，P1 候选）在真连下确认少 1 次往返。
 - [ ] Wave 2 全部 GUI 走查（上下文条 / 键属性侧栏 / 屏 A 让位）留待人工，单测不替代。
-- [ ] `RedisWorkbench.tsx`（680 行）拆分与 `cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件拆分（800 行红线）。
+- [ ] `RedisWorkbench.tsx`（680 行）拆分与 `cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件拆分（800 行红线）；**+ W3-B 的 `ops_tree_scan.rs`（修复轮后 988 行，建议切 `ops_tree_scan/{batch,page}.rs`）与其 `tests.rs`（1072+ 行）**。
+- [ ] 驱动 UI 纳入类型门禁：先清 `packages/drivers/*/ui` 的 12 条存量 `error TS`（W3-B 实测清单），再把该面加进根 `tsconfig.json` include（或建 `tsconfig.drivers.json` 独立跑）；同时评估加一条自动单文件行数门禁（仓内现无）。
 - [ ] 轨道 worktree / feature 分支清理（三条已合入的可在 R 阶段末删除）。
