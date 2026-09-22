@@ -135,6 +135,27 @@ fn pg_trigger_ident(trigger: &MigrationTrigger) -> Result<(String, String), Stri
     Ok((trigger_ident, target_ident))
 }
 
+fn pg_sequence_ident(sequence: &MigrationSequence) -> Result<String, String> {
+    validate_migration_identifier(&sequence.name)?;
+    let schema = sequence
+        .schema
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or("PostgreSQL sequence schema is required")?;
+    validate_migration_identifier(schema)?;
+    let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+    Ok(format!("{}.{}", quote(schema), quote(&sequence.name)))
+}
+
+fn pg_validate_sequence_ddl(sequence: &MigrationSequence) -> Result<String, String> {
+    validate_sequence_definition_with_identity(
+        &sequence.definition,
+        sequence.schema.as_deref(),
+        &sequence.name,
+    )?;
+    Ok(sequence.definition.trim().to_owned())
+}
+
 fn pg_validate_object_ddl(
     definition: &str,
     kind: ObjectKind,
@@ -626,6 +647,40 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                     summary: format!("DROP TRIGGER {}", trigger.name),
                 })
             }
+            MigrationOperation::CreateSequence { sequence } => {
+                let definition = pg_validate_sequence_ddl(sequence)?;
+                let ident = pg_sequence_ident(sequence)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP SEQUENCE {ident}")),
+                    summary: format!("CREATE SEQUENCE {}", sequence.name),
+                })
+            }
+            MigrationOperation::ReplaceSequence { current, desired } => {
+                if current.schema != desired.schema || current.name != desired.name {
+                    return Err("sequence replacement identities must match".into());
+                }
+                let current_definition = pg_validate_sequence_ddl(current)?;
+                let desired_definition = pg_validate_sequence_ddl(desired)?;
+                let ident = pg_sequence_ident(desired)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP SEQUENCE {ident}; {desired_definition}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!("DROP SEQUENCE {ident}; {current_definition}")),
+                    summary: format!("REPLACE SEQUENCE {}", desired.name),
+                })
+            }
+            MigrationOperation::DropSequence { sequence } => {
+                let definition = pg_validate_sequence_ddl(sequence)?;
+                let ident = pg_sequence_ident(sequence)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP SEQUENCE {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!("DROP SEQUENCE {}", sequence.name),
+                })
+            }
         }
     }
 }
@@ -664,7 +719,10 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             }
             MigrationOperation::CreateTrigger { .. }
             | MigrationOperation::ReplaceTrigger { .. }
-            | MigrationOperation::DropTrigger { .. } => true,
+            | MigrationOperation::DropTrigger { .. }
+            | MigrationOperation::CreateSequence { .. }
+            | MigrationOperation::ReplaceSequence { .. }
+            | MigrationOperation::DropSequence { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -1029,6 +1087,85 @@ mod tests {
             .sql
             .contains("DROP FUNCTION \"public\".\"calculate_total\"(integer)"));
         assert!(drop.rollback_sql.is_some());
+    }
+
+    fn pg_sequence(definition: &str) -> MigrationSequence {
+        MigrationSequence {
+            schema: Some("public".into()),
+            name: "orders_id_seq".into(),
+            definition: definition.into(),
+        }
+    }
+
+    #[test]
+    fn renders_sequence_create_replace_drop_and_requires_exact_identity() {
+        let current = pg_sequence(
+            "CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE; ALTER SEQUENCE \"public\".\"orders_id_seq\" OWNED BY \"public\".\"orders\".\"id\";",
+        );
+        let desired = pg_sequence(
+            "CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 10 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 2 CYCLE; ALTER SEQUENCE \"public\".\"orders_id_seq\" OWNED BY \"public\".\"orders\".\"id\";",
+        );
+        let create = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateSequence {
+                sequence: current.clone(),
+            })
+            .unwrap();
+        assert_eq!(create.risk, MigrationRisk::Additive);
+        assert!(create
+            .sql
+            .starts_with("CREATE SEQUENCE \"public\".\"orders_id_seq\""));
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP SEQUENCE \"public\".\"orders_id_seq\"")
+        );
+        let replace = PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceSequence {
+                current: current.clone(),
+                desired: desired.clone(),
+            })
+            .unwrap();
+        assert_eq!(replace.risk, MigrationRisk::Destructive);
+        assert!(replace
+            .sql
+            .contains("DROP SEQUENCE \"public\".\"orders_id_seq\""));
+        assert!(replace.sql.contains("INCREMENT BY 10"));
+        assert!(replace.rollback_sql.is_some());
+        let drop = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropSequence {
+                sequence: desired.clone(),
+            })
+            .unwrap();
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        assert!(drop.rollback_sql.is_some());
+        let mismatched = MigrationSequence {
+            schema: Some("other".into()),
+            ..desired.clone()
+        };
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceSequence {
+                current,
+                desired: mismatched,
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn sequence_renderer_rejects_name_mismatch_and_unsafe_catalog_ddl() {
+        let unsafe_sequence = MigrationSequence {
+            schema: Some("public".into()),
+            name: "orders_id_seq".into(),
+            definition: "CREATE SEQUENCE \"public\".\"other_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;".into(),
+        };
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateSequence {
+                sequence: unsafe_sequence,
+            })
+            .is_err());
+        assert!(PostgresMigrationCapabilities.supports(
+            &MigrationOperation::CreateSequence {
+                sequence: pg_sequence("CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;")
+            }
+        ));
     }
 
     #[test]

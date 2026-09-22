@@ -318,6 +318,29 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('[tester] prepareSequencePlan forwards only qualified selectors and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'sequence:public:orders_id_seq',
+        tables: ['sequence:public:orders_id_seq'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareSequencePlan({
+        sourceDbSessionId: 'src-sequence',
+        targetDbSessionId: 'tgt-sequence',
+        objectNames: ['public.orders_id_seq'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['sequence:public:orders_id_seq'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_sequence_plan', {
+      sourceDbSessionId: 'src-sequence',
+      targetDbSessionId: 'tgt-sequence',
+      objectNames: ['public.orders_id_seq'],
+      allowDestructive: true,
+    });
+  });
+
   it('executeDeploy forwards deploy options and confirm token', async () => {
     const plan = samplePlan();
     const result = { status: 'committed', executedCount: 1 };

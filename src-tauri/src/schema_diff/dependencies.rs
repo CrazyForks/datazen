@@ -35,6 +35,11 @@ fn op_table(op: &MigrationOperation) -> &str {
             desired: trigger, ..
         }
         | MigrationOperation::DropTrigger { trigger } => &trigger.name,
+        MigrationOperation::CreateSequence { sequence }
+        | MigrationOperation::ReplaceSequence {
+            desired: sequence, ..
+        }
+        | MigrationOperation::DropSequence { sequence } => &sequence.name,
     }
 }
 
@@ -299,6 +304,9 @@ fn priority(op: &MigrationOperation) -> u8 {
         DropTable { .. } => 5,
         ReplaceView { .. } | ReplaceRoutine { .. } | ReplaceTrigger { .. } => 2,
         CreateTrigger { .. } => 3,
+        CreateSequence { .. } => 0,
+        ReplaceSequence { .. } => 2,
+        DropSequence { .. } => 4,
         _ => 2,
     }
 }
@@ -419,6 +427,31 @@ mod tests {
         assert!(
             matches!(&sorted[1], MigrationOperation::DropColumn { column, .. } if column.name == "z")
         );
+    }
+
+    #[test]
+    fn sequence_operations_have_deterministic_create_replace_drop_order() {
+        let make = |name: &str| {
+            datazen_driver_api::MigrationSequence {
+            schema: Some("public".into()),
+            name: name.into(),
+            definition: format!(
+                "CREATE SEQUENCE \"public\".\"{name}\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;"
+            ),
+        }
+        };
+        let create = MigrationOperation::CreateSequence {
+            sequence: make("s"),
+        };
+        let replace = MigrationOperation::ReplaceSequence {
+            current: make("s"),
+            desired: make("s"),
+        };
+        let drop = MigrationOperation::DropSequence {
+            sequence: make("s"),
+        };
+        let sorted = resolve_dependencies(vec![drop.clone(), create.clone(), replace.clone()]);
+        assert_eq!(sorted, vec![create, replace, drop]);
     }
 }
 

@@ -49,6 +49,16 @@ pub struct MigrationTrigger {
     pub definition: String,
 }
 
+/// A PostgreSQL sequence definition captured from the server catalog. The
+/// definition contains only the catalog-generated CREATE statement and an
+/// optional OWNED BY statement; callers never supply it from the client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationSequence {
+    pub schema: Option<String>,
+    pub name: String,
+    pub definition: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
     CreateTable {
@@ -171,6 +181,18 @@ pub enum MigrationOperation {
     DropTrigger {
         trigger: MigrationTrigger,
     },
+    CreateSequence {
+        sequence: MigrationSequence,
+    },
+    /// Replacing a sequence resets mutable counter state. Renderers must mark
+    /// it destructive and must not claim a complete rollback.
+    ReplaceSequence {
+        current: MigrationSequence,
+        desired: MigrationSequence,
+    },
+    DropSequence {
+        sequence: MigrationSequence,
+    },
 }
 
 /// Validate and trim a relation identifier used by a reviewed migration
@@ -281,6 +303,198 @@ pub fn validate_object_definition_with_identity(
             return Err(format!(
                 "routine declaration signature `{declared_signature}` does not match requested signature `{signature}`"
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate PostgreSQL sequence DDL returned by the catalog before a renderer
+/// can include it in a reviewed migration plan. Sequence DDL has a narrow,
+/// known shape: a CREATE SEQUENCE statement with an optional ALTER SEQUENCE
+/// ... OWNED BY statement. Rejecting any other script shape keeps a stale or
+/// malicious catalog payload from becoming arbitrary SQL.
+pub fn validate_sequence_definition_with_identity(
+    definition: &str,
+    schema: Option<&str>,
+    name: &str,
+) -> Result<(), String> {
+    validate_migration_identifier(name)?;
+    if let Some(schema) = schema.filter(|schema| !schema.is_empty()) {
+        validate_migration_identifier(schema)?;
+    }
+    let trimmed = definition.trim();
+    if trimmed.is_empty() {
+        return Err("sequence definition must not be empty".into());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
+    {
+        return Err("sequence definition contains control characters".into());
+    }
+    // Catalog-generated sequence DDL never needs SQL literals or comments.
+    // Refuse them instead of trying to recover a statement boundary from an
+    // arbitrary script.
+    if trimmed.contains('\'')
+        || trimmed.contains("--")
+        || trimmed.contains("/*")
+        || trimmed.contains("*/")
+        || trimmed.contains('#')
+    {
+        return Err("sequence definition contains unsupported literal or comment syntax".into());
+    }
+    let statements = split_sequence_statements(trimmed)?;
+    if statements.is_empty() || statements.len() > 2 {
+        return Err(
+            "sequence definition must contain CREATE and at most one OWNED BY statement".into(),
+        );
+    }
+    let create_tokens = executable_sql_tokens(statements[0]);
+    let mut index = 0;
+    expect_word(&create_tokens, &mut index, "CREATE")?;
+    expect_word(&create_tokens, &mut index, "SEQUENCE")?;
+    validate_sequence_identity(&create_tokens, &mut index, schema, name)?;
+    validate_sequence_options(&create_tokens[index..])?;
+
+    if let Some(owned_by) = statements.get(1) {
+        let tokens = executable_sql_tokens(owned_by);
+        let mut index = 0;
+        expect_word(&tokens, &mut index, "ALTER")?;
+        expect_word(&tokens, &mut index, "SEQUENCE")?;
+        validate_sequence_identity(&tokens, &mut index, schema, name)?;
+        expect_word(&tokens, &mut index, "OWNED")?;
+        expect_word(&tokens, &mut index, "BY")?;
+        let owner = consume_qualified_identifier(&tokens, &mut index)
+            .ok_or("sequence OWNED BY relation is missing")?;
+        if owner.len() != 3 || index != tokens.len() {
+            return Err(
+                "sequence OWNED BY relation must be schema-qualified table column identity".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn split_sequence_statements(definition: &str) -> Result<Vec<&str>, String> {
+    let mut statements = Vec::new();
+    let mut start = 0;
+    let chars = definition.char_indices().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut quoted_identifier = false;
+    while index < chars.len() {
+        let (offset, ch) = chars[index];
+        if ch == '"' {
+            if quoted_identifier && chars.get(index + 1).is_some_and(|(_, next)| *next == '"') {
+                index += 2;
+                continue;
+            }
+            quoted_identifier = !quoted_identifier;
+        } else if ch == ';' && !quoted_identifier {
+            let statement = definition[start..offset].trim();
+            if statement.is_empty() {
+                return Err("sequence definition contains an empty statement".into());
+            }
+            statements.push(statement);
+            start = offset + ch.len_utf8();
+        }
+        index += 1;
+    }
+    if quoted_identifier {
+        return Err("sequence definition contains an unclosed quoted identifier".into());
+    }
+    let tail = definition[start..].trim();
+    if !tail.is_empty() {
+        statements.push(tail);
+    }
+    Ok(statements)
+}
+
+fn expect_word(
+    tokens: &[ExecutableSqlToken],
+    index: &mut usize,
+    expected: &str,
+) -> Result<(), String> {
+    if tokens.get(*index).and_then(ExecutableSqlToken::as_word) != Some(expected) {
+        return Err(format!("sequence definition must contain {expected}"));
+    }
+    *index += 1;
+    Ok(())
+}
+
+fn consume_qualified_identifier(
+    tokens: &[ExecutableSqlToken],
+    index: &mut usize,
+) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    loop {
+        let part = match tokens.get(*index) {
+            Some(ExecutableSqlToken::Word(value)) | Some(ExecutableSqlToken::Identifier(value)) => {
+                value.clone()
+            }
+            _ => return None,
+        };
+        parts.push(part);
+        *index += 1;
+        if tokens.get(*index) != Some(&ExecutableSqlToken::Symbol('.')) {
+            break;
+        }
+        *index += 1;
+    }
+    Some(parts)
+}
+
+fn validate_sequence_identity(
+    tokens: &[ExecutableSqlToken],
+    index: &mut usize,
+    schema: Option<&str>,
+    name: &str,
+) -> Result<(), String> {
+    let parts = consume_qualified_identifier(tokens, index)
+        .ok_or("sequence definition must declare a sequence identity")?;
+    let expected_schema = schema.filter(|schema| !schema.is_empty());
+    let identity_matches = match expected_schema {
+        Some(schema) => {
+            parts.len() == 2
+                && normalize_identifier(&parts[0]) == normalize_identifier(schema)
+                && normalize_identifier(&parts[1]) == normalize_identifier(name)
+        }
+        None => parts.len() == 1 && normalize_identifier(&parts[0]) == normalize_identifier(name),
+    };
+    if identity_matches {
+        Ok(())
+    } else {
+        Err("sequence definition identity does not match the catalog object".into())
+    }
+}
+
+fn validate_sequence_options(tokens: &[ExecutableSqlToken]) -> Result<(), String> {
+    const KEYWORDS: &[&str] = &[
+        "AS",
+        "SMALLINT",
+        "INTEGER",
+        "BIGINT",
+        "INCREMENT",
+        "BY",
+        "MINVALUE",
+        "MAXVALUE",
+        "START",
+        "WITH",
+        "CACHE",
+        "CYCLE",
+        "NO",
+    ];
+    if tokens.is_empty() {
+        return Err("sequence definition is missing sequence attributes".into());
+    }
+    for token in tokens {
+        match token {
+            ExecutableSqlToken::Word(value)
+                if KEYWORDS.contains(&value.as_str())
+                    || value.chars().all(|ch| ch.is_ascii_digit()) => {}
+            // Negative values are tokenized as their digits after the minus
+            // symbol, which is valid PostgreSQL sequence syntax.
+            ExecutableSqlToken::Symbol('-') => {}
+            _ => return Err("sequence definition contains unsupported attribute syntax".into()),
         }
     }
     Ok(())
@@ -960,5 +1174,41 @@ mod type_parts_tests {
             "wanted_name",
         )
         .is_ok());
+    }
+
+    #[test]
+    fn sequence_definition_validation_requires_exact_qualified_identity_and_attributes() {
+        let ddl = "CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE; ALTER SEQUENCE \"public\".\"orders_id_seq\" OWNED BY \"public\".\"orders\".\"id\";";
+        assert!(
+            validate_sequence_definition_with_identity(ddl, Some("public"), "orders_id_seq")
+                .is_ok()
+        );
+        assert!(
+            validate_sequence_definition_with_identity(ddl, Some("other"), "orders_id_seq")
+                .is_err()
+        );
+        assert!(validate_sequence_definition_with_identity(ddl, Some("public"), "other").is_err());
+        assert!(validate_sequence_definition_with_identity(
+            "CREATE SEQUENCE \"public\".\"orders_id_seq\"",
+            Some("public"),
+            "orders_id_seq"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sequence_definition_validation_rejects_scripts_literals_comments_and_ambiguous_owner() {
+        let valid = "CREATE SEQUENCE \"public\".\"s\" AS integer INCREMENT BY -1 MINVALUE -2147483648 MAXVALUE 2147483647 START WITH 1 CACHE 2 CYCLE;";
+        for unsafe_ddl in [
+            "SELECT 1",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer; DROP TABLE users",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer -- comment",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer START WITH '1'",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer; ALTER SEQUENCE \"public\".\"other\" OWNED BY \"public\".\"t\".\"id\"",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer; ALTER SEQUENCE \"public\".\"s\" OWNED BY \"public\".\"t\"",
+        ] {
+            assert!(validate_sequence_definition_with_identity(unsafe_ddl, Some("public"), "s").is_err(), "{unsafe_ddl}");
+        }
+        assert!(validate_sequence_definition_with_identity(valid, Some("public"), "s").is_ok());
     }
 }
