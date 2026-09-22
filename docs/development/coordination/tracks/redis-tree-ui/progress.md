@@ -1,12 +1,12 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: READY_FOR_TEST
-- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）
-- 测试 commit: 95040148f、da04fd11b（D-3..D-8 连续旅程 + 分隔符测试引用修正）
+- 状态: TEST_FAILED（第 1 轮 Tester：2 条 `待修复` = BUG-001 Major + BUG-002 Minor；四件套门禁全绿、D-0/D-1/D-3/D-4/D-6/D-7 与 D-5/D-8 判定顺序均通过）
+- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）
+- 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、本 commit（覆盖率补测 + 判定收口）
 - 合并 commit: —
-- 代理: w3d-tree-ui-rescuer（接管原编码代理收尾；原代理未及登记 agentId，其父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd）
+- 代理: w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd
 - Worktree: .worktrees/datazen-redis-tree-ui
 - 分支: feature/redis-tree-ui
-- 心跳: 2026-09-22 21:11
+- 心跳: 2026-09-22 22:57（Tester 第 1 轮）
 
 # W3-D `redis-tree-ui` 简报（协调者下发）
 
@@ -129,6 +129,9 @@ sticky 滚动钉住/释放、I-4 重展开不重取、I-8 批量失败 DOM、I-1
 ### 留待 R 回归
 - 真实 Redis 的 live e2e 按纪律未跑（禁 `pnpm e2e`）；需真机复核点：sticky 在真实滚动容器中的视觉贴合、
   `count_matching n+` 部分计数（W3-B 契约后）与原生右键菜单弹出（jsdom 无法弹 OS 菜单）。
+- **（第 1 轮 Tester 追加）BUG-001 修复后**：pattern → `list_children` 的真实语义需真库回归 ——
+  `app:*` 究竟该折叠成 `app:` 子树（prefix 路由）还是客户端 glob 过滤整层，mock 无法裁定，
+  只有真 Redis 的 `list_children` 折叠结果能确认修复方向与用户预期一致。
 
 ---
 
@@ -153,6 +156,11 @@ sticky 滚动钉住/释放、I-4 重展开不重取、I-8 批量失败 DOM、I-1
 
 4 条 R3 advisory 均为宿主既有文件（`src/locales/locales.test.ts`、`src/test/driverUiSetup.ts`×2、
 `src/windows/connection/DocumentConnectionView.tsx`），非本轨引入 —— 已核对本轨 diff 不含这些路径。
+
+**Tester 补测后终跑**（含本 Tester 新增 2 个测试文件，串行）：
+`vitest` → **53 files / 551 passed | 2 skipped（553）**，exit 0（2 skipped = BUG-001/002 复现用例）；
+`tsc --noEmit` → 0；`boundaries` → **1483 files · 0 blocking · 4 advisory**（+2 为新增测试文件，扫描面自然增长）；
+`vite build` → **built in 4.63s**，exit 0。⇒ 门禁仍"只增不红"，`## 4 门禁` 四条全绿成立。
 
 ### 验收项 6：范围审查（实测）
 - `git diff 8981d3078..HEAD --name-only` = 41 个文件，**全部**落在
@@ -218,3 +226,107 @@ sticky 滚动钉住/释放、I-4 重展开不重取、I-8 批量失败 DOM、I-1
 - D-1..D-8 覆盖对照：每面均有「纯函数状态机 + DOM 旅程」双路（D-1 ✅；D-2 ✅；D-3 ✅；D-4 ✅；
   D-5 ✅；D-6 ✅；D-7 ✅ 全链；D-8 ✅ 判定顺序）—— 无"只剩静态测试无旅程"的验收面
   （BUG-001 属链路缺失，非测试缺失，不记在本项下）。
+
+### 验收项 4：覆盖率实测（v8，include=`packages/drivers/redis/ui/key-browser/**`）
+Tester 自带 diff 加权脚本（`git diff 8981d3078..HEAD` 新增行 × coverage-final.json）独立复算，**不复用自报口径**：
+
+| 口径 | Rescuer 自报 | Tester 实测（补测前） | Tester 实测（补测后） |
+| --- | --- | --- | --- |
+| 本目录全量 Stmts | — | 69.36% (899/1296) | **72.68% (942/1296)** |
+| 本目录全量 Branch | — | 69.16% (507/733) | **73.66% (540/733)** |
+| **diff 加权 Stmts** | 84.04% (795/946) | **81.78% (525/642)** | **86.14% (553/642)** |
+| **diff 加权 Branch** | 82.63% (452/547) | **81.86% (370/452)** | **88.72% (401/452)** |
+
+- 判定：**补测前 81.78% ≥ 80 已达标**，与自报 84.04% 有 ~2.3pt 差（口径差异：自报按"非删除条目"计数，
+  Tester 按 git diff 新增行 ∩ v8 statementMap 行命中）。两者均 ≥80，**判定成立**。
+- **8 个 sub-80 缺口逐个裁定**（Rescuer 均称"非本轨面 / D-0 抽出的接线层"）：
+  | 文件 | 自报 | Tester 判定 |
+  | --- | --- | --- |
+  | `useWorkbenchSplit.ts` | 45% | **部分成立**：分栏拖拽回调确非本轨面（I-10/持久化属 Wave 4）；但纯函数 `clampTreeWidth` 属 D-0 拆分自证范围且是零 UI 依赖 → **已补测**（Stmts 44.4%，branch 0→100%）。拖拽 DOM 路径维持"非本轨面"。 |
+  | `useBatchActions.tsx` | 48.73% | **成立**：残余缺口是 rename/pattern 两个对话框的 invoke 分支（简报 P2 未做面）；**I-8 主路径（TTL partial/整批抛错）已被旅程覆盖**，与自报一致。补 `BatchPatternBar` 触发面后 diff 50.0→**51.8%**、whole-file 48.73→**51.26%**（仍 <80，缺口即上述 P2 对话框分支）。 |
+  | `useKeyRowActions.tsx` | 56.52% | **成立**：缺口是 `showNativeContextMenu` 打开路径（OS 菜单，jsdom 不可弹，已登记留待 R）；菜单项构建另有 `redisKeyWebContextMenu.test.tsx`，行/文件夹删除有旅程。补右键绑定断言后 whole-file Stmts 56.52→**69.56%** / Lines 61.9→**76.19%**（残余 54-58 行即原生菜单打开体）。 |
+  | `BatchBar.tsx` | 60% | **成立**：该文件已瘦身为 `export * from './batchInvokes'` + `BatchPatternBar`；pattern/rename 按钮接线属 D-0 抽出层 → **已补测触发面**（本轨计数下 33.3%，真实增量在 `useBatchActions`）。 |
+  | `batchInvokes.ts` | 60% | **不成立（Tester 补测）**：`rename/count_matching` 是本轨 D-6 写路径的**直接依赖**，payload camelCase 契约与 `keys:null` 语义都在本轨验收面内，不该"未被本轨调用面覆盖"。→ 补 3 条纯函数契约测后 **whole-file 与 diff 双口径均 100% Stmts / 100% Branch**（原 85-100 行缺口全覆盖）。 |
+  | `KeyTreeColumn.tsx` | 66.66% | **不成立（Tester 补测）**：`searchMode !== 'key'` 的值搜索切换就在 D-1 交付的 R1 段控件下游 → 补切换+回切旅程后 **whole-file 100%**（diff 口径 0/0：D-0 起该文件无新增行可加权）。 |
+  | `useKeySelection.ts` | 72.22% | **不成立（Tester 补测）**：`toggleKey` 是 30px 行 leaf checkbox 的唯一 mutator，就在 D-4 行规格内 → 补点勾选/取消（whole-file 72.22→**88.88%**；diff 78.6→**96.4%**）。 |
+  | `useWorkbenchSearch.ts` | 79.16% | **成立**：残余缺口是 value/all 模式的 `startValueSearch` 分支（65-70 行，属 value-search，非本轨）；补测后 whole-file Stmts 维持 79.16、Branch 66.7→75（模式切换测跑过 key 分支），未跨面不动。 |
+- **结论**：8 条缺口里 **4 条"非本轨面"成立**（useBatchActions 的 P2 对话框分支 / useKeyRowActions 原生菜单体 /
+  BatchBar 接线 / useWorkbenchSearch value 分支）、**1 条部分成立**（useWorkbenchSplit：拖拽体不测，纯函数 `clampTreeWidth` 已补，branch 0→100%）、
+  **3 条不成立且已由 Tester 补测闭环**（batchInvokes → 双口径 100%、KeyTreeColumn → whole-file 100%、useKeySelection → 跨 80 线）。
+  补测后本轨核心面（`treeLevels/treeEmptyState/treeRowSpec/treePreferences/keyTree/useKeyTreeView/useKeyTree/KeyTreeList`）Stmts 全部 100%、Branch 91~100%。
+- **新增测试文件**（Tester 写，禁改生产码）：
+  - `keyTreeTesterCoverage.test.tsx` — **24 例全绿**，11 组缺口：`keyUnderFolder` 边界（`app`≠`apple`/配置分隔符/跨分隔符 prefix）、
+    I-4 `(n+)` 渲染与 wrap 后回落、leaf 复选框（`toggleKey` 唯一入口）、行点击≠勾选、Enter-on-folder、
+    sticky 钉住行点击折叠、右键绑定、`useKeyTree` 调度 4 路（陈旧回包丢弃 / re-root 重取展开前缀 /
+    `loadMore` 三守卫 / `clearTree`）、I-9 边缘臂（空树 guard、无 active 行进入、`parentIndexOf` 孤儿夹紧）、
+    `KeyTreeColumn` 模式切换、`BatchPatternBar` 触发面、`batchInvokes` payload 契约、`clampTreeWidth`。
+  - `keyTreeTesterGaps.test.tsx` — 6 例（4 绿 + 2 `it.skip` 对应 BUG-001/002）。
+- **反摆设证明（变异注入，全部已 `git checkout` 还原，工作树干净）**：M1 `keyUnderFolder` 退化为裸 startsWith
+  → 红；M2 `partial` 恒 false → 2 红；M3 删陈旧回包 guard → 红；M4 `loadRoot` 不重取展开前缀 → 红；
+  M5 leaf checkbox 接空函数 → 红；M6 `loadMore` 去掉 done/loading 守卫 → 红；M7 Enter-on-folder 不折叠 → 红；
+  M8 sticky 行点击失效 → 红；M9 `clearTree` 不清 expanded → 红；M10 右键未绑到行 → 红；
+  M11 `rowCount===0` 改为 setActiveIndex(0) → 红；M12 无 active 行进入返回 -1 → 红；
+  M14 `KeyTreeColumn` 值模式渲染死 div → 红。**M1~M12 + M14 共 13 项，存活 0**。
+  （另有 M13 `parentIndexOf` 放宽 depth 判定**存活**：该变异在合法 pre-order 行集上与原版等价，属**等价变异**，
+  非用例空洞 —— 该函数的"找到父行"正臂已被既有旅程覆盖，Tester 只补了"找不到夹紧"臂。故总计 14 项注入、
+  13 杀 1 等价存活。）
+- **口径说明**：上表"自报"列为 v8 **whole-file** 数字；Tester 判定列同时给 diff 加权与 whole-file，
+  二者对同一文件可差数点（如 `useKeySelection` diff 78.6→96.4 / whole-file 72.22→88.88），
+  凡本 Tester 声称"补测后 X%"处，两口径均已实测、方向一致（显著提升、跨 80 线者跨线）。
+
+### 验收项 5：范围与契约（补记）
+- 变异实验后 `git diff --stat -- packages/drivers/redis/ui/key-browser` **为空**，生产码零改动；
+  工作树仅剩 Tester 新增的两个 `__tests__` 文件（未跟踪→已 commit）。
+- `git grep DEFAULT_SEPARATORS` 无残留；`buildKeyTreeRows/splitKeyNamespace/separatorsFor` 三函数
+  **在生产路径已无调用方**（仅 `keyTree.test.ts` 引用）—— 见下"审查记录"补充。
+
+### 验收项 6：契约消费检查（简报 §2「明确不做」）
+逐项实测，**全部合规，无提前偷接**：
+- `KvSlotState` 契约（`packages/driver-sdk/src/types/kv-slots.ts:42-54`）当前只有
+  `subscribe/getSelectedKey/selectKey/getDirty/setDirty` 五成员；本轨 `useKvSlotRelay.ts` 只调
+  `selectKey` + `setDirty`（均为既有 F-2 契约），**未新增/未消费** `loaded/cursor/scanning/budget/selectionCount/recordWrite`
+  任何 setter，状态确实"留在树自己手里"（`useKeyTree`/`useRedisKeyScan` 私有）。✅
+- `git grep "key_probe|fetch_all|budget|Stop fetching|scan_abort" -- ui/key-browser` → 仅命中两处文档注释
+  （"size budget"、"budget 上限"），**无实现**：页脚三态 / 扫描预算 UI / 25k 分片 rAF / 精确键短路均未接线。✅
+- `count_matching`：`batchInvokes.invokeCountMatching` 只传 `{dbSessionId,dbIndex,pattern}` 三参
+  （**未使用 W3-B 才引入的预算参数**），且只被 `useBatchActions.loadPatternCount`（pattern 对话框预览）调用，
+  未接进 `n+` 计数 —— 与简报"本轨不调用它的新参数"一致。✅
+- `I-10 容器查询断点（740/340/240）`：未做，`clampTreeWidth` 仍为固定 min/max；列头动作组未改。✅
+- 未硬编码 W3-B 未合入形状：`partial` 计数走的是既有 `ChildEntry.count` + 层级 `done` 位，
+  不依赖 W3-B 的预算返回。✅
+- `ui/shared/meta.ts`、`scripts/resolve-drivers.mjs` 零改动（不在 41 文件 diff 内）。✅
+
+### 验收项 7：E2E 留待 R 回归核对
+自验记录的 `## 留待 R 回归` 三条**全部在册**且判定正确（本机确不可测）：
+1. **sticky 视觉贴合**（真实滚动容器 + `position:sticky` 的亚像素对齐）—— jsdom 无布局引擎，
+   Tester 补的旅程只能测到 `data-sticky-depth` 逻辑链与"钉住行可点击折叠"，测不到视觉贴合 → **保留 R**。✅
+2. **`count_matching n+` 真库**（需 W3-B 契约 + 真 Redis 的预算返回）—— 本机 mock 只能造 cursor，
+   造不出真实部分计数语义 → **保留 R**。✅
+3. **OS 右键菜单弹出**（`showNativeContextMenu` 是宿主 IPC 弹原生菜单）—— jsdom 无 OS 菜单，
+   Tester 只能断言"菜单被构建 + 绑到行的 key + 传了 client 坐标"（已补 M10 变异证明）→ **保留 R**。✅
+- **Tester 追加第 4 条留待 R**（补测暴露、本机不可判）：BUG-001 修复后，pattern→`list_children` 的
+  **真实服务端 prefix/分隔符语义**（`app:*` 到底该折叠成 `app:` 子树还是客户端 glob 过滤）需真库回归确认；
+  单测与 mock 无法裁定哪种折叠与真 Redis 一致。
+
+### 验收项 8：缺陷登记结果
+见同目录 `bugs.md`：**2 条 `待修复`（BUG-001 Major / BUG-002 Minor）**，均经红测证实后登记，
+各带 vitest 实测日志摘录 + 复现步骤 + 建议修法 + 是否阻断合并裁定。
+两条均为**代码审查阶段产出、经新增测试证实**，不在 Rescuer 自报范围内（自报四件套全绿是事实，
+但既有测试对该两条路径**零或伪覆盖**）。
+
+### 审查记录补充（非 Bug，移交协调者裁定）
+- `keyTree.ts` 的 `buildKeyTreeRows` / `splitKeyNamespace` / `separatorsFor` 三函数
+  **生产码已无调用方**（`git grep` 仅命中 `keyTree.test.ts`）。简报 §1 D-3 点名的
+  "换分隔符树形立即重算"的**状态机测试（`keyTree.test.ts:94` "R3 state machine"）实际测的是这段死代码**，
+  真实链路 `buildServerTreeRows` 的重算靠旅程测（DOM 层，见 `keyTreeInteractionsJourney:185`）。
+  ⇒ 判定：**不登记为 Bug**（真实路径有测试且行为正确，DOM 旅程已证实换 sep 后 `app:`→`app.`），
+  但**自验记录"状态机 keyTree.test.ts:94"的引用具有误导性** —— 它给的"纯函数状态机覆盖"信心落在
+  一段无人调用的旧客户端折叠上。建议 Coder 在修复回合顺手：删除死函数或将该状态机测试改测
+  `buildServerTreeRows`（live path）。属"死代码 + 冗余测试"类（tester.md §2 审查项）。
+- `Rescuer 声称"基线 47/456" → 实测 51/523" 的差值构成核对：本轨新增测试文件 4 个
+  （`keyBrowserModuleSplit` / `keyTreeState` / `keyTreeJourney` / `keyTreeInteractionsJourney`），
+  净增 4 files + 67 tests，与 6 个 commit 的测试面吻合。
+  `git diff 8981d3078..HEAD -- __tests__ | grep "^-\s+(it|describe)\("` 全文只命中 **1 行**
+  （`redisKeyWebContextMenu.test.tsx` 那条 `showNativeContextMenu` 用例改名，
+  diff 显示断言体未动、只把读取路径从 `RedisWorkbench.tsx` 换成 D-0 拆出的 `useKeyRowActions.tsx`）
+  ⇒ **无"删基线测试凑数"迹象**。
