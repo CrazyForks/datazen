@@ -2,13 +2,14 @@
 
 use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
+use super::comparison_store::StreamingComparisonStoreWriter;
 use super::inspect::inspect_data_sync_impl;
 use super::keyset_source::DriverKeysetSource;
 use super::plans;
 use crate::data_sync::{
-    compare_table_pages, generate_table_sql_with_preview_formatter_and_policy, mysql_placeholder,
-    postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult, DataSyncError,
-    SyncOptions, SyncSourceFilter, TableMapping, TableMappingStatus, TableResult,
+    compare_table_pages_to_sink, generate_table_sql_with_preview_formatter_and_policy,
+    mysql_placeholder, postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult,
+    DataSyncError, SyncOptions, SyncSourceFilter, TableMapping, TableMappingStatus, TableResult,
 };
 use std::collections::HashMap;
 
@@ -176,12 +177,15 @@ async fn compare_data_sync_impl_inner(
         })?;
 
     options.validate().map_err(CommandError::from)?;
-    let mut out = Vec::new();
+    let mut comparison_writer =
+        StreamingComparisonStoreWriter::new().map_err(CommandError::Validation)?;
     for mapping in inspected {
         if mapping.status != TableMappingStatus::Matched
             || (!wanted.is_empty() && !wanted.contains(&mapping.source_table))
         {
-            out.push(mapping);
+            comparison_writer
+                .add_table(mapping)
+                .map_err(CommandError::Validation)?;
             continue;
         }
         if cancelled
@@ -336,7 +340,7 @@ async fn compare_data_sync_impl_inner(
             target_database.clone(),
             target_schema.clone(),
             column_names.clone(),
-            pk_columns,
+            pk_columns.clone(),
             quote,
             &family,
             tgt_key_adapter.clone(),
@@ -345,7 +349,19 @@ async fn compare_data_sync_impl_inner(
             target_column_types,
             target_recordset_limit,
         )?;
-        let mut table_result = compare_table_pages(
+        let mut table_metadata = TableResult::matched(
+            mapping.source_table.clone(),
+            mapping.target_table.clone(),
+            Vec::new(),
+        );
+        table_metadata.columns = column_names.clone();
+        table_metadata.primary_keys = pk_columns.clone();
+        table_metadata.column_types = schema.columns.iter().map(|c| c.data_type.clone()).collect();
+        table_metadata.source_filter = sync_filter.clone();
+        comparison_writer
+            .begin_table(table_metadata)
+            .map_err(CommandError::Validation)?;
+        let table_result = compare_table_pages_to_sink(
             &mapping.source_table,
             &mapping.target_table,
             &pk_indexes,
@@ -354,14 +370,17 @@ async fn compare_data_sync_impl_inner(
             &mut src_source,
             &mut tgt_source,
             cancelled.clone(),
+            &mut comparison_writer,
         )
         .await
         .map_err(CommandError::from)?;
-        table_result.column_types = schema.columns.iter().map(|c| c.data_type.clone()).collect();
-        table_result.source_filter = sync_filter;
-        out.push(table_result);
+        comparison_writer
+            .finish_table(table_result.unchanged_count)
+            .map_err(CommandError::Validation)?;
     }
-    let comparison = ComparisonResult::new(out);
+    let comparison = comparison_writer
+        .finish()
+        .map_err(CommandError::Validation)?;
     let source_database_name =
         super::types::resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
     let target_database_name =
@@ -381,27 +400,28 @@ async fn compare_data_sync_impl_inner(
     let mut source_entries = Vec::new();
     let mut target_entries = Vec::new();
     for table in comparison
-        .tables
-        .iter()
-        .filter(|table| table.status == TableMappingStatus::Matched)
+        .summaries()
+        .map_err(CommandError::Validation)?
+        .into_iter()
+        .filter(|table| table.table.status == TableMappingStatus::Matched)
     {
         let source_schema_snapshot = src_driver
-            .get_table_schema(&src_handle, &table.source_table)
+            .get_table_schema(&src_handle, &table.table.source_table)
             .await
             .cmd_err("compare_data_sync")?;
         let target_schema_snapshot = tgt_driver
-            .get_table_schema(&tgt_handle, &table.target_table)
+            .get_table_schema(&tgt_handle, &table.table.target_table)
             .await
             .cmd_err("compare_data_sync")?;
         source_entries.push((
-            table.source_table.clone(),
+            table.table.source_table.clone(),
             Some(source_schema_snapshot),
-            table.source_filter.clone(),
+            table.table.source_filter.clone(),
         ));
         target_entries.push((
-            table.target_table.clone(),
+            table.table.target_table.clone(),
             Some(target_schema_snapshot),
-            table.source_filter.clone(),
+            table.table.source_filter.clone(),
         ));
     }
     let source_schema_fingerprint = plans::fingerprint_relations_with_filters(
@@ -416,7 +436,7 @@ async fn compare_data_sync_impl_inner(
         target_entries,
     )
     .map_err(CommandError::Validation)?;
-    plans::issue_plan(
+    plans::issue_plan_with_store(
         source_db_session_id,
         target_db_session_id,
         source_database_name,

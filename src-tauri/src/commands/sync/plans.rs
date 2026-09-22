@@ -394,6 +394,44 @@ impl SyncPlanStore {
         let id = Uuid::new_v4().to_string();
         let selection_revision = 1;
         let comparison = ComparisonStore::from_comparison(comparison)?;
+        self.issue_with_store(
+            id,
+            selection_revision,
+            source_db_session_id,
+            target_db_session_id,
+            source_database,
+            target_database,
+            source_schema,
+            target_schema,
+            source_driver,
+            target_driver,
+            source_schema_fingerprint,
+            target_schema_fingerprint,
+            comparison,
+            options,
+            target_read_only_at_preview,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn issue_with_store(
+        &self,
+        id: String,
+        selection_revision: u64,
+        source_db_session_id: String,
+        target_db_session_id: String,
+        source_database: String,
+        target_database: String,
+        source_schema: Option<String>,
+        target_schema: Option<String>,
+        source_driver: &dyn DatabaseDriver,
+        target_driver: &dyn DatabaseDriver,
+        source_schema_fingerprint: String,
+        target_schema_fingerprint: String,
+        comparison: ComparisonStore,
+        options: SyncOptions,
+        target_read_only_at_preview: bool,
+    ) -> Result<SyncComparisonPreview, String> {
         let preview_tables = comparison
             .summaries()?
             .iter()
@@ -496,6 +534,42 @@ pub(crate) fn issue_plan(
     target_read_only_at_preview: bool,
 ) -> Result<SyncComparisonPreview, String> {
     global_store().issue(
+        source_db_session_id,
+        target_db_session_id,
+        source_database,
+        target_database,
+        source_schema,
+        target_schema,
+        source_driver,
+        target_driver,
+        source_schema_fingerprint,
+        target_schema_fingerprint,
+        comparison,
+        options,
+        target_read_only_at_preview,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn issue_plan_with_store(
+    source_db_session_id: String,
+    target_db_session_id: String,
+    source_database: String,
+    target_database: String,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
+    source_driver: &dyn DatabaseDriver,
+    target_driver: &dyn DatabaseDriver,
+    source_schema_fingerprint: String,
+    target_schema_fingerprint: String,
+    comparison: ComparisonStore,
+    options: SyncOptions,
+    target_read_only_at_preview: bool,
+) -> Result<SyncComparisonPreview, String> {
+    let id = Uuid::new_v4().to_string();
+    global_store().issue_with_store(
+        id,
+        1,
         source_db_session_id,
         target_db_session_id,
         source_database,
