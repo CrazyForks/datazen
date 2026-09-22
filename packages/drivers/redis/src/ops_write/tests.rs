@@ -374,3 +374,42 @@ async fn test_tester_a_non_keepttl_rejection_must_not_reissue_the_write() {
         conn.journal()
     );
 }
+
+/// BUG-004 绿色孪生体：非 KEEPTTL 的 SET 失败原样抛出、绝不补发第二条写入。
+/// 不 push PTTL 回复 —— 回退一旦发生，`take_reply` 会直接 panic，回归无处可藏。
+#[tokio::test]
+async fn a_non_keyword_set_failure_is_thrown_without_rescue() {
+    let mut conn = Scripted::new();
+    conn.push_err("SET", "sentinel-wrongtype");
+
+    let err = write_with(&mut conn, None)
+        .await
+        .expect_err("a failure that never mentioned KEEPTTL must propagate");
+    assert!(err.contains("sentinel-wrongtype"), "got: {err}");
+    assert_eq!(
+        conn.journal().len(),
+        1,
+        "no PTTL/PX rescue for an unrelated failure, got {:?}",
+        conn.journal()
+    );
+}
+
+/// BUG-004 分类器的第二种受理形态：关键词没被回显、而是被报成 SET 的未知选项。
+#[tokio::test]
+async fn an_unknown_option_shape_is_also_a_keyword_refusal() {
+    let mut conn = Scripted::new();
+    conn.push_err("SET", "sentinel unknown option for 'set'");
+    conn.push_int("PTTL", 5_000);
+    conn.push_ok("SET");
+
+    let outcome = write_with(&mut conn, None)
+        .await
+        .expect("the rescue must run for a keyword refusal");
+    assert!(outcome.keep_ttl_fallback);
+    assert_eq!(
+        conn.journal().len(),
+        3,
+        "SET / PTTL / SET, got {:?}",
+        conn.journal()
+    );
+}

@@ -42,6 +42,8 @@ pub fn keep_ttl_policy(input: &serde_json::Value) -> Option<bool> {
 /// keyword) the write is re-issued as `PTTL` + `SET … PX <remaining>` and the
 /// outcome reports `keep_ttl_fallback: true`. A non-positive `PTTL` means
 /// "persistent" (`-1`) or "key gone" (`-2`) and must never become an expiry.
+/// Every other `SET` failure is thrown verbatim — see
+/// [`is_keepttl_keyword_rejection`].
 pub async fn set_string_with_ttl_policy<C>(
     conn: &mut C,
     key: &str,
@@ -66,6 +68,10 @@ where
             keep_ttl: true,
             keep_ttl_fallback: false,
         }),
+        // Not the keyword being refused (transport, ACL, WRONGTYPE, …): C-3
+        // keeps those a generic IPC error — no PTTL probe, no second write,
+        // and no claim that this server lacks KEEPTTL.
+        Err(rejected) if !is_keepttl_keyword_rejection(&rejected) => Err(rejected),
         Err(rejected) => {
             let remaining = match pttl_millis(conn, key).await {
                 Ok(ms) => ms,
@@ -89,6 +95,19 @@ where
             })
         }
     }
+}
+
+/// Did the server reject the `KEEPTTL` **keyword itself** (C-4)?
+///
+/// Only that refusal (Redis < 6.0, or a proxy stripping the keyword) may arm
+/// the `PTTL` + `PX` rescue. The two accepted shapes are what a server emits
+/// when *this* command's argument list is refused: it echoes `KEEPTTL` back,
+/// or reports an unknown option for `SET`. Anything else — `WRONGTYPE`,
+/// `READONLY`, ACL, transport — is thrown verbatim with no fallback claimed
+/// (progress.md C-3 final paragraph).
+fn is_keepttl_keyword_rejection(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("keepttl") || (m.contains("unknown option") && m.contains("'set'"))
 }
 
 /// Remaining lifetime in milliseconds; negative means "no expiry to preserve".
