@@ -5,25 +5,15 @@ import type { KeyDetail, ValueFrame } from '../shared/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
 import { JsonEditor } from './JsonEditor';
 import { StreamEditor } from './StreamEditor';
-import {
-  initialStringEditorValue,
-  looksLikeJsonText,
-  tryDecompressString,
-  unwrapStringKeyValue,
-  valueLooksCompressed,
-  type DecompressResult,
-} from './stringKeyValue';
-import { JsonModeBar } from './JsonModeBar';
-import { formatJson, JSON_TEXT_MODES, type JsonDisplayMode, type JsonTextMode } from './jsonModes';
-import { invokeRename, invokeSetString } from './keyEditorsInvokes';
+import { invokeRename } from './keyEditorsInvokes';
 import { invokeGetKeyRaw } from '../shared/redisInvoke';
-import { ValueViewer } from './ValueViewer';
-import { useRedisGate, type GateWriteFn } from '../shared/useRedisGate';
+import { useRedisGate } from '../shared/useRedisGate';
 import { formatSize } from '../shared/formatSize';
 import { HashEditor } from './HashEditor';
 import { ListEditor } from './ListEditor';
 import { SetEditor } from './SetEditor';
 import { ZsetEditor } from './ZsetEditor';
+import { StringEditor } from './StringEditor';
 import { TtlControls } from './TtlControls';
 
 export type { PluginInvokeFn } from './keyEditorsInvokes';
@@ -128,8 +118,12 @@ export function KeyDetailEditor({
               </span>
             )}
             {frame.truncated && (
-              <span className="rounded bg-warning/10 px-1.5 py-0.5 text-warning">
-                {'truncated'}
+              <span
+                className="rounded bg-warning/10 px-1.5 py-0.5 text-warning"
+                data-testid="redis-key-badge-truncated"
+                data-i18n-key="redis.detail.badge.truncated"
+              >
+                {t('redis.detail.badge.truncated')}
               </span>
             )}
           </>
@@ -241,184 +235,4 @@ export function KeyDetailEditor({
       {gateDialog}
     </div>
   );
-}
-
-function StringEditor({
-  dbSessionId,
-  dbIndex,
-  detail,
-  frame,
-  gateWrite,
-  onSaved,
-  onDirtyChange,
-}: {
-  dbSessionId: string;
-  dbIndex: number;
-  detail: KeyDetail;
-  frame: ValueFrame | null;
-  gateWrite?: GateWriteFn;
-  onSaved: () => void;
-  onDirtyChange?: (dirty: boolean) => void;
-}) {
-  const { t } = useI18n();
-  const [value, setValue] = useState(() => initialStringEditorValue(detail.value));
-  const [saving, setSaving] = useState(false);
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [jsonDisplay, setJsonDisplay] = useState<JsonTextMode>('pretty');
-  const [jsonDirty, setJsonDirty] = useState(false);
-  const [keepTtl, setKeepTtl] = useState(detail.ttl >= 0);
-  const [decomp, setDecomp] = useState<DecompressResult | null>(null);
-  const [decompBusy, setDecompBusy] = useState(false);
-  const [decompError, setDecompError] = useState<string | null>(null);
-  const jsonMode = looksLikeJsonText(value);
-  const rawOriginal = unwrapStringKeyValue(detail.value);
-  const maybeCompressed = valueLooksCompressed(unwrapRaw(detail.value));
-
-  // `jsonDirty` is exactly the unsaved-draft signal: entering edit mode without
-  // typing is not dirty, and reformatting JSON (which does not touch
-  // `jsonDirty`) is not a data-loss risk either.
-  useEffect(() => {
-    onDirtyChange?.(jsonDirty);
-    return () => {
-      // An unmounted editor cannot have a draft — never publish a stale flag.
-      onDirtyChange?.(false);
-    };
-  }, [jsonDirty, onDirtyChange]);
-
-  const selectJsonMode = (next: JsonDisplayMode) => {
-    if (next === 'tree') return;
-    setJsonDisplay(next);
-    setJsonError(null);
-    setValue((prev) => (next === 'raw' && !jsonDirty ? rawOriginal : formatJson(prev, next)));
-  };
-
-  const save = () => {
-    if (jsonMode) {
-      try {
-        JSON.parse(value);
-      } catch {
-        setJsonError(t('redis.invalidJson'));
-        return;
-      }
-      setJsonError(null);
-    }
-    setSaving(true);
-    void (async () => {
-      if (gateWrite && !(await gateWrite('write-op'))) {
-        setSaving(false);
-        return;
-      }
-      await invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl)
-        .then(() => {
-          // Saved: the draft no longer exists, so the dirty relay must drop.
-          setJsonDirty(false);
-          onSaved();
-        })
-        .finally(() => setSaving(false));
-    })();
-  };
-
-  const runDecompress = () => {
-    setDecompBusy(true);
-    setDecompError(null);
-    void tryDecompressString(unwrapRaw(detail.value))
-      .then((r) => {
-        if (!r) {
-          setDecompError(t('redis.decompressFailed'));
-          setDecomp(null);
-        } else {
-          setDecomp(r);
-        }
-      })
-      .catch((e) => {
-        setDecompError(e instanceof Error ? e.message : String(e));
-        setDecomp(null);
-      })
-      .finally(() => setDecompBusy(false));
-  };
-
-  return (
-    <div
-      className="space-y-2"
-      data-testid="redis-string-editor"
-      data-string-dirty={jsonDirty ? 'true' : 'false'}
-    >
-      <ValueViewer dbSessionId={dbSessionId} frame={frame} />
-
-      <textarea
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setJsonDirty(true);
-          setJsonError(null);
-        }}
-        className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
-        spellCheck={false}
-        data-testid="redis-string-input"
-      />
-      {jsonError && (
-        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-          {jsonError}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-fg-secondary">
-          <input
-            type="checkbox"
-            checked={keepTtl}
-            onChange={(e) => setKeepTtl(e.target.checked)}
-            className="rounded border-edge"
-          />
-          {t('redis.keepTtl')}
-        </label>
-        <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
-        {jsonMode && (
-          <JsonModeBar modes={JSON_TEXT_MODES} active={jsonDisplay} onSelect={selectJsonMode} />
-        )}
-        {(maybeCompressed || decomp) && (
-          <Button
-            variant="secondary"
-            className="h-7 px-2 text-xs"
-            disabled={decompBusy}
-            onClick={runDecompress}
-          >
-            {t('redis.decompressView')}
-          </Button>
-        )}
-        <Button
-          variant="primary"
-          className="h-7 px-2 text-xs"
-          disabled={saving}
-          onClick={save}
-          data-testid="redis-string-save"
-        >
-          {t('common.save')}
-        </Button>
-      </div>
-      {decompError && (
-        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-          {decompError}
-        </div>
-      )}
-      {decomp && (
-        <div className="space-y-1 rounded-md border border-edge bg-surface-alt p-2">
-          <div className="text-fg-muted">
-            {t('redis.decompressCodec').replace('{codec}', decomp.codec)} · {decomp.bytes} B
-          </div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-fg-secondary">
-            {decomp.text}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function unwrapRaw(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object' && 'value' in value) {
-    const inner = (value as { value: unknown }).value;
-    if (typeof inner === 'string') return inner;
-  }
-  return '';
 }

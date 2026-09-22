@@ -477,6 +477,17 @@ const locale = {
   'redis.keyProps.freq': 'Access frequency',
   'redis.keyProps.maxmemoryPolicy': 'Eviction policy',
   'redis.keyProps.refresh': 'Reload key attributes',
+
+  // ── W3-E key detail (PRD §3.3 screen B right column) ─────────────────────────
+  // Only the I-5 read-only reasons live here. Tab labels, the wrap checkbox
+  // (`redis.view.wrap`) and the TTL words (`redis.noExpiry` / `redis.setTtl` …)
+  // reuse the existing `redis.*` keys above — this namespace must stay the only
+  // thing this track appends to `en.ts` (conflict surface §3).
+  'redis.detail.badge.truncated': 'Payload truncated by the size budget',
+  'redis.detail.readonly.binaryView':
+    'Byte view: the rendered hex/bits are a projection, not the stored bytes — switch back to a text view to edit.',
+  'redis.detail.readonly.bigValue':
+    'Large value: the payload is incomplete, so editing is read-only to stop a truncated write overwriting it.',
 } as const;
 
 export default locale;

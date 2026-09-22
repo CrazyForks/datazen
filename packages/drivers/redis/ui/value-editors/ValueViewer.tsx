@@ -24,24 +24,64 @@ export interface ValueViewerProps {
   dbSessionId: string;
   frame: ValueFrame | null;
   invoke?: RedisInvokeFn;
+  /**
+   * 受控视图 / 解码选择（E-3）。缺省时组件自持状态（旧的独立预览用法不变）；
+   * 宿主传入时，宿主要按当前 view 判定 I-5 只读态，所以这里只做受控转发。
+   */
+  view?: ViewMode;
+  codec?: Codec;
+  onViewChange?: (view: ViewMode) => void;
+  onCodecChange?: (codec: Codec) => void;
+  /**
+   * false ⇒ 只渲染 Codec / View 两行"渲染预检"控件，把输出区让给宿主的常驻编辑区
+   * （PRD §3.3：编辑区下方占满剩余高度，不允许再叠一份只读预览）。
+   */
+  showOutput?: boolean;
 }
 
 type Status = 'idle' | 'busy' | 'error';
 
-export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }: ValueViewerProps) {
+export function ValueViewer({
+  dbSessionId,
+  frame,
+  invoke = redisCommandInvoke,
+  view: controlledView,
+  codec: controlledCodec,
+  onViewChange,
+  onCodecChange,
+  showOutput = true,
+}: ValueViewerProps) {
   const { t } = useI18n();
-  const [codec, setCodec] = useState<Codec>('none');
-  const [view, setView] = useState<ViewMode>('utf8');
+  const [innerCodec, setInnerCodec] = useState<Codec>('none');
+  const [innerView, setInnerView] = useState<ViewMode>('utf8');
   const [wrap, setWrap] = useState(true);
   const [status, setStatus] = useState<Status>('idle');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [rendered, setRendered] = useState<RenderedView | null>(null);
   const seqRef = useRef(0);
 
+  const codec = controlledCodec ?? innerCodec;
+  const view = controlledView ?? innerView;
+  const selectCodec = useCallback(
+    (next: Codec) => {
+      onCodecChange?.(next);
+      if (controlledCodec === undefined) setInnerCodec(next);
+    },
+    [onCodecChange, controlledCodec],
+  );
+  const selectView = useCallback(
+    (next: ViewMode) => {
+      onViewChange?.(next);
+      if (controlledView === undefined) setInnerView(next);
+    },
+    [onViewChange, controlledView],
+  );
+
   const rawB64 = frame?.rawB64 ?? null;
+  const memBytes = frame?.memBytes ?? null;
 
   const recompute = useCallback(async () => {
-    if (!rawB64) {
+    if (!rawB64 || !showOutput) {
       setRendered(null);
       setStatus('idle');
       return;
@@ -67,7 +107,7 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
       setStatus('error');
       setRendered(null);
     }
-  }, [rawB64, codec, view, dbSessionId, invoke]);
+  }, [rawB64, codec, view, dbSessionId, invoke, showOutput]);
 
   useEffect(() => {
     void recompute();
@@ -98,16 +138,12 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
     URL.revokeObjectURL(url);
   }, [rawB64, frame?.key]);
 
-  if (!frame || !rawB64) {
-    return (
-      <div className="rounded-md border border-edge bg-surface-alt px-2 py-3 text-center text-xs text-fg-muted">
-        {t('redis.view.noData')}
-      </div>
-    );
-  }
+  const noPayload = !frame || !rawB64;
+  // 载荷缺席（只读态②的截断大 value 就是 `rawB64 === null`）只影响**输出区**：
+  // Codec / View 两行必须留着，否则用户没法把视图切回文本档。
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-testid="redis-value-viewer" data-show-output={showOutput ? 'true' : 'false'}>
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
         <span className="text-fg-muted">{t('redis.codec.label')}</span>
         <div className="flex flex-wrap gap-1" data-testid="redis-codec-group" role="group">
@@ -122,15 +158,15 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
                   ? 'bg-accent/15 text-accent'
                   : 'text-fg-secondary hover:bg-surface-raised',
               )}
-              onClick={() => setCodec(c)}
+              onClick={() => selectCodec(c)}
             >
               {t(`redis.codec.${c}` as 'redis.codec.none')}
             </button>
           ))}
         </div>
-        {frame.memBytes != null && (
+        {memBytes != null && (
           <span className="ml-auto rounded bg-surface-alt px-1.5 py-0.5 text-fg-muted">
-            {formatSize(frame.memBytes)}
+            {formatSize(memBytes)}
           </span>
         )}
       </div>
@@ -149,7 +185,7 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
                   ? 'bg-accent/15 text-accent'
                   : 'text-fg-secondary hover:bg-surface-raised',
               )}
-              onClick={() => setView(v)}
+              onClick={() => selectView(v)}
             >
               {t(`redis.view.${v}` as 'redis.view.utf8')}
             </button>
@@ -157,44 +193,57 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-fg-secondary">
-          <input
-            type="checkbox"
-            checked={wrap}
-            onChange={(e) => setWrap(e.target.checked)}
-            className="rounded border-edge"
-            data-testid="redis-view-wrap"
-          />
-          {t('redis.view.wrap')}
-        </label>
-        <Button
-          variant="secondary"
-          className="h-6 gap-1 px-2 text-[11px]"
-          onClick={copyText}
-          data-testid="redis-view-copy"
+      {showOutput && noPayload && (
+        <div
+          className="rounded-md border border-edge bg-surface-alt px-2 py-3 text-center text-xs text-fg-muted"
+          data-testid="redis-value-no-data"
         >
-          <Copy className="h-3 w-3" />
-          {t('redis.view.copy')}
-        </Button>
-        <Button
-          variant="secondary"
-          className="h-6 gap-1 px-2 text-[11px]"
-          onClick={downloadBytes}
-          data-testid="redis-view-download"
-        >
-          <Download className="h-3 w-3" />
-          {t('redis.view.download')}
-        </Button>
-      </div>
-
-      {status === 'error' && errorText && (
-        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-xs text-danger">
-          {errorText}
+          {t('redis.view.noData')}
         </div>
       )}
 
-      <ValueViewOutput rendered={rendered} busy={status === 'busy'} wrap={wrap} />
+      {showOutput && !noPayload && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-fg-secondary">
+              <input
+                type="checkbox"
+                checked={wrap}
+                onChange={(e) => setWrap(e.target.checked)}
+                className="rounded border-edge"
+                data-testid="redis-view-wrap"
+              />
+              {t('redis.view.wrap')}
+            </label>
+            <Button
+              variant="secondary"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={copyText}
+              data-testid="redis-view-copy"
+            >
+              <Copy className="h-3 w-3" />
+              {t('redis.view.copy')}
+            </Button>
+            <Button
+              variant="secondary"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={downloadBytes}
+              data-testid="redis-view-download"
+            >
+              <Download className="h-3 w-3" />
+              {t('redis.view.download')}
+            </Button>
+          </div>
+
+          {status === 'error' && errorText && (
+            <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-xs text-danger">
+              {errorText}
+            </div>
+          )}
+
+          <ValueViewOutput rendered={rendered} busy={status === 'busy'} wrap={wrap} />
+        </>
+      )}
     </div>
   );
 }
