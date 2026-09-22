@@ -309,9 +309,144 @@ Wave 4 可逐字引用。两处**口径**问题不属形状偏差，但 Wave 4 �
    审查发现 **R-1**，不判缺陷但要求二选一收口。
 
 
-### 步骤 5-9 · 进行中
+### 步骤 5 · Append-only 审查（`git diff 8981d3078..HEAD -- packages/drivers/redis/src/`）
 
-append-only 审查、预算模型、cluster 纪律、红线、覆盖率、E2E 登记随后续 commit 落地。
-**已登记缺陷**：BUG-001（高，`list_children` 叶子属性错位）、BUG-002（高，`count_matching` 形状变更漏改消费端）、
-BUG-003（中，契约文档与源码不符）。
+逐文件（14 个，+3505/−333）核对既有 out 字段的改名 / 删除 / 层级变动：
+
+| 命令 | 基线 out | HEAD out | 判定 |
+|---|---|---|---|
+| `scan_keys` | `{cursor, keys, dbSize}` | `{cursor, keys, dbSize, consumed, truncated, dbsize, exact}` | ✅ 前三项名称/层级原样，后四项**尾部追加**；`keys[]` = `KeyEntry` 五字段零变动 |
+| `list_children` | `{children, cursor}` | `{children, cursor, consumed, truncated, dbsize}` | ✅ 纯追加；`ChildEntry` enum（`ops_tree.rs:31-48`）与基线**逐字符相同**（`git show` 比对：变体名、五字段、`tag="kind"`、`rename_all_fields`）|
+| `count_matching` | `json_ok(<u64>)` —— **裸标量** | `{count, truncated, consumed, dbsize}` | ⚠️ 形状变更由简报目标 6 明确要求（"返回 `{count,truncated}`"），故不判违约；但**消费端漏改** ⇒ **BUG-002（高）** |
+| `key_probe` | —（新命令） | `{exists, type, ttlMs, memoryBytes}` | ✅ 新面，无历史约束 |
+
+- 删除项清点：`ops::count_matching`（全 crate grep 零调用者 ⇒ 死码搬运，安全）、
+  `redis_driver_on::{scan_keys_with_info_on, preview_on, value_len_on, type_of_key_on, memory_usage_on, extract_hscan_preview}`
+  —— 后五者功能原样搬入 `ops_tree_scan`（`render_preview` / `parse_value_group` / `parse_meta_group` /
+  `extract_hscan_preview` 逐段可读，PREVIEW_MAX 120 未变）⇒ **原样搬运，非改名**。
+- 签名变更（Rust API，非 IPC 契约）：`RedisDriver::scan_keys_with_info` 返回 `(u64, Vec<KeyEntry>, u64)` →
+  `ScanKeysPage`；`list_children` 返回 `(Vec<ChildEntry>, u64)` → `ChildrenPage`。
+  全 crate 调用者仅 `redis_driver_kv.rs:19-31`（已同步投影，丢弃新位）；宿主 `src/`、`src-tauri/`
+  grep 零引用 ⇒ 不外溢。`KeyValueDriver` trait 与 `packages/driver-sdk/src/types/kv.ts` 的
+  `KeyScanResult{cursor,keys,dbSize}` **未改**（TS 侧靠 JSON 宽松兼容读旧字段）⇒ TS 消没泄漏确认为零，
+  与 tsc 0 / vitest 47/456 一致。
+- 简报 §4 冲突面：`commands.rs` / `commands_exec_dispatch.rs` 只**新增**自己的行（`key_probe` 归类臂、
+  三条命令的 `budget`/`withMemory` 属性行、`key_probe` 分发臂），未重排他轨行 ✓。
+
+### 步骤 6 · 预算模型 + Cluster 纪律（生死线）+ 红线 + key_probe 注册面
+
+**预算模型**（`ops_tree_budget.rs`）：
+
+- `DEFAULT_TREE_BUDGET = 50_000` / `HARD_MAX_TREE_BUDGET = 1_000_000` / `TREE_BUDGET_DBSIZE_FACTOR = 2` ✓；
+  模块文档 `:10-23` 明写"与 `ops_value_search` 的 50k/**200k** 不同名不同值，勿互相对齐"，
+  并由 `assert_ne!(HARD_MAX_TREE_BUDGET, HARD_MAX_KEYS)` 钉死（`tree_budget_hard_cap_is_the_key_tree_one_not_value_searchs`）✓
+  —— 简报"永不对齐"注释要求**满足**。
+- `tree_scan_budget(None, dbsize) = dbsize×2.clamp(50_000, 1_000_000)`（saturating 乘，`u64::MAX` 不溢出）✓；
+  `Some(raw) = raw.clamp(1, 1_000_000)` 且**不缩放**✓。降级路径：`dbsize == 0` ⇒ 默认档 ✓ ——
+  但"DBSIZE 不可得"实际**到不了**这里 ⇒ **BUG-003**。
+- `truncated` 语义：`!(exhausted || page_filled)`（`ops_tree_scan.rs:418`）——
+  预算/轮次/停滞守卫耗尽且游标未归零 ⇒ `true`；整页但游标未归零 ⇒ 分页，保持 `false` ✓，
+  三条边界都有用例（`budget_exhaustion_stops_the_scan_and_reports_truncated` /
+  `a_full_page_with_an_open_cursor_is_pagination_not_truncation` / 本轮新增两条守卫用例）。
+- `Σ COUNT ≤ budget` 不变式：`next_count` 以 `remaining()` 为上限（唯一例外是末轮不低于
+  `MIN_TREE_SCAN_COUNT=10` 的"最后一轮仍在推进"取舍，已在文档与单测
+  `only_the_final_round_of_a_partial_budget_may_overshoot_by_one_min_round` 里公开写明）✓。
+- schema 层无 `minimum`/`maximum` ⇒ 钳制在驱动内（Tester 新增
+  `test_tester_budget_declares_no_bounds_and_zero_still_validates` 把这条从"注释"升成"断言"）✓。
+
+**Cluster 纪律**（简报 §2）：
+
+| 纪律 | 实现 | 反证 | 判定 |
+|---|---|---|---|
+| DBSIZE 单次、不路由 | `read_dbsize` 每命令调用 1 次，走 `query_async` | `page_reads_dbsize_once_and_answers_in_two_batches` 计数恰 1；cluster 用例 `singles == ["DBSIZE"]` | ✅ |
+| SCAN 锚 slot | `scan_round` Cluster 臂 `command_at_slot(…, cluster_scan_anchor_slot())` | `cluster_pages_address_…` 断言唯一 SCAN 的 slot == 锚 | ✅ |
+| 精确键 / probe 按 `get_slot(key)` 定址 | `key_exists` Cluster 臂、`fetch_key_group` | `count_cluster_addresses_the_existence_probe_to_the_keys_slot`、`key_probe_is_one_addressed_batch…` | ✅ |
+| 一键一批、永不 CROSSSLOT | `fetch_page_groups` Cluster 臂逐 item `build(from_ref(item))`；批内命令全指同键 | 用例逐批断言"批内每条命令的键 == 该批主体键"；本轮补 `test_tester_list_children_on_cluster_addresses_every_batch_by_key`（6 批 = 3 叶 ×(meta+value)，零跨键批） | ✅ 逻辑与反证俱在 |
+| 批失败/短答 ⇒ 逐命令 replay（fail-soft） | `fetch_key_group` 的 `Err` / 短 `Ok` 两臂 → `replay_per_command`；`fold_command_answer` 把服务端错误降成 `Nil`，连接级错误上抛 | **基线零覆盖**；本轮补 5 条（Rejected 重放、Short(2) 重放、单字段 answered-error、transport failure 上抛、分类表 + `fold_command_answer` 直测）| ✅ 补后全绿 |
+| `{hash-tag}` 用例 + "去掉 tag 处理就红" | `get_slot` 全程 | `hash_tag_slotting_is_the_routing_contract_and_breaks_without_tag_handling`：同 tag 两键**等**、tag 内容与整键**等**、无 brace **等**、且用 `assert_ne!(slot("user1000"), slot("user2000"))` 反证"等式非空洞" | ✅ 存在且判红 |
+| #56 只登记不修不加重 | `list_children` 新路径 | 见下 | ✅ 未加重（并见附注） |
+
+- **红线核验**：`git diff --numstat 8981d3078..HEAD -- src/ops_workbench.rs src/ops_workbench/tests.rs` = **0 行**（两文件零增删）✓。
+- **#56 附注（交协调者裁定，非缺陷）**：基线 `list_children_on` 的 CROSSSLOT 成因是**一条跨全部叶子的
+  `pipe.query_async`**（`git show 8981d3078:…/ops_tree.rs:145-165`）；本轨新路径改为一键一寻址批 ⇒
+  **该成因在进程内已不可构造**（本轮 cluster 用例即证：`batches.is_empty()` + 6 个单键批）。
+  本轨未越权宣称修复，故 #56 仍按挂账处理，但 **R 项 9e 复现时若已不复现，须据此改判归属**。
+- 顺带修掉的旧缺陷（简报未点名，属"原样搬运"路径之外的改进，记为收益）：`noTtlOnly` 在基线
+  `list_children` 里只作用于**已富化的 children**，而基线 `scan_keys_with_info_on` 是逐键 `continue`；
+  两条路径现在语义统一，但 `list_children` 由此暴露 BUG-001。
+
+**key_probe 注册面**（四件套俱在）：
+`commands.rs:26-31` 归类 `Observe`（与 `get_key` 同臂）✓ · `:134-141` 声明（`redis:allow-info`、`key` 必填）✓ ·
+`commands_exec_dispatch.rs:86-95` 分发臂可达 ✓ · `redis_driver.rs:412` `plugin_on_db_topo!` 透传拓扑 ✓ ·
+集成 `tests/tree_scan_budget.rs` 四条钉住（注册、只读、`ConnectionFailed` 而非 `Unsupported` 的可达性对照）✓；
+Tester 另补 `test_tester_key_probe_is_a_get_key_peer`（与 `get_key` **同权限串、同类、同访问级**）。
+
+### 步骤 7 · 覆盖率（`cargo llvm-cov -p datazen-driver-redis --lib`，实测）
+
+| 文件 | 基线（仅交付用例） | **补测后** | 函数 | 判定 |
+|---|---|---|---|---|
+| `ops_tree_scan.rs`（950 行新文件） | 81.43% 行 / 77.16% region | **95.12% 行 / 92.59% region** | 94.74% | ✅ ≥80 |
+| `ops_tree_budget.rs` | 98.08% 行 | **98.08%** | 100% | ✅ |
+| `ops_key_probe.rs` | 94.27% 行 | **94.71%** | 85.71% | ✅ |
+| `ops_tree.rs`（重写的 `list_children_page`） | 96.35% 行 | **96.35%** | 95.00% | ✅ |
+| crate TOTAL | 53.31% | 54.10% | — | 参考值（含大量本轨未触碰的存量文件） |
+
+- 度量口径：llvm-cov 0.8.7，`--lib`（**不含** `tests/` 集成用例，故 `redis_driver.rs` 等装配层记 0%，
+  属既有口径限制，非本轨缺口）。
+- Tester 本轮**新增 31 条用例**：`ops_tree_scan/tests.rs` +22（18 可跑 + 2 ignore RED pin + 2 单测，
+  纯尾部追加，`git diff --numstat` 显示 0 删除行）+ `tests/tree_contract_tester.rs` 9（4 可跑 + 5 `#[ignore]`）。
+  lib 271 → **291 passed / 3 ignored**（ignored = 基线 1 条 live-redis + 本 Tester 2 条 RED pin），
+  clippy 仍 **21**（补测零新增诊断，含一次自查撤销的假警报），`cargo fmt --check` exit 0。
+- **剩余缺口点名**（本轨文件，`--lcov` 逐行核实，行号=实测未执行）：
+  - `ops_tree_scan.rs` 余 21 行：**全部**为 `tracing::warn!/debug!/info!` 的字段与文案行
+    （128、183、185、193、267-269、402、405-406、854-855、863-865）+ 空批早退（172）
+    + `push_preview_cmd` 的 `_ => {}`（597）+ `reply_array` 的 `Nil`/非数组臂（625-626）
+    + `extract_hscan_preview` 收尾臂（647）+ `scan_keys_page` 的 `if exact` 收尾花括号（835）。
+  - `ops_tree.rs` 余 7 行 = **`:214`（`list_children` 的 `noTtlOnly` 臂，见下"诚实声明"）**
+    + 回填/守卫与日志行（244、250、252、255-256、261）。
+  - `ops_key_probe.rs` 余 8 行 = `warn!` 文案（145-146）+ `#[cfg(test)]` helper 与断言消息行
+    （214、234、261、269、273、327，属度量噪声）。
+  - `ops_tree_budget.rs` 余 3 行 = 断言消息字符串（227、304、324）。
+  - 装配层 `redis_driver.rs` / `redis_driver_db.rs` / `redis_driver_kv.rs` / `commands_exec*.rs`
+    在 `--lib` 口径下记 **0%**（其测试全在 `tests/` 集成面）——既有口径限制，非本轨缺口；
+    本轨对它们的改动（锁/拓扑透传/分发臂）由 `tests/tree_scan_budget.rs` 的可达性用例与
+    Tester 新增的 4 条声明面用例覆盖。
+  ⇒ **无"成块业务分支未覆盖"**：未覆盖行集中在日志字段、空集合早退与测试期断言文案。
+- **诚实声明一处**：`ops_tree.rs:214`（`list_children` 的 `noTtlOnly` 分支）在**默认门禁下仍未执行** ——
+  唯一走到它的两条用例是 BUG-001 的 `#[ignore]` RED pin（走即红，故必须 ignore）。
+  即"补测后仍绿"不等于"该分支被测过"：该分支的覆盖**只在 `-- --ignored` 时出现**，
+  而那时它是**失败**的（正是缺陷证据）。BUG-001 修复 + 摘 ignore 后此条自动闭环（R-10）。
+
+
+### 步骤 8 · E2E 登记
+
+**本机可执行**（已提交，属默认门禁，全绿）：`tests/tree_contract_tester.rs` 4 条声明面用例 +
+`ops_tree_scan/tests.rs` 18 条替身用例 —— fail-soft/重放 6 条（含分类表与 `fold_command_answer` 直测）、
+cluster 纪律 3 条（`scan_keys` 页 / `list_children` 页 / 锚定 SCAN 携带 MATCH+TYPE）、
+`noTtlOnly` 2 条（`scan_keys` 一条绿、`list_children` 一条 ignore RED pin）、
+扫描守卫 2 条（停滞游标 / 轮次上界）、`withMemory` 页 1 条、standalone/哨兵批形状 2 条、
+预览与散列兜底 4 条、`key_probe` 单节点 1 条（+1 条 TYPE-only 缺席判定单测）。
+
+
+**留待 R 回归**（本轨禁 live e2e ⇒ 全部写成 `#[ignore]` 可执行用例，R 侧带 env 变量跑即证）：
+
+| # | 用例 | 前置 | 判定要点 |
+|---|---|---|---|
+| R-1 | `test_tester_scan_keys_payload_matches_the_freeze` | `DATAZEN_TEST_REDIS_URL` | 7 字段俱在 + `dbSize == dbsize` + `keys[]` 五字段 |
+| R-2 | `test_tester_list_children_payload_matches_the_freeze` | 同上 | `children/cursor/consumed/truncated/dbsize`；`folder`/`key` 两类各自字段集；`memBytes` 为 `null` 而非缺席 |
+| R-3 | `test_tester_count_and_probe_payloads_match_the_freeze` | 同上 | `count_matching` 四字段 + `*` ⇒ `count==dbsize`/`consumed==0`；`key_probe` 缺失键四字段俱在（`ttlMs=-2`） |
+| R-4 | `test_tester_zero_budget_equals_absent_budget_over_the_wire` | 同上 | `budget:0` 与缺省同消耗；`budget:1` 原样生效（不缩放） |
+| R-5 | `test_tester_cluster_page_never_crosses_slots` | `DATAZEN_TEST_REDIS_CLUSTER_URL` | **真集群 CROSSSLOT 侧证**：多分片页成功 + `key_probe` 落对分片 |
+| R-6 | 大库缩放联调 | ≥10 万键真库 | `min(1M, max(50k, dbsize×2))` 实测、`n+` 展示（Wave 4 UI） |
+| R-7 | 真集群 9a（继承） | 集群 | cursor 跨轮连续性、锚分片单侧覆盖的 UI 表述是否诚实 |
+| R-8 | #56 复现（继承） | 集群 | 按本轮"附注"判定：若已不复现 ⇒ 改判归属 |
+| R-9 | BUG-003 真连侧证 | 关 `DBSIZE` 的 ACL profile | 三条命令是否整条红（进程内已证，真连补一条即闭环） |
+| R-10 | BUG-001 修复后 | — | 摘掉两条 `#[ignore]` RED pin，转常绿 |
+
+### 步骤 9 · 判定
+
+见本文件头部状态行。**结论：`TEST_FAILED`** —— 四道门禁逐字复现且零谎报，契约冻结形状逐字段成立，
+但 BUG-001（高，本轨引入的回归，release 静默错数据）、BUG-002（高，既有功能被本轨形状变更打破）、
+BUG-003（中，冻结承诺的降级路径不可达 + 基线能力回退）三条待原 Coder 修复后全新复测。
+
 

@@ -43,70 +43,37 @@
 - 最后一个叶子因拿不到行而保留占位值（`split_children` 的 `key_type: ""`、`ttl: -1`、`logical_len: 0`）
   ⇒ UI 显示「空类型 + 永不过期 + 长度 0」，而该键真实存在且有值。
 
-### 复现（可粘贴，无需 live Redis）
+### 复现（无需 live Redis）
 
-临时用例（本 Tester 实测用后即删，未提交；正式 pin 建议 Coder 随修复一并落地）：
-追加到 `packages/drivers/redis/src/ops_tree_scan/tests.rs`：
+Tester 已把两条路径各写成一条**提交在库里的 RED pin**（`#[ignore]` + 缺陷 ID 说明，修复后去掉
+`#[ignore]` 即成为回归防线）：
+`packages/drivers/redis/src/ops_tree_scan/tests.rs` 的
+`test_tester_list_children_no_ttl_only_keeps_rows_aligned`（`TreeConn` 脚本化连接，
+`app:a/-1/1`、`app:b/7/2`、`app:c/9/3` 三叶，`noTtlOnly=true` 只应留 a、c）与
+`test_tester_list_children_survives_a_key_that_vanished_mid_page`（同形，改为 `app b` 的 `TYPE` 回 `none`）。
 
-```rust
-#[tokio::test]
-async fn test_tester_list_children_keeps_leaf_rows_aligned() {
-    let mut conn = TreeConn::new();
-    conn.state().dbsize = 6;
-    for (key, ttl, len) in [("app:a", -1i64, 1i64), ("app:b", 7, 2), ("app:c", 9, 3)] {
-        let mut st = conn.state();
-        st.types.insert(key.to_string(), "string".to_string());
-        st.ttls.insert(key.to_string(), ttl);
-        st.lens.insert(key.to_string(), len);
-        st.previews.insert(key.to_string(), bulk("v"));
-    }
-    conn.state().scan_script.push_back((
-        0,
-        vec!["app:a".to_string(), "app:b".to_string(), "app:c".to_string()],
-    ));
-
-    // Path 1: the frozen `noTtlOnly` filter drops app:b from the row set.
-    let page = list_children_page(
-        &mut conn, "app:", 0, 100, None, true, None, false, None,
-        Topology::Standalone, Instant::now(),
-    )
-    .await
-    .expect("noTtlOnly page");
-    let leaves: Vec<(String, String, i64, u64)> = page.entries.iter().filter_map(|e| match e {
-        ChildEntry::Key { key, key_type, ttl, logical_len, .. } => {
-            Some((key.clone(), key_type.clone(), *ttl, *logical_len))
-        }
-        _ => None,
-    }).collect();
-    assert_eq!(
-        leaves,
-        vec![
-            ("app:a".to_string(), "string".to_string(), -1, 1),
-            ("app:c".to_string(), "string".to_string(), -1, 3),
-        ],
-        "noTtlOnly must return exactly the non-expiring leaves, each with its OWN attributes"
-    );
-}
-```
-
-Tester 实测日志（两条路径各一次）：
+Tester 实测日志（两条路径各一次；`-- --ignored` 强制跑即红）：
 
 ```
-# noTtlOnly=true 路径
-thread '...' panicked at packages/drivers/redis/src/ops_tree.rs:239:21:
+# Path 1 — noTtlOnly=true（断言级证据，= release 构建的真实形态，debug_assert 被编译掉）
+assertion `left == right` failed: noTtlOnly must return exactly the non-expiring leaves, each with its OWN attributes
+  left:  [("app:a", "string", -1, 1), ("app:b", "", -1, 0), ("app:c", "", -1, 0)]
+  right: [("app:a", "string", -1, 1), ("app:c", "string", -1, 3)]
+
+# Path 2 — app:b 的 TYPE 回 none（键中途消失），命中 ops_tree.rs:239 的 debug_assert
+panicked at packages/drivers/redis/src/ops_tree.rs:239:21:
 assertion `left == right` failed: leaf rows must keep page order
-  left: "app:c"
- right: "app:b"
-test result: FAILED. 0 passed; 1 failed; 0 ignored; ...
-
-# app:b 的 TYPE 回 none（键中途消失）路径
-thread '...' panicked at packages/drivers/redis/src/ops_tree.rs:239:21:
-assertion `left == right` failed: leaf rows must keep page order
+  left: "gone:c"
+ right: "gone:b"
 ```
 
-⇒ 现有 271 条 lib 用例**无一**走过「叶子被过滤 + 仍有其它叶子」的组合
+⇒ **Path 1 是生产形态**：`app:b`（TTL=7，本该被 `noTtlOnly` 滤掉）**仍出现在结果里**，且
+`app:b`/`app:c` 双双拿到占位值 `key_type:""`、`ttl:-1`、`logical_len:0` —— UI 把"7 秒后过期"的键
+画成"永不过期、空类型、长度 0"。
+⇒ 补测前 271 条 lib 用例**无一**走过「叶子被过滤 + 仍有其它叶子」的组合
 （`list_children_appends_the_budget_trio_and_types_only_leaves` 用 `no_ttl_only=false` 且无 absent 键），
-所以门禁全绿。这正是本条要补的覆盖缺口。
+`ops_tree.rs:214`（`noTtlOnly` 臂）是**未执行行** ⇒ 门禁全绿。上述两条 RED pin 已堵上该缺口。
+
 
 ### 影响范围
 

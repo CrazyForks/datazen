@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use futures_util::FutureExt;
 use redis::{Cmd, Pipeline, RedisFuture};
 
-use crate::ops_key_probe::key_probe;
+use crate::ops_key_probe::{key_probe, parse_key_probe, KeyProbe};
 use crate::ops_tree::{list_children_page, ChildEntry};
 use crate::ops_tree_budget::{
     DEFAULT_TREE_BUDGET, HARD_MAX_TREE_BUDGET, MAX_TREE_SCAN_ROUNDS, MAX_TREE_STALLED_ROUNDS,
@@ -1069,4 +1069,1083 @@ fn tree_scan_constants_are_pinned_by_literal() {
     assert_eq!(meta_fields_per_key(true), 3);
     // The key-tree cap must never be the value-search cap.
     assert_ne!(HARD_MAX_TREE_BUDGET, crate::ops_value_search::HARD_MAX_KEYS);
+}
+
+// ---------------------------------------------------------------------------
+// [tester] Round-1 coverage of the fail-soft / degradation contract.
+//
+// The track's cluster claim is not only "one addressed batch per key" but also
+// "a rejected *field* degrades alone, a transport failure does not" — the
+// replay arm (`fetch_key_group` → `replay_per_command` → `fold_command_answer`)
+// was entirely unexercised by the delivered suite, so these tests pin it.
+// Declared in this file's existing `mod tests` scope via `super::*`.
+// ---------------------------------------------------------------------------
+
+/// How the addressed dispatch layer behaves, mirroring what a real
+/// `ClusterConnection` does to a batch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum BatchOutcome {
+    /// One reply per command (the happy path), and the un-scripted default.
+    #[default]
+    Full,
+    /// `try_pipeline_request` folds the batch into one error (BUG-001 shape).
+    Rejected,
+    /// A short reply vector — the `#[doc(hidden)]` layout drift of BUG-003.
+    Short(usize),
+}
+
+#[derive(Clone, Default)]
+struct RoutingConn {
+    state: Arc<Mutex<TreeState>>,
+    outcome: Arc<Mutex<BatchOutcome>>,
+    /// Command names whose *addressed single* answer arrives as a server error.
+    answered_errors: Arc<Mutex<HashSet<String>>>,
+    /// Command names whose addressed single fails at transport level.
+    transport_errors: Arc<Mutex<HashSet<String>>>,
+    replays: Arc<Mutex<usize>>,
+    replay_slots: Arc<Mutex<Vec<u16>>>,
+}
+
+impl RoutingConn {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn set_outcome(&self, outcome: BatchOutcome) {
+        *self.outcome.lock().expect("outcome lock") = outcome;
+    }
+
+    fn answer_error(&self, name: &str) {
+        self.answered_errors
+            .lock()
+            .expect("lock")
+            .insert(name.to_string());
+    }
+
+    fn fail_transport(&self, name: &str) {
+        self.transport_errors
+            .lock()
+            .expect("lock")
+            .insert(name.to_string());
+    }
+
+    fn replay_count(&self) -> usize {
+        *self.replays.lock().expect("lock")
+    }
+
+    fn replayed_slots(&self) -> Vec<u16> {
+        self.replay_slots.lock().expect("lock").clone()
+    }
+
+    fn batch_commands(&self, pipe: &Pipeline) -> Vec<Vec<String>> {
+        pipe.cmd_iter().map(args_of).collect()
+    }
+
+    /// The addressed-single answer, shared by the two dispatch shapes.
+    fn single(&self, args: &[String]) -> Result<RValue, redis::RedisError> {
+        let name = args.first().map(String::as_str).unwrap_or_default();
+        let errors = self.answered_errors.lock().expect("lock");
+        if errors.contains(name) {
+            return Err(redis::RedisError::from((
+                ErrorKind::ResponseError,
+                "ERR unknown subcommand or wrong number of args",
+            )));
+        }
+        drop(errors);
+        let fails = self.transport_errors.lock().expect("lock");
+        if fails.contains(name) {
+            return Err(redis::RedisError::from((
+                ErrorKind::IoError,
+                "connection reset",
+            )));
+        }
+        drop(fails);
+        let mut st = self.state.lock().expect("lock");
+        Ok(st.reply(args))
+    }
+}
+
+impl ConnectionLike for RoutingConn {
+    fn get_db(&self) -> i64 {
+        0
+    }
+
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, RValue> {
+        let args = args_of(cmd);
+        (async move {
+            let mut st = self.state.lock().expect("lock");
+            st.singles.push(args.clone());
+            Ok(st.reply(&args))
+        })
+        .boxed()
+    }
+
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        pipe: &'a Pipeline,
+        _offset: usize,
+        _count: usize,
+    ) -> RedisFuture<'a, Vec<RValue>> {
+        let batch = self.batch_commands(pipe);
+        (async move {
+            let mut st = self.state.lock().expect("lock");
+            let values = batch.iter().map(|a| st.reply(a)).collect();
+            st.batches.push(batch);
+            Ok(values)
+        })
+        .boxed()
+    }
+}
+
+impl SlotRoutedConnection for RoutingConn {
+    fn command_at_slot<'a>(&'a mut self, cmd: &'a Cmd, slot: u16) -> RedisFuture<'a, RValue> {
+        let args = args_of(cmd);
+        (async move {
+            *self.replays.lock().expect("lock") += 1;
+            self.replay_slots.lock().expect("lock").push(slot);
+            let mut st = self.state.lock().expect("lock");
+            st.addressed.push((slot, vec![args.clone()]));
+            drop(st);
+            self.single(&args)
+        })
+        .boxed()
+    }
+
+    fn pipeline_at_slot<'a>(
+        &'a mut self,
+        pipe: &'a Pipeline,
+        slot: u16,
+    ) -> SlotRoutedBatchFuture<'a> {
+        let batch = self.batch_commands(pipe);
+        let len = batch.len();
+        (async move {
+            match *self.outcome.lock().expect("lock") {
+                BatchOutcome::Rejected => {
+                    Err(redis::RedisError::from((ErrorKind::CrossSlot, "CROSSSLOT")).to_string())
+                }
+                BatchOutcome::Short(n) => {
+                    let mut st = self.state.lock().expect("lock");
+                    Ok(batch.iter().take(n.min(len)).map(|a| st.reply(a)).collect())
+                }
+                BatchOutcome::Full => {
+                    let mut st = self.state.lock().expect("lock");
+                    let values = batch.iter().map(|a| st.reply(a)).collect();
+                    st.addressed.push((slot, batch));
+                    Ok(values)
+                }
+            }
+        })
+        .boxed()
+    }
+}
+
+use redis::ErrorKind;
+
+fn seeded_probe_conn(conn: &RoutingConn, key: &str) {
+    let mut st = conn.state.lock().expect("lock");
+    st.types.insert(key.to_string(), "hash".to_string());
+    st.ptls.insert(key.to_string(), 1_500);
+    st.mems.insert(key.to_string(), 64);
+}
+
+#[tokio::test]
+async fn test_tester_a_rejected_addressed_batch_replays_that_key_command_by_command() {
+    const KEY: &str = "app:{user1000}:session";
+    let conn = RoutingConn::new();
+    seeded_probe_conn(&conn, KEY);
+    // The dispatch layer folds the whole batch into one error, exactly as a
+    // cluster connection folds `OBJECT FREQ`'s rejection (redis-cmds-p0 BUG-001).
+    conn.set_outcome(BatchOutcome::Rejected);
+
+    let mut routed = conn.clone();
+    let probe = key_probe(&mut routed, KEY, Topology::Cluster)
+        .await
+        .expect("a folded batch must degrade to singles, not fail the probe");
+
+    assert!(probe.exists);
+    assert_eq!(probe.key_type.as_deref(), Some("hash"));
+    assert_eq!(probe.ttl_ms, 1_500);
+    assert_eq!(probe.memory_bytes, Some(64));
+    assert_eq!(
+        conn.replay_count(),
+        crate::ops_key_probe::KEY_PROBE_PIPELINE_LEN,
+        "the replay costs one round trip per command of *this* key only"
+    );
+    // Every replay stays on the key's own slot: the fallback must not silently
+    // un-address the batch (that is what caused the MOVED/slot-rebuild storm).
+    let expected = get_slot(KEY.as_bytes());
+    assert!(
+        conn.replayed_slots().iter().all(|s| *s == expected),
+        "replayed commands must keep the key's slot: {:?}",
+        conn.replayed_slots()
+    );
+    // And the batch itself was never taken as an answer.
+    assert!(conn.state.lock().expect("lock").batches.is_empty());
+}
+
+#[tokio::test]
+async fn test_tester_a_short_addressed_batch_replays_instead_of_misreading_slots() {
+    const KEY: &str = "app:{user1000}:session";
+    let conn = RoutingConn::new();
+    seeded_probe_conn(&conn, KEY);
+    // Only 2 of 4 replies come back: reading them positionally would answer
+    // `exists` from `EXISTS`, `type` from `TYPE`, and then *invent* ttl/memory.
+    conn.set_outcome(BatchOutcome::Short(2));
+
+    let mut routed = conn.clone();
+    let probe = key_probe(&mut routed, KEY, Topology::Cluster)
+        .await
+        .expect("a short vector must trigger the replay, not a half-read probe");
+
+    assert_eq!(
+        probe.ttl_ms, 1_500,
+        "ttl must come from PTTL, not from a shifted slot"
+    );
+    assert_eq!(probe.memory_bytes, Some(64));
+    assert_eq!(
+        conn.replay_count(),
+        crate::ops_key_probe::KEY_PROBE_PIPELINE_LEN
+    );
+}
+
+#[tokio::test]
+async fn test_tester_an_answered_error_degrades_one_field_and_keeps_the_rest() {
+    const KEY: &str = "app:{user1000}:session";
+    let conn = RoutingConn::new();
+    seeded_probe_conn(&conn, KEY);
+    conn.set_outcome(BatchOutcome::Rejected);
+    // MEMORY USAGE below Redis 4.0 (or under an ACL): a *server* answer, so only
+    // that field degrades.
+    conn.answer_error("MEMORY");
+
+    let mut routed = conn.clone();
+    let probe = key_probe(&mut routed, KEY, Topology::Cluster)
+        .await
+        .expect("one rejected field must not fail the probe");
+
+    assert!(probe.exists);
+    assert_eq!(probe.key_type.as_deref(), Some("hash"));
+    assert_eq!(probe.ttl_ms, 1_500);
+    assert_eq!(
+        probe.memory_bytes, None,
+        "the rejected field alone becomes null"
+    );
+}
+
+#[tokio::test]
+async fn test_tester_a_transport_failure_during_replay_aborts_the_command() {
+    const KEY: &str = "app:{user1000}:session";
+    let conn = RoutingConn::new();
+    seeded_probe_conn(&conn, KEY);
+    conn.set_outcome(BatchOutcome::Rejected);
+    // An I/O failure means the command never ran: reporting "no value" for it
+    // would dress a lost connection up as an empty keyspace.
+    conn.fail_transport("TYPE");
+
+    let mut routed = conn.clone();
+    let err = key_probe(&mut routed, KEY, Topology::Cluster)
+        .await
+        .expect_err("a transport failure must surface, not degrade silently");
+    assert!(
+        err.contains("connection reset"),
+        "the transport error must survive verbatim: {err}"
+    );
+}
+
+#[test]
+fn test_tester_the_tree_classifier_splits_a_lost_connection_from_a_rejected_command() {
+    // Connection-level: aborts the page (never rendered as "no such key").
+    for (kind, detail) in [
+        (ErrorKind::IoError, "connection reset"),
+        (ErrorKind::ClusterDown, "CLUSTERDOWN"),
+        (ErrorKind::CrossSlot, "CROSSSLOT"),
+        (
+            ErrorKind::ClusterConnectionNotFound,
+            "no connection to a valid node",
+        ),
+    ] {
+        let error = redis::RedisError::from((kind, detail));
+        assert!(
+            is_connection_level_failure(&error),
+            "{detail} is a transport/topology failure and must abort the batch"
+        );
+    }
+    // Command-level: degrades one field only.
+    for (kind, detail) in [
+        (ErrorKind::ResponseError, "ERR unknown command 'PTTL'"),
+        (ErrorKind::TypeError, "WRONGTYPE"),
+        (ErrorKind::ExtensionError, "NOPERM"),
+        (ErrorKind::ReadOnly, "READONLY"),
+    ] {
+        let error = redis::RedisError::from((kind, detail));
+        assert!(
+            !is_connection_level_failure(&error),
+            "{detail} is an answered error and must degrade one field"
+        );
+    }
+}
+
+#[test]
+fn test_tester_fold_command_answer_maps_a_server_error_to_a_missing_value() {
+    let rejected = redis::RedisError::from((ErrorKind::ResponseError, "ERR nope"));
+    assert!(matches!(
+        fold_command_answer(Err(rejected)),
+        Ok(RValue::Nil)
+    ));
+    let lost = redis::RedisError::from((ErrorKind::IoError, "connection reset"));
+    assert!(fold_command_answer(Err(lost)).is_err());
+    assert!(matches!(
+        fold_command_answer(Ok(RValue::Int(3))),
+        Ok(RValue::Int(3))
+    ));
+}
+
+#[tokio::test]
+async fn test_tester_standalone_pages_chunk_at_the_pipeline_limit() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 300;
+    let keys: Vec<String> = (0..300).map(|i| format!("chunk:{i}")).collect();
+    for key in &keys {
+        conn.seed_string(key, 1, "v");
+    }
+
+    let metas = fetch_key_meta(&mut conn, &keys, true, Topology::Standalone)
+        .await
+        .expect("chunked meta batch");
+    {
+        let st = conn.state();
+        assert_eq!(
+            st.batches.len(),
+            2,
+            "300 keys at TREE_KEYS_PER_PIPELINE={TREE_KEYS_PER_PIPELINE} = two batches"
+        );
+        assert_eq!(st.batches[0].len(), TREE_KEYS_PER_PIPELINE * 3);
+        assert_eq!(st.batches[1].len(), (300 - TREE_KEYS_PER_PIPELINE) * 3);
+    }
+    assert_eq!(metas.len(), 300, "one group per key, in key order");
+    assert!(metas
+        .iter()
+        .all(|m| m.mem_bytes == Some(64) || m.mem_bytes.is_none()));
+}
+
+#[tokio::test]
+async fn test_tester_sentinel_uses_the_node_batch_and_never_addressed_singles() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 4;
+    conn.seed_string("s:a", 1, "v");
+    conn.seed_string("s:b", 2, "w");
+    let keys = vec!["s:a".to_string(), "s:b".to_string()];
+
+    let metas = fetch_key_meta(&mut conn, &keys, false, Topology::Sentinel)
+        .await
+        .expect("sentinel page meta");
+    {
+        let st = conn.state();
+        assert_eq!(st.batches.len(), 1, "sentinel is a single node: one batch");
+        assert!(
+            st.addressed.is_empty(),
+            "addressing is meaningless on a sentinel and must not appear: {:?}",
+            st.addressed
+        );
+    }
+    assert_eq!(metas.len(), 2);
+}
+
+#[tokio::test]
+async fn test_tester_a_stalled_cursor_reports_truncated_before_the_budget_is_spent() {
+    let mut conn = TreeConn::new();
+    {
+        let mut st = conn.state();
+        st.dbsize = 100_000;
+        // The cursor never wraps and never yields a key: a proxy or a replica
+        // that is not making progress.
+        for _ in 0..(MAX_TREE_STALLED_ROUNDS + 8) {
+            st.scan_script.push_back((7, Vec::new()));
+        }
+    }
+
+    let page = scan_keys_page(
+        &mut conn,
+        "stalled:*",
+        0,
+        100,
+        None,
+        false,
+        false,
+        None,
+        Topology::Standalone,
+        Instant::now(),
+    )
+    .await
+    .expect("stalled page");
+
+    {
+        let st = conn.state();
+        assert_eq!(
+            joined(&st.singles)
+                .iter()
+                .filter(|line| line.starts_with("SCAN"))
+                .count(),
+            MAX_TREE_STALLED_ROUNDS as usize,
+            "the stall guard, not the budget, must end the loop"
+        );
+    }
+    assert!(page.truncated, "an abandoned open cursor is hidden data");
+    assert_eq!(
+        page.next_cursor, 7,
+        "the caller must still be able to resume"
+    );
+    assert!(
+        page.consumed < DEFAULT_TREE_BUDGET,
+        "the guard must fire while budget remains: {}",
+        page.consumed
+    );
+}
+
+#[tokio::test]
+async fn test_tester_the_round_cap_stops_a_cursor_that_never_wraps() {
+    let mut conn = TreeConn::new();
+    {
+        let mut st = conn.state();
+        // A big budget so only the round cap can end the walk, and one new key
+        // per round so the stall guard never fires.
+        st.dbsize = 100_000;
+        for round in 0..(MAX_TREE_SCAN_ROUNDS + 10) {
+            st.scan_script.push_back((9, vec![format!("loop:{round}")]));
+        }
+    }
+
+    let page = scan_budgeted(
+        &mut conn,
+        0,
+        TREE_SCAN_MIN_ROUND_COUNT,
+        usize::MAX,
+        Some("loop:*"),
+        None,
+        &mut ScanBudget::new(HARD_MAX_TREE_BUDGET),
+        Topology::Standalone,
+    )
+    .await
+    .expect("capped walk");
+
+    assert_eq!(
+        page.consumed,
+        u64::from(MAX_TREE_SCAN_ROUNDS) * u64::from(TREE_SCAN_MIN_ROUND_COUNT),
+        "exactly the capped number of rounds may be charged"
+    );
+    assert!(page.truncated);
+    assert!(!page.exhausted);
+    assert_eq!(page.keys.len(), MAX_TREE_SCAN_ROUNDS as usize);
+}
+
+#[test]
+fn test_tester_preview_rendering_covers_every_key_type() {
+    // string: the payload, truncated to the preview budget.
+    assert_eq!(render_preview("string", Some(&bulk("plain"))), "plain");
+    // list / set / zset: the array form the flat browser already renders.
+    assert_eq!(
+        render_preview("list", Some(&RValue::Array(vec![bulk("a"), bulk("b")]))),
+        r#"["a", "b"]"#
+    );
+    assert_eq!(
+        render_preview("zset", Some(&RValue::Array(vec![bulk("m"), bulk("1")]))),
+        r#"["m", "1"]"#
+    );
+    // hash: pairs come out of the HSCAN envelope, never a raw array.
+    assert_eq!(
+        render_preview(
+            "hash",
+            Some(&RValue::Array(vec![
+                bulk("0"),
+                RValue::Array(vec![bulk("f1"), bulk("v1"), bulk("f2"), bulk("v2")])
+            ]))
+        ),
+        r#"["f1: v1", "f2: v2"]"#
+    );
+    // stream: no read is issued, the label is fixed.
+    assert_eq!(render_preview("stream", None), "(stream)");
+    // module / unknown: nothing is invented, and nothing is read.
+    assert_eq!(render_preview("ReJSON-RL", Some(&bulk("{}"))), "");
+    // A missing reply degrades to the empty rendering for that type.
+    assert_eq!(render_preview("list", None), "[]");
+    // Long payloads are truncated, not streamed to the IPC layer.
+    let long = "x".repeat(400);
+    let rendered = render_preview("string", Some(&bulk(&long)));
+    assert!(
+        rendered.chars().count() < 400,
+        "preview must truncate: {rendered}"
+    );
+}
+
+#[test]
+fn test_tester_hscan_envelopes_that_are_not_pairs_answer_empty() {
+    // A malformed envelope (short member list / odd length) must not panic and
+    // must not fabricate a `field: value` pair.
+    assert!(extract_hscan_preview(&RValue::Array(vec![bulk("0")])).is_empty());
+    assert!(extract_hscan_preview(&RValue::Array(vec![
+        bulk("0"),
+        RValue::Array(vec![bulk("only-field")])
+    ]))
+    .is_empty());
+    assert!(extract_hscan_preview(&RValue::Nil).is_empty());
+    assert!(extract_hscan_preview(&bulk("not-an-array")).is_empty());
+}
+
+#[test]
+fn test_tester_value_group_readers_stay_aligned_with_their_builders() {
+    // A type with a length command but no preview read (stream): slot 0 is the
+    // length and there is no preview slot to steal.
+    let stream = parse_value_group(&[RValue::Int(9)], "stream");
+    assert_eq!(stream.logical_len, 9);
+    assert_eq!(stream.preview, "(stream)");
+    // A module type issues nothing at all.
+    let module = parse_value_group(&[], "ReJSON-RL");
+    assert_eq!(module.logical_len, 0);
+    assert_eq!(module.preview, "");
+    // An absent length reply degrades to 0 rather than to a plausible number.
+    let degraded = parse_value_group(&[RValue::Nil, bulk("v")], "string");
+    assert_eq!(degraded.logical_len, 0);
+    assert_eq!(degraded.preview, "v");
+    // Every type the builder knows about must round-trip through the reader.
+    for key_type in ["string", "list", "set", "zset", "hash", "stream"] {
+        let items = vec![PageKey {
+            key: "k".to_string(),
+            key_type: key_type.to_string(),
+        }];
+        let (_, sizes) = build_value_pipeline(&items);
+        let expected = usize::from(length_command_for(key_type).is_some())
+            + usize::from(has_preview_command(key_type));
+        assert_eq!(sizes, vec![expected], "{key_type} builder arity");
+    }
+}
+
+/// A standalone page whose batch answers with fewer values than commands: the
+/// `#[doc(hidden)]` reply-layout drift BUG-003 warned about. The tail must
+/// degrade, and the *shape* of the page must survive.
+#[derive(Clone, Default)]
+struct ShortBatchConn {
+    state: Arc<Mutex<TreeState>>,
+    /// Replies the pipeline hands back, however many commands were sent.
+    replies: usize,
+}
+
+impl ConnectionLike for ShortBatchConn {
+    fn get_db(&self) -> i64 {
+        0
+    }
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, RValue> {
+        let args = args_of(cmd);
+        (async move {
+            let mut st = self.state.lock().expect("lock");
+            st.singles.push(args.clone());
+            Ok(st.reply(&args))
+        })
+        .boxed()
+    }
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        pipe: &'a Pipeline,
+        _offset: usize,
+        _count: usize,
+    ) -> RedisFuture<'a, Vec<RValue>> {
+        let batch: Vec<Vec<String>> = pipe.cmd_iter().map(args_of).collect();
+        let replies = self.replies;
+        (async move {
+            let mut st = self.state.lock().expect("lock");
+            let values = batch.iter().take(replies).map(|a| st.reply(a)).collect();
+            st.batches.push(batch);
+            Ok(values)
+        })
+        .boxed()
+    }
+}
+
+impl SlotRoutedConnection for ShortBatchConn {}
+
+#[tokio::test]
+async fn test_tester_a_short_standalone_batch_degrades_the_tail_without_shifting_keys() {
+    // 3 keys × 2 meta commands = 6, but only the first key's 2 replies arrive.
+    let mut conn = ShortBatchConn {
+        state: Arc::new(Mutex::new(TreeState::default())),
+        replies: 2,
+    };
+    let keys = vec!["sh:1".to_string(), "sh:2".to_string(), "sh:3".to_string()];
+    let metas = fetch_key_meta(&mut conn, &keys, false, Topology::Standalone)
+        .await
+        .expect("a short batch must not fail the page");
+
+    assert_eq!(
+        metas.len(),
+        3,
+        "one group per key, whatever the reply count"
+    );
+    assert_eq!(
+        metas[0].key_type, "none",
+        "no key was seeded, so even the answered slot reads as 'none'"
+    );
+    // The point of `scatter`: the trailing keys must not borrow key #1's replies.
+    assert_eq!(
+        metas[1], metas[2],
+        "both unanswered keys degrade identically, not shift by one reply"
+    );
+}
+
+/// `noTtlOnly` on the flat browser: rows are filtered *after* enrichment, so the
+/// surviving keys keep their own attributes and the dropped one disappears.
+#[tokio::test]
+async fn test_tester_scan_keys_no_ttl_only_keeps_only_permanent_keys() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 5;
+    for (key, ttl) in [("nt:p", -1i64), ("nt:e", 30)] {
+        let mut st = conn.state();
+        st.types.insert(key.to_string(), "string".to_string());
+        st.ttls.insert(key.to_string(), ttl);
+        st.lens.insert(key.to_string(), 2);
+        st.previews.insert(key.to_string(), bulk("v"));
+    }
+    conn.state()
+        .scan_script
+        .push_back((0, vec!["nt:p".to_string(), "nt:e".to_string()]));
+
+    let page = scan_keys_page(
+        &mut conn,
+        "nt:*",
+        0,
+        100,
+        None,
+        false,
+        true,
+        None,
+        Topology::Standalone,
+        Instant::now(),
+    )
+    .await
+    .expect("noTtlOnly page");
+
+    let keys: Vec<&str> = page.entries.iter().map(|e| e.key.as_str()).collect();
+    assert_eq!(keys, vec!["nt:p"], "only keys without expiry survive");
+    assert_eq!(page.entries[0].ttl, -1, "and it keeps its OWN ttl");
+}
+
+/// [tester pin, committed RED-by-ignore] `list_children` refills leaf attributes
+/// positionally after dropping rows, so the `noTtlOnly` filter (and any key that
+/// vanishes between SCAN and the meta batch) mislabels the whole tail. This
+/// passes once redis-tree-backend-BUG-001 is fixed — remove the `#[ignore]` then.
+#[tokio::test]
+#[ignore = "RED: redis-tree-backend-BUG-001 — list_children fills leaves by position, so a dropped row shifts every later key's type/TTL/size"]
+async fn test_tester_list_children_no_ttl_only_keeps_rows_aligned() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 6;
+    for (key, ttl, len) in [("app:a", -1i64, 1i64), ("app:b", 7, 2), ("app:c", 9, 3)] {
+        let mut st = conn.state();
+        st.types.insert(key.to_string(), "string".to_string());
+        st.ttls.insert(key.to_string(), ttl);
+        st.lens.insert(key.to_string(), len);
+        st.previews.insert(key.to_string(), bulk("v"));
+    }
+    conn.state().scan_script.push_back((
+        0,
+        vec![
+            "app:a".to_string(),
+            "app:b".to_string(),
+            "app:c".to_string(),
+        ],
+    ));
+
+    let page = list_children_page(
+        &mut conn,
+        "app:",
+        0,
+        100,
+        None,
+        true,
+        None,
+        false,
+        None,
+        Topology::Standalone,
+        Instant::now(),
+    )
+    .await
+    .expect("noTtlOnly children page");
+
+    let leaves: Vec<(String, String, i64, u64)> = page
+        .entries
+        .iter()
+        .filter_map(|e| match e {
+            ChildEntry::Key {
+                key,
+                key_type,
+                ttl,
+                logical_len,
+                ..
+            } => Some((key.clone(), key_type.clone(), *ttl, *logical_len)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        leaves,
+        vec![
+            ("app:a".to_string(), "string".to_string(), -1, 1),
+            ("app:c".to_string(), "string".to_string(), -1, 3),
+        ],
+        "noTtlOnly must return exactly the non-expiring leaves, each with its OWN attributes"
+    );
+}
+
+/// The same defect reached through the other door: a key that expires between
+/// the SCAN and the meta batch is dropped by `absent`, with identical fallout.
+#[tokio::test]
+#[ignore = "RED: redis-tree-backend-BUG-001 — a leaf dropped as `absent` shifts every later leaf's attributes"]
+async fn test_tester_list_children_survives_a_key_that_vanished_mid_page() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 6;
+    for (key, ttl, len) in [("gone:a", -1i64, 1i64), ("gone:b", 7, 2), ("gone:c", 9, 3)] {
+        let mut st = conn.state();
+        st.types.insert(key.to_string(), "string".to_string());
+        st.ttls.insert(key.to_string(), ttl);
+        st.lens.insert(key.to_string(), len);
+        st.previews.insert(key.to_string(), bulk("v"));
+    }
+    // The server now answers `none` for app b: it expired after the SCAN.
+    conn.state()
+        .types
+        .insert("gone:b".to_string(), "none".to_string());
+    conn.state().scan_script.push_back((
+        0,
+        vec![
+            "gone:a".to_string(),
+            "gone:b".to_string(),
+            "gone:c".to_string(),
+        ],
+    ));
+
+    let page = list_children_page(
+        &mut conn,
+        "gone:",
+        0,
+        100,
+        None,
+        false,
+        None,
+        false,
+        None,
+        Topology::Standalone,
+        Instant::now(),
+    )
+    .await
+    .expect("page with a vanished leaf");
+
+    let leaves: Vec<(String, String, u64)> = page
+        .entries
+        .iter()
+        .filter_map(|e| match e {
+            ChildEntry::Key {
+                key,
+                key_type,
+                logical_len,
+                ..
+            } => Some((key.clone(), key_type.clone(), *logical_len)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        leaves,
+        vec![
+            ("gone:a".to_string(), "string".to_string(), 1),
+            ("gone:c".to_string(), "string".to_string(), 3),
+        ],
+        "the vanished key must disappear and its neighbours keep their own sizes"
+    );
+}
+
+/// #56 discipline, made checkable in-process: `list_children` must not add a
+/// second way to fail on a cluster. The delivered suite only exercises the
+/// hierarchical scan standalone, so "this track did not worsen the existing
+/// CrossSlot defect" had no counter-proof. On a cluster every batch this op
+/// issues is one key's own attributes, addressed to *that key's* slot (not the
+/// scan anchor), and there is no cross-key pipeline to be rejected.
+#[tokio::test]
+async fn test_tester_list_children_on_cluster_addresses_every_batch_by_key() {
+    // `sep = "."` keeps these three keys leaves at the requested level, so the
+    // leaf batches (the only place a CROSSSLOT could come from) are exercised.
+    const TAGGED_A: &str = "app:{user1000}:profile";
+    const TAGGED_B: &str = "app:{user1000}:token";
+    const OTHER: &str = "app:{other9}:token";
+
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 3;
+    for key in [TAGGED_A, TAGGED_B, OTHER] {
+        conn.seed_string(key, 2, "v");
+    }
+    conn.state().scan_script.push_back((
+        0,
+        vec![
+            TAGGED_A.to_string(),
+            TAGGED_B.to_string(),
+            OTHER.to_string(),
+        ],
+    ));
+
+    let page = list_children_page(
+        &mut conn,
+        "app:",
+        0,
+        100,
+        Some("."),
+        false,
+        None,
+        true,
+        None,
+        Topology::Cluster,
+        Instant::now(),
+    )
+    .await
+    .expect("cluster children page");
+    assert_eq!(page.entries.len(), 3, "all three are leaves at this level");
+
+    {
+        let st = conn.state();
+        assert_eq!(
+            joined(&st.singles),
+            ["DBSIZE"],
+            "DBSIZE is the only unrouted command in this op"
+        );
+        assert!(
+            st.batches.is_empty(),
+            "no cross-key pipeline may be issued on a cluster (that is #56's shape): {:?}",
+            st.batches
+        );
+
+        let scans: Vec<u16> = st
+            .addressed
+            .iter()
+            .filter(|(_, cmds)| cmds[0][0] == "SCAN")
+            .map(|(slot, _)| *slot)
+            .collect();
+        assert_eq!(scans, vec![cluster_scan_anchor_slot()], "SCAN anchored");
+
+        let batches: Vec<&(u16, Vec<Vec<String>>)> = st
+            .addressed
+            .iter()
+            .filter(|(_, cmds)| cmds[0][0] != "SCAN")
+            .collect();
+        assert_eq!(batches.len(), 6, "3 leaves x (meta + value)");
+        let all_keys = [TAGGED_A, TAGGED_B, OTHER];
+        for (slot, cmds) in &batches {
+            // The subject is wherever the command puts it: `TYPE k` names it at
+            // index 1, `MEMORY USAGE k` at index 2 — the two-word form is the
+            // whole reason the batch has to be *explicitly* addressed.
+            let subject = all_keys
+                .iter()
+                .find(|key| cmds.iter().any(|cmd| cmd.iter().any(|a| a == *key)))
+                .expect("a batch must name a key");
+            for cmd in cmds.iter() {
+                assert!(
+                    cmd.iter().any(|arg| arg == subject),
+                    "every command of the batch is about {subject}: {cmd:?}"
+                );
+                for other in all_keys.iter().filter(|k| *k != subject) {
+                    assert!(
+                        !cmd.iter().any(|arg| arg == other),
+                        "{subject}'s batch leaked {other} — a cross-slot batch: {cmds:?}"
+                    );
+                }
+            }
+            assert_eq!(
+                *slot,
+                get_slot(subject.as_bytes()),
+                "{subject} must run on the shard owning it, not on the scan anchor"
+            );
+        }
+        // Counter-proof for tag-blind addressing: both hash-tag keys share a
+        // shard, the third does not. If `get_slot` were bypassed (or everything
+        // were pinned to the anchor), the per-key equality above turns red.
+        assert_eq!(get_slot(TAGGED_A.as_bytes()), get_slot(TAGGED_B.as_bytes()));
+        assert_ne!(get_slot(TAGGED_A.as_bytes()), get_slot(OTHER.as_bytes()));
+    }
+    assert_eq!(page.dbsize, 3);
+    assert!(!page.truncated);
+}
+
+/// Delivered unit 4 says `withMemory` makes `size` the `MEMORY USAGE` answer.
+/// The delivered suite only asserted that claim on the batch builder, never on
+/// an assembled page — so a page that quietly kept the logical length would
+/// have stayed green. One key answers memory, one does not (Redis < 4.0 or
+/// `NOPERM`), and the fallback must be the logical length, not zero.
+#[tokio::test]
+async fn test_tester_scan_keys_page_with_memory_reports_bytes_and_falls_back_to_length() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 4;
+    conn.seed_string("mem:bytes", 12, "payload");
+    conn.state().mems.insert("mem:bytes".to_string(), 96);
+    conn.seed_string("mem:unsupported", 7, "other");
+    // `mem:unsupported` has no MEMORY USAGE answer at all → the double replies Nil.
+    conn.state().scan_script.push_back((
+        0,
+        vec!["mem:bytes".to_string(), "mem:unsupported".to_string()],
+    ));
+
+    let page = scan_keys_page(
+        &mut conn,
+        "mem:*",
+        0,
+        100,
+        None,
+        true,
+        false,
+        None,
+        Topology::Standalone,
+        Instant::now(),
+    )
+    .await
+    .expect("withMemory page");
+
+    assert_eq!(page.entries.len(), 2);
+    assert_eq!(
+        page.entries[0].size, 96,
+        "withMemory makes `size` the MEMORY USAGE byte count"
+    );
+    assert_eq!(
+        page.entries[1].size, 7,
+        "an unsupported MEMORY USAGE falls back to the logical length, never to 0"
+    );
+    let st = conn.state();
+    assert_eq!(
+        joined(&st.batches[0]),
+        [
+            "TYPE mem:bytes",
+            "TTL mem:bytes",
+            "MEMORY USAGE mem:bytes",
+            "TYPE mem:unsupported",
+            "TTL mem:unsupported",
+            "MEMORY USAGE mem:unsupported",
+        ],
+        "MEMORY USAGE rides the same meta batch (no extra round trip)"
+    );
+}
+
+/// A cluster `SCAN` must carry `MATCH` and `TYPE` into the *addressed* command:
+/// the anchor routing and the server-side filter are two independent
+/// requirements, and the round trip is built from scratch on this arm, so the
+/// filter could silently be dropped.
+#[tokio::test]
+async fn test_tester_cluster_scan_round_carries_match_and_type_to_the_anchor() {
+    let mut conn = TreeConn::new();
+    conn.state().dbsize = 2;
+    conn.state()
+        .types
+        .insert("h:{user1000}:a".to_string(), "string".to_string());
+    conn.state().ttls.insert("h:{user1000}:a".to_string(), -1);
+    conn.state().lens.insert("h:{user1000}:a".to_string(), 1);
+    conn.state()
+        .previews
+        .insert("h:{user1000}:a".to_string(), bulk("v"));
+    conn.state()
+        .scan_script
+        .push_back((0, vec!["h:{user1000}:a".to_string()]));
+
+    let page = scan_keys_page(
+        &mut conn,
+        "h:*",
+        0,
+        100,
+        Some("string"),
+        false,
+        false,
+        None,
+        Topology::Cluster,
+        Instant::now(),
+    )
+    .await
+    .expect("cluster filtered page");
+    assert_eq!(page.entries.len(), 1);
+
+    let st = conn.state();
+    let (_, scan) = st
+        .addressed
+        .iter()
+        .find(|(_, cmds)| cmds[0][0] == "SCAN")
+        .expect("the SCAN round was addressed");
+    let line = scan[0].join(" ");
+    assert!(
+        line.contains("MATCH h:*"),
+        "the pattern must survive into the addressed SCAN: {line}"
+    );
+    assert!(
+        line.contains("TYPE string"),
+        "the type filter must be applied server-side, not client-side: {line}"
+    );
+    let unaddressed: Vec<String> = st
+        .batches
+        .iter()
+        .flat_map(|batch| batch.iter().map(|cmd| cmd.join(" ")))
+        .collect();
+    assert!(
+        !unaddressed.iter().any(|l| l.contains("SCAN")),
+        "SCAN must never leave as an unaddressed batch on a cluster: {unaddressed:?}"
+    );
+}
+
+/// `key_probe` on a single node is the common production shape: one pipeline,
+/// one round trip, and no addressing at all. The delivered suite pins the
+/// cluster arm only, so `fetch_key_group`'s non-cluster branch was never run.
+#[tokio::test]
+async fn test_tester_key_probe_on_a_single_node_is_one_pipeline_round_trip() {
+    const KEY: &str = "app:users:42";
+    let mut conn = TreeConn::new();
+    {
+        let mut st = conn.state();
+        st.types.insert(KEY.to_string(), "hash".to_string());
+        st.ptls.insert(KEY.to_string(), 2_500);
+        st.mems.insert(KEY.to_string(), 88);
+    }
+
+    let probe = key_probe(&mut conn, KEY, Topology::Standalone)
+        .await
+        .expect("standalone probe");
+    assert!(probe.exists);
+    assert_eq!(probe.key_type.as_deref(), Some("hash"));
+    assert_eq!(probe.ttl_ms, 2_500);
+    assert_eq!(probe.memory_bytes, Some(88));
+
+    let st = conn.state();
+    assert_eq!(st.batches.len(), 1, "one batch, one round trip");
+    assert_eq!(
+        joined(&st.batches[0]),
+        [
+            format!("EXISTS {KEY}"),
+            format!("TYPE {KEY}"),
+            format!("PTTL {KEY}"),
+            format!("MEMORY USAGE {KEY}"),
+        ],
+        "the frozen four, in order, no value read"
+    );
+    assert!(st.singles.is_empty(), "and nothing issued one at a time");
+    assert!(
+        st.addressed.is_empty(),
+        "addressing is meaningless on a single node and must not appear"
+    );
+}
+
+/// Presence decided by `TYPE` alone: `EXISTS` was folded away and `TYPE`
+/// positively answers `none`. That is an absence the probe must report as a
+/// fact, not as "unreadable".
+#[test]
+fn test_tester_probe_reports_absence_when_only_type_answers() {
+    let values = vec![
+        crate::ops_key_probe::err_reply("connection reset"),
+        bulk("none"),
+        RValue::Int(-2),
+        RValue::Nil,
+    ];
+    assert_eq!(
+        parse_key_probe(&values),
+        Some(KeyProbe {
+            exists: false,
+            key_type: None,
+            ttl_ms: -2,
+            memory_bytes: None,
+        }),
+        "TYPE saying `none` is enough to say the key is gone"
+    );
 }
