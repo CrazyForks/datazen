@@ -54,6 +54,15 @@ export function ValueViewer({ dbSessionId, frame, invoke = redisCommandInvoke }:
       let decoded: Uint8Array;
       if (isBackendCodec(codec)) {
         const res = await invokeDecodeValue(dbSessionId, codec, rawB64, invoke);
+        if (!res.ok) {
+          // In-band decode failure (C-3): show the stable `reason` code as a
+          // visible error — a failed decode must never render as `(empty)`.
+          if (seq !== seqRef.current) return;
+          setErrorText(res.reason ?? null);
+          setStatus('error');
+          setRendered(null);
+          return;
+        }
         decoded = new TextEncoder().encode(res.json ?? '');
       } else {
         decoded = await applyBrowserCodec(bytes, codec);
