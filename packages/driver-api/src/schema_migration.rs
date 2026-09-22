@@ -893,6 +893,40 @@ mod type_parts_tests {
     }
 
     #[test]
+    fn test_tester_object_definition_ignores_quoted_kind_tokens_outside_header() {
+        // Quoted identifiers remain identifiers, rather than declaration-kind
+        // tokens. A view body/header containing one must never be accepted as
+        // a routine or trigger definition.
+        for (definition, kind, name) in [
+            (
+                "CREATE VIEW report AS SELECT `FUNCTION` FROM metadata",
+                ObjectKind::Function,
+                "report",
+            ),
+            (
+                "CREATE VIEW `FUNCTION` AS SELECT 1",
+                ObjectKind::Function,
+                "FUNCTION",
+            ),
+            (
+                "CREATE VIEW report AS SELECT \"TRIGGER\" FROM metadata",
+                ObjectKind::Trigger,
+                "report",
+            ),
+            (
+                "CREATE VIEW [TRIGGER] AS SELECT 1",
+                ObjectKind::Trigger,
+                "TRIGGER",
+            ),
+        ] {
+            assert!(
+                validate_object_definition(definition, kind, name).is_err(),
+                "{definition}"
+            );
+        }
+    }
+
+    #[test]
     fn test_tester_object_definition_requires_requested_name_in_declaration() {
         // The driver contract must not accept an unrelated routine merely
         // because the requested identity occurs in a body literal or comment.

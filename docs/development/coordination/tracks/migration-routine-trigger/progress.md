@@ -1,6 +1,6 @@
 # migration-routine-trigger
 
-Phase: READY_FOR_RETEST
+Phase: PASSED
 
 ## Scope
 
@@ -118,11 +118,38 @@ directory were restored/removed before commit.
 
 ## E2E registration
 
-| Case | Journey | Status |
-| --- | --- | --- |
-| RT-001 | PostgreSQL source/target fixtures with overloaded functions: select `public.lookup(integer)`, review a replacement plan, deploy, and verify only that overload changed. | 留待 BUG-002/003 修复后 R 回归 |
-| RT-002 | PostgreSQL source/target fixtures with same-name triggers on different relations: select `public.audit ON public.orders`, approve destructive target-only removal, and verify the reviewed target snapshot blocks an out-of-band change. | 留待 BUG-002/003 修复后 R 回归 |
-| RT-003 | MySQL source/target function, procedure, and trigger fixtures: create, replace, and approved drop; verify definition and rollback SQL on the target. | 留待 BUG-002/003 修复后 R 回归 |
+| Case   | Journey                                                                                                                                                                                                                                  | Status                                                          |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| RT-001 | PostgreSQL source/target fixtures with overloaded functions: select `public.lookup(integer)`, review a replacement plan, deploy, and verify only that overload changed.                                                                  | 留待 R 回归：最终独立单元/集成复测已通过，需 PostgreSQL fixture |
+| RT-002 | PostgreSQL source/target fixtures with same-name triggers on different relations: select `public.audit ON public.orders`, approve destructive target-only removal, and verify the reviewed target snapshot blocks an out-of-band change. | 留待 R 回归：最终独立单元/集成复测已通过，需 PostgreSQL fixture |
+| RT-003 | MySQL source/target function, procedure, and trigger fixtures: create, replace, and approved drop; verify definition and rollback SQL on the target.                                                                                     | 留待 R 回归：最终独立单元/集成复测已通过，需 MySQL fixture      |
 
 No routine/trigger picker is present in this slice, so these are backend
 command/integration journeys rather than an existing Schema Diff window path.
+
+## Final independent tester verification
+
+- Reviewed the BUG-002/003 fix in `982fd5e4`, including the declaration
+  tokenizer, exact declared-name check, routine-signature check, PostgreSQL
+  and MySQL renderers, planner ordering and safety gates, reviewed snapshots,
+  IPC registration, and the TypeScript wrapper. No new business-code defect
+  was found.
+- Reproduced all three fail-closed boundaries: view-shaped DDL with kind words
+  in literals, body text, comments, and backtick/double-quote/bracket quoted
+  identifiers is rejected; a requested name appearing only in a body/comment
+  is rejected; and `lookup(integer)` paired with `lookup(text)` produces no
+  executable statement. Valid PostgreSQL `CREATE OR REPLACE` and MySQL
+  `DEFINER` routine/trigger DDL remains accepted.
+- Added `test_tester_object_definition_ignores_quoted_kind_tokens_outside_header`
+  to cover quoted identifier variants not covered by the earlier regressions.
+- Independent results: Driver API **145 passed**; PostgreSQL **121 passed**;
+  MySQL **102 passed**; injected Host Schema Diff **105 passed**; Schema Diff
+  command wrapper **17 passed**; `npx tsc --noEmit`, `cargo fmt --all --
+--check`, frontend Prettier, and `git diff --check` passed.
+- Dedicated command-wrapper coverage is **100% statements, 86.95% branches,
+  100% functions, and 100% lines**. Rust has no instrumented coverage gate;
+  its reviewed branches cover create/replace/drop, rollback, destructive
+  approval, target snapshots, overload identity, trigger relation identity,
+  same-dialect enforcement, and SQLite/cross-dialect rejection.
+- Temporary driver-injection artifacts and the build-only resource directory
+  were removed; `Cargo.lock` was restored before the tester commit.
