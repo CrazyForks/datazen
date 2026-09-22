@@ -12,7 +12,7 @@
 1. 必读：AGENTS.md、docs/development/subagent/rescuer.md。
 2. 逐文件分段审查已有 diff，找出残缺与错误。
 3. 遵循最小补丁原则，不随意大面积重构。
-4. 完成后跑通自验三件套，补齐 tracks/<track-id>/progress.md 与 bugs.md。
+4. 完成后跑通自验三件套（重型命令严格串行），补齐 tracks/<track-id>/progress.md；Bug 修复的回写面 = 对应 `tracks/<track-id>/bugs/<bug-id>.md`（只追加 `## 修复记录（round-N）` 块 + 只改 `- **状态**：` 行，禁改正文）。
 
 ## 4. 返回格式
 - 结论：RESCUE_DONE 或 RESCUE_BLOCKED

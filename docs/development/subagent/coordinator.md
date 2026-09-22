@@ -44,23 +44,33 @@ scripts/new-feature-worktree.sh <track-id> <base-branch>
 
 ### 3.2 Bug 修复循环
 
-Tester 完成完整测试后统一上报 Bug 清单。协调者收到 `TEST_FAILED` 后启动修复循环：
+Tester 完成完整测试后交回判定；Bug 在证实当下即逐条落盘（一 Bug 一文件），终报汇总清单。协调者收到 `TEST_FAILED` 后启动修复循环：
 
 ```text
-Tester 完成完整测试 → 一并上报 Bug 清单 + TEST_FAILED
+Tester 跑完 4 阶段 → 交回 Bug 清单 + TEST_FAILED（各条已在 bugs/ 目录逐文件落盘）
 → 协调者 resume 原 Coder agent 修复全部 Bug
 → Coder 修复并提交 → 协调者派发全新 Tester 完整复测
 → 通过 → 闭环 / 不通过 → 回到循环起点
 ```
 
 **规则**：
-1. **完整上报**：Tester 跑完全部测试阶段后统一上报，不逐个中断。
+1. **逐条落盘、统一交回**：Tester 每证实一条 Bug 立即单独 commit 其 `bugs/<bug-id>.md`（死亡免疫，判定不丢）；但 TEST_FAILED 状态机上报仍须等 4 阶段全部跑完，不逐个中断。
 2. **复用原 Coder**：优先 `Task(resume=<coder-agent-id>)` 恢复原编码 Coder，利用已有上下文。仅不可恢复时用 Rescuer。
 3. **修复后必须复测**：Coder 修复并返回 `READY_FOR_TEST` 后，协调者**必须**派发全新 Tester 完整复测。Coder 的自验不能替代 Tester，禁止跳过复测直接合入。
 4. **全新 Tester**：每轮复测使用全新 Tester 实例。
 4. **最大 5 轮**：同一轨道超过 5 轮仍有 Bug，标记 `ESCALATED` 上报用户。
 5. **Bug 状态流转**：`待修复` → `修复中` → `待复测` → `已修复` 或回到 `待修复`。
-6. **修复简报**：包含完整 Bug 清单 + "仅修复这些 Bug" 纪律约束。
+6. **修复简报**：必须包含完整 Bug 清单（ID + 描述 + 重现步骤 + 日志）+ "仅修复这些 Bug" 纪律约束 + 本文件 §3.3 的四份模板件。
+
+### 3.3 修复回合简报的强制要素（W3 实证教训）
+
+派发任何修复/复测/续跑代理时，简报必须自带以下四件，缺一即可能让整个回合报废：
+
+1. **交接手册**：新派实例（与死者不同会话）看不到死者的对话与推理。若修复方案依赖协调者的裁定/取证结论，把**具体落点（文件:行号）+ 已验证的修复方式 + 需审计确认的点**写进简报正文。反例：W3-B/D 两棒的交接结论只存在于已死代理的上下文里，新实例从零重新取证，两棒死亡期间零产出。
+2. **写锁声明**：明写「你是该 worktree 唯一写者」，并列出禁写文件与授权文件（跨轨修复需**显式授权**越界文件，如"仅许动这 3 个 ui 文件 + 新测试"）。
+3. **死亡免疫协议**：一步一 commit（禁止超过 15 分钟无 commit 区间）、重型命令严格串行一次一条、收口前在提交态复跑门禁。本环境的代理死亡多为服务错误/瞬时网络，且**常在长阅读/长思考区间无落盘时发生**——落盘频率就是损失上限。
+4. **Bug 文件写面**：修复者只改 `- **状态**：` 行 + 追加 `## 修复记录（round-N）` 块；正文归登记 Tester。禁改他人区段（一 Bug 一文件后，这是唯一仍可能冲突的共享面）。
+
 
 ## 4. 活性监控与死亡恢复
 
@@ -77,7 +87,7 @@ Tester 完成完整测试 → 一并上报 Bug 清单 + TEST_FAILED
 
 ## 5. 方案 B 进度总览聚合
 
-各子代理仅提交各自 `tracks/<track-id>/progress.md` 与 `bugs.md`。
+各子代理仅提交各自 `tracks/<track-id>/progress.md` 与 `bugs/` 目录（一 Bug 一文件）。
 协调者在以下节点运行聚合脚本：
 ```bash
 node scripts/aggregate-hub.mjs
@@ -88,7 +98,7 @@ node scripts/aggregate-hub.mjs
 ## 6. 合流验证与清理
 
 ### 6.1 逐轨合并
-**合入前提条件**：只有 Tester 返回 `TEST_DONE`（PASSED）且 `bugs.md` 无未关闭 Bug 时，才能合入。Coder 的 `READY_FOR_TEST` 不满足合入条件——必须经过 Tester 复测。
+**合入前提条件**：只有 Tester 返回 `TEST_DONE`（PASSED）且 `tracks/<track-id>/bugs/` 无未关闭 Bug（历史单文件 `bugs.md` 同样计）时，才能合入。Coder 的 `READY_FOR_TEST` 不满足合入条件——必须经过 Tester 复测。
 
 协调者在集成分支合入该轨：
 ```bash

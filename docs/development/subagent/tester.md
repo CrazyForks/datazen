@@ -67,17 +67,21 @@
      - 新增/补齐的测试用例清单及覆盖的路径说明
      - commit hash
 - **存在 Bug**：
-  1. 在 `tracks/<track-id>/bugs.md` 登记（详见 §3）。
-  2. 提交 `bugs.md` 与 `progress.md`：`docs(coordination): record bugs for <track-id>`。
+  1. 逐条登记到 `tracks/<track-id>/bugs/<track-id>-BUG-nnn.md`（一 Bug 一文件，详见 §3）。
+  2. 每条 Bug 一经证实立即单独 commit（测试文件 + 该 Bug 文件同 commit）；终局提交 `progress.md`：`test(<scope>): register bugs for <track-id>`。
   3. 返回 `TEST_FAILED`，附带 Bug ID 清单与阻断原因。
 
 ## 3. Bug 登记规范
 
-若测试不通过，在 `tracks/<track-id>/bugs.md` 登记：
-- **Bug ID**：`<track-id>-BUG-nnn`（如 `prh-sql-guard-BUG-001`）
-- **字段要求**：描述（含量级）、状态（`待修复`）、重现步骤、实测错误日志与影响范围。
+若测试不通过，为每条 Bug 单独建文件 `tracks/<track-id>/bugs/<track-id>-BUG-nnn.md`（**一 Bug 一文件**：多代理——Tester、修复 Coder、复测 Tester——会并发写账本，单文件共写必然产生合并冲突；拆分后每个文件的写者序列清晰，跨轨合并亦正交）：
+- **文件名** = Bug ID：`<track-id>-BUG-nnn`（如 `prh-sql-guard-BUG-001.md`）。
+- **正文首行**：`# <track-id>-BUG-nnn · <一句话标题>`。
+- **字段要求**：严重度、`- **状态**：待修复`（独占一行，供聚合脚本计数）、涉及文件、描述（含量级）、重现步骤、实测错误日志与影响范围。
+- **写面所有权**：正文归登记 Tester；修复者只改 `- **状态**：` 行并在文件末尾**追加** `## 修复记录（round-N）` 块；复测者追加 `## 复测记录（round-N）` 块并改判状态。任何一方不得改写他人区段。
+- 无缺陷轮次：建/更新 `tracks/<track-id>/bugs/README.md` 记录「第 N 轮：无」。
+- **历史兼容**：旧轨的单文件 `bugs.md` 保持只读，聚合脚本双格式计数，不再新增单文件。
 - 将 `tracks/<track-id>/progress.md` 的 Phase 更新为 `FAILED`。
-- **上报时机**：Tester 必须完成全部 4 个测试阶段（A/B/C/D）后，将所有 Bug **一并**上报，不逐个中断测试流程。
+- **上报时机**：Bug 文件证实一条落盘一条（死亡免疫，判定不丢）；但**状态机上报**（TEST_FAILED）仍须等全部 4 个测试阶段（A/B/C/D）跑完后统一交回，不逐个中断测试流程。
 - **后续流程**：协调者收到上报后，resume 原 Coder agent 修复全部 Bug → 修复后派发全新 Tester 完整复测 → 闭环或继续循环（最多 5 轮）。
 
 ### Bug 状态流转
