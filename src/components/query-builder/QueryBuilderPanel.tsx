@@ -161,7 +161,7 @@ export function QueryBuilderPanel({
 
   // ── Foreign key detection ──────────────────────────────
   const [fkRelations, setFkRelations] = useState<ForeignKeyRelation[]>([]);
-  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? true);
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? false);
 
   useEffect(() => {
     if (selectedTables.length === 0) {
