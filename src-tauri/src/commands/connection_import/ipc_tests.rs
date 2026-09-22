@@ -428,3 +428,277 @@ async fn export_keeps_connections_whose_tunnel_cannot_be_exported() {
         );
     }
 }
+
+/// [tester] `materialize_tunnel_refs` mutates a *clone* of the store snapshot;
+/// the live connection cache must stay untouched, otherwise exporting would
+/// silently rewrite the running connection configs.
+#[tokio::test]
+async fn test_tester_materialize_does_not_pollute_the_live_connection_cache() {
+    use crate::db::{SavedTunnel, SshTunnelConfig, TunnelKind};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+
+    let test = TestAppState::new().await;
+    test.store
+        .save_tunnel(SavedTunnel {
+            id: "tunnel-ssh".into(),
+            name: "Bastion".into(),
+            kind: TunnelKind::Ssh,
+            ssh: Some(SshTunnelConfig {
+                enabled: true,
+                host: "bastion.internal".into(),
+                port: 2222,
+                username: "ubuntu".into(),
+                auth_method: "password".into(),
+                password: Some("ssh-secret".into()),
+                private_key_path: None,
+                passphrase: None,
+                jump: None,
+            }),
+            http_proxy: None,
+            websocket: None,
+        })
+        .await
+        .unwrap();
+
+    let mut conn = sample_postgres_config("ref-cache");
+    conn.name = "Internal DB".into();
+    conn.tunnel_id = Some("tunnel-ssh".into());
+    conn.ssh_tunnel = None;
+    test.store.save_connection(conn).await.unwrap();
+
+    let dest = test._temp.path().join("share.datazenconnection");
+    write_connections_export(&test.state, "share-secret", dest)
+        .await
+        .unwrap();
+
+    let cached = test
+        .store
+        .get_connection("ref-cache")
+        .await
+        .expect("the exported connection is still cached");
+    assert!(
+        cached.ssh_tunnel.is_none(),
+        "the export must not write the materialized tunnel back into the live cache"
+    );
+    assert_eq!(cached.tunnel_id.as_deref(), Some("tunnel-ssh"));
+    assert_eq!(cached.host.as_deref(), Some("localhost"));
+    assert_eq!(cached.port, Some(5432));
+}
+
+/// [tester] Every degradation branch of `materialize_tunnel_refs` must leave the
+/// connection without a tunnel, without panicking and without touching the
+/// connection's own database target.
+#[tokio::test]
+async fn test_tester_materialize_degrades_every_unsupported_branch() {
+    use crate::db::{SavedTunnel, SshTunnelConfig, TunnelKind, WebSocketTunnelConfig};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+
+    let test = TestAppState::new().await;
+    for tunnel in [
+        SavedTunnel {
+            id: "t-none".into(),
+            name: "Disabled".into(),
+            kind: TunnelKind::None,
+            ssh: None,
+            http_proxy: None,
+            websocket: None,
+        },
+        SavedTunnel {
+            id: "t-ws".into(),
+            name: "Relay".into(),
+            kind: TunnelKind::WebSocket,
+            ssh: None,
+            http_proxy: None,
+            websocket: Some(WebSocketTunnelConfig {
+                enabled: true,
+                url: "wss://relay.corp/v1".into(),
+                auth_token: Some("ws-secret".into()),
+                headers: None,
+                connect_timeout_secs: 30,
+                ping_interval_secs: 30,
+                mode: "datazen_v1".into(),
+            }),
+        },
+        SavedTunnel {
+            id: "t-ssh-empty".into(),
+            name: "SSH without config".into(),
+            kind: TunnelKind::Ssh,
+            ssh: None,
+            http_proxy: None,
+            websocket: None,
+        },
+    ] {
+        test.store.save_tunnel(tunnel).await.unwrap();
+    }
+
+    let mut empty_ref = sample_postgres_config("c-empty-ref");
+    empty_ref.tunnel_id = Some(String::new());
+    let mut dangling = sample_postgres_config("c-dangling");
+    dangling.tunnel_id = Some("t-gone".into());
+    let mut none_kind = sample_postgres_config("c-none-kind");
+    none_kind.tunnel_id = Some("t-none".into());
+    let mut ws_kind = sample_postgres_config("c-ws-kind");
+    ws_kind.tunnel_id = Some("t-ws".into());
+    let mut ssh_no_config = sample_postgres_config("c-ssh-empty");
+    ssh_no_config.tunnel_id = Some("t-ssh-empty".into());
+    // No reference at all: an inline tunnel must survive untouched.
+    let mut inline_only = sample_postgres_config("c-inline");
+    inline_only.ssh_tunnel = Some(SshTunnelConfig {
+        enabled: true,
+        host: "inline.bastion".into(),
+        port: 22,
+        username: "inline-user".into(),
+        auth_method: "password".into(),
+        password: Some("inline-secret".into()),
+        private_key_path: None,
+        passphrase: None,
+        jump: None,
+    });
+
+    let mut connections = vec![
+        empty_ref,
+        dangling,
+        none_kind,
+        ws_kind,
+        ssh_no_config,
+        inline_only,
+    ];
+    materialize_tunnel_refs(&test.state, &mut connections).await;
+
+    for conn in connections.iter().take(5) {
+        assert!(
+            conn.ssh_tunnel.is_none(),
+            "`{}` must degrade to no tunnel",
+            conn.id
+        );
+        assert_eq!(
+            conn.host.as_deref(),
+            Some("localhost"),
+            "`{}` must keep its own database host",
+            conn.id
+        );
+        assert_eq!(
+            conn.port,
+            Some(5432),
+            "`{}` must keep its own port",
+            conn.id
+        );
+    }
+    let inline = connections.last().expect("inline connection");
+    assert_eq!(
+        inline.ssh_tunnel.as_ref().map(|s| s.host.as_str()),
+        Some("inline.bastion"),
+        "a connection without a tunnel reference keeps its inline tunnel"
+    );
+}
+
+/// [tester] The degradations are observable, not silent: the dangling-reference
+/// and non-expressible-kind branches both emit a warning naming the connection
+/// and the tunnel involved.
+#[tokio::test]
+async fn test_tester_materialize_warns_on_dangling_and_unsupported_references() {
+    use crate::db::{SavedTunnel, TunnelKind, WebSocketTunnelConfig};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let test = TestAppState::new().await;
+    test.store
+        .save_tunnel(SavedTunnel {
+            id: "tunnel-ws".into(),
+            name: "Relay".into(),
+            kind: TunnelKind::WebSocket,
+            ssh: None,
+            http_proxy: None,
+            websocket: Some(WebSocketTunnelConfig {
+                enabled: true,
+                url: "wss://relay.corp/v1".into(),
+                auth_token: None,
+                headers: None,
+                connect_timeout_secs: 30,
+                ping_interval_secs: 30,
+                mode: "datazen_v1".into(),
+            }),
+        })
+        .await
+        .unwrap();
+
+    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let writer_buf = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || SharedBuf(writer_buf.clone()))
+        .with_ansi(false)
+        .finish();
+    // Thread-local default: `#[tokio::test]` is a current-thread runtime, so the
+    // awaited export stays on this thread and its warnings land in `buf`.
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let mut dangling = sample_postgres_config("c-dangling-log");
+    dangling.name = "Dangling".into();
+    dangling.tunnel_id = Some("tunnel-gone".into());
+    let mut unsupported = sample_postgres_config("c-ws-log");
+    unsupported.name = "Relay ref".into();
+    unsupported.tunnel_id = Some("tunnel-ws".into());
+
+    let mut connections = vec![dangling, unsupported];
+    materialize_tunnel_refs(&test.state, &mut connections).await;
+
+    let logged = String::from_utf8(buf.lock().expect("log buffer lock").clone()).unwrap();
+    assert!(
+        logged.contains("referenced tunnel not found"),
+        "dangling reference must warn: {logged}"
+    );
+    assert!(
+        logged.contains("tunnel-gone") && logged.contains("c-dangling-log"),
+        "the dangling warning must name the tunnel and the connection: {logged}"
+    );
+    assert!(
+        logged.contains("cannot be expressed"),
+        "a non-expressible kind must warn: {logged}"
+    );
+    assert!(
+        logged.contains("c-ws-log"),
+        "the kind warning must name the connection: {logged}"
+    );
+}
+
+/// [tester] A failing write must surface as an error and must not be mistaken
+/// for a successful export (covers the `cmd_err("export_connections")` branch
+/// the tunnel materialization now sits in front of).
+#[tokio::test]
+async fn test_tester_export_fails_when_the_destination_cannot_be_written() {
+    use crate::testing::app_state::TestAppState;
+
+    let test = TestAppState::new().await;
+    test.save_connection("exp-unwritable").await;
+
+    let dest = test
+        ._temp
+        .path()
+        .join("no-such-directory")
+        .join("share.datazenconnection");
+    let err = write_connections_export(&test.state, "share-secret", dest)
+        .await
+        .expect_err("writing into a missing directory must fail the export");
+    assert!(
+        !err.to_string().is_empty(),
+        "the export error must carry a message"
+    );
+    assert_eq!(test.store.get_connections().await.len(), 1);
+}
