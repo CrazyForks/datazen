@@ -215,13 +215,24 @@ pub fn validate_view_definition(definition: &str) -> Result<(), String> {
 }
 
 /// Validate a complete routine/trigger DDL payload returned by a driver.
-/// Routine bodies may legitimately contain semicolons, so this deliberately
-/// validates the object envelope and control characters rather than trying to
-/// parse dialect-specific procedural SQL in the host.
+/// Routine bodies may legitimately contain semicolons, so this validates only
+/// the executable CREATE envelope rather than trying to parse procedural SQL.
 pub fn validate_object_definition(
     definition: &str,
     kind: ObjectKind,
     name: &str,
+) -> Result<(), String> {
+    validate_object_definition_with_identity(definition, kind, name, None)
+}
+
+/// Validate an object definition and, when supplied, its routine identity
+/// arguments. A routine's name/signature are extracted from the declaration
+/// header; body text and comments are never considered identity evidence.
+pub fn validate_object_definition_with_identity(
+    definition: &str,
+    kind: ObjectKind,
+    name: &str,
+    signature: Option<&str>,
 ) -> Result<(), String> {
     let trimmed = definition.trim();
     if trimmed.is_empty() {
@@ -239,7 +250,14 @@ pub fn validate_object_definition(
         ObjectKind::Trigger => "TRIGGER",
         _ => return Err("schema object kind is not a routine or trigger".into()),
     };
-    if object_declaration_kind(trimmed) != Some(kind) {
+    let Some((declared_kind, declared_name, declared_signature)) =
+        object_declaration_identity(trimmed)
+    else {
+        return Err(format!(
+            "schema object definition must declare CREATE {kind_token}"
+        ));
+    };
+    if declared_kind != kind {
         return Err(format!(
             "schema object definition must declare CREATE {kind_token}"
         ));
@@ -247,58 +265,268 @@ pub fn validate_object_definition(
     if name.trim().is_empty() {
         return Err("schema object name must not be empty".into());
     }
-    // A driver query is expected to return the requested object. Require the
-    // identity to occur in the DDL after normalizing common quote styles.
-    let normalized_definition = trimmed
-        .to_ascii_uppercase()
-        .replace(['`', '"', '[', ']'], "");
-    let normalized_name = name.to_ascii_uppercase().replace(['`', '"', '[', ']'], "");
-    if !normalized_definition
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .any(|token| token == normalized_name)
-    {
+    if normalize_identifier(&declared_name) != normalize_identifier(name) {
         return Err(format!(
-            "schema object definition does not contain object name `{name}`"
+            "schema object definition declares `{declared_name}` instead of `{name}`"
         ));
+    }
+    if let Some(signature) = signature {
+        if !matches!(kind, ObjectKind::Function | ObjectKind::Procedure) {
+            return Err("routine signature supplied for a non-routine object".into());
+        }
+        let Some(declared_signature) = declared_signature else {
+            return Err("routine declaration arguments could not be verified".into());
+        };
+        if !routine_signatures_match(&declared_signature, signature) {
+            return Err(format!(
+                "routine declaration signature `{declared_signature}` does not match requested signature `{signature}`"
+            ));
+        }
     }
     Ok(())
 }
 
-/// Return the object kind from the executable CREATE declaration header.
+fn normalize_identifier(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(['`', '"', '[', ']'])
+        .to_ascii_uppercase()
+}
+
+/// Return the object kind, terminal identifier, and optional routine
+/// declaration arguments from the executable CREATE declaration header.
 ///
 /// The catalog DDL for MySQL may contain a `DEFINER=...` clause between
 /// `CREATE` and the object kind, while PostgreSQL commonly uses
 /// `CREATE OR REPLACE`. Tokens inside quoted strings and SQL comments are
 /// discarded before inspecting the header, so a body or comment cannot make a
 /// wrong object type appear valid.
-fn object_declaration_kind(definition: &str) -> Option<ObjectKind> {
-    let tokens = executable_sql_words(definition);
-    if tokens.first().map(String::as_str) != Some("CREATE") {
+fn object_declaration_identity(definition: &str) -> Option<(ObjectKind, String, Option<String>)> {
+    let tokens = executable_sql_tokens(definition);
+    if tokens.first().and_then(ExecutableSqlToken::as_word) != Some("CREATE") {
         return None;
     }
     let mut index = 1;
-    if tokens.get(index).map(String::as_str) == Some("OR")
-        && tokens.get(index + 1).map(String::as_str) == Some("REPLACE")
+    if tokens.get(index).and_then(ExecutableSqlToken::as_word) == Some("OR")
+        && tokens.get(index + 1).and_then(ExecutableSqlToken::as_word) == Some("REPLACE")
     {
         index += 2;
     }
-    while let Some(token) = tokens.get(index).map(String::as_str) {
-        match token {
-            "FUNCTION" => return Some(ObjectKind::Function),
-            "PROCEDURE" => return Some(ObjectKind::Procedure),
-            "TRIGGER" => return Some(ObjectKind::Trigger),
-            // Once the declaration has reached a relation/view body, a later
-            // routine word belongs to SQL text rather than the object header.
-            "AS" | "BEGIN" | "VIEW" | "TABLE" | "SCHEMA" | "EVENT" => return None,
-            _ => index += 1,
+    if tokens.get(index).and_then(ExecutableSqlToken::as_word) == Some("DEFINER") {
+        index += 1;
+        if tokens.get(index) != Some(&ExecutableSqlToken::Symbol('=')) {
+            return None;
+        }
+        index += 1;
+        let mut has_definer_value = false;
+        while let Some(token) = tokens.get(index) {
+            match token {
+                ExecutableSqlToken::Word(value)
+                    if matches!(value.as_str(), "FUNCTION" | "PROCEDURE" | "TRIGGER") =>
+                {
+                    if !has_definer_value {
+                        return None;
+                    }
+                    break;
+                }
+                ExecutableSqlToken::Word(value)
+                    if matches!(
+                        value.as_str(),
+                        "AS" | "BEGIN" | "VIEW" | "TABLE" | "SCHEMA" | "EVENT"
+                    ) =>
+                {
+                    return None;
+                }
+                _ => {
+                    has_definer_value = true;
+                    index += 1;
+                }
+            }
         }
     }
-    None
+    let kind = loop {
+        match tokens.get(index) {
+            Some(ExecutableSqlToken::Word(token)) => match token.as_str() {
+                "FUNCTION" => break ObjectKind::Function,
+                "PROCEDURE" => break ObjectKind::Procedure,
+                "TRIGGER" => break ObjectKind::Trigger,
+                // Once the declaration has reached a relation/view body, a later
+                // routine word belongs to SQL text rather than the object header.
+                "AS" | "BEGIN" | "VIEW" | "TABLE" | "SCHEMA" | "EVENT" => return None,
+                _ => index += 1,
+            },
+            Some(_) => index += 1,
+            None => return None,
+        }
+    };
+    index += 1;
+    let mut declared_name = match tokens.get(index) {
+        Some(ExecutableSqlToken::Word(name)) | Some(ExecutableSqlToken::Identifier(name)) => {
+            name.clone()
+        }
+        _ => return None,
+    };
+    index += 1;
+    while tokens.get(index) == Some(&ExecutableSqlToken::Symbol('.')) {
+        index += 1;
+        match tokens.get(index) {
+            Some(ExecutableSqlToken::Word(name)) | Some(ExecutableSqlToken::Identifier(name)) => {
+                declared_name = name.clone();
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    let declared_signature = if matches!(kind, ObjectKind::Function | ObjectKind::Procedure) {
+        if tokens.get(index) != Some(&ExecutableSqlToken::Symbol('(')) {
+            return None;
+        }
+        let mut depth = 0usize;
+        let mut parameters = Vec::new();
+        let mut current = Vec::new();
+        let mut closed = false;
+        for token in tokens.iter().skip(index + 1) {
+            match token {
+                ExecutableSqlToken::Symbol('(') => {
+                    depth += 1;
+                    current.push(token.clone());
+                }
+                ExecutableSqlToken::Symbol(')') if depth > 0 => {
+                    depth -= 1;
+                    current.push(token.clone());
+                }
+                ExecutableSqlToken::Symbol(')') => {
+                    if !current.is_empty() {
+                        parameters.push(normalize_sql_tokens(&current));
+                    }
+                    closed = true;
+                    break;
+                }
+                ExecutableSqlToken::Symbol(',') if depth == 0 => {
+                    parameters.push(normalize_sql_tokens(&current));
+                    current.clear();
+                }
+                _ => current.push(token.clone()),
+            }
+        }
+        if !closed {
+            return None;
+        }
+        Some(parameters.join(", "))
+    } else {
+        None
+    };
+    Some((kind, declared_name, declared_signature))
 }
 
-fn executable_sql_words(sql: &str) -> Vec<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecutableSqlToken {
+    Word(String),
+    Identifier(String),
+    Symbol(char),
+}
+
+impl ExecutableSqlToken {
+    fn as_word(&self) -> Option<&str> {
+        match self {
+            Self::Word(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+}
+
+fn normalize_sql_tokens(tokens: &[ExecutableSqlToken]) -> String {
+    tokens
+        .iter()
+        .map(|token| match token {
+            ExecutableSqlToken::Word(value) | ExecutableSqlToken::Identifier(value) => {
+                value.to_ascii_uppercase()
+            }
+            ExecutableSqlToken::Symbol(value) => value.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" ( ", "(")
+        .replace(" )", ")")
+        .replace(" ,", ",")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_signature_part(value: &str) -> String {
+    let upper = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    let upper = upper
+        .split_once(" DEFAULT ")
+        .map(|(value, _)| value)
+        .or_else(|| upper.split_once("=").map(|(value, _)| value))
+        .unwrap_or(&upper)
+        .trim();
+    let mut words = upper.split_whitespace().collect::<Vec<_>>();
+    if matches!(
+        words.first().copied(),
+        Some("IN" | "OUT" | "INOUT" | "VARIADIC")
+    ) {
+        words.remove(0);
+    }
+    words.join(" ")
+}
+
+fn signature_parts(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in value.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(normalize_signature_part(&value[start..index]));
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let tail = normalize_signature_part(&value[start..]);
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
+fn routine_signatures_match(declared: &str, requested: &str) -> bool {
+    let declared_parts = signature_parts(declared);
+    let requested_parts = signature_parts(requested);
+    if declared_parts.len() != requested_parts.len() {
+        return false;
+    }
+    declared_parts
+        .iter()
+        .zip(requested_parts.iter())
+        .all(|(declared, requested)| {
+            declared == requested
+                || declared
+                    .split_whitespace()
+                    .enumerate()
+                    .skip(1)
+                    .any(|(index, _)| {
+                        declared
+                            .split_whitespace()
+                            .skip(index)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            == *requested
+                    })
+        })
+}
+
+fn executable_sql_tokens(sql: &str) -> Vec<ExecutableSqlToken> {
     let chars = sql.chars().collect::<Vec<_>>();
-    let mut words = Vec::new();
+    let mut tokens = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
@@ -324,7 +552,7 @@ fn executable_sql_words(sql: &str) -> Vec<String> {
             index = (index + 2).min(chars.len());
             continue;
         }
-        if matches!(ch, '\'' | '"' | '`') {
+        if ch == '\'' {
             let quote = ch;
             index += 1;
             while index < chars.len() {
@@ -344,6 +572,25 @@ fn executable_sql_words(sql: &str) -> Vec<String> {
             }
             continue;
         }
+        if matches!(ch, '"' | '`' | '[') {
+            let (quote, closing) = if ch == '[' { (ch, ']') } else { (ch, ch) };
+            index += 1;
+            let start = index;
+            while index < chars.len() {
+                if chars[index] == closing {
+                    let value = chars[start..index].iter().collect::<String>();
+                    tokens.push(ExecutableSqlToken::Identifier(value));
+                    index += 1;
+                    break;
+                }
+                if chars[index] == quote && chars.get(index + 1) == Some(&quote) {
+                    index += 2;
+                    continue;
+                }
+                index += 1;
+            }
+            continue;
+        }
         if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$') {
             let start = index;
             index += 1;
@@ -352,17 +599,20 @@ fn executable_sql_words(sql: &str) -> Vec<String> {
             {
                 index += 1;
             }
-            words.push(
+            tokens.push(ExecutableSqlToken::Word(
                 chars[start..index]
                     .iter()
                     .collect::<String>()
                     .to_ascii_uppercase(),
-            );
+            ));
             continue;
+        }
+        if matches!(ch, '.' | '(' | ')' | ',' | '=' | '@') {
+            tokens.push(ExecutableSqlToken::Symbol(ch));
         }
         index += 1;
     }
-    words
+    tokens
 }
 
 /// Validate a CHECK predicate before it is embedded into a reviewed DDL

@@ -1,6 +1,6 @@
 # migration-routine-trigger
 
-Phase: FAILED
+Phase: READY_FOR_RETEST
 
 ## Scope
 
@@ -19,9 +19,27 @@ Phase: FAILED
 
 ## Commit
 
-`add22767` (amended once to record the final commit hash).
+`add22767` (base implementation); current `HEAD` contains the BUG-002/003 fix
+and is `READY_FOR_RETEST`.
 
 ## Self-validation
+
+### BUG-002/003 修复（当前提交）
+
+- `cargo test -p datazen-driver-api --lib schema_migration::type_parts_tests`:
+  10 passed, including the exact declaration-name regression.
+- PostgreSQL routine renderer identity regression: 1 passed; MySQL routine
+  renderer identity regression: 1 passed.
+- Injected Host Schema Diff overload regression:
+  `test_tester_overloaded_routine_definition_must_match_requested_signature`:
+  1 passed.
+- `cargo fmt --all -- --check` and `git diff --check` passed after formatting
+  with temporary driver injection; generated driver files and `Cargo.lock` were
+  restored afterward.
+
+The independent Tester should re-run the BUG-002 and BUG-003 cases before
+merging. Scope remains PostgreSQL/MySQL same-dialect routine/trigger identity
+validation; no sequence, view, or table-option work was added.
 
 - `cargo test -p datazen-driver-api --lib schema_migration::type_parts_tests`: 9 passed.
 - The BUG-001 regression and related validator tests pass.

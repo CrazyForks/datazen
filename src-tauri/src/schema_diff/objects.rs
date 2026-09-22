@@ -10,8 +10,8 @@ use super::types::{
     StatementRisk,
 };
 use datazen_driver_api::{
-    validate_object_definition, validate_view_definition, MigrationCapabilities, MigrationRenderer,
-    MigrationRoutine, MigrationTrigger, MigrationView, ObjectKind,
+    validate_object_definition_with_identity, validate_view_definition, MigrationCapabilities,
+    MigrationRenderer, MigrationRoutine, MigrationTrigger, MigrationView, ObjectKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -523,9 +523,17 @@ pub fn build_routine_trigger_migration_plan_with_components(
             });
             return false;
         }
-        if let Err(reason) =
-            validate_object_definition(&object.definition, object.kind, &object.name)
-        {
+        let signature = if matches!(object.kind, ObjectKind::Function | ObjectKind::Procedure) {
+            object.signature.as_deref()
+        } else {
+            None
+        };
+        if let Err(reason) = validate_object_definition_with_identity(
+            &object.definition,
+            object.kind,
+            &object.name,
+            signature,
+        ) {
             requirements.push(PlanRequirement::Unsupported {
                 operation: object.name.clone(),
                 reason,

@@ -139,8 +139,9 @@ fn pg_validate_object_ddl(
     definition: &str,
     kind: ObjectKind,
     name: &str,
+    signature: Option<&str>,
 ) -> Result<String, String> {
-    validate_object_definition(definition, kind, name)?;
+    validate_object_definition_with_identity(definition, kind, name, signature)?;
     Ok(definition.trim().to_owned())
 }
 
@@ -511,7 +512,12 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 })
             }
             MigrationOperation::CreateRoutine { routine } => {
-                let definition = pg_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let definition = pg_validate_object_ddl(
+                    &routine.definition,
+                    routine.kind,
+                    &routine.name,
+                    routine.signature.as_deref(),
+                )?;
                 let _ = pg_routine_ident(routine)?;
                 Ok(MigrationStatement {
                     sql: definition,
@@ -528,8 +534,18 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 if current.kind != desired.kind || current.schema != desired.schema || current.name != desired.name || current.signature != desired.signature {
                     return Err("routine replacement identities must match".into());
                 }
-                let desired_definition = pg_validate_object_ddl(&desired.definition, desired.kind, &desired.name)?;
-                let current_definition = pg_validate_object_ddl(&current.definition, current.kind, &current.name)?;
+                let desired_definition = pg_validate_object_ddl(
+                    &desired.definition,
+                    desired.kind,
+                    &desired.name,
+                    desired.signature.as_deref(),
+                )?;
+                let current_definition = pg_validate_object_ddl(
+                    &current.definition,
+                    current.kind,
+                    &current.name,
+                    current.signature.as_deref(),
+                )?;
                 Ok(MigrationStatement {
                     sql: desired_definition,
                     risk: MigrationRisk::Rewrite,
@@ -538,7 +554,12 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 })
             }
             MigrationOperation::DropRoutine { routine } => {
-                let definition = pg_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let definition = pg_validate_object_ddl(
+                    &routine.definition,
+                    routine.kind,
+                    &routine.name,
+                    routine.signature.as_deref(),
+                )?;
                 let ident = pg_routine_ident(routine)?;
                 Ok(MigrationStatement {
                     sql: format!("DROP {} {ident}", routine.kind.as_str().to_ascii_uppercase()),
@@ -548,7 +569,12 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 })
             }
             MigrationOperation::CreateTrigger { trigger } => {
-                let definition = pg_validate_object_ddl(&trigger.definition, ObjectKind::Trigger, &trigger.name)?;
+                let definition = pg_validate_object_ddl(
+                    &trigger.definition,
+                    ObjectKind::Trigger,
+                    &trigger.name,
+                    None,
+                )?;
                 let _ = pg_trigger_ident(trigger)?;
                 Ok(MigrationStatement {
                     sql: definition,
@@ -565,8 +591,18 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 if current.schema != desired.schema || current.name != desired.name || current.target_schema != desired.target_schema || current.target_name != desired.target_name {
                     return Err("trigger replacement identities must match".into());
                 }
-                let desired_definition = pg_validate_object_ddl(&desired.definition, ObjectKind::Trigger, &desired.name)?;
-                let current_definition = pg_validate_object_ddl(&current.definition, ObjectKind::Trigger, &current.name)?;
+                let desired_definition = pg_validate_object_ddl(
+                    &desired.definition,
+                    ObjectKind::Trigger,
+                    &desired.name,
+                    None,
+                )?;
+                let current_definition = pg_validate_object_ddl(
+                    &current.definition,
+                    ObjectKind::Trigger,
+                    &current.name,
+                    None,
+                )?;
                 let (trigger_ident, target_ident) = pg_trigger_ident(desired)?;
                 Ok(MigrationStatement {
                     sql: format!("DROP TRIGGER {trigger_ident} ON {target_ident}; {desired_definition}"),
@@ -576,7 +612,12 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 })
             }
             MigrationOperation::DropTrigger { trigger } => {
-                let definition = pg_validate_object_ddl(&trigger.definition, ObjectKind::Trigger, &trigger.name)?;
+                let definition = pg_validate_object_ddl(
+                    &trigger.definition,
+                    ObjectKind::Trigger,
+                    &trigger.name,
+                    None,
+                )?;
                 let (trigger_ident, target_ident) = pg_trigger_ident(trigger)?;
                 Ok(MigrationStatement {
                     sql: format!("DROP TRIGGER {trigger_ident} ON {target_ident}"),

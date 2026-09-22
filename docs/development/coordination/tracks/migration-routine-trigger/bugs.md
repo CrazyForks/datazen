@@ -39,7 +39,7 @@
 
 ## migration-routine-trigger-BUG-002 — requested routine name is accepted from a body or comment
 
-- 状态：待修复
+- 状态：待复测
 - 描述：after BUG-001, `validate_object_definition` verifies the declaration
   kind but still searches the whole DDL text for the requested object name. A
   driver response for `other_name` is accepted as `wanted_name` when that
@@ -63,9 +63,19 @@
   `CREATE` envelope (outside quoted literals/comments) and require it to match
   the requested name; do not use a whole-definition substring/token search.
 
+### 修复记录
+
+- `validate_object_definition_with_identity` now extracts the terminal
+  declaration identifier from the executable `CREATE` header and compares it
+  with the requested object name. Body literals and trailing comments cannot
+  satisfy the identity check. PostgreSQL `OR REPLACE` and MySQL `DEFINER`
+  envelopes remain supported.
+- Driver API regression and PostgreSQL/MySQL renderer regressions pass. Awaiting
+  independent re-test.
+
 ## migration-routine-trigger-BUG-003 — PostgreSQL overload signature is not verified against source DDL
 
-- 状态：待修复
+- 状态：待复测
 - 描述：the routine planner carries `signature` in its identity key, but DDL
   validation accepts a declaration for another overload that has the same
   routine name. For a selected `public.lookup(integer)`, a returned `CREATE
@@ -85,3 +95,12 @@
   executable declaration arguments against the selected identity using
   dialect-aware canonicalization. If an exact match cannot be established,
   return an unsupported requirement rather than rendering SQL.
+
+### 修复记录
+
+- Routine validation now extracts declaration parameters and compares them
+  with the selected routine signature after safe whitespace, mode, default,
+  and nested-type normalization. An unverified or mismatched signature is
+  rejected before plan statements or renderer SQL are produced.
+- The injected Host overload regression and focused renderer regressions pass.
+  Awaiting independent re-test.

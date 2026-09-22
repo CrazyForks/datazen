@@ -93,8 +93,9 @@ fn mysql_validate_object_ddl(
     definition: &str,
     kind: ObjectKind,
     name: &str,
+    signature: Option<&str>,
 ) -> Result<String, String> {
-    validate_object_definition(definition, kind, name)?;
+    validate_object_definition_with_identity(definition, kind, name, signature)?;
     Ok(definition.trim().to_owned())
 }
 
@@ -512,8 +513,12 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 })
             }
             MigrationOperation::CreateRoutine { routine } => {
-                let definition =
-                    mysql_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let definition = mysql_validate_object_ddl(
+                    &routine.definition,
+                    routine.kind,
+                    &routine.name,
+                    routine.signature.as_deref(),
+                )?;
                 let ident = mysql_routine_ident(routine)?;
                 Ok(MigrationStatement {
                     sql: definition,
@@ -536,10 +541,18 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 {
                     return Err("routine replacement identities must match".into());
                 }
-                let desired_definition =
-                    mysql_validate_object_ddl(&desired.definition, desired.kind, &desired.name)?;
-                let current_definition =
-                    mysql_validate_object_ddl(&current.definition, current.kind, &current.name)?;
+                let desired_definition = mysql_validate_object_ddl(
+                    &desired.definition,
+                    desired.kind,
+                    &desired.name,
+                    desired.signature.as_deref(),
+                )?;
+                let current_definition = mysql_validate_object_ddl(
+                    &current.definition,
+                    current.kind,
+                    &current.name,
+                    current.signature.as_deref(),
+                )?;
                 let ident = mysql_routine_ident(desired)?;
                 Ok(MigrationStatement {
                     sql: format!(
@@ -559,8 +572,12 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 })
             }
             MigrationOperation::DropRoutine { routine } => {
-                let definition =
-                    mysql_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let definition = mysql_validate_object_ddl(
+                    &routine.definition,
+                    routine.kind,
+                    &routine.name,
+                    routine.signature.as_deref(),
+                )?;
                 let ident = mysql_routine_ident(routine)?;
                 Ok(MigrationStatement {
                     sql: format!(
@@ -581,6 +598,7 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     &trigger.definition,
                     ObjectKind::Trigger,
                     &trigger.name,
+                    None,
                 )?;
                 let ident = mysql_trigger_ident(trigger)?;
                 Ok(MigrationStatement {
@@ -602,11 +620,13 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     &desired.definition,
                     ObjectKind::Trigger,
                     &desired.name,
+                    None,
                 )?;
                 let current_definition = mysql_validate_object_ddl(
                     &current.definition,
                     ObjectKind::Trigger,
                     &current.name,
+                    None,
                 )?;
                 let ident = mysql_trigger_ident(desired)?;
                 Ok(MigrationStatement {
@@ -621,6 +641,7 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     &trigger.definition,
                     ObjectKind::Trigger,
                     &trigger.name,
+                    None,
                 )?;
                 let ident = mysql_trigger_ident(trigger)?;
                 Ok(MigrationStatement {
