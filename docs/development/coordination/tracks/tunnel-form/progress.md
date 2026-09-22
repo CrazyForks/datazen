@@ -40,12 +40,13 @@ testTunnel: (id: string, targetHost: string, targetPort: number) => invoke<numbe
 - [x] Coder 完成 → **READY_FOR_TEST**（`27ad8a88`）
 - [x] Tester Round 1 复测（阶段 A/B/C/D 全部完成）→ **FAILED**（2 Bug，见 [bugs.md](./bugs.md)）
 - [x] Coder 修复 Round 1（BUG-001 / BUG-002）→ **READY_FOR_TEST**（修复 commit 见「Coder 修复记录」）
+- [x] Coder 追加提交：**协调者批准的范围扩展**（内联隧道必填校验提前，同族缺陷）→ **READY_FOR_TEST**
 - [ ] Tester Round 2 复测（全新实例）→ 待复测
 
 ## Coder 修复记录（Round 1，2026-09-22）
 
-修复 commit：**（本提交，hash 见交接回报）**
-修复范围：**仅** `tunnel-form-BUG-001` 与 `tunnel-form-BUG-002`；未做任何范围外改动。
+修复 commit：`c9777246`（BUG-001 / BUG-002）；追加 commit：`fix(tunnel): validate inline tunnel fields on driver-validator forms`（协调者批准的范围扩展）——两个 commit 的 hash 均见交接回报。
+修复范围：`tunnel-form-BUG-001` + `tunnel-form-BUG-002`，外加协调者**明确批准**的一条同族范围扩展；除此之外未做任何范围外改动。
 
 ### BUG-001（中）—— 悬空引用在驱动自定义校验表单上不阻止保存
 
@@ -97,12 +98,25 @@ if (driverValidator) {
 
 BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」这一保留行为），**无 `it.fails` 需要转换**，仅同步了其陈旧注释。Tester 已提交的回归覆盖（`tester_tunnelRefIntegrity.test.ts` 9 例、`tester_SaveTunnelDialog.test.tsx` 6 例、向既有文件追加的用例）**全部保留、零删除**。
 
+### 范围扩展（**协调者批准**）—— 内联隧道必填校验同样提前：同族缺陷，源于本次重构不一致
+
+- **发现者**：Coder（本轮自查，记录于下方原「同族观察」）；**批准者**：协调者（明确批准修掉，认定它不是无关的既存问题，而是本次重构留下的不一致：同一个 `validate()` 里隧道域规则对 Redis 一半生效、一半不生效）。**未登记进 `bugs.md`**（不属于上一轮 Tester 登记的 2 个 Bug）。
+- **改动**（`src/components/connection/useConnectionForm.ts`）：把三条**内联**隧道必填校验一并移入驱动分支之前的共享序言，与悬空引用校验并入同一 `errors`：
+  - `!tunnelId && effectiveTunnelKind === 'httpProxy'` → `httpProxyHost` / `httpProxyPort` 必填
+  - `!tunnelId && effectiveTunnelKind === 'websocket'` → `wsUrl` 必填
+  - `!tunnelId && effectiveTunnelKind === 'ssh' && sshEnabled` → `sshHost` / `sshUsername` 必填
+- **作用域守住**：三条均带 `!tunnelId` 守卫 → **只对 `inline` 来源生效**，`saved` 来源按 id 校验、不受影响；`meta?.connectionMode === 'file'` 与 `isDriverForm` 的通用 host/port/database 校验**保持原样**留在非驱动分支（Redis 自有驱动校验器负责它自己的字段）；驱动校验结果仍走 `Object.assign` 合并，隧道域键不会被覆盖。
+- **证明用例**（`tester_tunnelRefIntegrity.test.ts`，新增 `describe('[tester] inline tunnel validation is form-variant independent')`）：
+  1. `requires inline HTTP proxy fields on a driver-validator form (redis)` —— `formVariant==='redis'` + `tunnelSource==='inline'` + `effectiveTunnelKind==='httpProxy'` + 空的 host/port → `validate()===false` 且 `validationErrors.httpProxyHost/httpProxyPort === 'newConn.required'`；
+  2. `keeps the same inline requirements on a non-driver form (postgresql control)` —— 同夹具下 `getDriverValidator(formVariant)` 为 `undefined`（确认走非驱动分支）且报出**同样两个键**，证明非驱动路径不回归；
+  3. `does not mis-block a driver-validator form with no tunnel configured (redis)` —— 等价性守卫：`tunnelSource==='none'` 的普通 Redis 连接 `validate()===true`、`validationErrors` 为空（hoist 未误拦正常保存）；同一用例再验证填好内联 HTTP 代理后仍 `validate()===true`。
+
 ### 自验结果（修复轮，命令按协调者更正，禁用 `npx`）
 
 - `pnpm typecheck`：**0 error**
-- `pnpm test:unit src/components/connection src/stores`：**38 文件 / 593 用例全部通过，0 失败，0 expected-fail**（修复前为 591 + 1 expected-fail；差值 = 转换的 1 例转为真实通过 + 新增 1 例空集合悬空断言）
-- `pnpm test:unit` 全量：**456 文件 / 4755 passed / 1 failed**，唯一失败仍为跨轨 `src/commands/__tests__/pathIpcWiring.test.ts`（后端 3 条新 IPC 未注册，合流后自动转绿，**非本轨 Bug、本轮未试图在 Rust 侧修复**）
-- 修复文件仅 4 个生产/文案文件 + 2 个测试文件（见上）；`useConnectionForm.ts` 仍 742 行内
+- `pnpm test:unit src/components/connection src/stores`：**38 文件 / 596 用例全部通过，0 失败，0 expected-fail**（Round 1 修复后 593；本次范围扩展 +3 例）
+- `pnpm test:unit` 全量：**456 文件 / 4758 passed / 1 failed**，唯一失败仍为跨轨 `src/commands/__tests__/pathIpcWiring.test.ts`（后端 3 条新 IPC 未注册，合流后自动转绿，**非本轨 Bug、本轮未试图在 Rust 侧修复**）
+- 修复轮共触及 3 个生产/文案文件 + 2 个测试文件 + 2 份轨道文档；`useConnectionForm.ts` **759 行**（< 800）
 
 ### Follow-up 登记（Tester 非 Bug 改进建议，本轮**按指示全部不修**）
 
@@ -116,7 +130,8 @@ BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」�
 6. `ConnectionFormState` 新增必填成员对驱动 UI 的外溢面（驱动 UI 未纳入类型检查）；
 7. 跨窗口列表同步与设置页管理面（`usage` / `testTunnel` 等待调用）。
 
-**另记一条本轮自查发现的同族观察（不修，供后续排期）**：驱动校验分支（redis）除悬空引用外，**内联隧道必填校验**（`httpProxyHost/Port`、`wsUrl`、`sshHost/Username`）同样因原提前 return 而从不执行；本轮按「只修 2 个 Bug」的约束**刻意保持其原作用域不变**（避免范围外行为变更），故 redis 表单在「内联隧道参数残缺」时仍可能通过 `validate()`。该行为在本次修复前即存在，非本轮引入。
+**原「同族观察」的去向**：该观察（驱动校验分支上内联隧道必填校验从不执行）已由协调者批准，按上述「范围扩展」**本轮已修**，不再作为 follow-up。
+
 
 ## Coder 实施记录（2026-09-22）
 
@@ -187,6 +202,7 @@ BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」�
 3. 空集合时隧道面板**不再整段消失**，引导与新建入口可用。
 4. `get_tunnel_summaries`（无密）是否已替换列表渲染路径，`get_tunnels` 不再用于下拉。
 5. 全量套件中 `pathIpcWiring.test.ts` 的红是否为后端未注册所致（跨轨依赖，非本轨缺陷）。
+6. **Round 2 追加**：悬空引用在**驱动校验表单（redis）**上同样被拦（`formVariant==='redis'` → `validate()===false` + `validationErrors.tunnelId`）；内联隧道必填校验对 redis 同样生效；`tunnelSource==='none'` 的普通 redis 连接保存**不被误拦**（等价性）；悬空态下「解绑为内联」按钮不再渲染且告警文案不再宣称该动作。
 
 ---
 

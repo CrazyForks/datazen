@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useConnectionForm } from '../useConnectionForm';
 import { useTunnelStore } from '../../../stores/tunnelStore';
+import { getDriverValidator } from '../../../extensions/generated';
 import type { ConnectionConfig, SavedTunnelSummary } from '../../../types';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -362,5 +363,98 @@ describe('[tester] inline tunnel hydration and validation', () => {
       expect(result.current.validate()).toBe(false);
     });
     expect(result.current.validationErrors.database).toBe('newConn.required');
+  });
+});
+
+describe('[tester] inline tunnel validation is form-variant independent', () => {
+  /** Inline HTTP proxy with both fields blanked, on the requested variant. */
+  function renderInlineHttpProxy(databaseType: 'redis' | 'postgresql') {
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'c-inline-proxy',
+        existingConnections: [
+          editExisting({
+            id: 'c-inline-proxy',
+            databaseType,
+            port: databaseType === 'redis' ? 6379 : 5432,
+            sslMode: 'disable',
+            tunnelId: undefined,
+            tunnelKind: 'httpProxy',
+          }),
+        ],
+      }),
+    );
+
+    act(() => {
+      result.current.setHttpProxyHost('');
+      result.current.setHttpProxyPort('');
+    });
+    expect(result.current.tunnelSource).toBe('inline');
+    expect(result.current.effectiveTunnelKind).toBe('httpProxy');
+    return result;
+  }
+
+  it('requires inline HTTP proxy fields on a driver-validator form (redis)', () => {
+    const result = renderInlineHttpProxy('redis');
+
+    expect(result.current.formVariant).toBe('redis');
+    act(() => {
+      expect(result.current.validate()).toBe(false);
+    });
+    expect(result.current.validationErrors.httpProxyHost).toBe('newConn.required');
+    expect(result.current.validationErrors.httpProxyPort).toBe('newConn.required');
+  });
+
+  it('keeps the same inline requirements on a non-driver form (postgresql control)', () => {
+    const result = renderInlineHttpProxy('postgresql');
+
+    // Control: this variant has no driver validator, so the pre-existing
+    // non-driver branch must still report the very same inline requirements.
+    expect(getDriverValidator(result.current.formVariant)).toBeUndefined();
+    act(() => {
+      expect(result.current.validate()).toBe(false);
+    });
+    expect(result.current.validationErrors.httpProxyHost).toBe('newConn.required');
+    expect(result.current.validationErrors.httpProxyPort).toBe('newConn.required');
+  });
+
+  it('does not mis-block a driver-validator form with no tunnel configured (redis)', () => {
+    // Equivalence guard for the hoist: a tunnel-free Redis connection must be
+    // judged by the driver validator alone, exactly as before the change.
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'c-redis-plain',
+        existingConnections: [
+          editExisting({
+            id: 'c-redis-plain',
+            databaseType: 'redis',
+            host: 'cache.internal',
+            port: 6379,
+            sslMode: 'disable',
+            tunnelId: undefined,
+            tunnelKind: 'none',
+          }),
+        ],
+      }),
+    );
+
+    expect(result.current.formVariant).toBe('redis');
+    expect(result.current.tunnelSource).toBe('none');
+    act(() => {
+      expect(result.current.validate()).toBe(true);
+    });
+    expect(result.current.validationErrors).toEqual({});
+
+    // And a filled-in inline tunnel stays savable on the same variant.
+    act(() => {
+      result.current.setTunnelSource('inline');
+      result.current.setTunnelKind('httpProxy');
+      result.current.setHttpProxyHost('proxy.internal');
+      result.current.setHttpProxyPort('8080');
+    });
+    act(() => {
+      expect(result.current.validate()).toBe(true);
+    });
+    expect(result.current.validationErrors).toEqual({});
   });
 });

@@ -550,28 +550,11 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     // reference the backend is guaranteed to reject (tunnel-form-BUG-001).
     const errors: Record<string, string> = {};
     if (tunnel.tunnelRefMissing) errors.tunnelId = t('newConn.tunnelMissing');
-
-    const driverValidator = getDriverValidator(formVariant);
-    if (driverValidator) {
-      // Driver validators only report their own connection fields; `tunnelId`
-      // belongs to the tunnel domain, so merging cannot clobber it.
-      Object.assign(
-        errors,
-        driverValidator(
-          { host, port, database, username, password, schema, options: connectionOptions },
-          t as (key: string) => string,
-        ),
-      );
-      setValidationErrors(errors);
-      return Object.keys(errors).length === 0;
-    }
-
-    if (meta?.connectionMode === 'file') {
-      if (!database.trim()) errors.database = t('newConn.required');
-    } else if (!isDriverForm) {
-      if (!host.trim()) errors.host = t('newConn.required');
-      if (!port.trim() || isNaN(Number(port))) errors.port = t('newConn.required');
-    }
+    // Inline-tunnel requirements belong to the same shared prologue: leaving them
+    // below the driver-validator early return enforced the tunnel domain for only
+    // half the form variants (same refactor gap as BUG-001). The `!tunnelId` guard
+    // keeps them scoped to the `inline` source — a `saved` reference is validated
+    // by id, never by these fields.
     if (!tunnelId && effectiveTunnelKind === 'httpProxy') {
       if (!httpProxyHost.trim()) errors.httpProxyHost = t('newConn.required');
       if (!httpProxyPort.trim() || isNaN(Number(httpProxyPort)))
@@ -583,6 +566,30 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     if (!tunnelId && effectiveTunnelKind === 'ssh' && sshEnabled) {
       if (!sshHost.trim()) errors.sshHost = t('newConn.required');
       if (!sshUsername.trim()) errors.sshUsername = t('newConn.required');
+    }
+
+    const driverValidator = getDriverValidator(formVariant);
+    if (driverValidator) {
+      // Driver validators only report their own connection fields; the tunnel
+      // domain keys above belong to this hook, so merging cannot clobber them.
+      Object.assign(
+        errors,
+        driverValidator(
+          { host, port, database, username, password, schema, options: connectionOptions },
+          t as (key: string) => string,
+        ),
+      );
+      setValidationErrors(errors);
+      return Object.keys(errors).length === 0;
+    }
+
+    // Generic (non-driver) connection fields keep their original scope: driver
+    // validators own their own host/port/database rules.
+    if (meta?.connectionMode === 'file') {
+      if (!database.trim()) errors.database = t('newConn.required');
+    } else if (!isDriverForm) {
+      if (!host.trim()) errors.host = t('newConn.required');
+      if (!port.trim() || isNaN(Number(port))) errors.port = t('newConn.required');
     }
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
