@@ -1110,6 +1110,24 @@ mod tests {
     }
 
     #[test]
+    fn manifest_operation_count_tampering_fails_closed() {
+        let store =
+            ComparisonStore::from_comparison(comparison(COMPARISON_MEMORY_LIMIT + 1)).unwrap();
+        let manifest = store.path().unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        document["tables"][0]["insertCount"] = serde_json::Value::from(0usize);
+        fs::write(&manifest, serde_json::to_vec(&document).unwrap()).unwrap();
+
+        let summary_error = store.summaries().unwrap_err();
+        assert!(summary_error.contains("operation counts do not match"));
+        let page_error = store.load_table_page("users", "users", 0, 1).unwrap_err();
+        assert!(page_error.contains("operation counts do not match"));
+        let load_error = store.load().unwrap_err();
+        assert!(load_error.contains("operation counts do not match"));
+    }
+
+    #[test]
     fn indexed_page_reads_only_requested_table_and_rows_without_full_load() {
         let comparison = multi_table_comparison();
         let store = ComparisonStore::from_comparison(ComparisonResult::new(vec![
