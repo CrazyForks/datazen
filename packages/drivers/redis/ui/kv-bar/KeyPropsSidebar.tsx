@@ -5,8 +5,9 @@
  * a KV panel while its body was an empty row grid, i.e. a dead button. The
  * drawer now renders these server attributes instead, from the single
  * `key_object_info` pipeline: `TYPE` / `MEMORY USAGE` / `OBJECT ENCODING` /
- * `OBJECT IDLETIME` / `OBJECT FREQ` / `PTTL`, plus the server-wide
- * `maxmemory_policy` from `info_filtered`.
+ * `OBJECT IDLETIME` / `OBJECT FREQ` / `PTTL`, plus the `maxmemory_policy` of the
+ * server behind the current `dbSessionId` (`info_filtered`: one server's fact, so
+ * scoped to that session — never a session-free one; see the policy effect).
  *
  * Three contract obligations shape the component:
  * 1. **`open === false` ⇒ render `null`** — the host owns the drawer geometry
@@ -55,19 +56,28 @@ export function RedisKeyPropsSidebar({
     open ? selectedKey : null,
     open,
   );
-  const [policy, setPolicy] = useState<string | null>(null);
+  // The policy value is tagged with the session that produced it, because that is
+  // the scope of its data source: `invokeMaxmemoryPolicy(dbSessionId)` reads one
+  // server's `INFO`, so the row may only be attributed to the session on screen.
+  // Same session ⇒ the previous value deliberately stays visible while a re-read
+  // is open (it is not another key's attribute — contrast BUG-001, which is the
+  // *key* dimension, the only one the earlier comment on this effect claimed to
+  // cover). Different session ⇒ no known fact yet ⇒ empty row until the new
+  // server answers, exactly like every other row of this list (redis-kvbar-ui-BUG-005).
+  const [policy, setPolicy] = useState<{ session: string; value: string | null } | null>(null);
 
   // `maxmemory_policy` rides along with the key read: the refresh button is one
   // action, and a policy row that never re-reads would contradict the freq row
   // the same click just refreshed (redis-kvbar-ui-BUG-003). `attempt` is that
-  // shared trigger. The previous value deliberately stays on screen while the
-  // re-read is open — it is a server-wide fact, not another key's attribute, so
-  // keeping it cannot mis-attribute anything (contrast BUG-001).
+  // shared trigger, and it deliberately does *not* invalidate the tag above.
+  // `stale` is the write-side half of the same rule: a reply that arrives after
+  // its effect was superseded never enters the state at all, so a session which
+  // is no longer current cannot even leave a candidate value behind.
   useEffect(() => {
     if (!open) return;
     let stale = false;
     void invokeMaxmemoryPolicy(dbSessionId).then((value) => {
-      if (!stale) setPolicy(value);
+      if (!stale) setPolicy({ session: dbSessionId, value });
     });
     return () => {
       stale = true;
@@ -78,6 +88,9 @@ export function RedisKeyPropsSidebar({
 
   const view = attributeViewState(selectedKey, loading, failed, info);
   const ttl = info ? describeTtl(info.ttlMs) : null;
+  // Derived while rendering, so a session swap invalidates this row at once
+  // instead of waiting for the effect that runs after that paint.
+  const policyValue = policy?.session === dbSessionId ? policy.value : null;
 
   return (
     <aside
@@ -189,7 +202,7 @@ export function RedisKeyPropsSidebar({
             <AttributeRow
               attr="maxmemory-policy"
               labelKey="redis.keyProps.maxmemoryPolicy"
-              value={policy}
+              value={policyValue}
             />
           </dl>
         )}

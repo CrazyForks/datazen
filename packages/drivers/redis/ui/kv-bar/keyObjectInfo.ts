@@ -127,7 +127,10 @@ export async function invokeKeyObjectInfo(
 }
 
 /**
- * Server-wide `maxmemory_policy`, read from the `memory` INFO section.
+ * `maxmemory_policy` of the server behind `dbSessionId`, read from the `memory`
+ * INFO section. "Server-wide" here means *across that server's keys* — the value
+ * is still scoped to the session it was read through, which is what the caller's
+ * state has to be keyed by as well (redis-kvbar-ui-BUG-005).
  *
  * `null` on any failure (no permission for `CONFIG`-adjacent INFO fields, older
  * server layout, offline node): the eviction row is simply not rendered, which

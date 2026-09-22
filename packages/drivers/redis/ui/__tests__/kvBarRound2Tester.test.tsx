@@ -16,9 +16,13 @@
  *  - BUG-003: `info_filtered` counts over *N* refreshes (round 1's complaint was
  *    "刷新 N 次 ⇒ 0 次"), and the retained "old policy stays visible" shape.
  *
- * One case here is `it.skip` by design and marked `FIXME(redis-kvbar-ui-BUG-005)`:
- * it is red on today's code (the measured failure is quoted next to it), and its
- * paired green case pins that behaviour so the pair cannot pass by accident.
+ * The `redis-kvbar-ui-BUG-005` pair in the last section is the two arms of that
+ * fix. The case registered as `it.skip` (red on `1778f592a`, un-skipped by the
+ * round-2 fix) measures the swap window itself: no known fact for the new session
+ * ⇒ empty row. Its partner takes the other arm: only a reply read through the
+ * *current* session ever paints, whatever arrived for the previous one. Dropping
+ * the session tag reddens the first; painting from a session that was never asked
+ * — or never painting at all — reddens the second.
  *
  * Assertion policy (PRD §7-6): `data-*` markers, i18n keys and values echoed by
  * Redis (`hash`, `noeviction`, `2.0 KB`) only. No rendered English copy is pinned.
@@ -172,6 +176,9 @@ const barType = (el: HTMLElement | null) =>
   el?.querySelector('[data-part="type"]')?.textContent ?? null;
 const sideValue = (el: HTMLElement | null, attr: string) =>
   el?.querySelector(`[data-attr="${attr}"] dd`)?.getAttribute('data-value') ?? null;
+/** Which named empty state an empty cell is presenting (PRD §7-6 / §3.4). */
+const sideFallbackKey = (el: HTMLElement | null, attr: string) =>
+  el?.querySelector(`[data-attr="${attr}"] dd`)?.getAttribute('data-fallback-key') ?? null;
 const refreshButton = (el: HTMLElement | null) =>
   el?.querySelector<HTMLButtonElement>('[data-testid="redis-kv-props-refresh"]') ?? null;
 
@@ -420,12 +427,13 @@ describe('[tester r2] BUG-003: refresh covers the policy row as many times as it
     expect(router.calls('key_object_info')).toBe(3);
   });
 
-  it('pins the previous session policy on screen while the new session attributes have landed (redis-kvbar-ui-BUG-005 evidence)', async () => {
-    // Green by design: it records what the code does today so the paired skipped
-    // case cannot be vacuous. `KeyPropsSidebar.tsx:62-65` justifies keeping the old
-    // value "because it is a server-wide fact, not another key's attribute" — true
-    // across keys, false across *sessions*: `invokeMaxmemoryPolicy(dbSessionId)` is
-    // session-scoped, so this row attributes one server's fact to another server.
+  it('paints the eviction row only from the session that is on screen (redis-kvbar-ui-BUG-005)', async () => {
+    // Rewritten from the case that registered the defect (it used to pin the old
+    // server's answer sitting next to the new session's attributes, which is what
+    // `KeyPropsSidebar.tsx` then argued was harmless — true across keys, false
+    // across sessions). Now the other arm of the pair: neither a reply that was
+    // still in flight for `sess-1` nor the absence of an answer may stand in for
+    // `sess-2`; only `sess-2`'s own `INFO` fills the row.
     const relay = makeRelay();
     const router = routeCommands();
     const { container, rerender } = render(
@@ -433,9 +441,11 @@ describe('[tester r2] BUG-003: refresh covers the policy row as many times as it
     );
     act(() => relay.selectKey('user:1'));
     await waitFor(() => expect(router.keys.has('sess-1|5|user:1')).toBe(true));
+    await waitFor(() => expect(router.policies.has('sess-1')).toBe(true));
     router.keys.get('sess-1|5|user:1')!.resolve(info({ type: 'string' }));
-    router.policies.get('sess-1')!.resolve(policyReply('noeviction'));
-    await waitFor(() => expect(sideValue(container, 'maxmemory-policy')).toBe('noeviction'));
+    await waitFor(() => expect(propsState(container)).toBe('ready'));
+    // `sess-1`'s own policy read is still open, so its row names the empty state.
+    expect(sideValue(container, 'maxmemory-policy')).toBe('');
 
     rerender(
       <RedisKeyPropsSidebar
@@ -445,24 +455,32 @@ describe('[tester r2] BUG-003: refresh covers the policy row as many times as it
       />,
     );
     await waitFor(() => expect(router.keys.has('sess-2|5|user:1')).toBe(true));
-    // The key read wins the race (one pipeline) and the policy read is still open.
+    await waitFor(() => expect(router.policies.has('sess-2')).toBe(true));
+    // The key read wins the race (one pipeline) and both policy reads are open.
     router.keys.get('sess-2|5|user:1')!.resolve(info({ type: 'hash', memoryBytes: 2048 }));
     await waitFor(() => expect(propsState(container)).toBe('ready'));
-
     expect(sideValue(container, 'type')).toBe('hash');
-    // …and the eviction row still carries the *old* server's answer.
-    expect(sideValue(container, 'maxmemory-policy')).toBe('noeviction');
+    expect(sideValue(container, 'maxmemory-policy')).toBe('');
+    expect(sideFallbackKey(container, 'maxmemory-policy')).toBe('redis.keyProps.unavailable');
 
+    // `sess-1` answers first — the old server's fact must not become the new one's.
+    router.policies.get('sess-1')!.resolve(policyReply('noeviction'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sideValue(container, 'maxmemory-policy')).toBe('');
+
+    // The row is filled by the session it now reports on, and nothing else was asked.
     router.policies.get('sess-2')!.resolve(policyReply('allkeys-lfu'));
     await waitFor(() => expect(sideValue(container, 'maxmemory-policy')).toBe('allkeys-lfu'));
+    expect(router.calls('info_filtered')).toBe(2);
   });
 
-  it.skip('clears the eviction-policy row while the next session has not answered (FIXME redis-kvbar-ui-BUG-005)', async () => {
-    // FIXME(redis-kvbar-ui-BUG-005): red by design on `1778f592a`. Measured failure:
+  it('clears the eviction-policy row while the next session has not answered (redis-kvbar-ui-BUG-005)', async () => {
+    // Was `it.skip` with `FIXME(redis-kvbar-ui-BUG-005)`, red on `1778f592a` as
     //   AssertionError: expected 'noeviction' to be ''
-    // i.e. the row keeps the *previous session's* `maxmemory_policy` next to a
-    // freshly painted attribute list for the new session. §3.4 wants "no known
-    // fact ⇒ no rendering", which is what every other row of this list does.
+    // i.e. the row kept the *previous session's* `maxmemory_policy` next to a
+    // freshly painted attribute list. Fixed by tagging the value with the session
+    // that produced it; §3.4's "no known fact ⇒ no rendering" now holds for this
+    // row exactly as it does for every other row of the list.
     const relay = makeRelay();
     const router = routeCommands();
     const { container, rerender } = render(
@@ -484,7 +502,10 @@ describe('[tester r2] BUG-003: refresh covers the policy row as many times as it
     await waitFor(() => expect(router.keys.has('sess-2|5|user:1')).toBe(true));
     router.keys.get('sess-2|5|user:1')!.resolve(info({ type: 'hash' }));
     await waitFor(() => expect(propsState(container)).toBe('ready'));
+    expect(sideValue(container, 'type')).toBe('hash');
+    // …and the eviction row now names the empty state instead of the old answer.
     expect(sideValue(container, 'maxmemory-policy')).toBe('');
+    expect(sideFallbackKey(container, 'maxmemory-policy')).toBe('redis.keyProps.unavailable');
   });
 
   it('keeps the policy row for the same session across a key switch, which is not a mis-attribution', async () => {
