@@ -2,7 +2,7 @@
 
 ## Phase
 
-FAILED
+READY_FOR_TEST
 
 ## Scope
 
@@ -94,3 +94,14 @@ FAILED
 - Verdict: **TEST_FAILED** for `migration-sequence-BUG-001` and
   `migration-sequence-BUG-002`; do not merge until a fresh Tester reruns the
   complete suite after repair.
+
+## Repair
+
+- The validator now performs comment/literal rejection outside quoted
+  identifiers, restores doubled PostgreSQL identifier quotes, and compares
+  quoted identities exactly while folding unquoted identities to lower case.
+- Sequence replacement no longer returns rollback SQL because recreating a
+  sequence cannot restore its mutable `last_value` counter.
+- The tester regression crate passes all four repaired cases locally; the
+  focused Driver API and PostgreSQL suites remain green. A fresh independent
+  tester rerun is still required before merge.

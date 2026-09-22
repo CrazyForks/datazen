@@ -661,13 +661,16 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 if current.schema != desired.schema || current.name != desired.name {
                     return Err("sequence replacement identities must match".into());
                 }
-                let current_definition = pg_validate_sequence_ddl(current)?;
+                pg_validate_sequence_ddl(current)?;
                 let desired_definition = pg_validate_sequence_ddl(desired)?;
                 let ident = pg_sequence_ident(desired)?;
                 Ok(MigrationStatement {
                     sql: format!("DROP SEQUENCE {ident}; {desired_definition}"),
                     risk: MigrationRisk::Destructive,
-                    rollback_sql: Some(format!("DROP SEQUENCE {ident}; {current_definition}")),
+                    // Recreating a sequence from CREATE DDL cannot restore its
+                    // mutable last_value counter, so this operation must not
+                    // claim complete rollback support.
+                    rollback_sql: None,
                     summary: format!("REPLACE SEQUENCE {}", desired.name),
                 })
             }
@@ -1129,7 +1132,7 @@ mod tests {
             .sql
             .contains("DROP SEQUENCE \"public\".\"orders_id_seq\""));
         assert!(replace.sql.contains("INCREMENT BY 10"));
-        assert!(replace.rollback_sql.is_some());
+        assert!(replace.rollback_sql.is_none());
         let drop = PostgresMigrationRenderer
             .render(&MigrationOperation::DropSequence {
                 sequence: desired.clone(),

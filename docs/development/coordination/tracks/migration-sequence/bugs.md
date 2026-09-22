@@ -10,7 +10,7 @@
 - 量级：P1，PostgreSQL sequence create/replace/drop cannot migrate valid
   schema-qualified objects using these names, and a mismatched quoted identity
   can pass validation and reach reviewed SQL rendering.
-- 状态：待修复
+- 状态：已修复，待复测
 - 重现步骤：
   1. Run `cargo test --offline --manifest-path tracks/migration-sequence/tests/Cargo.toml`.
   2. Observe the tester cases
@@ -40,7 +40,7 @@
 - 量级：P1，`requireRollback` can approve a destructive sequence replacement
   whose rollback loses the pre-change counter state; a failed later statement
   can therefore leave sequence values altered after rollback.
-- 状态：待修复
+- 状态：已修复，待复测
 - 重现步骤：
   1. Run `cargo test --offline --manifest-path tracks/migration-sequence/tests/Cargo.toml`.
   2. Observe `test_tester_sequence_replace_does_not_claim_counter_state_rollback`.

@@ -332,17 +332,7 @@ pub fn validate_sequence_definition_with_identity(
     {
         return Err("sequence definition contains control characters".into());
     }
-    // Catalog-generated sequence DDL never needs SQL literals or comments.
-    // Refuse them instead of trying to recover a statement boundary from an
-    // arbitrary script.
-    if trimmed.contains('\'')
-        || trimmed.contains("--")
-        || trimmed.contains("/*")
-        || trimmed.contains("*/")
-        || trimmed.contains('#')
-    {
-        return Err("sequence definition contains unsupported literal or comment syntax".into());
-    }
+    validate_sequence_definition_safety(trimmed)?;
     let statements = split_sequence_statements(trimmed)?;
     if statements.is_empty() || statements.len() > 2 {
         return Err(
@@ -409,6 +399,46 @@ fn split_sequence_statements(definition: &str) -> Result<Vec<&str>, String> {
     Ok(statements)
 }
 
+fn validate_sequence_definition_safety(definition: &str) -> Result<(), String> {
+    let chars = definition.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut quoted_identifier = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        if quoted_identifier {
+            if ch == '"' {
+                if chars.get(index + 1) == Some(&'"') {
+                    index += 2;
+                    continue;
+                }
+                quoted_identifier = false;
+            }
+            index += 1;
+            continue;
+        }
+        if ch == '"' {
+            quoted_identifier = true;
+            index += 1;
+            continue;
+        }
+        if ch == '\''
+            || ch == '#'
+            || (ch == '-' && chars.get(index + 1) == Some(&'-'))
+            || (ch == '/' && chars.get(index + 1) == Some(&'*'))
+            || (ch == '*' && chars.get(index + 1) == Some(&'/'))
+        {
+            return Err(
+                "sequence definition contains unsupported literal or comment syntax".into(),
+            );
+        }
+        index += 1;
+    }
+    if quoted_identifier {
+        return Err("sequence definition contains an unclosed quoted identifier".into());
+    }
+    Ok(())
+}
+
 fn expect_word(
     tokens: &[ExecutableSqlToken],
     index: &mut usize,
@@ -424,12 +454,12 @@ fn expect_word(
 fn consume_qualified_identifier(
     tokens: &[ExecutableSqlToken],
     index: &mut usize,
-) -> Option<Vec<String>> {
+) -> Option<Vec<ExecutableSqlToken>> {
     let mut parts = Vec::new();
     loop {
         let part = match tokens.get(*index) {
-            Some(ExecutableSqlToken::Word(value)) | Some(ExecutableSqlToken::Identifier(value)) => {
-                value.clone()
+            Some(ExecutableSqlToken::Word(_)) | Some(ExecutableSqlToken::Identifier(_)) => {
+                tokens[*index].clone()
             }
             _ => return None,
         };
@@ -455,15 +485,28 @@ fn validate_sequence_identity(
     let identity_matches = match expected_schema {
         Some(schema) => {
             parts.len() == 2
-                && normalize_identifier(&parts[0]) == normalize_identifier(schema)
-                && normalize_identifier(&parts[1]) == normalize_identifier(name)
+                && sequence_identifier_matches(&parts[0], schema)
+                && sequence_identifier_matches(&parts[1], name)
         }
-        None => parts.len() == 1 && normalize_identifier(&parts[0]) == normalize_identifier(name),
+        None => parts.len() == 1 && sequence_identifier_matches(&parts[0], name),
     };
     if identity_matches {
         Ok(())
     } else {
         Err("sequence definition identity does not match the catalog object".into())
+    }
+}
+
+fn sequence_identifier_matches(token: &ExecutableSqlToken, expected: &str) -> bool {
+    match token {
+        // PostgreSQL folds unquoted identifiers to lower case. A catalog
+        // identity containing upper-case characters therefore requires a
+        // quoted token and must not match an unquoted spelling.
+        ExecutableSqlToken::Word(value) => value.to_ascii_lowercase() == expected,
+        // Quoted identifiers are exact and the lexer has already restored
+        // doubled double-quotes.
+        ExecutableSqlToken::Identifier(value) => value == expected,
+        ExecutableSqlToken::Symbol(_) => false,
     }
 }
 
@@ -787,21 +830,26 @@ fn executable_sql_tokens(sql: &str) -> Vec<ExecutableSqlToken> {
             continue;
         }
         if matches!(ch, '"' | '`' | '[') {
-            let (quote, closing) = if ch == '[' { (ch, ']') } else { (ch, ch) };
+            let closing = if ch == '[' { ']' } else { ch };
             index += 1;
-            let start = index;
+            let mut value = String::new();
+            let mut closed = false;
             while index < chars.len() {
                 if chars[index] == closing {
-                    let value = chars[start..index].iter().collect::<String>();
-                    tokens.push(ExecutableSqlToken::Identifier(value));
+                    if chars.get(index + 1) == Some(&closing) {
+                        value.push(closing);
+                        index += 2;
+                        continue;
+                    }
                     index += 1;
+                    closed = true;
                     break;
                 }
-                if chars[index] == quote && chars.get(index + 1) == Some(&quote) {
-                    index += 2;
-                    continue;
-                }
+                value.push(chars[index]);
                 index += 1;
+            }
+            if closed {
+                tokens.push(ExecutableSqlToken::Identifier(value));
             }
             continue;
         }
