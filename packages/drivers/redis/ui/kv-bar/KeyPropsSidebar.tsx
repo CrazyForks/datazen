@@ -157,12 +157,16 @@ export function RedisKeyPropsSidebar({
               value={info.memoryBytes === null ? null : formatSize(info.memoryBytes)}
             />
             {/* `-1` has its own word (`redis.noExpiry`) instead of the generic
-                "Unavailable": it is an answer, not a missing measurement. */}
+                "Unavailable": it is an answer, not a missing measurement. `-2` is a
+                *different* answer — the server reported the key gone inside this very
+                pipeline (`TYPE` hit, `PTTL` -2) while `missing` stayed false, so
+                calling it "no expiry" would state the one thing certainly not true of
+                it (redis-kvbar-ui-BUG-004). */}
             <AttributeRow
               attr="ttl"
               labelKey="redis.ttl"
               value={ttl?.kind === 'remaining' ? formatDurationMs(ttl.ms) : null}
-              fallbackKey="redis.noExpiry"
+              fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps.missing' : 'redis.noExpiry'}
             />
             <AttributeRow
               attr="encoding"

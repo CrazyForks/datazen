@@ -443,3 +443,60 @@ describe('[fix:BUG-003] the refresh action covers the policy row', () => {
     expect(propsState(container)).toBe('ready');
   });
 });
+
+describe('[fix:BUG-004] the two PTTL sentinels, told apart on screen', () => {
+  // `describeTtl` already split `-2` (gone) from `-1` (never expires); the fix is
+  // the renderers consuming it. `kvBarSlotTesterGaps.test.tsx` pins each word for
+  // one slot; what is pinned here is the part a single-slot test cannot see — that
+  // the two surfaces of the *same* selection never tell opposite stories about the
+  // same reply (bugs.md 建议修法: "需与侧栏口径一致").
+  function goneReads() {
+    commandInvoke.mockImplementation((_plugin: string, command: string) =>
+      Promise.resolve(
+        command === 'key_object_info'
+          ? info({ missing: false, ttlMs: -2 })
+          : POLICY_SECTIONS('noeviction'),
+      ),
+    );
+  }
+
+  it('says "gone" in the sidebar while the status bar claims nothing about a deadline', async () => {
+    const relay = makeRelay();
+    goneReads();
+    const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    const side = render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+    act(() => relay.selectKey('racing'));
+
+    await waitFor(() => expect(propsState(side.container)).toBe('ready'));
+    const dd = side.container.querySelector('[data-attr="ttl"] dd')!;
+    expect(dd.getAttribute('data-fallback-key')).toBe('redis.keyProps.missing');
+    expect(dd.getAttribute('data-value')).toBe('');
+
+    await waitFor(() => expect(statusState(bar.container)).toBe('ready'));
+    // The bar's wording for a gone key is silence, not a deadline it was not
+    // given — and not the "no expiry" claim either, which is why no marker for
+    // either state may appear here.
+    expect(bar.container.querySelector('[data-part="ttl"]')).toBeNull();
+    // What the pipeline *did* answer stays visible: the `-2` invalidates the TTL
+    // row only, not the type/size rows read before it in the same pipeline.
+    expect(bar.container.querySelector('[data-part="type"]')?.textContent).toBe('string');
+  });
+
+  it('keeps the status bar TTL part available for a key that really does expire', async () => {
+    // The control for the negative assertion above: if the ttl part simply never
+    // rendered, "gone ⇒ no ttl part" would pass for the wrong reason.
+    const relay = makeRelay();
+    commandInvoke.mockImplementation((_plugin: string, command: string) =>
+      Promise.resolve(
+        command === 'key_object_info'
+          ? info({ missing: false, ttlMs: 125_000 })
+          : POLICY_SECTIONS('noeviction'),
+      ),
+    );
+    const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    act(() => relay.selectKey('expiring'));
+
+    await waitFor(() => expect(statusState(bar.container)).toBe('ready'));
+    expect(bar.container.querySelector('[data-part="ttl"]')?.textContent).toBe('2m 05s');
+  });
+});

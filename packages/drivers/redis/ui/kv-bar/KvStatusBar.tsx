@@ -57,6 +57,10 @@ export function RedisKvStatusBar({ dbSessionId, dbIndex, database, state }: KvSt
     }
     // No-expiry keys are the norm, so the pill stays silent unless there is a
     // real deadline to count down — the sidebar states "No expiry" explicitly.
+    // A key the server reported gone (`-2`, redis-kvbar-ui-BUG-004) is silent here
+    // too, and the sidebar words that row as *gone*: a bar pill would have to print
+    // a duration it was not given, and the one claim both surfaces must avoid is
+    // presenting such a key as one that simply never expires.
     if (ttl?.kind === 'remaining') {
       parts.push({
         part: 'ttl',
