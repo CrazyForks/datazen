@@ -3,7 +3,7 @@
 ## migration-sync-bounded-BUG-001
 
 - **Severity:** P1 (data-integrity / review-gate)
-- **Status:** 待修复
+- **Status:** 已修复，待复测
 - **Description:** `ComparisonStore::validate_manifest` validates row/index/frame structure but does not validate the operation and unchanged counters stored in the manifest against the indexed row payloads. A damaged manifest can therefore make `summaries()` return inconsistent counts while `load_table_page()` and `load()` still expose the intact rows.
 - **Reproduction:**
   1. Create a streaming comparison containing one `Insert` row for `counts -> counts` and finish the store.

@@ -1,6 +1,6 @@
 # migration-sync-bounded
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 ## Scope completed
 
@@ -78,6 +78,16 @@ changing the immutable plan or selection contract.
   `manifest.json`'s `insertCount` makes `ComparisonStore::summaries()` return
   inconsistent metadata instead of rejecting the damaged store. No business
   code was changed by the tester.
+
+## Repair
+
+- Manifest validation now streams each indexed row payload one at a time,
+  recomputes insert/update/delete counters, checks the embedded unchanged
+  count, and rejects any mismatch before summaries, page reads, or full loads
+  are served.
+- The repaired path remains bounded in memory because it never accumulates
+  row payloads; a fresh independent tester rerun is still required before
+  merge.
 
 ## Real database journey registration (留待 R)
 

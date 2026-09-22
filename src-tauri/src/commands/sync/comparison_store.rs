@@ -676,6 +676,9 @@ fn validate_manifest(manifest: &DiskManifest, directory: &Path) -> Result<(), St
         if table.row_count != offset_count {
             return Err("Data Sync comparison manifest row index is inconsistent".into());
         }
+        if table.table.unchanged_count != table.unchanged_count {
+            return Err("Data Sync comparison manifest unchanged count is inconsistent".into());
+        }
         let file_name = Path::new(&table.rows_file);
         if file_name.components().count() != 1
             || file_name.file_name().and_then(|name| name.to_str())
@@ -718,6 +721,71 @@ fn validate_manifest(manifest: &DiskManifest, directory: &Path) -> Result<(), St
             }
             validate_frame_lengths(&path, &table.offsets)?;
         }
+        validate_operation_counts(directory, table)?;
+    }
+    Ok(())
+}
+
+/// Recompute the mutating operation counters from the framed rows while
+/// validating the manifest. This reads one payload at a time, so summary and
+/// page validation stay bounded in memory while refusing a manifest whose
+/// counters were changed independently of its row files.
+fn validate_operation_counts(directory: &Path, table: &DiskTable) -> Result<(), String> {
+    let path = directory.join(&table.rows_file);
+    let mut rows = File::open(&path)
+        .map_err(|error| format!("cannot open Data Sync comparison row file: {error}"))?;
+    let mut index = table
+        .index_file
+        .as_ref()
+        .map(|name| {
+            File::open(directory.join(name))
+                .map_err(|error| format!("cannot open Data Sync comparison row index: {error}"))
+        })
+        .transpose()?;
+    let mut insert_count = 0usize;
+    let mut update_count = 0usize;
+    let mut delete_count = 0usize;
+    for position in 0..table.row_count {
+        let offset = if let Some(index) = index.as_mut() {
+            read_offset(index)?
+        } else {
+            table.offsets.get(position).cloned().ok_or_else(|| {
+                "Data Sync comparison manifest row index is incomplete".to_string()
+            })?
+        };
+        let frame_prefix = offset
+            .offset
+            .checked_sub(8)
+            .ok_or_else(|| "Data Sync comparison row offset is invalid".to_string())?;
+        rows.seek(SeekFrom::Start(frame_prefix))
+            .map_err(|error| format!("cannot seek Data Sync comparison row frame: {error}"))?;
+        let mut length_bytes = [0u8; 8];
+        rows.read_exact(&mut length_bytes)
+            .map_err(|error| format!("cannot read Data Sync comparison row frame: {error}"))?;
+        if u64::from_le_bytes(length_bytes) != offset.length {
+            return Err("Data Sync comparison row frame length does not match its index".into());
+        }
+        let length = usize::try_from(offset.length)
+            .map_err(|_| "Data Sync comparison row is too large to read".to_string())?;
+        let mut payload = vec![0u8; length];
+        rows.read_exact(&mut payload)
+            .map_err(|error| format!("cannot read Data Sync comparison row: {error}"))?;
+        let change: RowChange = serde_json::from_slice(&payload)
+            .map_err(|error| format!("cannot decode Data Sync comparison row: {error}"))?;
+        match change.operation {
+            crate::data_sync::ChangeOperation::Insert => insert_count += 1,
+            crate::data_sync::ChangeOperation::Update => update_count += 1,
+            crate::data_sync::ChangeOperation::Delete => delete_count += 1,
+            crate::data_sync::ChangeOperation::Unchanged => {
+                return Err("Data Sync comparison store contains an indexed unchanged row".into())
+            }
+        }
+    }
+    if insert_count != table.insert_count
+        || update_count != table.update_count
+        || delete_count != table.delete_count
+    {
+        return Err("Data Sync comparison manifest operation counts do not match its rows".into());
     }
     Ok(())
 }
