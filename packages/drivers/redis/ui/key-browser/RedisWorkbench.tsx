@@ -11,14 +11,11 @@ import { useI18n } from '@datazen/ui';
 import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
 import { BatchPatternBar } from './BatchBar';
 import { ImportExport } from './ImportExport';
-import { KeyTreeColumn } from './KeyTreeColumn';
-import { KeyTreeHeader } from './KeyTreeHeader';
-import { KeyTreeSearchRow } from './KeyTreeSearchRow';
+import { KeyTreePane } from './KeyTreePane';
 import { useBatchActions } from './useBatchActions';
 import { DetailColumn } from './DetailColumn';
 import { useRedisKeyScan } from './useRedisKeyScan';
-import { useKeyTree } from './useKeyTree';
-import { buildServerTreeRows } from './keyTree';
+import { useKeyTreeView } from './useKeyTreeView';
 import { KeyWorkbenchDialogs } from './KeyWorkbenchDialogs';
 import { mergeDatabases, dbIndexOfName } from './workbenchDatabases';
 import { DbSidebar } from './DbSidebar';
@@ -42,16 +39,19 @@ import type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes
  *
  * This file is deliberately a *composition*. After the D-0 split every block of
  * the previous 705-line wall owns a module (`DbSidebar`, `WorkbenchToolbar`,
- * `KeyTreeColumn`, `DetailColumn`, `useRedisKeyScan`/`useKeyTree`, the `useKey*`
- * state hooks, `useWorkbenchOverlays` and `KeyWorkbenchDialogs`). What stays here
- * is only what genuinely has to be shared: the single writers of selection and
- * detail state, the refresh fan-out, the host KV relay (contract F-2) and the
- * imperative handle the host tabs drive.
+ * `KeyTreePane` — the whole left column, R1/R2/R3 header plus the list —,
+ * `DetailColumn`, `useRedisKeyScan`/`useKeyTreeView`, the `useKey*` state hooks,
+ * `useWorkbenchOverlays` and `KeyWorkbenchDialogs`). What stays here is only what
+ * genuinely has to be shared: the single writers of selection and detail state,
+ * the refresh fan-out (including the I-8 "refresh without dropping the
+ * selection" variant), the host KV relay (contract F-2) and the imperative handle
+ * the host tabs drive.
  */
 export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchProps>(
   function RedisWorkbench(
     {
       dbSessionId,
+      connectionId,
       initialDatabase,
       hideSidebar,
       onDbIndexChange,
@@ -84,49 +84,48 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     const selection = useKeySelection();
     const detail = useKeyDetailState(dbSessionId, dbIndex);
 
-    const {
-      keys,
-      cursor,
-      dbSize,
-      keysLoading,
-      searchPattern,
-      setSearchPattern,
-      keyTypeFilter,
-      setKeyTypeFilter,
-      withMemory,
-      setWithMemory,
-      noTtlOnly,
-      setNoTtlOnly,
-      loadKeys,
-      resetSelectionState,
-      refresh: scanRefresh,
-      loadMore,
-      search: scanSearch,
-    } = useRedisKeyScan({
+    // Flat `scan_keys` list — kept as one object (`scan.*`) because 屏 B reads a
+    // dozen of its fields and a destructure block is 18 lines of noise.
+    const scan = useRedisKeyScan({
       dbSessionId,
       dbIndex,
       enabled: selectedDb !== null,
     });
 
-    const tree = useKeyTree({
+    /*
+     * D-3 + D-8 in a single owner: the R3 separator has to reach both the
+     * `list_children` request and the row fold (two places, one value), and the
+     * four named empty states (I-11) are derived from the same rows.
+     */
+    const treeView = useKeyTreeView({
+      connectionId,
       dbSessionId,
       dbIndex,
       enabled: selectedDb !== null,
-      noTtlOnly,
-      keyType: keyTypeFilter,
+      noTtlOnly: scan.noTtlOnly,
+      keyType: scan.keyTypeFilter,
+      loadedKeys: scan.keys,
+      pattern: scan.searchPattern,
+      loading: scan.keysLoading,
+      scanOpen: scan.cursor !== 0,
     });
-
-    const treeRows = useMemo(
-      () => buildServerTreeRows(tree.levels, tree.expanded),
-      [tree.levels, tree.expanded],
-    );
 
     useEffect(() => {
       void loadForConnection(dbSessionId, { skipLoadTables: true });
     }, [dbSessionId, loadForConnection]);
 
+    // Stable identities: `scan` / `treeView` are fresh objects every render, and
+    // listing them in a dependency array would churn every callback below.
+    const tree = treeView.tree;
+    const { setSearchPattern, resetSelectionState, loadKeys, refresh: scanRefresh } = scan;
+
     const modules = useReJsonModules(dbSessionId);
-    const { dbCounts, loadDbSizes } = useDbKeyCounts(dbSessionId, dbIndex, selectedDb, dbSize);
+    const { dbCounts, loadDbSizes } = useDbKeyCounts(
+      dbSessionId,
+      dbIndex,
+      selectedDb,
+      scan.dbSize,
+    );
     const createTypes = useCreateTypes(modules);
 
     /** Drop the mounted detail *and* the checkbox selection (db switch, refresh). */
@@ -139,7 +138,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       dbSessionId,
       dbIndex,
       clearFocus,
-      runKeySearch: scanSearch,
+      runKeySearch: scan.search,
     });
 
     const handleSelectDb = useCallback(
@@ -154,19 +153,12 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         resetSelectionState();
         void loadKeys(idx, '*', 0, true);
       },
-      [
-        clearFocus,
-        loadKeys,
-        resetSelectionState,
-        setSearchPattern,
-        onDatabaseChange,
-        onDbIndexChange,
-      ],
+      [clearFocus, setSearchPattern, resetSelectionState, loadKeys, onDatabaseChange, onDbIndexChange],
     );
 
     useEffect(() => {
-      onKeysChange?.(keys.map((entry) => entry.key));
-    }, [keys, onKeysChange]);
+      onKeysChange?.(scan.keys.map((entry) => entry.key));
+    }, [scan.keys, onKeysChange]);
 
     useEffect(() => {
       if (databases.length > 0 && !selectedDb) {
@@ -182,13 +174,23 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       clearFocus();
       scanRefresh();
       tree.refresh();
-    }, [selectedDb, clearFocus, scanRefresh, tree]);
+    }, [selectedDb, clearFocus, scanRefresh, tree.refresh]);
 
     const handleRefresh = useCallback(() => {
       void loadForConnection(dbSessionId, { skipLoadTables: true });
       refreshKeys();
       loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
+
+    /*
+     * I-8 (D-6): a batch write reloads the *data* only. `refreshKeys` also drops
+     * the selection, which would silently undo "failed keys stay selected" the
+     * moment the post-write refresh lands, so the batch controller gets this one.
+     */
+    const refreshAfterWrite = useCallback(() => {
+      scanRefresh();
+      tree.refresh();
+    }, [scanRefresh, tree.refresh]);
 
     useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb }), [
       refreshKeys,
@@ -219,9 +221,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       dbSessionId,
       dbIndex,
       selectedKeys: [...selection.selectedKeys],
-      searchPattern,
-      onClearSelection: selection.clearSelection,
-      onRefresh: refreshKeys,
+      searchPattern: scan.searchPattern,
+      onRemoveFromSelection: selection.removeKeys,
+      onRefresh: refreshAfterWrite,
       onSummary: overlays.setBatchSummary,
     });
 
@@ -242,11 +244,11 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
             <>
               <WorkbenchToolbar
                 selectedDb={selectedDb}
-                dbSize={dbSize}
-                loadedCount={keys.length}
-                hasMore={cursor !== 0}
-                withMemory={withMemory}
-                onWithMemoryChange={setWithMemory}
+                dbSize={scan.dbSize}
+                loadedCount={scan.keys.length}
+                hasMore={scan.cursor !== 0}
+                withMemory={scan.withMemory}
+                onWithMemoryChange={scan.setWithMemory}
                 allowFlush={allowFlush}
                 onImportExport={() => overlays.setImportExportOpen(true)}
                 onFlushDb={() => overlays.setFlushDialog('db')}
@@ -267,51 +269,20 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                   data-testid="redis-tree-pane"
                   data-tree-width={treeWidth}
                 >
-                  <KeyTreeHeader
-                    searchMode={search.searchMode}
-                    onSearchModeChange={search.setSearchMode}
-                    loadedCount={keys.length}
-                    totalCount={dbSize}
-                    scanning={cursor !== 0}
-                    selectedCount={selection.selectionCount}
-                    onSelectAll={() => selection.selectMany(keys.map((k) => k.key))}
-                    onClearSelection={selection.clearSelection}
-                    onBatchTtl={() => batchActions.request('ttl')}
-                    onBatchDelete={() => batchActions.request('delete')}
-                    onRefresh={handleRefresh}
-                    onCreateKey={() => overlays.setCreateOpen(true)}
-                  >
-                    <KeyTreeSearchRow
-                      scope={search.searchMode}
-                      pattern={searchPattern}
-                      onPatternChange={setSearchPattern}
-                      onApply={() => search.applySearch(searchPattern, fuzzyPattern)}
-                      fuzzy={fuzzyPattern}
-                      onFuzzyChange={setFuzzyPattern}
-                      noTtlOnly={noTtlOnly}
-                      onNoTtlOnlyChange={setNoTtlOnly}
-                      keyType={keyTypeFilter}
-                      onKeyTypeChange={setKeyTypeFilter}
-                    />
-                  </KeyTreeHeader>
-                  <KeyTreeColumn
-                    searchMode={search.searchMode}
-                    treeRows={treeRows}
-                    allKeys={keys.map((k) => k.key)}
-                    expandedFolders={tree.expanded}
-                    onToggleFolder={tree.toggleFolder}
-                    selectedKey={detail.selectedKey}
-                    selectedKeys={selection.selectedKeys}
-                    onSelectKey={detail.selectKey}
-                    onToggleKey={selection.toggleKey}
-                    onToggleKeys={selection.toggleKeys}
+                  <KeyTreePane
+                    view={treeView}
+                    scan={scan}
+                    search={search}
+                    selection={selection}
+                    detail={detail}
+                    batch={batchActions}
                     onKeyContextMenu={handleKeyContextMenu}
                     onDeleteRow={handleDeleteRow}
-                    loading={keysLoading}
-                    hasMore={cursor !== 0}
-                    onLoadMore={loadMore}
-                    valueSearchState={search.valueSearchState}
-                    onCancelValueSearch={search.cancelValueSearch}
+                    totalCount={scan.dbSize}
+                    fuzzy={fuzzyPattern}
+                    onFuzzyChange={setFuzzyPattern}
+                    onCreateKey={() => overlays.setCreateOpen(true)}
+                    onRefresh={handleRefresh}
                   />
                 </div>
 
@@ -356,7 +327,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
           selectedKeys={[...selection.selectedKeys]}
-          searchPattern={searchPattern}
+          searchPattern={scan.searchPattern}
           open={overlays.importExportOpen}
           onOpenChange={overlays.setImportExportOpen}
           onRefresh={refreshKeys}

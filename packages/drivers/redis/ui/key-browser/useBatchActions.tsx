@@ -2,6 +2,13 @@ import { useCallback, useState } from 'react';
 import { Button, Dialog, Input, useI18n } from '@datazen/ui';
 import { useRedisGate } from '../shared/useRedisGate';
 import {
+  batchSummary,
+  failedKeyNames,
+  failuresForAllKeys,
+  failuresFromErrors,
+  type BatchSummaryPayload,
+} from './batchErrors';
+import {
   invokeBatchDeletePattern,
   invokeBatchRenamePrefix,
   invokeBatchSetTtl,
@@ -25,6 +32,10 @@ import {
  *  - exit: `closeDialog()` (cancel, dismiss, or a fully successful run) clears
  *    the mode, the error and the pattern preview count. There is no path that
  *    leaves `dialog` set without an owner rendering it.
+ *
+ * Selection after a run (I-8 / D-6): the server tells us *which* keys failed, so
+ * only the ones that did not fail leave the selection. An exception out of a
+ * batch call keeps the entire selection — "we could not verify" is not "succeed".
  */
 
 export type BatchMode = 'delete' | 'pattern' | 'ttl' | 'rename';
@@ -35,9 +46,10 @@ export interface BatchActionsOptions {
   selectedKeys: string[];
   /** Current tree filter — the default pattern of the "delete by pattern" dialog. */
   searchPattern: string;
-  onClearSelection: () => void;
+  /** I-8: drop exactly the keys the batch proved it handled. */
+  onRemoveFromSelection: (keys: string[]) => void;
   onRefresh: () => void | Promise<void>;
-  onSummary?: (message: string) => void;
+  onSummary?: (summary: BatchSummaryPayload) => void;
 }
 
 export function useBatchActions({
@@ -45,7 +57,7 @@ export function useBatchActions({
   dbIndex,
   selectedKeys,
   searchPattern,
-  onClearSelection,
+  onRemoveFromSelection,
   onRefresh,
   onSummary,
 }: BatchActionsOptions) {
@@ -60,14 +72,6 @@ export function useBatchActions({
   const [newPrefix, setNewPrefix] = useState('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const showSummary = useCallback(
-    (parts: string[]) => {
-      const msg = parts.filter(Boolean).join(' · ');
-      onSummary?.(msg);
-    },
-    [onSummary],
-  );
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -102,18 +106,32 @@ export function useBatchActions({
     }
   };
 
+  /** Every requested key the server did *not* report as failed. */
+  const releaseSucceeded = (requested: string[], failed: string[]) => {
+    const dropped = new Set(failed);
+    onRemoveFromSelection(requested.filter((key) => !dropped.has(key)));
+  };
+
+  const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
   const runDeleteSelected = async () => {
     if (!(await gateWrite('write-op'))) return;
+    const requested = [...selectedKeys];
     setBusy(true);
     setError(null);
     try {
-      const deleted = await invokeDeleteKeys(dbSessionId, dbIndex, selectedKeys);
-      showSummary([t('redis.deleted').replace('{count}', String(deleted))]);
-      onClearSelection();
+      const deleted = await invokeDeleteKeys(dbSessionId, dbIndex, requested);
+      // `delete_keys` answers a bare count: no per-key verdict exists, so a
+      // return without an exception is the only case where the whole selection
+      // may leave. Partial failure is not expressible on this command.
+      releaseSucceeded(requested, []);
+      onSummary?.(batchSummary('delete', deleted, []));
       closeDialog();
       await onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = messageOf(e);
+      setError(message);
+      onSummary?.(batchSummary('delete', 0, failuresForAllKeys(requested, message)));
     } finally {
       setBusy(false);
     }
@@ -125,15 +143,13 @@ export function useBatchActions({
     setError(null);
     try {
       const result = await invokeBatchDeletePattern(dbSessionId, dbIndex, patternInput);
-      const errCount = result.errors.length;
-      showSummary([
-        t('redis.deleted').replace('{count}', String(result.deleted)),
-        errCount > 0 ? t('redis.errorsCount').replace('{count}', String(errCount)) : '',
-      ]);
+      // The pattern is not the selection, so I-8 does not apply: leave the checks
+      // alone and let the refresh show what survived.
+      onSummary?.(batchSummary('delete-pattern', result.deleted, failuresFromErrors(result.errors)));
       closeDialog();
       await onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(messageOf(e));
     } finally {
       setBusy(false);
     }
@@ -141,6 +157,7 @@ export function useBatchActions({
 
   const runBatchTtl = async () => {
     if (!(await gateWrite('write-op'))) return;
+    const requested = [...selectedKeys];
     setBusy(true);
     setError(null);
     try {
@@ -148,17 +165,16 @@ export function useBatchActions({
       if (!persistMode && (Number.isNaN(ttl!) || ttl! < 0)) {
         throw new Error(t('redis.ttlSeconds'));
       }
-      const result = await invokeBatchSetTtl(dbSessionId, dbIndex, selectedKeys, ttl!);
-      const errCount = result.errors.length;
-      showSummary([
-        t('redis.updated').replace('{count}', String(result.updated)),
-        errCount > 0 ? t('redis.errorsCount').replace('{count}', String(errCount)) : '',
-      ]);
-      onClearSelection();
+      const result = await invokeBatchSetTtl(dbSessionId, dbIndex, requested, ttl!);
+      const failures = failuresFromErrors(result.errors);
+      releaseSucceeded(requested, failedKeyNames(failures));
+      onSummary?.(batchSummary('ttl', result.updated, failures));
       closeDialog();
       await onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = messageOf(e);
+      setError(message);
+      onSummary?.(batchSummary('ttl', 0, failuresForAllKeys(requested, message)));
     } finally {
       setBusy(false);
     }
@@ -166,10 +182,11 @@ export function useBatchActions({
 
   const runBatchRename = async () => {
     if (!(await gateWrite('write-op'))) return;
+    const requested = [...selectedKeys];
     setBusy(true);
     setError(null);
     try {
-      const keysArg = selectedKeys.length > 0 ? selectedKeys : undefined;
+      const keysArg = requested.length > 0 ? requested : undefined;
       const result = await invokeBatchRenamePrefix(
         dbSessionId,
         dbIndex,
@@ -177,16 +194,15 @@ export function useBatchActions({
         newPrefix,
         keysArg,
       );
-      const errCount = result.errors.length;
-      showSummary([
-        t('redis.renamed').replace('{count}', String(result.renamed)),
-        errCount > 0 ? t('redis.errorsCount').replace('{count}', String(errCount)) : '',
-      ]);
-      onClearSelection();
+      const failures = failuresFromErrors(result.errors);
+      releaseSucceeded(requested, failedKeyNames(failures));
+      onSummary?.(batchSummary('rename', result.renamed, failures));
       closeDialog();
       await onRefresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = messageOf(e);
+      setError(message);
+      onSummary?.(batchSummary('rename', 0, failuresForAllKeys(requested, message)));
     } finally {
       setBusy(false);
     }

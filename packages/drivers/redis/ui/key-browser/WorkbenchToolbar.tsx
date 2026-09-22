@@ -1,35 +1,124 @@
+import { useEffect, useState } from 'react';
 import { FolderInput } from 'lucide-react';
 import { Button, useI18n } from '@datazen/ui';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
+import {
+  BATCH_FAILURE_KEYS,
+  failuresByCode,
+  type BatchSummaryPayload,
+} from './batchErrors';
 
 /**
- * Summary banner of the last batch write (delete / TTL / rename / import).
+ * Result banner of the last batch write (delete / TTL / rename / import).
+ *
+ * Two shapes (D-6 / I-8):
+ *  - a plain string, from import / export and the single-row actions — one line;
+ *  - a {@link BatchResultSummary}, from every batch write that gets a per-key
+ *    verdict back: `成功 N / 失败 M`, expandable into the failed keys grouped by
+ *    *stable reason code* (`data-failure-code`), never by an English sentence.
+ *
  * Dismissible; `null` renders nothing.
  */
 export function BatchSummaryBanner({
   summary,
   onDismiss,
 }: {
-  summary: string | null;
+  summary: BatchSummaryPayload | null;
   onDismiss: () => void;
 }) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  // A new result always starts collapsed: the previous run's expanded reasons must
+  // not leak into the next banner.
+  useEffect(() => setExpanded(false), [summary]);
+
   if (!summary) return null;
+
+  if (typeof summary === 'string') {
+    return (
+      <div
+        className="shrink-0 border-b border-edge bg-surface-alt px-3 py-1 text-xs text-fg-secondary"
+        data-testid="redis-batch-summary"
+        data-kind="text"
+        role="status"
+      >
+        {summary}
+        <DismissButton onDismiss={onDismiss} />
+      </div>
+    );
+  }
+
+  const groups = failuresByCode(summary.failures);
+
   return (
     <div
       className="shrink-0 border-b border-edge bg-surface-alt px-3 py-1 text-xs text-fg-secondary"
       data-testid="redis-batch-summary"
+      data-kind="batch"
+      data-action={summary.action}
+      data-ok={summary.ok}
+      data-failed={summary.failed}
       role="status"
     >
-      {summary}
-      <button
-        type="button"
-        className="ml-2 text-fg-muted hover:text-fg"
-        data-testid="redis-batch-summary-dismiss"
-        onClick={onDismiss}
-      >
-        ×
-      </button>
+      <span data-testid="redis-batch-summary-text">
+        {t('redis.tree.batchResult')
+          .replace('{ok}', String(summary.ok))
+          .replace('{failed}', String(summary.failed))}
+      </span>
+      {summary.failed > 0 && (
+        <>
+          <button
+            type="button"
+            className="ml-2 text-accent hover:underline"
+            aria-expanded={expanded}
+            data-testid="redis-batch-summary-toggle"
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            {t('redis.tree.batchResultToggle')}
+          </button>
+          {expanded && (
+            <ul
+              className="mt-1 max-h-32 list-none space-y-0.5 overflow-auto border-t border-edge pt-1"
+              data-testid="redis-batch-summary-failures"
+              data-group-count={groups.length}
+            >
+              {groups.map((group) => (
+                <li
+                  key={group.code}
+                  className="flex flex-wrap items-baseline gap-1"
+                  data-testid={`redis-batch-failure-group-${group.code}`}
+                  data-failure-code={group.code}
+                  data-count={group.keys.length}
+                  data-reason-key={BATCH_FAILURE_KEYS[group.code]}
+                >
+                  <span className="font-medium text-danger">
+                    {t(BATCH_FAILURE_KEYS[group.code])}
+                  </span>
+                  <span className="text-fg-muted">×{group.keys.length}</span>
+                  <span className="min-w-0 break-all font-mono text-[11px]">
+                    {group.keys.join(' ')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      <DismissButton onDismiss={onDismiss} />
     </div>
+  );
+}
+
+function DismissButton({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <button
+      type="button"
+      className="ml-2 text-fg-muted hover:text-fg"
+      data-testid="redis-batch-summary-dismiss"
+      onClick={onDismiss}
+    >
+      ×
+    </button>
   );
 }
 

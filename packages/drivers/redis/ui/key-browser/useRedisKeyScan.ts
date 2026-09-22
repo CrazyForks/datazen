@@ -121,3 +121,6 @@ export function useRedisKeyScan({ dbSessionId, dbIndex, enabled }: UseRedisKeySc
     search,
   };
 }
+
+/** Everything 屏 B reads off the flat scan — passed whole to `KeyTreePane`. */
+export type KeyScanApi = ReturnType<typeof useRedisKeyScan>;
