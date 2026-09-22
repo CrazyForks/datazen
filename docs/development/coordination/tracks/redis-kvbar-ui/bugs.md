@@ -13,7 +13,7 @@
 | redis-kvbar-ui-BUG-003 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
 | redis-kvbar-ui-BUG-004 | Low | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
 | **redis-kvbar-ui-BUG-005** | Low | **已修复**（第 3 轮 Tester 复测通过 @ `3e382a930`） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
-| **redis-kvbar-ui-BUG-006** | Low | **待修复**（第 3 轮 Tester 新登记） | 本轨门禁测试自身有断言竞态：`kvBarSlots.test.tsx:188` 在等完一个**同步**探针后裸断言一个**异步**部件，实测 1/28 次随机红（生产代码无关，属测试侧假红） |
+| **redis-kvbar-ui-BUG-006** | Low | **待复测**（第 3 轮修复回合 `59c062da1` 已修，见本节修复备注） | 本轨门禁测试自身有断言竞态：`kvBarSlots.test.tsx:188` 在等完一个**同步**探针后裸断言一个**异步**部件，实测 1/28 次随机红（生产代码无关，属测试侧假红） |
 
 > **修复第 1 轮（Coder @ `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）**：四条全部改到生产码
 > 并各带回归用例 ⇒ 全部置 **待复测**，每条下方新增「修复备注（Coder 第 1 轮 · sha）」给出落点与复测入口。
@@ -41,6 +41,16 @@
 > **本轮新登记 1 条 `待修复`：`redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态）** ⇒ 轨道判定仍为
 > `TEST_FAILED`，但**与 BUG-005 的闭环无关**（BUG-005 已结），修复面是一行测试代码，
 > 协调者可自行裁定为"合并前顺手修"或豁免（详见该节「是否阻断合并」）。
+>
+> **修复第 3 轮（Coder @ `59c062da1`，只修 BUG-006 这一条）**：采建议修法 **1 的加强版** ——
+> 一次 `waitFor` 内把三个判据（`data-status-state='ready'` + `selected-key` + `type`）
+> 全部读自**同一个渲染根元素**，谓词与被断言的 DOM 事实由此同源，空窗帧在谓词里不再存在。
+> 断言只增不减（`expect(` 计数 3 → 4，`toBe('hash')` 未降级），无 sleep / timeout / `--retry`，
+> 生产代码零改动。BUG-006 状态 → **待复测**；稳定性证据（20/3/6×6 三组分母全 0 红）、
+> 两项变异（M1 永不含 type、M2 永不 ready）与时序放大器的红绿判别见同目录
+> `progress.md`「第 3 轮修复回合」。
+> **复测方式由协调者按相称性裁定：不再派第 4 轮 Tester，合流时由协调者亲自复跑稳定性证据**
+> ⇒ 文件头 `- 状态:` 仍为 `TEST_FAILED`，本回合一行未动。
 
 
 ---
@@ -516,7 +526,8 @@ AssertionError: expected 'noeviction' to be '' // Object.is equality
 
 - **严重度**：Low（**测试侧**缺陷，非产品缺陷：生产行为正确且下一帧自愈。
   后果是轨道门禁 `vitest` 可能**无代码变更地随机红**，实测 **1/28 次** ≈ 3.6%）
-- **状态**：`待修复`（第 3 轮 Tester 独立复跑门禁时观测到，非沿用任何前棒结论）
+- **状态**：`待复测`（第 3 轮 Tester 独立复跑门禁时观测到，非沿用任何前棒结论；
+  第 3 轮修复回合 `59c062da1` 已按建议修法 1 的加强版关闭）
 - **量级**：28 次执行中 1 次红 —— 单文件 15 次全绿、全量串行 3 次全绿、
   6 路并发全量 6 次全绿、**与 `tsc --noEmit` 并发** 4 次全绿；
   唯一一次红恰好也发生在"tsc 与 vitest 并发"的那一批（CPU 争用放大微任务延迟）。
@@ -595,6 +606,48 @@ npx vitest run --config vitest.drivers.config.ts   # 循环 5~30 次观测
 2. 或最小改动：`await waitFor(() => expect(container.querySelector('[data-part="type"]')?.textContent).toBe('hash'));`。
 3. **禁止**用 `--retry` / 忽略该用例 / 删除断言来"修"（属弱化）；断言口径保持
    `data-*` + 服务端回显值，不得引入英文字面量文案断言。
+
+**修复备注（Coder 第 3 轮 · `59c062da1`）· 状态 → 待复测**
+
+- **采建议修法 1，并把"同源"做到同一个元素上**：`:185-188` 的"等同步探针 + 裸断异步部件"
+  合成**一次** `waitFor`，谓词的三个判据全部读自
+  `container.querySelector('[data-status-state]')` 这**一个渲染根**、在同一次同步检查里取：
+  `data-status-state === 'ready'` + `[data-part="selected-key"] === 'user:1'` +
+  `[data-part="type"] === 'hash'`。`KvStatusBar.tsx` 的标记（`:77` ← `:35` 的
+  `attributeViewState`）与 `data-part` 列表（`:37-70`）出自**同一次渲染、同一个 `info` 对象**，
+  因此"标记已是 `ready` 的那一帧必然已把 type 排进 parts"是**结构事实**：谓词无法在
+  "selected-key 已到位、info 尚未发布"那类帧上成立，空窗被谓词本身排除，而不是被固定时长躲过。
+- **未采用的写法（登记以免下轮重提）**：①建议修法 2（只把 `type` 那条塞进 `waitFor`）
+  同样消灭竞态，但把"状态标记与部件是否彼此一致"这一维**留在无人检查**的位置，
+  实测在 M2 变异下仍然漏（见下），故采修法 1；②`sleep` / 加大 `waitFor` timeout /
+  `--retry` / 改弱断言一律未用。
+- **断言只增不减（逐字核对）**：`toBe('hash')` 仍是服务端回显的类型名（未降为
+  `not.toBeNull()` / 非空），`selected-key` 断言原样保留，`commandInvoke` 的入参断言原样保留；
+  本用例 `expect(` 计数 **3 → 4**（净 +1 = 新增 `ready` 判据），用例数 17 → 17，
+  未删 / 未 skip / 未改 `it.only`；无英文字面量文案断言（一律 `data-*` + 回显值）。
+- **生产代码零改动**：`git diff --stat 9962c9335..59c062da1` 只有
+  `packages/drivers/redis/ui/__tests__/kvBarSlots.test.tsx`（+14/−4）一个文件；
+  `ui/kv-bar/**`、`ui/overview/**`、宿主 `src/**`、`src-tauri/**`、`packages/driver-sdk`、
+  `locales/en.ts`、`*.rs`、`Cargo.toml`/`Cargo.lock` 经逐路径核验**全部 0 行**
+  ⇒ 未扩 `KvSlotState`、未动契约、未加词条；也未新增/删除任何测试文件（分母仍是
+  41 files / 328 tests）。
+- **非空跑与"只增不减"的双向证明**（三次注入，跑完 `git checkout HEAD --` 还原，
+  `git status --porcelain` 收尾为空；详细表见 `progress.md`「第 3 轮修复回合」）：
+  - **M1 = 任务书点名的"回包链永不填充 type"**（`keyObjectInfo.ts` 的
+    `invokeKeyObjectInfo` 出口强制 `type: null`）⇒ 目标用例**转红**
+    （`AssertionError: expected undefined to be 'hash'`，新写法在 `waitFor` 1000ms 后失败，
+    用时 1015ms（两次独立跑 1015ms / 1017ms）—— 说明谓词真的在等那一格出现，不是白等）；该文件红 3 条 / 17。
+  - **M2 = `attributeViewState` 永不返回 `ready`** ⇒ **旧写法漏检**（目标用例仍绿），
+    **新写法转红**（`expected 'unavailable' to be 'ready'`，该文件红 4 条 / 17）
+    ⇒ 新增判据确实多守了一维，属强化而非等价改写。
+  - **时序放大器（只改测试替身，不动生产码）**：把 mock 回包改成 60ms 后在另一个宏任务落地，
+    即 1/28 偶发窗口的人为确定性版 ⇒ **旧写法必红**（红的正是登记的裸断言那一行，
+    放大补丁加了 5 行故帧号显示 `:193` = HEAD `:188`），**新写法必绿**（17/17，该文件 140ms；修法 2 同条件 139ms）。
+- **稳定性实测（三组分母全 0 红）**：目标 spec 单文件串行 **20/20**、全量驱动套件串行 **3/3**、
+  全量套件 **6 路并发 × 6 轮（36 次）** 全绿；原始逐次输出见 `progress.md` 同节。
+  本条属低频竞态，"注红 + 放大必红"与"三组 0 红"是同一枚证据的两面。
+- **复测口径**：按协调者裁定，本条修复**不再派第 4 轮 Tester**，合流时由协调者亲自复跑稳定性证据；
+  `progress.md` 文件头 `- 状态:` 本回合**一字未动**（仍 `TEST_FAILED`），返回 `READY_FOR_MERGE`。
 
 ---
 
