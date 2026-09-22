@@ -1,25 +1,19 @@
-import { Database, Loader2, Search } from 'lucide-react';
-import { Input, cn, useI18n } from '@datazen/ui';
-import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
+import { Database, Loader2 } from 'lucide-react';
+import { cn, useI18n } from '@datazen/ui';
 import { dbIndexOfName } from './workbenchDatabases';
 
 /**
- * Database picker of the key workbench (only rendered when the host has no
- * outer navigator tree, i.e. `hideSidebar` is false).
+ * Database picker of the key workbench (only rendered when the host has no outer
+ * navigator tree, i.e. `hideSidebar` is false).
  *
  * Presentational: it lists the merged db names with their key counts and reports
- * the user's choice. The scan/tree state stays with `RedisWorkbench` (and after
- * D-1 the search-scope segment control moves out of here into the key-tree
- * column header, where PRD §3.2 R1 wants it).
+ * the user's choice. After D-1/D-2 nothing else lives here — the search-scope
+ * segment control and the pattern row moved into the key-tree column header
+ * (PRD §3.2 R1/R2), because this sidebar disappears in the host's normal layout
+ * and the controls it hid were the entry point to the whole panel.
  */
 
 export interface DbSidebarProps {
-  searchMode: SearchMode;
-  onSearchModeChange: (mode: SearchMode) => void;
-  searchPattern: string;
-  onSearchPatternChange: (pattern: string) => void;
-  /** `Enter` in the pattern input applies the search (PRD §4 I-9). */
-  onSearchSubmit: () => void;
   loading: boolean;
   databases: string[];
   selectedDb: string | null;
@@ -28,11 +22,6 @@ export interface DbSidebarProps {
 }
 
 export function DbSidebar({
-  searchMode,
-  onSearchModeChange,
-  searchPattern,
-  onSearchPatternChange,
-  onSearchSubmit,
   loading,
   databases,
   selectedDb,
@@ -46,27 +35,6 @@ export function DbSidebar({
       className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-edge bg-surface-alt"
       data-testid="redis-db-sidebar"
     >
-      <div className="border-b border-edge p-2">
-        <div className="mb-2">
-          <SearchModeTabs mode={searchMode} onChange={onSearchModeChange} />
-        </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-muted" />
-          <Input
-            value={searchPattern}
-            onChange={(e) => onSearchPatternChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onSearchSubmit();
-            }}
-            placeholder={
-              searchMode === 'key' ? t('redis.searchKeys') : t('redis.search.valuePlaceholder')
-            }
-            className="h-7 pl-7 text-xs"
-            data-testid="redis-search-input"
-          />
-        </div>
-      </div>
-
       {loading && (
         <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />

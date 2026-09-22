@@ -9,12 +9,13 @@ import {
 import { Database } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
 import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
-import { BatchBar } from './BatchBar';
+import { BatchPatternBar } from './BatchBar';
 import { ImportExport } from './ImportExport';
 import { KeyTreeColumn } from './KeyTreeColumn';
+import { KeyTreeHeader } from './KeyTreeHeader';
+import { KeyTreeSearchRow } from './KeyTreeSearchRow';
+import { useBatchActions } from './useBatchActions';
 import { DetailColumn } from './DetailColumn';
-import type { SearchMode } from './SearchModeTabs';
-import { useValueSearch } from '../value-search/useValueSearch';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTree } from './useKeyTree';
 import { buildServerTreeRows } from './keyTree';
@@ -27,6 +28,7 @@ import { useKeySelection } from './useKeySelection';
 import { useKeyDetailState } from './useKeyDetailState';
 import { useKeyRowActions } from './useKeyRowActions';
 import { useKvSlotRelay } from './useKvSlotRelay';
+import { useWorkbenchSearch } from './useWorkbenchSearch';
 import { useDbKeyCounts } from './useDbKeyCounts';
 import { useCreateTypes, useReJsonModules } from './useReJsonModules';
 import { useWorkbenchOverlays } from './useWorkbenchOverlays';
@@ -74,7 +76,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
     const [selectedDb, setSelectedDb] = useState<string | null>(null);
     const [dbIndex, setDbIndex] = useState(0);
-    const [searchMode, setSearchMode] = useState<SearchMode>('key');
+    // R2 chip: wrap a literal input in `*…*` when applying (see toScanPattern).
+    const [fuzzyPattern, setFuzzyPattern] = useState(false);
 
     const overlays = useWorkbenchOverlays();
     const { treeWidth, startSplitDrag } = useWorkbenchSplit();
@@ -113,19 +116,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       keyType: keyTypeFilter,
     });
 
-    const {
-      state: valueSearchState,
-      start: startValueSearch,
-      cancel: cancelValueSearch,
-      reset: resetValueSearch,
-    } = useValueSearch({ dbSessionId, dbIndex });
-
-    // Exit transition: leaving value search (mode → key, or db/session change)
-    // tears down any running task so no stale scan keeps polling.
-    useEffect(() => {
-      if (searchMode === 'key') resetValueSearch();
-    }, [searchMode, dbIndex, dbSessionId, resetValueSearch]);
-
     const treeRows = useMemo(
       () => buildServerTreeRows(tree.levels, tree.expanded),
       [tree.levels, tree.expanded],
@@ -144,6 +134,13 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       detail.clearDetail();
       selection.clearSelection();
     }, [detail.clearDetail, selection.clearSelection]);
+
+    const search = useWorkbenchSearch({
+      dbSessionId,
+      dbIndex,
+      clearFocus,
+      runKeySearch: scanSearch,
+    });
 
     const handleSelectDb = useCallback(
       (db: string) => {
@@ -198,20 +195,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       handleSelectDb,
     ]);
 
-    const handleSearch = useCallback(() => {
-      clearFocus();
-      if (searchMode === 'key') {
-        scanSearch();
-        return;
-      }
-      const query = searchPattern.trim();
-      if (!query) {
-        resetValueSearch();
-        return;
-      }
-      startValueSearch({ mode: searchMode, query, pattern: '*' });
-    }, [clearFocus, searchMode, scanSearch, searchPattern, startValueSearch, resetValueSearch]);
-
     const reloadDetail = useCallback(async () => {
       if (!detail.selectedKey) return;
       await detail.selectKey(detail.selectedKey);
@@ -230,15 +213,22 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       onKeyCtxDialog: overlays.setKeyCtxDialog,
     });
 
+    // One controller for every batch write; the R1 header and the pattern strip
+    // are two trigger surfaces over the same dialogs (D-1).
+    const batchActions = useBatchActions({
+      dbSessionId,
+      dbIndex,
+      selectedKeys: [...selection.selectedKeys],
+      searchPattern,
+      onClearSelection: selection.clearSelection,
+      onRefresh: refreshKeys,
+      onSummary: overlays.setBatchSummary,
+    });
+
     return (
       <div className="flex min-h-0 flex-1">
         {!hideSidebar && (
           <DbSidebar
-            searchMode={searchMode}
-            onSearchModeChange={setSearchMode}
-            searchPattern={searchPattern}
-            onSearchPatternChange={setSearchPattern}
-            onSearchSubmit={handleSearch}
             loading={loading}
             databases={databases}
             selectedDb={selectedDb}
@@ -255,18 +245,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                 dbSize={dbSize}
                 loadedCount={keys.length}
                 hasMore={cursor !== 0}
-                searchMode={searchMode}
+                withMemory={withMemory}
+                onWithMemoryChange={setWithMemory}
                 allowFlush={allowFlush}
-                filters={{
-                  keyType: keyTypeFilter,
-                  onKeyTypeChange: setKeyTypeFilter,
-                  withMemory,
-                  onWithMemoryChange: setWithMemory,
-                  noTtlOnly,
-                  onNoTtlOnlyChange: setNoTtlOnly,
-                }}
-                onRefresh={handleRefresh}
-                onCreate={() => overlays.setCreateOpen(true)}
                 onImportExport={() => overlays.setImportExportOpen(true)}
                 onFlushDb={() => overlays.setFlushDialog('db')}
                 onFlushAll={() => overlays.setFlushDialog('all')}
@@ -277,15 +258,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                 onDismiss={() => overlays.setBatchSummary(null)}
               />
 
-              <BatchBar
-                dbSessionId={dbSessionId}
-                dbIndex={dbIndex}
-                selectedKeys={[...selection.selectedKeys]}
-                searchPattern={searchPattern}
-                onClearSelection={selection.clearSelection}
-                onRefresh={refreshKeys}
-                onSummary={overlays.setBatchSummary}
-              />
+              <BatchPatternBar actions={batchActions} dbIndex={dbIndex} />
 
               <div className="flex min-h-0 flex-1">
                 <div
@@ -294,8 +267,35 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                   data-testid="redis-tree-pane"
                   data-tree-width={treeWidth}
                 >
+                  <KeyTreeHeader
+                    searchMode={search.searchMode}
+                    onSearchModeChange={search.setSearchMode}
+                    loadedCount={keys.length}
+                    totalCount={dbSize}
+                    scanning={cursor !== 0}
+                    selectedCount={selection.selectionCount}
+                    onSelectAll={() => selection.selectMany(keys.map((k) => k.key))}
+                    onClearSelection={selection.clearSelection}
+                    onBatchTtl={() => batchActions.request('ttl')}
+                    onBatchDelete={() => batchActions.request('delete')}
+                    onRefresh={handleRefresh}
+                    onCreateKey={() => overlays.setCreateOpen(true)}
+                  >
+                    <KeyTreeSearchRow
+                      scope={search.searchMode}
+                      pattern={searchPattern}
+                      onPatternChange={setSearchPattern}
+                      onApply={() => search.applySearch(searchPattern, fuzzyPattern)}
+                      fuzzy={fuzzyPattern}
+                      onFuzzyChange={setFuzzyPattern}
+                      noTtlOnly={noTtlOnly}
+                      onNoTtlOnlyChange={setNoTtlOnly}
+                      keyType={keyTypeFilter}
+                      onKeyTypeChange={setKeyTypeFilter}
+                    />
+                  </KeyTreeHeader>
                   <KeyTreeColumn
-                    searchMode={searchMode}
+                    searchMode={search.searchMode}
                     treeRows={treeRows}
                     allKeys={keys.map((k) => k.key)}
                     expandedFolders={tree.expanded}
@@ -310,8 +310,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     loading={keysLoading}
                     hasMore={cursor !== 0}
                     onLoadMore={loadMore}
-                    valueSearchState={valueSearchState}
-                    onCancelValueSearch={cancelValueSearch}
+                    valueSearchState={search.valueSearchState}
+                    onCancelValueSearch={search.cancelValueSearch}
                   />
                 </div>
 
@@ -384,6 +384,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         />
 
         {actionDialogs}
+        {batchActions.dialogs}
       </div>
     );
   },

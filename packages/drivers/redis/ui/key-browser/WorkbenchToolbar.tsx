@@ -1,8 +1,6 @@
-import { FolderInput, Plus, RefreshCw } from 'lucide-react';
+import { FolderInput } from 'lucide-react';
 import { Button, useI18n } from '@datazen/ui';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
-import { KeyBrowserControls, type KeyBrowserControlsProps } from './KeyBrowserControls';
-import type { SearchMode } from './SearchModeTabs';
 
 /**
  * Summary banner of the last batch write (delete / TTL / rename / import).
@@ -42,33 +40,32 @@ export interface WorkbenchToolbarProps {
   loadedCount: number;
   /** Scan cursor still non-zero ⇒ the loaded set is partial. */
   hasMore: boolean;
-  searchMode: SearchMode;
-  filters: KeyBrowserControlsProps;
+  /** Optional `MEMORY USAGE` per key — expensive, so it stays opt-in here. */
+  withMemory: boolean;
+  onWithMemoryChange: (withMemory: boolean) => void;
   allowFlush: boolean;
-  onRefresh: () => void;
-  onCreate: () => void;
   onImportExport: () => void;
   onFlushDb: () => void;
   onFlushAll: () => void;
 }
 
 /**
- * Workbench toolbar row (db · sizes · loaded · filters · global actions).
+ * Workbench toolbar row (db · sizes · session actions).
  *
- * Extracted verbatim from `RedisWorkbench.tsx` in D-0. The PRD's R1 *column*
- * header is a different row and lives next to the tree; this one keeps the
- * session-wide actions (refresh / create / import-export / FLUSH).
+ * Extracted verbatim from `RedisWorkbench.tsx` in D-0. Since D-1/D-2 the
+ * key-tree actions (refresh, `+` create, select/batch) and the pattern/type/
+ * no-expiry filters live in the R1/R2 column header next to the tree they act
+ * on; this row keeps the session-wide ones (import/export, FLUSH) and the
+ * server-cost switch, which is not a per-tree filter.
  */
 export function WorkbenchToolbar({
   selectedDb,
   dbSize,
   loadedCount,
   hasMore,
-  searchMode,
-  filters,
+  withMemory,
+  onWithMemoryChange,
   allowFlush,
-  onRefresh,
-  onCreate,
   onImportExport,
   onFlushDb,
   onFlushAll,
@@ -86,28 +83,18 @@ export function WorkbenchToolbar({
       <span className="text-edge">|</span>
       <span>{t('redis.loadedCount').replace('{count}', String(loadedCount))}</span>
       {hasMore && <span className="text-fg-muted">({t('redis.loadMore')}…)</span>}
-      {searchMode === 'key' && <KeyBrowserControls {...filters} />}
+      <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-secondary">
+        <input
+          type="checkbox"
+          checked={withMemory}
+          onChange={(e) => onWithMemoryChange(e.target.checked)}
+          className="rounded border-edge"
+          data-testid="redis-with-memory"
+        />
+        {t('redis.withMemory')}
+      </label>
       <div className="flex-1" />
       <SafeModeBadge />
-      <Button
-        variant="secondary"
-        className="h-7 gap-1 px-2 text-xs"
-        title={t('connWin.refresh')}
-        data-testid="redis-refresh"
-        onClick={onRefresh}
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-        {t('redis.refresh')}
-      </Button>
-      <Button
-        variant="secondary"
-        className="h-7 gap-1 px-2 text-xs"
-        data-testid="redis-create-key"
-        onClick={onCreate}
-      >
-        <Plus className="h-3.5 w-3.5" />
-        {t('redis.createKey')}
-      </Button>
       <Button
         variant="secondary"
         className="h-7 gap-1 px-2 text-xs"

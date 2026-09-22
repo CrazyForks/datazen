@@ -119,6 +119,8 @@ export function KeyTreeList({
                   className="text-xs text-accent hover:underline"
                   onClick={onLoadMore}
                   disabled={loading}
+                  data-testid="redis-tree-load-more"
+                  data-loading={loading ? 'true' : 'false'}
                 >
                   {loading ? (
                     <Loader2 className="inline h-3.5 w-3.5 animate-spin" />
