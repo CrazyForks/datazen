@@ -16,7 +16,7 @@
 > **复测结论（Tester 第 2 轮）**: ✅ **已修复**。独立重跑 + 自建对抗用例（三种 kind 不可达端点全部 `Err`；`CONNECT` 请求行/`Host`/`Proxy-Authorization` 优先级/终止头逐字节断言；`407`/`502`/畸形状态行均 `Err`；`datazen_v1` `op=error` 与静默中继均 `Err`；`raw_binary` 非 WS 端点 `Err`；Ssh 成功路径经 in-process bastion 实测 `Ok`）。详见 `progress.md`「Tester 复测轮（第 2 轮）」。残留问题另登记为 BUG-003（探针无超时）与 BUG-004（TLS 路径 panic），二者**不在**原 BUG-001 的定义域内。
 
 - **量级**: 中高（G8 新功能对 3 种隧道类型中的 2 种完全失效，且是"谎报成功"而非报错）
-- **状态**: 待复测（已修复）
+- **状态**: ✅ 已修复（复测通过）
 - **影响范围**: `ConnectionManager::test_tunnel`（`src-tauri/src/services/connection_manager/tunnels.rs:68-120`）→ 新 IPC `test_tunnel(id, targetHost, targetPort)`（`src-tauri/src/commands/tunnel.rs:131-139`）。管理面「测试隧道」按钮对 HTTP 代理 / WebSocket 隧道会显示"连通"，即使代理/中继地址根本不可达。SSH 类型不受影响。
 
 ### 描述
@@ -73,7 +73,7 @@ test commands::tunnel::tests::zz_temp_repro_dead_endpoints_report_success ... ok
 > **复测结论（Tester 第 2 轮）**: ✅ **已修复**。本轮自建 **in-process russh bastion 夹具**（macOS 非 root 无法跑 `sshd`：`ssh_sandbox_child: sandbox_init: Operation not permitted`），对**真实 `SshTunnel::start`** 路径动态验证：转发真实字节 → `drop` 后 `AbortHandle::is_finished()` 为真、已建立的转发连接被拆除、`127.0.0.1:<port>` 可重新 bind、**SSH 会话计数归零**（`Arc<Mutex<Handle>>` 克隆全部释放）；跳板链（`_upstream`）两跳会话同样归零。既存 `test_connection` 的同类泄漏随之修复（同一 `Drop`）。
 
 - **量级**: 中（资源泄漏，非数据损坏；但管理面可被反复点击，泄漏会累积）
-- **状态**: 待复测（已修复）
+- **状态**: ✅ 已修复（复测通过）
 - **影响范围**: `ConnectionManager::test_tunnel`（`src-tauri/src/services/connection_manager/tunnels.rs:113-119`）的 SSH 分支；根因在 `SshTunnel` 缺少 `Drop`（`src-tauri/src/ssh_tunnel.rs:99-103`）。既存 `ConnectionManager::test_connection`（`tunnels.rs:41-57`）有同一形状的既存泄漏。
 
 ### 描述

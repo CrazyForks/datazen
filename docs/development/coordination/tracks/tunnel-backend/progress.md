@@ -507,6 +507,7 @@ Tester 第 2 轮新增的 14 条建议本轮**一条未动**，其中与本次�
 
 - 复测对象: 修复 commit **`1398bd7d`**（`fix(tunnel): bound the CONNECT probe and install a rustls CryptoProvider`），基线 `302cf444`
 - 复测者: **全新 Tester 实例**（与编码代理、第 1 / 2 轮 Tester 均不同实例）
+- 测试 commit: **`c008cb3b67834aed2ee7dbf45bf07c9fd412a8fb`**（`test(tunnel): re-verify tunnel-backend after fix round 2`；含本轮 6 个新用例 + `bugs.md` / 本文档状态更新）
 - 环境: macOS / `CARGO_TARGET_DIR=target/cargo-wt`；未使用 `npx`、未执行 `pnpm install`
 - 结论: **`TEST_DONE`** —— BUG-003 / BUG-004 均确认修复，**未发现新 Bug**，未发现断言被弱化或测试丢失
 
