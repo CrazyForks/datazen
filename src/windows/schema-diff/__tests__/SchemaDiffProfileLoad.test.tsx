@@ -188,6 +188,11 @@ describe('SchemaDiffWindow profile loading', () => {
 
   afterEach(() => cleanup());
 
+  function chooseProfile(profileName: string) {
+    fireEvent.click(screen.getByTestId('schema-diff-profile-select'));
+    fireEvent.mouseDown(screen.getByRole('option', { name: profileName }));
+  }
+
   it('[tester] reloads a profile through fresh inspection and preserves options and type overrides', async () => {
     render(<SchemaDiffWindow />);
 
@@ -202,9 +207,7 @@ describe('SchemaDiffWindow profile loading', () => {
     await waitFor(() => expect(screen.getByTestId('schema-diff-step-plan')).toBeInTheDocument());
     await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByTestId('schema-diff-profile-select'), {
-      target: { value: profile.id },
-    });
+    chooseProfile(profile.name);
     fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
 
     await waitFor(() =>
@@ -245,17 +248,19 @@ describe('SchemaDiffWindow profile loading', () => {
     render(<SchemaDiffWindow />);
 
     fireEvent.click(screen.getByTestId('schema-diff-next'));
-    await waitFor(() => expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByTestId('schema-diff-next'));
     await waitFor(() => expect(screen.getByTestId('schema-diff-step-compare')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('schema-diff-next'));
     await waitFor(() => expect(screen.getByTestId('schema-diff-step-plan')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByTestId('schema-diff-profile-select'), {
-      target: { value: profile.id },
-    });
+    chooseProfile(profile.name);
     fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
-    await waitFor(() => expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('schema-diff-objects-panel')).toBeInTheDocument(),
+    );
 
     const archive = screen
       .getAllByTestId('schema-diff-table-row')
@@ -277,11 +282,13 @@ describe('SchemaDiffWindow profile loading', () => {
       'public.archive',
     );
     fireEvent.click(screen.getByTestId('schema-diff-next'));
-    await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        tableNames: ['public.users'],
-        targetOnlyTableNames: ['public.archive'],
-      }),
-    ));
+    await waitFor(() =>
+      expect(schemaDiffCommands.preparePlan).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          tableNames: ['public.users'],
+          targetOnlyTableNames: ['public.archive'],
+        }),
+      ),
+    );
   });
 });

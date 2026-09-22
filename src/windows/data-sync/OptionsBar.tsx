@@ -1,5 +1,6 @@
 import { useI18n } from '../../hooks/useI18n';
 import type { SyncOptions } from '../../commands/sync';
+import { Select } from '../../components/ui/Select';
 
 interface OptionsBarProps {
   options: SyncOptions;
@@ -50,21 +51,22 @@ export function OptionsBar({ options, onChange, onEnableDelete }: OptionsBarProp
       </label>
       <label className="flex items-center gap-2 text-sm">
         <span>{t('sync.conflictPolicyLabel')}</span>
-        <select
-          className="rounded border border-edge bg-surface px-2 py-1 text-sm"
-          data-testid="data-sync-conflict-policy"
+        <Select
+          className="min-w-28"
+          triggerDataAttrs={{ 'data-testid': 'data-sync-conflict-policy' }}
           value={options.conflictPolicy ?? 'abort'}
-          onChange={(e) =>
+          options={[
+            { value: 'abort', label: t('sync.conflictPolicyAbort') },
+            { value: 'skip', label: t('sync.conflictPolicySkip') },
+            { value: 'force', label: t('sync.conflictPolicyForce') },
+          ]}
+          onChange={(value) =>
             onChange({
               ...options,
-              conflictPolicy: e.target.value as NonNullable<SyncOptions['conflictPolicy']>,
+              conflictPolicy: value as NonNullable<SyncOptions['conflictPolicy']>,
             })
           }
-        >
-          <option value="abort">{t('sync.conflictPolicyAbort')}</option>
-          <option value="skip">{t('sync.conflictPolicySkip')}</option>
-          <option value="force">{t('sync.conflictPolicyForce')}</option>
-        </select>
+        />
       </label>
       {options.conflictPolicy && options.conflictPolicy !== 'abort' ? (
         <span className="text-xs text-amber-600 dark:text-amber-400">

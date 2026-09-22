@@ -344,6 +344,11 @@ describe('DataSyncWindow wizard', () => {
     cleanup();
   });
 
+  function chooseProfile(profileName: string) {
+    fireEvent.click(screen.getByTestId('data-sync-profile-select'));
+    fireEvent.mouseDown(screen.getByRole('option', { name: profileName }));
+  }
+
   it('shows the migration-style wizard shell and endpoint controls', async () => {
     render(<DataSyncWindow />);
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('get_connections'));
@@ -1463,14 +1468,16 @@ describe('DataSyncWindow wizard', () => {
     fireEvent.click(screen.getByTestId('data-sync-profile-save'));
 
     await waitFor(() => expect(saveSyncProfileMock).toHaveBeenCalledTimes(1));
-    const [profile] = saveSyncProfileMock.mock.calls[0] as [{
-      version: number;
-      name: string;
-      sourceConnectionId: string;
-      targetConnectionId: string;
-      tables: unknown[];
-      options: { insert: boolean; update: boolean; delete: boolean };
-    }];
+    const [profile] = saveSyncProfileMock.mock.calls[0] as [
+      {
+        version: number;
+        name: string;
+        sourceConnectionId: string;
+        targetConnectionId: string;
+        tables: unknown[];
+        options: { insert: boolean; update: boolean; delete: boolean };
+      },
+    ];
     expect(profile).toMatchObject({
       version: 1,
       name: 'Nightly users',
@@ -1505,9 +1512,7 @@ describe('DataSyncWindow wizard', () => {
       targetDatabase: 'tgt',
       sourceSchema: null,
       targetSchema: null,
-      tables: [
-        { sourceTable: 'users', targetTable: 'users', enabled: false, sourceFilter },
-      ],
+      tables: [{ sourceTable: 'users', targetTable: 'users', enabled: false, sourceFilter }],
       options: {
         insert: true,
         update: false,
@@ -1528,9 +1533,7 @@ describe('DataSyncWindow wizard', () => {
     render(<DataSyncWindow />);
     await selectEndpoints();
     await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
-    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
-      target: { value: profile.id },
-    });
+    chooseProfile(profile.name);
     fireEvent.click(screen.getByTestId('data-sync-profile-load'));
     expect(await screen.findByText('sync.profile.loaded')).toBeTruthy();
 
@@ -1569,9 +1572,7 @@ describe('DataSyncWindow wizard', () => {
     ]);
     render(<DataSyncWindow />);
     await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
-    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
-      target: { value: 'stale-profile' },
-    });
+    chooseProfile('Stale');
     fireEvent.click(screen.getByTestId('data-sync-profile-load'));
     expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(
       'sync.profile.missingConnection',
@@ -1594,9 +1595,7 @@ describe('DataSyncWindow wizard', () => {
     getSyncProfilesMock.mockResolvedValue([profile]);
     render(<DataSyncWindow />);
     await waitFor(() => expect(screen.getByTestId('data-sync-profile-select')).toBeTruthy());
-    fireEvent.change(screen.getByTestId('data-sync-profile-select'), {
-      target: { value: profile.id },
-    });
+    chooseProfile(profile.name);
     fireEvent.click(screen.getByTestId('data-sync-profile-delete'));
     await waitFor(() => expect(deleteSyncProfileMock).toHaveBeenCalledWith(profile.id));
     expect(await screen.findByText('sync.profile.deleted')).toBeTruthy();

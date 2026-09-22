@@ -5,6 +5,7 @@ import { StatusBar } from '../../components/StatusBar';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
+import { Select } from '../../components/ui/Select';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { SchemaDiffPanel, formatSchemaDiffText } from '../../components/schema/SchemaDiffPanel';
 import {
@@ -373,7 +374,10 @@ export function SchemaDiffWindow() {
         targetDatabase: endpoints.targetDatabase || null,
         targetSchema: endpoints.targetSchema || null,
         profile: profiles.find((profile) => profile.id === selectedProfileId)
-          ? { id: selectedProfileId, revision: profiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
+          ? {
+              id: selectedProfileId,
+              revision: profiles.find((profile) => profile.id === selectedProfileId)!.updatedAt,
+            }
           : undefined,
       });
       setDeployResult(result);
@@ -712,14 +716,17 @@ export function SchemaDiffWindow() {
       <TitleBar
         title={t('common.schemaDiff')}
         rightContent={
-          <div className="flex items-center gap-1"><MigrationRunHistoryDialog operation="schemaDiff" /><Button
-            variant="secondary"
-            className="h-6 w-6 !px-0"
-            title={t('docs.openSchemaDiffHelp')}
-            onClick={() => openDocsWindow('schemaDiff')}
-          >
-            <BookOpen className="h-3 w-3" />
-          </Button></div>
+          <div className="flex items-center gap-1">
+            <MigrationRunHistoryDialog operation="schemaDiff" />
+            <Button
+              variant="secondary"
+              className="h-6 w-6 !px-0"
+              title={t('docs.openSchemaDiffHelp')}
+              onClick={() => openDocsWindow('schemaDiff')}
+            >
+              <BookOpen className="h-3 w-3" />
+            </Button>
+          </div>
         }
       />
 
@@ -884,20 +891,18 @@ export function SchemaDiffWindow() {
                     {clipboardFeedback === 'sql' ? t('common.copied') : t('common.copySql')}
                   </Button>
                 )}
-                <select
-                  data-testid="schema-diff-profile-select"
-                  className="h-8 rounded-md border border-edge bg-surface px-2 text-xs text-fg"
+                <Select
+                  className="min-w-36"
+                  triggerDataAttrs={{ 'data-testid': 'schema-diff-profile-select' }}
                   value={selectedProfileId}
-                  aria-label={t('schemaDiff.profileSelect')}
-                  onChange={(event) => setSelectedProfileId(event.target.value)}
-                >
-                  <option value="">{t('schemaDiff.profileSelect')}</option>
-                  {profiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-                </select>
+                  title={t('schemaDiff.profileSelect')}
+                  placeholder={t('schemaDiff.profileSelect')}
+                  options={profiles.map((profile) => ({
+                    value: profile.id,
+                    label: profile.name,
+                  }))}
+                  onChange={setSelectedProfileId}
+                />
                 <Button
                   variant="secondary"
                   data-testid="schema-diff-profile-load"

@@ -18,9 +18,10 @@ describe('Data Sync conflict policy options', () => {
         onEnableDelete={vi.fn()}
       />,
     );
-    const select = screen.getByTestId('data-sync-conflict-policy') as HTMLSelectElement;
-    expect(select.value).toBe('abort');
-    fireEvent.change(select, { target: { value: 'skip' } });
+    const select = screen.getByTestId('data-sync-conflict-policy');
+    expect(select).toHaveTextContent('sync.conflictPolicyAbort');
+    fireEvent.click(select);
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'sync.conflictPolicySkip' }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ conflictPolicy: 'skip' }));
     view.rerender(
       <OptionsBar

@@ -6,6 +6,7 @@ import { StatusBar } from '../../components/StatusBar';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
+import { Select } from '../../components/ui/Select';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { aiCommands } from '../../commands/ai';
 import {
@@ -1353,14 +1354,31 @@ export function DataSyncWindow() {
       const result = tableSelections.length
         ? profileRef
           ? await syncCommands.executeDataSync(
-              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections, profileRef,
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              selectedRows,
+              tableSelections,
+              profileRef,
             )
           : await syncCommands.executeDataSync(
-              tgtConnId, selected, jobId, targetDatabase, selectedRows, tableSelections,
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              selectedRows,
+              tableSelections,
             )
         : profileRef
           ? await syncCommands.executeDataSync(
-              tgtConnId, selected, jobId, targetDatabase, undefined, undefined, profileRef,
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              undefined,
+              undefined,
+              profileRef,
             )
           : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
       setLastExecutionResult(result);
@@ -1851,7 +1869,10 @@ export function DataSyncWindow() {
       data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
-      <TitleBar title={t('common.dataSyncTitle')} rightContent={<MigrationRunHistoryDialog operation="dataSync" />} />
+      <TitleBar
+        title={t('common.dataSyncTitle')}
+        rightContent={<MigrationRunHistoryDialog operation="dataSync" />}
+      />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">
@@ -1913,19 +1934,17 @@ export function DataSyncWindow() {
                 </label>
                 <label className="min-w-48 text-xs text-fg-muted">
                   <span className="mb-1 block">{t('sync.profile.load')}</span>
-                  <select
-                    data-testid="data-sync-profile-select"
+                  <Select
+                    className="w-full"
+                    triggerDataAttrs={{ 'data-testid': 'data-sync-profile-select' }}
                     value={selectedProfileId}
-                    onChange={(event) => setSelectedProfileId(event.target.value)}
-                    className="h-8 w-full rounded border border-edge bg-surface px-2 text-sm text-fg"
-                  >
-                    <option value="">{t('sync.profile.select')}</option>
-                    {syncProfiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder={t('sync.profile.select')}
+                    options={syncProfiles.map((profile) => ({
+                      value: profile.id,
+                      label: profile.name,
+                    }))}
+                    onChange={setSelectedProfileId}
+                  />
                 </label>
                 <Button
                   size="sm"
