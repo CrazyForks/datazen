@@ -182,10 +182,20 @@ describe('RedisKvStatusBar (statusBar slot)', () => {
     const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
 
     act(() => relay.selectKey('user:1'));
-    await waitFor(() =>
-      expect(container.querySelector('[data-part="selected-key"]')?.textContent).toBe('user:1'),
-    );
-    expect(container.querySelector('[data-part="type"]')?.textContent).toBe('hash');
+    // One wait, one render root (redis-kvbar-ui-BUG-006). `selected-key` is printed
+    // straight from the relay, so it is already true on the click frame; the `type`
+    // part only exists once the reply has landed (≥3 extra microtask hops in
+    // useKeyObjectInfo.ts). Waiting for the first and then bare-asserting the second
+    // left a legal empty window — that is the race this gate used to be exposed to.
+    // The status-bar root carries `data-status-state` *and* the parts, both computed
+    // from the same `info` in one render pass, so no frame can pass this check by
+    // accident; `ready` is pinned too, which the old form never asserted.
+    await waitFor(() => {
+      const bar = container.querySelector('[data-status-state]');
+      expect(bar?.getAttribute('data-status-state')).toBe('ready');
+      expect(bar?.querySelector('[data-part="selected-key"]')?.textContent).toBe('user:1');
+      expect(bar?.querySelector('[data-part="type"]')?.textContent).toBe('hash');
+    });
     expect(commandInvoke).toHaveBeenCalledWith('redis', 'key_object_info', {
       dbSessionId: 'sess-1',
       dbIndex: 5,
