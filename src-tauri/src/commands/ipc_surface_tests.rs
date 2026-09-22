@@ -16,6 +16,8 @@ const SOURCE: &str = concat!(
     include_str!("app_archive.rs"),
     "\n",
     include_str!("encryption_key.rs"),
+    "\n",
+    include_str!("tunnel.rs"),
 );
 const BOOTSTRAP_RS: &str = include_str!("../bootstrap/run.rs");
 
@@ -37,6 +39,9 @@ fn bootstrap_rs_registers_merged_commands_only() {
     assert!(BOOTSTRAP_RS.contains("commands::save_settings,"));
     assert!(BOOTSTRAP_RS.contains("commands::get_tunnels,"));
     assert!(BOOTSTRAP_RS.contains("commands::save_tunnel,"));
+    assert!(BOOTSTRAP_RS.contains("commands::get_tunnel_summaries,"));
+    assert!(BOOTSTRAP_RS.contains("commands::get_tunnel_usage,"));
+    assert!(BOOTSTRAP_RS.contains("commands::test_tunnel,"));
 }
 
 #[test]
@@ -90,6 +95,28 @@ mod ipc_contract_guards {
                 "raw `path` parameter must not return after the merge; got: {params}"
             );
         }
+    }
+
+    #[test]
+    fn tunnel_commands_expose_metadata_only_params() {
+        // The summary IPC must stay parameterless (no way to ask for secrets),
+        // and the connectivity probe takes an explicit target rather than a
+        // caller-supplied config blob.
+        let summary = command_params("get_tunnel_summaries");
+        assert_eq!(
+            summary.trim().trim_end_matches(','),
+            "state: State<'_, AppState>",
+            "get_tunnel_summaries must take nothing but state; got: {summary}"
+        );
+
+        let usage = command_params("get_tunnel_usage");
+        assert!(usage.contains("id: String"), "got: {usage}");
+        assert!(!usage.contains("password"), "got: {usage}");
+
+        let probe = command_params("test_tunnel");
+        assert!(probe.contains("id: String"), "got: {probe}");
+        assert!(probe.contains("target_host: String"), "got: {probe}");
+        assert!(probe.contains("target_port: u16"), "got: {probe}");
     }
 
     #[test]

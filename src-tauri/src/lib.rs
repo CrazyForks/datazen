@@ -24,6 +24,7 @@ mod ssh_known_hosts;
 pub mod ssh_tunnel;
 mod store;
 mod theme;
+mod tls;
 pub mod transfer;
 mod tray;
 pub mod tunnel;
@@ -55,3 +56,4 @@ pub(crate) use bootstrap::{
 };
 
 pub use bootstrap::{is_mcp_stdio_mode, run, run_mcp_stdio};
+pub use tls::install_default_crypto_provider;
