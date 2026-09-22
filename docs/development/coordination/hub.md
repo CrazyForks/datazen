@@ -2,7 +2,7 @@
 
 # Coordination Hub — 协调总览
 
-> **状态**：Redis Workbench P0（`docs/todo/redis-workbench-ux/PRD.md` v1.1.0）Wave 1 三条轨道已全部合入集成分支 `feat/redis-workspace-ux`；暂无活跃子代理，等待派发 Wave 2。上一轮（驱动解耦 `feat/driver-decoupling`）已关账，其轨道目录保留为历史台账。
+> **状态**：Redis Workbench P0（`docs/todo/redis-workbench-ux/PRD.md` v1.1.0）Wave 1 三条 + Wave 2 第一段两条（`redis-overview` / `redis-kvbar-ui`）已合入集成分支 `feat/redis-workspace-ux`；暂无活跃子代理。P0 剩余 = `redis-kv-contract`（#70 契约 F-2.1 加宽）→ `contextBar` 全量版（#69）→ R 阶段全量回归（#44）。上一轮（驱动解耦 `feat/driver-decoupling`）已关账，其轨道目录保留为历史台账。
 
 ## 功能总览表
 
@@ -25,6 +25,8 @@
 | redis-assert-policy | 存量"钉死英文文案"断言改写 + 原则六口径落档（i18n 文案护栏按裁定撤销） | MERGED（2026-09-22 · 第 3 轮由协调者裁定取消，只合改写） | `abe72c9bb`（撤护栏留改写）+ 历史 `1f7965677` / `075d2a10c` | 第 1 轮复测 `47b9a4a9f`（FAILED）；第 2 轮修复后未复测（裁定撤护栏，无待测代码） | `9a194afa7` |
 | redis-cmds-p0 | 两条 P0 后端命令（`type_distribution` / `key_object_info`） | MERGED（2026-09-22 · 第 3 轮复测 TEST_DONE） | `81cc58a90` + `286d917c4` + `a6304a4fb` | `77cec65c3`（Tester 第 3 轮裁定 + 门禁复跑台账） | `f3d396292` |
 | redis-host-slots | 宿主 KV 槽位与能力判定（去硬编码 + 死按钮修正） | MERGED（2026-09-22 · 第 1 轮修复复测 PASSED） | `d4469185e` | `91b12d28d`（复测确认）+ `840fd386b`（裁定台账） | `fcf606ca2` |
+| redis-kvbar-ui | KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3） | MERGED（第 3 轮 TEST_DONE；BUG-006 协调者裁定免第 4 轮 Tester，合流复验 64 次 0 红后合入） | `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`；**第 2 轮修复（只修 BUG-005）= `010c6b406`**；**第 3 轮修复（只修 BUG-006）= `59c062da1`** | `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ 第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）+ **第 3 轮 Tester：`3e382a930`（新文件 `kvBarRound3Tester.test.tsx` 3 例：连续旅程 / 收起态跨跃迁 / 回到已回答过的会话）+ `a069379d9`（该文件 prettier 收敛，纯格式）** + **第 3 轮修复回合：`59c062da1`（BUG-006：改 `kvBarSlots.test.tsx` 一条断言的等待谓词，+14/−4，无新增文件、用例数 17 → 17、断言只增不减）** | `b1e991ab1`（W2-A 合入集成分支）+ `01d3ad269`（协调者合流轮修复：meta 重复键 + 槽位护栏加宽，详见正文「合流轮」） |
+| redis-overview | 屏 A 连接总览七区块 + connectionHome 槽位（PRD §3.1 / 裁定 8-5） | MERGED（第 2 轮 Tester TEST_DONE，BUG-001/002/003 已修复、BUG-005 当场补测闭环，已合入集成分支） | `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`；修复轮 `fc78cf4c5`(BUG-002) + `4030d27e2`(现场保全) + `1ed9e1566`(cluster 批次) + `1b864b88f`(补测) + `df2d1d93a`(PRD 8-6) + `3db6c0091`(rustfmt) | `48a91e60c` + `0b78374aa` + `7f54bf982` + `2c151abb9`（Tester 第 1 轮补测 13 例）+ `b9361b9aa` + `cc826c5ec`（Tester 第 2 轮补测 6 例 ⇒ 全套 369） | `1e26c8003`（集成分支 `feat/redis-workspace-ux`，四道门禁全绿后合入） |
 
 ## 写锁台账
 
@@ -47,6 +49,8 @@
 | redis-assert-policy | 无活跃子代理（按裁定停止） | `.worktrees/datazen-redis-assert-policy` | `feature/redis-assert-policy`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 3 轮由协调者裁定取消，只合改写） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
 | redis-cmds-p0 | 无活跃子代理（Tester 第 3 轮已交付） | `.worktrees/datazen-redis-cmds-p0` | `feature/redis-cmds-p0`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 3 轮复测 TEST_DONE） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
 | redis-host-slots | 无活跃子代理 | `.worktrees/datazen-redis-host-slots` | `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 1 轮修复复测 PASSED） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
+| redis-kvbar-ui | w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，关账）** → **第 3 轮修复回合 Coder（BUG-006 单条）** → 协调者合流轮（免第 4 轮 Tester，见「合流轮」节） | .worktrees/datazen-redis-kvbar-ui | feature/redis-kvbar-ui | MERGED（第 3 轮 TEST_DONE；BUG-006 协调者裁定免第 4 轮 Tester，合流复验 64 次 0 红后合入） | 2026-09-22 15:46（**第 3 轮修复回合 Coder 交回协调者，返回 `READY_FOR_MERGE`**：只修 BUG-006 一条 = `59c062da1`（单个测试文件 +14/−4，等待谓词与被断言 DOM 挪进同一渲染根，断言只增不减）；稳定性实测目标 spec 单文件串行 **20×0 红** / 全量串行 **3×0 红**（41 files · 328 tests）/ 6 路并发 **6×6 = 36 次 0 红**（追加：与满负荷 `tsc` 并发 5 次 0 红，即 Tester 登记该红的原触发条件）；非空转证明 = M1「回包链永不填充 type」→ 目标用例红（1015ms 超时后红）+ M2「`attributeViewState` 永不 `ready`」→ 旧写法与修法 2 均**漏检为绿**、本轮写法红 + 宏任务放大器下旧写法 8ms 必红 / 本轮写法 17/17 绿；注入已全部 `git checkout HEAD --` 还原、生产码零改动。便宜门禁：tsc exit 0 · vitest 41/328 全绿 · 边界护栏 `1434 files · 0 blocking · 4 advisory`（与第 3 轮 Tester 在 `05af287d7` 的逐字一致 —— 本轮零新增文件、零生产改动，扫描面不可能变；exit 0 + `2 allow-listed reference(s) skipped`） · `ui/kv-bar/**` 覆盖率 100×4（**本回合在 `59c062da1` 实跑**，非沿用；本轮零生产改动 ⇒ 四指标与第 3 轮一致）。上一棒心跳（第 3 轮 Tester 15:06 关账）内容已完整留档在本文件「第 3 轮 Tester 判定」节） |
+| redis-overview | w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）/ w2b-overview-tester-2（第 2 轮复测，TEST_DONE） | .worktrees/datazen-redis-overview | feature/redis-overview | MERGED（第 2 轮 Tester TEST_DONE，BUG-001/002/003 已修复、BUG-005 当场补测闭环，已合入集成分支） | 2026-09-22 13:25 |
 
 ## 波次记录
 
@@ -57,7 +61,11 @@
   - `redis-host-slots` —— 宿主 KV 槽位与能力判定（`kvWorkspace` 能力位 + 4 个 codegen 槽位 + 死按钮修正）。Bug 循环 1 轮，复测 PASSED → `fcf606ca2`。
   - `redis-cmds-p0` —— `type_distribution` / `key_object_info` 两条 P0 后端命令（三拓扑往返口径）。Bug 循环 3 轮，复测 TEST_DONE → `f3d396292`。
   - `redis-assert-policy` —— 存量"钉死英文文案"断言改写 + 原则六口径落档 → `9a194afa7`。**中途裁定**：i18n 文案护栏脚本（420 行）+ 自测（687 行）+ 两条 npm 脚本按用户裁定整体删除，不再开第 3 轮复测（详见该轨 progress.md「协调者裁定（第 2 轮 · 护栏整体撤销）」）。
-- **Wave 2**（待派）：`redis-kvbar-ui`（KV 上下文条，消费 W1-A 两命令 + W1-B `contextBar` 槽位）+ `redis-overview`（屏 A 总览，消费 `home` 槽位）。
+- **Wave 2**（第一段 2026-09-22 两条均已合入）：
+  - `redis-overview` —— 屏 A 连接总览七区块 + `connectionHome` 槽位 + `memory_sample` 扩列。Bug 循环 2 轮（第 1 轮 3 条待修复 → 修复 → 第 2 轮 TEST_DONE）→ `1e26c8003`。
+  - `redis-kvbar-ui` —— 状态条 + 键属性侧栏 + 契约 F-2 中继接线（`contextBar` 全量版另立第二段 #69）。Bug 循环 3 轮（BUG-001~006），第 3 轮仅剩 1 条测试侧竞态，按相称性裁定**免第 4 轮 Tester**、由协调者合流复验 64 次 0 红 → `b1e991ab1` + 合流修复 `01d3ad269`。
+  - **合流期新增缺陷（不属任一轨）**：两轨各自往 `ui/shared/meta.ts` 的同一个 `redisMeta` 对象里加了一个**同名 `kvWorkspace` 键**（相隔 15 行 ⇒ git 静默自动合并），运行时后者覆盖前者 ⇒ 状态条与侧栏能力位归零、两槽整体不渲染且无运行时报错；`tsc` 以 TS1117 拦住，双闸门护栏 `kvSlotRegistration.test.ts` 首跑 4 例红抓到它。`resolve-drivers.mjs` 的 `kvSlots` 块同形（那处是真冲突，手工合）。
+  - **Wave 2 未完部分**：`redis-kv-contract`（#70，`KvSlotState` 按裁定 F-2.1 加宽，只加 workbench 私有事实且 getter 必须返回标量）→ `contextBar` 全量版（#69，消费新 getter；反向动作通道需先过协调者裁定）。
 - **R 阶段**（待执行）：见下方「R 阶段清单」。
 
 ## 跨轨风险
@@ -67,10 +75,11 @@
 - **Cluster 键树仍不可用**（基线缺陷 #56）：既有 `list_children` 在 Cluster 下同形 CrossSlot，Wave 2 不要在键树里假设 Cluster 可用，需在 UI 上给出降级提示。
 - **驱动不得 import `src/**`**：`KV_SLOT_NAMES` 之类宿主常量在驱动侧不可见，用 driver-sdk 的 `KvSlotName` 或由宿主把判定结果作 props 传入（W1-B 已按此形状生成槽位）。
 - **文案改动无护栏兜底**：护栏已删，"新测试零可见英文字面量"退化为纯人工评审口径（原则六）；派单时把该口径写进 Coder/Tester 验收标准，不要再提议脚本。
+- **并行轨往同一个对象字面量加"同名键"是最坏的合并面**：git 会静默自动合并（不同 hunk），JS 只保留最后一个键 ⇒ 另一轨的贡献整块消失且不报错。派单前必须在 `progress.md` 写明"本轨往哪个对象的哪个键里写"，合流时逐个人工比对。已知三处：`ui/shared/meta.ts` 的 `kvWorkspace`、`scripts/resolve-drivers.mjs` 的 `kvSlots`、`packages/drivers/redis/locales/en.ts` 的扁平 key 表（key 表因 key 名互斥才安全）。`#69 contextBar` 全量版会同时碰这三处，合并顺序排在 `#70` 之后。
 
 ## R 阶段清单
 
-- [ ] 全量回归：`npx tsc --noEmit` + 宿主 vitest + `pnpm test:unit:drivers` + `cargo test -p datazen --lib`（Wave 1 合流时已跑过一次：tsc 0 错、宿主 451 文件 / 4658 例、驱动 33 文件 / 241 例、Rust 1454 通过 / 3 ignored）。
+- [ ] 全量回归：`npx tsc --noEmit` + 宿主 vitest + `pnpm test:unit:drivers` + `cargo test -p datazen --lib`（W2 合流时已跑过一遍：tsc 0 错、宿主 451 文件 / 4658 例、驱动 47 文件 / 456 例 ×3、Rust 1454 通过 / 3 ignored + `datazen-driver-redis` 239 / 4；R 阶段仍需在主检出复跑一次）。
 - [ ] `node scripts/check-driver-import-boundaries.mjs --root` 在**主检出**复跑（worktree 缺 gitignored 的 git 驱动与 pro-extensions，结果不完整）。
 - [ ] **真连 Cluster 侧证 9a**：redis-cmds-p0 BUG-007 只有进程内复测，`route_command` 那一行不可证伪 ⇒ 需真集群 MONITOR 核对每条命令的落点，通过前该条不自关闭。
 - [ ] **真连 Cluster 9e**：`list_children` CrossSlot 基线缺陷（#56）复现并裁定归属。

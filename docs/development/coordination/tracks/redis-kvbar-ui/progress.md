@@ -1,15 +1,10 @@
 - 任务: KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3）
-- 状态: TEST_FAILED（**第 3 轮 Tester 复测**：`redis-kvbar-ui-BUG-005` 判为**真已修掉**并置 `已修复`
-  ——独立旅程复现 + 7 项变异零存活 + `{ session, value }` 形状裁定为**状态归属正确**（非清值补丁、
-  非缓存层），五项门禁在本轮最终 HEAD 复跑全绿（`a32267124` 数字 + `05af287d7` 上 tsc/vitest 串行复跑）、
-  `ui/kv-bar/**` 覆盖率 100×4；**但阶段 B 首跑观测到
-  本轨门禁测试自身 1 次随机红，新登记 `redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态，1/28 频次）
-  ⇒ 仍为 `TEST_FAILED`。BUG-006 与本条闭环无关、不阻断产品正确性，修复面一行测试代码，
-  协调者可裁定"合并前顺手修"或豁免**）
+- 状态: MERGED（第 3 轮 TEST_DONE；BUG-006 协调者裁定免第 4 轮 Tester，合流复验 64 次 0 红后合入）
 - 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`；**第 2 轮修复（只修 BUG-005）= `010c6b406`**；**第 3 轮修复（只修 BUG-006）= `59c062da1`**
 - 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ 第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）+ **第 3 轮 Tester：`3e382a930`（新文件 `kvBarRound3Tester.test.tsx` 3 例：连续旅程 / 收起态跨跃迁 / 回到已回答过的会话）+ `a069379d9`（该文件 prettier 收敛，纯格式）** + **第 3 轮修复回合：`59c062da1`（BUG-006：改 `kvBarSlots.test.tsx` 一条断言的等待谓词，+14/−4，无新增文件、用例数 17 → 17、断言只增不减）**
 - 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；第 2 轮修复回合**未改判**；**第 3 轮 Tester（本轮）判定 = `99e135f2b`**（状态行保持 `TEST_FAILED`：BUG-005 → 已修复，新登记 BUG-006 Low 测试侧）；README 假口径改判结案 = `05af287d7`；最终复跑补注 = 本次提交；第 3 轮阶段 B 门禁数字先行提交为 `a32267124`；第 3 轮修复回合（`59c062da1`）**未改判、也不改本行状态语义** —— 协调者裁定该条不派第 4 轮 Tester，返回 `READY_FOR_MERGE`，稳定性由协调者合流前自测
-- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，关账）** → **第 3 轮修复回合 Coder（BUG-006 单条，本次）**
+- 合并 commit: `b1e991ab1`（W2-A 合入集成分支）+ `01d3ad269`（协调者合流轮修复：meta 重复键 + 槽位护栏加宽，详见正文「合流轮」）
+- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，关账）** → **第 3 轮修复回合 Coder（BUG-006 单条）** → 协调者合流轮（免第 4 轮 Tester，见「合流轮」节）
 - Worktree: .worktrees/datazen-redis-kvbar-ui
 - 分支: feature/redis-kvbar-ui
 - 心跳: 2026-09-22 15:46（**第 3 轮修复回合 Coder 交回协调者，返回 `READY_FOR_MERGE`**：只修 BUG-006 一条 = `59c062da1`（单个测试文件 +14/−4，等待谓词与被断言 DOM 挪进同一渲染根，断言只增不减）；稳定性实测目标 spec 单文件串行 **20×0 红** / 全量串行 **3×0 红**（41 files · 328 tests）/ 6 路并发 **6×6 = 36 次 0 红**（追加：与满负荷 `tsc` 并发 5 次 0 红，即 Tester 登记该红的原触发条件）；非空转证明 = M1「回包链永不填充 type」→ 目标用例红（1015ms 超时后红）+ M2「`attributeViewState` 永不 `ready`」→ 旧写法与修法 2 均**漏检为绿**、本轮写法红 + 宏任务放大器下旧写法 8ms 必红 / 本轮写法 17/17 绿；注入已全部 `git checkout HEAD --` 还原、生产码零改动。便宜门禁：tsc exit 0 · vitest 41/328 全绿 · 边界护栏 `1434 files · 0 blocking · 4 advisory`（与第 3 轮 Tester 在 `05af287d7` 的逐字一致 —— 本轮零新增文件、零生产改动，扫描面不可能变；exit 0 + `2 allow-listed reference(s) skipped`） · `ui/kv-bar/**` 覆盖率 100×4（**本回合在 `59c062da1` 实跑**，非沿用；本轮零生产改动 ⇒ 四指标与第 3 轮一致）。上一棒心跳（第 3 轮 Tester 15:06 关账）内容已完整留档在本文件「第 3 轮 Tester 判定」节）
@@ -1028,3 +1023,56 @@ A~C 去重后只有两种取值：`exit=0 files="1 passed (1)" tests="17 passed 
   文件头 `- 状态:` 保持 `TEST_FAILED` **一字未动**，改判权与裁定理由归协调者。
 - commit：`59c062da1`（修复，单文件）· 本台账与 `bugs.md` 状态 = 紧随其后的第二个 commit。
 
+## 合流轮（协调者 · 集成分支 `feat/redis-workspace-ux` · 2026-09-22 16:20）
+
+> 按第 3 轮修复回合的裁定，BUG-006 不派第 4 轮 Tester，稳定性证据由协调者在合流时亲自复跑。
+> 本节即该次复跑的记录，同时是**改判依据**：`- 状态:` 由 `TEST_FAILED` → `MERGED`。
+
+### 1. 合流本身暴露的新缺陷（不在任何一轨范围内，属合并期缺陷）
+
+`git merge --no-ff feature/redis-kvbar-ui`（→ `b1e991ab1`）只有 2 处显式冲突（`en.ts`、
+`resolve-drivers.mjs`），但**第三处是 git 静默自动合并出来的**：
+
+- `packages/drivers/redis/ui/shared/meta.ts` 里出现了**两个同名 `kvWorkspace` 键**——
+  本轨在对象前段写 `{ statusBar, keyPropsSidebar }`，overview 轨在对象尾段写 `{ home: true }`，
+  两处相隔 15 行、不同 hunk ⇒ git 视为不冲突。
+- 后果分级：`tsc` 以 **TS1117** 红（唯一拦住它的门禁）；esbuild 只给 warning；
+  运行时**后一个对象字面量键静默覆盖前一个** ⇒ `statusBar` / `keyPropsSidebar` 两个能力位归零 ⇒
+  本轨两个槽位在真连环境下**整体不渲染**，且宿主不会报任何错。
+- 本轨 Tester 产出的双闸门护栏 `kvSlotRegistration.test.ts` **正是为此写的**：合流后首跑
+  4 例红（capability / registration / export / lockstep 各 1），即"缺口不在产品代码里、
+  在产品代码与注册表不一致"的那类问题被机器而不是人抓到。
+- 处置 = `01d3ad269`：合并成单个 `kvWorkspace` 块三行（`statusBar` / `keyPropsSidebar` / `home`），
+  并把护栏的 track-scoped 事实从"两行、路径钉死 `ui/kv-bar`"改成**每槽一行 (slot + component + module) 的表**，
+  导出检查改为**按注册行的 `path` 动态 import**（不再只查 `ui/kv-bar` 的命名空间导入）。
+
+### 2. 护栏加宽后的变异复验（协调者实跑，每次注入后 `git checkout` 还原，末次复跑 7/7 绿）
+
+| # | 注入 | 结果 |
+|---|---|---|
+| M1 | 删 `meta.ts` 的 `home: true`（只留注册行） | **2 红**（capability + lockstep） |
+| M2 | 删 `resolve-drivers.mjs` 的 `connectionHome` 行（只留能力位） | **2 红**（registration + lockstep） |
+| M3 | 把该行 `component` 改成 `RedisOverviewHomeX` | **2 红**（registration + export） |
+| M4 | 把该行 `path` 指向目录而非模块 | **2 红**（registration + export） |
+| M5 | 在配置对象里再加**第二个 `kvSlots:` 键**（后键胜出，两行静默消失）—— 即字面取并集会留下的形状 | **2 红**（registration + lockstep） |
+
+M5 是本轮新价值：`scripts/**` 不在 `tsc` 的扫描范围内，`vite build` 也不报错，
+**这条静默丢失此前只有人工比对能发现**，现在被钉在驱动套件里。
+
+### 3. BUG-006 稳定性复验（在合流后的树上跑，非沿用第 3 轮修复回合数字）
+
+| 组 | 分母 | 红 |
+|---|---|---|
+| A 单文件串行 | `kvBarSlots.test.tsx` × 20 | **0** |
+| B 全量串行 | 驱动全套 × 3（47 files / **456** tests） | **0** |
+| C 并发 | 3 份 kvbar/overview spec × 6 路 × 6 轮 = 36 次 | **0** |
+| D 与满负荷 `tsc` 并发 | `kvBarSlots.test.tsx` × 5 | **0** |
+
+合计 **64 次运行 0 红**；第 3 轮 Tester 登记该红的原触发条件正是 D 组形状（并发负载）。
+⇒ **`redis-kvbar-ui-BUG-006` 状态 `待复测` → `已修复`**（修复内容 `59c062da1`，复验人 = 协调者，理由见文件头裁定）。
+
+### 4. 合流后四道门禁（集成分支 `01d3ad269`）
+
+`npx tsc --noEmit` **0 错**（合流前该树是 1 错 TS1117）｜`npx vite build` **exit 0 且 0 条 Duplicate key 警告**｜
+驱动全套 **47 files / 456 tests 全绿 ×3 次**｜边界护栏 **1453 files · 0 blocking · 4 advisory**｜
+`cargo test -p datazen-driver-redis` **239 lib + 4 集成全绿**（本次合流零 Rust 改动，数字与 `1e26c8003` 一致）。

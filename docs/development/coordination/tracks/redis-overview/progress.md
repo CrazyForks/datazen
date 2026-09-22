@@ -1,8 +1,8 @@
 - 任务: 屏 A 连接总览七区块 + connectionHome 槽位（PRD §3.1 / 裁定 8-5）
-- 状态: TEST_DONE（第 2 轮 Tester 复测：BUG-001/002/003 全部已修复，无 `待修复` 遗留；新发现 BUG-005 由本 Tester 当场补测闭环）
+- 状态: MERGED（第 2 轮 Tester TEST_DONE，BUG-001/002/003 已修复、BUG-005 当场补测闭环，已合入集成分支）
 - 编码 commit: `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`；修复轮 `fc78cf4c5`(BUG-002) + `4030d27e2`(现场保全) + `1ed9e1566`(cluster 批次) + `1b864b88f`(补测) + `df2d1d93a`(PRD 8-6) + `3db6c0091`(rustfmt)
 - 测试 commit: `48a91e60c` + `0b78374aa` + `7f54bf982` + `2c151abb9`（Tester 第 1 轮补测 13 例）+ `b9361b9aa` + `cc826c5ec`（Tester 第 2 轮补测 6 例 ⇒ 全套 369）
-- 合并 commit: —
+- 合并 commit: `1e26c8003`（集成分支 `feat/redis-workspace-ux`，四道门禁全绿后合入）
 - 代理: w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）/ w2b-overview-tester-2（第 2 轮复测，TEST_DONE）
 - Worktree: .worktrees/datazen-redis-overview
 - 分支: feature/redis-overview
