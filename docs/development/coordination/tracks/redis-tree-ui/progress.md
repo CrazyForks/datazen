@@ -164,3 +164,57 @@ sticky 滚动钉住/释放、I-4 重展开不重取、I-8 批量失败 DOM、I-1
   零改/零重排他人 key；未新增其他命名空间。
 - 单文件规模：全轨最大文件 `KeyTreeList.tsx` **531 行** ≤800；`RedisWorkbench.tsx` 705 → **362 行**；
   新测试最大 `keyTreeInteractionsJourney.test.tsx` **717 行** ≤800。全部达标。
+
+### 验收项 2：D-0..D-8 逐项代码审查（阶段 A）
+逐文件 Read 了 `key-browser/**` 全部 38 个文件（含新建 17 个）与 4 个测试文件。
+
+| 单元 | 结论 | Tester 独立依据（非引用自报） |
+| --- | --- | --- |
+| D-0 拆分 | ✅ 通过 | 362 行编排根 + `KeyTreePane/KeyTreeColumn/DetailColumn/KeyWorkbenchDialogs/BatchBar/WorkbenchToolbar/DbSidebar` + 9 个 `use*`；`KeyTreePane` 自称且确实是 presentation only（零 state 零 I/O，只做接线）。**未见"换个地方堆"**。 |
+| D-1 R1 列头 | ✅ 通过 | `KeyTreeHeader.tsx:66-79` 计数三属性 `data-loaded/data-total/data-partial` 齐；扫描中 `${loaded}+`；图标组 6 枚齐（全选/取消/批量TTL/批量删除带 `data-count`/刷新/`+`）；`hideSidebar` 常驻由旅程 `keyTreeJourney.test.tsx:153-160` 实测。计数文案零硬编码。 |
+| D-2 R2 搜索行 | ⚠️ **登记 BUG-001（Major）** | pattern/applied 分离**做对了**（`useRedisKeyScan.ts:19-29`，`loadMore`/`refresh` 只用 `appliedPattern`；旅程 `:246` 有专测）；Enter 应用 / Esc 清空齐；类型 Select 保留（优势项未丢）。**但 pattern 不作用于树视图** ⇒ 见 bugs.md。 |
+| D-3 R3 分组行 | ✅ 通过 | `treePreferences.ts` 按 connectionId（回退 dbSessionId）分桶、三选、损坏 payload / 抛错 storage / 越界值全降级（6 条边界实测）；`useKeyTree.ts:62+119` 把 sep 作为**显式参数**送进 `list_children` **且**列入 reset 触发项 —— 简报点名的"硬编码 + 调用不传 sep"两处均已消除。 |
+| D-4 行规格 / sticky | ✅ 通过 | `ROW_HEIGHT=30`、`rowIndent = 4 + depth×10`（`rowIndent(-2)` 夹紧为 4，有断言）；`stickyFolderChain` 用 running stack 精确取**严格祖先链**，覆盖进入/替换/离开/clamp 四跃迁；leaf 图标↔checkbox 交换且**已勾选时常驻 checkbox**（`KeyTreeList.tsx:448-465`，避免选中集自我隐藏）—— 这个细节是对的。 |
+| D-5 I-4 分组游标 | ⚠️ **登记 BUG-002（Minor）** | 对比基线 `8981d3078:useKeyTree.ts` 的 `refresh` 里确有 `setLevels({})` ⇒ 简报指出的违反 I-4 行为**确实被改掉**；`pass` 机制实现"旧行在途不消失、wrap 才替换"，`mergeChildren` 对 folder count 只增不减防 `(9)` 回退 `(4)`；`reqSeq` 丢陈旧回包 + `levelsRef` 单一同步源（基线读闭包 `levels[prefix]?.cursor` 是真 bug，已修）。**残留**：失败路径不关 pass。 |
+| D-6 I-8 批量失败 | ✅ 通过 | 基线三处无条件 `onClearSelection()` 已换成 `releaseSucceeded(requested, failedKeyNames)`；整批抛错走 `failuresForAllKeys`（安全侧：全保留）；`delete_keys` 只回裸计数 ⇒ 注释显式说明"部分失败不可表达"，不假装能分类；`refreshAfterWrite`（`RedisWorkbench.tsx:190-193`）刻意不复用 `refreshKeys`，正是为了不让写后刷新吃掉选中 —— 判定正确。 |
+| D-7 I-9 键盘 | ✅ 通过 | 三要素完整：进入（`tabIndex=0` + `treeNavAction`）；状态内（单一 `activeIndex`，两端**夹紧而非回绕**）；退出（`←` 在 root 行返回自身、`Esc` → `-1` + 清选）。`treeNavAction` 对未知组合键返回 `null`（⌘←/⌘⇧A/IME commit 交回浏览器）—— 防吃掉宿主快捷键的正确写法。 |
+| D-8 I-11 具名空态 | ✅ 判定顺序通过（可达性受 BUG-001 影响） | `resolveTreeEmptyState` 顺序 `rowCount/loading → rootError → scanning → filter?no-match:none`，与简报一致；`keyTreeState.test.ts:409-417` 用"三条件同时为真"逐层剥离验证优先级（真断言）；只暴露 key + `data-empty-state` 双出口。 |
+
+**六个重点面独立判定**：
+(a) **分隔符切换是否零重取重折 —— 实测：会重取，且这是正确行为**。`sep` 是 `list_children` 的服务端形参
+（Rust `ops_tree.rs::list_children_on` 按 sep 折叠），换 sep 意味 prefix 归属改变，客户端无法凭 `:` 的回包
+"零重取"重折成 `.` 树；`useKeyTree` 走 `loadRoot()`（reset 语义）对根 + 每个仍展开的 prefix 各取一次。
+与简报验收标准不冲突（只要求"立即重算 + 显式参数 + per-connection 持久化"，未要求零网络往返）。
+旅程 `keyTreeInteractionsJourney.test.tsx:185-224` 实测换 `.` 后 `app:` 消失、`app.` 出现、落 `{view:'tree',sep:'.'}`。
+(b) 刷新在途旧行不消失 —— ✅（旅程 `:328-363` 用扣住回包的方式断言中间态 `data-count` 仍为 2）。
+(c) 折叠保留层级/游标、重展开零重取 —— ✅（`toggleFolder` 折叠分支只删 `expanded`；`:365-385` + `:423-426` 双路测 `childCalls()` 恒 1）。
+(d) I-8 失败键保持选中 —— ✅（`:476-545` 断言"后刷新落地后"失败键仍 checked、成功键释放，并测 dismiss 后仍在）。
+(e) I-9 三要素 —— ✅ 完整。
+(f) I-11 判定顺序 —— ✅ 一致。
+
+**非 Bug 级审查记录**（tester.md §2 要求记录）：
+- `tree.loadMore`（`useKeyTree.ts:138-144`）**当前无消费方**：`KeyTreePane.tsx:117` 把 `onLoadMore` 接到
+  `scan.loadMore`（扁平列表游标）。已核对基线 `8981d3078` 同样接法 ⇒ **非本轨引入**；folder 级"分页续扫"
+  属简报 §2 明确不做的"页脚三态"，留 Wave 4 合理。风险备注给 Wave 4：函数已备好，但展开 folder 的 `n+`
+  目前无法被用户推进。
+- 折叠态 folder 的 `(n)` 用服务端 `child.count`，非 `allKeys` 过滤数 ⇒ 以服务端为准，符合 PRD §5 裁定。
+- 基线 `fetchLevel` 读闭包 `levels[prefix]?.cursor` 的**陈旧游标 bug** 已被 `levelsRef` 消除（改进项）。
+
+### 验收项 3：旅程测试强度审查
+- `keyTreeInteractionsJourney.test.tsx` **14 条全为真旅程**，逐条抽查：每条含"进入 → 中间态 → 退出"，
+  且至少断言一次在途/残缺中间态。最硬三条：`:328-363`（`mockImplementationOnce` 扣住回包才能断言
+  "刷新在途旧行仍在" —— 真实强度，非 `waitFor` 终态）；`:476-545`（partial TTL 的 5 个跃迁点）；
+  `:389-472`（键盘单条走完 `-1→0→1→↑clamp→→展开→→进子→←回父→←折叠→→零重取重展开→Enter→⌘A→Esc→⌘R`
+  共 12 跃迁）。**无摆设用例。**
+- **零英文字面量文案断言**：`useI18n` stub 为恒等 `t`，断言只出现在 `data-*` / `.disabled` / mock 调用参数 /
+  testid 上（`data-reason-key` 断的是 key 本身）。选择器全 `data-testid`/`data-*`，**无一处视口几何反查**。合规。
+- **发现强度缺口并补测**（新增 `keyTreeTesterGaps.test.tsx`，6 例）：
+  1. `markFetchFailed` 的 `rescan + pass!==null` 分支既有测试零覆盖 ⇒ 补状态机复现（证实 BUG-002）。
+  2. 既有旅程的 `no-match` 是把 `listChildren` mock 成返回**空 children** 达成的，绕过了
+     "树行是否随 pattern 收窄"这条真实链路 ⇒ pattern→tree 通路**既无实现也无测试** ⇒ 补
+     characterization（绿，钉当前矛盾）+ 复现（红 → `it.skip`）各一条（证实 BUG-001），
+     另补 2 条 precondition 绿测（`keyType`/`sep` 确实进 `list_children`），
+     防止修复时靠删掉整排过滤器来"通过"红测。
+- D-1..D-8 覆盖对照：每面均有「纯函数状态机 + DOM 旅程」双路（D-1 ✅；D-2 ✅；D-3 ✅；D-4 ✅；
+  D-5 ✅；D-6 ✅；D-7 ✅ 全链；D-8 ✅ 判定顺序）—— 无"只剩静态测试无旅程"的验收面
+  （BUG-001 属链路缺失，非测试缺失，不记在本项下）。
