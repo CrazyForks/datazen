@@ -2,7 +2,7 @@
 
 # Coordination Hub — 协调总览
 
-> **状态**：Redis Workbench P0（`docs/todo/redis-workbench-ux/PRD.md` v1.1.0）Wave 1 三条 + Wave 2 第一段两条（`redis-overview` / `redis-kvbar-ui`）已合入集成分支 `feat/redis-workspace-ux`；暂无活跃子代理。P0 剩余 = `redis-kv-contract`（#70 契约 F-2.1 加宽）→ `contextBar` 全量版（#69）→ R 阶段全量回归（#44）。上一轮（驱动解耦 `feat/driver-decoupling`）已关账，其轨道目录保留为历史台账。
+> **状态**：Redis Workbench P0（`docs/todo/redis-workbench-ux/PRD.md` v1.1.0）Wave 1 三条 + Wave 2 第一段两条（`redis-overview` / `redis-kvbar-ui`）+ **Wave 3 已闭环三条（`redis-kv-contract` / `redis-codec-write` / `redis-console-safety`）**已合入集成分支 `feat/redis-workspace-ux`（合入后 sanity：宿主 Rust 1454 passed / 3 ignored、redis crate lib+集成全绿、tsc 0 错、驱动 UI 50 files / 551 tests）。活跃子代理：`redis-tree-backend` Tester（READY_FOR_TEST 复验）、`redis-tree-ui` Tester（复验中，2 条疑似缺陷待落盘 bugs.md）、`redis-detail-ui` Rescuer（E-5 收尾）。P0 剩余 = W3-B/D/E 闭环合入 → `contextBar` 全量版 + statusBar 消费方（Wave 4，消费 W3-A `## 契约冻结` F-1/F-2/F-3 与 W3-B `## 契约冻结` 四命令形状）→ R 阶段全量回归（#44）。上一轮（驱动解耦 `feat/driver-decoupling`）已关账，其轨道目录保留为历史台账。
 
 ## 功能总览表
 
