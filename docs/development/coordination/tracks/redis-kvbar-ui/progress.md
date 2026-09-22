@@ -1,12 +1,17 @@
 - 任务: KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3）
-- 状态: TEST_FAILED（**第 2 轮 Tester 复测**：BUG-001~004 四条判为**真已修掉**并置 `已修复`，五项门禁独立复跑全绿 + `ui/kv-bar/**` 覆盖率 100×4 + 15 项变异零存活；但复核“刻意保留形状”时**新登记 1 条 `待修复`：`redis-kvbar-ui-BUG-005`（Low，会话切换后驱逐策略行保留上一会话值）** ⇒ 仍需第 2 轮修复回合）
+- 状态: TEST_FAILED（**第 3 轮 Tester 复测**：`redis-kvbar-ui-BUG-005` 判为**真已修掉**并置 `已修复`
+  ——独立旅程复现 + 7 项变异零存活 + `{ session, value }` 形状裁定为**状态归属正确**（非清值补丁、
+  非缓存层），五项门禁在 HEAD 复确认全绿、`ui/kv-bar/**` 覆盖率 100×4；**但阶段 B 复跑时观测到
+  本轨门禁测试自身 1 次随机红，新登记 `redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态，1/28 频次）
+  ⇒ 仍为 `TEST_FAILED`。BUG-006 与本条闭环无关、不阻断产品正确性，修复面一行测试代码，
+  协调者可裁定"合并前顺手修"或豁免**）
 - 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`；**第 2 轮修复（只修 BUG-005）= `010c6b406`**
-- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ **第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）**
-- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；**本轮为修复回合，未改判：状态行仍 `TEST_FAILED`，改判权在第 3 轮 Tester**
-- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ **第 2 轮修复回合 Coder（本次，BUG-005 单条，Phase = READY_FOR_TEST）**
+- 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ 第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）+ **第 3 轮 Tester：`3e382a930`（新文件 `kvBarRound3Tester.test.tsx` 3 例：连续旅程 / 收起态跨跃迁 / 回到已回答过的会话）+ `a069379d9`（该文件 prettier 收敛，纯格式）**
+- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；第 2 轮修复回合**未改判**；**第 3 轮 Tester（本轮）= 见本节，状态行由 `TEST_FAILED` 保持 `TEST_FAILED`（BUG-005 → 已修复，新登记 BUG-006 Low 测试侧）**；第 3 轮阶段 B 门禁数字先行提交为 `a32267124`
+- 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，本次关账）**
 - Worktree: .worktrees/datazen-redis-kvbar-ui
 - 分支: feature/redis-kvbar-ui
-- 心跳: 2026-09-22 14:06（第 2 轮修复回合关账，`010c6b406` + 本台账提交；门禁与变异表在 14:00~14:05 全项复跑一遍）
+- 心跳: 2026-09-22 15:05（第 3 轮 Tester 接管实例关账：阶段 A/C/D 完成，判定 `TEST_FAILED` + BUG-006 登记；阶段 B 数字沿用 `a32267124` 并在本轮 HEAD 复确认 tsc / vitest / 覆盖率 / 护栏四项）
 
 # redis-kvbar-ui 轨道台账
 
@@ -683,4 +688,155 @@ V8 反过来证明读侧过滤顶不掉写侧守卫（两侧各有一条独立�
 被测量级改动全部在轨内文件面：仅 `KeyPropsSidebar.tsx`(+29/−… 净 +23)、`keyObjectInfo.ts`(docblock +5)、
 两测试文件；`ui/overview/**`、宿主 `src/**`、`packages/driver-sdk`、`KvSlotState` 契约、`hub.md` **零改动**，
 `locales/en.ts` 零改动（空态复用既有 `redis.keyProps.unavailable`）。无越界。
+
+## 接管说明（第 3 棒死于服务错误，本实例为第 3 轮第 2 任）
+
+协调者交代的继承现场逐条核实为真，未重做已完成的调查：
+
+| 继承物 | 核实结论 |
+|---|---|
+| `a32267124`（阶段 B 五项门禁数字） | 已提交且完整；本轮**只复确认便宜的四项**（见下「阶段 B 复确认」），`vite build` 未重跑、沿用该节 `✓ built in 5.53s` |
+| 未跟踪 `kvBarRound3Tester.test.tsx` | **“半成品”的判断不成立**：两条用例是**已完成且已成立**的（单跑 2/2 绿），且经变异复验**非空跑**（V1 缺陷形态注入时两条同时红）。本轮**未重写其语义**，只做两处加法：`Router` 增加 `keyAsked`/`keyAsks()` 观测“同一身份第二次发问”（`Map` 语义下槽位被覆盖，仅 `has()` 分不出首问与重问），并补第三条路径 |
+| 轨道范围 | 只有 BUG-005 一条待复测；BUG-001~004 未重开（本轮只确认未引入新回归：它们在 65 例电池中仍全绿，7 项注入的归因表里亦无一条“存量转红”） |
+
+---
+
+# 第 3 轮 Tester 判定（接管实例，独立复跑 + 阶段 A/C/D）
+
+> 判定：**TEST_FAILED** —— 但**轨道范围内的 BUG-005 已闭环**（→ `已修复`）；
+> 阻断项是本轮阶段 B 复跑时**实测到的一次门禁自身随机红**，登记为
+> `redis-kvbar-ui-BUG-006`（Low，**测试侧**，非产品缺陷）。
+> 本任为全新实例，未沿用任何编码代理或前任 Tester 的判断。
+
+## 阶段 B 复确认（在本轮 HEAD `a069379d9` 上）
+
+| 门禁 | 命令 | 实测原始结果 | 与 `a32267124` 的差异 |
+|---|---|---|---|
+| 类型 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0，0 条诊断** | 一致（本轮只增测试文件） |
+| 驱动 UI 全量 | `npx vitest run --config vitest.drivers.config.ts` | **Test Files 41 passed (41) · Tests 328 passed (328) · 0 failed · 0 skipped** | **+1 file / +3 例**（全部来自 `kvBarRound3Tester.test.tsx`），325 → 328 与增量吻合；**但首跑曾 1 failed**，见下节 |
+| `ui/kv-bar/**` 覆盖率 | `npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.provider=v8 --coverage.include='packages/drivers/redis/ui/kv-bar/**'` | **exit 0**；`All files 100 / 100 / 100 / 100`；逐文件 `KeyPropsSidebar.tsx` / `KvStatusBar.tsx` / `keyObjectInfo.ts` / `useKeyObjectInfo.ts` / `useKvSelection.ts` 均 100×4，`index.ts` 0/0/0/0（纯再导出桶，同前两轮口径）；同次运行 41 files / 328 tests 全绿 | 一致，仍 ≥80% 硬标准 |
+| import 边界护栏 | `node scripts/check-driver-import-boundaries.mjs` | **exit 0**，`ok (1434 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` | `1433 → 1434` = 本轮新增测试文件一个；advisory 集合与上一轮**同一组**（`locales.test.ts`、`driverUiSetup.ts` ×2、`DocumentConnectionView.tsx`），未新增 |
+| 前端构建 | `npx vite build` | **沿用第 3 轮阶段 B 已提交数字**（`a32267124`：exit 0，`✓ built in 5.53s`，仅既有 chunk >500 kB 告警）——本轮 HEAD 相对该时点**只多一个测试文件**，测试文件不参与 `vite build` 产物，故未重跑 | 无产品码改动，不适用重跑 |
+| 附：格式 | `npx prettier --check`（本轮新文件） | 首检 **不合规**（两处换行超 printWidth 100）→ `--write` 收敛后 `All matched files use Prettier code style!`，用例仍 3/3 绿（→ `a069379d9`） | 新增项，纯格式 |
+| Rust | — | **不适用**：`git diff --stat 7e809bc1c..HEAD -- '*.rs' 'Cargo.toml' 'Cargo.lock'` 输出为空 | 同 `a32267124` |
+
+### 阶段 B 的一次红：不复现但机理确凿 ⇒ 登记 BUG-006
+
+首跑（**与 `tsc --noEmit` 并发**，我自己在同一批里跑的）出现
+`Test Files 1 failed | 40 passed (41) · Tests 1 failed | 327 passed (328)`，
+失败点由代码帧 `:188-190` + grep 唯一命中反查为
+`kvBarSlots.test.tsx:188`（`[data-part="type"]` 的裸断言）。此后
+**28 次执行仅这 1 次**：单文件串行 15 次全绿、全量串行 3 次全绿、6 路并发全量 6 次全绿、
+再刻意与 tsc 并发 4 次全绿 ⇒ **按需不可复现，实测频次 ≈ 1/28**。
+
+机理是**结构性**的、已核实到行：`:185-187` 的 `waitFor` 等的
+`selected-key` 由中继**同步**渲染（`KvStatusBar.tsx:40-46`），`:188` 随后裸断的 `type`
+要等回包链 ≥3 跳微任务（`useKeyObjectInfo.ts:151-153` + `:189-207`）才进入
+`KvStatusBar.tsx:48-51` 的分支 —— 两个探针不同源，存在合法的空窗帧。
+**全轨审计**：这是唯一一处“等同步判据 + 裸断异步部件”；同文件 `:205-210`/`:226-231`/`:279-292`
+与 `kvBarSlotTesterGaps:235-237`、`kvBarRound1Fixes:256-263` 均安全，
+因为它们等待的判据与后续断言**出自同一次渲染的同一个 `info`**（或就是 `data-*-state` 总闸）。
+
+**归因（重要，防下轮误判）**：该竞态自本轨首次交付 `6e3624c7f` 即存在，
+`010c6b406` 未碰 `KvStatusBar.tsx` 与该测试文件；它之所以在“分母 325 → 328 的第一跑”才露头，
+是我新增 3 例改变了 worker 调度/CPU 争用，**不是新测试测坏了存量行为**。
+
+## 阶段 A：BUG-005 判定 → **已修复**
+
+判据是“缺陷本身是否还可达”，不是“新用例是否绿”。三条独立复现路径落在
+`kvBarRound3Tester.test.tsx`（`[tester r3]`，3 例，全部为存量 5 个电池走不到的形状）：
+
+1. **连续旅程**（两半帧钉在同一个用例里，排除各自侥幸）：
+   `noeviction` 跃迁**前必须真的可见** → 新会话 `propsState='ready'` 且 `type='hash'` 已上色，
+   **同一帧**策略行必须是 `data-value=''` + `data-fallback-key='redis.keyProps.unavailable'`
+   （命名空态，不是空白）→ 只有 `sess-2` 自己回答后才上色；
+   末尾数往返 `asked=['sess-1','sess-2']`、`info_filtered=2`、`key_object_info=2`，
+   排除“靠不再发问来假装修好”。
+2. **跃迁期间抽屉收起**：契约义务 1 使槽位折叠时**保持挂载**，带 tag 的值跨
+   close→swap→reopen **存活在 `useState`** 中，此时唯一防线就是渲染期身份比对
+   ⇒ 这条直接量“tag 是否真被消费”。
+3. **回到曾经回答过的会话** `sess-1→sess-2→sess-1`：跳回当帧必须为**空态**（既不是
+   `noeviction` 也不是 `sess-2` 的 `allkeys-lfu`），且必须重新发问（`asked` 三条、`info_filtered=3`）
+   ⇒ 这条是“tag 有没有悄悄长成缓存”的唯一判别器（存量电池只朝前跳，区分不开）。
+
+### 对 `{ session, value }` 形状的裁定：**状态归属正确**，不是“把清值挪了个地方”
+
+| 判据 | 结论与证据 |
+|---|---|
+| 数据与其来源是否同轴 | **是**。值来自 `invokeMaxmemoryPolicy(dbSessionId)`（`keyObjectInfo.ts:139-150`，`info_filtered{dbSessionId}`），作用域**就是会话**；状态里的 tag 是同一个量，未引入第三个概念。失效轴 = 数据源作用域，这是归属，不是补丁 |
+| 与同目录既有方案是否一致 | **一致**。`useKeyObjectInfo` 对键维度用的正是 `{owner, info}` + 渲染期 `publishRead()`（定义 `:115-120`、渲染期调用 `:214`）。本轮是**同一形状换轴**，非第二套机制 |
+| 是否“记得清一下”的旁路旗标 | **没有**。`setPolicy` 全文**只有一个调用点** `KeyPropsSidebar.tsx:80`，在 `.then` 回包分支里；effect 触发路径上不清任何值。反向证据：注入 V4（“每次触发就清值”）红 1 条 ⇒ “不清值”这一性质**有测试守着**，不是只读代码读出来的 |
+| 是否新增缓存层 | **没有**。仍是**单槽** `useState`（非 `Map`），未扩 `KvSlotState`、未动宿主。反向证据：注入 V6（换成 `Map<session,value>`）**只红本轮第 3 条**，说明该退化方向真实可达且此前无人守 —— 现由用例钉住 |
+| 是否取代了原有防护 | **没有**（不是把守卫搬个位置）。注入 V7（拆 `stale` 写侧守卫、只留 tag）红 1 条**且与本轮新电池无关**（三种分母下都红，命中的是第 1 轮就在的 `kvBarSlotTesterGaps:418`）⇒ 写侧守卫仍是活依赖，两侧防线各自成立，**无需裁“等价冗余”**，Coder 的该项自述复核为真 |
+
+### 三条禁止项与文件面的自证
+
+`git diff --stat 7e809bc1c..HEAD` 逐路径复核：生产面只有 `KeyPropsSidebar.tsx`(+29)
+与 `keyObjectInfo.ts`(docblock 5 行)；`'*.rs' 'Cargo.toml' 'Cargo.lock'` → **0 行**；
+`src` / `src-tauri` / `packages/driver-sdk` → **0 行**（⇒ `KvSlotState` 未被扩）；
+`packages/drivers/redis/ui/overview` → **0 行**。i18n 零改动。
+本轮自身也只动测试与台账：`git status --porcelain -- packages src scripts` 在 7 项注入后**每次**为空。
+
+## 阶段 C：变异复验（7 项注入，全部在 `KeyPropsSidebar.tsx`，零存活）
+
+三个分母同时跑，用来回答“这条红是谁守的”：
+`all6` = 6 个 kv-bar 电池 **65 例**（存量 62 + 本轮 3）；
+`base4` = 扣掉 `kvBarRound2Fixes` **与** `kvBarRound3Tester` 的 **59 例**（= Coder 表“去掉新电池后”的同一分母）；
+`base4+r3` = 只扣 `kvBarRound2Fixes` 的 **62 例**（用来单独量本轮新电池的贡献）。
+基线实测 `all6=65·0红 / base4=59·0红 / base4+r3=62·0红`；每种注入要求 pattern **唯一命中**，
+否则报 `APPLY-FAILED`（阴性对照，防“注了等于没注”）；注入后一律 `git checkout HEAD --` 还原。
+
+| # | 注入（生产代码） | all6 / 65 | base4 / 59 | base4+r3 / 62 | 归因 |
+|---|---|---|---|---|---|
+| V1 | 退回裸字符串形态（状态不带会话 + `setPolicy(value)` + 渲染取 `policy`） | **5** | 1 | 4 | `kvBarRound2Tester` 解开的那条 + `kvBarRound2Fixes` 一条 + **本轮三条全红** |
+| V2 | 保留 tag 但**拆掉渲染期过滤**（`policy?.value ?? null`） | **5** | 1 | 4 | 同 V1 ⇒ 缺陷不在“忘了写 tag”，在“归属没被消费” |
+| V3 | 会话比较**两臂互换**（`!==`） | **32** | 26 | 29 | 策略行全部正向断言 + 侧栏属性表多路；`32−3=29` 与 Coder 表 V3=29/62 **逐值吻合** |
+| V4 | **过度修正**：每次触发就清值（旁路旗标式） | **1** | **0** | **0** | 仅 `kvBarRound2Fixes` 的 `keeps the current session policy … while a refresh re-read is open` |
+| V5 | **过度修正**：`dbIndex` 进 policy effect 依赖（错误的轴） | **1** | **0** | **0** | 仅 `is not invalidated by a database switch inside the same session` |
+| V6 | tag 退化成 `Map<session, value>` 会话字典（= 新缓存层） | **1** | **0** | **1** | **只有本轮第 3 条红** —— 该方向此前 5 个电池全部无人守 |
+| V7 | 拆掉 `stale` 写侧守卫、只留 tag | **1** | **1** | **1** | `kvBarSlotTesterGaps` 的 `drops a policy reply that lands after the session switched`（三种分母同红 ⇒ 守卫独立有效） |
+
+**任务书点名的 5 项 = V1 / V2 / V3 / V4 / V5，全部为红，零存活。**
+
+### 对上一棒“V4/V5 只有新电池抓得到”这句的独立验证 → **成立**
+
+`base4`（同时扣掉 `kvBarRound2Fixes` 与本轮文件）下 V4/V5 红数**均为 0**，
+`base4+r3` 下**仍为 0** ⇒ 这两项的**唯一**守门人是 Coder 自带的 `kvBarRound2Fixes.test.tsx`，
+本轮新电池**没有**（也不该为凑数）重复它。原自述逐值可复现，无夸大。
+附带把 Coder 表的其余行也对了一遍：V1 `2/62·1/59` ↔ 本轮 `5/65·1/59`（增量恰为本轮 3 条）、
+V2 同理、V3 `29/62·26/59` ↔ `32/65·26/59` ⇒ **存量数字全部为真**。
+
+**本轮自身补测的自证**：V6（会话字典缓存）与 V1/V2 的 `base4+r3` 列（0 → 1、1 → 4）
+证明 `kvBarRound3Tester.test.tsx` 三条**非空跑**，且在“不许退化成缓存”这一侧是**唯一**防线。
+
+**还原核验**：7 项注入每次注入前断言生产文件干净、每次注入后 `git checkout HEAD -- KeyPropsSidebar.tsx`
+并复查 `git status --porcelain -- packages src scripts`；全批结束时该输出为**空**，
+`git diff --stat HEAD` 为空。临时产物只有 `/tmp/mut_r3.py` 与 `/tmp/*.log`，
+**未新增任何常驻探针文件**、未入库。
+
+## 【留待 R 回归】第 3 轮同步（**本轮同样未跑任何 e2e / 真连 Redis**）
+
+R1~R9 **一条未消**，本轮全部证据仍是进程内（本地 `makeRelay()` 替身 + `commandInvoke` 路由替身）：
+
+| # | 第 3 轮状态变化 |
+|---|---|
+| R5 | BUG-005 已置 `已修复`，本行“策略行退化 `—` 且不影响其余 6 行”回到纯真连复证；**新增同形待验**：真机重连/切实例时策略行空态是否肉眼可见（V1~V7 全为进程内证据） |
+| R8 | 口径继续沿用（驱动 UI 必须带 `--config vitest.drivers.config.ts`）；**本轮追加**：该门禁存在**已知低频假红**（BUG-006），跑红时先看是否 `kvBarSlots.test.tsx:188`，勿误判为自己的改动引入回归 |
+| R1/R2/R3/R4/R6/R7/R9 | 本轮无变化，原样保留（BUG-001~004 未重开，其真连项不因本轮复测而消） |
+
+## 判定与关账
+
+- **状态 → 保持 `TEST_FAILED`**，但**轨道范围内的待复测项已清零**：
+  `redis-kvbar-ui-BUG-005` → **`已修复`**（第 3 轮 Tester @ `3e382a930`）。
+  新登记 **1 条 `待修复`：`redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态）**，
+  它是本轮唯一阻断项，**与 BUG-005 的闭环无关**，修复面为**一行测试代码**（建议修法见 `bugs.md`）。
+  ⇒ 协调者可自行裁定：(a) 派第 4 轮修复回合（范围就这一行），或 (b) 豁免并在合并前顺手修，
+  同时在 R8 保留“该门禁有已知低频假红”的口径。
+- 新基线（合入本轮测试后）：**41 files / 328 passed (328) / 0 failed / 0 skipped**、`tsc` exit 0、
+  `ui/kv-bar/**` 覆盖率 **100×4**、护栏 `1434 scanned · 0 blocking · 4 advisory`。
+- 只测不修：生产代码**零改动**（7 项变异均还原，逐次核验干净），未动 `ui/overview/**`、宿主 `src/**`、
+  `hub.md`、其它轨道目录；未跑 `pnpm install` / `pnpm build` / e2e / 裸 `cargo build`；
+  未提交任何 gitignored codegen 或 `Cargo.lock`；断言一律 `data-*` / i18n key / 服务端回显值，
+  **零条英文字面量文案断言**；i18n 零改动。
+- commit：`3e382a930`（用例）· `a069379d9`（prettier 收敛）· 本台账与 `bugs.md` 判定 = 本次提交。
 

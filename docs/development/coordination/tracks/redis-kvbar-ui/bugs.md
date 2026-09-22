@@ -12,7 +12,8 @@
 | redis-kvbar-ui-BUG-002 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 一次键选中发**两次**完全相同的 `key_object_info`（状态条 + 侧栏各一份，实测 2 次读 / 3 条命令） |
 | redis-kvbar-ui-BUG-003 | Minor | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | 侧栏刷新按钮只重读键属性，**不**重读 `maxmemory_policy` 行（实测 `info_filtered` 1→1） |
 | redis-kvbar-ui-BUG-004 | Low | **已修复**（第 2 轮 Tester 复测通过 @ `257017096`） | `PTTL -2` 且 `missing:false` 时 ttl 行标成 `redis.noExpiry`；`describeTtl` 的三态分离在渲染侧无人消费 |
-| **redis-kvbar-ui-BUG-005** | Low | **待复测**（第 2 轮修复回合 Coder @ `010c6b406`） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
+| **redis-kvbar-ui-BUG-005** | Low | **已修复**（第 3 轮 Tester 复测通过 @ `3e382a930`） | `dbSessionId` 跃迁时驱逐策略行**保留上一会话的值**：新会话的键属性已落地、策略行仍写旧服务器答案（BUG-001 同族的“会话维度”残留） |
+| **redis-kvbar-ui-BUG-006** | Low | **待修复**（第 3 轮 Tester 新登记） | 本轨门禁测试自身有断言竞态：`kvBarSlots.test.tsx:188` 在等完一个**同步**探针后裸断言一个**异步**部件，实测 1/28 次随机红（生产代码无关，属测试侧假红） |
 
 > **修复第 1 轮（Coder @ `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`）**：四条全部改到生产码
 > 并各带回归用例 ⇒ 全部置 **待复测**，每条下方新增「修复备注（Coder 第 1 轮 · sha）」给出落点与复测入口。
@@ -32,6 +33,14 @@
 > `kvBarRound2Fixes.test.tsx` 3 例钉住“不许过度失效”一侧。BUG-005 状态 → **待复测**，
 > 落点、变异表（V1~V8）与门禁原始数字见该节「修复备注」与 `progress.md`「第 2 轮修复回合」。
 > 第 1 轮已判 `已修复` 的四条一行未动。
+>
+> **复测第 3 轮（Tester 全新实例 · 接管棒，@ `3e382a930`）**：BUG-005 判为**真已修掉**
+> （独立复现"跃迁前旧值可见 → 跃迁后命名空态 → 新会话上色"整条连续旅程 + 收起抽屉跨跃迁 +
+> **回到已回答过的会话**三条新路径；7 项变异零存活），状态 → **已修复**。
+> 阶段 A/C 判定、`{ session, value }` 形状裁定与变异表见同目录 `progress.md`「第 3 轮 Tester 判定」。
+> **本轮新登记 1 条 `待修复`：`redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态）** ⇒ 轨道判定仍为
+> `TEST_FAILED`，但**与 BUG-005 的闭环无关**（BUG-005 已结），修复面是一行测试代码，
+> 协调者可自行裁定为"合并前顺手修"或豁免（详见该节「是否阻断合并」）。
 
 
 ---
@@ -328,7 +337,10 @@ ttl 行按状态选词：`fallbackKey={ttl?.kind === 'missing' ? 'redis.keyProps
 
 - **严重度**：Low（单行、窄窗口的一行错叙述；与 BUG-004 同量级 —— 不伪造数字、不影响写路径，
   但把**另一台服务器**的事实挂在当前会话上）
-- **状态**：`待复测`（第 2 轮 Tester 登记 → 第 2 轮修复回合 Coder @ `010c6b406` 修完，见本节末「修复备注」）
+- **状态**：`已修复`（第 3 轮 Tester 全新实例复测通过 @ `3e382a930`：缺陷本身消失，非“有绿测即算”；
+  独立旅程复现 + 7 项变异零存活 + `{ session, value }` 形状裁定为**状态归属正确**而非“把清值挪了个地方”，
+  见本节末「复测备注（Tester 第 3 轮）」与 `progress.md` 同名节。原登记 → 修复链：
+  第 2 轮 Tester 登记 → 第 2 轮修复回合 Coder @ `010c6b406` 修完，见下「修复备注」）
 - **量级**：需要 (1) 面板存活期内 `dbSessionId` 跃迁（重连、切实例、会话重建），
   (2) 新会话的 `key_object_info`（1 条 SELECT + 1 条 pipeline）**先于** `info_filtered` 落地。
   一次跃迁最多一个窗口，时长 = 两条命令的时差；顺序不常但确定可达
@@ -462,6 +474,128 @@ AssertionError: expected 'noeviction' to be '' // Object.is equality
   +3 例来自新文件、+1 来自解开的那条 skip），`ui/kv-bar/**` 覆盖率仍 **100 / 100 / 100 / 100**。
 - 本条只改渲染侧状态归属与注释：`.rs` 零改动，未跑 cargo / e2e / `pnpm build`。
 
+**复测备注（Tester 第 3 轮 · `3e382a930`）· 状态 → 已修复**
+
+- **独立复现的是缺陷本身，不是"新用例绿"**（`kvBarRound3Tester.test.tsx` 三条，全部为存量电池
+  走不到的路径）：
+  1. **一条连续旅程**钉住两个半帧 —— 跃迁**前** `noeviction` 必须真的可见（否则"跃迁后消失"
+     可以靠"从未显示"侥幸通过）→ 跃迁后新会话的键属性已 `ready` 且 `type` 已上色，同一帧
+     策略行必须为**命名空态**（`data-value=''` + `data-fallback-key=redis.keyProps.unavailable`）
+     → 只有 `sess-2` 自己回答后才上色；末尾数往返 `asked === ['sess-1','sess-2']`、
+     `info_filtered` 2 次、`key_object_info` 2 次，排除"靠不再发问来假装修好"。
+  2. **跃迁期间抽屉处于收起**：契约义务 1 让槽位在折叠时保持挂载，带 tag 的值会跨
+     close→swap→reopen **存活在 `useState` 里**，此时唯一挡得住它上屏的就是渲染期身份比对。
+     这条量的正是 Coder 声称的"tag 真被消费"，裸字符串与"写了 tag 从不读"两种形态都必然红。
+  3. **`sess-1 → sess-2 → sess-1`（回到曾经回答过的会话）**：所有存量电池只朝前跳，
+     因此无法把"带会话 tag 的单槽"与"`Map<session, value>` 缓存"区分开（两者对没见过的会话
+     都表现为空）。注入 V6（把单槽换成会话字典）实测**只有本条红** ⇒ 该退化方向此前无人守。
+- **形状裁定（任务书要求）：`{ session, value }` 是状态归属正确，不是把清值挪了个地方。**
+  判据三条，逐条实测：
+  1. **数据与其来源同轴** —— 值来自 `invokeMaxmemoryPolicy(dbSessionId)`，作用域就是会话；
+     状态里存的 tag 与它**完全同一个轴**，不引入第三个概念。
+  2. **与同目录既有方案同形** —— `useKeyObjectInfo` 对键维度用的正是
+     `{owner, info}` + 渲染期 `publishRead()` 过滤（`useKeyObjectInfo.ts:115-120` 定义、`:214` 渲染期调用），
+     本轮把同一形状搬到会话维度，未发明第二套机制。
+  3. **禁止的两项均未出现** —— 无新增缓存层（`useState` 仍是**单槽**，非 `Map`；
+     实测跳回旧会话仍需重新发问，见上第 3 条），无旁路清值旗标（`setPolicy` 全文只有
+     一个调用点 `:80`，且它在 `.then` 回包分支里 —— effect 触发本身不清任何值）。
+     注入 V4（改成"每次触发就清值"）实测红 1 条 ⇒ "不是清值补丁"这一判断有反向证据，
+     不只是读代码的结论。
+- **`stale` 写侧守卫未被渲染期过滤吸收**（独立复核 Coder"两侧防线各自测过"的说法）：
+  注入 V7（拆守卫、只留 tag）红 **1** 条（`kvBarSlotTesterGaps` 的
+  `drops a policy reply that lands after the session switched`），且**去掉本轮新电池仍红**
+  ⇒ 守卫仍是活依赖，不是冗余，无需裁"等价冗余"，也说明修法不是"用 tag 取代原有防护"。
+- **越界自查**：`git diff --stat 7e809bc1c..HEAD` 生产面只有 `KeyPropsSidebar.tsx`(+29/-…)
+  与 `keyObjectInfo.ts`(docblock 5 行)；`*.rs` / `Cargo.toml` / `Cargo.lock` **0 行**，
+  宿主 `src/**`、`src-tauri/**`、`packages/driver-sdk`、`ui/overview/**`、`locales/en.ts`
+  经逐路径 `git diff --stat` 核验**全部为空** ⇒ 未扩 `KvSlotState`、未动契约、未加词条。
+
+---
+
+## redis-kvbar-ui-BUG-006 — 门禁测试自身的断言竞态（`kvBarSlots.test.tsx:188`）
+
+- **严重度**：Low（**测试侧**缺陷，非产品缺陷：生产行为正确且下一帧自愈。
+  后果是轨道门禁 `vitest` 可能**无代码变更地随机红**，实测 **1/28 次** ≈ 3.6%）
+- **状态**：`待修复`（第 3 轮 Tester 独立复跑门禁时观测到，非沿用任何前棒结论）
+- **量级**：28 次执行中 1 次红 —— 单文件 15 次全绿、全量串行 3 次全绿、
+  6 路并发全量 6 次全绿、**与 `tsc --noEmit` 并发** 4 次全绿；
+  唯一一次红恰好也发生在"tsc 与 vitest 并发"的那一批（CPU 争用放大微任务延迟）。
+  ⇒ 低频、依赖机器负载，**不可按需复现**，因此只能以"机制 + 频次"登记，不能给必现步骤。
+- **涉及文件:行号**：`packages/drivers/redis/ui/__tests__/kvBarSlots.test.tsx:179-194`
+  （用例 `follows the relay: selection alone drives the read`），失败断言在 **`:188`**。
+
+### 机理（为什么只有这一处不安全）
+
+`:185-187` 的 `waitFor` 等的是 `[data-part="selected-key"]`，该部件在
+`KvStatusBar.tsx:40-46` **直接由中继的 `selectedKey` 渲染**（同步，`act()` 内即成立）；
+`:188` 随后**裸断言** `[data-part="type"]`，而它只在 `KvStatusBar.tsx:48-51` 的
+`if (info && !info.missing)` 分支里出现，`info` 要等回包链
+`invokeKeyObjectInfo()` → `.finally()` → `flight.then(setRead)` **≥3 跳微任务**
+（`useKeyObjectInfo.ts:151-153` 建链 + `:189-207` 消费）才落到 state。
+两个探针**不同源**，于是存在"selected-key 已到位、info 尚未发布"这一帧，
+`waitFor` 首 tick 即通过、`:188` 在同一帧取到 `undefined`。
+
+**全轨审计结论（免下轮重复推演）**：这是**唯一**一处"等同步探针 + 裸断异步部件"。
+`kvBarSlots.test.tsx:205-210`（等 `size` 后断 `ttl`）、`:226-231`（等 `data-status-state='missing'` 后断
+`type`/`size` 为 null）、`:279-292`（等 `data-props-state='ready'` 后断 7 行）、
+`kvBarSlotTesterGaps.test.tsx:235-237`、`kvBarRound1Fixes.test.tsx:256-263` 均**安全**，
+因为它们等待的判据与后续裸断言**出自同一次渲染的同一个 `info` 对象**
+（或直接就是 `data-*-state` 这个总闸），不存在跨帧窗口。
+
+### 重现步骤
+
+```bash
+cd /Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-redis-kvbar-ui
+# 必现性低（实测 1/28）；提高命中率的口径是让 vitest 与一个满负荷 tsc 抢 CPU：
+npx --config.verify-deps-before-run=false tsc --noEmit &
+npx vitest run --config vitest.drivers.config.ts   # 循环 5~30 次观测
+```
+
+### 实测日志
+
+本轮唯一一次红的**原始输出尾部**（当时用 `tail -12` 抓取，
+因此**代码帧之后的 `AssertionError` 消息行未落盘**，此处不转录未捕获的内容；
+失败文件与行号由 `:188-190` 三行代码帧 + `expect(commandInvoke).toHaveBeenCalledWith('redis',
+'key_object_info'` 在 `__tests__/` 下 grep **唯一命中** `kvBarSlots.test.tsx:189` 反查确定）：
+
+```text
+    |                                                                        ^
+    189|     expect(commandInvoke).toHaveBeenCalledWith('redis', 'key_object_in…
+    190|       dbSessionId: 'sess-1',
+
+ Test Files  1 failed | 40 passed (41)
+      Tests  1 failed | 327 passed (328)
+```
+
+余下 27 次为 `Test Files 41 passed (41) · Tests 328 passed (328)`。
+
+### 影响范围
+
+- 只影响 `npx vitest run --config vitest.drivers.config.ts` 这一道门禁的可信度：
+  红的时候**没有任何生产代码问题**，会让人误判为本轮改动引入回归（本轮即为我的
+  新电池使分母从 325 → 328 的第一跑，极易被归因成"新测试把存量测坏了"）。
+- **与 BUG-005 的闭环无关**：`010c6b406` 未碰 `KvStatusBar.tsx` 与该测试文件，
+  该竞态自本轨首次交付 `6e3624c7f` 即存在，第 1/2 轮 Tester 与两轮 Coder 均未观测到
+  （他们的门禁跑法没有与 tsc 并发）。
+- **是否阻断合并**：不阻断产品正确性；但门禁不可信本身值得修，**修复面一行测试代码**，
+  协调者可裁定"合并前顺手修"或豁免（豁免则应在 R 清单留一行，说明该门禁存在已知低频假红）。
+
+### 建议修法
+
+把 `:188` 并入异步判据的等待，或改等"总闸"后再裸断（两种都是**加强**断言，不弱化）：
+
+1. 首选：`:185-188` 合并为一次等待，等待目标换成**同源**的 `data-status-state`，
+   再保留 `:188` 的裸断言 —— 与同文件 `:227` / `:280` 已经采用的写法对齐：
+   ```tsx
+   await waitFor(() =>
+     expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe('ready'),
+   );
+   expect(container.querySelector('[data-part="type"]')?.textContent).toBe('hash');
+   ```
+2. 或最小改动：`await waitFor(() => expect(container.querySelector('[data-part="type"]')?.textContent).toBe('hash'));`。
+3. **禁止**用 `--retry` / 忽略该用例 / 删除断言来"修"（属弱化）；断言口径保持
+   `data-*` + 服务端回显值，不得引入英文字面量文案断言。
+
 ---
 
 ## 附：本轮判定依据与不计为缺陷的事项
@@ -492,3 +626,17 @@ AssertionError: expected 'noeviction' to be '' // Object.is equality
    `attributeViewState` 因此回 `unavailable`，下一帧（effect 起飞）才是 `loading`。
    两者都是“无已知事实”的命名空态，未伪造任何属性值，测试侧因 effect 提前 flush 而不可见；
    仅记录，不改判。
+
+### 第 3 轮追加：核查过但**不**登记为缺陷的三项
+
+1. **`dbIndex` 不进策略行的失效轴**（会话内换库不清值、不多花一次 `INFO`）：**判为正确，
+   不是漏失效**。`INFO memory` 是实例级命令，同一会话的 16 个库共用同一个
+   `maxmemory_policy`，把 `dbIndex` 纳入失效轴会在键树每次点库时白付一次往返（注入 V5
+   实测正是这个后果：`info_filtered` 1→2，由 `kvBarRound2Fixes` 第三条抓住）。
+   ⇒ 与 BUG-001 的键维度不对称**是应当的**，两者失效轴各自等于其数据源的作用域。
+2. **策略行不存在“有策略值却没有键属性”的帧**：`<dl>` 整体在 `info && !info.missing`
+   分支内（`KeyPropsSidebar.tsx:164`），因此会话跃迁期间策略行要么与其余 6 行同时缺席
+   （`propsState` 非 `ready`），要么同时在场且策略为空态；不会出现“单行陈旧、其余正常”
+   之外的组合。第 2 轮裁定 1 的形状在本轮 7 项注入下未被破坏。
+3. **状态条不受本条影响**：`KvStatusBar.tsx` 无 `maxmemory-policy` 部件，
+   且 `010c6b406` 的生产面只有侧栏一个文件 ⇒ BUG-005 的影响范围确认为**单行、单槽位**。
