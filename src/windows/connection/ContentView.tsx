@@ -434,6 +434,7 @@ export function ContentView({
           detailPanelApplicable={detailPanelApplicable}
           detailOpen={detailOpen}
           contextBarSlot={kvSlots.contextBar}
+          kvPanelState={kvSlots.panelState}
           onNewQuery={() => handlers.handleNewQuery()}
           onCreateTable={handlers.handleCreateTable}
           onOpenErDiagram={() => handlers.handleOpenErDiagram()}
@@ -512,8 +513,10 @@ export function ContentView({
           aiChatOpen={aiChatOpen}
           detailPanelApplicable={detailPanelApplicable}
           dbSessionId={dbSessionId}
+          connectionName={connectionName}
           currentDatabase={currentDatabase}
           databaseType={databaseType}
+          kvPanelState={kvSlots.panelState}
           onCloseDetail={closeDetail}
           keyPropsSidebarSlot={kvSlots.keyPropsSidebar}
           pendingDraftRequest={pendingDraftRequest}

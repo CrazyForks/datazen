@@ -236,5 +236,6 @@ const pack = {
     'Safe Mode blocks flushing a database. Turn Safe Mode off in Settings to continue.',
   // KV context facts injected into an AI request (W3-A §1.3).
   'redis.ai.context.tooltip': 'Ask the assistant about the selected key',
+  'redis.ai.context.attached': 'Asking about key',
 } as const;
 export default pack;

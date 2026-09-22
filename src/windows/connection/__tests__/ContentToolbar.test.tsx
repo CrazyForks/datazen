@@ -1,7 +1,7 @@
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useSyncExternalStore, type ReactNode } from 'react';
-import type { KvContextBarProps } from '@datazen/driver-sdk';
+import type { KvContextBarProps, KvSlotState } from '@datazen/driver-sdk';
 import { ContentToolbar } from '../ContentToolbar';
 import { createKvSlotState } from '../../../lib/kvSlotState';
 import type { KvContextBarBinding } from '../useKvWorkspaceSlots';
@@ -91,7 +91,7 @@ function binding(
   };
 }
 
-function renderToolbar(contextBarSlot?: KvContextBarBinding) {
+function renderToolbar(contextBarSlot?: KvContextBarBinding, kvPanelState?: KvSlotState) {
   return render(
     <ContentToolbar
       showNewQuery={false}
@@ -103,6 +103,7 @@ function renderToolbar(contextBarSlot?: KvContextBarBinding) {
       detailPanelApplicable={false}
       detailOpen={false}
       contextBarSlot={contextBarSlot}
+      kvPanelState={kvPanelState}
       onNewQuery={vi.fn()}
       onCreateTable={vi.fn()}
       onOpenErDiagram={vi.fn()}
@@ -166,5 +167,57 @@ describe('ContentToolbar KV context bar slot', () => {
     expect(screen.getByTestId('fixture-context-bar').getAttribute('data-selected-key')).toBe(
       'user:42',
     );
+  });
+});
+
+/**
+ * W3-A §1.3 / PRD §3.4: an AI button that opens a chat carrying no Redis fact is
+ * the half-broken state this track removes. The three cases below are the full
+ * state machine of that affordance on a KV panel — hidden while nothing is in
+ * scope, shown for a key, and hidden again once the selection is cleared (an
+ * entry condition with no exit would be a one-way deadlock).
+ */
+describe('ContentToolbar AI button on a KV panel (W3-A §1.3)', () => {
+  function renderKvToolbar() {
+    const state = createKvSlotState();
+    renderToolbar(binding(state), state);
+    return state;
+  }
+
+  it('renders no AI affordance while the panel has no key in scope', () => {
+    renderKvToolbar();
+    expect(screen.queryByTestId('conn-toolbar-ai')).not.toBeInTheDocument();
+  });
+
+  it('treats a published blank key as no key', () => {
+    const state = renderKvToolbar();
+    act(() => {
+      state.selectKey('   ');
+    });
+    expect(screen.queryByTestId('conn-toolbar-ai')).not.toBeInTheDocument();
+  });
+
+  it('shows the button when a key is selected and hides it again when cleared', () => {
+    const state = renderKvToolbar();
+
+    act(() => {
+      state.selectKey('user:42');
+    });
+    const button = screen.getByTestId('conn-toolbar-ai');
+    // The tooltip says what the assistant will be told about (asserted as an
+    // i18n key, never as visible English copy).
+    expect(button.getAttribute('title')).toBe('redis.ai.context.tooltip');
+
+    act(() => {
+      state.selectKey(null);
+    });
+    expect(screen.queryByTestId('conn-toolbar-ai')).not.toBeInTheDocument();
+  });
+
+  it('leaves a relational panel untouched: no relay, button as before', () => {
+    renderToolbar();
+    const button = screen.getByTestId('conn-toolbar-ai');
+    // No KV tooltip is claimed for a panel whose facts are `contextTables`.
+    expect(button.getAttribute('title')).not.toBe('redis.ai.context.tooltip');
   });
 });
