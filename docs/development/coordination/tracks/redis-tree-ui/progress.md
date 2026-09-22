@@ -129,3 +129,38 @@ sticky 滚动钉住/释放、I-4 重展开不重取、I-8 批量失败 DOM、I-1
 ### 留待 R 回归
 - 真实 Redis 的 live e2e 按纪律未跑（禁 `pnpm e2e`）；需真机复核点：sticky 在真实滚动容器中的视觉贴合、
   `count_matching n+` 部分计数（W3-B 契约后）与原生右键菜单弹出（jsdom 无法弹 OS 菜单）。
+
+---
+
+## 第 1 轮 Tester 复验记录
+
+> 2026-09-22 · Tester 全新实例（前任死于服务错误，无半成品）。工作目录固定
+> `.worktrees/datazen-redis-tree-ui`，HEAD `ef0d62d94`，起点工作树干净。
+> 重型命令一律串行执行（vitest → tsc → boundaries → build），零并行重负载。
+
+### 验收项 0：现场自检
+- `git status --porcelain` 空；分支 `feature/redis-tree-ui`；HEAD `ef0d62d94`。
+- commit 链核对：`01f6396cd` → `d591a9891` → `a26ef97fc` → `95040148f` → `da04fd11b` → `ef0d62d94`（+ 基线 `8981d3078`）。与上报一致。
+- 生成物准备：`node scripts/generate-builtin-locales.mjs` → exit 0。
+
+### 验收项 1：四件套门禁独立重跑（全部实测，非引用自报）
+| 门禁 | 自报 | Tester 实测 | 判定 |
+| --- | --- | --- | --- |
+| `npx vitest run --config vitest.drivers.config.ts` | 51 files / 523 tests | **51 files / 523 tests passed**，exit 0（18.56s） | ✅ 一致 |
+| `npx tsc --noEmit` | 0 error | **0 error**，exit 0 | ✅ 一致 |
+| `node scripts/check-driver-import-boundaries.mjs` | 1481 files · 0 blocking | **1481 files scanned · 0 blocking · 4 advisory**，exit 0 | ✅ 一致 |
+| `npx vite build` | built 4.61s | **built in 8.57s**，exit 0（chunk>500kB 为既有告警） | ✅ 通过（耗时差异为本机负载，非结果差异） |
+
+4 条 R3 advisory 均为宿主既有文件（`src/locales/locales.test.ts`、`src/test/driverUiSetup.ts`×2、
+`src/windows/connection/DocumentConnectionView.tsx`），非本轨引入 —— 已核对本轨 diff 不含这些路径。
+
+### 验收项 6：范围审查（实测）
+- `git diff 8981d3078..HEAD --name-only` = 41 个文件，**全部**落在
+  `packages/drivers/redis/ui/key-browser/**`、`packages/drivers/redis/ui/__tests__/**`、
+  `packages/drivers/redis/locales/en.ts`、本轨 `progress.md` 四面内。
+  **零越界**：无 `ui/value-editors/**`、无 `ui/console/**`、无 `ui/connection/RedisConnectionView.tsx`、
+  无 `ui/kv-bar/**`、无宿主 `src/**`、无 `packages/driver-sdk/**`、无 `ui/shared/meta.ts`、无 `scripts/resolve-drivers.mjs`。
+- `en.ts` 实测：26 行全部为 `redis.tree.*` 追加（`+` 块位于 `redis.keyProps.*` 之后、`as const` 之前），
+  零改/零重排他人 key；未新增其他命名空间。
+- 单文件规模：全轨最大文件 `KeyTreeList.tsx` **531 行** ≤800；`RedisWorkbench.tsx` 705 → **362 行**；
+  新测试最大 `keyTreeInteractionsJourney.test.tsx` **717 行** ≤800。全部达标。
