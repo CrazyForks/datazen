@@ -433,15 +433,42 @@ fn dedup_keys(keys: &mut Vec<String>) {
 /// Deliberately unrouted on every topology: redis' own cluster table fans
 /// `DBSIZE` out to all masters and sums the answers, which is the whole-database
 /// number the UI's "共 M 个 key" needs (see `ops_workbench`'s module docs).
-pub(crate) async fn read_dbsize<C>(conn: &mut C) -> Result<u64, String>
+///
+/// **It cannot fail**, and that is a contract, not a convenience (redis-tree-backend-BUG-003):
+/// `DBSIZE` is routinely refused — an ACL profile without the flag (`-NOPERM`), a
+/// managed/proxy tier that hides the command, or one unreachable master under the
+/// cluster fan-out above. This value is an *input to a budget* and a *display
+/// number*; neither is worth a failed page, and the pre-budget code agreed
+/// (`8981d3078`'s `redis_driver_on.rs:138` read it as `unwrap_or(0)`). An
+/// unusable reply therefore yields `0`, which makes the budget fall back to
+/// [`DEFAULT_TREE_BUDGET`] via [`tree_scan_budget`] — the "DBSIZE 不可得 ⇒ 默认档"
+/// degradation `## 契约冻结` promises. The signature has no `Result` so a future
+/// caller cannot re-raise it into a hard dependency again.
+pub(crate) async fn read_dbsize<C>(conn: &mut C) -> u64
 where
     C: ConnectionLike + Send,
 {
-    let raw: RValue = redis::cmd("DBSIZE")
-        .query_async(conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(parse_opt_int(&raw).unwrap_or(0).max(0) as u64)
+    let raw: Result<RValue, _> = redis::cmd("DBSIZE").query_async(conn).await;
+    match raw {
+        // A reply we could not read as a number is the same degraded case as an
+        // error, so it warns too rather than quietly reporting an empty database.
+        Ok(value) => match parse_opt_int(&value) {
+            Some(n) if n >= 0 => n as u64,
+            _ => {
+                tracing::warn!(
+                    "redis key tree: DBSIZE reply was unusable, budget falls back to the default tier"
+                );
+                0
+            }
+        },
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "redis key tree: DBSIZE refused, budget falls back to the default tier"
+            );
+            0
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +821,7 @@ pub(crate) async fn scan_keys_page<C>(
 where
     C: ConnectionLike + SlotRoutedConnection + Send,
 {
-    let dbsize = read_dbsize(conn).await.map_err(DriverError::QueryFailed)?;
+    let dbsize = read_dbsize(conn).await;
     let mut ledger = ScanBudget::new(tree_scan_budget(budget, dbsize));
     let exact = is_exact_key_pattern(pattern);
 
@@ -891,10 +918,13 @@ pub struct CountOutcome {
 
 /// Count keys matching `pattern` under one action budget.
 ///
-/// Two shapes skip the scan entirely: `*` answers from `DBSIZE` (as before, and
-/// at strictly less cost — one command instead of a full walk), and an exact key
-/// name answers `0` or `1` with a single `EXISTS` (PRD §4 I-3, "计数显示 1/1
-/// 而非 n+").
+/// Two shapes normally skip the scan entirely: `*` answers from `DBSIZE` (as
+/// before, and at strictly less cost — one command instead of a full walk), and
+/// an exact key name answers `0` or `1` with a single `EXISTS` (PRD §4 I-3,
+/// "计数显示 1/1 而非 n+"). The `*` shortcut has one exception (see
+/// [`read_dbsize`]): a `dbsize` of `0` is ambiguous between "this database is
+/// empty" and "`DBSIZE` was refused", so it is verified by a real scan pass
+/// before being published as a census.
 pub(crate) async fn count_budgeted<C>(
     conn: &mut C,
     pattern: &str,
@@ -904,8 +934,8 @@ pub(crate) async fn count_budgeted<C>(
 where
     C: ConnectionLike + SlotRoutedConnection + Send,
 {
-    let dbsize = read_dbsize(conn).await?;
-    if pattern.is_empty() || pattern == "*" {
+    let dbsize = read_dbsize(conn).await;
+    if pattern.is_empty() || (pattern == "*" && dbsize > 0) {
         return Ok(CountOutcome {
             count: dbsize,
             truncated: false,
@@ -922,6 +952,10 @@ where
         });
     }
 
+    // `pattern == "*"` reaching here means `dbsize == 0`: spend one real scan
+    // round instead of short-circuiting, so an unread DBSIZE cannot be sold to
+    // the UI as "0 keys" (redis-tree-backend-BUG-003). A genuinely empty
+    // database pays one extra round and the cursor wraps immediately.
     let mut ledger = ScanBudget::new(tree_scan_budget(budget, dbsize));
     let page = scan_budgeted(
         conn,

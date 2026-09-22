@@ -183,6 +183,12 @@ Wave 4 树 UI 预算轨逐字引用本节。以下 JSON 为驱动 `execute_drive
 ```
 
 - `pattern == "*"`：直接答 `count == dbsize`，`consumed == 0`，不发 SCAN。
+  - **行为注记（修复轮第 1 回合 / BUG-003，协调者裁定；JSON 形状一字未动）**：该短路仅在
+    `dbsize > 0` 时生效。`read_dbsize` 现**永不失败**（服务端拒绝 / 不可解析回复 ⇒ `0` +
+    `tracing::warn!`，与基线 `unwrap_or(0)` 同语义），而 `0` 同时是"空库"与"DBSIZE 不可得"
+    两种情形的取值，故 `dbsize == 0` 时不发假答：改走**一轮真 SCAN** 后再出 `count`
+    （空库多付一轮、游标即刻归零，`truncated` 仍 `false`）。形状四字段与 `consumed == 0`
+    的既有承诺在 `dbsize > 0` 的快路径上原样保持。
 - 精确键（无 glob 字符）：一次 `EXISTS`，不发 SCAN。
 - 否则：预算内 SCAN，`truncated: true` ⇒ `count` 为下界，UI 必须显示 `n+`。
 

@@ -174,8 +174,10 @@ where
     let sep_chars: Vec<String> = sep_str.chars().map(|c| c.to_string()).collect();
     let seps: Vec<&str> = sep_chars.iter().map(|s| s.as_str()).collect();
 
-    // DBSIZE first: the budget is scaled off it, so it cannot be read later.
-    let dbsize = read_dbsize(conn).await.map_err(DriverError::QueryFailed)?;
+    // DBSIZE first: the budget is scaled off it, so it cannot be read later. A
+    // refused DBSIZE yields 0 and the default tier — it never fails the level
+    // (redis-tree-backend-BUG-003).
+    let dbsize = read_dbsize(conn).await;
     let mut ledger = ScanBudget::new(tree_scan_budget(budget, dbsize));
     let page = scan_budgeted(
         conn,
