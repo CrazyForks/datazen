@@ -19,7 +19,7 @@
  * Redis only. No rendered English copy is asserted anywhere in this file.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { KvSlotState, KvStatusBarProps } from '@datazen/driver-sdk';
 
 vi.mock('@datazen/ui', async (importOriginal) => ({
@@ -33,7 +33,7 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
   redisCommandInvoke: (...args: unknown[]) => commandInvoke(...(args as [])),
 }));
 
-import { RedisKvStatusBar } from '../kv-bar';
+import { RedisKeyPropsSidebar, RedisKvStatusBar } from '../kv-bar';
 import type { KeyObjectInfo } from '../kv-bar/keyObjectInfo';
 import { publishRead, type KeyReadOwner, type OwnedKeyRead } from '../kv-bar/useKeyObjectInfo';
 
@@ -270,5 +270,118 @@ describe('[fix:BUG-001] superseded replies (rendered through the statusBar slot)
     );
     expect(container.querySelector('[data-part="size"]')?.textContent).toBe('640 B');
     expect(container.querySelector('[data-part="ttl"]')?.textContent).toBe('2m 05s');
+  });
+});
+
+/** How many times a driver command was invoked. */
+function readsOf(command: string): number {
+  return commandInvoke.mock.calls.filter(([, name]) => name === command).length;
+}
+
+/** The keys `key_object_info` was actually asked for, in call order. */
+function keysRead(): string[] {
+  return commandInvoke.mock.calls
+    .filter(([, name]) => name === 'key_object_info')
+    .map(([, , payload]) => (payload as { key: string }).key);
+}
+
+const statusState = (container: HTMLElement) =>
+  container.querySelector('[data-status-state]')?.getAttribute('data-status-state');
+const propsState = (container: HTMLElement) =>
+  container.querySelector('[data-props-state]')?.getAttribute('data-props-state');
+
+describe('[fix:BUG-002] one round trip per key for the whole panel', () => {
+  it('merges the status bar and sidebar read of the same key into one command', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info({ type: 'hash', memoryBytes: 2048 }));
+    const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    const side = render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+
+    act(() => relay.selectKey('user:1'));
+    await waitFor(() => expect(statusState(bar.container)).toBe('ready'));
+    await waitFor(() => expect(propsState(side.container)).toBe('ready'));
+
+    // The measured regression: this selection used to cost 2 identical
+    // `key_object_info` calls (each `SELECT` + pipeline) and 3 commands overall.
+    expect(keysRead()).toEqual(['user:1']);
+    expect(bar.container.querySelector('[data-part="type"]')?.textContent).toBe('hash');
+    expect(
+      side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value'),
+    ).toBe('hash');
+    expect(
+      side.container.querySelector('[data-attr="memory"] dd')?.getAttribute('data-value'),
+    ).toBe('2.0 KB');
+  });
+
+  it('re-reads the next key instead of serving it from the merged read', async () => {
+    // The merge is an in-flight join, not a value cache: a settled reply must not
+    // be reusable, so the next selection and an explicit refresh each cost a call.
+    const relay = makeRelay();
+    commandInvoke.mockResolvedValue(info());
+    const { container } = render(
+      <>
+        <RedisKvStatusBar {...slotProps(relay)} />
+        <RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />
+      </>,
+    );
+    act(() => relay.selectKey('first'));
+    await waitFor(() => expect(statusState(container)).toBe('ready'));
+    expect(keysRead()).toEqual(['first']);
+
+    act(() => relay.selectKey('second'));
+    await waitFor(() => expect(statusState(container)).toBe('ready'));
+    expect(keysRead()).toEqual(['first', 'second']);
+
+    fireEvent.click(container.querySelector('[data-testid="redis-kv-props-refresh"]')!);
+    await waitFor(() => expect(readsOf('key_object_info')).toBe(3));
+    expect(keysRead()).toEqual(['first', 'second', 'second']);
+  });
+
+  it('shares a failure with both slots and forgets the read afterwards', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockRejectedValue(new Error('connection reset'));
+    const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
+    const side = render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+    act(() => relay.selectKey('user:1'));
+
+    await waitFor(() => expect(statusState(bar.container)).toBe('failed'));
+    expect(propsState(side.container)).toBe('failed');
+    expect(readsOf('key_object_info')).toBe(1);
+
+    // The rejected flight has to leave with its promise: the next read of the same
+    // key must issue a fresh command rather than reuse the cached rejection.
+    vi.clearAllMocks();
+    commandInvoke.mockResolvedValue(info({ type: 'zset' }));
+    fireEvent.click(side.container.querySelector('[data-testid="redis-kv-props-refresh"]')!);
+    await waitFor(() => expect(propsState(side.container)).toBe('ready'));
+    expect(readsOf('key_object_info')).toBe(1);
+    expect(
+      side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value'),
+    ).toBe('zset');
+    // `reload` is still each slot's own attempt — the bar recovers on the next
+    // selection, not on the drawer's refresh. Naming that split here so a later
+    // round that shares the attempt across the panel flips this assertion on
+    // purpose instead of discovering it as a regression.
+    expect(statusState(bar.container)).toBe('failed');
+  });
+
+  it('keeps two panels of the same connection from sharing a read scope', async () => {
+    // The merge is scoped by the panel relay, so a second KV panel on the same
+    // session and key still reads for itself — a plain module map keyed by the
+    // read identity would answer both panels from one promise.
+    const first = makeRelay();
+    const second = makeRelay();
+    commandInvoke.mockResolvedValue(info());
+    const a = render(<RedisKvStatusBar {...slotProps(first)} />);
+    const b = render(<RedisKvStatusBar {...slotProps(second)} />);
+
+    act(() => {
+      first.selectKey('shared-name');
+      second.selectKey('shared-name');
+    });
+    await waitFor(() => expect(statusState(a.container)).toBe('ready'));
+    await waitFor(() => expect(statusState(b.container)).toBe('ready'));
+    expect(readsOf('key_object_info')).toBe(2);
+    expect(keysRead()).toEqual(['shared-name', 'shared-name']);
   });
 });

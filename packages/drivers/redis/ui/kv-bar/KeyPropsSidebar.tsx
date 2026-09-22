@@ -49,6 +49,7 @@ export function RedisKeyPropsSidebar({
   // Nothing is fetched while the drawer is collapsed: the slot stays mounted, so
   // `open` doubles as the request gate and a closed drawer costs no round trips.
   const { info, loading, failed, reload } = useKeyObjectInfo(
+    state,
     dbSessionId,
     dbIndex,
     open ? selectedKey : null,

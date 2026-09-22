@@ -28,7 +28,7 @@ export function RedisKvStatusBar({ dbSessionId, dbIndex, database, state }: KvSt
   const { t } = useI18n();
   const selectedKey = useKvSelectedKey(state);
   const dirty = useKvDirty(state);
-  const { info, loading, failed } = useKeyObjectInfo(dbSessionId, dbIndex, selectedKey);
+  const { info, loading, failed } = useKeyObjectInfo(state, dbSessionId, dbIndex, selectedKey);
 
   const dbLabel = database ?? (dbIndex === undefined ? null : `db${dbIndex}`);
   const ttl = info && !info.missing ? describeTtl(info.ttlMs) : null;

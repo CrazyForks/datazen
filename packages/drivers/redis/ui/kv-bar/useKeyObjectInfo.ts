@@ -19,8 +19,18 @@
  *   nothing instead of a half-truth (§3.4 “不渲染，不是渲染 0”);
  * - a reply for a superseded read is discarded where it lands, so it can neither
  *   paint another key's row nor clear the current one's `loading` marker.
+ *
+ * **Two slots, one round trip** (redis-kvbar-ui-BUG-002): with the drawer open the
+ * status bar and the sidebar want the same read at the same instant, and they sit
+ * in different React subtrees with no driver-side common parent. They now join the
+ * *same in-flight request* — see {@link sharedKeyObjectInfo}, which is scoped to
+ * the panel relay and holds nothing once the command settles. A shared *value*
+ * cache is deliberately not the answer: a cache only pays off if it outlives the
+ * component that filled it, and that is exactly the driver-side module singleton
+ * contract F-2 rejected.
  */
 import { useCallback, useEffect, useState } from 'react';
+import type { KvSlotState } from '@datazen/driver-sdk';
 import { invokeKeyObjectInfo, type KeyObjectInfo } from './keyObjectInfo';
 
 /** The three things a published read may say about the key being rendered. */
@@ -103,13 +113,52 @@ export function publishRead(read: OwnedKeyRead, current: KeyReadOwner | null): P
 const NO_READ: OwnedKeyRead = { owner: null, info: null, loading: false, failed: false };
 
 /**
+ * Reads currently in flight, grouped by the panel that asked for them.
+ *
+ * Keyed **weakly by the relay object** because that object *is* the panel's
+ * identity for these slots: `useKvWorkspaceSlots` hands the same
+ * `getKvSlotState(panelId)` to the status bar, the sidebar and the workbench, and
+ * the host prunes the atom when the panel closes — so an entry here can neither
+ * outlive its panel nor be shared by two panels that happen to select the same
+ * key. Values are unsettled promises only, deleted the moment they settle (both
+ * outcomes), which is what keeps this an in-flight merge rather than a cache:
+ * there is no state in which a finished read can be handed to a late consumer.
+ */
+const openReads = new WeakMap<KvSlotState, Map<string, Promise<KeyObjectInfo>>>();
+
+function sharedKeyObjectInfo(
+  scope: KvSlotState,
+  owner: KeyReadOwner,
+): Promise<KeyObjectInfo> {
+  const id = readToken(owner);
+  let byOwner = openReads.get(scope);
+  if (!byOwner) {
+    byOwner = new Map();
+    openReads.set(scope, byOwner);
+  }
+  const joined = byOwner.get(id);
+  if (joined) return joined;
+  const scopeById = byOwner;
+  const flight = invokeKeyObjectInfo(owner.dbSessionId, owner.dbIndex, owner.key).finally(() => {
+    scopeById.delete(id);
+  });
+  scopeById.set(id, flight);
+  return flight;
+}
+
+/**
  * Fetch {@link key} while `enabled`.
  *
  * Pass `enabled: false` (or `key: null`) to keep the hook mounted without
  * issuing traffic — the sidebar does exactly that while the drawer is closed,
  * because the host never unmounts it.
+ *
+ * {@link scope} is the panel's relay: not read as state, only used as the
+ * identity of "these slots belong to one panel" so concurrent reads merge
+ * (redis-kvbar-ui-BUG-002).
  */
 export function useKeyObjectInfo(
+  scope: KvSlotState,
   dbSessionId: string,
   dbIndex: number | undefined,
   key: string | null,
@@ -128,7 +177,7 @@ export function useKeyObjectInfo(
     // key's payload (BUG-001). `reload` re-reads the same owner and takes the same
     // path, so refreshing also starts from nothing instead of from stale numbers.
     setRead({ owner, info: null, loading: true, failed: false });
-    void invokeKeyObjectInfo(owner.dbSessionId, owner.dbIndex, owner.key).then(
+    void sharedKeyObjectInfo(scope, owner).then(
       (info) => {
         // Apply the reply only while the state still belongs to this read; a
         // superseded one must not even flip `loading` off (see the docblock).
@@ -148,7 +197,7 @@ export function useKeyObjectInfo(
         );
       },
     );
-  }, [dbSessionId, dbIndex, key, enabled, attempt]);
+  }, [scope, dbSessionId, dbIndex, key, enabled, attempt]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   // Derived while rendering, so moving the selection invalidates the attributes
