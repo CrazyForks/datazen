@@ -144,6 +144,11 @@ impl MigrationRenderer for SqliteMigrationRenderer {
             | MigrationOperation::DropCheckConstraint { .. } => Err(
                 "SQLite CHECK constraint changes require a table rebuild; refusing an unsafe direct ALTER".into(),
             ),
+            MigrationOperation::CreateType { .. }
+            | MigrationOperation::ReplaceType { .. }
+            | MigrationOperation::DropType { .. } => Err(
+                "SQLite user-defined type migration is unsupported".into(),
+            ),
             _ => Err(format!(
                 "SQLite renderer does not yet support {:?}; table rebuild may be required",
                 op

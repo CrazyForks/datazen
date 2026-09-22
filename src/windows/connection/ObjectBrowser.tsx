@@ -17,7 +17,7 @@ import { copyToClipboard } from '../../lib/fetchRelationDdl';
 import { databaseObjectIdentityKey } from '../../lib/databaseObjectIdentity';
 import type { DatabaseObject, DatabaseObjectKind } from '../../types';
 
-const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence'];
+const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence', 'type'];
 
 function sameObjectIdentity(left: DatabaseObject | null, right: DatabaseObject): boolean {
   return left !== null && databaseObjectIdentityKey(left) === databaseObjectIdentityKey(right);
@@ -211,7 +211,9 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
                   ? t('objects.procedure')
                   : k === 'trigger'
                     ? t('objects.trigger')
-                    : t('schemaTree.sequences')}
+                    : k === 'sequence'
+                      ? t('schemaTree.sequences')
+                      : t('schemaTree.types')}
             </button>
           ))}
         </div>

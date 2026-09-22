@@ -325,19 +325,28 @@ pub fn object_ddl_sql_with_metadata(
             let schema_str = sql_string(schema.unwrap_or("public"));
             let name_str = sql_string(name);
             Some(format!(
-                "SELECT pg_catalog.format_type(t.oid, NULL) || ' = ' || \
-                 CASE t.typtype \
-                   WHEN 'e' THEN 'ENUM (' || string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) || ')' \
-                   WHEN 'c' THEN 'COMPOSITE (...)' \
-                   WHEN 'd' THEN 'DOMAIN ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) \
-                   WHEN 'r' THEN 'RANGE' \
-                   ELSE t.typtype::text \
+                "SELECT CASE t.typtype \
+                   WHEN 'e' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS ENUM (' || string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) || ');' \
+                   WHEN 'd' THEN 'CREATE DOMAIN ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) \
+                     || CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END \
+                     || COALESCE(' DEFAULT ' || pg_get_expr(t.typdefaultbin, 0), '') \
+                     || COALESCE(' ' || (SELECT string_agg('CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid), ' ' ORDER BY con.oid) FROM pg_constraint con WHERE con.contypid = t.oid), '') \
+                     || ';' \
+                   WHEN 'c' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS (' || (SELECT string_agg(quote_ident(a.attname) || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped) || ');' \
+                   WHEN 'r' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS RANGE (SUBTYPE = ' || pg_catalog.format_type(r.rngsubtype, NULL) || ');' \
                  END AS ddl \
                  FROM pg_type t \
                  JOIN pg_namespace n ON n.oid = t.typnamespace \
                  LEFT JOIN pg_enum e ON e.enumtypid = t.oid \
+                 LEFT JOIN pg_range r ON r.rngtypid = t.oid \
+                 LEFT JOIN pg_class type_rel ON type_rel.oid = t.typrelid \
                  WHERE n.nspname = {schema_str} AND t.typname = {name_str} \
-                 GROUP BY t.oid, t.typtype, t.typbasetype, t.typtypmod"
+                   AND (t.typtype IN ('e','d','r') OR (t.typtype = 'c' AND type_rel.relkind = 'c')) \
+                 GROUP BY t.oid, n.nspname, t.typname, t.typtype, t.typbasetype, t.typtypmod, t.typnotnull, t.typdefaultbin, t.typrelid, r.rngsubtype"
             ))
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),

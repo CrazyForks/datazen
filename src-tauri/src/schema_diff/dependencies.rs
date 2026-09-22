@@ -40,6 +40,12 @@ fn op_table(op: &MigrationOperation) -> &str {
             desired: sequence, ..
         }
         | MigrationOperation::DropSequence { sequence } => &sequence.name,
+        MigrationOperation::CreateType { type_definition }
+        | MigrationOperation::ReplaceType {
+            desired: type_definition,
+            ..
+        }
+        | MigrationOperation::DropType { type_definition } => &type_definition.name,
     }
 }
 

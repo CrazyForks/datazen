@@ -341,6 +341,29 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('prepareTypePlan forwards qualified selectors and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'type:public:mood',
+        tables: ['type:public:mood'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareTypePlan({
+        sourceDbSessionId: 'src-type',
+        targetDbSessionId: 'tgt-type',
+        objectNames: ['public.mood'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['type:public:mood'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_type_plan', {
+      sourceDbSessionId: 'src-type',
+      targetDbSessionId: 'tgt-type',
+      objectNames: ['public.mood'],
+      allowDestructive: true,
+    });
+  });
+
   it('executeDeploy forwards deploy options and confirm token', async () => {
     const plan = samplePlan();
     const result = { status: 'committed', executedCount: 1 };

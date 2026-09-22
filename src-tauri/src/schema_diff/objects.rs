@@ -11,8 +11,9 @@ use super::types::{
 };
 use datazen_driver_api::{
     validate_object_definition_with_identity, validate_sequence_definition_with_identity,
-    validate_view_definition, MigrationCapabilities, MigrationRenderer, MigrationRoutine,
-    MigrationSequence, MigrationTrigger, MigrationView, ObjectKind,
+    validate_type_definition_with_identity, validate_view_definition, MigrationCapabilities,
+    MigrationRenderer, MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationType,
+    MigrationView, ObjectKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -89,6 +90,18 @@ impl SchemaObjectSnapshot {
         }
     }
 
+    pub fn type_definition(schema: Option<&str>, name: &str, definition: &str) -> Self {
+        Self {
+            kind: ObjectKind::Type,
+            schema: schema.map(str::to_owned),
+            name: name.to_owned(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
+            definition: definition.to_owned(),
+        }
+    }
+
     fn key(
         &self,
     ) -> (
@@ -156,6 +169,17 @@ impl SchemaObjectSnapshot {
             definition: self.definition.clone(),
         })
     }
+
+    fn as_migration_type(&self) -> Result<MigrationType, String> {
+        if self.kind != ObjectKind::Type {
+            return Err("schema object is not a user-defined type".into());
+        }
+        Ok(MigrationType {
+            schema: self.schema.clone(),
+            name: self.name.clone(),
+            definition: self.definition.clone(),
+        })
+    }
 }
 
 fn unsupported_plan(
@@ -165,9 +189,10 @@ fn unsupported_plan(
     operation: impl Into<String>,
     reason: impl Into<String>,
 ) -> SchemaDiffPlan {
+    let operation = operation.into();
     SchemaDiffPlan {
         plan_id: None,
-        table: tables.first().cloned().unwrap_or_else(|| "view".into()),
+        table: tables.first().cloned().unwrap_or_else(|| operation.clone()),
         tables,
         source_dialect: normalize_dialect(source_dialect),
         target_dialect: normalize_dialect(target_dialect),
@@ -175,7 +200,7 @@ fn unsupported_plan(
         statements: Vec::new(),
         warnings: Vec::new(),
         requirements: vec![PlanRequirement::Unsupported {
-            operation: operation.into(),
+            operation,
             reason: reason.into(),
         }],
         rollback_completeness: RollbackCompleteness {
@@ -1001,6 +1026,249 @@ pub fn build_sequence_migration_plan_with_components(
     }
 }
 
+/// Build a reviewed same-dialect migration plan for user-defined types.
+/// Definitions are opaque driver-owned DDL; no cross-dialect translation is
+/// attempted because enum/domain/composite/range semantics are not portable.
+pub fn build_type_migration_plan(
+    source: &[SchemaObjectSnapshot],
+    target: &[SchemaObjectSnapshot],
+    source_dialect: &str,
+    target_dialect: &str,
+    allow_destructive: bool,
+) -> SchemaDiffPlan {
+    let target_dialect = normalize_dialect(target_dialect);
+    let Some(driver) = datazen_driver_api::create_driver(&target_dialect) else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "type",
+            format!("No registered driver for target database: {target_dialect}"),
+        );
+    };
+    let Some(renderer) = driver.migration_renderer() else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "type",
+            format!("Driver {target_dialect} does not expose schema migration rendering"),
+        );
+    };
+    let Some(capabilities) = driver.migration_capabilities() else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "type",
+            format!("Driver {target_dialect} does not expose schema migration capabilities"),
+        );
+    };
+    build_type_migration_plan_with_components(
+        source,
+        target,
+        source_dialect,
+        &target_dialect,
+        allow_destructive,
+        renderer.as_ref(),
+        capabilities.as_ref(),
+    )
+}
+
+pub fn build_type_migration_plan_with_components(
+    source: &[SchemaObjectSnapshot],
+    target: &[SchemaObjectSnapshot],
+    source_dialect: &str,
+    target_dialect: &str,
+    allow_destructive: bool,
+    renderer: &dyn MigrationRenderer,
+    capabilities: &dyn MigrationCapabilities,
+) -> SchemaDiffPlan {
+    let source_dialect = normalize_dialect(source_dialect);
+    let target_dialect = normalize_dialect(target_dialect);
+    if source_dialect != target_dialect {
+        return unsupported_plan(
+            &source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "type",
+            "User-defined type migration requires matching source and target dialects",
+        );
+    }
+
+    let mut requirements = Vec::new();
+    let mut warnings = Vec::new();
+    let mut source_by_key = HashMap::new();
+    let mut target_by_key = HashMap::new();
+    let validate = |object: &SchemaObjectSnapshot, requirements: &mut Vec<PlanRequirement>| {
+        if object.kind != ObjectKind::Type {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Only user-defined type objects are supported by this migration slice"
+                    .into(),
+            });
+            return false;
+        }
+        if object.name.trim().is_empty() {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: "type".into(),
+                reason: "Type name must not be empty".into(),
+            });
+            return false;
+        }
+        if let Err(reason) = validate_type_definition_with_identity(
+            &object.definition,
+            object.schema.as_deref(),
+            &object.name,
+        ) {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason,
+            });
+            return false;
+        }
+        true
+    };
+
+    for object in source {
+        if validate(object, &mut requirements)
+            && source_by_key.insert(object.key(), object).is_some()
+        {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Source contains duplicate type identities".into(),
+            });
+        }
+    }
+    for object in target {
+        if validate(object, &mut requirements)
+            && target_by_key.insert(object.key(), object).is_some()
+        {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Target contains duplicate type identities".into(),
+            });
+        }
+    }
+
+    let mut keys = BTreeSet::new();
+    keys.extend(source_by_key.keys().cloned());
+    keys.extend(target_by_key.keys().cloned());
+    let mut tables = BTreeSet::new();
+    let mut operations = Vec::new();
+    for key in keys {
+        let source_object = source_by_key.get(&key).copied();
+        let target_object = target_by_key.get(&key).copied();
+        let Some(object) = source_object.or(target_object) else {
+            continue;
+        };
+        tables.insert(object_label(object));
+        match (source_object, target_object) {
+            (Some(desired), None) => match desired.as_migration_type() {
+                Ok(type_definition) => {
+                    operations.push(MigrationOperation::CreateType { type_definition })
+                }
+                Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                    operation: desired.name.clone(),
+                    reason,
+                }),
+            },
+            (Some(desired), Some(current))
+                if desired.definition.trim() != current.definition.trim() =>
+            {
+                match (current.as_migration_type(), desired.as_migration_type()) {
+                    (Ok(current), Ok(desired)) => {
+                        operations.push(MigrationOperation::ReplaceType { current, desired })
+                    }
+                    (Err(reason), _) | (_, Err(reason)) => {
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: desired.name.clone(),
+                            reason,
+                        })
+                    }
+                }
+            }
+            (None, Some(current)) => match current.as_migration_type() {
+                Ok(type_definition) => {
+                    let operation = MigrationOperation::DropType { type_definition };
+                    if allow_destructive {
+                        operations.push(operation);
+                    } else {
+                        warnings.push(format!("Skipped destructive operation {}", operation.key()));
+                    }
+                }
+                Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                    operation: current.name.clone(),
+                    reason,
+                }),
+            },
+            _ => {}
+        }
+    }
+
+    operations.sort_by_key(|operation| {
+        let priority = match operation {
+            MigrationOperation::CreateType { .. } => 0,
+            MigrationOperation::ReplaceType { .. } => 1,
+            MigrationOperation::DropType { .. } => 2,
+            _ => 3,
+        };
+        (priority, operation.key())
+    });
+    let mut statements = Vec::new();
+    for operation in operations {
+        let key = operation.key();
+        let driver_operation = operation.to_driver_api();
+        if !capabilities.supports(&driver_operation) {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: key,
+                reason: format!("Operation is not supported by {target_dialect}"),
+            });
+            continue;
+        }
+        match renderer.render(&driver_operation) {
+            Ok(statement) => {
+                let risk = match statement.risk {
+                    datazen_driver_api::MigrationRisk::Additive => StatementRisk::Additive,
+                    datazen_driver_api::MigrationRisk::Rewrite => StatementRisk::Rewrite,
+                    datazen_driver_api::MigrationRisk::Destructive => StatementRisk::Destructive,
+                };
+                statements.push(PlanStatement {
+                    sql: statement.sql,
+                    risk,
+                    rollback_sql: statement.rollback_sql,
+                    summary: statement.summary,
+                });
+            }
+            Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                operation: key,
+                reason,
+            }),
+        }
+    }
+    let missing = statements
+        .iter()
+        .filter(|statement| statement.rollback_sql.is_none())
+        .map(|statement| statement.summary.clone())
+        .collect::<Vec<_>>();
+    SchemaDiffPlan {
+        plan_id: None,
+        table: tables.first().cloned().unwrap_or_else(|| "type".into()),
+        tables: tables.into_iter().collect(),
+        source_dialect,
+        target_dialect,
+        same_dialect: true,
+        statements,
+        warnings,
+        requirements,
+        rollback_completeness: RollbackCompleteness {
+            complete: missing.is_empty(),
+            missing,
+        },
+        type_suggestions: Vec::new(),
+    }
+}
+
 fn object_label(object: &SchemaObjectSnapshot) -> String {
     let schema = object.schema.as_deref().filter(|value| !value.is_empty());
     match object.kind {
@@ -1019,6 +1287,7 @@ fn object_label(object: &SchemaObjectSnapshot) -> String {
             object.target_name.as_deref().unwrap_or_default()
         ),
         ObjectKind::Sequence => format!("sequence:{}:{}", schema.unwrap_or_default(), object.name),
+        ObjectKind::Type => format!("type:{}:{}", schema.unwrap_or_default(), object.name),
         _ => object.name.clone(),
     }
 }
@@ -1116,6 +1385,24 @@ mod tests {
                     risk: MigrationRisk::Destructive,
                     rollback_sql: Some(sequence.definition.clone()),
                     summary: format!("DROP SEQUENCE {}", sequence.name),
+                }),
+                DriverOperation::CreateType { type_definition } => Ok(MigrationStatement {
+                    sql: type_definition.definition.clone(),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP TYPE {}", type_definition.name)),
+                    summary: format!("CREATE TYPE {}", type_definition.name),
+                }),
+                DriverOperation::ReplaceType { current, desired } => Ok(MigrationStatement {
+                    sql: desired.definition.clone(),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(current.definition.clone()),
+                    summary: format!("REPLACE TYPE {}", desired.name),
+                }),
+                DriverOperation::DropType { type_definition } => Ok(MigrationStatement {
+                    sql: format!("DROP TYPE {}", type_definition.name),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(type_definition.definition.clone()),
+                    summary: format!("DROP TYPE {}", type_definition.name),
                 }),
                 _ => Err("unexpected operation".into()),
             }
@@ -1526,5 +1813,97 @@ mod tests {
         let unsupported = build_sequence_migration_plan(&source, &[], "redis", "redis", false);
         assert!(unsupported.statements.is_empty());
         assert!(!unsupported.requirements.is_empty());
+    }
+
+    #[test]
+    fn type_plan_creates_replaces_and_requires_destructive_drop_approval() {
+        let source = [SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "mood",
+            "CREATE TYPE public.mood AS ENUM ('sad', 'happy')",
+        )];
+        let target = [
+            SchemaObjectSnapshot::type_definition(
+                Some("public"),
+                "mood",
+                "CREATE TYPE public.mood AS ENUM ('sad')",
+            ),
+            SchemaObjectSnapshot::type_definition(
+                Some("public"),
+                "legacy_mood",
+                "CREATE TYPE public.legacy_mood AS ENUM ('legacy')",
+            ),
+        ];
+        let safe = build_type_migration_plan_with_components(
+            &source,
+            &target,
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert_eq!(safe.statements.len(), 1);
+        assert_eq!(safe.statements[0].risk, StatementRisk::Destructive);
+        assert!(safe
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("legacy_mood")));
+
+        let approved = build_type_migration_plan_with_components(
+            &source,
+            &target,
+            "postgresql",
+            "postgresql",
+            true,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert_eq!(approved.statements.len(), 2);
+        assert!(approved
+            .statements
+            .iter()
+            .any(|statement| statement.summary.contains("DROP TYPE legacy_mood")));
+    }
+
+    #[test]
+    fn type_plan_fails_closed_for_cross_dialect_and_unsafe_ddl() {
+        let source = [SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "mood",
+            "CREATE TYPE public.mood AS ENUM ('happy')",
+        )];
+        let cross = build_type_migration_plan_with_components(
+            &source,
+            &[],
+            "postgresql",
+            "sqlserver",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(cross.statements.is_empty());
+        assert!(cross.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("matching source and target dialects")
+        )));
+
+        let unsafe_source = [SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "mood",
+            "CREATE TYPE public.mood AS ENUM ('happy'); DROP TABLE users",
+        )];
+        let plan = build_type_migration_plan_with_components(
+            &unsafe_source,
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(plan.statements.is_empty());
+        assert!(!plan.requirements.is_empty());
     }
 }
