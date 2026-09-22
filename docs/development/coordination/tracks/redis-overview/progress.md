@@ -126,6 +126,43 @@
 2. 复测 Tester：重跑四项门禁 + 全量套件（含 `overviewTesterGaps.test.tsx` 13 例）+ 变异 M1/M2/M3/M4a/M4b 全套复验；覆盖率数字若因删死代码变化，以「全部门禁文件 ≥80%」为准。
 3. `pnpm test:unit:drivers` 若仍被 verify-deps 卡住，按注①的命令体执行并在报告里保留该说明。
 
+## 第 2 轮 Tester 门禁实测（独立复跑，非代理自述）· 2026-09-22 13:00–13:12
+
+入口：`3db6c0091`（工作树 clean、分支 `feature/redis-overview`、codegen 两文件在位）。全新实例 `w2b-overview-tester-2`。
+
+| 门禁 | 命令（原样执行） | 实测 | 与 Coder 自述对账 |
+|---|---|---|---|
+| 类型检查 | `npx --config.verify-deps-before-run=false tsc --noEmit` | **exit 0 / 0 错** | 一致 |
+| 驱动单测 | `npx vitest run --config vitest.drivers.config.ts` | **39 files / 363 tests 全绿**，7.40s | 一致（第 1 轮基线 39/359，修复轮 +4 例） |
+| Rust | `CARGO_TARGET_DIR=/tmp/ct-w2b-t2 cargo test -p datazen-driver-redis` | **exit 0**：lib **239 passed / 0 failed / 1 ignored**（0.07s）+ 集成 `tests/workbench_commands.rs` **4 passed / 0 failed** + doc **0**；编译 **0 warning** | 一致 |
+| 生产构建 | `npx vite build` | **exit 0**（`✓ built in 5.16s`；仅存量 chunk>500kB 提示） | 一致 |
+| 覆盖率 | 同第 1 轮 include 范围（`ui/overview/**` + `ui/lib/redisBrowseHistory.ts`） | **All files 98.73 stmts / 94.55 branch / 100 funcs / 99.69 lines** | 一致（逐位） |
+
+覆盖率逐文件（v8，全量 39-file 套件）：
+
+| 文件 | Stmts | Branch | Funcs | Lines | 未覆盖行 |
+|---|---|---|---|---|---|
+| `lib/redisBrowseHistory.ts` | 94.11 | 91.3 | 100 | 98.5 | 51（沙箱帧 `localStorage` 抛错 catch，需真 webview → R-7） |
+| `overview/MemoryCard.tsx` | 100 | **96.34** | 100 | 100 | 139 |
+| `overview/OverviewCard.tsx` | 100 | 88.23 | 100 | 100 | 128-130、145、165（存量兜底分支，第 1 轮已核） |
+| `overview/overviewModel.ts` | 100 | **94.57** | 100 | 100 | 351、356、396、453（**351/356 = 存量 `?? 0`/`isFinite(bytes)` 防御**；新字段行 357-359 已覆盖） |
+| `overview/overviewNavigation.ts` | 100 | **100** | 100 | 100 | — （BUG-002 死导出清除后转满覆盖） |
+| `overview/RecentKeysCard.tsx` / `RedisOverviewHome.tsx` / `KeySpaceCard.tsx` / `ServerInfoCard.tsx` / `QuickActionsCard.tsx` | 100 | 100 | 100 | 100 | — |
+| `overview/useOverviewData.ts` | 100 | 94.59 | 100 | 100 | 80、118（存量提前 return 防御） |
+| `overview/SlowlogCard.tsx` / `RedisOverviewBanner.tsx` | 100 | 90 / 90.9 | 100 | 100 | 64 / 55 |
+
+**门禁判定：五项全绿，全部文件 ≥80% 通过；Coder 自述数字与独立实测逐项吻合（无虚报）。** 全程未跑 `pnpm install` / `pnpm build` / `pnpm e2e` / `pnpm tauri:build:*` / 裸 `cargo build`。`pnpm test:unit:drivers` 仍受 verify-deps 限制（第 1 轮注①口径不变），改跑同一命令体。
+
+### 触碰文件行数规模（供阶段 D 裁定输入）
+
+| 文件 | 行数 | 备注 |
+|---|---|---|
+| `packages/drivers/redis/src/ops_workbench.rs` | **1070**（末 2 行为 `#[cfg(test)] mod tests;`，即生产体 **1068**） | 修复轮 +224；Coder 自述 1066，实测 1070（rustfmt commit 后） |
+| `packages/drivers/redis/src/ops_workbench/tests.rs` | 1602 | 自 `b1e1f4010`（W1-A 轨）即存在，本修复轮 +402；测试文件 |
+| `packages/drivers/redis/src/ops_observe.rs` | 558 | 修复轮 +78 |
+| `ui/__tests__/redisOverviewHome.test.tsx` | 679 | 修复轮 +41（第 1 轮 656，仍未到 800） |
+| `ui/__tests__/overviewTesterGaps.test.tsx` | 369 | 第 1 轮 Tester 自建 |
+
 ## 第 1 轮修复记录（rescuer 接手未提交现场，2026-09-22 12:05–12:30）
 
 > 现场：前任修复代理提交 `fc78cf4c5`（BUG-002）后死于 150 轮上限，留有 14 文件 / +646−37 的成形未提交实现。本棒按「盘点 → 保全 commit → 补缺口 → 分步提交」执行，未重做已入库部分。
