@@ -1,6 +1,6 @@
 # migration-sync-bounded
 
-Phase: READY_FOR_TEST
+Phase: TEST_DONE
 
 ## Scope completed
 
@@ -40,6 +40,9 @@ Phase: READY_FOR_TEST
 
 Implementation commit: `16e969f5` (`feat(sync): stream comparison rows into indexed store`).
 
+Repair commits: `0e14e73c` (counter validation) and `70c6e826` (durable manifest
+tampering regression).
+
 ## Limits not covered
 
 The SQL preview and execute IPC still return/consume `Vec<SqlStatement>` and
@@ -54,12 +57,13 @@ changing the immutable plan or selection contract.
   fixed-width index are bounded to the two driver pages plus the current row;
   writer Drop/claim/TTL cleanup and selection defaults/exclusions are wired as
   intended.
-- Independent Rust suites passed: ComparisonStore 8/8 before tester additions,
-  tester additions 5/5, `data_sync::compare` 18/18, complete `data_sync` 129/129,
-  complete `commands::sync` 57/57, and the focused `commands::sync::tests` 25/25.
-  The tester additions cover 0/1/10,001 streaming rows, index corruption,
-  cancellation cleanup, unchanged-row sink rejection, and the 64 MiB full-load
-  fail-closed path while leaving one-page review reads available.
+- Independent Rust suites passed: ComparisonStore 14/14 (including the durable
+  manifest-counter tampering regression), `data_sync` 129/129, complete
+  `commands::sync` 58/58, and focused `commands::sync::tests` 25/25. The
+  comparison-store tests cover 0/1/10,001 streaming rows, index corruption,
+  manifest counter corruption, cancellation cleanup, unchanged-row sink
+  rejection, and the 64 MiB full-load fail-closed path while leaving one-page
+  review reads available.
 - Independent frontend checks passed: focused Data Sync Vitest 10 files / 63
   tests and `npx tsc --noEmit`. `git diff --check` passed. `cargo fmt --all
   -- --check` reports only the known ordering difference in generated,
@@ -73,11 +77,9 @@ changing the immutable plan or selection contract.
   a P2 follow-up limitation for this track: it fails closed before a complete
   `Vec<SqlStatement>` is built, while bounded review pages remain usable. It is
   not recorded as a defect in this bounded-generation wave.
-- **TEST_FAILED:**
-  `migration-sync-bounded-BUG-001` is recorded in `bugs.md`. Mutating only
-  `manifest.json`'s `insertCount` makes `ComparisonStore::summaries()` return
-  inconsistent metadata instead of rejecting the damaged store. No business
-  code was changed by the tester.
+- The previous round found and reproduced
+  `migration-sync-bounded-BUG-001`; the repair now rejects the damaged store
+  before summaries, page reads, or full loads are served.
 
 ## Repair
 
@@ -86,8 +88,20 @@ changing the immutable plan or selection contract.
   count, and rejects any mismatch before summaries, page reads, or full loads
   are served.
 - The repaired path remains bounded in memory because it never accumulates
-  row payloads; a fresh independent tester rerun is still required before
-  merge.
+- row payloads. Fresh independent re-test passed the durable
+  `manifest_operation_count_tampering_fails_closed` regression and the
+  complete bounded-sync Rust suites above.
+
+## Repair re-test (2026-09-22)
+
+- `manifest_operation_count_tampering_fails_closed`: passed.
+- Focused Data Sync Vitest: 10 files / 63 tests passed.
+- `npx tsc --noEmit`: passed.
+- `git diff --check`: passed. `cargo fmt --all -- --check` reports only the
+  known ordering difference in generated, ignored `src-tauri/src/driver_init.rs`;
+  injected files and `Cargo.lock` were restored after testing.
+- No live PostgreSQL/MySQL fixtures were available, so the registered real
+  multi-page journeys remain 【留待 R】.
 
 ## Real database journey registration (留待 R)
 
