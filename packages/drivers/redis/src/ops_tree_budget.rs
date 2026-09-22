@@ -88,12 +88,18 @@ pub fn is_exact_key_pattern(pattern: &str) -> bool {
 /// tier from the `10k/50k/200k/1M` ladder means it. `dbsize == 0` (empty db, or
 /// `DBSIZE` unavailable and reported as zero) falls back to the default tier, so
 /// a missing answer can never produce a zero budget.
+///
+/// **`Some(0)` means "no request"**, exactly like `None` (审查发现 R-1, closed in
+/// favour of `## 契约冻结`: "`budget` 缺失或 `0` ⇒ 派生档"). A zero never reaches the
+/// clamp, so this function cannot hand out a 1-round budget someone did not ask
+/// for; the dispatch arm folds `0` into `None` for the same reason, and the two
+/// layers now agree instead of holding opposite readings of the same input.
 pub fn tree_scan_budget(requested: Option<u64>, dbsize: u64) -> u64 {
-    match requested {
+    match requested.filter(|raw| *raw > 0) {
         // A requested tier is clamped into 1..=HARD_MAX without scaling.
         Some(raw) => raw.clamp(1, HARD_MAX_TREE_BUDGET),
-        // Derived: DEFAULT floor, DBSIZE × factor, HARD ceiling. The constants
-        // satisfy DEFAULT < HARD, so this clamp cannot panic.
+        // Absent or zero: derived — DEFAULT floor, DBSIZE × factor, HARD ceiling.
+        // The constants satisfy DEFAULT < HARD, so this clamp cannot panic.
         None => dbsize
             .saturating_mul(TREE_BUDGET_DBSIZE_FACTOR)
             .clamp(DEFAULT_TREE_BUDGET, HARD_MAX_TREE_BUDGET),
@@ -256,8 +262,21 @@ mod tests {
         assert_eq!(tree_scan_budget(Some(10_000), 9_000_000), 10_000);
         assert_eq!(tree_scan_budget(Some(200_000), 0), 200_000);
         assert_eq!(tree_scan_budget(Some(5_000_000), 0), HARD_MAX_TREE_BUDGET);
-        // A zero request is a "did you mean 1" typo, not "scan nothing".
-        assert_eq!(tree_scan_budget(Some(0), 0), 1);
+        assert_eq!(tree_scan_budget(Some(1), 9_000_000), 1);
+    }
+
+    #[test]
+    fn a_zero_request_is_the_derived_tier_not_a_one_round_budget() {
+        // 审查发现 R-1, closed in favour of `## 契约冻结`: "budget 缺失或 0 ⇒ 派生档".
+        // The old reading (Some(0) == "did you mean 1") contradicted the freeze and
+        // only stayed invisible because the dispatch arm filtered 0 into None.
+        assert_eq!(tree_scan_budget(Some(0), 0), tree_scan_budget(None, 0));
+        assert_eq!(tree_scan_budget(Some(0), 0), DEFAULT_TREE_BUDGET);
+        assert_eq!(
+            tree_scan_budget(Some(0), 40_000),
+            tree_scan_budget(None, 40_000)
+        );
+        assert_eq!(tree_scan_budget(Some(0), 9_000_000), HARD_MAX_TREE_BUDGET);
     }
 
     #[test]
