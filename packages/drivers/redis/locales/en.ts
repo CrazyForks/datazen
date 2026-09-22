@@ -479,15 +479,29 @@ const locale = {
   'redis.keyProps.refresh': 'Reload key attributes',
 
   // ── W3-E key detail (PRD §3.3 screen B right column) ─────────────────────────
-  // Only the I-5 read-only reasons live here. Tab labels, the wrap checkbox
-  // (`redis.view.wrap`) and the TTL words (`redis.noExpiry` / `redis.setTtl` …)
-  // reuse the existing `redis.*` keys above — this namespace must stay the only
-  // thing this track appends to `en.ts` (conflict surface §3).
+  // Read-only reasons (I-5), key header row, badge row and the TTL pill live
+  // here. Tab labels, the wrap checkbox (`redis.view.wrap`) and the TTL words
+  // (`redis.noExpiry` / `redis.setTtl` …) reuse the existing `redis.*` keys
+  // above — this namespace must stay the only thing this track appends to
+  // `en.ts` (conflict surface §3).
   'redis.detail.badge.truncated': 'Payload truncated by the size budget',
   'redis.detail.readonly.binaryView':
     'Byte view: the rendered hex/bits are a projection, not the stored bytes — switch back to a text view to edit.',
   'redis.detail.readonly.bigValue':
     'Large value: the payload is incomplete, so editing is read-only to stop a truncated write overwriting it.',
+  // Badge row: `大小: N B` (ruling 8-4) — `n` is server data (MEMORY USAGE).
+  'redis.detail.badge.size': 'Size: {n} B',
+  // Key header row (ruling 8-4 copy semantics; refresh/rename/delete labels
+  // reuse `redis.refresh` / `redis.renameKey` / `redis.delete` above).
+  'redis.detail.header.copyKey': 'Copy key name',
+  'redis.detail.header.copyInsert': 'Copy insert statement',
+  'redis.detail.header.renameInput': 'New key name',
+  'redis.detail.header.autoRefresh': 'Auto refresh interval',
+  'redis.detail.refresh.interval': '{n} s',
+  'redis.detail.refresh.off': 'Off',
+  // TTL pill: 3-state inline editor (永不过期 reuses `redis.noExpiry`).
+  'redis.detail.ttl.modeRelative': 'Relative TTL',
+  'redis.detail.ttl.modeAbsolute': 'Absolute time (EXPIREAT)',
 } as const;
 
 export default locale;

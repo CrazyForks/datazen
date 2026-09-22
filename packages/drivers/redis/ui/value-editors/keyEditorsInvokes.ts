@@ -309,6 +309,20 @@ export async function invokeRename(
   });
 }
 
+/** Single-key delete for the key header row (same command the batch bar uses). */
+export async function invokeDeleteKey(
+  dbSessionId: string,
+  dbIndex: number,
+  key: string,
+  invoke: PluginInvokeFn = redisCommandInvoke,
+) {
+  await invoke('redis', 'delete_keys', {
+    dbSessionId: dbSessionId,
+    dbIndex: dbIndex,
+    keys: [key],
+  });
+}
+
 export async function invokeSetTtl(
   dbSessionId: string,
   dbIndex: number,

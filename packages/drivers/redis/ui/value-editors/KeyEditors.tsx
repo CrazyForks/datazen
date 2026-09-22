@@ -1,24 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Input } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
 import { JsonEditor } from './JsonEditor';
 import { StreamEditor } from './StreamEditor';
-import { invokeRename } from './keyEditorsInvokes';
+import { invokeDeleteKey, invokeRename } from './keyEditorsInvokes';
 import { invokeGetKeyRaw } from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
-import { formatSize } from '../shared/formatSize';
 import { HashEditor } from './HashEditor';
 import { ListEditor } from './ListEditor';
 import { SetEditor } from './SetEditor';
 import { ZsetEditor } from './ZsetEditor';
 import { StringEditor } from './StringEditor';
 import { TtlControls } from './TtlControls';
+import { KeyHeaderRow } from './KeyHeaderRow';
+import { buildRedisInsertStatement } from './redisInsertStatement';
 
 export type { PluginInvokeFn } from './keyEditorsInvokes';
 export {
   invokeCreateKey,
+  invokeDeleteKey,
   invokeHashDel,
   invokeHashSet,
   invokeListPop,
@@ -39,7 +40,12 @@ export interface KeyDetailEditorProps {
   dbIndex: number;
   detail: KeyDetail;
   modules?: string[] | null;
-  onRefresh: () => void | Promise<void>;
+  /**
+   * Reload the key detail. May resolve `false` to report an I-1 draft-guard
+   * refusal (E-5 wires the guard); `void`/`true` reads as success, so the
+   * host's plain `reloadDetail` stays assignable here.
+   */
+  onRefresh: () => boolean | void | Promise<boolean | void>;
   onRenamed?: (newKey: string) => void;
   /**
    * Unsaved-draft signal for the PRD §4 I-1 dirty gate.
@@ -63,8 +69,6 @@ export function KeyDetailEditor({
 }: KeyDetailEditorProps) {
   const { t } = useI18n();
   const { gateWrite, gateDialog } = useRedisGate();
-  const [renameInput, setRenameInput] = useState(detail.key);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<ValueFrame | null>(null);
 
@@ -84,21 +88,45 @@ export function KeyDetailEditor({
     };
   }, [dbSessionId, dbIndex, detail.key]);
 
+  /** Gate a write path; `true` only when it ran and refreshed successfully. */
   const run = useCallback(
-    async (fn: () => Promise<void>) => {
-      if (!(await gateWrite('write-op'))) return;
-      setBusy(true);
+    async (fn: () => Promise<void>): Promise<boolean> => {
+      if (!(await gateWrite('write-op'))) return false;
       setError(null);
       try {
         await fn();
         await onRefresh();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setBusy(false);
+        return false;
       }
     },
     [onRefresh, gateWrite],
+  );
+
+  // Header-row actions. `refreshNow` is where E-5 inserts the I-1 draft guard
+  // (a refusal resolves `false`, which also switches auto-refresh to 关).
+  const refreshNow = useCallback(async (): Promise<boolean> => {
+    await onRefresh();
+    return true;
+  }, [onRefresh]);
+
+  const handleRename = useCallback(
+    (newName: string): Promise<boolean> =>
+      run(async () => {
+        await invokeRename(dbSessionId, dbIndex, detail.key, newName);
+        onRenamed?.(newName);
+      }),
+    [run, dbSessionId, dbIndex, detail.key, onRenamed],
+  );
+
+  const handleDelete = useCallback(
+    (): Promise<boolean> =>
+      run(async () => {
+        await invokeDeleteKey(dbSessionId, dbIndex, detail.key);
+      }),
+    [run, dbSessionId, dbIndex, detail.key],
   );
 
   const showJsonEditor =
@@ -107,60 +135,51 @@ export function KeyDetailEditor({
 
   return (
     <div className="space-y-3 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
-        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">{detail.keyType}</span>
-        {frame && (
-          <>
-            {frame.memBytes != null && (
-              <span className="rounded bg-surface-alt px-1.5 py-0.5 text-fg-muted">
-                {formatSize(frame.memBytes)}
-              </span>
-            )}
-            {frame.truncated && (
-              <span
-                className="rounded bg-warning/10 px-1.5 py-0.5 text-warning"
-                data-testid="redis-key-badge-truncated"
-                data-i18n-key="redis.detail.badge.truncated"
-              >
-                {t('redis.detail.badge.truncated')}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-
-      <TtlControls
-        dbSessionId={dbSessionId}
-        dbIndex={dbIndex}
+      {/* Key header row (PRD §3.3): mono name + refresh split · copy · rename · delete */}
+      <KeyHeaderRow
         keyName={detail.key}
-        ttl={detail.ttl}
-        gateWrite={gateWrite}
-        onChanged={() => void onRefresh()}
+        onRefresh={refreshNow}
+        onRename={handleRename}
+        onDelete={handleDelete}
+        insertStatement={buildRedisInsertStatement(detail)}
       />
 
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
-        <div className="flex min-w-[120px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.name')}</label>
-          <Input
-            value={renameInput}
-            onChange={(e) => setRenameInput(e.target.value)}
-            className="h-7 font-mono text-xs"
-          />
-        </div>
-        <Button
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          disabled={busy || !renameInput.trim() || renameInput === detail.key}
-          onClick={() =>
-            void run(async () => {
-              await invokeRename(dbSessionId, dbIndex, detail.key, renameInput.trim());
-              onRenamed?.(renameInput.trim());
-            })
-          }
+      {/* Badge row (PRD §3.3): 类型 | 大小 N B | TTL pill | truncated */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="redis-key-badges">
+        <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
+        <span
+          className="rounded bg-accent/10 px-1.5 py-0.5 text-accent"
+          data-testid="redis-key-badge-type"
+          data-key-type={detail.keyType}
         >
-          {t('redis.renameKey')}
-        </Button>
+          {detail.keyType}
+        </span>
+        {frame?.memBytes != null && (
+          <span
+            className="rounded bg-surface-alt px-1.5 py-0.5 text-fg-muted"
+            data-testid="redis-key-badge-size"
+            data-i18n-key="redis.detail.badge.size"
+          >
+            {t('redis.detail.badge.size', { n: frame.memBytes })}
+          </span>
+        )}
+        <TtlControls
+          dbSessionId={dbSessionId}
+          dbIndex={dbIndex}
+          keyName={detail.key}
+          ttl={detail.ttl}
+          gateWrite={gateWrite}
+          onChanged={() => void onRefresh()}
+        />
+        {frame?.truncated && (
+          <span
+            className="rounded bg-warning/10 px-1.5 py-0.5 text-warning"
+            data-testid="redis-key-badge-truncated"
+            data-i18n-key="redis.detail.badge.truncated"
+          >
+            {t('redis.detail.badge.truncated')}
+          </span>
+        )}
       </div>
 
       {error && (
