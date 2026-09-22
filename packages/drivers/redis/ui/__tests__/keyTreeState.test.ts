@@ -191,6 +191,63 @@ describe('treeLevels: fetch modes (I-4 refresh / collapse)', () => {
     });
   });
 
+  /*
+   * [redis-tree-ui-BUG-002] — the `rescan` branch with an **open** authoritative
+   * pass. Round 1 had zero coverage for this arm, which is why the whole gate
+   * stayed green while a failed refresh pinned one level as "scanning" forever
+   * (R1's `N+` and I-11's `interrupted` both read `anyLevelScanning`). Full state
+   * machine: entry, behaviour inside the state, and both exit transitions.
+   */
+  describe('[redis-tree-ui-BUG-002] a failed rescan closes the level', () => {
+    /** A finished root level holding one folder, mid-rescan with `pass` open. */
+    function midRescan(): TreeLevel {
+      return beginFetch(finishedAgain(), 'rescan');
+    }
+
+    it('entry + abandon: the failed pass closes and stops claiming a scan', () => {
+      const opened = midRescan();
+      expect(opened.pass).toEqual([]);
+      expect(anyLevelScanning({ '': opened })).toBe(true);
+
+      const failed = markFetchFailed(opened, 'rescan');
+      // I-4 half: the loaded subset survives the failure …
+      expect(failed.children).toEqual([folder('app:', 2)]);
+      // … and the abandoned pass must not stay open (TreeLevel.pass contract).
+      expect(failed).toMatchObject({ loading: false, error: true, done: true });
+      expect(failed.pass).toBeNull();
+      // Exit transition 1: the level no longer claims to be scanning.
+      expect(anyLevelScanning({ '': failed })).toBe(false);
+    });
+
+    it('exit transition 2: the next successful rescan clears the error (self-heal)', () => {
+      const failed = markFetchFailed(midRescan(), 'rescan');
+      expect(failed.error).toBe(true);
+      const healed = applyFetch(beginFetch(failed, 'rescan'), 'rescan', {
+        children: [folder('app:', 3), leaf('fresh')],
+        cursor: 0,
+      });
+      expect(healed).toMatchObject({ error: false, done: true, loading: false });
+      expect(healed.pass).toBeNull();
+      expect(healed.children).toEqual([folder('app:', 3), leaf('fresh')]);
+      expect(anyLevelScanning({ '': healed })).toBe(false);
+    });
+
+    it('a failure mid-pass drops the partial pass, not the last good subset', () => {
+      // The pass may already hold pages when the failure lands; those partial
+      // results are abandoned with it (`children` keep the previous good set).
+      const withPass = applyFetch(midRescan(), 'rescan', {
+        children: [leaf('partial')],
+        cursor: 41,
+      });
+      expect(withPass).toMatchObject({ done: false, pass: [leaf('partial')] });
+      const failed = markFetchFailed(withPass, 'rescan');
+      expect(failed.pass).toBeNull();
+      expect(failed.done).toBe(true);
+      expect(failed.children).toEqual([folder('app:', 2)]);
+      expect(anyLevelScanning({ '': failed })).toBe(false);
+    });
+  });
+
   function finishedAgain(): TreeLevel {
     return applyFetch(beginFetch(EMPTY_LEVEL, 'reset'), 'reset', {
       children: [folder('app:', 2)],

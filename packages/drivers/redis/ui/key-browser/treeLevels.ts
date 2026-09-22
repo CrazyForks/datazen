@@ -115,10 +115,22 @@ export function applyFetch(
   return { ...base, children, cursor: result.cursor, done, loading: false, error: false };
 }
 
-/** The request failed: keep the loaded subset, remember why nothing new arrived. */
+/**
+ * The request failed: keep the loaded subset, remember why nothing new arrived,
+ * and **end** the level's scan claim (redis-tree-ui-BUG-002).
+ *
+ * An abandoned authoritative pass must be dropped (`pass: null`) and the level
+ * closed (`done: true`): `anyLevelScanning` reads either an open pass or an open
+ * cursor as "still scanning", so a failed refresh used to pin R1's `N+` and I-11's
+ * `interrupted` forever — the level declared itself scanning while no request was
+ * in flight and nothing could ever finish it. Dropping the pass keeps `children`
+ * at the last good subset, which is exactly the fallback I-4 asks for, and the
+ * next successful `rescan` opens a fresh pass and clears `error` (see
+ * {@link applyFetch}), so a failure self-heals instead of poisoning the tree.
+ */
 export function markFetchFailed(level: TreeLevel, mode: LevelFetchMode): TreeLevel {
   if (mode === 'reset') return { ...EMPTY_LEVEL, loading: false, done: true, error: true };
-  return { ...level, loading: false, done: level.pass === null ? true : level.done, error: true };
+  return { ...level, loading: false, done: true, error: true, pass: null };
 }
 
 /**

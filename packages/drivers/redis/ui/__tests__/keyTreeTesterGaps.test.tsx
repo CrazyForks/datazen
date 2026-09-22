@@ -179,12 +179,14 @@ describe('[tester] treeLevels: a failed rescan must close the authoritative pass
     expect(anyLevelScanning({ '': opened })).toBe(true);
   });
 
-  it.skip('FIXME(redis-tree-ui-BUG-002): a failed rescan closes the pass instead of pinning 扫描中 forever', () => {
+  it('FIXME(redis-tree-ui-BUG-002): a failed rescan closes the pass instead of pinning 扫描中 forever', () => {
+    // Un-skipped by coder round-1 (fixed in `markFetchFailed`: the non-reset
+    // branch now abandons the failed pass, `pass: null`, `done: true`).
     // Measured un-skipped on ef0d62d94 (this file: 2 failed / 5; first quote is the
     // one vitest printed for this case):
     //   AssertionError: expected [] to be null        (failed.pass — pass stays open)
     //   AssertionError: expected true to be false     (anyLevelScanning, next line)
-    // The level ends up { done: true, loading: false, error: true, pass: [] }:
+    // The level used to end up { done: true, loading: false, error: true, pass: [] }:
     // no fetch is in flight, yet the level declares itself permanently scanning.
     const failed = markFetchFailed(beginFetch(finished(), 'rescan'), 'rescan');
     // The I-4 half already holds: the loaded subset survived the failure.
