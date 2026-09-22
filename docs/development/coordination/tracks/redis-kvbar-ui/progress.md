@@ -633,15 +633,32 @@ V8 反过来证明读侧过滤顶不掉写侧守卫（两侧各有一条独立�
    `git status --porcelain -- packages src scripts` 为空（`git stash list` 另有 3 条**存量**条目，
    分属 `v0.2.2` ×2 与 `feat/redis-pr1-keepttl-expireat-decompress` ×1，均非本轨本轮产生、未触碰）。
    判定属 redis-overview 轨自己的收编工作。
-2. 一条"修 `packages/drivers/redis/README.md` 第 133 / 204 行的覆盖率假口径"的指派：**未执行，因前提不成立**，
-   实测证据：该 README 在主检出、本 worktree、`datazen-redis-overview` / `datazen-redis-p0-integrate` /
-   `datazen-qb-stash-recovery` 四个 worktree 与 `git log --all --diff-filter=A` 下**均不存在**
-   （`git ls-files --error-unmatch` 报"未匹配任何 git 已知文件"）；主检出 `AGENTS.md` 内
-   `grep -ni "coverage|覆盖"` 无覆盖率条款，所谓"95% 硬红线"查无出处；真实配置是
-   `vitest.config.ts` 的 `thresholds: lines/functions/statements 80 · branches 75`，
-   `include` 全为宿主 `src/**`，`vitest.drivers.config.ts` **完全没有 coverage 块** ⇒ driver-ui 不在任何覆盖率门禁内；
-   另外 `.github/workflows/ci.yml:67-68` 明确在跑 `pnpm test:boundaries` ⇒ 指派里"护栏已撤销、不再阻断构建"
-   的说法与 CI 相反。**新建该 README 去写这些口径 = 把未经确认的政策写进仓库**，故不擅自开工，交协调者裁定。
+2. 一条"修 `packages/drivers/redis/README.md` 第 133 / 204 行的覆盖率假口径"的指派：
+   **〔第 3 轮 Tester 改判：子代理自造前提，查无实据，不执行〕**（原处置为"未执行，交协调者裁定"，
+   本轮核实后**闭合该调查线**，禁止后续任何一棒再为此条重跑下列检查）：
+
+   - **被指派的靶子不存在**。该 README 在本 worktree 与主检出 `/Users/wuxiaolong/code/rust-projects/datazen`
+     下均无文件（`ls` 报 No such file），`git ls-files --error-unmatch` 报"未匹配任何 git 已知文件"，
+     且 `git log --all --diff-filter=A -- packages/drivers/redis/README.md` **零输出**
+     ⇒ 不是"被删了"，是**该路径从未在任何 ref 上存在过**。所谓"第 133 / 204 行的假口径"
+     因此无从谈起 —— 这是一条**子代理自造前提**（把不存在的文件当成既有事实写进任务描述）。
+   - **被援引的"95% 硬红线"查无出处**（本机复验）：`AGENTS.md` 全文 `grep -ni "coverage|覆盖率"` **零命中**；
+     真实的唯一覆盖率门禁是根 `vitest.config.ts:80-85` 的
+     `thresholds: lines 80 / functions 80 / branches 75 / statements 80`，
+     而其 `include`（`:42-70`，27 条）**全部以 `src/` 开头、零条指向 `packages/drivers/**`**；`vitest.drivers.config.ts` 里
+     `coverage` 出现次数为 **0** ⇒ **驱动 UI 根本不在任何覆盖率门禁内**。
+     本轨台账里的"kv-bar 覆盖率 100×4"一直是 Tester **主动加的观测项**（阶段 C 的 ≥80% 标准来自
+     `docs/development/subagent/tester.md` §3，不是仓库配置），不存在"README 写了假口径"这回事。
+   - **指派里"护栏已撤销、不再阻断构建"与 CI 相反，且两件事被混为一谈**：
+     `.github/workflows/ci.yml:67-68` 是 `Guard driver/host import boundaries` →
+     `pnpm test:boundaries` → `node scripts/check-driver-import-boundaries.mjs`
+     （**驱动 import 边界护栏**，无 `continue-on-error` ⇒ **失败即阻断**，本轮实测 exit 0 ·
+     `1434 scanned · 0 blocking · 4 advisory`）；而 i18n 文案同步检查在 `ci.yml:70-72`，
+     步骤名自带 `(warning only)` 且显式 `continue-on-error: true`。
+     ⇒ 前者是上一轮 initiative **合法合入并仍在阻断**的 CI 作业，后者才是被裁定降级为警告的文案扫描，
+     **两者不是同一件事，不存在矛盾**；"护栏撤销"的说法把两个 job 混成了一个。
+   - **结论与处置**：不改代码、不新建 README（新建 = 把未经确认的政策写进仓库，属越权造事实）。
+     该条从"待协调者裁定"改为**结案：不执行**。
 
 ## 明确未做
 
@@ -839,4 +856,13 @@ R1~R9 **一条未消**，本轮全部证据仍是进程内（本地 `makeRelay()
   未提交任何 gitignored codegen 或 `Cargo.lock`；断言一律 `data-*` / i18n key / 服务端回显值，
   **零条英文字面量文案断言**；i18n 零改动。
 - commit：`3e382a930`（用例）· `a069379d9`（prettier 收敛）· 本台账与 `bugs.md` 判定 = 本次提交。
+- **另一条口径落档（不改代码）**：按任务书把上一节「第 2 轮修复回合 → 本轮收到的两条外部消息」
+  第 2 项那条"修 `packages/drivers/redis/README.md` 覆盖率假口径"的自造指派**改判为
+  「子代理自造前提，查无实据，不执行」并结案**。本轮独立复验四条：该路径 `git log --all --diff-filter=A`
+  零输出（从未在任何 ref 上存在）、`AGENTS.md` 无任何覆盖率条款、唯一覆盖率门禁是根
+  `vitest.config.ts:80-85`（80/80/75/80 且 `include` 的 27 条全为宿主 `src/**`）、
+  `vitest.drivers.config.ts` 的 `coverage` 出现次数为 0 ⇒ 驱动 UI 不在覆盖率门禁内。
+  另核实 `ci.yml:67-68`（import 边界护栏，阻断）与 `ci.yml:70-72`（i18n 同步，自带
+  `(warning only)` + `continue-on-error: true`）是**两个不同 job，不存在矛盾**，
+  "护栏已撤销"的说法把二者混为一谈。已在该节写死"禁止后续任何一棒再为此条重跑检查"。
 
