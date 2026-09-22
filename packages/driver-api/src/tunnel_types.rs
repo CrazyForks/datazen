@@ -89,3 +89,78 @@ pub struct SavedTunnel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub websocket: Option<WebSocketTunnelConfig>,
 }
+
+/// Metadata-only tunnel summary for selectors — must never carry any secret field.
+///
+/// The list IPC feeds a picker in the webview; projecting a full [`SavedTunnel`]
+/// there would push decrypted SSH/proxy/WS credentials into the renderer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTunnelSummary {
+    pub id: String,
+    pub name: String,
+    pub kind: TunnelKind,
+}
+
+/// Which connections reference a tunnel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelUsage {
+    pub connection_ids: Vec<String>,
+    pub connection_names: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_serializes_metadata_only() {
+        let summary = SavedTunnelSummary {
+            id: "t1".into(),
+            name: "Prod Bastion".into(),
+            kind: TunnelKind::Ssh,
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "id": "t1", "name": "Prod Bastion", "kind": "ssh" })
+        );
+        for key in [
+            "password",
+            "passphrase",
+            "authToken",
+            "auth_token",
+            "ssh",
+            "httpProxy",
+            "websocket",
+        ] {
+            assert!(
+                json.get(key).is_none(),
+                "SavedTunnelSummary must not carry `{key}`: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_serializes_camel_case_without_secrets() {
+        let usage = TunnelUsage {
+            connection_ids: vec!["c1".into(), "c2".into()],
+            connection_names: vec!["Alpha".into(), "Beta".into()],
+        };
+        let json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "connectionIds": ["c1", "c2"],
+                "connectionNames": ["Alpha", "Beta"],
+            })
+        );
+        for key in ["password", "passphrase", "authToken", "auth_token"] {
+            assert!(
+                json.get(key).is_none(),
+                "TunnelUsage must not carry `{key}`: {json}"
+            );
+        }
+    }
+}

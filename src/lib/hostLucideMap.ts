@@ -50,6 +50,7 @@ export const SETTINGS_SECTION_LUCIDE_MAP: Record<string, string> = {
   prompts: 'MessageSquareText',
   mcpServer: 'Server',
   mcpClient: 'Plug',
+  tunnels: 'Cable',
   monitor: 'Activity',
   extensions: 'Puzzle',
 };

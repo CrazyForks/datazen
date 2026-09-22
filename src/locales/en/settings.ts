@@ -246,5 +246,78 @@ const pack = {
   'settings.prompts.variables': 'Available Variables',
   'settings.mcp.title': 'MCP Server',
   'settings.mcpClient.title': 'External MCP Servers',
+  'settings.tunnels.title': 'Tunnels',
+  'settings.tunnels.description':
+    'Saved tunnels are stored encrypted and can be reused by any connection. Deleting one unbinds the connections that reference it.',
+  'settings.tunnels.empty': 'No saved tunnels yet',
+  'settings.tunnels.emptyHint':
+    'Create a tunnel here, or save an inline tunnel configuration from a connection form.',
+  'settings.tunnels.create': 'New tunnel',
+  'settings.tunnels.loadFailed': 'Could not load saved tunnels.',
+  'settings.tunnels.usageCount': 'Used by {count} connection(s)',
+  'settings.tunnels.usageNone': 'Not referenced',
+  'settings.tunnels.usagePending': 'Checking references…',
+  'settings.tunnels.copySuffix': ' (copy)',
+  'settings.tunnels.copyFailed': 'Could not copy the tunnel.',
+  'settings.tunnels.edit': 'Edit',
+  'settings.tunnels.copy': 'Copy',
+  'settings.tunnels.test': 'Test',
+  'settings.tunnels.delete': 'Delete',
+  'settings.tunnels.kind.ssh': 'SSH',
+  'settings.tunnels.kind.httpProxy': 'HTTP proxy',
+  'settings.tunnels.kind.websocket': 'WebSocket',
+  'settings.tunnels.editor.createTitle': 'New tunnel',
+  'settings.tunnels.editor.editTitle': 'Edit tunnel',
+  'settings.tunnels.editor.description':
+    'Credentials are stored encrypted and are never shown in the tunnel list.',
+  'settings.tunnels.editor.name': 'Name',
+  'settings.tunnels.editor.namePlaceholder': 'e.g. Bastion (staging)',
+  'settings.tunnels.editor.kind': 'Type',
+  'settings.tunnels.editor.loadFailed': 'Could not load this tunnel — it may have been deleted.',
+  'settings.tunnels.editor.saveFailed': 'Could not save the tunnel.',
+  'settings.tunnels.validation.name': 'Enter a name.',
+  'settings.tunnels.validation.sshHost': 'Enter the SSH host.',
+  'settings.tunnels.validation.sshPort': 'Enter a valid port (1–65535).',
+  'settings.tunnels.validation.sshUsername': 'Enter the SSH username.',
+  'settings.tunnels.validation.sshJumpHost': 'Enter the jump host.',
+  'settings.tunnels.validation.sshJumpPort': 'Enter a valid jump port (1–65535).',
+  'settings.tunnels.validation.sshJumpUsername': 'Enter the jump username.',
+  'settings.tunnels.validation.httpProxyHost': 'Enter the proxy host.',
+  'settings.tunnels.validation.httpProxyPort': 'Enter a valid proxy port (1–65535).',
+  'settings.tunnels.validation.wsUrl': 'Enter the relay URL.',
+  'settings.tunnels.delete.title': 'Delete tunnel',
+  'settings.tunnels.delete.description': '“{name}” will be removed permanently.',
+  'settings.tunnels.delete.affected':
+    'These connections reference it. They will be unbound and fall back to a direct connection:',
+  'settings.tunnels.delete.noReferences': 'No connection references this tunnel.',
+  'settings.tunnels.delete.unbindHint':
+    'The tunnel is deleted only after every reference has been cleared. If unbinding fails, nothing is deleted.',
+  'settings.tunnels.delete.confirm': 'Delete and unbind',
+  'settings.tunnels.delete.confirming': 'Deleting…',
+  'settings.tunnels.delete.failed': 'Could not delete the tunnel.',
+  'settings.tunnels.delete.unbindFailed':
+    'Could not unbind a referencing connection, so nothing was deleted.',
+  'settings.tunnels.delete.rollbackNote':
+    'Restored {restored} connection(s); still bound: {failed}.',
+  'settings.tunnels.delete.deleteFailed':
+    'Every reference was cleared, but the tunnel itself could not be deleted. Try deleting it again.',
+  'settings.tunnels.test.title': 'Test tunnel',
+  'settings.tunnels.test.description': 'Runs a live probe through “{name}”.',
+  'settings.tunnels.test.targetHost': 'Target host',
+  'settings.tunnels.test.targetPort': 'Target port',
+  'settings.tunnels.test.run': 'Run test',
+  'settings.tunnels.test.running': 'Testing…',
+  'settings.tunnels.test.success': 'Probe succeeded in {ms} ms.',
+  'settings.tunnels.test.failed': 'Probe failed: {error}',
+  'settings.tunnels.test.hostRequired': 'Enter a target host.',
+  'settings.tunnels.test.portRequired': 'Enter a valid target port (1–65535).',
+  'settings.tunnels.test.scope.ssh':
+    'An SSH probe only proves that the jump host is reachable and authentication succeeds — it does not prove that the target is reachable through it.',
+  'settings.tunnels.test.scope.httpProxy':
+    'An HTTP proxy probe sends a CONNECT handshake for the target through the proxy.',
+  'settings.tunnels.test.scope.websocket':
+    'A WebSocket probe checks the relay: in raw_binary mode it only proves that the relay is reachable, while datazen_v1 opens a channel to the target.',
+  'settings.tunnels.test.scope.general':
+    'A passing probe never guarantees that your database is reachable through this tunnel.',
 } as const;
 export default pack;
