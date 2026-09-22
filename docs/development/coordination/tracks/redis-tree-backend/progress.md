@@ -401,10 +401,12 @@ Tester 另补 `test_tester_key_probe_is_a_get_key_peer`（与 `get_key` **同权
 
 - 度量口径：llvm-cov 0.8.7，`--lib`（**不含** `tests/` 集成用例，故 `redis_driver.rs` 等装配层记 0%，
   属既有口径限制，非本轨缺口）。
-- Tester 本轮**新增 31 条用例**：`ops_tree_scan/tests.rs` +22（18 可跑 + 2 ignore RED pin + 2 单测，
-  纯尾部追加，`git diff --numstat` 显示 0 删除行）+ `tests/tree_contract_tester.rs` 9（4 可跑 + 5 `#[ignore]`）。
-  lib 271 → **291 passed / 3 ignored**（ignored = 基线 1 条 live-redis + 本 Tester 2 条 RED pin），
+- Tester 本轮**新增 31 条用例**：`ops_tree_scan/tests.rs` **+22**（20 可跑 + 2 条 `#[ignore]` RED pin；
+  纯尾部追加，`git diff --numstat` = 556/0，零删除行）+ `tests/tree_contract_tester.rs` **9**
+  （4 可跑 + 5 条 `#[ignore]` live）。
+  lib 271 → **291 passed / 3 ignored**（+20 可跑；ignored = 基线 1 条 live-redis + 本 Tester 2 条 RED pin），
   clippy 仍 **21**（补测零新增诊断，含一次自查撤销的假警报），`cargo fmt --check` exit 0。
+
 - **剩余缺口点名**（本轨文件，`--lcov` 逐行核实，行号=实测未执行）：
   - `ops_tree_scan.rs` 余 21 行：**全部**为 `tracing::warn!/debug!/info!` 的字段与文案行
     （128、183、185、193、267-269、402、405-406、854-855、863-865）+ 空批早退（172）
@@ -429,11 +431,12 @@ Tester 另补 `test_tester_key_probe_is_a_get_key_peer`（与 `get_key` **同权
 ### 步骤 8 · E2E 登记
 
 **本机可执行**（已提交，属默认门禁，全绿）：`tests/tree_contract_tester.rs` 4 条声明面用例 +
-`ops_tree_scan/tests.rs` 18 条替身用例 —— fail-soft/重放 6 条（含分类表与 `fold_command_answer` 直测）、
-cluster 纪律 3 条（`scan_keys` 页 / `list_children` 页 / 锚定 SCAN 携带 MATCH+TYPE）、
-`noTtlOnly` 2 条（`scan_keys` 一条绿、`list_children` 一条 ignore RED pin）、
-扫描守卫 2 条（停滞游标 / 轮次上界）、`withMemory` 页 1 条、standalone/哨兵批形状 2 条、
-预览与散列兜底 4 条、`key_probe` 单节点 1 条（+1 条 TYPE-only 缺席判定单测）。
+`ops_tree_scan/tests.rs` **20 条**替身用例 —— fail-soft/重放 6 条（含分类表与 `fold_command_answer` 直测）、
+cluster 纪律 2 条（`list_children` 页逐批单键寻址 + 锚定 SCAN 携带 MATCH/TYPE）、
+`noTtlOnly` 1 条绿（`scan_keys`）+ 1 条 ignore RED pin（`list_children`）、
+扫描守卫 2 条（停滞游标 / 轮次上界）、`withMemory` 页 1 条、standalone/哨兵批形状与短回复 3 条、
+预览与散列兜底 3 条、`key_probe` 单节点 + TYPE-only 缺席 2 条。
+
 
 
 **留待 R 回归**（本轨禁 live e2e ⇒ 全部写成 `#[ignore]` 可执行用例，R 侧带 env 变量跑即证）：
