@@ -211,12 +211,33 @@ export async function invokeScanAbort(
 
 export type BackendCodec = 'msgpack' | 'pickle' | 'php' | 'java';
 
+/**
+ * In-band envelope of `decode_value`, key set per contracts C-2/C-3.
+ *
+ * A payload that fails to decode does **not** reject: it resolves with
+ * `ok:false` plus a stable `reason` code, `suggestedCodec`, `retryable` and a
+ * human-readable `message`. The promise only rejects on an IPC/transport
+ * failure (connection gone), which callers must treat as a generic error.
+ */
 export interface DecodeValueResult {
   ok: boolean;
-  json?: string;
+  codec?: string;
+  kind?: 'json' | 'bytes';
+  data?: string | null;
+  text?: string | null;
+  json?: string | null;
+  bytes?: number;
+  inBytes?: number;
+  reason?: string;
+  message?: string;
+  suggestedCodec?: string | null;
+  retryable?: boolean;
 }
 
-/** Parse-only decode of a base64 payload into a JSON tree text (R8). Throws on reject. */
+/**
+ * Parse-only decode of a base64 payload (R8). Decode failures come back
+ * in-band as `ok:false`; only transport/IPC failures throw.
+ */
 export async function invokeDecodeValue(
   dbSessionId: string,
   codec: BackendCodec,

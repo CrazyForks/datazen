@@ -358,8 +358,8 @@ impl RedisDriver {
         Ok(crate::ops_value_search::abort_task(&session, requested).await)
     }
 
-    plugin_on_db!(plugin_set_string, (key: &str, value: &str, keep_ttl: bool) -> (), |conn| crate::ops::set_string_with_options(conn, key, value, keep_ttl));
-    plugin_on_db!(plugin_set_string_bytes, (key: &str, bytes: &[u8], keep_ttl: bool) -> (), |conn| crate::ops_write::set_string_bytes(conn, key, bytes, keep_ttl));
+    plugin_on_db!(plugin_set_string, (key: &str, value: &str, keep_ttl: Option<bool>) -> crate::ops_write::SetStringOutcome, |conn| crate::ops_write::set_string_with_ttl_policy(conn, key, value.as_bytes(), keep_ttl));
+    plugin_on_db!(plugin_set_string_bytes, (key: &str, bytes: &[u8], keep_ttl: Option<bool>) -> crate::ops_write::SetStringOutcome, |conn| crate::ops_write::set_string_with_ttl_policy(conn, key, bytes, keep_ttl));
     plugin_on_db!(plugin_set_expire_at, (key: &str, expire_at: i64) -> (), |conn| crate::ops::set_expire_at(conn, key, expire_at));
     plugin_on_db!(plugin_hash_set, (key: &str, field: &str, value: &str) -> (), |conn| crate::ops::hash_set(conn, key, field, value));
     plugin_on_db!(plugin_hash_del, (key: &str, fields: &[String]) -> (), |conn| crate::ops::hash_del(conn, key, fields));
