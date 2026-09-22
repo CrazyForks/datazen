@@ -102,7 +102,11 @@ async fn preview_sql_file_target(
     crate::data_transfer::sql_file::validate_target_dialect_job(&job)
         .map_err(CommandError::from)?;
     let source_tables = src_driver
-        .get_tables(&src_handle, &job.source.database)
+        .get_tables(
+            &src_handle,
+            &job.source.database,
+            job.source.normalized_schema(),
+        )
         .await
         .cmd_err("preview_data_transfer")?;
     let source_tables: Vec<_> = source_tables
@@ -382,7 +386,11 @@ pub(crate) async fn preview_data_transfer_impl(
         .cmd_err("preview_data_transfer")?;
 
     let src_tables = src_driver
-        .get_tables(&src_handle, &job.source.database)
+        .get_tables(
+            &src_handle,
+            &job.source.database,
+            job.source.normalized_schema(),
+        )
         .await
         .cmd_err("preview_data_transfer")?;
 

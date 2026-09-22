@@ -36,7 +36,11 @@ async fn load_sql_source_snapshot(
         .await
         .cmd_err("data_transfer_sql_file")?;
     let tables = driver
-        .get_tables(&handle, &job.source.database)
+        .get_tables(
+            &handle,
+            &job.source.database,
+            job.source.normalized_schema(),
+        )
         .await
         .cmd_err("data_transfer_sql_file")?;
     let tables: Vec<_> = tables
@@ -556,7 +560,11 @@ pub(crate) async fn execute_data_transfer_impl(
     }
 
     let src_tables = src_driver
-        .get_tables(&src_handle, &job.source.database)
+        .get_tables(
+            &src_handle,
+            &job.source.database,
+            job.source.normalized_schema(),
+        )
         .await
         .cmd_err("execute_data_transfer")?;
 

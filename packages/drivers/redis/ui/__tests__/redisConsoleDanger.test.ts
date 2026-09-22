@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { classifyDangerLevel, requiresConfirmation, dangerBadgeColor } from '../redisConsoleDanger';
+import {
+  classifyDangerLevel,
+  requiresConfirmation,
+  dangerBadgeColor,
+} from '../console/redisConsoleDanger';
 
 describe('redisConsoleDanger', () => {
   describe('classifyDangerLevel', () => {

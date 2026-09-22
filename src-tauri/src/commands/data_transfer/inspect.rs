@@ -83,11 +83,11 @@ pub(crate) async fn inspect_data_transfer_impl(
         .cmd_err("inspect_data_transfer")?;
 
     let src_tables = src_driver
-        .get_tables(&src_handle, &src_db)
+        .get_tables(&src_handle, &src_db, source.normalized_schema())
         .await
         .cmd_err("inspect_data_transfer")?;
     let tgt_tables = tgt_driver
-        .get_tables(&tgt_handle, &tgt_db)
+        .get_tables(&tgt_handle, &tgt_db, target.normalized_schema())
         .await
         .cmd_err("inspect_data_transfer")?;
 
@@ -217,7 +217,7 @@ pub(crate) async fn inspect_sql_file_transfer_impl(
         .await
         .cmd_err("inspect_sql_file_transfer")?;
     let source_tables = src_driver
-        .get_tables(&src_handle, &src_db)
+        .get_tables(&src_handle, &src_db, source.normalized_schema())
         .await
         .cmd_err("inspect_sql_file_transfer")?;
     let source_tables: Vec<_> = source_tables

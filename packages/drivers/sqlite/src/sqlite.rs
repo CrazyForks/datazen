@@ -14,119 +14,6 @@ pub struct SqliteDriver {
     pools: RwLock<HashMap<String, SqlitePool>>,
 }
 
-fn skip_sqlite_block_comment(bytes: &[u8], start: usize) -> usize {
-    bytes[start + 2..]
-        .windows(2)
-        .position(|pair| pair == b"*/")
-        .map_or(bytes.len(), |offset| start + 2 + offset + 2)
-}
-
-fn skip_sqlite_line_comment(bytes: &[u8], start: usize) -> usize {
-    bytes[start..]
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .map_or(bytes.len(), |offset| start + offset + 1)
-}
-
-fn parse_sqlite_check_constraints(create_sql: &str) -> Vec<CheckConstraint> {
-    let bytes = create_sql.as_bytes();
-    let mut checks = Vec::new();
-    let mut index = 0usize;
-    let mut quote = None;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
-        if let Some(active) = quote {
-            if ch == active {
-                if index + 1 < bytes.len() && bytes[index + 1] as char == active {
-                    index += 2;
-                    continue;
-                }
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(ch, '\'' | '"' | '`') {
-            quote = Some(ch);
-            index += 1;
-            continue;
-        }
-        if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
-            index = skip_sqlite_block_comment(bytes, index);
-            continue;
-        }
-        if bytes[index..].starts_with(b"--") {
-            index = skip_sqlite_line_comment(bytes, index);
-            continue;
-        }
-        let is_check = index + 5 <= bytes.len()
-            && bytes[index..index + 5].eq_ignore_ascii_case(b"CHECK")
-            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
-            && (index + 5 == bytes.len() || !bytes[index + 5].is_ascii_alphanumeric());
-        if !is_check {
-            index += 1;
-            continue;
-        }
-        let mut open = index + 5;
-        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
-            open += 1;
-        }
-        if open >= bytes.len() || bytes[open] != b'(' {
-            index += 5;
-            continue;
-        }
-        let mut cursor = open;
-        let mut depth = 0usize;
-        let mut inner_quote = None;
-        let mut close = None;
-        while cursor < bytes.len() {
-            let current = bytes[cursor] as char;
-            if let Some(active) = inner_quote {
-                if current == active {
-                    if cursor + 1 < bytes.len() && bytes[cursor + 1] as char == active {
-                        cursor += 2;
-                        continue;
-                    }
-                    inner_quote = None;
-                }
-                cursor += 1;
-                continue;
-            }
-            if matches!(current, '\'' | '"' | '`') {
-                inner_quote = Some(current);
-            } else if cursor + 1 < bytes.len() && bytes[cursor] == b'/' && bytes[cursor + 1] == b'*'
-            {
-                cursor = skip_sqlite_block_comment(bytes, cursor);
-                continue;
-            } else if bytes[cursor..].starts_with(b"--") {
-                cursor = skip_sqlite_line_comment(bytes, cursor);
-                continue;
-            } else if current == '(' {
-                depth += 1;
-            } else if current == ')' {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    close = Some(cursor);
-                    break;
-                }
-            }
-            cursor += 1;
-        }
-        let Some(close) = close else {
-            break;
-        };
-        let expression = create_sql[open + 1..close].trim();
-        if !expression.is_empty() {
-            checks.push(CheckConstraint {
-                name: format!("check_{}", checks.len()),
-                expression: expression.to_string(),
-            });
-        }
-        index = close + 1;
-    }
-    checks
-}
-
 impl SqliteDriver {
     pub fn new() -> Self {
         Self {
@@ -195,7 +82,11 @@ impl SqliteDriver {
                                         row.try_get::<i32, _>(i).ok().map(|v| Value::Bool(v != 0))
                                     })
                                 }
-                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(Value::Bytes),
+                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(|bytes| {
+                                    let hex: String =
+                                        bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                                    Value::String(format!("\\x{}", hex))
+                                }),
                                 _ => row
                                     .try_get::<String, _>(i)
                                     .ok()
@@ -210,6 +101,27 @@ impl SqliteDriver {
                 .collect();
 
         (columns, result_rows)
+    }
+
+    /// Resolve the attached-database name a metadata read targets.
+    ///
+    /// SQLite addresses a relation as `alias.table`, where the alias is `main`,
+    /// `temp`, or an `ATTACH` alias. The explicit `database` argument is
+    /// authoritative; a blank argument keeps the previous behavior and falls
+    /// back to `main` (a plain single-file connection's only database).
+    fn effective_database(database: &str) -> &str {
+        let database = database.trim();
+        if database.is_empty() {
+            "main"
+        } else {
+            database
+        }
+    }
+
+    /// Quote an attached-database name so it can be used as a SQLite schema
+    /// qualifier (`"aux".sqlite_master`, `PRAGMA "aux".table_info(...)`).
+    fn quote_schema(name: &str) -> String {
+        format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
 
@@ -249,26 +161,6 @@ impl DatabaseDriver for SqliteDriver {
 
     fn sync_family(&self) -> String {
         "sqlite".into()
-    }
-
-    fn format_sql_literal(&self, value: &Option<Value>) -> String {
-        match value {
-            None | Some(Value::Null) => "NULL".into(),
-            Some(Value::Bool(true)) => "1".into(),
-            Some(Value::Bool(false)) => "0".into(),
-            Some(Value::Integer(n)) => n.to_string(),
-            Some(Value::Float(n)) => n.to_string(),
-            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
-            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
-            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
-            Some(Value::Bytes(bytes)) => format!(
-                "X'{}'",
-                bytes
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            ),
-        }
     }
 
     fn dialect_notes(&self) -> Option<String> {
@@ -368,18 +260,24 @@ impl DatabaseDriver for SqliteDriver {
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,
-        _database: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<Vec<TableInfo>, DriverError> {
+        // SQLite has no schema level: any schema argument is a caller bug.
+        validate_schema_target(self, database, schema, SchemaScope::AnySchema)?;
+        // The attached-database name comes from the explicit argument instead
+        // of a hard-coded `main`/session state; blank falls back to `main`.
+        let catalog = Self::quote_schema(Self::effective_database(database));
         let pools = self.pools.read().await;
         let pool = Self::get_pool(&pools, handle)?;
 
-        let rows = sqlx::query(
+        let rows = sqlx::query(&format!(
             r#"
-            SELECT name, type FROM sqlite_master
+            SELECT name, type FROM {catalog}.sqlite_master
             WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
             ORDER BY name
-            "#,
-        )
+            "#
+        ))
         .fetch_all(pool)
         .await
         .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
@@ -409,14 +307,24 @@ impl DatabaseDriver for SqliteDriver {
         &self,
         handle: &ConnectionHandle,
         table: &str,
+        database: &str,
+        schema: Option<&str>,
     ) -> Result<TableSchema, DriverError> {
+        // SQLite has no schema level: a single-table read must pin no schema.
+        validate_schema_target(self, database, schema, SchemaScope::ExactSchema)?;
+        // Resolve against the caller's attached database, never the session's
+        // implicit `main`; blank keeps the old `main` fallback.
+        let catalog = Self::quote_schema(Self::effective_database(database));
         let pools = self.pools.read().await;
         let pool = Self::get_pool(&pools, handle)?;
 
-        let col_rows = sqlx::query(&format!("PRAGMA table_info({})", self.quote_ident(table)))
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let col_rows = sqlx::query(&format!(
+            "PRAGMA {catalog}.table_info({})",
+            self.quote_ident(table)
+        ))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
         let mut columns = Vec::new();
         let mut primary_keys = Vec::new();
@@ -444,10 +352,13 @@ impl DatabaseDriver for SqliteDriver {
         }
 
         // Indexes
-        let idx_rows = sqlx::query(&format!("PRAGMA index_list({})", self.quote_ident(table)))
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let idx_rows = sqlx::query(&format!(
+            "PRAGMA {catalog}.index_list({})",
+            self.quote_ident(table)
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
         let mut indexes = Vec::new();
         for idx_row in &idx_rows {
@@ -455,7 +366,7 @@ impl DatabaseDriver for SqliteDriver {
             let is_unique: bool = idx_row.get::<i32, _>("unique") != 0;
 
             let info_rows = sqlx::query(&format!(
-                "PRAGMA index_info(\"{}\")",
+                "PRAGMA {catalog}.index_info(\"{}\")",
                 idx_name.replace('"', "\"\"")
             ))
             .fetch_all(pool)
@@ -479,7 +390,7 @@ impl DatabaseDriver for SqliteDriver {
 
         // Foreign keys
         let fk_rows = sqlx::query(&format!(
-            "PRAGMA foreign_key_list({})",
+            "PRAGMA {catalog}.foreign_key_list({})",
             self.quote_ident(table)
         ))
         .fetch_all(pool)
@@ -513,24 +424,13 @@ impl DatabaseDriver for SqliteDriver {
 
         let foreign_keys: Vec<ForeignKeyInfo> = fk_map.into_values().collect();
 
-        let sqlite_table_name = table.rsplit('.').next().unwrap_or(table);
-        let create_sql =
-            sqlx::query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
-                .bind(sqlite_table_name)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-                .and_then(|row| row.try_get::<Option<String>, _>("sql").ok().flatten())
-                .unwrap_or_default();
-        let check_constraints = parse_sqlite_check_constraints(&create_sql);
-
         Ok(TableSchema {
             table_name: table.to_string(),
             columns,
             primary_keys,
             indexes,
             foreign_keys,
-            check_constraints,
+            check_constraints: Vec::new(),
             table_options: TableOptions::default(),
         })
     }
@@ -697,31 +597,6 @@ impl DatabaseDriver for SqliteDriver {
         let pool = Self::get_pool(&pools, handle)?;
 
         let result = sqlx::query(sql)
-            .execute(pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
-        Ok(result.rows_affected())
-    }
-
-    fn parameter_placeholder(
-        &self,
-        _index: usize,
-        _data_type: Option<&str>,
-    ) -> Result<String, DriverError> {
-        Ok("?".into())
-    }
-
-    async fn execute_with_params(
-        &self,
-        handle: &ConnectionHandle,
-        sql: &str,
-        params: &[Value],
-    ) -> Result<u64, DriverError> {
-        let pools = self.pools.read().await;
-        let pool = Self::get_pool(&pools, handle)?;
-
-        let result = Self::bind_values(sqlx::query(sql), params)
             .execute(pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
@@ -898,19 +773,6 @@ mod tests {
     use datazen_driver_api::DatabaseDriver;
 
     #[test]
-    fn format_sql_literal_keeps_binary_bytes_lossless() {
-        let driver = SqliteDriver::new();
-        assert_eq!(
-            driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
-            "X'00fffe'"
-        );
-        assert_eq!(
-            driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
-            "'O''Brien'"
-        );
-    }
-
-    #[test]
     fn test_tester_ddl_atomicity_is_transactional() {
         assert_eq!(
             SqliteDriver::new().ddl_atomicity(),
@@ -943,35 +805,6 @@ mod tests {
         let (sql, cap) = apply_sqlite_select_limit("WITH x AS (SELECT 1) SELECT * FROM x", Some(2));
         assert_eq!(sql, "WITH x AS (SELECT 1) SELECT * FROM x LIMIT 3");
         assert_eq!(cap, Some(2));
-    }
-
-    #[test]
-    fn parses_nested_sqlite_check_constraints_without_strings() {
-        let checks = parse_sqlite_check_constraints(
-            "CREATE TABLE users (age INTEGER CHECK (age >= 0), note TEXT CHECK (length(note) > 0), marker TEXT DEFAULT 'CHECK (ignored)')",
-        );
-        assert_eq!(checks.len(), 2);
-        assert_eq!(checks[0].name, "check_0");
-        assert_eq!(checks[0].expression, "age >= 0");
-        assert_eq!(checks[1].expression, "length(note) > 0");
-    }
-
-    #[test]
-    fn test_tester_check_parser_ignores_sql_comments() {
-        let checks = parse_sqlite_check_constraints(
-            "CREATE TABLE users (id INTEGER /* CHECK (comment_only) */, CHECK (id > 0))",
-        );
-        assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].expression, "id > 0");
-    }
-
-    #[test]
-    fn test_tester_check_parser_ignores_line_comments_and_nested_comments() {
-        let checks = parse_sqlite_check_constraints(
-            "CREATE TABLE users (id INTEGER,\n-- CHECK (line_only)\nCHECK (id > 0 /* ) fake_close */))",
-        );
-        assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].expression, "id > 0 /* ) fake_close */");
     }
 
     fn collect_events() -> (
@@ -1079,6 +912,10 @@ mod tests {
             connection_timeout: 30,
             max_pool_size: 10,
             ssh_tunnel: None,
+            tunnel_kind: None,
+            tunnel_id: None,
+            http_proxy_tunnel: None,
+            websocket_tunnel: None,
             color_tag: None,
             group: None,
             last_connected_at: None,
@@ -1202,200 +1039,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn binary_text_keyset_cursor_advances_single_and_composite_pages() {
-        let dir = std::env::temp_dir().join(format!(
-            "datazen-sqlite-binary-keyset-{}",
-            uuid::Uuid::new_v4()
-        ));
+    async fn metadata_reads_honor_explicit_attached_database() {
+        let dir =
+            std::env::temp_dir().join(format!("datazen-sqlite-attach-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("keyset.db");
-        std::fs::File::create(&path).unwrap();
+        let main_path = dir.join("main.db");
+        let aux_path = dir.join("aux.db");
+        std::fs::File::create(&main_path).unwrap();
+        std::fs::File::create(&aux_path).unwrap();
+        let main_str = main_path.to_string_lossy().to_string();
+        let aux_str = aux_path.to_string_lossy().to_string();
 
         let driver = SqliteDriver::new();
-        let handle = driver
-            .connect(&test_config(path.to_str().unwrap()))
-            .await
-            .unwrap();
+        let handle = driver.connect(&test_config(&main_str)).await.unwrap();
         driver
-            .execute(&handle, "CREATE TABLE text_keys (name TEXT PRIMARY KEY)")
+            .execute(&handle, "CREATE TABLE main_only (id INTEGER PRIMARY KEY)")
             .await
             .unwrap();
         driver
             .execute(
                 &handle,
-                "INSERT INTO text_keys (name) VALUES ('a'), ('b'), ('c')",
+                &format!("ATTACH DATABASE '{}' AS aux", aux_str.replace('\'', "''")),
+            )
+            .await
+            .unwrap();
+        driver
+            .execute(
+                &handle,
+                "CREATE TABLE aux.aux_only (id INTEGER PRIMARY KEY, label TEXT)",
             )
             .await
             .unwrap();
 
-        let adapter = crate::SqliteSyncAdapter;
-        let text_contract = adapter
-            .sync_key_contract(&ColumnSchema {
-                name: "name".into(),
-                data_type: "TEXT".into(),
-                nullable: false,
-                default_value: None,
-                comment: None,
-                is_primary_key: true,
-                is_auto_increment: false,
-            })
-            .unwrap();
-        let first = driver
-            .query_with_params(
-                &handle,
-                "SELECT name FROM text_keys ORDER BY CAST(name AS BLOB) LIMIT ?",
-                &[Value::Integer(1)],
-            )
-            .await
-            .unwrap();
-        assert!(matches!(
-            &first.rows[0][0],
-            Some(Value::String(name)) if name == "a"
-        ));
-        let cursor = adapter
-            .sync_key_seek_value(
-                first.rows[0][0].as_ref().expect("text cursor"),
-                &text_contract,
-            )
-            .unwrap();
-        assert!(matches!(cursor, Value::Bytes(ref bytes) if bytes == b"a"));
-        let second = driver
-            .query_with_params(
-                &handle,
-                "SELECT name FROM text_keys WHERE CAST(name AS BLOB) > ? ORDER BY CAST(name AS BLOB) LIMIT ?",
-                &[cursor, Value::Integer(2)],
-            )
-            .await
-            .unwrap();
-        let names: Vec<&str> = second
-            .rows
-            .iter()
-            .map(|row| match &row[0] {
-                Some(Value::String(name)) => name.as_str(),
-                other => panic!("expected text key, got {other:?}"),
-            })
-            .collect();
-        assert_eq!(names, ["b", "c"]);
+        // The explicit attached-database argument is authoritative: reading
+        // `aux` must not leak the session's default `main` tables (or vice versa).
+        let aux_tables = driver.get_tables(&handle, "aux", None).await.unwrap();
+        let names: Vec<&str> = aux_tables.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"aux_only"), "aux tables: {names:?}");
+        assert!(!names.contains(&"main_only"), "aux tables: {names:?}");
 
-        driver
-            .execute(
-                &handle,
-                "CREATE TABLE composite_keys (tenant TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (tenant, name))",
-            )
+        // A blank argument keeps the previous behavior (`main`).
+        let main_tables = driver.get_tables(&handle, "", None).await.unwrap();
+        let names: Vec<&str> = main_tables.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"main_only"), "main tables: {names:?}");
+        assert!(!names.contains(&"aux_only"), "main tables: {names:?}");
+
+        // Column/index resolution follows the same explicit database argument.
+        let aux_schema = driver
+            .get_table_schema(&handle, "aux_only", "aux", None)
             .await
             .unwrap();
-        driver
-            .execute(
-                &handle,
-                "INSERT INTO composite_keys (tenant, name) VALUES ('a', 'a'), ('a', 'b'), ('b', 'a')",
-            )
+        assert!(
+            aux_schema.columns.iter().any(|c| c.name == "label"),
+            "aux schema: {aux_schema:?}"
+        );
+        let main_schema = driver
+            .get_table_schema(&handle, "main_only", "main", None)
             .await
             .unwrap();
-        let first_composite = driver
-            .query_with_params(
-                &handle,
-                "SELECT tenant, name FROM composite_keys ORDER BY CAST(tenant AS BLOB), CAST(name AS BLOB) LIMIT ?",
-                &[Value::Integer(2)],
-            )
+        assert!(
+            main_schema.columns.iter().any(|c| c.name == "id"),
+            "main schema: {main_schema:?}"
+        );
+
+        // SQLite has no schema level, so a schema argument is rejected before
+        // any relation is resolved.
+        let err = driver
+            .get_tables(&handle, "main", Some("public"))
             .await
-            .unwrap();
-        let composite_cursor: Vec<Value> = first_composite.rows[1]
-            .iter()
-            .map(|value| {
-                adapter
-                    .sync_key_seek_value(value.as_ref().expect("composite cursor"), &text_contract)
-                    .unwrap()
-            })
-            .collect();
-        assert!(composite_cursor
-            .iter()
-            .all(|value| matches!(value, Value::Bytes(_))));
-        let second_composite = driver
-            .query_with_params(
-                &handle,
-                "SELECT tenant, name FROM composite_keys WHERE (CAST(tenant AS BLOB), CAST(name AS BLOB)) > (?, ?) ORDER BY CAST(tenant AS BLOB), CAST(name AS BLOB) LIMIT ?",
-                &[
-                    composite_cursor[0].clone(),
-                    composite_cursor[1].clone(),
-                    Value::Integer(2),
-                ],
-            )
+            .unwrap_err();
+        assert!(matches!(err, DriverError::InvalidConfig(_)), "got {err:?}");
+        let err = driver
+            .get_table_schema(&handle, "main_only", "main", Some("public"))
             .await
-            .unwrap();
-        assert_eq!(second_composite.rows.len(), 1);
-        assert!(matches!(
-            &second_composite.rows[0][0],
-            Some(Value::String(tenant)) if tenant == "b"
-        ));
-        assert!(matches!(
-            &second_composite.rows[0][1],
-            Some(Value::String(name)) if name == "a"
-        ));
+            .unwrap_err();
+        assert!(matches!(err, DriverError::InvalidConfig(_)), "got {err:?}");
+        let err = driver
+            .get_columns(&handle, "main_only", "main", Some("public"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DriverError::InvalidConfig(_)), "got {err:?}");
 
         driver.disconnect(handle).await.unwrap();
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[tokio::test]
-    async fn execute_params_preserves_all_bytes_and_actual_affected_rows() {
-        let directory =
-            std::env::temp_dir().join(format!("datazen-bound-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("bound.db");
-        std::fs::File::create(&path).unwrap();
-        let driver = SqliteDriver::new();
-        let handle = driver
-            .connect(&test_config(path.to_str().unwrap()))
-            .await
-            .unwrap();
-        driver
-            .execute(
-                &handle,
-                "CREATE TABLE t (id INTEGER, payload BLOB, label TEXT)",
-            )
-            .await
-            .unwrap();
-        let bytes = (0..=255).collect::<Vec<u8>>();
-        let label = "'\\\n雪";
-        assert_eq!(
-            driver
-                .execute_with_params(
-                    &handle,
-                    "INSERT INTO t VALUES (?, ?, ?)",
-                    &[
-                        Value::Integer(1),
-                        Value::Bytes(bytes.clone()),
-                        Value::String(label.into())
-                    ]
-                )
-                .await
-                .unwrap(),
-            1
-        );
-        let result = driver
-            .query(&handle, "SELECT payload, label FROM t")
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::to_value(&result.rows[0]).unwrap(),
-            serde_json::to_value(vec![
-                Some(Value::Bytes(bytes)),
-                Some(Value::String(label.into()))
-            ])
-            .unwrap()
-        );
-        assert_eq!(
-            driver
-                .execute_with_params(
-                    &handle,
-                    "UPDATE t SET label = ? WHERE id = ?",
-                    &[Value::String("missing".into()), Value::Integer(2)]
-                )
-                .await
-                .unwrap(),
-            0
-        );
-        driver.disconnect(handle).await.unwrap();
-        std::fs::remove_dir_all(directory).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

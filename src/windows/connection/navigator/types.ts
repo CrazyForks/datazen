@@ -30,6 +30,12 @@ export type UnifiedRow =
       dbName: string;
       expanded: boolean;
       loading: boolean;
+      /**
+       * Whether this database is open: the user expanded it in the tree, or the
+       * driver still holds a per-database resource for it. A closed database
+       * renders no marker at all — there is no "closed" indicator.
+       */
+      isOpen: boolean;
       depth: number;
     }
   | {
@@ -66,6 +72,7 @@ export type UnifiedRow =
       dbName: string;
       depth: number;
       isSelected: boolean;
+      dbCountsCommand?: string;
     }
   | { type: 'db-loading'; depth: number }
   | {

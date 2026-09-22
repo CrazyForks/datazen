@@ -35,9 +35,14 @@ pub async fn load_table_schema(
     endpoint: &Endpoint,
     table: &str,
 ) -> Result<TableSchema, TransferError> {
-    let relation = metadata_relation_ref(endpoint, table)?;
+    metadata_relation_ref(endpoint, table)?;
     driver
-        .get_table_schema(handle, &relation)
+        .get_table_schema(
+            handle,
+            table,
+            &endpoint.database,
+            endpoint.normalized_schema(),
+        )
         .await
         .map_err(|error| TransferError::validation(error.to_string()))
 }

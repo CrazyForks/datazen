@@ -197,11 +197,21 @@ async fn compare_data_sync_impl_inner(
             ));
         }
         let schema = src_driver
-            .get_table_schema(&src_handle, &mapping.source_table)
+            .get_table_schema(
+                &src_handle,
+                &mapping.source_table,
+                src_config.database.as_deref().unwrap_or_default(),
+                src_config.schema.as_deref(),
+            )
             .await
             .cmd_err("compare_data_sync")?;
         let target_table_schema = tgt_driver
-            .get_table_schema(&tgt_handle, &mapping.target_table)
+            .get_table_schema(
+                &tgt_handle,
+                &mapping.target_table,
+                tgt_config.database.as_deref().unwrap_or_default(),
+                tgt_config.schema.as_deref(),
+            )
             .await
             .cmd_err("compare_data_sync")?;
         let pk_columns = schema.effective_primary_keys();
@@ -406,11 +416,21 @@ async fn compare_data_sync_impl_inner(
         .filter(|table| table.table.status == TableMappingStatus::Matched)
     {
         let source_schema_snapshot = src_driver
-            .get_table_schema(&src_handle, &table.table.source_table)
+            .get_table_schema(
+                &src_handle,
+                &table.table.source_table,
+                src_config.database.as_deref().unwrap_or_default(),
+                src_config.schema.as_deref(),
+            )
             .await
             .cmd_err("compare_data_sync")?;
         let target_schema_snapshot = tgt_driver
-            .get_table_schema(&tgt_handle, &table.table.target_table)
+            .get_table_schema(
+                &tgt_handle,
+                &table.table.target_table,
+                tgt_config.database.as_deref().unwrap_or_default(),
+                tgt_config.schema.as_deref(),
+            )
             .await
             .cmd_err("compare_data_sync")?;
         source_entries.push((
@@ -544,7 +564,12 @@ pub(crate) async fn generate_data_sync_sql_impl(
     let mut statements = Vec::new();
     for table in &set.tables {
         let schema = tgt_driver
-            .get_table_schema(&tgt_handle, &table.target_table)
+            .get_table_schema(
+                &tgt_handle,
+                &table.target_table,
+                tgt_config.database.as_deref().unwrap_or_default(),
+                tgt_config.schema.as_deref(),
+            )
             .await
             .cmd_err("generate_data_sync_sql")?;
         let projection = comparison

@@ -6,6 +6,7 @@ mod datagrip;
 mod datazen;
 mod dbeaver;
 mod dbx;
+pub(crate) mod ipc;
 mod map;
 mod navicat;
 mod rncryptor;
@@ -458,6 +459,10 @@ mod tests {
             connection_timeout: 30,
             max_pool_size: 10,
             ssh_tunnel: None,
+            tunnel_kind: None,
+            tunnel_id: None,
+            http_proxy_tunnel: None,
+            websocket_tunnel: None,
             color_tag: None,
             group: Some("Prod".into()),
             last_connected_at: None,

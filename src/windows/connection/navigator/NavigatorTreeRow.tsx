@@ -22,6 +22,12 @@ import { setDragPayload } from '../schema-tree/schemaTreeDrag';
 import { PINNED_GROUP_KEY, RECENT_GROUP_KEY } from '../../../lib/connectionLocator';
 import type { UnifiedRow } from './types';
 import { createDragGhost, depthPadding, namespaceLeafContext, removeDragGhost } from './utils';
+import { useKvDbCounts } from './useKvDbCounts';
+
+/** Parse the numeric database index from a `db{n}` name; NaN when not a db name. */
+function dbIndexFromName(dbName: string): number {
+  return Number(dbName.replace(/^db/, ''));
+}
 
 export type GroupDropTarget = { groupName: string; target: 'header' | 'empty' };
 
@@ -147,6 +153,8 @@ export function NavigatorTreeRow({
   renderStatusDot,
   viewActions,
 }: NavigatorTreeRowProps) {
+  const kvDb = row.type === 'kv-db' ? row : null;
+  const dbCounts = useKvDbCounts(kvDb?.dbSessionId, kvDb?.dbCountsCommand);
   switch (row.type) {
     case 'section':
       return (
@@ -324,6 +332,19 @@ export function NavigatorTreeRow({
           />
           <span className="selectable min-w-0 truncate">{row.dbName}</span>
           {row.loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-fg-muted" />}
+          {!row.loading && row.isOpen && (
+            // Only open databases carry a marker: a solid green dot meaning the
+            // database is open (expanded, or still holding a pool that "Close
+            // Database Connection" would release). A closed database shows
+            // nothing — an empty ring on every closed node said no more than
+            // the absence of a dot, while implying the tree knew more than it did.
+            <span
+              data-db-open="true"
+              title={t('schemaTree.databaseOpen')}
+              aria-label={t('schemaTree.databaseOpenAria')}
+              className={cn('h-1.5 w-1.5 shrink-0 rounded-full bg-green-500')}
+            />
+          )}
         </button>
       );
 
@@ -529,6 +550,14 @@ export function NavigatorTreeRow({
             fallback={Database}
           />
           <span className="selectable min-w-0 truncate">{row.dbName}</span>
+          {dbCounts[dbIndexFromName(row.dbName)] != null && (
+            <span
+              className="ml-auto shrink-0 pl-1 text-[11px] text-fg-muted"
+              data-testid={`kv-db-count-${row.dbName}`}
+            >
+              ({dbCounts[dbIndexFromName(row.dbName)]})
+            </span>
+          )}
         </button>
       );
 

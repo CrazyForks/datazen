@@ -341,8 +341,13 @@ async fn fetch_target_table_schema(
     driver: &dyn datazen_driver_api::DatabaseDriver,
     handle: &datazen_driver_api::ConnectionHandle,
     table: &str,
+    database: &str,
+    schema: Option<&str>,
 ) -> Result<crate::db::TableSchema, CommandError> {
-    match driver.get_table_schema(handle, table).await {
+    match driver
+        .get_table_schema(handle, table, database, schema)
+        .await
+    {
         Ok(schema) => Ok(schema),
         Err(e) => {
             let msg = e.to_string();
@@ -530,12 +535,27 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             target_schema_override.as_deref(),
         );
         let src_schema = src_driver
-            .get_table_schema(&src_handle, &src_table)
+            .get_table_schema(
+                &src_handle,
+                &src_table,
+                src_config.database.as_deref().unwrap_or_default(),
+                source_schema_override
+                    .as_deref()
+                    .or(src_config.schema.as_deref()),
+            )
             .await
             .cmd_err("prepare_schema_diff_plan")?;
-        let tgt_schema = fetch_target_table_schema(tgt_driver.as_ref(), &tgt_handle, &tgt_table)
-            .await
-            .cmd_err("prepare_schema_diff_plan")?;
+        let tgt_schema = fetch_target_table_schema(
+            tgt_driver.as_ref(),
+            &tgt_handle,
+            &tgt_table,
+            tgt_config.database.as_deref().unwrap_or_default(),
+            target_schema_override
+                .as_deref()
+                .or(tgt_config.schema.as_deref()),
+        )
+        .await
+        .cmd_err("prepare_schema_diff_plan")?;
         // DDL in the plan targets the target dialect, so the pair's table identifier must be
         // target-resolved. Using `table` here leaks the source's schema qualification into the
         // target DDL (e.g. `public.table` on MySQL) and breaks deploy.
@@ -559,7 +579,14 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         // real target schema and fail closed if the selected table disappeared;
         // do not turn it into an empty source schema sentinel.
         let tgt_schema = tgt_driver
-            .get_table_schema(&tgt_handle, &tgt_table)
+            .get_table_schema(
+                &tgt_handle,
+                &tgt_table,
+                tgt_config.database.as_deref().unwrap_or_default(),
+                target_schema_override
+                    .as_deref()
+                    .or(tgt_config.schema.as_deref()),
+            )
             .await
             .cmd_err("prepare_schema_diff_plan")?;
         if source_target_tables.contains(tgt_table.as_str()) {
@@ -1168,7 +1195,15 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
             }
         };
     for (table, snapshot) in &reviewed.snapshots {
-        let current = match fetch_target_table_schema(driver.as_ref(), &handle, table).await {
+        let current = match fetch_target_table_schema(
+            driver.as_ref(),
+            &handle,
+            table,
+            config.database.as_deref().unwrap_or_default(),
+            config.schema.as_deref(),
+        )
+        .await
+        {
             Ok(value) => value,
             Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
         };
@@ -1285,12 +1320,23 @@ pub(crate) async fn compare_table_schemas_impl(
     let tgt_table = resolve_table_for_dialect(&tgt_config.database_type, &table_name);
 
     let src_schema = src_driver
-        .get_table_schema(&src_handle, &src_table)
+        .get_table_schema(
+            &src_handle,
+            &src_table,
+            src_config.database.as_deref().unwrap_or_default(),
+            src_config.schema.as_deref(),
+        )
         .await
         .cmd_err("compare_table_schemas")?;
-    let tgt_schema = fetch_target_table_schema(tgt_driver.as_ref(), &tgt_handle, &tgt_table)
-        .await
-        .cmd_err("compare_table_schemas")?;
+    let tgt_schema = fetch_target_table_schema(
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_table,
+        tgt_config.database.as_deref().unwrap_or_default(),
+        tgt_config.schema.as_deref(),
+    )
+    .await
+    .cmd_err("compare_table_schemas")?;
 
     // Source = desired: missingOnTarget → ADD, extraOnTarget → DROP.
     // `added`/`removed` kept as aliases for one release.

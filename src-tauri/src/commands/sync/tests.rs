@@ -597,7 +597,7 @@ async fn execute_data_sync_rejects_read_only_target() {
         parameters: vec![],
         row_key: vec![],
     };
-    let err = super::execute_data_sync_impl(&test.state, id, vec![stmt], None, None)
+    let err = super::execute_data_sync_impl(&test.state, id, vec![stmt], None, None, None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("read-only"));
@@ -800,7 +800,7 @@ async fn cancel_data_sync_stops_execute_before_start() {
         parameters: vec![],
         row_key: vec![],
     };
-    let err = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None)
+    let err = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None, None)
         .await
         .unwrap_err();
     assert!(err.to_string().to_lowercase().contains("cancel"), "{err}");

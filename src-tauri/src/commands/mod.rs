@@ -1,6 +1,7 @@
 //! Tauri IPC command surface.
 
 pub mod ai;
+mod app_archive;
 mod backup;
 mod clipboard;
 mod config;
@@ -12,6 +13,7 @@ mod data;
 mod data_transfer;
 mod dialog;
 pub(crate) mod driver_command;
+mod encryption_key;
 mod error;
 mod export;
 mod file;
@@ -24,22 +26,24 @@ mod schema_diff;
 mod structure;
 mod sync;
 mod theme;
+mod tunnel;
 mod wapps;
 pub(crate) mod window;
 mod workflow;
 
 pub use ai::*;
+pub use app_archive::*;
 pub use backup::*;
 pub use clipboard::*;
 pub use config::*;
 pub use connection::*;
+pub use connection_import::ipc::*;
 pub use context::*;
 pub use dashboard::*;
 pub use data::*;
 pub use data_transfer::*;
-// Webdriver builds re-export the injection IPCs for lib.rs registration;
-// production builds expose nothing from the dialog gateway beyond its
-// internal call sites (super::dialog::* within this module).
+pub use encryption_key::*;
+// The dialog module is private; its commands are only re-exported for webdriver.
 #[cfg(feature = "webdriver")]
 pub use dialog::*;
 pub use driver_command::*;
@@ -54,6 +58,7 @@ pub use schema_diff::*;
 pub use structure::*;
 pub use sync::*;
 pub use theme::*;
+pub use tunnel::*;
 pub use wapps::*;
 pub use window::*;
 pub use workflow::*;
@@ -274,3 +279,7 @@ pub mod test_harness {
             .map_err(|e| e.to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "ipc_surface_tests.rs"]
+mod ipc_surface_tests;

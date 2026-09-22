@@ -12,6 +12,7 @@ mod settings;
 mod sync_profiles;
 mod sync_tasks;
 mod transfer_profiles;
+mod tunnels;
 
 #[allow(unused_imports)] // public re-exports for IPC / other modules
 pub use app_db::{
@@ -207,6 +208,7 @@ impl Store {
         let mut cache = self.cache.write().await;
 
         cache.connections = self.load_connections_from_disk().await?;
+        cache.tunnels = self.load_tunnels_from_disk().await?;
 
         // First launch: store is empty, nothing to seed.
         // Users create connections via the UI.

@@ -196,7 +196,10 @@ async fn current_schema_fingerprint(
         } else {
             &table.target_table
         };
-        let schema_snapshot = driver.get_table_schema(handle, relation).await.ok();
+        let schema_snapshot = driver
+            .get_table_schema(handle, relation, database, schema)
+            .await
+            .ok();
         entries.push((
             relation.clone(),
             schema_snapshot,

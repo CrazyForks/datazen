@@ -27,12 +27,28 @@ import { useI18n } from '../../hooks/useI18n';
 import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
-import { buildErGraph } from './er/buildErGraph';
+import { buildErGraph, defaultCollapsedTables } from './er/buildErGraph';
+import { ErRelationLegend } from './er/ErRelationLegend';
+import {
+  applyHoverToEdges,
+  applyHoverToNodes,
+  applyPinnedPositions,
+  hoveredNeighbourhood,
+} from './er/interactionState';
+import type { ErPredictedRelation } from './er/buildErGraph';
+import { toPredictionTablesFromSchemas } from '../../lib/relationPrediction/fromTableSchema';
+import { predictRelations } from '../../lib/relationPrediction/predictRelations';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { TableSchema } from '../../types';
 
 interface ErDiagramViewProps {
   dbSessionId: string;
   database: string;
+  /**
+   * Schema to read the diagram's tables from. Captured from the panel that was
+   * active when the diagram was opened; `null` lets the host/driver decide.
+   */
+  schema?: string | null;
   focusTable?: string;
   onSelectTable?: (tableName: string, schema: string | null, database: string) => void;
   /** Optional; when omitted, Focus still works via internal focus state. */
@@ -54,6 +70,7 @@ export function ErDiagramView(props: ErDiagramViewProps) {
 function ErDiagramInner({
   dbSessionId,
   database,
+  schema = null,
   focusTable,
   onSelectTable,
   onFocusTable,
@@ -61,11 +78,38 @@ function ErDiagramInner({
   const { t } = useI18n();
   const { fitView, zoomIn, zoomOut } = useReactFlow();
   const [schemas, setSchemas] = useState<TableSchema[]>([]);
+  // Inference is opt-in: an unset value means off, and the legend's button turns
+  // it on for this and every other surface that reads the same setting.
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? false);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   /** Local focus override; syncs from prop when parent changes focusTable. */
   const [activeFocus, setActiveFocus] = useState<string | undefined>(focusTable);
+  /**
+   * Collapsed tables are view state, not node state.
+   *
+   * Collapsing changes a node's height, so it must re-run the layout — otherwise
+   * the diagram keeps a collapsed node's old footprint and an expanded one can be
+   * drawn over its neighbour. Holding it here (rather than in node data) is what
+   * makes the rebuild happen at all.
+   */
+  const [collapsedTables, setCollapsedTables] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  /**
+   * Positions the user has dragged a node to.
+   *
+   * A relayout runs on schema load, on collapse and on focus, and it would
+   * otherwise throw away every hand-placed node. Pinned nodes keep their position
+   * and the "re-layout" control clears them.
+   */
+  const [pinnedPositions, setPinnedPositions] = useState<
+    ReadonlyMap<string, { x: number; y: number }>
+  >(() => new Map());
+  /** Table under the cursor, whose relationships are brought forward. */
+  const [hoveredTable, setHoveredTable] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -97,10 +141,13 @@ function ErDiagramInner({
     setLoading(true);
     setError(null);
     databaseCommands
-      .getErData(dbSessionId, database)
+      .getErData(dbSessionId, database, schema)
       .then((data) => {
         if (!cancelled) {
           setSchemas(data);
+          // Wide tables start collapsed, but only as a seed: after this the user
+          // owns the collapse state, so expanding one sticks.
+          setCollapsedTables(defaultCollapsedTables(data));
           setLoading(false);
         }
       })
@@ -113,60 +160,138 @@ function ErDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [dbSessionId, database]);
+  }, [dbSessionId, database, schema]);
+
+  // Inferred relationships, drawn alongside the declared ones. The ER diagram
+  // already holds a full schema per table, so this needs no extra IPC — and it is
+  // memoised on `schemas` because the engine walks every table in the database.
+  const predictedRelations = useMemo<ErPredictedRelation[]>(() => {
+    if (!fkPredictionEnabled || schemas.length < 2) return [];
+    return predictRelations(toPredictionTablesFromSchemas(schemas)).map((candidate) => ({
+      id: candidate.id,
+      fromTable: candidate.fromTable,
+      toTable: candidate.toTable,
+      columnPairs: candidate.columnPairs,
+      score: candidate.score,
+    }));
+  }, [fkPredictionEnabled, schemas]);
+
+  /**
+   * Search dims rather than filters — a hard filter would hide the very
+   * neighbours that make a match understandable.
+   */
+  const applySearchState = useCallback(
+    (list: Node[]): Node[] => {
+      const query = searchQuery.trim().toLowerCase();
+      return list.map((node) => {
+        const name = (node.data.tableName as string).toLowerCase();
+        const matches = query.length > 0 && name.includes(query);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            highlighted: query.length > 0 ? matches : node.id === activeFocus,
+            dimmed: query.length > 0 ? !matches : false,
+          },
+        };
+      });
+    },
+    [searchQuery, activeFocus],
+  );
 
   useEffect(() => {
     if (loading || error) return;
-    const { nodes: n, edges: e } = buildErGraph(schemas, activeFocus);
-    setNodes(n);
+    const { nodes: n, edges: e } = buildErGraph(
+      schemas,
+      activeFocus,
+      predictedRelations,
+      collapsedTables,
+    );
+    // Search state is reapplied here because a relayout replaces every node.
+    setNodes(applySearchState(applyPinnedPositions(n, pinnedPositions)));
     setEdges(e);
-  }, [schemas, activeFocus, loading, error, setNodes, setEdges]);
+  }, [
+    schemas,
+    activeFocus,
+    predictedRelations,
+    collapsedTables,
+    pinnedPositions,
+    loading,
+    error,
+    setNodes,
+    setEdges,
+    applySearchState,
+  ]);
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setNodes((nds) =>
-        nds.map((n) => ({
-          ...n,
-          data: {
-            ...n.data,
-            highlighted: n.id === activeFocus,
-            dimmed: false,
-          },
-        })),
-      );
-      return;
-    }
-    const q = searchQuery.toLowerCase();
-    setNodes((nds) =>
-      nds.map((n) => ({
-        ...n,
-        data: {
-          ...n.data,
-          highlighted: (n.data.tableName as string).toLowerCase().includes(q),
-          dimmed: !(n.data.tableName as string).toLowerCase().includes(q),
-        },
-      })),
-    );
-  }, [searchQuery, setNodes, activeFocus]);
+    setNodes((nds) => applySearchState(nds));
+  }, [applySearchState, setNodes]);
 
   useEffect(() => {
     const handler = (e: Event) => {
       const tableName = (e as CustomEvent<string>).detail;
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === tableName ? { ...n, data: { ...n.data, collapsed: !n.data.collapsed } } : n,
-        ),
-      );
+      setCollapsedTables((current) => {
+        const next = new Set(current);
+        if (next.has(tableName)) next.delete(tableName);
+        else next.add(tableName);
+        return next;
+      });
     };
     window.addEventListener('er-toggle-collapse', handler);
     return () => window.removeEventListener('er-toggle-collapse', handler);
-  }, [setNodes]);
+  }, []);
 
   const stats = useMemo(() => {
     const tableCount = schemas.length;
-    const relationCount = schemas.reduce((acc, s) => acc + s.foreignKeys.length, 0);
-    return { tableCount, relationCount };
-  }, [schemas]);
+    const declaredCount = schemas.reduce((acc, s) => acc + s.foreignKeys.length, 0);
+    return {
+      tableCount,
+      declaredCount,
+      predictedCount: predictedRelations.length,
+      relationCount: declaredCount + predictedRelations.length,
+    };
+  }, [schemas, predictedRelations]);
+
+  const handleNodeDragStop = useCallback((_: unknown, node: Node) => {
+    setPinnedPositions((current) => new Map(current).set(node.id, { ...node.position }));
+  }, []);
+
+  const handleRelayout = useCallback(() => {
+    // Dropping the pins is the whole operation: the next build lays the graph out
+    // again from the relationships.
+    setPinnedPositions(new Map());
+  }, []);
+
+  const handleTogglePrediction = useCallback(
+    (enabled: boolean) => {
+      // Persisted, not page-local: the Settings → Editor switch shows the same
+      // value, so the two can never disagree about whether inference is on.
+      updateSettings({ enableFkPrediction: enabled }).catch((e: unknown) => {
+        console.error('Failed to update smart foreign key prediction:', e);
+      });
+    },
+    [updateSettings],
+  );
+
+  const handleNodeMouseEnter = useCallback((_: unknown, node: Node) => {
+    setHoveredTable(node.id);
+  }, []);
+
+  const handleNodeMouseLeave = useCallback(() => {
+    setHoveredTable(null);
+  }, []);
+
+  // Hover rather than click: clicking a node opens that table in the workspace and
+  // leaves the diagram, so a click-driven highlight would never be seen.
+  const neighbourhood = useMemo(
+    () => hoveredNeighbourhood(edges, hoveredTable),
+    [edges, hoveredTable],
+  );
+  const styledNodes = useMemo(
+    () => applyHoverToNodes(nodes, neighbourhood),
+    [nodes, neighbourhood],
+  );
+  const styledEdges = useMemo(() => applyHoverToEdges(edges, hoveredTable), [edges, hoveredTable]);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -285,11 +410,14 @@ function ErDiagramInner({
   return (
     <div className="h-full w-full" data-testid="er-diagram-view">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={styledNodes}
+        edges={styledEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
         onNodeContextMenu={handleNodeContextMenu}
         nodeTypes={nodeTypes}
         viewport={viewport}
@@ -324,6 +452,14 @@ function ErDiagramInner({
             onClick={() => void zoomOut()}
           >
             −
+          </ControlButton>
+          <ControlButton
+            data-testid="er-diagram-relayout"
+            aria-label={t('erDiagram.relayout')}
+            title={t('erDiagram.relayout')}
+            onClick={handleRelayout}
+          >
+            ⟲
           </ControlButton>
           <ControlButton
             data-testid="er-diagram-fit-view"
@@ -390,6 +526,20 @@ function ErDiagramInner({
               {t('erDiagram.relationCount').replace('{count}', String(stats.relationCount))}
             </span>
           </div>
+        </Panel>
+        {/* Bottom-centre: the corners are already taken by the search box, the
+            stats, React Flow's zoom controls and the mini-map, and a legend that
+            sat under one of them would be unreadable. */}
+        <Panel position="bottom-center">
+          {/* The key to the canvas's own lines, next to the button that adds the
+              inferred ones — so "what is this amber dashed line" is answered
+              where the question is asked. */}
+          <ErRelationLegend
+            declaredCount={stats.declaredCount}
+            predictedCount={stats.predictedCount}
+            predictionEnabled={fkPredictionEnabled}
+            onTogglePrediction={handleTogglePrediction}
+          />
         </Panel>
       </ReactFlow>
     </div>

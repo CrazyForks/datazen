@@ -422,6 +422,7 @@ fn test_tester_stream_chunk_cancelled_explicit_true() {
         usage: None,
         tool_calls: None,
         response_id: None,
+        egress_summary: None,
     };
     let json = serde_json::to_string(&chunk).unwrap();
     assert!(json.contains("\"cancelled\":true"));
@@ -440,6 +441,7 @@ fn test_tester_stream_chunk_cancelled_explicit_false() {
         usage: None,
         tool_calls: None,
         response_id: None,
+        egress_summary: None,
     };
     let json = serde_json::to_string(&chunk).unwrap();
     // cancelled: false is serialized (serde(default) doesn't skip false)
@@ -497,6 +499,7 @@ fn test_tester_stream_chunk_camel_case_serialization() {
         usage: None,
         tool_calls: None,
         response_id: None,
+        egress_summary: None,
     };
     let json = serde_json::to_string(&chunk).unwrap();
     assert!(json.contains("\"cancelled\""));

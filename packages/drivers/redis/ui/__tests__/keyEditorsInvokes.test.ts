@@ -9,7 +9,7 @@ import {
   invokeSetScan,
   invokeZsetScan,
   type PluginInvokeFn,
-} from '../keyEditorsInvokes';
+} from '../value-editors/keyEditorsInvokes';
 
 describe('invokeSetString (PR-1 KEEPTTL)', () => {
   it('passes keepTtl=false by default', async () => {

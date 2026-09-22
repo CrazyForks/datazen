@@ -15,6 +15,7 @@ import {
 import { t } from '../locales/t';
 import type { DatabaseType, TableInfo } from '../types';
 import { bindSchemaStore } from '@datazen/driver-sdk';
+import { capabilitiesForDbSession, relationSchemaFor } from '../lib/driverCapabilities';
 import {
   computeIsMultiDatabase,
   knownTableNames,
@@ -95,6 +96,13 @@ interface SchemaStore extends ConnectionSchemaState {
   setActiveConnection: (dbSessionId: string | null) => void;
   removeConnection: (dbSessionId: string) => void;
   getConnectionSchema: (dbSessionId: string) => ConnectionSchemaState | undefined;
+  /**
+   * The schema a *loaded* relation lives in, from its `TableInfo.schema`.
+   * Schema-aware engines (PostgreSQL, SQL Server) need it for every per-table
+   * metadata read; `null` means "unknown/not applicable" and is what
+   * schema-less engines expect.
+   */
+  schemaOfRelation: (name: string, dbSessionId?: string) => string | null;
 }
 
 function mergePartialIntoStore(
@@ -193,6 +201,21 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
     },
 
     getConnectionSchema: (dbSessionId) => get().schemas.get(dbSessionId),
+
+    schemaOfRelation: (name, dbSessionIdOverride) => {
+      const dbSessionId = resolveTargetConnectionId(get(), dbSessionIdOverride);
+      const state = get().schemas.get(dbSessionId);
+      if (!state) return null;
+      const target = name.trim();
+      if (!target) return null;
+      const candidates = [
+        ...state.tables,
+        ...state.views,
+        ...Object.values(state.pathItems).flat(),
+      ];
+      const hit = candidates.find((item) => item.name === target);
+      return hit?.schema?.trim() ? hit.schema : null;
+    },
 
     loadForConnection: async (dbSessionId, options) => {
       commitConnectionPatch(
@@ -513,6 +536,16 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         schema;
       const known = knownTableNames(namespaceTree, tables, views, pathItems);
       if (known.size === 0) return;
+      // Every read below carries the table's *own* schema (from `TableInfo`).
+      // Schema-aware engines (PostgreSQL, SQL Server) reject a schema-less
+      // metadata read, and guessing would be the same class of bug this
+      // replaced: resolving a table against a namespace it does not live in.
+      const capabilities = capabilitiesForDbSession(dbSessionId);
+      const schemaOf = new Map<string, string | null>();
+      for (const item of [...tables, ...views, ...Object.values(pathItems).flat()]) {
+        const relationSchema = relationSchemaFor(capabilities, item.schema);
+        if (relationSchema) schemaOf.set(item.name, relationSchema);
+      }
       const wanted = [
         ...new Set(
           tableNames
@@ -568,7 +601,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         const settled = await Promise.all(
           toFetch.map(async (name) => {
             try {
-              const typedCols = await databaseCommands.getColumnsTyped(dbSessionId, name, database);
+              const typedCols = await databaseCommands.getColumnsTyped(
+                dbSessionId,
+                name,
+                database,
+                schemaOf.get(name) ?? null,
+              );
               return {
                 name,
                 cols: typedCols.map((c) => c.name),
@@ -577,7 +615,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
             } catch {
               try {
                 // Fallback to untyped endpoint if typed not available
-                const cols = await databaseCommands.getColumns(dbSessionId, name, database);
+                const cols = await databaseCommands.getColumns(
+                  dbSessionId,
+                  name,
+                  database,
+                  schemaOf.get(name) ?? null,
+                );
                 return { name, cols, typeMap: null };
               } catch {
                 return { name, cols: null, typeMap: null };
