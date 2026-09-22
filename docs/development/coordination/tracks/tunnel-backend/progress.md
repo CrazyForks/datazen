@@ -99,8 +99,80 @@
 - `test_tunnel` 的**成功路径**（真实建立隧道并回报耗时）需要活的 SSH/代理/WS 端点，单测无法覆盖：本轨只证明失败路径与「无隧道配置」边界。Tester 若需正向验证，需要夹具端点或 mock。
 - `materialize_tunnel_refs` 的 `tracing::warn!` 分支只断言了「导出结果不含隧道」，未断言日志文本（无 subscriber 夹具）。
 
+## Tester 独立复验（全新实例，零信任）
+
+- 被验编码 commit: `7571d2887b027744619c5d2d4a00f52b183c8efe`
+- 测试代码 commit: `4b9515b6376ea972cd37e7fee1bd87a10bbe3a28`（`test(tunnel): verify tunnel-backend with integration tests`）
+- 本文件 commit: 提交信息为 `docs(coordination): record bugs for tunnel-backend` 的提交
+- **结论: `TEST_FAILED`** —— 发现 2 个 Bug，详见同目录 `bugs.md`
+
+### 套件实测（Coder 自报 vs Tester 独立实测）
+
+| 命令 | Coder 自报 | Tester 实测 | 一致? |
+|---|---|---|---|
+| `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-api --lib` | 128 passed / 0 failed / 0 ignored | **128 passed / 0 failed / 0 ignored** | ✅ |
+| `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib`（编码 commit 原样，未加 Tester 用例） | 1487 passed / 0 failed / 3 ignored | **1487 passed / 0 failed / 3 ignored** | ✅ |
+| 同上 + Tester 11 个新用例 | — | **1498 passed / 0 failed / 3 ignored** | — |
+| `rustfmt --check`（9 个改动文件） | 零 diff | **9 个改动文件全绿** | ✅ |
+| `cargo fmt --check`（全仓） | 仅 gitignored codegen `src-tauri/src/driver_init.rs` 有 diff | **同左**；`git check-ignore -v` 确认该文件被 `.gitignore:66` 忽略且不在本 commit 的 10 个文件内 | ✅ |
+
+（3 个 ignored 为既存 OS-keychain 手动用例。）
+
+**一次性 flake 记录（未复现）**：全套件中曾有 **1 次** 运行出现 `1497 passed; 1 failed`，随后 **78 次**全套件重跑（分批 12 / 30 / 1 / 15 / 20 次，含 CPU 满载 + `--test-threads=24`/`32` 压测）全部 `1498 passed; 0 failed`，未能复现，也未捕获失败用例名（当时仅保留 `tail -4`）。该仓库已有**既存 flaky 用例**并自述于注释：`src-tauri/src/commands/mcp.rs:265,274`（"flaky only under full-suite load"/"observed flaky on loaded machines"）、`src-tauri/src/ai/protocol/openai_chat.rs:964`（wiremock "can flake under high parallel load"）。据此判定与本次改动无关，但如实记录。
+
+### 改动文件覆盖率报告（逻辑分支覆盖；本机无 `llvm-tools`/`cargo-llvm-cov`，`rustup component add llvm-tools-preview` 因离线下载失败，故无法产出 llvm-cov 数字）
+
+| 改动文件 | 改动前 | 改动后 | 说明 |
+|---|---|---|---|
+| `packages/driver-api/src/tunnel_types.rs`（新增 2 个 DTO） | n/a | 序列化路径 100% | 补 ssh/httpProxy/websocket 三型的无密钥投影断言；`Deserialize` derive 未被任何代码使用（见改进项 4） |
+| `src-tauri/src/commands/tunnel.rs`（3 个 `*_impl`） | 无此代码 | **100% 分支** | 摘要：空 store / 单条 / 三条；usage：多命中同序、未命中、不存在、`tunnel_id=None` 排除、空串；test_tunnel：成功 + 4 条失败路径 |
+| `src-tauri/src/services/connection_manager/tunnels.rs`（`test_tunnel`） | 无此代码 | **100% 分支** | `start_tunnel` Err（id 不存在 / ssh 缺失 / ssh 禁用）、`tunnel.is_none()` 真、`Ok(elapsed)+drop` 假分支 |
+| `src-tauri/src/commands/connection_import/ipc.rs`（`materialize_tunnel_refs` + 导出） | 部分 | **100% 分支** | 空串 / 悬空 / kind=None / HttpProxy / WebSocket / Ssh-无配置 / 无引用内联 共 7 条路径 + 导出写失败分支 |
+| `src-tauri/src/bootstrap/run.rs`（3 行注册） | n/a | 静态守卫覆盖 | 运行时无法直接执行；由 `bootstrap::tests::invoke_handler_contains_tunnel_commands` 与 `ipc_surface_tests::bootstrap_rs_registers_merged_commands_only` 源码断言锁定 |
+| `packages/driver-api/src/lib.rs`（重导出 2 个 DTO） | n/a | 编译期覆盖 | 无运行时语句 |
+| `tunnel.rs` 的 3 个 `#[tauri::command]` 薄包装 | n/a | 未执行 | 需要 `State<'_, AppState>`，单测无法构造；由 `ipc_surface_tests::tunnel_commands_expose_metadata_only_params` 静态锁定参数面 |
+
+**≥80% 结论**：核心改动模块（`tunnel.rs` 三个 impl、`ConnectionManager::test_tunnel`、`materialize_tunnel_refs`/`write_connections_export`）可达分支 **100%** 覆盖。未执行项仅为 3 个一行的 `#[tauri::command]` 委托包装、编译期重导出、以及未被使用的 `Deserialize` derive，均已在上表说明，不构成覆盖率缺口。
+
+### 新增测试（11 个，全部通过，命名前缀 `test_tester_`）
+
+| 测试 | 覆盖路径 |
+|---|---|
+| `tunnel::tests::test_tester_summaries_are_empty_for_an_empty_store` | 空 store 摘要投影 |
+| `tunnel::tests::test_tester_summaries_keep_store_order_and_drop_secrets_for_every_kind` | ssh/httpProxy/websocket 三型摘要均无密钥 + store 顺序保持 |
+| `tunnel::tests::test_tester_usage_is_positionally_aligned_across_multiple_hits` | 多命中下 ids/names 严格同序对齐（id 与 name 排序刻意错开）；`None` 与异隧道引用被排除 |
+| `tunnel::tests::test_tester_usage_with_empty_id_matches_no_real_reference` | 空串查询不误扫直连连接 |
+| `tunnel::tests::test_tester_test_tunnel_rejects_ssh_kind_without_ssh_config` | `kind=ssh` 但 `ssh=None` → Err |
+| `tunnel::tests::test_tester_test_tunnel_rejects_disabled_ssh_tunnel` | `ssh.enabled=false` → Err |
+| `tunnel::tests::test_tester_test_tunnel_success_path_with_local_proxy_fixture` | **成功路径**：本地 TCP 夹具（应答 `HTTP/1.1 200 Connection Established`）→ `Ok(elapsed_ms)`，且 `drop` 不 panic |
+| `ipc::tests::test_tester_materialize_does_not_pollute_the_live_connection_cache` | 导出只改 `get_connections()` 的**克隆**，store 内存 cache 的 `ssh_tunnel`/`host`/`port` 不被污染（防别名缺陷） |
+| `ipc::tests::test_tester_materialize_degrades_every_unsupported_branch` | 空串 / 悬空 / None / WebSocket / Ssh-无配置 五条降级 + 无引用内联隧道原样保留 + 连接自身 DB host/port 不被跳板覆盖 |
+| `ipc::tests::test_tester_materialize_warns_on_dangling_and_unsupported_references` | 线程局部 `tracing_subscriber::fmt` + 共享缓冲夹具，断言 warn 文本同时点名 connection_id 与 tunnel_id（可观测降级） |
+| `ipc::tests::test_tester_export_fails_when_the_destination_cannot_be_written` | 导出写失败分支（`cmd_err("export_connections")`） |
+
+**未覆盖项与理由**：
+
+1. **`test_tunnel` 的 SSH 成功路径**：需要一台可用的 SSH 服务器。本机无可用端点，仓库也未提供 in-process SSH 夹具（`russh` 在本仓库仅作客户端使用，无 server 侧测试设施）。替代验证：用本地 TCP 代理夹具覆盖了同一个 `Ok(elapsed) + drop` 代码路径；SSH 特有的 drop 拆除语义改以**逐行静态核验**（`SshTunnel` 无 `Drop`、`JoinHandle` drop 即 detach）并登记为 `tunnel-backend-BUG-002`。**若后续需要动态验证，需新增 `russh` server 夹具并统计会话数。**
+2. **`#[tauri::command]` 三个薄包装**：`State<'_, AppState>` 无法在单测中构造；改为静态参数面守卫（既存机制）。
+3. **`materialize_tunnel_refs` 的 warn 分支日志**：已按任务要求评估并**补齐**（见上表第 10 条）。注意：若改用线程局部 subscriber 而不新建 `Dispatch`，会受 tracing callsite interest 全局缓存影响而 flaky；本实现通过 `tracing_subscriber::fmt()` 构造新 `Dispatch`（触发 `register_dispatch` → 全量 interest 重建）保证确定性，已用 `--test-threads=1` 定序复现验证。
+
+### E2E 用例登记
+
+| # | 用例 | 覆盖目标 | 可执行性 | 前置条件 |
+|---|---|---|---|---|
+| E1 | 调用 `get_tunnel_summaries`，断言载荷精确等于 `[{id,name,kind}]`，且无 `password`/`passphrase`/`authToken`/`ssh`/`httpProxy`/`websocket` 字段、无密钥值/跳板主机名/用户名 | G9 摘要 IPC 无密钥 | 【本机可执行】`cargo test -p datazen --lib commands::tunnel::tests` | 无外部依赖；`TestAppState` + `FileKeyringGuard`（`DATAZEN_KEYRING=file`） |
+| E2 | 三种 kind 各存一条带明文密钥的隧道后调用摘要 IPC，逐一断言密钥不出现 | G9 全类型无密钥 | 【本机可执行】同上 | 同上 |
+| E3 | `get_tunnel_usage(id)` 命中：多条引用连接按 store 顺序返回且 ids/names 一一对应；未命中（不存在 / 无引用 / 空串 / `None`）返回双空数组 | G3 引用统计 | 【本机可执行】`cargo test -p datazen --lib commands::tunnel::tests` | 无外部依赖 |
+| E4 | 导出物化：`tunnel_id → ssh` 引用的连接导出后 `isOverSSH=true`、跳板 host/port/user/password 保留、DB 目标 host/port 不变；导出后运行中 cache 不被污染 | G7 静默数据丢失修复 | 【本机可执行】`cargo test -p datazen --lib commands::connection_import::ipc::tests` | 无外部依赖（RNCryptor 本地加解密） |
+| E5 | 不可表达类型降级：`httpProxy` / `websocket` / `kind=none` / 悬空 `tunnel_id` / 空串引用导出时均不带隧道、导出不失败，且各自 emit 带 connection_id/tunnel_id 的 warn | G7 可观测降级 | 【本机可执行】同上 | 无外部依赖 |
+| E6 | 真实 GUI 旅程：设置页「隧道管理」→「测试」按钮 → SSH 隧道应回报耗时；不可达的 HTTP 代理 / WebSocket 必须回报失败 | G8 端到端可用性（**当前会暴露 `tunnel-backend-BUG-001`**） | 【留待 R 回归】WebdriverIO `e2e/specs/` | 需 `pnpm tauri:build:webdriver`；需前端管理面（本轨不含）；需一台可达 SSH 服务器；代理/WS 用不可达地址做反向断言 |
+| E7 | 真实导出→导入往返：A 环境导出引用 SSH 隧道的连接，B 环境导入后 `isOverSSH=true` 且能经跳板连内网库 | G7 端到端 | 【留待 R 回归】手工黑盒 `test/` | 双环境或双 profile；需真实 SSH 跳板与内网数据库 |
+
 ## Phase
 
-`READY_FOR_TEST`
+`FAILED`
 
-> Coder 自验通过 ≠ 功能完成。本轨唯一正确状态是 `READY_FOR_TEST`，必须由独立 Tester 复测后才能标记 `PASSED`。
+> Tester 已完成阶段 A/B/C/D（逐文件审查 + 独立复跑 + 覆盖率补齐 + E2E 登记）。发现 2 个 Bug：
+> `tunnel-backend-BUG-001`（`test_tunnel` 对 HTTP 代理 / WebSocket 恒报成功，假阳性）、
+> `tunnel-backend-BUG-002`（SSH 探针 `drop` 不拆除隧道，每次探测泄漏任务 + SSH 会话 + 本地端口）。
+> 详见同目录 `bugs.md`。等待原 Coder 修复后由全新 Tester 完整复测。
