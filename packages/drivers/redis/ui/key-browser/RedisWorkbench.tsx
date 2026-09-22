@@ -7,7 +7,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { Database, FolderInput, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { Database, FolderInput, Loader2, Plus, RefreshCw, Search } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import {
@@ -24,14 +24,14 @@ import { BatchBar, invokeDeleteKeys, invokeBatchDeletePattern } from './BatchBar
 import { hasRedisJson } from '../value-editors/hasRedisJson';
 import { ImportExport } from './ImportExport';
 import { invokeModulesList } from '../value-editors/JsonEditor';
-import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { buildRedisKeyContextMenuItems } from './redisKeyContextMenu';
 import { KeyBrowserControls } from './KeyBrowserControls';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
-import { KeyTreeList, type KeyTreeDeleteTarget } from './KeyTreeList';
+import type { KeyTreeDeleteTarget } from './KeyTreeList';
+import { KeyTreeColumn } from './KeyTreeColumn';
+import { DetailColumn } from './DetailColumn';
 import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
 import { useValueSearch } from '../value-search/useValueSearch';
-import { ValueSearchResults } from '../value-search/ValueSearchResults';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTree } from './useKeyTree';
 import { useRedisGate } from '../shared/useRedisGate';
@@ -549,30 +549,25 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
               <div className="flex min-h-0 flex-1">
                 <div className="flex min-w-0 shrink-0 flex-col" style={{ width: treeWidth }}>
-                  {searchMode === 'key' ? (
-                    <KeyTreeList
-                      treeRows={treeRows}
-                      allKeys={keys.map((k) => k.key)}
-                      expandedFolders={tree.expanded}
-                      onToggleFolder={tree.toggleFolder}
-                      selectedKey={selectedKey}
-                      selectedKeys={selectedKeys}
-                      onSelectKey={handleSelectKey}
-                      onToggleKey={toggleKeySelection}
-                      onToggleKeys={toggleKeysSelection}
-                      onKeyContextMenu={handleKeyContextMenu}
-                      onDeleteRow={handleDeleteRow}
-                      loading={keysLoading}
-                      hasMore={cursor !== 0}
-                      onLoadMore={loadMore}
-                    />
-                  ) : (
-                    <ValueSearchResults
-                      state={valueSearchState}
-                      onSelectKey={handleSelectKey}
-                      onCancel={cancelValueSearch}
-                    />
-                  )}
+                  <KeyTreeColumn
+                    searchMode={searchMode}
+                    treeRows={treeRows}
+                    allKeys={keys.map((k) => k.key)}
+                    expandedFolders={tree.expanded}
+                    onToggleFolder={tree.toggleFolder}
+                    selectedKey={selectedKey}
+                    selectedKeys={selectedKeys}
+                    onSelectKey={handleSelectKey}
+                    onToggleKey={toggleKeySelection}
+                    onToggleKeys={toggleKeysSelection}
+                    onKeyContextMenu={handleKeyContextMenu}
+                    onDeleteRow={handleDeleteRow}
+                    loading={keysLoading}
+                    hasMore={cursor !== 0}
+                    onLoadMore={loadMore}
+                    valueSearchState={valueSearchState}
+                    onCancelValueSearch={cancelValueSearch}
+                  />
                 </div>
 
                 <div
@@ -584,47 +579,23 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                 />
 
                 <div className="flex min-w-0 flex-1 flex-col border-l border-edge">
-                  {selectedKey ? (
-                    <>
-                      <div className="flex items-center justify-between border-b border-edge bg-surface-alt px-3 py-2">
-                        <span className="truncate text-xs font-medium text-fg">{selectedKey}</span>
-                        <button
-                          type="button"
-                          className="rounded p-1 text-fg-muted hover:bg-surface-raised hover:text-fg"
-                          onClick={() => {
-                            setSelectedKey(null);
-                            setKeyDetail(null);
-                          }}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="flex-1 overflow-auto p-3">
-                        {keyDetailLoading ? (
-                          <div className="flex items-center gap-2 text-xs text-fg-muted">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            {t('common.loading')}
-                          </div>
-                        ) : keyDetail ? (
-                          <KeyDetailEditor
-                            dbSessionId={dbSessionId}
-                            dbIndex={dbIndex}
-                            detail={keyDetail}
-                            modules={modules}
-                            onRefresh={reloadDetail}
-                            onRenamed={(newKey) => {
-                              setSelectedKey(newKey);
-                              refreshKeys();
-                            }}
-                          />
-                        ) : null}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-fg-muted">
-                      {t('redis.selectKeyHint')}
-                    </div>
-                  )}
+                  <DetailColumn
+                    dbSessionId={dbSessionId}
+                    dbIndex={dbIndex}
+                    selectedKey={selectedKey}
+                    detail={keyDetail}
+                    detailLoading={keyDetailLoading}
+                    modules={modules}
+                    onRefresh={reloadDetail}
+                    onRenamed={(newKey) => {
+                      setSelectedKey(newKey);
+                      refreshKeys();
+                    }}
+                    onClose={() => {
+                      setSelectedKey(null);
+                      setKeyDetail(null);
+                    }}
+                  />
                 </div>
               </div>
             </>
