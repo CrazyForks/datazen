@@ -88,7 +88,13 @@ export function RedisOverviewHome({
         setHintKey(null);
         // PRD 最近浏览键 = 真正到过的键；只有桥接成功的 key 跳转才入历史。
         if (target.kind === 'key') {
-          setRecent(pushBrowseEntry(connectionId, { key: target.key, dbIndex: target.dbIndex }));
+          setRecent(
+            pushBrowseEntry(connectionId, {
+              key: target.key,
+              dbIndex: target.dbIndex,
+              keyType: target.keyType ?? null,
+            }),
+          );
         }
         return;
       }

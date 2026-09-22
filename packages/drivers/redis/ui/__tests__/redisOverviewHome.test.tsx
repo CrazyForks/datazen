@@ -63,12 +63,17 @@ const DB_SIZES_OK = [
 
 const MEMORY_OK = {
   samples: [
-    { key: 'cache:small', bytes: 1024 },
-    { key: 'blob:a', bytes: 5 * 1024 * 1024 },
-    { key: 'blob:b', bytes: 4 * 1024 * 1024 },
-    { key: 'blob:c', bytes: 3 * 1024 * 1024 },
-    { key: 'blob:d', bytes: 2 * 1024 * 1024 },
-    { key: 'blob:e', bytes: 1 * 1024 * 1024 },
+    { key: 'cache:small', bytes: 1024, type: 'string', ttlMs: 60_000, missing: false },
+    // rank 1: no-expiry string
+    { key: 'blob:a', bytes: 5 * 1024 * 1024, type: 'string', ttlMs: -1, missing: false },
+    // rank 2: hash with a live ttl (jump must forward this type — BUG-001)
+    { key: 'blob:b', bytes: 4 * 1024 * 1024, type: 'hash', ttlMs: 8_000, missing: false },
+    // rank 3: TTL reply unreadable → null
+    { key: 'blob:c', bytes: 3 * 1024 * 1024, type: 'list', ttlMs: null, missing: false },
+    // rank 4: deleted between SCAN and field read → distinguishable empty state
+    { key: 'blob:d', bytes: 2 * 1024 * 1024, type: null, ttlMs: -2, missing: true },
+    // rank 5: type unreadable → unknown badge
+    { key: 'blob:e', bytes: 1 * 1024 * 1024, type: null, ttlMs: 30_000, missing: false },
   ],
   truncated: false,
 };
@@ -339,6 +344,19 @@ describe('卡 2 — 内存', () => {
     expect(ranks).toEqual(['1', '2', '3', '4', '5']);
     expect(attr(container, '[data-overview-bigkey="1"]', 'data-overview-key')).toBe('blob:a');
     expect(attr(container, '[data-overview-bigkey="5"]', 'data-overview-key')).toBe('blob:e');
+    // BUG-003: the type / TTL columns come from the same memory_sample reply.
+    expect(attr(container, '[data-overview-bigkey="1"]', 'data-overview-bigkey-type')).toBe('string');
+    expect(attr(container, '[data-overview-bigkey="1"]', 'data-overview-bigkey-ttl-ms')).toBe('-1');
+    expect(attr(container, '[data-overview-bigkey="2"]', 'data-overview-bigkey-type')).toBe('hash');
+    expect(attr(container, '[data-overview-bigkey="2"]', 'data-overview-bigkey-ttl-ms')).toBe('8000');
+    // rank 4 is a key deleted between SCAN and read — a distinguishable empty state.
+    expect(attr(container, '[data-overview-bigkey="4"]', 'data-overview-bigkey-missing')).toBe('true');
+    expect(attr(container, '[data-overview-bigkey="4"]', 'data-overview-bigkey-type')).toBe('unknown');
+    // rank 5 type unreadable but a live TTL still shows; rank 3 TTL null → dash.
+    expect(attr(container, '[data-overview-bigkey="5"]', 'data-overview-bigkey-type')).toBe('unknown');
+    expect(attr(container, '[data-overview-bigkey="3"]', 'data-overview-bigkey-ttl-ms')).toBe('');
+    // The type badge is a *visible* cell, not only a data attribute.
+    expect(container.querySelector('[data-overview-bigkey="2"]')?.textContent).toContain('hash');
     expect(container.querySelector('[data-overview-bigkey-truncated]')).not.toBeNull();
     expect(container.querySelector('[data-overview-memory-sample-db]')).not.toBeNull();
   });
@@ -545,12 +563,17 @@ describe('区块 6 — 最近浏览键', () => {
     await waitFor(() => expect(wired.container.querySelectorAll('[data-overview-bigkey]').length).toBe(5));
     fireEvent.click(wired.container.querySelector('[data-overview-bigkey="2"]') as Element);
 
-    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'key', dbIndex: 0, key: 'blob:b' });
+    // BUG-001 + BUG-003: the big-key jump forwards the type `memory_sample`
+    // already resolved for that row (blob:b is a hash), so the host can
+    // pre-colour 屏 B and the browse-history entry keeps its type.
+    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'key', dbIndex: 0, key: 'blob:b', keyType: 'hash' });
     const bucket = JSON.parse(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY) ?? '{}') as Record<
       string,
-      Array<{ key: string; dbIndex: number }>
+      Array<{ key: string; dbIndex: number; keyType: string | null }>
     >;
-    expect(bucket[CONNECTION]?.map((entry) => [entry.key, entry.dbIndex])).toEqual([['blob:b', 0]]);
+    expect(bucket[CONNECTION]?.map((entry) => [entry.key, entry.dbIndex, entry.keyType])).toEqual([
+      ['blob:b', 0, 'hash'],
+    ]);
     await waitFor(() => expect(ids(wired.container, 'data-overview-recent-key')).toEqual(['blob:b']));
   });
 

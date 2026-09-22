@@ -419,6 +419,8 @@ const locale = {
     'Big-key sampling is not authorized for this connection',
   'redis.overview.memory.bigKeysUnauthorizedHint':
     'Grant the redis:allow-memory-sample permission to list the largest keys.',
+  'redis.overview.memory.bigKeyGone': 'gone',
+  'redis.overview.typeUnknown': 'unknown',
 
   // Card 3 · Key space grid
   'redis.overview.keyspace.title': 'Key Space',

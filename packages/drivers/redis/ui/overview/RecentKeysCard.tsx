@@ -1,9 +1,9 @@
 import { X } from 'lucide-react';
-import { Button, useI18n } from '@datazen/ui';
+import { Button, cn, useI18n } from '@datazen/ui';
 import { OverviewCard } from './OverviewCard';
 import { relativeTimeParts, type BrowseHistoryEntry } from '../lib/redisBrowseHistory';
 import type { OverviewJumpHandler, OverviewJumpTarget } from './overviewNavigation';
-import { jumpStateAttribute } from './overviewNavigation';
+import { jumpStateAttribute, typeBadgeClass } from './overviewNavigation';
 
 /**
  * 最近浏览键（PRD §3.1 第七行）— 连接级 localStorage 历史，点击直达。
@@ -53,10 +53,25 @@ export function RecentKeysCard({
                   data-overview-key-type={entry.keyType ?? 'unknown'}
                   data-overview-jump={jumpState}
                   className="flex w-full items-baseline gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-surface-raised"
-                  onClick={() => onJump({ kind: 'key', dbIndex: entry.dbIndex, key: entry.key })}
+                  onClick={() =>
+                    onJump({
+                      kind: 'key',
+                      dbIndex: entry.dbIndex,
+                      key: entry.key,
+                      keyType: entry.keyType ?? null,
+                    })
+                  }
                 >
                   <span className="min-w-0 flex-1 truncate font-mono text-fg" title={entry.key}>
                     {entry.key}
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] leading-none',
+                      typeBadgeClass(entry.keyType),
+                    )}
+                  >
+                    {entry.keyType ?? t('redis.overview.typeUnknown')}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-fg-muted">
                     {`db${entry.dbIndex}`}

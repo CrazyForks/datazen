@@ -246,6 +246,21 @@ describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
     expect(buildBigKeyRows(null)).toEqual([]);
     expect(buildBigKeyRows(undefined)).toEqual([]);
   });
+
+  it('carries the type / TTL / gone state resolved by the same memory_sample call (BUG-003)', () => {
+    const [live, gone, unknown] = buildBigKeyRows({
+      samples: [
+        { key: 'live', bytes: 30, type: 'hash', ttlMs: 8_000, missing: false },
+        { key: 'gone', bytes: 20, type: null, ttlMs: -2, missing: true },
+        { key: 'unknown', bytes: 10 },
+      ],
+    });
+    expect(live).toMatchObject({ key: 'live', keyType: 'hash', ttlMs: 8_000, missing: false });
+    // A key deleted between SCAN and read keeps its own distinguishable state.
+    expect(gone).toMatchObject({ key: 'gone', keyType: null, ttlMs: -2, missing: true });
+    // A legacy `{ key, bytes }`-only sample degrades to null/absent, never a lie.
+    expect(unknown).toMatchObject({ key: 'unknown', keyType: null, ttlMs: null, missing: false });
+  });
 });
 
 describe('buildSlowlogRows — PRD 卡 4', () => {

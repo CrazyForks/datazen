@@ -845,5 +845,146 @@ where
     Ok(info)
 }
 
+// ---------------------------------------------------------------------------
+// Big-key sample field read (`memory_sample`)
+//
+// `ops_observe::memory_sample` scans a db and needs `MEMORY USAGE` for every
+// sampled key, now plus `TYPE` and `PTTL` so screen A's Top-5 can render the
+// 键名 / 类型 / 字节 / TTL columns PRD §3.1 asks for. Doing that per key would
+// triple the round trips, so the three fields are batched here with the same
+// primitives `key_object_info` uses — see the module docs for why the batch is
+// a pipeline on a single node but *must* be one addressed command at a time on
+// a cluster.
+// ---------------------------------------------------------------------------
+
+/// Commands read per key in the big-key sample pipeline.
+pub const MEMORY_SAMPLE_FIELDS_PER_KEY: usize = 3;
+
+/// Sampled keys resolved per pipeline on a single node. The screen-A Top-5 and
+/// the 200-key default window each fit inside one batch, so the whole field
+/// read costs a single round trip there; larger windows add one round trip per
+/// chunk — never one per key.
+pub const MEMORY_SAMPLE_KEYS_PER_PIPELINE: usize = 256;
+
+/// Reply slots inside one key's group in [`build_memory_sample_pipeline`].
+pub mod memory_sample_slots {
+    pub const MEMORY: usize = 0;
+    pub const TYPE: usize = 1;
+    pub const TTL: usize = 2;
+}
+
+/// Build the batched big-key field pipeline: for each key, in order,
+/// `MEMORY USAGE` + `TYPE` + `PTTL`. Side-effect free, so it is the contract
+/// surface the tests assert against.
+pub fn build_memory_sample_pipeline(keys: &[String]) -> redis::Pipeline {
+    let mut pipe = redis::Pipeline::with_capacity(keys.len() * MEMORY_SAMPLE_FIELDS_PER_KEY);
+    for key in keys {
+        pipe.cmd("MEMORY")
+            .arg("USAGE")
+            .arg(key)
+            .cmd("TYPE")
+            .arg(key)
+            .cmd("PTTL")
+            .arg(key);
+    }
+    pipe
+}
+
+/// Attributes read for one sampled key. `missing` marks a key that expired or
+/// was deleted between the `SCAN` that found it and this read — a distinguishable
+/// empty state, not an error.
+#[derive(Debug, Clone, Default)]
+pub struct MemorySampleFields {
+    /// `MEMORY USAGE` in bytes; `None` when unavailable (Redis < 4.0) or gone.
+    pub bytes: Option<u64>,
+    /// Redis `TYPE`; `None` when absent / unreadable / the key is gone.
+    pub key_type: Option<String>,
+    /// `PTTL` in ms: `-1` no expiry, `-2` gone, `>0` remaining; `None` unreadable.
+    pub ttl_ms: Option<i64>,
+    pub missing: bool,
+}
+
+/// Assemble one key's `(MEMORY USAGE, TYPE, PTTL)` replies. `TYPE` decides
+/// presence exactly as [`parse_key_info`] does, and every slot degrades through
+/// the shared parsers, so a reply that is simply not there is never invented
+/// into a type name or an expiry.
+pub fn parse_memory_sample_fields(values: &[RValue]) -> MemorySampleFields {
+    let type_reply = slot(values, memory_sample_slots::TYPE);
+    if !is_unusable_reply(&type_reply) && type_reply_says_absent(&type_reply) {
+        // TYPE == "none": gone between SCAN and read. A clean empty state —
+        // not an error — that keeps the -2 PTTL sentinel for the UI.
+        return MemorySampleFields {
+            bytes: None,
+            key_type: None,
+            ttl_ms: Some(TTL_MISSING),
+            missing: true,
+        };
+    }
+    MemorySampleFields {
+        bytes: parse_opt_int(&slot(values, memory_sample_slots::MEMORY))
+            .and_then(|n| u64::try_from(n).ok()),
+        key_type: parse_type_token(&type_reply),
+        ttl_ms: parse_opt_int(&slot(values, memory_sample_slots::TTL)),
+        missing: false,
+    }
+}
+
+/// Resolve bytes/type/ttl for a set of sampled keys.
+///
+/// On a single-node connection the whole sample goes out in
+/// [`MEMORY_SAMPLE_KEYS_PER_PIPELINE`]-sized batches — one round trip for the
+/// screen-A Top-5 — so field reads cost at most `ceil(keys / chunk)` instead of
+/// one round trip per key. That is the improvement this bug asks for.
+///
+/// **Cluster is the hard constraint and the documented exception.** A pipeline
+/// spanning hash slots is rejected with `CROSSSLOT`, and `ClusterConnection`
+/// additionally pins a whole pipeline to a single slot (see the module docs), so
+/// the only cluster-safe shape sends each key's three commands to the shard that
+/// owns *that* key ([`get_slot`]). The three commands of one key always hash to
+/// the same slot, so they never cross — this can never regress into a `CROSSSLOT`
+/// the way batching different keys into one pipeline would. The cost is three
+/// addressed round trips per key rather than one batch for the sample; that
+/// trade-off is recorded in the track ledger alongside `type_distribution`,
+/// which makes the same choice.
+pub(crate) async fn fetch_memory_sample_fields<C>(
+    conn: &mut C,
+    keys: &[String],
+    topology: Topology,
+) -> Result<Vec<MemorySampleFields>, String>
+where
+    C: ConnectionLike + SlotRoutedConnection + Send,
+{
+    let mut fields = Vec::with_capacity(keys.len());
+    if matches!(topology, Topology::Cluster) {
+        for key in keys {
+            let pipe = build_memory_sample_pipeline(std::slice::from_ref(key));
+            let values = routed_sequential(conn, &pipe, get_slot(key.as_bytes())).await?;
+            fields.push(parse_memory_sample_fields(&values));
+        }
+        return Ok(fields);
+    }
+    for chunk in keys.chunks(MEMORY_SAMPLE_KEYS_PER_PIPELINE) {
+        let pipe = build_memory_sample_pipeline(chunk);
+        let values = pipeline_raw(conn, &pipe).await?;
+        let expected = chunk.len() * MEMORY_SAMPLE_FIELDS_PER_KEY;
+        if values.len() != expected {
+            tracing::warn!(
+                expected,
+                replied = values.len(),
+                "redis memory_sample: field pipeline answered a short vector, degrading the trailing keys"
+            );
+        }
+        let mut groups = values.chunks_exact(MEMORY_SAMPLE_FIELDS_PER_KEY);
+        for _ in chunk {
+            // A short vector leaves the remaining keys with no reply rather than
+            // guessing values into the wrong slot: `chunks_exact` hands out only
+            // full groups, and `slot()` reads an absent group's fields as `Nil`.
+            let group = groups.next().unwrap_or(&[][..]);
+            fields.push(parse_memory_sample_fields(group));
+        }
+    }
+    Ok(fields)
+}
+
 #[cfg(test)]
 mod tests;

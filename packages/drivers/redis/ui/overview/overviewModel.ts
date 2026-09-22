@@ -40,6 +40,12 @@ export const SLOWLOG_COMMAND_SUMMARY_MAX = 96;
 export interface OverviewMemorySample {
   key: string;
   bytes: number;
+  /** Redis `TYPE`; null/absent when unreadable or the key vanished after SCAN. */
+  type?: string | null;
+  /** `PTTL` ms: -1 no expiry, -2 gone, >0 remaining; null when unreadable. */
+  ttlMs?: number | null;
+  /** The key expired / was deleted between `SCAN` and the field read. */
+  missing?: boolean;
 }
 
 export interface OverviewMemorySampleResult {
@@ -321,11 +327,19 @@ export interface BigKeyRow {
   rank: number;
   key: string;
   bytes: number;
+  /** Redis `TYPE` from the same `memory_sample` call; null when unreadable/gone. */
+  keyType: string | null;
+  /** `PTTL` ms: -1 no expiry, -2 gone, >0 remaining; null when unreadable. */
+  ttlMs: number | null;
+  /** Key vanished between `SCAN` and the field read — an empty, labelled state. */
+  missing: boolean;
 }
 
 /**
- * `memory_sample` 只回 `{ key, bytes }` —— 类型 / TTL 需要每键一次往返，
- * 会直接违反屏 A 的零键级往返不变量，所以这两列**不渲染**（台账已登记）。
+ * `memory_sample` resolves `MEMORY USAGE` + `TYPE` + `PTTL` for the whole sample
+ * in one batch (see `ops_workbench::fetch_memory_sample_fields`), so 键名 / 类型 /
+ * 字节 / TTL all come from the same single 屏 A command — the zero-键级-往返
+ * invariant holds because there is no extra per-key round trip to break it.
  */
 export function buildBigKeyRows(
   result: OverviewMemorySampleResult | null | undefined,
@@ -340,6 +354,9 @@ export function buildBigKeyRows(
       rank: offset + 1,
       key: sample.key,
       bytes: Number.isFinite(sample.bytes) ? sample.bytes : 0,
+      keyType: typeof sample.type === 'string' && sample.type.length > 0 ? sample.type : null,
+      ttlMs: Number.isFinite(sample.ttlMs) ? (sample.ttlMs as number) : null,
+      missing: sample.missing === true,
     }));
 }
 

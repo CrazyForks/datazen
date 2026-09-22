@@ -26,7 +26,12 @@
 /** Where a 屏 A affordance wants to land. */
 export type OverviewJumpTarget =
   | { kind: 'database'; dbIndex: number }
-  | { kind: 'key'; dbIndex: number; key: string }
+  /**
+   * Jump to 屏 B selecting `key`. `keyType` is best-effort: every 屏 A entry that
+   * already knows the type (big-key row, recent-key chip) forwards it so the host
+   * can pre-colour the selection, but a target without it is still a valid jump.
+   */
+  | { kind: 'key'; dbIndex: number; key: string; keyType?: string | null }
   | { kind: 'console' }
   | { kind: 'pubsub' }
   | { kind: 'monitor'; section: 'info' | 'memory' | 'slowlog' }
@@ -92,8 +97,11 @@ export function jumpStateAttribute(handler: OverviewJumpHandler | undefined): 'w
   return typeof handler === 'function' ? 'wired' : 'unwired';
 }
 
+/** Colour token a Redis TYPE maps to on a 屏 A type badge. */
+export type RedisTypeTone = 'accent' | 'success' | 'warning' | 'danger' | 'neutral';
+
 /** Redis TYPE 令牌 → 徽标 tone（未知类型退化成 neutral，不编造颜色）。 */
-export function typeTone(keyType: string | null | undefined): 'accent' | 'success' | 'warning' | 'danger' | 'neutral' {
+export function typeTone(keyType: string | null | undefined): RedisTypeTone {
   switch ((keyType ?? '').toLowerCase()) {
     case 'string':
       return 'accent';
@@ -109,6 +117,24 @@ export function typeTone(keyType: string | null | undefined): 'accent' | 'succes
     default:
       return 'neutral';
   }
+}
+
+/**
+ * Tailwind classes for an outlined type pill in `typeTone`'s vocabulary. Kept in
+ * the model file (not a component) so both 屏 A rows that show a type — the
+ * big-key row and the recent-key chip — render identical colours, mirroring
+ * `KeyTreeList`'s outlined-pill styling without importing a component here.
+ */
+const TYPE_TONE_CLASS: Record<RedisTypeTone, string> = {
+  accent: 'border-accent/40 text-accent',
+  success: 'border-success/40 text-success',
+  warning: 'border-warning/40 text-warning',
+  danger: 'border-danger/40 text-danger',
+  neutral: 'border-edge text-fg-muted',
+};
+
+export function typeBadgeClass(keyType: string | null | undefined): string {
+  return TYPE_TONE_CLASS[typeTone(keyType)];
 }
 
 /** 解析 `db7` / `7` / `db0` 形式的逻辑库标识（与 RedisConnectionView 同规则）。 */

@@ -4,6 +4,8 @@ use redis::AsyncCommands;
 use redis::FromRedisValue;
 use serde::Serialize;
 
+use crate::connect::Topology;
+use crate::ops_workbench::SlotRoutedConnection;
 use crate::redis_driver::parse_scan_result;
 
 /// Default number of keys to sample when `limit` is omitted or zero.
@@ -50,6 +52,16 @@ pub fn parse_info_sections(raw: &str) -> Vec<(String, Vec<(String, String)>)> {
 pub struct MemorySample {
     pub key: String,
     pub bytes: u64,
+    /// Redis `TYPE`; `None` when unreadable or the key expired after sampling.
+    /// Serialized as `type` (matches the `key_object_info` sidebar contract).
+    #[serde(rename = "type")]
+    pub key_type: Option<String>,
+    /// `PTTL` in milliseconds: `-1` no expiry, `-2` gone, `>0` remaining,
+    /// `None` when the reply could not be read.
+    pub ttl_ms: Option<i64>,
+    /// The key vanished between the `SCAN` that found it and the field read —
+    /// a distinguishable empty state, not an error.
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,9 +93,22 @@ where
     cmd.query_async(conn).await.map_err(|e| e.to_string())
 }
 
-pub async fn memory_sample<C>(conn: &mut C, limit: u32) -> Result<MemorySampleResult, String>
+/// Cursor-sample a database's largest keys, reading `MEMORY USAGE`, `TYPE` and
+/// `PTTL` for each in the batched primitive
+/// [`crate::ops_workbench::fetch_memory_sample_fields`] (see that fn for why the
+/// read is one pipeline on a single node but addressed per key on a cluster).
+///
+/// The `SCAN` loop below is topology-agnostic on purpose — a cluster `SCAN`
+/// reaching different masters is a separate pre-existing concern tracked on its
+/// own, and out of scope here, which is why the batched field read is addressed
+/// by each key's own slot rather than assuming the sample is single-shard.
+pub async fn memory_sample<C>(
+    conn: &mut C,
+    limit: u32,
+    topology: Topology,
+) -> Result<MemorySampleResult, String>
 where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+    C: redis::aio::ConnectionLike + SlotRoutedConnection + Send,
 {
     let limit = limit.max(1) as usize;
     let db_size: u64 = redis::cmd("DBSIZE")
@@ -119,17 +144,16 @@ where
         }
     };
 
+    let fields = crate::ops_workbench::fetch_memory_sample_fields(conn, &keys, topology).await?;
+
     let mut samples = Vec::with_capacity(keys.len());
-    for key in keys {
-        let bytes: Option<u64> = redis::cmd("MEMORY")
-            .arg("USAGE")
-            .arg(&key)
-            .query_async(conn)
-            .await
-            .map_err(|e| e.to_string())?;
+    for (key, field) in keys.into_iter().zip(fields) {
         samples.push(MemorySample {
             key,
-            bytes: bytes.unwrap_or(0),
+            bytes: field.bytes.unwrap_or(0),
+            key_type: field.key_type,
+            ttl_ms: field.ttl_ms,
+            missing: field.missing,
         });
     }
 
@@ -406,6 +430,40 @@ mod tests {
         assert_eq!(resolve_memory_sample_limit(None), 200);
         assert_eq!(resolve_memory_sample_limit(Some(0)), 200);
         assert_eq!(resolve_memory_sample_limit(Some(50)), 50);
+    }
+
+    #[test]
+    fn memory_sample_serializes_the_bigkey_contract() {
+        // Screen A's Top-5 rows read `type` / `ttlMs` / `missing`; `keyType`
+        // (the sidebar's field) must NOT appear here.
+        let sample = MemorySample {
+            key: "big".into(),
+            bytes: 4096,
+            key_type: Some("hash".into()),
+            ttl_ms: Some(-1),
+            missing: false,
+        };
+        let json = serde_json::to_value(&sample).expect("MemorySample must serialize");
+        assert_eq!(json["type"], serde_json::json!("hash"));
+        assert_eq!(json["ttlMs"], serde_json::json!(-1));
+        assert_eq!(json["bytes"], serde_json::json!(4096));
+        assert_eq!(json["missing"], serde_json::json!(false));
+        assert!(
+            json.get("keyType").is_none(),
+            "big-key type serializes as `type`, not `keyType`"
+        );
+
+        // A deleted key answers a distinguishable empty state, not an error.
+        let gone = MemorySample {
+            key: "gone".into(),
+            bytes: 0,
+            key_type: None,
+            ttl_ms: Some(-2),
+            missing: true,
+        };
+        let json = serde_json::to_value(&gone).expect("serialize");
+        assert_eq!(json["missing"], serde_json::json!(true));
+        assert!(json["type"].is_null());
     }
 
     #[test]

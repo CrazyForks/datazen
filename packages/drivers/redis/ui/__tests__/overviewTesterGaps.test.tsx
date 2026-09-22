@@ -134,7 +134,14 @@ describe('[tester] 屏 A 跳转不落历史（key 目标补桩）', () => {
     );
 
     fireEvent.click(container.querySelector('[data-overview-recent-key="user:1"]') as Element);
-    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'key', dbIndex: 2, key: 'user:1' });
+    // The stored entry had no type, so the forwarded jump carries `keyType: null`
+    // (BUG-001: the type is best-effort — a jump without it is still valid).
+    expect(onOpenTarget).toHaveBeenCalledWith({
+      kind: 'key',
+      dbIndex: 2,
+      key: 'user:1',
+      keyType: null,
+    });
 
     const bucket = readBucket();
     // 到达 ⇒ 条目被重新置顶且时间戳刷新（不再是播种时的固定值）。
@@ -177,10 +184,19 @@ describe('[tester] RecentKeysCard 行点击发出 key 跳转请求', () => {
 
     const row = container.querySelector('[data-overview-recent-key="queue:jobs"]') as Element;
     expect(row.getAttribute('data-overview-key-type')).toBe('list');
+    // BUG-001: the type is now a *visible* badge, not only a data attribute.
+    expect(row.textContent).toContain('list');
     expect(row.getAttribute('data-overview-jump')).toBe('unwired');
 
     fireEvent.click(row);
-    expect(onJump).toHaveBeenCalledWith({ kind: 'key', dbIndex: 4, key: 'queue:jobs' });
+    // BUG-001: the known type is forwarded on the jump so the host can
+    // pre-colour the 屏 B selection.
+    expect(onJump).toHaveBeenCalledWith({
+      kind: 'key',
+      dbIndex: 4,
+      key: 'queue:jobs',
+      keyType: 'list',
+    });
   });
 });
 

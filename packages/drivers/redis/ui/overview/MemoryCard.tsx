@@ -4,7 +4,7 @@ import { formatSize } from '../shared/formatSize';
 import type { BigKeyRow, MemoryModel } from './overviewModel';
 import type { OverviewSourceStatus } from './useOverviewData';
 import type { OverviewJumpHandler, OverviewJumpTarget } from './overviewNavigation';
-import { jumpStateAttribute } from './overviewNavigation';
+import { jumpStateAttribute, typeBadgeClass } from './overviewNavigation';
 
 /**
  * 卡 2 — 内存（PRD §3.1：used/max 进度条 + 碎片率 + `memory_sample` Top5 大 key）.
@@ -13,9 +13,11 @@ import { jumpStateAttribute } from './overviewNavigation';
  * gated `memory_sample` command, so its 未授权 / 空 / 失败 states are resolved
  * separately below the gauge instead of blanking the whole card (I-11).
  *
- * `memory_sample` replies `{ key, bytes }` only — TYPE/TTL would need one round
- * trip per key, which breaks 屏 A 的零键级往返前提, so those two columns are not
- * rendered (registered as a backend gap in the track ledger).
+ * `memory_sample` resolves `MEMORY USAGE` + `TYPE` + `PTTL` for the whole sample
+ * in one backend batch, so 键名 / 类型 / 字节 / TTL are all four PRD columns and
+ * they come from that single 屏 A command — no extra per-key round trip, so the
+ * "zero 键级往返" invariant is intact. A key deleted between `SCAN` and the field
+ * read renders a distinguishable 已消失 / empty state, never a red error.
  */
 export interface MemoryCardProps {
   infoStatus: OverviewSourceStatus;
@@ -40,6 +42,22 @@ function fragText(value: number | null): string {
 function percentText(value: number | null): string {
   if (value === null) return '—';
   return `${value.toFixed(1)}%`;
+}
+
+type TFn = ReturnType<typeof useI18n>['t'];
+
+/**
+ * TTL cell for a big-key row. `PTTL` sentinels map to the same vocabulary the
+ * key tree uses (`redis.noExpiry` / `redis.seconds`); a key that vanished
+ * between `SCAN` and the field read gets its own labelled empty state, and an
+ * unreadable reply shows the neutral em dash — never a fabricated count.
+ */
+function bigKeyTtlText(row: BigKeyRow, t: TFn): string {
+  if (row.missing) return t('redis.overview.memory.bigKeyGone');
+  const ttl = row.ttlMs;
+  if (ttl === null || (ttl < 0 && ttl !== -1)) return '—';
+  if (ttl === -1) return t('redis.noExpiry');
+  return `${Math.round(ttl / 1000)}${t('redis.seconds')}`;
 }
 
 export function MemoryCard({
@@ -200,10 +218,18 @@ export function MemoryCard({
                       data-overview-bigkey={row.rank}
                       data-overview-key={row.key}
                       data-overview-db-index={sampledDbIndex}
+                      data-overview-bigkey-type={row.keyType ?? 'unknown'}
+                      data-overview-bigkey-ttl-ms={row.ttlMs ?? ''}
+                      data-overview-bigkey-missing={row.missing ? 'true' : 'false'}
                       data-overview-jump={jumpState}
                       className="flex w-full items-baseline gap-2 rounded px-1 py-1 text-left transition-colors hover:bg-surface-raised"
                       onClick={() =>
-                        onJump({ kind: 'key', dbIndex: sampledDbIndex, key: row.key })
+                        onJump({
+                          kind: 'key',
+                          dbIndex: sampledDbIndex,
+                          key: row.key,
+                          keyType: row.keyType,
+                        })
                       }
                     >
                       <span className="w-4 shrink-0 font-mono text-[10px] text-fg-muted">{row.rank}</span>
@@ -213,8 +239,25 @@ export function MemoryCard({
                       >
                         {row.key}
                       </span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] leading-none',
+                          typeBadgeClass(row.keyType),
+                        )}
+                      >
+                        {row.keyType ?? t('redis.overview.typeUnknown')}
+                      </span>
                       <span data-overview-bigkey-bytes={row.rank} className="shrink-0 font-mono tabular-nums text-fg-secondary">
                         {formatSize(row.bytes)}
+                      </span>
+                      <span
+                        data-overview-bigkey-ttl={row.rank}
+                        className={cn(
+                          'w-14 shrink-0 text-right font-mono tabular-nums',
+                          row.missing ? 'text-fg-muted' : 'text-fg-secondary',
+                        )}
+                      >
+                        {bigKeyTtlText(row, t)}
                       </span>
                     </button>
                   </li>
