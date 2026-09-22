@@ -1,19 +1,27 @@
 - 任务: 键树扫描后端预算模型（PRD §3.2 扫描预算 6 条 / §4 I-2、I-3）+ 精确键短路 + pipeline 化
-- 状态: **TEST_FAILED**（第 1 轮 Tester 全新实例；门禁逐字复现、契约形状成立，但 3 条缺陷待修 ⇒ 交回原 Coder）
+- 状态: **READY_FOR_TEST**（修复轮第 1 回合：BUG-001/002/003 + R-1 全修，四件套提交态复跑全绿 ⇒ 待第 2 轮全新 Tester 完整复测）
 - 编码 commit: 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）+ 1c03f1595（契约冻结台账）
+- 修复轮 commit: `b7abb440c`（保全前任 BUG-001 WIP，审计 a-e 五项全到位）+ `4380fc09b`（BUG-003）
+  + `a0444e1c1`（R-1）+ `dc7f55db0`（BUG-002）+ `331e95b51`（count 兜底收尾 + 死片段对齐 + 本回合台账）
+  + `c1e9dc933`（rustfmt 收尾，纯本回合 hunk）
 - 测试 commit: 15ce0c917（步骤 1-4：门禁复跑 + 契约逐字核对 + 3 条 Bug 登记 + `tests/tree_contract_tester.rs`）
   + f1910f08e（步骤 5-8：append-only/预算/cluster/红线/覆盖率/E2E + 22 条补测 + BUG-001 双 RED pin）
 - 合并 commit: —
 - 代理: w3b-tree-backend-rescuer（session-61319db9-6e5c-4f32-a35e-cad750b647dd，接管阵亡 coder 的未提交现场）
+- 修复代理: 第 1 轮 Coder 全新实例（前任修复代理连续 3 次死于服务错误、零新 commit；本实例按任务书内联裁定
+  从 WIP 续作，一步一 commit、重型命令严格串行）
 - 测试代理: w3b-tester-round1（全新实例，与 Coder/Rescuer 不同会话；前两轮 Tester 均死于并行重负载，
   本轮全程串行执行重型命令 + 每完成一步即 commit 落盘）
 - Worktree: .worktrees/datazen-redis-tree-backend
 - 分支: feature/redis-tree-backend
-- 心跳: 2026-09-22 23:21
+- 心跳: 2026-09-23 00:10
 - 缺陷（全部「待修复」）: **BUG-001 高** `list_children` 叶子属性错位（本轨回归，release 静默错数据）
   · **BUG-002 高** `count_matching` 形状变更漏改驱动 UI 消费端（既有功能被打破）
   · **BUG-003 中** DBSIZE 失败 ⇒ 三条键树命令整条报错（冻结承诺的降级路径不可达 + 基线能力回退）
   详见本目录 `bugs.md`；审查发现 R-1/R-3/R-4/R-5（非缺陷）与撤销项 R-2 亦在该文件。
+- 缺陷（修复轮第 1 回合处置）: **BUG-001 / BUG-002 / BUG-003 全部「待复测」**；
+  **R-1 已按冻结口径收口**（`tree_scan_budget` 把 `Some(0)` 折进派生档 + 原钉死旧语义的单测换掉）；
+  R-3/R-4/R-5 是 Wave 4 的口径知情项，本回合未动（不属本回合修复范围）。
 
 
 # W3-B `redis-tree-backend` 简报（协调者下发）
@@ -499,9 +507,36 @@ BUG-003（中，冻结承诺的降级路径不可达 + 基线能力回退）三�
 收到值恰为 `[object Object]`；对 `ImportExport` 侧同法 ⇒ 2 用例红。即该测试文件对 BUG-002 的
 两个消费端各自有效，不是只测 helper 的空壳。
 
-### 自验（提交态复跑，`CARGO_TARGET_DIR=/tmp/w3b2-cargo-target`）
+### 自验（提交态复跑，`CARGO_TARGET_DIR=/tmp/w3b2-cargo-target`，2026-09-23 00:0x）
 
-见下条 commit 后数字；重型命令全程严格串行，一次一条。
+重型命令全程严格串行，一次只跑一条。基线取第 1 轮 Tester 实测值。
+
+| 门禁 | Tester 基线 | **本回合提交态实测** | 判定 |
+|---|---|---|---|
+| `cargo test -p datazen-driver-redis --lib` | 291 passed / 0 failed / **3 ignored**（271+20 可跑；3 = 1 条 live-redis + 2 条 BUG-001 RED pin） | **299 passed / 0 failed / 1 ignored** | ✅ 只增不红：291 + 2（摘掉的两条 RED pin）+ 5（BUG-003）+ 1（R-1）= 299，ignored 回落到基线的 1 条 live-redis |
+| 集成 `tree_scan_budget` | 4/0 | **4 passed / 0 failed** | ✅ |
+| 集成 `tree_contract_tester` | 4 passed / 5 ignored | **4 passed / 0 failed / 5 ignored** | ✅ |
+| 集成 `workbench_commands` | 4/0 | **4 passed / 0 failed** | ✅ |
+| doctests | 0 | **0 / 0** | ✅ |
+| 编译告警 | 0 | `grep -E "^(warning\|error)"` 于 test 构建 **0 条** | ✅ |
+| `cargo fmt -p datazen-driver-redis` | 干净 | 跑后仅两文件被格式化（**全是本回合自己的 hunk**）⇒ `c1e9dc933`；复跑测试仍 299 绿 | ✅ |
+| `cargo clippy -p datazen-driver-redis --all-targets` | 21 条（基线 24） | **21 条 / 20 个位置**，与本文件步骤 1 的点名清单**逐条同集合**；`ops_tree*.rs` / `ops_key_probe.rs` / 新 ui 文件命中 **0 条** | ✅ 0 新增 |
+| clippy 两条 deny | `approx_constant`(PI) ×2 既有债 | 仍在 `ops.rs:881` / `ops_exec.rs:260`（非本轨行，未动） | ✅ 既有 |
+| `npx tsc --noEmit` | exit 0 | **exit 0** | ✅（但见下"新发现"） |
+| `npx vitest run --config vitest.drivers.config.ts` | 47 files / 456 tests | **48 files / 464 tests passed**（+1 文件 / +8 例 = BUG-002 电池） | ✅ 只增不红 |
+
+### 新发现（交协调者，非本回合范围）：根 tsconfig 不覆盖驱动 UI ⇒ 该类泄漏结构性免疫 tsc
+
+`tsconfig.json:26` 的 `include` 是 `["src", "packages/driver-sdk", "packages/extension-points",
+"packages/wapp-sdk", "packages/ui"]` —— **`packages/drivers/*/ui` 不在其中**。BUG-002 的
+`as number` 之所以"tsc 全绿"，除显式断言本身会消音外，还有这层：整个驱动 UI 面从未被根 tsc 看过。
+本回合用临时 tsconfig（extends 根配置 + 加 `packages/drivers/redis/ui`）实测：
+**我改的 4 个文件（BatchBar / ImportExport / redisInvoke / 新测试）零 `error TS`**，
+但该临时配置下驱动 UI 暴露 **12 条既有错误**（`console/consoleResultRenderer.tsx` TS6133 ×1、
+`observe/SearchableInfoPanel.tsx` TS6133 ×3 / TS2345 ×7 / TS2322 ×1 / TS2488 ×1），
+全在本回合未触碰的文件里 ⇒ 属存量债，非本轨引入（临时配置已删，未提交）。
+建议单开一轨/一回合评估把 `packages/drivers/*/ui` 纳入类型门禁（先清存量），否则 Wave 4 的
+"UI 消费后端新形状"仍只有 vitest 一层网。
 
 ### 红线与写面纪律自查
 

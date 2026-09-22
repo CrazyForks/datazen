@@ -7,9 +7,9 @@
 
 | Bug ID | 严重度 | 状态 | 标题 |
 |---|---|---|---|
-| redis-tree-backend-BUG-001 | **高** | 待修复 | `list_children` 叶子属性按**位置**回填，行集一被缩短就整体错位（`noTtlOnly` / 键中途消失即触发）——本轨引入的**回归** |
-| redis-tree-backend-BUG-002 | **高** | 待修复 | `count_matching` out 由 `u64` 改对象，**驱动 UI 既有消费端未跟改**（`BatchBar` / `ImportExport` 仍 `as number`），界面渲染 `[object Object]`；tsc/vitest 全绿只因该路径零测试 |
-| redis-tree-backend-BUG-003 | 中 | 待修复 | DBSIZE 读失败时三条键树命令**整条报错**，而 `## 契约冻结` 明写"DBSIZE 不可得 ⇒ 回落默认档"；较基线是**能力回退**（旧代码 `unwrap_or(0)` 容忍） |
+| redis-tree-backend-BUG-001 | **高** | 待复测 | `list_children` 叶子属性按**位置**回填，行集一被缩短就整体错位（`noTtlOnly` / 键中途消失即触发）——本轨引入的**回归** |
+| redis-tree-backend-BUG-002 | **高** | 待复测 | `count_matching` out 由 `u64` 改对象，**驱动 UI 既有消费端未跟改**（`BatchBar` / `ImportExport` 仍 `as number`），界面渲染 `[object Object]`；tsc/vitest 全绿只因该路径零测试 |
+| redis-tree-backend-BUG-003 | 中 | 待复测 | DBSIZE 读失败时三条键树命令**整条报错**，而 `## 契约冻结` 明写"DBSIZE 不可得 ⇒ 回落默认档"；较基线是**能力回退**（旧代码 `unwrap_or(0)` 容忍） |
 
 ---
 
@@ -90,6 +90,22 @@ assertion `left == right` failed: leaf rows must keep page order
    （与 `:249-251` 那条"多出行"的 warn 对称），否则这条只在 debug 生效的断言就是唯一防线。
 3. 补两条用例：`noTtlOnly` 混合 TTL 页；一页内一个键 `absent`。两者都要断言"每个叶子拿到自己的属性"。
 
+
+### 修复记录（coder round-1）
+
+- **commit**：`b7abb440c`（修复 + 两条回归钉子摘 `#[ignore]` 转常绿）。
+- **落点**：`ops_tree.rs:205-293`。属性改为**按 key 关联**（`attrs: HashMap<String,(KeyMeta,ValueFields)>`），
+  不再有任何位置 zip 回填；`absent` 键先入 `gone` 集并 `continue`（不占 `items`/`attrs` ⇒ 既不占占位值
+  也不消费他键属性）；`noTtlOnly` 与 `absent` 两条过滤都挪到富化**之后**对 `children` 做 `retain`
+  ⇒ 恢复 `8981d3078` 的"先富化、后过滤"语义；`debug_assert_eq!(filled, attrs.len())` 旁新增
+  **release 可见** `tracing::warn!`，且批长≠叶子数时另有一条 warn（两个方向都覆盖）。
+- **建议 1/2/3 全部采纳**（本清单"修法建议"三条逐条对应）。
+- **用例**：`test_tester_list_children_no_ttl_only_keeps_rows_aligned`（混合 TTL 页，`app:c` 逻辑长度
+  改为 3 使"错一格"可见）、`test_tester_list_children_survives_a_key_that_vanished_mid_page`（页内一键
+  absent）；均断言"每个叶子拿到自己的属性"。
+- **复测入口**：`cargo test -p datazen-driver-redis --lib list_children`（4 passed）；全量 lib **299 passed / 0 failed / 1 ignored**
+  （基线 291 + 本条摘掉的 2 条 RED pin）。
+
 ---
 
 ## redis-tree-backend-BUG-002 · 高 · `count_matching` 形状变更漏改驱动 UI 消费端
@@ -159,6 +175,30 @@ Wave 4 上线树预算 UI 后，`n+` 消费的是新形状，问题会被误读�
    禁英文字面量（PRD §7-6）。
 3. 协调者裁定：本条修复落哪一轨。若判"后端形状已冻结、消费端改动归 UI 轨"，则本条转 W3-D/E/F；
    但**必须**在合流前完成，否则 Redis 驱动 UI 带着 `[object Object]` 进 R 回归。
+
+### 修复记录（coder round-1）
+
+- **commit**：`dc7f55db0`。**协调者裁定归本回合，单点授权三个 ui 文件 + 新测试文件。**
+- **落点**：`ui/shared/redisInvoke.ts` 导出 `CountMatchingResult{count,truncated,consumed,dbsize}`；
+  `BatchBar.tsx:85-96` 的 `invokeCountMatching` 返回该对象（`as number` 消失）、`:136` state 改型、
+  `:161` 消费端、`:376-381` 渲染；`ImportExport.tsx:99` state、`:131` 消费端、`:296-302` 渲染。
+  新增共享 `formatMatchCount`（`truncated ⇒ "${count}+"`，否则 `String(count)`）——`+` 是数据，
+  `redis.matchCount` 的 `{count}` 占位不变 ⇒ **`en.ts` 零改动**（新 key 归 W3-D/E/F 追加面）。
+- **建议 2 采纳**：新测试 `ui/__tests__/treeUiBug002CountMatching.test.tsx`（8 例）钉住"消费端读 `.count`"，
+  全部按 `data-testid`（`redis-pattern-match-count` / `redis-export-match-count`）断言，
+  **零英文字面量**（`redis.matchCount` 被 mock 成只回 `{count}` 替换值 ⇒ 断言里只有数字）。
+  覆盖两条消费端 + 空态/失败回落 + `n+` 两态。
+- **反证**（证明测试非空壳）：手工把 `formatMatchCount(matchCount)` 改回 `String(matchCount)` ⇒
+  BatchBar 侧 3 例红、ImportExport 侧 2 例红，收到的值恰为 `[object Object]`。
+- **建议 3（本条归属）**：已按裁定在本回合修完，未转 W3-D/E/F。
+- **顺带（本清单 note 4 的定时炸弹）**：`commands_exec_all_arms.rs:223` / `commands_exec_mutate.rs:282`
+  的死片段选了"对齐"方案 —— 补第四参 `budget`（与 live 臂同一表达式）并在臂上加
+  「DEAD FRAGMENT：本文件无人 `include!`，勿 include」说明。两文件不参与编译，门禁无感。
+- **复测入口**：`npx vitest run --config vitest.drivers.config.ts` ⇒ **48 files / 464 tests passed**
+  （基线 47/456 + 本文件 8 例）。
+
+---
+
 
 ## redis-tree-backend-BUG-003 · 中 · DBSIZE 失败 ⇒ 三条键树命令整条报错（冻结承诺的降级路径不可达 + 基线能力回退）
 
@@ -231,6 +271,30 @@ test result: ok. 1 passed; 0 failed; ...
 3. 补用例：`read_dbsize` 报错时三条命令仍成功且 `dbsize == 0`、`consumed` 落在默认档的首轮 1000。
 4. `count_budgeted` 的 `*` 分支需同步决定：DBSIZE 不可得时 `count` 报 `0` 还是
    标记不可信 —— 建议按 (2) 的位或 `truncated=true`，避免"空库"假象（当前会把错误读成 `count: 0` 成功）。
+
+
+### 修复记录（coder round-1）
+
+- **commit**：`4380fc09b`（主体）+ `331e95b51`（SCAN 兜底形状收尾）。
+- **建议 1 采纳**：`read_dbsize` **签名去掉 `Result`，直接返回 `u64`** —— 比"保留 Result 让调用方处理"
+  更稳：任何未来调用方都无法再把它升回硬依赖（协调者已批准该收紧）。服务端错误与不可解析回复
+  各自一条 **release 可见** `tracing::warn!` ⇒ `0`，与基线 `unwrap_or(0)` 同语义；
+  三处调用点（`scan_keys_page` / `list_children_page` / `count_budgeted`）跟改。
+  "DBSIZE 不可得 ⇒ 默认档"从文字变成事实（`tree_scan_budget(None, 0) == DEFAULT_TREE_BUDGET`）。
+- **建议 4 由协调者裁定**：`count_budgeted` 的"全量"分支只在 `dbsize > 0` 时短路；`dbsize == 0`
+  （空库或读不到）**改走一轮真 SCAN** 再出 `count`，消"空库假象"。空库只多付一轮、游标即刻归零。
+  另：该轮不再发冗余 `SCAN … MATCH *`，且空 pattern 与 `*` 统一按"全量"处理。
+  **冻结只追加注记、JSON 一字未动**（见 `progress.md` `## 契约冻结` `count_matching` 段）。
+- **建议 2 未采纳**（`dbsize_available: bool`）：那会给冻结形状加字段，与本轨"形状不可动"红线冲突；
+  裁定用 SCAN 兜底消歧后，该位不再有信息增量。留作 Wave 4 若要区分展示再议。
+- **建议 3 采纳**：新增 5 条用例 —— `read_dbsize_never_fails_and_reports_zero_when_refused`、
+  `scan_keys_succeeds_when_dbsize_is_refused`、
+  `list_children_succeeds_with_own_attributes_when_dbsize_is_refused`（顺带钉本清单"影响范围"里
+  BUG-003 会放大 BUG-001 的交叉项：降级路径不得扰动属性绑定）、
+  `count_star_verifies_with_a_scan_when_dbsize_is_refused`（含空库与空 pattern 两形）、
+  `count_star_still_short_circuits_when_dbsize_answers`（快路径未被削弱）。
+- **复测入口**：`cargo test -p datazen-driver-redis --lib dbsize`／`... count_star`；
+  全量 lib **299 passed / 0 failed / 1 ignored**。真连侧证仍挂 R-9。
 
 ---
 
