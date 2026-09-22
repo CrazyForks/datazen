@@ -1,12 +1,13 @@
 - 任务: 后端 codec 补齐到 §3.3 矩阵 + string 写路径 KEEPTTL 默认化与 PTTL/PX 回退（PRD §3.3 / §6）
-- 状态: READY_FOR_TEST
-- 编码 commit: ebbdfd7dd
-- 测试 commit: —
+- 状态: **FAILED（Phase = TEST_FAILED · 第 1 轮 Tester · 5 条 `待修复`，见本目录 `bugs.md`）**
+- 编码 commit: ebbdfd7dd（交付头：`c0ad7078d`）
+- 测试 commit: 本轮 `docs(coordination): record bugs for redis-codec-write`（新增 12 例测试 + 台账）
 - 合并 commit: —
 - 代理: w3c-codec-write-coder（待登记 agentId）
+- 测试代理: w3c-codec-write-tester（全新实例，未复用编码代理）
 - Worktree: .worktrees/datazen-redis-codec-write
 - 分支: feature/redis-codec-write
-- 心跳: 2026-09-22 18:05
+- 心跳: 2026-09-22 18:23
 
 # W3-C `redis-codec-write` 简报（协调者下发）
 
@@ -187,3 +188,95 @@ View 枚举源：`packages/drivers/redis/ui/value-editors/valueView/views.ts:9-1
   2. `stages`/链式数组入参 —— 已由 C-2 的 `data` 二次调用覆盖，加第 10 个概念不值。
   3. 后端不做压缩（只解压）—— 写回路径 PRD 未要求，且 KEEPTTL 保存的是原字节。
   4. 前端 `BROWSER_CODECS` 收编为「全部走后端」—— 属 W3-E 的面（浏览器 `DecompressionStream` 已可用，本轨只需后端同集合）。
+
+---
+
+# 第 1 轮 Tester 记录（`w3c-codec-write-tester` · 全新实例 · 2026-09-22 18:23）
+
+## 判定：**TEST_FAILED** —— 5 条 `待修复`（`bugs.md` BUG-001~005）。四阶段 A/B/C/D 全部跑完，无中断上报。
+
+> 门禁本身**全绿**：Bug 不来自红测，而来自逐档代码审查 + 独立补测（其中 4 条有已提交的 `#[ignore]` 复现体，1 条是台账事实错误）。
+
+## T-1. `## 契约冻结` 可引用性核查（Wave 4 / W3-E 的输入是否精确可引）
+
+| 条目 | 可引用性 | 核对方式 |
+|---|---|---|
+| C-1 codec 同集合 + framing 映射 | **可逐字引用**：9 规范名/别名/`kind`/成功返回齐备，`:120-121` 的 ⚠ 段把 `'zlib'→'deflate'`、`'deflate'→'deflate-raw'` 的浏览器映射写死，且明确「二者绝不互相兜底」 | 与 `ui/value-editors/valueView/codecs.ts` 的 `CODECS`（9 项）逐项对齐 ⇒ **同集合声明成立**；`BACKEND_CODECS` 仍 4 项（W3-E 的账，非本轨缺陷） |
+| C-2 统一成功结构 | 可引用：键集 `ok,codec,kind,inBytes,bytes,data,text,json` + `inBytes`/`bytes` 定义 + 「链式 = 二次调用，不加 `stages`」 | 本 Tester 新增 `test_tester_json_kind_envelope_has_the_full_key_set` 钉住 `json` kind 的键集完整（缺值为 `null` 而非缺席） |
+| C-3 in-band 失败结构 | 可引用：8 个 reason 拼写逐一核对为 kebab-case 且与 `Reason::code()` 一致；6 步建议顺序含「嗅到的正是本次所选 ⇒ null」与 `retryable === (suggested != null)` | 本 Tester 补 6 例覆盖 C-3 此前未测的分界（`unknown-codec` vs `missing-data`、byte codec 失败**不得**建议结构化 codec、deflate 失败无建议时 `null`） |
+| C-4 TTL 语义 | 可引用：缺省=true / 显式 `false` 仍清（具名 `explicit_false_still_clears_the_expiry`）/ 非布尔按缺省 / 回退链 / 三态不得写错 / 返回位 / 两级都失败不谎报 | 全部由 Coder 的 11 例 + 本 Tester 的 1 例钉住；**但**「回退的触发前提」实现侧缺拒绝分类 ⇒ BUG-004 |
+| C-5 依赖治理 | 可引用：`flate2 = "1.1.9"` 已核（`Cargo.toml` diff 唯一一行），升级必查两条用例名准确 | 本 Tester 额外要求：升版复验清单**追加** BUG-002/003 的两条新例 |
+
+**唯一契约侧欠账（建议修复回合顺手补，属文档级）**：C-1 只承诺了「头校验」的**判据**，没写「校验不过的载荷今天会答 `ok:true, bytes:0`」（BUG-002）；C-4 只写了 `keepTtlFallback` 的含义，没写「今天任何 SET 错误都会置位」（BUG-004）。W3-E 若按字面实现会测不到这两条。
+
+## T-2. 阶段 A：逐档代码审查结论
+
+* **`decode/mod.rs`（428 行）**：`decode_value` 返回 `JsonValue` 而非 `Result` ⇒ **结构上不可能 panic 上抛**，半成功与异常入口一律收敛到信封；`sniff_structured` 仅在 `!codec.is_byte_codec()` 时参与建议（byte 载荷失败不推荐结构化 codec，已补测封口）；`MAX_INPUT_BYTES == MAX_DECOMPRESSED_BYTES == 50 MiB`；无裸 `unwrap/expect`。`protobuf` 在 `Codec::parse` 可达、在 `commands.rs` schema `enum` 不可达 —— 与 §1.4 一致（N-2），`codec-not-implemented` 只对无头调用方可达。
+* **`decode/compress.rs`（257 行，新）**：`Framing` 三臂与 C-1 一一对应；`looks_like_zlib_header()` 公式与契约字面一致，**但只服务 `sniff_framing()`、未接入 `decode()` 入口** ⇒ BUG-002；zip-bomb 用 `take(cap+1)` 计数、不预分配（N-7 成立）；`GzDecoder` 单成员 ⇒ BUG-003。
+* **`ops_write.rs`（151 行）+ `ops_write/tests.rs`（376 行）**：`keep_ttl_policy` 双拼写（`keepTtl` 优先）+ 非布尔 ⇒ `None`（宁可不删过期）；回退四臂齐（KEEPTTL 成功 / 拒绝+`PTTL>0`⇒`PX` / 拒绝+`PTTL<=0`⇒裸 `SET` / `PTTL` 不可用⇒原样抛且不谎报写入）；双重失败消息保留两段 ⇒ 满足 C-4；`SetStringOutcome` serde camelCase 与契约键名一致。**唯一缺口 = 拒绝分类缺失**（BUG-004）。
+* **`commands.rs` / `commands_exec_dispatch.rs`**：`decode_value` 臂改为 `json_ok(decode_value(&input))`、去掉 `map_err(InvalidConfig)` ⇒ in-band 直通（正确方向，但正是 BUG-001 的后端侧变更点）；`set_string` / `set_string_raw` 两臂只动自己名下（§3 与 W3-B 的分工未被破坏）。
+* **`redis_driver.rs:361-362`**：`plugin_set_string` / `plugin_set_string_bytes` 签名转 `Option<bool>` → `SetStringOutcome`；宿主 lib 1454 例复跑绿 ⇒ 无宿主调用方被打断。
+* **`ops.rs`**：净 -24 行（删 `set_string_with_options`），未新增行；红线文件 `ops_workbench.rs`(1066) / 其 `tests.rs`(1602) **零 diff**。
+* **可见性 / 冗余 import / 死代码**：本轨 9 个改动文件在 clippy 下 **0 诊断**；新增跨模块 API 只在 crate 内可见，未扩到 `packages/driver-api`。
+* **三档容器不被合并**：C-1 ⚠ 段成立（`zlib_stream_is_not_raw_deflate_and_vice_versa` + `gzip_and_zlib_headers_are_distinguished_not_merged` 实测绿），**但**「选错必须失败」只在载荷足够长时成立 ⇒ 归 BUG-002。
+* **cluster**：单键写路径 `SET`/`PTTL`/`SET` 同键同 slot ⇒ 无 cross-slot 动作（与基线缺陷 #56 不同源，N-5）。
+* **死片段裁决（协调者委托项）**：`src/commands_exec_all_arms.rs` / `commands_exec_mutate.rs` / `commands_exec_ops.rs` —— **确认零引用，结论「建议整段删除」，本 Tester 未动一行**。证据：全 crate `include!` 仅 `commands_exec.rs:117` 一处（指向 `commands_exec_dispatch.rs`）；`lib.rs` 只 `mod commands_exec;`；repo 级 Grep 三文件名只命中 2 份 progress.md + `design-plans/redis-driver-depth-prd.md`；`commands_exec_all_arms.rs:29-43` 的旧 `set_string` 臂把 `unwrap_or(false)` 的 `bool` 喂给现为 `Option<bool>` 的 `plugin_set_string` 且无 `decode_value` 臂 ⇒ 误接线会**编译期即红**（不会静默跑旧语义，风险是误导读者）。若要保留，必须先按 C-3/C-4 同步三条臂。详见 `bugs.md` N-1。
+
+## T-3. 阶段 B：门禁独立复跑（自报 vs 实测，一律 `CARGO_TARGET_DIR=/tmp/w3c-test-cargo-target`）
+
+| 门禁 | Coder 自报 | Tester 实测 | 判定 |
+|---|---|---|---|
+| redis crate lib | 267 passed / 1 ignored（基线 239） | **267 passed / 1 ignored**（交付原样）→ 补测后 **276 passed / 4 ignored** | **一致**（+37 真实存在） |
+| redis crate 集成 | 4 passed | **4 passed** | 一致 |
+| 宿主 lib | 1454 passed / 3 ignored | **1454 passed / 3 ignored** | 一致 |
+| `npx tsc --noEmit` | 0 | **0** | 一致 |
+| 驱动 vitest | 47 files / 456 tests | **47 files / 456 tests** 全绿 | 一致（**但不构成 BUG-001 反证**：套件从未 mock 过 `{ok:false}`） |
+| `cargo fmt -p datazen-driver-redis -- --check` | 干净 | **干净**（Coder 文件无需重排；本 Tester 新增 12 例经一次 `cargo fmt` 后干净，diff 仅 2 个测试文件） | 一致 |
+| `cargo clippy --all-targets` | 17 lib warn / 18 lib-test warn / 2 `approx_constant` error，本轨文件 0 新增 | 数量**一致**；2 个 error 实为 `ops.rs:881` + `ops_exec.rs:260`（自报写作 `decode/pickle.rs` + `redis_value_preview.rs`，两处 `3.14` 命中数均为 0）⇒ **归属自报错误** | 结论成立，**台账失实 → BUG-005** |
+| 边界护栏（额外自跑） | — | `check-driver-import-boundaries.mjs` → `ok (1453 file(s) scanned · 0 blocking · 4 advisory)` | 绿 |
+| 覆盖率（llvm-cov，见 T-4） | 未自报 | 改动核心三文件 **≥94%** | 门禁满足 |
+
+顺序合规：BOOTSTRAP 前置 → `node scripts/generate-builtin-locales.mjs` → Rust → tsc → vitest → 护栏；生成物（`src/extensions/generated*.ts`、`src-tauri/src/driver_init.rs`、`capabilities/default.json`、`.driver-features.json`）**零提交**；工作树既有 `Cargo.lock` 脏改动**未提交亦未 revert**（保持原样）。未跑 live e2e / 真连 journey（登记进 T-6）。
+
+## T-4. 阶段 C：补测与覆盖率
+
+`cargo llvm-cov -p datazen-driver-redis --lib --summary-only`（本次快照已含 T-4 全部 decode 侧新例）：
+
+| 改动文件 | Region | Line | 门槛 |
+|---|---|---|---|
+| `decode/mod.rs` | **99.18%** | **99.19%** | ≥80% ✅ |
+| `decode/compress.rs` | **94.12%** | **96.18%** | ≥80% ✅ |
+| `ops_write.rs` | **100.00%** | **100.00%** | ≥80% ✅ |
+| `commands.rs`（本轨 +12 行） | 100.00% | 100.00% | ✅ |
+| `commands_exec_dispatch.rs`（本轨 +25 行） | 0.00%（`--lib` 内不可达：三臂均需真连接会话） | 同 | → T-6 第 1/5 项 |
+| crate TOTAL（存量口径，非本轨门禁） | 52.85% | 50.64% | 登记备查 |
+
+**本 Tester 新增 12 例**（`test_tester_*` + `[tester]` 注释块；只断键名/结构/枚举 code/sentinel，**零英文字面量断言**；既有字面量断言未被删除亦未被改写 —— 本轨生产 diff 内无此类断言）：
+
+* `decode/tests.rs`（+189 行）：8 绿 —— base64 拒绝非 base64、base64 容忍换行空白、缺/非字符串 codec ⇒ `unknown-codec`、非字符串 `data` ⇒ `missing-data`、deflate 失败无建议 ⇒ `null`、byte codec 失败**绝不**建议结构化 codec、单字节载荷的信封形状、`json` kind 键集完整；2 `#[ignore]` 复现体 —— BUG-002 截断 zlib、BUG-003 多成员 gzip。
+* `ops_write/tests.rs`（+48 行）：1 绿 —— `keepTtl` 与 `keep_ttl` 同时存在时 camelCase 优先；1 `#[ignore]` 复现体 —— BUG-004 非 KEEPTTL 拒绝。
+* 三条 `#[ignore]` 的复跑（今日全红，即缺陷的可执行证据）：`cargo test -p datazen-driver-redis --lib -- --ignored test_tester_` → `0 passed; 3 failed`，日志摘录见 `bugs.md`。
+* **未覆盖且未补的路径**：`payload-too-large` / `decompressed-too-large` 的 50 MiB 端到端（成本不成比例，seam 级已由双方用例钉住）、`plugin_*` 与三条 dispatch 臂（需真连接）⇒ 全部进 T-6。
+
+## T-5. 阶段 D：Bug 登记与修复回合验收口径
+
+`bugs.md`（同目录）5 条，一律 `待修复`：BUG-001（中·解码失败在 GUI 退化为 `(empty)`，本轨引入的回归）· BUG-002（中低·zlib/deflate 截断答成功）· BUG-003（低·多成员 gzip 少报 `bytes`）· BUG-004（低-中·回退分诊口径过宽）· BUG-005（低·clippy 台账归属失实）。
+
+**修复回合验收（本 Tester 下一轮按此复测）**：
+1. BUG-002/003/004 的三条 `#[ignore]` 复现体**去掉 `#[ignore]` 即必须绿**，不得改断言、不得改成「断言当前错误行为」；
+2. BUG-001 至少落「失败可见」（`{ok:false}` 不得渲染成具名空态），「按 X 重试」按钮可交 W3-E；`redisInvoke.ts` 的「Throws on reject」注释与 `DecodeValueResult` 键集必须与 C-2/C-3 对齐；
+3. BUG-005 改 `progress.md:178` 一行归属；
+4. 基线口径变更须同步：本轨 lib 从 267 → **276 passed / 4 ignored（其中 3 为 Bug 复现体）**，下一轮 Coder 交付后本 Tester 期望「276 + 新增数 / 1 ignored（仅剩 `local_live_connect_…`）」。
+
+## T-6. 留待 R 回归（含前置条件）
+
+| # | 待验项 | 前置条件 |
+|---|---|---|
+| R-1 | 真连 Redis ≥6.0 与 <6.0（或剥 `KEEPTTL` 的代理）：`keepTtlFallback=true` 实际置位、TTL 误差 ≤ 一次往返 | live Redis 6.x + 一个 4.x/代理；沿用 `connect::tests::local_live_connect_*` 的 `#[ignore]` 约定（同一 target 前缀） |
+| R-2 | `PTTL` 与 `SET` 之间第三方改过期的竞态（回退链的固有时间窗） | 双客户端注入（离线 stand-in 只能钉指令形状，已钉） |
+| R-3 | Cluster 下 `READONLY` / failover 与 BUG-004 的交互；确认单键三命令无 cross-slot | 真 3 主 cluster（与基线缺陷 #56 同一环境，可与 #56 合并跑） |
+| R-4 | 50 MiB 端到端 `payload-too-large` / `decompressed-too-large` | `--release` 或提高测试超时；**不得**放进默认 lib 套件 |
+| R-5 | GUI「按 X 重试」按钮 + 原始字节回退展示（BUG-001 修复后） | W3-E 接线；jsdom 断言只允许 `data-*` / reason 码，禁英文字面量 |
+| R-6 | `protobuf` 是否接 schema（§1.4 挂账） | Wave 4/P2 裁定；当前 `codec-not-implemented` + `suggestedCodec:"base64"` 为可见降级 |
+| R-7 | flate2 升版复验（C-5） | 升版必跑：`zlib_stream_is_not_raw_deflate_and_vice_versa`、`gzip_and_zlib_headers_are_distinguished_not_merged` + BUG-002/003 的两条新例（解挂后） |
+| R-8 | `BACKEND_CODECS` 由 4 项收编为 9 项（浏览器解压 → 后端统一路径） | W3-E 的面，本轨后端已就绪（`every_ui_codec_name_is_accepted_by_the_backend` 已钉住同集合） |
