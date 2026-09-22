@@ -166,7 +166,10 @@ const sideValue = (el: HTMLElement | null, attr: string) =>
 const sideFallbackKey = (el: HTMLElement | null, attr: string) =>
   el?.querySelector(`[data-attr="${attr}"] dd`)?.getAttribute('data-fallback-key') ?? null;
 
-function slotProps(state: KvSlotState, overrides: Partial<KvStatusBarProps> = {}): KvStatusBarProps {
+function slotProps(
+  state: KvSlotState,
+  overrides: Partial<KvStatusBarProps> = {},
+): KvStatusBarProps {
   return {
     connectionId: 'conn-1',
     dbSessionId: 'sess-1',
@@ -251,9 +254,7 @@ describe('[tester r3] BUG-005 re-check: the policy row invalidates with its sess
     await waitFor(() => expect(sideValue(container, 'maxmemory-policy')).toBe('noeviction'));
 
     // Close the drawer: no unmount, no new commands (contract obligation 1/2).
-    rerender(
-      <RedisKeyPropsSidebar {...slotProps(relay)} open={false} onClose={() => {}} />,
-    );
+    rerender(<RedisKeyPropsSidebar {...slotProps(relay)} open={false} onClose={() => {}} />);
     expect(container.querySelector('[data-props-state]')).toBeNull();
     expect(router.calls('info_filtered')).toBe(1);
 
