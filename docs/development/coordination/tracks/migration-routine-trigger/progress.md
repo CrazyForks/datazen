@@ -1,6 +1,6 @@
 # migration-routine-trigger
 
-Phase: FAILED
+Phase: READY_FOR_RETEST
 
 ## Scope
 
@@ -23,7 +23,8 @@ Phase: FAILED
 
 ## Self-validation
 
-- `cargo test -p datazen-driver-api --lib`: 142 passed.
+- `cargo test -p datazen-driver-api --lib schema_migration::type_parts_tests`: 9 passed.
+- The BUG-001 regression and related validator tests pass.
 - `cargo test -p datazen-driver-postgres --lib`: 119 passed.
 - New PostgreSQL routine/trigger renderer tests: 2 passed.
 - New MySQL routine/trigger renderer tests: 2 passed.
@@ -31,6 +32,13 @@ Phase: FAILED
   build required a temporary ignored `src-tauri/resources/builtin-ep`
   directory; it was removed afterward).
 - `git diff --check`: passed.
+
+## BUG-001 fix validation
+
+- PostgreSQL routine renderer regression: 1 passed.
+- MySQL routine renderer regression: 1 passed.
+- `cargo fmt --all -- --check`: passed after the final fix.
+- `git diff --check`: passed after the final fix.
 
 Host Schema Diff full tests and live database journeys remain for the
 independent Tester. No UI picker was added in this slice; callers use the new

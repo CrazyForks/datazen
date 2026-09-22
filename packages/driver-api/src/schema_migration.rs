@@ -233,25 +233,25 @@ pub fn validate_object_definition(
     {
         return Err("schema object definition contains control characters".into());
     }
-    let upper = trimmed.to_ascii_uppercase();
-    if !upper.starts_with("CREATE ") {
-        return Err("schema object definition must start with CREATE".into());
-    }
     let kind_token = match kind {
         ObjectKind::Function => "FUNCTION",
         ObjectKind::Procedure => "PROCEDURE",
         ObjectKind::Trigger => "TRIGGER",
         _ => return Err("schema object kind is not a routine or trigger".into()),
     };
-    if !upper.contains(kind_token) {
-        return Err(format!("schema object definition is not a {kind_token}"));
+    if object_declaration_kind(trimmed) != Some(kind) {
+        return Err(format!(
+            "schema object definition must declare CREATE {kind_token}"
+        ));
     }
     if name.trim().is_empty() {
         return Err("schema object name must not be empty".into());
     }
     // A driver query is expected to return the requested object. Require the
     // identity to occur in the DDL after normalizing common quote styles.
-    let normalized_definition = upper.replace(['`', '"', '[', ']'], "");
+    let normalized_definition = trimmed
+        .to_ascii_uppercase()
+        .replace(['`', '"', '[', ']'], "");
     let normalized_name = name.to_ascii_uppercase().replace(['`', '"', '[', ']'], "");
     if !normalized_definition
         .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
@@ -262,6 +262,107 @@ pub fn validate_object_definition(
         ));
     }
     Ok(())
+}
+
+/// Return the object kind from the executable CREATE declaration header.
+///
+/// The catalog DDL for MySQL may contain a `DEFINER=...` clause between
+/// `CREATE` and the object kind, while PostgreSQL commonly uses
+/// `CREATE OR REPLACE`. Tokens inside quoted strings and SQL comments are
+/// discarded before inspecting the header, so a body or comment cannot make a
+/// wrong object type appear valid.
+fn object_declaration_kind(definition: &str) -> Option<ObjectKind> {
+    let tokens = executable_sql_words(definition);
+    if tokens.first().map(String::as_str) != Some("CREATE") {
+        return None;
+    }
+    let mut index = 1;
+    if tokens.get(index).map(String::as_str) == Some("OR")
+        && tokens.get(index + 1).map(String::as_str) == Some("REPLACE")
+    {
+        index += 2;
+    }
+    while let Some(token) = tokens.get(index).map(String::as_str) {
+        match token {
+            "FUNCTION" => return Some(ObjectKind::Function),
+            "PROCEDURE" => return Some(ObjectKind::Procedure),
+            "TRIGGER" => return Some(ObjectKind::Trigger),
+            // Once the declaration has reached a relation/view body, a later
+            // routine word belongs to SQL text rather than the object header.
+            "AS" | "BEGIN" | "VIEW" | "TABLE" | "SCHEMA" | "EVENT" => return None,
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn executable_sql_words(sql: &str) -> Vec<String> {
+    let chars = sql.chars().collect::<Vec<_>>();
+    let mut words = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '-' && chars.get(index + 1) == Some(&'-') {
+            index += 2;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if ch == '#' {
+            index += 1;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if ch == '/' && chars.get(index + 1) == Some(&'*') {
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            index = (index + 2).min(chars.len());
+            continue;
+        }
+        if matches!(ch, '\'' | '"' | '`') {
+            let quote = ch;
+            index += 1;
+            while index < chars.len() {
+                if chars[index] == '\\' {
+                    index = (index + 2).min(chars.len());
+                    continue;
+                }
+                if chars[index] == quote {
+                    if chars.get(index + 1) == Some(&quote) {
+                        index += 2;
+                        continue;
+                    }
+                    index += 1;
+                    break;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$') {
+            let start = index;
+            index += 1;
+            while index < chars.len()
+                && (chars[index].is_ascii_alphanumeric() || matches!(chars[index], '_' | '$'))
+            {
+                index += 1;
+            }
+            words.push(
+                chars[start..index]
+                    .iter()
+                    .collect::<String>()
+                    .to_ascii_uppercase(),
+            );
+            continue;
+        }
+        index += 1;
+    }
+    words
 }
 
 /// Validate a CHECK predicate before it is embedded into a reviewed DDL
@@ -523,6 +624,18 @@ mod type_parts_tests {
         .is_err());
         assert!(validate_object_definition(
             "CREATE VIEW audit_insert AS SELECT 'TRIGGER' AS marker",
+            ObjectKind::Trigger,
+            "audit_insert",
+        )
+        .is_err());
+        assert!(validate_object_definition(
+            "/* FUNCTION */ CREATE VIEW calculate_total AS SELECT 1",
+            ObjectKind::Function,
+            "calculate_total",
+        )
+        .is_err());
+        assert!(validate_object_definition(
+            "CREATE VIEW audit_insert AS SELECT 1 -- TRIGGER",
             ObjectKind::Trigger,
             "audit_insert",
         )
