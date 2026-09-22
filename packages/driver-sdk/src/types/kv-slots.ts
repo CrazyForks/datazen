@@ -109,6 +109,30 @@ export interface KvSlotState {
   recordWrite(command: string, durationMs: number): void;
 }
 
+/**
+ * A request from an in-panel slot back to the **host** (W3-A §1.2).
+ *
+ * This is the only reverse channel: slots render facts from {@link KvSlotState}
+ * and ask for things through `request`. It deliberately has no answer — a slot
+ * must not assume anybody is listening, because the host ignores what it cannot
+ * do (no-op plus one developer warning, never a throw). Callback-style escape
+ * hatches on the state relay (`onRefresh?: () => void`) are banned: they would
+ * fork the one channel into N undocumented ones.
+ *
+ * Where an action goes to the drive side of the panel (a scan-budget change, a
+ * flush), the host dispatcher is still the single decision point: dangerous
+ * actions pass its write gate before anything else happens.
+ */
+export type KvSlotAction =
+  | { type: 'refresh' }
+  | { type: 'newKey' }
+  | { type: 'import' }
+  | { type: 'export' }
+  | { type: 'flushDb' }
+  | { type: 'openMonitor' }
+  | { type: 'openSettings' }
+  | { type: 'setScanBudget'; value: number };
+
 /** Props every in-panel KV slot receives from the host. */
 export interface KvPanelSlotProps {
   /** Persisted connection-config id (stable across restarts). */
@@ -129,7 +153,10 @@ export interface KvPanelSlotProps {
    * (`databaseFieldType: 'index'`, i.e. Redis). Undefined otherwise.
    */
   dbIndex?: number;
-  /** Host-owned per-panel state relay (selected key + dirty flag). */
+  /**
+   * Host-owned per-panel state relay: selection, dirty flag and the scan /
+   * selection / last-write facts the status bar and context bar render.
+   */
   state: KvSlotState;
 }
 
@@ -140,6 +167,15 @@ export interface KvContextBarProps extends KvPanelSlotProps {
    * the toolbar; a driver decides what to drop first (chips → icons → overflow).
    */
   compact: boolean;
+  /**
+   * Ask the host to carry out {@link KvSlotAction}. Present on this slot only —
+   * the status bar and the key-props sidebar are read-only surfaces, so the
+   * shared {@link KvPanelSlotProps} bundle stays free of it.
+   *
+   * Fire-and-forget: never await it for a "did that work?" answer, and never
+   * hide a control because you expect the host to have nothing to do with it.
+   */
+  request(action: KvSlotAction): void;
 }
 
 /** Bottom status bar centre cluster (`kvWorkspace.statusBar`). */

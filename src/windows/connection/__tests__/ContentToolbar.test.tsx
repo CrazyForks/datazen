@@ -1,8 +1,9 @@
-import { render, screen, cleanup, act } from '@testing-library/react';
+import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import type { KvContextBarProps } from '@datazen/driver-sdk';
 import { ContentToolbar } from '../ContentToolbar';
+import { createKvSlotState } from '../../../lib/kvSlotState';
 import type { KvContextBarBinding } from '../useKvWorkspaceSlots';
 
 // useCompactToolbar observes the toolbar width; jsdom has no ResizeObserver.
@@ -31,8 +32,9 @@ vi.mock('../../../components/DataTable/DetailPanelToggle', () => ({
 
 /**
  * Fixture standing in for a driver's KV context bar: it renders the props the host
- * hands over as data attributes and subscribes to the shared selection atom, which
- * is exactly the contract Wave 2 implements against.
+ * hands over as data attributes, subscribes to the shared selection atom and calls
+ * `request` for a host action, which is exactly the contract Wave 2/3 implements
+ * against.
  */
 function FixtureContextBar({
   connectionId,
@@ -43,6 +45,7 @@ function FixtureContextBar({
   dbIndex,
   compact,
   state,
+  request,
 }: KvContextBarProps) {
   const selectedKey = useSyncExternalStore(state.subscribe, state.getSelectedKey);
   return (
@@ -56,11 +59,23 @@ function FixtureContextBar({
       data-db-index={dbIndex ?? ''}
       data-compact={String(compact)}
       data-selected-key={selectedKey ?? ''}
-    />
+      data-request={typeof request === 'function' ? 'wired' : 'missing'}
+    >
+      <button
+        type="button"
+        data-testid="fixture-request-flush"
+        onClick={() => request({ type: 'flushDb' })}
+      >
+        flush
+      </button>
+    </div>
   );
 }
 
-function binding(state: KvContextBarProps['state']): KvContextBarBinding {
+function binding(
+  state: KvContextBarProps['state'],
+  request: KvContextBarProps['request'] = vi.fn(),
+): KvContextBarBinding {
   return {
     Component: FixtureContextBar,
     props: {
@@ -71,6 +86,7 @@ function binding(state: KvContextBarProps['state']): KvContextBarBinding {
       database: 'db7',
       dbIndex: 7,
       state,
+      request,
     },
   };
 }
@@ -115,15 +131,8 @@ describe('ContentToolbar KV context bar slot', () => {
   });
 
   it('renders the driver cluster into the 48px band with the frozen props', () => {
-    const { container } = renderToolbar(
-      binding({
-        subscribe: () => () => {},
-        getSelectedKey: () => null,
-        selectKey: vi.fn(),
-        getDirty: () => false,
-        setDirty: vi.fn(),
-      }),
-    );
+    const request = vi.fn();
+    const { container } = renderToolbar(binding(createKvSlotState(), request));
     const toolbar = container.firstElementChild as HTMLElement;
 
     const bar = screen.getByTestId('conn-toolbar-kv-context-bar');
@@ -138,28 +147,20 @@ describe('ContentToolbar KV context bar slot', () => {
     // P-1: the driver cluster takes the free space instead of an empty band.
     expect(bar.className).toContain('flex-1');
     expect(toolbar.querySelector(':scope > div[class="flex-1"]')).toBeNull();
+    // §1.2: the reverse action channel reaches the slot through its props.
+    expect(fixture.getAttribute('data-request')).toBe('wired');
+    fireEvent.click(screen.getByTestId('fixture-request-flush'));
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith({ type: 'flushDb' });
   });
 
   it('re-renders the driver cluster when the panel selection changes', () => {
-    let selected: string | null = null;
-    const listeners = new Set<() => void>();
-    const state = {
-      subscribe(listener: () => void) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-      getSelectedKey: () => selected,
-      selectKey: vi.fn(),
-      getDirty: () => false,
-      setDirty: vi.fn(),
-    };
-
+    const state = createKvSlotState();
     renderToolbar(binding(state));
     expect(screen.getByTestId('fixture-context-bar').getAttribute('data-selected-key')).toBe('');
 
-    selected = 'user:42';
     act(() => {
-      for (const listener of [...listeners]) listener();
+      state.selectKey('user:42');
     });
 
     expect(screen.getByTestId('fixture-context-bar').getAttribute('data-selected-key')).toBe(

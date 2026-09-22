@@ -18,6 +18,8 @@ import type {
   ConnectionHomeSlotProps,
   KeyPropsSidebarProps,
   KvContextBarProps,
+  KvPanelSlotProps,
+  KvSlotAction,
   KvSlotState,
   KvStatusBarProps,
 } from '@datazen/driver-sdk';
@@ -81,6 +83,12 @@ export interface UseKvWorkspaceSlotsArgs {
   connectionContext: ConnectionContext | null;
   /** Database stored on the connection config, forwarded to the home slot. */
   initialDatabase: string | undefined;
+  /**
+   * The host's single KV action dispatcher (`useKvSlotActions`), handed to the
+   * context bar as `request`. It must keep a stable identity — it rides inside
+   * the memoised props bundle the driver slots memo on.
+   */
+  onSlotAction: (action: KvSlotAction) => void;
 }
 
 /**
@@ -112,6 +120,7 @@ export function useKvWorkspaceSlots({
   connectionName,
   connectionContext,
   initialDatabase,
+  onSlotAction,
 }: UseKvWorkspaceSlotsArgs): KvWorkspaceSlots {
   const panelMeta = databaseType ? DB_REGISTRY[databaseType] : undefined;
   const dbIndex = resolveKvDatabaseIndex(panelMeta, database);
@@ -123,7 +132,9 @@ export function useKvWorkspaceSlots({
   }, [activePanel, isKvPanel, panelId]);
 
   // Props every in-panel slot shares; kept stable so driver components can memo.
-  const panelSlotProps = useMemo<KvSlotPropsOf<KvContextBarProps, 'compact'> | null>(
+  // `request` is NOT part of it — only the context bar may ask the host for
+  // something, so the shared bundle stays exactly KvPanelSlotProps.
+  const panelSlotProps = useMemo<KvPanelSlotProps | null>(
     () =>
       panelState && databaseType
         ? {
@@ -144,8 +155,10 @@ export function useKvWorkspaceSlots({
   const contextBar = useMemo<KvContextBarBinding | undefined>(() => {
     if (!inPanelKvContext || !panelSlotProps) return undefined;
     const Component = getKvSlotComponent<KvContextBarProps>(databaseType, 'contextBar');
-    return Component ? { Component, props: panelSlotProps } : undefined;
-  }, [inPanelKvContext, panelSlotProps, databaseType]);
+    return Component
+      ? { Component, props: { ...panelSlotProps, request: onSlotAction } }
+      : undefined;
+  }, [inPanelKvContext, panelSlotProps, databaseType, onSlotAction]);
 
   const statusBar = useMemo<KvStatusBarBinding | undefined>(() => {
     if (!inPanelKvContext || !panelSlotProps) return undefined;
