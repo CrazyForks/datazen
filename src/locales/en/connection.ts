@@ -105,6 +105,28 @@ const pack = {
   'newConn.tunnelWebSocket': 'WebSocket tunnel',
   'newConn.savedTunnel': 'Saved tunnel',
   'newConn.savedTunnelNone': 'Inline configuration',
+  'newConn.tunnelSource': 'Tunnel source',
+  'newConn.tunnelEmptyHint':
+    'No saved tunnels yet. Configure one below, then use “Save as tunnel” to reuse it in other connections.',
+  'newConn.tunnelCreateEntry': 'Configure manually',
+  'newConn.tunnelManage': 'Manage saved tunnels',
+  'newConn.tunnelSavedHint':
+    'This connection reuses a saved tunnel; inline fields are folded away.',
+  'newConn.tunnelUnbind': 'Unbind to inline',
+  'newConn.tunnelMissing':
+    'The referenced tunnel no longer exists. Pick another tunnel or unbind to inline before saving.',
+  'newConn.tunnelSaveAs': 'Save as tunnel…',
+  'newConn.tunnelSaveTitle': 'Save tunnel',
+  'newConn.tunnelSaveDesc':
+    'Store the current inline tunnel configuration so other connections can reuse it.',
+  'newConn.tunnelName': 'Tunnel name',
+  'newConn.tunnelNamePlaceholder': 'Production bastion',
+  'newConn.tunnelSaveConfirm': 'Save tunnel',
+  'newConn.tunnelSaving': 'Saving…',
+  'newConn.tunnelSaveFailed': 'Could not save the tunnel.',
+  'newConn.tunnelLoadFailed': 'Could not load the tunnel configuration.',
+  'newConn.tunnelUnbindKept': 'Could not read the saved tunnel; the reference was kept.',
+  'tunnelStore.loadFailed': 'Could not load saved tunnels.',
   'newConn.httpProxyHost': 'Proxy host',
   'newConn.httpProxyPort': 'Proxy port',
   'newConn.httpProxyScheme': 'Proxy scheme',
