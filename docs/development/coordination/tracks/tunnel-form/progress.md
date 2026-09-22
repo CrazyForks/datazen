@@ -319,7 +319,7 @@ BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」�
 
 - 被验 HEAD：**`cfb63354`**（`c9777246` = BUG-001 + BUG-002 修复；`cfb63354` = 协调者批准的范围扩展）
 - 复测实例：**全新 Tester 实例**（与 Round 1 Tester 不同实例，亦与 Coder 不同）；仅写入本 worktree，未触碰 `hub.md` / 主检出 / 其他 worktree
-- 测试 commit：`<本提交，hash 见交接回报>`（message：`test(tunnel-form): re-verify tunnel-form after fix round 1`）
+- 测试 commit：**`d84d73cbcac7ad71fc544e55ab3e0324fb101986`**（message：`test(tunnel-form): re-verify tunnel-form after fix round 1`）
 - **结论：PASSED** — 2 个 Bug 均置「已修复」，**零新增 Bug**；范围扩展成立且未误伤合法保存
 
 ### 阶段 A：修复实现审查
