@@ -560,3 +560,55 @@ BUG-003（中，冻结承诺的降级路径不可达 + 基线能力回退）三�
    从冻结承诺的 `consumed == 0` 变成一轮真实 SCAN 的消耗。这是裁定本身要求的行为（否则就是假答），
    已在冻结注记里写明"该承诺保留在 `dbsize > 0` 的快路径上"。Wave 4 若按 `consumed == 0` 判
    "这是 DBSIZE 快答"，需改判 `dbsize > 0 && consumed == 0`。
+
+## 第 2 轮 Tester 复验记录
+
+> Tester 全新实例（不复用第 1 轮 Tester、不用修复 Coder）。起点 HEAD `008fbfb75`，工作树干净。
+> 目录 `.worktrees/datazen-redis-tree-backend`，`CARGO_TARGET_DIR=/tmp/w3b2-cargo-target`。
+> 零信任复验：只测不修；变异仅用于反证用例有效性，每次 `git checkout HEAD --` 还原后复跑。
+> 重型命令严格串行（一次一条）+ 每完成一个验收项立即 commit。
+
+### 阶段 1-1 · BUG-001 定点复验 —— **通过**
+
+代码审查（`git show b7abb440c -- ops_tree.rs` + 现文件 `:205-293`）：
+
+| 项 | 事实 | 判定 |
+|---|---|---|
+| (a) 按 key 关联、零位置 zip | `attrs: HashMap<String,(KeyMeta,ValueFields)>`（`:225`），回填走 `attrs.get(key)`（`:261`）；原 `rows.zip(values)` + `leaf_iter.next()` 全部消失 | ✅ |
+| (b) `noTtlOnly`+absent 的 retain 在富化**后** | `children.retain(...)` 在 `:289`，位于富化循环（`:252-269`）之后；对照 `git show 8981d3078:…/ops_tree.rs`：基线亦为"回填完 → `if no_ttl_only { children.retain(...) }`" ⇒ **序一致** | ✅ |
+| (c) gone 集不入 attrs、无占位值残留 | `if meta.absent { gone.insert(key); continue; }`（`:232-235`）⇒ 该键既不入 `items`（不发值批）也不入 `attrs`；其槽位由 `retain` 的 `!gone.contains(key)`（`:290`）剔除 | ✅ |
+| (d) 两条 release warn | `:214-220`（`metas.len() != leaf_keys.len()`）与 `:278-284`（`filled != attrs.len()`）两个方向均 release 可见；`debug_assert_eq!` 保留作 debug 侧早爆 | ✅ |
+
+正式用例（第 1 轮两条 RED pin 已摘 `#[ignore]` 转正）：
+
+```
+cargo test -p datazen-driver-redis --lib list_children
+test_tester_list_children_no_ttl_only_keeps_rows_aligned ... ok
+test_tester_list_children_survives_a_key_that_vanished_mid_page ... ok
+（同筛选另 3 条既有用例）→ 5 passed / 0 failed / 0 ignored
+```
+
+**独立变异 1（把 `children.retain(...)` 整块挪回富化循环之前 = 缺陷原序）**：
+
+```
+test_tester_list_children_no_ttl_only_keeps_rows_aligned ... FAILED
+  left:  [("app:a","string",-1,1), ("app:b","string",7,2), ("app:c","string",-1,3)]
+  right: [("app:a","string",-1,1), ("app:c","string",-1,3)]
+list_children_succeeds_with_own_attributes_when_dbsize_is_refused ... FAILED（同形态）
+→ 4 passed / 2 failed
+```
+
+`git checkout HEAD --` 还原 → 5/5 复绿。用例确有牙（`app:b` TTL=7 一混入即红）。
+
+**独立变异 2（去掉 `retain` 闭包中的 `!gone.contains(key)`，即 (c) 项单独失效）**：
+
+```
+test_tester_list_children_survives_a_key_that_vanished_mid_page ... FAILED
+  left:  [("gone:a","string",1), ("gone:b","",0), ("gone:c","string",3)]
+  right: [("gone:a","string",1), ("gone:c","string",3)]
+→ 4 passed / 1 failed
+```
+
+⇒ 两条 pin 用例分别钉住两条触发路径（`noTtlOnly` 过滤 / 页内键消失）且互相独立：
+(b) 失效只红第一条，(c) 失效只红第二条。还原后复跑 5/5 绿，工作树干净。
+
