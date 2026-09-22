@@ -21,6 +21,10 @@
  * `data-*` marker (the measured failure text is quoted next to it), and the
  * BUG-004 pair additionally pins today's wrong label in a case that passes.
  *
+ * Round-1 fix status: the two BUG-001 cases and the BUG-004 case are un-skipped
+ * by the fix commit that closes them (see `kvBarRound1Fixes.test.tsx` for the
+ * ownership tests that seal the same behaviour at the pure-function level).
+ *
  * Assertion policy (PRD §7-6): `data-*` markers and i18n keys only — no rendered
  * English copy is pinned anywhere in this file.
  */
@@ -132,14 +136,13 @@ afterEach(() => {
 });
 
 describe('[tester] KvSlotState read staleness (useKeyObjectInfo docblock claim)', () => {
-  // FIXME(redis-kvbar-ui-BUG-001): red by design until the fix lands — the read
-  // keeps the previous key's payload while the next key's read is in flight, so
-  // both slots attribute one key's type/size/TTL to another. Un-skip (and the
-  // sidebar case below) together with the fix; see tracks/redis-kvbar-ui/bugs.md.
-  // Proof this is not vacuous (test round, `it.skip` removed): fails with
-  // `expected <span data-part="type">…</span> to be null` — the bar still prints
-  // `first`'s type/size while `data-status-state` reads `loading`.
-  it.skip('does not keep painting the previous key while the new read is in flight', async () => {
+  // redis-kvbar-ui-BUG-001 (fixed, was `it.skip`): the read used to keep the
+  // previous key's payload while the next key's read was in flight, so both slots
+  // attributed one key's type/size/TTL to another. Un-skipped by the fix commit;
+  // measured failure before the fix was
+  // `expected <span data-part="type">…</span> to be null` while
+  // `data-status-state` read `loading`.
+  it('does not keep painting the previous key while the new read is in flight', async () => {
     const relay = makeRelay();
     const pending = queueReads();
     const { container } = render(<RedisKvStatusBar {...slotProps(relay)} />);
@@ -314,13 +317,12 @@ describe('[tester] KeyPropsSidebar null arms', () => {
 });
 
 describe('[tester] KeyPropsSidebar stale payload — sidebar half of redis-kvbar-ui-BUG-001', () => {
-  // FIXME(redis-kvbar-ui-BUG-001): same root cause as the status-bar case, but
-  // the sidebar is worse: it shows the loading hint *and* the previous key's
-  // attribute list at the same time. Red by design; un-skip with the fix.
-  // Proof (test round, `it.skip` removed): fails with
-  // `expected <div data-attr="type">…</div> to be null` while
-  // `data-props-state` is `loading`.
-  it.skip('hides the previous key attributes while the next key is being read', async () => {
+  // redis-kvbar-ui-BUG-001 (fixed, was `it.skip`): same root cause as the status
+  // bar case, but the sidebar was worse — it showed the loading hint *and* the
+  // previous key's attribute list at the same time. Measured failure before the
+  // fix: `expected <div data-attr="type">…</div> to be null` while
+  // `data-props-state` was `loading`.
+  it('hides the previous key attributes while the next key is being read', async () => {
     const relay = makeRelay();
     const pending = queueReads();
     render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
