@@ -91,9 +91,9 @@ TEST_DONE
   MySQL, SQLite, and unregistered-driver requests. No PostgreSQL fixture is
   available: `pg_isready` reports `/tmp:5432 - no response`, and `psql` cannot
   access the local socket (`Operation not permitted`).
-- Verdict: **TEST_FAILED** for `migration-sequence-BUG-001` and
-  `migration-sequence-BUG-002`; do not merge until a fresh Tester reruns the
-  complete suite after repair.
+- Initial tester identified `migration-sequence-BUG-001` and
+  `migration-sequence-BUG-002`; the fresh Tester rerun after repair closed
+  both defects as recorded below.
 
 ## Repair
 
