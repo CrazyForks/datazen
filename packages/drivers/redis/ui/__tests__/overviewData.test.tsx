@@ -270,12 +270,10 @@ describe('useOverviewData · 权限降级', () => {
 describe('useOverviewData · session switch', () => {
   it('drops an in-flight reply from the previous session', async () => {
     const resolvers: Array<(value: unknown) => void> = [];
-    const infoCalls: string[] = [];
     const invoke = vi.fn(
       (_pluginId: string, command: string) =>
         new Promise<unknown>((resolve) => {
           if (command === OVERVIEW_COMMANDS.info) {
-            infoCalls.push(command);
             resolvers.push(resolve);
           } else {
             resolve(undefined);

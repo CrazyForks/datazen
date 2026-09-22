@@ -133,7 +133,7 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div data-overview-grid className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <ServerInfoCard
             status={data.info.status}
             rows={serverRows}
