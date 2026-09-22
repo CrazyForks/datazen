@@ -1,12 +1,12 @@
 - 任务: 屏 A 连接总览七区块 + connectionHome 槽位（PRD §3.1 / 裁定 8-5）
-- 状态: 第 1 轮修复已提交（BUG-001/002/003，5 commit），待第 2 轮 Tester 复测；第 1 轮判定见 bugs.md
-- 编码 commit: `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`；修复轮 `fc78cf4c5`(BUG-002) + `4030d27e2`(现场保全) + `1ed9e1566`(cluster 批次) + `1b864b88f`(补测) + `df2d1d93a`(PRD 8-6)
-- 测试 commit: `48a91e60c` + `0b78374aa` + `7f54bf982` + `2c151abb9`（Tester 补测 13 例）
+- 状态: TEST_DONE（第 2 轮 Tester 复测：BUG-001/002/003 全部已修复，无 `待修复` 遗留；新发现 BUG-005 由本 Tester 当场补测闭环）
+- 编码 commit: `f34beed2b` + `68ee8b01a` + `48a91e60c` + `0b78374aa` + `7f54bf982`；修复轮 `fc78cf4c5`(BUG-002) + `4030d27e2`(现场保全) + `1ed9e1566`(cluster 批次) + `1b864b88f`(补测) + `df2d1d93a`(PRD 8-6) + `3db6c0091`(rustfmt)
+- 测试 commit: `48a91e60c` + `0b78374aa` + `7f54bf982` + `2c151abb9`（Tester 第 1 轮补测 13 例）+ `b9361b9aa` + `cc826c5ec`（Tester 第 2 轮补测 6 例 ⇒ 全套 369）
 - 合并 commit: —
-- 代理: w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）
+- 代理: w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）/ w2b-overview-tester-2（第 2 轮复测，TEST_DONE）
 - Worktree: .worktrees/datazen-redis-overview
 - 分支: feature/redis-overview
-- 心跳: 2026-09-22 12:25
+- 心跳: 2026-09-22 13:25
 
 # redis-overview 轨道台账
 
@@ -197,4 +197,58 @@
 1. **`ops_workbench.rs` 1066 行**超 800 行推荐线（保全 commit 时已 905+）；候选拆分为 `ops_workbench` 子模块（大 key 字段读一节自包含），是否拆由第 2 轮 Tester/协调者裁定，本棒未动刀（避免与复测窗口撞车）。
 2. `ClusterConnection::route_pipeline` 真集群行为与既有 `route_command` 同属【留待 R 回归】（jsdom/单测只能证形状，见 `cluster_topology.rs:421` 注记）。
 3. redis 依赖升级核查（`send_packed_commands` 迁移，hub 任务 #57）时须连带复核 `pipeline_at_slot` 的折叠回退是否仍必要。
-4. 非 en.ts 的 9 语言词条（`redis.overview.memory.bigKeyGone` / `redis.overview.typeUnknown` 两个新 key）留待发布前 i18n-sync 回合（N-3 口径）。
+4. 非 en.ts 的 9 语言词条（`redis.overview.memory.bigKeyGone` / `redis.overview.typeUnknown` 两个新 key）留发布前 i18n-sync 回合（N-3 口径）。
+
+## 第 2 轮 Tester 复测（全新实例 `w2b-overview-tester-2`）· 2026-09-22 13:00–13:25
+
+判定：**TEST_DONE**。门禁见上方「第 2 轮 Tester 门禁实测」（五项全绿、Coder 自述数字逐项吻合、0 虚报）。三条 Bug 的复测结论与证据写在 `bugs.md` 对应条目下（BUG-001/002/003 → `已修复`，BUG-004 → 复跑绿确认闭环）。测试 commit：`b9361b9aa`（TTL 四态 + 徽标 tone class，5 例）、`cc826c5ec`（maxmemory 无 human 形制回退，1 例）⇒ 套件 **369 例 / 39 files 全绿**。
+
+### 变异复验（6 项：Coder 点名 3 + 本 Tester 自选 3；每次注入后 `git checkout HEAD --` 还原，全程 `git diff` 最终为空）
+
+| # | 注入的破坏 | 目标 | 实测 | 结论 |
+|---|---|---|---|---|
+| **C1** | 删掉 cluster 批次被折叠拒绝后的 `routed_sequential` 回退（`pipeline_at_slot(...).await?` 直取） | 逐字段降级契约 | Rust **1 例红**：`cluster_rejected_field_degrades_via_per_command_replay_not_batch_error` | **杀掉**。被拒 `TYPE` 不再拖垮整条 `memory_sample` |
+| **C2** | `bigKeyTtlText` 四臂塌成「非正数一律 `—`」 | 屏 A TTL 列 + 裁定 8-6 的 -1/-2 可区分 | 存量 **363 例全绿 = 变异存活** | **缺口 → 已补测**：注入态跑新 5 例 ⇒ `2 failed`（`expected '—' to be 'redis.noExpiry'`、`... to be 'redis.overview.memory.bigKeyGone'`）⇒ 还原后全绿 → 登记 **BUG-005（本 Tester 已闭环）** |
+| **C3** | 断掉 `keyType` 透传（`pushBrowseEntry` 只传 `key`/`dbIndex`） | BUG-001 类型链路写入端 | **1 例红**：`writes history only for a jump that actually landed`（`[…,null]` ≠ `[…,'hash']`） | **杀掉**。BUG-001 的修复被测住而非形式补齐 |
+| **C4** | cluster 分支改回 `routed_sequential` 直取（3 单发/键） | 「每键一次寻址批次 = N 往返」口径 | Rust **2 例红**：`cluster_..._is_one_addressed_batch_per_key`（`assertion failed: one batch per key`）+ 重放形状断言 | **杀掉** ⇒ 往返口径确实被测试钉住，非注释宣称 |
+| **C5** | `parse_memory_sample_fields` 的 `type_reply_says_absent` 判定取反 | 键消失/在场识别（四种空态可区分） | Rust **8 例红**（含 `memory_sample_reports_a_key_deleted_after_sampling_as_missing`、两条 cluster 例、单节点整批例） | **杀掉**，且证明该面覆盖密度充足 |
+| **C6** | 单节点 `chunks(MEMORY_SAMPLE_KEYS_PER_PIPELINE)` → `chunks(1)` | `ceil(keys/256)` 批读口径 / 屏 A Top-5=1 次 | Rust **3 例红**（`one_round_trip_for_the_whole_sample`、`scales_by_chunk_not_by_key`、整链 `memory_sample` 例） | **杀掉** |
+| **M1 复跑** | `useOverviewData` effect 内注入第 5 条 `scan_keys` | 屏 A「四条命令 / 零 SCAN」不变量 | **9 例红 / 3 份 spec**，与第 1 轮同量 | **仍封口**（且 `useOverviewData.ts` 本回合零 diff）⇒ 非 Major，未被放宽 |
+
+存活项合计 **1 条（C2）**，已由本 Tester 补测闭环；其余 6 项全部杀掉。
+
+### cluster 往返口径实测结论（独立核对，非采信自述）
+
+Coder 自述的两条 redis **0.27.6** 源码依据本 Tester **逐条查实**（读 `~/.cargo/registry/.../redis-0.27.6`，非推理）：
+
+1. `src/cluster_routing.rs` `RoutingInfo::for_routable` 的 match 臂里**没有** `MEMORY USAGE`/`OBJECT *` 专臂（`MEMORY`/`OBJECT` 只出现在 `Routable::command()` 的双词命令名拼装表里），故落 `_ => match r.arg_idx(1)` ⇒ `MEMORY USAGE <key>` 的「键」被读成 **`USAGE`**；`cluster_async/routing.rs:71` 的 `route_for_pipeline` 正是逐命令调 `for_routable` 取第一个 specific slot，槽不同即 `Err(CrossSlot)`。⇒ 「不能用普通 pipeline」成立。
+2. `cluster_async/mod.rs:678`：`try_pipeline_request` = `req_packed_commands(...).and_then(Value::extract_error_vec)` ⇒ 批内任一命令被拒**整批折叠成 Err**。⇒ 「保留 `routed_sequential` 重放以保住逐字段降级」成立，C1 红即其回归护栏。
+3. `route_pipeline(pipe, 0, count, SingleNodeRoutingInfo::SpecificNode(Route(slot, Master)))` 确实**显式指定节点**、绕开 ①，且三命令同键同槽 ⇒ 服务端不会 CROSSSLOT。
+
+**往返实测口径（jsdom/单测层，经 C4/C6 双向封口）**：单节点与 Sentinel = `ceil(keys/256)` 次 pipeline（屏 A Top-5 ⇒ **1 次**）；Cluster = **每键 1 次寻址批次 = N 次**，与原「每键一次 `MEMORY USAGE`」实现**持平、未退化**，仅被折叠拒绝的键额外 +3 单发。屏 A 前端仍是四条命令、零 SCAN。**真实集群下的往返数与 `route_pipeline` 行为仍属【留待 R 回归】**（单测只能证形状，与既有 `route_command` 同级）。
+
+### 第 2 轮规模裁定（`ops_workbench.rs` 超线）——本 Tester 独立判断：**非阻塞，但要还**
+
+- 事实：`ops_workbench.rs` **1070 行**（末 2 行是 `#[cfg(test)] mod tests;` ⇒ 生产体 **1068**），Coder 自述 1066 系 rustfmt 前口径。本修复轮 +224 行。
+- 同 crate 校准：`ops.rs` **1172**、`connect.rs` **1091** 已在它之上 ⇒ 本文件是 redis crate **第三大**，不是该 crate 的离群值；宿主 `src-tauri` 侧另有 1413 行的 `history_db.rs`。故 AGENTS.md 的 800 行「推荐线」在此 crate 已是**存量普遍状态**，若按「超线即阻塞」一刀切，本轨会比它继承的基线更冤。
+- 真正该登记的量问题：**`ops_workbench/tests.rs` 1602 行**才是该 crate 最大文件，且此前无人入账（见 bugs.md N-12）。
+- **裁定建议**：①**不构成阻塞**，不影响合并与本轨关账；②属**应当偿还的治理债**，建议协调者开一个**独立小收敛 commit（ housekeeping 级，不必单开整轨）**，因为拆分面已天然自洽：
+  - 首选切面 `ops_workbench/slot_routing.rs` —— `SlotRoutedConnection` trait + 两个 impl + `master_route`/`routed_single`/`routed_sequential`/`pipeline_raw`/`issue_batch`/`is_connection_level_failure`（≈200 行）。理由：这是 `type_distribution`、`key_object_info`、`memory_sample` **三条命令共用**的传输层，抽走后本文件降到 ≈870 行，且新加命令不会再往同一文件堆。
+  - 次选 `ops_workbench/memory_sample.rs` —— 本回合新增的「Big-key sample field read」一节（≈170 行，常量 + build/parse/fetch 完整自包含）。
+  - 同一次拆分必须连带把 `tests.rs` 里对应的 ≈400 行测试移成 `slot_routing/tests.rs` 等侧文件，否则 1602 行不动等于没治。
+  ③本 Tester **未动刀**（范围外，且会与复测窗口撞车）。
+
+### 【留待 R 回归】第 2 轮增量（R-1~R-7 原样保留，见上方第 1 轮清单）
+
+| # | 项 | 期望 | 状态 |
+|---|---|---|---|
+| R-8 | **真 cluster 下 `route_pipeline` 的批读行为**（并入 Coder 自报未做项 2） | 3 分片集群 + 跨槽 Top-5：每键 1 次往返（抓包/日志计数）、无 `CROSSSLOT`、无 `MEMORY USAGE` 被投到 `slot("USAGE")` 引发的 `refresh_slots` 风暴 | 【留待 R 回归】单测只能证形状 |
+| R-9 | **真 cluster 下折叠拒绝的重放代价** | ACL 拒 `TYPE` 时该键 +3 单发、其余键不受影响、`memory_sample` 整体不 failed | 【留待 R 回归】依赖 R-8 环境 |
+| R-10 | 屏 A 大 key 行**四列真值** | `TYPE`/`PTTL` 与服务端一致；采样与读字段之间删键 ⇒ 该行 TTL 列具名「已消失」且整行不报错（对应 C5 钉住的分支 + BUG-005 新钉的文本） | 【留待 R 回归】jsdom 用 fixture |
+| R-11 | 两个新 i18n key 的 9 语言 | 发布前 `i18n-sync` 补齐 `redis.overview.memory.bigKeyGone` / `redis.overview.typeUnknown`（开发期只 `en.ts`，N-3/N-13） | 【留待发布前回合】 |
+
+### 本 Tester 纪律与限制自述
+
+- 全程未跑：`pnpm install` / `pnpm build` / `pnpm e2e` / `pnpm tauri:build:*` / 裸 `cargo build`；未改生产代码（6 次变异注入全部 `git checkout HEAD --` 还原，最终 `git diff HEAD --stat` 为空）；未碰 `ui/kv-bar/**`、宿主 `src/**`、`hub.md`；未提交 gitignored codegen 或 `Cargo.lock`。
+- `pnpm test:unit:drivers` 仍受 verify-deps 限制（第 1 轮注①口径不变），按指令改跑同一命令体 `npx vitest run --config vitest.drivers.config.ts`。
+- 新增断言零可见英文字面量：只断 `data-*`、className token、i18n key、破折号与服务端 token，以及用 `formatSize()` 同源比对而非钉死格式化字符串。
