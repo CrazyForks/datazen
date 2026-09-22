@@ -13,12 +13,14 @@
 
 use datazen_driver_api::DriverError;
 use redis::AsyncCommands;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::connect::Topology;
 use crate::ops_tree_budget::{tree_scan_budget, ScanBudget};
-use crate::ops_tree_scan::{fetch_key_meta, fetch_key_values, read_dbsize, scan_budgeted, PageKey};
+use crate::ops_tree_scan::{
+    fetch_key_meta, fetch_key_values, read_dbsize, scan_budgeted, KeyMeta, PageKey, ValueFields,
+};
 
 /// Default separator: colon.
 const DEFAULT_SEP: &str = ":";
@@ -204,28 +206,47 @@ where
         let metas = fetch_key_meta(conn, &leaf_keys, with_memory, topology)
             .await
             .map_err(DriverError::QueryFailed)?;
-        let mut rows: Vec<(String, crate::ops_tree_scan::KeyMeta)> =
-            leaf_keys.into_iter().zip(metas).collect();
-        // A key the server now says is gone is not a child; an *unreadable*
-        // reply is (`KeyMeta::absent`), so a degraded batch can never shrink a
-        // level.
-        rows.retain(|(_, meta)| !meta.absent);
-        if no_ttl_only {
-            rows.retain(|(_, meta)| meta.ttl == -1);
+        // A batch answering with the wrong number of rows is a server/transport
+        // defect, not data — warn in release builds too, so the row/leaf
+        // agreement this function relies on is never debug-only.
+        if metas.len() != leaf_keys.len() {
+            tracing::warn!(
+                rows = metas.len(),
+                leaves = leaf_keys.len(),
+                "redis list_children: meta batch length differs from leaf count"
+            );
         }
 
-        let items: Vec<PageKey> = rows
-            .iter()
-            .map(|(key, meta)| PageKey {
-                key: key.clone(),
+        // Attributes join to children **by key, never by position**
+        // (redis-tree-backend-BUG-001): shortening or reordering `rows` before
+        // the join used to shift type/TTL/size onto the next key's slot.
+        let mut attrs: HashMap<String, (KeyMeta, ValueFields)> = HashMap::new();
+        let mut gone: HashSet<String> = HashSet::new();
+        let mut items: Vec<PageKey> = Vec::new();
+        for (key, meta) in leaf_keys.into_iter().zip(metas) {
+            // A key the server now says is gone is not a child; an *unreadable*
+            // reply is (`KeyMeta::absent` false), so a degraded batch can never
+            // shrink a level.
+            if meta.absent {
+                gone.insert(key);
+                continue;
+            }
+            items.push(PageKey {
                 key_type: meta.key_type.clone(),
-            })
-            .collect();
+                key: key.clone(),
+            });
+            attrs.insert(key, (meta, ValueFields::default()));
+        }
         let values = fetch_key_values(conn, &items, topology)
             .await
             .map_err(DriverError::QueryFailed)?;
+        for (item, value) in items.iter().zip(values) {
+            if let Some(slot) = attrs.get_mut(&item.key) {
+                slot.1 = value;
+            }
+        }
 
-        let mut leaf_iter = rows.into_iter().zip(values.into_iter());
+        let mut filled = 0usize;
         for child in children.iter_mut() {
             if let ChildEntry::Key {
                 key,
@@ -235,20 +256,40 @@ where
                 mem_bytes,
             } = child
             {
-                if let Some(((row_key, meta), value)) = leaf_iter.next() {
-                    debug_assert_eq!(&row_key, key, "leaf rows must keep page order");
-                    *key_type = meta.key_type;
+                if let Some((meta, value)) = attrs.get(key) {
+                    *key_type = meta.key_type.clone();
                     *ttl = meta.ttl;
                     *logical_len = value.logical_len;
                     *mem_bytes = meta.mem_bytes;
+                    filled += 1;
                 }
             }
         }
-        // More resolved rows than leaf slots can only mean a bug above; an
-        // unfilled row keeps its placeholder shape rather than a wrong value.
-        if leaf_iter.next().is_some() {
-            tracing::warn!("redis list_children: resolved more leaves than child slots");
+        // Row/slot agreement is checked in release as well: a `debug_assert`
+        // alone compiles away exactly where a silent mislabelling would ship
+        // (the old "more rows than slots" warn covered only one direction).
+        debug_assert_eq!(
+            filled,
+            attrs.len(),
+            "every resolved leaf row must bind to its own slot"
+        );
+        if filled != attrs.len() {
+            tracing::warn!(
+                filled,
+                resolved = attrs.len(),
+                "redis list_children: resolved leaf rows and child slots disagree"
+            );
         }
+
+        // Filters run **after** attributes are attached (the baseline order):
+        // the surviving leaves are exactly the ones the server described, so
+        // `noTtlOnly` can no longer shift properties across keys.
+        children.retain(|child| match child {
+            ChildEntry::Key { key, ttl, .. } => {
+                !gone.contains(key) && (!no_ttl_only || *ttl == -1)
+            }
+            ChildEntry::Folder { .. } => true,
+        });
     }
 
     tracing::info!(

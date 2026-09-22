@@ -1727,16 +1727,18 @@ async fn test_tester_scan_keys_no_ttl_only_keeps_only_permanent_keys() {
     assert_eq!(page.entries[0].ttl, -1, "and it keeps its OWN ttl");
 }
 
-/// [tester pin, committed RED-by-ignore] `list_children` refills leaf attributes
-/// positionally after dropping rows, so the `noTtlOnly` filter (and any key that
-/// vanishes between SCAN and the meta batch) mislabels the whole tail. This
-/// passes once redis-tree-backend-BUG-001 is fixed — remove the `#[ignore]` then.
+/// Regression guard for redis-tree-backend-BUG-001: `list_children` fills leaf
+/// attributes **by key**, so the `noTtlOnly` filter (a shortened row set) can
+/// never shift type/TTL/size onto a neighbour's slot.
 #[tokio::test]
-#[ignore = "RED: redis-tree-backend-BUG-001 — list_children fills leaves by position, so a dropped row shifts every later key's type/TTL/size"]
 async fn test_tester_list_children_no_ttl_only_keeps_rows_aligned() {
     let mut conn = TreeConn::new();
     conn.state().dbsize = 6;
-    for (key, ttl, len) in [("app:a", -1i64, 1i64), ("app:b", 7, 2), ("app:c", 9, 3)] {
+    // a and c never expire (TTL -1) so `noTtlOnly` must keep both; b carries an
+    // expiry and must be the one dropped. Each surviving key has a distinct
+    // logical length (1 vs 3), so a one-slot shift is visible rather than
+    // silently plausible.
+    for (key, ttl, len) in [("app:a", -1i64, 1i64), ("app:b", 7, 2), ("app:c", -1, 3)] {
         let mut st = conn.state();
         st.types.insert(key.to_string(), "string".to_string());
         st.ttls.insert(key.to_string(), ttl);
@@ -1792,10 +1794,10 @@ async fn test_tester_list_children_no_ttl_only_keeps_rows_aligned() {
     );
 }
 
-/// The same defect reached through the other door: a key that expires between
-/// the SCAN and the meta batch is dropped by `absent`, with identical fallout.
+/// Regression guard for redis-tree-backend-BUG-001, second door: a key that
+/// expires between the SCAN and the meta batch is dropped as `absent`, which
+/// used to shift every later leaf's attributes by one slot.
 #[tokio::test]
-#[ignore = "RED: redis-tree-backend-BUG-001 — a leaf dropped as `absent` shifts every later leaf's attributes"]
 async fn test_tester_list_children_survives_a_key_that_vanished_mid_page() {
     let mut conn = TreeConn::new();
     conn.state().dbsize = 6;
