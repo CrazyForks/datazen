@@ -396,8 +396,9 @@ async fn cross_database_reads_never_move_the_session() {
         "the foreign database has an open pool and must be reported: {open:?}"
     );
     assert!(
-        open.iter().any(|d| d == &cfg.database_b),
-        "the handle's own database is open too: {open:?}"
+        !open.iter().any(|d| d == &cfg.database_b),
+        "the handle's own database is the session's primary pool, not a \
+         releasable per-database resource, so it must not be reported: {open:?}"
     );
 
     // ── closing the foreign database pool drops only that pool ──
@@ -418,8 +419,8 @@ async fn cross_database_reads_never_move_the_session() {
         "a closed database must stop being reported as open: {open_after:?}"
     );
     assert!(
-        open_after.iter().any(|d| d == &cfg.database_b),
-        "closing a foreign database must not affect the handle's own: {open_after:?}"
+        !open_after.iter().any(|d| d == &cfg.database_b),
+        "closing a foreign database must not surface the handle's own: {open_after:?}"
     );
     let schema_after_close = driver
         .get_table_schema(&handle, &probe, &cfg.database_a, Some("public"))

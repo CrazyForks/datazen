@@ -295,27 +295,25 @@ impl PostgresDriver {
         }
     }
 
-    /// The connection's own database plus every foreign-database pool still
-    /// cached for this handle. This is what the navigator marks as "open".
+    /// Every foreign-database pool still cached for this handle.
+    ///
+    /// The handle's own database is deliberately excluded. It is the session's
+    /// primary pool, so it is already implied by the connection being up;
+    /// [`Self::close_database_pool`] refuses to release it individually; and
+    /// [`Self::resolve_connect_database`] falls back to the literal `postgres`
+    /// when the config names no database — so reporting it made every freshly
+    /// connected session mark a database the user never opened. What is left is
+    /// exactly the set `close_database` can act on.
     pub(crate) async fn open_databases_impl(
         &self,
         handle: &ConnectionHandle,
     ) -> Result<Vec<String>, DriverError> {
-        let mut open: Vec<String> = self
-            .active_databases
-            .read()
-            .await
-            .get(&handle.pool_id)
-            .cloned()
-            .into_iter()
-            .collect();
-
         let cache = self.database_pools.read().await;
-        for (owner, database) in cache.keys() {
-            if owner == &handle.pool_id {
-                open.push(database.clone());
-            }
-        }
+        let mut open: Vec<String> = cache
+            .keys()
+            .filter(|(owner, _)| owner == &handle.pool_id)
+            .map(|(_, database)| database.clone())
+            .collect();
         open.sort();
         open.dedup();
         Ok(open)

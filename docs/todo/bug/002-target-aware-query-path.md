@@ -132,13 +132,17 @@ MySQL 的 `get_tables` 对不存在的库此前返回**空列表**（`informatio
 ### 3.6 连接树显示库打开状态（现象 3）
 
 - 驱动契约新增 `open_databases(handle) -> Vec<String>`（默认 `Ok(vec![])`）：
-  PG = 句柄自己的库 + 缓存的外库池；MySQL = `active_databases`；其余默认空。
+  PG = 缓存的外库池（句柄自己的库**不算**，见下）；MySQL / 其余默认空。
 - 新增 IPC `get_open_databases(dbSessionId)`。
 - 前端 `useNavigatorDbState` 维护 `openDbs`，在**读表之后**、**连接刷新之后**重新拉取；
   "关闭数据库连接" / "删除数据库" 走 `clearDbLocalCache`，**立即**把该库从打开集合移除。
-- 数据库节点渲染 `[data-db-open="true|false"]` 小圆点（实心=打开，空心=已关闭）。
-- **驱动不上报（`null`）时不渲染任何标记**，而不是谎称"已关闭" —— 否则等于替驱动宣称
-  一个它从未提供的事实。
+- 数据库节点**只在打开时**渲染 `[data-db-open="true"]` 实心绿点；关闭的库**不渲染任何标记**
+  （不再有"空心圈"表示已关闭 —— 它只是重复了"没有圆点"这件事，却暗示树知道池状态）。
+- 判定的两个来源：用户**在树里展开了**该库（`expandedDbs`，注意不能用 `isDbExpanded` ——
+  全局搜索会强制展开命中项，那不算"打开"），或驱动**仍持有可释放的** per-database 资源。
+- **句柄自己的库不计入**：它是会话主池（"已连接"本身已表达），`close_database` 明确拒绝单独
+  释放它，而 `database` 为空时 PG 会回退到字面量 `postgres` —— 算进去会导致**每次刚连上就有一个
+  用户从没打开过的库亮绿点**。
 
 ## 4. 验证
 
@@ -146,7 +150,7 @@ MySQL 的 `get_tables` 对不存在的库此前返回**空列表**（`informatio
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `packages/drivers/postgres/tests/postgres_cross_database.rs` | 带目标读外库成功；**同一条语句无目标读失败**；事务内跨库报 `TransactionError`；`open_databases` 随关闭收敛且不影响句柄自己的库 |
+| `packages/drivers/postgres/tests/postgres_cross_database.rs` | 带目标读外库成功；**同一条语句无目标读失败**；事务内跨库报 `TransactionError`；`open_databases` 随关闭收敛，且**句柄自己的库从不上报**（它是会话主池、`close_database` 无法单独释放） |
 | `packages/drivers/mysql/tests/mysql_cross_database.rs::connection_without_a_default_database_needs_an_explicit_target` | **无默认库**连接下未限定语句复现 `1046`，带目标语句成功 |
 | `packages/drivers/mysql/tests/mysql_cross_database.rs::cross_database_reads_use_qualified_names_not_use` | 限定名跨库读；未知库报错；`qualified_sql` 确实内联了库名 |
 

@@ -542,19 +542,13 @@ impl DatabaseDriver for MysqlDriver {
         })
     }
 
-    /// MySQL serves every database from one pool by qualifying names, so the
-    /// only database that is genuinely "open" is the connection's own. It is
-    /// still worth reporting: the UI marks it, and `close_database` correctly
-    /// refuses to close it individually.
-    async fn open_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
-        Ok(self
-            .active_databases
-            .read()
-            .await
-            .get(&handle.pool_id)
-            .cloned()
-            .into_iter()
-            .collect())
+    /// MySQL serves every database from one pool by qualifying names, so it
+    /// holds no per-database resource at all: `close_database` can never release
+    /// one. Reporting the connection's own database here would make the tree
+    /// mark a database the user never opened, so the default empty report
+    /// applies — the tree's own expand state is what shows a database as open.
+    async fn open_databases(&self, _handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
+        Ok(Vec::new())
     }
 
     async fn disconnect(&self, handle: ConnectionHandle) -> Result<(), DriverError> {

@@ -329,21 +329,17 @@ export function NavigatorTreeRow({
           />
           <span className="selectable min-w-0 truncate">{row.dbName}</span>
           {row.loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-fg-muted" />}
-          {!row.loading && row.isOpen !== null && (
-            // Open state comes from the backend (which databases still hold a
-            // pool), so the marker tells the user what "Close Database
-            // Connection" would actually release. `null` means the driver does
-            // not report per-database resources and no marker is shown.
+          {!row.loading && row.isOpen && (
+            // Only open databases carry a marker: a solid green dot meaning the
+            // database is open (expanded, or still holding a pool that "Close
+            // Database Connection" would release). A closed database shows
+            // nothing — an empty ring on every closed node said no more than
+            // the absence of a dot, while implying the tree knew more than it did.
             <span
-              data-db-open={row.isOpen ? 'true' : 'false'}
-              title={row.isOpen ? t('schemaTree.databaseOpen') : t('schemaTree.databaseClosed')}
-              aria-label={
-                row.isOpen ? t('schemaTree.databaseOpenAria') : t('schemaTree.databaseClosedAria')
-              }
-              className={cn(
-                'h-1.5 w-1.5 shrink-0 rounded-full',
-                row.isOpen ? 'bg-green-500' : 'border border-fg-muted/60',
-              )}
+              data-db-open="true"
+              title={t('schemaTree.databaseOpen')}
+              aria-label={t('schemaTree.databaseOpenAria')}
+              className={cn('h-1.5 w-1.5 shrink-0 rounded-full bg-green-500')}
             />
           )}
         </button>

@@ -344,7 +344,7 @@ Transfer / Sync / Schema-Diff 端点），本方案**保留**该能力，但连�
 | ⑥ 能力位 | ✅ | `DriverCapabilities` 增加 `supports_offset` + `has_schema_level`（Rust `db/registry.rs` / TS `types/index.ts`）；前端 `src/lib/driverCapabilities.ts` 消费运行时值；`DatabaseTypeMeta.supportsOffset` 手工镜像删除 |
 | ⑦ git 驱动 | ✅ | 三仓库已 push（kiwi `7e927cf` / superset `9690044` / olap `7096c87`）；`drivers-registry.json` 的 `olap` `ref` 已钉到 `7096c873` |
 | ⑧ 目标感知查询路径 | ✅ | 新增 `qualified_sql` + `query_at` / `query_multi_at` / `execute_at` / `query_with_params_at` / `query_stream_at`；PG 覆写为按库选池；host 数据网格 / 编辑器 / 导出 / 同步 / 传输 / 备份 / 结构比对全部透传目标 |
-| ⑨ 库打开状态 | ✅ | 新增 `open_databases`（driver-api 默认空）+ `get_open_databases` IPC；PG / MySQL 实现；连接树数据库节点显示打开标记 |
+| ⑨ 库打开状态 | ✅ | 新增 `open_databases`（driver-api 默认空）+ `get_open_databases` IPC；PG 实现（MySQL 一个池服务所有库，无 per-database 资源可释放，按默认空上报）；连接树数据库节点仅在打开时显示实心绿点 |
 
 ### 13.2 与原方案的偏离
 
@@ -421,9 +421,12 @@ Transfer / Sync / Schema-Diff 端点），本方案**保留**该能力，但连�
    走目标库自己的池，**不报错**。
 2. **`SqlTarget::new(database, schema)`**：空串 / 纯空白一律视为"未给出"，避免"空选择"
    被解释成"会话默认"。
-3. **`open_databases`**：驱动报告"当前仍持有打开资源"的库集合（PG = 句柄自己的库 + 缓存的外库池；
-   MySQL = `active_databases`；其余默认空）。前端据此在连接树数据库节点上渲染打开标记；
-   `null`（驱动不上报）**不渲染任何标记**，而不是谎称"已关闭"。
+3. **`open_databases`**：驱动报告"仍持有**可释放的** per-database 资源"的库集合，即
+   `close_database` 能真正关掉的那些（PG = 缓存的外库池；MySQL / 其余默认空）。
+   句柄自己的库**不算**：它是会话主池（"已连接"本身已表达），`close_database` 明确拒绝单独释放它，
+   而 `database` 为空时 PG 会回退到字面量 `postgres` —— 把它算作已打开会让**每次刚连上就有一个
+   用户从没打开过的库亮绿点**。前端据此 + 树自身的展开状态在数据库节点上渲染标记：
+   **只有打开时才渲染实心绿点，关闭的库不渲染任何标记**（不再有"空心圈"表示已关闭）。
 4. **未知库报错**：MySQL 的 `get_tables` 对不存在的库此前返回空列表，与 PG 的报错行为不一致；
    现在也在 `information_schema.TABLES` 为空时回查 `SCHEMATA`，未知库报 `Unknown database`。
 
