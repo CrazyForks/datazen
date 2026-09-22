@@ -45,6 +45,15 @@ export interface PublishedKeyRead {
 export interface KeyObjectInfoView extends PublishedKeyRead {
   /** Re-read the current key (wired to the sidebar / status bar refresh action). */
   reload: () => void;
+  /**
+   * How many reads this slot has asked for, `reload` included.
+   *
+   * Exposed because the refresh button owns more than this hook's own command:
+   * the sidebar's `maxmemory_policy` row is read by a second effect (redis-kvbar-ui-BUG-003)
+   * and has to re-read together with the key attributes, so it keys off the
+   * attempt counter rather than duplicating the button's wiring.
+   */
+  attempt: number;
 }
 
 /**
@@ -203,5 +212,5 @@ export function useKeyObjectInfo(
   // Derived while rendering, so moving the selection invalidates the attributes
   // at once instead of waiting for the effect that runs after the paint.
   const published = publishRead(read, ownerOf(dbSessionId, dbIndex, key));
-  return { ...published, reload };
+  return { ...published, reload, attempt };
 }

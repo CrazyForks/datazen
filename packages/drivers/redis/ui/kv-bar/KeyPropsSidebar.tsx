@@ -48,7 +48,7 @@ export function RedisKeyPropsSidebar({
   const selectedKey = useKvSelectedKey(state);
   // Nothing is fetched while the drawer is collapsed: the slot stays mounted, so
   // `open` doubles as the request gate and a closed drawer costs no round trips.
-  const { info, loading, failed, reload } = useKeyObjectInfo(
+  const { info, loading, failed, reload, attempt } = useKeyObjectInfo(
     state,
     dbSessionId,
     dbIndex,
@@ -57,6 +57,12 @@ export function RedisKeyPropsSidebar({
   );
   const [policy, setPolicy] = useState<string | null>(null);
 
+  // `maxmemory_policy` rides along with the key read: the refresh button is one
+  // action, and a policy row that never re-reads would contradict the freq row
+  // the same click just refreshed (redis-kvbar-ui-BUG-003). `attempt` is that
+  // shared trigger. The previous value deliberately stays on screen while the
+  // re-read is open — it is a server-wide fact, not another key's attribute, so
+  // keeping it cannot mis-attribute anything (contrast BUG-001).
   useEffect(() => {
     if (!open) return;
     let stale = false;
@@ -66,7 +72,7 @@ export function RedisKeyPropsSidebar({
     return () => {
       stale = true;
     };
-  }, [open, dbSessionId]);
+  }, [open, dbSessionId, attempt]);
 
   if (!open) return null;
 

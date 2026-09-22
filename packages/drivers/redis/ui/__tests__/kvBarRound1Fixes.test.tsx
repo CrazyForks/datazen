@@ -385,3 +385,61 @@ describe('[fix:BUG-002] one round trip per key for the whole panel', () => {
     expect(keysRead()).toEqual(['shared-name', 'shared-name']);
   });
 });
+
+const POLICY_SECTIONS = (policy: string) => ({
+  sections: [{ name: 'Memory', entries: [{ key: 'maxmemory_policy', value: policy }] }],
+});
+
+function policyValue(container: HTMLElement): string | null {
+  return (
+    container
+      .querySelector('[data-attr="maxmemory-policy"] dd')
+      ?.getAttribute('data-value') ?? null
+  );
+}
+
+describe('[fix:BUG-003] the refresh action covers the policy row', () => {
+  it('re-reads maxmemory_policy together with the key attributes', async () => {
+    const relay = makeRelay();
+    commandInvoke.mockImplementation((_plugin: string, command: string) =>
+      Promise.resolve(command === 'key_object_info' ? info() : POLICY_SECTIONS('noeviction')),
+    );
+    const { container } = render(
+      <RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />,
+    );
+    act(() => relay.selectKey('user:1'));
+    await waitFor(() => expect(propsState(container)).toBe('ready'));
+    expect(policyValue(container)).toBe('noeviction');
+    expect(readsOf('info_filtered')).toBe(1);
+
+    // Measured before the fix: `key_object_info 1->2` while `info_filtered 1->1`,
+    // i.e. N clicks never re-read the eviction policy.
+    fireEvent.click(container.querySelector('[data-testid="redis-kv-props-refresh"]')!);
+    await waitFor(() => expect(readsOf('info_filtered')).toBe(2));
+    expect(readsOf('key_object_info')).toBe(2);
+    await waitFor(() => expect(propsState(container)).toBe('ready'));
+  });
+
+  it('shows the policy the server now reports, not the one from when it opened', async () => {
+    const relay = makeRelay();
+    let policyReads = 0;
+    commandInvoke.mockImplementation((_plugin: string, command: string) => {
+      if (command === 'key_object_info') return Promise.resolve(info({ freq: null }));
+      policyReads += 1;
+      return Promise.resolve(
+        POLICY_SECTIONS(policyReads === 1 ? 'noeviction' : 'allkeys-lfu'),
+      );
+    });
+    const { container } = render(
+      <RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />,
+    );
+    act(() => relay.selectKey('user:1'));
+    await waitFor(() => expect(policyValue(container)).toBe('noeviction'));
+
+    // The everyday flow: switch the server to LFU to explain `OBJECT FREQ`, then
+    // refresh. Both rows have to move together or the panel reads as lying.
+    fireEvent.click(container.querySelector('[data-testid="redis-kv-props-refresh"]')!);
+    await waitFor(() => expect(policyValue(container)).toBe('allkeys-lfu'));
+    expect(propsState(container)).toBe('ready');
+  });
+});
