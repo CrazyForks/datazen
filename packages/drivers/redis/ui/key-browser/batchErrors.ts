@@ -34,7 +34,9 @@ export const BATCH_FAILURE_ORDER: BatchFailureCode[] = [
 
 const CODE_PATTERNS: [BatchFailureCode, RegExp][] = [
   ['noAcl', /NOPERM|WRONGUSER|NOAUTH|ACL|unauthori[sz]ed/i],
-  ['network', /connection|closed|reset|broken pipe|i\/o|timed? out|timeout|cluster/i],
+  // `slot` covers `CROSSSLOT …` / `MOVED …`: a batch the cluster could not route
+  // as one unit, which is a transport-shape failure, not a per-key value problem.
+  ['network', /connection|closed|reset|broken pipe|i\/o|timed? out|timeout|cluster|slot/i],
   ['badValue', /WRONGTYPE|invalid|malformed|not an? int|out of range|value too large/i],
   ['keyGone', /doesn'?t exist|no such key|not exist|expired/i],
 ];
