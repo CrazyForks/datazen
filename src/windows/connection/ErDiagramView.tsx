@@ -28,6 +28,7 @@ import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
 import { buildErGraph, defaultCollapsedTables } from './er/buildErGraph';
+import { ErRelationLegend } from './er/ErRelationLegend';
 import {
   applyHoverToEdges,
   applyHoverToNodes,
@@ -71,7 +72,10 @@ function ErDiagramInner({
   const { t } = useI18n();
   const { fitView, zoomIn, zoomOut } = useReactFlow();
   const [schemas, setSchemas] = useState<TableSchema[]>([]);
-  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? true);
+  // Inference is opt-in: an unset value means off, and the legend's button turns
+  // it on for this and every other surface that reads the same setting.
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? false);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -251,6 +255,17 @@ function ErDiagramInner({
     // again from the relationships.
     setPinnedPositions(new Map());
   }, []);
+
+  const handleTogglePrediction = useCallback(
+    (enabled: boolean) => {
+      // Persisted, not page-local: the Settings → Editor switch shows the same
+      // value, so the two can never disagree about whether inference is on.
+      updateSettings({ enableFkPrediction: enabled }).catch((e: unknown) => {
+        console.error('Failed to update smart foreign key prediction:', e);
+      });
+    },
+    [updateSettings],
+  );
 
   const handleNodeMouseEnter = useCallback((_: unknown, node: Node) => {
     setHoveredTable(node.id);
@@ -504,21 +519,21 @@ function ErDiagramInner({
             <span>
               {t('erDiagram.relationCount').replace('{count}', String(stats.relationCount))}
             </span>
-            {/* Say how many were inferred: the total alone would present a guess
-                with the same weight as a constraint. */}
-            {stats.predictedCount > 0 && (
-              <>
-                <span className="text-edge">·</span>
-                <span
-                  className="text-warning"
-                  title={t('erDiagram.predictedHint')}
-                  data-testid="er-predicted-count"
-                >
-                  {t('erDiagram.predictedCount').replace('{count}', String(stats.predictedCount))}
-                </span>
-              </>
-            )}
           </div>
+        </Panel>
+        {/* Bottom-centre: the corners are already taken by the search box, the
+            stats, React Flow's zoom controls and the mini-map, and a legend that
+            sat under one of them would be unreadable. */}
+        <Panel position="bottom-center">
+          {/* The key to the canvas's own lines, next to the button that adds the
+              inferred ones — so "what is this amber dashed line" is answered
+              where the question is asked. */}
+          <ErRelationLegend
+            declaredCount={stats.declaredCount}
+            predictedCount={stats.predictedCount}
+            predictionEnabled={fkPredictionEnabled}
+            onTogglePrediction={handleTogglePrediction}
+          />
         </Panel>
       </ReactFlow>
     </div>

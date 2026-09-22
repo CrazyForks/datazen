@@ -84,6 +84,53 @@ async function ensureErDiagramVisible() {
   );
 }
 
+/** `data-id` of an inferred edge between the two tables, or null when absent. */
+async function findPredictedEdgeId(): Promise<string | null> {
+  return browser.execute(
+    (member: string, owner: string) => {
+      const edges = Array.from(document.querySelectorAll('.react-flow__edge'));
+      const match = edges.find((el) => {
+        const id = el.getAttribute('data-id') ?? '';
+        return id.startsWith('predicted-') && id.includes(member) && id.includes(owner);
+      });
+      return match?.getAttribute('data-id') ?? null;
+    },
+    PRED_MEMBER,
+    PRED_OWNER,
+  );
+}
+
+/**
+ * Drive the ER page's own prediction button to `enabled` and confirm it took.
+ *
+ * The button and Settings → Editor are the same persisted setting, so the state
+ * is read back rather than assumed: the store only flips after the save returns.
+ */
+async function setErPrediction(enabled: boolean): Promise<void> {
+  const toggle = await $('[data-testid="er-diagram-toggle-prediction"]');
+  await toggle.waitForClickable({ timeout: 10000 });
+  if ((await toggle.getAttribute('aria-pressed')) !== String(enabled)) {
+    await toggle.click();
+  }
+  await browser.waitUntil(
+    async () => (await toggle.getAttribute('aria-pressed')) === String(enabled),
+    {
+      timeout: 10000,
+      timeoutMsg: `ER 智能预测开关未切换到 ${enabled ? '开启' : '关闭'}`,
+    },
+  );
+  await browser.pause(600);
+}
+
+/** Computed dash pattern of a rendered edge, or null when the edge is absent. */
+async function edgeDashOf(edgeId: string): Promise<string | null> {
+  return browser.execute((id: string) => {
+    const el = document.querySelector(`.react-flow__edge[data-id="${id}"]`);
+    const path = el?.querySelector('path');
+    return path ? getComputedStyle(path).strokeDasharray : null;
+  }, edgeId);
+}
+
 describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
   let mainWindow: string;
 
@@ -247,7 +294,7 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
     await captureJourneyStep('er-table-selected', 0, true);
   });
 
-  it('ER-009: 无外键约束的两张表也应画出推测关系，且与声明关系视觉可区分', async () => {
+  it('ER-009: 图例区分声明与推测关系，页面按钮可开启智能预测', async () => {
     await browser.switchToWindow(mainWindow);
     await ensureErDiagramVisible();
 
@@ -264,40 +311,55 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
       { timeout: 15000, timeoutMsg: '推测关系涉及的表未出现在 ER 图中' },
     );
 
-    // Edges are keyed by the engine's candidate id, which is prefixed so an
-    // inferred relationship is identifiable without reading styles.
-    const predictedEdgeId = await browser.execute(
-      (member: string, owner: string) => {
-        const edges = Array.from(document.querySelectorAll('.react-flow__edge'));
-        const match = edges.find((el) => {
-          const id = el.getAttribute('data-id') ?? '';
-          return id.startsWith('predicted-') && id.includes(member) && id.includes(owner);
-        });
-        return match?.getAttribute('data-id') ?? null;
-      },
-      PRED_MEMBER,
-      PRED_OWNER,
+    // ── The legend is the page's own key to its lines ──
+    const legend = await $('[data-testid="er-diagram-legend"]');
+    await legend.waitForDisplayed({ timeout: 10000 });
+    expectTrue(
+      await $('[data-testid="er-legend-declared"]').isDisplayed(),
+      '图例未说明数据库声明的外键',
     );
-    expectTrue(predictedEdgeId !== null, '未画出推测出的 ER 关系');
+    expectTrue(
+      await $('[data-testid="er-legend-predicted"]').isDisplayed(),
+      '图例未说明智能推测的关系',
+    );
+    // The inferred swatch must be dashed, matching the edge it describes.
+    const swatchDash = await browser.execute(() => {
+      const line = document.querySelector('[data-testid="er-legend-predicted"] line');
+      return line?.getAttribute('stroke-dasharray') ?? null;
+    });
+    expectTrue(!!swatchDash, '图例中的推测连线未画成虚线');
+    await captureJourneyStep('er-legend', 0, true);
+
+    // ── Prediction is opt-in: off means no inferred edge is drawn ──
+    await setErPrediction(false);
+    expectTrue((await findPredictedEdgeId()) === null, '关闭智能预测后仍画出了推测关系');
+
+    // ── The page's own button turns it on, with no trip to Settings ──
+    await setErPrediction(true);
+    await browser.waitUntil(async () => (await findPredictedEdgeId()) !== null, {
+      timeout: 15000,
+      timeoutMsg: '开启智能预测后未画出推测关系',
+    });
+    const predictedEdgeId = (await findPredictedEdgeId()) as string;
     await captureJourneyStep('er-predicted-relation', 0, true);
 
     // An inference must not look like a constraint: the declared edges are solid
     // and animated, the inferred one dashed and still.
-    const dashed = await browser.execute((edgeId: string) => {
-      const el = document.querySelector(`.react-flow__edge[data-id="${edgeId}"]`);
-      const path = el?.querySelector('path');
-      return path ? getComputedStyle(path).strokeDasharray : null;
-    }, predictedEdgeId as string);
+    const dashed = await edgeDashOf(predictedEdgeId);
     expectTrue(
       dashed !== null && dashed !== 'none' && dashed.length > 0,
       `推测关系未使用虚线样式（strokeDasharray=${String(dashed)}）`,
     );
 
-    // The stats must disclose how many were inferred rather than folding them
+    // The legend must disclose how many were inferred rather than folding them
     // into the declared total.
     const inferredCount = await $('[data-testid="er-predicted-count"]');
     await inferredCount.waitForDisplayed({ timeout: 10000 });
-    expectTrue(/\d/.test(await inferredCount.getText()), '统计面板未显示推测关系数量');
+    expectTrue(/[1-9]/.test(await inferredCount.getText()), '图例未显示推测关系数量');
+
+    // ── Leave the setting off, which is also its default ──
+    await setErPrediction(false);
+    expectTrue((await findPredictedEdgeId()) === null, '关闭智能预测后仍画出了推测关系');
   });
 
   it('ER-010: 真实渲染的节点之间不得重叠', async () => {

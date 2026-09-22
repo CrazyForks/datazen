@@ -4,6 +4,7 @@ import type { TableSchema } from '../../../types';
 import { fitEdgeLabel } from './interactionState';
 import { layoutErGraph } from './layoutErGraph';
 import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
+import { ER_DECLARED_COLOR, ER_PREDICTED_COLOR, ER_PREDICTED_DASH } from './relationStyle';
 
 /** How an edge between two tables was established. */
 export type ErRelationKind = 'declared' | 'predicted';
@@ -42,9 +43,6 @@ export function defaultCollapsedTables(schemas: readonly TableSchema[]): Set<str
 
 /** Shared empty set, so the default argument does not allocate per call. */
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
-
-const DECLARED_COLOR = 'var(--c-accent, #3b82f6)';
-const PREDICTED_COLOR = 'var(--c-warning, #e39a27)';
 
 /**
  * Build the ER diagram's nodes and edges.
@@ -140,8 +138,8 @@ export function buildErGraph(
         target: fk.referencedTable,
         type: 'smoothstep',
         animated: true,
-        style: { stroke: DECLARED_COLOR },
-        markerEnd: { type: MarkerType.ArrowClosed, color: DECLARED_COLOR },
+        style: { stroke: ER_DECLARED_COLOR },
+        markerEnd: { type: MarkerType.ArrowClosed, color: ER_DECLARED_COLOR },
         labelStyle: { fontSize: 10, fill: 'var(--color-fg-muted, #888)' },
         // A composite foreign key spans several rows; the edge meets the first
         // one, since a line has only one endpoint.
@@ -167,9 +165,9 @@ export function buildErGraph(
       // Not animated and dashed: this relationship is inferred, and the diagram
       // must not present it with the same certainty as a constraint.
       animated: false,
-      style: { stroke: PREDICTED_COLOR, strokeDasharray: '4 3' },
-      markerEnd: { type: MarkerType.ArrowClosed, color: PREDICTED_COLOR },
-      labelStyle: { fontSize: 10, fill: PREDICTED_COLOR },
+      style: { stroke: ER_PREDICTED_COLOR, strokeDasharray: ER_PREDICTED_DASH },
+      markerEnd: { type: MarkerType.ArrowClosed, color: ER_PREDICTED_COLOR },
+      labelStyle: { fontSize: 10, fill: ER_PREDICTED_COLOR },
       data: {
         kind: 'predicted' satisfies ErRelationKind,
         score: relation.score,

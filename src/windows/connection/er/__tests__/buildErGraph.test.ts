@@ -3,6 +3,7 @@ import { buildErGraph, defaultCollapsedTables } from '../buildErGraph';
 import type { ErPredictedRelation } from '../buildErGraph';
 import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from '../nodeMetrics';
 import { ER_LAYOUT_MARGIN } from '../layoutErGraph';
+import { ER_DECLARED_COLOR, ER_PREDICTED_COLOR, ER_PREDICTED_DASH } from '../relationStyle';
 import type { TableSchema } from '../../../../types';
 
 function makeSchema(
@@ -526,6 +527,19 @@ describe('buildErGraph with inferred relationships', () => {
     expect(inferred.animated).toBe(false);
     expect(inferred.style?.stroke).not.toBe(declared.style?.stroke);
     expect(inferred.markerEnd).toBeTruthy();
+  });
+
+  it('draws each kind with the stroke the legend documents', () => {
+    // The legend renders these same constants, so this is what keeps the key and
+    // the canvas from drifting apart.
+    const { edges } = buildErGraph(allSchemas, undefined, predicted);
+    const declared = edges.find((e) => e.data?.kind === 'declared')!;
+    const inferred = edges.find((e) => e.data?.kind === 'predicted')!;
+
+    expect(declared.style?.stroke).toBe(ER_DECLARED_COLOR);
+    expect(declared.style?.strokeDasharray).toBeUndefined();
+    expect(inferred.style?.stroke).toBe(ER_PREDICTED_COLOR);
+    expect(inferred.style?.strokeDasharray).toBe(ER_PREDICTED_DASH);
   });
 
   it('marks inferred columns as foreign keys on the node', () => {

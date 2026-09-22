@@ -83,9 +83,13 @@ const pack = {
   'erDiagram.expand': 'Expand columns',
   'erDiagram.tableCount': '{count} tables',
   'erDiagram.relationCount': '{count} relationships',
-  'erDiagram.predictedCount': '{count} inferred',
-  'erDiagram.predictedHint':
-    'Relationships inferred from table structure and naming, not declared by the database. Turn this off in Settings → Editor.',
+  'erDiagram.legendTitle': 'Relationship lines',
+  'erDiagram.legendDeclared': 'Declared foreign key',
+  'erDiagram.legendPredicted': 'Predicted (inferred)',
+  'erDiagram.predictionOn': 'Smart prediction: on',
+  'erDiagram.predictionOff': 'Enable smart prediction',
+  'erDiagram.predictionToggleHint':
+    'Infer relationships from table structure and naming. The same switch as Settings → Editor.',
   'createDb.name': 'Database Name',
   'createDb.encoding': 'Encoding',
   'createDb.owner': 'Owner',

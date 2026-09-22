@@ -506,7 +506,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
               <ToggleRow
                 label={t('settings.enableFkPrediction')}
                 hint={t('settings.enableFkPredictionHint')}
-                checked={settings.enableFkPrediction ?? true}
+                checked={settings.enableFkPrediction ?? false}
                 onChange={(v) => updateField('enableFkPrediction', v)}
                 testId="settings-toggle-enableFkPrediction"
               />

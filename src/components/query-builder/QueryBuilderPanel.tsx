@@ -105,7 +105,7 @@ export function QueryBuilderPanel({
   const removeJoin = useQueryBuilderStore((s) => s.removeJoin);
   const updateJoinType = useQueryBuilderStore((s) => s.updateJoinType);
   const addJoin = useQueryBuilderStore((s) => s.addJoin);
-  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? true);
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? false);
   const setTableAlias = useQueryBuilderStore((s) => s.setTableAlias);
   const updateTablePosition = useQueryBuilderStore((s) => s.updateTablePosition);
   const setZoom = useQueryBuilderStore((s) => s.setZoom);

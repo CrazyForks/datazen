@@ -82,9 +82,13 @@ const pack = {
   'erDiagram.expand': '展开列',
   'erDiagram.tableCount': '{count} 张表',
   'erDiagram.relationCount': '{count} 个关系',
-  'erDiagram.predictedCount': '{count} 条推测',
-  'erDiagram.predictedHint':
-    '依据表结构与命名推测出的关系，并非数据库声明。可在「设置 → 编辑器」中关闭。',
+  'erDiagram.legendTitle': '关系连线',
+  'erDiagram.legendDeclared': '数据库声明的外键',
+  'erDiagram.legendPredicted': '智能推测（推断）',
+  'erDiagram.predictionOn': '智能预测：已开启',
+  'erDiagram.predictionOff': '开启智能预测',
+  'erDiagram.predictionToggleHint':
+    '依据表结构与命名推断关系；与「设置 → 编辑器」中的开关是同一个。',
   'createDb.name': '数据库名称',
   'createDb.encoding': '字符编码',
   'createDb.owner': '所有者',

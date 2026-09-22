@@ -3,7 +3,7 @@ const pack = {
   'settings.editorCompletionIncludeTablePrefix': '列名补全时添加表名或别名前缀',
   'settings.enableFkPrediction': '智能外键预测',
   'settings.enableFkPredictionHint':
-    '当数据库未声明外键时，依据表结构与命名推断外键关系，并用于 JOIN 建议与补全排序。推测出的关系始终有明确标注，且可一键移除。',
+    '默认关闭。开启后，在数据库未声明外键时依据表结构与命名推断关系，并用于 JOIN 建议、补全排序与 ER 图。推测出的关系始终以独立颜色标注，且可一键移除。',
   'settings.title': '偏好设置',
   'settings.general': '通用',
   'settings.extensions.title': '扩展',

@@ -138,6 +138,32 @@ async function openBuilderFromMoreMenu(): Promise<void> {
 }
 
 /**
+ * Drive Settings → Editor → Smart foreign key prediction to `enabled`.
+ *
+ * Prediction is opt-in, so a phase that needs an inferred relationship has to ask
+ * for it. This is the same persisted setting the ER diagram's legend button
+ * writes, so the two surfaces can never disagree about whether it is on.
+ *
+ * Leaves the workspace on a fresh query tab, ready for `openBuilderFromMoreMenu`.
+ */
+async function setFkPredictionSwitch(enabled: boolean): Promise<void> {
+  await openSettingsInMainWindow('editor');
+  const toggle = await $('[data-testid="settings-toggle-enableFkPrediction"]');
+  await toggle.waitForClickable({ timeout: 10000 });
+  if ((await toggle.getAttribute('aria-checked')) !== String(enabled)) {
+    await toggle.click();
+  }
+  await browser.waitUntil(
+    async () => (await toggle.getAttribute('aria-checked')) === String(enabled),
+    { timeout: 10000, timeoutMsg: `智能外键预测开关未切换到 ${enabled ? '开启' : '关闭'}` },
+  );
+  await backFromSettingsInMainWindow();
+  // Settings lives on the workspace root, so the query tab has to be reopened.
+  await openConnectionWindow();
+  await openQueryTab();
+}
+
+/**
  * Narrow the navigator search to the table so its row stays mounted at the top
  * of the virtualized schema tree while we drag it. Uses the native value setter
  * so React's controlled input sees the change.
@@ -843,6 +869,10 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
   it('阶段9b：无外键约束的两张表也能按命名推测出 JOIN', async function () {
     if (!journey.manualJoinVerified) this.skip();
 
+    // Prediction is opt-in, so the switch has to be on before anything can be
+    // inferred — and this is the only thing that decides it.
+    await setFkPredictionSwitch(true);
+
     await openBuilderFromMoreMenu();
     expect(await isQbPanelOpen()).toBe(true);
 
@@ -912,7 +942,8 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     await openSettingsInMainWindow('editor');
     const toggle = await $('[data-testid="settings-toggle-enableFkPrediction"]');
     await toggle.waitForClickable({ timeout: 10000 });
-    expectTrue((await toggle.getAttribute('aria-checked')) === 'true', '开关默认应为开启');
+    // 阶段9b turned it on, so this is a real transition rather than a no-op.
+    expectTrue((await toggle.getAttribute('aria-checked')) === 'true', '阶段9b 之后开关应为开启');
     await toggle.click();
     await browser.waitUntil(async () => (await toggle.getAttribute('aria-checked')) === 'false', {
       timeout: 5000,
@@ -961,15 +992,11 @@ describe('Visual Query Builder 完整用户旅程 (QB-JOURNEY)', () => {
     });
     await captureJourneyStep('qb-declared-join-survives');
 
-    // ── Restore the switch so the setting does not leak into other specs ──
+    // ── The setting must not leak: off is also the shipped default ──
     await openSettingsInMainWindow('editor');
     const restore = await $('[data-testid="settings-toggle-enableFkPrediction"]');
     await restore.waitForClickable({ timeout: 10000 });
-    await restore.click();
-    await browser.waitUntil(async () => (await restore.getAttribute('aria-checked')) === 'true', {
-      timeout: 5000,
-      timeoutMsg: '开关未恢复开启',
-    });
+    expectTrue((await restore.getAttribute('aria-checked')) === 'false', '开关未保持在关闭状态');
     await backFromSettingsInMainWindow();
 
     journey.fkPredictionToggleVerified = true;
