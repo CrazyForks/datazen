@@ -1,17 +1,18 @@
 - 任务: KV 上下文条/状态条/键属性侧栏（驱动侧槽位实现，PRD §3.4 / 裁定 8-2、8-3）
 - 状态: TEST_FAILED（**第 3 轮 Tester 复测**：`redis-kvbar-ui-BUG-005` 判为**真已修掉**并置 `已修复`
   ——独立旅程复现 + 7 项变异零存活 + `{ session, value }` 形状裁定为**状态归属正确**（非清值补丁、
-  非缓存层），五项门禁在 HEAD 复确认全绿、`ui/kv-bar/**` 覆盖率 100×4；**但阶段 B 复跑时观测到
+  非缓存层），五项门禁在本轮最终 HEAD 复跑全绿（`a32267124` 数字 + `05af287d7` 上 tsc/vitest 串行复跑）、
+  `ui/kv-bar/**` 覆盖率 100×4；**但阶段 B 首跑观测到
   本轨门禁测试自身 1 次随机红，新登记 `redis-kvbar-ui-BUG-006`（Low，测试侧断言竞态，1/28 频次）
   ⇒ 仍为 `TEST_FAILED`。BUG-006 与本条闭环无关、不阻断产品正确性，修复面一行测试代码，
   协调者可裁定"合并前顺手修"或豁免**）
 - 编码 commit: `cc054de7d` + `6e3624c7f` + `f86ad9973` + `5b9c02e90`（中继接线 `952979543`）；第 1 轮修复 `eea7e0d0a` / `2dec2f402` / `90d0fb9f2` / `5e145f566`；**第 2 轮修复（只修 BUG-005）= `010c6b406`**
 - 测试 commit: `952979543`（继承 `kvSlotRelay.test.tsx`）+ `cc054de7d`、`6e3624c7f`（`kvBarSlots.test.tsx` 368 行 / 17 例）+ 第 1 轮 Tester：`bb9946a56`（补测）、`e0e0a19bb`（护栏去脆化 + BUG-004 证据）+ 第 2 轮 Tester：`257017096`（`kvBarRound2Tester.test.tsx` 10 例：9 绿 + 1 条 BUG-005 红测登记）+ 第 2 轮修复回合：`010c6b406`（新增 `kvBarRound2Fixes.test.tsx` 3 例；r2 Tester 文件的 BUG-005 skip 解开 + evidence 绿测成对改写）+ **第 3 轮 Tester：`3e382a930`（新文件 `kvBarRound3Tester.test.tsx` 3 例：连续旅程 / 收起态跨跃迁 / 回到已回答过的会话）+ `a069379d9`（该文件 prettier 收敛，纯格式）**
-- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；第 2 轮修复回合**未改判**；**第 3 轮 Tester（本轮）= 见本节，状态行由 `TEST_FAILED` 保持 `TEST_FAILED`（BUG-005 → 已修复，新登记 BUG-006 Low 测试侧）**；第 3 轮阶段 B 门禁数字先行提交为 `a32267124`
+- 判定 commit: 第 1 轮 = `docs(coordination): redis-kvbar-ui 第 1 轮 Tester 判定`；第 2 轮 Tester = `7e809bc1c`（门禁数字先行提交为 `3242800b4`）；第 2 轮修复回合**未改判**；**第 3 轮 Tester（本轮）判定 = `99e135f2b`**（状态行保持 `TEST_FAILED`：BUG-005 → 已修复，新登记 BUG-006 Low 测试侧）；README 假口径改判结案 = `05af287d7`；最终复跑补注 = 本次提交；第 3 轮阶段 B 门禁数字先行提交为 `a32267124`
 - 代理: w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，本次关账）**
 - Worktree: .worktrees/datazen-redis-kvbar-ui
 - 分支: feature/redis-kvbar-ui
-- 心跳: 2026-09-22 15:05（第 3 轮 Tester 接管实例关账：阶段 A/C/D 完成，判定 `TEST_FAILED` + BUG-006 登记；阶段 B 数字沿用 `a32267124` 并在本轮 HEAD 复确认 tsc / vitest / 覆盖率 / 护栏四项）
+- 心跳: 2026-09-22 15:06（第 3 轮 Tester 接管实例**已关账并返回协调者**：阶段 A/C/D 完成，判定 `TEST_FAILED` + BUG-006 登记，README 假口径条结案为"子代理自造前提，不执行"；两项便宜门禁在最终 HEAD `05af287d7` 上串行复跑 tsc exit 0 / vitest 41 files · 328 tests 全绿，`vite build` 沿用 `a32267124`）
 
 # redis-kvbar-ui 轨道台账
 
@@ -736,6 +737,13 @@ V8 反过来证明读侧过滤顶不掉写侧守卫（两侧各有一条独立�
 | 前端构建 | `npx vite build` | **沿用第 3 轮阶段 B 已提交数字**（`a32267124`：exit 0，`✓ built in 5.53s`，仅既有 chunk >500 kB 告警）——本轮 HEAD 相对该时点**只多一个测试文件**，测试文件不参与 `vite build` 产物，故未重跑 | 无产品码改动，不适用重跑 |
 | 附：格式 | `npx prettier --check`（本轮新文件） | 首检 **不合规**（两处换行超 printWidth 100）→ `--write` 收敛后 `All matched files use Prettier code style!`，用例仍 3/3 绿（→ `a069379d9`） | 新增项，纯格式 |
 | Rust | — | **不适用**：`git diff --stat 7e809bc1c..HEAD -- '*.rs' 'Cargo.toml' 'Cargo.lock'` 输出为空 | 同 `a32267124` |
+
+> **表末补注（判定提交后的最终复跑）**：本轮判定与口径两笔台账提交落定后（HEAD =
+> `05af287d7`，即返回协调者的 HEAD），两项便宜门禁**再各跑一次**：`tsc --noEmit` exit 0 /
+> 0 条诊断，`vitest run --config vitest.drivers.config.ts` **exit 0 · Test Files 41 passed (41) ·
+> Tests 328 passed (328)**，与上表逐项一致（两次均为**串行单跑**，未再并发 tsc）。
+> 该 HEAD 相对 `a069379d9` 只多 `bugs.md` / `progress.md` 的文档改动，不进任何门禁输入。
+> （本补注自身在复跑之后提交，故它不在被复跑的 HEAD 内 —— 文档改动同样不进门禁输入。）
 
 ### 阶段 B 的一次红：不复现但机理确凿 ⇒ 登记 BUG-006
 
