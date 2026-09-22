@@ -376,3 +376,78 @@ M15（两道全拆）钉住。本回合**不再为单拆任一闸门追加用例
 | `vite build` | ok 4.94s | ok 4.99s（exit 0） | 一致（耗时为机器波动） |
 | import 护栏 | `1431 scanned · 0 blocking · 4 advisory` | 同 | 一致 |
 
+## 阶段 A：逐条判定（独立复测，不看红测看缺陷本身）
+
+新增独立测试文件 `packages/drivers/redis/ui/__tests__/kvBarRound2Tester.test.tsx`
+（10 例：9 绿 + 1 条 `it.skip` 红测登记 BUG-005；全部 `data-*` / i18n key / 服务端回显值定位，
+零英文字面量断言）。合入后全量 **39 files / 321 passed + 1 skipped (322) / 0 failed**，`tsc` 仍 0。
+
+### BUG-001（Major）→ **已修复**
+
+- **代码审查**：state 形状 `{owner, info, loading, failed}`，`owner = {dbSessionId, dbIndex, key}`
+  （`useKeyObjectInfo.ts:67-71`）；`readToken` 三字段同一比较（`:94-96`）；`publishRead` 在
+  **render 期**过滤（`:115-120`，`:214` 调用）；成功/失败回包各再校验一次（`:193-207`）。
+- **docblock 与实现一致性**（第 1 轮处置项 3）：`grep` 实测 `effect identity` / `Last successful reply`
+  两条错误声明**已从文件消失**，`eea7e0d0a` 的删除行可核对；旧 `stale` 闭包旗标亦已删
+  （文件内仅剩 `:187` 一句普通措辞，策略侧 `KeyPropsSidebar.tsx:68-73` 的 `stale` 是另一职责，合法保留）。
+  现声明的三条推论（切键不 paint 旧值 / 飞行期无已知事实 / 过期回包就地丢弃）均可测。
+- **实测**：状态条与侧栏两半飞行期均无 type/size/TTL（gaps `:144`、`:324`，round1Fixes 三条）；
+  本轮补 **BUG-001 × BUG-002 合成路径**一条：两槽 join 同一条 in-flight 时，**先落地的过期键回包
+  不得在任一侧 paint**（`keeps a late reply for the previous key out of both slots that share one read`）。
+
+### BUG-002（Minor）→ **已修复，WeakMap 生命周期论证成立**
+
+- **静态核查宿主侧前提**（不采信自述）：`src/windows/connection/useKvWorkspaceSlots.ts:120-140`
+  确把**同一个** `panelState` 对象展开给 statusBar / keyPropsSidebar / contextBar；
+  `src/lib/kvSlotState.ts:63-82` 的 atom 按 **panelId** 记忆、`pruneKvSlotStates` 是唯一回收路径 ⇒
+  relay 身份 = 面板身份，**不是跨面板单例**（同连接的第二个面板是另一个对象）。
+- **三种情形往返数实测**（本轮新用例，全部为“是不是值缓存”的可观测探针）：
+
+  | 情形 | 实测 | 若是值缓存会怎样 |
+  |---|---|---|
+  | `dbSessionId` 跃迁（两槽在挂） | `key_object_info 1→2`、`info_filtered 1→2`，paints 新会话的 `stream` | 3 次（合并丢失）或 1 次（旧值复用） |
+  | 同一 key 二次进入（A→B→A） | `readKeys = ['A','B','A']` 3 条命令，paints 第三次的 `set` / `128 B` | 2 条命令、paints 第一次的 `string` |
+  | 面板 mid-flight 卸载后以**同一 relay** 重开 | 2 条命令，paints 新回包 `list`（非被丢弃的 `zset`） | 0 条新命令、paints 已卸载那次的 `zset` |
+  | 新面板（新 relay，同 session 同名键） | 2 条命令，各 paint 各自回包 | 1 条命令、两面板同值 |
+  | settled **失败**后再选同一 key | `['user:1','user:2','user:1']`，最终 paints `string` | 永远 `failed`（粘住拒绝） |
+
+  ⇒ `.finally()` 即 `delete` 的说法与实测一致：**不存在任何被复用的 settled 值**；
+  `openReads` 仅存进行中 Promise，故判 (a) 方案成立，非“换形的值缓存”。
+- **观察（不登记为缺陷）**：`flight1.finally` 的 `delete(id)` 与同 token 的 flight2 注册之间存在
+  微任务竞态（极端时序下 finally 会摘掉 flight2 的表项），后果只是**少合并一次往返**，
+  不可能误归属（表项按身份令牌分桶），不值得为其加复杂度；记录以免下轮重复推演。
+
+### BUG-003（Minor）→ **已修复**
+
+- `attempt` 已进 policy effect 依赖（`KeyPropsSidebar.tsx:66-75`），hook 增返 `attempt`（`:215`）。
+- 实测口径对照第 1 轮的 `info_filtered 1->1`：现在单击刷新 `1→2`（round1Fixes）；
+  本轮补 **N 次点击 ⇒ N 次重读**（`info_filtered 1→2→3`，`key_object_info` 同步 3 次），
+  以及“服务器改 `allkeys-lfu` 后刷新，行值必须跟着变”。
+- 既有不变量未弱化：会话切换后到的策略回包仍被丢弃（gaps `:418`），策略四层降级形状仍在。
+
+### BUG-004（Low）→ **已修复**
+
+- 侧栏 ttl 行按 `ttl.kind` 选词（`:165-170`），`missing` ⇒ `redis.keyProps.missing` 且
+  `data-value` 为空；状态条对 `-2` 沉默（`KvStatusBar.tsx:58-69`），`describeTtl` 三分支全部有消费者。
+- 成对自证合规：登记的 `it.skip` 解开转绿；常驻绿测**改写**为断言另一臂（`-1 ⇒ redis.noExpiry`），
+  **未删除任何断言**，两条用例均按 `data-fallback-key` 断言（无英文字面量）。
+- 跨槽位一致性 + 控制用例（`ttlMs>0` 必须出 TTL 段）在 round1Fixes，本轮变异 Q 臂复跑为红。
+
+## 对 Coder 两处「刻意保留形状」的独立裁定
+
+1. **BUG-003 重读期间旧驱逐策略仍可见** —— **对“键”跃迁不成立也不需成立**：实测键切换飞行期内
+   整个 `<dl>`（含策略行）根本不渲染（`publishRead` 使 `info` 为 null），故无“上一键的属性挂在
+   当前键上”的可能（用例 `keeps the policy row for the same session across a key switch…` 钉住
+   `propsState === 'loading'` + `data-value` 取不到 + `info_filtered` 仍 1 次）。
+   **但同一形状搬到 `dbSessionId` 跃迁上就是误归属**：策略读的是 `invokeMaxmemoryPolicy(dbSessionId)`，
+   值按会话作用域，而 `policy` state 不随会话复位 ⇒ 新会话的键属性已落地、策略行仍写旧服务器的值。
+   代码注释 `KeyPropsSidebar.tsx:62-65` 的“it is a server-wide fact, not another key's attribute,
+   so keeping it cannot mis-attribute anything”**论证范围过宽（只对键维度成立）**。
+   ⇒ **判为缺陷，登记 `redis-kvbar-ui-BUG-005`（Low）**，见 `bugs.md`。
+2. **BUG-002 的 `reload` 仍为每槽位各自 attempt** —— **与 BUG-001 口径不冲突，接受保留**：
+   侧栏刷新后状态条停在它**自己**上一次读数（同一键的旧值或 `failed`），属“同键陈旧”，
+   不是“把上一个键的读数当当前键”，未越过 BUG-001 的红线；该形状已由一条显式
+   `expect(statusState).toBe('failed')` 钉住，翻转需故意。
+   附带 UX 观察（非缺陷、不登记）：状态条自身没有刷新入口，用户只能靠再点一次键来救它 ——
+   建议随 W2-C 扩 `KvSlotState` 时一并裁定是否给状态条一个 refresh  affordance。
+
