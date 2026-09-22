@@ -7,20 +7,24 @@ import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
 import { RedisConsole } from '../console/RedisConsole';
 import { MonitorPanel } from '../observe/MonitorPanel';
 import { PubSubPanel } from '../observe/PubSubPanel';
+import { SlowlogPanel } from '../observe/SlowlogPanel';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
 
-type ActiveTab = 'items' | 'console' | 'monitor' | 'pubsub';
+/**
+ * 右列一级页签（裁定 8-1 = **5 枚**：键详情 / 命令行 / 发布订阅 / 监控 / 慢日志）。
+ * 慢日志由 `MonitorPanel` 的二极子页升为一级，独立组件见 `observe/SlowlogPanel`。
+ */
+export type ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor' | 'slowlog';
 
-const TABS: ActiveTab[] = ['items', 'console', 'monitor', 'pubsub'];
+/** 页签顺序即 PRD §3.3 右列页签条顺序（发布订阅在监控之前）。 */
+export const TABS: ActiveTab[] = ['items', 'console', 'pubsub', 'monitor', 'slowlog'];
 
-const TAB_LABEL_KEYS: Record<
-  ActiveTab,
-  'redis.items' | 'redis.console' | 'redis.monitor' | 'redis.pubsub'
-> = {
+const TAB_LABEL_KEYS: Record<ActiveTab, string> = {
   items: 'redis.items',
   console: 'redis.console',
   monitor: 'redis.monitor',
   pubsub: 'redis.pubsub',
+  slowlog: 'redis.slowlog',
 };
 
 function parseRedisDbIndex(database?: string): number {
@@ -86,12 +90,17 @@ export function RedisConnectionView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4">
+      <div
+        className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4"
+        data-testid="redis-tab-bar"
+        data-tab-count={TABS.length}
+      >
         {TABS.map((tab) => (
           <button
             key={tab}
             type="button"
             data-testid={`redis-tab-${tab}`}
+            data-active={activeTab === tab ? 'true' : 'false'}
             className={cn(
               'relative px-4 py-3 text-sm transition-colors',
               activeTab === tab ? 'text-fg font-medium' : 'text-fg-secondary hover:text-fg',
@@ -155,6 +164,11 @@ export function RedisConnectionView({
       {visitedTabs.includes('pubsub') && (
         <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'pubsub' && 'hidden')}>
           <PubSubPanel dbSessionId={dbSessionId} />
+        </div>
+      )}
+      {visitedTabs.includes('slowlog') && (
+        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'slowlog' && 'hidden')}>
+          <SlowlogPanel dbSessionId={dbSessionId} />
         </div>
       )}
     </div>
