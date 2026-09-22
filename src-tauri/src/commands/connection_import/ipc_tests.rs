@@ -297,3 +297,134 @@ async fn merged_connections_export_roundtrips_through_preview_helper() {
     // Wrong password must fail the same decrypt path.
     assert!(build_import_preview_from_path("wrong", dest).await.is_err());
 }
+
+/// G7: a connection that references a saved SSH tunnel must export as
+/// `isOverSSH=true` with the jump host materialized, even though it carries no
+/// inline `ssh_tunnel` locally.
+#[tokio::test]
+async fn export_materializes_referenced_ssh_tunnel() {
+    use crate::db::{SavedTunnel, SshTunnelConfig, TunnelKind};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+
+    let test = TestAppState::new().await;
+    test.store
+        .save_tunnel(SavedTunnel {
+            id: "tunnel-ssh".into(),
+            name: "Bastion".into(),
+            kind: TunnelKind::Ssh,
+            ssh: Some(SshTunnelConfig {
+                enabled: true,
+                host: "bastion.internal".into(),
+                port: 2222,
+                username: "ubuntu".into(),
+                auth_method: "password".into(),
+                password: Some("ssh-secret".into()),
+                private_key_path: None,
+                passphrase: None,
+                jump: None,
+            }),
+            http_proxy: None,
+            websocket: None,
+        })
+        .await
+        .unwrap();
+
+    let mut conn = sample_postgres_config("ref-1");
+    conn.name = "Internal DB".into();
+    conn.tunnel_id = Some("tunnel-ssh".into());
+    conn.ssh_tunnel = None;
+    test.store.save_connection(conn).await.unwrap();
+
+    let dest = test._temp.path().join("share.datazenconnection");
+    assert_eq!(
+        write_connections_export(&test.state, "share-secret", dest.clone())
+            .await
+            .unwrap(),
+        1
+    );
+
+    let bytes = tokio::fs::read(&dest).await.unwrap();
+    let parsed = parse_import_file(
+        Path::new("datazen-connections.datazenconnection"),
+        &bytes,
+        Some("share-secret"),
+    )
+    .unwrap();
+    let exported = &parsed.connections[0];
+    let ssh = exported
+        .ssh_tunnel
+        .as_ref()
+        .expect("a referenced SSH tunnel must be materialized into the export");
+    assert!(ssh.enabled);
+    assert_eq!(ssh.host, "bastion.internal");
+    assert_eq!(ssh.port, 2222);
+    assert_eq!(ssh.username, "ubuntu");
+    assert_eq!(ssh.password.as_deref(), Some("ssh-secret"));
+    // The database target stays the database target; only the jump host moved.
+    assert_eq!(exported.host.as_deref(), Some("localhost"));
+    assert_eq!(exported.port, Some(5432));
+}
+
+/// Tunnel kinds the export format cannot express, and dangling references, must
+/// degrade to "no tunnel" instead of failing the whole export.
+#[tokio::test]
+async fn export_keeps_connections_whose_tunnel_cannot_be_exported() {
+    use crate::db::{HttpProxyTunnelConfig, SavedTunnel, TunnelKind};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+
+    let test = TestAppState::new().await;
+    test.store
+        .save_tunnel(SavedTunnel {
+            id: "tunnel-proxy".into(),
+            name: "Corp proxy".into(),
+            kind: TunnelKind::HttpProxy,
+            ssh: None,
+            http_proxy: Some(HttpProxyTunnelConfig {
+                enabled: true,
+                host: "proxy.corp".into(),
+                port: 8080,
+                scheme: "http".into(),
+                username: None,
+                password: None,
+                headers: None,
+                connect_timeout_secs: 30,
+            }),
+            websocket: None,
+        })
+        .await
+        .unwrap();
+
+    let mut proxy = sample_postgres_config("ref-proxy");
+    proxy.name = "Via proxy".into();
+    proxy.tunnel_id = Some("tunnel-proxy".into());
+    test.store.save_connection(proxy).await.unwrap();
+
+    let mut dangling = sample_postgres_config("ref-dangling");
+    dangling.name = "Dangling".into();
+    dangling.tunnel_id = Some("tunnel-gone".into());
+    test.store.save_connection(dangling).await.unwrap();
+
+    let dest = test._temp.path().join("share.datazenconnection");
+    assert_eq!(
+        write_connections_export(&test.state, "share-secret", dest.clone())
+            .await
+            .unwrap(),
+        2
+    );
+
+    let bytes = tokio::fs::read(&dest).await.unwrap();
+    let parsed = parse_import_file(
+        Path::new("datazen-connections.datazenconnection"),
+        &bytes,
+        Some("share-secret"),
+    )
+    .unwrap();
+    assert_eq!(parsed.connections.len(), 2);
+    for exported in &parsed.connections {
+        assert!(
+            exported.ssh_tunnel.is_none(),
+            "`{}` must not gain an SSH tunnel from a non-SSH reference",
+            exported.name
+        );
+    }
+}

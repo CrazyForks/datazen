@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::ActiveSession;
 use super::{ConnectionError, ConnectionManager};
-use crate::db::ConnectionConfig;
+use crate::db::{ConnectionConfig, SslMode};
 use crate::tunnel::Tunnel;
 use std::sync::Arc;
 use std::time::Instant;
@@ -54,6 +54,66 @@ impl ConnectionManager {
             .test_connection(&effective_config)
             .await
             .map_err(ConnectionError::DriverError)
+    }
+
+    /// Establish the tunnel referenced by `tunnel_id` toward
+    /// `target_host:target_port`, tear it down immediately, and report how long
+    /// establishment took.
+    ///
+    /// Backs the standalone tunnel connectivity probe: the management UI can
+    /// validate one saved tunnel without opening a database session. Only the
+    /// tunnel fields plus the forwarded target reach the tunnel runtime, so the
+    /// synthetic config's `database_type` is a placeholder and no driver is ever
+    /// contacted.
+    pub async fn test_tunnel(
+        &self,
+        tunnel_id: &str,
+        target_host: &str,
+        target_port: u16,
+    ) -> Result<Duration, ConnectionError> {
+        let config = ConnectionConfig {
+            id: format!("__tunnel_test__{tunnel_id}"),
+            name: format!("tunnel test: {tunnel_id}"),
+            // Never dialed: `start_tunnel` only forwards `host`/`port` through
+            // the tunnel and does not resolve a driver here.
+            database_type: "postgresql".to_string(),
+            host: Some(target_host.to_string()),
+            port: Some(target_port),
+            database: None,
+            schema: None,
+            username: None,
+            password: None,
+            ssl_mode: SslMode::default(),
+            connection_timeout: 30,
+            max_pool_size: 10,
+            ssh_tunnel: None,
+            tunnel_kind: None,
+            tunnel_id: Some(tunnel_id.to_string()),
+            http_proxy_tunnel: None,
+            websocket_tunnel: None,
+            color_tag: None,
+            group: None,
+            last_connected_at: None,
+            server_version: None,
+            options: None,
+            read_only: false,
+            pinned: false,
+        };
+
+        let started = Instant::now();
+        let (_resolved, tunnel) = self.start_tunnel(config).await?;
+        let elapsed = started.elapsed();
+        if tunnel.is_none() {
+            // `tunnelKind = none` (or a tunnel that resolves to nothing) means
+            // nothing was probed; reporting success would be a false positive.
+            return Err(ConnectionError::Internal(format!(
+                "tunnel '{tunnel_id}' resolved to no tunnel configuration"
+            )));
+        }
+        // Dropping the tunnel tears the local forwarder down: the probe is
+        // deliberately one-shot and must not leak a listener.
+        drop(tunnel);
+        Ok(elapsed)
     }
 
     pub async fn ping(&self, db_session_id: &str) -> bool {

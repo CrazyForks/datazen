@@ -11,7 +11,7 @@ use super::{
     build_tableplus_export, detect_import_path, format_label, parse_from_app, parse_import_file,
     ImportApp, ParsedImport, PathContext,
 };
-use crate::db::ConnectionConfig;
+use crate::db::{ConnectionConfig, TunnelKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -173,15 +173,65 @@ fn build_encrypted_connections_export(
     build_tableplus_export(connections, password)
 }
 
+/// Materialize `tunnel_id` references into the inline tunnel fields the export
+/// payload can express (G7).
+///
+/// A connection that references a saved SSH tunnel carries no inline
+/// `ssh_tunnel` (the form deliberately omits it, see
+/// `src/lib/connectionFormModel.ts`), and the TablePlus payload only reads
+/// `ssh_tunnel`. Without this step such a connection exports as
+/// `isOverSSH=false` and the jump host is silently dropped, so the receiver can
+/// never reach an internal database.
+///
+/// The TablePlus format cannot express HTTP-proxy / WebSocket tunnels, so those
+/// (and dangling references) are logged and exported without a tunnel rather
+/// than silently misrepresented.
+async fn materialize_tunnel_refs(state: &AppState, connections: &mut [ConnectionConfig]) {
+    for conn in connections.iter_mut() {
+        let Some(tunnel_id) = conn.tunnel_id.as_deref().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let Some(saved) = state.store.get_tunnel(tunnel_id).await else {
+            tracing::warn!(
+                connection_id = %conn.id,
+                tunnel_id = %tunnel_id,
+                "referenced tunnel not found; exporting connection without a tunnel"
+            );
+            continue;
+        };
+        match saved.kind {
+            TunnelKind::Ssh => match saved.ssh {
+                Some(ssh) => conn.ssh_tunnel = Some(ssh),
+                None => tracing::warn!(
+                    connection_id = %conn.id,
+                    tunnel_id = %tunnel_id,
+                    "SSH tunnel has no ssh config; exporting connection without a tunnel"
+                ),
+            },
+            TunnelKind::HttpProxy | TunnelKind::WebSocket | TunnelKind::None => {
+                tracing::warn!(
+                    connection_id = %conn.id,
+                    tunnel_id = %tunnel_id,
+                    kind = ?saved.kind,
+                    "tunnel kind cannot be expressed in the connection export format; \
+                     exporting connection without a tunnel"
+                );
+            }
+        }
+    }
+}
+
 /// Build the encrypted `.datazenconnection` payload and write it to `dest`.
 async fn write_connections_export(
     state: &AppState,
     password: &str,
     dest: PathBuf,
 ) -> Result<u32, CommandError> {
-    let connections = state.store.get_connections().await;
+    let mut connections = state.store.get_connections().await;
     let groups = state.store.get_groups().await;
     let count = connections.len() as u32;
+
+    materialize_tunnel_refs(state, &mut connections).await;
 
     let bytes = build_encrypted_connections_export(&connections, &groups, password)?;
 
