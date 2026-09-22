@@ -651,6 +651,11 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     summary: format!("DROP TRIGGER {}", trigger.name),
                 })
             }
+            MigrationOperation::CreateSequence { .. }
+            | MigrationOperation::ReplaceSequence { .. }
+            | MigrationOperation::DropSequence { .. } => {
+                Err("MySQL sequence migration is unsupported".into())
+            }
         }
     }
 }
@@ -691,6 +696,9 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
             MigrationOperation::CreateTrigger { .. }
             | MigrationOperation::ReplaceTrigger { .. }
             | MigrationOperation::DropTrigger { .. } => true,
+            MigrationOperation::CreateSequence { .. }
+            | MigrationOperation::ReplaceSequence { .. }
+            | MigrationOperation::DropSequence { .. } => false,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {

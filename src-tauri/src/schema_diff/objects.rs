@@ -10,8 +10,9 @@ use super::types::{
     StatementRisk,
 };
 use datazen_driver_api::{
-    validate_object_definition_with_identity, validate_view_definition, MigrationCapabilities,
-    MigrationRenderer, MigrationRoutine, MigrationTrigger, MigrationView, ObjectKind,
+    validate_object_definition_with_identity, validate_sequence_definition_with_identity,
+    validate_view_definition, MigrationCapabilities, MigrationRenderer, MigrationRoutine,
+    MigrationSequence, MigrationTrigger, MigrationView, ObjectKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -76,6 +77,18 @@ impl SchemaObjectSnapshot {
         }
     }
 
+    pub fn sequence(schema: Option<&str>, name: &str, definition: &str) -> Self {
+        Self {
+            kind: ObjectKind::Sequence,
+            schema: schema.map(str::to_owned),
+            name: name.to_owned(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
+            definition: definition.to_owned(),
+        }
+    }
+
     fn key(
         &self,
     ) -> (
@@ -129,6 +142,17 @@ impl SchemaObjectSnapshot {
                 .target_name
                 .clone()
                 .ok_or("trigger target relation is missing")?,
+            definition: self.definition.clone(),
+        })
+    }
+
+    fn as_migration_sequence(&self) -> Result<MigrationSequence, String> {
+        if self.kind != ObjectKind::Sequence {
+            return Err("schema object is not a sequence".into());
+        }
+        Ok(MigrationSequence {
+            schema: self.schema.clone(),
+            name: self.name.clone(),
             definition: self.definition.clone(),
         })
     }
@@ -734,6 +758,249 @@ pub fn build_routine_trigger_migration_plan_with_components(
     }
 }
 
+/// Build a reviewed same-dialect migration plan for PostgreSQL sequences.
+/// Sequence definitions are returned by the driver catalog command and are
+/// validated again here; the host never accepts client-supplied DDL.
+pub fn build_sequence_migration_plan(
+    source: &[SchemaObjectSnapshot],
+    target: &[SchemaObjectSnapshot],
+    source_dialect: &str,
+    target_dialect: &str,
+    allow_destructive: bool,
+) -> SchemaDiffPlan {
+    let target_dialect = normalize_dialect(target_dialect);
+    let Some(driver) = datazen_driver_api::create_driver(&target_dialect) else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "sequence",
+            format!("No registered driver for target database: {target_dialect}"),
+        );
+    };
+    let Some(renderer) = driver.migration_renderer() else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "sequence",
+            format!("Driver {target_dialect} does not expose schema migration rendering"),
+        );
+    };
+    let Some(capabilities) = driver.migration_capabilities() else {
+        return unsupported_plan(
+            source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "sequence",
+            format!("Driver {target_dialect} does not expose schema migration capabilities"),
+        );
+    };
+    build_sequence_migration_plan_with_components(
+        source,
+        target,
+        source_dialect,
+        &target_dialect,
+        allow_destructive,
+        renderer.as_ref(),
+        capabilities.as_ref(),
+    )
+}
+
+pub fn build_sequence_migration_plan_with_components(
+    source: &[SchemaObjectSnapshot],
+    target: &[SchemaObjectSnapshot],
+    source_dialect: &str,
+    target_dialect: &str,
+    allow_destructive: bool,
+    renderer: &dyn MigrationRenderer,
+    capabilities: &dyn MigrationCapabilities,
+) -> SchemaDiffPlan {
+    let source_dialect = normalize_dialect(source_dialect);
+    let target_dialect = normalize_dialect(target_dialect);
+    if source_dialect != target_dialect {
+        return unsupported_plan(
+            &source_dialect,
+            &target_dialect,
+            Vec::new(),
+            "sequence",
+            "Sequence migration requires matching source and target dialects",
+        );
+    }
+
+    let mut requirements = Vec::new();
+    let mut warnings = Vec::new();
+    let mut source_by_key = HashMap::new();
+    let mut target_by_key = HashMap::new();
+    let validate = |object: &SchemaObjectSnapshot, requirements: &mut Vec<PlanRequirement>| {
+        if object.kind != ObjectKind::Sequence {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Only sequence objects are supported by this migration slice".into(),
+            });
+            return false;
+        }
+        let Some(schema) = object.schema.as_deref().filter(|value| !value.is_empty()) else {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "PostgreSQL sequence schema-qualified identity is required".into(),
+            });
+            return false;
+        };
+        if let Err(reason) = validate_sequence_definition_with_identity(
+            &object.definition,
+            Some(schema),
+            &object.name,
+        ) {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason,
+            });
+            return false;
+        }
+        true
+    };
+
+    for object in source {
+        if validate(object, &mut requirements)
+            && source_by_key.insert(object.key(), object).is_some()
+        {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Source contains duplicate sequence identities".into(),
+            });
+        }
+    }
+    for object in target {
+        if validate(object, &mut requirements)
+            && target_by_key.insert(object.key(), object).is_some()
+        {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object.name.clone(),
+                reason: "Target contains duplicate sequence identities".into(),
+            });
+        }
+    }
+
+    let mut keys = BTreeSet::new();
+    keys.extend(source_by_key.keys().cloned());
+    keys.extend(target_by_key.keys().cloned());
+    let mut tables = BTreeSet::new();
+    let mut operations = Vec::new();
+    for key in keys {
+        let source_object = source_by_key.get(&key).copied();
+        let target_object = target_by_key.get(&key).copied();
+        let Some(object) = source_object.or(target_object) else {
+            continue;
+        };
+        tables.insert(object_label(object));
+        match (source_object, target_object) {
+            (Some(desired), None) => match desired.as_migration_sequence() {
+                Ok(sequence) => operations.push(MigrationOperation::CreateSequence { sequence }),
+                Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                    operation: desired.name.clone(),
+                    reason,
+                }),
+            },
+            (Some(desired), Some(current))
+                if desired.definition.trim() != current.definition.trim() =>
+            {
+                match (
+                    current.as_migration_sequence(),
+                    desired.as_migration_sequence(),
+                ) {
+                    (Ok(current), Ok(desired)) => {
+                        operations.push(MigrationOperation::ReplaceSequence { current, desired })
+                    }
+                    (Err(reason), _) | (_, Err(reason)) => {
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: desired.name.clone(),
+                            reason,
+                        })
+                    }
+                }
+            }
+            (None, Some(current)) => match current.as_migration_sequence() {
+                Ok(sequence) => {
+                    let operation = MigrationOperation::DropSequence { sequence };
+                    if allow_destructive {
+                        operations.push(operation);
+                    } else {
+                        warnings.push(format!("Skipped destructive operation {}", operation.key()));
+                    }
+                }
+                Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                    operation: current.name.clone(),
+                    reason,
+                }),
+            },
+            _ => {}
+        }
+    }
+
+    operations.sort_by_key(|operation| {
+        let priority = match operation {
+            MigrationOperation::CreateSequence { .. } => 0,
+            MigrationOperation::ReplaceSequence { .. } => 1,
+            MigrationOperation::DropSequence { .. } => 2,
+            _ => 3,
+        };
+        (priority, operation.key())
+    });
+    let mut statements = Vec::new();
+    for operation in operations {
+        let key = operation.key();
+        let driver_operation = operation.to_driver_api();
+        if !capabilities.supports(&driver_operation) {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: key,
+                reason: format!("Operation is not supported by {target_dialect}"),
+            });
+            continue;
+        }
+        match renderer.render(&driver_operation) {
+            Ok(statement) => {
+                let risk = match statement.risk {
+                    datazen_driver_api::MigrationRisk::Additive => StatementRisk::Additive,
+                    datazen_driver_api::MigrationRisk::Rewrite => StatementRisk::Rewrite,
+                    datazen_driver_api::MigrationRisk::Destructive => StatementRisk::Destructive,
+                };
+                statements.push(PlanStatement {
+                    sql: statement.sql,
+                    risk,
+                    rollback_sql: statement.rollback_sql,
+                    summary: statement.summary,
+                });
+            }
+            Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                operation: key,
+                reason,
+            }),
+        }
+    }
+    let missing = statements
+        .iter()
+        .filter(|statement| statement.rollback_sql.is_none())
+        .map(|statement| statement.summary.clone())
+        .collect::<Vec<_>>();
+    SchemaDiffPlan {
+        plan_id: None,
+        table: tables.first().cloned().unwrap_or_else(|| "sequence".into()),
+        tables: tables.into_iter().collect(),
+        source_dialect,
+        target_dialect,
+        same_dialect: true,
+        statements,
+        warnings,
+        requirements,
+        rollback_completeness: RollbackCompleteness {
+            complete: missing.is_empty(),
+            missing,
+        },
+        type_suggestions: Vec::new(),
+    }
+}
+
 fn object_label(object: &SchemaObjectSnapshot) -> String {
     let schema = object.schema.as_deref().filter(|value| !value.is_empty());
     match object.kind {
@@ -751,6 +1018,7 @@ fn object_label(object: &SchemaObjectSnapshot) -> String {
             object.target_schema.as_deref().unwrap_or_default(),
             object.target_name.as_deref().unwrap_or_default()
         ),
+        ObjectKind::Sequence => format!("sequence:{}:{}", schema.unwrap_or_default(), object.name),
         _ => object.name.clone(),
     }
 }
@@ -822,6 +1090,32 @@ mod tests {
                     risk: MigrationRisk::Destructive,
                     rollback_sql: Some(trigger.definition.clone()),
                     summary: format!("DROP TRIGGER {}", trigger.name),
+                }),
+                DriverOperation::CreateSequence { sequence } => Ok(MigrationStatement {
+                    sql: sequence.definition.clone(),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "DROP SEQUENCE {}.{}",
+                        sequence.schema.as_deref().unwrap_or_default(),
+                        sequence.name
+                    )),
+                    summary: format!("CREATE SEQUENCE {}", sequence.name),
+                }),
+                DriverOperation::ReplaceSequence { current, desired } => Ok(MigrationStatement {
+                    sql: desired.definition.clone(),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(current.definition.clone()),
+                    summary: format!("REPLACE SEQUENCE {}", desired.name),
+                }),
+                DriverOperation::DropSequence { sequence } => Ok(MigrationStatement {
+                    sql: format!(
+                        "DROP SEQUENCE {}.{}",
+                        sequence.schema.as_deref().unwrap_or_default(),
+                        sequence.name
+                    ),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(sequence.definition.clone()),
+                    summary: format!("DROP SEQUENCE {}", sequence.name),
                 }),
                 _ => Err("unexpected operation".into()),
             }
@@ -967,6 +1261,16 @@ mod tests {
         SchemaObjectSnapshot::routine(kind, Some("public"), name, Some("integer"), definition)
     }
 
+    fn sequence(name: &str, increment: i64) -> SchemaObjectSnapshot {
+        SchemaObjectSnapshot::sequence(
+            Some("public"),
+            name,
+            &format!(
+                "CREATE SEQUENCE \"public\".\"{name}\" AS bigint INCREMENT BY {increment} MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;"
+            ),
+        )
+    }
+
     #[test]
     fn routine_trigger_plan_creates_replaces_and_drops_with_destructive_gate() {
         let source = [
@@ -1102,5 +1406,125 @@ mod tests {
             PlanRequirement::Unsupported { reason, .. }
                 if reason.contains("signature")
         )));
+    }
+
+    #[test]
+    fn sequence_plan_creates_replaces_and_requires_destructive_drop_approval() {
+        let source = [sequence("orders_id_seq", 10)];
+        let target = [sequence("orders_id_seq", 1), sequence("legacy_seq", 1)];
+        let safe = build_sequence_migration_plan_with_components(
+            &source,
+            &target,
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert_eq!(safe.statements.len(), 1);
+        assert_eq!(safe.statements[0].risk, StatementRisk::Destructive);
+        assert!(safe
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("legacy_seq")));
+
+        let approved = build_sequence_migration_plan_with_components(
+            &source,
+            &target,
+            "postgresql",
+            "postgresql",
+            true,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert_eq!(approved.statements.len(), 2);
+        assert!(approved
+            .statements
+            .iter()
+            .any(|statement| statement.summary.contains("DROP SEQUENCE legacy_seq")));
+    }
+
+    #[test]
+    fn sequence_plan_fails_closed_for_cross_dialect_bad_ddl_and_identity_mismatch() {
+        let valid = sequence("orders_id_seq", 1);
+        let cross = build_sequence_migration_plan_with_components(
+            &[valid.clone()],
+            &[],
+            "postgresql",
+            "mysql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(cross.statements.is_empty());
+        assert!(cross.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("matching source and target dialects")
+        )));
+
+        let mismatch = SchemaObjectSnapshot::sequence(
+            Some("public"),
+            "orders_id_seq",
+            "CREATE SEQUENCE \"public\".\"other_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;",
+        );
+        let bad = build_sequence_migration_plan_with_components(
+            &[mismatch],
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(bad.statements.is_empty());
+        assert!(bad.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("identity")
+        )));
+
+        let unqualified = SchemaObjectSnapshot::sequence(
+            None,
+            "orders_id_seq",
+            "CREATE SEQUENCE \"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;",
+        );
+        let missing_schema = build_sequence_migration_plan_with_components(
+            &[unqualified],
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(missing_schema.statements.is_empty());
+        assert!(missing_schema
+            .requirements
+            .iter()
+            .any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Unsupported { reason, .. }
+                    if reason.contains("schema-qualified")
+            )));
+    }
+
+    #[test]
+    fn sequence_plan_fails_closed_for_mysql_sqlite_and_unregistered_drivers() {
+        let source = [sequence("orders_id_seq", 1)];
+        for dialect in ["mysql", "sqlite"] {
+            let plan = build_sequence_migration_plan(&source, &[], dialect, dialect, false);
+            assert!(
+                plan.statements.is_empty(),
+                "{dialect} must reject sequences"
+            );
+            assert!(
+                !plan.requirements.is_empty(),
+                "{dialect} must explain rejection"
+            );
+        }
+        let unsupported = build_sequence_migration_plan(&source, &[], "redis", "redis", false);
+        assert!(unsupported.statements.is_empty());
+        assert!(!unsupported.requirements.is_empty());
     }
 }

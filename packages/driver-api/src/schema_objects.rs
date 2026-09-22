@@ -287,16 +287,38 @@ pub fn object_ddl_sql_with_metadata(
         ("postgresql", ObjectKind::Sequence) => {
             let schema_str = sql_string(schema.unwrap_or("public"));
             let name_str = sql_string(name);
+            // Keep this lookup server-side and return one catalog-generated
+            // script. pg_sequences exposes the complete mutable sequence
+            // definition, while pg_depend/pg_attribute supplies OWNED BY.
+            // The exact schema/name predicates make missing and ambiguous
+            // catalog rows fail closed in extract_object_ddl_checked.
             Some(format!(
-                "SELECT 'CREATE SEQUENCE ' || quote_ident(schemaname) || '.' || quote_ident(sequencename) \
-                 || ' AS ' || data_type \
-                 || ' INCREMENT BY ' || increment_by \
-                 || ' MINVALUE ' || min_value \
-                 || ' MAXVALUE ' || max_value \
-                 || ' START WITH ' || start_value \
-                 || CASE WHEN cycle THEN ' CYCLE' ELSE ' NO CYCLE' END \
-                 || ';' AS ddl \
-                 FROM pg_sequences WHERE schemaname = {schema_str} AND sequencename = {name_str}"
+                "SELECT 'CREATE SEQUENCE ' || quote_ident(ns.nspname) || '.' || quote_ident(c.relname) \
+                 || ' AS ' || format_type(s.seqtypid, NULL) \
+                 || ' INCREMENT BY ' || s.seqincrement \
+                 || ' MINVALUE ' || s.seqmin \
+                 || ' MAXVALUE ' || s.seqmax \
+                 || ' START WITH ' || s.seqstart \
+                 || ' CACHE ' || s.seqcache \
+                 || CASE WHEN s.seqcycle THEN ' CYCLE' ELSE ' NO CYCLE' END \
+                 || ';' \
+                 || CASE WHEN owner_ns.nspname IS NULL THEN '' \
+                    ELSE ' ALTER SEQUENCE ' || quote_ident(ns.nspname) || '.' || quote_ident(c.relname) \
+                      || ' OWNED BY ' || quote_ident(owner_ns.nspname) || '.' \
+                      || quote_ident(owner_cls.relname) || '.' || quote_ident(owner_att.attname) || ';' END AS ddl \
+                 FROM pg_class c \
+                 JOIN pg_namespace ns ON ns.oid = c.relnamespace \
+                 JOIN pg_sequence s ON s.seqrelid = c.oid \
+                 LEFT JOIN pg_depend dep ON dep.objid = c.oid \
+                   AND dep.classid = 'pg_class'::regclass \
+                   AND dep.refclassid = 'pg_class'::regclass \
+                   AND dep.deptype IN ('a', 'i') \
+                 LEFT JOIN pg_class owner_cls ON owner_cls.oid = dep.refobjid \
+                 LEFT JOIN pg_namespace owner_ns ON owner_ns.oid = owner_cls.relnamespace \
+                 LEFT JOIN pg_attribute owner_att ON owner_att.attrelid = owner_cls.oid \
+                   AND owner_att.attnum = dep.refobjsubid \
+                   AND NOT owner_att.attisdropped \
+                 WHERE c.relkind = 'S' AND ns.nspname = {schema_str} AND c.relname = {name_str}"
             ))
         }
         ("postgresql", ObjectKind::Type) => {

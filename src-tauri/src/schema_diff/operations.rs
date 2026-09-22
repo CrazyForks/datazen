@@ -3,7 +3,7 @@
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
 use datazen_driver_api::TableOptions;
-use datazen_driver_api::{MigrationRoutine, MigrationTrigger, MigrationView};
+use datazen_driver_api::{MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -123,6 +123,16 @@ pub enum MigrationOperation {
     DropTrigger {
         trigger: MigrationTrigger,
     },
+    CreateSequence {
+        sequence: MigrationSequence,
+    },
+    ReplaceSequence {
+        current: MigrationSequence,
+        desired: MigrationSequence,
+    },
+    DropSequence {
+        sequence: MigrationSequence,
+    },
 }
 
 impl MigrationOperation {
@@ -136,7 +146,9 @@ impl MigrationOperation {
             | Self::DropCheckConstraint { .. }
             | Self::DropView { .. }
             | Self::DropRoutine { .. }
-            | Self::DropTrigger { .. } => StatementRisk::Destructive,
+            | Self::DropTrigger { .. }
+            | Self::ReplaceSequence { .. }
+            | Self::DropSequence { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
@@ -206,6 +218,16 @@ impl MigrationOperation {
                 trigger.target_schema.as_deref().unwrap_or_default(),
                 trigger.target_name
             ),
+            Self::CreateSequence { sequence }
+            | Self::ReplaceSequence {
+                desired: sequence, ..
+            }
+            | Self::DropSequence { sequence } => sequence
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("sequence:{schema}.{}", sequence.name))
+                .unwrap_or_else(|| format!("sequence:{}", sequence.name)),
         }
     }
 }
@@ -417,6 +439,16 @@ impl MigrationOperation {
             },
             Self::DropTrigger { trigger } => O::DropTrigger {
                 trigger: trigger.clone(),
+            },
+            Self::CreateSequence { sequence } => O::CreateSequence {
+                sequence: sequence.clone(),
+            },
+            Self::ReplaceSequence { current, desired } => O::ReplaceSequence {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropSequence { sequence } => O::DropSequence {
+                sequence: sequence.clone(),
             },
             Self::CreateTable {
                 table,

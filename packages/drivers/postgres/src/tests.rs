@@ -481,6 +481,38 @@ fn build_pg_create_sequence_sql_and_owned_by() {
 }
 
 #[test]
+fn postgres_sequence_catalog_ddl_covers_attributes_and_owned_by() {
+    let sql = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Sequence,
+        "orders_id_seq",
+        Some("public"),
+        None,
+        None,
+        None,
+    )
+    .expect("PostgreSQL sequences have catalog-backed DDL");
+    for fragment in [
+        "pg_sequence",
+        "s.seqincrement",
+        "s.seqmin",
+        "s.seqmax",
+        "s.seqstart",
+        "s.seqcache",
+        "s.seqcycle",
+        "OWNED BY",
+        "pg_depend",
+        "ns.nspname = 'public'",
+        "c.relname = 'orders_id_seq'",
+    ] {
+        assert!(
+            sql.contains(fragment),
+            "catalog SQL missing {fragment}: {sql}"
+        );
+    }
+}
+
+#[test]
 fn build_pg_create_table_ddl_omits_pk_when_empty() {
     let columns = vec![PgColumnDdl {
         name: "x".into(),

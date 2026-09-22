@@ -300,6 +300,25 @@ mod tests {
         changed.schema = Some("other".into());
         assert!(validate_object_snapshot(&old, &changed).is_err());
     }
+
+    #[test]
+    fn test_tester_sequence_snapshot_detects_catalog_ddl_and_identity_changes() {
+        let reviewed = SchemaObjectSnapshot::sequence(
+            Some("public"),
+            "orders_id_seq",
+            "CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;",
+        );
+        assert!(validate_object_snapshot(&reviewed, &reviewed).is_ok());
+        let changed = SchemaObjectSnapshot::sequence(
+            Some("public"),
+            "orders_id_seq",
+            "CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 2 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;",
+        );
+        assert!(validate_object_snapshot(&reviewed, &changed).is_err());
+        let wrong_identity =
+            SchemaObjectSnapshot::sequence(Some("other"), "orders_id_seq", &reviewed.definition);
+        assert!(validate_object_snapshot(&reviewed, &wrong_identity).is_err());
+    }
     #[tokio::test]
     async fn test_tester_concurrent_deploy_consumes_exactly_once() {
         let mut plan = plan();
