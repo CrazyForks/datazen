@@ -16,6 +16,7 @@ import {
   showNativeContextMenu,
   readBooleanField,
   useBoundConfirmDialog,
+  type KvSlotState,
 } from '@datazen/driver-sdk';
 import { useI18n } from '@datazen/ui';
 import { invokeGetKey, invokeDbSizes } from '../shared/redisInvoke';
@@ -53,6 +54,14 @@ export interface RedisWorkbenchProps {
   onDbIndexChange?: (dbIndex: number) => void;
   onDatabaseChange?: (database: string) => void;
   onKeysChange?: (keys: string[]) => void;
+  /**
+   * Host-owned selection/dirty atom of this panel (`driver-sdk` `KvSlotState`),
+   * forwarded by `RedisConnectionView`. The workbench is the only writer: the
+   * host-rendered KV slots read selection and dirtiness from here instead of
+   * calling back into the driver (PRD §7-2, contract F-2). Absent when the
+   * driver declares no KV slot capability, so every publish below is optional.
+   */
+  kvSlotState?: KvSlotState;
 }
 
 export interface RedisWorkbenchHandle {
@@ -71,7 +80,15 @@ function mergeDatabases(fromServer: string[]): string[] {
 
 export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchProps>(
   function RedisWorkbench(
-    { dbSessionId, initialDatabase, hideSidebar, onDbIndexChange, onDatabaseChange, onKeysChange },
+    {
+      dbSessionId,
+      initialDatabase,
+      hideSidebar,
+      onDbIndexChange,
+      onDatabaseChange,
+      onKeysChange,
+      kvSlotState,
+    },
     ref,
   ) {
     const { t } = useI18n();
@@ -93,6 +110,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [keyDetail, setKeyDetail] = useState<KeyDetail | null>(null);
     const [keyDetailLoading, setKeyDetailLoading] = useState(false);
+    // Unsaved draft of the mounted detail editor, mirrored to the host relay
+    // below. `DetailColumn` owns who reports it; this state is what gets published.
+    const [editorDirty, setEditorDirty] = useState(false);
     const [batchSummary, setBatchSummary] = useState<string | null>(null);
     const [modules, setModules] = useState<string[] | null>(null);
     const [importExportOpen, setImportExportOpen] = useState(false);
@@ -236,6 +256,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         setSelectedKey(null);
         setSelectedKeys(new Set());
         setKeyDetail(null);
+        setEditorDirty(false);
         setSearchPattern('*');
         resetSelectionState();
         void loadKeys(idx, '*', 0, true);
@@ -261,6 +282,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         setSelectedKey(null);
         setSelectedKeys(new Set());
         setKeyDetail(null);
+        setEditorDirty(false);
         scanRefresh();
         tree.refresh();
       }
@@ -281,6 +303,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       setSelectedKey(null);
       setSelectedKeys(new Set());
       setKeyDetail(null);
+      setEditorDirty(false);
       if (searchMode === 'key') {
         scanSearch();
         return;
@@ -315,6 +338,35 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       await handleSelectKey(selectedKey);
       refreshKeys();
     }, [selectedKey, handleSelectKey, refreshKeys]);
+
+    /* ── host KV relay ───────────────────────────────────────────────────────
+     * Contract F-2: the host-rendered KV slots never ask the workbench for
+     * anything — they read selection and dirtiness off the per-panel
+     * `KvSlotState` the host hands down. Publishing is write-only and
+     * field-granular (`selectKey` / `setDirty`), so a slot subscribing to
+     * `getSelectedKey()` re-renders on selection, not on every state change.
+     *
+     * Dirty invariant: `editorDirty` can only be true while a detail editor with
+     * an unsaved draft is mounted — `StringEditor` publishes `false` when it
+     * unmounts, and the paths that drop the selection reset it here.
+     */
+    useEffect(() => {
+      kvSlotState?.selectKey(selectedKey);
+    }, [kvSlotState, selectedKey]);
+
+    useEffect(() => {
+      kvSlotState?.setDirty(editorDirty);
+    }, [kvSlotState, editorDirty]);
+
+    useEffect(() => {
+      if (!kvSlotState) return;
+      return () => {
+        // Unmount / session swap: a later mount must not inherit a key that is
+        // no longer rendered, nor a draft that no longer exists.
+        kvSlotState.selectKey(null);
+        kvSlotState.setDirty(false);
+      };
+    }, [kvSlotState, dbSessionId]);
 
     const toggleKeySelection = (key: string, checked: boolean) => {
       setSelectedKeys((prev) => {
@@ -591,9 +643,11 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                       setSelectedKey(newKey);
                       refreshKeys();
                     }}
+                    onDirtyChange={setEditorDirty}
                     onClose={() => {
                       setSelectedKey(null);
                       setKeyDetail(null);
+                      setEditorDirty(false);
                     }}
                   />
                 </div>

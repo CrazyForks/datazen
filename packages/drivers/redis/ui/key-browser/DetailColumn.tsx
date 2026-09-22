@@ -3,8 +3,15 @@
  *
  * Owns nothing but rendering — `RedisWorkbench` keeps the selected key, the
  * fetched {@link KeyDetail} and the module list — so the workbench stays a
- * state owner (PRD §7-5 split). Carving this out is a pure move: the states
- * below are exactly the branches the workbench used to inline.
+ * state owner (PRD §7-5 split).
+ *
+ * Two things matter for the KV workspace (PRD §4 I-1 dirty gate):
+ * 1. the editor mounts with `key={detail.key}`, so switching keys cannot carry a
+ *    previous key's draft — and therefore a previous key's *dirty* flag — into
+ *    the newly selected key (before this split the workbench inlined the same
+ *    element without a key, so a leftover draft did survive a key switch);
+ * 2. draft dirtiness leaves through `onDirtyChange` and the workbench relays it
+ *    to the host's per-panel `KvSlotState`; this column never touches the relay.
  *
  * `data-detail-state` / `data-selected-key` markers exist so tests can assert
  * which branch rendered without pinning any translated copy (the guard deleted
@@ -26,6 +33,8 @@ export interface DetailColumnProps {
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onClose: () => void;
+  /** Unsaved-draft flag of the mounted editor (the workbench relays it to the host). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 export function DetailColumn({
@@ -38,6 +47,7 @@ export function DetailColumn({
   onRefresh,
   onRenamed,
   onClose,
+  onDirtyChange,
 }: DetailColumnProps) {
   const { t } = useI18n();
 
@@ -84,12 +94,14 @@ export function DetailColumn({
           </div>
         ) : detail ? (
           <KeyDetailEditor
+            key={detail.key}
             dbSessionId={dbSessionId}
             dbIndex={dbIndex}
             detail={detail}
             modules={modules}
             onRefresh={onRefresh}
             onRenamed={onRenamed}
+            onDirtyChange={onDirtyChange}
           />
         ) : null}
       </div>

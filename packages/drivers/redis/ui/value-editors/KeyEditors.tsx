@@ -51,6 +51,15 @@ export interface KeyDetailEditorProps {
   modules?: string[] | null;
   onRefresh: () => void | Promise<void>;
   onRenamed?: (newKey: string) => void;
+  /**
+   * Unsaved-draft signal for the PRD §4 I-1 dirty gate.
+   *
+   * Only `StringEditor` can hold a draft today: every other type editor writes
+   * through `gateWrite('write-op')` on the spot, so there is nothing pending to
+   * lose there and they keep the flag at `false`. The workbench relays the value
+   * to the host's per-panel `KvSlotState` — this module never touches the relay.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 export function KeyDetailEditor({
@@ -60,6 +69,7 @@ export function KeyDetailEditor({
   modules = null,
   onRefresh,
   onRenamed,
+  onDirtyChange,
 }: KeyDetailEditorProps) {
   const { t } = useI18n();
   const { gateWrite, gateDialog } = useRedisGate();
@@ -173,6 +183,7 @@ export function KeyDetailEditor({
           frame={frame}
           gateWrite={gateWrite}
           onSaved={() => void onRefresh()}
+          onDirtyChange={onDirtyChange}
         />
       )}
       {detail.keyType === 'hash' && (
@@ -239,6 +250,7 @@ function StringEditor({
   frame,
   gateWrite,
   onSaved,
+  onDirtyChange,
 }: {
   dbSessionId: string;
   dbIndex: number;
@@ -246,6 +258,7 @@ function StringEditor({
   frame: ValueFrame | null;
   gateWrite?: GateWriteFn;
   onSaved: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useI18n();
   const [mode, setMode] = useState<'view' | 'edit'>('view');
@@ -261,6 +274,17 @@ function StringEditor({
   const jsonMode = looksLikeJsonText(value);
   const rawOriginal = unwrapStringKeyValue(detail.value);
   const maybeCompressed = valueLooksCompressed(unwrapRaw(detail.value));
+
+  // `jsonDirty` is exactly the unsaved-draft signal: entering edit mode without
+  // typing is not dirty, and reformatting JSON (which does not touch
+  // `jsonDirty`) is not a data-loss risk either.
+  useEffect(() => {
+    onDirtyChange?.(jsonDirty);
+    return () => {
+      // An unmounted editor cannot have a draft — never publish a stale flag.
+      onDirtyChange?.(false);
+    };
+  }, [jsonDirty, onDirtyChange]);
 
   const selectJsonMode = (next: JsonDisplayMode) => {
     if (next === 'tree') return;
@@ -286,7 +310,11 @@ function StringEditor({
         return;
       }
       await invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl)
-        .then(onSaved)
+        .then(() => {
+          // Saved: the draft no longer exists, so the dirty relay must drop.
+          setJsonDirty(false);
+          onSaved();
+        })
         .finally(() => setSaving(false));
     })();
   };
@@ -311,7 +339,11 @@ function StringEditor({
   };
 
   return (
-    <div className="space-y-2">
+    <div
+      className="space-y-2"
+      data-testid="redis-string-editor"
+      data-string-dirty={jsonDirty ? 'true' : 'false'}
+    >
       <div className="flex items-center gap-1" data-testid="redis-string-mode-toggle">
         <button
           type="button"
@@ -354,6 +386,7 @@ function StringEditor({
             }}
             className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
             spellCheck={false}
+            data-testid="redis-string-input"
           />
           {jsonError && (
             <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
@@ -384,7 +417,13 @@ function StringEditor({
                 {t('redis.decompressView')}
               </Button>
             )}
-            <Button variant="primary" className="h-7 px-2 text-xs" disabled={saving} onClick={save}>
+            <Button
+              variant="primary"
+              className="h-7 px-2 text-xs"
+              disabled={saving}
+              onClick={save}
+              data-testid="redis-string-save"
+            >
               {t('common.save')}
             </Button>
           </div>

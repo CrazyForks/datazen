@@ -41,6 +41,10 @@ export function RedisConnectionView({
   hideSidebar,
   isActive = true,
   selectTableRef,
+  // Host-owned selection/dirty atom of this panel; only present when the driver
+  // declared a KV workspace capability. The workbench is its single writer, so
+  // this view just forwards it (contract F-2 — no bare getter on the render path).
+  kvSlotState,
 }: ConnectionViewProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<ActiveTab>('items');
@@ -123,6 +127,7 @@ export function RedisConnectionView({
             onDbIndexChange={setDbIndex}
             onDatabaseChange={handleDatabaseChange}
             onKeysChange={setKeySuggestions}
+            kvSlotState={kvSlotState}
           />
         </div>
       )}
