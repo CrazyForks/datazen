@@ -390,3 +390,57 @@ describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () =
     expect(draftInput().value).toBe('hello');
   });
 });
+
+describe('I-1 边角出口：Esc / 卸载 / 非法 JSON 保存', () => {
+  it('Esc closes the dialog: the guarded action is cancelled, selection and draft survive', async () => {
+    renderWorkbench();
+    await selectAndDraft();
+    const readsBefore = getKey.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId('redis-refresh'));
+    await screen.findByTestId('redis-draft-discard');
+    const dialogEl = document.querySelector('[role="dialog"]');
+    expect(dialogEl).not.toBeNull();
+
+    fireEvent.keyDown(dialogEl!, { key: 'Escape' });
+    await waitFor(() => expect(leaveDialog()).toBeNull());
+    // 退出跃迁（Esc＝继续编辑）：动作取消、重取没发生、草稿与选择原样。
+    expect(isLeavePending()).toBe(false);
+    expect(getKey.mock.calls.length).toBe(readsBefore);
+    expect(column().getAttribute('data-selected-key')).toBe('user:1');
+    expect(editor().getAttribute('data-string-dirty')).toBe('true');
+    expect(dirtyBar()).not.toBeNull();
+  });
+
+  it('unmounting the editor while a leave is pending settles it false (no dangling await)', async () => {
+    const view = renderWorkbench();
+    await selectAndDraft();
+
+    fireEvent.click(screen.getByTestId('redis-refresh'));
+    await screen.findByTestId('redis-draft-discard');
+    expect(isLeavePending()).toBe(true);
+
+    view.unmount();
+    // DraftLeaveDialog 的卸载清扫：挂起的 leave 必须落定，否则调用方 await 悬死。
+    expect(isLeavePending()).toBe(false);
+  });
+
+  it('saving invalid JSON never hits the wire and keeps the draft dirty', async () => {
+    getKey.mockResolvedValue(stringDetail('user:1', '{"a":1}'));
+    renderWorkbench();
+    fireEvent.click(await screen.findByTestId('redis-key-row-user:1'));
+    await waitFor(() => expect(screen.getByTestId('redis-string-input')).toBeTruthy());
+
+    // 敲出一个残缺中间态（journey 要求覆盖的非法中间态）。
+    fireEvent.change(draftInput(), { target: { value: '{"a":' } });
+    await waitFor(() => expect(dirtyBar()).not.toBeNull());
+
+    fireEvent.click(screen.getByTestId('redis-string-save'));
+    await waitFor(() => expect(editor().getAttribute('data-string-dirty')).toBe('true'));
+    // 解析失败 ⇒ 提前返回：不发 SET、不碰守卫、草稿仍在。
+    expect(setString).not.toHaveBeenCalled();
+    expect(isLeavePending()).toBe(false);
+    expect(leaveDialog()).toBeNull();
+    expect(dirtyBar()).not.toBeNull();
+  });
+});
