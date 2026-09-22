@@ -70,6 +70,16 @@ Written against: a7ac714cd9b915d72a1b1cc258ec89500b359c47
 5. **设置页新增 `tunnels` 分区**：`settingsSections.ts` 的联合与 `SETTINGS_SECTIONS` 加项，新增 `TunnelSettingsSection.tsx`。列表列 name / kind / 引用连接数 / 操作（编辑、复制、测试、删除）；编辑复用 `SshTunnelFields` / `HttpProxyTunnelFields` / `WebSocketTunnelFields`（它们只依赖 `ConnectionFormState`，可抽出为受控子组件复用）。
 6. **删除走引用检查**：新增 `get_tunnel_usage(id) -> { connectionIds, names }`。删除弹窗展示受影响连接，三选一：取消 / 删除并解绑（清空引用方 `tunnelId`，连接退回直连）/ 删除。默认「删除并解绑」，禁止无提示静默删除。
 7. **`test_tunnel(id)`**：复用 `start_tunnel` 建立隧道后立即拆除并回报，供管理面单独验证（解 G8）。
+
+   > **实施校正（2026-09-22，由 tunnel-backend 独立复测发现 BUG-001 后补记）**：本节初稿写的「复用 `start_tunnel` 建立隧道后立即拆除并回报」隐含了一个错误假设——**`start` 即验证连通**。实际上三种隧道的 `start` 语义不一致：
+   > - `SshTunnel::start` 在 start 阶段就完成 `client::connect` + 认证 + 本地端口绑定，**是真的在探测**；
+   > - `HttpProxyTunnel::start`（`tunnel/http_proxy.rs`）与 `WebSocketTunnel::start`（`tunnel/websocket.rs`）是**惰性**的：只 `TcpListener::bind("127.0.0.1:0")` + spawn accept 循环就返回 `Ok`，**全程不连** `proxy.host:proxy.port` / `cfg.url`（CONNECT 在 `connect_and_copy`、`connect_async` 在 `handle_client`，只有入站连接才触发）。
+   >
+   > 因此「以 `tunnel.is_none()` 为守卫」的探针只能拦住 `kind=None`，对不可达的代理/中继会**谎报成功**（实测 `http-proxy(closed port 1) -> Ok(0)`、`websocket(closed port 1) -> Ok(0)`）。
+   >
+   > **不变量**：`test_tunnel` 对不可达端点必须返回 `Err`，三种 kind 都不许假阳性；实现须为每种隧道做**真实的上游链路探测**（HTTP 代理做 CONNECT 握手、WS 做 `connect_async`、或穿透本地 listener 打真实连接），确实无法探测的类型必须显式返回 `Err` 而非 `Ok(0)`。
+   >
+   > 另：拆除隧道不能依赖 drop `JoinHandle`（tokio 中只 detach 不 abort）——`SshTunnel` 原先缺少 `Drop`，导致每次探测泄漏任务/SSH 会话/本地端口（BUG-002），已补 `impl Drop` 与 HTTP/WS 同构。
 8. **表单侧引用校验**：`tunnelId` 非空但不在 `savedTunnels` 中时，面板顶部显示「引用的隧道已不存在」告警并阻止保存（解 G3 的用户侧可见性）。
 9. **「隧道来源」单一状态机**，替换现有双控件互踩：
 
