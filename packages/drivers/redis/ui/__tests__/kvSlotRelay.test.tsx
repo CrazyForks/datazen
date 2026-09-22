@@ -205,14 +205,14 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
   it('reports a draft as dirty only after the value was edited', async () => {
     const onDirtyChange = vi.fn();
     detailColumn({ onDirtyChange });
+
+    // E-2 (PRD §3.3): the editor is resident — there is no view/edit surface to
+    // click into, so mounting must not itself count as a draft…
+    expect(screen.queryByTestId('redis-string-mode-toggle')).toBeNull();
     expect(stringEditor().getAttribute('data-string-dirty')).toBe('false');
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
 
-    // Entering edit mode alone is not a draft.
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
-    expect(stringEditor().getAttribute('data-string-dirty')).toBe('false');
-    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
-
+    // …and the first keystroke is what turns the draft on.
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'edited' } });
     expect(stringEditor().getAttribute('data-string-dirty')).toBe('true');
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
@@ -221,7 +221,6 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
   it('clears the dirty signal once the draft has been written', async () => {
     const onDirtyChange = vi.fn();
     detailColumn({ onDirtyChange });
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'edited' } });
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
@@ -233,8 +232,9 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
   it('does not leak one key draft into another key (per-key editor remount)', async () => {
     const onDirtyChange = vi.fn();
     const { rerender } = detailColumn({ onDirtyChange });
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
-    fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft-of-user-1' } });
+    fireEvent.change(screen.getByTestId('redis-string-input'), {
+      target: { value: 'draft-of-user-1' },
+    });
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
     getKey.mockResolvedValue(stringDetail('user:2', 'other'));
@@ -255,17 +255,15 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
 
     const column = screen.getByTestId('redis-detail-column');
     expect(column.getAttribute('data-selected-key')).toBe('user:2');
+    // Editing the new key starts from its own value, never the previous draft.
+    expect(screen.getByTestId('redis-string-input')).toHaveValue('other');
     expect(stringEditor().getAttribute('data-string-dirty')).toBe('false');
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
-    // Editing the new key starts from its own value, never the previous draft.
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
-    expect(screen.getByTestId('redis-string-input')).toHaveValue('other');
   });
 
   it('unmounting the editor publishes a clean slate', () => {
     const onDirtyChange = vi.fn();
     const { unmount } = detailColumn({ onDirtyChange });
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'x' } });
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     unmount();
@@ -305,7 +303,6 @@ describe('RedisWorkbench → host KV relay (contract F-2)', () => {
 
     fireEvent.click(await screen.findByTestId('redis-key-row-user:1'));
     await waitFor(() => expect(stringEditor()).toBeTruthy());
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft' } });
 
     await waitFor(() => expect(relay.getDirty()).toBe(true));
@@ -332,7 +329,6 @@ describe('RedisWorkbench → host KV relay (contract F-2)', () => {
 
     fireEvent.click(await screen.findByTestId('redis-key-row-user:1'));
     await waitFor(() => expect(relay.getSelectedKey()).toBe('user:1'));
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft' } });
     await waitFor(() => expect(relay.getDirty()).toBe(true));
 
@@ -402,7 +398,6 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
   async function draftOnRelay(relay: KvSlotState) {
     fireEvent.click(await screen.findByTestId('redis-key-row-user:1'));
     await waitFor(() => expect(stringEditor()).toBeTruthy());
-    fireEvent.click(screen.getByTestId('redis-string-edit'));
     fireEvent.change(screen.getByTestId('redis-string-input'), { target: { value: 'draft' } });
     await waitFor(() => expect(relay.getDirty()).toBe(true));
     expect(relay.getSelectedKey()).toBe('user:1');

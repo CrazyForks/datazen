@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Input, cn } from '@datazen/ui';
+import { Button, Input } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
@@ -261,7 +261,6 @@ function StringEditor({
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useI18n();
-  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [value, setValue] = useState(() => initialStringEditorValue(detail.value));
   const [saving, setSaving] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -344,105 +343,72 @@ function StringEditor({
       data-testid="redis-string-editor"
       data-string-dirty={jsonDirty ? 'true' : 'false'}
     >
-      <div className="flex items-center gap-1" data-testid="redis-string-mode-toggle">
-        <button
-          type="button"
-          className={cn(
-            'rounded px-2 py-0.5 text-[11px] transition-colors',
-            mode === 'view'
-              ? 'bg-accent/15 text-accent'
-              : 'text-fg-secondary hover:bg-surface-raised',
-          )}
-          data-testid="redis-string-view"
-          onClick={() => setMode('view')}
-        >
-          {t('redis.stringModeView')}
-        </button>
-        <button
-          type="button"
-          className={cn(
-            'rounded px-2 py-0.5 text-[11px] transition-colors',
-            mode === 'edit'
-              ? 'bg-accent/15 text-accent'
-              : 'text-fg-secondary hover:bg-surface-raised',
-          )}
-          data-testid="redis-string-edit"
-          onClick={() => setMode('edit')}
-        >
-          {t('redis.stringModeEdit')}
-        </button>
-      </div>
+      <ValueViewer dbSessionId={dbSessionId} frame={frame} />
 
-      {mode === 'view' ? (
-        <ValueViewer dbSessionId={dbSessionId} frame={frame} />
-      ) : (
-        <>
-          <textarea
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              setJsonDirty(true);
-              setJsonError(null);
-            }}
-            className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
-            spellCheck={false}
-            data-testid="redis-string-input"
+      <textarea
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setJsonDirty(true);
+          setJsonError(null);
+        }}
+        className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
+        spellCheck={false}
+        data-testid="redis-string-input"
+      />
+      {jsonError && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
+          {jsonError}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-fg-secondary">
+          <input
+            type="checkbox"
+            checked={keepTtl}
+            onChange={(e) => setKeepTtl(e.target.checked)}
+            className="rounded border-edge"
           />
-          {jsonError && (
-            <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-              {jsonError}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5 text-fg-secondary">
-              <input
-                type="checkbox"
-                checked={keepTtl}
-                onChange={(e) => setKeepTtl(e.target.checked)}
-                className="rounded border-edge"
-              />
-              {t('redis.keepTtl')}
-            </label>
-            <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
-            {jsonMode && (
-              <JsonModeBar modes={JSON_TEXT_MODES} active={jsonDisplay} onSelect={selectJsonMode} />
-            )}
-            {(maybeCompressed || decomp) && (
-              <Button
-                variant="secondary"
-                className="h-7 px-2 text-xs"
-                disabled={decompBusy}
-                onClick={runDecompress}
-              >
-                {t('redis.decompressView')}
-              </Button>
-            )}
-            <Button
-              variant="primary"
-              className="h-7 px-2 text-xs"
-              disabled={saving}
-              onClick={save}
-              data-testid="redis-string-save"
-            >
-              {t('common.save')}
-            </Button>
+          {t('redis.keepTtl')}
+        </label>
+        <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
+        {jsonMode && (
+          <JsonModeBar modes={JSON_TEXT_MODES} active={jsonDisplay} onSelect={selectJsonMode} />
+        )}
+        {(maybeCompressed || decomp) && (
+          <Button
+            variant="secondary"
+            className="h-7 px-2 text-xs"
+            disabled={decompBusy}
+            onClick={runDecompress}
+          >
+            {t('redis.decompressView')}
+          </Button>
+        )}
+        <Button
+          variant="primary"
+          className="h-7 px-2 text-xs"
+          disabled={saving}
+          onClick={save}
+          data-testid="redis-string-save"
+        >
+          {t('common.save')}
+        </Button>
+      </div>
+      {decompError && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
+          {decompError}
+        </div>
+      )}
+      {decomp && (
+        <div className="space-y-1 rounded-md border border-edge bg-surface-alt p-2">
+          <div className="text-fg-muted">
+            {t('redis.decompressCodec').replace('{codec}', decomp.codec)} · {decomp.bytes} B
           </div>
-          {decompError && (
-            <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-              {decompError}
-            </div>
-          )}
-          {decomp && (
-            <div className="space-y-1 rounded-md border border-edge bg-surface-alt p-2">
-              <div className="text-fg-muted">
-                {t('redis.decompressCodec').replace('{codec}', decomp.codec)} · {decomp.bytes} B
-              </div>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-fg-secondary">
-                {decomp.text}
-              </pre>
-            </div>
-          )}
-        </>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-fg-secondary">
+            {decomp.text}
+          </pre>
+        </div>
       )}
     </div>
   );

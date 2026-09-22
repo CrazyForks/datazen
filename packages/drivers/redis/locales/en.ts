@@ -214,8 +214,10 @@ const locale = {
   'redis.view.invalidUtf8': 'Not valid UTF-8 (shown with replacement characters)',
   'redis.view.empty': '(empty)',
   'redis.view.noData': 'No binary value available.',
-  'redis.stringModeView': 'View',
-  'redis.stringModeEdit': 'Edit',
+  // E-2 (PRD §3.3): the string "View / Edit" toggle was deleted — the editor is
+  // resident, so `redis.stringModeView` / `redis.stringModeEdit` are gone from the
+  // source of truth. The other nine locales keep their orphan copies until the
+  // pre-release i18n-sync pass (AGENTS.md "i18n 国际化规则").
   'redis.seconds': 's',
   'redis.selectDb': 'Select a database',
   'redis.selectKeyHint': 'Select a key to view details',
