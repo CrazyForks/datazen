@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::model::{TableMapping, TransferMode, TransferOptions, WriteMode};
+use super::model::{
+    SqlFileCompression, SqlFileEncoding, TableMapping, TransferMode, TransferOptions, WriteMode,
+};
 
 /// Persisted, reusable Data Transfer configuration.
 ///
@@ -30,6 +32,8 @@ pub struct TransferProfile {
     pub sql_file_dialect: Option<String>,
     #[serde(default)]
     pub sql_file_encoding: Option<String>,
+    #[serde(default)]
+    pub sql_file_compression: Option<String>,
     #[serde(default)]
     pub sql_file_database: Option<String>,
     #[serde(default)]
@@ -78,6 +82,12 @@ impl TransferProfile {
             }
         }
         self.options.validate().map_err(|error| error.to_string())?;
+        if let Some(value) = self.sql_file_encoding.as_deref() {
+            SqlFileEncoding::parse_profile(value).map_err(|error| error.to_string())?;
+        }
+        if let Some(value) = self.sql_file_compression.as_deref() {
+            SqlFileCompression::parse_profile(value).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 }

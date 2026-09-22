@@ -81,7 +81,9 @@ export interface TransferSqlFileTarget {
   /** Registered SQL driver used to render the artifact; omitted means source dialect. */
   databaseType?: string;
   /** Output text encoding; omitted means UTF-8 without a BOM. */
-  encoding?: 'utf8' | 'utf8Bom';
+  encoding?: 'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be';
+  /** Output compression; omitted means an uncompressed .sql artifact. */
+  compression?: 'none' | 'gzip';
   /** Optional target catalog/database qualifier for the generated SQL. */
   database?: string;
   /** Optional target schema qualifier for the generated SQL. */
@@ -100,7 +102,8 @@ export interface TransferProfile {
   targetSchema?: string | null;
   destinationMode: 'database' | 'sqlFile';
   sqlFileDialect?: string | null;
-  sqlFileEncoding?: 'utf8' | 'utf8Bom' | null;
+  sqlFileEncoding?: 'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be' | null;
+  sqlFileCompression?: 'none' | 'gzip' | null;
   sqlFileDatabase?: string | null;
   sqlFileSchema?: string | null;
   mode: TransferMode;

@@ -12,7 +12,9 @@ use crate::data_sync::SyncSourceFilter;
 use crate::data_transfer::model::{
     Endpoint as TransferEndpoint, TransferRunOptions, TransferRunSelection,
 };
-use crate::data_transfer::{SqlFileEncoding, SqlFileTarget, TransferJob, TransferRunRequest};
+use crate::data_transfer::{
+    SqlFileCompression, SqlFileEncoding, SqlFileTarget, TransferJob, TransferRunRequest,
+};
 use crate::store::MigrationProfileRef;
 use crate::workflow::model::{
     StepExecutionResult, StepStatus, UnattendedDestructivePolicy, WorkflowMigrationOperation,
@@ -469,6 +471,11 @@ async fn run_transfer(
                     .as_deref()
                     .map(parse_sql_file_encoding)
                     .transpose()?,
+                compression: profile
+                    .sql_file_compression
+                    .as_deref()
+                    .map(parse_sql_file_compression)
+                    .transpose()?,
             })
         } else {
             None
@@ -718,13 +725,13 @@ async fn run_schema(
 }
 
 fn parse_sql_file_encoding(value: &str) -> Result<SqlFileEncoding, WorkflowError> {
-    match value.trim() {
-        "utf8" | "UTF-8" => Ok(SqlFileEncoding::Utf8),
-        "utf8Bom" | "utf-8-bom" | "UTF-8-BOM" => Ok(SqlFileEncoding::Utf8Bom),
-        other => Err(WorkflowError::Validation(format!(
-            "unsupported SQL-file encoding '{other}'"
-        ))),
-    }
+    SqlFileEncoding::parse_profile(value)
+        .map_err(|error| WorkflowError::Validation(error.to_string()))
+}
+
+fn parse_sql_file_compression(value: &str) -> Result<SqlFileCompression, WorkflowError> {
+    SqlFileCompression::parse_profile(value)
+        .map_err(|error| WorkflowError::Validation(error.to_string()))
 }
 
 /// Remove per-run SQL-file tokens before the generic workflow history writer
@@ -802,6 +809,7 @@ mod tests {
                 destination_mode: "database".into(),
                 sql_file_dialect: None,
                 sql_file_encoding: None,
+                sql_file_compression: None,
                 sql_file_database: None,
                 sql_file_schema: None,
                 mode: TransferMode::Data,

@@ -40,7 +40,8 @@ pub(crate) struct StoredTransferPlan {
     /// Reserved for the filter contract. Until parameterized filters are
     /// supported by Transfer, all plans explicitly bind `None` here.
     pub(crate) filter: Option<String>,
-    /// Fingerprint of the SQL-file dialect and target namespace qualifiers.
+    /// Fingerprint of the SQL-file dialect, output format and target namespace
+    /// qualifiers.
     /// This keeps catalog/schema scope review-bound alongside the immutable
     /// structure sequence and prevents later renderer changes from silently
     /// changing the output namespace.
@@ -113,6 +114,7 @@ pub(crate) fn target_scope_fingerprint(job: &TransferJob) -> Result<Option<Strin
         target.normalized_database(),
         target.normalized_schema(),
         target.normalized_encoding(),
+        target.normalized_compression(),
     );
     let bytes = serde_json::to_vec(&scope).map_err(|error| {
         TransferError::validation(format!("cannot fingerprint SQL-file target scope: {error}"))
@@ -559,6 +561,7 @@ mod tests {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         });
         let id = store
             .issue_with_ttl(
@@ -600,6 +603,13 @@ mod tests {
         assert_ne!(
             stored.target_scope_fingerprint,
             target_scope_fingerprint(&changed_scope).unwrap()
+        );
+        let mut changed_format = stored.job.clone();
+        changed_format.sql_file_target.as_mut().unwrap().compression =
+            Some(crate::data_transfer::SqlFileCompression::Gzip);
+        assert_ne!(
+            stored.target_scope_fingerprint,
+            target_scope_fingerprint(&changed_format).unwrap()
         );
     }
 

@@ -272,6 +272,7 @@ pub(crate) async fn inspect_sql_file_transfer_impl(
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         };
         let _driver =
             crate::data_transfer::sql_file::resolve_target_driver(src_driver.clone(), &target)

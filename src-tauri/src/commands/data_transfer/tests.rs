@@ -139,6 +139,7 @@ async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
         destination_mode: "sqlFile".into(),
         sql_file_dialect: Some("mysql".into()),
         sql_file_encoding: Some("utf8Bom".into()),
+        sql_file_compression: Some("gzip".into()),
         sql_file_database: Some("analytics".into()),
         sql_file_schema: None,
         mode: TransferMode::Data,
@@ -154,6 +155,12 @@ async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
         .unwrap();
     let stored = test.store.get_transfer_profiles().await;
     assert_eq!(stored, vec![profile]);
+    let mut invalid = stored[0].clone();
+    invalid.sql_file_encoding = Some("gbk".into());
+    assert!(invalid.validate().is_err());
+    invalid.sql_file_encoding = Some("utf16Le".into());
+    invalid.sql_file_compression = Some("brotli".into());
+    assert!(invalid.validate().is_err());
     let json = tokio::fs::read_to_string(test.store.data_dir().join("transfer_profiles.json"))
         .await
         .unwrap();
@@ -267,6 +274,7 @@ async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -327,6 +335,7 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -392,6 +401,7 @@ async fn sql_file_preview_honors_table_selection_renames_and_skipped_columns() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Data,
         write_mode: WriteMode::Insert,
@@ -469,6 +479,7 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::StructureAndData,
         write_mode: WriteMode::Insert,
@@ -558,6 +569,7 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
             database: None,
             schema: None,
             encoding: None,
+            compression: None,
         }),
         mode: TransferMode::Structure,
         write_mode: WriteMode::Insert,

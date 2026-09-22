@@ -149,14 +149,13 @@ pub async fn pick_data_transfer_sql_file(
 ) -> Result<Option<crate::data_transfer::SqlFileTarget>, CommandError> {
     let picked = super::dialog::save_file(
         &app,
-        ("SQL".into(), vec!["sql".into()]),
+        ("SQL".into(), vec!["sql".into(), "sql.gz".into()]),
         "datazen-transfer.sql".into(),
     )
     .await?;
     let Some(path) = picked else {
         return Ok(None);
     };
-    super::file::validate_extension(&path, &["sql"])?;
     let token = crate::data_transfer::sql_file::register_path(path).map_err(CommandError::from)?;
     Ok(Some(crate::data_transfer::SqlFileTarget {
         file_token: token,
@@ -164,6 +163,7 @@ pub async fn pick_data_transfer_sql_file(
         database: None,
         schema: None,
         encoding: None,
+        compression: None,
     }))
 }
 

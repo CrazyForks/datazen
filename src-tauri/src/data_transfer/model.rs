@@ -23,11 +23,56 @@ pub struct Endpoint {
 pub enum SqlFileEncoding {
     Utf8,
     Utf8Bom,
+    Utf16Le,
+    Utf16Be,
 }
 
 impl Default for SqlFileEncoding {
     fn default() -> Self {
         Self::Utf8
+    }
+}
+
+impl SqlFileEncoding {
+    /// Parse the stable profile/workflow spelling while keeping the IPC enum
+    /// strict: unknown values never silently fall back to UTF-8.
+    pub fn parse_profile(value: &str) -> Result<Self, TransferError> {
+        match value.trim() {
+            "utf8" | "UTF-8" => Ok(Self::Utf8),
+            "utf8Bom" | "utf-8-bom" | "UTF-8-BOM" => Ok(Self::Utf8Bom),
+            "utf16Le" | "utf-16le" | "UTF-16LE" => Ok(Self::Utf16Le),
+            "utf16Be" | "utf-16be" | "UTF-16BE" => Ok(Self::Utf16Be),
+            other => Err(TransferError::validation(format!(
+                "unsupported SQL-file encoding '{other}'"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SqlFileCompression {
+    None,
+    Gzip,
+}
+
+impl Default for SqlFileCompression {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl SqlFileCompression {
+    /// Parse the stable profile/workflow spelling while keeping the IPC enum
+    /// strict: unknown values never silently fall back to no compression.
+    pub fn parse_profile(value: &str) -> Result<Self, TransferError> {
+        match value.trim() {
+            "none" | "None" => Ok(Self::None),
+            "gzip" | "GZIP" | "gz" => Ok(Self::Gzip),
+            other => Err(TransferError::validation(format!(
+                "unsupported SQL-file compression '{other}'"
+            ))),
+        }
     }
 }
 
@@ -53,6 +98,10 @@ pub struct SqlFileTarget {
     /// the historical UTF-8 output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding: Option<SqlFileEncoding>,
+    /// Optional compression for the generated artifact. Omitted preserves
+    /// the historical uncompressed output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<SqlFileCompression>,
 }
 
 impl SqlFileTarget {
@@ -98,6 +147,10 @@ impl SqlFileTarget {
 
     pub fn normalized_encoding(&self) -> SqlFileEncoding {
         self.encoding.unwrap_or_default()
+    }
+
+    pub fn normalized_compression(&self) -> SqlFileCompression {
+        self.compression.unwrap_or_default()
     }
 }
 
