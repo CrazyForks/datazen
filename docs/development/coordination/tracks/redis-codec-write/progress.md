@@ -1,5 +1,5 @@
 - 任务: 后端 codec 补齐到 §3.3 矩阵 + string 写路径 KEEPTTL 默认化与 PTTL/PX 回退（PRD §3.3 / §6）
-- 状态: **FAILED（Phase = TEST_FAILED · 第 1 轮 Tester · 5 条 `待修复`，见本目录 `bugs.md`）**
+- 状态: **READY_FOR_TEST（第 1 轮 5 条 bug 已全部修复，待第 2 轮 Tester 复测；逐条修复点、commit 与门禁实跑见文末「修复轮自验记录」及 `bugs.md` 各条状态）**
 - 编码 commit: ebbdfd7dd（交付头：`c0ad7078d`）
 - 测试 commit: 本轮 `docs(coordination): record bugs for redis-codec-write`（新增 12 例测试 + 台账）
 - 合并 commit: —
@@ -7,7 +7,7 @@
 - 测试代理: w3c-codec-write-tester（全新实例，未复用编码代理）
 - Worktree: .worktrees/datazen-redis-codec-write
 - 分支: feature/redis-codec-write
-- 心跳: 2026-09-22 18:23
+- 心跳: 2026-09-22 20:48（修复轮完成，READY_FOR_TEST）
 
 # W3-C `redis-codec-write` 简报（协调者下发）
 
@@ -176,7 +176,7 @@ View 枚举源：`packages/drivers/redis/ui/value-editors/valueView/views.ts:9-1
 | 格式 | `cargo fmt -p datazen-driver-redis` | — | 无剩余 diff（仅本轨文件被格式化，未重排他人文件） | 绿 |
 | 类型 | `npx tsc --noEmit` | 0 | **0** | 绿 |
 | 驱动 UI | `npx vitest run --config vitest.drivers.config.ts` | 47 文件 / 456 测试 | **47 passed / 456 passed** | 绿（后端形状变更未把 UI 打红；`ValueViewer.test.tsx` 的 `{ok,json}` mock 与新形状兼容） |
-| clippy | `cargo clippy -p datazen-driver-redis --all-targets` | 既有 17-18 warning + 2 `approx_constant` error（`decode/pickle.rs`、`redis_value_preview.rs` 等，非本轨文件） | 本轨文件 **0 新增** warning/error | 绿（不越界修他人文件） |
+| clippy | `cargo clippy -p datazen-driver-redis --all-targets` | 既有 17-18 warning + 2 `approx_constant` error（`ops.rs:881`、`ops_exec.rs:260`，均在 `#[cfg(test)]` 内、基线即存在的测试代码 —— 修复轮已按 BUG-005 核正归属；原行误记为 `decode/pickle.rs`、`redis_value_preview.rs`） | 本轨文件 **0 新增** warning/error | 绿（不越界修他人文件） |
 
 ### 3. 越界自查与遗留
 
@@ -280,3 +280,33 @@ View 枚举源：`packages/drivers/redis/ui/value-editors/valueView/views.ts:9-1
 | R-6 | `protobuf` 是否接 schema（§1.4 挂账） | Wave 4/P2 裁定；当前 `codec-not-implemented` + `suggestedCodec:"base64"` 为可见降级 |
 | R-7 | flate2 升版复验（C-5） | 升版必跑：`zlib_stream_is_not_raw_deflate_and_vice_versa`、`gzip_and_zlib_headers_are_distinguished_not_merged` + BUG-002/003 的两条新例（解挂后） |
 | R-8 | `BACKEND_CODECS` 由 4 项收编为 9 项（浏览器解压 → 后端统一路径） | W3-E 的面，本轨后端已就绪（`every_ui_codec_name_is_accepted_by_the_backend` 已钉住同集合） |
+
+## 修复轮自验记录（W3-C bug-fix · 2026-09-22 20:48 · READY_FOR_TEST）
+
+**逐条修复点与 commit**（均在分支 `feature/redis-codec-write`，工作树 `.worktrees/datazen-redis-codec-write`；`Cargo.lock` 保持未提交）：
+
+| Bug | commit | 修复点 |
+|---|---|---|
+| BUG-001 | `dfc1e0523` | `ValueViewer.tsx` recompute 读 `res.ok`：`{ok:false}` ⇒ `errorText=reason` + `status='error'` + `setRendered(null)`（含 seq 过期保护），失败不再渲染具名空态；`redisInvoke.ts` 删除虚假的「Throws on reject」注释改为 C-3 口径，`DecodeValueResult` 键集对齐 C-2/C-3（`json: string \| null` 亦如实反映显式 null）。**未做**「按 X 重试」按钮（W3-E/Wave 4 归属不变），无新增 `ui/**` 测试文件，hunk 限于该两文件最小面 |
+| BUG-002 | `ec087a52d` | `Framing::decode` 入口门：Zlib 先过既有 `looks_like_zlib_header()`（不过 ⇒ `Failed`），Deflate 补 `MIN_DEFLATE_BYTES=2` 门槛；弃用 `Read::take` 对 zlib/deflate 的「截断=EOF」口径，改为手动 `inflate_stream` 驱动到显式 `Status::StreamEnd`（32 KiB 有界窗口 ⇒ 越限 `TooLarge`；无进展 ⇒ `Failed`）；三腿统一后置「输入非空而输出 0 字节 ⇒ `Failed`」（bugs.md 建议修法原文落地；取舍：合法的空压缩值也会判失败）。零新依赖、零新文件 |
+| BUG-003 | `ec087a52d` | gzip 臂换 `flate2::read::MultiGzDecoder`（= `GzDecoder::new(r).multi(true)` 的公开等价，C-5 版本口径内）：拼接成员全量解码，`bytes` 不再少报；尾随垃圾按 header-parse 失败传播（不依赖人读文本）。与 BUG-002 同文件同函数、无法按 hunk 拆分，故同 commit |
+| BUG-004 | `8ce9285d8` | `ops_write.rs` 新增 `is_keepttl_keyword_rejection`（小写后含 `keepttl`，或 `unknown option` + `'set'` 形态，恰好是 bugs.md 指定的两种）；`Err` 臂加守卫：非 KEEPTTL 拒绝**原样 `Err` 抛出**、不探 PTTL、不发第二笔写、`keepTtlFallback:false` 保留 ⇒ 对齐 C-3 末段与 C-4。分类函数在 `ops_write.rs` 内部，零新依赖 |
+| BUG-005 | 本 commit | `## 1. 门禁` clippy 行归属核正为 `ops.rs:881` + `ops_exec.rs:260`（均 `#[cfg(test)]`、基线即存在）；「本轨文件 0 新增 clippy 诊断」结论不变，本轮 clippy 复跑仍为 17/18 warning + 该 2 error，且逐文件清单中 `decode/compress.rs`、`ops_write*`、`decode/tests.rs` 零命中 |
+
+**门禁实跑（修复轮，全部复跑）**：
+
+| 门禁 | 实跑 | 判定 |
+|---|---|---|
+| redis crate `cargo test -p datazen-driver-redis` | **281 passed / 0 failed / 4 ignored** lib + **4 passed** 集成 | 绿（基线 276 + 本轮新增 5 例绿测：compress 3 + ops_write 2） |
+| 三条 `#[ignore]` 复现体（任务书指定验收线，**未改动、保持 `#[ignore]`**） | `cargo test -p datazen-driver-redis --lib -- --ignored test_tester_` → **3 passed / 0 failed** | 绿（002/003/004 复现体断言原样通过） |
+| 宿主 `cargo test -p datazen --lib` | **1454 passed / 0 failed / 3 ignored** | 绿（与基线一致） |
+| `cargo fmt -p datazen-driver-redis -- --check` | 无 diff | 绿 |
+| `npx tsc --noEmit` | **0** 错 | 绿 |
+| `npx vitest run --config vitest.drivers.config.ts` | **47 files / 456 tests** 全绿 | 绿（BUG-001 hunk 未打红 `ValueViewer.test.tsx` 既有 mock） |
+| clippy | 同基线 17/18 warning + 2 error（`ops.rs:881`/`ops_exec.rs:260`），本轨改动文件零诊断 | 绿 |
+
+**新增 5 例绿测**（修复的回归钉，全部 `#[test]` 非 ignore）：`no_prefix_of_a_zlib_or_deflate_stream_decodes_as_a_success`、`headerless_tiny_payloads_fail_at_the_entry_gate`、`gzip_decodes_every_concatenated_member`（compress.rs）；`a_non_keyword_set_failure_is_thrown_without_rescue`、`an_unknown_option_shape_is_also_a_keyword_refusal`（ops_write/tests.rs）。
+
+**给下一轮 Tester / 协调者的两点说明**：
+1. T-5 第 4 项期望复现体解挂后「1 ignored」，但本轮任务书明确要求三条 `#[ignore]` 复现体**保持原样**（可执行证据形态）⇒ 本轮维持 4 ignored；解挂与否请协调者裁定。
+2. `DecodeValueResult`/注释对齐已按 T-5 第 2 项完成；「按 X 重试」按钮与原始字节回退仍归 W3-E（R-5 不变）。
