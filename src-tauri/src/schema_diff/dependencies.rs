@@ -25,6 +25,16 @@ fn op_table(op: &MigrationOperation) -> &str {
         MigrationOperation::CreateView { view }
         | MigrationOperation::ReplaceView { desired: view, .. }
         | MigrationOperation::DropView { view } => &view.name,
+        MigrationOperation::CreateRoutine { routine }
+        | MigrationOperation::ReplaceRoutine {
+            desired: routine, ..
+        }
+        | MigrationOperation::DropRoutine { routine } => &routine.name,
+        MigrationOperation::CreateTrigger { trigger }
+        | MigrationOperation::ReplaceTrigger {
+            desired: trigger, ..
+        }
+        | MigrationOperation::DropTrigger { trigger } => &trigger.name,
     }
 }
 
@@ -275,7 +285,7 @@ pub fn resolve_dependencies(mut ops: Vec<MigrationOperation>) -> Vec<MigrationOp
 fn priority(op: &MigrationOperation) -> u8 {
     use MigrationOperation::*;
     match op {
-        CreateTable { .. } | CreateView { .. } => 0,
+        CreateTable { .. } | CreateView { .. } | CreateRoutine { .. } => 0,
         AddColumn { .. } | AddPrimaryKey { .. } => 1,
         CreateIndex { .. } | AddForeignKey { .. } | AddCheckConstraint { .. } => 3,
         DropColumn { .. }
@@ -283,9 +293,12 @@ fn priority(op: &MigrationOperation) -> u8 {
         | DropPrimaryKey { .. }
         | DropForeignKey { .. }
         | DropCheckConstraint { .. }
-        | DropView { .. } => 4,
+        | DropView { .. }
+        | DropRoutine { .. }
+        | DropTrigger { .. } => 4,
         DropTable { .. } => 5,
-        ReplaceView { .. } => 2,
+        ReplaceView { .. } | ReplaceRoutine { .. } | ReplaceTrigger { .. } => 2,
+        CreateTrigger { .. } => 3,
         _ => 2,
     }
 }

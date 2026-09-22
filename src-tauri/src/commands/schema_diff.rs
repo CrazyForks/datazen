@@ -9,6 +9,7 @@ use crate::schema_diff::deploy::{
 };
 use crate::schema_diff::diff_table_schemas;
 use crate::schema_diff::objects::{
+    build_routine_trigger_migration_plan_with_components,
     build_view_migration_plan_with_components, SchemaObjectSnapshot,
 };
 use crate::schema_diff::plan::{is_source_unbounded_text, PlanOptions};
@@ -86,6 +87,101 @@ async fn fetch_schema_view(
     ))
 }
 
+async fn list_schema_objects(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+    kind: datazen_driver_api::ObjectKind,
+) -> Result<Vec<datazen_driver_api::DatabaseObject>, CommandError> {
+    let result = datazen_driver_api::execute_schema_object_command(
+        driver,
+        &driver.driver_type(),
+        handle,
+        "list_objects",
+        serde_json::json!({ "kind": kind.as_str() }),
+    )
+    .await
+    .map_err(CommandError::Driver)?;
+    result
+        .data
+        .get("objects")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| {
+            CommandError::Internal(format!("invalid {} metadata: {error}", kind.as_str()))
+        })
+        .map(|objects| objects.unwrap_or_default())
+}
+
+async fn fetch_schema_object(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+    object: &datazen_driver_api::DatabaseObject,
+) -> Result<SchemaObjectSnapshot, CommandError> {
+    let kind = datazen_driver_api::ObjectKind::parse(&object.kind).ok_or_else(|| {
+        CommandError::Validation(format!("Unsupported schema object kind `{}`", object.kind))
+    })?;
+    let result = datazen_driver_api::execute_schema_object_command(
+        driver,
+        &driver.driver_type(),
+        handle,
+        "get_object_ddl",
+        serde_json::json!({
+            "kind": kind.as_str(),
+            "name": object.name,
+            "schema": object.schema,
+            "signature": object.signature,
+            "targetSchema": object.target_schema,
+            "targetName": object.target_name,
+        }),
+    )
+    .await
+    .map_err(CommandError::Driver)?;
+    let definition = result
+        .data
+        .get("ddl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if definition.is_empty() {
+        return Err(CommandError::Validation(format!(
+            "{} {} disappeared while it was being inspected",
+            kind.as_str(),
+            object.name
+        )));
+    }
+    Ok(match kind {
+        datazen_driver_api::ObjectKind::View => {
+            SchemaObjectSnapshot::view(object.schema.as_deref(), &object.name, &definition)
+        }
+        datazen_driver_api::ObjectKind::Function | datazen_driver_api::ObjectKind::Procedure => {
+            SchemaObjectSnapshot::routine(
+                kind,
+                object.schema.as_deref(),
+                &object.name,
+                object.signature.as_deref(),
+                &definition,
+            )
+        }
+        datazen_driver_api::ObjectKind::Trigger => SchemaObjectSnapshot::trigger(
+            object.schema.as_deref(),
+            &object.name,
+            object.target_schema.as_deref(),
+            object.target_name.as_deref().ok_or_else(|| {
+                CommandError::Validation(format!("Trigger {} has no target relation", object.name))
+            })?,
+            &definition,
+        ),
+        _ => {
+            return Err(CommandError::Validation(format!(
+                "{} migration is not supported",
+                kind.as_str()
+            )))
+        }
+    })
+}
+
 fn object_selector(object: &datazen_driver_api::DatabaseObject) -> String {
     object
         .schema
@@ -94,7 +190,32 @@ fn object_selector(object: &datazen_driver_api::DatabaseObject) -> String {
         .unwrap_or_else(|| object.name.clone())
 }
 
-fn select_view_object_pair(
+fn object_selector_with_metadata(object: &datazen_driver_api::DatabaseObject) -> String {
+    let base = object_selector(object);
+    match datazen_driver_api::ObjectKind::parse(&object.kind) {
+        Some(datazen_driver_api::ObjectKind::Function)
+        | Some(datazen_driver_api::ObjectKind::Procedure) => object
+            .signature
+            .as_deref()
+            .map(|signature| format!("{base}({signature})"))
+            .unwrap_or(base),
+        Some(datazen_driver_api::ObjectKind::Trigger) => object
+            .target_name
+            .as_deref()
+            .map(|target| {
+                let target = object
+                    .target_schema
+                    .as_deref()
+                    .map(|schema| format!("{schema}.{target}"))
+                    .unwrap_or_else(|| target.to_owned());
+                format!("{base} ON {target}")
+            })
+            .unwrap_or(base),
+        _ => base,
+    }
+}
+
+fn select_schema_object_pair(
     source: &[datazen_driver_api::DatabaseObject],
     target: &[datazen_driver_api::DatabaseObject],
     requested: &[String],
@@ -111,18 +232,26 @@ fn select_view_object_pair(
         let name = raw.trim();
         let source_matches = source
             .iter()
-            .filter(|object| object.name == name || object_selector(object) == name)
+            .filter(|object| {
+                object.name == name
+                    || object_selector(object) == name
+                    || object_selector_with_metadata(object) == name
+            })
             .collect::<Vec<_>>();
         let target_matches = target
             .iter()
-            .filter(|object| object.name == name || object_selector(object) == name)
+            .filter(|object| {
+                object.name == name
+                    || object_selector(object) == name
+                    || object_selector_with_metadata(object) == name
+            })
             .collect::<Vec<_>>();
         if source_matches.len() > 1
             || target_matches.len() > 1
             || (source_matches.is_empty() && target_matches.is_empty())
         {
             return Err(CommandError::Validation(format!(
-                "View selector `{name}` must identify exactly one available view"
+                "Schema object selector `{name}` must identify exactly one available object"
             )));
         }
         if let Some(object) = source_matches.first() {
@@ -606,7 +735,7 @@ pub async fn prepare_schema_view_plan(
     let source_available = list_schema_views(src_driver.as_ref(), &src_handle).await?;
     let target_available = list_schema_views(tgt_driver.as_ref(), &tgt_handle).await?;
     let (source_selected, target_selected) =
-        select_view_object_pair(&source_available, &target_available, &object_names)?;
+        select_schema_object_pair(&source_available, &target_available, &object_names)?;
 
     let mut source_snapshots = Vec::with_capacity(source_selected.len());
     for object in &source_selected {
@@ -631,6 +760,113 @@ pub async fn prepare_schema_view_plan(
         )));
     };
     let mut plan = build_view_migration_plan_with_components(
+        &source_snapshots,
+        &target_snapshots,
+        &src_dialect,
+        &tgt_dialect,
+        allow_destructive,
+        renderer.as_ref(),
+        capabilities.as_ref(),
+    );
+    crate::schema_diff::reviewed::freeze_with_objects(
+        &mut plan,
+        target_db_session_id,
+        &tgt_handle,
+        &tgt_config,
+        Vec::new(),
+        target_snapshots,
+    )
+    .await;
+    Ok(plan)
+}
+
+/// Prepare a reviewed same-dialect plan for PostgreSQL/MySQL functions,
+/// procedures, or triggers. The backend owns object DDL retrieval so callers
+/// cannot inject replacement SQL into the migration plan.
+#[tauri::command]
+pub async fn prepare_schema_routine_trigger_plan(
+    state: State<'_, AppState>,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    kind: String,
+    object_names: Vec<String>,
+    allow_destructive: bool,
+) -> Result<SchemaDiffPlan, CommandError> {
+    let kind = datazen_driver_api::ObjectKind::parse(&kind).ok_or_else(|| {
+        CommandError::Validation("kind must be function, procedure, or trigger".into())
+    })?;
+    if !matches!(
+        kind,
+        datazen_driver_api::ObjectKind::Function
+            | datazen_driver_api::ObjectKind::Procedure
+            | datazen_driver_api::ObjectKind::Trigger
+    ) {
+        return Err(CommandError::Validation(
+            "kind must be function, procedure, or trigger".into(),
+        ));
+    }
+    if object_names.is_empty() {
+        return Err(CommandError::Validation(
+            "object_names must not be empty".into(),
+        ));
+    }
+    let src_config = state
+        .connection_manager
+        .get_session_config(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_routine_trigger_plan")?;
+    let tgt_config = state
+        .connection_manager
+        .get_session_config(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_routine_trigger_plan")?;
+    if tgt_config.read_only {
+        return Err(CommandError::Validation(
+            "Target connection is read-only".into(),
+        ));
+    }
+    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config) {
+        return Err(CommandError::Validation(
+            "Source and target must identify different database scopes".into(),
+        ));
+    }
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_routine_trigger_plan")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_routine_trigger_plan")?;
+    let source_available = list_schema_objects(src_driver.as_ref(), &src_handle, kind).await?;
+    let target_available = list_schema_objects(tgt_driver.as_ref(), &tgt_handle, kind).await?;
+    let (source_selected, target_selected) =
+        select_schema_object_pair(&source_available, &target_available, &object_names)?;
+    let mut source_snapshots = Vec::with_capacity(source_selected.len());
+    for object in &source_selected {
+        source_snapshots.push(fetch_schema_object(src_driver.as_ref(), &src_handle, object).await?);
+    }
+    let mut target_snapshots = Vec::with_capacity(target_selected.len());
+    for object in &target_selected {
+        target_snapshots.push(fetch_schema_object(tgt_driver.as_ref(), &tgt_handle, object).await?);
+    }
+    let src_dialect = normalize_dialect(&src_config.database_type);
+    let tgt_dialect = normalize_dialect(&tgt_config.database_type);
+    let Some(renderer) = tgt_driver.migration_renderer() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration rendering",
+            tgt_config.database_type
+        )));
+    };
+    let Some(capabilities) = tgt_driver.migration_capabilities() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration capabilities",
+            tgt_config.database_type
+        )));
+    };
+    let mut plan = build_routine_trigger_migration_plan_with_components(
         &source_snapshots,
         &target_snapshots,
         &src_dialect,
@@ -838,14 +1074,14 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
     }
     for snapshot in &reviewed.object_snapshots {
         let object = datazen_driver_api::DatabaseObject {
-            kind: "view".into(),
+            kind: snapshot.kind.as_str().into(),
             schema: snapshot.schema.clone(),
             name: snapshot.name.clone(),
-            signature: None,
-            target_schema: None,
-            target_name: None,
+            signature: snapshot.signature.clone(),
+            target_schema: snapshot.target_schema.clone(),
+            target_name: snapshot.target_name.clone(),
         };
-        let current = match fetch_schema_view(driver.as_ref(), &handle, &object).await {
+        let current = match fetch_schema_object(driver.as_ref(), &handle, &object).await {
             Ok(value) => value,
             Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
         };

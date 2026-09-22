@@ -3,7 +3,7 @@
 //! Dialect SQL helpers used by driver `list_objects` / `get_object_ddl` /
 //! `list_privileges` commands. Host must not execute these SQL strings directly.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectKind {
     Table,
     View,

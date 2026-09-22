@@ -2,8 +2,8 @@
 
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
-use datazen_driver_api::MigrationView;
 use datazen_driver_api::TableOptions;
+use datazen_driver_api::{MigrationRoutine, MigrationTrigger, MigrationView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -103,6 +103,26 @@ pub enum MigrationOperation {
     DropView {
         view: MigrationView,
     },
+    CreateRoutine {
+        routine: MigrationRoutine,
+    },
+    ReplaceRoutine {
+        current: MigrationRoutine,
+        desired: MigrationRoutine,
+    },
+    DropRoutine {
+        routine: MigrationRoutine,
+    },
+    CreateTrigger {
+        trigger: MigrationTrigger,
+    },
+    ReplaceTrigger {
+        current: MigrationTrigger,
+        desired: MigrationTrigger,
+    },
+    DropTrigger {
+        trigger: MigrationTrigger,
+    },
 }
 
 impl MigrationOperation {
@@ -114,14 +134,18 @@ impl MigrationOperation {
             | Self::DropIndex { .. }
             | Self::DropForeignKey { .. }
             | Self::DropCheckConstraint { .. }
-            | Self::DropView { .. } => StatementRisk::Destructive,
+            | Self::DropView { .. }
+            | Self::DropRoutine { .. }
+            | Self::DropTrigger { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
             }
             | Self::SetAutoIncrement { .. }
             | Self::SetTableOptions { .. }
-            | Self::ReplaceView { .. } => StatementRisk::Rewrite,
+            | Self::ReplaceView { .. }
+            | Self::ReplaceRoutine { .. }
+            | Self::ReplaceTrigger { .. } => StatementRisk::Rewrite,
             _ => StatementRisk::Additive,
         }
     }
@@ -160,6 +184,28 @@ impl MigrationOperation {
                 .filter(|schema| !schema.is_empty())
                 .map(|schema| format!("view:{schema}.{}", view.name))
                 .unwrap_or_else(|| format!("view:{}", view.name)),
+            Self::CreateRoutine { routine }
+            | Self::ReplaceRoutine {
+                desired: routine, ..
+            }
+            | Self::DropRoutine { routine } => format!(
+                "routine:{}:{}:{}:{}",
+                routine.kind.as_str(),
+                routine.schema.as_deref().unwrap_or_default(),
+                routine.name,
+                routine.signature.as_deref().unwrap_or_default()
+            ),
+            Self::CreateTrigger { trigger }
+            | Self::ReplaceTrigger {
+                desired: trigger, ..
+            }
+            | Self::DropTrigger { trigger } => format!(
+                "trigger:{}:{}:{}:{}",
+                trigger.schema.as_deref().unwrap_or_default(),
+                trigger.name,
+                trigger.target_schema.as_deref().unwrap_or_default(),
+                trigger.target_name
+            ),
         }
     }
 }
@@ -352,6 +398,26 @@ impl MigrationOperation {
                 desired: desired.clone(),
             },
             Self::DropView { view } => O::DropView { view: view.clone() },
+            Self::CreateRoutine { routine } => O::CreateRoutine {
+                routine: routine.clone(),
+            },
+            Self::ReplaceRoutine { current, desired } => O::ReplaceRoutine {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropRoutine { routine } => O::DropRoutine {
+                routine: routine.clone(),
+            },
+            Self::CreateTrigger { trigger } => O::CreateTrigger {
+                trigger: trigger.clone(),
+            },
+            Self::ReplaceTrigger { current, desired } => O::ReplaceTrigger {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropTrigger { trigger } => O::DropTrigger {
+                trigger: trigger.clone(),
+            },
             Self::CreateTable {
                 table,
                 columns,

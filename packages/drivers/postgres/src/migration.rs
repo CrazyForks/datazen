@@ -72,6 +72,78 @@ fn pg_view_ident(view: &MigrationView) -> String {
     }
 }
 
+fn pg_object_schema(schema: Option<&str>) -> Result<Option<String>, String> {
+    schema
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            validate_migration_identifier(value)?;
+            Ok(format!("\"{}\"", value.replace('"', "\"\"")))
+        })
+        .transpose()
+}
+
+fn pg_routine_ident(routine: &MigrationRoutine) -> Result<String, String> {
+    if !matches!(routine.kind, ObjectKind::Function | ObjectKind::Procedure) {
+        return Err("PostgreSQL routine operation requires a function or procedure".into());
+    }
+    validate_migration_identifier(&routine.name)?;
+    let schema = pg_object_schema(routine.schema.as_deref())?;
+    let name = format!("\"{}\"", routine.name.replace('"', "\"\""));
+    let signature = routine
+        .signature
+        .as_deref()
+        .ok_or("PostgreSQL routine identity arguments are required")?;
+    if signature
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')) || ch == ';')
+    {
+        return Err("PostgreSQL routine signature contains unsafe characters".into());
+    }
+    Ok(format!(
+        "{}{}({})",
+        schema.map(|value| format!("{value}.")).unwrap_or_default(),
+        name,
+        signature
+    ))
+}
+
+fn pg_trigger_ident(trigger: &MigrationTrigger) -> Result<(String, String), String> {
+    validate_migration_identifier(&trigger.name)?;
+    validate_migration_identifier(&trigger.target_name)?;
+    let trigger_schema = pg_object_schema(trigger.schema.as_deref())?;
+    let target_schema = pg_object_schema(
+        trigger
+            .target_schema
+            .as_deref()
+            .or(trigger.schema.as_deref()),
+    )?;
+    let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+    let trigger_ident = format!(
+        "{}{}",
+        trigger_schema
+            .map(|value| format!("{value}."))
+            .unwrap_or_default(),
+        quote(&trigger.name)
+    );
+    let target_ident = format!(
+        "{}{}",
+        target_schema
+            .map(|value| format!("{value}."))
+            .unwrap_or_default(),
+        quote(&trigger.target_name)
+    );
+    Ok((trigger_ident, target_ident))
+}
+
+fn pg_validate_object_ddl(
+    definition: &str,
+    kind: ObjectKind,
+    name: &str,
+) -> Result<String, String> {
+    validate_object_definition(definition, kind, name)?;
+    Ok(definition.trim().to_owned())
+}
+
 pub struct PostgresMigrationRenderer;
 
 impl MigrationRenderer for PostgresMigrationRenderer {
@@ -438,6 +510,81 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                     summary: format!("DROP VIEW {}", view.name),
                 })
             }
+            MigrationOperation::CreateRoutine { routine } => {
+                let definition = pg_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let _ = pg_routine_ident(routine)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "DROP {} {}",
+                        routine.kind.as_str().to_ascii_uppercase(),
+                        pg_routine_ident(routine)?
+                    )),
+                    summary: format!("CREATE {} {}", routine.kind.as_str().to_ascii_uppercase(), routine.name),
+                })
+            }
+            MigrationOperation::ReplaceRoutine { current, desired } => {
+                if current.kind != desired.kind || current.schema != desired.schema || current.name != desired.name || current.signature != desired.signature {
+                    return Err("routine replacement identities must match".into());
+                }
+                let desired_definition = pg_validate_object_ddl(&desired.definition, desired.kind, &desired.name)?;
+                let current_definition = pg_validate_object_ddl(&current.definition, current.kind, &current.name)?;
+                Ok(MigrationStatement {
+                    sql: desired_definition,
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(current_definition),
+                    summary: format!("REPLACE {} {}", desired.kind.as_str().to_ascii_uppercase(), desired.name),
+                })
+            }
+            MigrationOperation::DropRoutine { routine } => {
+                let definition = pg_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let ident = pg_routine_ident(routine)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP {} {ident}", routine.kind.as_str().to_ascii_uppercase()),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!("DROP {} {}", routine.kind.as_str().to_ascii_uppercase(), routine.name),
+                })
+            }
+            MigrationOperation::CreateTrigger { trigger } => {
+                let definition = pg_validate_object_ddl(&trigger.definition, ObjectKind::Trigger, &trigger.name)?;
+                let _ = pg_trigger_ident(trigger)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "DROP TRIGGER {} ON {}",
+                        pg_trigger_ident(trigger)?.0,
+                        pg_trigger_ident(trigger)?.1
+                    )),
+                    summary: format!("CREATE TRIGGER {}", trigger.name),
+                })
+            }
+            MigrationOperation::ReplaceTrigger { current, desired } => {
+                if current.schema != desired.schema || current.name != desired.name || current.target_schema != desired.target_schema || current.target_name != desired.target_name {
+                    return Err("trigger replacement identities must match".into());
+                }
+                let desired_definition = pg_validate_object_ddl(&desired.definition, ObjectKind::Trigger, &desired.name)?;
+                let current_definition = pg_validate_object_ddl(&current.definition, ObjectKind::Trigger, &current.name)?;
+                let (trigger_ident, target_ident) = pg_trigger_ident(desired)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP TRIGGER {trigger_ident} ON {target_ident}; {desired_definition}"),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!("DROP TRIGGER {trigger_ident} ON {target_ident}; {current_definition}")),
+                    summary: format!("REPLACE TRIGGER {}", desired.name),
+                })
+            }
+            MigrationOperation::DropTrigger { trigger } => {
+                let definition = pg_validate_object_ddl(&trigger.definition, ObjectKind::Trigger, &trigger.name)?;
+                let (trigger_ident, target_ident) = pg_trigger_ident(trigger)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP TRIGGER {trigger_ident} ON {target_ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!("DROP TRIGGER {}", trigger.name),
+                })
+            }
         }
     }
 }
@@ -467,6 +614,16 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             | MigrationOperation::CreateView { .. }
             | MigrationOperation::ReplaceView { .. }
             | MigrationOperation::DropView { .. } => true,
+            MigrationOperation::CreateRoutine { routine }
+            | MigrationOperation::ReplaceRoutine {
+                desired: routine, ..
+            }
+            | MigrationOperation::DropRoutine { routine } => {
+                matches!(routine.kind, ObjectKind::Function | ObjectKind::Procedure)
+            }
+            MigrationOperation::CreateTrigger { .. }
+            | MigrationOperation::ReplaceTrigger { .. }
+            | MigrationOperation::DropTrigger { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -783,5 +940,99 @@ mod tests {
             },
         };
         assert!(PostgresMigrationRenderer.render(&op).is_err());
+    }
+
+    fn pg_function(definition: &str) -> MigrationRoutine {
+        MigrationRoutine {
+            kind: ObjectKind::Function,
+            schema: Some("public".into()),
+            name: "calculate_total".into(),
+            signature: Some("integer".into()),
+            definition: definition.into(),
+        }
+    }
+
+    #[test]
+    fn renders_routine_create_replace_drop_with_identity_and_rollback() {
+        let current = pg_function(
+            "CREATE OR REPLACE FUNCTION public.calculate_total(integer) RETURNS integer AS $$ SELECT 1 $$",
+        );
+        let desired = pg_function(
+            "CREATE OR REPLACE FUNCTION public.calculate_total(integer) RETURNS integer AS $$ SELECT 2 $$",
+        );
+        let create = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateRoutine {
+                routine: desired.clone(),
+            })
+            .unwrap();
+        assert!(create.sql.starts_with("CREATE OR REPLACE FUNCTION"));
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP FUNCTION \"public\".\"calculate_total\"(integer)")
+        );
+        let replace = PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceRoutine {
+                current: current.clone(),
+                desired: desired.clone(),
+            })
+            .unwrap();
+        assert!(replace.sql.contains("SELECT 2"));
+        assert!(replace
+            .rollback_sql
+            .is_some_and(|sql| sql.contains("SELECT 1")));
+        let drop = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropRoutine { routine: current })
+            .unwrap();
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        assert!(drop
+            .sql
+            .contains("DROP FUNCTION \"public\".\"calculate_total\"(integer)"));
+        assert!(drop.rollback_sql.is_some());
+    }
+
+    #[test]
+    fn renders_trigger_operations_and_rejects_missing_target_or_ddl() {
+        let trigger = MigrationTrigger {
+            schema: Some("public".into()),
+            name: "audit_insert".into(),
+            target_schema: Some("public".into()),
+            target_name: "orders".into(),
+            definition:
+                "CREATE TRIGGER audit_insert AFTER INSERT ON public.orders EXECUTE FUNCTION audit()"
+                    .into(),
+        };
+        let create = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateTrigger {
+                trigger: trigger.clone(),
+            })
+            .unwrap();
+        assert!(create.sql.starts_with("CREATE TRIGGER"));
+        assert!(create
+            .rollback_sql
+            .is_some_and(|sql| sql
+                .contains("DROP TRIGGER \"public\".\"audit_insert\" ON \"public\".\"orders\"")));
+        let drop = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropTrigger {
+                trigger: trigger.clone(),
+            })
+            .unwrap();
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        let missing_target = MigrationTrigger {
+            target_name: String::new(),
+            ..trigger.clone()
+        };
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::DropTrigger {
+                trigger: missing_target
+            })
+            .is_err());
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateRoutine {
+                routine: MigrationRoutine {
+                    definition: "SELECT 1".into(),
+                    ..pg_function("CREATE FUNCTION calculate_total(integer) RETURNS integer AS $$ SELECT 1 $$")
+                }
+            })
+            .is_err());
     }
 }

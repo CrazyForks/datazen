@@ -25,6 +25,30 @@ pub struct MigrationView {
     pub definition: String,
 }
 
+/// A routine definition captured from the source database. `definition` is
+/// driver-owned DDL (for example `pg_get_functiondef` or SHOW CREATE) and is
+/// never synthesized by the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationRoutine {
+    pub kind: ObjectKind,
+    pub schema: Option<String>,
+    pub name: String,
+    pub signature: Option<String>,
+    pub definition: String,
+}
+
+/// A trigger definition plus the relation it is attached to. Trigger names
+/// are not globally unique on every supported engine, so the target relation
+/// is part of the reviewed identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationTrigger {
+    pub schema: Option<String>,
+    pub name: String,
+    pub target_schema: Option<String>,
+    pub target_name: String,
+    pub definition: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
     CreateTable {
@@ -127,6 +151,26 @@ pub enum MigrationOperation {
     DropView {
         view: MigrationView,
     },
+    CreateRoutine {
+        routine: MigrationRoutine,
+    },
+    ReplaceRoutine {
+        current: MigrationRoutine,
+        desired: MigrationRoutine,
+    },
+    DropRoutine {
+        routine: MigrationRoutine,
+    },
+    CreateTrigger {
+        trigger: MigrationTrigger,
+    },
+    ReplaceTrigger {
+        current: MigrationTrigger,
+        desired: MigrationTrigger,
+    },
+    DropTrigger {
+        trigger: MigrationTrigger,
+    },
 }
 
 /// Validate and trim a relation identifier used by a reviewed migration
@@ -166,6 +210,56 @@ pub fn validate_view_definition(definition: &str) -> Result<(), String> {
         .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
     {
         return Err("view definition contains control characters".into());
+    }
+    Ok(())
+}
+
+/// Validate a complete routine/trigger DDL payload returned by a driver.
+/// Routine bodies may legitimately contain semicolons, so this deliberately
+/// validates the object envelope and control characters rather than trying to
+/// parse dialect-specific procedural SQL in the host.
+pub fn validate_object_definition(
+    definition: &str,
+    kind: ObjectKind,
+    name: &str,
+) -> Result<(), String> {
+    let trimmed = definition.trim();
+    if trimmed.is_empty() {
+        return Err("schema object definition must not be empty".into());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
+    {
+        return Err("schema object definition contains control characters".into());
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if !upper.starts_with("CREATE ") {
+        return Err("schema object definition must start with CREATE".into());
+    }
+    let kind_token = match kind {
+        ObjectKind::Function => "FUNCTION",
+        ObjectKind::Procedure => "PROCEDURE",
+        ObjectKind::Trigger => "TRIGGER",
+        _ => return Err("schema object kind is not a routine or trigger".into()),
+    };
+    if !upper.contains(kind_token) {
+        return Err(format!("schema object definition is not a {kind_token}"));
+    }
+    if name.trim().is_empty() {
+        return Err("schema object name must not be empty".into());
+    }
+    // A driver query is expected to return the requested object. Require the
+    // identity to occur in the DDL after normalizing common quote styles.
+    let normalized_definition = upper.replace(['`', '"', '[', ']'], "");
+    let normalized_name = name.to_ascii_uppercase().replace(['`', '"', '[', ']'], "");
+    if !normalized_definition
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .any(|token| token == normalized_name)
+    {
+        return Err(format!(
+            "schema object definition does not contain object name `{name}`"
+        ));
     }
     Ok(())
 }
@@ -390,6 +484,30 @@ mod type_parts_tests {
             "audit. events",
         ] {
             assert!(validate_migration_identifier(value).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn object_definition_validation_allows_routine_bodies_but_rejects_missing_or_wrong_ddl() {
+        assert!(validate_object_definition(
+            "CREATE FUNCTION calculate_total(integer) RETURNS integer AS $$ BEGIN SELECT 1; END $$",
+            ObjectKind::Function,
+            "calculate_total"
+        )
+        .is_ok());
+        assert!(validate_object_definition(
+            "CREATE TRIGGER audit_insert AFTER INSERT ON orders BEGIN SELECT 1; END",
+            ObjectKind::Trigger,
+            "audit_insert"
+        )
+        .is_ok());
+        for definition in [
+            "",
+            "SELECT 1",
+            "CREATE VIEW v AS SELECT 1",
+            "CREATE FUNCTION x()\0",
+        ] {
+            assert!(validate_object_definition(definition, ObjectKind::Function, "x").is_err());
         }
     }
 }

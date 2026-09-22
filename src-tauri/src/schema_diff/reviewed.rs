@@ -152,6 +152,9 @@ pub fn validate_object_snapshot(
     if reviewed.kind != current.kind
         || reviewed.schema != current.schema
         || reviewed.name != current.name
+        || reviewed.signature != current.signature
+        || reviewed.target_schema != current.target_schema
+        || reviewed.target_name != current.target_name
         || reviewed.definition.trim() != current.definition.trim()
     {
         return Err(format!(

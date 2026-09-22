@@ -55,6 +55,49 @@ fn mysql_view_ident(view: &MigrationView) -> String {
     }
 }
 
+fn mysql_routine_ident(routine: &MigrationRoutine) -> Result<String, String> {
+    if !matches!(routine.kind, ObjectKind::Function | ObjectKind::Procedure) {
+        return Err("MySQL routine operation requires a function or procedure".into());
+    }
+    validate_migration_identifier(&routine.name)?;
+    let quote = |value: &str| format!("`{}`", value.replace('`', "``"));
+    Ok(
+        match routine
+            .schema
+            .as_deref()
+            .filter(|schema| !schema.is_empty())
+        {
+            Some(schema) => format!("{}.{}", quote(schema), quote(&routine.name)),
+            None => quote(&routine.name),
+        },
+    )
+}
+
+fn mysql_trigger_ident(trigger: &MigrationTrigger) -> Result<String, String> {
+    validate_migration_identifier(&trigger.name)?;
+    validate_migration_identifier(&trigger.target_name)?;
+    let quote = |value: &str| format!("`{}`", value.replace('`', "``"));
+    Ok(
+        match trigger
+            .schema
+            .as_deref()
+            .filter(|schema| !schema.is_empty())
+        {
+            Some(schema) => format!("{}.{}", quote(schema), quote(&trigger.name)),
+            None => quote(&trigger.name),
+        },
+    )
+}
+
+fn mysql_validate_object_ddl(
+    definition: &str,
+    kind: ObjectKind,
+    name: &str,
+) -> Result<String, String> {
+    validate_object_definition(definition, kind, name)?;
+    Ok(definition.trim().to_owned())
+}
+
 fn mysql_option_token(value: &str, field: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty()
@@ -468,6 +511,125 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     summary: format!("DROP VIEW {}", view.name),
                 })
             }
+            MigrationOperation::CreateRoutine { routine } => {
+                let definition =
+                    mysql_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let ident = mysql_routine_ident(routine)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!(
+                        "DROP {} {ident}",
+                        routine.kind.as_str().to_ascii_uppercase()
+                    )),
+                    summary: format!(
+                        "CREATE {} {}",
+                        routine.kind.as_str().to_ascii_uppercase(),
+                        routine.name
+                    ),
+                })
+            }
+            MigrationOperation::ReplaceRoutine { current, desired } => {
+                if current.kind != desired.kind
+                    || current.schema != desired.schema
+                    || current.name != desired.name
+                {
+                    return Err("routine replacement identities must match".into());
+                }
+                let desired_definition =
+                    mysql_validate_object_ddl(&desired.definition, desired.kind, &desired.name)?;
+                let current_definition =
+                    mysql_validate_object_ddl(&current.definition, current.kind, &current.name)?;
+                let ident = mysql_routine_ident(desired)?;
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "DROP {} {ident}; {desired_definition}",
+                        desired.kind.as_str().to_ascii_uppercase()
+                    ),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!(
+                        "DROP {} {ident}; {current_definition}",
+                        current.kind.as_str().to_ascii_uppercase()
+                    )),
+                    summary: format!(
+                        "REPLACE {} {}",
+                        desired.kind.as_str().to_ascii_uppercase(),
+                        desired.name
+                    ),
+                })
+            }
+            MigrationOperation::DropRoutine { routine } => {
+                let definition =
+                    mysql_validate_object_ddl(&routine.definition, routine.kind, &routine.name)?;
+                let ident = mysql_routine_ident(routine)?;
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "DROP {} {ident}",
+                        routine.kind.as_str().to_ascii_uppercase()
+                    ),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!(
+                        "DROP {} {}",
+                        routine.kind.as_str().to_ascii_uppercase(),
+                        routine.name
+                    ),
+                })
+            }
+            MigrationOperation::CreateTrigger { trigger } => {
+                let definition = mysql_validate_object_ddl(
+                    &trigger.definition,
+                    ObjectKind::Trigger,
+                    &trigger.name,
+                )?;
+                let ident = mysql_trigger_ident(trigger)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP TRIGGER {ident}")),
+                    summary: format!("CREATE TRIGGER {}", trigger.name),
+                })
+            }
+            MigrationOperation::ReplaceTrigger { current, desired } => {
+                if current.schema != desired.schema
+                    || current.name != desired.name
+                    || current.target_schema != desired.target_schema
+                    || current.target_name != desired.target_name
+                {
+                    return Err("trigger replacement identities must match".into());
+                }
+                let desired_definition = mysql_validate_object_ddl(
+                    &desired.definition,
+                    ObjectKind::Trigger,
+                    &desired.name,
+                )?;
+                let current_definition = mysql_validate_object_ddl(
+                    &current.definition,
+                    ObjectKind::Trigger,
+                    &current.name,
+                )?;
+                let ident = mysql_trigger_ident(desired)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP TRIGGER {ident}; {desired_definition}"),
+                    risk: MigrationRisk::Rewrite,
+                    rollback_sql: Some(format!("DROP TRIGGER {ident}; {current_definition}")),
+                    summary: format!("REPLACE TRIGGER {}", desired.name),
+                })
+            }
+            MigrationOperation::DropTrigger { trigger } => {
+                let definition = mysql_validate_object_ddl(
+                    &trigger.definition,
+                    ObjectKind::Trigger,
+                    &trigger.name,
+                )?;
+                let ident = mysql_trigger_ident(trigger)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP TRIGGER {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!("DROP TRIGGER {}", trigger.name),
+                })
+            }
         }
     }
 }
@@ -498,6 +660,16 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
             | MigrationOperation::CreateView { .. }
             | MigrationOperation::ReplaceView { .. }
             | MigrationOperation::DropView { .. } => true,
+            MigrationOperation::CreateRoutine { routine }
+            | MigrationOperation::ReplaceRoutine {
+                desired: routine, ..
+            }
+            | MigrationOperation::DropRoutine { routine } => {
+                matches!(routine.kind, ObjectKind::Function | ObjectKind::Procedure)
+            }
+            MigrationOperation::CreateTrigger { .. }
+            | MigrationOperation::ReplaceTrigger { .. }
+            | MigrationOperation::DropTrigger { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -833,5 +1005,80 @@ mod tests {
             .unwrap();
         assert!(replacement.sql.starts_with("CREATE OR REPLACE VIEW"));
         assert!(replacement.rollback_sql.is_some());
+    }
+
+    fn mysql_procedure(definition: &str) -> MigrationRoutine {
+        MigrationRoutine {
+            kind: ObjectKind::Procedure,
+            schema: Some("app".into()),
+            name: "rebuild_cache".into(),
+            signature: None,
+            definition: definition.into(),
+        }
+    }
+
+    #[test]
+    fn renders_mysql_routine_create_replace_drop() {
+        let current = mysql_procedure(
+            "CREATE DEFINER=`root`@`localhost` PROCEDURE `app`.`rebuild_cache`() BEGIN SELECT 1; END",
+        );
+        let desired = mysql_procedure(
+            "CREATE DEFINER=`root`@`localhost` PROCEDURE `app`.`rebuild_cache`() BEGIN SELECT 2; END",
+        );
+        let create = MysqlMigrationRenderer
+            .render(&MigrationOperation::CreateRoutine {
+                routine: desired.clone(),
+            })
+            .unwrap();
+        assert!(create.sql.starts_with("CREATE DEFINER"));
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP PROCEDURE `app`.`rebuild_cache`")
+        );
+        let replace = MysqlMigrationRenderer
+            .render(&MigrationOperation::ReplaceRoutine {
+                current: current.clone(),
+                desired: desired.clone(),
+            })
+            .unwrap();
+        assert!(replace
+            .sql
+            .contains("DROP PROCEDURE `app`.`rebuild_cache`; CREATE"));
+        assert!(replace
+            .rollback_sql
+            .is_some_and(|sql| sql.contains("SELECT 1")));
+        let drop = MysqlMigrationRenderer
+            .render(&MigrationOperation::DropRoutine { routine: current })
+            .unwrap();
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        assert!(drop.rollback_sql.is_some());
+    }
+
+    #[test]
+    fn renders_mysql_trigger_and_rejects_bad_ddl() {
+        let trigger = MigrationTrigger {
+            schema: Some("app".into()),
+            name: "audit_insert".into(),
+            target_schema: Some("app".into()),
+            target_name: "orders".into(),
+            definition: "CREATE DEFINER=`root`@`localhost` TRIGGER `app`.`audit_insert` AFTER INSERT ON `app`.`orders` FOR EACH ROW SET @audit = 1".into(),
+        };
+        let create = MysqlMigrationRenderer
+            .render(&MigrationOperation::CreateTrigger {
+                trigger: trigger.clone(),
+            })
+            .unwrap();
+        assert!(create.sql.starts_with("CREATE DEFINER"));
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP TRIGGER `app`.`audit_insert`")
+        );
+        let bad = MigrationRoutine {
+            definition: "CREATE VIEW wrong AS SELECT 1".into(),
+            ..mysql_procedure("CREATE PROCEDURE rebuild_cache() BEGIN SELECT 1; END")
+        };
+        assert!(MysqlMigrationRenderer
+            .render(&MigrationOperation::CreateRoutine { routine: bad })
+            .is_err());
     }
 }
