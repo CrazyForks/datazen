@@ -308,6 +308,15 @@ const locale = {
   'redis.console.dangerDanger': 'Dangerous',
   'redis.console.dangerUltra': 'Destructive',
   'redis.console.dangerWarning': '⚠ This command may be destructive. Execute with caution.',
+  // Console fail-closed safety (PRD §4 I-7). Copy lives under its own namespace
+  // so it never lands in the lazily loaded `redis.console.*` domain pack.
+  'redis.consoleSafety.badgeUnknown': 'Unknown · blocked',
+  'redis.consoleSafety.blockedDestructive':
+    'Blocked: {commands} are destructive or server-wide commands and will not run from the Console.',
+  'redis.consoleSafety.blockedUnknown':
+    'Blocked: {commands} is not a recognised Redis command, so the Console refused to run it.',
+  'redis.consoleSafety.blockedHint':
+    'Use the key browser instead of KEYS, the settings and info panels instead of CONFIG, and enable Allow Flush in the Redis connection settings for FLUSHDB/FLUSHALL.',
   // Console completion popup
   'redis.completion.loading': 'Loading keys…',
   'redis.grp.key': 'key',

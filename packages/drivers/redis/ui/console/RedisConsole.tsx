@@ -9,7 +9,19 @@ import {
   readBooleanField,
 } from '@datazen/driver-sdk';
 import { redisCommandInvoke } from '../shared/redisInvoke';
-import { classifyDangerLevel, dangerBadgeColor, type DangerLevel } from './redisConsoleDanger';
+import { assessCommand, classifyDangerLevel, isFlushCommand } from './redisConsoleDanger';
+import {
+  assessCommands,
+  badgeAssessment,
+  composeBlockedMessage,
+  describeCommands,
+} from './consoleCommandBatch';
+import { RedisConsoleDangerBadge, dangerBorderClass } from './RedisConsoleDangerBadge';
+import {
+  ConsoleResultView,
+  inferResultType,
+  type ConsoleResultItem,
+} from './consoleResultRenderer';
 import { useRedisGate } from '../shared/useRedisGate';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
 import {
@@ -36,36 +48,14 @@ interface ExecResult {
   ok: boolean;
   value?: string;
   error?: string;
+  /** Server-classified result shape (`scalar` | `array` | `map` | `ok` | `nil` | `error`). */
+  resultType?: string;
+  /** Server-side danger level, echoed for parity with the client classifier. */
+  dangerLevel?: string;
 }
 
 interface ExecResponse {
   results: ExecResult[];
-}
-
-function dangerLevelLabel(level: DangerLevel, t: (key: string) => string): string {
-  switch (level) {
-    case 'ultra-danger':
-      return t('redis.console.dangerUltra');
-    case 'danger':
-      return t('redis.console.dangerDanger');
-    case 'write':
-      return t('redis.console.dangerWrite');
-    default:
-      return t('redis.console.dangerSafe');
-  }
-}
-
-function dangerBorderClass(level: DangerLevel): string {
-  switch (level) {
-    case 'ultra-danger':
-      return 'border-l-red-500';
-    case 'danger':
-      return 'border-l-orange-500';
-    case 'write':
-      return 'border-l-yellow-500';
-    default:
-      return 'border-l-transparent';
-  }
 }
 
 function applyCompletion(
@@ -77,6 +67,25 @@ function applyCompletion(
   const nextText = `${text.slice(0, tokenStart)}${completion} ${text.slice(tokenEnd)}`;
   const nextCursor = tokenStart + completion.length + 1;
   return { text: nextText, cursor: nextCursor };
+}
+
+const RESULT_TYPES: readonly string[] = ['scalar', 'array', 'map', 'ok', 'nil', 'error'];
+
+/**
+ * Map one server `exec` result onto the pure renderer's props. The server's own
+ * `resultType` wins; `inferResultType` is only the fallback for servers that do
+ * not send the field (P0-3: the Console used to drop it and re-guess shapes).
+ */
+function toConsoleResultItem(result: ExecResult): ConsoleResultItem {
+  const fromServer = result.resultType && RESULT_TYPES.includes(result.resultType);
+  return {
+    command: result.command,
+    ok: result.ok,
+    value: result.value,
+    error: result.error,
+    resultType: (fromServer ? result.resultType : inferResultType(result.value)) as ConsoleResultItem['resultType'],
+    dangerLevel: classifyDangerLevel(result.command),
+  };
 }
 
 export function RedisConsole({
@@ -174,14 +183,34 @@ export function RedisConsole({
     const trimmed = commands.trim();
     if (!trimmed || running) return;
 
-    const level = classifyDangerLevel(trimmed);
-    const firstToken = trimmed.split(/\s+/)[0]?.toUpperCase() ?? '';
-    if ((firstToken === 'FLUSHDB' || firstToken === 'FLUSHALL') && !allowFlush) {
-      setError(t('redis.console.flushBlocked'));
+    // PRD I-7: classify the whole batch. A multi-line paste used to be graded by
+    // its first line only, which let `GET a\nDEL b` through with no brake at all.
+    const batch = assessCommands(trimmed, allowFlush);
+
+    if (batch.blocked.length > 0) {
+      // Refuse before the gate: a confirmation dialog is not a release valve for
+      // the blocked tier (task book §1.2 "不可仅弹确认放行"). FLUSHDB/FLUSHALL
+      // keep their dedicated copy, which explains the Allow Flush opt-in.
+      const flushOnly = batch.blocked.every((command) => isFlushCommand(command.name));
+      setError(flushOnly ? t('redis.console.flushBlocked') : composeBlockedMessage(batch, t));
       return;
     }
-    const allowed = await gateWrite(level, trimmed);
-    if (!allowed) return;
+
+    // R-3 (task book §6.1): one confirmation for the whole batch, listing every
+    // danger-tier-and-above command, then a second one for the surviving
+    // ultra-danger commands (FLUSHDB/FLUSHALL with the allowFlush opt-in).
+    const confirmTargets = [...batch.confirmations, ...batch.doubleConfirmations];
+    if (confirmTargets.length > 0) {
+      const listing = describeCommands(confirmTargets);
+      if (!(await gateWrite('danger', listing))) return;
+      for (const command of batch.doubleConfirmations) {
+        if (!(await gateWrite('ultra-danger', command.raw))) return;
+      }
+    } else if (batch.worst !== 'safe') {
+      // Pure write / read batch: still route through the gate so Safe Mode can
+      // refuse the write path (I-6 semantics, unchanged).
+      if (!(await gateWrite(batch.worst, trimmed))) return;
+    }
 
     setRunning(true);
     setError(null);
@@ -275,6 +304,7 @@ export function RedisConsole({
   );
 
   const activeResult = results[activeResultIdx];
+  const failedCount = results.reduce((count, result) => (result.ok ? count : count + 1), 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -290,15 +320,7 @@ export function RedisConsole({
         </Button>
         <span className="text-[11px] text-fg-muted">{t('redis.console.hint')}</span>
         {commands.trim() && (
-          <span
-            className={cn(
-              'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
-              dangerBadgeColor(classifyDangerLevel(commands.trim())),
-            )}
-            data-testid="redis-console-danger-badge"
-          >
-            {dangerLevelLabel(classifyDangerLevel(commands.trim()), t)}
-          </span>
+          <RedisConsoleDangerBadge assessment={badgeAssessment(commands, allowFlush)} t={t} />
         )}
         <div className="flex-1" />
         <SafeModeBadge />
@@ -351,7 +373,10 @@ export function RedisConsole({
 
         {error && !running && (
           <div className="flex-1 overflow-auto p-4">
-            <div className="rounded-md border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
+            <div
+              className="whitespace-pre-line rounded-md border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger"
+              data-testid="redis-console-error"
+            >
               {error}
             </div>
           </div>
@@ -359,6 +384,14 @@ export function RedisConsole({
 
         {results.length > 0 && !running && (
           <>
+            {failedCount > 0 && (
+              <div
+                className="shrink-0 border-b border-danger/20 bg-danger/10 px-3 py-1 text-xs text-danger"
+                data-testid="redis-console-failed-count"
+              >
+                {t('redis.errorsCount', { count: String(failedCount) })}
+              </div>
+            )}
             {results.length > 1 && (
               <div className="flex shrink-0 items-center border-b border-edge bg-surface-alt px-1">
                 {results.map((result, idx) => (
@@ -367,7 +400,7 @@ export function RedisConsole({
                     type="button"
                     className={cn(
                       'relative max-w-[220px] truncate border-l-2 px-3 py-1.5 text-xs transition-colors',
-                      dangerBorderClass(classifyDangerLevel(result.command)),
+                      dangerBorderClass(assessCommand(result.command)),
                       idx === activeResultIdx
                         ? 'text-fg font-medium'
                         : 'text-fg-muted hover:text-fg-secondary',
@@ -400,7 +433,7 @@ export function RedisConsole({
                 <div
                   className={cn(
                     'flex items-center gap-3 border-b border-l-2 border-edge bg-surface-alt px-3 py-1.5 text-xs text-fg-secondary',
-                    dangerBorderClass(classifyDangerLevel(activeResult.command)),
+                    dangerBorderClass(assessCommand(activeResult.command)),
                   )}
                 >
                   <span className="font-mono">{activeResult.command}</span>
@@ -413,15 +446,10 @@ export function RedisConsole({
                   className="min-h-0 flex-1 overflow-auto p-4"
                   data-testid="redis-console-result"
                 >
-                  {activeResult.ok ? (
-                    <pre className="whitespace-pre-wrap break-all font-mono text-[13px] text-fg-secondary">
-                      {activeResult.value ?? '(nil)'}
-                    </pre>
-                  ) : (
-                    <div className="rounded-md border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
-                      {activeResult.error}
-                    </div>
-                  )}
+                  {/* P0-3: the renderer is fed the server's own `resultType`
+                      variant instead of re-inferring it from the formatted
+                      string, and every per-command error stays on screen. */}
+                  <ConsoleResultView item={toConsoleResultItem(activeResult)} />
                 </div>
               </div>
             )}
