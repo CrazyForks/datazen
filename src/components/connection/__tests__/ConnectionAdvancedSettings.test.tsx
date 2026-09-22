@@ -418,10 +418,10 @@ describe('[tester] ConnectionAdvancedSettings tunnel source control', () => {
     fireEvent.click(screen.getByTestId('new-conn-tunnel-manage-entry'));
     expect(openSettingsWindow).toHaveBeenCalledWith('tunnels');
 
-    // Known limitation (reported as an improvement): the `tunnels` settings
-    // section does not exist in this track (plan P1-5), so the entry actually
-    // lands on `general` — the button label over-promises.
-    expect(parseSettingsSection('tunnels')).toBe('general');
+    // The `tunnels` settings section now exists (tunnel-settings track, plan
+    // P1-5/P1-6), so the entry lands on the management surface instead of
+    // silently falling back to `general`.
+    expect(parseSettingsSection('tunnels')).toBe('tunnels');
   });
 
   it('surfaces a tunnel error inline while configuring manually', () => {
