@@ -1,12 +1,20 @@
 - 任务: 键树扫描后端预算模型（PRD §3.2 扫描预算 6 条 / §4 I-2、I-3）+ 精确键短路 + pipeline 化
-- 状态: READY_FOR_TEST
-- 编码 commit: 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）
-- 测试 commit: —（R 轨执行门禁回归）
+- 状态: **TEST_FAILED**（第 1 轮 Tester 全新实例；门禁逐字复现、契约形状成立，但 3 条缺陷待修 ⇒ 交回原 Coder）
+- 编码 commit: 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）+ 1c03f1595（契约冻结台账）
+- 测试 commit: 15ce0c917（步骤 1-4：门禁复跑 + 契约逐字核对 + 3 条 Bug 登记 + `tests/tree_contract_tester.rs`）
+  + f1910f08e（步骤 5-8：append-only/预算/cluster/红线/覆盖率/E2E + 22 条补测 + BUG-001 双 RED pin）
 - 合并 commit: —
 - 代理: w3b-tree-backend-rescuer（session-61319db9-6e5c-4f32-a35e-cad750b647dd，接管阵亡 coder 的未提交现场）
+- 测试代理: w3b-tester-round1（全新实例，与 Coder/Rescuer 不同会话；前两轮 Tester 均死于并行重负载，
+  本轮全程串行执行重型命令 + 每完成一步即 commit 落盘）
 - Worktree: .worktrees/datazen-redis-tree-backend
 - 分支: feature/redis-tree-backend
-- 心跳: 2026-09-22 21:12
+- 心跳: 2026-09-22 23:21
+- 缺陷（全部「待修复」）: **BUG-001 高** `list_children` 叶子属性错位（本轨回归，release 静默错数据）
+  · **BUG-002 高** `count_matching` 形状变更漏改驱动 UI 消费端（既有功能被打破）
+  · **BUG-003 中** DBSIZE 失败 ⇒ 三条键树命令整条报错（冻结承诺的降级路径不可达 + 基线能力回退）
+  详见本目录 `bugs.md`；审查发现 R-1/R-3/R-4/R-5（非缺陷）与撤销项 R-2 亦在该文件。
+
 
 # W3-B `redis-tree-backend` 简报（协调者下发）
 
