@@ -1048,6 +1048,7 @@ pub async fn execute_with_target(
             rows_inserted: total,
             cancelled: false,
             partial: false,
+            resume_token: None,
         })
     } else {
         Ok(TransferExecutionResult {
@@ -1057,6 +1058,7 @@ pub async fn execute_with_target(
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst)),
             partial: true,
+            resume_token: None,
         })
     }
 }

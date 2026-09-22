@@ -176,6 +176,8 @@ export interface TransferExecutionResult {
   rowsInserted: number;
   cancelled: boolean;
   partial: boolean;
+  /** Opaque table-boundary token for a safe database-only resume. */
+  resumeToken?: string | null;
 }
 
 export interface TransferRunSelection {
@@ -191,6 +193,7 @@ export interface TransferRunRequest {
   selection?: TransferRunSelection;
   options?: TransferRunOptions;
   jobId?: string;
+  resumeToken?: string;
 }
 
 export interface TransferPairingView {

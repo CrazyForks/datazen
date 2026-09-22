@@ -487,6 +487,10 @@ pub struct TransferRunRequest {
     /// alternate execution payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+    /// Opaque server-owned table-boundary checkpoint from a cancelled or
+    /// partial database transfer. It never contains a row offset or payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -506,6 +510,9 @@ pub struct TransferExecutionResult {
     pub rows_inserted: u64,
     pub cancelled: bool,
     pub partial: bool,
+    /// Present only when a bounded database transfer can be resumed safely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
