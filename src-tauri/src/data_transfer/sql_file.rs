@@ -1584,6 +1584,41 @@ mod tests {
         assert_eq!(decoded, format!("{statement}\n"));
     }
 
+    #[test]
+    fn test_tester_atomic_writer_round_trips_utf16_bom_inside_gzip() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "INSERT INTO t VALUES ('中文 😀', X'00FF', 12345678901234567890.123456789, '{\"ok\":true}');";
+        for (name, encoding, marker) in [
+            ("le.sql.gz", SqlFileEncoding::Utf16Le, [0xFF, 0xFE]),
+            ("be.sql.gz", SqlFileEncoding::Utf16Be, [0xFE, 0xFF]),
+        ] {
+            let destination = dir.path().join(name);
+            let mut output = AtomicSqlFile::create_with_format(
+                destination.clone(),
+                encoding,
+                SqlFileCompression::Gzip,
+            )
+            .unwrap();
+            output.line(text).unwrap();
+            output.finish().unwrap();
+
+            let compressed = fs::read(destination).unwrap();
+            let mut decoder = GzDecoder::new(compressed.as_slice());
+            let mut decoded = Vec::new();
+            decoder.read_to_end(&mut decoded).unwrap();
+            assert!(decoded.starts_with(&marker));
+            let units = decoded[2..]
+                .chunks_exact(2)
+                .map(|chunk| match encoding {
+                    SqlFileEncoding::Utf16Le => u16::from_le_bytes([chunk[0], chunk[1]]),
+                    SqlFileEncoding::Utf16Be => u16::from_be_bytes([chunk[0], chunk[1]]),
+                    _ => unreachable!(),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(String::from_utf16(&units).unwrap(), format!("{text}\n"));
+        }
+    }
+
     fn structure_table(
         source: &str,
         target: &str,

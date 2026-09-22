@@ -882,4 +882,22 @@ mod tests {
         assert_eq!(sanitized["destinationToken"], "[redacted]");
         assert_eq!(sanitized["keep"], "value");
     }
+
+    #[test]
+    fn test_tester_workflow_accepts_extended_sql_file_formats() {
+        assert_eq!(
+            parse_sql_file_encoding(" utf16Le ").unwrap(),
+            SqlFileEncoding::Utf16Le
+        );
+        assert_eq!(
+            parse_sql_file_encoding("UTF-16BE").unwrap(),
+            SqlFileEncoding::Utf16Be
+        );
+        assert_eq!(
+            parse_sql_file_compression("gzip").unwrap(),
+            SqlFileCompression::Gzip
+        );
+        assert!(parse_sql_file_encoding("cp936").is_err());
+        assert!(parse_sql_file_compression("brotli").is_err());
+    }
 }

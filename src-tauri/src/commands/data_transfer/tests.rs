@@ -121,6 +121,27 @@ fn transfer_profile_rejects_runtime_file_token_and_unknown_fields() {
     assert!(serde_json::from_str::<TransferProfile>(payload).is_err());
 }
 
+#[test]
+fn test_tester_legacy_transfer_profile_without_format_fields_is_compatible() {
+    let payload = r#"{
+        "version": 1,
+        "id": "legacy-profile",
+        "name": "legacy",
+        "sourceConnectionId": "src",
+        "destinationMode": "sqlFile",
+        "mode": "data",
+        "writeMode": "insert",
+        "tables": [],
+        "options": {"batchSize": 10, "stopOnError": true, "confirmedDestructive": false},
+        "createdAt": "2026-09-21T00:00:00Z",
+        "updatedAt": "2026-09-21T00:00:00Z"
+    }"#;
+    let profile = serde_json::from_str::<TransferProfile>(payload).unwrap();
+    assert_eq!(profile.sql_file_encoding, None);
+    assert_eq!(profile.sql_file_compression, None);
+    profile.validate().unwrap();
+}
+
 #[tokio::test]
 async fn transfer_profile_store_round_trip_excludes_runtime_sessions() {
     let test = crate::testing::app_state::TestAppState::new().await;
