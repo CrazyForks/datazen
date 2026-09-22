@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::ActiveSession;
 use super::{ConnectionError, ConnectionManager};
-use crate::db::{ConnectionConfig, SslMode};
+use crate::db::{ConnectionConfig, SslMode, TunnelKind};
 use crate::tunnel::Tunnel;
 use std::sync::Arc;
 use std::time::Instant;
@@ -57,20 +57,31 @@ impl ConnectionManager {
     }
 
     /// Establish the tunnel referenced by `tunnel_id` toward
-    /// `target_host:target_port`, tear it down immediately, and report how long
-    /// establishment took.
+    /// `target_host:target_port`, probe its upstream leg, tear it down
+    /// immediately, and report how long that took.
     ///
     /// Backs the standalone tunnel connectivity probe: the management UI can
     /// validate one saved tunnel without opening a database session. Only the
     /// tunnel fields plus the forwarded target reach the tunnel runtime, so the
     /// synthetic config's `database_type` is a placeholder and no driver is ever
     /// contacted.
+    ///
+    /// `SshTunnel::start` dials the bastion and authenticates, but
+    /// `HttpProxyTunnel::start` / `WebSocketTunnel::start` are lazy — they only
+    /// bind the local listener — so those kinds are verified explicitly.
+    /// Otherwise an unreachable proxy/relay would be reported as reachable.
     pub async fn test_tunnel(
         &self,
         tunnel_id: &str,
         target_host: &str,
         target_port: u16,
     ) -> Result<Duration, ConnectionError> {
+        let Some(saved) = self.store.get_tunnel(tunnel_id).await else {
+            return Err(ConnectionError::Internal(format!(
+                "tunnel id '{tunnel_id}' not found"
+            )));
+        };
+
         let config = ConnectionConfig {
             id: format!("__tunnel_test__{tunnel_id}"),
             name: format!("tunnel test: {tunnel_id}"),
@@ -102,17 +113,47 @@ impl ConnectionManager {
 
         let started = Instant::now();
         let (_resolved, tunnel) = self.start_tunnel(config).await?;
-        let elapsed = started.elapsed();
-        if tunnel.is_none() {
+        let Some(tunnel) = tunnel else {
             // `tunnelKind = none` (or a tunnel that resolves to nothing) means
             // nothing was probed; reporting success would be a false positive.
             return Err(ConnectionError::Internal(format!(
                 "tunnel '{tunnel_id}' resolved to no tunnel configuration"
             )));
-        }
-        // Dropping the tunnel tears the local forwarder down: the probe is
-        // deliberately one-shot and must not leak a listener.
+        };
+
+        let verified: Result<(), ConnectionError> = match saved.kind {
+            TunnelKind::HttpProxy => {
+                let proxy = saved.http_proxy.ok_or_else(|| {
+                    ConnectionError::Internal(format!(
+                        "tunnel '{tunnel_id}' has no httpProxy config"
+                    ))
+                })?;
+                crate::tunnel::verify_http_proxy_upstream(&proxy, target_host, target_port)
+                    .await
+                    .map_err(ConnectionError::DriverError)
+            }
+            TunnelKind::WebSocket => {
+                let websocket = saved.websocket.ok_or_else(|| {
+                    ConnectionError::Internal(format!(
+                        "tunnel '{tunnel_id}' has no websocket config"
+                    ))
+                })?;
+                crate::tunnel::verify_websocket_upstream(&websocket, target_host, target_port)
+                    .await
+                    .map_err(ConnectionError::DriverError)
+            }
+            // `SshTunnel::start` already dials the bastion and authenticates, so
+            // building the tunnel *is* the probe. `None` never reaches here: it
+            // yields no tunnel and we bail out above.
+            TunnelKind::Ssh | TunnelKind::None => Ok(()),
+        };
+
+        let elapsed = started.elapsed();
+        // Dropping the tunnel tears the local forwarder down (see `SshTunnel`'s
+        // `Drop`): the probe is deliberately one-shot and must not leak a
+        // listener, a task or an SSH session.
         drop(tunnel);
+        verified?;
         Ok(elapsed)
     }
 

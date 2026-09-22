@@ -20,6 +20,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 
 // ── SSH client handler (TOFU host key verification) ─────────────────
 
@@ -98,8 +99,24 @@ impl client::Handler for TunnelHandler {
 
 pub struct SshTunnel {
     local_port: u16,
-    _task: tokio::task::JoinHandle<()>,
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
     _upstream: Option<Box<SshTunnel>>,
+}
+
+impl Drop for SshTunnel {
+    fn drop(&mut self) {
+        // Dropping a `JoinHandle` only *detaches* the task (tokio semantics), so
+        // without this the forwarding loop, the bound 127.0.0.1 port and the SSH
+        // session (kept alive by the task's `Arc<Mutex<Handle>>` clone) would
+        // leak for the lifetime of the process. Cancelling first lets in-flight
+        // per-connection forwarders unwind, then `abort` stops the accept loop;
+        // once the last handle clone is gone the russh session task ends and the
+        // SSH connection closes. `_upstream` (jump-host chain) drops after this
+        // body and tears itself down the same way.
+        self.cancel.cancel();
+        self.task.abort();
+    }
 }
 
 pub fn supported_auth_method(method: &str) -> bool {
@@ -191,19 +208,24 @@ impl SshTunnel {
         // 4. Spawn forwarding loop — accepts multiple concurrent connections
         let rh = remote_host.to_string();
         let session = Arc::new(tokio::sync::Mutex::new(session));
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
         let task = tokio::spawn(async move {
             loop {
-                let accept = listener.accept().await;
-                let (mut tcp_stream, _) = match accept {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!("SSH tunnel accept error: {e}");
-                        break;
-                    }
+                let (mut tcp_stream, _) = tokio::select! {
+                    _ = task_cancel.cancelled() => break,
+                    accept = listener.accept() => match accept {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!("SSH tunnel accept error: {e}");
+                            break;
+                        }
+                    },
                 };
 
                 let rh = rh.clone();
                 let session = session.clone();
+                let child_cancel = task_cancel.clone();
                 let lp = local_port;
 
                 tokio::spawn(async move {
@@ -226,14 +248,18 @@ impl SshTunnel {
                         }
                     };
                     let mut ssh_stream = channel.into_stream();
-                    let _ = tokio::io::copy_bidirectional(&mut tcp_stream, &mut ssh_stream).await;
+                    tokio::select! {
+                        _ = child_cancel.cancelled() => {}
+                        _ = tokio::io::copy_bidirectional(&mut tcp_stream, &mut ssh_stream) => {}
+                    }
                 });
             }
         });
 
         Ok(SshTunnel {
             local_port,
-            _task: task,
+            cancel,
+            task,
             _upstream: upstream,
         })
     }
@@ -390,6 +416,72 @@ mod tests {
 
     const SAMPLE_ED25519: &str =
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
+
+    /// Regression for `tunnel-backend-BUG-002`: `SshTunnel` used to hold only a
+    /// `JoinHandle`, and dropping a `JoinHandle` *detaches* rather than aborts,
+    /// so every probe leaked the forwarder task, the SSH session and the bound
+    /// 127.0.0.1 port.
+    ///
+    /// No SSH endpoint exists in unit tests, so this builds the minimal shape
+    /// `start` produces (a bound listener owned by a spawned forwarder) and
+    /// proves that `drop` cancels + aborts it and that the port is released.
+    #[tokio::test]
+    async fn drop_cancels_and_aborts_the_forwarder_and_releases_the_local_port() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture listener");
+        let local_port = listener.local_addr().expect("fixture addr").port();
+
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = task_cancel.cancelled() => {}
+                _ = listener.accept() => {}
+            }
+            // `listener` is dropped here, which is what frees the port.
+        });
+        let abort = task.abort_handle();
+
+        let observed = cancel.clone();
+        let tunnel = SshTunnel {
+            local_port,
+            cancel,
+            task,
+            _upstream: None,
+        };
+        assert_eq!(tunnel.local_port(), local_port);
+        assert!(!observed.is_cancelled(), "fixture must start uncancelled");
+
+        drop(tunnel);
+
+        assert!(
+            observed.is_cancelled(),
+            "SshTunnel::drop must cancel the forwarder (BUG-002 regression)"
+        );
+
+        let mut aborted = false;
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+            if abort.is_finished() {
+                aborted = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            aborted,
+            "SshTunnel::drop must abort the forwarder task (BUG-002 regression)"
+        );
+
+        // A detach-only drop would keep 127.0.0.1:<local_port> bound forever.
+        let rebound = TcpListener::bind(("127.0.0.1", local_port)).await;
+        assert!(
+            rebound.is_ok(),
+            "SshTunnel::drop must release 127.0.0.1:{local_port}: {:?}",
+            rebound.err()
+        );
+    }
 
     fn sample_ed25519_key() -> PublicKey {
         PublicKey::from_openssh(SAMPLE_ED25519).expect("sample ed25519 key")

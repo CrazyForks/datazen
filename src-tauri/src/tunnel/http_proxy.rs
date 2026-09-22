@@ -27,17 +27,7 @@ impl HttpProxyTunnel {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<Self, DriverError> {
-        let scheme = proxy.scheme.to_ascii_lowercase();
-        if scheme != "http" && scheme != "https" {
-            return Err(DriverError::HttpProxyTunnelError(format!(
-                "unsupported HTTP proxy scheme '{scheme}'; use http or https"
-            )));
-        }
-        if proxy.host.trim().is_empty() {
-            return Err(DriverError::HttpProxyTunnelError(
-                "HTTP proxy host is empty".into(),
-            ));
-        }
+        let scheme = normalize_scheme(proxy)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -50,17 +40,9 @@ impl HttpProxyTunnel {
         let proxy_host = proxy.host.clone();
         let proxy_port = proxy.port;
         let remote_host = remote_host.to_string();
-        let timeout = Duration::from_secs(u64::from(proxy.connect_timeout_secs.max(1)));
-        let extra_headers: Vec<(String, String)> = proxy
-            .headers
-            .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-        let auth_header = extra_headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
-            .map(|(_, value)| value.clone())
-            .or_else(|| basic_auth_header(proxy.username.as_deref(), proxy.password.as_deref()));
+        let timeout = connect_timeout(proxy);
+        let extra_headers = proxy_headers(proxy);
+        let auth_header = resolve_auth_header(proxy, &extra_headers);
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
 
@@ -128,6 +110,132 @@ impl Drop for HttpProxyTunnel {
     }
 }
 
+/// Lowercased and validated proxy scheme (`http` / `https`).
+fn normalize_scheme(proxy: &HttpProxyTunnelConfig) -> Result<String, DriverError> {
+    let scheme = proxy.scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(DriverError::HttpProxyTunnelError(format!(
+            "unsupported HTTP proxy scheme '{scheme}'; use http or https"
+        )));
+    }
+    if proxy.host.trim().is_empty() {
+        return Err(DriverError::HttpProxyTunnelError(
+            "HTTP proxy host is empty".into(),
+        ));
+    }
+    Ok(scheme)
+}
+
+fn proxy_headers(proxy: &HttpProxyTunnelConfig) -> Vec<(String, String)> {
+    proxy
+        .headers
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default()
+}
+
+/// An explicit `Proxy-Authorization` header wins; otherwise derive Basic auth.
+fn resolve_auth_header(
+    proxy: &HttpProxyTunnelConfig,
+    extra_headers: &[(String, String)],
+) -> Option<String> {
+    extra_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
+        .map(|(_, value)| value.clone())
+        .or_else(|| basic_auth_header(proxy.username.as_deref(), proxy.password.as_deref()))
+}
+
+fn connect_timeout(proxy: &HttpProxyTunnelConfig) -> Duration {
+    Duration::from_secs(u64::from(proxy.connect_timeout_secs.max(1)))
+}
+
+/// Dial the proxy host (TLS is applied separately by [`tls_connect`]).
+async fn dial_proxy(
+    proxy_host: &str,
+    proxy_port: u16,
+    timeout: Duration,
+) -> Result<TcpStream, DriverError> {
+    tokio::time::timeout(timeout, TcpStream::connect((proxy_host, proxy_port)))
+        .await
+        .map_err(|_| DriverError::HttpProxyTunnelError("connect to proxy timed out".into()))?
+        .map_err(|e| {
+            DriverError::HttpProxyTunnelError(format!(
+                "connect to proxy {proxy_host}:{proxy_port}: {e}"
+            ))
+        })
+}
+
+/// Wrap `socket` in TLS for an `https://` proxy.
+async fn tls_connect<S>(
+    proxy_host: &str,
+    socket: S,
+    timeout: Duration,
+) -> Result<tokio_rustls::client::TlsStream<S>, DriverError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+    };
+    let tls_config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let server_name = if let Ok(ip) = proxy_host.parse::<std::net::IpAddr>() {
+        ServerName::IpAddress(IpAddr::from(ip))
+    } else {
+        ServerName::try_from(proxy_host.to_owned()).map_err(|e| {
+            DriverError::HttpProxyTunnelError(format!("invalid HTTPS proxy host: {e}"))
+        })?
+    };
+    let connector = TlsConnector::from(std::sync::Arc::new(tls_config));
+    tokio::time::timeout(timeout, connector.connect(server_name, socket))
+        .await
+        .map_err(|_| DriverError::HttpProxyTunnelError("TLS proxy handshake timed out".into()))?
+        .map_err(|e| DriverError::HttpProxyTunnelError(format!("TLS proxy handshake failed: {e}")))
+}
+
+/// Prove the proxy endpoint is reachable **and** accepts a `CONNECT` for
+/// `remote_host:remote_port`, then close the throwaway connection.
+///
+/// [`HttpProxyTunnel::start`] is lazy — it only binds the local listener and
+/// spawns the accept loop — so on its own it reports success even for an
+/// unreachable proxy. This is the step that actually establishes the upstream
+/// leg, and it is what the standalone tunnel connectivity probe uses.
+pub(crate) async fn verify_upstream(
+    proxy: &HttpProxyTunnelConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<(), DriverError> {
+    let scheme = normalize_scheme(proxy)?;
+    let timeout = connect_timeout(proxy);
+    let extra_headers = proxy_headers(proxy);
+    let auth_header = resolve_auth_header(proxy, &extra_headers);
+
+    let socket = dial_proxy(&proxy.host, proxy.port, timeout).await?;
+    if scheme == "https" {
+        let mut upstream = tls_connect(&proxy.host, socket, timeout).await?;
+        perform_connect(
+            &mut upstream,
+            remote_host,
+            remote_port,
+            auth_header.as_deref(),
+            &extra_headers,
+        )
+        .await
+    } else {
+        let mut upstream = socket;
+        perform_connect(
+            &mut upstream,
+            remote_host,
+            remote_port,
+            auth_header.as_deref(),
+            &extra_headers,
+        )
+        .await
+    }
+}
+
 async fn connect_and_copy(
     inbound: &mut TcpStream,
     scheme: &str,
@@ -140,36 +248,10 @@ async fn connect_and_copy(
     timeout: Duration,
     cancel: &CancellationToken,
 ) -> Result<(), DriverError> {
-    let socket = tokio::time::timeout(timeout, TcpStream::connect((proxy_host, proxy_port)))
-        .await
-        .map_err(|_| DriverError::HttpProxyTunnelError("connect to proxy timed out".into()))?
-        .map_err(|e| {
-            DriverError::HttpProxyTunnelError(format!(
-                "connect to proxy {proxy_host}:{proxy_port}: {e}"
-            ))
-        })?;
+    let socket = dial_proxy(proxy_host, proxy_port, timeout).await?;
 
     if scheme == "https" {
-        let roots = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-        };
-        let tls_config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        let server_name = if let Ok(ip) = proxy_host.parse::<std::net::IpAddr>() {
-            ServerName::IpAddress(IpAddr::from(ip))
-        } else {
-            ServerName::try_from(proxy_host.to_owned()).map_err(|e| {
-                DriverError::HttpProxyTunnelError(format!("invalid HTTPS proxy host: {e}"))
-            })?
-        };
-        let connector = TlsConnector::from(std::sync::Arc::new(tls_config));
-        let mut upstream = tokio::time::timeout(timeout, connector.connect(server_name, socket))
-            .await
-            .map_err(|_| DriverError::HttpProxyTunnelError("TLS proxy handshake timed out".into()))?
-            .map_err(|e| {
-                DriverError::HttpProxyTunnelError(format!("TLS proxy handshake failed: {e}"))
-            })?;
+        let mut upstream = tls_connect(proxy_host, socket, timeout).await?;
         establish_and_copy(
             inbound,
             &mut upstream,

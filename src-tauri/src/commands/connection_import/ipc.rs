@@ -201,7 +201,12 @@ async fn materialize_tunnel_refs(state: &AppState, connections: &mut [Connection
         };
         match saved.kind {
             TunnelKind::Ssh => match saved.ssh {
-                Some(ssh) => conn.ssh_tunnel = Some(ssh),
+                Some(ssh) if ssh.enabled => conn.ssh_tunnel = Some(ssh),
+                Some(_) => tracing::warn!(
+                    connection_id = %conn.id,
+                    tunnel_id = %tunnel_id,
+                    "SSH tunnel is disabled; exporting connection without a tunnel"
+                ),
                 None => tracing::warn!(
                     connection_id = %conn.id,
                     tunnel_id = %tunnel_id,

@@ -61,10 +61,14 @@ pub(crate) async fn get_tunnel_usage_impl(
 ) -> Result<TunnelUsage, CommandError> {
     let mut connection_ids = Vec::new();
     let mut connection_names = Vec::new();
-    for conn in state.store.get_connections().await {
-        if conn.tunnel_id.as_deref() == Some(id.as_str()) {
-            connection_ids.push(conn.id);
-            connection_names.push(conn.name);
+    // An empty query must not sweep in connections whose reference is itself
+    // empty: `materialize_tunnel_refs` treats "" as "no tunnel reference".
+    if !id.is_empty() {
+        for conn in state.store.get_connections().await {
+            if conn.tunnel_id.as_deref() == Some(id.as_str()) {
+                connection_ids.push(conn.id);
+                connection_names.push(conn.name);
+            }
         }
     }
     Ok(TunnelUsage {
@@ -567,5 +571,239 @@ mod tests {
         );
 
         fixture.abort();
+    }
+
+    // ── tunnel-backend-BUG-001: unreachable proxy / relay must not pass ──
+
+    /// A `127.0.0.1` port the OS just handed out and that nothing listens on.
+    async fn closed_local_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind probe port");
+        let port = listener.local_addr().expect("probe addr").port();
+        drop(listener);
+        port
+    }
+
+    fn saved_proxy_tunnel(id: &str, port: u16) -> SavedTunnel {
+        SavedTunnel {
+            id: id.into(),
+            name: "Proxy".into(),
+            kind: TunnelKind::HttpProxy,
+            ssh: None,
+            http_proxy: Some(crate::db::HttpProxyTunnelConfig {
+                enabled: true,
+                host: "127.0.0.1".into(),
+                port,
+                scheme: "http".into(),
+                username: None,
+                password: None,
+                headers: None,
+                connect_timeout_secs: 2,
+            }),
+            websocket: None,
+        }
+    }
+
+    fn saved_websocket_tunnel(id: &str, port: u16) -> SavedTunnel {
+        SavedTunnel {
+            id: id.into(),
+            name: "Relay".into(),
+            kind: TunnelKind::WebSocket,
+            ssh: None,
+            http_proxy: None,
+            websocket: Some(crate::db::WebSocketTunnelConfig {
+                enabled: true,
+                url: format!("ws://127.0.0.1:{port}/tunnel"),
+                auth_token: None,
+                headers: None,
+                connect_timeout_secs: 2,
+                ping_interval_secs: 0,
+                mode: "datazen_v1".into(),
+            }),
+        }
+    }
+
+    /// BUG-001 regression: `HttpProxyTunnel::start` only binds the local
+    /// listener, so the probe used to answer `Ok(0)` for a proxy on a closed
+    /// port. It must report `Err`.
+    #[tokio::test]
+    async fn test_tunnel_rejects_unreachable_http_proxy_endpoint() {
+        let test = TestAppState::new().await;
+        let port = closed_local_port().await;
+        test.store
+            .save_tunnel(saved_proxy_tunnel("t-dead-proxy", port))
+            .await
+            .unwrap();
+
+        let err = test_tunnel_impl(&test.state, "t-dead-proxy".into(), "127.0.0.1".into(), 5432)
+            .await
+            .expect_err("an unreachable proxy must not be reported as reachable");
+        assert!(
+            err.to_string().contains("connect to proxy"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A reachable proxy that *rejects* the CONNECT must fail too: this proves
+    /// the probe performs a real CONNECT handshake, not a bare TCP connect.
+    #[tokio::test]
+    async fn test_tunnel_rejects_proxy_that_refuses_connect() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind proxy fixture");
+        let port = listener.local_addr().expect("fixture addr").port();
+        let fixture = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\n\r\n").await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+
+        let test = TestAppState::new().await;
+        test.store
+            .save_tunnel(saved_proxy_tunnel("t-refusing-proxy", port))
+            .await
+            .unwrap();
+
+        let err = test_tunnel_impl(
+            &test.state,
+            "t-refusing-proxy".into(),
+            "127.0.0.1".into(),
+            5432,
+        )
+        .await
+        .expect_err("a proxy that refuses CONNECT must not be reported as reachable");
+        assert!(
+            err.to_string().contains("CONNECT rejected"),
+            "unexpected error: {err}"
+        );
+
+        fixture.abort();
+    }
+
+    /// BUG-001 regression: `WebSocketTunnel::start` only binds the local
+    /// listener, so the probe used to answer `Ok(0)` for a relay on a closed
+    /// port. It must report `Err`.
+    #[tokio::test]
+    async fn test_tunnel_rejects_unreachable_websocket_endpoint() {
+        let test = TestAppState::new().await;
+        let port = closed_local_port().await;
+        test.store
+            .save_tunnel(saved_websocket_tunnel("t-dead-relay", port))
+            .await
+            .unwrap();
+
+        let err = test_tunnel_impl(&test.state, "t-dead-relay".into(), "127.0.0.1".into(), 5432)
+            .await
+            .expect_err("an unreachable relay must not be reported as reachable");
+        assert!(
+            !err.to_string().is_empty(),
+            "the probe error must carry a message"
+        );
+    }
+
+    /// The mirror of the failure tests: a relay that really answers the
+    /// `datazen_v1` `open` with `opened` must pass, so the fix cannot be
+    /// "always return Err for WebSocket".
+    #[tokio::test]
+    async fn test_tunnel_probes_websocket_relay_end_to_end() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind relay fixture");
+        let port = listener.local_addr().expect("fixture addr").port();
+        let fixture = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+                        return;
+                    };
+                    if let Some(Ok(Message::Text(text))) = ws.next().await {
+                        let open: serde_json::Value =
+                            serde_json::from_str(&text).unwrap_or_default();
+                        let ack = if open.get("op").and_then(|v| v.as_str()) == Some("open") {
+                            r#"{"op":"opened"}"#
+                        } else {
+                            r#"{"op":"error","message":"unexpected frame"}"#
+                        };
+                        let _ = ws.send(Message::Text(ack.to_string().into())).await;
+                        // Hold the socket until the probe closes it.
+                        while let Some(Ok(msg)) = ws.next().await {
+                            if msg.is_close() {
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let test = TestAppState::new().await;
+        test.store
+            .save_tunnel(saved_websocket_tunnel("t-live-relay", port))
+            .await
+            .unwrap();
+
+        let elapsed_ms =
+            test_tunnel_impl(&test.state, "t-live-relay".into(), "127.0.0.1".into(), 5432)
+                .await
+                .expect("a relay that acks the open must pass the probe");
+        assert!(
+            elapsed_ms < 5_000,
+            "probe took suspiciously long: {elapsed_ms}ms"
+        );
+
+        fixture.abort();
+    }
+
+    /// SSH has always dialed eagerly, so this pins that an unreachable bastion
+    /// is reported as unreachable rather than optimistically succeeding.
+    #[tokio::test]
+    async fn test_tunnel_rejects_unreachable_ssh_bastion() {
+        let test = TestAppState::new().await;
+        let port = closed_local_port().await;
+        test.store
+            .save_tunnel(SavedTunnel {
+                id: "t-dead-bastion".into(),
+                name: "Bastion".into(),
+                kind: TunnelKind::Ssh,
+                ssh: Some(SshTunnelConfig {
+                    enabled: true,
+                    host: "127.0.0.1".into(),
+                    port,
+                    username: "ubuntu".into(),
+                    auth_method: "password".into(),
+                    password: Some("secret".into()),
+                    private_key_path: None,
+                    passphrase: None,
+                    jump: None,
+                }),
+                http_proxy: None,
+                websocket: None,
+            })
+            .await
+            .unwrap();
+
+        let err = test_tunnel_impl(
+            &test.state,
+            "t-dead-bastion".into(),
+            "127.0.0.1".into(),
+            5432,
+        )
+        .await
+        .expect_err("an unreachable bastion must not be reported as reachable");
+        assert!(
+            err.to_string().contains("SSH connect"),
+            "unexpected error: {err}"
+        );
     }
 }

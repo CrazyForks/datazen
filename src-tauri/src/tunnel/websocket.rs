@@ -31,17 +31,7 @@ impl WebSocketTunnel {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<Self, DriverError> {
-        if cfg.url.trim().is_empty() {
-            return Err(DriverError::WebSocketTunnelError(
-                "WebSocket tunnel URL is empty".into(),
-            ));
-        }
-        let mode = cfg.mode.to_ascii_lowercase();
-        if mode != "datazen_v1" && mode != "raw_binary" {
-            return Err(DriverError::WebSocketTunnelError(format!(
-                "Unknown WebSocket tunnel mode '{mode}'; use datazen_v1 or raw_binary"
-            )));
-        }
+        let mode = validate_config(cfg)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -51,23 +41,11 @@ impl WebSocketTunnel {
             .map_err(|e| DriverError::WebSocketTunnelError(format!("get local port: {e}")))?
             .port();
 
-        let url = if mode == "raw_binary" {
-            raw_binary_url(&cfg.url, &remote_host, remote_port)?
-        } else {
-            cfg.url.clone()
-        };
+        let url = resolve_url(cfg, &mode, remote_host, remote_port)?;
         let auth_token = cfg.auth_token.clone();
-        let extra_headers: Vec<(String, String)> = cfg
-            .headers
-            .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-        let timeout = Duration::from_secs(u64::from(cfg.connect_timeout_secs.max(1)));
-        let ping_interval = if cfg.ping_interval_secs == 0 {
-            None
-        } else {
-            Some(Duration::from_secs(u64::from(cfg.ping_interval_secs)))
-        };
+        let extra_headers = ws_headers(cfg);
+        let timeout = ws_timeout(cfg);
+        let ping_interval = ws_ping_interval(cfg);
         let remote_host = remote_host.to_string();
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
@@ -132,6 +110,84 @@ impl Drop for WebSocketTunnel {
         self.cancel.cancel();
         self.task.abort();
     }
+}
+
+/// Validated tunnel config: non-empty URL plus lowercased mode
+/// (`datazen_v1` / `raw_binary`).
+fn validate_config(cfg: &WebSocketTunnelConfig) -> Result<String, DriverError> {
+    if cfg.url.trim().is_empty() {
+        return Err(DriverError::WebSocketTunnelError(
+            "WebSocket tunnel URL is empty".into(),
+        ));
+    }
+    let mode = cfg.mode.to_ascii_lowercase();
+    if mode != "datazen_v1" && mode != "raw_binary" {
+        return Err(DriverError::WebSocketTunnelError(format!(
+            "Unknown WebSocket tunnel mode '{mode}'; use datazen_v1 or raw_binary"
+        )));
+    }
+    Ok(mode)
+}
+
+fn ws_headers(cfg: &WebSocketTunnelConfig) -> Vec<(String, String)> {
+    cfg.headers
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default()
+}
+
+fn ws_timeout(cfg: &WebSocketTunnelConfig) -> Duration {
+    Duration::from_secs(u64::from(cfg.connect_timeout_secs.max(1)))
+}
+
+fn ws_ping_interval(cfg: &WebSocketTunnelConfig) -> Option<Duration> {
+    if cfg.ping_interval_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(u64::from(cfg.ping_interval_secs)))
+    }
+}
+
+/// Effective relay URL: `raw_binary` injects the target host/port as query keys.
+fn resolve_url(
+    cfg: &WebSocketTunnelConfig,
+    mode: &str,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<String, DriverError> {
+    if mode == "raw_binary" {
+        raw_binary_url(&cfg.url, remote_host, remote_port)
+    } else {
+        Ok(cfg.url.clone())
+    }
+}
+
+/// Prove the relay endpoint is reachable **and**, in `datazen_v1` mode, that it
+/// accepts an `open` for `remote_host:remote_port`; then close the throwaway
+/// connection.
+///
+/// [`WebSocketTunnel::start`] is lazy — it only binds the local listener and
+/// spawns the accept loop — so on its own it reports success even for an
+/// unreachable relay. This is the step that actually establishes the upstream
+/// leg, and it is what the standalone tunnel connectivity probe uses.
+pub(crate) async fn verify_upstream(
+    cfg: &WebSocketTunnelConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<(), DriverError> {
+    let mode = validate_config(cfg)?;
+    let url = resolve_url(cfg, &mode, remote_host, remote_port)?;
+    let extra_headers = ws_headers(cfg);
+    let timeout = ws_timeout(cfg);
+
+    let mut ws = connect_ws(&url, cfg.auth_token.as_deref(), &extra_headers, timeout).await?;
+    if mode == "datazen_v1" {
+        let channel_id = open_datazen_channel(&mut ws, remote_host, remote_port, timeout).await?;
+        let close = serde_json::json!({ "op": "close", "id": channel_id });
+        let _ = ws.send(Message::Text(close.to_string().into())).await;
+    }
+    let _ = ws.close(None).await;
+    Ok(())
 }
 
 fn raw_binary_url(

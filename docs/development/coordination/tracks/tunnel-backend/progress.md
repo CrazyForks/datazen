@@ -168,11 +168,84 @@
 | E6 | 真实 GUI 旅程：设置页「隧道管理」→「测试」按钮 → SSH 隧道应回报耗时；不可达的 HTTP 代理 / WebSocket 必须回报失败 | G8 端到端可用性（**当前会暴露 `tunnel-backend-BUG-001`**） | 【留待 R 回归】WebdriverIO `e2e/specs/` | 需 `pnpm tauri:build:webdriver`；需前端管理面（本轨不含）；需一台可达 SSH 服务器；代理/WS 用不可达地址做反向断言 |
 | E7 | 真实导出→导入往返：A 环境导出引用 SSH 隧道的连接，B 环境导入后 `isOverSSH=true` 且能经跳板连内网库 | G7 端到端 | 【留待 R 回归】手工黑盒 `test/` | 双环境或双 profile；需真实 SSH 跳板与内网数据库 |
 
+## Coder 修复轮（第 2 轮，针对 `bugs.md`）
+
+- 修复 commit: 与本文件同体提交的 `fix(tunnel): ...`（hash 见本轨收尾汇报 / `git log -1 --format=%H`）
+- 范围：**只修 2 个 Bug** + 2 条被简报批准的附带修正（Tester 改进项 #2 / #6）。Tester 的 11 个 `test_tester_*` 用例**零改动、零删除**，全部通过。
+
+### BUG-001 修复（`test_tunnel` 对 HTTP 代理 / WebSocket 恒报成功）
+
+根因：`HttpProxyTunnel::start` / `WebSocketTunnel::start` 是**惰性**的 —— 只 bind 本地 127.0.0.1 监听并 spawn accept loop，真正 dial 上游发生在首个入站连接时。`test_tunnel` 只调 `start_tunnel` 就返回，于是对不可达的代理/中继一律 `Ok(0)`。
+
+修法（单一机制，不在 `test_tunnel` 里打特例补丁）：
+
+- `tunnel/http_proxy.rs`：抽出 `normalize_scheme` / `proxy_headers` / `resolve_auth_header` / `connect_timeout` / `dial_proxy` / `tls_connect`，让数据路径（`start` + `connect_and_copy`）与新增探针**共用同一套拨号与握手实现**（而非复制一份探测逻辑）；新增 `pub(crate) async fn verify_upstream(proxy, remote_host, remote_port)`：拨号（`https` 代理含 TLS）→ `perform_connect` 真实 CONNECT 握手 → 关闭连接。
+- `tunnel/websocket.rs`：同样抽出 `validate_config` / `ws_headers` / `ws_timeout` / `ws_ping_interval` / `resolve_url`；新增 `pub(crate) async fn verify_upstream(cfg, remote_host, remote_port)`：`connect_ws` →（`datazen_v1` 模式 `open_datazen_channel` 等待 `opened` 应答）→ 发 `close` → 关闭连接。
+- `tunnel/mod.rs`：以 `pub(crate) use http_proxy::verify_upstream as verify_http_proxy_upstream` / `... websocket::verify_upstream as verify_websocket_upstream` 重导出（`http_proxy` / `websocket` 是私有子模块，必须重导出）。
+- `ConnectionManager::test_tunnel`：先 `store.get_tunnel(id)` 取 `kind`，`start_tunnel` 后按 kind 分派 —— `Ssh` 无需额外动作（`SshTunnel::start` 本就 eager 拨号 + 认证，建隧道即探针），`HttpProxy` / `WebSocket` 调对应 `verify_upstream`；顺序为 **计时（含探针）→ `drop(tunnel)` → `verified?`**，保证探针失败时隧道也一定被拆除。配置缺失（`kind=httpProxy` 而 `http_proxy=None` 等）显式 `Err`，绝不静默成功。
+- **未**采用「把探针塞进 `start` 做 eager 预检」：会让生产路径每次建隧道都多一次握手，并破坏既有单连接夹具（`http_proxy.rs::forwards_bytes_through_connect_proxy`、`websocket.rs::forwards_datazen_v1_bytes_and_sends_close_control` 都只 accept 一次）。
+- **未**采用「经本地监听器探测」：Tester 的成功夹具（`test_tester_test_tunnel_success_path_with_local_proxy_fixture`）在写完 `200 Connection Established` 后立即 shutdown，EOF 探测会把这条合法成功路径误判为失败。
+
+### BUG-002 修复（`SshTunnel` 缺 `Drop`：每次探测泄漏任务 + SSH 会话 + 本地端口）
+
+`SshTunnel` 增加 `cancel: CancellationToken`（原 `_task` 改名 `task`）并实现：
+
+```rust
+impl Drop for SshTunnel {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.task.abort();
+    }
+}
+```
+
+与 `HttpProxyTunnel` / `WebSocketTunnel` **同形**（单一机制，不在 `test_tunnel` 里补）。accept loop 改为 `tokio::select!` 监听 `cancel.cancelled()`；每个连接的子任务也监听克隆 token，使 `Arc<Mutex<client::Handle>>` 克隆随任务结束而释放、russh 会话随之关闭；`_upstream`（跳板链）按字段 drop 递归拆除。**同一机制顺带修掉 `ConnectionManager::test_connection` 里既存的同类泄漏。**
+
+### 附带修正（仅简报批准的 2 条）
+
+- 改进项 **#2**：`get_tunnel_usage_impl` 对空 `id` 直接返回双空数组，与 `materialize_tunnel_refs` 把 `""` 视为「无引用」的语义对齐（此前空串会扫出 `tunnel_id=Some("")` 的连接）。
+- 改进项 **#6**：`materialize_tunnel_refs` 中 `kind=ssh` 且 `ssh.enabled == false` 原先是**静默**降级（只有 `ssh=None` 才 warn），现改为与其它不可表达分支一致：`tracing::warn!` 点名 connection_id / tunnel_id 后不带隧道导出。
+
+### 第 2 轮新增测试（7 个，全部 ok）
+
+| 测试 | 覆盖 |
+|---|---|
+| `commands::tunnel::tests::test_tunnel_rejects_unreachable_http_proxy_endpoint` | **BUG-001 主证**：代理端口无监听 → `Err`（含 `connect to proxy`），不再是 `Ok(0)` 假阳性 |
+| `commands::tunnel::tests::test_tunnel_rejects_proxy_that_refuses_connect` | 可达但回 `403` 的代理 → `Err`（含 `CONNECT rejected`）：证明真的做了 CONNECT 握手，而不是只 TCP connect |
+| `commands::tunnel::tests::test_tunnel_rejects_unreachable_websocket_endpoint` | **BUG-001 主证（WS）**：中继端口无监听 → `Err` |
+| `commands::tunnel::tests::test_tunnel_probes_websocket_relay_end_to_end` | 反向证明：本地 WS 夹具正确应答 `open → opened` 时 → `Ok(elapsed)`，排除「WS 一律返回 Err」的假修复 |
+| `commands::tunnel::tests::test_tunnel_rejects_unreachable_ssh_bastion` | 三种 kind 均不谎报成功：不可达 SSH 堡垒 → `Err`（含 `SSH connect`） |
+| `ssh_tunnel::tests::drop_cancels_and_aborts_the_forwarder_and_releases_the_local_port` | **BUG-002 主证**：`drop(SshTunnel)` 后 token 已取消、`AbortHandle::is_finished()` 为真、且 `127.0.0.1:<port>` 可被重新 bind（detach-only drop 会让端口永久占用） |
+| `commands::connection_import::ipc::tests::export_warns_and_skips_a_disabled_ssh_tunnel` | 附带修正 #6：`ssh.enabled=false` 不物化 + warn 同时点名 connection_id / tunnel_id |
+
+### 第 2 轮套件实测
+
+| 命令 | 结果 |
+|---|---|
+| `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib` | **1505 passed; 0 failed; 3 ignored**（= 修复前基线 1498 + 本轮 7 个新用例；≥ 基线且 0 failed） |
+| `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-api --lib` | **128 passed; 0 failed; 0 ignored** |
+| `CARGO_TARGET_DIR=target/cargo-wt cargo fmt --check` | 改动文件 **零 diff**；唯一 diff 仍是 gitignored codegen `src-tauri/src/driver_init.rs`（既存、非本轨改动） |
+| Tester 回归用例 | 11 个 `test_tester_*` **全部保留、全部通过**（无一个被修改或删除） |
+
+生产路径 panic 政策：本轮新增行中的 `unwrap()` / `expect()` **全部**位于 `#[cfg(test)]`（`commands/tunnel.rs` 测试模块、`ipc_tests.rs`、`ssh_tunnel.rs` 测试模块）；新增/改写的生产代码（两个 `verify_upstream`、`SshTunnel::drop`、抽出的各 helper、`test_tunnel`、`get_tunnel_usage_impl`、`materialize_tunnel_refs`）零裸 `unwrap()` / `expect()`。
+
+### 未采纳的 Tester 改进项（follow-up，本轮登记不修）
+
+- **#1 `get_tunnel_summaries` 的 N+1 store 加锁**：每条隧道一次 `store.get_tunnel`。当前隧道数量级（个位到几十）下无实测影响；若要优化应新增 `store.get_tunnels()` 批量解密接口，属独立改动。
+- **#3 摘要投影约定**：`SavedTunnelSummary` 未走「先全量解密再统一投影」的既有约定，而是直接读解密实体后只映射 `id/name/kind`。若后续 DTO 增多，再抽统一投影层。
+- **#4 `SavedTunnelSummary` / `TunnelUsage` 的 `Deserialize` derive 未被任何代码使用**：为与 `driver-api` 其它 DTO 风格一致而保留；删除属纯清理。
+- **#5 `test_tunnel` 合成 config 的 `"postgresql"` 占位 `database_type`**：该字段在 `start_tunnel` 路径上不会被解析（不查 driver），保留占位仅为满足 `ConnectionConfig` 必填字段。
+- **#8 既存 `ref_count` 未使用告警**：非本轨引入，超出范围。
+
+（**#7 `_upstream` 生命周期已随 BUG-002 的 `Drop` 一并解决**：字段 drop 递归拆除跳板链，不再是遗留问题。）
+
 ## Phase
 
-`FAILED`
+`READY_FOR_TEST`
 
-> Tester 已完成阶段 A/B/C/D（逐文件审查 + 独立复跑 + 覆盖率补齐 + E2E 登记）。发现 2 个 Bug：
-> `tunnel-backend-BUG-001`（`test_tunnel` 对 HTTP 代理 / WebSocket 恒报成功，假阳性）、
-> `tunnel-backend-BUG-002`（SSH 探针 `drop` 不拆除隧道，每次探测泄漏任务 + SSH 会话 + 本地端口）。
-> 详见同目录 `bugs.md`。等待原 Coder 修复后由全新 Tester 完整复测。
+> 第 2 轮修复完成：`tunnel-backend-BUG-001` / `tunnel-backend-BUG-002` 均已修复且各有主证测试；附带修正 #2 / #6 完成；Tester 11 个回归用例零改动、全通过。
+> 实测 `cargo test -p datazen --lib` **1505 passed / 0 failed / 3 ignored**，`cargo test -p datazen-driver-api --lib` **128 passed / 0 failed**。
+> 两条 Bug 状态 → **待复测**（`bugs.md` 已同步）。请**全新 Tester 实例**完整复测，重点：
+> （a）BUG-001 —— 是否有任何 kind 仍能对不可达端点返回 `Ok`；反向夹具（`403` / 正确 `opened`）是否被绕过；
+> （b）BUG-002 —— `drop(SshTunnel)` 是否真的释放任务、SSH 会话与本地端口（不只是取消 token）。
+> 本轨不自评 `PASSED`。

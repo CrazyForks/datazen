@@ -9,8 +9,10 @@
 
 ## tunnel-backend-BUG-001 — `test_tunnel` 对 HTTP 代理 / WebSocket 隧道恒报成功（假阳性）
 
+> **状态变更（Coder 第 2 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 2 轮）」。
+
 - **量级**: 中高（G8 新功能对 3 种隧道类型中的 2 种完全失效，且是"谎报成功"而非报错）
-- **状态**: 待修复
+- **状态**: 待复测（已修复）
 - **影响范围**: `ConnectionManager::test_tunnel`（`src-tauri/src/services/connection_manager/tunnels.rs:68-120`）→ 新 IPC `test_tunnel(id, targetHost, targetPort)`（`src-tauri/src/commands/tunnel.rs:131-139`）。管理面「测试隧道」按钮对 HTTP 代理 / WebSocket 隧道会显示"连通"，即使代理/中继地址根本不可达。SSH 类型不受影响。
 
 ### 描述
@@ -63,8 +65,10 @@ test commands::tunnel::tests::zz_temp_repro_dead_endpoints_report_success ... ok
 
 ## tunnel-backend-BUG-002 — SSH 探针 `drop(tunnel)` 不拆除隧道，每次探测泄漏一个 SSH 会话 + 任务 + 本地端口
 
+> **状态变更（Coder 第 2 轮）**: 已修复，待 Tester 复测。修复说明与主证测试见同目录 `progress.md`「Coder 修复轮（第 2 轮）」。
+
 - **量级**: 中（资源泄漏，非数据损坏；但管理面可被反复点击，泄漏会累积）
-- **状态**: 待修复
+- **状态**: 待复测（已修复）
 - **影响范围**: `ConnectionManager::test_tunnel`（`src-tauri/src/services/connection_manager/tunnels.rs:113-119`）的 SSH 分支；根因在 `SshTunnel` 缺少 `Drop`（`src-tauri/src/ssh_tunnel.rs:99-103`）。既存 `ConnectionManager::test_connection`（`tunnels.rs:41-57`）有同一形状的既存泄漏。
 
 ### 描述

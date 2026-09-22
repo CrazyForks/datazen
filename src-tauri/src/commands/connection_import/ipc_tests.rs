@@ -702,3 +702,82 @@ async fn test_tester_export_fails_when_the_destination_cannot_be_written() {
     );
     assert_eq!(test.store.get_connections().await.len(), 1);
 }
+
+/// A `kind = ssh` reference whose `ssh.enabled` is false is a silent degradation
+/// in the payload (`connection_to_tableplus_json` filters disabled SSH blocks
+/// out), so it must be treated like every other non-exportable branch: warned
+/// about, and not materialized.
+#[tokio::test]
+async fn export_warns_and_skips_a_disabled_ssh_tunnel() {
+    use crate::db::{SavedTunnel, SshTunnelConfig, TunnelKind};
+    use crate::testing::app_state::{sample_postgres_config, TestAppState};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let test = TestAppState::new().await;
+    test.store
+        .save_tunnel(SavedTunnel {
+            id: "tunnel-ssh-off".into(),
+            name: "Disabled bastion".into(),
+            kind: TunnelKind::Ssh,
+            ssh: Some(SshTunnelConfig {
+                enabled: false,
+                host: "bastion.internal".into(),
+                port: 2222,
+                username: "ubuntu".into(),
+                auth_method: "password".into(),
+                password: Some("ssh-secret".into()),
+                private_key_path: None,
+                passphrase: None,
+                jump: None,
+            }),
+            http_proxy: None,
+            websocket: None,
+        })
+        .await
+        .unwrap();
+
+    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let writer_buf = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || SharedBuf(writer_buf.clone()))
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let mut conn = sample_postgres_config("c-ssh-off");
+    conn.name = "Disabled ref".into();
+    conn.tunnel_id = Some("tunnel-ssh-off".into());
+    let mut connections = vec![conn];
+    materialize_tunnel_refs(&test.state, &mut connections).await;
+
+    assert!(
+        connections[0].ssh_tunnel.is_none(),
+        "a disabled SSH tunnel must not be materialized into the export"
+    );
+    let logged = String::from_utf8(buf.lock().expect("log buffer lock").clone()).unwrap();
+    assert!(
+        logged.contains("SSH tunnel is disabled"),
+        "a disabled SSH tunnel must warn: {logged}"
+    );
+    assert!(
+        logged.contains("tunnel-ssh-off") && logged.contains("c-ssh-off"),
+        "the warning must name the tunnel and the connection: {logged}"
+    );
+}
