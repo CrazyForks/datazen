@@ -283,7 +283,9 @@ PRD §3.4 状态条样例含 **keys 总数 / loaded / 扫描游标 / 多选计�
 | BUG-001 后 | 0 错误 | 38 files / 303 passed \| 1 skipped (304) | 100/100/100/100 | ok 5.37s |
 | BUG-002 后 | 0 错误 | 38 files / 307 passed \| 1 skipped (308) | 100/100/100/100 | ok 4.88s |
 | BUG-003 后 | 0 错误 | 38 files / 309 passed \| 1 skipped (310) | 100/100/100/100 | ok 5.08s |
-| BUG-004 后（**新基线**） | 0 错误 | 38 files / **312 passed \| 0 skipped (312)** | 100/100/100/100 | ok 4.63s |
+| BUG-004 后（**新基线**） | 0 错误 | 38 files / **312 passed \| 0 skipped (312)** | 100/100/100/100 | ok 4.94s |
+
+> BUG-004 一行是对**已提交的 `5e145f566`** 重跑的数值（该提交内含 BUG-004 全部码面改动）。
 
 - 覆盖率命令：`npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.include='packages/drivers/redis/ui/kv-bar/**'`；
   列为 Stmts / Branch / Funcs / Lines 四值。`index.ts` 那行显示 0 是**再导出桶文件无可计语句**，
@@ -307,7 +309,7 @@ PRD §3.4 状态条样例含 **keys 总数 / loaded / 扫描游标 / 多选计�
 | M5 | owner 令牌不含 `dbIndex` | 对应那条红 | 2 红 |
 | M6 | `publishRead` 的过滤整个删掉 | 红 | 3 红 |
 | M7 | `ownerOf` 忽略 `dbIndex` | 红 | 1 红 |
-| M8 | hook 忽略 `enabled` 参数 | — | **存活（等价变异）**，见下注 |
+| M8 | hook 忽略 `enabled` 参数（第 4 参当常量） | — | **存活（等价变异）**，见下注 |
 | N1 | 去掉 in-flight join（各槽位各发一次） | 红 | 3 红 |
 | N2 | 合并表按全局键名而非 relay 建键（跨面板共享） | 红 | 2 红 |
 | N3 | settled 后不 `delete`（变成值缓存） | 红 | 3 红 |
@@ -321,11 +323,13 @@ PRD §3.4 状态条样例含 **keys 总数 / loaded / 扫描游标 / 多选计�
 | Q3 | `describeTtl` 把 `-2` 并入 no-expiry 臂 | 红 | 3 红（含纯函数层 `separates the three PTTL meanings`） |
 | Q4 | 状态条对 `-2` 也渲染 TTL 段 | 红 | 1 红 |
 
-**M8 存活注（等价变异，与 Tester 本轮 M13 同一形状）**：侧栏关闭时除 `enabled=false` 外
-**还**额外传了 `key=null`，所以拆掉 `enabled` 这一道闸门后“抽屉收起零请求”仍成立——
-该保证实际由第二道闸门守着，已由 M14/M15（Tester 表）证明它确实被用例钉住。
-两道闸门互为冗余是 §I-11 契约（`open===false ⇒ 不取数`）的显式冗余，**不再追加用例**，
-在此登记以免下一轮重复注入。
+**M8 存活注（等价变异，非覆盖缺口）**：注入的是“hook 无视第 4 参 `enabled`”，
+而侧栏在抽屉收起时**除** `enabled=false` **外**还额外把键换成 `null`
+（`KeyPropsSidebar.tsx:51-57` 的 `open ? selectedKey : null`），owner 因此仍为 `null` ⇒
+仍零请求，故该注入在语义上与“不拆”等价。它与第 1 轮 Tester 表的 **M13 互为镜像**
+（M13 拆三元、保 `enabled`，同样存活），两条合起来说明这是**同一保证的两道冗余闸门**，
+而不是没人守的行为：“抽屉收起零往返”这一保证本身由 Tester 的 M14（只拆 `enabled`）/
+M15（两道全拆）钉住。本回合**不再为单拆任一闸门追加用例**，在此登记以免下一轮重复注入。
 
 ## 本轮结论与遗留
 
