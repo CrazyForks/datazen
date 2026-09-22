@@ -49,10 +49,7 @@ match command {
         ),
         "scan_values" => json_ok(driver.scan_values(handle, db, &input).await?),
         "scan_abort" => json_ok(driver.scan_abort(handle, &input).await?),
-        "decode_value" => json_ok(
-            crate::decode::decode_value(&input)
-                .map_err(DriverError::InvalidConfig)?,
-        ),
+        "decode_value" => json_ok(crate::decode::decode_value(&input)),
         "get_key_raw" => {
             let with_memory = input
                 .get("withMemory")
