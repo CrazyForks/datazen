@@ -1,0 +1,10 @@
+[package]
+name = "migration-sequence-tester"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+datazen-driver-api = { path = "../../../packages/driver-api" }
+datazen-driver-postgres = { path = "../../../packages/drivers/postgres" }
+
+[workspace]
