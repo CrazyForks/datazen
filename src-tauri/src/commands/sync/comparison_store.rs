@@ -954,7 +954,10 @@ fn create_new_file(path: &Path) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_sync::{RowChange, SyncOptions, TableResult};
+    use crate::data_sync::{
+        compare_table_pages_to_sink, ChangeOperation, RowChange, SliceRowSource, SyncOptions,
+        TableResult,
+    };
 
     fn comparison(payload_size: usize) -> ComparisonResult {
         let options = SyncOptions::default();
@@ -1187,5 +1190,169 @@ mod tests {
             .unwrap();
         drop(writer);
         assert!(!directory.exists());
+    }
+
+    #[test]
+    fn test_tester_streaming_writer_round_trips_zero_one_and_large_row_counts() {
+        let options = SyncOptions::default();
+        let mut writer = StreamingComparisonStoreWriter::new().unwrap();
+        writer
+            .begin_table(TableResult::matched("empty", "empty", Vec::new()))
+            .unwrap();
+        writer.finish_table(0).unwrap();
+
+        writer
+            .begin_table(TableResult::matched("single", "single", Vec::new()))
+            .unwrap();
+        writer
+            .push_row(RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1))],
+                &options,
+            ))
+            .unwrap();
+        writer.finish_table(0).unwrap();
+
+        writer
+            .begin_table(TableResult::matched("large", "large", Vec::new()))
+            .unwrap();
+        for key in 0..10_001 {
+            writer
+                .push_row(RowChange::insert(
+                    vec![Value::Integer(key)],
+                    vec![Some(Value::Integer(key))],
+                    &options,
+                ))
+                .unwrap();
+        }
+        writer.finish_table(0).unwrap();
+        let store = writer.finish().unwrap();
+
+        let summaries = store.summaries().unwrap();
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0].row_count, 0);
+        assert_eq!(summaries[1].row_count, 1);
+        assert_eq!(summaries[2].row_count, 10_001);
+        assert!(store
+            .load_table_page("empty", "empty", 0, 1)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .load_table_page("large", "large", 10_000, 2)
+                .unwrap()
+                .len(),
+            1
+        );
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.tables[0].rows.len(), 0);
+        assert_eq!(loaded.tables[1].rows.len(), 1);
+        assert_eq!(loaded.tables[2].rows.len(), 10_001);
+    }
+
+    #[test]
+    fn test_tester_index_corruption_fails_summary_page_and_full_load() {
+        let options = SyncOptions::default();
+        let mut writer = StreamingComparisonStoreWriter::new().unwrap();
+        writer
+            .begin_table(TableResult::matched("users", "users", Vec::new()))
+            .unwrap();
+        writer
+            .push_row(RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1))],
+                &options,
+            ))
+            .unwrap();
+        writer.finish_table(0).unwrap();
+        let store = writer.finish().unwrap();
+        let directory = store.directory().unwrap();
+        let index_path = directory.join("table-0.index");
+        let mut bytes = fs::read(&index_path).unwrap();
+        bytes[8] = bytes[8].wrapping_add(1);
+        fs::write(&index_path, bytes).unwrap();
+
+        assert!(store.summaries().unwrap_err().contains("frame length"));
+        assert!(store.load_table_page("users", "users", 0, 1).is_err());
+        assert!(store.load().is_err());
+        drop(store);
+        assert!(!directory.exists());
+    }
+
+    #[tokio::test]
+    async fn test_tester_cancelled_sink_drops_partial_store() {
+        let mut writer = StreamingComparisonStoreWriter::new().unwrap();
+        let directory = writer.directory.clone().unwrap();
+        writer
+            .begin_table(TableResult::matched("users", "users", Vec::new()))
+            .unwrap();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut source = SliceRowSource::new(vec![vec![Some(Value::Integer(1))]], vec![0]).unwrap();
+        let mut target = SliceRowSource::new(Vec::new(), vec![0]).unwrap();
+        let error = compare_table_pages_to_sink(
+            "users",
+            "users",
+            &[0],
+            &["id".into()],
+            &SyncOptions::default(),
+            &mut source,
+            &mut target,
+            Some(flag),
+            &mut writer,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, DataSyncError::Cancelled(_)));
+        drop(writer);
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn test_tester_unchanged_row_is_rejected_and_writer_cleanup_is_recoverable() {
+        let mut writer = StreamingComparisonStoreWriter::new().unwrap();
+        let directory = writer.directory.clone().unwrap();
+        writer
+            .begin_table(TableResult::matched("users", "users", Vec::new()))
+            .unwrap();
+        let error = writer
+            .push_row(RowChange {
+                operation: ChangeOperation::Unchanged,
+                key: vec![Value::Integer(1)],
+                source_row: Some(vec![Some(Value::Integer(1))]),
+                target_row: Some(vec![Some(Value::Integer(1))]),
+                changed_columns: Vec::new(),
+                selected: false,
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("unchanged rows"));
+        drop(writer);
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn test_tester_full_load_fails_closed_above_64_mib_but_page_stays_available() {
+        let options = SyncOptions::default();
+        let mut writer = StreamingComparisonStoreWriter::new().unwrap();
+        writer
+            .begin_table(TableResult::matched("large", "large", Vec::new()))
+            .unwrap();
+        for key in 0..9 {
+            writer
+                .push_row(RowChange::insert(
+                    vec![Value::Integer(key)],
+                    vec![Some(Value::String("x".repeat(8_000_000)))],
+                    &options,
+                ))
+                .unwrap();
+        }
+        writer.finish_table(0).unwrap();
+        let store = writer.finish().unwrap();
+        assert!(store.bytes() > COMPARISON_FULL_LOAD_LIMIT as usize);
+        assert!(store.load().unwrap_err().contains("64 MiB"));
+        assert_eq!(store.summaries().unwrap()[0].row_count, 9);
+        assert_eq!(
+            store.load_table_page("large", "large", 0, 1).unwrap().len(),
+            1
+        );
     }
 }
