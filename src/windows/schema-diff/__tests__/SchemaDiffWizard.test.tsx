@@ -177,7 +177,16 @@ describe('complete schema migration wizard journeys', () => {
     fireEvent.click(screen.getByLabelText('schemaDiff.useTransaction'));
     fireEvent.click(deploy);
     await screen.findByTestId('schema-diff-deploy-result');
-    expect(schemaDiffCommands.executeDeploy).toHaveBeenCalledExactlyOnceWith({ targetDbSessionId: 'target-session', plan: plan(), useTransaction: true, requireRollback: true, confirmDestructive: 'DEPLOY' });
+    expect(schemaDiffCommands.executeDeploy).toHaveBeenCalledExactlyOnceWith({
+      targetDbSessionId: 'target-session',
+      plan: plan(),
+      useTransaction: true,
+      requireRollback: true,
+      confirmDestructive: 'DEPLOY',
+      targetDatabase: 'target',
+      targetSchema: null,
+      profile: undefined,
+    });
     expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('committed');
     expect(deploy).toBeDisabled();
     fireEvent.click(deploy);

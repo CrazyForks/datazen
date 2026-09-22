@@ -690,6 +690,8 @@ async fn run_schema(
             (destructive_policy == UnattendedDestructivePolicy::Allow)
                 .then_some(crate::schema_diff::deploy::DESTRUCTIVE_CONFIRM_TOKEN.to_string()),
             None,
+            None,
+            None,
             Some(reference.clone()),
         )
         .await

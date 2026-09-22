@@ -3,8 +3,9 @@
 use super::error::{CmdExt, CommandError};
 use super::sync::compare::diff_table_schemas_ir;
 use super::AppState;
+use crate::db::SqlTarget;
 use crate::schema_diff::deploy::{
-    execute_schema_diff_deploy as run_schema_diff_deploy, plan_has_destructive, DeployOptions,
+    execute_schema_diff_deploy_at as run_schema_diff_deploy, plan_has_destructive, DeployOptions,
     DESTRUCTIVE_CONFIRM_TOKEN,
 };
 use crate::schema_diff::diff_table_schemas;
@@ -1041,6 +1042,8 @@ pub async fn execute_schema_diff_deploy(
     require_rollback: Option<bool>,
     confirm_destructive: Option<String>,
     job_id: Option<String>,
+    target_database: Option<String>,
+    target_schema: Option<String>,
     profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<SchemaDiffDeployResult, CommandError> {
     execute_schema_diff_deploy_impl(
@@ -1051,6 +1054,8 @@ pub async fn execute_schema_diff_deploy(
         require_rollback,
         confirm_destructive,
         job_id,
+        target_database,
+        target_schema,
         profile,
     )
     .await
@@ -1064,6 +1069,8 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
     require_rollback: Option<bool>,
     confirm_destructive: Option<String>,
     job_id: Option<String>,
+    target_database: Option<String>,
+    target_schema: Option<String>,
     profile: Option<crate::store::MigrationProfileRef>,
 ) -> Result<SchemaDiffDeployResult, CommandError> {
     crate::commands::history::validate_migration_profile_ref(
@@ -1139,6 +1146,39 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
         )
         .await;
     }
+    let effective_target_database = target_database
+        .as_deref()
+        .or(config.database.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let effective_target_schema = target_schema
+        .as_deref()
+        .or(config.schema.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if target_database.is_some()
+        && effective_target_database != config.database.as_deref().map(str::trim)
+    {
+        return fail_schema_diff_deploy(
+            &state,
+            history_run,
+            CommandError::Validation(
+                "Target database changed after review; prepare the plan again".into(),
+            ),
+        )
+        .await;
+    }
+    if target_schema.is_some() && effective_target_schema != config.schema.as_deref().map(str::trim)
+    {
+        return fail_schema_diff_deploy(
+            &state,
+            history_run,
+            CommandError::Validation(
+                "Target schema changed after review; prepare the plan again".into(),
+            ),
+        )
+        .await;
+    }
     if require_rollback.unwrap_or(false)
         && (!plan.rollback_completeness.complete
             || !use_transaction.unwrap_or(true)
@@ -1199,8 +1239,8 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
             driver.as_ref(),
             &handle,
             table,
-            config.database.as_deref().unwrap_or_default(),
-            config.schema.as_deref(),
+            effective_target_database.unwrap_or_default(),
+            effective_target_schema,
         )
         .await
         {
@@ -1245,7 +1285,15 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
         stop_on_error: true,
     };
 
-    let result = run_schema_diff_deploy(driver.as_ref(), &handle, &plan, opts, cancelled).await;
+    let result = run_schema_diff_deploy(
+        driver.as_ref(),
+        &handle,
+        &plan,
+        opts,
+        cancelled,
+        SqlTarget::new(effective_target_database, effective_target_schema),
+    )
+    .await;
 
     if let Some(id) = job_id.as_deref() {
         remove_job(id).await;

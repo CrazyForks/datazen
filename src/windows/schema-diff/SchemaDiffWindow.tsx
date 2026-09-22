@@ -370,6 +370,8 @@ export function SchemaDiffWindow() {
         useTransaction,
         requireRollback,
         confirmDestructive: planHasDestructive(plan) ? confirmText.trim() : undefined,
+        targetDatabase: endpoints.targetDatabase || null,
+        targetSchema: endpoints.targetSchema || null,
         profile: profiles.find((profile) => profile.id === selectedProfileId)
           ? { id: selectedProfileId, revision: profiles.find((profile) => profile.id === selectedProfileId)!.updatedAt }
           : undefined,

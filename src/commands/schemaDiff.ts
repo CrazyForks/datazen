@@ -281,6 +281,8 @@ export const schemaDiffCommands = {
     requireRollback?: boolean;
     confirmDestructive?: string;
     jobId?: string;
+    targetDatabase?: string | null;
+    targetSchema?: string | null;
     profile?: { id: string; revision: string };
   }) =>
     invoke<SchemaDiffDeployResult>('execute_schema_diff_deploy', {
@@ -290,6 +292,8 @@ export const schemaDiffCommands = {
       requireRollback: params.requireRollback,
       confirmDestructive: params.confirmDestructive,
       jobId: params.jobId,
+      targetDatabase: params.targetDatabase,
+      targetSchema: params.targetSchema,
       ...(params.profile ? { profile: params.profile } : {}),
     }),
 
