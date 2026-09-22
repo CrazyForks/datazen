@@ -361,3 +361,247 @@ describe('useTunnelFormState', () => {
     expect(result.current.sshEnabled).toBe(false);
   });
 });
+
+/**
+ * [tester] Remaining state-machine exit branches and failure-path coverage.
+ * These are the transitions the UI drives from the source / kind selectors that
+ * the Coder's journey exercised only through `unbindTunnel()`.
+ */
+describe('[tester] useTunnelFormState exit branches', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    backend = [];
+    resetStore();
+    mockTunnelCommands.saveTunnel.mockImplementation(async (tunnel: SavedTunnel) => {
+      backend = [...backend.filter((t) => t.id !== tunnel.id), tunnel];
+    });
+    mockTunnelCommands.getTunnelSummaries.mockImplementation(
+      async (): Promise<SavedTunnelSummary[]> =>
+        backend.map(({ id, name, kind }) => ({ id, name, kind })),
+    );
+    mockTunnelCommands.getTunnel.mockImplementation(
+      async (id: string): Promise<SavedTunnel | null> => backend.find((t) => t.id === id) ?? null,
+    );
+  });
+
+  function seedSshWithJump() {
+    backend = [
+      {
+        id: 'tun_jump',
+        name: 'Jumped bastion',
+        kind: 'ssh',
+        ssh: {
+          enabled: true,
+          host: 'bastion.internal',
+          port: 2222,
+          username: 'ops',
+          authMethod: 'private_key',
+          privateKeyPath: '/home/ops/.ssh/id_ed25519',
+          passphrase: 'phrase',
+          jump: {
+            enabled: true,
+            host: 'edge.internal',
+            port: 2200,
+            username: 'jumper',
+            authMethod: 'password',
+            password: 'jpw',
+          },
+        },
+      },
+    ];
+  }
+
+  it('setTunnelSource("inline") from `saved` refills parameters instead of dropping the reference', async () => {
+    seedSshWithJump();
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('saved'));
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelId).toBe('tun_jump');
+
+    await actAndFlush(() => result.current.setTunnelSource('inline'));
+    expect(result.current.tunnelSource).toBe('inline');
+    expect(result.current.tunnelId).toBeNull();
+    // The whole SSH leg — jump host included — must survive the transition.
+    expect(result.current.sshHost).toBe('bastion.internal');
+    expect(result.current.sshPort).toBe('2222');
+    expect(result.current.sshAuthMethod).toBe('private_key');
+    expect(result.current.sshKeyPath).toBe('/home/ops/.ssh/id_ed25519');
+    expect(result.current.sshPassphrase).toBe('phrase');
+    expect(result.current.sshJumpEnabled).toBe(true);
+    expect(result.current.sshJumpHost).toBe('edge.internal');
+    expect(result.current.sshJumpPort).toBe('2200');
+    expect(result.current.sshJumpUsername).toBe('jumper');
+    expect(result.current.sshJumpAuthMethod).toBe('password');
+    expect(result.current.sshJumpPassword).toBe('jpw');
+    expect(result.current.tunnelInlineValid).toBe(true);
+  });
+
+  it('setTunnelKind("none") leaves `inline` for `none` and clears the reference', async () => {
+    seedSshWithJump();
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('saved'));
+    expect(result.current.tunnelId).toBe('tun_jump');
+
+    act(() => result.current.setTunnelKind('none'));
+    expect(result.current.tunnelSource).toBe('none');
+    expect(result.current.tunnelKind).toBe('none');
+    expect(result.current.tunnelId).toBeNull();
+    expect(result.current.effectiveTunnelKind).toBe('none');
+  });
+
+  it('setTunnelId(null) with no reference is a no-op that never calls get_tunnel', async () => {
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelId(null));
+    expect(result.current.tunnelId).toBeNull();
+    expect(result.current.tunnelSource).toBe('none');
+    expect(mockTunnelCommands.getTunnel).not.toHaveBeenCalled();
+  });
+
+  it('unbindTunnel() with no reference enters `inline` without touching the kind', async () => {
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    await act(async () => {
+      await result.current.unbindTunnel();
+    });
+    expect(result.current.tunnelSource).toBe('inline');
+    expect(mockTunnelCommands.getTunnel).not.toHaveBeenCalled();
+
+    // Latent inconsistency (not user-reachable — the unbind button only renders
+    // in the `saved` state, which always carries a `tunnelId`): this path sets
+    // the source to `inline` without restoring `lastInlineKindRef`, so the inline
+    // sub-selector has no matching option (`none` is not in `inlineKindOptions`).
+    expect(result.current.tunnelKind).toBe('none');
+    expect(result.current.effectiveTunnelKind).toBe('none');
+  });
+
+  it('saveAsTunnel() refuses to persist an invalid or empty inline configuration', async () => {
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    // `none` state: there is no inline configuration to promote.
+    expect(await result.current.saveAsTunnel('Nothing')).toBeNull();
+    expect(mockTunnelCommands.saveTunnel).not.toHaveBeenCalled();
+
+    // `inline` but still incomplete (host without username).
+    act(() => result.current.setTunnelSource('inline'));
+    act(() => result.current.setSshHost('bastion'));
+    expect(await result.current.saveAsTunnel('Incomplete')).toBeNull();
+    expect(mockTunnelCommands.saveTunnel).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a non-Error rejection from get_tunnel with the fallback message', async () => {
+    seedSshWithJump();
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('saved'));
+    mockTunnelCommands.getTunnel.mockRejectedValue({ weird: true });
+
+    await act(async () => {
+      await result.current.unbindTunnel();
+    });
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelError).toBe('newConn.tunnelUnbindKept');
+  });
+
+  it('surfaces a string rejection from get_tunnel verbatim', async () => {
+    seedSshWithJump();
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('saved'));
+    mockTunnelCommands.getTunnel.mockRejectedValue('keyring locked');
+
+    await act(async () => {
+      await result.current.unbindTunnel();
+    });
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelError).toBe('keyring locked');
+  });
+
+  it('falls back to the generic message when saving fails without an error message', async () => {
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('inline'));
+    act(() => result.current.setSshHost('bastion'));
+    act(() => result.current.setSshUsername('ops'));
+    mockTunnelCommands.saveTunnel.mockRejectedValue({});
+
+    let created: SavedTunnel | null = null;
+    await act(async () => {
+      created = await result.current.saveAsTunnel('Boom');
+    });
+    expect(created).toBeNull();
+    expect(result.current.tunnelError).toBe('newConn.tunnelSaveFailed');
+  });
+
+  it('promotes an inline WebSocket configuration to a saved tunnel', async () => {
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('inline'));
+    act(() => result.current.setTunnelKind('websocket'));
+    act(() => result.current.setWsUrl('wss://relay.example/v1'));
+    act(() => result.current.setWsMode('raw_binary'));
+    act(() => result.current.setWsAuthToken('tok'));
+    act(() => result.current.setWsTimeout('45'));
+    expect(result.current.tunnelInlineValid).toBe(true);
+
+    let created: SavedTunnel | null = null;
+    await act(async () => {
+      created = await result.current.saveAsTunnel('Relay');
+    });
+    expect(created?.kind).toBe('websocket');
+    expect(created?.websocket).toEqual({
+      enabled: true,
+      url: 'wss://relay.example/v1',
+      mode: 'raw_binary',
+      authToken: 'tok',
+      connectTimeoutSecs: 45,
+    });
+    expect(result.current.tunnelSource).toBe('saved');
+  });
+
+  it('re-entering `saved` keeps the current selection instead of jumping to the first entry', async () => {
+    backend = [
+      {
+        id: 'tun_a',
+        name: 'A',
+        kind: 'ssh',
+        ssh: { enabled: true, host: 'a', port: 22, username: 'u', authMethod: 'agent' },
+      },
+      { id: 'tun_b', name: 'B', kind: 'websocket', websocket: { enabled: true, url: 'wss://b' } },
+    ];
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.hydrateTunnelRef('tun_b', 'websocket'));
+    expect(result.current.tunnelId).toBe('tun_b');
+
+    act(() => result.current.setTunnelSource('saved'));
+    expect(result.current.tunnelId).toBe('tun_b');
+    expect(result.current.savedTunnel?.name).toBe('B');
+  });
+
+  it('setSshEnabled(true) never drags the form out of `saved`', async () => {
+    seedSshWithJump();
+    const { result } = renderHook(() => useTunnelFormState({ supportsSSH: true }));
+    await flush();
+
+    act(() => result.current.setTunnelSource('saved'));
+    expect(result.current.tunnelSource).toBe('saved');
+
+    act(() => result.current.setSshEnabled(true));
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelId).toBe('tun_jump');
+    expect(result.current.sshEnabled).toBe(true);
+  });
+});

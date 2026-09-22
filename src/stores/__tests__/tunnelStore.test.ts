@@ -137,3 +137,40 @@ describe('tunnelStore', () => {
     expect(newTunnelId()).not.toBe(newTunnelId());
   });
 });
+
+describe('[tester] tunnelStore failure normalisation', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('uses an Error message when the IPC rejects with an Error', async () => {
+    const { useTunnelStore } = await import('../tunnelStore');
+    mockTunnelCommands.getTunnelSummaries.mockRejectedValue(new Error('channel closed'));
+
+    await useTunnelStore.getState().load();
+    expect(useTunnelStore.getState().error).toBe('channel closed');
+  });
+
+  it('falls back to the localised message for a message-less rejection', async () => {
+    const { useTunnelStore } = await import('../tunnelStore');
+    mockTunnelCommands.getTunnelSummaries.mockRejectedValue({});
+
+    await useTunnelStore.getState().load();
+    // `t()` resolves through the shared locale registry.
+    expect(useTunnelStore.getState().error).toBeTruthy();
+    expect(useTunnelStore.getState().error).not.toBe('[object Object]');
+  });
+
+  it('clears a previous error as soon as a later load starts', async () => {
+    const { useTunnelStore } = await import('../tunnelStore');
+    mockTunnelCommands.getTunnelSummaries.mockRejectedValue('ipc down');
+    await useTunnelStore.getState().load();
+    expect(useTunnelStore.getState().error).toBe('ipc down');
+
+    mockTunnelCommands.getTunnelSummaries.mockResolvedValue([sshSummary]);
+    await useTunnelStore.getState().load(true);
+    expect(useTunnelStore.getState().error).toBeNull();
+    expect(useTunnelStore.getState().summaries).toEqual([sshSummary]);
+  });
+});

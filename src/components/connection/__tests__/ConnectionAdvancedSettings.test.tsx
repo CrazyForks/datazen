@@ -3,6 +3,8 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { ConnectionAdvancedSettings } from '../ConnectionAdvancedSettings';
 import type { ConnectionFormState } from '../useConnectionForm';
 import type { SavedTunnelSummary } from '../../../types';
+import { openSettingsWindow } from '../../../lib/windowManager';
+import { parseSettingsSection } from '../../../windows/settings/settingsSections';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -335,5 +337,81 @@ describe('ConnectionAdvancedSettings', () => {
     expect(setTunnelKind).toHaveBeenCalledWith('websocket');
     // The old double-control bug: changing the kind must not clear the reference.
     expect(setTunnelId).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * [tester] Source-selector gating and empty-collection entry targets.
+ */
+describe('[tester] ConnectionAdvancedSettings tunnel source control', () => {
+  function openSourceSelect() {
+    const wrap = screen.getByTestId('new-conn-tunnel-source');
+    fireEvent.click(wrap.querySelector('button') ?? wrap);
+    return screen.getAllByTestId('select-option');
+  }
+
+  it('disables the `saved` source option while the collection is empty', () => {
+    const setTunnelSource = vi.fn();
+    const form = createMockForm({
+      tunnelSource: 'none',
+      savedTunnels: [],
+      setTunnelSource,
+    });
+    render(<ConnectionAdvancedSettings form={form} />);
+    fireEvent.click(screen.getByTestId('new-conn-tunnel-toggle'));
+
+    const options = openSourceSelect();
+    const savedOption = options.find((el) => el.textContent?.trim() === 'newConn.savedTunnel');
+    expect(savedOption).toBeTruthy();
+    expect(savedOption).toHaveAttribute('aria-disabled', 'true');
+
+    fireEvent.mouseDown(savedOption as HTMLElement);
+    expect(setTunnelSource).not.toHaveBeenCalled();
+  });
+
+  it('enables the `saved` source option once a summary exists', () => {
+    const setTunnelSource = vi.fn();
+    const form = createMockForm({
+      tunnelSource: 'none',
+      savedTunnels: [savedSsh],
+      setTunnelSource,
+    });
+    render(<ConnectionAdvancedSettings form={form} />);
+    fireEvent.click(screen.getByTestId('new-conn-tunnel-toggle'));
+
+    const options = openSourceSelect();
+    const savedOption = options.find((el) => el.textContent?.trim() === 'newConn.savedTunnel');
+    expect(savedOption).not.toHaveAttribute('aria-disabled');
+
+    fireEvent.mouseDown(savedOption as HTMLElement);
+    expect(setTunnelSource).toHaveBeenCalledWith('saved');
+  });
+
+  it('routes the empty-collection manage entry to the settings window', () => {
+    const form = createMockForm({ tunnelSource: 'none', savedTunnels: [] });
+    render(<ConnectionAdvancedSettings form={form} />);
+    fireEvent.click(screen.getByTestId('new-conn-tunnel-toggle'));
+
+    fireEvent.click(screen.getByTestId('new-conn-tunnel-manage-entry'));
+    expect(openSettingsWindow).toHaveBeenCalledWith('tunnels');
+
+    // Known limitation (reported as an improvement): the `tunnels` settings
+    // section does not exist in this track (plan P1-5), so the entry actually
+    // lands on `general` — the button label over-promises.
+    expect(parseSettingsSection('tunnels')).toBe('general');
+  });
+
+  it('surfaces a tunnel error inline while configuring manually', () => {
+    const form = createMockForm({
+      tunnelSource: 'inline',
+      tunnelKind: 'httpProxy',
+      tunnelInlineValid: true,
+      tunnelError: 'newConn.tunnelSaveFailed',
+    });
+    render(<ConnectionAdvancedSettings form={form} />);
+
+    expect(screen.getByTestId('new-conn-inline-tunnel')).toHaveTextContent(
+      'newConn.tunnelSaveFailed',
+    );
   });
 });
