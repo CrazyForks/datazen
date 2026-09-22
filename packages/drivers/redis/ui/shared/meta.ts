@@ -30,11 +30,12 @@ export const redisMeta = {
   // KV workspace surfaces Redis fills (host contract F-1 — capability flags, not
   // slot components). Declared here rather than in the host so the host never
   // branches on a driver id, and declared slot by slot so a surface Redis does
-  // not contribute to keeps the host's default rendering. `contextBar` and
-  // `home` stay absent until their owning tracks land.
+  // not contribute to keeps the host's default rendering. `contextBar` stays
+  // absent until its owning track lands.
   kvWorkspace: {
     statusBar: true,
     keyPropsSidebar: true,
+    home: true,
   },
   connectionForm: 'redis',
   clipboardSchemes: ['redis', 'rediss', 'redis+tls', 'redis-sentinel', 'sentinel'],
@@ -48,5 +49,4 @@ export const redisMeta = {
     fields: {},
     indexMethods: [],
   },
-  kvWorkspace: { home: true },
 } satisfies DatabaseTypeMeta;

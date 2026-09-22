@@ -6,7 +6,7 @@
  * component row contributed by this build (F-3, the `kvSlots` block read by
  * `scripts/resolve-drivers.mjs`). The host-side suites
  * (`src/lib/__tests__/kvWorkspaceSlots.test.ts`) prove the *mechanism* with
- * fixture drivers only, so nothing pinned **Redis' own two halves**: deleting the
+ * fixture drivers only, so nothing pinned **Redis' own halves**: deleting the
  * capability block, or deleting a registration row, left the whole suite green
  * (verified by mutation during this track's test round). This file closes that.
  *
@@ -15,13 +15,21 @@
  * name reddens 2; undeclaring the `keyPropsSidebar` row reddens 2 (including the
  * cross-gate agreement case below).
  *
- * Maintenance contract: {@link SHIPPED_SLOTS} is the **only** track-scoped fact in
- * this file. The slot that Wave-2 deliberately leaves out (`contextBar`, owned by
- * Rescuer-B, and `connectionHome`, owned by `redis-overview`) is therefore not
- * asserted as "missing forever" — it is asserted as "missing while this list says
- * so", and adding a slot here re-checks both gates at once. Everything else
- * (exports, paths, copy keys) is derived from the tree rather than hardcoded, so
- * a new slot file cannot make this suite lie in either direction.
+ * Merge-round re-verification (three shipped slots, coordinator run, each
+ * injection reddens ≥2 and the tree restores clean): dropping the `home`
+ * capability; dropping the `connectionHome` row; typo'ing its component name;
+ * pointing its path at the directory instead of the module; and adding a second
+ * `kvSlots:` key to the config object — the shape a naive union merge leaves
+ * behind, where JS keeps only the last key and two slot rows vanish without any
+ * compile error, since `scripts/**` is outside `tsc`'s reach.
+ *
+ * Maintenance contract: {@link SHIPPED_ROWS} is the **only** track-scoped fact in
+ * this file. A slot Redis does not fill yet (`contextBar`, owned by Rescuer-B) is
+ * therefore not asserted as "missing forever" — it is asserted as "missing while
+ * this table says so", and adding a row here re-checks both gates at once.
+ * Everything else (export identity, module paths, copy keys) is derived from the
+ * registry rows rather than hardcoded, so a new slot file cannot make this suite
+ * lie in either direction.
  *
  * Boundary note: importing `scripts/resolve-drivers.mjs` from a driver test is
  * test-only tooling access, not a host-`src/**` reference, so guard rule R1 does
@@ -38,16 +46,35 @@ import {
 } from '../../../../../scripts/resolve-drivers.mjs';
 
 import { redisMeta } from '../shared/meta';
-// Namespace import: the registration rows name components by string, and this is
-// the same module the host's generated import resolves against.
-import * as kvBar from '../kv-bar';
 import en from '../../locales/en';
 
-/** Slots this build ships from `ui/kv-bar` — the one line a new slot edits. */
-const SHIPPED_SLOTS = ['statusBar', 'keyPropsSidebar'];
+/**
+ * Rows this build ships: one per KV slot Redis fills, with the module the
+ * codegen must import the component from. This table is the **only**
+ * track-scoped fact in the file — `contextBar` (owned by Rescuer-B) is not
+ * asserted as "missing forever", only as "missing while this table says so", and
+ * adding a row here re-checks both gates plus the export at once.
+ */
+const SHIPPED_ROWS: Array<{ slot: string; component: string; module: string }> = [
+  { slot: 'statusBar', component: 'RedisKvStatusBar', module: 'packages/drivers/redis/ui/kv-bar' },
+  {
+    slot: 'keyPropsSidebar',
+    component: 'RedisKeyPropsSidebar',
+    module: 'packages/drivers/redis/ui/kv-bar',
+  },
+  {
+    slot: 'connectionHome',
+    component: 'RedisOverviewHome',
+    module: 'packages/drivers/redis/ui/overview/RedisOverviewHome',
+  },
+];
 
-/** The module path the codegen emits for every row of this package. */
-const KV_BAR_PATH = '../../packages/drivers/redis/ui/kv-bar';
+const SHIPPED_SLOTS = SHIPPED_ROWS.map((row) => row.slot);
+
+/** Registry row → the repo-relative module path codegen emits for it. */
+function moduleOf(row: { module: string }): string {
+  return `../../${row.module}`;
+}
 
 /** `connectionHome` is the slot name; the capability flag behind it is `home`. */
 const CAPABILITY_KEY: Record<string, string> = {
@@ -85,23 +112,36 @@ describe('[tester] redis KV slot double gate (F-1 ⇄ F-3)', () => {
     }
   });
 
-  it('registers exactly one row per shipped slot, all for redis, from ui/kv-bar', () => {
+  it('registers exactly one row per shipped slot, all for redis, with the declared module', () => {
     const rows = registeredSlots();
     // Sorted-set compare: a duplicated object key in the `kvSlots` block collapses
     // silently in JS (the collector reads slot by slot), which would drop a row.
     expect(rows.map((row) => row.slot).sort()).toEqual([...SHIPPED_SLOTS].sort());
-    for (const row of rows) {
+    for (const expected of SHIPPED_ROWS) {
+      const matching = rows.filter((row) => row.slot === expected.slot);
+      expect(matching.length, `rows for ${expected.slot}`).toBe(1);
+      const [row] = matching;
       expect(row.dbType).toBe('redis');
-      expect(row.path, `row ${row.slot}`).toBe(KV_BAR_PATH);
+      expect(row.component, `component for ${expected.slot}`).toBe(expected.component);
+      expect(row.path, `path for ${expected.slot}`).toBe(moduleOf(expected));
     }
   });
 
-  it('names components that really are exports of the declared module', () => {
-    // A stale or typo'd `component` string would only fail at `vite build`; this
-    // catches it while the row is still the only thing that changed. Resolved
-    // against `ui/kv-bar` itself, so it never needs a per-slot update.
-    const exports_ = kvBar as unknown as Record<string, unknown>;
+  it('names components that really are exports of the declared module', async () => {
+    // A stale or typo'd `component` / `path` string would only fail at `vite build`;
+    // this catches it while the row is still the only thing that changed. Both the
+    // module and the export name come from the **registry row**, not from the
+    // table, so the case where the two disagree is covered too. Rows that share a
+    // module import it once.
+    const byModule = new Map<string, Record<string, unknown>>();
     for (const row of registeredSlots()) {
+      // codegen emits paths relative to `src/extensions/`; the test runs at repo root.
+      const module = resolve(process.cwd(), row.path.replace(/^(\.\.\/)+/, ''));
+      let exports_ = byModule.get(module);
+      if (!exports_) {
+        exports_ = (await import(module)) as Record<string, unknown>;
+        byModule.set(module, exports_);
+      }
       expect(exports_, `no export named ${row.component}`).toHaveProperty(row.component);
       expect(typeof exports_[row.component], row.component).toBe('function');
     }
