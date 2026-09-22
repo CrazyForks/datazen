@@ -24,6 +24,16 @@ pub trait RowPageSource: Send {
     fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError>;
 }
 
+/// Receives only the rows that differ while the two keyset streams are
+/// merged.  Implementations may persist each change immediately, keeping the
+/// merge state bounded to the two driver pages and the current row.
+#[async_trait]
+pub trait RowChangeSink: Send {
+    async fn push(&mut self, change: RowChange) -> Result<(), DataSyncError>;
+
+    async fn unchanged(&mut self) -> Result<(), DataSyncError>;
+}
+
 pub fn cmp_values(left: &Value, right: &Value) -> Ordering {
     match (left, right) {
         (Value::Null, Value::Null) => Ordering::Equal,
@@ -237,6 +247,22 @@ fn validate_page(
 const MAX_DIFF_ROWS: usize = 10_000;
 const MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
+struct VecRowChangeSink {
+    rows: Vec<RowChange>,
+}
+
+#[async_trait]
+impl RowChangeSink for VecRowChangeSink {
+    async fn push(&mut self, change: RowChange) -> Result<(), DataSyncError> {
+        self.rows.push(change);
+        Ok(())
+    }
+
+    async fn unchanged(&mut self) -> Result<(), DataSyncError> {
+        Ok(())
+    }
+}
+
 pub async fn compare_table_pages<S, T>(
     source_table: &str,
     target_table: &str,
@@ -251,6 +277,76 @@ where
     S: RowPageSource,
     T: RowPageSource,
 {
+    let mut sink = VecRowChangeSink { rows: Vec::new() };
+    let mut result = compare_table_pages_into(
+        source_table,
+        target_table,
+        pk_indexes,
+        column_names,
+        options,
+        source,
+        target,
+        cancelled,
+        &mut sink,
+        Some((MAX_DIFF_ROWS, MAX_RESULT_BYTES)),
+    )
+    .await?;
+    result.rows = sink.rows;
+    Ok(result)
+}
+
+/// Compare two ordered keyset streams and send each difference to `sink` as
+/// soon as it is found.  The sink path deliberately has no aggregate result
+/// limit: the durable comparison index owns the change rows and only the two
+/// bounded driver pages remain in memory.
+pub async fn compare_table_pages_to_sink<S, T, K>(
+    source_table: &str,
+    target_table: &str,
+    pk_indexes: &[usize],
+    column_names: &[String],
+    options: &SyncOptions,
+    source: &mut S,
+    target: &mut T,
+    cancelled: Option<Arc<AtomicBool>>,
+    sink: &mut K,
+) -> Result<TableResult, DataSyncError>
+where
+    S: RowPageSource,
+    T: RowPageSource,
+    K: RowChangeSink,
+{
+    compare_table_pages_into(
+        source_table,
+        target_table,
+        pk_indexes,
+        column_names,
+        options,
+        source,
+        target,
+        cancelled,
+        sink,
+        None,
+    )
+    .await
+}
+
+async fn compare_table_pages_into<S, T, K>(
+    source_table: &str,
+    target_table: &str,
+    pk_indexes: &[usize],
+    column_names: &[String],
+    options: &SyncOptions,
+    source: &mut S,
+    target: &mut T,
+    cancelled: Option<Arc<AtomicBool>>,
+    sink: &mut K,
+    result_limits: Option<(usize, usize)>,
+) -> Result<TableResult, DataSyncError>
+where
+    S: RowPageSource,
+    T: RowPageSource,
+    K: RowChangeSink,
+{
     options.validate()?;
     let mut src_page = source.next_page(None, options.batch_size).await?;
     let mut tgt_page = target.next_page(None, options.batch_size).await?;
@@ -258,20 +354,15 @@ where
     validate_page_with_source(target, &tgt_page, pk_indexes, column_names, None)?;
     let mut unchanged_count = 0;
     let mut result_bytes = 0;
-    let mut accounted = 0;
     let mut i = 0usize;
     let mut j = 0usize;
-    let mut changes = Vec::new();
+    let mut change_count = 0usize;
 
     loop {
-        for change in &changes[accounted..] {
-            result_bytes += serde_json::to_vec(change)
-                .map_err(|e| DataSyncError::validation(e.to_string()))?
-                .len();
-        }
-        accounted = changes.len();
-        if changes.len() > MAX_DIFF_ROWS || result_bytes > MAX_RESULT_BYTES {
-            return Err(DataSyncError::validation("comparison exceeds the current 10,000 difference / 32 MiB review limit; select fewer tables or a smaller dataset"));
+        if let Some((max_rows, max_bytes)) = result_limits {
+            if change_count > max_rows || result_bytes > max_bytes {
+                return Err(DataSyncError::validation("comparison exceeds the current 10,000 difference / 32 MiB review limit; select fewer tables or a smaller dataset"));
+            }
         }
         if cancelled
             .as_ref()
@@ -296,13 +387,31 @@ where
         }
         if src_page.is_empty() {
             let key = extract_key(&tgt_page[j], pk_indexes)?;
-            changes.push(RowChange::delete(key, tgt_page[j].clone(), options));
+            let change = RowChange::delete(key, tgt_page[j].clone(), options);
+            result_bytes = result_bytes.saturating_add(
+                serde_json::to_vec(&change)
+                    .map_err(|e| DataSyncError::validation(e.to_string()))?
+                    .len(),
+            );
+            change_count = change_count
+                .checked_add(1)
+                .ok_or_else(|| DataSyncError::validation("comparison change count overflowed"))?;
+            sink.push(change).await?;
             j += 1;
             continue;
         }
         if tgt_page.is_empty() {
             let key = extract_key(&src_page[i], pk_indexes)?;
-            changes.push(RowChange::insert(key, src_page[i].clone(), options));
+            let change = RowChange::insert(key, src_page[i].clone(), options);
+            result_bytes = result_bytes.saturating_add(
+                serde_json::to_vec(&change)
+                    .map_err(|e| DataSyncError::validation(e.to_string()))?
+                    .len(),
+            );
+            change_count = change_count
+                .checked_add(1)
+                .ok_or_else(|| DataSyncError::validation("comparison change count overflowed"))?;
+            sink.push(change).await?;
             i += 1;
             continue;
         }
@@ -322,11 +431,29 @@ where
         }
         match src_key.cmp(&tgt_key) {
             Ordering::Less => {
-                changes.push(RowChange::insert(src_raw_key, src_page[i].clone(), options));
+                let change = RowChange::insert(src_raw_key, src_page[i].clone(), options);
+                result_bytes = result_bytes.saturating_add(
+                    serde_json::to_vec(&change)
+                        .map_err(|e| DataSyncError::validation(e.to_string()))?
+                        .len(),
+                );
+                change_count = change_count.checked_add(1).ok_or_else(|| {
+                    DataSyncError::validation("comparison change count overflowed")
+                })?;
+                sink.push(change).await?;
                 i += 1;
             }
             Ordering::Greater => {
-                changes.push(RowChange::delete(tgt_raw_key, tgt_page[j].clone(), options));
+                let change = RowChange::delete(tgt_raw_key, tgt_page[j].clone(), options);
+                result_bytes = result_bytes.saturating_add(
+                    serde_json::to_vec(&change)
+                        .map_err(|e| DataSyncError::validation(e.to_string()))?
+                        .len(),
+                );
+                change_count = change_count.checked_add(1).ok_or_else(|| {
+                    DataSyncError::validation("comparison change count overflowed")
+                })?;
+                sink.push(change).await?;
                 j += 1;
             }
             Ordering::Equal => {
@@ -334,14 +461,24 @@ where
                     diff_changed_columns(&src_page[i], &tgt_page[j], column_names, pk_indexes);
                 if changed_columns.is_empty() {
                     unchanged_count += 1;
+                    sink.unchanged().await?;
                 } else {
-                    changes.push(RowChange::update(
+                    let change = RowChange::update(
                         src_raw_key,
                         src_page[i].clone(),
                         tgt_page[j].clone(),
                         changed_columns,
                         options,
-                    ));
+                    );
+                    result_bytes = result_bytes.saturating_add(
+                        serde_json::to_vec(&change)
+                            .map_err(|e| DataSyncError::validation(e.to_string()))?
+                            .len(),
+                    );
+                    change_count = change_count.checked_add(1).ok_or_else(|| {
+                        DataSyncError::validation("comparison change count overflowed")
+                    })?;
+                    sink.push(change).await?;
                 }
                 i += 1;
                 j += 1;
@@ -349,7 +486,7 @@ where
         }
     }
 
-    let mut result = TableResult::matched(source_table, target_table, changes);
+    let mut result = TableResult::matched(source_table, target_table, Vec::new());
     result.columns = column_names.to_vec();
     result.primary_keys = pk_indexes
         .iter()
@@ -881,6 +1018,49 @@ mod tests {
             serde_json::json!([0, -1])
         );
         assert_eq!(result.primary_keys, vec!["k1", "k2"]);
+    }
+
+    #[tokio::test]
+    async fn sink_path_accepts_large_change_sets_without_review_buffer_limit() {
+        #[derive(Default)]
+        struct CountingSink {
+            changes: usize,
+        }
+
+        #[async_trait::async_trait]
+        impl RowChangeSink for CountingSink {
+            async fn push(&mut self, _change: RowChange) -> Result<(), DataSyncError> {
+                self.changes += 1;
+                Ok(())
+            }
+
+            async fn unchanged(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+        }
+
+        let rows = (0..10_001)
+            .map(|key| vec![Some(Value::Integer(key))])
+            .collect();
+        let mut source = SliceRowSource::new(rows, vec![0]).unwrap();
+        let mut target = SliceRowSource::new(Vec::new(), vec![0]).unwrap();
+        let mut sink = CountingSink::default();
+        let result = compare_table_pages_to_sink(
+            "users",
+            "users",
+            &[0],
+            &["id".into()],
+            &SyncOptions::default(),
+            &mut source,
+            &mut target,
+            None,
+            &mut sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(sink.changes, 10_001);
+        assert_eq!(result.unchanged_count, 0);
+        assert!(result.rows.is_empty());
     }
 
     #[test]
