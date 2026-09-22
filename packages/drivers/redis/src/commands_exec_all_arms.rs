@@ -220,9 +220,22 @@
             driver.plugin_flush_all(id).await?;
             Ok(ok())
         }
+        // DEAD FRAGMENT: this file is not `include!`d anywhere (only
+        // commands_exec_dispatch.rs is, see commands_exec.rs). Kept aligned with
+        // the live 4-arg signature so it cannot be pasted back as a stale arm --
+        // do not `include!` it. redis-tree-backend BUG-002 note 4.
+        // DEAD FRAGMENT: this file is not `include!`d anywhere -- the live match
+        // is commands_exec_dispatch.rs (see commands_exec.rs). This arm is kept
+        // aligned with the live 4-arg signature so it cannot be pasted back as a
+        // stale shape; do not `include!` it. redis-tree-backend-BUG-002 note 4.
         "count_matching" => json_ok(
             driver
-                .plugin_count_matching(id, db, req_str(&input, "pattern")?)
+                .plugin_count_matching(
+                    id,
+                    db,
+                    req_str(&input, "pattern")?,
+                    input.get("budget").and_then(JsonValue::as_u64).filter(|v| *v > 0),
+                )
                 .await?,
         ),
         "cluster_nodes" => json_ok(driver.plugin_cluster_nodes(id).await?),

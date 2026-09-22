@@ -935,7 +935,9 @@ where
     C: ConnectionLike + SlotRoutedConnection + Send,
 {
     let dbsize = read_dbsize(conn).await;
-    if pattern.is_empty() || (pattern == "*" && dbsize > 0) {
+    // Both spellings of "everything" answer from DBSIZE (see `## 契约冻结`).
+    let matches_all = pattern.is_empty() || pattern == "*";
+    if matches_all && dbsize > 0 {
         return Ok(CountOutcome {
             count: dbsize,
             truncated: false,
@@ -952,17 +954,19 @@ where
         });
     }
 
-    // `pattern == "*"` reaching here means `dbsize == 0`: spend one real scan
-    // round instead of short-circuiting, so an unread DBSIZE cannot be sold to
-    // the UI as "0 keys" (redis-tree-backend-BUG-003). A genuinely empty
-    // database pays one extra round and the cursor wraps immediately.
+    // A `matches_all` request reaching here means `dbsize == 0`: spend one real
+    // scan round instead of short-circuiting, so an unread DBSIZE cannot be sold
+    // to the UI as "0 keys" (redis-tree-backend-BUG-003). A genuinely empty
+    // database pays one extra round and the cursor wraps immediately. The filter
+    // is omitted — `SCAN … MATCH *` is the no-op `scan_keys_page` declines too.
+    let match_pat = (!matches_all).then_some(pattern);
     let mut ledger = ScanBudget::new(tree_scan_budget(budget, dbsize));
     let page = scan_budgeted(
         conn,
         0,
         crate::ops_tree_budget::TREE_SCAN_MIN_ROUND_COUNT,
         usize::MAX,
-        Some(pattern),
+        match_pat,
         None,
         &mut ledger,
         topology,

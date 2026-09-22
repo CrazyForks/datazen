@@ -936,14 +936,20 @@ async fn count_star_verifies_with_a_scan_when_dbsize_is_refused() {
     assert_eq!(outcome.consumed, TREE_SCAN_MIN_ROUND_COUNT as u64);
     {
         let st = conn.state();
-        let scans = joined(&st.singles)
+        let scan_lines: Vec<String> = joined(&st.singles)
             .iter()
             .filter(|line| line.starts_with("SCAN"))
-            .count();
-        assert_eq!(scans, 1, "exactly one verification round is spent");
+            .cloned()
+            .collect();
+        assert_eq!(scan_lines.len(), 1, "exactly one verification round is spent");
+        assert!(
+            !scan_lines[0].contains("MATCH"),
+            "counting everything needs no filter argument: {}",
+            scan_lines[0]
+        );
     }
 
-    // Genuinely empty database: same shape, honest 0, one wasted round.
+    // A genuinely empty database takes the same path and answers an honest 0.
     let mut empty = TreeConn::new();
     empty.state().dbsize_refused = true;
     let outcome = count_budgeted(&mut empty, "*", None, Topology::Standalone)
@@ -951,6 +957,17 @@ async fn count_star_verifies_with_a_scan_when_dbsize_is_refused() {
         .expect("count on an empty keyspace");
     assert_eq!(outcome.count, 0);
     assert!(!outcome.truncated);
+
+    // The other spelling of "everything" (empty pattern) is verified the same way.
+    let mut bare = TreeConn::new();
+    bare.state().dbsize_refused = true;
+    bare.seed_string("k", 1, "x");
+    bare.state().scan_script.push_back((0, vec!["k".to_string()]));
+    let outcome = count_budgeted(&mut bare, "", None, Topology::Standalone)
+        .await
+        .expect("count with an empty pattern");
+    assert_eq!(outcome.count, 1, "an empty pattern counts every key");
+    assert_eq!(outcome.dbsize, 0);
 }
 
 /// A non-empty `DBSIZE` still short-circuits: the frozen fast path is intact.

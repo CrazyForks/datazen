@@ -467,3 +467,61 @@ cluster 纪律 2 条（`list_children` 页逐批单键寻址 + 锚定 SCAN 携�
 BUG-003（中，冻结承诺的降级路径不可达 + 基线能力回退）三条待原 Coder 修复后全新复测。
 
 
+
+## 修复轮第 1 回合（Coder · 全新实例，接管阵亡修复代理的 WIP）
+
+- 起点 HEAD `6c69d157d`，未提交现场 = 前任 BUG-001 修复 WIP（两文件）⇒ **第 0 步先存命**：
+  `b7abb440c` 原样保全（未改写、未 rebase），随后审 → 验证 → 逐单元 commit。
+- 交接手册的 `## 修复轮交接（协调者）` 节经协调者更正为**口误，不存在**（本文件 463 行、全 docs/ grep、
+  全 worktree 副本、`git log -S` 均为空已独立核实）。一切裁定以任务书内联文本为准。
+
+### 缺陷处置与 commit
+
+| 单元 | commit | 落点 |
+|---|---|---|
+| BUG-001（高，回归） | `b7abb440c` | `ops_tree.rs:205-293`：属性改**按 key 关联**（`attrs: HashMap<String,(KeyMeta,ValueFields)>`），`absent` 先进 `gone` 集不占位、不消费他键属性；`noTtlOnly`+absent 过滤挪到富化**之后**对 `children` 做 `retain`（= 基线 `8981d3078` 语义）；两处 release 可见 `tracing::warn!`（批长≠叶子数 / 已绑行数≠解析行数）取代裸 `debug_assert` 的唯一防线 |
+| BUG-001 用例 | `b7abb440c` | 两条 RED pin 摘 `#[ignore]` 转常绿：`test_tester_list_children_no_ttl_only_keeps_rows_aligned`（混合 TTL 页，`app:c` 长度改成 3 使一格偏移可见）、`test_tester_list_children_survives_a_key_that_vanished_mid_page`；均断言"每个叶子拿到自己的属性" |
+| BUG-003（中） | `4380fc09b` + 本回合收尾 | `read_dbsize` 签名去掉 `Result` ⇒ **不可能再被任何调用方升回硬依赖**：服务端错误 / 不可解析回复 ⇒ `0` + release `warn!`（= 基线 `unwrap_or(0)`）；三处调用点跟改。协调者裁定落地：`count_budgeted` 的"全量"分支仅在 `dbsize > 0` 短路，`dbsize == 0` 走**一轮真 SCAN** 消"空库假象"（且不再发冗余 `MATCH *`） |
+| R-1（口径分叉） | `a0444e1c1` | `tree_scan_budget` 用 `requested.filter(\|v\| *v > 0)` 把 `Some(0)` 折进派生档，与冻结句"缺失或 0 ⇒ 派生档"一致；原钉死 `Some(0)==1` 的单测换成钉"0 ≡ 缺失（各 dbsize 档全等）" |
+| BUG-002（高，ui 单点授权） | `dc7f55db0` | `redisInvoke.ts` 导出 `CountMatchingResult`；`invokeCountMatching` 返回对象；`BatchBar`/`ImportExport` 两处 state + 渲染改型，共享 `formatMatchCount`（`truncated ⇒ ${count}+`）。`en.ts` **零改动**（`redis.matchCount` 已有 `{count}` 占位，`+` 是数据非文案 ⇒ 无新 key） |
+| 顺带（BUG-002 note 4） | 本回合 | `commands_exec_all_arms.rs` / `commands_exec_mutate.rs` 的旧三参 `count_matching` 死片段：选**对齐**（补 `budget` 第四参 + 首行标注「DEAD FRAGMENT：本文件无人 `include!`，勿 include」），消除下次误接线的定时炸弹；两文件不参与编译，门禁无感 |
+
+### BUG-001 审计 a-e 逐项确认（前任 WIP 质量核验）
+
+(a) 按 key 关联 ✓（HashMap，非位置 zip）；(b) 过滤后置于富化之后 ✓（基线序）；(c) 无行叶子不占占位值 ✓
+（`gone` 键直接 `continue`，不入 `attrs`，其槽位由 `retain` 剔除）；(d) absent 不消费其他键属性 ✓
+（`items` 只收非 gone 键 ⇒ 值批的组与槽一一对应）；(e) release 可见 warn ✓（两个方向都覆盖，
+`debug_assert_eq!(filled, attrs.len())` 仍留作 debug 侧早爆）。**五项全部已到位，未追加改动。**
+
+### 反证（新用例真的能抓到缺陷）
+
+手工把 `formatMatchCount(matchCount)` 改回 `String(matchCount)`：BatchBar 侧 3/8 用例红，
+收到值恰为 `[object Object]`；对 `ImportExport` 侧同法 ⇒ 2 用例红。即该测试文件对 BUG-002 的
+两个消费端各自有效，不是只测 helper 的空壳。
+
+### 自验（提交态复跑，`CARGO_TARGET_DIR=/tmp/w3b2-cargo-target`）
+
+见下条 commit 后数字；重型命令全程严格串行，一次一条。
+
+### 红线与写面纪律自查
+
+- `git diff --numstat 8981d3078..HEAD -- src/ops_workbench.rs src/ops_workbench/tests.rs` = **0 行**（保持 Tester 核过的 0）。
+- 冻结形状零改动：四条命令 in/out 字段名/层级/camelCase/可空性未动；只在 `## 契约冻结` `count_matching`
+  段**追加**一条行为注记（BUG-003 的 SCAN 兜底），JSON 原文一字未改。
+- ui 写面：仅 `redisInvoke.ts` + `BatchBar.tsx` + `ImportExport.tsx` + 新测试文件；`BatchBar`/`ImportExport`
+  的他人 hunk 与 `locales/en.ts` 未触碰（`git show --stat dc7f55db0` 可核）。
+- `bugs.md` 写面：只改本人三条的 `- **状态**：` 行 + 各节末追加 `### 修复记录（coder round-1）`。
+- 生产路径新增代码零裸 `unwrap()/expect()`。
+
+### 已知遗留（不阻断，交协调者裁定归属）
+
+1. **`ops_tree_scan.rs` 现 988 行，越过 AGENTS.md 的 800 行"推荐"线**：交付时即 950 行
+   （Tester 覆盖率表按"950 行新文件"记录），本回合按裁定加 38 行行为码。**不在修复回合拆分**
+   ——与 W3-C 同 crate，拆文件会制造本轮最不该有的大冲突面；纯 `#[cfg(test)] mod tests` 之外
+   的拆分方案应作为一个独立交付回合做（建议切 `ops_tree_scan/batch.rs`（两类页批 + scatter/fail-soft）
+   与 `ops_tree_scan/page.rs`（命令级页），预算与守卫已在 `ops_tree_budget.rs`）。
+   另注：仓内**无任何自动单文件行数门禁**（scripts/ 与 workflows 全查），这条纯靠人工纪律。
+2. **`consumed` 口径在 BUG-003 降级路径上会变非 0**：`count_matching("*")` 在 DBSIZE 不可得时
+   从冻结承诺的 `consumed == 0` 变成一轮真实 SCAN 的消耗。这是裁定本身要求的行为（否则就是假答），
+   已在冻结注记里写明"该承诺保留在 `dbsize > 0` 的快路径上"。Wave 4 若按 `consumed == 0` 判
+   "这是 DBSIZE 快答"，需改判 `dbsize > 0 && consumed == 0`。
