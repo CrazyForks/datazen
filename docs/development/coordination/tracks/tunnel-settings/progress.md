@@ -144,6 +144,8 @@ Tester 已独立证实该隐患并评估其影响：见下节「既有隐患登�
 ## Tester 独立复测（全新实例，零信任）
 
 被验 HEAD = `9d18aafd`（实现 `9ed6604d`）。所有数字均为 Tester 本机重跑，未采信自报值。
+**测试 commit：`06187efc`**（`test(tunnel-settings): re-verify saved-tunnel management surface`）。
+结论：**PASSED** —— 无阻断 Bug，无新增回归。
 
 ### 各套件实测（Coder 自报 vs 独立实测）
 
