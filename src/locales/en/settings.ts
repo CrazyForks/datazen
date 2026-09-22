@@ -7,6 +7,8 @@ const pack = {
     'Off by default. When on, infers foreign keys from table structure and naming where the schema declares none, and uses them for JOIN suggestions, completion ranking and the ER diagram. Predicted relationships are always drawn in a distinct colour and can be removed in one click.',
   'settings.title': 'Settings',
   'settings.general': 'General',
+  'settings.nav.group.app': 'Application',
+  'settings.nav.group.integration': 'AI & Integrations',
   'settings.extensions.title': 'Extensions',
   'settings.extensions.empty': 'No extensions are available in this build.',
   'settings.theme': 'Theme',
