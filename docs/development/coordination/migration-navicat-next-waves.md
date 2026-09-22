@@ -277,7 +277,7 @@ Destructive approval remains required, and reviewed plans retain target snapshot
 
 Independent verification passed 6 Vitest files/49 tests, including picker defaults, qualified selectors, destructive reject/allow, reviewed snapshots, profile round-trip and workflow-compatible validation; focused Schema Diff Rust passed 96/96, TypeScript, changed-file rustfmt and diff checks passed, and the integrated full Host Rust suite passed 1645 with 3 ignored. Live database/WebDriver coverage for this slice remains deferred.
 
-This gate closes explicit target-only table selection for Schema Diff. CHECK constraints, table options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
+This gate closes explicit target-only table selection for Schema Diff. CHECK constraints, table options, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
 
 ## Schema Diff CHECK constraint release gate (2026-09-21)
 
@@ -285,7 +285,7 @@ The CHECK constraint wave is integrated after implementation `d60ab3d5`, parser 
 
 The independent first pass found two parser boundary defects: MySQL default string literals and SQLite comments could be mistaken for CHECK clauses. Both were fixed by skipping quoted text, identifiers and comments before recognition, then verified by a fresh second tester. Final verification passed MySQL 98/98, SQLite 58/58, PostgreSQL 119/119, Driver API 141/141, Host Schema Diff 100/100 and frontend Schema Diff 49/49; the integrated full Host Rust suite passed 1649 with 3 ignored, plus TypeScript, rustfmt and diff checks.
 
-This gate closes CHECK comparison and safe same-dialect rendering for the covered drivers. SQLite table-rebuild support, table-level engine/charset/collation/comment/partition options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
+This gate closes CHECK comparison and safe same-dialect rendering for the covered drivers. SQLite table-rebuild support, table-level engine/charset/collation/comment/partition options, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
 
 ## Schema Diff table-option release gate (2026-09-21)
 
@@ -293,4 +293,14 @@ The table-option wave is integrated after implementation `03644d70`, Redis compl
 
 The first independent pass caught a missing `TableOptions` initializer in the Redis driver, which blocked basic Host compilation. The fix was isolated and a fresh tester then passed Driver API 141, MySQL 17, PostgreSQL 17, SQLite 58, Redis 126 (1 ignored), Host Schema Diff 101 and Schema Diff frontend 66; TypeScript, rustfmt and diff checks passed. The integrated full Host Rust suite passed 1650 with 3 ignored.
 
-This gate closes table comments and MySQL/MariaDB engine/charset migration for the covered contract. Collation translation, partitioning, compression, SQLite table rebuilds, routine/trigger migration renderers, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
+This gate closes table comments and MySQL/MariaDB engine/charset migration for the covered contract. Collation translation, partitioning, compression, SQLite table rebuilds, sequence translation, cross-dialect view translation, Windows packaging validation and broader driver coverage remain open parity work.
+
+## Schema Diff routine and trigger release gate (2026-09-22)
+
+The routine/trigger wave is integrated after implementation `add22767`, declaration-header hardening `57808124`, identity hardening `982fd5e4`, and independent final verification `d440ee0d`. The shared migration IR now models create, replace and destructive drop for routines and triggers. PostgreSQL and MySQL render same-dialect operations with rollback metadata where it is sound; PostgreSQL routine identity includes its argument signature and trigger identity includes its attached relation. The host reads object definitions only from the server catalog, binds qualified selectors into the reviewed target snapshot, orders dependencies deterministically, and requires explicit destructive approval for removals.
+
+The track intentionally fails closed for cross-dialect changes, SQLite, unsupported object kinds, ambiguous or absent catalog DDL, invalid identifiers, declaration/name/signature mismatches, and stale reviewed targets. The frontend command wrapper exposes the server-owned preparation API; it never accepts client-provided DDL.
+
+Two independent test rounds found three correctness defects before the final pass: executable declaration validation could be bypassed by kind words in comments, strings or quoted identifiers; a requested routine name could occur only in a body or comment; and an overloaded PostgreSQL routine could be accepted with a different argument signature. The fixes scan the executable declaration envelope and validate exact normalized object identity. Final independent verification passed Driver API 145/145, PostgreSQL 121/121, MySQL 102/102, Host Schema Diff 105/105 and frontend wrapper 17/17, with TypeScript, formatting, and diff checks clean. The integration branch full Host suite then passed 1654 tests with 3 ignored. PostgreSQL/MySQL live create/replace/drop journeys remain pending because no database fixtures are available in this environment.
+
+This gate closes safe same-dialect PostgreSQL/MySQL routine and trigger migration for the covered object identities. Sequence translation, cross-dialect view/object translation, broader dependency graphs, live database journeys, and wider driver coverage remain open parity work.
