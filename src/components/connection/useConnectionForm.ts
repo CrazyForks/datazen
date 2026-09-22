@@ -544,24 +544,34 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const validate = useCallback((): boolean => {
+    // Shared by every form variant, driver-validator forms included: a dangling
+    // tunnel reference must refuse to save (G3 / P1-8). This used to sit after
+    // the driver-validator early return, so `redis` forms could persist a
+    // reference the backend is guaranteed to reject (tunnel-form-BUG-001).
+    const errors: Record<string, string> = {};
+    if (tunnel.tunnelRefMissing) errors.tunnelId = t('newConn.tunnelMissing');
+
     const driverValidator = getDriverValidator(formVariant);
     if (driverValidator) {
-      const errors = driverValidator(
-        { host, port, database, username, password, schema, options: connectionOptions },
-        t as (key: string) => string,
+      // Driver validators only report their own connection fields; `tunnelId`
+      // belongs to the tunnel domain, so merging cannot clobber it.
+      Object.assign(
+        errors,
+        driverValidator(
+          { host, port, database, username, password, schema, options: connectionOptions },
+          t as (key: string) => string,
+        ),
       );
       setValidationErrors(errors);
       return Object.keys(errors).length === 0;
     }
-    const errors: Record<string, string> = {};
+
     if (meta?.connectionMode === 'file') {
       if (!database.trim()) errors.database = t('newConn.required');
     } else if (!isDriverForm) {
       if (!host.trim()) errors.host = t('newConn.required');
       if (!port.trim() || isNaN(Number(port))) errors.port = t('newConn.required');
     }
-    // Dangling reference: surface it and refuse to save (G3).
-    if (tunnel.tunnelRefMissing) errors.tunnelId = t('newConn.tunnelMissing');
     if (!tunnelId && effectiveTunnelKind === 'httpProxy') {
       if (!httpProxyHost.trim()) errors.httpProxyHost = t('newConn.required');
       if (!httpProxyPort.trim() || isNaN(Number(httpProxyPort)))

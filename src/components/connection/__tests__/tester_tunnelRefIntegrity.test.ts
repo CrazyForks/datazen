@@ -220,8 +220,9 @@ describe('[tester] tunnel reference integrity', () => {
     });
     expect(result.current.tunnelRefMissing).toBe(true);
 
-    // The panel tells the user to "unbind to inline", but the entity is gone so
-    // there is nothing to refill from — the unbind is refused (tunnel-form-BUG-002).
+    // The panel no longer advertises this action and no longer renders the
+    // button in this state (tunnel-form-BUG-002); the hook-level refusal is kept
+    // on purpose so a reference is never dropped silently.
     await act(async () => {
       await result.current.unbindTunnel();
     });
@@ -236,40 +237,42 @@ describe('[tester] tunnel reference integrity', () => {
     expect(result.current.validate()).toBe(true);
   });
 
-  it.fails(
-    'blocks saving a dangling reference on a driver-validator form (redis) [tunnel-form-BUG-001]',
-    async () => {
-      mockTunnelCommands.getTunnelSummaries.mockResolvedValue([]);
+  it('blocks saving a dangling reference on a driver-validator form (redis) [tunnel-form-BUG-001]', async () => {
+    mockTunnelCommands.getTunnelSummaries.mockResolvedValue([]);
 
-      const { result } = renderHook(() =>
-        useConnectionForm({
-          editId: 'c-redis',
-          existingConnections: [
-            editExisting({
-              id: 'c-redis',
-              databaseType: 'redis',
-              port: 6379,
-              sslMode: 'disable',
-              tunnelId: 'tun_gone',
-            }),
-          ],
-        }),
-      );
-      await act(async () => {
-        await useTunnelStore.getState().load();
-      });
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'c-redis',
+        existingConnections: [
+          editExisting({
+            id: 'c-redis',
+            databaseType: 'redis',
+            port: 6379,
+            sslMode: 'disable',
+            tunnelId: 'tun_gone',
+          }),
+        ],
+      }),
+    );
+    await act(async () => {
+      await useTunnelStore.getState().load();
+    });
 
-      expect(result.current.formVariant).toBe('redis');
-      expect(result.current.tunnelRefMissing).toBe(true);
+    expect(result.current.formVariant).toBe('redis');
+    expect(result.current.tunnelRefMissing).toBe(true);
 
-      // G3 / P1-8: the panel warns, so `validate()` must refuse to save.
+    // G3 / P1-8: the panel warns, so `validate()` must refuse to save.
+    // (Converted from `it.fails` once tunnel-form-BUG-001 was fixed; it now
+    // guards the driver-validator branch against regressing.)
+    act(() => {
       expect(result.current.validate()).toBe(false);
-      await act(async () => {
-        await result.current.onSave();
-      });
-      expect(saveConnectionMock).not.toHaveBeenCalled();
-    },
-  );
+    });
+    expect(result.current.validationErrors.tunnelId).toBe('newConn.tunnelMissing');
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(saveConnectionMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('[tester] inline tunnel hydration and validation', () => {

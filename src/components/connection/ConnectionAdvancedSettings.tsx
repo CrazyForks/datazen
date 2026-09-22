@@ -223,6 +223,9 @@ export function ConnectionAdvancedSettings({
               className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-300"
             >
               {t('newConn.tunnelMissing')}
+              {/* Only mention picking another tunnel when one is actually listed:
+                  the guidance must never point at an unreachable action (BUG-002). */}
+              {form.savedTunnels.length > 0 && ` ${t('newConn.tunnelMissingAlt')}`}
             </div>
           )}
 
@@ -284,15 +287,23 @@ export function ConnectionAdvancedSettings({
                   </span>
                 </div>
               )}
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={form.tunnelBusy}
-                onClick={() => void form.unbindTunnel()}
-                data-testid="new-conn-tunnel-unbind"
-              >
-                {t('newConn.tunnelUnbind')}
-              </Button>
+              {/* Unbinding refills the inline fields from the stored entity. When
+                  that entity is gone there is nothing to refill, and dropping the
+                  reference silently is deliberately refused — so the action does
+                  not apply to this state at all and must not be offered as a
+                  clickable dead end (tunnel-form-BUG-002). Switching the source to
+                  "None (direct)" is the reachable exit, as the alert states. */}
+              {!form.tunnelRefMissing && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={form.tunnelBusy}
+                  onClick={() => void form.unbindTunnel()}
+                  data-testid="new-conn-tunnel-unbind"
+                >
+                  {t('newConn.tunnelUnbind')}
+                </Button>
+              )}
               {form.tunnelError && (
                 <div role="alert" className="text-xs text-red-400">
                   {form.tunnelError}

@@ -114,7 +114,8 @@ const pack = {
     'This connection reuses a saved tunnel; inline fields are folded away.',
   'newConn.tunnelUnbind': 'Unbind to inline',
   'newConn.tunnelMissing':
-    'The referenced tunnel no longer exists. Pick another tunnel or unbind to inline before saving.',
+    'The referenced saved tunnel no longer exists. Set “Tunnel source” to “None (direct)” to drop the reference before saving.',
+  'newConn.tunnelMissingAlt': 'You can also select another saved tunnel.',
   'newConn.tunnelSaveAs': 'Save as tunnel…',
   'newConn.tunnelSaveTitle': 'Save tunnel',
   'newConn.tunnelSaveDesc':

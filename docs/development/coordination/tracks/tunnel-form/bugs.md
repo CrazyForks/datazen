@@ -12,7 +12,7 @@ Tester 复测轮次：Round 1（独立全新实例）
 ## tunnel-form-BUG-001 — 悬空 `tunnelId` 在「驱动自定义校验表单」上不阻止保存
 
 - **量级**：中（静默持久化一个必然连接失败的引用；用户侧已看到告警却仍能保存）
-- **状态**：`待修复`
+- **状态**：`待复测`
 - **影响范围**：所有 `getDriverValidator(formVariant)` 命中的表单变体，当前构建即 **Redis**（`redisMeta.connectionForm = 'redis'` 且 `supportsSSH: true`，`DRIVER_VALIDATORS = { redis: redisValidate }`）。未来任何注册了驱动校验器的驱动（如 sqlserver 若接入）同样中招。后端 `resolve_tunnel_ref` 找不到 id 时抛 `ConnectionError::Internal("tunnel id '{tid}' not found")`，即保存成功但连接必失败。
 
 ### 描述
@@ -74,7 +74,7 @@ saveConnection 未被调用
 ## tunnel-form-BUG-002 — 悬空引用态下「解绑为内联」是死路，且引导文案指向该不可达动作
 
 - **量级**：低（无数据丢失，存在可用替代出口；但恰好在本功能主场景下误导用户并形成无效循环）
-- **状态**：`待修复`
+- **状态**：`待复测`
 - **影响范围**：所有「引用的隧道已被删除」的表单（任意数据库类型），即 P1-8 专门设计的场景。
 
 ### 描述
@@ -113,3 +113,21 @@ setTunnelSource('none') →  tunnelId = null, tunnelRefMissing = false, validate
 
 - 最小修复：`newConn.tunnelMissing` 文案改为只提可达动作（「请选择另一条隧道，或将隧道来源切换为『无（直连）』」），并在 `tunnelRefMissing` 为真时隐藏/禁用「解绑为内联」按钮。
 - 或允许在实体缺失时「解绑为内联」退化为清空引用 + 空内联配置（用 `lastInlineKindRef` 恢复子类型），需产品确认是否可接受。
+
+---
+
+## Coder 修复说明（Round 1，修复 commit 见 `progress.md`「Coder 修复记录」）
+
+> 本轮只修上述 2 个 Bug，零范围外改动。修复后 Phase 回到 `READY_FOR_TEST`，等待**全新 Tester** 复测；未自行标 `已修复`。
+
+### BUG-001 → `待复测`
+
+- **改动**：`src/components/connection/useConnectionForm.ts` `validate()` —— `errors` 对象提到最前，悬空引用校验移到 `driverValidator` 分支**之前**，两分支共用同一 `errors`；驱动校验器结果经 `Object.assign` **合并**（非覆盖）。非悬空引用时驱动分支行为与修复前完全等价。
+- **证明用例**：`src/components/connection/__tests__/tester_tunnelRefIntegrity.test.ts` → `blocks saving a dangling reference on a driver-validator form (redis) [tunnel-form-BUG-001]`（原 `it.fails` 已转为普通 `it`，并加强断言 `validationErrors.tunnelId === 'newConn.tunnelMissing'`）。
+- **自验**：`pnpm test:unit src/components/connection src/stores` = 38 文件 / 593 用例全绿，0 expected-fail。
+
+### BUG-002 → `待复测`
+
+- **改动**：`src/locales/en/connection.ts`（`newConn.tunnelMissing` 改为只提可达动作「把 Tunnel source 切到 None (direct)」；新增 `newConn.tunnelMissingAlt` 仅在确有其他可选隧道时追加）+ `src/components/connection/ConnectionAdvancedSettings.tsx`（`new-conn-tunnel-unbind` 在 `tunnelRefMissing` 为真时**不渲染**）。
+- **未改**：`unbindTunnel()` 拒绝回填（避免静默丢参）的有意设计原样保留。
+- **证明用例**：`ConnectionAdvancedSettings.test.tsx` → `warns when the referenced tunnel no longer exists`、`does not offer another tunnel when the collection is empty in the dangling state`；`tester_tunnelRefIntegrity.test.ts` → `cannot unbind a dangling reference; switching the source to \`none\` is the working exit`（保留，注释同步更新）。

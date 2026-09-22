@@ -251,9 +251,32 @@ describe('ConnectionAdvancedSettings', () => {
     });
     render(<ConnectionAdvancedSettings form={form} />);
 
-    expect(screen.getByTestId('new-conn-tunnel-missing')).toHaveTextContent(
-      'newConn.tunnelMissing',
-    );
+    const alert = screen.getByTestId('new-conn-tunnel-missing');
+    expect(alert).toHaveTextContent('newConn.tunnelMissing');
+    // A listed alternative makes "select another saved tunnel" reachable.
+    expect(alert).toHaveTextContent('newConn.tunnelMissingAlt');
+    // tunnel-form-BUG-002: the text must not advertise the unreachable unbind,
+    // and the dead-end button must not be rendered in this state.
+    expect(alert).not.toHaveTextContent('newConn.tunnelUnbind');
+    expect(screen.queryByTestId('new-conn-tunnel-unbind')).not.toBeInTheDocument();
+  });
+
+  it('does not offer another tunnel when the collection is empty in the dangling state', () => {
+    const form = createMockForm({
+      tunnelSource: 'saved',
+      tunnelKind: 'ssh',
+      tunnelId: 'tun_gone',
+      savedTunnels: [],
+      savedTunnel: null,
+      tunnelRefMissing: true,
+    });
+    render(<ConnectionAdvancedSettings form={form} />);
+
+    const alert = screen.getByTestId('new-conn-tunnel-missing');
+    // Nothing to pick: only the reachable source switch may be advertised.
+    expect(alert).toHaveTextContent('newConn.tunnelMissing');
+    expect(alert).not.toHaveTextContent('newConn.tunnelMissingAlt');
+    expect(screen.queryByTestId('new-conn-tunnel-unbind')).not.toBeInTheDocument();
   });
 
   it('renders HttpProxyTunnelFields when the inline kind is httpProxy', () => {

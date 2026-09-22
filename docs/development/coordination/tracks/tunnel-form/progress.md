@@ -39,7 +39,84 @@ testTunnel: (id: string, targetHost: string, targetPort: number) => invoke<numbe
 
 - [x] Coder 完成 → **READY_FOR_TEST**（`27ad8a88`）
 - [x] Tester Round 1 复测（阶段 A/B/C/D 全部完成）→ **FAILED**（2 Bug，见 [bugs.md](./bugs.md)）
-- [ ] Coder 修复 → 待复测
+- [x] Coder 修复 Round 1（BUG-001 / BUG-002）→ **READY_FOR_TEST**（修复 commit 见「Coder 修复记录」）
+- [ ] Tester Round 2 复测（全新实例）→ 待复测
+
+## Coder 修复记录（Round 1，2026-09-22）
+
+修复 commit：**（本提交，hash 见交接回报）**
+修复范围：**仅** `tunnel-form-BUG-001` 与 `tunnel-form-BUG-002`；未做任何范围外改动。
+
+### BUG-001（中）—— 悬空引用在驱动自定义校验表单上不阻止保存
+
+**根因**：`useConnectionForm.validate()` 在 `getDriverValidator(formVariant)` 命中时**提前 return**，悬空引用拦截位于其后，只有非驱动校验表单可达 → Redis 表单（`DRIVER_VALIDATORS = { redis: redisValidate }`）看到告警仍能保存。
+
+**修复**（`src/components/connection/useConnectionForm.ts:546-580`）：把 `errors` 对象提到最前，悬空引用校验**提到驱动分支之前**，两条分支共用同一个 `errors`：
+
+```ts
+const errors: Record<string, string> = {};
+if (tunnel.tunnelRefMissing) errors.tunnelId = t('newConn.tunnelMissing');
+
+const driverValidator = getDriverValidator(formVariant);
+if (driverValidator) {
+  Object.assign(errors, driverValidator({ host, port, database, username, password, schema, options }, t));
+  setValidationErrors(errors);
+  return Object.keys(errors).length === 0;
+}
+// …非驱动分支的既有基础校验 + 内联隧道必填校验（作用域未变）…
+```
+
+- **无复制**：悬空校验只写一次；驱动校验自身的错误集合经 `Object.assign` **合并**进同一对象，未被覆盖（驱动校验器只报自身连接字段，`tunnelId` 属隧道域，无键冲突）。
+- **驱动校验语义未变**：非悬空引用时驱动分支的行为与修复前逐字节等价（`errors` 起始为空）。
+
+**证明用例**：`src/components/connection/__tests__/tester_tunnelRefIntegrity.test.ts`
+→ `blocks saving a dangling reference on a driver-validator form (redis) [tunnel-form-BUG-001]`
+断言链：`formVariant === 'redis'`、`tunnelRefMissing === true` → `validate() === false` → **`validationErrors.tunnelId === 'newConn.tunnelMissing'`** → `onSave()` 后 `saveConnection` 未被调用。
+
+### BUG-002（低）—— 悬空引用态下「解绑为内联」是死路，文案指向不可达动作
+
+**修复（最小，不动「拒绝静默丢参」的有意设计）**：
+
+1. **文案只提可达动作**（`src/locales/en/connection.ts`）：
+   - `newConn.tunnelMissing`：`The referenced saved tunnel no longer exists. Set “Tunnel source” to “None (direct)” to drop the reference before saving.`（切「无（直连）」在**任何**情形都可达，不再宣称「解绑为内联」）
+   - 新增 `newConn.tunnelMissingAlt`：`You can also select another saved tunnel.`，**仅当** `savedTunnels.length > 0`（确有可选实体）时由 `ConnectionAdvancedSettings.tsx` 追加渲染，避免在集合为空时又指向一个不可达动作。
+2. **隐藏死路按钮**：`new-conn-tunnel-unbind` 改为仅在 `!form.tunnelRefMissing` 时渲染（`ConnectionAdvancedSettings.tsx`）。选择「隐藏」而非「禁用」的理由：该状态下实体已不可读、回填被**有意**拒绝，即「解绑为内联」在本状态**根本不成立**（不是暂时不可用），保留一个禁用按钮只会让用户面对一个没有解释的死控件；移除后唯一的出口就是告警里点名且下拉中可操作的动作。非悬空态按钮照常渲染，`disabled={form.tunnelBusy}` 语义不变。
+3. `unbindTunnel()` 拒绝回填的逻辑**未改**（有意设计，避免静默丢参）。
+
+**证明用例**：
+- `src/components/connection/__tests__/ConnectionAdvancedSettings.test.tsx`
+  → `warns when the referenced tunnel no longer exists`（告警含 `newConn.tunnelMissing` 与 `newConn.tunnelMissingAlt`、**不含** `newConn.tunnelUnbind`、且 `new-conn-tunnel-unbind` **不在文档中**）
+  → `does not offer another tunnel when the collection is empty in the dangling state`（集合为空时不含 `newConn.tunnelMissingAlt`，同样无解绑按钮）
+- `tester_tunnelRefIntegrity.test.ts` → `cannot unbind a dangling reference; switching the source to \`none\` is the working exit`（保留 hook 层「拒绝静默丢参 + 切 none 是真正出口」回归；陈旧注释已同步更新）
+
+### Tester `it.fails` 证据用例处理（按要求）
+
+| 文件 | 用例 | 处理 |
+| --- | --- | --- |
+| `tester_tunnelRefIntegrity.test.ts` | `blocks saving a dangling reference on a driver-validator form (redis) [tunnel-form-BUG-001]` | `it.fails(...)` → **普通 `it(...)`**；修复后该用例真实通过，若保留 `it.fails` 会因「预期失败却通过」翻红。同时**加强**断言（新增 `validationErrors.tunnelId` 校验），并注明「已由 BUG-001 修复转化为回归守卫」 |
+
+BUG-002 在 Tester 侧本就是以普通 `it` 写的（断言「拒绝解绑」这一保留行为），**无 `it.fails` 需要转换**，仅同步了其陈旧注释。Tester 已提交的回归覆盖（`tester_tunnelRefIntegrity.test.ts` 9 例、`tester_SaveTunnelDialog.test.tsx` 6 例、向既有文件追加的用例）**全部保留、零删除**。
+
+### 自验结果（修复轮，命令按协调者更正，禁用 `npx`）
+
+- `pnpm typecheck`：**0 error**
+- `pnpm test:unit src/components/connection src/stores`：**38 文件 / 593 用例全部通过，0 失败，0 expected-fail**（修复前为 591 + 1 expected-fail；差值 = 转换的 1 例转为真实通过 + 新增 1 例空集合悬空断言）
+- `pnpm test:unit` 全量：**456 文件 / 4755 passed / 1 failed**，唯一失败仍为跨轨 `src/commands/__tests__/pathIpcWiring.test.ts`（后端 3 条新 IPC 未注册，合流后自动转绿，**非本轨 Bug、本轮未试图在 Rust 侧修复**）
+- 修复文件仅 4 个生产/文案文件 + 2 个测试文件（见上）；`useConnectionForm.ts` 仍 742 行内
+
+### Follow-up 登记（Tester 非 Bug 改进建议，本轮**按指示全部不修**）
+
+来源：Tester Round 1「改进建议（非 Bug）」1–7（详见下方 Tester 复测记录 §改进建议），本轮原样保留为后续工作项：
+
+1. `useTunnelFormState.ts` 617 行按「来源状态机 / 内联字段」两职责拆分；
+2. store 加载失败对用户不可见且本会话不重试（建议空集合引导区分 error 态 + 重试入口）；
+3. 「管理已保存的隧道」指向尚未落地的设置页分区（P1-5 前文案过度承诺）；
+4. 另存为隧道无重名 / 长度校验；
+5. `unbindTunnel()` 无引用分支未恢复 `lastInlineKindRef`（当前 UI 不可达，防御性硬化）；
+6. `ConnectionFormState` 新增必填成员对驱动 UI 的外溢面（驱动 UI 未纳入类型检查）；
+7. 跨窗口列表同步与设置页管理面（`usage` / `testTunnel` 等待调用）。
+
+**另记一条本轮自查发现的同族观察（不修，供后续排期）**：驱动校验分支（redis）除悬空引用外，**内联隧道必填校验**（`httpProxyHost/Port`、`wsUrl`、`sshHost/Username`）同样因原提前 return 而从不执行；本轮按「只修 2 个 Bug」的约束**刻意保持其原作用域不变**（避免范围外行为变更），故 redis 表单在「内联隧道参数残缺」时仍可能通过 `validate()`。该行为在本次修复前即存在，非本轮引入。
 
 ## Coder 实施记录（2026-09-22）
 
