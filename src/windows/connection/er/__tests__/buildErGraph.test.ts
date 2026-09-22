@@ -542,6 +542,21 @@ describe('buildErGraph with inferred relationships', () => {
     expect(inferred.style?.strokeDasharray).toBe(ER_PREDICTED_DASH);
   });
 
+  it('keeps a constraint and an inference that share a pair as two edges', () => {
+    // `allSchemas` already declares orders → users and `predicted` infers it again,
+    // which is the ordinary shape that used to take the layout down. The layout
+    // collapses the pair before dagre sees it (see `layoutEdges`), but React Flow
+    // must still receive both edges — one solid, one dashed.
+    const { nodes, edges } = buildErGraph(allSchemas, undefined, predicted);
+    const shared = edges.filter((e) => e.source === 'orders' && e.target === 'users');
+    expect(shared).toHaveLength(2);
+    expect(shared.map((e) => e.data?.kind).sort()).toEqual(['declared', 'predicted']);
+    for (const node of nodes) {
+      expect(Number.isFinite(node.position.x)).toBe(true);
+      expect(Number.isFinite(node.position.y)).toBe(true);
+    }
+  });
+
   it('marks inferred columns as foreign keys on the node', () => {
     const { nodes } = buildErGraph(allSchemas, undefined, predicted);
     const ordersNode = nodes.find((n) => n.id === 'orders')!;

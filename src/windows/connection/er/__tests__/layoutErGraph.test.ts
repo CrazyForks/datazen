@@ -99,14 +99,17 @@ describe('layoutErGraph', () => {
     expect(Number.isFinite(at(laid, 'a').x)).toBe(true);
   });
 
-  it('keeps two relationships between one pair as two edges', () => {
-    // A multigraph, so `orders.billing_id` and `orders.shipping_id` do not collapse.
+  it('ranks a pair once however many relationships they share', () => {
+    // Two relationships between the same tables are collapsed before dagre sees
+    // them (see `layoutEdges`); React Flow still draws both, because it draws the
+    // caller's edge list and its own paths, not dagre's routing points.
     const edges: Edge[] = [
       { id: 'e1', source: 'orders', target: 'users', data: { kind: 'declared' } },
       { id: 'e2', source: 'orders', target: 'users', data: { kind: 'declared' } },
     ];
     const laid = layoutErGraph([node('orders'), node('users')], edges);
     expect(laid).toHaveLength(2);
+    expect(at(laid, 'users').x).toBeGreaterThan(at(laid, 'orders').x);
   });
 
   it('survives a self-referencing table', () => {
