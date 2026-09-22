@@ -31,4 +31,4 @@
 
 ## Commit
 
-- Implementation commit: recorded in the final Coder handoff after commit.
+- Implementation commit: `efaad36c`.
