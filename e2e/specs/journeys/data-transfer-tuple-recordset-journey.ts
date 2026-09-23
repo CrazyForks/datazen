@@ -88,6 +88,13 @@ function insertFixtureSql(table: string): string {
     ('z-外', 0, 'outside-text-prefix')`;
 }
 
+function queryText(value: unknown): string {
+  if (Array.isArray(value) && value.every((item) => typeof item === 'number')) {
+    return new TextDecoder().decode(Uint8Array.from(value));
+  }
+  return String(value);
+}
+
 describe('Data Transfer composite tuple recordset journeys', () => {
   for (const route of routes) {
     describe(route.label, () => {
@@ -129,6 +136,27 @@ describe('Data Transfer composite tuple recordset journeys', () => {
             dbSessionId: sourceSession!,
             sql: insertFixtureSql(table),
           });
+          const sourceHex =
+            route.sourceType === 'postgresql'
+              ? "encode(convert_to(tenant, 'UTF8'), 'hex')"
+              : 'HEX(tenant)';
+          const sourceRows = await invokeBackend<QueryResultPayload>('execute_query', {
+            dbSessionId: sourceSession!,
+            sql: `SELECT tenant, ${sourceHex} AS tenant_hex, CAST(seq AS ${route.sourceType === 'postgresql' ? 'TEXT' : 'CHAR'}) AS seq FROM ${table} ORDER BY tenant, seq`,
+          });
+          const sourceTuples = parseQueryRows(sourceRows).map(
+            (row) => `${queryText(row[0])}:${queryText(row[1]).toLowerCase()}:${queryText(row[2])}`,
+          );
+          expect([...sourceTuples].sort()).toEqual(
+            [
+              'a-雪:612de99baa:-3',
+              'a-雪:612de99baa:-2',
+              'a-雪:612de99baa:0',
+              'a-雪:612de99baa:9223372036854775806',
+              'a-雪:612de99baa:9223372036854775807',
+              'z-外:7a2de5a496:0',
+            ].sort(),
+          );
           await invokeBackend('execute_query', {
             dbSessionId: targetSession!,
             sql: createTableSql(route.targetType, table),
@@ -219,13 +247,32 @@ describe('Data Transfer composite tuple recordset journeys', () => {
 
         const target = await connectBackend(targetId);
         try {
+          const tenantHex =
+            route.targetType === 'postgresql'
+              ? "encode(convert_to(tenant, 'UTF8'), 'hex')"
+              : 'HEX(tenant)';
           const cast = route.targetType === 'postgresql' ? 'TEXT' : 'CHAR';
+          const tenantType =
+            route.targetType === 'postgresql' ? 'pg_typeof(tenant)::text AS tenant_type, ' : '';
           const rows = await invokeBackend<QueryResultPayload>('execute_query', {
             dbSessionId: target,
-            sql: `SELECT tenant, CAST(seq AS ${cast}) AS seq FROM ${table} ORDER BY tenant, seq`,
+            sql: `SELECT tenant AS tenant_value, ${tenantType}${tenantHex} AS tenant_hex, CAST(seq AS ${cast}) AS seq FROM ${table} ORDER BY tenant, seq`,
           });
-          const actual = parseQueryRows(rows).map((row) => `${String(row[0])}:${String(row[1])}`);
-          expect(actual).toEqual(['a-雪:-2', 'a-雪:0', 'a-雪:9223372036854775806']);
+          const tenantHexIndex = route.targetType === 'postgresql' ? 2 : 1;
+          const targetRows = parseQueryRows(rows);
+          expect(targetRows.map((row) => queryText(row[0]))).toEqual(['a-雪', 'a-雪', 'a-雪']);
+          if (route.targetType === 'postgresql') {
+            expect(targetRows.map((row) => queryText(row[1]))).toEqual(['text', 'text', 'text']);
+          }
+          const actual = targetRows.map(
+            (row) =>
+              `${queryText(row[tenantHexIndex]).toLowerCase()}:${queryText(row[tenantHexIndex + 1])}`,
+          );
+          expect(actual).toEqual([
+            '612de99baa:-2',
+            '612de99baa:0',
+            '612de99baa:9223372036854775806',
+          ]);
         } finally {
           await disconnectBackend(target);
         }

@@ -1,8 +1,8 @@
 //! Batch INSERT execute path (same-family and IR).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use datazen_driver_api::TableSchema;
 
@@ -75,20 +75,61 @@ pub fn map_row_values(
             columns.len()
         )));
     }
-    for col in columns {
-        if !source_schema
+    let mut projected = Vec::with_capacity(columns.len());
+    for (value, col) in source_row.iter().zip(columns) {
+        let source_column = source_schema
             .columns
             .iter()
-            .any(|c| c.name == col.source_column)
-        {
-            return Err(TransferError::validation(format!(
-                "source column '{}' not found",
-                col.source_column
-            )));
-        }
+            .find(|source| source.name == col.source_column)
+            .ok_or_else(|| {
+                TransferError::validation(format!(
+                    "source column '{}' not found",
+                    col.source_column
+                ))
+            })?;
+
+        // Some MySQL text columns with binary collations are surfaced by the
+        // driver as bytes. Preserve their text meaning when the source schema
+        // confirms a character type; never reinterpret binary columns this way.
+        let value = match value {
+            Some(Value::Bytes(bytes)) if is_textual_source_type(&source_column.data_type) => {
+                let text = std::str::from_utf8(bytes).map_err(|_| {
+                    TransferError::validation(format!(
+                        "source text column '{}' contains bytes that are not valid UTF-8",
+                        col.source_column
+                    ))
+                })?;
+                Some(Value::String(text.to_owned()))
+            }
+            value => value.clone(),
+        };
+        projected.push(value);
     }
-    // SELECT already follows active mappings, including reordered/subset columns.
-    Ok(source_row.to_vec())
+    Ok(projected)
+}
+
+fn is_textual_source_type(data_type: &str) -> bool {
+    let normalized = data_type.trim().to_ascii_lowercase();
+    let base = normalized.split('(').next().unwrap_or(&normalized).trim();
+    matches!(
+        base,
+        "char"
+            | "character"
+            | "varchar"
+            | "character varying"
+            | "nchar"
+            | "nvarchar"
+            | "national char"
+            | "national character"
+            | "national character varying"
+            | "text"
+            | "tinytext"
+            | "mediumtext"
+            | "longtext"
+            | "citext"
+            | "enum"
+            | "set"
+    )
 }
 
 pub async fn execute_transfer_data(
