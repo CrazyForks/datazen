@@ -1,6 +1,6 @@
 # migration-sync-tuple-selection
 
-Phase: READY_FOR_RETEST
+Phase: TEST_DONE
 
 - Task: Data Sync composite primary-key recordset ranges
 - Branch: `feature/migration-sync-tuple-selection`
@@ -55,4 +55,16 @@ Restored `datazen::data_sync::filter::{SyncRecordset, SyncRecordsetBound}` with 
 
 ## Independent Tester — 2026-09-23
 
-Prior result: `TEST_FAILED` only for the public module-path regression filed as `migration-sync-tuple-selection-BUG-001` in `bugs.md`. The Tester reported the tuple feature's focused Rust suites, Vitest, typecheck, PostgreSQL/MySQL WDIO journeys, and core coverage results above. Tester fixes were not copied into this Coder worktree. Fresh independent retest of the public path fix is pending.
+Prior result: `TEST_FAILED` only for the public module-path regression filed as `migration-sync-tuple-selection-BUG-001` in `bugs.md`. The Tester reported the tuple feature's focused Rust suites, Vitest, typecheck, PostgreSQL/MySQL WDIO journeys, and core coverage results above. Tester fixes were not copied into this Coder worktree.
+
+## Fresh independent Retester — 2026-09-23
+
+- Reviewed the Coder fix: `filter` remains a public module and now re-exports both legacy types from `recordset`; root `data_sync` exports are unchanged. The integration test compiles in a separate crate context and assigns each legacy import to its root-exported counterpart.
+- `cargo test -p datazen --test data_sync_public_api`: 1 passed.
+- `cargo test -p datazen --lib data_sync::filter::tests`: 14 passed.
+- `cargo test -p datazen --lib commands::sync::`: 66 passed.
+- `pnpm exec vitest run src/windows/data-sync/__tests__/RecordsetEditor.test.tsx src/commands/__tests__/syncPlan.test.ts`: 2 files, 12 passed.
+- `pnpm exec tsc --noEmit`: passed.
+- Changed-file `rustfmt --check` and `git diff --check`: passed.
+- The Rust change is limited to compile-time public re-export declarations, so runtime branch coverage is not applicable. The external-crate test directly compiles both restored names and verifies type identity with both root exports. Existing independent PostgreSQL/MySQL WDIO evidence remains valid because the fix does not change runtime behavior; no WDIO rerun was needed.
+- No additional review findings. `migration-sync-tuple-selection-BUG-001` is closed after independent retest.
