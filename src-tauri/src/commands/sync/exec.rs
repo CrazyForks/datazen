@@ -419,3 +419,129 @@ pub(crate) async fn execute_data_sync_impl(
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::sync::plans::{
+        SelectionMatcher, SyncRunSelection, SyncSelectionMode, SyncTableSelection,
+    };
+    use crate::data_sync::{
+        ChangeOperation, ComparisonResult, ConflictPolicy, RowChange, TableResult,
+    };
+    use crate::testing::app_state::TestAppState;
+
+    #[tokio::test]
+    async fn test_tester_streaming_sql_generation_preserves_cross_page_order_and_policy() {
+        let test = TestAppState::with_tables().await;
+        test.save_and_connect("sync-stream-target").await;
+        let target_db_session_id = test.connect_config("sync-stream-target").await;
+
+        let mut options = SyncOptions::default();
+        options.conflict_policy = ConflictPolicy::Force;
+        let mut rows = Vec::with_capacity(plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 1);
+        rows.push(RowChange::insert(
+            vec![Value::Integer(0)],
+            vec![
+                Some(Value::Integer(0)),
+                Some(Value::String("x".repeat(
+                    super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1,
+                ))),
+            ],
+            &options,
+        ));
+        rows.extend((1..plans::SYNC_COMPARISON_STREAM_PAGE_SIZE).map(|key| {
+            RowChange::insert(
+                vec![Value::Integer(key as i64)],
+                vec![
+                    Some(Value::Integer(key as i64)),
+                    Some(Value::String(format!("name-{key}"))),
+                ],
+                &options,
+            )
+        }));
+        rows.push(RowChange::update(
+            vec![Value::Integer(
+                plans::SYNC_COMPARISON_STREAM_PAGE_SIZE as i64,
+            )],
+            vec![
+                Some(Value::Integer(
+                    plans::SYNC_COMPARISON_STREAM_PAGE_SIZE as i64,
+                )),
+                Some(Value::String("new-name".into())),
+            ],
+            vec![
+                Some(Value::Integer(
+                    plans::SYNC_COMPARISON_STREAM_PAGE_SIZE as i64,
+                )),
+                Some(Value::String("old-name".into())),
+            ],
+            vec!["name".into()],
+            &options,
+        ));
+        let mut table = TableResult::matched("users", "users", rows);
+        table.columns = vec!["id".into(), "name".into()];
+        table.column_types = vec!["integer".into(), "text".into()];
+        table.primary_keys = vec!["id".into()];
+        let comparison = ComparisonStore::from_comparison(ComparisonResult::new(vec![table]))
+            .expect("comparison should persist");
+        assert!(comparison.is_spilled());
+
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                selection_mode: SyncSelectionMode::All,
+                operations: vec![ChangeOperation::Insert, ChangeOperation::Update],
+                excluded_rows: Vec::new(),
+            }],
+        };
+        let matcher = SelectionMatcher::new(&selection, &options).expect("selection should match");
+        let statements = generate_data_sync_sql_from_store_pages(
+            &test.state,
+            &target_db_session_id,
+            &comparison,
+            &matcher,
+            &options,
+            Some("app"),
+            None,
+        )
+        .await
+        .expect("streamed SQL should generate");
+
+        assert_eq!(
+            statements.len(),
+            plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 1
+        );
+        assert!(matches!(
+            statements
+                .first()
+                .map(|statement| statement.row_key.as_slice()),
+            Some([Value::Integer(0)])
+        ));
+        assert!(matches!(
+            statements.last().map(|statement| statement.operation),
+            Some(ChangeOperation::Update)
+        ));
+        assert!(matches!(
+            statements.last().map(|statement| statement.row_key.as_slice()),
+            Some([Value::Integer(key)])
+                if *key == plans::SYNC_COMPARISON_STREAM_PAGE_SIZE as i64
+        ));
+        assert_eq!(
+            statements
+                .last()
+                .map(|statement| statement.parameters.len()),
+            Some(2),
+            "force policy must omit optimistic target-row predicates"
+        );
+        assert_eq!(comparison.full_load_calls(), 0);
+        assert_eq!(
+            test.mock.get_schema_calls(),
+            2,
+            "501 rows must be generated as two independently bounded pages"
+        );
+    }
+}
