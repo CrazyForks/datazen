@@ -221,9 +221,9 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
 
     await applyPattern('zzz');
 
-    // Server half: the root request is now a `zzz*` scan.
-    await waitFor(() => expect(childPrefixes).toBeTruthy());
-    expect(childPrefixes().some((prefix) => prefix.startsWith('zzz'))).toBe(true);
+    // Server half: the root request is now a `zzz*` scan (prefix routing), so the
+    // pattern really entered the tree's data path and not just the flat list.
+    await waitFor(() => expect(childPrefixes().some((prefix) => prefix.startsWith('zzz'))).toBe(true));
     // Client half: the rows the fold produced are gone.
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
     // I-11: a finished scan plus an active filter is exactly `no-match`.
