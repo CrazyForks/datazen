@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use super::super::AppState;
 use super::super::error::{CmdExt, CommandError};
+use super::super::AppState;
 use super::inspect::inspect_data_transfer_impl;
 use crate::data_transfer::{
-    TransferJob, TransferPreview, TransferPreviewAdapters, build_preview, enforce_transfer_pairing,
+    build_preview, enforce_transfer_pairing, TransferJob, TransferPreview, TransferPreviewAdapters,
 };
 use datazen_driver_api::{TableSchema, TableType};
 

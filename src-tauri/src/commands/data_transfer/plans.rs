@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use datazen_driver_api::{DatabaseDriver, PROTOCOL_VERSION, TableSchema, iter_driver_factories};
+use datazen_driver_api::{iter_driver_factories, DatabaseDriver, TableSchema, PROTOCOL_VERSION};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;

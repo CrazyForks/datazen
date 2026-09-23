@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
 
 use datazen_driver_api::{DatabaseDriver, TableSchema};
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use uuid::Uuid;
 
 use super::error::TransferError;
@@ -1492,11 +1492,9 @@ mod tests {
             .normalize_qualifiers()
             .unwrap();
         let error = validate_target_dialect_job(&job).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("explicit target database/schema")
-        );
+        assert!(error
+            .to_string()
+            .contains("explicit target database/schema"));
     }
 
     #[test]

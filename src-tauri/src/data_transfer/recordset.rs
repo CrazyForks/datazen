@@ -16,7 +16,7 @@ use super::model::{
     TransferRecordset, TransferRecordsetBound, TransferRecordsetTupleBound,
     TransferRecordsetTupleRange,
 };
-use super::recordset_bounds::{BoundKey, canonical_bound_value, compare_bound_keys};
+use super::recordset_bounds::{canonical_bound_value, compare_bound_keys, BoundKey};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRecordset {

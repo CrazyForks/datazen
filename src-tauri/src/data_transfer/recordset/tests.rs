@@ -334,12 +334,10 @@ fn tuple_ranges_reject_reversed_empty_and_unverified_driver_ordering() {
                 .map(|c| c.data_type.clone())
         },
     );
-    assert!(
-        unsupported
-            .unwrap_err()
-            .to_string()
-            .contains("cannot guarantee")
-    );
+    assert!(unsupported
+        .unwrap_err()
+        .to_string()
+        .contains("cannot guarantee"));
 }
 
 #[test]
@@ -381,19 +379,15 @@ fn defaults_to_single_effective_primary_key_and_parameterizes_scope() {
 #[test]
 fn rejects_missing_primary_key_without_explicit_order_and_composite_default() {
     let no_pk = schema(&[]);
-    assert!(
-        resolve_recordset(&rs(None), &no_pk)
-            .unwrap_err()
-            .to_string()
-            .contains("no primary key")
-    );
+    assert!(resolve_recordset(&rs(None), &no_pk)
+        .unwrap_err()
+        .to_string()
+        .contains("no primary key"));
     let composite = schema(&["id", "name"]);
-    assert!(
-        resolve_recordset(&rs(None), &composite)
-            .unwrap_err()
-            .to_string()
-            .contains("composite")
-    );
+    assert!(resolve_recordset(&rs(None), &composite)
+        .unwrap_err()
+        .to_string()
+        .contains("composite"));
 }
 
 #[test]
