@@ -36,7 +36,7 @@ Remove orphaned Data Sync comparison files after an app process exits unexpected
 
 - Data Sync: additional registered-driver snapshot/order contracts, SQL preview paging/export, and operator reconciliation of genuinely unknown outcomes.
 - Data Transfer: chunk-level resumability with a demonstrated idempotency/commit protocol, richer per-table outcome reporting, and heterogeneous structure mapping completeness.
-- Schema Diff: cross-dialect view/routine/trigger/type translation, SQLite table rebuild, broader table options, and per-driver catalog/capability validation.
+- Schema Diff: unified cross-category reviewed deployment plan, cross-dialect view/routine/trigger/type translation, SQLite table rebuild, broader table options, and per-driver catalog/capability validation.
 - Release: supported-driver capability matrix, PostgreSQL/MySQL failure journeys, Windows file picker/atomic replacement and migration WDIO journeys, performance/fault injection, and full installation validation. DMG-only packaging failure is excluded by user instruction and `AGENTS.md`.
 
 No track may mark the feature release-ready on unit tests alone. Final release status requires the integrated R phase and no unresolved correctness bugs.
