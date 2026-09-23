@@ -579,3 +579,49 @@ Coder 建议的 `satisfies KvSlotState` 护栏一旦落地，**这个文件会�
 - **三条硬约束全部被独立证实为「承重」**（4 组探针共 9 条断言红），且**每项都有模型层 + DOM 层两级断言**（1a 除外——它是纯模型判定，DOM 层的对应保护由 1b 与动作 5 的 chips 三态用例承担）。**零「注入后仍绿」。**
 - **`string 0` 反断言非空转（独立论证）**：渲染模板为 `{chip.type} {formatCompactCount(chip.count)}`（`RedisContextBar.tsx:171`），`formatCompactCount(0)` ⇒ `String(0)` ⇒ `"0"`。⇒ **`"string 0"` 是被测代码真实可产出的字符串**，`container.textContent).not.toContain('string 0')` 不是恒真式。（注：组件层目前的失败用例走的是 `deriveTypeChips` 返 `null` 的路径，因此该字符串由**生产过滤条件**保证不出现 —— 变异 4 恰是从模型层堵住它，两者互补。）
 - **两处 DOM 层断言直接钉在 `data-*` 属性**（`data-max-bytes="unlimited"`、`data-budget-percent="unknown"`），符合 AGENTS.md「数据属性解耦、禁几何反查」与断言纪律。
+
+## 动作 5 — `request` 通道全量实测
+
+### (5-1) 9 个 action 的 spy 断言矩阵（逐条实测，`describe('… every control asks the host (F-3)')` + 预算档位）
+
+| # | action | 触发控件 | 断言（逐字） | 判定 |
+|---|---|---|---|---|
+| 1 | `refresh` | `redis-context-refresh` | `expect(await clickAndCapture(…)).toEqual([{ type: 'refresh' }])` | ✅ |
+| 2 | `newKey` | `redis-context-new-key` | `toEqual([{ type: 'newKey' }])` | ✅ |
+| 3 | `import` | `redis-context-import` | `toEqual([{ type: 'import' }])` | ✅ |
+| 4 | `export` | `redis-context-export` | `toEqual([{ type: 'export' }])` | ✅ |
+| 5 | `selectDatabase` | `redis-context-db`（`fireEvent.change` → `db3`） | `toHaveBeenCalledTimes(1)` + `calls[0][0]` `toEqual({ type:'selectDatabase', database:'db3' })` | ✅ **载荷含选中 db，非空标签** |
+| 6 | `flushDb` | `redis-context-menu-flush` | `toEqual([{ type: 'flushDb' }])` | ✅ |
+| 7 | `openMonitor` | `redis-context-menu-monitor` | `toEqual([{ type: 'openMonitor' }])` | ✅ |
+| 8 | `openSettings` | `redis-context-menu-settings` | `toEqual([{ type: 'openSettings' }])` | ✅ |
+| 9 | `setScanBudget` ×4 档 | `redis-context-budget-{10000,50000,200000,1000000}` | 循环点击后 `toEqual([{value:10_000},{50_000},{200_000},{1_000_000}])` | ✅ **4 档逐一比对，且数量恰好 4（无多余档）** |
+
+⇒ **9/9 全部有 spy 断言，无遗漏、无 `toHaveBeenCalled()` 空转式断言**（全部比对**精确载荷**）。
+
+### (5-2) 独立核点 (a)：未接线不抛错（F-3 ruling 1）
+
+**双层证据**：
+
+1. **驱动侧**（`redisContextBar.test.tsx`）：用例 `does not throw when the host ignores the action (unwired is a no-op)` 把 `request` 换成**只收集不处理**的 `vi.fn()`，对 8 个控件 + db `change` 逐个 `expect(() => …).not.toThrow()`，并断言 `request` 被调用**恰好 9 次**、bar 仍在。用例 `keeps every control rendered even though the host may handle none of them` 另钉「控件恒渲染」。
+2. **宿主侧**（`useKvSlotActions.test.tsx`）：`degrades to a warning when the host threaded no sink through` —— 不传 `onSelectDatabase` 时 `not.toThrow()` + `warnSpy` 恰 1 次 + 警告文案**含 `"selectDatabase"`**（可诊断「缺 sink」而非「缺能力」）+ `onRefresh` 未被误调。另有用例钉 `request` 身份**冻结**（`expect(request).toBe(initial)`）且能取到**最新** sink（`stale` 零调用 / `fresh` 收 `db9`）。
+
+**Tester 探针（A）**：把该降级分支由 `warnUnwired(action); return;` **改为 `throw new Error('probe: …')`** ⇒
+`FAIL … degrades to a warning when the host threaded no sink through`
+`AssertionError: expected [Function] to not throw an error but 'Error: probe: unwired selectDatabase …' was thrown`
+**1 红 ⇒ 该断言真承重**（`18` 例中 `1 failed | 17 passed`）。还原后 `git status --porcelain` 净。
+
+### (5-3) 独立核点 (b)：`flushDb` 无驱动侧确认框
+
+**静态证据**：`grep -rn "useConfirmDialog|confirm(|Dialog|window.confirm|<dialog|role=\"dialog\"" packages/drivers/redis/ui/kv-bar/` ⇒ **exit 1，零命中**。`ContextBarActions.tsx:171` 为裸 `onClick={() => request({ type: 'flushDb' })}`，无守卫、无对话框。
+
+**宿主门闸仍在**（`useKvSlotActions.ts:168-177`）：`case 'flushDb'` 先 `gateDangerous(FLUSH_DB_COPY)`（`redis.kvSlot.flushTitle/flushMessage/flushBlocked`，SafeMode 下走 `blockedKey` 硬拦），**批准后也仅 warn**（不执行 —— 执行 FLUSHDB 需宿主命名驱动命令，是 §7-4 禁止的硬编码）。⇒ **门闸先于一切，F-3 ruling 2 成立。**
+
+**驱动侧既有断言**：`routes the dangerous flush through request alone — no driver-side confirm` ⇒ `expect(request).toHaveBeenCalledWith({ type: 'flushDb' })` + `expect(screen.queryByRole('dialog')).toBeNull()`。
+
+**Tester 探针（B）**：把 `flushDb` 的点击改为 `if (window.confirm('probe…')) request(...)`（**注入驱动侧确认**）⇒
+`FAIL sends the overflow menu items with their exact payloads` — `AssertionError: expected [] to deeply equal [ { type: 'flushDb' } ]`
+`FAIL routes the dangerous flush through request alone — no driver-side confirm` — `expected "vi.fn()" to be called with arguments: [ { type: 'flushDb' } ]`
+`FAIL does not throw when the host ignores the action (unwired is a no-op)` — `expected "vi.fn()" to be called 9 times, but got 8 times`
+**3 红 ⇒ 「零驱动确认」被真实钉住**（`1 failed | 44 passed`）。还原后 `git status --porcelain` 净、`47 passed (47)`。
+
+**动作 5 结论：PASS。** 9/9 action 有精确 spy 断言；两个独立核点均以探针反证承重。
