@@ -1,13 +1,14 @@
 - 任务: KV 上下文条全量版（PRD §3.4 / 裁定 8-2 = 全量，#69）+ **合并承担 statusBar 全量版**（协调者追加裁定）
-- 状态: TEST_FAILED（第 2 轮完整验收）
+- 状态: READY_FOR_TEST（Rescuer 修复已完成，待 Tester 独立复测）
 - 编码 commit: `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版）
+- 修复 commit: `392e851aa`（compact overflow 保留采样标记与无上限语义）
 - 测试 commit: 编码期测试随编码提交；第 2 轮 Tester commits `4c59a32f5`、`a63f6bd0a`、`78e660789`、`6d253d058`（本终判 commit 见工作树 HEAD）
 - 合并 commit: —
 - 代理: w4-redis-kv-context-bar-coder
 - Worktree: .worktrees/datazen-redis-kv-context-bar
 - 分支: feature/redis-kv-context-bar
 - 基线: `d049ceb4e`
-- 心跳: 2026-09-23 18:30（Tester 第 2 轮 A/B/C/D 完成，`TEST_FAILED`，两项待修 Bug）
+- 心跳: 2026-09-23 18:39（Rescuer 修复与三件套自验完成，`READY_FOR_TEST`）
 
 # W4 `redis-kv-context-bar` 简报理解（逐条回执）
 
@@ -853,3 +854,17 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
 - **Phase：FAILED；结论：`TEST_FAILED`。** 阻断项为 `redis-kv-context-bar-BUG-001`、`redis-kv-context-bar-BUG-002`，两条分别登记、分别提交，当前状态均为 `待修复`。
 - 完整 A/B/C/D 已跑完；Tester 未修改业务生产代码。由于缺陷仍在，不设置 `TEST_DONE`，也不建立“无缺陷轮次” README。
 - 修复后需按流程由全新 Tester 重跑完整门禁、覆盖率和回归旅程，再更新这两条 Bug 状态。
+
+## 修复轮第 1 回合（Rescuer，2026-09-23）
+
+- 接管基线为 Tester 第 2 轮的 `TEST_FAILED`：仅 BUG-001 与 BUG-002 两条阻断缺陷。启动 `git status --short` 只有既有 `M Cargo.lock`；其中 `datazen-driver-redis` dependencies 的 `flate2` 增加行完整保留，未暂存/提交。
+- 修复 commit：`392e851aa`（`fix(redis): preserve compact context bar semantics`），只改 `packages/drivers/redis/ui/kv-bar/ContextBarActions.tsx`；Tester 的两条回归断言没有改动。
+- BUG-001：compact overflow chips 行尾保留 `types.sample`，使用 `redis.contextBar.sampled` 并带采样数、dbsize 属性。
+- BUG-002：compact memory overflow 按 `maxBytes === null` 选择 `redis.contextBar.memoryUnlimited`，不再用短横线冒充上限值。
+- 自验均通过，命令串行运行：
+  - Redis 上下文条 targeted：`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui/__tests__/redisContextBar.test.tsx` — 1 file / 49 tests passed。
+  - 完整驱动 UI：`npx vitest run --config vitest.drivers.config.ts` — 63 files / 876 tests passed。
+  - 类型检查：`npx --no-install tsc --noEmit` — exit 0。
+  - Redis Rust lib：`CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-redis --lib` — 342 passed / 0 failed / 4 ignored。
+  - `git diff --check` — 通过。
+- **当前阶段：`READY_FOR_TEST`**。独立 Tester 复测入口为上述 targeted + 完整驱动 UI、TypeScript 和 Redis Rust lib 三件套；两条 Bug 文件均已改为 `待复测`。
