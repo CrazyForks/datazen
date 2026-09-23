@@ -323,17 +323,17 @@ src/extensions/generated.ts:195 { dbType: 'redis', slot: 'contextBar', component
    `getLoadedCount()`），简报也明确要求用 `db_sizes`。已按简报执行，并额外做了
    **跨槽位合流**（否则两个槽位各付一次 32 往返）。若协调者认为该合流应由宿主中继承担，
    属契约扩展，留给后续轨。
-7. **`compact` 只给了两级而非 I-10 的三级**（740/340/240px）。冻结的 `KvContextBarProps`
-   只交一个 `boolean compact`（宿主 `useCompactToolbar` 单断点），driver 侧拿不到另外两级
-   断点。选择：把降级做成**有序**的（先标签、后装饰进溢出），在不改契约的前提下尽可能贴近
-   I-10 的意图，并在 `contextBarModel.contextBarLayout` 注释里写明这是对契约宽度的诚实收敛。
-   **若要真三级，需扩 `KvContextBarProps`（宿主侧断点），属契约变更，留给协调者裁定。**
-8. **`db 选择器` 默认走已接线的 (A)**；简报提到「保留你已写的 (B) 降级能力」——
-   (B) 的降级路径即「宿主未传 `onSelectDatabase` ⇒ dispatcher no-op + warn」，
-   driver 侧 `data-db-switch="wired"` 标记**当前恒为 wired**（宿主已接线）。
-   我未保留一个「未接线」的第二渲染形态：那种形态在宿主已接线的今天只会是永不出现的死代码，
-   而 F-3 ruling 1 要求的「不因宿主可能不处理而藏控件」已由「控件恒渲染 + dispatcher 降级」
-   满足。若协调者要一个可观测的 unwired 形态，需在 props 上新增能力位，属契约变更。
+7. ~~`compact` 只给了两级而非 I-10 的三级~~ → **经裁定 1 撤销为「非偏差」**，见 §11.1。
+   原文留档（撤销理由不改写历史）：冻结的 `KvContextBarProps` 只交一个 `boolean compact`
+   （宿主 `useCompactToolbar` 单断点），driver 侧拿不到另外两级断点；我把降级做成**有序**的
+   （先标签、后装饰进溢出），并在 `contextBarModel.contextBarLayout` 注释里写明这是对契约宽度的收敛。
+   **结论：交付合格，三级断点属列头（D 轨）遗留，不是本轨缺口；`KvContextBarProps` 不扩。**
+8. ~~`data-db-switch` 恒 `wired`、未保留 unwired 第二形态~~ → **经裁定 2 接受**，见 §11.2。
+   原文留档：简报提到「保留你已写的 (B) 降级能力」，(B) 的降级路径即「宿主未传
+   `onSelectDatabase` ⇒ dispatcher no-op + warn」；driver 侧 `data-db-switch="wired"` 当前恒为 wired。
+   我未保留「未接线」的第二渲染形态（宿主已接线的今天那只会是永不出现的死代码），
+   F-3 ruling 1 的「不因宿主可能不处理而藏控件」由「控件恒渲染 + dispatcher 降级」满足。
+   **结论：属性保留（零成本诊断价值），不再为它造第二个分支，不在 props 上加能力位。**
 
 ## 10. 未尽事项（不属本轨范围，登记以免重复推演）
 
@@ -348,6 +348,62 @@ src/extensions/generated.ts:195 { dbType: 'redis', slot: 'contextBar', component
    `pruneKvSlotStates` 回收中继，弱引用条目随之可回收。异常路径（promise 永不 settle）
    会让该面板的重复读取共享同一个悬挂 promise —— 与既有 `useKeyObjectInfo` 的合流表同一取舍，
    留待 Tester 判断是否需要超时。
+
+## 11. 协调者裁定登记（2026-09-23 · 编码轮收口后下发，本轨据此**只改台账、不改代码**）
+
+> 本节按协调者指令追加。两条裁定**均不要求改任何代码**，故本节 commit 的变更面仅本文件。
+> 变动前后代码零差异（`git diff` 仅 `docs/development/coordination/tracks/redis-kv-context-bar/**`）。
+
+### 11.1 裁定 1：I-10 三级断点 —— 归属**列头**，本轨偏离项 7 撤销
+
+- **协调者核实 PRD 原文**（`docs/todo/redis-workbench-ux/PRD.md:179`）：
+
+  > I-10 | 响应式 | **列头动作**容器查询断点 740/340/240px：文字标签 → 纯图标 → 溢出菜单（dbx `RedisKeyBrowser.vue:3866-3908`）
+
+  即 I-10 约束的是**列头动作**（`KeyTreeHeader`），**不是上下文条**。
+  我收到的简报把该要求写成了 contextBar 的要求 —— 属**简报误指派**，不是我的实现缺口。
+- **协调者实测**：`KeyTreeHeader.tsx`（176 行，D 轨产出）**目前零响应式处理** ——
+  动作区恒为图标+文字，没有 740/340/240 三级降级，也没有对应测试。
+  ⇒ **三级断点登记为列头侧的遗留项（D 轨缺口）**，由协调者录入 hub 的 R 清单。
+- **对本轨的结论**：我做的「有序两级降级（先丢文字标签 → 再让 memory/chips 进 `⋯`）」，
+  在冻结契约给到的单 `boolean compact` 之下**已经超出该表面的契约能力**，属**合格交付**。
+- **契约结论**：`KvContextBarProps` 只带一个 `boolean compact` 是**契约的真实形状，不是缺口**
+  —— 上下文条就该按「单断点 + 有序降级」实现。**不扩 `KvContextBarProps`。**
+- **台账处置**：§9 偏离项 7 由「偏离」改判为「非偏差（简报误指派 + 归属他轨）」，
+  原文留档于 §9.7 的删除线块内，不改写历史。
+
+### 11.2 裁定 2：`data-db-switch` 恒 `wired` —— **接受**，不保留不可观测形态
+
+- **裁定**：我对「不保留一个宿主已接线后永不出现的第二渲染形态」的判断**正确**（那是死代码），
+  且「控件恒渲染 + dispatcher 降级」已满足 F-3 ruling 1 的**实质**。
+  **不在 props 上加能力位。**
+- **保留 `data-db-switch="wired"` 属性本身**（诊断价值，成本为零），
+  **但不再为它造第二个分支** ⇒ 本轨代码零改动。
+- **理由（协调者给出，逐字登记）**：
+
+  > F-3 ruling 1 的原文要求是「槽位不得因为宿主可能不处理而藏掉按钮」——它约束的是**渲染**，
+  > 不是要求槽位**感知**宿主接线状态。加能力位等于把宿主实现细节泄漏进契约，
+  > 与 F-3「request 只管发问、不问谁处理」的分层相悖。
+
+- **台账处置**：§9 偏离项 8 标注为「经裁定接受」，原文留档。
+
+### 11.3 协调者对其余交付项的逐项确认（无需动作，登记备查）
+
+| 项 | 协调者结论 |
+|---|---|
+| §9.3 中继桩漂移发现 | **本轮最有价值的产出，已确认为真问题**。实测 9 个测试文件有本地桩、`tsconfig.json:27-33` 把 `packages/**/__tests__/**` 排除 ⇒ `tsc` 结构性看不见 ⇒ W3-A 加宽时六个桩默默过期，直到本轨读 `getLoadedCount()` 才以 30 例红爆出。「只加不改」补齐 10 个 getter 的处理**正确**。我的 `satisfies KvSlotState` 护栏建议**已采纳，将作独立小轨派发** |
+| §9.4 `kvBarSlots.test.tsx` 断言改动 | 旧口径（`not.toHaveBeenCalled()` = 状态条零命令）与新口径（`key_object_info` 零调用 + `db_sizes` 唯一命令 = 无选中⇒无键读取）均已写明且原 4 条断言保留 ⇒ **正确的「语义收窄而非删除」** |
+| §4 契约扩展 `selectDatabase` | 已核 diff：**恰好加一个成员、既有 8 条零改名零删除、`KvSlotState` 一字未动**、JSDoc 写明「为何是 action 而非 state」⇒ **完全符合授权范围** |
+| §6 结构断言（唯一开面板入口） | `ContentView` 不含 `addPanel`/`nextPanelId`、`ConnectionPage` 恰好 2 次、无驱动字面量 ⇒ **spy 测不到的维度的正确补法** |
+| §留待 R 回归 8 项 | 随合流登记 |
+| 未尽事项 1（`⋯` 内 5 个 action 仍 no-op+warn） | **契约内行为**，已在 R 清单登记目视项，**不算缺陷** |
+| 未尽事项 2（`handleSelectKvDb` 累积页签） | 同上，**契约内行为**，R 清单目视项 |
+
+### 11.4 本轮状态
+
+- `READY_FOR_TEST` 不变；**代码零改动**，四门数字（§7）继续有效，无需重跑。
+- 变更面：仅 `docs/development/coordination/tracks/redis-kv-context-bar/progress.md`。
+- 下一步：由协调者派 Tester 做第 1 轮验收。
 
 ## 留待 R 回归
 
