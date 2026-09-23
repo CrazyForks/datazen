@@ -68,3 +68,4 @@ Prior result: `TEST_FAILED` only for the public module-path regression filed as 
 - Changed-file `rustfmt --check` and `git diff --check`: passed.
 - The Rust change is limited to compile-time public re-export declarations, so runtime branch coverage is not applicable. The external-crate test directly compiles both restored names and verifies type identity with both root exports. Existing independent PostgreSQL/MySQL WDIO evidence remains valid because the fix does not change runtime behavior; no WDIO rerun was needed.
 - No additional review findings. `migration-sync-tuple-selection-BUG-001` is closed after independent retest.
+- Retest evidence commit: `82a40c29`.
