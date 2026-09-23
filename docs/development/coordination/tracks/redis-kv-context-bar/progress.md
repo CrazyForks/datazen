@@ -1,5 +1,5 @@
 - 任务: KV 上下文条全量版（PRD §3.4 / 裁定 8-2 = 全量，#69）+ **合并承担 statusBar 全量版**（协调者追加裁定）
-- 状态: READY_FOR_TEST（Rescuer 修复已完成，待 Tester 独立复测）
+- 状态: READY_TO_MERGE（第 3 轮独立复测通过；GUI E2E 旅程留待 R）
 - 编码 commit: `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版）
 - 修复 commit: `392e851aa`（compact overflow 保留采样标记与无上限语义）
 - 测试 commit: 编码期测试随编码提交；第 2 轮 Tester commits `4c59a32f5`、`a63f6bd0a`、`78e660789`、`6d253d058`（本终判 commit 见工作树 HEAD）
@@ -922,3 +922,11 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
 本次修改文件各项均达 100%；kv-bar 全范围超过规程的 ≥80% 标准。相对第 2 轮记录，`ContextBarActions.tsx` 的 branches 从 93.75% 升至 100%，整体 branches 从 96.14% 升至 96.18%。其他未覆盖点仍为既有防御 / 竞态分支（见前轮逐项归因），没有新增核心路径缺口。
 
 适用 GUI E2E 旅程继续登记为 **【留待 R 回归】**：`W4-KVBAR-01` 在 Tauri + 大于采样窗口的真 Redis 下切到 compact，确认 overflow types 行保留采样标识；`W4-KVBAR-02` 在真 Redis `maxmemory=0` 且 compact 时确认 memory 行明确表达无限制。两条单测在本轮已通过；本轮没有启动 Tauri GUI / 真 Redis，不能据此宣称 GUI E2E 通过。此前登记的 W4-KVBAR-03 至 07 继续留待相应 R 环境执行。
+
+### 阶段 D — 终判与收尾（已完成）
+
+- **Phase：PASSED；结论：`TEST_DONE`；轨道状态：`READY_TO_MERGE`。** BUG-001、BUG-002 均由本轮独立确认修复，状态已更新为 `已修复`；新增缺陷：无。
+- 两项修复分别经反向变异独立验证其原回归断言会红，修复态 targeted + 完整驱动 UI 都通过；宿主全套、Redis Rust lib、类型检查、coverage 与边界门均通过。覆盖率达到门槛（改动文件 100%，kv-bar 98.32% statements / 96.18% branches / 96.77% functions / 100% lines）。
+- 最终还原审计：两个反向变异均恢复原源码；`ContextBarActions.tsx` 与 Tester 回归测试无未提交 diff；`git diff --check` 通过。测试/coverage/codegen 产生物均为 gitignored。唯一工作区差异仍是已知 `Cargo.lock` `datazen-driver-redis` dependencies 的 `+ "flate2"`，明确保留、未暂存、未提交。
+- 本轮没有运行 Tauri GUI 或真 Redis；W4-KVBAR-01/02 的环境旅程以及前轮登记的 W4-KVBAR-03 至 07 均留待 R 阶段执行，不记作本轮通过项。
+- 第 3 轮无新缺陷，见 `bugs/README.md`；测试结果提交 hash 记录在本轮终判提交之后的 progress 更新中。
