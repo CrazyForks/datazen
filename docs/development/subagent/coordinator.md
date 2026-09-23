@@ -130,6 +130,9 @@ git merge --no-ff feature/<track-id> -m "feat(coordination): merge track <track-
 - **裁决依据是契约/语义，不是分支新旧**：先问「哪一侧的形状被冻结、被谁消费、有没有守卫测试」，再决定保留谁的结构、把谁的语义**移植**进去。
 - **合流清单**：`git log --oneline <merge-base>..<other> -- <file>` 检查两轨是否都碰过同一文件的**不同抽象层**；`--name-only` 取交集，逐个判「文本 or 语义」。
 - **移植必须带上守卫测试**：把被移植方的回归测试按新结构重写（如把渲染整组件的用例改成「hook + 触发条 + `actions.dialogs`」三段式），**断言一条不减** —— 否则重构会让旧 bug 在测试绿灯下复活（W3 `redis-tree-ui` 合流实证：8 条断言全部保留，含 `[object Object]` 反断言与 `n+` 截断臂）。
+- **「触发条件是否真重叠」优先于二选一**（W3-E 实证，I-1 vs I-8）：批量写后的刷新该走「过 draft 守卫 + 清选择」还是「只刷数据 + 保选择」？两轨的验收测试互斥——**看似必须二选一**。但 Rescuer 判出 I-1 的触发条件是「动作会毁掉草稿」、I-8 的前提是「**干净态**刷新不能清选择」，**两者互不重叠**，遂落成 `if (isDraftDirty()) { 守卫 → 拒绝即 return } else { clearFocus() } ; scanRefresh(); tree.refresh();`，两侧同时满足、无需裁定。**协议**：遇到「A 轨测试要 X、B 轨测试要非 X」时，先问「两者的前置条件是否真的在同一区间」，而不是立刻上报互斥。协调者复核时应对这种**新构造的分支**做双向变异（关掉脏分支应只红 A 轨用例、干净路径加 `clearFocus` 应只红 B 轨用例），确认两侧都真被钉住而非「恰好没踩到」。
+- **机械拆分/重命名的独立硬判据：「公开面集合相等」**（W3 `redis-src-split` 实证）：把 8 个超限文件拆成模块目录后，`cargo test 342/0/4` 逐位不变、`fmt` 无新漂移、逐行溯源 8/8 PASS——**但仍有 1 个真回归**：`ops_tree_scan.rs` 顶层的 `pub mod meta_slots` 在 `mod.rs` 的 `pub use` 区被漏掉，旧路径 `crate::ops_tree_scan::meta_slots` 静默断裂，而**门禁完全看不见**（crate 内暂无调用方）。⇒ **重构的验收必须包含「公开面/导出名集合相等」这条独立判据**（`pub fn/struct/enum/const/type/mod/use` 名集合逐文件对照 BASE vs HEAD），并注意口径：**内联 `pub mod` 也算公开名**（漏计会得出「19==19」的假 PASS）。配套的编译级双向探针（改前报 E0433、补一行后编译通过）是最硬的证据形式。
+- **改名/迁移必须登记对照表**（W3-E 合流实证）：D 轨把刷新/新建按钮从工具栏搬到列头并改名 `redis-refresh`→`redis-tree-refresh`、`redis-create-key`→`redis-tree-create-key`、`redis-no-ttl-only`→`redis-tree-chip-no-ttl`（还把 checkbox 换成 chip `<button data-active>`），生产码语义完好，但 E 轨 5 个旅程测试按旧名点击 ⇒ **合流后 9 例红**。⇒ 凡跨轨改名/迁移 `data-testid`、导出名、函数名，必须在 `progress.md` 登记「旧名 → 新名（+ 控件形状变化）」对照，否则消费轨会在合流时集体失效。
 
 ### 6.2 Worktree 与分支清理
 确认合入主线且无残留后执行规范清理：
