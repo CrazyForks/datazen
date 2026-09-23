@@ -737,6 +737,24 @@ clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生
    `dbsize > 0` 快路径，降级路径改为一轮真 SCAN 的真实消耗。Wave 4 判"DBSIZE 快答"需
    `dbsize > 0 && consumed == 0` 双条件。事实成立，无需另登记。
 
+### 阶段 2 · 全量门禁独立重跑（严格串行，一次一条）—— **全绿**
+
+| # | 门禁 | 修复轮自报 | **Tester 实测** | 判定 |
+|---|---|---|---|---|
+| 1 | `cargo test -p datazen-driver-redis` | lib 299/0/1 | lib **299 passed / 0 failed / 1 ignored**（300 计数）；`tree_scan_budget` **4/0**；`tree_contract_tester` **4 passed / 5 ignored**；`workbench_commands` **4/0**；doctests **0/0** | ✅ 逐字复现 |
+| 2 | 同上 `-- --ignored` | 唯一 ignored=live-redis | lib ignored 名单 = `connect::tests::local_live_connect_prefer_plaintext_require_times_out`（**1 条**，7.01s 过，正当：无需真服务、测超时行为）；集成 ignored 5 条 = `tree_contract_tester` 的 R-1..R-5 live 面（禁 live e2e ⇒ **不跑**，按 R 清单挂账） | ✅ |
+| 3 | `cargo fmt -p datazen-driver-redis -- --check` | 干净 | **exit 0** | ✅ |
+| 4 | `cargo clippy -p datazen-driver-redis --all-targets`（`cargo clean -p` 后全新跑） | 21 条/20 位置同集合 | **20 个位置**，与第 1 轮点名清单逐点对齐：`redis_driver.rs` 117/253/706 · `redis_driver_on.rs:187` · `redis_value_preview.rs:28` · `ops.rs:881` + `ops_exec.rs:260`（`approx_constant` deny ×2，既有债）· `ops_value_search.rs` ×3 · `ops_io.rs:285` · `decode/pickle.rs` ×3 · `commands_exec_dispatch.rs` 473/480/487（blame=`49c550cda` MONITOR 轨行，**非本轨**）· `datazen-driver-api` ×3。本轨文件（`ops_tree*.rs`/`ops_key_probe.rs`/`ops_tree_budget.rs`/tests）**0 命中** | ✅ 0 新增 |
+| 5 | `npx tsc --noEmit` | exit 0 | **exit 0**，零行输出 | ✅ |
+| 6 | `npx vitest run --config vitest.drivers.config.ts` | 48/464 | **48 files / 464 tests passed**，exit 0 | ✅ |
+| 7 | `node scripts/check-driver-import-boundaries.mjs`（修复轮未报，本轮补跑） | — | **ok**：1454 files scanned，**0 blocking**，4 advisory（R3 均在他轨/宿主文件：`src/locales`、`src/test/driverUiSetup.ts`、`DocumentConnectionView.tsx`，非本轨） | ✅ |
+| 8 | 编译告警 | 0 | `cargo test --no-run` 输出 `^warning\|^error` 计数 **0** | ✅ |
+
+差异说明：自报"21 条"含 lib/lib-test 双 profile 重复计数，按唯一位置为 20——与第 1 轮"21 条/20 位置"
+同形态，集合无差。
+
+
+
 
 
 
