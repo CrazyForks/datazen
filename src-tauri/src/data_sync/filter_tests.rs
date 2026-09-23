@@ -506,3 +506,208 @@ fn legacy_scalar_filter_json_remains_unchanged_when_round_tripped() {
     let filter: SyncSourceFilter = serde_json::from_value(json.clone()).unwrap();
     assert_eq!(serde_json::to_value(filter).unwrap(), json);
 }
+
+#[test]
+fn test_tester_filter_value_conversion_covers_scalar_and_invalid_json_shapes() {
+    use super::super::filter_values::{in_values, json_to_value, scalar_value, value_to_json};
+
+    assert!(matches!(
+        scalar_value(&serde_json::json!(true)).unwrap(),
+        Value::Bool(true)
+    ));
+    assert!(scalar_value(&serde_json::json!([1, 2])).is_err());
+    assert!(matches!(
+        in_values(&serde_json::json!(" a, ,b ")).unwrap().as_slice(),
+        [Value::String(a), Value::String(b)] if a == "a" && b == "b"
+    ));
+    assert!(in_values(&serde_json::json!(true)).is_err());
+    assert!(in_values(&serde_json::json!([{"nested": true}])).is_err());
+
+    for value in [
+        Value::Null,
+        Value::Bool(false),
+        Value::Integer(3),
+        Value::Float(1.5),
+        Value::String("text".into()),
+        Value::Timestamp("2026-09-23T12:00:00Z".into()),
+        Value::Bytes(vec![0, 255]),
+        Value::Json(serde_json::json!({"key": "value"})),
+    ] {
+        value_to_json(&value).expect("supported filter value should serialize");
+    }
+    assert!(value_to_json(&Value::Float(f64::NAN)).is_err());
+    assert!(json_to_value(&serde_json::json!({"not": "a scalar"})).is_err());
+    assert!(json_to_value(&serde_json::json!({
+        "$datazenType": "bytes",
+        "encoding": "base64",
+        "value": "not base64!"
+    }))
+    .is_err());
+}
+
+#[test]
+fn test_tester_recordset_rejects_bad_primary_key_metadata_and_tuple_scalars() {
+    let valid = serde_json::json!({
+        "recordset": {"tupleRange": {
+            "columns": ["tenant_id", "id"],
+            "start": {"values": ["1", "2"]}
+        }}
+    });
+    let filter: SyncSourceFilter = serde_json::from_value(valid.clone()).unwrap();
+
+    let mut duplicate_keys = composite_schema(&[("tenant_id", "INTEGER"), ("id", "INTEGER")]);
+    duplicate_keys.primary_keys = vec!["tenant_id".into(), "tenant_id".into()];
+    let duplicate_filter: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+        "recordset": {"tupleRange": {
+            "columns": ["tenant_id", "tenant_id"],
+            "start": {"values": ["1", "2"]}
+        }}
+    }))
+    .unwrap();
+    assert!(duplicate_filter.validate(&duplicate_keys).is_err());
+
+    let mut missing_column = composite_schema(&[("tenant_id", "INTEGER"), ("id", "INTEGER")]);
+    missing_column.primary_keys = vec!["tenant_id".into(), "missing".into()];
+    let missing_filter: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+        "recordset": {"tupleRange": {
+            "columns": ["tenant_id", "missing"],
+            "start": {"values": ["1", "2"]}
+        }}
+    }))
+    .unwrap();
+    assert!(missing_filter.validate(&missing_column).is_err());
+
+    for component in [
+        serde_json::json!(["nested"]),
+        serde_json::json!({"nested": true}),
+    ] {
+        let invalid: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+            "recordset": {"tupleRange": {
+                "columns": ["tenant_id", "id"],
+                "start": {"values": ["1", component]}
+            }}
+        }))
+        .unwrap();
+        assert!(invalid
+            .validate(&composite_schema(&[
+                ("tenant_id", "INTEGER"),
+                ("id", "INTEGER")
+            ]))
+            .is_err());
+    }
+
+    let no_keys = {
+        let mut schema = composite_schema(&[("tenant_id", "INTEGER"), ("id", "INTEGER")]);
+        schema.primary_keys.clear();
+        schema
+            .columns
+            .iter_mut()
+            .for_each(|column| column.is_primary_key = false);
+        schema
+    };
+    let scalar_without_order: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+        "recordset": {"start": {"value": "1"}}
+    }))
+    .unwrap();
+    assert!(scalar_without_order.validate(&no_keys).is_err());
+    assert!(filter
+        .validate(&composite_schema(&[
+            ("tenant_id", "INTEGER"),
+            ("id", "INTEGER")
+        ]))
+        .is_ok());
+}
+
+#[test]
+fn test_tester_recordset_builder_rejects_unverified_columns_order_and_binding() {
+    let tuple: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+        "recordset": {"tupleRange": {
+            "columns": ["tenant_id", "id"],
+            "start": {"values": ["1", "2"]}
+        }}
+    }))
+    .unwrap();
+    assert!(tuple
+        .build_where_typed_with_key_order(
+            '"',
+            1,
+            None,
+            None,
+            |_, value| Ok(value.clone()),
+            |_| Some("INTEGER".into()),
+            |index, _| Ok(format!("${index}")),
+        )
+        .is_err());
+    assert!(tuple
+        .build_where_typed_with_key_order(
+            '"',
+            1,
+            None,
+            Some((&["tenant_id".into(), "id".into()], &["tenant".into()])),
+            |_, value| Ok(value.clone()),
+            |_| Some("INTEGER".into()),
+            |index, _| Ok(format!("${index}")),
+        )
+        .is_err());
+
+    let no_default: SyncSourceFilter = serde_json::from_value(serde_json::json!({
+        "recordset": {"start": {"value": "1"}}
+    }))
+    .unwrap();
+    assert!(no_default
+        .build_where_typed_with_default_order(
+            '"',
+            1,
+            None,
+            |_| None,
+            |index, _| { Ok(format!("${index}")) }
+        )
+        .is_err());
+    assert!(no_default
+        .build_where_typed_with_default_order(
+            '"',
+            1,
+            Some("missing"),
+            |_| None,
+            |index, _| { Ok(format!("${index}")) }
+        )
+        .is_err());
+
+    let valid_keys = vec!["tenant_id".to_string(), "id".to_string()];
+    let expression_count_mismatch = tuple.build_where_typed_with_key_order(
+        '"',
+        1,
+        None,
+        Some((&valid_keys, &["tenant_expr".into()])),
+        |_, value| Ok(value.clone()),
+        |_| Some("INTEGER".into()),
+        |index, _| Ok(format!("${index}")),
+    );
+    assert!(expression_count_mismatch.is_err());
+
+    let placeholder_error = tuple.build_where_typed_with_key_order(
+        '"',
+        1,
+        None,
+        Some((&valid_keys, &["tenant_expr".into(), "id_expr".into()])),
+        |_, value| Ok(value.clone()),
+        |_| Some("INTEGER".into()),
+        |_, _| {
+            Err(crate::data_sync::DataSyncError::validation(
+                "placeholder failed",
+            ))
+        },
+    );
+    assert!(placeholder_error.is_err());
+
+    let normalization_error = tuple.build_where_typed_with_key_order(
+        '"',
+        1,
+        None,
+        Some((&valid_keys, &["tenant_expr".into(), "id_expr".into()])),
+        |_, _| Err(crate::data_sync::DataSyncError::validation("unknown key")),
+        |_| Some("INTEGER".into()),
+        |index, _| Ok(format!("${index}")),
+    );
+    assert!(normalization_error.is_err());
+}

@@ -5,6 +5,8 @@ pub(crate) mod compare;
 mod comparison_store;
 mod exec;
 mod filter_validation;
+#[cfg(test)]
+mod filter_validation_tests;
 mod inspect;
 mod jobs;
 mod keyset_source;
