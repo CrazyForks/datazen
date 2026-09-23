@@ -939,3 +939,33 @@ ii **19 failed**、iii **17 failed**、iv **4 failed**（后者为自带套件�
   自报（无独立数字，仅声明「新增测试文件使计数上涨」）与本 Tester 实测不冲突。
 - 逐文件（本回合轴）：`keyTreeFilter.ts` 110/111、`treeRowSpec.ts` 4/4、
   `useKeyTree.ts` 3/3、`KeyTreeList.tsx` 6/6。
+
+### 6. 断言纪律 + 死代码 —— PASS
+
+**几何反查（AGENTS「禁止视口几何坐标反查」）**：改动 4 个测试文件内
+`getBoundingClientRect|offsetTop|offsetHeight|clientHeight|clientWidth|scrollHeight|elementFromPoint`
+**0 命中** ✓。
+
+**vacuous 断言**：改动测试文件的**新增行**匹配器分布 =
+`toBe` 45 · `toEqual` 4 · `toBeNull` 4 · `toBeGreaterThan` 1，**零**
+`toBeTruthy`/`toBeDefined`/`not.toBeNull` 新增。既有两处
+`expect(await screen.findByTestId(...)).toBeTruthy()`（`keyTreePatternFilter.tsx:314/346`）
+经查**均为本轮未新增**（`git diff` 新增行内 `findBy*` 只作 `await` 前置，不作结论），
+且其后紧跟具体 `data-*` / `queryByTestId(...).toBeNull()` 断言 ⇒ 非空转。
+
+**文案纪律**：新增断言**零英文 copy 字面量** —— 断言串仅含 `data-*` 属性名、
+`redis-*` testid、`ArrowDown/ArrowUp/ArrowRight/ArrowLeft/Enter` 键名、
+i18n key（`useI18n` 被 stub 成恒等 `t`）与 mock 夹具键名（`app:1`/`zzz-thing` 等）。
+
+**抑制/跳过**：`.skip(` / `it.todo` / `describe.skip` / `xit(` / `xdescribe(` **0 命中**；
+新增支持 0 处。两处 `eslint-disable ... no-unnecessary-condition`（`:55`）为
+`globalThis.ResizeObserver ??= MockResizeObserver` 的**既有 idiom**，
+`keyTreePatternFilter.test.tsx:55` 在 `f3a3eea19` **即已存在**（git show 核对），
+非本轮新增，且非 `@ts-ignore`/`@ts-expect-error`。
+
+**死代码 / 孤儿导出**：本轮**退役并删除**了 `globToRegExp` 与 `globMatchesName`，
+全 `packages/drivers/redis/ui` 引用数 **0 / 0**（无残留调用点与导出面）；
+当前导出面引用数 —— `filterTreeRowsByPattern` 36、`nextNavigableIndex` 22、
+`filterKeysByPattern` 18、`isBreadcrumbRow` 17、`countSelectableRows` 10、
+`redisGlobMatch` 8、`globMatcher` 5、`compileGlob` 4，**全部被消费**，
+`tsc --noEmit` = 0 错（§4）⇒ **零新增孤儿导出/未使用函数**。
