@@ -1,5 +1,5 @@
 - 任务: 根 `tsc --noEmit` 打通驱动 UI 类型盲区（REDIS_WORKSPACE_UX P0 R 清单第 9 项）：tsconfig 纳入 `packages/drivers/*/ui` + 清零清点出的生产类型错误
-- 状态: **TEST_FAILED（第 2 轮，1 个 bug）**
+- 状态: **READY_FOR_TEST（第 3 轮等待派发）**
 - 编码 commit: `c2d1c1c25` → `e507cd74c` → `b0d486347` → 本台账 commit
 - 测试 commit: `7b2731e42`（T1-T5 台账）→ `794dfac50`（BUG-003 登记）→ 本终局 commit（T6-T8 + 终判）
 - 合并 commit: —（TEST_FAILED，等 Coder 修复 BUG-003 后派新 Tester 复测）
@@ -354,7 +354,7 @@ Tester 提交清单：
 
 ## 终判（第 2 轮）
 
-**TEST_FAILED（第 2 轮，1 个 bug）** — `driver-ui-type-gate-BUG-004`（`info_filtered` 测试 mock 形状与
+**READY_FOR_TEST（第 3 轮等待派发）** — `driver-ui-type-gate-BUG-004`（`info_filtered` 测试 mock 形状与
 真实 IPC 不一致：对象数组 vs 后端二元组数组、链路零转换——验收序列第 4 项 mock 保真度子项失败）。
 
 其余验收项全部通过：文件面审计 ✓ · BUG-003 覆盖核心 10/10 + line135/154 计数 2/1 ✓ · 独立双向变异闭环 ✓ ·
