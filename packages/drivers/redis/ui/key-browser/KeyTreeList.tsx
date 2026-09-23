@@ -30,6 +30,7 @@ import {
   firstChildIndex,
   firstVisibleIndex,
   nextActiveIndex,
+  nextNavigableIndex,
   parentIndexOf,
   rowIndent,
   stickyFolderChain,
@@ -170,11 +171,16 @@ export function KeyTreeList({
    */
   const stepActiveIndex = (from: number, direction: 1 | -1): number => {
     const target = nextActiveIndex(from, direction, paintedRows);
-    let index = target;
-    while (index >= 0 && index < paintedRows && !isNavigable(index)) index += direction;
-    // Every row in that direction is a breadcrumb ⇒ stay on the current one.
-    if (index < 0 || index >= paintedRows) return target;
-    return index;
+    const walked = nextNavigableIndex(target, direction, paintedRows, isNavigable);
+    /*
+     * Nothing navigable in that direction ⇒ do **not** land on the breadcrumb the
+     * walk stopped at: stay put (`nextActiveIndex`'s clamp at the ends), or drop
+     * selection entirely when the current row is itself no longer navigable (its
+     * subtree was filtered away underneath it). Round 1 returned `target` here,
+     * which *is* that breadcrumb — the defect redis-tree-ui-BUG-004 pins.
+     */
+    if (walked < 0) return isNavigable(from) ? from : -1;
+    return walked;
   };
 
   // Folder checkboxes select every key under the prefix from the *visible* key
@@ -269,10 +275,21 @@ export function KeyTreeList({
       if (row.kind === 'folder') {
         if (!expandedFolders.has(row.path)) onToggleFolder(row.path);
         else {
-          let child = firstChildIndex(treeRows, from);
-          // Step into the subtree, past any breadcrumb the filter back-filled.
-          while (child >= 0 && child < paintedRows && !isNavigable(child)) child += 1;
-          if (child >= 0 && child < paintedRows) {
+          /*
+           * Step into the subtree, past any breadcrumb the filter back-filled.
+           * A breadcrumb *child* of an open folder never arises from the pattern
+           * filter (asserted executable in
+           * keyTreeBreadcrumbKeyboardJourney.test.tsx), so this arm delegates to
+           * the same tested helper as ↑/↓ instead of carrying a second inline
+           * copy of the walk that nothing could evidence.
+           */
+          const child = nextNavigableIndex(
+            firstChildIndex(treeRows, from),
+            1,
+            paintedRows,
+            isNavigable,
+          );
+          if (child >= 0) {
             setActiveIndex(child);
             revealRow(child);
           }

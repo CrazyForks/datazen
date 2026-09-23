@@ -75,7 +75,7 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import { patternToTreePrefix } from '../key-browser/useKeyTree';
-import { globToRegExp } from '../key-browser/keyTreeFilter';
+import { filterKeysByPattern } from '../key-browser/keyTreeFilter';
 import { DEFAULT_SEPARATOR } from '../key-browser/keyTree';
 import type { ChildEntry } from '../shared/redisInvoke';
 
@@ -144,12 +144,34 @@ function childrenFor(prefix: string, sep = ':'): ChildEntry[] {
   ];
 }
 
+/**
+ * What the *server* returns for `scan_keys(pattern)` over {@link KEYSPACE}.
+ *
+ * Hand-derived per pattern from Redis' MATCH rules (a leading `*` = "ends with",
+ * a trailing `*` = "starts with", no `*` = exact, `[0-9]` = one digit byte) —
+ * deliberately a literal table rather than a call into `keyTreeFilter`: the whole
+ * point of BUG-003 is that the client filter and the server must agree, and an
+ * oracle that borrows the client implementation could not observe them disagree.
+ * `keyTreeFilter agrees with the scan_keys oracle` asserts the pair per pattern,
+ * so the table cannot silently drift from the client either.
+ */
+const SCAN_KEYS_ANSWERS: Readonly<Record<string, readonly string[]>> = {
+  '*': KEYSPACE,
+  '': KEYSPACE,
+  '*nope': [],
+  'zzz*': ['zzz-thing'],
+  zzz: [],
+  'app:*': ['app:1', 'app:2'],
+  '*:1': ['app:1'],
+  '*thing': ['zzz-thing'],
+  '*[0-9]': ['app:1', 'app:2'],
+  '*[a-c]*': ['app:1', 'app:2', 'cache-hit', 'root-plain'],
+};
+
 /** Flat `scan_keys`, honouring the glob it was given — as Redis SCAN MATCH does. */
 function keysFor(pattern: string) {
-  const re = pattern && pattern !== '*' ? globToRegExp(pattern) : null;
-  if (!pattern || pattern === '*') return KEYSPACE.map((key) => entry(key));
-  if (!re) return [];
-  return KEYSPACE.filter((key) => re.test(key)).map((key) => entry(key));
+  const answer = SCAN_KEYS_ANSWERS[pattern] ?? [];
+  return answer.map((key) => entry(key));
 }
 
 function entry(key: string) {
@@ -225,6 +247,23 @@ describe('[redis-tree-ui-BUG-001] patternToTreePrefix routes the literal head', 
     ['zzz*', 'zzz'],
     // no star ⇒ the whole pattern is the literal head
     ['root-plain', 'root-plain'],
+    /*
+     * BUG-003 consequence: the routed head must be *purely literal*, because
+     * `list_children` re-globs `{prefix}*` **and** byte-slices keys at
+     * `prefix.len`. `[ac]` as a prefix would strip four bytes off keys that never
+     * started with them, so the head is truncated at the first metacharacter —
+     * which still narrows safely (a superset), rather than giving up: `a[0-9]*`
+     * scans `a*`, `app:a?b*` scans `app:*`, and only a pattern that *opens* with
+     * a metacharacter keeps the whole keyspace.
+     */
+    ['*[0-9]', ''],
+    ['[ac]*', ''],
+    ['a[0-9]*', 'a'],
+    ['h[a-c]*', 'h'],
+    ['a?b', 'a'],
+    ['\\lit', ''],
+    ['app:a?b*', 'app:'],
+    ['app[0-9]:*', 'app'],
   ] as const)('%s ⇒ prefix %s', (pattern, expected) => {
     expect(patternToTreePrefix(pattern, sep)).toBe(expected);
   });
@@ -417,6 +456,65 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     const empty = await screen.findByTestId('redis-tree-empty');
     expect(empty.getAttribute('data-empty-state')).toBe('no-match');
   });
+
+  /* ── BUG-003: the two views must mean the same thing by one pattern ─────── */
+
+  it('`*[0-9]` no longer leaves the tree asserting no-match about live keys', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+
+    // The reported repro. Before BUG-003 the class expression was evaluated by
+    // the server (3 list rows) and by an incapable client filter (0 rows +
+    // `no-match`) at the same time. Now both halves speak Redis MATCH:
+    await applyPattern('*[0-9]');
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('*[0-9]'));
+    // R1's counter is the *key* set both halves agree on …
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    // … and the tree paints it as one collapsed folder holding exactly those two
+    // keys (a folder row is one row for many keys — that is tree semantics, not
+    // a disagreement). What must NOT happen is the false empty state.
+    const folderRow = await screen.findByTestId('redis-tree-folder-app:');
+    expect(folderRow.getAttribute('data-breadcrumb')).toBe('false');
+    expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
+
+    // Expanding proves the subtree really is the server's answer: both leaves
+    // appear and nothing the pattern rejected can slip in.
+    fireEvent.click(folderRow);
+    await screen.findByTestId('redis-key-row-app:1');
+    await screen.findByTestId('redis-key-row-app:2');
+    expect(screen.queryByTestId('redis-key-row-cache-hit')).toBeNull();
+    expect(screen.queryByTestId('redis-key-row-zzz-thing')).toBeNull();
+  });
+
+  it.each(Object.entries(SCAN_KEYS_ANSWERS))(
+    'pattern %j: tree rows, R1 counter and the server answer are one set',
+    async (pattern, expected) => {
+      renderWorkbench();
+      await screen.findByTestId('redis-tree-folder-app:');
+      await applyPattern(pattern);
+
+      // The pure client filter must agree with the (hand-written) server answer,
+      // otherwise the two views can still disagree even though the widgets read
+      // one source.
+      await waitFor(() =>
+        expect(filterKeysByPattern(KEYSPACE, pattern)).toEqual([...expected]),
+      );
+      // … and what R1 counts is that same set, so the flat list and the tree can
+      // never show opposite facts for one pattern again. (The *row* count is not
+      // asserted equal here: under a collapsed folder one row stands for many
+      // keys, which is tree semantics, not a contradiction.)
+      await waitFor(() =>
+        expect(attr('redis-tree-count', 'data-loaded')).toBe(String(expected.length)),
+      );
+      if (expected.length > 0) {
+        expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
+      } else {
+        // Only a genuinely finished, non-scanning root may claim `no-match`.
+        const empty = await screen.findByTestId('redis-tree-empty');
+        expect(empty.getAttribute('data-empty-state')).toBe('no-match');
+      }
+    },
+  );
 
   it('a folder with an open scan admits its remainder is unfiltered', async () => {
     // Root level stays mid-scan (cursor 41), so `app:`'s count is a lower bound.

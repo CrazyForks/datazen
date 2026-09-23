@@ -21,6 +21,7 @@ import {
   firstChildIndex,
   firstVisibleIndex,
   nextActiveIndex,
+  nextNavigableIndex,
   parentIndexOf,
   rowIndent,
   rowPrefix,
@@ -490,6 +491,78 @@ describe('treeEmptyState (I-11)', () => {
     expect(isGlobalPattern('  ')).toBe(true);
     expect(isGlobalPattern('**')).toBe(false);
     expect(hasActiveTreeFilter(signal({ pattern: ' * ' }))).toBe(false);
+  });
+});
+
+describe('[redis-tree-ui-BUG-004] nextNavigableIndex walks past non-navigable rows', () => {
+  /*
+   * Round 1 claimed "navigation passes breadcrumbs through" with zero execution
+   * evidence, so the walk is now a pure helper and this is its state machine:
+   * enter (start on a blocked candidate), state (keep walking in the same
+   * direction), exit (run off either end ⇒ -1 — callers stay put).
+   * `first` is inclusive: callers advance before asking.
+   */
+  const rowsOf = (navigable: boolean[]): ((i: number) => boolean) => (i) =>
+    i >= 0 && i < navigable.length && navigable[i];
+
+  it('entry: starting on a blocked candidate walks forward to the next free row', () => {
+    const free = rowsOf([false, false, true, false, true]);
+    expect(nextNavigableIndex(0, 1, 5, free)).toBe(2);
+    expect(nextNavigableIndex(1, 1, 5, free)).toBe(2);
+    expect(nextNavigableIndex(3, 1, 5, free)).toBe(4);
+    // Inclusive: a free candidate is returned as-is, no accidental skip.
+    expect(nextNavigableIndex(2, 1, 5, free)).toBe(2);
+  });
+
+  it('the same walk backwards mirrors it exactly', () => {
+    const free = rowsOf([true, false, true, false, false]);
+    expect(nextNavigableIndex(4, -1, 5, free)).toBe(2);
+    expect(nextNavigableIndex(3, -1, 5, free)).toBe(2);
+    expect(nextNavigableIndex(1, -1, 5, free)).toBe(0);
+    expect(nextNavigableIndex(0, -1, 5, free)).toBe(0);
+  });
+
+  it('exit: nothing free in that direction ⇒ -1, never a blocked index', () => {
+    const none = rowsOf([false, false, false]);
+    expect(nextNavigableIndex(0, 1, 3, none)).toBe(-1);
+    expect(nextNavigableIndex(2, -1, 3, none)).toBe(-1);
+    // Trailing blocked rows: the forward walk runs off the end …
+    expect(nextNavigableIndex(2, 1, 4, rowsOf([true, true, false, false]))).toBe(-1);
+    // … and leading blocked rows make the backward walk run off the top.
+    expect(nextNavigableIndex(1, -1, 4, rowsOf([false, false, true, true]))).toBe(-1);
+  });
+
+  it('an empty list has nowhere to go', () => {
+    expect(nextNavigableIndex(0, 1, 0, rowsOf([]))).toBe(-1);
+    expect(nextNavigableIndex(-1, 1, 0, rowsOf([]))).toBe(-1);
+  });
+
+  it('every row being a breadcrumb yields -1 for the whole sweep (leading-crumb case)', () => {
+    // `data-row-count = 0` with rows still painted is exactly this shape: the
+    // tree shows crumbs only, so no key press may land anywhere.
+    const onlyCrumbs = rowsOf([false, false]);
+    let index = -1;
+    for (let step = 0; step < 4; step++) {
+      const next = nextNavigableIndex(index + 1, 1, 2, onlyCrumbs);
+      expect(next).toBe(-1);
+      index = next < 0 ? index : next;
+    }
+  });
+
+  it('caller-side contract: -1 means stay put, not "land on the skipped crumb"', () => {
+    /*
+     * `stepActiveIndex` used to return its *target* when the walk found nothing —
+     * and the target is precisely the breadcrumb row it was skipping, so ↑ from
+     * the row below a breadcrumb landed on it. The helper returns -1 and the
+     * caller resolves: stay on the current row if it is still navigable, else
+     * leave selection.
+     */
+    const free = rowsOf([false, true]); // index 0 = breadcrumb, 1 = real row
+    const resolve = (walked: number, from: number) =>
+      walked < 0 ? (free(from) ? from : -1) : walked;
+    expect(nextNavigableIndex(0, -1, 2, free)).toBe(-1);
+    expect(resolve(-1, 1)).toBe(1); // stayed on the real row
+    expect(resolve(-1, 0)).toBe(-1); // current row itself is a crumb ⇒ deselect
   });
 });
 

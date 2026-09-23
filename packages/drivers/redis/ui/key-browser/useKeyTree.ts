@@ -16,6 +16,13 @@ import {
 const PAGE_SIZE = 500;
 
 /**
+ * First metacharacter of a glob: the run before it is purely literal and can be
+ * sent to the server as a prefix. `?` and `*` are wildcards, `[` opens a class,
+ * `\\` is the escape byte.
+ */
+const GLOB_METACHARACTER = /[*?[\\]/;
+
+/**
  * The `list_children` prefix the root request should send for an applied R2
  * pattern (redis-tree-ui-BUG-001, the routing half of the fix).
  *
@@ -39,8 +46,19 @@ const PAGE_SIZE = 500;
 export function patternToTreePrefix(pattern: string, sep: string): string {
   const trimmed = pattern.trim();
   if (!trimmed || trimmed === '*') return '';
-  const star = trimmed.indexOf('*');
-  const head = star === -1 ? trimmed : trimmed.slice(0, star);
+  /*
+   * The head is the run of *purely literal* bytes before the first metacharacter.
+   * That cut matters beyond `*` (BUG-003 consequence, round 2): `list_children`
+   * re-globs `{prefix}*` **and** byte-slices keys at `prefix.len` when folding, so
+   * a head like `[ac]` — a class, not four literal bytes — would make the server
+   * strip four bytes off keys that never started with them. Truncating at the
+   * first metacharacter keeps the prefix a true superset of the pattern (the
+   * server may hand back more than the pattern admits, and the client filter cuts
+   * that down); abandoning routing altogether would throw away a narrowing the
+   * server can still do safely, e.g. `app:a?b*` still scans `app:*`.
+   */
+  const meta = trimmed.search(GLOB_METACHARACTER);
+  const head = meta === -1 ? trimmed : trimmed.slice(0, meta);
   if (!head) return '';
   if (sep && head.endsWith(sep)) return head;
   const lastSep = head.lastIndexOf(sep);

@@ -138,3 +138,32 @@ export function treeNavAction(event: TreeNavKeyEvent): TreeNavAction | null {
   }
   return PLAIN_NAV_KEYS[event.key] ?? null;
 }
+
+/**
+ * Starting at `first` (inclusive) and moving in `direction`, return the first
+ * index `isNavigable` accepts, or `-1` when the walk leaves the list without
+ * finding one (redis-tree-ui-BUG-004: extracted from `KeyTreeList`, where two
+ * inline copies of this walk existed — the ↑/↓ step and `→`-into-subtree — and
+ * no test ever reached either, so the round-1 claim "navigation passes
+ * breadcrumbs through" had zero execution evidence).
+ *
+ * `first` is the *candidate*, not the current row: callers advance first
+ * (`nextActiveIndex`, `firstChildIndex`) and this helper only skips what the
+ * pattern filter marked as decoration. `isNavigable` is injected rather than
+ * imported so this module stays free of the row type — the tree passes "not a
+ * breadcrumb", a test can pass anything.
+ *
+ * A return of `-1` means "nowhere to go": callers must stay put (or leave
+ * selection when the current row is itself no longer navigable). Returning the
+ * row the walk skipped past would defeat it, which is exactly the round-1 defect.
+ */
+export function nextNavigableIndex(
+  first: number,
+  direction: 1 | -1,
+  rowCount: number,
+  isNavigable: (index: number) => boolean,
+): number {
+  let index = first;
+  while (index >= 0 && index < rowCount && !isNavigable(index)) index += direction;
+  return index >= 0 && index < rowCount ? index : -1;
+}
