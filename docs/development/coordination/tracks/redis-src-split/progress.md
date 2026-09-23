@@ -1,7 +1,7 @@
 # `redis-src-split` 台账
 
 - 任务: 把 redis 驱动 crate 超 800 行的文件按职责拆分，**零行为变更**（纯机械重构 + 测试保持全绿）
-- 状态: **TEST_FAILED（第 1 轮，1 个 bug）**
+- 状态: **FIXED_PENDING_RETEST**（修复轮第 1 回合：BUG-001 已修 + ERR-01/ERR-02 已更正；待第 2 轮 Tester 复测）
 - 分支: `feature/redis-src-split`
 - Worktree: `.worktrees/datazen-redis-src-split`
 - 基线: `d049ceb4e`
@@ -68,9 +68,33 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
 | 3 | `src/ops.rs` | 1124 | `ops/mod.rs` **490** + `ops/{list 122, batch 100, parse 90, types 75, scan 66, zset 61, hash 60, set 50, flush 50, keys 43, ttl 33}` | `5ebfd6290` |
 | 4 | `src/connect.rs` | 1091 | `connect/mod.rs` **317** + `connect/{parse 202, live 186, plan 122, client 114, standalone 92, tls 91, cluster 67, sentinel 56}` | `dc5b34b95` |
 | 5 | `src/ops_workbench/tests/cluster_topology.rs` | 1164 | `cluster_topology/mod.rs` **423** + `{census 277, routing 177, batch 161, hash_tag 150}` | `00c5f4086` |
-| 6 | `src/ops_tree_scan.rs` | 988 | `ops_tree_scan/mod.rs` **107** + `{value 197, page 169, batch 160, transport 139, budget 137, meta 102, count 92}` | `197434dc4` |
+| 6 | `src/ops_tree_scan.rs` | 988 | `ops_tree_scan/mod.rs` **107** + `{value 197, page 169, batch 160, transport 139, budget 137, meta 102, count 92}` → **见下方勘误 ERR-02** | `197434dc4` |
 | 7 | `src/ops_workbench.rs` | 1070 | `ops_workbench/mod.rs` **161** + `{shapes 277, transport 253, distribution 187, memory_sample 168, primitives 96, key_info 62}` | `833fef717` |
 | 8 | `src/ops_stream.rs` | 975 | `ops_stream/mod.rs` **313** + `{parse 223, entries 210, groups 114, types 99, overview 96}` | `6d8ea052e` |
+
+### 勘误 ERR-02（第 1 轮 Tester 发现，Coder 修复回合更正）
+
+上表第 6 行（`ops_tree_scan` 组）的 8 个数字是**誊写偏差**：Coder 当时抄的是生成器
+**rustfmt 之前**的行数，而 commit 里落盘的是 rustfmt **之后**的行数（签名因加 `pub(crate) ` 变长被
+换行 / 加尾逗号，每个文件多出 3~8 行）。**原值保留在上表中**，实测更正如下（其余 55 个产出文件行数正确）：
+
+| 产出文件 | 原记 | 实测（= commit `197434dc4` 落盘值） | 差 |
+|---|---|---|---|
+| `ops_tree_scan/mod.rs` | 107 | **106** | −1 |
+| `ops_tree_scan/value.rs` | 197 | **202** | +5 |
+| `ops_tree_scan/page.rs` | 169 | **172** | +3 |
+| `ops_tree_scan/batch.rs` | 160 | **165** | +5 |
+| `ops_tree_scan/transport.rs` | 139 | **147** | +8 |
+| `ops_tree_scan/budget.rs` | 137 | **140** | +3 |
+| `ops_tree_scan/meta.rs` | 102 | **105** | +3 |
+| `ops_tree_scan/count.rs` | 92 | **95** | +3 |
+
+> 注：修复回合给 `ops_tree_scan/mod.rs` 补了 BUG-001 的 1 行 `pub use meta::meta_slots;`，
+> 故其**当前**工作区行数为 **107**（= 拆分当时的 106 + 1）。上表「实测」列取**拆分 commit 当次**的值，
+> 与 Tester 的口径一致。
+
+**判据不受影响**：本条是说明性表格的誊写误差；实质判据「**每个新文件 ≤800 行**」已独立验证通过
+（更正后最大者 `ops_tree_scan/value.rs` 202，全轨最大 `ops_tree_scan/tests/page_coverage.rs` 684）。
 
 **每个新文件 ≤800 行**（最大 `ops_tree_scan/tests/page_coverage.rs` 684）。
 原文件变 `mod.rs` 后均 ≤800（最大 `ops/mod.rs` 490）。
@@ -118,7 +142,9 @@ $ find src -name "*.rs" -exec wc -l {} + | grep -v total | sort -rn | head -5
 - `ops.rs`：拆前 `pub` 项 **38** 个，拆后 `ops/mod.rs` 的 `pub use` 重新导出 **38** 个，集合**完全相等**
   （`missing: none / extra: none`）；
 - `connect.rs`：拆前 **12** 个 == 拆后 **12** 个，集合完全相等。
-- `ops_tree_scan.rs`：拆前 `pub` **19** == 拆后 **19**；
+- `ops_tree_scan.rs`：拆前 `pub` **19** 项 + **1** 个内联 `pub mod`（`meta_slots`）= **20**；
+  拆后 `pub use` **20** —— **但首次拆分时漏了 `meta_slots`（19 vs 20）**，由第 1 轮 Tester 以编译级双向探针
+  判为 **BUG-001**，修复回合补 `pub use meta::meta_slots;` 后回到 **20 == 20**（见 §4b 修复记录）；
 - `ops_workbench.rs`：拆前 `pub` **33**（含 2 个嵌套 `pub mod`）→ 拆后 **35** = 33 顶层项 + 2 嵌套模块；
 - `ops_stream.rs`：拆前 **23** == 拆后 **23**。
 - 所有调用方路径（`crate::ops::X` / `crate::connect::X` / `crate::ops_tree_scan::X` /
@@ -136,10 +162,41 @@ $ find src -name "*.rs" -exec wc -l {} + | grep -v total | sort -rn | head -5
 | 文件 | 放宽为 `pub(crate)` 的条目 |
 |---|---|
 | `ops.rs` | 9 个私有 fn：`apply_ttl_command`、`parse_cursor_from_value`、`parse_flat_string_array`、`parse_flat_string_pairs`、`parse_hash_scan_result`、`parse_scan_result_generic`、`parse_string_array`、`parse_zscan_result`、`value_to_string` |
-| `connect.rs` | 18 个私有 fn + `PREFER_TLS_PROBE` 常量 + `TlsPlan::plaintext` 关联函数 |
+| `connect.rs` | ~~18 个私有 fn~~ **23 个私有 fn**（经第 1 轮 Tester 复核更正）+ `PREFER_TLS_PROBE` 常量 + `TlsPlan::plaintext` 关联函数 |
 | `ops_tree_scan.rs` | 6 个私有 fn：`fetch_page_groups`、`scatter`、`reply_at`、`pipeline_raw`、`fold_command_answer`、`is_connection_level_failure` |
 | `ops_workbench.rs` | 10 个私有 fn：`slot`、`unreadable_key_state`、`master_route`、`pipeline_raw`、`routed_single`、`routed_sequential`、`issue_batch`、`fetch_dbsize`、`is_connection_level_failure`、`sample_types` |
 | `ops_stream.rs` | 7 个私有 fn：`parse_stream_entry`、`parse_stream_id`、`parse_xinfo_consumers`、`parse_xinfo_groups`、`parse_xpending_entries`、`value_to_string`、`value_to_u64` |
+
+### 勘误 ERR-01（第 1 轮 Tester 发现，Coder 修复回合更正）
+
+**计数更正（名单本身正确，无泄漏；原值保留在上表中并划除）**：
+
+| 项 | 原记 | 实测 | 说明 |
+|---|---|---|---|
+| `connect.rs` 放宽数 | 20 | **25** | = 23 私有 fn + `PREFER_TLS_PROBE` 常量 + `TlsPlan::plaintext` 关联函数。原文把「23 个私有 fn」误写成「18 个私有 fn」，故 18+1+1=20 亦随之错 |
+| 全轨放宽合计 | 52 | **57** | 9（`ops`）+ 25（`connect`）+ 6（`ops_tree_scan`）+ 10（`ops_workbench`）+ 7（`ops_stream`） |
+
+**Coder 复核实测**（按「BASE 中为私有、HEAD 中为 `pub(crate)`」的口径逐模块重算）：
+
+```
+ops             widened=  9
+connect         widened= 25
+ops_tree_scan   widened=  6
+ops_workbench   widened= 10
+ops_stream      widened=  7
+GRAND TOTAL WIDENED: 57
+```
+
+`connect.rs` 的 25 项明细：`PREFER_TLS_PROBE`（常量）、`plaintext`（`TlsPlan` 关联函数）、
+其余 23 个为自由 fn —— `connect_with_timeout`、`non_empty`、`opt_string`、`parse_db_index`、
+`parse_host_port`、`parse_node_urls`、`parse_sentinel_urls`、`parse_tls`、`parse_topology`、
+`scheme_for_tls`、`build_node_url`、`load_tls_certificates`、`tls_mode_for_plan`、`plaintext_url`、
+`plaintext_sentinel_plan`、`open_standalone_client`、`open_standalone_conn_with_fallback`、
+`open_standalone_pubsub`、`open_standalone_pubsub_with_fallback`、`open_cluster_conn_with_fallback`、
+`open_sentinel_conn`、`open_sentinel_pubsub`、`sentinel_node_info`。
+
+**判据不受影响**：放宽只增不减外部面（`pub(crate)` 不进 crate 对外 API），故 §3「38 == 38」「12 == 12」
+及本轮修复后的 `ops_tree_scan`「20 == 20」全部成立；勘误纯属文字计数，名单与结论均未变。
 
 **放宽只增不减外部面**：`pub(crate)` 不进入 crate 的对外 API，故 §3 的「38 == 38」「12 == 12」成立。
 `ops_tree_scan/tests.rs` 的 1 行 `use redis::ErrorKind;` 从文件中段提升到父模块头部 —— 原因：拆成子模块后
@@ -148,6 +205,82 @@ $ find src -name "*.rs" -exec wc -l {} + | grep -v total | sort -rn | head -5
 **`ops.rs` 全部函数体未重写**：只移动、只加 `pub(crate) ` 前缀。rustfmt 因签名变长做了换行/尾逗号重排
 （`hash.rs` 的 `parse_hash_scan_result`、`ttl.rs` 的 `apply_ttl_command`），这是**空白层**差异，字符级
 （去空白后）比对确认语义零变化。
+
+## 4b. 修复轮第 1 回合：BUG-001（`ops_tree_scan::meta_slots` 公开路径断裂）
+
+**缺陷**（第 1 轮 Tester 登记，Coder 独立复现）：基线 `ops_tree_scan.rs` 的**顶层** `pub mod meta_slots`
+使 `crate::ops_tree_scan::meta_slots` 可达；拆分把模块本体逐字留在 `ops_tree_scan/meta.rs:35`，
+但 `ops_tree_scan/mod.rs` 的 `pub use` 区**漏了它** ⇒ 该路径失效（`E0433`）。
+**属遗漏而非设计选择**：同批拆分的另 2 个内联 `pub mod`（`ops_workbench` 的 `key_info_slots` /
+`memory_sample_slots`）都已显式 `pub use` 透出。
+
+**修法**：`packages/drivers/redis/src/ops_tree_scan/mod.rs` 补**一行**，紧邻 `meta::*` 分组：
+
+```rust
+pub use meta::meta_slots;
+```
+
+**commit**：`5f78065cb`（`fix(redis): re-export ops_tree_scan::meta_slots (BUG-001 — broken public path, no behavior change)`）
+
+**Coder 独立复现（编译级双向探针，验完已验净还原）**：
+
+```
+探针 A（修复前）—— 在 meta.rs 末尾注入：
+    const _PROBE_A: usize = crate::ops_tree_scan::meta_slots::TYPE;
+$ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo build -p datazen-driver-redis
+error[E0433]: failed to resolve: could not find `meta_slots` in `ops_tree_scan`
+   --> could not compile `datazen-driver-redis` (lib) due to 1 previous error      ← 红
+
+探针 A（补一行后，探针仍在）—— 同一命令：
+（无 error 行；探针解析通过）                                                       ← 绿
+
+验净：cp 备份还原 meta.rs；`grep -c _PROBE_A` = 0；`git diff --stat -- meta.rs` 无输出（逐字节同一）。
+```
+
+**公开面 20 vs 20（实测）**：
+
+```
+BASE  ops_tree_scan.rs : 19 top-level pub items + 1 inline pub mod = 20
+        mods =['meta_slots']
+HEAD  mod.rs           : 20 `pub use` + 14 `pub(crate) use`
+BASE total (20) == HEAD `pub use` (20) : True
+  missing now: none
+  extra  now : none
+```
+
+**同类不对称已消除**（全轨内联 `pub mod` 与透出一一对应）：
+
+```
+OK   ops_tree_scan::meta_slots          (defined src/ops_tree_scan/meta.rs:35,  re-exported mod.rs:80)
+OK   ops_workbench::key_info_slots      (defined src/ops_workbench/shapes.rs:90, re-exported mod.rs:138)
+OK   ops_workbench::memory_sample_slots (defined .../memory_sample.rs:27,        re-exported mod.rs:116)
+```
+
+**门禁（修复后）**：
+
+```
+$ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+$ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo test -p datazen-driver-redis 2>&1 | grep -E "test result"
+  test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+  test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+   1 src/ops_observe.rs:280:
+   1 src/ops_observe.rs:569:          ← 仍恰为基线既有的 2 条，无新增漂移
+```
+
+**本轮关键教训**：BUG-001 存在时 `342 passed; 0 failed; 4 ignored` **依然全绿**（crate 内无调用方），
+**门禁测不出公开面收缩**。「公开面集合相等」必须作为**独立判据**单独跑 —— 这是本轨最有价值的结论。
+
+**TS-01 / TS-02（Tester 登记的覆盖空洞，均为基线既有、非本轨引入）**：本轮**未修**。
+理由：本轨只做机械拆分，补测试属**扩大改动面**；两者都不是本轮引入的缺陷。
+**留待独立轮**（建议单开一条「redis 驱动变异测试补强」轨道，用 `secs+1` 与去掉 `n >= 0` 两个已知变异
+作为起点，反证补测有效）。
 
 ## 5. 每步门禁尾部（逐字）
 
@@ -409,15 +542,17 @@ $ wc -l ui/console/consoleCompletion/commandMeta.ts
 | `cargo test` 数字逐位不变 | ✅ 每步 `342 passed; 0 failed; 4 ignored`，集成测试 4 目标全绿 |
 | 每个新文件 ≤800 行 | ✅ 最大 684 |
 | 原文件（`mod.rs`）≤800 | ✅ 最大 490 |
-| 台账 `progress.md` | ✅ 本文件，头部 `READY_FOR_TEST` |
-| `bugs.md` 存在 | ✅ 同目录，空表 |
+| 台账 `progress.md` | ✅ 本文件（首轮头部为 `READY_FOR_TEST`，Tester 终判后翻 `TEST_FAILED`，修复回合翻 `FIXED_PENDING_RETEST`） |
+| `bugs.md` 存在 | ✅ 同目录（首轮为空表；第 1 轮 Tester 登记 BUG-001 + TS-01/TS-02/ERR-01/ERR-02） |
 | 树净 | ✅ 见 §7 |
 
 ## 7. 终态与未完成项
 
-**commit 列表（本轨道，9 个）**
+**commit 列表（本轨道，11 个）**
 
 ```
+5f78065cb  fix(redis): re-export ops_tree_scan::meta_slots (BUG-001 — broken public path, no behavior change)
+b47c14d24  docs(coordination): bugs.md: register BUG-001 + TS-01/TS-02 + ERR-01/ERR-02   ← 第 1 轮 Tester
 6d8ea052e  refactor(redis): split ops_stream.rs into ops_stream/{types,parse,groups,entries,overview}.rs + mod.rs
 833fef717  refactor(redis): split ops_workbench.rs into ops_workbench/{primitives,shapes,transport,distribution,key_info,memory_sample}.rs + mod.rs
 197434dc4  refactor(redis): split ops_tree_scan.rs into ops_tree_scan/{transport,batch,budget,meta,value,page,count}.rs + mod.rs

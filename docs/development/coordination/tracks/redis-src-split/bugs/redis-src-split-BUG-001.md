@@ -1,6 +1,6 @@
 # redis-src-split-BUG-001 · `ops_tree_scan::meta_slots` 在拆分后失去根路径可达性（公开面集合减少 1 项）
 
-- **状态**：**待修**（第 1 轮 Tester 登记）
+- **状态**：**待复测**（修复轮第 1 回合已修，commit `5f78065cb`，待第 2 轮 Tester 复测）
 - **严重度**：中（`pub mod` 层级可达路径丢失 —— 对外/对 crate 的路径契约变化；当前**无编译期破坏**，因本 crate 内暂无调用方，但属**真实公开面收缩**，违反本轨「零行为变更/公开面集合相等」的硬要求；合流后若 `main` 侧有任何 `crate::ops_tree_scan::meta_slots` 引用即编译失败）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例）· 2026-09-23
 - **登记依据**：第 1 轮验收**步骤 3「公开面集合相等」** —— `ops_tree_scan` 公开面 **20 → 19**，缺失 `meta_slots`
@@ -81,3 +81,76 @@ pub use meta::meta_slots;
 
 补后需复跑：`cargo test -p datazen-driver-redis --lib`（应仍 342 passed; 0 failed; 4 ignored）+
 本轨 Tester 步骤 3 的公开面脚本（`ops_tree_scan` 应回到 20 vs 20）。
+
+---
+
+### 修复记录（coder round-1）
+
+- **修复 commit**：`5f78065cb` — `fix(redis): re-export ops_tree_scan::meta_slots (BUG-001 — broken public path, no behavior change)`
+- **修法**：`packages/drivers/redis/src/ops_tree_scan/mod.rs` 的 `pub use` 区补**恰好一行**，
+  紧邻既有 `meta::*` 分组（位于 `pub use meta::meta_fields_per_key;` 与 `pub use meta::parse_meta_group;` 之间）：
+
+  ```rust
+  pub use meta::meta_slots;
+  ```
+
+  `git diff` 为 **+1 行 / −0 行**，无其他改动；`ops_tree_scan/meta.rs` 及其余 Rust 文件**一字未动**。
+
+- **Coder 独立复现（编译级双向探针，与你步骤 3 的口径一致）**：
+
+  ```
+  探针 A（修复前）—— 在 meta.rs 末尾临时注入：
+      const _PROBE_A: usize = crate::ops_tree_scan::meta_slots::TYPE;
+  $ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo build -p datazen-driver-redis
+  error[E0433]: failed to resolve: could not find `meta_slots` in `ops_tree_scan`
+  error: could not compile `datazen-driver-redis` (lib) due to 1 previous error        ← 红（复现成功）
+
+  探针 A（补一行后，探针仍在）—— 同一命令：
+  （无 error 输出）                                                                     ← 绿（修复生效）
+
+  验净：探针文件以备份还原；`grep -c _PROBE_A` = 0；
+        `git diff --stat -- src/ops_tree_scan/meta.rs` 无输出（与 HEAD 逐字节相同）
+  ```
+
+- **公开面实测：20 vs 20（口径 = 顶层 `pub` 项 + 内联 `pub mod` 都算）**：
+
+  ```
+  BASE  ops_tree_scan.rs : 19 top-level pub items + 1 inline pub mod = 20
+          mods =['meta_slots']
+  HEAD  mod.rs           : 20 `pub use` + 14 `pub(crate) use`
+  BASE total (20) == HEAD `pub use` (20) : True
+    missing now: none
+    extra  now : none
+  ```
+
+- **同类不对称已消除**（全轨内联 `pub mod` 逐一对应透出）：
+
+  | 内联 `pub mod` | 定义处 | 透出处 |
+  |---|---|---|
+  | `ops_tree_scan::meta_slots` | `ops_tree_scan/meta.rs:35` | `ops_tree_scan/mod.rs:80`（**本次补**） |
+  | `ops_workbench::key_info_slots` | `ops_workbench/shapes.rs:90` | `ops_workbench/mod.rs:138` |
+  | `ops_workbench::memory_sample_slots` | `ops_workbench/memory_sample.rs:27` | `ops_workbench/mod.rs:116` |
+
+- **门禁尾部（逐字）**：
+
+  ```
+  $ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
+  test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+  $ CARGO_TARGET_DIR=/tmp/dz-split-fix cargo test -p datazen-driver-redis 2>&1 | grep -E "test result"
+    test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+    test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+     1 src/ops_observe.rs:280:
+     1 src/ops_observe.rs:569:          ← 仍恰为基线既有 2 条，无新增漂移
+  ```
+
+- **可复测点（给你第 2 轮）**：
+  1. 重跑编译级探针 A ⇒ 应**直接绿**（无需再补任何行）；
+  2. 公开面脚本 ⇒ `ops_tree_scan` **20 vs 20**，`missing: none / extra: none`；
+  3. `git diff 197434dc4..5f78065cb -- packages/drivers/redis/src/ops_tree_scan/mod.rs` ⇒ **仅 +1 行**；
+  4. 确认 `ops_tree_scan/meta.rs` 与拆分 commit 相比**逐字节未变**（`git diff 197434dc4..HEAD -- .../meta.rs` 空）。
