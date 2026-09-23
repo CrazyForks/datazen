@@ -9,12 +9,12 @@
 
 | Bug ID | 严重度 | 类别 | 一句话 | 状态 |
 | ------ | ------ | ---- | ------ | ---- |
-| `redis-detail-ui-BUG-001` | **高** | I-1 数据丢失 | 树内重点击**已选中的键** ⇒ 不弹守卫、编辑面随 `detailLoading` 卸载 ⇒ 草稿静默蒸发（与头行刷新的已测行为相反） | 待修复 |
-| `BUG-002` | 中 | I-1 数据丢失 | `KeyWorkbenchDialogs` 的 `onSelectKey` 仍是未守卫的 `handleSelectKey` ⇒ 创建键 / 右键 TTL / 右键 PERSIST / 右键重命名四条出口静默丢草稿 | 待修复 |
-| `BUG-003` | 中 | 错误处理 | `StringEditor.save()` 无 `.catch` ⇒ 后端拒绝时**零反馈** + 一次未处理 Promise rejection | 待修复 |
-| `BUG-004` | 中 | 状态机/键盘 | TTL pill 内联编辑缺 **Esc / 失焦** 两条退出跃迁（简报 E-4 点名项；同轨键头行改名已实现，行为不一致） | 待修复 |
-| `BUG-005` | 低 | 台账如实性 | 自报口径 B 不可复现（86.25%→复算 85.57%）；`keyEditorsInvokes:306-321` 缺口归属写错（实为本轨新建的 `invokeDeleteKey`/`invokeRename`，非"存量集合辅助"）⇒ 被误记为非缺口 | 待修复（改台账；测试已补） |
-| `BUG-006` | 低 | 文案真实性 | 大 value 原因条在「超哨兵但载荷完整」分支说"载荷不完整/截断写覆盖"，与同屏 `truncated` 徽标缺席自相矛盾（64 KiB~5 MiB 为常态区间） | 待修复 |
+| `redis-detail-ui-BUG-001` | **高** | I-1 数据丢失 | 树内重点击**已选中的键** ⇒ 不弹守卫、编辑面随 `detailLoading` 卸载 ⇒ 草稿静默蒸发（与头行刷新的已测行为相反） | 修复中 |
+| `BUG-002` | 中 | I-1 数据丢失 | `KeyWorkbenchDialogs` 的 `onSelectKey` 仍是未守卫的 `handleSelectKey` ⇒ 创建键 / 右键 TTL / 右键 PERSIST / 右键重命名四条出口静默丢草稿 | 修复中 |
+| `BUG-003` | 中 | 错误处理 | `StringEditor.save()` 无 `.catch` ⇒ 后端拒绝时**零反馈** + 一次未处理 Promise rejection | 修复中 |
+| `BUG-004` | 中 | 状态机/键盘 | TTL pill 内联编辑缺 **Esc / 失焦** 两条退出跃迁（简报 E-4 点名项；同轨键头行改名已实现，行为不一致） | 修复中 |
+| `BUG-005` | 低 | 台账如实性 | 自报口径 B 不可复现（86.25%→复算 85.57%）；`keyEditorsInvokes:306-321` 缺口归属写错（实为本轨新建的 `invokeDeleteKey`/`invokeRename`，非"存量集合辅助"）⇒ 被误记为非缺口 | 修复中（改台账；测试已补） |
+| `BUG-006` | 低 | 文案真实性 | 大 value 原因条在「超哨兵但载荷完整」分支说"载荷不完整/截断写覆盖"，与同屏 `truncated` 徽标缺席自相矛盾（64 KiB~5 MiB 为常态区间） | 修复中 |
 
 ## 判定影响
 

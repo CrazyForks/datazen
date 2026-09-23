@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-004 · TTL pill 内联编辑器缺 Esc / 失焦 退出跃迁（E-4 验收项未达，且与同轨键头行改名不对称）
 
 - **严重度**：中（不丢数据、不阻断门禁，但它是简报 E-4 点名的验收要素之一，也是 PRD §4 I-9 的键盘规则；同一轨的**另一个**内联编辑器（键头行改名）已经实现了 Escape 退出，TTL pill 没有 ⇒ 同一屏两个内联编辑面行为不一致）
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **发现**：W3-E 第 1 轮 Tester 复验（HEAD `3919307ce`，jsdom 实测）
 - **涉及文件**：`packages/drivers/redis/ui/value-editors/TtlControls.tsx:121-249`（展开态整体无 `onKeyDown` / `onBlur`；退出只挂了 `redis-ttl-close` 按钮 `:149-157`）
 - **对照实现（正确的参照物就在本轨）**：`packages/drivers/redis/ui/value-editors/KeyHeaderRow.tsx:144-150` —— 内联改名输入框有

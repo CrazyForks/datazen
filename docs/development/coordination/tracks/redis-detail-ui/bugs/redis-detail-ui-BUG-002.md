@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-002 · 对话框出口的 `onSelectKey` 未接守卫 ⇒ 创建键 / 右键 TTL / 重命名后静默丢草稿
 
 - **严重度**：中（同 BUG-001 的 I-1 旁路类别；触发面比 BUG-001 窄——要求「已有一把选中键 + 恰好一个未保存草稿」，且动作本身是服务端写操作而非纯导航，部分用户会预期草稿被换掉。但**结果同样是零提示的草稿蒸发**，与简报 E-5「消掉静默清 dirty」直接冲突）
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **发现**：W3-E 第 1 轮 Tester 复验（补测 commit `da4bc9531`）
 - **涉及文件**：
   - `packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx:735`（`onSelectKey={handleSelectKey}` —— 传给 `KeyWorkbenchDialogs` 的是**未守卫**的原始回调；对比 `:657` 树列已换成 `handleSelectKeyGuarded`）

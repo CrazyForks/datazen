@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-001 · 树内重点击「已选中的键」会静默销毁未保存草稿（无 I-1 弹层）
 
 - **严重度**：高（I-1 的同一失败类别——"用户草稿无痕消失"——在本轨宣称已消灭后，仍以另一条路径存在；且触发姿势是树内最普通的点击）
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **发现**：W3-E 第 1 轮 Tester 复验（全新实例，HEAD `3919307ce` → 补测 commit `da4bc9531`）
 - **涉及文件**：
   - `packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx:364-374`（`handleSelectKeyGuarded` 的同键旁路：`key === selectedKey` ⇒ 直接 `handleSelectKey(key)`，**不经过** `requestDraftLeave`）

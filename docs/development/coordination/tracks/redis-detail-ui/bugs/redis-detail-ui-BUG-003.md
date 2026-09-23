@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-003 · 保存失败静默：`invokeSetString` 无 `.catch` ⇒ 零反馈 + 未处理的 Promise rejection
 
 - **严重度**：中（E-5 新写的保存主链路自身的错误处理缺口；用户点「保存」后**界面看起来完全没反应**——底栏仍在、按钮闪一下又亮、草稿还在，但既不知道失败也不知道原因；写路径失败被吞掉是本轨要消灭的类别，且会污染测试/运行的错误上报）
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **发现**：W3-E 第 1 轮 Tester 复验（HEAD `3919307ce`，探针实测）
 - **涉及文件**：`packages/drivers/redis/ui/value-editors/StringEditor.tsx:152-164`（`await invokeSetString(...).then(...).finally(() => setSaving(false))` —— **无 `.catch`**）
 - **对照**：同文件 `runDecompress` 有 `.catch` 并渲染 `decompError`（`:180-183`）；`KeyEditors.tsx:97-104` 的 `run()` 有 `catch` 并 `setError(...)`。⇒ 同一轨道内其它写路径都处理了失败，唯独新常驻编辑面的保存没有。

@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-006 · 大 value 只读原因文案在「超哨兵但载荷完整」分支上说的是假事实
 
 - **严重度**：低（不阻断行为：只读本身是 PRD §3.3 要求的正确结果；向用户陈述的原因在该分支为假，且 8-4 的口径正是"文案要能承载语义"）
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **发现**：W3-E 第 1 轮 Tester 复验（jsdom 实测）
 - **涉及文件**：
   - `packages/drivers/redis/locales/en.ts:490`（`redis.detail.readonly.bigValue` = "Large value: the payload is **incomplete**, so editing is read-only to stop a **truncated** write overwriting it."）
