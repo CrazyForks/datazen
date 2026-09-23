@@ -2,17 +2,21 @@
 export type { DatabaseType } from '../extensions/generated';
 import type { DatabaseType } from '../extensions/generated';
 
+import type { SshAuthMethod } from './tunnel';
+
 export type {
   TunnelKind,
+  TunnelSource,
+  SshAuthMethod,
   HttpProxyTunnelConfig,
   WebSocketTunnelConfig,
   SavedTunnel,
   SavedTunnelSshConfig,
+  SavedTunnelSummary,
+  TunnelUsage,
 } from './tunnel';
 
 export type SslMode = 'disable' | 'prefer' | 'require' | 'verifyCa' | 'verifyFull';
-
-export type SshAuthMethod = 'password' | 'private_key' | 'agent';
 
 export interface SshTunnelConfig {
   enabled: boolean;

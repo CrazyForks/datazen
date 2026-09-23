@@ -91,8 +91,11 @@ fn invoke_handler_contains_tunnel_commands() {
     // Handler list lives in run.rs (single continuous function, no include! splits).
     let src = include_str!("run.rs");
     assert!(src.contains("crate::commands::get_tunnels"));
+    assert!(src.contains("crate::commands::get_tunnel_summaries"));
+    assert!(src.contains("crate::commands::get_tunnel_usage"));
     assert!(src.contains("crate::commands::save_tunnel"));
     assert!(src.contains("crate::commands::delete_tunnel"));
+    assert!(src.contains("crate::commands::test_tunnel"));
     assert!(src.contains(".invoke_handler(tauri::generate_handler!["));
 }
 

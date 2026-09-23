@@ -259,8 +259,11 @@ pub fn run() {
             // ── 隧道（SSH / HTTP 代理 / WebSocket） ──
             crate::commands::delete_tunnel,
             crate::commands::get_tunnel,
+            crate::commands::get_tunnel_summaries,
+            crate::commands::get_tunnel_usage,
             crate::commands::get_tunnels,
             crate::commands::save_tunnel,
+            crate::commands::test_tunnel,
             // ── 连接配置、设置、日志与路径 ──
             crate::commands::export_connections,
             crate::commands::get_app_executable_path,

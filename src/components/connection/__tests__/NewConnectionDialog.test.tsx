@@ -120,7 +120,7 @@ describe('NewConnectionDialog', () => {
     expect(screen.queryByTestId('new-conn-ssh-tunnel-checkbox')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('new-conn-tunnel-toggle'));
-    expect(screen.getByTestId('new-conn-tunnel-kind')).toBeInTheDocument();
+    expect(screen.getByTestId('new-conn-tunnel-source')).toBeInTheDocument();
   });
 
   it('loads existing connection in edit mode', async () => {

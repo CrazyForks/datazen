@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { connectionCommands } from '../../commands/connection';
-import { tunnelCommands } from '../../commands/tunnel';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { useI18n } from '../../hooks/useI18n';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
@@ -13,16 +12,15 @@ import {
   type ConnectionFormSnapshot,
 } from '../../lib/connectionFormModel';
 import { newId } from './shared';
+import { useTunnelFormState } from './useTunnelFormState';
 import type {
   ConnectionConfig,
   DatabaseType,
   HttpProxyTunnelConfig,
   SslMode,
-  SshAuthMethod,
   SshTunnelConfig,
   TunnelKind,
   WebSocketTunnelConfig,
-  SavedTunnel,
 } from '../../types';
 import { getDriverConnectionForm, getDriverValidator } from '../../extensions/generated';
 import type { ConnectionFormState } from '@datazen/driver-sdk';
@@ -85,57 +83,75 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
 
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const [tunnelKind, setTunnelKindState] = useState<TunnelKind>('none');
-  const setTunnelKind = useCallback((kind: TunnelKind) => {
-    setTunnelKindState(kind);
-    setSshEnabled(kind === 'ssh');
-    setTunnelIdState(null);
-  }, []);
+  const meta = DB_REGISTRY[databaseType];
+  const formVariant = meta?.connectionForm ?? 'standard';
+  const isDriverForm = !!getDriverConnectionForm(formVariant);
+  const hasUsername = !!meta?.defaultUser || !!meta?.requiresUsername || isDriverForm;
+  const supportsSSL = !!meta?.supportsSSL;
+  const supportsSSH = !!meta?.supportsSSH;
 
-  const [tunnelId, setTunnelIdState] = useState<string | null>(null);
-  const [savedTunnels, setSavedTunnels] = useState<SavedTunnel[]>([]);
-  const setTunnelId = useCallback(
-    (id: string | null) => {
-      setTunnelIdState(id);
-      if (id) {
-        const saved = savedTunnels.find((t) => t.id === id);
-        if (saved) {
-          setTunnelKindState(saved.kind as TunnelKind);
-          setSshEnabled(saved.kind === 'ssh');
-        }
-      }
-    },
-    [savedTunnels],
-  );
-
-  const [sshEnabled, setSshEnabled] = useState(false);
-  const [sshHost, setSshHost] = useState('');
-  const [sshPort, setSshPort] = useState('22');
-  const [sshUsername, setSshUsername] = useState('');
-  const [sshAuthMethod, setSshAuthMethod] = useState<SshAuthMethod>('password');
-  const [sshPassword, setSshPassword] = useState('');
-  const [sshKeyPath, setSshKeyPath] = useState('');
-  const [sshPassphrase, setSshPassphrase] = useState('');
-  const [sshJumpEnabled, setSshJumpEnabled] = useState(false);
-  const [sshJumpHost, setSshJumpHost] = useState('');
-  const [sshJumpPort, setSshJumpPort] = useState('22');
-  const [sshJumpUsername, setSshJumpUsername] = useState('');
-  const [sshJumpAuthMethod, setSshJumpAuthMethod] = useState<SshAuthMethod>('password');
-  const [sshJumpPassword, setSshJumpPassword] = useState('');
-  const [sshJumpKeyPath, setSshJumpKeyPath] = useState('');
-  const [sshJumpPassphrase, setSshJumpPassphrase] = useState('');
-
-  const [httpProxyHost, setHttpProxyHost] = useState('');
-  const [httpProxyPort, setHttpProxyPort] = useState('8080');
-  const [httpProxyScheme, setHttpProxyScheme] = useState<'http' | 'https'>('http');
-  const [httpProxyUsername, setHttpProxyUsername] = useState('');
-  const [httpProxyPassword, setHttpProxyPassword] = useState('');
-  const [httpProxyTimeout, setHttpProxyTimeout] = useState('30');
-
-  const [wsUrl, setWsUrl] = useState('');
-  const [wsMode, setWsMode] = useState<'datazen_v1' | 'raw_binary'>('datazen_v1');
-  const [wsAuthToken, setWsAuthToken] = useState('');
-  const [wsTimeout, setWsTimeout] = useState('30');
+  // Tunnel source state machine + every inline tunnel field (see useTunnelFormState).
+  const tunnel = useTunnelFormState({ supportsSSH });
+  const {
+    tunnelSource,
+    tunnelKind,
+    tunnelId,
+    setTunnelSource,
+    effectiveTunnelKind,
+    hydrateTunnelRef,
+    resetTunnel,
+    sshEnabled,
+    sshHost,
+    setSshHost,
+    sshPort,
+    setSshPort,
+    sshUsername,
+    setSshUsername,
+    sshAuthMethod,
+    setSshAuthMethod,
+    sshPassword,
+    setSshPassword,
+    sshKeyPath,
+    setSshKeyPath,
+    sshPassphrase,
+    setSshPassphrase,
+    sshJumpEnabled,
+    setSshJumpEnabled,
+    sshJumpHost,
+    setSshJumpHost,
+    sshJumpPort,
+    setSshJumpPort,
+    sshJumpUsername,
+    setSshJumpUsername,
+    sshJumpAuthMethod,
+    setSshJumpAuthMethod,
+    sshJumpPassword,
+    setSshJumpPassword,
+    sshJumpKeyPath,
+    setSshJumpKeyPath,
+    sshJumpPassphrase,
+    setSshJumpPassphrase,
+    httpProxyHost,
+    setHttpProxyHost,
+    httpProxyPort,
+    setHttpProxyPort,
+    httpProxyScheme,
+    setHttpProxyScheme,
+    httpProxyUsername,
+    setHttpProxyUsername,
+    httpProxyPassword,
+    setHttpProxyPassword,
+    httpProxyTimeout,
+    setHttpProxyTimeout,
+    wsUrl,
+    setWsUrl,
+    wsMode,
+    setWsMode,
+    wsAuthToken,
+    setWsAuthToken,
+    wsTimeout,
+    setWsTimeout,
+  } = tunnel;
 
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<string | null>(null);
@@ -176,12 +192,8 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     setReadOnlyState(isExistingDriverRo || existing.readOnly === true);
     setConnectionOptions(sanitizeConnectionOptions(existing.options ?? {}));
 
-    if (existing.tunnelId) {
-      setTunnelIdState(existing.tunnelId);
-    }
-    const kind = resolveInitialTunnelKind(existing);
-    setTunnelKindState(kind);
-    setSshEnabled(kind === 'ssh');
+    // A stored `tunnelId` hydrates the `saved` state directly — never an unbind.
+    hydrateTunnelRef(existing.tunnelId ?? null, resolveInitialTunnelKind(existing));
 
     if (existing.sshTunnel?.enabled) {
       setSshHost(existing.sshTunnel.host);
@@ -222,22 +234,38 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
 
     setShowAdvanced(true);
     setLoaded(true);
-  }, [editId, loaded, existingConnections, setGroup]);
-
-  useEffect(() => {
-    let cancelled = false;
-    tunnelCommands
-      .getTunnels()
-      .then((list) => {
-        if (!cancelled) setSavedTunnels(list);
-      })
-      .catch(() => {
-        if (!cancelled) setSavedTunnels([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [
+    editId,
+    loaded,
+    existingConnections,
+    setGroup,
+    hydrateTunnelRef,
+    setSshHost,
+    setSshPort,
+    setSshUsername,
+    setSshAuthMethod,
+    setSshPassword,
+    setSshKeyPath,
+    setSshPassphrase,
+    setSshJumpEnabled,
+    setSshJumpHost,
+    setSshJumpPort,
+    setSshJumpUsername,
+    setSshJumpAuthMethod,
+    setSshJumpPassword,
+    setSshJumpKeyPath,
+    setSshJumpPassphrase,
+    setHttpProxyHost,
+    setHttpProxyPort,
+    setHttpProxyScheme,
+    setHttpProxyUsername,
+    setHttpProxyPassword,
+    setHttpProxyTimeout,
+    setWsUrl,
+    setWsMode,
+    setWsAuthToken,
+    setWsTimeout,
+  ]);
 
   const tabFill = useCallback(
     (setter: (v: string) => void) => (e: KeyboardEvent<HTMLInputElement>) => {
@@ -329,8 +357,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
       setReadOnlyState(isTargetDriverRo || snapshot.readOnly);
       setConnectionOptions(sanitizeConnectionOptions(snapshot.connectionOptions));
       setShowAdvanced(snapshot.showAdvanced);
-      setSshEnabled(snapshot.sshEnabled);
-      setTunnelKindState(snapshot.sshEnabled ? 'ssh' : 'none');
+      hydrateTunnelRef(null, snapshot.sshEnabled ? 'ssh' : 'none');
       setSshHost(snapshot.sshHost);
       setSshPort(snapshot.sshPort);
       setSshUsername(snapshot.sshUsername);
@@ -347,62 +374,57 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
       setSshJumpKeyPath(snapshot.sshJumpKeyPath);
       setSshJumpPassphrase(snapshot.sshJumpPassphrase);
     },
-    [databaseType, setGroup],
+    [
+      databaseType,
+      setGroup,
+      hydrateTunnelRef,
+      setSshHost,
+      setSshPort,
+      setSshUsername,
+      setSshAuthMethod,
+      setSshPassword,
+      setSshKeyPath,
+      setSshPassphrase,
+      setSshJumpEnabled,
+      setSshJumpHost,
+      setSshJumpPort,
+      setSshJumpUsername,
+      setSshJumpAuthMethod,
+      setSshJumpPassword,
+      setSshJumpKeyPath,
+      setSshJumpPassphrase,
+    ],
   );
 
-  const applyTypeDefaults = useCallback((newType: DatabaseType) => {
-    const meta = DB_REGISTRY[newType];
-    if (!meta) return;
-    setName('');
-    setHost(meta.defaultHost || '127.0.0.1');
-    setPort(meta.defaultPort ? String(meta.defaultPort) : '');
-    setUsername(meta.defaultUser || '');
-    setSslMode(meta.defaultSslMode ?? 'prefer');
-    setTunnelKindState('none');
-    setTunnelIdState(null);
-    setSshEnabled(false);
-    setSshHost('');
-    setSshPort('22');
-    setSshUsername('');
-    setSshAuthMethod('password');
-    setSshPassword('');
-    setSshKeyPath('');
-    setSshPassphrase('');
-    setSshJumpEnabled(false);
-    setSshJumpHost('');
-    setSshJumpPort('22');
-    setSshJumpUsername('');
-    setSshJumpAuthMethod('password');
-    setSshJumpPassword('');
-    setSshJumpKeyPath('');
-    setSshJumpPassphrase('');
-    setHttpProxyHost('');
-    setHttpProxyPort('8080');
-    setHttpProxyScheme('http');
-    setHttpProxyUsername('');
-    setHttpProxyPassword('');
-    setHttpProxyTimeout('30');
-    setWsUrl('');
-    setWsMode('datazen_v1');
-    setWsAuthToken('');
-    setWsTimeout('30');
-    if (meta.databaseFieldType === 'index') {
-      setDatabase(meta.defaultDatabase ?? '0');
-    } else if (meta.connectionMode === 'file') {
-      setDatabase('');
-    } else {
-      setDatabase(meta.defaultDatabase ?? '');
-    }
-    if (meta.connectionIncludesSchema) setSchema('default');
-    if (meta.readOnly === true) setReadOnlyState(true);
-    setConnectionOptions(sanitizeConnectionOptions({ ...(meta.defaultOptions ?? {}) }));
-  }, []);
+  const applyTypeDefaults = useCallback(
+    (newType: DatabaseType) => {
+      const newMeta = DB_REGISTRY[newType];
+      if (!newMeta) return;
+      setName('');
+      setHost(newMeta.defaultHost || '127.0.0.1');
+      setPort(newMeta.defaultPort ? String(newMeta.defaultPort) : '');
+      setUsername(newMeta.defaultUser || '');
+      setSslMode(newMeta.defaultSslMode ?? 'prefer');
+      resetTunnel();
+      if (newMeta.databaseFieldType === 'index') {
+        setDatabase(newMeta.defaultDatabase ?? '0');
+      } else if (newMeta.connectionMode === 'file') {
+        setDatabase('');
+      } else {
+        setDatabase(newMeta.defaultDatabase ?? '');
+      }
+      if (newMeta.connectionIncludesSchema) setSchema('default');
+      if (newMeta.readOnly === true) setReadOnlyState(true);
+      setConnectionOptions(sanitizeConnectionOptions({ ...(newMeta.defaultOptions ?? {}) }));
+    },
+    [resetTunnel],
+  );
 
   const handleDatabaseTypeChange = useCallback(
     (newType: DatabaseType) => {
       if (newType === databaseType) return;
-      const meta = DB_REGISTRY[newType];
-      if (!meta) return;
+      const newMeta = DB_REGISTRY[newType];
+      if (!newMeta) return;
       if (!editId) typeSnapshotsRef.current.set(databaseType, captureSnapshot());
       setDatabaseType(newType);
       if (!editId) {
@@ -413,28 +435,36 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
         }
         applyTypeDefaults(newType);
       } else {
-        setHost(meta.defaultHost || '127.0.0.1');
-        setPort(meta.defaultPort ? String(meta.defaultPort) : '');
-        setUsername(meta.defaultUser || '');
-        setSslMode(meta.defaultSslMode ?? 'prefer');
-        if (!meta.supportsSSH && tunnelKind === 'ssh') {
-          setTunnelKindState('none');
-          setSshEnabled(false);
+        setHost(newMeta.defaultHost || '127.0.0.1');
+        setPort(newMeta.defaultPort ? String(newMeta.defaultPort) : '');
+        setUsername(newMeta.defaultUser || '');
+        setSslMode(newMeta.defaultSslMode ?? 'prefer');
+        // Only an inline SSH tunnel is dropped here; a saved reference must never be.
+        if (!newMeta.supportsSSH && tunnelSource === 'inline' && tunnelKind === 'ssh') {
+          setTunnelSource('none');
         }
-        if (meta.databaseFieldType === 'index') setDatabase(meta.defaultDatabase ?? '0');
-        else if (meta.connectionMode === 'file') setDatabase('');
-        else setDatabase(meta.defaultDatabase ?? '');
-        if (meta.connectionIncludesSchema) setSchema('default');
-        if (meta.readOnly === true) setReadOnlyState(true);
-        setConnectionOptions(sanitizeConnectionOptions({ ...(meta.defaultOptions ?? {}) }));
+        if (newMeta.databaseFieldType === 'index') setDatabase(newMeta.defaultDatabase ?? '0');
+        else if (newMeta.connectionMode === 'file') setDatabase('');
+        else setDatabase(newMeta.defaultDatabase ?? '');
+        if (newMeta.connectionIncludesSchema) setSchema('default');
+        if (newMeta.readOnly === true) setReadOnlyState(true);
+        setConnectionOptions(sanitizeConnectionOptions({ ...(newMeta.defaultOptions ?? {}) }));
       }
     },
-    [applyTypeDefaults, captureSnapshot, databaseType, editId, restoreSnapshot, tunnelKind],
+    [
+      applyTypeDefaults,
+      captureSnapshot,
+      databaseType,
+      editId,
+      restoreSnapshot,
+      setTunnelSource,
+      tunnelKind,
+      tunnelSource,
+    ],
   );
 
   const sshTunnel = useMemo((): SshTunnelConfig | undefined => {
-    if (tunnelKind !== 'ssh' && !sshEnabled) return undefined;
-    if (!sshEnabled) return undefined;
+    if (effectiveTunnelKind !== 'ssh' || !sshEnabled) return undefined;
     return {
       enabled: true,
       host: sshHost,
@@ -460,6 +490,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
         : undefined,
     };
   }, [
+    effectiveTunnelKind,
     sshAuthMethod,
     sshEnabled,
     sshHost,
@@ -476,11 +507,10 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     sshPassword,
     sshPort,
     sshUsername,
-    tunnelKind,
   ]);
 
   const httpProxyTunnel = useMemo((): HttpProxyTunnelConfig | undefined => {
-    if (tunnelKind !== 'httpProxy') return undefined;
+    if (effectiveTunnelKind !== 'httpProxy') return undefined;
     return {
       enabled: true,
       host: httpProxyHost,
@@ -491,17 +521,17 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
       connectTimeoutSecs: Number(httpProxyTimeout) || 30,
     };
   }, [
+    effectiveTunnelKind,
     httpProxyHost,
     httpProxyPassword,
     httpProxyPort,
     httpProxyScheme,
     httpProxyTimeout,
     httpProxyUsername,
-    tunnelKind,
   ]);
 
   const websocketTunnel = useMemo((): WebSocketTunnelConfig | undefined => {
-    if (tunnelKind !== 'websocket') return undefined;
+    if (effectiveTunnelKind !== 'websocket') return undefined;
     return {
       enabled: true,
       url: wsUrl,
@@ -509,51 +539,64 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
       authToken: wsAuthToken || undefined,
       connectTimeoutSecs: Number(wsTimeout) || 30,
     };
-  }, [tunnelKind, wsAuthToken, wsMode, wsTimeout, wsUrl]);
-
-  const meta = DB_REGISTRY[databaseType];
-  const formVariant = meta?.connectionForm ?? 'standard';
-  const isDriverForm = !!getDriverConnectionForm(formVariant);
-  const hasUsername = !!meta?.defaultUser || !!meta?.requiresUsername || isDriverForm;
-  const supportsSSL = !!meta?.supportsSSL;
-  const supportsSSH = !!meta?.supportsSSH;
+  }, [effectiveTunnelKind, wsAuthToken, wsMode, wsTimeout, wsUrl]);
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const validate = useCallback((): boolean => {
+    // Shared by every form variant, driver-validator forms included: a dangling
+    // tunnel reference must refuse to save (G3 / P1-8). This used to sit after
+    // the driver-validator early return, so `redis` forms could persist a
+    // reference the backend is guaranteed to reject (tunnel-form-BUG-001).
+    const errors: Record<string, string> = {};
+    if (tunnel.tunnelRefMissing) errors.tunnelId = t('newConn.tunnelMissing');
+    // Inline-tunnel requirements belong to the same shared prologue: leaving them
+    // below the driver-validator early return enforced the tunnel domain for only
+    // half the form variants (same refactor gap as BUG-001). The `!tunnelId` guard
+    // keeps them scoped to the `inline` source — a `saved` reference is validated
+    // by id, never by these fields.
+    if (!tunnelId && effectiveTunnelKind === 'httpProxy') {
+      if (!httpProxyHost.trim()) errors.httpProxyHost = t('newConn.required');
+      if (!httpProxyPort.trim() || isNaN(Number(httpProxyPort)))
+        errors.httpProxyPort = t('newConn.required');
+    }
+    if (!tunnelId && effectiveTunnelKind === 'websocket') {
+      if (!wsUrl.trim()) errors.wsUrl = t('newConn.required');
+    }
+    if (!tunnelId && effectiveTunnelKind === 'ssh' && sshEnabled) {
+      if (!sshHost.trim()) errors.sshHost = t('newConn.required');
+      if (!sshUsername.trim()) errors.sshUsername = t('newConn.required');
+    }
+
     const driverValidator = getDriverValidator(formVariant);
     if (driverValidator) {
-      const errors = driverValidator(
-        { host, port, database, username, password, schema, options: connectionOptions },
-        t as (key: string) => string,
+      // Driver validators only report their own connection fields; the tunnel
+      // domain keys above belong to this hook, so merging cannot clobber them.
+      Object.assign(
+        errors,
+        driverValidator(
+          { host, port, database, username, password, schema, options: connectionOptions },
+          t as (key: string) => string,
+        ),
       );
       setValidationErrors(errors);
       return Object.keys(errors).length === 0;
     }
-    const errors: Record<string, string> = {};
+
+    // Generic (non-driver) connection fields keep their original scope: driver
+    // validators own their own host/port/database rules.
     if (meta?.connectionMode === 'file') {
       if (!database.trim()) errors.database = t('newConn.required');
     } else if (!isDriverForm) {
       if (!host.trim()) errors.host = t('newConn.required');
       if (!port.trim() || isNaN(Number(port))) errors.port = t('newConn.required');
     }
-    if (!tunnelId && tunnelKind === 'httpProxy') {
-      if (!httpProxyHost.trim()) errors.httpProxyHost = t('newConn.required');
-      if (!httpProxyPort.trim() || isNaN(Number(httpProxyPort)))
-        errors.httpProxyPort = t('newConn.required');
-    }
-    if (!tunnelId && tunnelKind === 'websocket') {
-      if (!wsUrl.trim()) errors.wsUrl = t('newConn.required');
-    }
-    if (!tunnelId && tunnelKind === 'ssh' && sshEnabled) {
-      if (!sshHost.trim()) errors.sshHost = t('newConn.required');
-      if (!sshUsername.trim()) errors.sshUsername = t('newConn.required');
-    }
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   }, [
     connectionOptions,
     database,
+    effectiveTunnelKind,
     formVariant,
     host,
     httpProxyHost,
@@ -567,8 +610,8 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     sshHost,
     sshUsername,
     t,
+    tunnel.tunnelRefMissing,
     tunnelId,
-    tunnelKind,
     username,
     wsUrl,
   ]);
@@ -591,17 +634,17 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
       colorTag,
       readOnly,
       connectionOptions,
-      sshTunnel: tunnelId ? undefined : tunnelKind === 'ssh' ? sshTunnel : undefined,
-      tunnelKind: tunnelKind === 'none' ? undefined : tunnelKind,
+      sshTunnel: tunnelId ? undefined : effectiveTunnelKind === 'ssh' ? sshTunnel : undefined,
+      tunnelKind: effectiveTunnelKind === 'none' ? undefined : effectiveTunnelKind,
       tunnelId: tunnelId || undefined,
       httpProxyTunnel: tunnelId
         ? undefined
-        : tunnelKind === 'httpProxy'
+        : effectiveTunnelKind === 'httpProxy'
           ? httpProxyTunnel
           : undefined,
       websocketTunnel: tunnelId
         ? undefined
-        : tunnelKind === 'websocket'
+        : effectiveTunnelKind === 'websocket'
           ? websocketTunnel
           : undefined,
     });
@@ -611,6 +654,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     database,
     databaseType,
     editId,
+    effectiveTunnelKind,
     group,
     host,
     httpProxyTunnel,
@@ -623,7 +667,6 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     sslMode,
     t,
     tunnelId,
-    tunnelKind,
     username,
     websocketTunnel,
   ]);
@@ -665,6 +708,7 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
   );
 
   return {
+    ...tunnel,
     name,
     setName,
     databaseType,
@@ -690,67 +734,6 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     readOnly: driverReadOnly || readOnly,
     driverReadOnly,
     setReadOnly,
-    tunnelKind,
-    setTunnelKind,
-    tunnelId,
-    setTunnelId,
-    savedTunnels,
-    sshEnabled,
-    setSshEnabled: (v: boolean) => {
-      setSshEnabled(v);
-      if (v) setTunnelKindState('ssh');
-      else if (tunnelKind === 'ssh') setTunnelKindState('none');
-    },
-    sshHost,
-    setSshHost,
-    sshPort,
-    setSshPort,
-    sshUsername,
-    setSshUsername,
-    sshAuthMethod,
-    setSshAuthMethod,
-    sshPassword,
-    setSshPassword,
-    sshKeyPath,
-    setSshKeyPath,
-    sshPassphrase,
-    setSshPassphrase,
-    sshJumpEnabled,
-    setSshJumpEnabled,
-    sshJumpHost,
-    setSshJumpHost,
-    sshJumpPort,
-    setSshJumpPort,
-    sshJumpUsername,
-    setSshJumpUsername,
-    sshJumpAuthMethod,
-    setSshJumpAuthMethod,
-    sshJumpPassword,
-    setSshJumpPassword,
-    sshJumpKeyPath,
-    setSshJumpKeyPath,
-    sshJumpPassphrase,
-    setSshJumpPassphrase,
-    httpProxyHost,
-    setHttpProxyHost,
-    httpProxyPort,
-    setHttpProxyPort,
-    httpProxyScheme,
-    setHttpProxyScheme,
-    httpProxyUsername,
-    setHttpProxyUsername,
-    httpProxyPassword,
-    setHttpProxyPassword,
-    httpProxyTimeout,
-    setHttpProxyTimeout,
-    wsUrl,
-    setWsUrl,
-    wsMode,
-    setWsMode,
-    wsAuthToken,
-    setWsAuthToken,
-    wsTimeout,
-    setWsTimeout,
     formVariant,
     hasUsername,
     supportsSSL,
