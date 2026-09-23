@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-009 · BUG-007 修复把 `RedisWorkbench.tsx` 推过本轨 §5 硬钉的 `≤800` 行上限（787 → 805）
 
 - **登记**：第 3 轮复测 Tester（round-3，全新实例），2026-09-23
-- **状态**：`待修复`
+- **状态**：`待复测（round-3 修复后）`
 - **严重度**：**低**（无功能影响、不阻断四门禁；但撞的是本轨 `progress.md` §5「环境纪律（**违反即返工**）」明文条 + AGENTS.md 单文件规模条，且第 2 轮自己的审计把「787 行 ≤ 800 ✅」列为核对项 ⇒ 一次提交即破线，属纪律回归）
 - **来源**：round-3 文件面审计（简报验收动作 #1「核对 `RedisWorkbench.tsx` ≤800 行」）
 
@@ -47,3 +47,66 @@ $ git show --numstat --format="" 9714509b1 -- …/RedisWorkbench.tsx
   `ui/shared/` 下的小纯函数（如 `needsStaleSameKeyGuard(selectedKey, detailKey, key)`）并 co-locate 单测，
   调用点只剩一行 —— 与 PRD §5 点名的「组件薄 + 纯逻辑模块厚」一致。
 - 验收：`wc -l` ≤ 800 且四门禁（尤其 G1/G4）保持绿；`round2Probe` P1b 与 `testerRound3Probe` A/B/C 不得转红。
+
+## 修复记录（coder round-3）
+
+- **修复者**：修复轮第 3 回合 Rescue Coder（`w3e-rescuer-r3`，全新实例）。
+- **commit**：`cbecba255` —— `refactor(redis-ui): trim the BUG-007 guard comment back under the 800-line rule (BUG-009)`。
+- **修法选型：建议 (a) 注释瘦身（最小改动、语义无损）**，未采用 (b) 抽模块（本回合只做"回到硬线内"，
+  不扩大改动面；(b) 可留作后续重构）。
+
+### 实测行数（逐字）
+
+```text
+$ wc -l packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx   # 修复前
+805
+$ wc -l packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx   # 修复后
+795
+$ git diff --numstat -- packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+6      15      packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+```
+
+⇒ **805 → 795 行（净 −10），回到 `≤800` 硬线内 ✅**。
+
+### 改动内容
+
+把 `:341-355` 的 **15 行** BUG-007 说明性注释压缩为 **6 行**（守卫本体 3 行代码**逐字未动**），
+保留要点：① 跨不一致态的同键重取**不是**下面的 in-place 分支（会翻 `loading`、重挂编辑器、静默毁草稿）；
+② 此守卫是**同键入口的单一收口**；③ 放弃愈合、答 keep 有界；④ 免问路径（一致性重取、写后回读）保持免问。
+根因与设计意图已在 BUG-007 / BUG-008 台账与 `round2Probe` 文件头各留一份，源码内不必三次重复
+（与建议 (a) 的理由一致）。
+
+```ts
+// BUG-007: `selectedKey` and `keyDetail.key` can still disagree, and a
+// same-key refetch across that gap is NOT the in-place one below — it flips
+// `loading`, remounts the editor and silently wipes the draft. Re-ask here,
+// the single choke point for every same-key entry: discard heals, keep is
+// bounded (ask-free paths — consistent refetches, post-write reloads — stay
+// ask-free).
+if (key === selectedKey && keyDetail?.key !== key) {
+```
+
+- 注释压缩后**仍准确**：BUG-008 修复后正门已由 `handleKeyCtxRename` 的"先问后改"堵住，该守卫转为
+  **防御性收口**（`selectedKey` 与 `detail.key` 现在恒一致，分支正常不再命中，但保留以防未来重现）。
+
+### 不回归核对
+
+- `round2Probe` P1b 与 `testerRound3Probe` A/B/C **未转红**（G1 全绿）。
+- 四门禁（逐字尾部）：
+
+```text
+G1  Test Files  60 passed (60)
+         Tests  564 passed (564)
+G2  [tsc exit: 0]
+G3  ✓ built in 4.69s
+    [vite build exit: 0]
+G4  [check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+    [boundaries exit: 0]
+```
+
+### 与本条台账事实的关系
+
+- 本条登记的 787 → 805 破线事实不变（历史）；本回合只负责**回到 ≤800**。
+- 未改动本轨其他生产文件行数；`commandMeta.ts`（873 行，存量、本轨零触碰）不属本条射程，本次未动。
+- **未自测代替复测**：由协调者派全新 Tester 做第 4 轮复测裁定（核对 `wc -l` 与四门禁）。
+
