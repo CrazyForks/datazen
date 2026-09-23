@@ -87,10 +87,12 @@ async function runSessionBootstrap() {
       .catch((e: unknown) => done(String(e)));
   });
 
-  // Create a per-worker isolated PG database so parallel specs never conflict.
-  _workerDb = createWorkerDatabase();
-
-  await seedDefaultPgConnection(browser, _workerDb);
+  // Database-fixture-only suites can opt out of global worker DB creation and
+  // seeding. This keeps their writes scoped to their own unique-prefix tables.
+  if (process.env.E2E_SKIP_WORKER_DATABASE !== '1') {
+    _workerDb = createWorkerDatabase();
+    await seedDefaultPgConnection(browser, _workerDb);
+  }
 
   // Reload page so the new language and seeded connections take effect
   await browser.execute(() => location.reload());

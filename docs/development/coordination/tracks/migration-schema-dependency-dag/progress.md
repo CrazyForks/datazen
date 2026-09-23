@@ -1,6 +1,6 @@
 # migration-schema-dependency-dag
 
-Phase: READY_FOR_RETEST
+Phase: TEST_FAILED
 
 ## Scope
 
@@ -22,7 +22,7 @@ This track covers the existing independent planner boundaries. It does **not** i
 - [ ] A combined reviewed plan represents supported dependencies across all selected table, view, routine, trigger, sequence, and type operations and validates them against source/target snapshots.
 - [ ] Dependencies inside opaque view/routine SQL bodies are extracted or supplied as driver metadata; unresolved references block execution instead of being silently omitted.
 - [ ] End-to-end mixed-kind apply and reverse drop are verified on PostgreSQL and MySQL using WDIO, with rendered SQL and read-back assertions.
-- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes the supported WDIO cases, and files any bugs.
+- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes all supported WDIO cases without failures, and files any bugs. Focused checks completed, but the independent WDIO retest found BUG-003 on PostgreSQL and BUG-004 on both dialects; the changed-executable-line coverage threshold was not independently certified.
 
 The targeted graph and planner unit tests below pass, but they do not satisfy these cross-category and live-database acceptance items. Do not mark this track PASSED until its supported boundary is independently reviewed; do not treat that result as closing the unified-plan release blocker.
 
@@ -56,5 +56,11 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 
 ## Independent Tester
 
-- The prior independent run reported BUG-001..003 as `TEST_FAILED`; the fixes below are now `READY_FOR_RETEST`. A fresh Tester must re-run the focused checks and the registered PG/MySQL WDIO journeys with plan SQL and read-back assertions before closing this track.
+- Status: `TEST_FAILED`. BUG-001 and BUG-002 passed independent live PostgreSQL journeys. BUG-003 passed on MySQL but failed closed on PostgreSQL due to a qualified/unqualified FK reference identity mismatch. Independent plan-only checks additionally reproduced BUG-004 on both PostgreSQL and MySQL: selecting just a referenced target parent exposes a `DROP TABLE` with no requirement while its FK child is left unselected. Neither failing plan was deployed.
+- The original six serial WDIO journeys produced 5 passed and 1 failed: PG create+FK and existing-table FK passed; MySQL create+FK, existing-table FK, and reverse-order target-only drop passed; PostgreSQL target-only drop failed with an unsupported `target-only-table-drop-order` requirement and zero statements. Both parent-only boundary tests independently showed the unsafe executable drop on their respective dialects.
+- WDIO was run directly against the webdriver binary from this worktree, with an absolute spec path, isolated temporary `DATAZEN_DATA_DIR`, port 4445, and `E2E_SKIP_WORKER_DATABASE=1`. No `pnpm e2e`, runner setup/reset script, global worker database bootstrap, or database teardown ran. Every fixture used unique per-spec table names; test `finally` cleanup ran, PostgreSQL cleanup was verified by querying `information_schema` (0 matching fixture tables), and 4445 was free afterward. The initial bad relative-spec invocation failed before running the test and did not create fixtures.
+- The PG/MySQL boundary plans were inspected only; they were not deployed. Do not interpret the WDIO failure as an execution failure or claim either parent-only drop is safe.
+- Independent focused checks: `cargo test -p datazen --lib schema_diff::` — 154 passed; `cargo test -p datazen-driver-api migration` — 15 passed; `cargo test -p datazen-driver-postgres` — 132 library tests passed plus live `schema_foreign_key_introspection` 1/1; `cargo test -p datazen-driver-mysql` — 113 library and 4 cross-database integration tests passed, with one existing DB-gated test skipped. TypeScript typecheck passed. Changed Rust sources passed `rustfmt --check` and `git diff --check`; workspace-wide `cargo fmt --all -- --check` only flagged generated, ignored `src-tauri/src/driver_init.rs` ordering.
+- Independent instrumented Host Schema Diff suite passed 154/154 using `RUSTFLAGS=-Cinstrument-coverage`, `CARGO_INCREMENTAL=0`, `xcrun llvm-profdata`, and `xcrun llvm-cov`. Measured whole-file line rates: `plan.rs` 89.21%, `operation_dependencies.rs` 71.09%, `operation_dependency_references.rs` 81.12%, `dependencies.rs` 86.36%, and `commands/schema_diff.rs` 15.52% (the latter includes substantial pre-existing code). The live PostgreSQL integration profile showed changed FK catalog query lines executed twice and reference normalization once. These file-level numbers do not independently certify ≥80% coverage across all changed executable lines.
+- Formal webdriver Tauri build produced the app binary used by WDIO; the overall packaging command later exited in the DMG hook. DMG packaging is explicitly excluded from this feature gate.
 - This changeset does not close the separate combined-plan/unified-planner release blocker above.

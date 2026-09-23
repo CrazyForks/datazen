@@ -230,7 +230,7 @@ async function deployPlan(fixture: DialectFixture, step: string, destructive = f
   await captureJourneyStep(step);
   await advanceSchemaDiffToReview();
   if (destructive) {
-    const confirmation = await $('[data-testid="schema-diff-deploy-panel"] input[type="text"]');
+    const confirmation = await $('[data-testid="schema-diff-deploy-panel"] input[placeholder="DEPLOY"]');
     await confirmation.setValue('DEPLOY');
   }
   await deploySchemaDiffPlan();
@@ -243,16 +243,30 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture) {
   await regenerate.waitForClickable({ timeout: 10000 });
   await regenerate.click();
 
-  await browser.waitUntil(
-    async () => {
-      const statements = await readPlanStatements();
-      return (
-        statements.some((sql) => sql.includes(fixture.parentTable)) &&
-        statements.some((sql) => sql.includes(fixture.childTable))
-      );
-    },
-    { timeout: 30000, timeoutMsg: 'target-only drop plan did not regenerate' },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const statements = await readPlanStatements();
+        return (
+          statements.some((sql) => sql.includes(fixture.parentTable)) &&
+          statements.some((sql) => sql.includes(fixture.childTable))
+        );
+      },
+      { timeout: 30000, timeoutMsg: 'target-only drop plan did not regenerate' },
+    );
+  } catch {
+    const statements = await readPlanStatements();
+    const planPanel = await $('[data-testid="schema-diff-plan-panel"]');
+    const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+    const errors = await $$('.error-message');
+    const visibleErrors: string[] = [];
+    for (const error of errors) {
+      if (await error.isDisplayed().catch(() => false)) visibleErrors.push(await error.getText());
+    }
+    throw new Error(
+      `target-only drop plan did not regenerate; plan=${await planPanel.getText().catch(() => '<unavailable>')}; requirements=${await requirements.getText().catch(() => '<none>')}; statements=${statements.join('\n') || '<none>'}; errors=${visibleErrors.join(' | ') || '<none>'}`,
+    );
+  }
   const statements = await readPlanStatements();
   const childDrop = statements.findIndex(
     (sql) => /\bDROP\s+TABLE\b/i.test(sql) && sql.includes(fixture.childTable),
@@ -346,6 +360,37 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
         await deployPlan(fixture, `schema-dag-${dialect}-target-only-drop`, true);
         expect(await tableCount(fixture)).toBe(0);
         expect(await foreignKeyCount(fixture)).toBe(0);
+      });
+    });
+  }
+
+  for (const dialect of ['postgresql', 'mysql'] as const) {
+    it(`SD-DAG-boundary-${dialect}-selected-parent-blocks-unselected-dependent`, async () => {
+      await withFixture(dialect, 'target-only', mainWindow, async (fixture) => {
+        await openSchemaDiffWindow();
+        await selectSchemaDiffEndpoints(fixture.sourceName, fixture.targetName);
+        await setSchemaDiffTables(fixture.parentTable);
+        await clickSchemaDiffCompare();
+        await clickSchemaDiffGeneratePlan();
+
+        const allowDestructive = await $('[data-testid="schema-diff-allow-destructive"]');
+        if (!(await allowDestructive.isSelected())) await allowDestructive.click();
+        const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
+        await regenerate.waitForClickable({ timeout: 10000 });
+        await regenerate.click();
+        await browser.waitUntil(
+          async () =>
+            (await readPlanStatements()).some((sql) => sql.includes(fixture.parentTable)),
+          { timeout: 30000, timeoutMsg: 'selected parent drop plan did not regenerate' },
+        );
+
+        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+        const statements = await readPlanStatements();
+        if (!(await requirements.isExisting())) {
+          throw new Error(
+            `unsafe boundary: selecting only referenced parent exposed an executable DROP while its FK child remained unselected; statements=${statements.join('\n')}`,
+          );
+        }
       });
     });
   }
