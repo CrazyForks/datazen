@@ -1,6 +1,6 @@
 # driver-ui-type-gate-BUG-003 · 新增特征测试未覆盖两处改动行：SearchableInfoPanel.tsx:135 / :155 的 `t()` 调用零执行
 
-- **状态**：待复测（round-1 修复后）
+- **状态**：待修复（round-2 复测核心全绿但验收第 4 项失败，按协议退回；详见文末复测记录）
 - **严重度**：低（运行时行为无影响；验收口径阻断）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd` · 2026-09-23
 - **登记依据**：round-1 覆盖率复核（Tester 阶段 C，本轨无 80% 基线，从严口径「改动行必须全被测到」）
@@ -182,3 +182,114 @@ statements 38/49  = 77.55%   （修复前 37/49 = 75.51%）
 
 `待修复` → **`待复测（round-1 修复后）`**。等新 Tester 复核：(a) 改动行覆盖 10/10（line135/154 count>0）；
 (b) 断言零英文文案字面量；(c) 三门禁数字 tsc 0 / 52·563 / 0 blocking+4 advisory。
+
+## 复测记录（round-2）
+
+- 复测人：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例，未复用修复轮）· 2026-09-23
+- 基线：`795cf8fca`（Coder 修复轮终态；复测起手 `git status --porcelain` 空）
+
+### A. 文件面审计 —— PASS
+
+`git diff 4253e6cef..HEAD --stat` 恰 3 个允许文件：`SearchableInfoPanel.test.tsx` +40 /
+`bugs/driver-ui-type-gate-BUG-003.md` +109 / `progress.md` +24；`git log 4253e6cef..HEAD` =
+`3f2a12b04`（用例 1）→ `95779d8d8`（用例 2）→ `795cf8fca`（台账）。**零生产 / i18n / scripts /
+tsconfig / Cargo 差异**，与自报一致。
+
+### B. 覆盖核心复验（BUG-003 本体）—— 全部通过
+
+复现命令原样（`--coverage.all=false` + json/json-summary/text 三 reporter），读 `coverage/coverage-final.json`：
+
+```
+branch@134 cond-expr [2,4]
+  loc#0 line 135 col 14 count 2     ← round-1 = 0，现 >0 ✓
+  loc#1 line 136 col 14 count 4
+branch@153 binary-expr [10,6,1]
+  loc#0 line 153 col 9 count 10
+  loc#1 line 153 col 20 count 6
+  loc#2 line 154 col 10 count 1     ← round-1 = 0，现 >0 ✓（终臂渲染 ⇒ :155 执行）
+```
+
+文件级（coverage-summary.json，与 Coder 自报逐字一致）：**lines 36/46 · branches 35/47 ·
+functions 14/15 · statements 38/49**（round-1 为 35/46 · 32/47 · 13/15 · 37/49）。
+
+**10/10 改动行清单**（全量零计数实体扫描：12 个 count=0 的 branch loc 无一落在改动行；
+唯一 line127 col21 为 loading 真臂非改动代码、round-1 已豁免）：
+
+| # | 行 | 实体计数 | 判定 |
+|---|---|---|---|
+| 1 | :3 `Button` import | 不在未覆盖语句集（21,22,23,24,71,74,75,80,82,92,113） | ✓ |
+| 2 | :108 placeholder `t()` | 同上 | ✓ |
+| 3 | :121 `variant="secondary"` | 同上 | ✓ |
+| 4 | :127 `t(refresh)` | branch loc#1 count **10** | ✓ |
+| 5 | :135 `t(infoMatched)` | branch loc#0 count **2**（原 0） | ✓ |
+| 6 | :136 `t(infoEntries)` | branch loc#1 count **4** | ✓ |
+| 7 | :138 `t(infoSections)` | branch loc count **5** | ✓ |
+| 8 | :155 `t(infoNoMatch)` | 经 branch@153 loc#2（line154）count **1**（原 0） | ✓ |
+| 9 | :160 `t(infoHint)` | 经 branch@158 loc#2（line159）count **4** | ✓ |
+| 10 | :218 对象解构 | statement count **3** | ✓ |
+
+未覆盖语句全集 21,22,23,24,71,74,75,80,82,92,113 均非改动行（107 已被新用例 onChange 覆盖）。
+
+### C. 反向变异（Tester 独立执行，非采信自报）
+
+- **M-A**：:135 `t(infoMatched)`→`t(infoEntries)` ⇒ diff 恰 1 行；单文件跑 **`1 failed | 3 passed`，
+  红=用例 1（test:87 `getByText(/redis\.monitor\.infoMatched/)`）**；`git checkout` 还原、树净。
+  （Coder 自报 `1 failed | 2 passed` 系其第 1 个 commit 后 3 用例状态下所测，与终态 4 用例不矛盾。）
+- **M-B**：:155 `t(infoNoMatch)`→`t(infoHint)` ⇒ diff 恰 1 行；**`1 failed | 3 passed`，
+  红=用例 2（test:106 `getByText('redis.monitor.infoNoMatch')`）**；还原、树净。
+- 双向矩阵闭环：改动行 ↔ 用例一一钉死，互不串染。
+
+### D. 偏离建议裁定 —— 采纳 Coder 方案（源码级）
+
+round-1 建议的 `mock sections: []` 路线不可达终臂：`reconstructInfo({sections: []})` 返回 `''` ⇒
+`rawInfo=''` ⇒ :153 `rawInfo &&` 首项短路。「拉取成功 + 零命中过滤」给出真值 `rawInfo` +
+`filtered.sections === []`，是**唯一生产可达** :153-154 终臂的路径。偏离成立、如实入账。
+
+### E. 断言纪律 —— 3/4 子项通过，**1 子项失败 ⇒ 立案 BUG-004**
+
+- ✓ 两条新用例断言 100% 绑 i18n key（`t: key => key` mock，正则/全等皆为 key），零英文文案字面量；
+- ✓ 零 `any`、零 `@ts-ignore`；
+- ✓ invoke 参数形状 `{dbSessionId, section, search, nodeAddr}` 与真实 IPC 一致（用例 1 钉住）；
+- ✗ **mock 形状 ≠ 真实 IPC**：fixture `entries: [{key, value}]`（:21-26 自称 wire shape）vs 后端
+  `ops_observe.rs:239 entries: Vec<(String, String)>` ⇒ serde 线上为 `[["redis_version","7.2.0"]]`，
+  且 `json_ok`→host `execute.rs`→`driverCommands`→`unwrapData`→`as` 断言**全链零转换**。
+  ⇒ 新立 **`driver-ui-type-gate-BUG-004`**（证据链、二选一修复方向、跨轨提示见该文件）。
+
+### F. 三门禁（提交态 `795cf8fca` 严格串行，逐字尾部）—— 全绿
+
+```
+npx tsc --noEmit
+[tsc exit: 0]                      ← 零输出
+
+npx vitest run --config vitest.drivers.config.ts
+ Test Files  52 passed (52)
+      Tests  563 passed (563)
+[vitest exit: 0]
+
+node scripts/check-driver-import-boundaries.mjs
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1465 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[boundaries exit: 0]
+```
+
+4 条 advisory 行位与 round-1 逐字一致（0 新增）；561+2=563 与基线吻合。
+
+### G. round-1 遗留快检
+
+- tsconfig `__tests__` 排除仍在（根 `tsconfig.json:28/:31`，42 测试错误口径不变）✓ 报告制维持；
+- `redis.monitor.refresh` 键在 `src/locales` 仍无注册（连 `infoNoMatch`/`infoHint` 亦无）——
+  预存在、i18n 禁写、round-1 已入 §7 挂账，**不立案** ✓。
+
+### 状态流（round-2）
+
+`待复测（round-1 修复后）` → **`待修复`**。
+
+失败细节：本 bug 的覆盖核心（B/C）与三门禁（F）**本轮实测全绿**，失败点不在本 bug 而在验收序列
+第 4 项的 mock 保真度子项（E ✗，BUG-004）。按协议「任一验收项失败 ⇒ BUG-003 退回 `待修复`、
+一问题一文件另立 BUG-004、本轨判 FAIL」执行：本 bug 待 BUG-004 裁决修复后随 round-3 一并复测
+（fixture 形状若变，line135/154 计数须重证）。复测循环计数：**2/5**（round-1 首判失败 1/5、
+round-2 复测未确认关闭 2/5）。

@@ -1,5 +1,5 @@
 - 任务: 根 `tsc --noEmit` 打通驱动 UI 类型盲区（REDIS_WORKSPACE_UX P0 R 清单第 9 项）：tsconfig 纳入 `packages/drivers/*/ui` + 清零清点出的生产类型错误
-- 状态: **TEST_FAILED（第 1 轮，1 个 bug）**
+- 状态: **TEST_FAILED（第 2 轮，1 个 bug）**
 - 编码 commit: `c2d1c1c25` → `e507cd74c` → `b0d486347` → 本台账 commit
 - 测试 commit: `7b2731e42`（T1-T5 台账）→ `794dfac50`（BUG-003 登记）→ 本终局 commit（T6-T8 + 终判）
 - 合并 commit: —（TEST_FAILED，等 Coder 修复 BUG-003 后派新 Tester 复测）
@@ -325,3 +325,40 @@ Tester 提交清单：
   M1 维持 Tester 裁定不补。
 - **状态**：`BUG-003` → `待复测（round-1 修复后）`；本轨待新 Tester 复测（覆盖 10/10 + 断言口径 + 三门禁数字）。
 - **心跳**：2026-09-23 12:29。
+
+# 复测记录（round-2 · Tester · 2026-09-23）
+
+- **复测人**：全新实例 Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（未复用编码/修复轮任何会话）。
+- **基线**：`795cf8fca`（修复轮终态），起手树净。
+- **文件面审计** PASS：`git diff 4253e6cef..HEAD --stat` 恰 3 个允许文件（test +40 / BUG-003 +109 /
+  progress +24），零生产/i18n/scripts/tsconfig/Cargo 差异；commit 序列与自报逐字一致。
+- **BUG-003 覆盖核心** PASS：
+  - `branch@134 loc#0 line 135 count 2`（原 0）、`branch@153 loc#2 line 154 count 1`（原 0），均 >0；
+  - 文件级 **lines 36/46 · branches 35/47 · functions 14/15 · statements 38/49** —— 与自报逐字一致；
+  - **10/10 改动行**（全量零计数扫描：12 个零 loc 无一落改动行，:127 col21 loading 臂非改动代码已豁免）；
+  - 独立反向变异：**M-A** :135 → `1 failed | 3 passed` 红=用例 1（test:87）、**M-B** :155 →
+    `1 failed | 3 passed` 红=用例 2（test:106），各恰 1 行 diff、还原后树净——双向闭环。
+- **偏离裁定**（round-1 建议 `sections: []` vs Coder 改道）：**采纳 Coder 方案**——`reconstructInfo([])` ⇒
+  `rawInfo=''` ⇒ :153 首项短路，建议路线不可达终臂；「拉取成功 + 零命中过滤」是唯一生产可达路径（源码级）。
+- **断言纪律**：i18n key 绑定 100%、零英文文案字面量、零 `any`/`@ts-ignore`、invoke 参数形状一致 —— 通过；
+  **但 mock 形状子项失败**：fixture `entries: [{key,value}]` 自称 wire shape，后端实为
+  `ops_observe.rs:239 Vec<(String, String)>` ⇒ `[["redis_version","7.2.0"]]`，链路
+  （`json_ok` → host `execute.rs` → `driverCommands` → `unwrapData` → `as` 断言）**零转换** ⇒
+  立案 **`bugs/driver-ui-type-gate-BUG-004.md`**（含二选一修复方向，须协调者先裁决契约；跨轨
+  `redis-kvbar-ui` 同型 fixture 仅提示不越权）。
+- **三门禁**（提交态严格串行，逐字）：**tsc exit 0 · drivers vitest `52 passed (52)` / `563 passed (563)` ·
+  boundaries `1465 file(s) scanned · 0 blocking · 4 advisory`**（4 条 advisory 行位与 round-1 逐字一致，0 新增）。
+- **遗留快检**：tsconfig `__tests__` exclude 在（:28/:31）✓；`redis.monitor.refresh` 键仍未注册——报告制维持 ✓。
+- **BUG-003 状态流**：`待复测（round-1 修复后）` → `待修复`（协议「任一验收项失败即退回」；核心本轮实测
+  全绿，待 BUG-004 修复后随 round-3 重证覆盖）。复测循环计数 2/5。
+
+## 终判（第 2 轮）
+
+**TEST_FAILED（第 2 轮，1 个 bug）** — `driver-ui-type-gate-BUG-004`（`info_filtered` 测试 mock 形状与
+真实 IPC 不一致：对象数组 vs 后端二元组数组、链路零转换——验收序列第 4 项 mock 保真度子项失败）。
+
+其余验收项全部通过：文件面审计 ✓ · BUG-003 覆盖核心 10/10 + line135/154 计数 2/1 ✓ · 独立双向变异闭环 ✓ ·
+偏离裁定采纳 ✓ · 断言纪律 3/4 子项 ✓ · 三门禁逐字全绿 ✓ · 台账结构与 round-1 历史保留 ✓ · 遗留快检 status quo ✓。
+
+Tester 提交：本终局 commit `test(coordination): record round-2 retest verdict for driver-ui-type-gate`
+（BUG-004 立案 + BUG-003 复测记录与状态回退 + 本终判 + 状态行翻转）。
