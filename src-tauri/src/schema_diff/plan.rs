@@ -272,7 +272,7 @@ fn is_mysql_character_type(data_type: &str) -> bool {
     )
 }
 
-fn is_known_mysql_default_type(data_type: &str) -> bool {
+fn is_mysql_numeric_default_type(data_type: &str) -> bool {
     matches!(
         normalized_mysql_type_base(data_type).as_str(),
         "tinyint"
@@ -286,13 +286,6 @@ fn is_known_mysql_default_type(data_type: &str) -> bool {
             | "float"
             | "double"
             | "real"
-            | "bit"
-            | "bool"
-            | "boolean"
-            | "date"
-            | "time"
-            | "datetime"
-            | "timestamp"
             | "year"
     )
 }
@@ -356,6 +349,50 @@ fn is_plain_numeric_literal(value: &str) -> bool {
         }
     }
     index == bytes.len()
+}
+
+fn is_plain_integer_literal(value: &str) -> bool {
+    let value = value.trim();
+    let digits = value
+        .strip_prefix('+')
+        .or_else(|| value.strip_prefix('-'))
+        .unwrap_or(value);
+    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn postgres_integer_range(data_type: &str) -> Option<(i128, i128)> {
+    let compact = data_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    if compact.contains('[') {
+        return None;
+    }
+    match compact.split('(').next().unwrap_or(compact.as_str()) {
+        "smallint" | "int2" | "smallserial" | "serial2" => {
+            Some((i16::MIN as i128, i16::MAX as i128))
+        }
+        "integer" | "int" | "int4" | "serial" | "serial4" => {
+            Some((i32::MIN as i128, i32::MAX as i128))
+        }
+        "bigint" | "int8" | "bigserial" | "serial8" => Some((i64::MIN as i128, i64::MAX as i128)),
+        _ => None,
+    }
+}
+
+fn is_compatible_postgres_numeric_literal(target_type: &str, value: &str) -> bool {
+    if let Some((min, max)) = postgres_integer_range(target_type) {
+        return is_plain_integer_literal(value)
+            && value
+                .trim()
+                .parse::<i128>()
+                .map(|number| number >= min && number <= max)
+                .unwrap_or(false);
+    }
+
+    is_postgres_numeric_type(target_type) && is_plain_numeric_literal(value)
 }
 
 fn is_unambiguous_timestamp_expression(value: &str) -> bool {
@@ -473,14 +510,25 @@ fn apply_mysql_string_default_mapping(
         ));
     }
 
-    if is_known_mysql_default_type(source_type) {
-        return Ok(());
+    if is_mysql_numeric_default_type(source_type) {
+        if is_compatible_postgres_numeric_literal(target_type, default)
+            || (is_postgres_boolean_type(target_type)
+                && matches!(
+                    default.trim().to_ascii_lowercase().as_str(),
+                    "true" | "false"
+                ))
+        {
+            return Ok(());
+        }
+        return Err(format!(
+            "Cannot safely translate MySQL numeric default expression `{default}` on column `{}`",
+            column.name
+        ));
     }
 
     // Explicitly preserve only defaults whose SQL meaning is unambiguous for
     // the mapped PostgreSQL type. Everything else requires human review.
-    let safe_for_target = (is_postgres_numeric_type(target_type)
-        && is_plain_numeric_literal(default))
+    let safe_for_target = is_compatible_postgres_numeric_literal(target_type, default)
         || (is_postgres_boolean_type(target_type)
             && matches!(
                 default.trim().to_ascii_lowercase().as_str(),
