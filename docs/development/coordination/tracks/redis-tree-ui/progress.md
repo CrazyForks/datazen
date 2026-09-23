@@ -873,3 +873,43 @@ ii **19 failed**、iii **17 failed**、iv **4 failed**（后者为自带套件�
 
 结论：**PASS**，无新 bug。第 2 轮「全部 613 条测试里执行 0 次、删守卫不会变红」的
 回归裸奔状态**已闭环**：现在删守卫（突变 A）或还原旧行为（突变 B）均立刻打红。
+
+### 4. 四门复跑（提交态、严格串行、逐字留尾）—— 4/4 PASS
+
+**1/4 vitest drivers** `npx vitest run --config vitest.drivers.config.ts` → EXIT=0，尾部：
+
+```
+ Test Files  56 passed (56)
+      Tests  697 passed (697)
+   Start at  15:05:55
+   Duration  10.45s (transform 4.44s, setup 21.51s, import 4.29s, tests 10.28s, environment 28.09s)
+```
+
+（56 files / 697 passed / **0 skipped**（`skipped` 词频 = 0），与自报**逐数吻合**；本轮探针已删除，
+故不掺入探针计数。）
+
+**2/4 tsc** `npx tsc --noEmit` → **tsc exit=0**，输出 **0 行**。
+
+**3/4 build** `npx vite build` → **build exit=0**，尾部：
+
+```
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.66s
+```
+
+（>500kB chunk 警告为**存量基线**，与自报 6.10s 同量级，非本轨引入。）
+
+**4/4 boundaries** `node scripts/check-driver-import-boundaries.mjs` → **boundaries exit=0**，尾部：
+
+```
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1487 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+```
+
+（1487 files / **0 blocking** / 4 advisory，与自报**逐字吻合**；advisory 均为存量宿主引用。）
