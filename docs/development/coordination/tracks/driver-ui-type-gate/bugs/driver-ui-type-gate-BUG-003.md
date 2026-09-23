@@ -1,6 +1,6 @@
 # driver-ui-type-gate-BUG-003 · 新增特征测试未覆盖两处改动行：SearchableInfoPanel.tsx:135 / :155 的 `t()` 调用零执行
 
-- **状态**：待复测（round-1 修复后）→ 待修复（round-2 复测核心全绿但验收第 4 项失败，按协议退回；详见文末复测记录） → **待复测（round-2 覆盖核心已过，随 round-3 重证）**
+- **状态**：**已修复**（第 3 轮复测通过；历史流转见文末「状态流转」）
 - **严重度**：低（运行时行为无影响；验收口径阻断）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd` · 2026-09-23
 - **登记依据**：round-1 覆盖率复核（Tester 阶段 C，本轨无 80% 基线，从严口径「改动行必须全被测到」）
@@ -302,3 +302,11 @@ round-2 复测未确认关闭 2/5）。
 ### 状态流转
 
 `待修复` → **`待复测（round-1 修复后）`** → `待修复`（round-2 因验收第 4 项 mock 保真度失败退回）→ **`待复测（round-2 覆盖核心已过，随 round-3 重证）`**。
+
+## 复测记录（round-3）
+
+round-2 的覆盖核心（改动行 10/10、line135/154 count>0、双向变异闭环、三门禁全绿）已判通过，本轮为跨契约核对：`git diff 4288cc820..HEAD --stat` 恰 5 个允许文件（零生产文件越界），
+`SearchableInfoPanel.test.tsx` fixture 注释已改引 Rust `InfoEntry` 契约、文件内 `infoParse` 零命中，
+Rust `InfoEntry { key, value }` 与 TS `InfoSection.entries` 逐字段同形 ⇒ **跨契约对齐、无回归**。
+门禁复跑 `cargo 342 passed / 0 failed / 4 ignored` · tsc 无输出 · vitest 52 files / 563 passed · boundaries 1465 / 0 blocking / 4 advisory。
+状态流：`待复测（round-2 覆盖核心已过，随 round-3 重证）` → **`已修复`**。

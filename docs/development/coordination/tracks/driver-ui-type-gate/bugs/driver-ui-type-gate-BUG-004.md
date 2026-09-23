@@ -1,6 +1,6 @@
 # driver-ui-type-gate-BUG-004 · 新增测试的 `info_filtered` mock 形状与真实 IPC 不一致：entries 对象数组 vs 后端二元组数组
 
-- **状态**：待修复 → **待复测（round-2 修复后，裁决 A 落地）**
+- **状态**：**已修复**（第 3 轮复测通过；历史流转见文末「状态流转」）
 - **严重度**：中（测试保真度失真 + 掩盖前后端线格式分歧；round-2 验收口径阻断；无运行时崩溃）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例）· 2026-09-23
 - **登记依据**：round-2 复测验收序列第 4 项「断言纪律 + **mock 形状与真实 IPC 一致**（对照 `redisInvoke` 侧的 `info_filtered` 结构）」——前 3 子项通过，末子项**失败**
@@ -193,3 +193,20 @@ Test Files  52 passed (52)
 
 **状态流转**：
 `待修复` → **`待复测（round-2 修复后，裁决 A 落地）`**。awaiting round-3 retest.
+
+## 复测记录（round-3）
+
+- 复测人：Tester（全新实例）· 2026-09-23 · 基线 `c790efb93`
+- **cargo 实测**：`CARGO_TARGET_DIR=/tmp/dz-tg-r3v3 cargo test -p datazen-driver-redis --lib` ⇒
+  `test result: ok. 342 passed; 0 failed; 4 ignored`（含新增 serde pin test，较基线 341 +1）✓
+- **fixture 注释已引用真契约**：`SearchableInfoPanel.test.tsx:21` 现为
+  「Wire shape of `info_filtered` is defined by Rust `InfoEntry` struct (ops_observe.rs), serialized via serde. Objects are the contract.」，
+  该文件 `infoParse` 零命中，不再以 `infoParse.ts` 自证 ✓
+- **跨契约对齐证据**：Rust `ops_observe.rs:245` `InfoEntry { key: String, value: String }`；
+  `:237-240` `InfoSectionFiltered { name, entries: Vec<InfoEntry> }`（已由 `Vec<(String,String)>` 切换）；
+  TS `ui/observe/infoParse.ts:1-4` `InfoSection.entries: Array<{ key: string; value: string }>` —— 两侧逐字段同形，
+  serde 线上对象数组，链路零转换 ⇒ **裁决 A（Backend → object entries）落地成功** ✓
+- **其余三门禁**：tsc 无输出（exit 0）· vitest `52 files / 563 passed` ·
+  boundaries `1465 file(s) scanned · 0 blocking · 4 advisory`（0 新增 advisory）✓
+- 改动面：`git diff 4288cc820..HEAD --stat` 恰 5 个文件，`ops_observe.rs` +47 行等，与裁决 A 声明一致 ✓
+- 状态流：`待复测（round-2 修复后，裁决 A 落地）` → **`已修复`**。
