@@ -236,7 +236,15 @@ where
 #[serde(rename_all = "camelCase")]
 pub struct InfoSectionFiltered {
     pub name: String,
-    pub entries: Vec<(String, String)>,
+    pub entries: Vec<InfoEntry>,
+}
+
+/// Represents a single key-value entry in info_filtered output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoEntry {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -272,7 +280,7 @@ where
             };
             if is_match {
                 matched_count += 1;
-                filtered.push((k.clone(), v.clone()));
+                filtered.push(InfoEntry { key: k.clone(), value: v.clone() });
             }
         }
 
@@ -554,5 +562,40 @@ mod tests {
             }
         }
         assert_eq!(matched, 1);
+    }
+
+    #[test]
+    fn test_info_filtered_entries_serialize_as_objects() {
+        use serde_json;
+
+        let result = crate::ops_observe::InfoFilteredResult {
+            sections: vec![
+                crate::ops_observe::InfoSectionFiltered {
+                    name: "Server".to_string(),
+                    entries: vec![
+                        crate::ops_observe::InfoEntry {
+                            key: "redis_version".to_string(),
+                            value: "7.2.0".to_string(),
+                        },
+                    ],
+                },
+            ],
+            total_entries: 1,
+            matched_entries: 1,
+        };
+
+        let json = serde_json::to_value(&result).expect("serialize");
+        let expected = serde_json::json!({
+            "sections": [
+                {
+                    "name": "Server",
+                    "entries": [{"key": "redis_version", "value": "7.2.0"}]
+                }
+            ],
+            "totalEntries": 1,
+            "matchedEntries": 1
+        });
+
+        assert_eq!(json, expected);
     }
 }
