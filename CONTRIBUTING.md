@@ -52,12 +52,11 @@ node scripts/generate-builtin-locales.mjs
 pnpm typecheck
 pnpm test:unit
 node scripts/resolve-drivers.mjs --drivers=basic
-cargo test -p datazen-driver-api --lib
+cargo test --lib -p datazen-driver-api -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis
 FEATURES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.driver-features.json','utf8')).features.join(','))")
 cargo test -p datazen --lib --features "$FEATURES"
-cargo test -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis --lib
-cargo test -p datazen-ai-api --lib
 node scripts/driver-file-stash.mjs restore
+cargo test -p datazen-ai-api --lib
 ```
 
 If you changed `site/`: `node scripts/check-site-seo.mjs`.
