@@ -1,5 +1,5 @@
 - 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
-- 状态: **READY_FOR_TEST（修复轮第 2 回合完成：BUG-007 已修复待复测，Bug 循环 2/5 → 待第 3 轮复测）**（第 2 轮复测判定 TEST_FAILED 历史：文件面审计 + 四门禁全绿、6/6 已声明修复翻「已修复」、偏差①-⑤ 成立；偏差⑥ 立案 **BUG-007**（I-1 静默毁草稿残留旁路，高）⇒ coder round-2 修复 `9714509b1` + P1b 转正，四门禁提交态复跑全绿（G1 `59 files/560 passed/0 skipped` · tsc 0 · build 0 · boundaries `1473/0/4`）。第 1 轮历史状态：门禁全绿 + 登记 6 条 Bug、Bug 循环 1/5）
+- 状态: **TEST_FAILED（第 3 轮，2 个 bug，Bug 循环 3/5）**（第 3 轮复测：文件面审计 4 文件全落在许可面、四门禁提交态全绿（G1 `60 files/563 passed/1 skipped` · tsc 0 · build 0 · boundaries `1474/0/4`）、覆盖率口径 B `92.43/95.43` 与 round-2 逐位相同；**BUG-007 复测通过翻「已修复」**（P1b 真断言 4/4、5 项变异矩阵 4 项红且即刻还原、有界性实测 = 每次同键点击重问且先问后取）；但同一偏差⑥ 残留不一致态上追出**独立新后果** ⇒ 新登记 **BUG-008**（高 · 保存写向陈旧 `detail.key` ⇒ 静默写错键 + 复活旧键），文件面审计另命中本轨 §5 硬钉 `≤800` 破线 ⇒ 新登记 **BUG-009**（低 · `RedisWorkbench.tsx` 805 行）。round-2 历史：READY_FOR_TEST（BUG-007 修复 `9714509b1` 待复测）→ 第 2 轮 TEST_FAILED（登记 BUG-007）→ 第 1 轮门禁全绿 + 6 条 Bug）
 - 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
 - Tester commit 链（12 笔，边测边 commit，无 >15min 无落盘区间）:
   `dbd9218e0` 阶段 A/B 台账（BOOTSTRAP + 门禁 + E-1/E-2）→ `da4bc9531` 补测 I-1 支路 8 例（+3 skip 占位）
@@ -653,3 +653,162 @@ G4 bound:   ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory fi
 - **commit 链**：`4cc510998`（BUG-007 状态→修复中）→ `9714509b1`（修复 + P1b 取消 skip）→ 本台账 commit → 门禁收口 commit。
 - **门禁（提交态复跑，逐字尾部随收口 commit 补录）**：G1 `npx vitest run --config vitest.drivers.config.ts`（round-2 基线 `59 files / 559 passed / 1 skipped`，P1b 转正 ⇒ 预期 `59 / 560 passed / 0 skipped`）· G2 `npx tsc --noEmit` → 0 · G3 `npx vite build` → 0（禁 `pnpm build`，pre-run deps check 会触 `pnpm install`）· G4 `node scripts/check-driver-import-boundaries.mjs`（round-2 基线 `1473 files / 0 blocking / 4 advisory`，本轮无新增文件）。
 - **门禁收口（提交态复跑，四门全绿 · 逐字尾部）**：G1 `Test Files  59 passed (59)` / `Tests  560 passed (560)` / `G1_EXIT=0`（= 基线 559 + P1b 转正，0 skipped）· G2 `npx tsc --noEmit` → `G2_EXIT=0`（0 错误）· G3 `✓ built in 10.91s` / `G3_EXIT=0`（chunk-size 提示为既有非阻断警告）· G4 `ok (1473 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` / `G4_EXIT=0`（2 allow-listed skipped；4 条 advisory 逐字同 round-2 基线）。收口 commit 即本节所在 commit。
+
+## 第 3 轮复测（round-3 Tester · 全新实例 · 只测不修）
+
+> 心跳 2026-09-23 15:20。复测基线 HEAD `104c87085`（修复轮第 2 回合收口；被验修复 commit `9714509b1`）。
+> 门禁/覆盖率最终复跑落在本轮探针收口态 `e89f4cf7f`。**只测不修：生产码零改动**，5 项变异期临时改动全部
+> `git checkout HEAD --` 还原，逐次 `git status --porcelain` 空 + `md5` 与 `git show HEAD:<file>` 逐字一致。
+
+### R3-A 文件面审计（`git diff 47e2240b7..HEAD --stat` + `git log --oneline 47e2240b7..HEAD`）
+
+修复范围 4 commit、4 文件，**全部落在许可面**：
+
+```text
+4cc510998 chore(redis-detail-ui): BUG-007 状态行置修复中（round-2 开工）
+9714509b1 fix(redis-detail-ui): BUG-007 同键跨不一致态先过守卫，禁止静默毁草稿
+2518b05e2 docs(redis-detail-ui): BUG-007 修复记录+待复测，progress 追加修复轮第 2 回合
+104c87085 docs(redis-detail-ui): progress 头部翻 READY_FOR_TEST + 修复轮第 2 回合四门禁绿证归档
+
+ bugs/redis-detail-ui-BUG-007.md          | 14 +++++++++++++-
+ coordination/.../progress.md             | 13 ++++++++++++-
+ ui/__tests__/round2Probe.test.tsx        |  7 ++++---
+ ui/key-browser/RedisWorkbench.tsx        | 18 ++++++++++++++++++
+```
+
+- **禁改面零命中**：BatchBar / ImportExport / shared / redisInvoke / console / kv-bar / meta / 宿主 `src` /
+  `driver-sdk` / Rust / `scripts` / `hub.md` / 他轨台账 / 其余 6 个已修复 bug 文件（`BUG-001~006` diff 为空）均无改动。
+- **碰禁改面判定：不成立（未碰）** ⇒ 文件面审计**通过**。
+- **`round2Probe.test.tsx` diff 逐字核验**：仅「`describe.skip` → `describe`」+ 两条注释改写，**断言零改动**（非降级占位）。
+- ⚠️ **`RedisWorkbench.tsx` = 805 行 > 800**（修复前 787；修复 commit 净增 **18** 行，自报「+13 行」且未声明破线）
+  ⇒ 违反本轨 §5「环境纪律（违反即返工）」明文条，另案登记 **BUG-009**（低，源码规模纪律）。
+
+### R3-B BUG-007 核心复验（最重要）
+
+1. **P1b 是真断言**：`round2Probe.test.tsx` 4/4 绿（P1a + P1b + P2×2）；P1b 体为 4 条 `expect.soft`
+   （`'draft'` / `data-string-dirty==='true'` / `isDraftDirty()===true` / `data-selected-key==='user:renamed'`），
+   非占位、非恒真。靶向命令：`npx vitest run --config vitest.drivers.config.ts …/round2Probe.test.tsx`。
+2. **变异反向验证矩阵（逐项：改 → 跑 → 记红 → 还原 → 验净）**：
+
+| 变异 | 手法 | 结果 | 红在哪条 |
+| ---- | ---- | ---- | -------- |
+| (i) | 删新守卫 3 行（`:356-358`） | **红** | P1b：`expected 'renamed-value' to be 'draft'` + `'false' to be 'true'`(dirty) + `false to be true`(全局 dirty) ＝草稿丢失现场三连红（`1 failed \| 3 passed`） |
+| (ii) | 条件恒 `false` | **红** | P1b 同上三连红 |
+| (iii) | 守卫「答 keep 也放行」（丢返回值） | **绿（假阴性）** | P1b **未能发现** —— 析取验收句「弹问 **或** 原位重取」在悬起未答时前半支恒真；已由本轮新探针补钉（见 R3-C） |
+| (iv) | `inPlace` 判定置 `false`（`:365`） | **红** | H2（BUG-002 TTL 回读）+ H（BUG-001 同键重点击）＝回归钉有效（`2 failed \| 21 passed`） |
+| (v) | 守卫**过度触发**（丢掉不一致判定） | **红** | 新探针 C 组（一致态零询问）+ H2（`2 failed \| 17 passed \| 1 skipped`）⇒ C 组非空断言 |
+
+3. **有界性实测（构造探针，round2Probe 同款 harness）**：新增 `ui/__tests__/testerRound3Probe.test.tsx`（A/B/C 三组恒绿）：
+   - **A**：不一致态同键点击 ⇒ 必弹守卫，且**弹的过程中 `invokeGetKey` 调用数不变**（先问后取，非"取了再问"）；
+     答「继续编辑」⇒ 原样返回（不重取、草稿三件套完好、`data-selected-key` 不变）；**再点又问、第三次仍问** ⇒ **有界、永不静默** ✅。
+   - **B**：仅答「放弃更改」才真正重取 ⇒ `invokeGetKey(…, 'user:renamed')` 被调用、`input().value==='renamed-value'`、
+     `isDraftDirty()===false`、**不一致愈合**（`redis-header-key-name` 与 `data-selected-key` 同为 `user:renamed`）✅。
+   - **C**：一致态脏草稿同键重点击 ⇒ **零询问**（`leaveDialog()` null、`isLeavePending()` false、草稿完好）✅（无误伤）。
+4. **判据边界 ⇒ `BUG-007` 翻「已修复」，但不掩盖残留态**：修复本体（同键跨不一致先过 I-1）成立 —— 草稿不再静默蒸发，
+   且有界/知情同意/无误伤三臂均有独立测钉。**但「有界化」≠ 消解不一致**：本轮在同一残留态上追出**独立新后果**
+   ⇒ 另案 **BUG-008**（高）。
+
+### R3-C 遗留项 2 裁定（round-2 留给协调者的题）
+
+**裁定：不接受「仅以有界 + 知情同意收口」，必须真消解（(a) 路线）；但 BUG-007 仍判「已修复」。**
+
+- **理由（实测取证，非推演）**：BUG-007 的验收句是「不一致**消解**或有界」，修复者选「有界」，字面成立 ⇒ 本条验收通过。
+  但本轮把探针从「重点击」顺藤到「**保存**」，实测该残留态下点保存：
+  `SET` 实参 `["sess-r3",0,"user:1","draft"]` —— 而屏幕显示与树标签都是 `user:renamed`。
+  即：**静默写错目标键 + 复活已 RENAME 掉的 `user:1` + 保存后 `reloadDetail` 回读新名 ⇒ 用户看到草稿"凭空消失"**（三处同时不符预期，全程零提示）。
+  故「不一致态本身无害」这一隐含前提**被实测推翻** ⇒ 有界化不足以收口，须真消解。
+- **(a) 路线为何此前被否决、又为何现在可行**：round-2 的否决理由是「P1a 钉死 label=new/detail=old，且 `key={detail.key}` 重挂载会立刻毁草稿」——
+  该理由**成立**。因此 (a) 的正确形态不是「改名时同步 detail.key」，而是**先问守卫、后改名**
+  （把 `onUpdateSelectedKey(next)` / `setKeyDetail` 挪到守卫放行之后），这样 keep 时根本不产生不一致态、也不需要重挂载 ⇒ 与 P1a **不冲突**（P1a 断的是 keep 后的状态，而 keep 后该路径已不再改名）。
+  若维持现顺序，则退而用 BUG-008 建议 (b)/(c)（保存目标改用 `selectedKey` / 保存前先守卫）作为最小收口。
+- **对 P1a 的处置建议**：真消解落地后 P1a 的 `redis-header-key-name='user:1'`（detail 不跟名）断言将不再成立，
+  须同步改写为「keep ⇒ 根本未改名（标签仍 `user:1`、detail 仍 `user:1`、草稿完好）」。**本条不擅自改断言**，留给修复轮一并处理。
+
+### R3-D 6 条已修复项回归（round-2 翻「已修复」的 6 条）
+
+逐文件独立复跑，**8 文件 77/77 绿**（`npx vitest run --config vitest.drivers.config.ts` 指定文件）：
+
+| Bug | 验收文件 | 结果 |
+| --- | -------- | ---- |
+| BUG-001 | `dirtyLeaveCoverage.test.tsx`（H 组） | **12/12** ✅ |
+| BUG-002 | 同上（F / H2 / fix-selftest） | 含于 12/12 ✅ |
+| BUG-003 | `stringEditorTesterGaps.test.tsx` | **4/4** ✅ |
+| BUG-004 | `ttlControlsJourney.test.tsx` | **12/12** ✅ |
+| BUG-005 | `keyReadOnlyPolicy.test.ts` | **12/12** ✅ |
+| BUG-006 | `keyReadOnlyPolicy.test.ts` + `stringValueReadOnlyJourney.test.tsx` | 12 + **9/9** ✅ |
+| （附带） | `dirtyLeaveJourney.test.tsx` / `keyHeaderRowJourney.test.tsx` / `redisWorkbench.test.tsx` | 11/11 · 11/11 · 6/6 ✅ |
+
+⇒ **6 条已修复项无回归**。（`keyReadOnlyPolicy 12 + stringValueReadOnlyJourney 9 = 21/21`，与 round-2 记录口径一致。）
+
+### R3-E 四门复跑（提交态 `e89f4cf7f`，串行实跑，逐字留尾）
+
+```text
+G1  npx vitest run --config vitest.drivers.config.ts
+    Test Files  60 passed (60)
+         Tests  563 passed | 1 skipped (564)
+    G1_EXIT=0
+    （= round-2 基线 59 files/560 passed/0 skipped + 本轮新探针 1 file/3 passed/1 skipped；
+      1 skipped = BUG-008 的正确期望钉，按第 1 轮先例不把已知错误行为断成绿断言）
+
+G2  npx tsc --noEmit
+    （0 行输出）  G2_EXIT=0
+
+G3  npx vite build
+    ✓ built in 4.74s
+    G3_EXIT=0
+    （chunk-size 提示为既有非阻断警告；禁 pnpm build）
+
+G4  node scripts/check-driver-import-boundaries.mjs
+    [check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+    [check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+    G4_EXIT=0
+    （files 1473 → 1474 = +本轮新探针文件；blocking 0 硬线保持；4 条 advisory 逐字同 round-2 基线）
+```
+
+### R3-F 覆盖率回归（v8，`--coverage.all=false`）
+
+复算命令与 round-2 同口径：`npx vitest run --config vitest.drivers.config.ts --coverage --coverage.provider=v8
+--coverage.all=false --coverage.reporter=json-summary`，按 `git diff 8981d3078..HEAD` 的本轨生产文件集
+（15 文件 = 口径 A）对 `coverage-summary.json` 求 Σcovered/Σtotal。
+
+| 口径 | round-2 记录 | **round-3 复算** | 差 |
+| ---- | ------------ | ---------------- | -- |
+| **B**（A 剔 `RedisWorkbench.tsx`）**stmts** | 92.43% | **92.43%** | **0.00pp** |
+| **B lines** | 95.43% | **95.43%** | **0.00pp** |
+| B branches / funcs | 85.36 / 90.29 | **85.36 / 90.29** | 0.00pp |
+| A stmts / lines | 88.84 / 91.20 | **88.88 / 91.22** | +0.04 / +0.02pp |
+
+⇒ **≥80% 硬线无回归、无显著下降**；口径 B 与 round-2 **逐位相同**（本轮只加测试、未动生产码）。
+**新守卫确有执行计数**（`coverage-final.json` 逐行）：
+
+```text
+{"id":"147","start":356,"end":358,"count":52}   ← 守卫 if 整块命中 52 次
+{"id":"148","start":357,"end":357,"count":5}    ← !(await requestDraftLeave())
+{"id":"149","start":357,"end":357,"count":4}    ← return（答 keep 早退 4 次）
+branch 23 if loc356 counts [5,47]               ← 进入 5 / 不进入 47（两侧均走）
+branch 25 if loc357 counts [4,1]                ← 早退 4 / 落空 1（answer 两向均覆盖）
+```
+
+### R3-G 断言纪律核验
+
+- 新/改用例**零英文文案字面量**：`round2Probe.test.tsx` P1b 未改断言；新探针 A/B/C 全部用 `data-testid` /
+  `data-*` / i18n key 定位（`useI18n` stub 为 identity `t`），断值仅为键名与 `'draft'` 等测试自造数据，非界面文案。
+- **零几何反查**：全文件无 `getBoundingClientRect` / `offsetWidth` / `clientX` / `getComputedStyle`（grep 零命中）。
+- **无 vacuous 断言**：C 组经变异 (v) 反证会红 ⇒ 非空断言；A 组含「`getKey` 调用数不变」的可证伪计数断言；
+  B 组含 `invokeGetKey(…, 'user:renamed')` 的目标参数断言。
+- P1b 转正方式合规（仅去 `.skip`，未降级断言）。
+
+### R3-H 判定
+
+- **`BUG-007` → `已修复（round-3 复测通过）`**（修复本体成立：草稿不再静默蒸发，有界/知情同意/无误伤三臂 + 4 项变异钉）。
+- **本轮整体 `TEST_FAILED`（第 3 轮，2 个 bug，Bug 循环 3/5）**：
+  - **`BUG-008`（高 · I-1 写错目标键）**：同一偏差⑥ 残留态下保存 `SET` 到陈旧 `detail.key` ⇒ 静默写错键 + 复活旧键 + 草稿可见消失。
+  - **`BUG-009`（低 · 源码规模纪律）**：`RedisWorkbench.tsx` 805 行 > 本轨 §5 硬钉 `≤800`。
+- **不退回 BUG-007 的理由**：BUG-008 是**独立可达路径上的独立后果**（保存 ≠ 重点击），不属 BUG-007 的验收面；
+  且退回会掩盖「修复本体其实成立」这一事实。两条同根（偏差⑥ 残留态），修复时建议一并按 R3-C 的 (a) 路线处理。
+- **commit 链（本轮，边测边 commit，无 >15min 无落盘区间）**：
+  `76a18f0c3`（新探针 A/B/C 补 P1b 析取盲区）→ `b56e37e0f`（探针补 D/E 取证：保存目标键）
+  → `88494c6ad`（登记 BUG-008 + D 组正确期望 skip 钉）→ `86bf7fb20`（BUG-007 复测记录 round-3）
+  → `e89f4cf7f`（登记 BUG-009 + README 索引与判定）→ 本台账 commit。
+- **skip 处置**：`testerRound3Probe.test.tsx` D 组（BUG-008 正确期望）以 `describe.skip` 留在库内，
+  **修复者取消 skip 即复验**；`round2Probe.test.tsx` P1b 已无 skip；`dirtyLeaveCoverage.test.tsx` 全文无 skip。
