@@ -3,7 +3,7 @@ use super::*;
 mod tester_recovery_tests;
 use crate::data_sync::{
     compare_table_pages_to_sink, ChangeOperation, RowChange, SliceRowSource, SyncOptions,
-    TableResult,
+    SyncSourceFilter, TableResult,
 };
 use uuid::Uuid;
 
@@ -52,6 +52,48 @@ fn multi_table_comparison() -> ComparisonResult {
     ])
 }
 
+fn row_bearing_table() -> TableResult {
+    let options = SyncOptions::default();
+    let mut insert = RowChange::insert(
+        vec![Value::Integer(1)],
+        vec![Some(Value::String("new".into()))],
+        &options,
+    );
+    insert.selected = false;
+    let update = RowChange::update(
+        vec![Value::Integer(2)],
+        vec![Some(Value::String("after".into()))],
+        vec![Some(Value::String("before".into()))],
+        vec!["name".into()],
+        &options,
+    );
+    let delete = RowChange::delete(
+        vec![Value::Integer(3)],
+        vec![Some(Value::String("removed".into()))],
+        &options,
+    );
+    let unchanged = RowChange::unchanged(
+        vec![Value::Integer(4)],
+        vec![Some(Value::String("same".into()))],
+        vec![Some(Value::String("same".into()))],
+    );
+    let mut table = TableResult::matched(
+        "source_users",
+        "target_users",
+        vec![insert, update, delete, unchanged],
+    );
+    table.columns = vec!["id".into(), "name".into()];
+    table.column_types = vec!["BIGINT".into(), "TEXT".into()];
+    table.primary_keys = vec!["id".into()];
+    table.unchanged_count = 2;
+    table.warnings = vec!["kept for review".into()];
+    table.source_filter = Some(SyncSourceFilter(serde_json::json!({
+        "filters": [{ "column": "id", "operator": "GREATER_THAN", "value": 0 }],
+        "logic": "AND"
+    })));
+    table
+}
+
 #[test]
 fn small_comparison_stays_inline_and_round_trips() {
     let store = ComparisonStore::from_comparison(comparison(8)).unwrap();
@@ -62,6 +104,76 @@ fn small_comparison_stays_inline_and_round_trips() {
         store.load_table_page("users", "users", 0, 1).unwrap().len(),
         1
     );
+}
+
+#[test]
+fn one_shot_add_table_preserves_rows_metadata_counts_and_order() {
+    let expected = row_bearing_table();
+    let inline =
+        ComparisonStore::from_comparison(ComparisonResult::new(vec![expected.clone()])).unwrap();
+    assert!(!inline.is_spilled());
+    let inline_loaded = inline.load().unwrap();
+    assert_eq!(
+        serde_json::to_value(&inline_loaded.tables[0]).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("stores");
+    let mut writer = StreamingComparisonStoreWriter::new_at(&root, None).unwrap();
+    writer.add_table(expected.clone()).unwrap();
+    let store = writer.finish().unwrap();
+
+    assert!(store.is_spilled());
+    let loaded = store.load().unwrap();
+    assert_eq!(
+        serde_json::to_value(&loaded.tables[0]).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+    let summary = &store.summaries().unwrap()[0];
+    assert_eq!(summary.row_count, 4);
+    assert_eq!(summary.insert_count, 1);
+    assert_eq!(summary.update_count, 1);
+    assert_eq!(summary.delete_count, 1);
+    assert_eq!(summary.unchanged_count, 3);
+    assert_eq!(
+        serde_json::to_value(
+            store
+                .load_table_page("source_users", "target_users", 0, 4)
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::to_value(&expected.rows).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(
+            store
+                .load_table_page("source_users", "target_users", 1, 2)
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::to_value(&expected.rows[1..3]).unwrap()
+    );
+}
+
+#[test]
+fn one_shot_add_table_row_write_failures_abort_without_publishing() {
+    for (failure, expected_message) in [
+        (TestWriteFailure::RowPayload, "comparison row"),
+        (TestWriteFailure::RowIndex, "comparison row index"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("stores");
+        let mut writer = StreamingComparisonStoreWriter::new_at(&root, Some(failure)).unwrap();
+        let directory = writer.directory.clone().unwrap();
+
+        let error = writer.add_table(row_bearing_table()).unwrap_err();
+
+        assert!(error.contains(expected_message));
+        assert!(!directory.exists());
+        assert!(writer.finish().unwrap_err().contains(expected_message));
+        assert!(!directory.exists());
+    }
 }
 
 #[test]

@@ -155,6 +155,7 @@ struct StreamingTable {
     index: File,
     row_count: usize,
     unchanged_count: usize,
+    unchanged_row_count: usize,
     insert_count: usize,
     update_count: usize,
     delete_count: usize,
@@ -210,13 +211,14 @@ impl StreamingComparisonStoreWriter {
         }
     }
 
-    pub(crate) fn add_table(&mut self, table: TableResult) -> Result<(), String> {
+    pub(crate) fn add_table(&mut self, mut table: TableResult) -> Result<(), String> {
+        let unchanged_count = table.unchanged_count;
+        let rows = std::mem::take(&mut table.rows);
         self.begin_table(table)?;
-        let unchanged_count = self
-            .tables
-            .last()
-            .map(|table| table.table.unchanged_count)
-            .unwrap_or_default();
+        for row in rows {
+            self.write_row(row, true)
+                .map_err(|error| error.to_string())?;
+        }
         self.finish_table(unchanged_count)
     }
 
@@ -259,6 +261,7 @@ impl StreamingComparisonStoreWriter {
             index: index_handle,
             row_count: 0,
             unchanged_count: 0,
+            unchanged_row_count: 0,
             insert_count: 0,
             update_count: 0,
             delete_count: 0,
@@ -281,7 +284,10 @@ impl StreamingComparisonStoreWriter {
                     .tables
                     .get_mut(index)
                     .ok_or_else(|| "Data Sync comparison table index is invalid".to_string())?;
-                table.unchanged_count = unchanged_count;
+                let total_unchanged_count = unchanged_count
+                    .checked_add(table.unchanged_row_count)
+                    .ok_or_else(|| "Data Sync unchanged row count overflowed".to_string())?;
+                table.unchanged_count = total_unchanged_count;
                 table.table.unchanged_count = unchanged_count;
                 table.file.flush().map_err(|error| {
                     format!("cannot flush Data Sync comparison row file: {error}")
@@ -410,8 +416,25 @@ impl StreamingComparisonStoreWriter {
     }
 
     fn push_row(&mut self, change: RowChange) -> Result<(), DataSyncError> {
+        self.write_row(change, false)
+    }
+
+    /// Write one compatibility `TableResult` row, including unchanged row
+    /// images. The live comparison sink continues to aggregate unchanged rows
+    /// through `unchanged()` and therefore calls `push_row` with this disabled.
+    fn write_row(
+        &mut self,
+        change: RowChange,
+        preserve_unchanged: bool,
+    ) -> Result<(), DataSyncError> {
         if let Some(error) = &self.failed {
             return Err(DataSyncError::validation(error.clone()));
+        }
+        if change.operation == crate::data_sync::ChangeOperation::Unchanged && !preserve_unchanged {
+            let error =
+                "unchanged rows must not be written to the Data Sync comparison index".to_string();
+            self.abort_storage(error.clone());
+            return Err(DataSyncError::validation(error));
         }
         let result: Result<(), String> = (|| {
             let index = self
@@ -479,10 +502,10 @@ impl StreamingComparisonStoreWriter {
                     })?;
                 }
                 crate::data_sync::ChangeOperation::Unchanged => {
-                    return Err(
-                        "unchanged rows must not be written to the Data Sync comparison index"
-                            .into(),
-                    );
+                    table.unchanged_row_count = table
+                        .unchanged_row_count
+                        .checked_add(1)
+                        .ok_or_else(|| "Data Sync unchanged row count overflowed".to_string())?;
                 }
             }
             Ok(())

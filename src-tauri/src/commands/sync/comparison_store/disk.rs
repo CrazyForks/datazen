@@ -171,9 +171,6 @@ fn validate_manifest(manifest: &DiskManifest, directory: &Path) -> Result<(), St
         if table.row_count != offset_count {
             return Err("Data Sync comparison manifest row index is inconsistent".into());
         }
-        if table.table.unchanged_count != table.unchanged_count {
-            return Err("Data Sync comparison manifest unchanged count is inconsistent".into());
-        }
         let file_name = Path::new(&table.rows_file);
         if file_name.components().count() != 1
             || file_name.file_name().and_then(|name| name.to_str())
@@ -240,6 +237,7 @@ fn validate_operation_counts(directory: &Path, table: &DiskTable) -> Result<(), 
     let mut insert_count = 0usize;
     let mut update_count = 0usize;
     let mut delete_count = 0usize;
+    let mut unchanged_row_count = 0usize;
     for position in 0..table.row_count {
         let offset = if let Some(index) = index.as_mut() {
             read_offset(index)?
@@ -272,13 +270,21 @@ fn validate_operation_counts(directory: &Path, table: &DiskTable) -> Result<(), 
             crate::data_sync::ChangeOperation::Update => update_count += 1,
             crate::data_sync::ChangeOperation::Delete => delete_count += 1,
             crate::data_sync::ChangeOperation::Unchanged => {
-                return Err("Data Sync comparison store contains an indexed unchanged row".into())
+                unchanged_row_count = unchanged_row_count
+                    .checked_add(1)
+                    .ok_or_else(|| "Data Sync unchanged row count overflowed".to_string())?;
             }
         }
     }
+    let expected_unchanged_count = table
+        .table
+        .unchanged_count
+        .checked_add(unchanged_row_count)
+        .ok_or_else(|| "Data Sync unchanged row count overflowed".to_string())?;
     if insert_count != table.insert_count
         || update_count != table.update_count
         || delete_count != table.delete_count
+        || expected_unchanged_count != table.unchanged_count
     {
         return Err("Data Sync comparison manifest operation counts do not match its rows".into());
     }
