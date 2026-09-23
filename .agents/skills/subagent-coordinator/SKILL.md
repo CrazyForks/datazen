@@ -51,10 +51,10 @@ scripts/new-feature-worktree.sh <track-id> <base-branch>
   1. **Review 编码代理的实现逻辑**——审查代码变更是否正确、是否有边界遗漏。
   2. **覆盖率驱动的测试补齐**——确保改动代码测试覆盖率 ≥ 80%，精准补齐未覆盖的分支和路径，不追求数量。
   3. **设计 E2E 测试用例**——在 progress.md 登记或直接编写可执行的 E2E 测试。
-- 测试代理只测不修。若出现缺陷，只在 `tracks/<track-id>/bugs.md` 登记；全部通过后才置 `TEST_DONE`。
+- 测试代理只测不修。若出现缺陷，逐条登记为**一 Bug 一文件**：`tracks/<track-id>/bugs/<track-id>-BUG-nnn.md`（证实一条 commit 一条，不攒批；历史单文件 `bugs.md` 只读兼容）；全部通过后才置 `TEST_DONE`。
 
-### 4.1 Bug 修复循环（Tester 完整上报后的闭环流程）
-Tester 必须先完成一轮**完整测试**（4 阶段 A/B/C/D 全部跑完），最终将所有发现的 Bug 一并在 `bugs.md` 登记，并以 `TEST_FAILED` 状态统一上报。协调者收到上报后启动修复循环：
+### 4.1 Bug 修复循环（Tester 判定收口后的闭环流程）
+Tester 必须先完成一轮**完整测试**（4 阶段 A/B/C/D 全部跑完）再交回判定；Bug 在证实当下即逐条落盘到 `tracks/<track-id>/bugs/` 目录，终报以 `TEST_FAILED` 状态汇总 Bug 清单。协调者收到上报后启动修复循环：
 
 ```text
 [Bug 修复循环]

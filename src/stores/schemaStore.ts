@@ -730,7 +730,7 @@ export function useConnectionSchemaField<K extends keyof ConnectionSchemaState>(
   });
 }
 
-if (typeof window !== 'undefined') {
+if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__schemaStore = useSchemaStore;
 }
 
