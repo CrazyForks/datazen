@@ -77,7 +77,9 @@
 
 - 状态置 `待复测`。commit：`03f3790f5`（纯函数 `keyTreeFilter.ts`）+ `307ce40df`
   （`appliedPattern` 接进行派生 / reset / 前缀路由 / 单一事实源）+ `975e23e6b`
-  （新旅程 `keyTreePatternFilter.test.tsx`）+ `406253a2f` / `eb733a757`（死代码收口）。
+  （新旅程 `keyTreePatternFilter.test.tsx`）+ `406253a2f` / `eb733a757`（死代码收口）
+  + `87b5e4620`（折叠子树 probe 臂：`*user*` 不得清空 `app:` 文件夹）+ `42c16bbee`
+  （把 R1 计数从 flat list 楔开的专用用例）。
 - 采**纯客户端过滤**路线（协调者裁定，不改 `list_children` 契约）：glob 语义对齐
   Redis `MATCH`，折叠态祖先补渲染为不可点面包屑（`data-breadcrumb`，不计
   `data-row-count`），空文件夹不显示，可见性按 `row.kind` 分叉。

@@ -1,6 +1,6 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
 - 状态: 修复轮第 1 回合完成 → READY_FOR_TEST（第 1 轮 Tester 的 BUG-001 Major + BUG-002 Minor 均已修并转绿，两条 `it.skip` 解 skip；等待第 2 轮 Tester 复测）
-- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名收口）
+- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例）
 - 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、本 commit（覆盖率补测 + 判定收口）
 - 合并 commit: —
 - 代理: w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd
@@ -405,17 +405,32 @@ Tester 自带 diff 加权脚本（`git diff 8981d3078..HEAD` 新增行 × covera
   （`onClearFilter`）。理由：pattern 现在拥有行，只清输入会让树被一个屏幕上没有任何
   痕迹的 pattern 过滤着（I-11 旅程 `:620` 钉的正是「Esc 把过滤器退回全键空间」）。
 
-#### c) 测试（`975e23e6b` + `eab9559bc` + `eb733a757`）
-- `keyTreeFilter.test.ts`：33 例表驱动（glob 矩阵含 `.`/`:` 转义与非法 `[`、prefix 路由、
-  面包屑补渲染、深度链、空文件夹规则、pre-order 保持、行过滤与键过滤交叉一致）。
-- 新旅程 `keyTreePatternFilter.test.tsx`（19 例）：`patternToTreePrefix` 矩阵（含分隔符维度：
-  `app.user:*` 在 sep `.` 下折在 `app.`）；DOM 全程——输 `zzz`+Enter ⇒ `data-row-count='0'`
-  + `data-empty-state='no-match'`（验收线），清空 ⇒ 行复原、空态消失、根请求回到 `''`；
-  `app:*` ⇒ 根请求前缀被路由且树在命名空间内重扎根；深匹配 ⇒ 父行为面包屑（无 checkbox、
-  点击不发请求）；R1 计数/全选/画出行在同一集合上双向一致；半截输入不重绘（typed vs
-  applied 分离在新管线下仍成立）；`(n+)` 提示随过滤器进/出。零英文字面量断言、零几何反查。
-- 一处 vacuous 断言自查后修正（`eab9559bc`）。
+#### c′) 折叠子树的 probe 臂（`87b5e4620`，接线轮之后由变异探针逼出）
+接线轮留下的隐含洞：协调者清单第 3 条只说了「文件夹匹配 glob 时展开/收起可见性判定正确」，
+但**折叠态**文件夹的子级从未被加载 ⇒ 行集无法回答「这底下有没有键匹配」，于是
+`*user*` 会把确实含有 `app:user:1` 的 `app:` 文件夹整格清空，而 R1 计数（读同一份过滤后
+键集）仍在数那个键 —— BUG-001 的矛盾换了个角落复活。
+`filterTreeRowsByPattern` 因此接受第三个参数 `hasVisibleDescendant(folderPath)`：自身不匹配
+但子树内存在可见键的文件夹以**普通可行**（可点可展开，展开是用户唯一的入口）留下；
+probe 默认 `false`（无调用方 ⇒ 无凭据的幸存不给）；空文件夹永不被救；
+发射优先级 **自身匹配 > 面包屑 > probe**（已画出存活行的祖先仍是不活泼面包屑）。
+`useKeyTreeView` 把 probe 接到与「全选已加载」/复选框级联**同一份** `visibleKeys` 上，
+三者结构上无法再分叉。旅程 fixture 同时改为**忠实的服务端模拟器**
+（`scan_keys` 真按 glob 收窄、`list_children` 真按 sep 折一层），此后任何一致都是真一致
+而非两个 mock 互相对暗号。
 
+#### c″) 变异探针（本回合自测，全部已还原；编号 C 系列以免与 Tester 的 M1~M14 混淆）
+- C1 filter 退化为 no-op ⇒ 3 红；C2 `countSelectableRows` 把面包屑计入 ⇒ 1 红；
+  C3 prefix 路由改回 `''` ⇒ 4 红；C4 回退 BUG-002 的 `markFetchFailed` ⇒ 3 红；
+  C5 把 R1 计数 `loadedCount` 接回 `scan.keys.length` ⇒ 1 红
+  C6 probe 硬编码 `false` ⇒ 1 红。**6 注入 6 杀，存活 0。**
+- C5 第一次是**存活**的，暴露真实测试强度洞：所有既有 fixture 里 flat 集合与树过滤集合
+  天然相同（`zzz` 把两边同时清 0），「单一事实源」这条主张没有反例证人。因此补
+  `42c16bbee`：强制 `scan_keys` **对 pattern 失明**（给什么 glob 都回五键），此时屏上唯一
+  能收窄的东西只剩客户端过滤 ⇒ `*nope` 后 `data-loaded='0'` 与 `data-row-count='0'` 必须
+  并肩成立，且「全选已加载」`disabled`（其判据正是 `loadedCount === 0`）。接回 flat list 的
+  实现会显示「5 个已加载 / 0 行 / 按钮可点但选出空集」= BUG-001 的谎言只剩一个数字。
+  复注 C5 后转红 ⇒ 该主张现在可杀。
 ### 3. 死代码收口（协调者裁定：删）— `406253a2f`、`eb733a757`
 
 `keyTree.ts` 删 `buildKeyTreeRows` / `splitKeyNamespace` / `separatorsFor`（+私有
@@ -433,17 +448,17 @@ in-state：label 按折叠所用分隔符切 + 外来分隔符 fallback；exit�
 
 | 门禁 | 结果 |
 | --- | --- |
-| `npx vitest run --config vitest.drivers.config.ts` | **55 files / 607 tests passed，0 skipped**，exit 0（基线 53/551+2 skip：解 skip +2 转绿、新增 keyTreeFilter 33 + keyTreePatternFilter 19 + keyTreeState +3，只增不红）|
+| `npx vitest run --config vitest.drivers.config.ts` | **55 files / 613 tests passed，0 skipped**，exit 0（基线 53/551+2 skip：解 skip +2 转绿、新增 keyTreeFilter 38 + keyTreePatternFilter 20 + keyTreeState +3，只增不红）|
 | `npx tsc --noEmit` | **0 error**，exit 0 |
 | `node scripts/check-driver-import-boundaries.mjs` | **1486 files · 0 blocking · 4 advisory**，exit 0（advisory 为宿主既有引用，非本轨）|
-| `npx vite build` | **built in 5.12s**，exit 0（chunk>500kB 为既有告警）|
+| `npx vite build` | **built in 4.66s**，exit 0（chunk>500kB 为既有告警）|
 
 覆盖率（v8，include=`packages/drivers/redis/ui/key-browser/**`，Tester 同口径
 = git diff 新增行 ∩ v8 statementMap 行命中）：
-- **本回合 diff 加权（`f8a191b66..HEAD`）**：Stmts **99.02%**（101/102）· Branch **100%**（57/57）。
-  唯一未命中语句是 `globToRegExp` 的 `catch → null` 分支体（`new RegExp` 在前置转义后不可
-  抛，属不可达防御）。
-- **全轨 diff 加权（`8981d3078..HEAD`）**：Stmts **87.60%**（636/726）· Branch **97.45%**（268/275）
+- **本回合 diff 加权（`f8a191b66..HEAD`）**：Stmts **99.11%**（111/112）· Branch **100%**（61/61）。
+  唯一未命中语句是 `globToRegExp` 的 `catch → null` 分支体（`new RegExp` 在前置逐字转义后
+  不可抛，属不可达防御臂）。
+- **全轨 diff 加权（`8981d3078..HEAD`）**：Stmts **87.77%**（646/736）· Branch **97.49%**（272/279）
   ——Tester 终值 86.14/88.72，两轴均上升，未掉穿 80。
 
 ### 5. 已知局限（登记，不阻断）
