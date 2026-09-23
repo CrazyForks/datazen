@@ -1,34 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Input, cn } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { hasRedisJson, isJsonKeyType, looksLikeJsonModuleDetail } from './hasRedisJson';
 import { JsonEditor } from './JsonEditor';
 import { StreamEditor } from './StreamEditor';
-import {
-  initialStringEditorValue,
-  looksLikeJsonText,
-  tryDecompressString,
-  unwrapStringKeyValue,
-  valueLooksCompressed,
-  type DecompressResult,
-} from './stringKeyValue';
-import { JsonModeBar } from './JsonModeBar';
-import { formatJson, JSON_TEXT_MODES, type JsonDisplayMode, type JsonTextMode } from './jsonModes';
-import { invokeRename, invokeSetString } from './keyEditorsInvokes';
+import { invokeDeleteKey, invokeRename } from './keyEditorsInvokes';
 import { invokeGetKeyRaw } from '../shared/redisInvoke';
-import { ValueViewer } from './ValueViewer';
-import { useRedisGate, type GateWriteFn } from '../shared/useRedisGate';
-import { formatSize } from '../shared/formatSize';
+import { useRedisGate } from '../shared/useRedisGate';
+import { requestDraftLeave } from '../shared/draftGuard';
 import { HashEditor } from './HashEditor';
 import { ListEditor } from './ListEditor';
 import { SetEditor } from './SetEditor';
 import { ZsetEditor } from './ZsetEditor';
+import { StringEditor } from './StringEditor';
 import { TtlControls } from './TtlControls';
+import { KeyHeaderRow } from './KeyHeaderRow';
+import { buildRedisInsertStatement } from './redisInsertStatement';
 
 export type { PluginInvokeFn } from './keyEditorsInvokes';
 export {
   invokeCreateKey,
+  invokeDeleteKey,
   invokeHashDel,
   invokeHashSet,
   invokeListPop,
@@ -49,7 +41,12 @@ export interface KeyDetailEditorProps {
   dbIndex: number;
   detail: KeyDetail;
   modules?: string[] | null;
-  onRefresh: () => void | Promise<void>;
+  /**
+   * Reload the key detail. May resolve `false` to report an I-1 draft-guard
+   * refusal (E-5 wires the guard); `void`/`true` reads as success, so the
+   * host's plain `reloadDetail` stays assignable here.
+   */
+  onRefresh: () => boolean | void | Promise<boolean | void>;
   onRenamed?: (newKey: string) => void;
   /**
    * Unsaved-draft signal for the PRD §4 I-1 dirty gate.
@@ -73,8 +70,6 @@ export function KeyDetailEditor({
 }: KeyDetailEditorProps) {
   const { t } = useI18n();
   const { gateWrite, gateDialog } = useRedisGate();
-  const [renameInput, setRenameInput] = useState(detail.key);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<ValueFrame | null>(null);
 
@@ -94,22 +89,54 @@ export function KeyDetailEditor({
     };
   }, [dbSessionId, dbIndex, detail.key]);
 
+  /** Gate a write path; `true` only when it ran and refreshed successfully. */
   const run = useCallback(
-    async (fn: () => Promise<void>) => {
-      if (!(await gateWrite('write-op'))) return;
-      setBusy(true);
+    async (fn: () => Promise<void>): Promise<boolean> => {
+      if (!(await gateWrite('write-op'))) return false;
       setError(null);
       try {
         await fn();
         await onRefresh();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setBusy(false);
+        return false;
       }
     },
     [onRefresh, gateWrite],
   );
+
+  // Header-row actions. `refreshNow`, rename and delete all sit upstream of any
+  // server write or refetch, so E-5 puts the I-1 draft guard here: a refusal
+  // resolves `false`, which the header already understands (auto-refresh falls
+  // to 关, the rename input stays open, the delete never runs).
+  const refreshNow = useCallback(async (): Promise<boolean> => {
+    if (!(await requestDraftLeave())) return false;
+    await onRefresh();
+    return true;
+  }, [onRefresh]);
+
+  const handleRename = useCallback(
+    async (newName: string): Promise<boolean> => {
+      if (!(await requestDraftLeave())) return false;
+      return run(async () => {
+        await invokeRename(dbSessionId, dbIndex, detail.key, newName);
+        onRenamed?.(newName);
+      });
+    },
+    [run, dbSessionId, dbIndex, detail.key, onRenamed],
+  );
+
+  const handleDelete = useCallback((): Promise<boolean> => {
+    // The confirm dialog (owned by the header) has already been answered at
+    // this point; the draft guard runs before the DELETE leaves the client.
+    return (async () => {
+      if (!(await requestDraftLeave())) return false;
+      return run(async () => {
+        await invokeDeleteKey(dbSessionId, dbIndex, detail.key);
+      });
+    })();
+  }, [run, dbSessionId, dbIndex, detail.key]);
 
   const showJsonEditor =
     isJsonKeyType(detail.keyType) ||
@@ -117,56 +144,51 @@ export function KeyDetailEditor({
 
   return (
     <div className="space-y-3 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
-        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">{detail.keyType}</span>
-        {frame && (
-          <>
-            {frame.memBytes != null && (
-              <span className="rounded bg-surface-alt px-1.5 py-0.5 text-fg-muted">
-                {formatSize(frame.memBytes)}
-              </span>
-            )}
-            {frame.truncated && (
-              <span className="rounded bg-warning/10 px-1.5 py-0.5 text-warning">
-                {'truncated'}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-
-      <TtlControls
-        dbSessionId={dbSessionId}
-        dbIndex={dbIndex}
+      {/* Key header row (PRD §3.3): mono name + refresh split · copy · rename · delete */}
+      <KeyHeaderRow
         keyName={detail.key}
-        ttl={detail.ttl}
-        gateWrite={gateWrite}
-        onChanged={() => void onRefresh()}
+        onRefresh={refreshNow}
+        onRename={handleRename}
+        onDelete={handleDelete}
+        insertStatement={buildRedisInsertStatement(detail)}
       />
 
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-edge bg-surface-alt p-2">
-        <div className="flex min-w-[120px] flex-1 flex-col gap-1">
-          <label className="text-fg-muted">{t('redis.name')}</label>
-          <Input
-            value={renameInput}
-            onChange={(e) => setRenameInput(e.target.value)}
-            className="h-7 font-mono text-xs"
-          />
-        </div>
-        <Button
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          disabled={busy || !renameInput.trim() || renameInput === detail.key}
-          onClick={() =>
-            void run(async () => {
-              await invokeRename(dbSessionId, dbIndex, detail.key, renameInput.trim());
-              onRenamed?.(renameInput.trim());
-            })
-          }
+      {/* Badge row (PRD §3.3): 类型 | 大小 N B | TTL pill | truncated */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="redis-key-badges">
+        <span className="font-medium text-fg-muted">{t('redis.type')}:</span>
+        <span
+          className="rounded bg-accent/10 px-1.5 py-0.5 text-accent"
+          data-testid="redis-key-badge-type"
+          data-key-type={detail.keyType}
         >
-          {t('redis.renameKey')}
-        </Button>
+          {detail.keyType}
+        </span>
+        {frame?.memBytes != null && (
+          <span
+            className="rounded bg-surface-alt px-1.5 py-0.5 text-fg-muted"
+            data-testid="redis-key-badge-size"
+            data-i18n-key="redis.detail.badge.size"
+          >
+            {t('redis.detail.badge.size', { n: frame.memBytes })}
+          </span>
+        )}
+        <TtlControls
+          dbSessionId={dbSessionId}
+          dbIndex={dbIndex}
+          keyName={detail.key}
+          ttl={detail.ttl}
+          gateWrite={gateWrite}
+          onChanged={() => void onRefresh()}
+        />
+        {frame?.truncated && (
+          <span
+            className="rounded bg-warning/10 px-1.5 py-0.5 text-warning"
+            data-testid="redis-key-badge-truncated"
+            data-i18n-key="redis.detail.badge.truncated"
+          >
+            {t('redis.detail.badge.truncated')}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -241,218 +263,4 @@ export function KeyDetailEditor({
       {gateDialog}
     </div>
   );
-}
-
-function StringEditor({
-  dbSessionId,
-  dbIndex,
-  detail,
-  frame,
-  gateWrite,
-  onSaved,
-  onDirtyChange,
-}: {
-  dbSessionId: string;
-  dbIndex: number;
-  detail: KeyDetail;
-  frame: ValueFrame | null;
-  gateWrite?: GateWriteFn;
-  onSaved: () => void;
-  onDirtyChange?: (dirty: boolean) => void;
-}) {
-  const { t } = useI18n();
-  const [mode, setMode] = useState<'view' | 'edit'>('view');
-  const [value, setValue] = useState(() => initialStringEditorValue(detail.value));
-  const [saving, setSaving] = useState(false);
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [jsonDisplay, setJsonDisplay] = useState<JsonTextMode>('pretty');
-  const [jsonDirty, setJsonDirty] = useState(false);
-  const [keepTtl, setKeepTtl] = useState(detail.ttl >= 0);
-  const [decomp, setDecomp] = useState<DecompressResult | null>(null);
-  const [decompBusy, setDecompBusy] = useState(false);
-  const [decompError, setDecompError] = useState<string | null>(null);
-  const jsonMode = looksLikeJsonText(value);
-  const rawOriginal = unwrapStringKeyValue(detail.value);
-  const maybeCompressed = valueLooksCompressed(unwrapRaw(detail.value));
-
-  // `jsonDirty` is exactly the unsaved-draft signal: entering edit mode without
-  // typing is not dirty, and reformatting JSON (which does not touch
-  // `jsonDirty`) is not a data-loss risk either.
-  useEffect(() => {
-    onDirtyChange?.(jsonDirty);
-    return () => {
-      // An unmounted editor cannot have a draft — never publish a stale flag.
-      onDirtyChange?.(false);
-    };
-  }, [jsonDirty, onDirtyChange]);
-
-  const selectJsonMode = (next: JsonDisplayMode) => {
-    if (next === 'tree') return;
-    setJsonDisplay(next);
-    setJsonError(null);
-    setValue((prev) => (next === 'raw' && !jsonDirty ? rawOriginal : formatJson(prev, next)));
-  };
-
-  const save = () => {
-    if (jsonMode) {
-      try {
-        JSON.parse(value);
-      } catch {
-        setJsonError(t('redis.invalidJson'));
-        return;
-      }
-      setJsonError(null);
-    }
-    setSaving(true);
-    void (async () => {
-      if (gateWrite && !(await gateWrite('write-op'))) {
-        setSaving(false);
-        return;
-      }
-      await invokeSetString(dbSessionId, dbIndex, detail.key, value, keepTtl)
-        .then(() => {
-          // Saved: the draft no longer exists, so the dirty relay must drop.
-          setJsonDirty(false);
-          onSaved();
-        })
-        .finally(() => setSaving(false));
-    })();
-  };
-
-  const runDecompress = () => {
-    setDecompBusy(true);
-    setDecompError(null);
-    void tryDecompressString(unwrapRaw(detail.value))
-      .then((r) => {
-        if (!r) {
-          setDecompError(t('redis.decompressFailed'));
-          setDecomp(null);
-        } else {
-          setDecomp(r);
-        }
-      })
-      .catch((e) => {
-        setDecompError(e instanceof Error ? e.message : String(e));
-        setDecomp(null);
-      })
-      .finally(() => setDecompBusy(false));
-  };
-
-  return (
-    <div
-      className="space-y-2"
-      data-testid="redis-string-editor"
-      data-string-dirty={jsonDirty ? 'true' : 'false'}
-    >
-      <div className="flex items-center gap-1" data-testid="redis-string-mode-toggle">
-        <button
-          type="button"
-          className={cn(
-            'rounded px-2 py-0.5 text-[11px] transition-colors',
-            mode === 'view'
-              ? 'bg-accent/15 text-accent'
-              : 'text-fg-secondary hover:bg-surface-raised',
-          )}
-          data-testid="redis-string-view"
-          onClick={() => setMode('view')}
-        >
-          {t('redis.stringModeView')}
-        </button>
-        <button
-          type="button"
-          className={cn(
-            'rounded px-2 py-0.5 text-[11px] transition-colors',
-            mode === 'edit'
-              ? 'bg-accent/15 text-accent'
-              : 'text-fg-secondary hover:bg-surface-raised',
-          )}
-          data-testid="redis-string-edit"
-          onClick={() => setMode('edit')}
-        >
-          {t('redis.stringModeEdit')}
-        </button>
-      </div>
-
-      {mode === 'view' ? (
-        <ValueViewer dbSessionId={dbSessionId} frame={frame} />
-      ) : (
-        <>
-          <textarea
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              setJsonDirty(true);
-              setJsonError(null);
-            }}
-            className="min-h-[160px] w-full rounded-md border border-edge bg-surface-alt p-3 font-mono text-xs text-fg-secondary"
-            spellCheck={false}
-            data-testid="redis-string-input"
-          />
-          {jsonError && (
-            <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-              {jsonError}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5 text-fg-secondary">
-              <input
-                type="checkbox"
-                checked={keepTtl}
-                onChange={(e) => setKeepTtl(e.target.checked)}
-                className="rounded border-edge"
-              />
-              {t('redis.keepTtl')}
-            </label>
-            <span className="text-fg-muted">{t('redis.keepTtlHint')}</span>
-            {jsonMode && (
-              <JsonModeBar modes={JSON_TEXT_MODES} active={jsonDisplay} onSelect={selectJsonMode} />
-            )}
-            {(maybeCompressed || decomp) && (
-              <Button
-                variant="secondary"
-                className="h-7 px-2 text-xs"
-                disabled={decompBusy}
-                onClick={runDecompress}
-              >
-                {t('redis.decompressView')}
-              </Button>
-            )}
-            <Button
-              variant="primary"
-              className="h-7 px-2 text-xs"
-              disabled={saving}
-              onClick={save}
-              data-testid="redis-string-save"
-            >
-              {t('common.save')}
-            </Button>
-          </div>
-          {decompError && (
-            <div className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger">
-              {decompError}
-            </div>
-          )}
-          {decomp && (
-            <div className="space-y-1 rounded-md border border-edge bg-surface-alt p-2">
-              <div className="text-fg-muted">
-                {t('redis.decompressCodec').replace('{codec}', decomp.codec)} · {decomp.bytes} B
-              </div>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-fg-secondary">
-                {decomp.text}
-              </pre>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function unwrapRaw(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object' && 'value' in value) {
-    const inner = (value as { value: unknown }).value;
-    if (typeof inner === 'string') return inner;
-  }
-  return '';
 }

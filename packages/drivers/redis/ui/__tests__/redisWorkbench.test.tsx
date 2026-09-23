@@ -15,15 +15,15 @@ describe('redis editor invoke helpers', () => {
     vi.clearAllMocks();
   });
 
-  it('invokeSetString uses camelCase plugin args', async () => {
-    await invokeSetString('conn-1', 2, 'mykey', 'hello', false, invoke);
+  it('invokeSetString uses camelCase plugin args (E-5: no keepTtl field)', async () => {
+    await invokeSetString('conn-1', 2, 'mykey', 'hello', invoke);
     expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
       dbSessionId: 'conn-1',
       dbIndex: 2,
       key: 'mykey',
       value: 'hello',
-      keepTtl: false,
     });
+    expect(invoke.mock.calls[0]?.[2]).not.toHaveProperty('keepTtl');
   });
 
   it('invokeHashSet passes field and value', async () => {
@@ -54,7 +54,6 @@ describe('redis editor invoke helpers', () => {
       dbIndex: 0,
       key: 'new',
       value: 'data',
-      keepTtl: false,
     });
   });
 });

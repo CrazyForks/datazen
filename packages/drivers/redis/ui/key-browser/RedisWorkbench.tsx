@@ -1,11 +1,4 @@
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useState,
-} from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Database } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
 import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
@@ -29,6 +22,7 @@ import { useWorkbenchSearch } from './useWorkbenchSearch';
 import { useDbKeyCounts } from './useDbKeyCounts';
 import { useCreateTypes, useReJsonModules } from './useReJsonModules';
 import { useWorkbenchOverlays } from './useWorkbenchOverlays';
+import { isDraftDirty, requestDraftLeave } from '../shared/draftGuard';
 
 export type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes';
 import type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes';
@@ -43,9 +37,15 @@ import type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes
  * `DetailColumn`, `useRedisKeyScan`/`useKeyTreeView`, the `useKey*` state hooks,
  * `useWorkbenchOverlays` and `KeyWorkbenchDialogs`). What stays here is only what
  * genuinely has to be shared: the single writers of selection and detail state,
- * the refresh fan-out (including the I-8 "refresh without dropping the
- * selection" variant), the host KV relay (contract F-2) and the imperative handle
- * the host tabs drive.
+ * the refresh fan-out (including the I-8 "refresh without dropping the selection"
+ * variant), the host KV relay (contract F-2) and the imperative handle the host tabs drive.
+ *
+ * On top of that structure this file owns the **I-1 draft gate** (PRD §4) for
+ * every navigation action except the two selection moves: 切db / 刷新 / 搜索 /
+ * 关面板 / 对话框出口 each pass the single `requestDraftLeave()` choke point
+ * *before* they run (the guard is module-level, so "did we already ask on this
+ * action?" is the guard's own answer). The 切键 ask and BUG-001's in-place rule
+ * live in `useKeyDetailState`.
  */
 export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchProps>(
   function RedisWorkbench(
@@ -84,8 +84,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     const selection = useKeySelection();
     const detail = useKeyDetailState(dbSessionId, dbIndex);
 
-    // Flat `scan_keys` list — kept as one object (`scan.*`) because 屏 B reads a
-    // dozen of its fields and a destructure block is 18 lines of noise.
+    // Flat `scan_keys` list — one object (`scan.*`) because 屏 B reads a dozen of
+    // its fields and a destructure block would be 18 lines of noise.
     const scan = useRedisKeyScan({
       dbSessionId,
       dbIndex,
@@ -93,15 +93,11 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     });
 
     /*
-     * D-3 + D-8 in a single owner: the R3 separator has to reach both the
-     * `list_children` request and the row fold (two places, one value), and the
-     * four named empty states (I-11) are derived from the same rows.
-     *
-     * BUG-001: the pattern joins them, as the **applied** one (`scan.appliedPattern`
-     * — the pattern the current scan belongs to), never the merely typed
-     * `searchPattern`. That is the difference between a decoration and a filter:
-     * it becomes the root `list_children` prefix, the client-side glob over the
-     * loaded rows, and a tree-reset trigger.
+     * D-3 + D-8 in one owner: the R3 separator reaches both the `list_children`
+     * request and the row fold, and the four named empty states (I-11) derive
+     * from the same rows. BUG-001: the pattern joins them as the **applied** one
+     * (`scan.appliedPattern`), never the merely typed `searchPattern` — the
+     * difference between a decoration and a filter.
      */
     const treeView = useKeyTreeView({
       connectionId,
@@ -121,18 +117,13 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       void loadForConnection(dbSessionId, { skipLoadTables: true });
     }, [dbSessionId, loadForConnection]);
 
-    // Stable identities: `scan` / `treeView` are fresh objects every render, and
-    // listing them in a dependency array would churn every callback below.
+    // Stable identities: `scan`/`treeView` are fresh objects every render, so a
+    // dependency array listing them would churn every callback below.
     const tree = treeView.tree;
     const { setSearchPattern, resetSelectionState, loadKeys, refresh: scanRefresh } = scan;
 
     const modules = useReJsonModules(dbSessionId);
-    const { dbCounts, loadDbSizes } = useDbKeyCounts(
-      dbSessionId,
-      dbIndex,
-      selectedDb,
-      scan.dbSize,
-    );
+    const { dbCounts, loadDbSizes } = useDbKeyCounts(dbSessionId, dbIndex, selectedDb, scan.dbSize);
     const createTypes = useCreateTypes(modules);
 
     /** Drop the mounted detail *and* the checkbox selection (db switch, refresh). */
@@ -141,6 +132,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       selection.clearSelection();
     }, [detail.clearDetail, selection.clearSelection]);
 
+    // I-1 for search sits inside `applySearch` (a search replaces the selection,
+    // i.e. the draft), so no ask is needed at this call site.
     const search = useWorkbenchSearch({
       dbSessionId,
       dbIndex,
@@ -149,8 +142,13 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     });
 
     const handleSelectDb = useCallback(
-      (db: string) => {
+      async (db: string) => {
         const idx = dbIndexOfName(db);
+        // Same-db re-click (the initial auto-select included) is not a 切db —
+        // never route it through the I-1 dialog.
+        if (selectedDb === db && dbIndex === idx) return;
+        // I-1: switching databases drops the selection, i.e. the live draft.
+        if (!(await requestDraftLeave())) return;
         setSelectedDb(db);
         setDbIndex(idx);
         onDbIndexChange?.(idx);
@@ -160,7 +158,16 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         resetSelectionState();
         void loadKeys(idx, '*', 0, true);
       },
-      [clearFocus, setSearchPattern, resetSelectionState, loadKeys, onDatabaseChange, onDbIndexChange],
+      [
+        selectedDb,
+        dbIndex,
+        clearFocus,
+        setSearchPattern,
+        resetSelectionState,
+        loadKeys,
+        onDatabaseChange,
+        onDbIndexChange,
+      ],
     );
 
     useEffect(() => {
@@ -172,33 +179,35 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         const initial = initialDatabase
           ? (databases.find((d) => d === initialDatabase) ?? initialDatabase)
           : databases[0];
-        if (initial) handleSelectDb(initial);
+        if (initial) void handleSelectDb(initial);
       }
     }, [databases, initialDatabase, selectedDb, handleSelectDb]);
 
-    const refreshKeys = useCallback(() => {
+    const refreshKeys = useCallback(async () => {
       if (!selectedDb) return;
+      // I-1: this body drops the selection (the draft with it) — ask first.
+      if (!(await requestDraftLeave())) return;
       clearFocus();
       scanRefresh();
       tree.refresh();
     }, [selectedDb, clearFocus, scanRefresh, tree.refresh]);
 
-    const handleRefresh = useCallback(() => {
+    const handleRefresh = useCallback(async () => {
+      // Toolbar 刷新 is a named I-1 interception point: refuse ⇒ nothing reloads.
+      // The second guard is inside `refreshKeys`; on a 放弃 answer the draft is
+      // already clean, so it passes without a second dialog (P2). Keep both.
+      if (!(await requestDraftLeave())) return;
       void loadForConnection(dbSessionId, { skipLoadTables: true });
-      refreshKeys();
-      loadDbSizes();
+      void refreshKeys();
+      void loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
 
-    /*
-     * I-8 (D-6): a batch write reloads the *data* only. `refreshKeys` also drops
-     * the selection, which would silently undo "failed keys stay selected" the
-     * moment the post-write refresh lands, so the batch controller gets this one.
-     */
+    // I-8 (D-6): a batch write reloads the *data* only; `refreshKeys` would drop
+    // the selection and silently undo "failed keys stay selected".
     const refreshAfterWrite = useCallback(() => {
       scanRefresh();
       tree.refresh();
     }, [scanRefresh, tree.refresh]);
-
     useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb }), [
       refreshKeys,
       handleSelectDb,
@@ -206,9 +215,13 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
     const reloadDetail = useCallback(async () => {
       if (!detail.selectedKey) return;
+      // E-5 fix: refetch the DETAIL only. `refreshKeys()` would clear the
+      // selection (its I-1 body drops the draft), so every save closed the panel.
+      // The list gets a direct, unguarded scan/tree refresh instead.
       await detail.selectKey(detail.selectedKey);
-      refreshKeys();
-    }, [detail, refreshKeys]);
+      scanRefresh();
+      tree.refresh();
+    }, [detail.selectedKey, detail.selectKey, scanRefresh, tree.refresh]);
 
     // Contract F-2: publish selection + draft flag into the host's KV atom.
     useKvSlotRelay(kvSlotState, dbSessionId, detail.selectedKey, detail.editorDirty);
@@ -233,6 +246,22 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       onRefresh: refreshAfterWrite,
       onSummary: overlays.setBatchSummary,
     });
+
+    /**
+     * Dialog-side refresh (创建 / TTL / PERSIST / 重命名 / 删除 / flush 出口,
+     * BUG-002). Those flows manage the selection through their own guarded
+     * outlets, so while a draft is live this must NOT run `refreshKeys`'
+     * destructive body — it would drop the draft outside any guard, or stack a
+     * SECOND leave dialog on one action (双弹). It only re-scans the list.
+     */
+    const refreshKeysForDialogs = useCallback(() => {
+      if (isDraftDirty()) {
+        scanRefresh();
+        tree.refresh();
+        return;
+      }
+      void refreshKeys();
+    }, [scanRefresh, tree.refresh, refreshKeys]);
 
     return (
       <div className="flex min-h-0 flex-1">
@@ -312,10 +341,12 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     onRefresh={reloadDetail}
                     onRenamed={(newKey) => {
                       detail.retargetKey(newKey);
-                      refreshKeys();
+                      // Draft already settled upstream (rename passes the I-1
+                      // guard before it runs), so this refresh sails through.
+                      void refreshKeys();
                     }}
                     onDirtyChange={detail.setEditorDirty}
-                    onClose={detail.clearDetail}
+                    onClose={detail.clearDetailGuarded}
                   />
                 </div>
               </div>
@@ -347,10 +378,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
           allowFlush={allowFlush}
           createTypes={createTypes}
           selectedKey={detail.selectedKey}
-          onRefreshKeys={refreshKeys}
+          onRefreshKeys={refreshKeysForDialogs}
           onSelectKey={detail.selectKey}
-          onClearSelectedKey={detail.clearDetail}
-          onUpdateSelectedKey={detail.retargetKey}
+          onClearSelectedKey={detail.clearDetailGuarded}
           onUpdateSelectedKeys={selection.update}
           onBatchSummary={overlays.setBatchSummary}
           createOpen={overlays.createOpen}

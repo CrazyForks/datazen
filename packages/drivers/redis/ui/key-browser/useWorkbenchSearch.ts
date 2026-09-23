@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useValueSearch } from '../value-search/useValueSearch';
+import { requestDraftLeave } from '../shared/draftGuard';
 import type { SearchMode } from './SearchModeTabs';
 import type { ValueSearchState } from '../value-search/useValueSearch';
 
@@ -57,17 +58,24 @@ export function useWorkbenchSearch({
 
   const applySearch = useCallback(
     (rawPattern: string, fuzzy: boolean) => {
-      clearFocus();
-      if (searchMode === 'key') {
-        runKeySearch(toScanPattern(rawPattern, fuzzy));
-        return;
-      }
-      const query = rawPattern.trim();
-      if (!query) {
-        resetValueSearch();
-        return;
-      }
-      startValueSearch({ mode: searchMode, query, pattern: '*' });
+      // I-1: applying a search replaces the selection — i.e. the live draft —
+      // and it is the *server* scan that follows, so the ask has to land here,
+      // before `clearFocus()` drops the detail. Refuse ⇒ the scan never runs and
+      // the selection survives untouched (kvSlotRelay asserts both halves).
+      void (async () => {
+        if (!(await requestDraftLeave())) return;
+        clearFocus();
+        if (searchMode === 'key') {
+          runKeySearch(toScanPattern(rawPattern, fuzzy));
+          return;
+        }
+        const query = rawPattern.trim();
+        if (!query) {
+          resetValueSearch();
+          return;
+        }
+        startValueSearch({ mode: searchMode, query, pattern: '*' });
+      })();
     },
     [clearFocus, searchMode, runKeySearch, startValueSearch, resetValueSearch],
   );

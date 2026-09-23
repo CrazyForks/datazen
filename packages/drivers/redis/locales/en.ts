@@ -214,8 +214,10 @@ const locale = {
   'redis.view.invalidUtf8': 'Not valid UTF-8 (shown with replacement characters)',
   'redis.view.empty': '(empty)',
   'redis.view.noData': 'No binary value available.',
-  'redis.stringModeView': 'View',
-  'redis.stringModeEdit': 'Edit',
+  // E-2 (PRD §3.3): the string "View / Edit" toggle was deleted — the editor is
+  // resident, so `redis.stringModeView` / `redis.stringModeEdit` are gone from the
+  // source of truth. The other nine locales keep their orphan copies until the
+  // pre-release i18n-sync pass (AGENTS.md "i18n 国际化规则").
   'redis.seconds': 's',
   'redis.selectDb': 'Select a database',
   'redis.selectKeyHint': 'Select a key to view details',
@@ -514,6 +516,45 @@ const locale = {
   // own scan has not finished still holds keys the filter never saw, so its
   // `(n+)` badge says the remainder is unfiltered instead of implying it was cut.
   'redis.tree.filterUnloaded': '· rest unfiltered',
+  // ── W3-E key detail (PRD §3.3 screen B right column) ─────────────────────────
+  // Read-only reasons (I-5), key header row, badge row and the TTL pill live
+  // here. Tab labels, the wrap checkbox (`redis.view.wrap`) and the TTL words
+  // (`redis.noExpiry` / `redis.setTtl` …) reuse the existing `redis.*` keys
+  // above — this namespace must stay the only thing this track appends to
+  // `en.ts` (conflict surface §3).
+  'redis.detail.badge.truncated': 'Payload truncated by the size budget',
+  'redis.detail.readonly.binaryView':
+    'Byte view: the rendered hex/bits are a projection, not the stored bytes — switch back to a text view to edit.',
+  'redis.detail.readonly.bigValue':
+    'Large value: the payload is incomplete, so editing is read-only to stop a truncated write overwriting it.',
+  // BUG-006: the over-sentinel-only branch (64 KiB sentinel vs. the backend's
+  // 5 MiB truncation cap) — the payload here IS complete, so the copy must
+  // not claim truncation (its truncated badge stays unlit right next to it).
+  'redis.detail.readonly.bigValueComplete':
+    'Large value: the payload is complete but over the editable size budget, so editing stays read-only to avoid a partial write-back replacing it.',
+  // Badge row: `大小: N B` (ruling 8-4) — `n` is server data (MEMORY USAGE).
+  'redis.detail.badge.size': 'Size: {n} B',
+  // Key header row (ruling 8-4 copy semantics; refresh/rename/delete labels
+  // reuse `redis.refresh` / `redis.renameKey` / `redis.delete` above).
+  'redis.detail.header.copyKey': 'Copy key name',
+  'redis.detail.header.copyInsert': 'Copy insert statement',
+  'redis.detail.header.renameInput': 'New key name',
+  'redis.detail.header.autoRefresh': 'Auto refresh interval',
+  'redis.detail.refresh.interval': '{n} s',
+  'redis.detail.refresh.off': 'Off',
+  // TTL pill: 3-state inline editor (永不过期 reuses `redis.noExpiry`).
+  'redis.detail.ttl.modeRelative': 'Relative TTL',
+  'redis.detail.ttl.modeAbsolute': 'Absolute time (EXPIREAT)',
+  // I-1 dirty interception (E-5): the bottom bar's discard action and the
+  // 放弃更改 / 继续编辑 leave dialog shown before any draft-destroying jump.
+  'redis.detail.discard': 'Discard',
+  'redis.detail.leave.title': 'Unsaved changes',
+  'redis.detail.leave.description': 'This key has unsaved changes.',
+  'redis.detail.leave.discard': 'Discard changes',
+  'redis.detail.leave.keepEditing': 'Keep editing',
+  // BUG-003: visible feedback when the backend rejects `set_string`. The
+  // draft is untouched, so the copy says why nothing was committed.
+  'redis.detail.saveFailed': 'Save failed — {error}',
 } as const;
 
 export default locale;
