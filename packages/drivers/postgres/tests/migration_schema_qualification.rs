@@ -23,6 +23,10 @@ fn config(database: String, schema: String) -> ConnectionConfig {
         connection_timeout: 5,
         max_pool_size: 2,
         ssh_tunnel: None,
+        tunnel_kind: None,
+        tunnel_id: None,
+        http_proxy_tunnel: None,
+        websocket_tunnel: None,
         color_tag: None,
         group: None,
         last_connected_at: None,
@@ -47,7 +51,7 @@ async fn test_transfer_qualified_metadata_isolates_selected_schema() {
     let table = format!("same_name_{suffix}.part");
     let driver = PostgresDriver::new();
     let handle = driver
-        .connect(&config(database, selected_schema.clone()))
+        .connect(&config(database.clone(), selected_schema.clone()))
         .await
         .unwrap();
 
@@ -64,7 +68,7 @@ async fn test_transfer_qualified_metadata_isolates_selected_schema() {
     }
 
     let schema = driver
-        .get_table_schema(&handle, &format!("{selected_schema}.{table}"))
+        .get_table_schema(&handle, &table, &database, Some(&selected_schema))
         .await
         .unwrap();
     let full_sql = PgSyncAdapter
