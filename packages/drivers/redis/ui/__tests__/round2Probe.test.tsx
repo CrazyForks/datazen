@@ -342,7 +342,7 @@ describe('[tester][round-2][偏差②] 工具栏刷新的一次动作只允许�
     renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await screen.findByTestId('redis-draft-discard');
     fireEvent.click(screen.getByTestId('redis-draft-keep'));
     await waitFor(() => expect(leaveDialog()).toBeNull());
@@ -360,7 +360,7 @@ describe('[tester][round-2][偏差②] 工具栏刷新的一次动作只允许�
     renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await screen.findByTestId('redis-draft-discard');
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() => expect(leaveDialog()).toBeNull());

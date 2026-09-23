@@ -342,7 +342,7 @@ describe('[tester] 批量删除选中的 I-1 拦截', () => {
     await checkOtherKey();
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
 
-    fireEvent.click(screen.getByText('redis.batchDelete'));
+    fireEvent.click(screen.getByTestId('redis-tree-batch-delete'));
     const dialog = await dialogByTitle('redis.confirmDeleteKeys');
     fireEvent.click(buttonWithKey(dialog, 'common.delete'));
 
@@ -376,7 +376,7 @@ describe('[tester] 批量 TTL 的 I-1 拦截', () => {
     await selectAndDraft();
     await checkOtherKey();
 
-    fireEvent.click(screen.getByText('redis.batchTtl'));
+    fireEvent.click(screen.getByTestId('redis-tree-batch-ttl'));
     const dialog = await dialogByTitle('redis.confirmBatchTtl');
     const field = dialog.querySelector('input:not([type="checkbox"])') as HTMLInputElement;
     expect(field).toBeTruthy();
@@ -411,9 +411,11 @@ describe('[tester] 列设置过滤：重扫列表但不毁草稿，故不该吃�
     await selectAndDraft();
     const scansBefore = scanKeys.mock.calls.length;
 
-    const toggle = screen.getByTestId('redis-no-ttl-only') as HTMLInputElement;
+    // R2 renders this filter as a chip `<button>` (D-3), not a checkbox: the
+    // "is it on" probe is `data-active`, exactly as `keyTreeJourney` asserts.
+    const toggle = screen.getByTestId('redis-tree-chip-no-ttl');
     fireEvent.click(toggle);
-    expect(toggle.checked).toBe(true);
+    expect(toggle.getAttribute('data-active')).toBe('on');
 
     // 确实重扫（不是空转）。
     await waitFor(() => expect(scanKeys.mock.calls.length).toBeGreaterThan(scansBefore));
@@ -439,7 +441,7 @@ describe('[redis-detail-ui-BUG-002] 创建键后的跳转不得静默丢草稿',
     renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-create-key'));
+    fireEvent.click(screen.getByTestId('redis-tree-create-key'));
     const dialog = await dialogByTitle('redis.createKey');
     const nameField = dialog.querySelector(
       'input[placeholder="redis.keyName"]',
@@ -582,7 +584,7 @@ describe('[fix-selftest] 对话框出口一次动作只询问一次守卫', () =
     renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-create-key'));
+    fireEvent.click(screen.getByTestId('redis-tree-create-key'));
     const dialog = await dialogByTitle('redis.createKey');
     const nameField = dialog.querySelector(
       'input[placeholder="redis.keyName"]',

@@ -310,7 +310,7 @@ describe('I-1 拦截点逐一验证（workbench 级）', () => {
     renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await screen.findByTestId('redis-draft-discard');
     expect(column().getAttribute('data-selected-key')).toBe('user:1');
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
@@ -354,7 +354,7 @@ describe('I-1 拦截点逐一验证（workbench 级）', () => {
     await waitFor(() => expect(column().getAttribute('data-selected-key')).toBe('user:1'));
 
     // 守卫此刻已干净 ⇒ 再点刷新直接执行，全程零对话框。
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await waitFor(() => expect(column().getAttribute('data-detail-state')).toBe('no-key'));
     expect(leaveDialog()).toBeNull();
   });
@@ -397,7 +397,7 @@ describe('I-1 边角出口：Esc / 卸载 / 非法 JSON 保存', () => {
     await selectAndDraft();
     const readsBefore = getKey.mock.calls.length;
 
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await screen.findByTestId('redis-draft-discard');
     const dialogEl = document.querySelector('[role="dialog"]');
     expect(dialogEl).not.toBeNull();
@@ -416,7 +416,7 @@ describe('I-1 边角出口：Esc / 卸载 / 非法 JSON 保存', () => {
     const view = renderWorkbench();
     await selectAndDraft();
 
-    fireEvent.click(screen.getByTestId('redis-refresh'));
+    fireEvent.click(screen.getByTestId('redis-tree-refresh'));
     await screen.findByTestId('redis-draft-discard');
     expect(isLeavePending()).toBe(true);
 
