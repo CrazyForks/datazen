@@ -1,5 +1,5 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: **READY_FOR_TEST（修复轮第 2 回合完成，待第 3 轮 Tester）**
+- 状态: **TEST_IN_PROGRESS（第 3 轮 Tester 复测中，2026-09-23）**
 - 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee + d1581baf2（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例/gaps 头注释）
 - 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、f8a191b66（覆盖率补测 + 判定收口）；**round-2**：本 commit（第 2 轮复测判定 + BUG-003/004 登记）
 - 合并 commit: —
@@ -718,3 +718,36 @@ build exit=0
 ### 5. 结论
 
 四门全部 PASS，无失败项；产物零改动（本轮仅台账两文件变更）。BUG-003/BUG-004 已翻 `待复测`，交第 3 轮 Tester。
+
+## 第 3 轮复测记录（第 3 轮 Tester，全新实例，2026-09-23）
+
+> 复测对象：修复轮第 2 回合 —— `698b18174`（BUG-003 glob 方言字节级移植）、
+> `492f5503d`（BUG-004 面包屑键盘旅程 + 仅字面头前缀路由）。Bug 循环 3/5。只测不修。
+
+### 1. 文件面审计 —— PASS
+
+`git diff f3a3eea19..HEAD --name-status` = **10 文件**（f3a3eea19 = 第 2 轮 Tester 判定 commit）：
+
+```
+M  docs/development/coordination/tracks/redis-tree-ui/bugs.md
+M  docs/development/coordination/tracks/redis-tree-ui/progress.md
+A  packages/drivers/redis/ui/__tests__/keyTreeBreadcrumbKeyboardJourney.test.tsx
+M  packages/drivers/redis/ui/__tests__/keyTreeFilter.test.ts
+M  packages/drivers/redis/ui/__tests__/keyTreePatternFilter.test.tsx
+M  packages/drivers/redis/ui/__tests__/keyTreeState.test.ts
+M  packages/drivers/redis/ui/key-browser/KeyTreeList.tsx
+M  packages/drivers/redis/ui/key-browser/keyTreeFilter.ts
+M  packages/drivers/redis/ui/key-browser/treeRowSpec.ts
+M  packages/drivers/redis/ui/key-browser/useKeyTree.ts
+```
+
+- 逐文件核对：全部落在 `ui/key-browser/**`（源码 4）+ `ui/__tests__/**`（测试 4）+ 本轨台账 2。
+- **禁改面零命中**：`BatchBar` / `ImportExport` / `redisInvoke` / `value-editors` / `console` /
+  宿主 `src/` / `driver-sdk` / `ui/shared/meta.ts` / `resolve-drivers.mjs` / `*.rs` / `scripts/` /
+  `hub.md` / `tsconfig` / `Cargo.*` / `locales/`（含 `locales/en.ts`）—— 反向 grep 判 `NONE-TOUCHED`；
+  越界白名单反向过滤判 `NONE-OUT-OF-SCOPE`。**本轮未改 `locales/en.ts`**（自报「如有」= 无）。
+- 规模红线：`KeyTreeList.tsx` **652 行** ≤800 ✓；`keyTreeFilter.ts` 350、`treeRowSpec.ts` 169、
+  `useKeyTree.ts` 253，均 ≤800 ✓。
+- diff 量级：1186 insertions / 101 deletions（测试 889 行占大头，符合「修复＝补测 + 方言重写」形态）。
+
+结论：**PASS**，无越界、无禁改面命中。
