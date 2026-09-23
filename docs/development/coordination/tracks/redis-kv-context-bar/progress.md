@@ -3,7 +3,7 @@
 - 编码 commit: `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版）
 - 修复 commit: `392e851aa`（compact overflow 保留采样标记与无上限语义）
 - 测试 commit: 第 2 轮 `4c59a32f5`、`a63f6bd0a`、`78e660789`、`6d253d058`；第 3 轮 `8770a2adc`、`88c027010`、`0ef88f36f`、`ab76454a6`
-- 合并 commit: `ec82e9606`
+- 合并 commit: `ec82e9606`（随后随 main `bbb92bc04` 前向合入 `feat/redis-workspace-ux`，合并 commit `77e0ad2ae`）
 - 代理: w4-redis-kv-context-bar-coder
 - Worktree: .worktrees/datazen-redis-kv-context-bar
 - 分支: feature/redis-kv-context-bar
