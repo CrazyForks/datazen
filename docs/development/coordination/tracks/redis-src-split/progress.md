@@ -68,9 +68,27 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
 | 3 | `src/ops.rs` | 1124 | `ops/mod.rs` **490** + `ops/{list 122, batch 100, parse 90, types 75, scan 66, zset 61, hash 60, set 50, flush 50, keys 43, ttl 33}` | `5ebfd6290` |
 | 4 | `src/connect.rs` | 1091 | `connect/mod.rs` **317** + `connect/{parse 202, live 186, plan 122, client 114, standalone 92, tls 91, cluster 67, sentinel 56}` | `dc5b34b95` |
 | 5 | `src/ops_workbench/tests/cluster_topology.rs` | 1164 | `cluster_topology/mod.rs` **423** + `{census 277, routing 177, batch 161, hash_tag 150}` | `00c5f4086` |
+| 6 | `src/ops_tree_scan.rs` | 988 | `ops_tree_scan/mod.rs` **107** + `{value 197, page 169, batch 160, transport 139, budget 137, meta 102, count 92}` | `197434dc4` |
+| 7 | `src/ops_workbench.rs` | 1070 | `ops_workbench/mod.rs` **161** + `{shapes 277, transport 253, distribution 187, memory_sample 168, primitives 96, key_info 62}` | `833fef717` |
+| 8 | `src/ops_stream.rs` | 975 | `ops_stream/mod.rs` **313** + `{parse 223, entries 210, groups 114, types 99, overview 96}` | `6d8ea052e` |
 
 **每个新文件 ≤800 行**（最大 `ops_tree_scan/tests/page_coverage.rs` 684）。
 原文件变 `mod.rs` 后均 ≤800（最大 `ops/mod.rs` 490）。
+
+**`packages/drivers/redis/src/` 现已无任何 >800 行的文件**（任务书列出的 7 个 Rust 超限文件 +
+协调者追加的 `cluster_topology.rs` **全部拆完**）。复核：
+
+```
+$ find src -name "*.rs" -exec wc -l {} + | awk '$1>800 && $2!="total"' | sort -rn
+（空）
+
+$ find src -name "*.rs" -exec wc -l {} + | grep -v total | sort -rn | head -5
+     787 src/commands.rs
+     786 src/redis_driver.rs
+     708 src/commands_exec_dispatch.rs
+     684 src/ops_tree_scan/tests/page_coverage.rs
+     601 src/ops_observe.rs
+```
 
 ## 3. 零行为变更的论证方法（不依赖「测试全绿」推断）
 
@@ -91,13 +109,20 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
 | `ops.rs` | 11 个子模块 = 原文「空白 + `pub(crate) ` 前缀」等价；tests 块与模块文档逐字进 `mod.rs` |
 | `connect.rs` | 8 个子模块「空白 + `pub(crate) ` + rustfmt 尾逗号」等价；macro 块与 tests 块逐字进 `mod.rs` |
 | `cluster_topology.rs` | 1159 行归属 + 5 空行丢弃；4 个 payload 逐字命中（173/157/273/146） |
+| `ops_tree_scan.rs` | 7 个子模块「空白 + `pub(crate) ` + 尾逗号」等价；模块文档逐字进 `mod.rs` |
+| `ops_workbench.rs` | 6 个子模块同上等价；模块文档逐字进 `mod.rs`（`value`/`primitives` 两段按常量归属分段比对） |
+| `ops_stream.rs` | 5 个子模块同上等价；模块文档与 tests 块逐字进 `mod.rs` |
 
 **公开 API 面逐项不变**（拆分 `ops.rs` / `connect.rs` 的硬要求，因为 `lib.rs` 有 `pub use`）：
 
 - `ops.rs`：拆前 `pub` 项 **38** 个，拆后 `ops/mod.rs` 的 `pub use` 重新导出 **38** 个，集合**完全相等**
   （`missing: none / extra: none`）；
 - `connect.rs`：拆前 **12** 个 == 拆后 **12** 个，集合完全相等。
-- 所有调用方路径（`crate::ops::X` / `crate::connect::X` / `lib.rs` 的 `pub use connect::{...}`）**一行未改**，
+- `ops_tree_scan.rs`：拆前 `pub` **19** == 拆后 **19**；
+- `ops_workbench.rs`：拆前 `pub` **33**（含 2 个嵌套 `pub mod`）→ 拆后 **35** = 33 顶层项 + 2 嵌套模块；
+- `ops_stream.rs`：拆前 **23** == 拆后 **23**。
+- 所有调用方路径（`crate::ops::X` / `crate::connect::X` / `crate::ops_tree_scan::X` /
+  `crate::ops_workbench::X` / `crate::ops_stream::X` / `lib.rs` 的 `pub use connect::{...}`）**一行未改**，
   因为 `mod.rs` 用 `pub use` 把它们原样透出。
 
 ## 4. 可见性变更清单（唯一被允许的签名改动，已在 commit message 说明）
@@ -112,6 +137,9 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
 |---|---|
 | `ops.rs` | 9 个私有 fn：`apply_ttl_command`、`parse_cursor_from_value`、`parse_flat_string_array`、`parse_flat_string_pairs`、`parse_hash_scan_result`、`parse_scan_result_generic`、`parse_string_array`、`parse_zscan_result`、`value_to_string` |
 | `connect.rs` | 18 个私有 fn + `PREFER_TLS_PROBE` 常量 + `TlsPlan::plaintext` 关联函数 |
+| `ops_tree_scan.rs` | 6 个私有 fn：`fetch_page_groups`、`scatter`、`reply_at`、`pipeline_raw`、`fold_command_answer`、`is_connection_level_failure` |
+| `ops_workbench.rs` | 10 个私有 fn：`slot`、`unreadable_key_state`、`master_route`、`pipeline_raw`、`routed_single`、`routed_sequential`、`issue_batch`、`fetch_dbsize`、`is_connection_level_failure`、`sample_types` |
+| `ops_stream.rs` | 7 个私有 fn：`parse_stream_entry`、`parse_stream_id`、`parse_xinfo_consumers`、`parse_xinfo_groups`、`parse_xpending_entries`、`value_to_string`、`value_to_u64` |
 
 **放宽只增不减外部面**：`pub(crate)` 不进入 crate 的对外 API，故 §3 的「38 == 38」「12 == 12」成立。
 `ops_tree_scan/tests.rs` 的 1 行 `use redis::ErrorKind;` 从文件中段提升到父模块头部 —— 原因：拆成子模块后
@@ -284,7 +312,78 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
 再用 1164 行做区间记账；跨两条测试带共用的 `scan_round_cmd` 与双替身 `ClusterFoldingConn`
 按 §4 留在父模块）。
 
-### 步骤 6 — 全量复核
+### 步骤 6 — `ops_tree_scan.rs` → `ops_tree_scan/{7 子模块}` + `mod.rs`
+
+```
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis 2>&1 | grep -E "test result"
+  test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.05s
+  test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+   1 src/ops_observe.rs:280:
+   1 src/ops_observe.rs:569:
+```
+
+公开面：拆前 `pub` **19** 个，`pub(crate)` **8** 个；拆后 `mod.rs` 的 `pub use` 重新导出 **19** 个
+（**集合相等**），`pub(crate) use` **14** 个（原 8 个 + 本次放宽的 6 个私有 helper），外部面不变。
+
+### 步骤 7 — `ops_workbench.rs` → `ops_workbench/{6 子模块}` + `mod.rs`
+
+```
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis 2>&1 | grep -E "test result"
+  test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.05s
+  test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+   1 src/ops_observe.rs:280:
+   1 src/ops_observe.rs:569:
+```
+
+公开面：拆前 `pub` **33** 个（含 2 个嵌套 `pub mod`），拆后 `pub use` 重新导出 **35** 个
+= 33 个顶层项 + `key_info_slots` / `memory_sample_slots` 两个嵌套模块（**无缺无溢**）。
+
+本步修过 3 轮编译错误（均在 commit 前解决）：① 关联函数（`TypeDistribution::from_sample`、
+`KeyObjectInfo::missing`）被误当作自由函数生成 `use super::shapes::from_sample;` —— 关联函数只能经
+`Type::` / `Self::` 抵达，**不生成 import**；② 嵌套 `pub mod key_info_slots` / `memory_sample_slots`
+未随 `pub use` 透出，既有子模块 `fix_round1` 等取不到 → 补 `pub use`；③ `.boxed()` 需要 `FutureExt`
+在作用域内 → 按调用点推断补 import。
+
+### 步骤 8 — `ops_stream.rs` → `ops_stream/{5 子模块}` + `mod.rs`
+
+```
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+$ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis 2>&1 | grep -E "test result"
+  test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.03s
+  test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+   1 src/ops_observe.rs:280:
+   1 src/ops_observe.rs:569:
+
+$ find src -name "*.rs" -exec wc -l {} + | awk '$1>800 && $2!="total"' | sort -rn
+（空）
+```
+
+公开面：拆前 `pub` **23** 个，拆后 `pub use` **23** 个，**集合完全相等**。本步一次编译通过。
+
+### 步骤 9 — 全量复核
 
 ```
 $ CARGO_TARGET_DIR=/tmp/dz-split-cargo cargo test -p datazen-driver-redis --lib 2>&1 | tail -3
@@ -295,19 +394,18 @@ $ cargo fmt --check 2>&1 | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -
    1 src/ops_observe.rs:569:
 
 $ find src -name "*.rs" -exec wc -l {} + | awk '$1>800 && $2!="total"' | sort -rn
-    1070 src/ops_workbench.rs
-     988 src/ops_tree_scan.rs
-     975 src/ops_stream.rs
-```
+（空 —— src/ 中已无超限文件）
 
-→ 步骤 1–5 的目标文件**全部 ≤800**；`src/` 中**剩余 3 个**超限文件见 §6（本轮未做，原因如下）。
+$ wc -l ui/console/consoleCompletion/commandMeta.ts
+     873 ui/console/consoleCompletion/commandMeta.ts   （TS 侧，见 §7 未完成项 2）
+```
 
 ## 6. 完成定义对照
 
 | 要求 | 状态 |
 |---|---|
-| 至少 4 个超限文件已拆 | ✅ **5 个**（含协调者追加批准的 `cluster_topology.rs`） |
-| 每个独立 commit | ✅ 5 个 commit，一文件一 commit |
+| 至少 4 个超限文件已拆 | ✅ **8 个**（任务书 7 个 Rust 超限文件全部 + 协调者追加的 `cluster_topology.rs`） |
+| 每个独立 commit | ✅ 8 个拆分 commit + 1 个台账 commit，一文件一 commit |
 | `cargo test` 数字逐位不变 | ✅ 每步 `342 passed; 0 failed; 4 ignored`，集成测试 4 目标全绿 |
 | 每个新文件 ≤800 行 | ✅ 最大 684 |
 | 原文件（`mod.rs`）≤800 | ✅ 最大 490 |
@@ -317,9 +415,13 @@ $ find src -name "*.rs" -exec wc -l {} + | awk '$1>800 && $2!="total"' | sort -r
 
 ## 7. 终态与未完成项
 
-**commit 列表（本轨道，5 个）**
+**commit 列表（本轨道，9 个）**
 
 ```
+6d8ea052e  refactor(redis): split ops_stream.rs into ops_stream/{types,parse,groups,entries,overview}.rs + mod.rs
+833fef717  refactor(redis): split ops_workbench.rs into ops_workbench/{primitives,shapes,transport,distribution,key_info,memory_sample}.rs + mod.rs
+197434dc4  refactor(redis): split ops_tree_scan.rs into ops_tree_scan/{transport,batch,budget,meta,value,page,count}.rs + mod.rs
+0501b880a  docs(coordination): redis-src-split — READY_FOR_TEST ledger
 00c5f4086  refactor(redis): split ops_workbench/tests/cluster_topology.rs into cluster_topology/{routing,batch,census,hash_tag}.rs + mod.rs
 dc5b34b95  refactor(redis): split connect.rs into connect/{plan,live,standalone,cluster,sentinel,parse,tls,client}.rs + mod.rs
 5ebfd6290  refactor(redis): split ops.rs into ops/{types,scan,hash,list,set,zset,parse,keys,ttl,batch,flush}.rs + mod.rs
@@ -329,22 +431,20 @@ bd887e0e0  refactor(redis): split ops_tree_scan/tests.rs into tests/{batch_shape
 
 **未完成项（本轮未做，逐条给原因）**
 
-1. `src/ops_workbench.rs`（1070）、`src/ops_tree_scan.rs`（988）、`src/ops_stream.rs`（975）——
-   任务书列的第 6/7 项。**原因：本轮时间优先给了前 4 项 + 协调者追加的 `cluster_topology.rs`；
-   三者均为实现模块（含生产逻辑与 module docs），拆分需重做与 `ops.rs` 同级的可见性/`pub use` 面
-   分析（`ops_workbench.rs` 还被 `ops_tree_scan/tests/*` 与 `ops_tree_scan.rs` 反向引用），
-   风险高于纯测试文件拆分，故留待下一轮。**建议下一轮按 `ops_tree_scan.rs` 已点名的
-   `ops_tree_scan/{batch,page}.rs` 切法起步。
-2. `ui/console/consoleCompletion/commandMeta.ts`（873，TS 侧）—— 任务书列为「另一轨 Tester 建议项」。
-   **原因：TS 侧改文件即触发 `npx tsc --noEmit` + `npx vitest run --config vitest.drivers.config.ts`
-   两道额外门禁；本轮 Rust 侧已用满时间片，为不把门禁跑到半途而留待下一轮**（单独一轮做，成本更低）。
+1. `ui/console/consoleCompletion/commandMeta.ts`（873，TS 侧；任务书列为「另一轨 Tester 建议项」）——
+   **原因：本轮把时间片全投在 Rust 侧 8 个文件的拆分上（任务书要求「至少前 4 个」，实际做到全部 7 个 + 追加 1 个）；
+   TS 侧改文件会额外触发 `npx tsc --noEmit` + `npx vitest run --config vitest.drivers.config.ts`
+   两道门禁，为不把门禁跑到半途而留待**下一轮单独做**（单独的 Coder 实例做这一项成本更低、风险更小）。
+   注意：`commandMeta.ts` 是**静态命令元数据表**，按 group 切分时需保证导出的聚合对象逐键不变
+   （等价于 Rust 侧的「公开面集合相等」校验），建议沿用本台账 §3 的方法论。**
 
 **未触碰（按纪律）**：`hub.md`、他轨台账、gitignored codegen、`Cargo.lock`、`src-tauri/Cargo.toml`。
 `Cargo.lock` 在工作区显示为已修改（`datazen-driver-redis` 依赖列表多了 `flate2`），
-**那是 worktree 建立时就存在的既有漂移，本轨道未 `git add` 它**，5 个 commit 均不含 `Cargo.lock`
-（已用 `git show --stat` 逐个复核）。
+**那是 worktree 建立时就存在的既有漂移，本轨道未 `git add` 它**，9 个 commit 均不含 `Cargo.lock`
+（已用 `git show --name-only` 逐个复核，另核 `Cargo.toml` / `hub.md` / generated 均未出现）。
 
 **合流风险提示（交给协调者）**：主检出 `main` 已在 `ops.rs` 上演进到 1172 行，且含本轨道基线没有的
 `count_matching` / `set_string_with_options`（后者被 `redis_driver.rs:356` 与 `ops_write.rs` 引用）。
 本轨道的拆分**基于基线 1124 行版**，故 `ops.rs` → `ops/` 的合流是**语义冲突**（不是文本冲突），
-需按协调者手册 §6.1.1 处理。`connect.rs` 同理需查 `d049ceb4e..main` 是否动过。
+需按协调者手册 §6.1.1 处理。`connect.rs`、`ops_tree_scan.rs`、`ops_workbench.rs`、`ops_stream.rs` 同理
+需先查 `d049ceb4e..main` 是否动过这几个文件再判断冲突类型。
