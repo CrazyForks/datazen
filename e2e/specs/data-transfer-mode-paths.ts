@@ -199,6 +199,17 @@ describe('数据传输模式路径矩阵 (DT-MODE-MATRIX)', () => {
           } else if (p.pair === 'mysql-pg' || p.pair === 'pg-pg') {
             await invokeBackend('execute_query', { dbSessionId: tgtSession, sql: pgCreate });
           }
+
+          const sourceRows = await invokeBackend<QueryResultPayload>('execute_query', {
+            dbSessionId: srcSession,
+            sql: `SELECT COUNT(*) AS c FROM ${p.table}`,
+          });
+          const targetRows = await invokeBackend<QueryResultPayload>('execute_query', {
+            dbSessionId: tgtSession,
+            sql: `SELECT COUNT(*) AS c FROM ${p.table}`,
+          });
+          expect(queryScalar(sourceRows, 'c')).toBe(2);
+          expect(queryScalar(targetRows, 'c')).toBe(0);
         });
       } finally {
         await disconnectBackend(srcSession);

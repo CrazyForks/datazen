@@ -1229,6 +1229,40 @@ fn mysql_string_defaults_are_quoted_for_postgres_add_create_and_set_default() {
 }
 
 #[test]
+fn test_tester_mysql_numeric_expression_default_fails_closed_for_postgres() {
+    let mut value = col("value", "int");
+    value.default_value = Some("IFNULL(1, 2)".into());
+    let mapper =
+        |_table: &str, _ty: &str, _name: &str| -> Result<String, String> { Ok("integer".into()) };
+    let plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![col("id", "int"), value]),
+            schema(vec![col("id", "integer")]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        plan.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("default") || reason.contains("Default")
+        )),
+        "numeric MySQL expression should block the plan: {plan:?}"
+    );
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("IFNULL(1, 2)")));
+}
+
+#[test]
 fn unsafe_mysql_string_defaults_fail_closed_for_postgres() {
     for (source_type, default, target_type) in [
         ("varchar(32)", "uuid()", "character varying(32)"),
