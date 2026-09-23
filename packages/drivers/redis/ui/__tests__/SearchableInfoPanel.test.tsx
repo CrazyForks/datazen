@@ -87,4 +87,24 @@ describe('SearchableInfoPanel', () => {
     expect(screen.getByText(/redis\.monitor\.infoMatched/)).toBeTruthy();
     expect(screen.queryByText(/redis\.monitor\.infoEntries/)).toBeNull();
   });
+
+  it('renders the no-match notice when the query filters every section out', async () => {
+    mockInvoke.mockResolvedValue(structuredReply);
+
+    render(<SearchableInfoPanel dbSessionId="test-session" />);
+    await act(async () => {
+      fireEvent.click(screen.getByText('redis.monitor.refresh'));
+    });
+
+    // rawInfo stays truthy while filtered.sections drops to zero → terminal
+    // arm renders the infoNoMatch notice (branch loc line 154 > 0).
+    const input = screen.getByPlaceholderText('redis.monitor.infoSearchPlaceholder');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'no-such-token-anywhere' } });
+    });
+
+    expect(screen.getByText('redis.monitor.infoNoMatch')).toBeTruthy();
+    // No section survives the filter, so the sections-count key is absent.
+    expect(screen.queryByText(/redis\.monitor\.infoSections/)).toBeNull();
+  });
 });
