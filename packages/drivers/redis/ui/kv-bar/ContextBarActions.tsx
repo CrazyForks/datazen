@@ -125,8 +125,8 @@ function OverflowMenu({
 }: {
   request: (action: KvSlotAction) => void;
   compact: boolean;
-  memory: { usedBytes: number; maxBytes: number | null } | null;
-  types: { chips: Array<{ type: string; count: number }>; sample: unknown } | null;
+  memory: MemoryReadout | null;
+  types: TypeChipsModel | null;
 }) {
   const { t } = useI18n();
   return (
@@ -147,21 +147,41 @@ function OverflowMenu({
         {compact && memory && (
           <OverflowRow
             testId="redis-context-overflow-memory"
-            i18nKey="redis.contextBar.memory"
-            text={t('redis.contextBar.memory', {
-              used: formatSize(memory.usedBytes),
-              max: memory.maxBytes === null ? '—' : formatSize(memory.maxBytes),
-            })}
-          />
+            i18nKey={memory.maxBytes === null
+              ? 'redis.contextBar.memoryUnlimited'
+              : 'redis.contextBar.memory'}
+          >
+            {memory.maxBytes === null
+              ? t('redis.contextBar.memoryUnlimited', { used: formatSize(memory.usedBytes) })
+              : t('redis.contextBar.memory', {
+                  used: formatSize(memory.usedBytes),
+                  max: formatSize(memory.maxBytes),
+                })}
+          </OverflowRow>
         )}
         {compact && types && (
           <OverflowRow
             testId="redis-context-overflow-types"
             i18nKey="redis.contextBar.types"
-            text={types.chips
+          >
+            {types.chips
               .map((chip) => `${chip.type} ${formatCompactCount(chip.count)}`)
               .join(' · ')}
-          />
+            {types.sample && (
+              <span
+                className="ml-1 whitespace-nowrap text-warning"
+                data-testid="redis-context-overflow-types-sampled"
+                data-sampled={types.sample.sampled}
+                data-dbsize={types.sample.dbsize}
+                data-i18n-key="redis.contextBar.sampled"
+              >
+                {t('redis.contextBar.sampled', {
+                  sampled: formatCompactCount(types.sample.sampled),
+                  dbsize: formatCompactCount(types.sample.dbsize),
+                })}
+              </span>
+            )}
+          </OverflowRow>
         )}
         <MenuItem
           testId="redis-context-menu-flush"
@@ -204,11 +224,11 @@ function OverflowMenu({
 function OverflowRow({
   testId,
   i18nKey,
-  text,
+  children,
 }: {
   testId: string;
   i18nKey: string;
-  text: string;
+  children: React.ReactNode;
 }) {
   return (
     <span
@@ -216,7 +236,7 @@ function OverflowRow({
       data-testid={testId}
       data-i18n-key={i18nKey}
     >
-      {text}
+      {children}
     </span>
   );
 }
