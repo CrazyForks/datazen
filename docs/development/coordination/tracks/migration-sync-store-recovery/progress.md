@@ -2,7 +2,7 @@
 
 Phase: READY_FOR_TEST
 
-Implementation commit: will be recorded in the follow-up progress commit immediately after the implementation commit.
+Implementation commit: `054fbb7d` (`feat(data-sync): recover comparison stores after process exit`).
 
 ## Scope
 
