@@ -812,3 +812,69 @@ Coder 台账 §4 的放宽清单**逐条名字与我实测一致**，但 `connec
 **不计入 `bugs/`**（不改变任何验收判据：公开面集合、门禁数字、行为等价均不受影响）。
 
 **步骤 6 结论：(a)(b)(c) 全部 PASS，无泄漏；发现台账计数勘误 1 处（52/50 vs 实测 57），已如实记录。**
+
+### 步骤 7 — 台账审阅
+
+| 审阅项 | 结果 |
+|---|---|
+| `progress.md` 头部 `READY_FOR_TEST` | ✅ 存在（:5 `- 状态: **READY_FOR_TEST**`） |
+| 拆分前后行数表 | ✅ 存在（§2，8 行，一文件一 commit 列全） |
+| 每步门禁尾部 | ✅ 存在（§5，步骤 1-9 逐字 `test result` / fmt 残差） |
+| 未完成项声明 | ✅ 存在（§7 第 1 条明确 `ui/console/consoleCompletion/commandMeta.ts` 873 行留给下一轮，附原因） |
+| `bugs.md` 存在 | ✅ 存在（同目录，空表 + 判据说明） |
+
+**基线行数复核（§2 的「前」列）—— 8/8 逐位正确**：
+
+```
+BASE ops_tree_scan/tests.rs                  2394   ✅
+BASE ops_workbench/tests.rs                  1602   ✅
+BASE ops.rs                                  1124   ✅
+BASE connect.rs                              1091   ✅
+BASE ops_workbench/tests/cluster_topology.rs 1164   ✅
+BASE ops_tree_scan.rs                         988   ✅
+BASE ops_workbench.rs                        1070   ✅
+BASE ops_stream.rs                            975   ✅
+```
+
+**拆分后行数复核（§2 的「后」列）—— 63 个产出文件全部存在，其中 55 个计数正确、8 个偏差**：
+
+```
+rows in ledger §2: 63   files present: 63   missing files: []
+MISMATCHES: 8  —— 全部集中在 ops_tree_scan 这一行：
+   ops_tree_scan/mod.rs         ledger  107  actual  106  (-1)
+   ops_tree_scan/value.rs       ledger  197  actual  202  (+5)
+   ops_tree_scan/page.rs        ledger  169  actual  172  (+3)
+   ops_tree_scan/batch.rs       ledger  160  actual  165  (+5)
+   ops_tree_scan/transport.rs   ledger  139  actual  147  (+8)
+   ops_tree_scan/budget.rs      ledger  137  actual  140  (+3)
+   ops_tree_scan/meta.rs        ledger  102  actual  105  (+3)
+   ops_tree_scan/count.rs       ledger   92  actual   95  (+3)
+```
+
+已核这 8 个计数在**拆分 commit `197434dc4` 当次**即为当前值（该行此后未再改动，
+`git log -- ops_tree_scan/` 只有拆分的两个 commit），故属**该行行数表誊写偏差**，
+非后续提交引入。**其余 7 行（55 个文件）行数逐位正确**。
+
+**判定：台账勘误，不计入 `bugs/`** —— 行数表是**说明性表格**，不是验收判据；
+真正的实质判据（「每个新文件 ≤800 行」）已独立验证通过：
+
+```
+$ find packages/drivers/redis/src -name "*.rs" -exec wc -l {} + | awk '$1>800 && $2!="total"'
+（空 —— src/ 中无任何 >800 行文件）
+$ find packages/drivers/redis/src/ops_tree_scan -name "*.rs" -exec wc -l {} + | sort -rn | head -3
+    3581 total
+     684 packages/drivers/redis/src/ops_tree_scan/tests/page_coverage.rs
+     402 packages/drivers/redis/src/ops_tree_scan/tests/fail_soft.rs
+```
+
+`ops_tree_scan` 组最大文件仍是 `tests/page_coverage.rs` 684（远低于 800），
+偏差全部是 +3~+8 行的小量誊写误差，**不影响任何完成定义**。
+建议下一轮 Coder 顺手把 §2 第 6 行 8 个数字改为实测值。
+
+**未完成项复核**：`wc -l packages/drivers/redis/ui/console/consoleCompletion/commandMeta.ts` = **873**，
+与 Coder 声明**逐位一致**；该文件确实**未被本轨任何 commit 触碰**（步骤 1 正向清单 71 条路径里
+只有 `packages/drivers/redis/src/**` 与本轨台账，**无 `ui/` 路径**），
+故「留给下一轮」的声明与实际状态**相符**。
+
+**步骤 7 结论：审阅项 5/5 存在；基线行数 8/8 正确；拆分后行数 55/63 正确、8 处誊写偏差（已登记为勘误）；
+未完成项声明与实际一致。**
