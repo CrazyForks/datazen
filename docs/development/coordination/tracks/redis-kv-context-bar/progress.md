@@ -1,0 +1,376 @@
+- 任务: KV 上下文条全量版（PRD §3.4 / 裁定 8-2 = 全量，#69）+ **合并承担 statusBar 全量版**（协调者追加裁定）
+- 状态: READY_FOR_TEST
+- 编码 commit: `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版）
+- 测试 commit: 随两个编码 commit（同 commit 内交付，无独立测试 commit）
+- 合并 commit: —
+- 代理: w4-redis-kv-context-bar-coder
+- Worktree: .worktrees/datazen-redis-kv-context-bar
+- 分支: feature/redis-kv-context-bar
+- 基线: `d049ceb4e`
+- 心跳: 2026-09-23 16:54（两单元已 commit，四门全绿，返回 `READY_FOR_TEST`）
+
+# W4 `redis-kv-context-bar` 简报理解（逐条回执）
+
+## 1. 交付物与我的理解
+
+| 简报要求 | 我的处置 |
+|---|---|
+| ① `kv-bar/RedisContextBar.tsx`：左→右六项，每项 `data-testid` | 已交付；六项各有独立 `data-testid` + `data-part`（`RedisContextBar.tsx` 236 行；右侧控件簇抽到 `ContextBarActions.tsx` 255 行以守住「组件 ≤250 行」） |
+| `db 选择器 ▾`（列表来自 `db_sizes` 或 `maxDatabaseIndex`） | 已交付，**取并集**（见 §3「数据来源」）；切换走裁定 (A) 的 `request({type:'selectDatabase'})` |
+| `52 keys` | 已交付；`db_sizes` 取该 db 行，取不到**不渲染**（不是 0/—） |
+| `used 1.2 MB / max 0`，max=0 须显示「无上限」语义 | 已交付；`deriveMemoryReadout` 把 `maxmemory <= 0` 归为 `maxBytes: null`，渲染走独立词条 `redis.contextBar.memoryUnlimited`，`data-max-bytes="unlimited"` |
+| 类型分布 chips（`type_distribution`） | 已交付；排序（count 降序、同名升序）在纯模型里 |
+| 采样硬约束：`sampled < dbsize` ⇒ 组尾强制标注；`>=` 可不标；失败整组不渲染 | 已交付；**判定由 `sampled`/`dbsize` 重算，不信线上的 `truncated` 布尔**（§3.4 的规则原文就是这条比较） |
+| 扫描状态（`getScanBudgetUsed/Total`、`isScanning`）；`Total === 0` ⇒ 只显示已用或不显示 | 已交付；`Total === 0` ⇒ 只显示已用（`redis.contextBar.scanUsed`），**不画进度条**（无分母的分数就是 §3.4 禁止的那类编造）；注释写明 |
+| 右侧：SafeMode 徽标 + 刷新 + `+` + 导入导出 + `⋯`（FLUSH/监控/驱动设置/预算档位） | 已交付；`SafeModeBadge` 复用既有组件，预算档位 10k/50k/200k/1M |
+| 响应式 I-10：`compact` 先丢文字标签再进溢出菜单 | 已交付，分级见 `contextBarModel.contextBarLayout` / `partInBand` 与 `COMPACT_OVERFLOW_PARTS` |
+| 反向动作 F-3：每个可点元素走 `request(action)` | 已交付；8 条原有 action 全部有覆盖，`flushDb` **不自弹确认框**（宿主过门闸） |
+| 组件薄逻辑厚 + co-located 单测 | 已交付：`contextBarModel.ts`（315 行纯函数，无 React/i18n 文案）、`useContextBarData.ts`（184 行取数）、`dbKeyCounts.ts`（121 行） |
+| ② `kv-bar/index.ts` 导出、`shared/meta.ts` 加进**现有** `kvWorkspace` 对象、`resolve-drivers.mjs` 加 kvSlots 行 | 已交付三处；`meta.ts` 是**往同一对象里加键**，未新建同名键 |
+| ③ 测试 `__tests__/redisContextBar.test.tsx` 覆盖清单 | 已交付 47 例；逐条对照见 §6 |
+
+## 2. 简报纪律回执（硬性禁项）
+
+- 未改宿主 `src/**` 的生产逻辑，除**协调者裁定 (A) 明确授权**的三个文件：
+  `packages/driver-sdk/src/types/kv-slots.ts`（仅加一个 `KvSlotAction` 变体）、
+  `src/windows/connection/useKvSlotActions.ts`、`src/windows/connection/ContentView.tsx`、
+  `src/windows/connection/ConnectionPage.tsx`（一线传参）。`src/lib/kvSlotState.ts` **零改动**。
+- 未改 `key-browser/**`、未改其他驱动 UI、未改 `kv-bar/**` 之外的驱动代码。
+- 未改/未提交 `hub.md`、他轨 `tracks/<other>/**`、codegen、`Cargo.lock`、注入过的 `Cargo.toml`。
+- `git add` 全程显式路径，未用 `git add -A`。
+- i18n 只改 `packages/drivers/redis/locales/en.ts`；测试零英文字面量断言（`t()` 被 mock 成回显 key + 参数）。
+- 生产路径无裸 `unwrap()/expect()`；无无理由 `!` 断言；单文件最大 315 行（≤800）。
+- 重型命令（vitest / vite build）串行执行，未并发。
+
+## 3. `type_distribution` 与 `db_sizes` 的数据来源说明（简报点名）
+
+### `type_distribution`（chips 唯一数据源）
+
+- **命令**：`execute_driver_command` → `redis` / `type_distribution`，入参 `{ dbSessionId, dbIndex }`
+  （`sampleLimit` 省略 ⇒ 后端默认 `DEFAULT_TYPE_SAMPLE_LIMIT = 1000`；cluster 连接后端自行收紧到 200）。
+- **后端实现**：`packages/drivers/redis/src/ops_workbench.rs::type_distribution` ——
+  `DBSIZE` 读一次 + `SCAN` 填充采样窗口（`COUNT 500`）+ `TYPE` 分块 pipeline
+  （standalone/sentinel 每 500 键一次往返；cluster 每键一次且全部寻址到
+  `CLUSTER_SCAN_ANCHOR` 钉住的同一分片）。**从不发 `KEYS`**。
+- **返回形状**（`TypeDistribution`，`serde(rename_all="camelCase")`）：
+  `{ counts: {string:30, hash:12, …}, sampled: 1000, dbsize: 52, truncated: bool }`。
+  不变量：`sampled === sum(counts.values())`（`TypeDistribution::from_sample` 维持）。
+- **前端消费**：`useContextBarData` 把整包交给 `contextBarModel.deriveTypeChips`。
+  我的判定**重新计算** `sampled < dbsize` 而不读 `truncated`：两者在健康服务器上恒等，
+  但 §3.4 的规则原文是那条比较，重算可让 payload 里两个位（§6 要求「必须带 sampled 与 dbsize 两个位」）
+  成为唯一真源，`truncated` 位退化为冗余校验。
+- **cluster 语义**（后端模块文档明写，前端照实标注）：`sampled` 来自**一个分片**，
+  `dbsize` 是 `Aggregate(Sum)` 全集群 ⇒ 集群上 `truncated` 几乎恒为 `true`，
+  于是「采样 N/M」标注在集群上**总是显示** —— 这是刻意的诚实，不是缺陷。
+
+### `db_sizes`（键数 + db 选择器列表）
+
+- **命令**：`redis` / `db_sizes`，入参仅 `{ dbSessionId }`（无 `dbIndex`）。
+- **返回**：`Array<{ db: number, keys: number }>`，每个逻辑库一行（后端 `SELECT` + `DBSIZE` 逐库）。
+- **两个消费点**：
+  1. `52 keys`（contextBar 与 statusBar 都要）——取 `db === dbIndex` 那一行；
+     不在返回里 / 命令失败 / 形状不对 ⇒ `null` ⇒ **不渲染该段**。
+  2. db 选择器列表——`deriveDbOptions(dbSizes, maxDatabaseIndex)` 取
+     **声明窗口 `db0…db{maxDatabaseIndex}`（= `redisMeta.maxDatabaseIndex`，15）∪ 服务端回报的 db 行**
+     的并集。取并集而非二选一：两个来源独立失败且含义不同（窗口是驱动声明、恒可用；
+     `db_sizes` 是服务端真相，ACL 禁 `DBSIZE` 时为空，重配过的服务器可能有窗口外的库），
+     丢掉任一方都会静默隐藏用户可达的库。
+- **一次读取，两个槽位**（`dbKeyCounts.sharedDbSizes`）：contextBar 与 statusBar 在不同 React 子树、
+  无共同父节点，若不合并则各自为 `db_sizes` 付一次费 —— 该命令是**逐库 `SELECT`+`DBSIZE`**，
+  16 库即 32 次往返，每次切 db 翻倍。合并表按**面板中继对象弱引用**分组
+  （`getKvSlotState(panelId)` 就是这些槽位的面板身份），值只存**未 settle 的 promise**、
+  settle 即删 —— 是 in-flight 合并而非缓存（缓存会被 F-2 的「不得起驱动侧缓存层」禁止）。
+  这是 `redis-kvbar-ui-BUG-002`（键读取合流）的同一条规则套到第二条命令上。
+
+### `info_filtered`（`used / max`）
+
+- 命令 `redis` / `info_filtered`，入参 `{ dbSessionId, section: 'memory' }`（与
+  `keyObjectInfo.invokeMaxmemoryPolicy` 同一个命令、同一种用法）。
+- 用 `info_filtered` 而非 `info`：字段集相同（就是该 section 解析后的 INFO），
+  payload 小得多，且面板不必多出第二种 INFO 风味。
+
+## 4. 裁定 (A) 的落地：db 选择器为什么走 action 通道而不是 `KvSlotState`
+
+### 证据链（**已用绝对路径在本 worktree 基线 `d049ceb4e` 重核**，协调者提醒后重跑）
+
+> 协调者提醒：`read`/`grep`/`glob` 传相对路径时解析基准是主检出。以下四条均以
+> `cd <worktree 绝对路径> && grep -n` 复核，落在本基线而非 `main`：
+
+| # | 事实 | 复核命令与结果 |
+|---|---|---|
+| 1 | F-3 的 8 个 action 确无 db 切换 | `packages/driver-sdk/src/types/kv-slots.ts` 联合类型 8 个成员，无 `selectDatabase` |
+| 2 | 宿主 dispatcher 只接线 2 条 | `useKvSlotActions.ts:42` `WIRED_ACTIONS = ['refresh','openSettings']` |
+| 3 | `database` 是槽位**入参**，槽位无法反写 | `useKvWorkspaceSlots.ts` 的 `panelSlotProps.database = database`（来自 `ContentView` 的 `statusDatabase`） |
+| 4 | **能力已在、未接线** | `ConnectionPage.tsx:360 const handleSelectKvDb = useCallback(...)` / `:696 onSelectKvDb={handleSelectKvDb}` —— 只传给导航树 |
+
+⇒ 不是「缺能力」，是「能力已在、未接线」。裁定 (A) + 复用同一实现成立。
+
+### 契约扩展逐字（`packages/driver-sdk/src/types/kv-slots.ts`，仅新增一个变体）
+
+```ts
+export type KvSlotAction =
+  | { type: 'refresh' }
+  | { type: 'newKey' }
+  | { type: 'import' }
+  | { type: 'export' }
+  | { type: 'flushDb' }
+  | { type: 'openMonitor' }
+  | { type: 'openSettings' }
+  | { type: 'setScanBudget'; value: number }
+  /**
+   * Ask the host to make `database` the panel's database — "switch the db
+   * selector" in PRD §3.4 terms.
+   * …（完整 JSDoc 见源码；说明它请求宿主把该 db 的 KV 面板置为活动面板，
+   *   与 setScanBudget 同类：宿主今天可能不处理，但槽位不得因此藏掉控件）
+   */
+  | { type: 'selectDatabase'; database: string };
+```
+
+**既有 8 个成员零改名零删除**；`KvSlotState`（F-1 冻结形状）**一字未动**。
+
+### 宿主接线点
+
+| 落点 | 改动 |
+|---|---|
+| `useKvSlotActions.ts` | `WIRED_ACTIONS` 加入 `'selectDatabase'`；`UseKvSlotActionsArgs` 新增可选 `onSelectDatabase?: (database: string) => void`；`switch` 新增 `case 'selectDatabase'`（有 sink ⇒ 转发；无 sink ⇒ 走既有 `warnUnwired`）。`latest` ref 扩展为 `{ t, onRefresh, onSelectDatabase }`，`request` 身份**仍然稳定** |
+| `ContentView.tsx` | 新增 prop `onSelectKvDb?: (connectionId, dbName) => void`；`useMemo` 把 `(database) => onSelectKvDb(connectionId, database)` 交给 dispatcher 的 `onSelectDatabase`（`connectionId` 由本层 `useConnectionWorkspaceMeta` 解析 —— 只有面板知道连接）；**未传回调时 `undefined`**，使 dispatcher 的 no-op+warn 降级路径保持可达（不是空壳 wrapper） |
+| `ConnectionPage.tsx` | 把**已有的** `handleSelectKvDb` 作 `onSelectKvDb` 传给 `ContentView`（原来只给导航树）。零新增实现 |
+
+### 为什么走 action 通道而非加进 `KvSlotState`（分层理由）
+
+1. **可订阅状态 vs 一次性请求**：中继（`KvSlotState`）装的是「面板此刻是什么」这类可被多个槽位
+   订阅、且必须稳定快照的标量（F-2.1 为此禁止返回对象）。db 切换是**一次性意图**，没有可观测回值，
+   塞进中继等于把一个动作伪装成状态。
+2. **F-3 原文已经给出这条分界**：`flushDb` / `openMonitor` / `setScanBudget` 都是动作而非状态，
+   `selectDatabase` 与它们同构，天然属于 `request`。
+3. **避免「谁来回答」的歧义**：若做成状态，两个槽位同时要求不同 db 时语义不明；
+   做成请求则由宿主 dispatcher 单点裁决（F-3 ruling：唯一 dispatcher）。
+4. **`request` 身份稳定**：它坐在被 memo 的槽位 props 包里，本轨扩了 `latest` ref 而未破坏该性质
+   （新增用例 `reaches the newest sink through the frozen request identity` 钉住）。
+
+### 三条既有裁定的遵守
+
+- **(a) 未接线 = no-op + warn，禁止抛错，禁止藏控件**：`selectDatabase` 现在已接线，但
+  `onSelectDatabase` 缺失时仍走 `warnUnwired`；driver 侧 8 个动作的控件**全部照常渲染**
+  （用例 `keeps every control rendered even though the host may handle none of them`）。
+- **(b) `flushDb` 过宿主写门闸**：driver 侧只发 `request({type:'flushDb'})`，**零确认框**
+  （用例 `routes the dangerous flush through request alone — no driver-side confirm`）。
+- **(c) `request` 身份稳定**：见上。
+
+## 5. 变异反证（每条硬约束都做了「改坏 ⇒ 变红」）
+
+| # | 变异（把规则改坏） | 期望 | 实测 |
+|---|---|---|---|
+| 1 | `deriveTypeChips` 恒返回 `sample`（全量库也标注） | 红 | **3 failed / 47** |
+| 2 | `deriveMemoryReadout` 把 `maxmemory 0` 回落成 `maxBytes: 0` | 红 | **2 failed / 47** |
+| 3 | chips 为空时 `push({type:'string',count:0})`（渲染 0 分布） | 红 | **2 failed / 47** |
+| 4 | `stopped` / `done` 去掉 `usedCount > 0` 项 | — | **0 failed（等价变异体）** ⇒ 判为死代码，当场删除冗余项；真实承重项（早退分支）改坏后 **5 failed** |
+| 5 | `scanStateOf` 改成「游标单独决定」（W3-A 之前的读法） | 红 | **3 failed / 23** |
+| 6 | `sharedDbSizes` 去掉 in-flight 合并 | 红 | **1 failed / 23** |
+| 7 | `ConnectionPage` 删掉给 `ContentView` 的 `onSelectKvDb` 绑定 | 红 | **1 failed / 7** |
+
+变异全部用 `cp` 备份 → `perl -0pi -e` 就地改 → 跑测 → `cp` 还原 → 复跑确认绿；
+收尾 `git status` 已核对无残留（见 §8）。
+
+## 6. 测试覆盖对照（简报 ③ 清单逐条）
+
+新文件 `packages/drivers/redis/ui/__tests__/redisContextBar.test.tsx`（47 例）
+与 `kvStatusBarFull.test.tsx`（23 例）。
+
+| 简报要求 | 落点 |
+|---|---|
+| 六项字段各自渲染（`data-testid` + 数字，零英文文案） | `renders db, keys, memory, chips and scan as separate identified parts`（逐项断言 `data-*` 与服务器数值） |
+| 采样三态：`<` 显示 / `>=` 不显示 / 失败整组不渲染（反断言不出现 0 分布） | `shows the mandatory annotation…` / `omits the annotation for a full census` / `renders no chips at all when the read fails — and no zeros either`（含 `not.toContain('string 0')` 与 `[data-type]` 计数为 0）+ `treats an empty counts map as no chips rather than zero chips` |
+| `maxmemory=0` 显示无上限语义（不是 `0`） | `says "no limit" instead of printing max 0`（`data-max-bytes="unlimited"` + `data-i18n-key` + 反断言 `not.toContain('max 0')`） |
+| `compact=true` 降级（文字标签消失、图标仍在） | `drops the button labels first while the icons stay`（`data-labelled` true→false，`textContent` 变空，`svg` 仍在）+ `moves the decorations into the overflow menu rather than losing them` + `never drops the scan cluster…` |
+| 每个 action 点击后 `request` 收到正确 payload（spy props） | 5 例：四按钮裸标签 / `selectDatabase` / 三条溢出项 / 四档预算值 / flush 只发请求 |
+| `request` 未接线不抛错 | `does not throw when the host ignores the action (unwired is a no-op)`（连点 8 个控件 + 一次 `change`，逐个 `not.toThrow()`） |
+| 空态：无 db / 无键数 / `scanBudgetTotal=0` 各不崩 | `renders without a resolved db or any server reply` / `renders without a key count when db_sizes does not cover this db` / `shows used only — no bar — when the ceiling is unknown` |
+| 扫描预算进度：`used/total` 与 `isScanning` 组合的渲染分支 | 5 例（fresh idle / 未知上限 / scanning 有比例与四格条 / `cursor='0'` 且未扫描 / 活体 relay 跃迁） |
+| （追加）statusBar 六段各自渲染 | `renders db, keys, loaded, cursor, selection and last write together` |
+| （追加）`cursor==='0'` 与 `loaded===0` 成对判据 | `scanStateOf` 四态 4 例 + 活体跃迁 1 例（`data-scan-state` 断言） |
+| （追加）各字段初值不渲染分支 | `renders loaded 0 … but no selection and no write` / `drops the write segment for a fresh panel whose write is null` / `omits the key count when db_sizes fails` 等 7 例 |
+| （追加）`lastWriteCommand=null` 时该段消失 | 同上两例 |
+| （追加）既有 `KvStatusBar` 测试全绿 | 63 files / 874 tests 全绿（含 `kvBarSlots` / `kvBarRound1/2/3` / `kvBarSlotTesterGaps`） |
+
+**驱动 + 宿主两侧都有跨边界一致性测试**（裁定 ④ 硬要求）：
+
+- 宿主 `src/windows/connection/__tests__/ContentViewKvDbSwitch.test.tsx`（7 例）：
+  spy 断言 `ContentView` 把 `(connectionId, db)` 转发给宿主回调；未传回调 ⇒ `undefined`；
+  sink 身份跨 rerender 稳定 / 换回调时重绑。
+- **「只存在一个开面板入口」的结构断言**（因为重复实现会照样通过一切 spy 测试）：
+  `ContentView.tsx` 不含 `addPanel` / `nextPanelId` / `dbName ===`；
+  `ConnectionPage.tsx` 含 `handleSelectKvDb` 定义与 `addPanel(panel)`，
+  且 `onSelectKvDb={handleSelectKvDb}` **恰好出现 2 次**（导航树 + ContentView）；
+  `ContentView.tsx` 不含 `databaseType === 'redis'` 或 `type: 'redis-db'`（PRD §7-4）。
+- driver 侧：`sends the db selector choice as selectDatabase with the chosen db`。
+
+## 7. 四门实测（尾部逐字）
+
+> 全部在 worktree 根目录、串行单跑。
+
+### 门 1 `npx tsc --noEmit`
+
+```
+（0 行输出）
+exit=0
+```
+
+### 门 2 `npx vitest run --config vitest.drivers.config.ts`
+
+```
+ Test Files  63 passed (63)
+      Tests  874 passed (874)
+   Start at  16:54:02
+   Duration  12.33s (transform 5.58s, setup 24.75s, import 5.04s, tests 12.41s, environment 34.48s)
+```
+
+基线实测（`git stash -u` 后同命令）：`Test Files 61 passed (61)` / `Tests 804 passed (804)`
+⇒ **只增：+2 files / +70 tests，0 红**。
+
+### 门 3 `npx vite build`
+
+```
+✓ built in 4.78s
+vite exit=0
+```
+
+### 门 4 `node scripts/check-driver-import-boundaries.mjs`
+
+```
+[check-driver-import-boundaries] ok (1507 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+```
+
+4 条 advisory 与基线逐条相同（`src/locales/locales.test.ts:107`、`src/test/driverUiSetup.ts:25`、
+`src/test/driverUiSetup.ts:26`、`src/windows/connection/DocumentConnectionView.tsx:25`），均为既有 R3，
+非本轨引入。files 数 1499 → 1507（本轨新增 6 个源文件 + 2 个测试文件）。
+
+### 门 6（额外自加，因本轨改了宿主 `src/windows/connection/**`）`npx vitest run`
+
+```
+ Test Files  454 passed (454)
+      Tests  4744 passed (4744)
+   Duration  86.02s
+```
+
+宿主基线（W3-A 台账 Tester 轮实测）`453 files / 4734 tests` ⇒ 本轨 **+1 file / +10 tests**
+（新文件 `ContentViewKvDbSwitch.test.tsx` 7 例 + `useKvSlotActions.test.tsx` +3 例），**0 红**。
+本轨改的三个宿主文件所属的 8 个相关套件定向先跑亦为 `8 files / 79 tests` 全绿。
+
+### 门 5 `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic`
+
+```
+[resolve-drivers] codegen-only: wrote generated.ts / driver_init.rs
+exit=0
+```
+
+产物抽查（**未提交**，gitignored）：
+
+```
+src/extensions/generated.ts:15  import { RedisContextBar, RedisKvStatusBar, RedisKeyPropsSidebar } from '../../packages/drivers/redis/ui/kv-bar';
+src/extensions/generated.ts:195 { dbType: 'redis', slot: 'contextBar', component: RedisContextBar },
+```
+
+## 8. 变更面与纪律自查
+
+- 本轨两 commit 的文件清单：
+
+| commit | 文件 |
+|---|---|
+| `fdc46cd74` | `packages/driver-sdk/src/types/kv-slots.ts`、`packages/drivers/redis/locales/en.ts`、`packages/drivers/redis/ui/shared/meta.ts`、`packages/drivers/redis/ui/kv-bar/{index.ts,useKvSelection.ts,RedisContextBar.tsx,ContextBarActions.tsx,contextBarModel.ts,useContextBarData.ts}`、`packages/drivers/redis/ui/__tests__/{redisContextBar.test.tsx,kvSlotRegistration.test.ts}`、`scripts/resolve-drivers.mjs`、`src/windows/connection/{useKvSlotActions.ts,ContentView.tsx,ConnectionPage.tsx}`、`src/windows/connection/__tests__/{useKvSlotActions.test.tsx,ContentViewKvDbSwitch.test.tsx}` |
+| `edc7ee051` | `packages/drivers/redis/locales/en.ts`、`packages/drivers/redis/ui/kv-bar/{KvStatusBar.tsx,dbKeyCounts.ts,useKvSelection.ts,useContextBarData.ts,RedisContextBar.tsx}`、`packages/drivers/redis/ui/__tests__/{kvStatusBarFull.test.tsx,redisContextBar.test.tsx,kvBarSlots.test.tsx,kvBarRound1Fixes.test.tsx,kvBarRound2Fixes.test.tsx,kvBarRound2Tester.test.tsx,kvBarRound3Tester.test.tsx,kvBarSlotTesterGaps.test.tsx}` |
+
+- `git status --porcelain` 收尾：**空**（仅本台账目录 `docs/development/coordination/tracks/redis-kv-context-bar/`
+  为未跟踪新目录，随本次台账 commit 一并提交）。门 5 生成的 codegen
+  （`src/extensions/generated.ts` / `src-tauri/src/driver_init.rs` / `.driver-features.json` /
+  `src-tauri/capabilities/default.json`）**被 gitignore**，因此不出现于 `--porcelain`；
+  已另行确认它们**不在任何 commit 的变更面里**（`git log --name-only` 抽查两 commit 的文件清单见上表，
+  零 codegen）。**未提交任何 codegen。**
+- 未跑任何 e2e / tauri build / cargo（本轨零 Rust 改动）；未改 `Cargo.toml` / `Cargo.lock`。
+- 单文件规模（全部 ≤800，最大 315）：`contextBarModel.ts` 315 ·
+  `ContextBarActions.tsx` 255 · `KvStatusBar.tsx` 239 · `RedisContextBar.tsx` 236 ·
+  `useContextBarData.ts` 184 · `dbKeyCounts.ts` 121 · `useKvSelection.ts` 94。
+  组件本体 236 行 ≤ 简报的 250 行目标。
+- i18n 只改 `en.ts`；新增 19 个词条（`redis.contextBar.*` 15 个 + `redis.contextBar.status.*` 4 个），
+  复用既有 `redis.dbSize` / `redis.loadedCount` / `redis.refresh` / `redis.createKey` /
+  `redis.importExportImport` / `redis.importExportExport` / `redis.flushDb` / `redis.monitor`。
+  其他 9 语言留待发布前 i18n-sync 统一补（§8.2 已核实开发期不阻塞）。
+  `kvSlotRegistration.test.ts` 的「无孤儿文案」扫描遍历 `ui/kv-bar/*.tsx`，本轨新词条全部落在
+  两个 `.tsx` 内 ⇒ 该例仍绿。
+
+## 9. 偏离项（逐条说明，无隐瞒）
+
+1. **`KvSlotAction` 加了一个变体**（`selectDatabase`）。简报原文禁止改 `packages/driver-sdk/**`
+   （「契约已冻结；若你认为缺字段，停下来汇报，不要自己加」）。
+   我按该条**先停下汇报**，协调者裁定 (A) 并**显式授权**动这一处。落地时严格只加一个变体，
+   既有 8 条零改名零删除，`KvSlotState` 一字未动。已按裁定要求写进本文件 §4。
+2. **动了宿主 `src/windows/connection/**` 三个文件**。同样源于简报禁止，同样经协调者裁定 (A)
+   显式授权，且目的正是「不新增第二份开面板逻辑」（复用 `handleSelectKvDb`）。
+   除这三个文件外宿主 `src/**` 零改动（`src/lib/kvSlotState.ts` 未触碰）。
+3. **改了 6 个既有测试文件的 `makeRelay()` 桩**。这不是风格改动：W3-A 加宽契约后这些桩
+   从未同步（测试文件在 `tsconfig.exclude` 里，`tsc` 看不见），本轨 statusBar 一开始读
+   加宽 getter 就以 `getSnapshot is not a function` 爆出 30 例红。补齐是**必要修复**，
+   且只加成员、不改任何既有 `makeRelay` 语义（沿用同样的 listener + 幂等 notify 风格）。
+   已登记 `bugs.md` 第 1 条并给出护栏建议。
+4. **改了 `kvBarSlots.test.tsx` 一条断言的等待谓词/内容**（"asks the server for nothing"）。
+   简报允许「按新语义更新该断言，但必须在台账写明哪条、为什么、旧断言钉的是什么」，
+   已逐条写明于 `bugs.md` 第 2 条与 §6。
+5. **`kvSlotRegistration.test.ts` 的 `SHIPPED_ROWS` 加了一行**。该文件自述
+   「adding a row here re-checks both gates at once」且 `capability(slot) === SHIPPED_SLOTS.includes(slot)`
+   遍历全部四个槽名 ⇒ 本轨一旦声明 `contextBar: true` + codegen 行，不加这行**必然红**。
+   这是该文件设计好的维护契约，非绕过护栏；已在汇报里提前告知协调者。
+6. **`statusBar` 的 `52 keys` 不是从 `KvSlotState` 取的**。契约里没有键数字段（只有
+   `getLoadedCount()`），简报也明确要求用 `db_sizes`。已按简报执行，并额外做了
+   **跨槽位合流**（否则两个槽位各付一次 32 往返）。若协调者认为该合流应由宿主中继承担，
+   属契约扩展，留给后续轨。
+7. **`compact` 只给了两级而非 I-10 的三级**（740/340/240px）。冻结的 `KvContextBarProps`
+   只交一个 `boolean compact`（宿主 `useCompactToolbar` 单断点），driver 侧拿不到另外两级
+   断点。选择：把降级做成**有序**的（先标签、后装饰进溢出），在不改契约的前提下尽可能贴近
+   I-10 的意图，并在 `contextBarModel.contextBarLayout` 注释里写明这是对契约宽度的诚实收敛。
+   **若要真三级，需扩 `KvContextBarProps`（宿主侧断点），属契约变更，留给协调者裁定。**
+8. **`db 选择器` 默认走已接线的 (A)**；简报提到「保留你已写的 (B) 降级能力」——
+   (B) 的降级路径即「宿主未传 `onSelectDatabase` ⇒ dispatcher no-op + warn」，
+   driver 侧 `data-db-switch="wired"` 标记**当前恒为 wired**（宿主已接线）。
+   我未保留一个「未接线」的第二渲染形态：那种形态在宿主已接线的今天只会是永不出现的死代码，
+   而 F-3 ruling 1 要求的「不因宿主可能不处理而藏控件」已由「控件恒渲染 + dispatcher 降级」
+   满足。若协调者要一个可观测的 unwired 形态，需在 props 上新增能力位，属契约变更。
+
+## 10. 未尽事项（不属本轨范围，登记以免重复推演）
+
+1. **`⋯` 菜单里的 `newKey` / `import` / `export` / `openMonitor` / `setScanBudget` 五条动作
+   在宿主侧仍是 no-op + warn**（契约如此，F-3 ruling 1）。contextBar 的控件照常渲染并按契约发请求。
+   要真正生效需要后续轨把驱动侧能力接进 dispatcher（宿主不得点名驱动命令，PRD §7-4）。
+2. **`selectDatabase` 的宿主执行体是 `handleSelectKvDb`**：语义为「已有该 db 的 KV 面板 ⇒ 置为活动；
+   否则新建面板」。注意它创建的是**新面板**而非切换当前面板的 db —— 与 PRD §3.4「切 db 只换页签」
+   一致，但它会累积页签；真实观感留待 R 回归确认。
+3. **集群上的类型分布标注恒显示**（后端 cluster 语义决定，见 §3），非缺陷但值得在 R 阶段目视确认。
+4. **`db_sizes` 合流表按中继对象弱引用 + 未 settle promise**：面板关闭后宿主
+   `pruneKvSlotStates` 回收中继，弱引用条目随之可回收。异常路径（promise 永不 settle）
+   会让该面板的重复读取共享同一个悬挂 promise —— 与既有 `useKeyObjectInfo` 的合流表同一取舍，
+   留待 Tester 判断是否需要超时。
+
+## 留待 R 回归
+
+1. **§3.4 上下文条全量目视（GUI + 真 Redis）**：db 选择器切换走 `handleSelectKvDb`
+   （已有该 db 面板 ⇒ 置活动；否则**新建页签**）⇒ 六个字段随新面板刷新；
+   `used / max` 在 `maxmemory 0` 的服务器上显示「无上限」措辞而非 `0`。
+2. **采样标注真机三态（GUI + 真 Redis）**：小库（`dbsize` ≤ 1000）应显示**无**标注；
+   大库应显示「采样 1000/N」；ACL 禁 `type_distribution` 的账号应**整组 chips 消失**且仅剩键数。
+3. **集群类型分布（GUI + 真集群）**：标注**恒显示**（`sampled` 来自一个钉住的
+   `CLUSTER_SCAN_ANCHOR` 分片、`dbsize` 为全集群求和）—— 确认这条诚实降级在 UI 上可读、
+   且不出现「看起来像精确分布」的观感。
+4. **I-10 响应式（GUI）**：把窗口从宽拖到窄，确认 ①按钮文字先消失、图标与 `title` 仍在；
+   ②memory 与 chips 移入 `⋯` 且数字一致；③db / keys / scan 三条**任何宽度都不消失**；
+   ④上下文条与工具栏右侧 AI/详情按钮不重叠。已知只两级（偏离项 7）。
+5. **statusBar 六段真值正确性（GUI + 真 Redis）**：`52 keys` 与键树实际一致、
+   `loaded` 随扫描增长、`cursor 0` 只在扫描真正跑完且 loaded > 0 时才呈「done」态
+   （`data-scan-state`，**不是**文案）、`选中 3` 与树内多选一致，多选取消后该段消失、
+   最后一次写操作的命令与毫秒数量级合理。
+6. **`db_sizes` 一次往返（GUI + 真 Redis，抓包或后端日志）**：同一 Redis 面板同时渲染
+   上下文条与状态条时，切 db 只应产生**一次** `db_sizes`（16 库 ⇒ 32 次 `SELECT`+`DBSIZE`）；
+   屏 A（`useOverviewData`）另有一次是**不同屏**，不算重复。
+7. **SafeMode 徽标与 flush 门闸（GUI）**：打开 Safe Mode ⇒ 上下文条右侧徽标出现；
+   此时点 `⋯ → FLUSH` ⇒ 宿主门闸硬拦（`redis.kvSlot.flushBlocked`），
+   **不出现驱动侧确认框**（driver 不发确认，符合 F-3 ruling 2）。
+8. **宿主 `handleSelectKvDb` 的页签累积（GUI）**：连续切 5 个 db，确认一次创建/复用行为
+   符合用户预期（未尽事项 2）。
