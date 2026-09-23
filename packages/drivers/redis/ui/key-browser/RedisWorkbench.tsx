@@ -786,7 +786,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
               setKeyDetail(null);
             })();
           }}
-          onUpdateSelectedKey={setSelectedKey}
           onUpdateSelectedKeys={setSelectedKeys}
           onBatchSummary={setBatchSummary}
           createOpen={createOpen}

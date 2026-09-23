@@ -1,5 +1,5 @@
 /**
- * [tester][round-3] BUG-007 复测探针（只加测试，不改生产码）：
+ * [tester][round-3] BUG-007/008 复测探针（Round-3 修复后转为验收断言）：
  *
  * P1b（`round2Probe.test.tsx`）断的是「弹守卫再问一次**或**原位重取」的**析取** ——
  * 草稿只要还活着就绿。变异实验（复测记录 round-3 变异矩阵 iii）证明：把守卫改成
@@ -7,12 +7,15 @@
  * 悬起未答的对话框让析取的前半支恒真，于是「回答被忽略」这一破坏性回归不可见。
  * 本探针补齐该盲区：
  *
- * A. 有界性 / 知情同意：不一致态（偏差⑥）下同键重点击 ⇒ **必须重新询问**，且询问期间
- *    绝不得先行重取（`invokeGetKey` 计数不变）；答「继续编辑」⇒ 原样返回（不重取、
- *    草稿三件套完好、选择不变）；再点**又问一次**（第三次亦然）—— 有界、永不静默。
- * B. 放行分支：只有答「放弃更改」才真正重取新名 ⇒ 草稿清空、detail 落到新键，
- *    不一致态愈合（键头行改名）。
+ * A. 有界性 / 知情同意：重命名选中键 + 脏草稿 + 答「继续编辑」后点新名行 ⇒
+ *    **必须询问**，且询问期间绝不得先行重取（`invokeGetKey` 计数不变）；答「继续编辑」
+ *    ⇒ 原样返回（不换键、不重取、草稿三件套完好、选择不动）；再点**又问一次**
+ *    （第三次亦然）—— 有界、永不静默。
+ * B. 放行分支：只有答「放弃更改」才真正换到新名 ⇒ 草稿清空、detail 落到新键，
+ *    标签与键头齐步（键头行改名）。
  * C. 无误伤：一致态下的同键重点击（脏草稿）不得弹守卫 —— 零询问原样。
+ * D. [BUG-008] 保存目标键：答 keep 后**根本未改名** ⇒ 保存必须写向用户看到的那个键
+ *    （此前用陈旧 `detail.key` 出网 ⇒ 静默写错键 + 复活已 RENAME 掉的键）。
  *
  * 断言口径（PRD §7-6）：`data-testid` / `data-*` / i18n key 定位，零英文文案字面量。
  */
@@ -210,9 +213,13 @@ async function renameSelectedKeep() {
   await flush(60);
 }
 
-/** 前后置断言之外的不变式：不一致态（标签=新名 / detail=旧键）。 */
+/**
+ * 前后置断言之外的不变式（round-3 BUG-008 修复后重新表述）：偏差⑥ 已从源头消失 ——
+ * 答 keep ⇒ `handleSelectKeyGuarded` 原样返回 ⇒ `handleSelectKey`（`setSelectedKey`
+ * 的唯一写入口）未执行 ⇒ 选中键**未被改写**，列表标签与编辑器头**一致**地留在旧键。
+ */
 function expectDeviation6() {
-  expect(column().getAttribute('data-selected-key')).toBe('user:renamed');
+  expect(column().getAttribute('data-selected-key')).toBe('user:1');
   expect(headerKeyName()).toBe('user:1');
 }
 
@@ -267,10 +274,13 @@ afterEach(() => {
 });
 
 // ============================================================================
-// A. 有界性 + 知情同意：答 keep 必须被尊重，且下一次点击**再问一次**
+// A. 有界性 + 知情同意：答 keep 必须被尊重 ⇒ 根本不换键；再点**再问一次**
 // ============================================================================
-describe('[tester][round-3] 不一致态同键重点击：先问、答 keep 不放行、再点再问', () => {
-  it('asks before refetching, honours 继续编辑 (no refetch), and re-asks on every further click', async () => {
+// round-3 BUG-008 修复后，本组钉的仍是同一族不变式（先问、答 keep 不放行、有界），
+// 但「不放行」的效果更强了：不再只是「草稿保住、不一致态留存」，而是**选中键也没被改写**
+// （`user:1`）。于是后续每一次点新名行都是**跨键**切换 ⇒ 每次都重新问，草稿永不被吞。
+describe('[tester][round-3] 重命名+keep 后点新名行：先问、答 keep 不放行、再点再问', () => {
+  it('asks before switching, honours 继续编辑 (no switch, no refetch), and re-asks on every further click', async () => {
     renderWorkbench();
     await selectAndDraft();
     await renameSelectedKeep();
@@ -286,7 +296,7 @@ describe('[tester][round-3] 不一致态同键重点击：先问、答 keep 不�
     expect(input().value).toBe('draft');
     expect(isDraftDirty()).toBe(true);
 
-    // ── 答「继续编辑」：原样返回 —— 不重取、草稿完好、选择不变。
+    // ── 答「继续编辑」：原样返回 —— 不换键、不重取、草稿完好、选择不动。
     fireEvent.click(screen.getByTestId('redis-draft-keep'));
     await waitFor(() => expect(leaveDialog()).toBeNull());
     await flush(60);
@@ -322,10 +332,10 @@ describe('[tester][round-3] 不一致态同键重点击：先问、答 keep 不�
 });
 
 // ============================================================================
-// B. 放行分支：只有「放弃更改」才重取新名，并愈合不一致态
+// B. 放行分支：答「放弃更改」才真正换到新名（草稿按知情同意消失）
 // ============================================================================
-describe('[tester][round-3] 不一致态同键重点击：答放弃才重取新名并愈合', () => {
-  it('refetches the NEW key only after 放弃更改, then label and detail agree', async () => {
+describe('[tester][round-3] 重命名+keep 后点新名行：答放弃才换到新名', () => {
+  it('switches to the NEW key only after 放弃更改, then label and detail agree', async () => {
     renderWorkbench();
     await selectAndDraft();
     await renameSelectedKeep();
@@ -338,7 +348,7 @@ describe('[tester][round-3] 不一致态同键重点击：答放弃才重取新�
     await waitFor(() => expect(leaveDialog()).toBeNull());
     await flush(60);
 
-    // 真正重取了新名（愈合），草稿按知情同意消失。
+    // 真正取到了新名，草稿按知情同意消失，标签与 detail 齐步。
     expect(getKey).toHaveBeenCalledWith('sess-r3', 0, 'user:renamed');
     expect(input().value).toBe('renamed-value');
     expect(isDraftDirty()).toBe(false);
@@ -371,16 +381,18 @@ describe('[tester][round-3] 一致态同键重点击不得吃守卫（零询问�
 });
 
 // ============================================================================
-// D. [BUG-008] 不一致态下「保存」写错目标键 —— 正确期望，修复者取消 skip 即复验
+// D. [BUG-008] 不一致态下「保存」写错目标键 —— 修复后取消 skip 转为验收断言
 // ============================================================================
-// 复测 round-3 取证（本文件曾以探针形态实测，事实见 bugs/redis-detail-ui-BUG-008.md）：
+// 复测 round-3 取证（探针形态实测，事实见 bugs/redis-detail-ui-BUG-008.md）：
 // 偏差⑥ 态（树标签 `user:renamed` / `detail.key` 仍是 `user:1`）下点「保存」，
 // `StringEditor.tsx:155` 用 `detail.key` 出网 ⇒ `SET db0 user:1 'draft'` ——
 // 写向 RENAME 前的旧名：① 与屏幕显示的目标键不一致（静默写错）② 复活已不存在的键
 // ③ 紧接着 `reloadDetail` 回读新名 ⇒ 可见结果仍是服务端旧值，用户草稿"凭空消失"。
-// 按第 1 轮先例（已知错误行为不钉成绿断言）：正确期望以 skip 形式留在下面。
-describe.skip('[redis-detail-ui-BUG-008] 不一致态下的保存必须写到用户看到的那个键', () => {
-  it('saves to the key the panel shows, not the stale detail.key', async () => {
+// round-3 修复（先问守卫、后换键 ⇒ 偏差⑥ 不再产生）后，本组改为钉**修复后的正确终态**：
+// 答 keep ⇒ 根本未改名 ⇒ 保存必须写到用户看到的那个键（旧键 `user:1`），
+// 且标签/键头/写目标三者一致，草稿真的落盘。
+describe('[redis-detail-ui-BUG-008] 保存必须写到用户看到的那个键', () => {
+  it('saves to the key the panel shows, and never splits label from detail', async () => {
     renderWorkbench();
     await selectAndDraft();
     await renameSelectedKeep();
@@ -391,10 +403,13 @@ describe.skip('[redis-detail-ui-BUG-008] 不一致态下的保存必须写到用
     await waitFor(() => expect(setString).toHaveBeenCalled());
     await flush(120);
 
-    // 正确期望：保存目标 = 面板显示/列表选中的键。
+    // 正确期望：保存目标 = 面板显示/列表选中的键（此处三者同为 `user:1`，未改名）。
     const target = setString.mock.calls[0][2] as string;
-    expect(column().getAttribute('data-selected-key')).toBe('user:renamed');
-    expect(headerKeyName()).toBe('user:renamed');
-    expect(target).toBe('user:renamed');
+    expect(column().getAttribute('data-selected-key')).toBe('user:1');
+    expect(headerKeyName()).toBe('user:1');
+    expect(target).toBe('user:1');
+    // 写的是用户看到的键，而非某个屏幕上不存在的陈旧键。
+    expect(target).toBe(column().getAttribute('data-selected-key'));
+    expect(setString).toHaveBeenCalledWith('sess-r3', 0, 'user:1', 'draft');
   });
 });

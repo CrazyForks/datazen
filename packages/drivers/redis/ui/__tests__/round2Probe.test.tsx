@@ -272,11 +272,12 @@ afterEach(() => {
 });
 
 // ============================================================================
-// P1a. 偏差⑥ 裁定探针：重命名+脏 → 守卫只问一次；「继续编辑」后
-//      标签=新名、detail=旧键（不一致）但**草稿完好**
+// P1a. 裁定探针（round-3 BUG-008 修复后语义）：重命名选中键 + 脏草稿 ⇒ 守卫只问一次；
+//      「继续编辑」= 取消换键 ⇒ 从 UI 状态看**根本未改名**
+//      （列表标签与编辑器头双双仍是旧键），偏差⑥ 不一致态不再产生、草稿完好。
 // ============================================================================
 describe('[tester][round-2][偏差⑥] 右键重命名选中键 + 脏草稿的实际状态', () => {
-  it('asks exactly once; 继续编辑 leaves label=new / detail=old with the draft fully intact', async () => {
+  it('asks exactly once; 继续编辑 keeps label AND detail on the old key with the draft intact', async () => {
     renderWorkbench();
     await selectAndDraft();
 
@@ -286,8 +287,10 @@ describe('[tester][round-2][偏差⑥] 右键重命名选中键 + 脏草稿的�
     expect(leaveDialog()).toBeNull();
     expect(isLeavePending()).toBe(false);
 
-    // 不一致本身：列表标签（列头）= 新名，编辑器头（detail.key）= 旧键。
-    expect(column().getAttribute('data-selected-key')).toBe('user:renamed');
+    // 不一致态已从源头消失：列表标签与编辑器头**一致**（同为旧键）。
+    // 答「继续编辑」⇒ `handleSelectKeyGuarded` 原样返回 ⇒ `handleSelectKey`
+    // （`setSelectedKey` 的唯一写入口）未执行 ⇒ 选中键根本没被改写。
+    expect(column().getAttribute('data-selected-key')).toBe('user:1');
     expect(screen.getByTestId('redis-header-key-name').textContent).toBe('user:1');
 
     // 草稿三件套原样：文本、编辑器脏标、全局脏标。
@@ -300,13 +303,15 @@ describe('[tester][round-2][偏差⑥] 右键重命名选中键 + 脏草稿的�
 });
 
 // ============================================================================
-// P1b. 顺藤：不一致态下的「同键重点击」（BUG-001 不变式必须继续成立）
+// P1b. 顺藤：重命名+keep 之后点新名行，草稿必须活着（BUG-001 不变式继续成立）
 // ============================================================================
 // BUG-007（第 2 轮 Tester 登记）：本用例断的是**正确**不变式 —— round-2 修复前必红：
 // 重命名+脏+「继续编辑」后点新名行 ⇒ 走未守卫的破坏路径，草稿三断言静默蒸发。
-// 修复（`RedisWorkbench.handleSelectKey` 顶部：同键但 `keyDetail.key` 不一致 ⇒ 先过
-// `requestDraftLeave`，答 keep 则原样返回）已落地，按本文件约定取消 skip 转为验收断言。
-describe('[tester][round-2][偏差⑥] 不一致态下的同键重点击不得静默毁草稿', () => {
+// round-3 BUG-008 修复后路径归属再次变化（不变式不变）：答 keep 时选中键**未被改写**
+// （仍是 `user:1`），故点 `user:renamed` 不再落进「同键跨不一致态」分支，而是一次
+// **普通跨键切换** ⇒ 由 `handleSelectKeyGuarded` 弹守卫、许可之前不得换键或重取。
+// 无论哪一支接管，验收口径同一条：**草稿不得静默蒸发**（soft 断言收集全貌）。
+describe('[tester][round-2][偏差⑥] 重命名+keep 后点新名行不得静默毁草稿', () => {
   it('re-clicking the renamed row after rename+keep must keep (or re-ask about) the draft', async () => {
     renderWorkbench();
     await selectAndDraft();
@@ -322,7 +327,10 @@ describe('[tester][round-2][偏差⑥] 不一致态下的同键重点击不得�
     expect.soft(input().value).toBe('draft');
     expect.soft(editor().getAttribute('data-string-dirty')).toBe('true');
     expect.soft(isDraftDirty()).toBe(true);
-    expect.soft(column().getAttribute('data-selected-key')).toBe('user:renamed');
+    // 未获许可之前，选择必须留在原键（这是 BUG-008 修复后的新语义：标签不再先行改掉）。
+    expect.soft(column().getAttribute('data-selected-key')).toBe('user:1');
+    // 且必须真的在问（不是无声吞掉这次点击）。
+    expect.soft(leaveDialog()).not.toBeNull();
   });
 });
 
