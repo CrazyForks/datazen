@@ -36,7 +36,7 @@ import { useValueSearch } from '../value-search/useValueSearch';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTree } from './useKeyTree';
 import { useRedisGate } from '../shared/useRedisGate';
-import { requestDraftLeave } from '../shared/draftGuard';
+import { isDraftDirty, requestDraftLeave } from '../shared/draftGuard';
 import { buildServerTreeRows } from './keyTree';
 import {
   KeyWorkbenchDialogs,
@@ -338,28 +338,37 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
     const handleSelectKey = useCallback(
       async (key: string) => {
+        // BUG-001: refetching the detail that is ALREADY mounted must not flip
+        // `DetailColumn` into `loading` — the loading branch replaces the
+        // editor, and its unmount cleanup wipes the draft silently. Same-key
+        // refetches (tree re-click, header refresh, post-write reload, dialog
+        // TTL/PERSIST refetch) stay in place; a fresh selection still reports
+        // loading exactly as before.
+        const inPlace = key === selectedKey && keyDetail?.key === key;
         setSelectedKey(key);
-        setKeyDetailLoading(true);
+        if (!inPlace) setKeyDetailLoading(true);
         try {
           const detail = await invokeGetKey(dbSessionId, dbIndex, key);
           setKeyDetail(detail);
         } catch (e) {
           console.error('get_key failed:', e);
-          setKeyDetail(null);
+          // In-place failure keeps the mounted editor (and its draft) intact.
+          if (!inPlace) setKeyDetail(null);
         } finally {
-          setKeyDetailLoading(false);
+          if (!inPlace) setKeyDetailLoading(false);
         }
       },
-      [dbSessionId, dbIndex],
+      [dbSessionId, dbIndex, selectedKey, keyDetail],
     );
 
     /**
      * Tree-row click (I-1 切键): switching to ANOTHER key must pass the leave
-     * dialog first. Re-clicking the selected key is a plain refetch — the
-     * selection (and therefore the draft) survives by construction, and
-     * `reloadDetail`'s editor-side dirty-skip sync keeps the draft across it,
-     * so there is nothing to ask. `handleSelectKey` itself stays raw because
-     * `reloadDetail` and post-write flows must bypass the guard on purpose.
+     * dialog first. Re-clicking the selected key is a plain IN-PLACE refetch —
+     * `handleSelectKey` keeps the mounted detail (no `loading` flip), so the
+     * draft survives by construction (BUG-001) and there is nothing to ask.
+     * `handleSelectKey` itself stays raw because `reloadDetail` and post-write
+     * flows must bypass the guard on purpose; the dialog side receives this
+     * guarded handle instead (BUG-002: 创建 / TTL / PERSIST / 重命名出口).
      */
     const handleSelectKeyGuarded = useCallback(
       async (key: string) => {
@@ -489,6 +498,24 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       },
       [confirmDelete, gateWrite, dbSessionId, dbIndex, t, refreshKeys],
     );
+
+    /**
+     * Dialog-side refresh (创建 / TTL / PERSIST / 重命名 / 删除 / flush 出口,
+     * BUG-002). Those flows manage the selection through their own guarded
+     * outlets (`onSelectKey` / `onClearSelectedKey` below), so while a draft
+     * is live this refresh must NOT run `refreshKeys`' destructive body: it
+     * would drop the draft outside any guard, or stack a SECOND leave dialog
+     * on the same user action (双弹). It only re-scans the list — no selection,
+     * no detail, no dirty flag touched. Clean state keeps today's behaviour.
+     */
+    const refreshKeysForDialogs = useCallback(() => {
+      if (isDraftDirty()) {
+        scanRefresh();
+        tree.refresh();
+        return;
+      }
+      void refreshKeys();
+    }, [scanRefresh, tree, refreshKeys]);
 
     return (
       <div className="flex min-h-0 flex-1">
@@ -731,8 +758,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
           allowFlush={allowFlush}
           createTypes={createTypes}
           selectedKey={selectedKey}
-          onRefreshKeys={refreshKeys}
-          onSelectKey={handleSelectKey}
+          onRefreshKeys={refreshKeysForDialogs}
+          onSelectKey={handleSelectKeyGuarded}
           onClearSelectedKey={() => {
             // I-1: clearing the selection drops the draft ⇒ ask first.
             void (async () => {

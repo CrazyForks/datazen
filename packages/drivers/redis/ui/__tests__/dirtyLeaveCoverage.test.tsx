@@ -434,7 +434,7 @@ describe('[tester] 列设置过滤：重扫列表但不毁草稿，故不该吃�
 // **未守卫的** `handleSelectKey` ⇒ 草稿被静默丢弃并跳到新键（`draftDirty=false`）。
 // 这是第二条 I-1 旁路，登记为 redis-detail-ui-BUG-002；下面的期望用例先 skip，
 // 修复者接上守卫后取消跳过即可复验。
-describe.skip('[redis-detail-ui-BUG-002] 创建键后的跳转不得静默丢草稿', () => {
+describe('[redis-detail-ui-BUG-002] 创建键后的跳转不得静默丢草稿', () => {
   it('asks about the stale draft instead of silently clearing it', async () => {
     renderWorkbench();
     await selectAndDraft();
@@ -518,7 +518,7 @@ describe('[tester] 对话框侧删除选中键的 I-1 拦截', () => {
 // H2. 右键「设置 TTL」作用在选中键上 ⇒ 之后的 onSelectKey 走未守卫的原始回调
 //     （redis-detail-ui-BUG-002 的第三条复现路径；本轮实测：草稿静默消失）
 // ============================================================================
-describe.skip('[redis-detail-ui-BUG-002] 右键 TTL 作用于选中键后不得静默丢草稿', () => {
+describe('[redis-detail-ui-BUG-002] 右键 TTL 作用于选中键后不得静默丢草稿', () => {
   it('refetches the selected key after a TTL apply and reports what happens to the draft', async () => {
     renderWorkbench();
     await selectAndDraft();
@@ -558,7 +558,7 @@ describe.skip('[redis-detail-ui-BUG-002] 右键 TTL 作用于选中键后不得�
 // ============================================================================
 // H. redis-detail-ui-BUG-001：同键重点击静默毁草稿 —— 正确期望，修复者取消 skip
 // ============================================================================
-describe.skip('[redis-detail-ui-BUG-001] 同键重点击不得静默丢草稿', () => {
+describe('[redis-detail-ui-BUG-001] 同键重点击不得静默丢草稿', () => {
   it('a plain refetch of the already-selected key must pass I-1 like the header refresh does', async () => {
     renderWorkbench();
     await selectAndDraft();
@@ -571,5 +571,72 @@ describe.skip('[redis-detail-ui-BUG-001] 同键重点击不得静默丢草稿', 
     expect(input().value).toBe('draft');
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
     expect(isDraftDirty()).toBe(true);
+  });
+});
+
+// ============================================================================
+// I. redis-detail-ui-BUG-002 修复自测：一次用户动作内守卫至多询问一次（排除双弹）
+// ============================================================================
+describe('[fix-selftest] 对话框出口一次动作只询问一次守卫', () => {
+  it('creating a key asks exactly once — 继续编辑后同一条链不再二次弹出', async () => {
+    renderWorkbench();
+    await selectAndDraft();
+
+    fireEvent.click(screen.getByTestId('redis-create-key'));
+    const dialog = await dialogByTitle('redis.createKey');
+    const nameField = dialog.querySelector(
+      'input[placeholder="redis.keyName"]',
+    ) as HTMLInputElement;
+    expect(nameField).toBeTruthy();
+    fireEvent.change(nameField, { target: { value: 'new:key' } });
+    fireEvent.click(buttonWithKey(dialog, 'redis.create'));
+
+    // 本次动作的唯一一次询问。
+    await screen.findByTestId('redis-draft-discard');
+    expect(isDraftDirty()).toBe(true);
+    fireEvent.click(screen.getByTestId('redis-draft-keep'));
+    await waitFor(() => expect(leaveDialog()).toBeNull());
+
+    // 若同一条链上还有第二道守卫，它只能在无人交互的情况下重新挂出 ——
+    // 长 flush 后必须依然没有弹窗、没有悬起的 pending、草稿与选中原样。
+    await flush(60);
+    expect(leaveDialog()).toBeNull();
+    expect(isLeavePending()).toBe(false);
+    expect(isDraftDirty()).toBe(true);
+    expect(column().getAttribute('data-selected-key')).toBe('user:1');
+    expect(input().value).toBe('draft');
+  });
+
+  it('a dialog-driven delete of the selected key asks exactly once', async () => {
+    renderWorkbench();
+    await selectAndDraft();
+
+    fireEvent.contextMenu(screen.getByTestId('redis-key-row-user:1'));
+    await flush(0);
+    const item = menuItems.find((i) => i.kind === 'item' && i.id === 'delete');
+    expect(item).toBeTruthy();
+    if (item && item.kind === 'item') {
+      item.action();
+      await flush(0);
+    }
+    const ctxDialog = await dialogByTitle('redis.confirmDeleteKeys');
+    fireEvent.click(buttonWithKey(ctxDialog, 'common.delete'));
+    await waitFor(() =>
+      expect(commands).toHaveBeenCalledWith(
+        'redis',
+        'delete_keys',
+        expect.objectContaining({ keys: ['user:1'] }),
+      ),
+    );
+
+    await screen.findByTestId('redis-draft-discard');
+    fireEvent.click(screen.getByTestId('redis-draft-keep'));
+    await waitFor(() => expect(leaveDialog()).toBeNull());
+    await flush(60);
+    expect(leaveDialog()).toBeNull();
+    expect(isLeavePending()).toBe(false);
+    expect(isDraftDirty()).toBe(true);
+    expect(column().getAttribute('data-selected-key')).toBe('user:1');
+    expect(editor().getAttribute('data-string-dirty')).toBe('true');
   });
 });
