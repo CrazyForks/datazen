@@ -301,3 +301,27 @@ Tester 提交清单：
 1. `7b2731e42` `test(coordination): record round-1 tester audit, gates and inventory recheck for driver-ui-type-gate`
 2. `794dfac50` `test(coordination): register driver-ui-type-gate-BUG-003 changed-lines coverage gap`
 3. 本终局 commit `test(coordination): register bugs for driver-ui-type-gate`（T6-T8 + 偏差裁定 + 终判 + 状态行翻转）
+
+# 修复轮记录（round-1 · Coder · 2026-09-23 12:24-12:29）
+
+- **触发**：Tester 终判 `TEST_FAILED`，唯一 bug `driver-ui-type-gate-BUG-003`（改动行 :135/:155 零执行）。
+- **写面**：仅 `SearchableInfoPanel.test.tsx` 追加 2 用例 + 本台账追加 + BUG-003 状态行/追加修复记录；
+  生产文件、i18n、scripts、其他轨台账**零改动**；未碰任何禁止面。
+- **修复单元**（一 commit 一单元；每单元先本文件局部绿 + 对应变异红 → 还原 → commit → 提交态串行三门禁复跑）：
+  1. `3f2a12b04` `test(driver-ui): cover matched-stats search arm in SearchableInfoPanel`
+     — 用例「结构化拉取后输入命中查询 → 断言 search 真臂 key `infoMatched` 渲染 + 假臂 key `infoEntries` 缺席」；
+     变异 M-A（:135 key→`infoEntries`）红 `1 failed | 2 passed`，还原后绿。
+  2. `95779d8d8` `test(driver-ui): cover no-match terminal arm in SearchableInfoPanel`
+     — 用例「真值 rawInfo + 零命中查询 → 断言 `infoNoMatch` 渲染 + `infoSections` 缺席」；
+     变异 M-B（:155 key→`infoHint`）红 `1 failed | 3 passed`，还原后绿。
+- **偏离建议 1 处（有据）**：Tester 建议的「mock 返回 `sections: []`」路线无法命中终臂——`reconstructInfo([])`
+  返回 `''` ⇒ `rawInfo=''` ⇒ :153 首项短路；改用「拉取成功后零命中过滤」达成同一终臂（实测 count>0，见下）。
+- **覆盖复现（BUG-003 复现命令原样重跑）**：`branch@134 loc#0 line 135 count 2`（原 0）、
+  `branch@153 loc#2 line 154 count 1`（原 0）——**两条 count>0，10/10 改动行全覆盖达成**；
+  文件级 分支 32/47→**35/47**、行 35/46→36/46、函数 13/15→14/15、语句 37/49→38/49。
+- **三门禁**（`95779d8d8` 提交态串行，逐字尾部见 BUG-003「自跑门禁尾部」节）：
+  **tsc exit 0 · drivers vitest 52 文件 / 563 测试全绿 · boundaries 0 blocking / 4 advisory（与基线逐字一致，0 新增）**。
+- **断言口径**：新增断言全部 i18n key（mock `t: key => key`），零英文文案字面量、零 `data-*` 需求、零新增 key；
+  M1 维持 Tester 裁定不补。
+- **状态**：`BUG-003` → `待复测（round-1 修复后）`；本轨待新 Tester 复测（覆盖 10/10 + 断言口径 + 三门禁数字）。
+- **心跳**：2026-09-23 12:29。
