@@ -719,6 +719,24 @@ clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生
   内部是否发 SCAN / 是否带 `MATCH` 实参；入参 schema（`commands.rs` 的 `pattern` 必填串）未动 ⇒
   对 Wave 4 与所有既有测试透明（阶段 2 门禁全量为证）。
 
+### 阶段 1-补 · 三项交来裁定的**事实复核**（不判修复义务）
+
+1. **`ops_tree_scan.rs` 行数**：`wc -l` 实测 **988 行**（自报一致）。附：本轨另一新文件
+   `ops_tree_budget.rs` 389 / `ops_key_probe.rs` 403 / `ops_tree.rs` 399，均在推荐线内；
+   红线双文件 `ops_workbench.rs` **1070**（基线 `8981d3078` 同为 1070，本轨 diff **0 行**）/
+   `ops_workbench/tests.rs` 1602（同 0）——简报所写"1066"系笔误级小差，与本轨无关。
+2. **驱动 UI 存量类型错**：临时 `tsconfig.redis-ui-check.json`（extends 根配置、include 仅
+   `packages/drivers/redis/ui`、exclude 测试文件；**用后即删未提交**）实测 ⇒ 驱动 UI **非测试**文件
+   `error TS` 恰 **12 条**：`console/consoleResultRenderer.tsx` TS6133 ×1 +
+   `observe/SearchableInfoPanel.tsx`（TS6133 ×2 / TS2345 ×7 / TS2322 ×1 / TS2488 ×1）×11；
+   **本轨 4 个 ui 文件（BatchBar / ImportExport / redisInvoke / 新测试）0 命中** ⇒ 自报属实。
+   （同口径下另有测试文件与 `packages/ui/tid.ts`、codegen `generated.ts` 的噪声错误，不计入该 12。）
+3. **`consumed` 口径**：冻结注记与实现逐字一致（见阶段 1-2）——`consumed == 0` 承诺保留在
+   `dbsize > 0` 快路径，降级路径改为一轮真 SCAN 的真实消耗。Wave 4 判"DBSIZE 快答"需
+   `dbsize > 0 && consumed == 0` 双条件。事实成立，无需另登记。
+
+
+
 
 
 
