@@ -29,8 +29,8 @@ pub use compare::{
 };
 pub use error::DataSyncError;
 pub use execute::{
-    execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
-    SyncConflict,
+    execute_statement_batches_with_policy, execute_statements, execute_statements_with_policy,
+    ExecutionResult, StatementBatchSource, StatementExecutor, SyncConflict,
 };
 pub use filter::{SyncFilterLogic, SyncRecordset, SyncRecordsetBound, SyncSourceFilter};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};

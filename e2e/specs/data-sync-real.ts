@@ -269,6 +269,8 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
       DROP TABLE IF EXISTS sync_simple;
       DROP TABLE IF EXISTS sync_pg_types;
       DROP TABLE IF EXISTS sync_apply_exec;
+      DROP TABLE IF EXISTS sync_stream_large;
+      DROP TABLE IF EXISTS sync_stream_rollback;
     `;
     await runSQL(srcSessionId, cleanSQL);
     await runSQL(tgtSessionId, cleanSQL);
@@ -283,6 +285,8 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
       DROP TABLE IF EXISTS sync_simple;
       DROP TABLE IF EXISTS sync_pg_types;
       DROP TABLE IF EXISTS sync_apply_exec;
+      DROP TABLE IF EXISTS sync_stream_large;
+      DROP TABLE IF EXISTS sync_stream_rollback;
     `;
     try {
       await runSQL(srcSessionId, cleanSQL);
@@ -626,6 +630,111 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
         (row) => row.operation === 'UPDATE' && row.key[0] === 1,
       ),
     ).toBe(true);
+  });
+
+  it('SYNC-REAL-026: streams and applies a plan larger than the former 64 MiB load limit', async function () {
+    this.timeout(300000);
+    const valueBytes = 14 * 1024;
+    const expectedRows = 5000;
+    const options = { ...SYNC_EXEC_OPTIONS, batchSize: 500 };
+    await runSQL(
+      srcSessionId,
+      `CREATE TABLE sync_stream_large (id integer PRIMARY KEY, val text NOT NULL);
+       INSERT INTO sync_stream_large (id, val)
+       SELECT id, repeat('x', ${valueBytes}) FROM generate_series(1, ${expectedRows}) AS gs(id);`,
+    );
+    await runSQL(
+      tgtSessionId,
+      'CREATE TABLE sync_stream_large (id integer PRIMARY KEY, val text NOT NULL);',
+    );
+
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
+      sourceDbSessionId: srcSessionId,
+      targetDbSessionId: tgtSessionId,
+      tables: ['sync_stream_large'],
+      options,
+    });
+    const selection = await selectionFor(preview, 'sync_stream_large', 'INSERT');
+    const previewError = await expectCommandError(() =>
+      invokeBackend('generate_data_sync_sql', {
+        planId: preview.planId,
+        selection,
+        options,
+      }),
+    );
+    expect(previewError).toMatch(/16 MiB IPC limit/);
+
+    const result = await invokeBackend<ExecutionResult>('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options,
+        jobId: null,
+      },
+    });
+    expect(result.applied).toBe(expectedRows);
+    expect(result.rolledBack).toBe(false);
+
+    const count = await invokeBackend<{ results: { rows: unknown[][] }[] }>('execute_query', {
+      dbSessionId: tgtSessionId,
+      sql: 'SELECT count(*) FROM sync_stream_large',
+    });
+    expect(count.results[0]?.rows).toEqual([[expectedRows]]);
+
+    const readback = await invokeBackend<{ results: { rows: unknown[][] }[] }>('execute_query', {
+      dbSessionId: tgtSessionId,
+      sql: 'SELECT id, length(val) FROM sync_stream_large WHERE id IN (1, 2500, 5000) ORDER BY id',
+    });
+    expect(readback.results[0]?.rows).toEqual([
+      [1, valueBytes],
+      [2500, valueBytes],
+      [5000, valueBytes],
+    ]);
+  });
+
+  it('SYNC-REAL-027: a conflict on the second generated page rolls back the first page', async function () {
+    this.timeout(180000);
+    await runSQL(
+      srcSessionId,
+      `CREATE TABLE sync_stream_rollback (id integer PRIMARY KEY, val text NOT NULL);
+       INSERT INTO sync_stream_rollback (id, val)
+       SELECT id, CASE WHEN id = 500 THEN 'source-before' ELSE 'source-' || id END
+       FROM generate_series(0, 500) AS gs(id);`,
+    );
+    await runSQL(
+      tgtSessionId,
+      `CREATE TABLE sync_stream_rollback (id integer PRIMARY KEY, val text NOT NULL);
+       INSERT INTO sync_stream_rollback VALUES (500, 'target-before');`,
+    );
+    const preview = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
+      sourceDbSessionId: srcSessionId,
+      targetDbSessionId: tgtSessionId,
+      tables: ['sync_stream_rollback'],
+      options: SYNC_EXEC_OPTIONS,
+    });
+    const selection = await selectionFor(preview, 'sync_stream_rollback');
+    await runSQL(
+      tgtSessionId,
+      "UPDATE sync_stream_rollback SET val = 'target-concurrent' WHERE id = 500;",
+    );
+
+    const result = await invokeBackend<ExecutionResult>('execute_data_sync', {
+      request: {
+        planId: preview.planId,
+        selection,
+        options: SYNC_EXEC_OPTIONS,
+        jobId: null,
+      },
+    });
+    expect(result.rolledBack).toBe(true);
+    expect(result.applied).toBeGreaterThan(0);
+    expect(result.rollbackReason).toMatch(/optimistic sync conflict/);
+
+    const readback = await invokeBackend<{ results: { rows: unknown[][] }[] }>('execute_query', {
+      dbSessionId: tgtSessionId,
+      sql: 'SELECT id, val FROM sync_stream_rollback ORDER BY id',
+    });
+    expect(readback.results[0]?.rows).toEqual([[500, 'target-concurrent']]);
   });
 
   it('SYNC-REAL-010: stale target schema rejects before write', async () => {

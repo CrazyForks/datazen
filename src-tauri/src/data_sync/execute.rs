@@ -52,6 +52,14 @@ pub trait StatementExecutor: Send {
     async fn rollback(&mut self) -> Result<(), DataSyncError>;
 }
 
+/// Produces one bounded group of statements at a time for large sync plans.
+/// A source error after execution has started is handled like a statement
+/// failure: the active target transaction is rolled back.
+#[async_trait]
+pub trait StatementBatchSource: Send {
+    async fn next_batch(&mut self) -> Result<Option<Vec<SqlStatement>>, DataSyncError>;
+}
+
 pub async fn execute_statements(
     statements: &[SqlStatement],
     executor: &mut dyn StatementExecutor,
@@ -195,6 +203,179 @@ pub async fn execute_statements_with_policy(
     })
 }
 
+/// Execute a pre-generated first page and then request further statement
+/// pages while keeping one transaction open for the entire plan.
+///
+/// The caller generates the first non-empty page before claiming the plan or
+/// opening a transaction. Later page-generation failures roll back prior
+/// writes from this run.
+pub async fn execute_statement_batches_with_policy(
+    first_batch: Vec<SqlStatement>,
+    source: &mut dyn StatementBatchSource,
+    executor: &mut dyn StatementExecutor,
+    cancelled: Option<Arc<AtomicBool>>,
+    conflict_policy: ConflictPolicy,
+) -> Result<ExecutionResult, DataSyncError> {
+    if first_batch.is_empty() {
+        return Err(DataSyncError::validation(
+            "change set is empty; nothing to execute",
+        ));
+    }
+    if executor.is_read_only() {
+        return Err(DataSyncError::validation(
+            "target connection is read-only; Data Synchronization cannot execute",
+        ));
+    }
+    if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+        return Ok(ExecutionResult {
+            applied: 0,
+            rolled_back: true,
+            rollback_reason: Some("execute cancelled before any changes were applied".into()),
+            affected_rows: 0,
+            skipped: 0,
+            conflicts: Vec::new(),
+        });
+    }
+
+    if let Err(error) = executor.begin().await {
+        return Ok(ExecutionResult {
+            applied: 0,
+            rolled_back: true,
+            rollback_reason: Some(format!(
+                "transaction could not start; no changes were applied: {error}"
+            )),
+            affected_rows: 0,
+            skipped: 0,
+            conflicts: Vec::new(),
+        });
+    }
+
+    let mut applied = 0usize;
+    let mut affected_rows = 0u64;
+    let mut skipped = 0usize;
+    let mut conflicts = Vec::new();
+    let mut batch = Some(first_batch);
+    loop {
+        let statements = match batch.take() {
+            Some(statements) => statements,
+            None => match source.next_batch().await {
+                Ok(Some(statements)) if !statements.is_empty() => statements,
+                Ok(Some(_)) => continue,
+                Ok(None) => break,
+                Err(error) => {
+                    let reason =
+                        format!("statement generation failed after {applied} statements: {error}");
+                    executor.rollback().await.map_err(|rollback_error| {
+                        DataSyncError::validation(format!(
+                            "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
+                        ))
+                    })?;
+                    return Ok(ExecutionResult {
+                        applied,
+                        rolled_back: true,
+                        rollback_reason: Some(reason),
+                        affected_rows,
+                        skipped: 0,
+                        conflicts: Vec::new(),
+                    });
+                }
+            },
+        };
+
+        for stmt in statements {
+            if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                executor.rollback().await.map_err(|error| {
+                    DataSyncError::validation(format!(
+                        "execute cancelled; rollback failed, outcome UNKNOWN: {error}"
+                    ))
+                })?;
+                return Ok(ExecutionResult {
+                    applied,
+                    rolled_back: true,
+                    rollback_reason: Some("execute cancelled; all changes were rolled back".into()),
+                    affected_rows,
+                    skipped: 0,
+                    conflicts: Vec::new(),
+                });
+            }
+            let operation = stmt.operation;
+            match executor.execute(&stmt.sql, &stmt.parameters).await {
+                Ok(affected) => {
+                    if matches!(operation, ChangeOperation::Update | ChangeOperation::Delete)
+                        && affected == 0
+                    {
+                        let message = format!(
+                            "optimistic sync conflict: {} for table '{}' affected zero rows",
+                            match operation {
+                                ChangeOperation::Update => "UPDATE",
+                                ChangeOperation::Delete => "DELETE",
+                                _ => "write",
+                            },
+                            stmt.table
+                        );
+                        if conflict_policy == ConflictPolicy::Skip {
+                            skipped += 1;
+                            conflicts.push(SyncConflict {
+                                table: stmt.table,
+                                operation,
+                                row_key: stmt.row_key,
+                                message,
+                            });
+                            continue;
+                        }
+                        executor.rollback().await.map_err(|error| {
+                            DataSyncError::validation(format!(
+                                "{message}; rollback failed, outcome UNKNOWN: {error}"
+                            ))
+                        })?;
+                        return Ok(ExecutionResult {
+                            applied,
+                            rolled_back: true,
+                            rollback_reason: Some(message.clone()),
+                            affected_rows,
+                            skipped: 0,
+                            conflicts: vec![SyncConflict {
+                                table: stmt.table,
+                                operation,
+                                row_key: stmt.row_key,
+                                message,
+                            }],
+                        });
+                    }
+                    applied += 1;
+                    affected_rows += affected;
+                }
+                Err(error) => {
+                    let reason = format!("execution failed after {applied} statements: {error}");
+                    executor.rollback().await.map_err(|rollback_error| {
+                        DataSyncError::validation(format!(
+                            "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
+                        ))
+                    })?;
+                    return Ok(ExecutionResult {
+                        applied,
+                        rolled_back: true,
+                        rollback_reason: Some(reason),
+                        affected_rows,
+                        skipped: 0,
+                        conflicts: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
+    executor.commit().await?;
+    Ok(ExecutionResult {
+        applied,
+        rolled_back: false,
+        rollback_reason: None,
+        affected_rows,
+        skipped,
+        conflicts,
+    })
+}
+
 #[derive(Default)]
 pub struct RecordingExecutor {
     pub read_only: bool,
@@ -248,6 +429,26 @@ impl StatementExecutor for RecordingExecutor {
 mod tests {
     use super::*;
     use crate::data_sync::model::ChangeOperation;
+    use std::collections::VecDeque;
+
+    struct VecBatchSource(VecDeque<Result<Option<Vec<SqlStatement>>, DataSyncError>>);
+
+    #[async_trait]
+    impl StatementBatchSource for VecBatchSource {
+        async fn next_batch(&mut self) -> Result<Option<Vec<SqlStatement>>, DataSyncError> {
+            self.0.pop_front().unwrap_or(Ok(None))
+        }
+    }
+
+    fn batch_source(batches: impl IntoIterator<Item = Vec<SqlStatement>>) -> VecBatchSource {
+        VecBatchSource(
+            batches
+                .into_iter()
+                .map(|batch| Ok(Some(batch)))
+                .chain(std::iter::once(Ok(None)))
+                .collect(),
+        )
+    }
 
     fn stmt(sql: &str) -> SqlStatement {
         SqlStatement {
@@ -614,5 +815,210 @@ mod tests {
         assert_eq!(result.applied, 1);
         assert_eq!(result.affected_rows, 1);
         assert!(exec.inner.calls.contains(&"rollback".to_string()));
+    }
+
+    #[tokio::test]
+    async fn statement_batches_preserve_order_across_page_boundaries() {
+        let mut exec = RecordingExecutor::default();
+        let mut source = batch_source(vec![vec![stmt("page-2-a"), stmt("page-2-b")]]);
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.applied, 3);
+        assert_eq!(
+            exec.calls,
+            vec![
+                "begin",
+                "execute:1:page-1",
+                "execute:1:page-2-a",
+                "execute:1:page-2-b",
+                "commit"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn statement_source_error_after_a_page_rolls_back_prior_writes() {
+        let mut exec = RecordingExecutor::default();
+        let mut source = VecBatchSource(VecDeque::from([Err(DataSyncError::validation(
+            "injected later page failure",
+        ))]));
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 1);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("statement generation failed after 1")));
+        assert!(exec.calls.contains(&"rollback".to_string()));
+        assert!(!exec.calls.contains(&"commit".to_string()));
+    }
+
+    #[tokio::test]
+    async fn later_page_failure_with_rollback_failure_reports_unknown_outcome() {
+        struct RollbackFailureExecutor(RecordingExecutor);
+
+        #[async_trait]
+        impl StatementExecutor for RollbackFailureExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                self.0.begin().await
+            }
+            async fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, DataSyncError> {
+                self.0.execute(sql, params).await
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                self.0.commit().await
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                self.0.calls.push("rollback-failed".into());
+                Err(DataSyncError::validation("injected rollback failure"))
+            }
+        }
+
+        let mut exec = RollbackFailureExecutor(RecordingExecutor::default());
+        let mut source = VecBatchSource(VecDeque::from([Err(DataSyncError::validation(
+            "injected later page failure",
+        ))]));
+        let error = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("outcome UNKNOWN"));
+        assert!(error.to_string().contains("injected rollback failure"));
+        assert_eq!(
+            exec.0.calls.last().map(String::as_str),
+            Some("rollback-failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_between_statement_pages_rolls_back_prior_page() {
+        struct FlipOnExecute {
+            inner: RecordingExecutor,
+            flag: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl StatementExecutor for FlipOnExecute {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                self.inner.begin().await
+            }
+            async fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, DataSyncError> {
+                let result = self.inner.execute(sql, params).await;
+                self.flag.store(true, Ordering::SeqCst);
+                result
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                self.inner.commit().await
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                self.inner.rollback().await
+            }
+        }
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut exec = FlipOnExecute {
+            inner: RecordingExecutor::default(),
+            flag: flag.clone(),
+        };
+        let mut source = batch_source(vec![vec![stmt("page-2")]]);
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            Some(flag),
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 1);
+        assert!(exec.inner.calls.contains(&"rollback".to_string()));
+        assert!(!exec.inner.calls.contains(&"execute:1:page-2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn streamed_skip_policy_reports_conflict_and_commits_following_page() {
+        struct MixedRowsExecutor {
+            calls: Vec<String>,
+            executions: usize,
+        }
+        #[async_trait]
+        impl StatementExecutor for MixedRowsExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("begin".into());
+                Ok(())
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                self.calls.push("execute".into());
+                let affected = if self.executions == 0 { 0 } else { 1 };
+                self.executions += 1;
+                Ok(affected)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("commit".into());
+                Ok(())
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                self.calls.push("rollback".into());
+                Ok(())
+            }
+        }
+
+        let mut update = stmt("UPDATE first");
+        update.operation = ChangeOperation::Update;
+        let mut followup = stmt("UPDATE second");
+        followup.operation = ChangeOperation::Update;
+        let mut source = batch_source(vec![vec![followup]]);
+        let mut exec = MixedRowsExecutor {
+            calls: Vec::new(),
+            executions: 0,
+        };
+        let result = execute_statement_batches_with_policy(
+            vec![update],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Skip,
+        )
+        .await
+        .unwrap();
+
+        assert!(!result.rolled_back);
+        assert_eq!(result.applied, 1);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.conflicts.len(), 1);
+        assert_eq!(exec.calls, vec!["begin", "execute", "execute", "commit"]);
     }
 }
