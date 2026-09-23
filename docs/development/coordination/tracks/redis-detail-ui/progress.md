@@ -1,5 +1,5 @@
 - 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
-- 状态: **TEST_FAILED**（第 1 轮 Tester 复验：门禁四件套独立重跑全绿，但登记 6 条 Bug，其中 BUG-001/002 属 PRD §4 I-1 的静默丢草稿类别 ⇒ 交原 Coder 修复，Bug 循环 1/5）
+- 状态: **TEST_FAILED（第 2 轮，1 个 bug，Bug 循环 2/5）**（第 2 轮复测：文件面审计 + 四门禁全绿、6/6 已声明修复全部独立复验通过并翻「已修复」、偏差①②③④⑤ 成立；但偏差⑥ 不成立 ⇒ 新登记 **BUG-007**（I-1 静默毁草稿残留旁路，高）⇒ 交下一棒修复。第 1 轮历史状态：门禁全绿 + 登记 6 条 Bug、Bug 循环 1/5）
 - 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
 - Tester commit 链（12 笔，边测边 commit，无 >15min 无落盘区间）:
   `dbd9218e0` 阶段 A/B 台账（BOOTSTRAP + 门禁 + E-1/E-2）→ `da4bc9531` 补测 I-1 支路 8 例（+3 skip 占位）
@@ -602,3 +602,43 @@ G4 bound:   ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory fi
 ```
 
 ⇒ 四门禁与 fixer 自报（58/556/0、0、0、1472/0/4）**逐项吻合**。
+
+### R2-C 六条声明偏差独立裁定（只测不修；⑥ 探针见 R2-F）
+
+| # | 声明 | 裁定 | 关键论据 |
+| - | ---- | ---- | -------- |
+| ① | BUG-001 修复（同键重取原位化）会把「已保存后的自动重取」误判成脏弹问 | **成立** | H 的字面断言就是「零询问 + 草稿完好」且现已绿（12/12）——守卫恒开与它直接矛盾；原位路径 `inPlace=true` 时 loading/detail/clear 三条件均不触发（`DetailColumn` 卸载仅由它们引起），编辑器保持挂载，草稿本地 + dirty 同步跳过；M-A（inPlace 恒 false）⇒ H 红，证明原位化正是该用例的测钉 |
+| ② | 「四出口全部接守卫」仍满足「一次动作至多一问」 | **成立** | 逐出口走查 + 双问占位探针 + 实测：创建 F 绿（1 问、继续编辑同链不二弹）；右键删除 `[fix-selftest]` 绿（恰好一次）；右键 TTL/PERSIST H2 绿且 **零询问**（静默链）；右键改名 P1a 绿（≤1 问，flush 60ms 后无第二弹层）。`handleRefresh→refreshKeys` 的链式双问被 `draftGuard` 合并回压（`if (leavePending && leavePromise) return leavePromise`，dirty=false 时第二问即时通过）⇒ 结构上不可能出现第二弹层；探针 P2a（keep）/P2b（discard）均绿。变异：M-G（撤静默包装）⇒ H2 红（包装有钉）；create 链 M-G 下由合并兜底保持绿=预期 |
+| ③ | BUG-005 用「追加式更正」而非简报要求的「就地改写」 | **成立** | 台账如实性 bug 的要害是引用错值；追加节内更正 1 明确写「引用口径 B 以此为准……本节起作废」（权威声明在位），四条更正 L513-538 齐全、历史原文全保留、更正前后可对照、README 索引同步 ⇒ 引用面已如值，且符合 round-1「不删历史」的修复纪律 |
+| ④ | BUG-006 只改 reason 选取处，不产生「同一 id 两种文案」的第二消费者 | **成立** | `resolveReadOnlyPolicy` 全仓唯一生产消费者是 `StringEditor`（:92 调用、:212 `data-readonly-reason`、:227-233 banner `data-i18n-key` 两分支如实）；两支状态 id 同为 `big-value` ⇒ 定位口径不变；grep 全仓无第二消费者；`redisBigValue.ts` 零 diff |
+| ⑤ | `pnpm build`（禁装依赖）以 `npx vite build` 等价替代 | **成立** | 等价口径实跑 `✓ built in 5.07s · exit=0`（与自报 4.89s 同量级、同一 chunk 告警），驱动 UI 产物构成一致；node_modules 为 symlink、禁 pnpm install 合规 |
+| ⑥ | 重命名选中键后标签/detail 短暂不一致但草稿完好 ⇒ 不立案 | **不成立 ⇒ 立案 BUG-007** | 探针 P1a 证组合**刚结束**时草稿三断言确实完好（绿）；但不一致**不是短暂态**——无任何机制收敛 `selectedKey≠keyDetail.key`（`onUpdateSelectedKey(next)` 在守卫前执行且答 keep 不回滚，`KeyWorkbenchDialogs.tsx:199-210`）。P1b：随后点新名行 ⇒ 守卫同键旁路（`RedisWorkbench.tsx:375-378`）⇒ `inPlace=false`（:347，`keyDetail.key` 仍是旧键）⇒ 未守卫破坏性重取（:349）⇒ 编辑器卸载，**草稿三断言静默蒸发、全程零询问**。按简报「短暂不一致但草稿完好 vs 草稿丢失 —— 只有后者立案」：实测为后者 |
+
+### R2-D 变异矩阵（7 项；每项定向改 → 定向跑 → 记红 → `git checkout HEAD --` → `git status` 干净；生产码净改动 0）
+
+| 变异 | 目标 | 变异内容 | 结果（红用例） |
+| ---- | ---- | -------- | -------------- |
+| M-A | `RedisWorkbench.tsx:347` | `inPlace` 恒 `false` | `2 failed \| 10 passed`：**H2 + H**（BUG-001/002 原位钉） |
+| M-B | `RedisWorkbench.tsx:762` | 对话框 `onSelectKey` 撤回裸 `handleSelectKey` | `2 failed \| 10 passed`：**F + [fix-selftest] 创建 exactly-once**；H2 **未红**（inPlace 吸收，诚实记录，由 M-A/M-G 另钉） |
+| M-G | `RedisWorkbench.tsx:761` | `onRefreshKeys` 撤掉 `refreshKeysForDialogs` 静默包装 | `1 failed \| 11 passed`：**H2**（TTL 零询问钉）；create 链合并兜底保持绿=预期 |
+| M-C | `StringEditor.tsx:167-172` | 删除保存链 `.catch` | `1 failed \| 3 passed`：**BUG-003 用例 + vitest `Unhandled Rejection`** |
+| M-D | `TtlControls.tsx:130-132` | 删 `onKeyDown` Escape 臂 | `1 failed \| 11 passed`：**540 Esc 用例** |
+| M-E | `TtlControls.tsx:133-137` | 删 `onBlur` 臂 | `1 failed \| 11 passed`：**552 失焦用例** |
+| M-F | `keyReadOnlyPolicy.ts:74` | 折叠 reason 拆分为单一常量 | `3 failed \| 18 passed`：**policy 拆分用例 + journey 截断/完整两例** |
+
+⇒ 7/7 变异全部有红，两条修复（inPlace、守卫接线）与四条小修（catch/两臂/拆分）**逐一被测钉**；全部还原后 `git status --porcelain` 仅剩探针未跟踪文件，终态干净。
+
+### R2-E 门禁（终态复跑）· 覆盖率复算 · skip 转正 · 断言纪律
+
+- **终态四门禁**（含探针新文件后）：G1 `59 passed (59)` 文件 / `559 passed | 1 skipped (560)`（1 skip = BUG-007 占位探针，见 R2-F）· G2 `tsc exit=0` · G3（提交态已验 `✓ built in 5.07s · exit=0`；终态 diff 不进 build 入口图）· G4 `ok (1473 file(s) scanned · 0 blocking · 4 advisory)`（+1 = 探针文件，4 条 advisory 逐字同 R2-B）。
+- **覆盖率复算**（同 v8 配置、`--coverage.all=false`，按 `git diff 8981d3078..HEAD` 生产文件集对 `coverage-summary.json` 求 Σcovered/Σtotal）：口径 A(15 文件，含 `en.ts`) **88.84% stmts / 91.20% lines**；口径 B（A 剔 `RedisWorkbench`；5 集合编辑器与 `JsonEditor` 经 diff 核验本就不在 A 内，零命中与 BUG-005 更正 2 口径一致）**92.43% / 95.43%**（bran 85.36 · funcs 90.29）。对 round-1 补测后 92.30/95.34：+0.13/+0.09pp（本轮新测增量），**≥80% 硬线余量充足，BUG-005 更正 1 结论无回归**。
+- **3 枚 skip 转正**：`dirtyLeaveCoverage` 原 BUG-001 ×1、BUG-002 ×2 全部取消 skip，**断言逐字未改**（diff 仅去 `.skip`），12/12 绿；另有 2 枚 `[fix-selftest]` 双问用例绿。
+- **断言纪律**：新测全部 `useI18n` 恒等 `t` 桩，断言落在 `data-testid` / `data-*` / `data-i18n-key`（如 `redis.invalidJson`、`data-string-dirty`、`data-readonly-reason`）；英文文案字面量仅出现在 `data-i18n-key` 值与键名（数据）中；`toBeTruthy()` 仅作 DOM 定位守卫（`getBy*` 缺席即抛），无空断言、无几何坐标依赖。
+
+### R2-F 新缺陷 BUG-007 与最终判定
+
+- **新缺陷**：`bugs/redis-detail-ui-BUG-007.md`（**高**，I-1 数据丢失，状态 `待修复`）。一句话：右键重命名**选中键** + 脏草稿答「继续编辑」⇒ `selectedKey='user:renamed'` 而 `keyDetail.key='user:1'` 恒不收敛 ⇒ 下次点新名行走守卫同键旁路（`RedisWorkbench.tsx:375-378`）⇒ `inPlace=false`（:347）⇒ **未守卫破坏性重取，编辑器卸载，草稿三断言（input 值 / `data-string-dirty` / `isDraftDirty`）静默蒸发，全程零询问** —— BUG-001 类残留旁路，生产可达。
+- **证据**：探针 `ui/__tests__/round2Probe.test.tsx`——P1a 绿（组合即刻 ≤1 问 + 草稿完好，即偏差⑥ 所述"短暂不一致"确实存在且无害）、**P1b 红三断言**（`expected 'renamed-value' to be 'draft'` 等）、P2a/P2b 绿（偏差②）。P1b 断的是**正确**不变式，按第 1 轮先例暂 `describe.skip` 占位（文件头注明），修复者取消跳过即复验。
+- **6 条已声明修复**：`BUG-001`~`BUG-006` 全部复验通过 ⇒ 状态翻 **`已修复`**，各 bug 文件已追加 `## 复测记录（round-2）`，`bugs/README.md` 6 行同步 + 新增 BUG-007 行。
+- **最终判定：`TEST_FAILED`（第 2 轮，1 个 bug，Bug 循环 2/5）**。理由：四门禁与文件面审计全绿、6/6 修复真实有效、偏差①-⑤ 成立，但偏差⑥ 的裁定结果是**存在生产可达的 I-1 静默数据丢失旁路** ⇒ 交付项 §1-5「现状缺陷必须一并消掉」未完整达成。
+- **本轮 commit 链**：`412caecb0`（R2-A/R2-B 门禁绿证）→ 探针用例 commit → 本判定 commit（6 bug 翻译 + BUG-007 + README + 本节）；全程生产码零改动（变异均即刻还原，终态 `git status` 干净）。

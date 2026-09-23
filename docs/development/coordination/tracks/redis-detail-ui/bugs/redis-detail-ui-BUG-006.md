@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-006 · 大 value 只读原因文案在「超哨兵但载荷完整」分支上说的是假事实
 
 - **严重度**：低（不阻断行为：只读本身是 PRD §3.3 要求的正确结果；向用户陈述的原因在该分支为假，且 8-4 的口径正是"文案要能承载语义"）
-- **状态**：`待复测（round-1 修复后）`
+- **状态**：`已修复（round-2 复测通过）`
 - **发现**：W3-E 第 1 轮 Tester 复验（jsdom 实测）
 - **涉及文件**：
   - `packages/drivers/redis/locales/en.ts:490`（`redis.detail.readonly.bigValue` = "Large value: the payload is **incomplete**, so editing is read-only to stop a **truncated** write overwriting it."）
@@ -44,3 +44,8 @@ I-5 只读态②有两个成因，但共用一枚文案：
 - **commit**：`18a4d0c48`（`fix(redis-detail-ui): BUG-006 大 value 只读文案按 truncated/超哨兵分支（新增 bigValueComplete）`）。
 - **修法**：`keyReadOnlyPolicy.ts` 按 `bigValue.truncated` 分支选取 reason——真截断沿用 `READ_ONLY_REASONS['big-value']`（`redis.detail.readonly.bigValue`，"载荷不完整"事实成立）；**超哨兵但 `truncated=false`** 走新增常量 `BIG_VALUE_COMPLETE_REASON`（`redis.detail.readonly.bigValueComplete`，`en.ts` 追加，文案如实说"payload is complete but over the editable size budget"）。状态 id 两者同为 `big-value` ⇒ `data-readonly-reason` 定位口径不变，仅文案事实分支。`redisBigValue.ts:57-65` 的 `big = truncated || overSentinel` 判定**保留**（它决定只读与否，不决定说什么）；缺陷所指"两分支折叠成同一 reason"的拆分点落在 reason 选取处。
 - **复验**：`stringValueReadOnlyJourney.test.tsx` 两处超哨兵期望改走新 key（`:252-266` 哨兵用例 + `[tester] does NOT raise the truncation badge…` 原 GAP 注释用例转正，仍断 `truncated` 徽标缺席）；真截断用例（`:268-275`、`:291-302`）维持旧 key 不动。`keyReadOnlyPolicy.test.ts` 新增分支断言（truncated 旧 key / over-sentinel 新 key / id 均为 `big-value`）。两文件合计 **21/21 绿**。
+
+## 复测记录（round-2）
+- **裁定**：已修复 ✅（round-2 Tester · 全新实例 · 只测不修 · 2026-09-23）。
+- **正测**：`keyReadOnlyPolicy.ts:74` 分支拆分在位——`bigValue.truncated ? READ_ONLY_REASONS['big-value'] : BIG_VALUE_COMPLETE_REASON`；状态 id 两支同为 `big-value`（`data-readonly-reason` 口径不变，偏差④：全仓唯一生产消费者 StringEditor，无第二消费者）；`redisBigValue.ts` 相对修复轮基线**零 diff**（判定/只读与否未动）；`en.ts` 仅追加 2 key（`bigValueComplete`/`saveFailed`），其余语言零改动（偏差口径合规）。
+- **变异钉**：M-F 把拆分折叠回单一 `READ_ONLY_REASONS['big-value']` ⇒ **3 红**（policy 拆分用例 + journey「截断说不完整」+「超哨兵但完整不误报截断」两例；`3 failed | 18 passed`）⇒ 拆分两侧均有独立测钉，还原后复绿、`git status` 干净。

@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-003 · 保存失败静默：`invokeSetString` 无 `.catch` ⇒ 零反馈 + 未处理的 Promise rejection
 
 - **严重度**：中（E-5 新写的保存主链路自身的错误处理缺口；用户点「保存」后**界面看起来完全没反应**——底栏仍在、按钮闪一下又亮、草稿还在，但既不知道失败也不知道原因；写路径失败被吞掉是本轨要消灭的类别，且会污染测试/运行的错误上报）
-- **状态**：`待复测（round-1 修复后）`
+- **状态**：`已修复（round-2 复测通过）`
 - **发现**：W3-E 第 1 轮 Tester 复验（HEAD `3919307ce`，探针实测）
 - **涉及文件**：`packages/drivers/redis/ui/value-editors/StringEditor.tsx:152-164`（`await invokeSetString(...).then(...).finally(() => setSaving(false))` —— **无 `.catch`**）
 - **对照**：同文件 `runDecompress` 有 `.catch` 并渲染 `decompError`（`:180-183`）；`KeyEditors.tsx:97-104` 的 `run()` 有 `catch` 并 `setError(...)`。⇒ 同一轨道内其它写路径都处理了失败，唯独新常驻编辑面的保存没有。
@@ -49,3 +49,8 @@ PROBE dirty= true bar= true errEl= false guardDirty= true unhandled= 1
 - **commit**：`449dba5fd`（`fix(redis-detail-ui): BUG-003 保存失败可见反馈（.catch + redis.detail.saveFailed）并补验收用例`）。
 - **修法**：`StringEditor.save()` 链上补 `.catch`（位于 `.then` 成功分支之后、`.finally` 之前）⇒ 新增 `saveError` 状态与错误节点 `data-testid="redis-string-save-error"`（`role="alert"` + `data-i18n-key="redis.detail.saveFailed"`，新 key 只追加在 `en.ts` 的 `redis.detail.*` 命名空间）。`setSaveError(null)` 挂在三处清旧错：再次保存、键入新字符、放弃草稿。失败时 `.then` 不执行 ⇒ 脏位 / 草稿 / `draftGuard` 脏位**原样保留**（未动 dirty，不引入第三条 I-1 静默路径）；rejection 被 `.catch` 消费 ⇒ 无 unhandled rejection。
 - **复验**：`stringEditorTesterGaps.test.tsx` 新增 `[redis-detail-ui-BUG-003] 保存被后端拒绝的可见反馈` 用例——reject ⇒ 错误节点可见、`data-i18n-key` 断 key（identity `t`，无英文字面量）、`data-string-dirty='true'`、`isDraftDirty()=true`、保存按钮可再点；链路恢复后再次保存 ⇒ 错误消失、脏位落 `false`（退出跃迁不卡死）。整文件 **4/4 绿**（无 unhandled rejection：有则 vitest 整跑失败）。
+
+## 复测记录（round-2）
+- **裁定**：已修复 ✅（round-2 Tester · 全新实例 · 只测不修 · 2026-09-23）。
+- **正测**：`stringEditorTesterGaps` BUG-003 用例绿——错误节点 `data-testid="redis-string-save-error"` / `role="alert"` / `data-i18n-key="redis.detail.saveFailed"` 断言齐；草稿与 dirty 在 rejection 后保留；三处 `setSaveError(null)` 复位可续存。
+- **变异钉**：M-C 删除保存链 `.catch`（`.then` 与 `.finally` 直连）⇒ 该用例红，且 vitest 同轮报告 **`Unhandled Rejection`**（`1 failed | 3 passed`）——正是原缺陷的两个症状（零反馈 + 未处理 rejection），还原后复绿、`git status` 干净。
