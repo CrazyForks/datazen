@@ -887,3 +887,38 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
 - BUG-002 独立反向变异：仅令 overflow memory `i18nKey` 固定为普通 memory key，运行该 Tester 用例得到 1 failed / 48 skipped，实测 `redis.contextBar.memory`、预期 `redis.contextBar.memoryUnlimited`（`:765`）；恢复后源文件字节相同。
 - 两条 Bug 均为 `待复测`，本轮复测前仍未变更终态；修复提交 `392e851aa`、READY_FOR_TEST 台账提交 `f47f063ac` 与 progress 记录一致。审查暂未发现第三项缺陷。
 - 源码反向探针均已还原，进入 B 前 `git diff -- packages/drivers/redis/ui/kv-bar/ContextBarActions.tsx` 为空；B 门禁尚未运行。
+
+### 阶段 B — 独立复验（已完成）
+
+所有门禁由本轮 Tester 在该 worktree 串行执行；以下为独立实测值，不采用 Rescuer 自测作为证据。
+
+| 命令 | 实测结果 | 判定 |
+|---|---|---|
+| `node scripts/generate-builtin-locales.mjs` | 成功，生成 en / zh-CN 内置词条文件（gitignored） | PASS |
+| targeted `redisContextBar.test.tsx` | 1 file / 49 tests passed；包含两条 compact overflow Tester 回归断言 | PASS |
+| `npx vitest run --config vitest.drivers.config.ts` | 63 files / 876 tests passed | PASS |
+| `npx --no-install tsc --noEmit` | exit 0，无输出 | PASS |
+| `cargo test -p datazen-driver-redis --lib` | 342 passed / 0 failed / 4 ignored（其中有既有其他 Redis 轨 BUG 标记的 ignored 测试） | PASS |
+| `npx vitest run`（宿主全套；本轨含宿主 dispatcher / 接线更改） | 454 files / 4744 tests passed；测试输出含被测 ErrorBoundary 的预期错误日志与临时 Git fixture 的诊断，但总退出码 0 | PASS |
+| `node scripts/check-driver-import-boundaries.mjs` | 1507 files；0 blocking / 4 advisory（均为当前既有引用） | PASS |
+| `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | exit 0；解析 postgres/mysql/sqlite/redis 并写出生成注册文件 | PASS |
+| `git diff --check` | exit 0 | PASS |
+
+门禁后源码与两条 Tester 断言均无未提交 diff。工作区仅保留约定的 `Cargo.lock` `+ "flate2"` 一行，未暂存、未提交；codegen/coverage 产物均为 gitignored。
+
+### 阶段 C — 覆盖率与 E2E（已完成）
+
+使用 `npx vitest run --config vitest.drivers.config.ts --coverage --coverage.include='packages/drivers/redis/ui/kv-bar/**'`，v8 覆盖率。覆盖命令自身再次通过 63 files / 876 tests。
+
+| 核心文件 / 范围 | Statements | Branches | Functions | Lines | 第 2 轮记录（Stmt / Branch / Func / Line） |
+|---|---:|---:|---:|---:|---:|
+| `ContextBarActions.tsx`（本次改动） | 100% (21/21) | 100% (20/20) | 100% (15/15) | 100% (21/21) | 100 / 93.75 / 100 / 100 |
+| `RedisContextBar.tsx` | 100% (17/17) | 95.65% (44/46) | 100% (5/5) | 100% (16/16) | 100 / 95.65 / 100 / 100 |
+| `contextBarModel.ts` | 100% (72/72) | 96.59% (85/88) | 100% (12/12) | 100% (58/58) | 100 / 96.59 / 100 / 100 |
+| `dbKeyCounts.ts` | 94.12% (32/34) | 86.36% (19/22) | 88.89% (8/9) | 100% (29/29) | 94.11 / 86.36 / 88.88 / 100 |
+| `useContextBarData.ts` | 93.22% (55/59) | 87.50% (28/32) | 86.67% (13/15) | 100% (47/47) | 93.22 / 87.5 / 86.66 / 100 |
+| `kv-bar/**` 全范围（12 files） | 98.32% (353/359) | 96.18% (353/367) | 96.77% (90/93) | 100% (304/304) | 98.32 / 96.14 / 96.77 / 100 |
+
+本次修改文件各项均达 100%；kv-bar 全范围超过规程的 ≥80% 标准。相对第 2 轮记录，`ContextBarActions.tsx` 的 branches 从 93.75% 升至 100%，整体 branches 从 96.14% 升至 96.18%。其他未覆盖点仍为既有防御 / 竞态分支（见前轮逐项归因），没有新增核心路径缺口。
+
+适用 GUI E2E 旅程继续登记为 **【留待 R 回归】**：`W4-KVBAR-01` 在 Tauri + 大于采样窗口的真 Redis 下切到 compact，确认 overflow types 行保留采样标识；`W4-KVBAR-02` 在真 Redis `maxmemory=0` 且 compact 时确认 memory 行明确表达无限制。两条单测在本轮已通过；本轮没有启动 Tauri GUI / 真 Redis，不能据此宣称 GUI E2E 通过。此前登记的 W4-KVBAR-03 至 07 继续留待相应 R 环境执行。
