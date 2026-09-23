@@ -369,3 +369,54 @@ describe('[tester][round-3] 一致态同键重点击不得吃守卫（零询问�
     expect(column().getAttribute('data-detail-state')).toBe('ready');
   });
 });
+
+// ============================================================================
+// D. 遗留项 2 取证：不一致态下「保存」写向哪个键？（裁定用事实，非猜测）
+// ============================================================================
+describe('[tester][round-3] 不一致态下的保存目标键（遗留项 2 取证）', () => {
+  it('records which key a save targets while label=new / detail=old', async () => {
+    renderWorkbench();
+    await selectAndDraft();
+    await renameSelectedKeep();
+    expectDeviation6();
+
+    // 用户带着草稿点「保存」。
+    fireEvent.click(screen.getByTestId('redis-string-dirty-bar'));
+    fireEvent.click(screen.getByTestId('redis-string-save'));
+    await waitFor(() => expect(setString).toHaveBeenCalled());
+
+    // 记录事实：SET 的目标键 = detail.key（旧名）。服务器此刻只有 user:renamed。
+    const target = setString.mock.calls[0][2] as string;
+    console.log('[round-3 取证] 保存目标键 =', JSON.stringify(target));
+    console.log('[round-3 取证] 树标签选中 = user:renamed / 编辑器头 =', JSON.stringify(headerKeyName()));
+    expect(target).toBe('user:1');
+  });
+
+  it('records the full post-save state: which key the panel shows next', async () => {
+    renderWorkbench();
+    await selectAndDraft();
+    await renameSelectedKeep();
+    expectDeviation6();
+
+    fireEvent.click(screen.getByTestId('redis-string-dirty-bar'));
+    fireEvent.click(screen.getByTestId('redis-string-save'));
+    await waitFor(() => expect(setString).toHaveBeenCalled());
+    await flush(120);
+
+    const target = setString.mock.calls[0][2] as string;
+    const after = {
+      saveTarget: target,
+      treeSelected: column().getAttribute('data-selected-key'),
+      headerKeyName: headerKeyName(),
+      inputValue: input().value,
+      draftDirty: isDraftDirty(),
+      detailState: column().getAttribute('data-detail-state'),
+      refetched: getKey.mock.calls.map((c) => c[2]),
+    };
+    console.log('[round-3 取证] 保存后状态 =', JSON.stringify(after, null, 2));
+    console.log('[round-3 取证] SET 实参 =', JSON.stringify(setString.mock.calls[0]));
+    // 事实断言（不预设裁定）：保存写向旧键，而面板随后回读的是新键。
+    expect(target).toBe('user:1');
+    expect(after.refetched).toContain('user:renamed');
+  });
+});
