@@ -747,3 +747,68 @@ $ npx tsc --noEmit
 还原后复跑 `test result: ok. 342 passed; 0 failed; 4 ignored` —— **回绿确认**。
 
 **步骤 5 结论：4/6 探针感知（拆分后测试强度完好），2 处如实登记为覆盖空洞 TS-01/TS-02。**
+
+### 步骤 6 — `pub(crate)` 放宽审计
+
+抽 5 个核对（任务书要求），并**顺手做了全量复核**（3 种独立方法交叉验证）。
+
+**(a) 抽样 5 个：确实原为私有 + 放宽后未进任何 `pub use` 转发**
+
+| # | helper | 基线 `d049ceb4e` 声明（逐字） | HEAD 声明 | (a) 原私有 | (b) 被裸 `pub use` 转发？ | 转发形式 |
+|---|---|---|---|---|---|---|
+| 1 | `parse_hash_scan_result` | `ops.rs:346` `fn parse_hash_scan_result(raw: &redis::Value) -> ...` | `ops/hash.rs:49` `pub(crate) fn` | ✅ 是 | ❌ 无 | `ops/mod.rs:30` `pub(crate) use`（crate 内） |
+| 2 | `value_to_string` | `ops.rs:495` `fn value_to_string(v: &redis::Value) -> String {` | `ops/parse.rs:81` `pub(crate) fn` | ✅ 是 | ❌ 无 | `ops/mod.rs:47` `pub(crate) use` |
+| 3 | `PREFER_TLS_PROBE` | `connect.rs:293` `const PREFER_TLS_PROBE: Duration = Duration::from_secs(5);` | `connect/standalone.rs:14` `pub(crate) const` | ✅ 是 | ❌ 无 | 无转发（同模块内用） |
+| 4 | `slot` | `ops_workbench.rs:393` `fn slot(values: &[RValue], index: usize) -> RValue {` | `ops_workbench/shapes.rs:208` `pub(crate) fn` | ✅ 是 | ❌ 无 | `ops_workbench/mod.rs:150` `pub(crate) use` |
+| 5 | `parse_stream_id` | `ops_stream.rs:310` `fn parse_stream_id(id: &str) -> Option<(u64, u64)> {` | `ops_stream/parse.rs:215` `pub(crate) fn` | ✅ 是 | ❌ 无 | `ops_stream/mod.rs:41` `pub(crate) use` |
+
+→ **5/5 两项条件同时满足，未发现「放宽后泄漏到对外 API」的条目。**
+
+**(b) 全量泄漏扫描（不止抽样）**：把 HEAD 下 5 个拆分目录里**所有** `pub use` 转发名
+与**所有** `pub(crate)` 声明名求交集：
+
+```
+pub(crate)-declared names found at HEAD: 126
+BARE `pub use` forwarding a pub(crate) name (LEAKS): NONE
+```
+
+**(c) crate 对外 API 面复核**：`lib.rs` 的对外再导出只有
+`pub use connect::{build_connection_plan, ConnectionPlan, RedisLiveConn, TlsPlan, Topology};`（:35）、
+`pub use ops::{set_settings_allow_flush, settings_allow_flush};`（:36）、`pub use redis_driver::*;`（:41）、
+`pub use plugin::init;`（:47）。求交集：
+
+```
+INTERSECTION of lib.rs re-exports with pub(crate)-widened names: EMPTY
+```
+
+且已核 `redis_driver.rs` **没有** glob 转发这 5 个模块（其唯一 `use` 是 `pub(crate) use crate::redis_value::{...}`），
+故 `pub use redis_driver::*` 不会把放宽名带出去。
+→ **放宽确实只增 crate 内部可见性，不增对外 API，结论 PASS。**
+
+**(d) 台账计数勘误（非缺陷，属台账精度问题，如实记录）**：
+Coder 台账 §4 的放宽清单**逐条名字与我实测一致**，但 `connect.rs` 一行的**计数写小了**：
+
+| 口径 | `ops` | `connect` | `ops_tree_scan` | `ops_workbench` | `ops_stream` | 合计 |
+|---|---|---|---|---|---|---|
+| Coder 台账 §4 文字 | 9 | 「18 个私有 fn + 1 常量 + 1 关联函数」= **20** | 6 | 10 | 7 | **52** |
+| Tester 实测（3 法一致） | 9 | **25**（23 私有 fn + 1 常量 + 1 关联函数） | 6 | 10 | 7 | **57** |
+| 任务书转述 | — | — | — | — | — | 50 |
+
+`connect.rs` 实测 25 条的**完整名单**（已逐条在该文件基线里确认无 `pub` 前缀）：
+`open_standalone_conn_with_fallback`、`open_standalone_pubsub`、`open_standalone_pubsub_with_fallback`、
+`open_cluster_conn_with_fallback`、`open_sentinel_conn`、`open_sentinel_pubsub`、`plaintext_url`、
+`plaintext_sentinel_plan`、`connect_with_timeout`、`parse_topology`、`parse_tls`、`opt_string`、`non_empty`、
+`parse_db_index`、`parse_host_port`、`parse_node_urls`、`parse_sentinel_urls`、`scheme_for_tls`、
+`build_node_url`、`tls_mode_for_plan`、`load_tls_certificates`、`open_standalone_client`、`sentinel_node_info`、
+`plaintext`（`TlsPlan` 关联函数）、`PREFER_TLS_PROBE`（常量）。
+
+**三法互证**：① 「HEAD 的 pub(crate) 声明 ∩ 基线同名无 `pub` 前缀」；
+② 逐名在基线原文里 grep 声明行看前缀；③ 去掉 `impl` 体后的 depth-0 扫描。三法均得 **25**。
+
+**判定**：这是**台账文字计数**与代码的偏差，**不是行为缺陷** ——
+放宽的**名单本身正确、无泄漏、对外面不变**（(a)(b)(c) 已证）。
+但按任务书「逐条核验 Coder 自报」的要求，**如实登记为台账勘误**，建议下一轮 Coder 把 §4 的
+`connect.rs` 计数由 20 改为 25、合计由 52 改为 57（或声明 50 的口径来源）。
+**不计入 `bugs/`**（不改变任何验收判据：公开面集合、门禁数字、行为等价均不受影响）。
+
+**步骤 6 结论：(a)(b)(c) 全部 PASS，无泄漏；发现台账计数勘误 1 处（52/50 vs 实测 57），已如实记录。**
