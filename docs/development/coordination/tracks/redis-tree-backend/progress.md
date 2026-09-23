@@ -764,6 +764,39 @@ clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生
 | 冻结 JSON 形状零改动 | 修复轮 `progress.md` diff 中含冻结字段名的 JSON 行 **0 命中**（JSON 原文一字未动，只追加行为注记——已在 1-2 逐字核过）；`CountOutcome`/`ChildEntry`/`KeyEntry`/`KeyProbe` 结构体字段行在 `6c69d157d..HEAD` 增删 **0** | ✅ |
 | 新代码无裸 unwrap/expect | 修复轮新增行中的 `.unwrap()/.expect(` 共 6 处，**全部**在 `ops_tree_scan/tests.rs`（`#[cfg(test)]` 内，合法）；`read_dbsize` / `count_budgeted` / `list_children_page` 三个改动的生产函数体内 **0 处** | ✅ |
 
+### 阶段 4 · 覆盖率（本回合新改核心路径，`cargo llvm-cov 0.8.7 --lib` + v8 diff-hunk 精算）—— **达标**
+
+**Rust**（与第 1 轮同口径；行覆盖含修复轮新增分支）：
+
+| 文件 | 第 1 轮行覆盖 | **本轮实测** | 判定 |
+|---|---|---|---|
+| `ops_tree.rs`（BUG-001 重写的富化/过滤段） | 96.35% | **94.94%**（237 行中 miss 12） | ✅ ≥80 |
+| `ops_tree_scan.rs`（`read_dbsize`/`count_budgeted` 改动） | 95.12% | **95.00%**（540 行中 miss 27） | ✅ ≥80 |
+| `ops_tree_budget.rs`（R-1 改动） | 98.08% | **98.18%** | ✅ |
+| `ops_key_probe.rs` | 94.71% | **94.71%** | ✅ |
+
+逐行点名未覆盖集（`--lcov` DA 行 = 0 的实测行号）：`ops_tree.rs` 215-218 / 276 / 279-282 = 修复轮**新增两条
+release warn** 的宏字段与文案行（`tracing` 默认 subscriber 下短路，分支判定行本身已覆盖）+ 293/296-297/302 =
+收尾花括号与 page-done `info!` 字段；`ops_tree_scan.rs` 459/467 = `read_dbsize` 两臂的 warn 文案行
+（`0` 返回值行 461/469 **已**覆盖，两条用例各自执行过），其余 128/172/183/185/193/267-269/402/405-406/624/
+652-653/674/862/881-892 与第 1 轮"剩余缺口点名"清单**同一集合**（日志字段、空批早退、`Nil` 收尾臂、
+`_ => {}`、info! 宏行）⇒ **修复轮没有引入任何未测业务分支**。
+说明一条：`ops_tree.rs:214`（meta 批长≠叶子数守卫）在替身下不可达——`fetch_key_meta` 自身补齐等长向量，
+该臂是 defense-in-depth（这正是它存在的位置），无故障注入面可达，与同文件其余 release warn 同为日志代价行。
+
+**TypeScript**（v8，`treeUiBug002CountMatching.test.tsx` 8 例驱动，按**本回合 diff hunk 行**精算）：
+
+| 文件 | 改动行 | hunk 内语句 | 覆盖 | 判定 |
+|---|---|---|---|---|
+| `key-browser/BatchBar.tsx` | +20 | 8 | **8/8 = 100%** | ✅ |
+| `key-browser/ImportExport.tsx` | +11 | 6 | **6/6 = 100%** | ✅ |
+| `shared/redisInvoke.ts` | +16 | 0（纯 interface/type 声明，无运行时语句） | 类型面由 tsc exit 0 + 两消费端用例钉住 | ✅（口径注明） |
+
+⇒ **无缺口需补测**：阶段 1 的四次定点复验已把每条新分支走绿，本轮未新增测试文件（禁改生产码同样遵守）。
+整文件百分比（BatchBar 29%、ImportExport 25%）是两组件大量本轨未触碰代码摊薄，非本回合改动面的覆盖。
+
+
+
 
 
 
