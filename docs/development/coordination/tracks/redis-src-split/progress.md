@@ -501,3 +501,81 @@ $ git show d049ceb4e:Cargo.lock | grep -A30 'name = "datazen-driver-redis"' | gr
 `0501b880a`2（台账）/ `197434dc4`9 / `833fef717`8 / `6d8ea052e`7 / `2e3d0c6b7`1（台账）。
 
 **步骤 1 结论：PASS。**
+
+### 步骤 2 — 独立复现「逐行原文比对」（Tester 自写脚本，非采信自报）
+
+脚本：`/tmp/dz-prov/{final2.py,bodyaudit.py,nine.py}`（临时目录，验收后删除）。
+取原文 `git show d049ceb4e:<原文件>`，取新文件集合 = `git show --name-only <拆分commit>` 中
+**在 HEAD 仍存在的 `.rs`**（原文件已被删除成目录的不再计入，否则会 `git show` 报 128）。
+
+**结论：8 个原文件全部 PASS。** 分两层证据：
+
+**(a) 行级多重集合包含（4 级规范化，逐级收紧口径）**
+
+| 原文件 | 原文非空行 | A(rstrip) 缺失 | B(+strip 前导空白) | C(+去 1 个 `pub(crate) `) | D(+rustfmt 换行规范化) |
+|---|---|---|---|---|---|
+| `src/ops_tree_scan/tests.rs` | 2218 | 0 | 0 | 0 | 0 |
+| `src/ops_workbench/tests.rs` | 1463 | 0 | 0 | 0 | 0 |
+| `src/ops.rs` | 1010 | 9 | 9 | **2** | 2 |
+| `src/connect.rs` | 1022 | 25 | 25 | **3** | 3 |
+| `src/ops_workbench/tests/cluster_topology.rs` | 1090 | 0 | 0 | 0 | 0 |
+| `src/ops_tree_scan.rs` | 926 | 6 | 6 | **2** | 2 |
+| `src/ops_workbench.rs` | 1008 | 10 | 10 | **2** | 2 |
+| `src/ops_stream.rs` | 874 | 7 | 7 | 0 | 0 |
+| **合计** | **9611** | 57 | 57 | **9** | 9 |
+
+A/B 级的 57 条缺失**全部是函数签名行**且**全部**是 `pub(crate)` 放宽的 50 个 helper 中的条目
+（C 级把 57 降到 9 即证）。**这 9 条 D 级仍不收敛，Tester 逐条追到底**（脚本 `nine.py`，按标识符
+定位新文件中的同名条目、抽出完整签名 span、用
+`canon = 折叠空白 + 去 pub(crate) + 去 `)` 前尾逗号 + 去结尾 `{`/`;`/`,` ` 比对）：
+
+```
+[OK ] src/ops.rs:346  parse_hash_scan_result      -> ops/hash.rs:49
+[OK ] src/ops.rs:543  apply_ttl_command           -> ops/ttl.rs:6
+[OK ] src/connect.rs:496  parse_tls               -> connect/parse.rs:34
+[OK ] src/connect.rs:533  opt_string              -> connect/parse.rs:74
+[OK ] src/connect.rs:706  load_tls_certificates   -> connect/tls.rs:61
+[OK ] src/ops_tree_scan.rs:89  pipeline_raw       -> ops_tree_scan/transport.rs:33
+[OK ] src/ops_tree_scan.rs:121 fold_command_answer-> ops_tree_scan/transport.rs:68
+[OK ] src/ops_workbench.rs:572 pipeline_raw       -> ops_workbench/transport.rs:122
+[OK ] src/ops_workbench.rs:627 routed_single      -> ops_workbench/transport.rs:180
+```
+
+即：**这 9 条与原文的差异 = 恰好 1 个 `pub(crate) ` 前缀 + rustfmt 因签名变长产生的换行/尾逗号重排**，
+函数体、参数列表、返回类型、`where` 子句**逐字相同**。**无一条是内容改写。**
+
+**(b) 条目级函数体逐字比对（决定性证据，绕开换行噪声）**
+
+对每个原文件做顶层 `{...}` 配平切片，把每个条目的**花括号体**折叠空白后在新文件集合里做多重集合包含：
+
+| 原文件 | 原顶层条目数 | 函数体逐字命中 | 未命中 | 判定 |
+|---|---|---|---|---|
+| `src/ops_tree_scan/tests.rs` | 13 | 13 | 0 | PASS |
+| `src/ops_workbench/tests.rs` | 65 | 65 | 0 | PASS |
+| `src/ops.rs` | 50 | 50 | 0 | PASS |
+| `src/connect.rs` | 37 | 36 | 1 | PASS（见下） |
+| `src/ops_workbench/tests/cluster_topology.rs` | 34 | 34 | 0 | PASS |
+| `src/ops_tree_scan.rs` | 40 | 40 | 0 | PASS |
+| `src/ops_workbench.rs` | 32 | 32 | 0 | PASS |
+| `src/ops_stream.rs` | 32 | 32 | 0 | PASS |
+| **合计** | **303** | **302** | **1** | **PASS** |
+
+唯一「未命中」是 `connect.rs` 的 `TlsPlan::plaintext`：其**类型声明**位于 `impl TlsPlan { ... }` 体内，
+该条目的「花括号体」`{ fn plaintext() -> TlsPlan { ... } }` 因内层函数加了 `pub(crate) ` 而不逐字相等。
+已手工逐行核对原文 `connect.rs:32-44` vs 新文 `connect/plan.rs:23-35`：**除 `pub(crate) ` 前缀外逐字相同**
+（`TlsPlan { enabled: false, prefer_fallback: false, ca_path: None, cert_path: None, key_path: None,
+key_passphrase: None, insecure_skip_verify: false }` 一致）。归一化掉该前缀后 **303/303 全命中**。
+
+**(c) 新增行审计（反查「有没有夹带/复制粘贴/重写」）**
+
+新文件里**不属于原文**的行，逐行分类，**8 个文件均为 0 条"代码形状"外来行**：
+
+- `ops_tree_scan/tests.rs` 48 条外来行 → 全部是 `mod`/`use super::*;`/`//` 注释；
+- `ops_workbench/tests.rs` 24 条 → 同上；
+- `cluster_topology.rs` 18 条 → 同上；
+- `ops.rs`/`connect.rs`/`ops_tree_scan.rs`/`ops_workbench.rs` 的「代码形状」外来行**全部**是
+  §(a) 中那 9 条签名的**跨行碎片**（如 `raw: &redis::Value,`、`) -> Result<...> {`）与**跨行 `use` 续行**
+  （`use crate::ops_workbench::{` / `Client, ClientTlsConfig, ...`）—— 均已由 (a) 的 `nine.py` 定位到原文对应条目，
+  非新增逻辑。
+
+**步骤 2 结论：PASS（8/8 文件行行有归属，303 个函数体逐字保留，无夹带代码）。**
