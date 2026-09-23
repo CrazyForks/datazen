@@ -156,6 +156,38 @@ fn pg_validate_sequence_ddl(sequence: &MigrationSequence) -> Result<String, Stri
     Ok(sequence.definition.trim().to_owned())
 }
 
+fn pg_type_ident(type_definition: &MigrationType) -> Result<String, String> {
+    validate_migration_identifier(&type_definition.name)?;
+    let schema = pg_object_schema(type_definition.schema.as_deref())?;
+    let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+    Ok(format!(
+        "{}{}",
+        schema.map(|value| format!("{value}.")).unwrap_or_default(),
+        quote(&type_definition.name)
+    ))
+}
+
+fn pg_type_keyword(definition: &str) -> Result<&'static str, String> {
+    let tokens = definition.split_whitespace().collect::<Vec<_>>();
+    match tokens
+        .get(0..2)
+        .map(|pair| (pair[0].to_ascii_uppercase(), pair[1].to_ascii_uppercase()))
+    {
+        Some((create, kind)) if create == "CREATE" && kind == "DOMAIN" => Ok("DOMAIN"),
+        Some((create, kind)) if create == "CREATE" && kind == "TYPE" => Ok("TYPE"),
+        _ => Err("PostgreSQL type definition must declare CREATE TYPE or CREATE DOMAIN".into()),
+    }
+}
+
+fn pg_validate_type_ddl(type_definition: &MigrationType) -> Result<String, String> {
+    validate_type_definition_with_identity(
+        &type_definition.definition,
+        type_definition.schema.as_deref(),
+        &type_definition.name,
+    )?;
+    Ok(type_definition.definition.trim().to_owned())
+}
+
 fn pg_validate_object_ddl(
     definition: &str,
     kind: ObjectKind,
@@ -684,6 +716,49 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                     summary: format!("DROP SEQUENCE {}", sequence.name),
                 })
             }
+            MigrationOperation::CreateType { type_definition } => {
+                let definition = pg_validate_type_ddl(type_definition)?;
+                let ident = pg_type_ident(type_definition)?;
+                let keyword = pg_type_keyword(&definition)?;
+                Ok(MigrationStatement {
+                    sql: definition,
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP {keyword} {ident}")),
+                    summary: format!("CREATE TYPE {}", type_definition.name),
+                })
+            }
+            MigrationOperation::ReplaceType { current, desired } => {
+                if current.schema != desired.schema || current.name != desired.name {
+                    return Err("type replacement identities must match".into());
+                }
+                let current_definition = pg_validate_type_ddl(current)?;
+                let desired_definition = pg_validate_type_ddl(desired)?;
+                let ident = pg_type_ident(desired)?;
+                let current_keyword = pg_type_keyword(&current_definition)?;
+                let desired_keyword = pg_type_keyword(&desired_definition)?;
+                if current_keyword != desired_keyword {
+                    return Err("type replacement cannot change TYPE/DOMAIN kind".into());
+                }
+                Ok(MigrationStatement {
+                    sql: format!("DROP {desired_keyword} {ident}; {desired_definition}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(format!(
+                        "DROP {current_keyword} {ident}; {current_definition}"
+                    )),
+                    summary: format!("REPLACE TYPE {}", desired.name),
+                })
+            }
+            MigrationOperation::DropType { type_definition } => {
+                let definition = pg_validate_type_ddl(type_definition)?;
+                let ident = pg_type_ident(type_definition)?;
+                let keyword = pg_type_keyword(&definition)?;
+                Ok(MigrationStatement {
+                    sql: format!("DROP {keyword} {ident}"),
+                    risk: MigrationRisk::Destructive,
+                    rollback_sql: Some(definition),
+                    summary: format!("DROP TYPE {}", type_definition.name),
+                })
+            }
         }
     }
 }
@@ -725,7 +800,10 @@ impl MigrationCapabilities for PostgresMigrationCapabilities {
             | MigrationOperation::DropTrigger { .. }
             | MigrationOperation::CreateSequence { .. }
             | MigrationOperation::ReplaceSequence { .. }
-            | MigrationOperation::DropSequence { .. } => true,
+            | MigrationOperation::DropSequence { .. }
+            | MigrationOperation::CreateType { .. }
+            | MigrationOperation::ReplaceType { .. }
+            | MigrationOperation::DropType { .. } => true,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
@@ -1169,6 +1247,80 @@ mod tests {
                 sequence: pg_sequence("CREATE SEQUENCE \"public\".\"orders_id_seq\" AS bigint INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1 NO CYCLE;")
             }
         ));
+    }
+
+    fn pg_type(definition: &str) -> MigrationType {
+        MigrationType {
+            schema: Some("public".into()),
+            name: "mood".into(),
+            definition: definition.into(),
+        }
+    }
+
+    #[test]
+    fn renders_type_create_replace_drop_with_identity_and_rollback() {
+        let current = pg_type("CREATE TYPE public.mood AS ENUM ('sad');");
+        let desired = pg_type("CREATE TYPE public.mood AS ENUM ('sad', 'happy');");
+        let create = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateType {
+                type_definition: current.clone(),
+            })
+            .unwrap();
+        assert_eq!(create.risk, MigrationRisk::Additive);
+        assert_eq!(
+            create.rollback_sql.as_deref(),
+            Some("DROP TYPE \"public\".\"mood\"")
+        );
+
+        let replace = PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceType {
+                current: current.clone(),
+                desired: desired.clone(),
+            })
+            .unwrap();
+        assert_eq!(replace.risk, MigrationRisk::Destructive);
+        assert!(replace.sql.contains("DROP TYPE \"public\".\"mood\""));
+        assert!(replace.sql.contains("'happy'"));
+        assert!(replace.rollback_sql.is_some());
+
+        let drop = PostgresMigrationRenderer
+            .render(&MigrationOperation::DropType {
+                type_definition: current,
+            })
+            .unwrap();
+        assert_eq!(drop.sql, "DROP TYPE \"public\".\"mood\"");
+        assert_eq!(drop.risk, MigrationRisk::Destructive);
+        assert!(drop.rollback_sql.is_some());
+    }
+
+    #[test]
+    fn type_renderer_rejects_identity_mismatch_scripts_and_kind_changes() {
+        let mismatch = MigrationType {
+            schema: Some("public".into()),
+            name: "mood".into(),
+            definition: "CREATE TYPE public.other AS ENUM ('ok')".into(),
+        };
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateType {
+                type_definition: mismatch,
+            })
+            .is_err());
+        let script = pg_type("CREATE TYPE public.mood AS ENUM ('ok'); DROP TABLE users");
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateType {
+                type_definition: script,
+            })
+            .is_err());
+        let domain = MigrationType {
+            definition: "CREATE DOMAIN public.mood AS text".into(),
+            ..pg_type("CREATE TYPE public.mood AS ENUM ('ok')")
+        };
+        assert!(PostgresMigrationRenderer
+            .render(&MigrationOperation::ReplaceType {
+                current: pg_type("CREATE TYPE public.mood AS ENUM ('ok')"),
+                desired: domain,
+            })
+            .is_err());
     }
 
     #[test]

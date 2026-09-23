@@ -59,6 +59,18 @@ pub struct MigrationSequence {
     pub definition: String,
 }
 
+/// A user-defined database type definition captured from the driver catalog.
+///
+/// The definition is a complete, driver-owned CREATE TYPE/CREATE DOMAIN
+/// statement. The host compares identities and delegates rendering; it never
+/// synthesizes type clauses or translates definitions between dialects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationType {
+    pub schema: Option<String>,
+    pub name: String,
+    pub definition: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
     CreateTable {
@@ -192,6 +204,16 @@ pub enum MigrationOperation {
     },
     DropSequence {
         sequence: MigrationSequence,
+    },
+    CreateType {
+        type_definition: MigrationType,
+    },
+    ReplaceType {
+        current: MigrationType,
+        desired: MigrationType,
+    },
+    DropType {
+        type_definition: MigrationType,
     },
 }
 
@@ -363,6 +385,125 @@ pub fn validate_sequence_definition_with_identity(
         }
     }
     Ok(())
+}
+
+/// Validate a driver-owned user-defined type definition before it becomes a
+/// reviewed migration statement. Only one CREATE TYPE/CREATE DOMAIN statement
+/// is accepted, with an optional trailing semicolon. The declaration identity
+/// must match the catalog identity so a stale or unrelated DDL payload cannot
+/// be applied to another type.
+pub fn validate_type_definition_with_identity(
+    definition: &str,
+    schema: Option<&str>,
+    name: &str,
+) -> Result<(), String> {
+    validate_migration_identifier(name)?;
+    if let Some(schema) = schema.filter(|schema| !schema.is_empty()) {
+        validate_migration_identifier(schema)?;
+    }
+    let trimmed = definition.trim();
+    if trimmed.is_empty() {
+        return Err("type definition must not be empty".into());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')))
+    {
+        return Err("type definition contains control characters".into());
+    }
+    if has_non_trailing_statement_terminator(trimmed) {
+        return Err("type definition must contain one CREATE TYPE statement".into());
+    }
+
+    let tokens = executable_sql_tokens(trimmed.trim_end_matches(';').trim());
+    if tokens.first().and_then(ExecutableSqlToken::as_word) != Some("CREATE") {
+        return Err("type definition must declare CREATE TYPE or CREATE DOMAIN".into());
+    }
+    let declaration = tokens.get(1).and_then(ExecutableSqlToken::as_word);
+    if !matches!(declaration, Some("TYPE") | Some("DOMAIN")) {
+        return Err("type definition must declare CREATE TYPE or CREATE DOMAIN".into());
+    }
+    let mut index = 2;
+    let parts = consume_qualified_identifier(&tokens, &mut index)
+        .ok_or("type definition must declare a type identity")?;
+    let expected_schema = schema.filter(|schema| !schema.is_empty());
+    let identity_matches = match expected_schema {
+        Some(schema) => {
+            parts.len() == 2
+                && type_identifier_matches(&parts[0], schema)
+                && type_identifier_matches(&parts[1], name)
+        }
+        None => parts.len() == 1 && type_identifier_matches(&parts[0], name),
+    };
+    if !identity_matches {
+        return Err("type definition identity does not match the catalog object".into());
+    }
+    if index >= tokens.len() {
+        return Err("type definition is missing its type body".into());
+    }
+    Ok(())
+}
+
+fn has_non_trailing_statement_terminator(definition: &str) -> bool {
+    let chars = definition.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_bracket_quote = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        if in_single_quote {
+            if ch == '\'' {
+                if chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                    continue;
+                }
+                in_single_quote = false;
+            }
+        } else if in_double_quote {
+            if ch == '"' {
+                if chars.get(index + 1) == Some(&'"') {
+                    index += 2;
+                    continue;
+                }
+                in_double_quote = false;
+            }
+        } else if in_bracket_quote {
+            if ch == ']' {
+                if chars.get(index + 1) == Some(&']') {
+                    index += 2;
+                    continue;
+                }
+                in_bracket_quote = false;
+            }
+        } else {
+            match ch {
+                '\'' => in_single_quote = true,
+                '"' => in_double_quote = true,
+                '[' => in_bracket_quote = true,
+                ';' if chars[index + 1..]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .is_empty() =>
+                {
+                    return false;
+                }
+                ';' => return true,
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    in_single_quote || in_double_quote || in_bracket_quote
+}
+
+fn type_identifier_matches(token: &ExecutableSqlToken, expected: &str) -> bool {
+    match token {
+        ExecutableSqlToken::Word(value) => value.eq_ignore_ascii_case(expected),
+        ExecutableSqlToken::Identifier(value) => value == expected,
+        ExecutableSqlToken::Symbol(_) => false,
+    }
 }
 
 fn split_sequence_statements(definition: &str) -> Result<Vec<&str>, String> {
@@ -1258,5 +1399,50 @@ mod type_parts_tests {
             assert!(validate_sequence_definition_with_identity(unsafe_ddl, Some("public"), "s").is_err(), "{unsafe_ddl}");
         }
         assert!(validate_sequence_definition_with_identity(valid, Some("public"), "s").is_ok());
+    }
+
+    #[test]
+    fn type_definition_validation_requires_exact_identity_and_one_statement() {
+        assert!(validate_type_definition_with_identity(
+            "CREATE TYPE \"public\".\"mood\" AS ENUM ('sad', 'ok', 'happy');",
+            Some("public"),
+            "mood"
+        )
+        .is_ok());
+        assert!(validate_type_definition_with_identity(
+            "CREATE DOMAIN public.email AS text CHECK (POSITION('@' IN VALUE) > 1)",
+            Some("public"),
+            "email"
+        )
+        .is_ok());
+        for (definition, schema, name) in [
+            ("SELECT 1", Some("public"), "mood"),
+            (
+                "CREATE TYPE public.other AS ENUM ('ok')",
+                Some("public"),
+                "mood",
+            ),
+            (
+                "CREATE TYPE public.mood AS ENUM ('ok'); DROP TABLE users",
+                Some("public"),
+                "mood",
+            ),
+            ("CREATE TYPE public.mood", Some("public"), "mood"),
+        ] {
+            assert!(
+                validate_type_definition_with_identity(definition, schema, name).is_err(),
+                "{definition}"
+            );
+        }
+    }
+
+    #[test]
+    fn type_definition_validation_allows_semicolons_inside_enum_literals() {
+        assert!(validate_type_definition_with_identity(
+            "CREATE TYPE \"public\".\"punctuation\" AS ENUM ('a;b', 'c');",
+            Some("public"),
+            "punctuation"
+        )
+        .is_ok());
     }
 }

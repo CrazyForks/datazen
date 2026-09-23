@@ -82,11 +82,7 @@ impl SqliteDriver {
                                         row.try_get::<i32, _>(i).ok().map(|v| Value::Bool(v != 0))
                                     })
                                 }
-                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(|bytes| {
-                                    let hex: String =
-                                        bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                                    Value::String(format!("\\x{}", hex))
-                                }),
+                                "BLOB" => row.try_get::<Vec<u8>, _>(i).ok().map(Value::Bytes),
                                 _ => row
                                     .try_get::<String, _>(i)
                                     .ok()
@@ -590,6 +586,29 @@ impl DatabaseDriver for SqliteDriver {
             rows_affected: None,
             execution_time_ms: start.elapsed().as_millis() as u64,
         })
+    }
+
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Ok("?".to_string())
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let result = Self::bind_values(sqlx::query(sql), params)
+            .execute(pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(result.rows_affected())
     }
 
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {

@@ -11,8 +11,8 @@ use crate::schema_diff::deploy::{
 use crate::schema_diff::diff_table_schemas;
 use crate::schema_diff::objects::{
     build_routine_trigger_migration_plan_with_components,
-    build_sequence_migration_plan_with_components, build_view_migration_plan_with_components,
-    SchemaObjectSnapshot,
+    build_sequence_migration_plan_with_components, build_type_migration_plan_with_components,
+    build_view_migration_plan_with_components, SchemaObjectSnapshot,
 };
 use crate::schema_diff::plan::{is_source_unbounded_text, PlanOptions};
 use crate::schema_diff::types::TableColumnDiff;
@@ -178,6 +178,11 @@ async fn fetch_schema_object(
         datazen_driver_api::ObjectKind::Sequence => {
             SchemaObjectSnapshot::sequence(object.schema.as_deref(), &object.name, &definition)
         }
+        datazen_driver_api::ObjectKind::Type => SchemaObjectSnapshot::type_definition(
+            object.schema.as_deref(),
+            &object.name,
+            &definition,
+        ),
         _ => {
             return Err(CommandError::Validation(format!(
                 "{} migration is not supported",
@@ -1002,6 +1007,109 @@ pub async fn prepare_schema_sequence_plan(
         )));
     };
     let mut plan = build_sequence_migration_plan_with_components(
+        &source_snapshots,
+        &target_snapshots,
+        &src_dialect,
+        &tgt_dialect,
+        allow_destructive,
+        renderer.as_ref(),
+        capabilities.as_ref(),
+    );
+    crate::schema_diff::reviewed::freeze_with_objects(
+        &mut plan,
+        target_db_session_id,
+        &tgt_handle,
+        &tgt_config,
+        Vec::new(),
+        target_snapshots,
+    )
+    .await;
+    Ok(plan)
+}
+
+/// Prepare a reviewed same-dialect plan for user-defined types. The client
+/// supplies only qualified selectors; both source and target DDL are read
+/// from the live driver catalog and frozen for the one-shot deploy gate.
+#[tauri::command]
+pub async fn prepare_schema_type_plan(
+    state: State<'_, AppState>,
+    source_db_session_id: String,
+    target_db_session_id: String,
+    object_names: Vec<String>,
+    allow_destructive: bool,
+) -> Result<SchemaDiffPlan, CommandError> {
+    if object_names.is_empty() {
+        return Err(CommandError::Validation(
+            "object_names must not be empty".into(),
+        ));
+    }
+    let src_config = state
+        .connection_manager
+        .get_session_config(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_type_plan")?;
+    let tgt_config = state
+        .connection_manager
+        .get_session_config(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_type_plan")?;
+    if tgt_config.read_only {
+        return Err(CommandError::Validation(
+            "Target connection is read-only".into(),
+        ));
+    }
+    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config) {
+        return Err(CommandError::Validation(
+            "Source and target must identify different database scopes".into(),
+        ));
+    }
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("prepare_schema_type_plan")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("prepare_schema_type_plan")?;
+    let source_available = list_schema_objects(
+        src_driver.as_ref(),
+        &src_handle,
+        datazen_driver_api::ObjectKind::Type,
+    )
+    .await?;
+    let target_available = list_schema_objects(
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        datazen_driver_api::ObjectKind::Type,
+    )
+    .await?;
+    let (source_selected, target_selected) =
+        select_schema_object_pair(&source_available, &target_available, &object_names)?;
+    let mut source_snapshots = Vec::with_capacity(source_selected.len());
+    for object in &source_selected {
+        source_snapshots.push(fetch_schema_object(src_driver.as_ref(), &src_handle, object).await?);
+    }
+    let mut target_snapshots = Vec::with_capacity(target_selected.len());
+    for object in &target_selected {
+        target_snapshots.push(fetch_schema_object(tgt_driver.as_ref(), &tgt_handle, object).await?);
+    }
+    let src_dialect = normalize_dialect(&src_config.database_type);
+    let tgt_dialect = normalize_dialect(&tgt_config.database_type);
+    let Some(renderer) = tgt_driver.migration_renderer() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration rendering",
+            tgt_config.database_type
+        )));
+    };
+    let Some(capabilities) = tgt_driver.migration_capabilities() else {
+        return Err(CommandError::Validation(format!(
+            "Driver {} does not expose schema migration capabilities",
+            tgt_config.database_type
+        )));
+    };
+    let mut plan = build_type_migration_plan_with_components(
         &source_snapshots,
         &target_snapshots,
         &src_dialect,

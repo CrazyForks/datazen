@@ -3,7 +3,9 @@
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
 use datazen_driver_api::TableOptions;
-use datazen_driver_api::{MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationView};
+use datazen_driver_api::{
+    MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationType, MigrationView,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -133,6 +135,16 @@ pub enum MigrationOperation {
     DropSequence {
         sequence: MigrationSequence,
     },
+    CreateType {
+        type_definition: MigrationType,
+    },
+    ReplaceType {
+        current: MigrationType,
+        desired: MigrationType,
+    },
+    DropType {
+        type_definition: MigrationType,
+    },
 }
 
 impl MigrationOperation {
@@ -148,7 +160,9 @@ impl MigrationOperation {
             | Self::DropRoutine { .. }
             | Self::DropTrigger { .. }
             | Self::ReplaceSequence { .. }
-            | Self::DropSequence { .. } => StatementRisk::Destructive,
+            | Self::DropSequence { .. }
+            | Self::ReplaceType { .. }
+            | Self::DropType { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
@@ -228,6 +242,17 @@ impl MigrationOperation {
                 .filter(|schema| !schema.is_empty())
                 .map(|schema| format!("sequence:{schema}.{}", sequence.name))
                 .unwrap_or_else(|| format!("sequence:{}", sequence.name)),
+            Self::CreateType { type_definition }
+            | Self::ReplaceType {
+                desired: type_definition,
+                ..
+            }
+            | Self::DropType { type_definition } => type_definition
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("type:{schema}.{}", type_definition.name))
+                .unwrap_or_else(|| format!("type:{}", type_definition.name)),
         }
     }
 }
@@ -449,6 +474,16 @@ impl MigrationOperation {
             },
             Self::DropSequence { sequence } => O::DropSequence {
                 sequence: sequence.clone(),
+            },
+            Self::CreateType { type_definition } => O::CreateType {
+                type_definition: type_definition.clone(),
+            },
+            Self::ReplaceType { current, desired } => O::ReplaceType {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropType { type_definition } => O::DropType {
+                type_definition: type_definition.clone(),
             },
             Self::CreateTable {
                 table,

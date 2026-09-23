@@ -274,6 +274,19 @@ export const schemaDiffCommands = {
       allowDestructive: params.allowDestructive,
     }).then(normalizePlan),
 
+  prepareTypePlan: (params: {
+    sourceDbSessionId: string;
+    targetDbSessionId: string;
+    objectNames: string[];
+    allowDestructive: boolean;
+  }) =>
+    invoke<SchemaDiffPlanIpc>('prepare_schema_type_plan', {
+      sourceDbSessionId: params.sourceDbSessionId,
+      targetDbSessionId: params.targetDbSessionId,
+      objectNames: params.objectNames,
+      allowDestructive: params.allowDestructive,
+    }).then(normalizePlan),
+
   executeDeploy: (params: {
     targetDbSessionId: string;
     plan: SchemaDiffPlan;

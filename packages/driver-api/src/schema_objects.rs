@@ -113,9 +113,11 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
         ),
         ("postgresql", ObjectKind::Type) => Some(
             "SELECT n.nspname AS schema, t.typname AS name \
-             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+             FROM pg_type t \
+             JOIN pg_namespace n ON n.oid = t.typnamespace \
+             LEFT JOIN pg_class type_rel ON type_rel.oid = t.typrelid \
              WHERE n.nspname NOT IN ('pg_catalog','information_schema') \
-               AND t.typtype IN ('c','e','d','r') \
+               AND (t.typtype IN ('e','d','r') OR (t.typtype = 'c' AND type_rel.relkind = 'c')) \
              ORDER BY 1, 2"
                 .into(),
         ),
@@ -325,19 +327,50 @@ pub fn object_ddl_sql_with_metadata(
             let schema_str = sql_string(schema.unwrap_or("public"));
             let name_str = sql_string(name);
             Some(format!(
-                "SELECT pg_catalog.format_type(t.oid, NULL) || ' = ' || \
-                 CASE t.typtype \
-                   WHEN 'e' THEN 'ENUM (' || string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) || ')' \
-                   WHEN 'c' THEN 'COMPOSITE (...)' \
-                   WHEN 'd' THEN 'DOMAIN ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) \
-                   WHEN 'r' THEN 'RANGE' \
-                   ELSE t.typtype::text \
+                "SELECT CASE t.typtype \
+                   WHEN 'e' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS ENUM (' || COALESCE((SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = t.oid), '') || ');' \
+                   WHEN 'd' THEN 'CREATE DOMAIN ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) \
+                     || CASE WHEN domain_coll.oid IS NULL THEN '' ELSE ' COLLATE ' || quote_ident(domain_coll_ns.nspname) || '.' || quote_ident(domain_coll.collname) END \
+                     || COALESCE(' DEFAULT ' || pg_get_expr(t.typdefaultbin, 0), '') \
+                     || CASE WHEN t.typnotnull AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.contypid = t.oid AND con.contype = 'n') THEN ' NOT NULL' ELSE '' END \
+                     || COALESCE(' ' || (SELECT string_agg('CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid), ' ' ORDER BY con.oid) FROM pg_constraint con WHERE con.contypid = t.oid), '') \
+                     || ';' \
+                   WHEN 'c' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS (' || COALESCE((SELECT string_agg(quote_ident(a.attname) || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) \
+                       || CASE WHEN attr_coll.oid IS NULL THEN '' ELSE ' COLLATE ' || quote_ident(attr_coll_ns.nspname) || '.' || quote_ident(attr_coll.collname) END, ', ' ORDER BY a.attnum) \
+                       FROM pg_attribute a \
+                       LEFT JOIN pg_collation attr_coll ON attr_coll.oid = NULLIF(a.attcollation, 0) \
+                       LEFT JOIN pg_namespace attr_coll_ns ON attr_coll_ns.oid = attr_coll.collnamespace \
+                       WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped), '') || ');' \
+                   WHEN 'r' THEN 'CREATE TYPE ' || quote_ident(n.nspname) || '.' || quote_ident(t.typname) \
+                     || ' AS RANGE (SUBTYPE = ' || pg_catalog.format_type(r.rngsubtype, NULL) \
+                     || CASE WHEN range_opclass.oid IS NULL THEN '' ELSE ', SUBTYPE_OPCLASS = ' || quote_ident(range_opclass_ns.nspname) || '.' || quote_ident(range_opclass.opcname) END \
+                     || CASE WHEN range_coll.oid IS NULL THEN '' ELSE ', COLLATION = ' || quote_ident(range_coll_ns.nspname) || '.' || quote_ident(range_coll.collname) END \
+                     || CASE WHEN canonical.oid IS NULL THEN '' ELSE ', CANONICAL = ' || quote_ident(canonical_ns.nspname) || '.' || quote_ident(canonical.proname) END \
+                     || CASE WHEN subtype_diff.oid IS NULL THEN '' ELSE ', SUBTYPE_DIFF = ' || quote_ident(subtype_diff_ns.nspname) || '.' || quote_ident(subtype_diff.proname) END \
+                     || CASE WHEN multirange.oid IS NULL THEN '' ELSE ', MULTIRANGE_TYPE_NAME = ' || quote_ident(multirange_ns.nspname) || '.' || quote_ident(multirange.typname) END \
+                     || ');' \
                  END AS ddl \
                  FROM pg_type t \
                  JOIN pg_namespace n ON n.oid = t.typnamespace \
-                 LEFT JOIN pg_enum e ON e.enumtypid = t.oid \
+                 LEFT JOIN pg_range r ON r.rngtypid = t.oid \
+                 LEFT JOIN pg_class type_rel ON type_rel.oid = t.typrelid \
+                 LEFT JOIN pg_collation domain_coll ON domain_coll.oid = NULLIF(t.typcollation, 0) \
+                 LEFT JOIN pg_namespace domain_coll_ns ON domain_coll_ns.oid = domain_coll.collnamespace \
+                 LEFT JOIN pg_opclass range_opclass ON range_opclass.oid = r.rngsubopc \
+                 LEFT JOIN pg_namespace range_opclass_ns ON range_opclass_ns.oid = range_opclass.opcnamespace \
+                 LEFT JOIN pg_collation range_coll ON range_coll.oid = NULLIF(r.rngcollation, 0) \
+                 LEFT JOIN pg_namespace range_coll_ns ON range_coll_ns.oid = range_coll.collnamespace \
+                 LEFT JOIN pg_proc canonical ON canonical.oid = r.rngcanonical \
+                 LEFT JOIN pg_namespace canonical_ns ON canonical_ns.oid = canonical.pronamespace \
+                 LEFT JOIN pg_proc subtype_diff ON subtype_diff.oid = r.rngsubdiff \
+                 LEFT JOIN pg_namespace subtype_diff_ns ON subtype_diff_ns.oid = subtype_diff.pronamespace \
+                 LEFT JOIN pg_type multirange ON multirange.oid = NULLIF(to_jsonb(r)->>'rngmultitypid', '')::oid \
+                 LEFT JOIN pg_namespace multirange_ns ON multirange_ns.oid = multirange.typnamespace \
                  WHERE n.nspname = {schema_str} AND t.typname = {name_str} \
-                 GROUP BY t.oid, t.typtype, t.typbasetype, t.typtypmod"
+                   AND (t.typtype IN ('e','d','r') OR (t.typtype = 'c' AND type_rel.relkind = 'c'))"
             ))
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
@@ -573,6 +606,35 @@ mod tests {
         assert!(ddl.contains("pg_get_function_identity_arguments"));
         assert!(ddl.contains("'integer, text'"));
         assert!(ddl.contains("p.prokind = 'f'"));
+    }
+
+    #[test]
+    fn postgres_type_catalog_excludes_table_row_types_and_preserves_type_options() {
+        let list = list_objects_sql("postgresql", ObjectKind::Type).unwrap();
+        assert!(list.contains("LEFT JOIN pg_class type_rel"));
+        assert!(list.contains("type_rel.relkind = 'c'"));
+        assert!(list.contains("t.typtype IN ('e','d','r')"));
+
+        let ddl = object_ddl_sql_with_metadata(
+            "postgresql",
+            ObjectKind::Type,
+            "delivery_window",
+            Some("app"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(ddl.contains("pg_enum"));
+        assert!(ddl.contains("typcollation"));
+        assert!(ddl.contains("attcollation"));
+        assert!(ddl.contains("rngsubopc"));
+        assert!(ddl.contains("rngcanonical"));
+        assert!(ddl.contains("rngsubdiff"));
+        assert!(ddl.contains("rngmultitypid"));
+        assert!(ddl.contains("con.contypid = t.oid"));
+        assert!(ddl.contains("n.nspname = 'app'"));
+        assert!(ddl.contains("t.typname = 'delivery_window'"));
     }
 
     #[test]

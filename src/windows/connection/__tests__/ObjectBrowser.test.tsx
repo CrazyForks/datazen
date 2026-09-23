@@ -135,6 +135,26 @@ describe('ObjectBrowser', () => {
     await screen.findByText('boom');
   });
 
+  it('[tester] browses user-defined types and requests their qualified DDL', async () => {
+    getDatabaseObjects
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ kind: 'type', schema: 'public', name: 'mood' }]);
+    getObjectDdl.mockResolvedValueOnce("CREATE TYPE public.mood AS ENUM ('sad', 'ok', 'happy');");
+
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
+    await screen.findByText('objects.empty');
+
+    fireEvent.click(screen.getByTestId('object-browser-type'));
+    const type = await screen.findByText('mood');
+    expect(getDatabaseObjects).toHaveBeenLastCalledWith('c1', 'type');
+
+    fireEvent.click(type);
+    await waitFor(() => {
+      expect(getObjectDdl).toHaveBeenCalledWith('c1', 'type', 'mood', 'public');
+    });
+    expect(screen.getByDisplayValue(/CREATE TYPE public\.mood/)).toBeInTheDocument();
+  });
+
   it('shows DDL fetch errors in the editor', async () => {
     getObjectDdl.mockRejectedValueOnce(new Error('no ddl'));
     render(<ObjectBrowser dbSessionId="c1" />);

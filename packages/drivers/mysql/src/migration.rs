@@ -656,6 +656,11 @@ impl MigrationRenderer for MysqlMigrationRenderer {
             | MigrationOperation::DropSequence { .. } => {
                 Err("MySQL sequence migration is unsupported".into())
             }
+            MigrationOperation::CreateType { .. }
+            | MigrationOperation::ReplaceType { .. }
+            | MigrationOperation::DropType { .. } => {
+                Err("MySQL user-defined type migration is unsupported".into())
+            }
         }
     }
 }
@@ -698,7 +703,10 @@ impl MigrationCapabilities for MysqlMigrationCapabilities {
             | MigrationOperation::DropTrigger { .. } => true,
             MigrationOperation::CreateSequence { .. }
             | MigrationOperation::ReplaceSequence { .. }
-            | MigrationOperation::DropSequence { .. } => false,
+            | MigrationOperation::DropSequence { .. }
+            | MigrationOperation::CreateType { .. }
+            | MigrationOperation::ReplaceType { .. }
+            | MigrationOperation::DropType { .. } => false,
         }
     }
     fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {

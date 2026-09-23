@@ -233,17 +233,17 @@ async fn begin_transaction_requires_pool() {
 }
 
 #[tokio::test]
-async fn begin_read_snapshot_requires_pool() {
+async fn begin_read_snapshot_fails_closed_when_unsupported() {
     let driver = MysqlDriver::new(false);
     let handle = ConnectionHandle {
         id: "conn".into(),
         pool_id: "missing-pool".into(),
     };
     let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
-    assert!(
-        matches!(err, DriverError::ConnectionFailed(_)),
-        "expected ConnectionFailed, got {err:?}"
-    );
+    assert!(matches!(
+        err,
+        DriverError::Unsupported(message) if message.contains("stable read snapshots")
+    ));
 }
 
 #[tokio::test]
@@ -523,4 +523,18 @@ fn migration_parameters_keep_values_out_of_sql() {
         driver.parameter_placeholder(99, Some("LONGBLOB")).unwrap(),
         "?"
     );
+}
+
+#[tokio::test]
+async fn execute_with_params_requires_pool() {
+    let driver = MysqlDriver::new(false);
+    let handle = ConnectionHandle {
+        id: "conn".into(),
+        pool_id: "missing-pool".into(),
+    };
+    let error = driver
+        .execute_with_params(&handle, "INSERT INTO t VALUES (?)", &[Value::Integer(1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, DriverError::ConnectionFailed(_)));
 }
