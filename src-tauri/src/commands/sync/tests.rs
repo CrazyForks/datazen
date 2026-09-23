@@ -807,15 +807,14 @@ async fn cancel_data_sync_stops_execute_before_start() {
         parameters: vec![],
         row_key: vec![],
     };
-    let result = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None)
+    let error = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None)
         .await
-        .unwrap();
-    assert!(result.rolled_back);
-    assert!(result
-        .rollback_reason
-        .as_deref()
-        .is_some_and(|reason| reason.to_lowercase().contains("cancel")));
-    assert_eq!(result.applied, 0);
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::commands::error::CommandError::DataSyncNotStarted(message)
+            if message.to_lowercase().contains("cancel")
+    ));
 }
 
 #[tokio::test]
@@ -949,4 +948,104 @@ fn value_as_u64_accepts_int_float_and_numeric_string() {
     assert_eq!(value_as_u64(&Value::Float(7.0)), Some(7));
     assert_eq!(value_as_u64(&Value::String("3".into())), Some(3));
     assert_eq!(value_as_u64(&Value::Integer(-1)), None);
+}
+
+#[test]
+fn execution_ipc_response_preserves_all_four_evidence_outcomes_flattened() {
+    use crate::commands::error::CommandError;
+    use crate::data_sync::{ExecutionOutcome, ExecutionResult};
+
+    let execution = || ExecutionResult {
+        applied: 2,
+        rolled_back: false,
+        rollback_reason: None,
+        affected_rows: 2,
+        skipped: 0,
+        conflicts: Vec::new(),
+    };
+    let cases = [
+        (
+            super::execution_response_from_result(Err(CommandError::DataSyncNotStarted(
+                "preflight rejected".into(),
+            ))),
+            ExecutionOutcome::NotStarted,
+        ),
+        (
+            super::execution_response_from_result(Ok(ExecutionResult {
+                rolled_back: true,
+                ..execution()
+            })),
+            ExecutionOutcome::RolledBack,
+        ),
+        (
+            super::execution_response_from_result(Ok(execution())),
+            ExecutionOutcome::Committed,
+        ),
+        (
+            super::execution_response_from_result(Err(CommandError::DataSyncOutcomeUnknown(
+                "commit acknowledgement lost".into(),
+            ))),
+            ExecutionOutcome::Unknown,
+        ),
+    ];
+
+    for (response, expected) in cases {
+        assert_eq!(response.outcome, expected);
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(
+            json["outcome"],
+            match expected {
+                ExecutionOutcome::NotStarted => "not_started",
+                ExecutionOutcome::Committed => "committed",
+                ExecutionOutcome::RolledBack => "rolled_back",
+                ExecutionOutcome::Unknown => "unknown",
+            }
+        );
+        assert!(
+            json.get("result").is_none(),
+            "legacy result fields stay flat"
+        );
+        assert!(json.get("applied").is_some());
+    }
+}
+
+#[test]
+fn confirmed_sync_cancellation_is_distinguished_before_safe_error_redaction() {
+    use crate::commands::error::CommandError;
+    use crate::data_sync::ExecutionResult;
+
+    let (not_started, cancelled_before_start) =
+        super::execution_response_and_cancelled(Err(CommandError::DataSyncNotStarted(
+            "execute cancelled before any changes were applied".into(),
+        )));
+    assert_eq!(
+        not_started.outcome,
+        crate::data_sync::ExecutionOutcome::NotStarted
+    );
+    assert!(cancelled_before_start);
+    assert_eq!(
+        not_started.error.as_deref(),
+        Some("Execution did not start. Check the plan and endpoint context, then compare again.")
+    );
+
+    let (rolled_back, cancelled_after_start) =
+        super::execution_response_and_cancelled(Ok(ExecutionResult {
+            applied: 1,
+            rolled_back: true,
+            rollback_reason: Some("execute cancelled; all changes were rolled back".into()),
+            affected_rows: 1,
+            skipped: 0,
+            conflicts: Vec::new(),
+        }));
+    assert_eq!(
+        rolled_back.outcome,
+        crate::data_sync::ExecutionOutcome::RolledBack
+    );
+    assert!(cancelled_after_start);
+
+    let (_, unknown_cancellation) =
+        super::execution_response_and_cancelled(Err(CommandError::DataSyncOutcomeUnknown(
+            "execute cancelled; rollback failed, outcome UNKNOWN".into(),
+        )));
+    assert!(!unknown_cancellation);
 }

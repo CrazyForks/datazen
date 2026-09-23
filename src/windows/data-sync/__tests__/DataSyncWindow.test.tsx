@@ -124,8 +124,11 @@ vi.mock('../../../lib/windowKind', () => ({
 }));
 
 vi.mock('../../../components/TitleBar', () => ({
-  TitleBar: ({ title }: { title?: unknown }) => (
-    <div data-testid="title-bar">{String(title ?? '')}</div>
+  TitleBar: ({ title, rightContent }: { title?: unknown; rightContent?: unknown }) => (
+    <div data-testid="title-bar">
+      {String(title ?? '')}
+      {rightContent as never}
+    </div>
   ),
 }));
 
@@ -184,6 +187,27 @@ const mysqlTgt: ConnectionConfig = {
   sslMode: 'disable',
 };
 
+const unknownHistoryRun = {
+  id: 'run-unknown',
+  operation: 'dataSync' as const,
+  status: 'failed' as const,
+  outcome: 'unknown',
+  phase: 'finished',
+  profileId: 'sync-profile-unknown',
+  profileRevision: '2026-09-23T00:00:00.000Z',
+  sourceConnectionId: 'pg-src',
+  targetConnectionId: 'pg-tgt',
+  startedAt: '2026-09-23T00:00:00.000Z',
+  finishedAt: '2026-09-23T00:01:00.000Z',
+  selectedCount: 1,
+  committedCount: 0,
+  failedCount: 0,
+  conflictCount: 0,
+  cancelled: false,
+  rollbackOutcome: 'unknown',
+  errorSummary: 'Commit or rollback could not be confirmed.',
+};
+
 function insertRow(): DataSyncRowChange {
   return {
     operation: 'INSERT',
@@ -203,6 +227,24 @@ function deleteRow(): DataSyncRowChange {
     targetRow: [[2, 'bob']],
     changedColumns: [],
     selected: true,
+  };
+}
+
+function historyRecoveryProfile(updatedAt = unknownHistoryRun.profileRevision) {
+  return {
+    version: 1,
+    id: unknownHistoryRun.profileId,
+    name: 'Recovery scope',
+    sourceConnectionId: 'pg-src',
+    targetConnectionId: 'pg-tgt',
+    sourceDatabase: 'src',
+    targetDatabase: 'tgt',
+    sourceSchema: null,
+    targetSchema: null,
+    tables: [{ sourceTable: 'users', targetTable: 'users', enabled: true }],
+    options: { insert: true, update: true, delete: false },
+    createdAt: '2026-09-22T00:00:00.000Z',
+    updatedAt,
   };
 }
 
@@ -322,15 +364,22 @@ describe('DataSyncWindow wizard', () => {
         args?: {
           connectionId?: string;
           database?: string | null;
+          dbSessionId?: string;
           sourceDatabaseType?: string;
           targetDatabaseType?: string;
         },
       ) => {
         if (cmd === 'get_connections') return [pgSrc, pgTgt, mysqlTgt];
+        if (cmd === 'list_migration_runs') {
+          return { items: [unknownHistoryRun], total: 1, offset: 0, limit: 25 };
+        }
         if (cmd === 'connect_dedicated') {
           const conn = args?.connectionId ?? 'unknown';
           const db = args?.database ?? 'default';
           return `dedicated-${conn}-${db}`;
+        }
+        if (cmd === 'get_databases') {
+          return args?.dbSessionId?.includes('pg-src') ? ['src', 'other'] : ['tgt'];
         }
         if (cmd === 'release_connection') return false;
         if (cmd === 'connect') return `live-${args?.connectionId}`;
@@ -1638,5 +1687,141 @@ describe('DataSyncWindow wizard', () => {
     fireEvent.click(screen.getByTestId('data-sync-profile-delete'));
     await waitFor(() => expect(deleteSyncProfileMock).toHaveBeenCalledWith(profile.id));
     expect(await screen.findByText('sync.profile.deleted')).toBeTruthy();
+  });
+
+  it('reopens an unknown history run through a fresh profile-backed compare', async () => {
+    const profile = historyRecoveryProfile();
+    getSyncProfilesMock.mockResolvedValue([profile]);
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    render(<DataSyncWindow />);
+
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+    fireEvent.click(await screen.findByTestId('migration-run-reconcile'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-step-endpoints')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByTestId('data-sync-target-database')).toHaveTextContent('tgt'),
+    );
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-step-setup')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(inspectDataSyncMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await screen.findByTestId('data-sync-summary');
+
+    expect(compareDataSyncMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'compared');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
+    );
+    expect(generateDataSyncSqlMock).not.toHaveBeenCalled();
+    expect(executeDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('requires scope reselection when the history profile revision changed', async () => {
+    getSyncProfilesMock.mockResolvedValue([historyRecoveryProfile('2026-09-24T00:00:00.000Z')]);
+    render(<DataSyncWindow />);
+
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+    fireEvent.click(await screen.findByTestId('migration-run-reconcile'));
+
+    expect(await screen.findByText('migrationHistory.syncReconcileProfileChanged')).toBeTruthy();
+    expect(screen.getByTestId('data-sync-recovery-scope-review')).toBeInTheDocument();
+    expect(screen.getByTestId('data-sync-next')).toBeDisabled();
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+    expect(inspectDataSyncMock).not.toHaveBeenCalled();
+    expect(compareDataSyncMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('data-sync-reconfirm-scope'));
+    expect(screen.queryByTestId('data-sync-recovery-scope-review')).not.toBeInTheDocument();
+    expect(screen.getByTestId('data-sync-next')).not.toBeDisabled();
+    expect(inspectDataSyncMock).not.toHaveBeenCalled();
+    expect(compareDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the history-run fence after a failed fresh comparison', async () => {
+    getSyncProfilesMock.mockResolvedValue([historyRecoveryProfile()]);
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockRejectedValueOnce(new Error('fresh history compare failed'));
+    render(<DataSyncWindow />);
+
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+    fireEvent.click(await screen.findByTestId('migration-run-reconcile'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-step-setup')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(inspectDataSyncMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(
+      'fresh history compare failed',
+    );
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'unknown');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+    expect(executeDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let a cancelled stale compare clear an unknown history-run fence', async () => {
+    getSyncProfilesMock.mockResolvedValue([historyRecoveryProfile()]);
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    let resolveCompare!: (rows: Array<Record<string, unknown>>) => void;
+    compareDataSyncMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCompare = resolve;
+        }),
+    );
+    render(<DataSyncWindow />);
+
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+    fireEvent.click(await screen.findByTestId('migration-run-reconcile'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(screen.getByTestId('data-sync-step-setup')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(inspectDataSyncMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId('data-sync-next'));
+    await waitFor(() => expect(resolveCompare).toBeDefined());
+    fireEvent.click(await screen.findByTestId('data-sync-cancel'));
+    await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
+
+    resolveCompare([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    await screen.findByTestId('data-sync-objects-step');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'unknown');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+    expect(executeDataSyncMock).not.toHaveBeenCalled();
   });
 });
