@@ -1,5 +1,5 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: **TEST_IN_PROGRESS（第 3 轮 Tester 复测中，2026-09-23）**
+- 状态: **TEST_DONE（第 3 轮复测通过，Tester e7c9c98b，2026-09-23）**
 - 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee + d1581baf2（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例/gaps 头注释）
 - 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、f8a191b66（覆盖率补测 + 判定收口）；**round-2**：本 commit（第 2 轮复测判定 + BUG-003/004 登记）
 - 合并 commit: —
@@ -969,3 +969,28 @@ i18n key（`useI18n` 被 stub 成恒等 `t`）与 mock 夹具键名（`app:1`/`z
 `filterKeysByPattern` 18、`isBreadcrumbRow` 17、`countSelectableRows` 10、
 `redisGlobMatch` 8、`globMatcher` 5、`compileGlob` 4，**全部被消费**，
 `tsc --noEmit` = 0 错（§4）⇒ **零新增孤儿导出/未使用函数**。
+
+### 7. 台账审阅 + 终判 —— 全部 PASS
+
+- **台账审阅 PASS**：`bugs.md` 的 BUG-003/BUG-004 状态行已由 `待复测（round-2 修复后…）`
+  翻为 **`已修复`（第 3 轮复测通过，2026-09-23）**，各追加 `## 复测记录（round-3）`；
+  两 bug 的 `### 修复记录（coder round-2）` 节齐备；`progress.md` 头部由
+  `READY_FOR_TEST（修复轮第 2 回合完成）` 翻 `TEST_DONE`，且「修复轮第 2 回合」小节完整。
+  **round-1 / round-2 历史未删改**：`git diff f3a3eea19..HEAD --numstat -- bugs.md`
+  = `15 added / 2 deleted`，删除仅两条状态行（翻转），其余为追加；
+  第 2 轮 `## 复测记录（round-2）— BUG-001/002` 与头部第 2 轮判定块**原文保留**。
+- **本 Tester 轮内 commit 序列**（一动作一 commit，无 >15 分钟空窗）：
+  `1e1dda095` 文件面审计 → `de1474b5c` BUG-003 16 面复测 → `142ae450f` 探针用后销毁
+  → `f70c262b7` BUG-004 复验 → `4bbfe1018` 四门复跑 → `b27e56421` 覆盖率回归
+  → `578ef3171` 断言纪律+死代码 → 本 commit（终判两 bug 翻 `已修复` + 第 3 轮记录）。
+- **生产源码零改动**：`git diff f3a3eea19..HEAD` 的生产侧变更 = 第 2 回合的
+  `KeyTreeList.tsx` / `keyTreeFilter.ts` / `treeRowSpec.ts` / `useKeyTree.ts`（+ 测试 4 + 台账 2），
+  本 Tester 未新增任何生产改动；临时探针已删、`/tmp/r3/**` 证据文件按约销毁。
+- **变异复原全清**：BUG-003 4 发 + BUG-004 2 发 = **6 发全部** `git checkout HEAD --`
+  复原后 `git status --porcelain` 为空（CLEAN_OK 6/6，逐发记录见 §2/§3）。
+
+**终判：TEST_DONE（第 3 轮复测通过，0 个新 bug）**
+BUG-003（glob 方言 16 分歧面）与 BUG-004（面包屑键盘旅程零锁定）**双双翻 `已修复`**。
+三条硬线全过：**56 files / 697 passed / 0 skipped**、**tsc 0**、**boundaries 0 blocking**；
+覆盖率两轴六数全 ≥80% 且无一下降（最紧 88.79%）；两 bug 的修复均经**双向验证**
+（正面对拍 9216 例 0 分歧 / 反向变异 6 发 6 中）。Bug 循环 **3/5 收口**，无遗留阻断项。

@@ -215,7 +215,7 @@
   但向用户展示与筛选条件矛盾的事实（列表有行、树断言 `no-match`），且修复记录（本文件 BUG-001
   修复记录第 3-4 行「glob 语义对齐 Redis `MATCH`」）的声明在这 16 个面上不成立。
   若协调者认为与 BUG-001「两事实互相矛盾」同级可升 Major，由协调者裁定，Tester 给出证据。
-- **状态**：`待复测（round-2 修复后，glob 方言字节级移植）`
+- **状态**：`已修复`（第 3 轮复测通过，2026-09-23）
 - **涉及文件**
   - `packages/drivers/redis/ui/key-browser/keyTreeFilter.ts:43-56` —— `globToRegExp`：
     `*`→`.*`、`?`→`.`、其余转义 `[.+^${}()|[\]\\]`、`^...$` 锚定、大小写敏感
@@ -267,6 +267,31 @@
 - 验收：第 2 轮 Tester 列出的 16 个分歧面逐条有断言。
 - 门禁：见 `progress.md` 的「修复轮第 2 回合」小节。
 
+## 复测记录（round-3）— redis-tree-ui-BUG-003
+
+- 判定：**通过** ⇒ 状态 `待复测` → `已修复`（2026-09-23，第 3 轮 Tester，全新实例）。
+- **方法（较第 2 轮升级）**：取 **Redis 7.2.0 `src/util.c` 的 `stringmatchlen_impl` 原文**
+  编译为**真实 C 预言机** `/tmp/r3/oracle.c`（`cc -O1`，源码零改动），TS 侧经临时 vitest
+  探针以 hex 编码驱动，**102 个模式 × 91 个键 = 9216 例逐例对拍 ⇒ `mismatches=0`**
+  （旧法「第二份手写 JS 移植」与实现共享误读风险，故弃用；探针用后已删除，
+  `142ae450f` 记录删除动作，`git diff f3a3eea19..HEAD` 复归 10 文件）。
+- **16 分歧面逐条复验：16/16 一致**（类 5 / 转义 3 / 换行 3 / 多字节 `?` 5），
+  逐面表见 `progress.md` §2。关键面实测：`?` vs `é` = 0（双字节，`?` 不匹配）、
+  `???` vs `用` = 1（三字节）、`a?c` vs `a\nc` = 1（跨 `\n`）、`h[ae]llo` vs `hello` = 1、
+  `h[^e]llo` vs `hallo` = 1、`\*lit` vs `*lit` = 1。
+- **附加面同批一致**：`[b-a]` 交换操作数、`[!e]` 非取反、类内 `\]`、未终止类回退、
+  `[^]`、`[]]`、`[a-]`、`[-a]`、`**` 折叠、`*` 不匹配空键、病态模式 `a*a*a*a*a*b`
+  与 `skipLongerMatches` 早退。
+- **变异 4 发 4 中**（逐发 `git checkout HEAD --` 复原 + `git status --porcelain` 验净，
+  CLEAN_OK 4/4）：①键侧按字符编码（等价 `?` 用 `.`）⇒ 探针 **40 mismatches**、
+  自带套件 6 failed；②禁用 `[` 类臂 ⇒ **142 mismatches**、16 failed；③去锚定 ⇒
+  **1223 mismatches**、14 failed；④删 `\` 转义直落臂 ⇒ **22 mismatches**、4 failed。
+  逐发 EXIT=1，复原后复跑探针 `mismatches=0 / faces_ok=16/16 / 5 passed`。
+- **trim 口径核对（主动审查项）**：`compileGlob` 先 `trim()`，与
+  `toScanPattern`（`useWorkbenchSearch.ts:97`）**同样 trim 后下发**一致，无新增分歧面。
+- 覆盖：本回合 diff 语句 99.19%、分支 ANY-side 100%（见 `progress.md` §5）；
+  四门 56/697 · tsc 0 · build exit 0 · boundaries 1487/0/4（§4）。
+
 ---
 
 ## redis-tree-ui-BUG-004 — 「键盘跨过面包屑」声称行为零旅程锁定
@@ -274,7 +299,7 @@
 - **严重度**：**Minor** —— 当前未观测到用户可见错误（helper 级 `nextActiveIndex` 夹紧有测），
   但修复轮明确声称的行为在全部 613 条测试里执行 0 次，回归（删守卫）不会让任何门禁变红；
   违反本仓「连续旅程测试：交互必须覆盖中间态并断言跃迁」原则对 I-9 的要求。
-- **状态**：`待复测（round-2 修复后，面包屑键盘旅程已锁定）`
+- **状态**：`已修复`（第 3 轮复测通过，2026-09-23）
 - **涉及文件**
   - `packages/drivers/redis/ui/key-browser/KeyTreeList.tsx:171-178` —— `stepActiveIndex`
     的 `while (... !isNavigable(index))` 跨过循环；
@@ -308,6 +333,35 @@
 - 修法：面包屑键盘旅程用例锁定 + 仅字面头做前缀路由（`492f5503d`）。
 - 验收：`KeyTreeList.tsx:174/176/274` 在 v8 计数中 hits>0。
 - 门禁：见 `progress.md` 的「修复轮第 2 回合」小节。
+
+## 复测记录（round-3）— redis-tree-ui-BUG-004
+
+- 判定：**通过** ⇒ 状态 `待复测` → `已修复`（2026-09-23，第 3 轮 Tester，全新实例）。
+- **hits 实测**（v8，`/tmp/r3/cov3/coverage-final.json`，采集命令见 `progress.md` §3）：
+  `KeyTreeList.tsx:174` **0 → 13**、`:274` **0 → 7**；
+  `:176` 因重构已成为**注释行**（无语句），其「跨过体」语义迁至
+  **`treeRowSpec.ts:167`** —— 循环体计数 **32**（第 2 轮该语义等价物为 0），
+  分支 `b22 L167 [33,58,51]`、`b23/b24 L168` 两侧全非零。
+- **行号漂移的独立裁定**：修复把 `KeyTreeList.tsx` 内**两处内联跨过 while 循环抽成**
+  `treeRowSpec.ts` 的 `nextNavigableIndex()`，故 174 变为委托调用、176 变为注释、
+  274 臂改走同一 helper。**判据「174/176/274 > 0」在 174/274 上字面成立；
+  176 的定位已失效，但被替代的语义点 `treeRowSpec.ts:167` 计数 32 > 0**，
+  故实质判据成立，且**强度高于第 2 轮建议**（原建议是「补一条旅程」，
+  实际做法是让两臂**共用同一被测 helper**，消灭了第二份无证据内联拷贝）。
+- **旅程真伪核验**：`keyTreeBreadcrumbKeyboardJourney.test.tsx`（339 行 / 5 例）为
+  真键盘旅程 —— `fireEvent.keyDown(tree(), {key})` 驱动，断言 `data-active-index` /
+  `data-active` / `data-breadcrumb` / `data-row-index` / `data-row-count`；
+  且 `:208` setup 例**先自证**面包屑确在 index 0、键行在 1，避免「无面包屑的树
+  证明不落在面包屑上」的空转；中间态齐全（`-1→↓→1`、`↑` 夹紧、连按三次不得爬升、
+  全面包屑树五键均留 `-1`）。非 vacuous。
+- **变异 2 发 2 中**（复原后 `git status --porcelain` 验净，CLEAN_OK 2/2）：
+  A 删 `treeRowSpec.ts:167` 跨过循环（删 `!isNavigable` 守卫）⇒ 旅程
+  **2 failed | 3 passed**（`:232`/`:247` 均 `expected '0' to be '1'`：`↓`/`↑`
+  落在面包屑 index 0 而非键行 1，**正是本 bug 复现**）；
+  B 还原 round-1 行为（`:182` `return target`）⇒ **1 failed | 4 passed**
+  （`:250` 同型失败）。复原后 journey + `keyTreeState` + `keyTreeInteractionsJourney`
+  = 64 passed / EXIT=0。
+- 第 2 轮「613 条测试中执行 0 次、删守卫不会变红」的**回归裸奔状态已闭环**。
 
 ---
 
