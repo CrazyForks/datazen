@@ -180,3 +180,29 @@ G4  [check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking viol
 
 - **未自测代替复测**：本回合只做修复与门禁取证，**由协调者派全新 Tester 做第 4 轮复测裁定**。
 
+### 变异反向验证（证明新断言非 vacuous）
+
+手法：把两个生产文件 `git checkout 3e25a3c0f -- …`（= **逐字还原到修复前**，已验
+`git diff 3e25a3c0f -- packages/drivers/redis/ui/key-browser/` 为空）后跑**修复后的新测试**，
+再 `git checkout HEAD -- …` 还原并验 `git status --porcelain` 净：
+
+```text
+ Test Files  2 failed (2)
+      Tests  5 failed | 3 passed (8)
+
+× round2Probe P1a      「继续编辑 keeps label AND detail on the old key」  ← 期望 'user:1'，实得 'user:renamed'
+× round2Probe P1b      「重命名+keep 后点新名行不得静默毁草稿」            ← 同上
+× round3Probe A        「先问、答 keep 不放行、再点再问」                  ← expectDeviation6 红
+× round3Probe B        「答放弃才换到新名」                                ← expectDeviation6 红
+× round3Probe D(BUG-008)「保存必须写到用户看到的那个键」                   ← expectDeviation6 红
+✓ round3Probe C        「一致态同键重点击零询问」                          ← 不受改名顺序影响，应绿
+✓ round2Probe P2 ×2    「工具栏刷新一次动作只问一次」                      ← 同上
+```
+
+⇒ 5 条改写/转正断言**全部可证伪**（D 组在修复前必红 ⇒ 非"转正即恒真"的占位）；
+3 条不受影响的用例保持绿 ⇒ 修复**未误伤**相邻路径。还原后复跑 **8/8 绿**、工作树净。
+
+- **注**：首次变异尝试写错了（在已删除该 prop 的组件里引用 `onUpdateSelectedKey?.()` 导致
+  `ReferenceError` 而非真实缺陷），已弃用该手法、改用上述"整文件还原到 pre-fix"的忠实变异。
+
+
