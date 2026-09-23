@@ -448,3 +448,56 @@ bd887e0e0  refactor(redis): split ops_tree_scan/tests.rs into tests/{batch_shape
 本轨道的拆分**基于基线 1124 行版**，故 `ops.rs` → `ops/` 的合流是**语义冲突**（不是文本冲突），
 需按协调者手册 §6.1.1 处理。`connect.rs`、`ops_tree_scan.rs`、`ops_workbench.rs`、`ops_stream.rs` 同理
 需先查 `d049ceb4e..main` 是否动过这几个文件再判断冲突类型。
+
+---
+
+## 8. Tester 第 1 轮验收（全新实例，独立复现，不采信自报）
+
+- Tester: `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例）
+- 被验终态: `2e3d0c6b7`（分支 `feature/redis-src-split`，起点 `d049ceb4e`）
+- 纪律: 一律绝对路径（本 worktree 基线 `d049ceb4e` 与主检出 `main` 已分叉，相对路径会读到 `main`）；
+  `CARGO_TARGET_DIR=/tmp/dz-split-tester`；重命令串行；一动作一 commit。
+
+### 步骤 1 — 文件面审计（含反向检查）
+
+正向：`git diff --name-only d049ceb4e..HEAD` 共 **71** 个路径，全部落在
+
+```
+docs/development/coordination/tracks/redis-src-split/{progress.md,bugs.md}      2
+packages/drivers/redis/src/**                                                  69
+```
+
+反向断言（**关键**）——`git log --name-only d049ceb4e..HEAD` 中不得出现的 7 类路径：
+
+```
+$ git log --name-only --pretty=format:'--- %h %s' d049ceb4e..HEAD \
+    | grep -n -E 'Cargo\.lock|Cargo\.toml|hub\.md|src/extensions/generated|driver_init\.rs|capabilities/default\.json|\.driver-features\.json'
+（无输出，grep exit=1）
+
+$ git diff --name-only d049ceb4e..HEAD -- Cargo.lock Cargo.toml \
+    docs/development/coordination/hub.md src/extensions src-tauri/src/driver_init.rs \
+    src-tauri/capabilities/default.json packages/drivers/.driver-features.json
+（无输出）
+```
+
+→ **7 类禁改路径全部未出现在 10 个 commit 中，PASS。**
+
+**附带发现（非本轨道缺陷、非 bug）**：worktree 工作区有**未提交**的 `Cargo.lock` 漂移
+（`datazen-driver-redis` 依赖列表 +1 行 `flate2`）。已独立核实为**既有漂移**：
+
+```
+$ git log --name-only d049ceb4e..HEAD -- Cargo.lock     # 空 → 本轨道 10 个 commit 均不含 Cargo.lock
+$ git show d049ceb4e:packages/drivers/redis/Cargo.toml | grep -n flate2
+26:flate2 = "1.1.9"                                       # 基线 Cargo.toml 已声明 flate2
+$ git show d049ceb4e:Cargo.lock | grep -A30 'name = "datazen-driver-redis"' | grep flate2
+（无）                                                    # 基线 Cargo.lock 未记录该依赖
+```
+
+即：基线起 `Cargo.toml` 有 `flate2` 而 `Cargo.lock` 未同步，属**进入本轨道前就存在**的状态
+（Coder 声明一致，见 §7）。Tester 全程只读，**不修改、不提交**该文件。
+
+**commit 计数复核**：`git rev-list --count d049ceb4e..HEAD` = **10**（8 拆分 + 2 台账），与任务书一致。
+逐 commit 文件数：`bd887e0e0`9 / `d230a6028`7 / `5ebfd6290`13 / `dc5b34b95`10 / `00c5f4086`6 /
+`0501b880a`2（台账）/ `197434dc4`9 / `833fef717`8 / `6d8ea052e`7 / `2e3d0c6b7`1（台账）。
+
+**步骤 1 结论：PASS。**
