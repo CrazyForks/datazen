@@ -2,10 +2,12 @@
  * [tester] Key-tree round-1 gap battery — written during the `redis-tree-ui` test
  * round (全新 Tester 实例，只测不修).
  *
- * Two cases are registered as `it.skip` with a `FIXME(redis-tree-ui-BUG-00N)`
- * marker so the track gate stays green while the defects are open. Each skipped
- * case quotes the **measured** failure it produced when run un-skipped on
- * `ef0d62d94` — that is the proof the repro is not vacuous.
+ * Two cases carry a `FIXME(redis-tree-ui-BUG-00N)` marker. They were registered
+ * by the round-1 Tester as `it.skip` so the gate stayed green while the defects
+ * were open, and each one quotes the **measured** failure it produced when run
+ * un-skipped on `ef0d62d94` — that is the proof the repro is not vacuous.
+ * Coder round-1 fixed both defects and **un-skipped** them (all 6 cases run; the
+ * markers stay so the provenance of each assertion remains readable).
  *
  * What each one pins:
  *  - BUG-001 (D-2 + D-8): in the *tree* view the R2 pattern reaches `scan_keys`
