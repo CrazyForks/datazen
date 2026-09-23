@@ -946,3 +946,59 @@ Tester 全新实例（只测不修）· 起点 `3e25a3c0f` → 复测 HEAD `b7ef
 ⇒ 未触碰 Cargo.* / hub.md / scripts / i18n / StringEditor / TtlControls / keyReadOnlyPolicy / BatchBar /
 ImportExport / redisInvoke / console / kv-bar / meta / 宿主 `src/` / `packages/driver-sdk` / 其他轨台账 /
 BUG-001~007 正文。**文件面结论：通过。**
+
+## R4-2 BUG-008 核心复验
+
+### 前提独立确认（「选中键唯一写入口」）
+
+通读生产码后确认该前提**成立**：
+
+- `RedisWorkbench.tsx` 中 `setSelectedKey` 共 8 处调用；其中 `:262/:299/:323/:776` 为**清空**（`null`，切库/刷新/搜索/关闭面板 四条 I-1 出口），
+  `:724` 为 `DetailColumn onRenamed` 出口，`:357` 位于 `handleSelectKey` 内 —— 即**唯一的「换到另一个具体键」写入口**。
+- `KeyWorkbenchDialogs.tsx` 的 `handleKeyCtxRename` 现状：`invokeRename` → `closeKeyCtxDialog` →
+  `onUpdateSelectedKeys`（批量集合）→ `onRefreshKeys()` → `await onSelectKey(next)`。
+  `onSelectKey` 实测绑定 `handleSelectKeyGuarded`（`:771`）；该守卫在 `key !== selectedKey` 时先 `await requestDraftLeave()`，
+  答 keep ⇒ **原样 return，`handleSelectKey` 不执行** ⇒ `:357` 不执行 ⇒ 选中键不被改写。
+- `onUpdateSelectedKey`（单数）prop 已**彻底移除**：`grep -rn onUpdateSelectedKey` 仅命中复数 `onUpdateSelectedKeys`
+  （批量集合，与选中键无关）。故 rename 路径不存在第二个选中键写入点。
+- 连带效果：`onRefreshKeys = refreshKeysForDialogs` 实测在 `isDraftDirty()` 为真时只做 `scanRefresh()+tree.refresh()`，
+  **不**调用 `refreshKeys()` ⇒ 脏草稿时 `setSelectedKey(null)` 那条路也不可达 ⇒ 答 keep 后选中键留旧键。
+
+**结论：前提成立 ⇒ 「答 keep ⇒ 选中键与 `detail.key` 双双留旧键 ⇒ 偏差⑥ 不一致态不存在」的推理链闭合。**
+
+### 基线跑（提交态 `b7ef8a009`）
+
+```
+ ✓ round2Probe.test.tsx (4 tests) 560ms
+ ✓ testerRound3Probe.test.tsx (4 tests) 928ms
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+```
+
+**8/8 绿 · 0 skipped** ✅（D 组 `describe.skip` 已转正并在册）。
+
+### 变异矩阵（各改-跑-记红-还原-验净）
+
+| # | 注入内容 | 结果 | 红在哪条断言 |
+| --- | --- | --- | --- |
+| (i) | 把 `await onSelectKey(next)` 挪回 `onUpdateSelectedKeys` **之前**（复现修复前顺序） | **全绿（8/8）** | 无 —— 见下方「(i) 判定」 |
+| (ii) | 守卫之后加回无条件选中键改写（`onSelectKey` 包装 `handleSelectKeyGuarded` 后补 `setSelectedKey(key)`，等价于被删的 `onUpdateSelectedKey`） | **5 failed \| 3 passed** ✅红 | `expectDeviation6`（`testerRound3Probe:222`：`data-selected-key` 期望 `user:1` 实得 `user:renamed`），经调用点 `:287 / :342 / :399` 三条用例；`round2Probe:293:56`（P1a）；`round2Probe:331:61`（P1b）。**P2×2 + 探针 C 保持绿**（未误伤无关路径） |
+| (ii-a) | 忠实变异：两生产文件整体还原到 `3e25a3c0f`（修复前） | **5 failed \| 3 passed** | 同上 5 条 —— 与 Coder 自报逐位一致 |
+| (iii) | 在守卫**之前**直接改选中键（不经过 `handleSelectKey`）：加回 `onUpdateSelectedKey` prop 并在 `closeKeyCtxDialog()` 后 `if (selectedKey === keyCtxDialog.key) onUpdateSelectedKey(next)` | **5 failed \| 3 passed** ✅红 | 同 (ii)：`expectDeviation6` 五处 |
+
+#### (i) 判定 —— 「注入后仍绿」的归因（必查项）
+
+**(i) 全绿属实，但不构成「测试强度缺陷」，也不推翻修复有效性。** 归因如下：
+
+修复前产生偏差⑥ 的**唯一**机制是被删掉的 `onUpdateSelectedKey(next)`（`handleKeyCtxRename` 内的直接 `setSelectedKey`）。
+把 `await onSelectKey(next)` 前移/后移**本身不改变任何语义**：
+
+- 该调用在生产代码里是 `handler()` 形式且**无前导 await** ⇒ 同步执行到守卫第一行，与同行内联**逐字等价**；
+- 答 keep 时守卫 `return` ⇒ 选中键仍未被改写（`setSelectedKey` 未执行）；
+- 答放弃时两处 `setSelectedKey(next)` 取值相同（闭包里的 `next`）⇒ 幂等。
+
+因此 (i) 在**已删除该陈旧写入行**的前提下是**语义等价变换**，全绿是正确行为。
+真正会重造偏差⑥ 的两项注射 —— (ii)（等价于恢复被删行）与 (iii)（把陈旧写入放回守卫之前）—— **均实测转红**，
+且忠实整体回退 (ii-a) 也转红。⇒ **修复的因果面被有效钉住，测试强度充分。**
+
+> 复测结论：**变异矩阵通过**（3 项中有意义的两项 + 忠实回退项全部转红，无关项保持绿）。
