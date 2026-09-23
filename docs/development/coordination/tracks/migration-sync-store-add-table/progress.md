@@ -31,7 +31,7 @@ No UI or driver behavior changes. Rust writer tests provide direct coverage of t
 - LLVM line coverage for the changed core files: `comparison_store.rs` 82.32%; `comparison_store/disk.rs` 82.96%. The changed `add_table`, `finish_table`, and `write_row` functions measured 100%, 100%, and 95% line coverage; `validate_operation_counts` measured 96.49%.
 - Scoped `rustfmt --check` and `git diff --check` pass.
 - No WDIO journey applies: this is a storage-only Rust contract with no UI or driver behavior change.
-- Coder commit: pending.
+- Coder implementation commit: `206e11cc` (`fix(sync): preserve rows in one-shot comparison store writes`).
 
 ## Caller inspection
 
