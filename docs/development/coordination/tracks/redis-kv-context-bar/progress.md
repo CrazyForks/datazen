@@ -1,13 +1,13 @@
 - 任务: KV 上下文条全量版（PRD §3.4 / 裁定 8-2 = 全量，#69）+ **合并承担 statusBar 全量版**（协调者追加裁定）
-- 状态: READY_FOR_TEST
+- 状态: TEST_FAILED（第 2 轮完整验收）
 - 编码 commit: `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版）
-- 测试 commit: 随两个编码 commit（同 commit 内交付，无独立测试 commit）
+- 测试 commit: 编码期测试随编码提交；第 2 轮 Tester commits `4c59a32f5`、`a63f6bd0a`、`78e660789`、`6d253d058`（本终判 commit 见工作树 HEAD）
 - 合并 commit: —
 - 代理: w4-redis-kv-context-bar-coder
 - Worktree: .worktrees/datazen-redis-kv-context-bar
 - 分支: feature/redis-kv-context-bar
 - 基线: `d049ceb4e`
-- 心跳: 2026-09-23 16:54（两单元已 commit，四门全绿，返回 `READY_FOR_TEST`）
+- 心跳: 2026-09-23 18:30（Tester 第 2 轮 A/B/C/D 完成，`TEST_FAILED`，两项待修 Bug）
 
 # W4 `redis-kv-context-bar` 简报理解（逐条回执）
 
@@ -800,3 +800,56 @@ All files          |   98.32 |    95.86 |   96.77 |     100 |
 - `redis-kv-context-bar-BUG-002`（提交 `78e660789`）：compact overflow 对 `maxBytes === null` 固定使用普通 memory 文案，丢失“无上限”语义。
 
 除上述两项外，本次静态审查未发现契约破坏或其他确认的逻辑缺陷。此前交付记录中提到的「无上限」与采样规则在宽布局的覆盖成立；缺口在 compact overflow 的派生呈现路径。
+
+## 阶段 B — 独立复验（已完成）
+
+生成物准备：`node scripts/generate-builtin-locales.mjs` 成功，生成 `src/locales/builtinLocales.ts`（en、zh-CN；gitignored）。所有命令在本 worktree 串行执行，未运行 `pnpm install`。
+
+| 命令 | 实测结果 | 判定 |
+|---|---|---|
+| `cargo test -p datazen-driver-redis --lib` | 342 passed，0 failed，4 ignored（既有 ignored 测试含其他轨已登记 Bug） | PASS；本轨没有 Rust 代码变更 |
+| `npx vitest run --config vitest.drivers.config.ts` | 63 files：62 passed / 1 failed；876 tests：874 passed / 2 failed | **FAIL，仅两条 `[tester]` 新断言失败，分别对应 BUG-001、BUG-002** |
+| `npx tsc --noEmit` | exit 0，无输出 | PASS |
+| `npx vite build` | exit 0，3310 modules，4.99s | PASS；存在既有动态/静态 import 与 >500 kB chunk 提示 |
+| `node scripts/check-driver-import-boundaries.mjs` | 1507 files，0 blocking、4 advisory | PASS；4 条 advisory 位于既有文件/行 |
+| `npx vitest run`（宿主） | 454 files / 4744 tests 全通过，72.04s | PASS |
+| `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` | exit 0；生成注册包含 `RedisContextBar` 的 `contextBar` 行 | PASS；生成文件均为 gitignored |
+
+两条失败均已在 B 阶段完整复验中再次出现：compact 采样标记断言为 `expected null not to be null`（`redisContextBar.test.tsx:746`）；compact 无上限文案断言收到 `redis.contextBar.memory`、预期 `redis.contextBar.memoryUnlimited`（`:765`）。两者以外驱动 UI 874 项通过，宿主及其他门禁全绿。
+
+本轮门禁后 `git status` 另见 `M Cargo.lock`，仅 `datazen-driver-redis` dependency block 增加一行 `flate2`。该项未暂存、未提交、未覆盖；按协调者提示视为保留的 lockfile 漂移。所有 Tester 提交均显式暂存本轨 progress/tests/bugs 文件。
+
+## 阶段 C — 覆盖率与 E2E（已完成）
+
+覆盖率使用 v8，针对 `packages/drivers/redis/ui/kv-bar/**`，并加 `--coverage.reportOnFailure` 以便失败回归测试仍输出报告：
+
+| 核心文件 | Statements | Branches | Functions | Lines | 第 1 轮记录（Stmt / Branch / Func / Line） |
+|---|---:|---:|---:|---:|---:|
+| `ContextBarActions.tsx` | 100% | 93.75% | 100% | 100% | 100 / 93.75 / 100 / 100 |
+| `RedisContextBar.tsx` | 100% | 95.65% | 100% | 100% | 100 / 95.65 / 100 / 100 |
+| `contextBarModel.ts` | 100% | 96.59% | 100% | 100% | 100 / 96.59 / 100 / 100 |
+| `dbKeyCounts.ts` | 94.11% | 86.36% | 88.88% | 100% | 94.11 / 86.36 / 88.88 / 100 |
+| `useContextBarData.ts` | 93.22% | 87.5% | 86.66% | 100% | 93.22 / 87.5 / 86.66 / 100 |
+| `useKvSelection.ts` | 100% | 100% | 100% | 100% | 100 / 100 / 100 / 100 |
+| `KvStatusBar.tsx` | 100% | 96% | 100% | 100% | 100 / 96 / 100 / 100 |
+| `src/windows/connection/useKvSlotActions.ts` | 100% | 100% | 100% | 100% | 第 1 轮未测 |
+
+kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions / 100% lines**；第 1 轮为 `98.32 / 95.86 / 96.77 / 100`。所有有执行逻辑的核心模块均 ≥80%。`index.ts` 是纯 re-export barrel，不含执行逻辑；其组件可达性由 slot 注册测试动态导入验证。两个 Tester 回归断言分别覆盖 compact 下的 sample 与 unlimited 分支，失败本身证实当前实现缺口。
+
+本轮登记以下 GUI E2E 旅程，均为 **【留待 R 回归】**（需 Tauri GUI 与 Redis 环境；Cluster 项需集群）。它们不替代已运行的单测：
+
+| E2E | 旅程 / 断言 | 前置条件与状态 |
+|---|---|---|
+| W4-KVBAR-01 | 让类型分布进入 compact overflow；当 `sampled < dbsize`，chips 组仍出现采样标注 | Redis 大于采样窗口；先修复 BUG-001；留待 R |
+| W4-KVBAR-02 | `maxmemory=0` 后切换 compact；memory overflow 明示无上限，和宽布局语义一致 | 真 Redis；先修复 BUG-002；留待 R |
+| W4-KVBAR-03 | 通过 db selector 在两个有不同数据的 db 间切换；宿主激活同 db 面板或创建一个，keys/types 与目标 db 相符 | Tauri + Redis，记录活动面板/页签；留待 R |
+| W4-KVBAR-04 | 同时显示 context bar 与 status bar，切 db 并用驱动日志确认同面板仅发一条 `db_sizes` | Tauri + Redis，检查命令日志；留待 R |
+| W4-KVBAR-05 | Safe Mode 开启时使用 overflow 的 FLUSH；宿主危险操作门闸阻断，驱动不弹第二套确认 | Tauri，检查宿主阻断反馈和对话框；留待 R |
+| W4-KVBAR-06 | Redis Cluster 上查看类型分布；采样标记不误称为全量且 chips 可读 | 真 Redis Cluster；留待 R |
+| W4-KVBAR-07 | 宽/窄窗口切换；compact 下按钮先去标签，memory/types 移入 overflow，db/keys/scan 保留 | Tauri GUI；留待 R。PRD I-10 的 740/340/240px 三级断点属于列头（协调者裁定），不归本轨上下文条 |
+
+## 阶段 D — 终判
+
+- **Phase：FAILED；结论：`TEST_FAILED`。** 阻断项为 `redis-kv-context-bar-BUG-001`、`redis-kv-context-bar-BUG-002`，两条分别登记、分别提交，当前状态均为 `待修复`。
+- 完整 A/B/C/D 已跑完；Tester 未修改业务生产代码。由于缺陷仍在，不设置 `TEST_DONE`，也不建立“无缺陷轮次” README。
+- 修复后需按流程由全新 Tester 重跑完整门禁、覆盖率和回归旅程，再更新这两条 Bug 状态。
