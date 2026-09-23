@@ -308,6 +308,10 @@ export function KeyTreeList({
       data-sticky-depth={sticky.length}
       data-active-index={activeIndex}
       data-separator={separator}
+      // D-2 / BUG-001: is a pattern in force? Published as data so tests never
+      // read copy to find out (and so the `(n+)` caveat has one owner).
+      data-filter-active={filterActive ? 'true' : 'false'}
+      data-filter-pattern={filterActive ? pattern : ''}
     >
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {/*
