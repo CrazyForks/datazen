@@ -677,3 +677,63 @@ Coder 自报「真实承重项（早退分支）改坏后 5 failed」。我独�
 `KvStatusBar.tsx` 是本轨唯一另一处带删除的生产文件。逐行审阅其 22 行删除：**全部为 (i) 已被新功能取代的旧 docblock**（原文自述「PRD 其余状态事实…`not` exposed by `KvSlotState`；渲染它们意味着加宽已冻结的契约，故**登记为缺口而非在此伪造**」—— 该缺口本轨已合法落地，旧注释**反向失真**，删除正确）+ (ii) 结构性重构行（`parts` 数组与 import 改写）。**未删任何保护逻辑**：`useKvDirty` 仍在使用（`KvStatusBar.tsx:70`），`data-part` / `data-testid` / `getDirty` 语义全部保留。
 
 **动作 6 结论：PASS。** 删除项经**形式化 + 1452 组穷举**双证为真不可观测；剩余承重项经 C1/C2 探针反证仍然有效；无保护逻辑被误删。
+
+## 动作 7 — 回归四门 + 宿主门（提交态 `9cddc1cff` 串行实测，逐字留尾）
+
+> 顺序：`tsc` → drivers `vitest` → `vite build` → boundaries，随后宿主全量 `vitest`。全部**串行**，无并发重命令。
+> 收尾 `git status --porcelain` **空**（`dist/` 由 `.gitignore:44` 忽略；codegen 未提交）。
+
+### 门 1 — `npx tsc --noEmit`
+
+```
+=== GATE 1: tsc --noEmit ===
+tsc-exit=0
+```
+⇒ **0 错**，与自报一致。
+
+### 门 2 — `npx vitest run --config vitest.drivers.config.ts`
+
+```
+ Test Files  63 passed (63)
+      Tests  874 passed (874)
+   Duration  12.65s (transform 5.19s, setup 24.81s, import 5.31s, tests 13.19s, environment 34.69s)
+
+vitest-exit=0
+```
+⇒ **63 files / 874 tests，0 失败**，与自报**逐字一致**（基线 61/804 ⇒ +2 files / +70 tests）。**Tester 探针已全部还原，未新增用例**，故数字即提交态数字。
+
+### 门 3 — `npx vite build`
+
+```
+dist/assets/main-CDsGxhk3.js                   1,672.07 kB │ gzip: 487.35 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+✓ built in 4.81s
+vite-exit=0
+```
+⇒ **exit 0**。`chunk > 500 kB` 为**存量提示**（`main` / `MainPage` 体积警告，与本轨无关，非失败）。
+
+### 门 4 — `node scripts/check-driver-import-boundaries.mjs`
+
+```
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1507 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+boundaries-exit=0
+```
+⇒ **0 blocking / 4 advisory / 1507 files**，与自报**逐字一致**。4 条 advisory 的**行位与文件全部未变**（`locales.test.ts:107` / `driverUiSetup.ts:25,26` / `DocumentConnectionView.tsx:25`），无一由本轨新增。1507 = 自报值。
+
+### 门 5（宿主，本轨改了宿主 `src/**` 必跑）— `npx vitest run`
+
+```
+ Test Files  454 passed (454)
+      Tests  4744 passed (4744)
+   Duration  101.15s (transform 29.45s, setup 60.54s, import 139.36s, tests 132.33s, environment 300.67s)
+
+host-exit=0
+```
+⇒ **454 files / 4744 tests，0 失败**，与自报**逐字一致**（基线 453/4734 ⇒ +1 file / +10 tests，即 `ContentViewKvDbSwitch.test.tsx` 7 例 + `useKvSlotActions` 新增 3 例）。
+
+**动作 7 结论：PASS。五门全绿，五项数字与自报逐字吻合，无一处夸大。**
