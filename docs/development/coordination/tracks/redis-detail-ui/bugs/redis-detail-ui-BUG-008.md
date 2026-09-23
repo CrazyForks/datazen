@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-008 · 偏差⑥ 不一致态下「保存」写向陈旧 `detail.key`（旧名），与屏幕显示的目标键不符
 
 - **登记**：第 3 轮复测 Tester（round-3，全新实例），2026-09-23
-- **状态**：`待复测（round-3 修复后）`
+- **状态**：`已修复`（round-4 复测通过）
 - **严重度**：**高**（静默写错目标键 + 复活已 RENAME 掉的键 + 用户草稿"凭空消失"三者同时发生；且属 PRD §3.3 屏 B 右列编辑面的核心写路径）
 - **来源**：round-3 复测「遗留项 2 裁定」取证探针（`ui/__tests__/testerRound3Probe.test.tsx` D 组，现以 `describe.skip` 保留正确期望）。BUG-007 的修复把不一致态**有界化**（不再静默毁草稿），但未**消解**它；本轮顺藤检查该残留态还有哪些后果时命中本条。
 
@@ -206,3 +206,91 @@ G4  [check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking viol
   `ReferenceError` 而非真实缺陷），已弃用该手法、改用上述"整文件还原到 pre-fix"的忠实变异。
 
 
+
+---
+
+## 复测记录（round-4）
+
+**Tester**：全新实例（只测不修）· 复测 HEAD `b7ef8a009`（修复轮第 3 回合交付态）· 判定：**通过 ⇒ 翻 `已修复`**
+
+### 1. 文件面 ✅
+
+`git diff 3e25a3c0f..HEAD --name-status` ⇒ 恰 7 文件，全部落在许可面（本 bug 生产改动仅
+`key-browser/KeyWorkbenchDialogs.tsx` +6/−5 与 `key-browser/RedisWorkbench.tsx` 的 prop 删除 1 行）。
+禁改面反向 grep（Cargo / hub.md / scripts / locales / StringEditor / TtlControls / keyReadOnlyPolicy /
+BatchBar / ImportExport / redisInvoke / console / kv-bar / meta / 宿主 `src/` / driver-sdk / 其他轨台账 / BUG-001~007 正文）
+⇒ **NONE**（exit 1）。
+
+### 2. 前提独立确认（「选中键唯一写入口 = `handleSelectKey` 内 `setSelectedKey`」）✅
+
+`grep -rn setSelectedKey packages/drivers/redis/ui/` 实证：生产码 8 处调用中，
+`RedisWorkbench.tsx:262/:299/:323/:776` 为**清空**（`null`），`:724` 为 `DetailColumn onRenamed` 出口，
+`:357` 位于 `handleSelectKey` —— 即**唯一的「换到另一个具体键」写入口**。
+`onUpdateSelectedKey`（单数）prop 已彻底移除（grep 仅命中复数 `onUpdateSelectedKeys`，属批量集合，与选中键正交）。
+连带核对：`onRefreshKeys = refreshKeysForDialogs` 在 `isDraftDirty()` 为真时只做 `scanRefresh()+tree.refresh()`，
+**不**调 `refreshKeys()` ⇒ 脏草稿时 `setSelectedKey(null)` 那条路亦不可达。
+⇒ **推理链闭合：答 keep ⇒ 守卫 `return` ⇒ `handleSelectKey` 未执行 ⇒ 选中键与 `detail.key` 双双留旧键 ⇒ 不一致态不存在 ⇒ 写错键路径不可达。**
+
+### 3. 基线跑 ✅
+
+`npx vitest run --config vitest.drivers.config.ts testerRound3Probe.test.tsx round2Probe.test.tsx`
+```
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+```
+⇒ **8/8 绿 · 0 skipped**（D 组已由 `describe.skip` 转正且在册）。
+
+### 4. 变异矩阵（各改-跑-记红-还原-验净）
+
+| # | 注入 | 结果 | 红在哪条 |
+| --- | --- | --- | --- |
+| (i) | `await onSelectKey(next)` 挪回 `onUpdateSelectedKeys` **之前** | **全绿 8/8** | 无 —— 见下「(i) 归因」 |
+| (ii) | 守卫后加回无条件选中键改写（`await handleSelectKeyGuarded(key)` 后补 `setSelectedKey(key)`，等价于被删行） | **5 failed / 3 passed** ✅红 | `expectDeviation6`（`testerRound3Probe:222`，`data-selected-key` 期望 `user:1` 实得 `user:renamed`），经 `:287`/`:342`/`:399` 三用例；`round2Probe:293:56`；`round2Probe:331:61` |
+| (ii-a) | 忠实回退：两生产文件整体还原 `3e25a3c0f` | **5 failed / 3 passed** | 同上 5 条（与 coder 自报逐位一致） |
+| (iii) | 守卫**之前**直接改选中键（加回 `onUpdateSelectedKey` prop 并在 `closeKeyCtxDialog()` 后调用） | **5 failed / 3 passed** ✅红 | 同 (ii) |
+
+**(i) 归因（「注入后仍绿」必查项）**：注入 (i) **不构成测试强度缺陷**。修复前产生偏差⑥ 的**唯一**机制是被删掉的
+`onUpdateSelectedKey(next)`；而 `await onSelectKey(next)` 在生产码中**无前导 await** ⇒ 同步执行到守卫第一行，
+与同行内联**逐字等价**：答 keep ⇒ 守卫 return（选中键仍不被改写）；答放弃 ⇒ 两处 `setSelectedKey(next)` 取值相同（幂等）。
+故 (i) 在已删除陈旧写入行的前提下是**语义等价变换**，全绿属正确。
+真正重造偏差⑥ 的两项 —— (ii)（等价恢复被删行）与 (iii)（放回守卫之前）—— **均实测转红**，忠实回退 (ii-a) 亦红
+⇒ **修复的因果面被有效钉住，测试强度充分**。**变异矩阵：通过。**
+
+### 5. 不变式实测（保存目标键 === 面板显示键 === 选中键）✅
+
+以 temp 探针实测三条路径后**即删**（不进交付面，`git status` 验净）：
+
+```
+[INV-1]  target=user:1        panel=user:1        selected=user:1        (rename + dirty + 答 keep 后保存)
+[INV-2a] panel=user:renamed   selected=user:renamed  input=renamed-value (rename + dirty + 答放弃)
+[INV-2b] target=user:renamed  panel=user:renamed  selected=user:renamed  (新键上再编辑并保存)
+[INV-3]  panel=user:renamed   selected=user:renamed  input=renamed-value (rename 干净态)
+```
+
+- 答 keep：三者同为旧键 `user:1`，保存**写向用户看到的键** ⇒ 原缺陷（写向屏幕不存在的陈旧键）**不可达** ✅
+- 答放弃 / 干净态：选中键**确实变为 `next`**，标签/键头/detail 齐步，新键上保存写向新键 ✅
+
+### 6. 裁定独立验证 ✅（裁定成立）
+
+对 `KeyWorkbenchDialogs.tsx` 全部 4 个 `onSelectKey` 调用点逐一核对：创建(`:106`) / TTL·PERSIST(`:159`,`:178`) /
+重命名(`:211`) 均由 `handleSelectKey` 完成选中键更新；删除键走**保留的** `onClearSelectedKey`(`:228`)；
+批量集合走**保留的** `onUpdateSelectedKeys`(`:198`,`:230`)。头部行改名（`KeyEditors:119-128` → `onRenamed` →
+`RedisWorkbench:724`）本就不经该 prop。守卫语义佐证：`draftGuard.ts:56-65` 干净态立即 `resolve(true)`、
+脏态**在动作前**悬起询问。
+⇒ **删除 `onUpdateSelectedKey` 后无任何合法路径丢失选中键更新；该调用在答 keep 时确实会重造偏差⑥（已由变异 (ii) 实测转红佐证）⇒ 协调者裁定「采纳、不回退」成立。**
+
+### 7. 回归四门 · 覆盖率 · 纪律（提交态串行）✅
+
+- **G1** `60 files / 564 passed / 0 skipped` ✅
+- **G2** `npx tsc --noEmit` ⇒ exit 0 ✅
+- **G3** `npx vite build` ⇒ `✓ built in 4.83s` exit 0 ✅
+- **G4** boundaries ⇒ `1474 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s)` exit 0 ✅
+- **覆盖率**（v8 `--coverage.all=false`）：方法经 round-3 态**逐位复现**（A 88.88/91.22、B 92.43/95.43）自证可信；
+  **like-for-like 旧口径 B 本轮 92.43/95.43 ⇒ 与 round-3 逐位相同，零回归**；本轮全量口径（纳入首次进入 diff 的
+  `KeyWorkbenchDialogs.tsx`）B 85.95/89.03、A 84.34/86.93 ⇒ **均 ≥80% 硬线**。
+- **断言纪律**：新增断言零英文文案字面量、零几何反查、无 vacuous 断言；两文件 `skip/only/todo` **零残留** ✅
+
+### 8. 终判
+
+**`已修复`（round-4 复测通过）。** 不一致态已从源头消除，写错键路径不可达，不变式三键齐步实测成立，
+无回归、无新增 bug，四门禁全绿。

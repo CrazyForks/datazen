@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-009 · BUG-007 修复把 `RedisWorkbench.tsx` 推过本轨 §5 硬钉的 `≤800` 行上限（787 → 805）
 
 - **登记**：第 3 轮复测 Tester（round-3，全新实例），2026-09-23
-- **状态**：`待复测（round-3 修复后）`
+- **状态**：`已修复`（round-4 复测通过）
 - **严重度**：**低**（无功能影响、不阻断四门禁；但撞的是本轨 `progress.md` §5「环境纪律（**违反即返工**）」明文条 + AGENTS.md 单文件规模条，且第 2 轮自己的审计把「787 行 ≤ 800 ✅」列为核对项 ⇒ 一次提交即破线，属纪律回归）
 - **来源**：round-3 文件面审计（简报验收动作 #1「核对 `RedisWorkbench.tsx` ≤800 行」）
 
@@ -110,3 +110,54 @@ G4  [check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking viol
 - 未改动本轨其他生产文件行数；`commandMeta.ts`（873 行，存量、本轨零触碰）不属本条射程，本次未动。
 - **未自测代替复测**：由协调者派全新 Tester 做第 4 轮复测裁定（核对 `wc -l` 与四门禁）。
 
+
+---
+
+## 复测记录（round-4）
+
+**Tester**：全新实例（只测不修）· 复测 HEAD `b7ef8a009` · 判定：**通过 ⇒ 翻 `已修复`**
+
+### 1. 行数实测（逐字）✅
+
+```
+$ wc -l packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+     795 packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+```
+
+⇒ **795 行 ≤ 800** ⇒ 回到本轨 §5 硬钉内 ✅（与 coder 自报 795 逐位一致）
+
+### 2. 净变化核对 ✅
+
+```
+$ git diff --numstat 3e25a3c0f..HEAD -- packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+6	16	packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx
+```
+
+⇒ **净 −10**（805 → 795）；其中含 BUG-008 删除的 `onUpdateSelectedKey={setSelectedKey}` 一行 + BUG-009 注释瘦身。
+
+### 3. 手法核对（只动注释、零语义改动）✅
+
+- 本 bug 独立 commit `cbecba255` 实测 `1 file changed, 6 insertions(+), 15 deletions(-)` ⇒ 与自报 `6 15` **逐位一致**；
+  `git show cbecba255` diff **全为注释行的增删**，无任何代码行改动。
+- **守卫 3 行代码逐字未动** —— 字节级取证：`if (key === selectedKey && keyDetail?.key !== key) {` /
+  `if (!(await requestDraftLeave())) return;` / `}` 三行在 `3e25a3c0f` 与 `HEAD` 两版
+  **md5 相同（`94a07d6d0aa78eddce048aee04585896`）、`diff` exit 0** ✅
+- 压缩后注释仍准确：该守卫现为**防御性收口**（正门已由 `handleKeyCtxRename` 的先问后改堵住，见 BUG-008 修复）。
+
+### 4. 附：规模纪律体检（advisory，非本轮回归）
+
+全 `packages/drivers/redis/ui` 扫描，唯一 >800 行为 `console/consoleCompletion/commandMeta.ts`（**873**）：
+它是**静态命令元数据表**（Redis 官方命令分类 / 语法 / 一行描述），非逻辑代码膨胀；
+**不在本轮 diff 内**（最后改动为更早的 `040e15bde`），且属本 Tester 禁改面（`console/`）。
+⇒ 记**观察项**（建议后续轨按 group 拆分为数据文件），**不登记为本轮 bug**：本轮未引入、未触及、非逻辑膨胀。
+`RedisWorkbench.tsx` 795 行已合规；其余最大 `value-editors/StreamEditor.tsx` 720 行亦合规。
+
+### 5. 回归四门 · 纪律 ✅
+
+G1 `60 files / 564 passed / 0 skipped` · G2 tsc exit 0 · G3 `✓ built in 4.83s` exit 0 ·
+G4 `1474 files / 0 blocking / 4 advisory` exit 0；覆盖率旧口径 B like-for-like **92.43/95.43 与 round-3 逐位相同**（零回归）。
+注释瘦身使 `RedisWorkbench.tsx` 覆盖分子 −2 语句 / −3 分支（分母不变）——**系被删/压缩代码行恰为已覆盖语句所致，非测试质量下降**。
+
+### 6. 终判
+
+**`已修复`（round-4 复测通过）。** 行数回到硬线内、手法合规（纯注释）、守卫语义零改动，无回归。
