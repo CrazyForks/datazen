@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use datazen_driver_api::{DatabaseDriver, TableSchema};
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use uuid::Uuid;
 
 use super::error::TransferError;
@@ -355,7 +355,7 @@ impl AtomicSqlFile {
                 Err(error) => {
                     return Err(TransferError::validation(format!(
                         "cannot create SQL file staging file: {error}"
-                    )))
+                    )));
                 }
             }
         }
@@ -915,6 +915,7 @@ pub async fn execute_with_target(
             mapping.and_then(|mapping| mapping.source_filter.as_ref()),
             mapping.and_then(|mapping| mapping.recordset.as_ref()),
             source_driver.quote_char(),
+            &source_driver.driver_type(),
             |index, data_type| {
                 source_driver
                     .parameter_placeholder(index, data_type)
@@ -1491,9 +1492,11 @@ mod tests {
             .normalize_qualifiers()
             .unwrap();
         let error = validate_target_dialect_job(&job).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("explicit target database/schema"));
+        assert!(
+            error
+                .to_string()
+                .contains("explicit target database/schema")
+        );
     }
 
     #[test]

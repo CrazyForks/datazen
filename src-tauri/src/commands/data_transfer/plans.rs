@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use datazen_driver_api::{iter_driver_factories, DatabaseDriver, TableSchema, PROTOCOL_VERSION};
+use datazen_driver_api::{DatabaseDriver, PROTOCOL_VERSION, TableSchema, iter_driver_factories};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -761,6 +761,7 @@ mod tests {
                 order_by: Some("id".into()),
                 start: None,
                 end: None,
+                tuple_range: None,
                 limit: Some(10),
             });
             mapping
@@ -775,6 +776,51 @@ mod tests {
                 inclusive: true,
             });
         assert_ne!(first_fingerprint, filter_fingerprint(&first).unwrap());
+
+        let recordset = first.tables[0].recordset.as_mut().unwrap();
+        recordset.order_by = None;
+        recordset.start = None;
+        recordset.tuple_range = Some(crate::data_transfer::model::TransferRecordsetTupleRange {
+            columns: vec!["tenant".into(), "sequence".into()],
+            start: Some(crate::data_transfer::model::TransferRecordsetTupleBound {
+                values: vec![serde_json::json!("a-雪"), serde_json::json!("-3")],
+                inclusive: false,
+            }),
+            end: None,
+        });
+        let tuple_fingerprint = filter_fingerprint(&first).unwrap();
+        first.tables[0]
+            .recordset
+            .as_mut()
+            .unwrap()
+            .tuple_range
+            .as_mut()
+            .unwrap()
+            .start
+            .as_mut()
+            .unwrap()
+            .values[1] = serde_json::json!("-2");
+        assert_ne!(tuple_fingerprint, filter_fingerprint(&first).unwrap());
+        first.tables[0]
+            .recordset
+            .as_mut()
+            .unwrap()
+            .tuple_range
+            .as_mut()
+            .unwrap()
+            .start
+            .as_mut()
+            .unwrap()
+            .values[1] = serde_json::json!("-3");
+        first.tables[0]
+            .recordset
+            .as_mut()
+            .unwrap()
+            .tuple_range
+            .as_mut()
+            .unwrap()
+            .columns = vec!["sequence".into(), "tenant".into()];
+        assert_ne!(tuple_fingerprint, filter_fingerprint(&first).unwrap());
     }
 
     #[test]

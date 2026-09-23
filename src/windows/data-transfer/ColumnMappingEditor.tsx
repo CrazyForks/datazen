@@ -7,6 +7,7 @@ import type {
   TransferColumnMapping,
   TransferRecordset,
   TransferRecordsetBound,
+  TransferRecordsetTupleBound,
   TransferTableResult,
 } from '../../commands/transfer';
 import {
@@ -172,6 +173,7 @@ function RecordsetEditor({
   const columns = table.sourceColumns ?? [];
   const primaryKeys = table.sourcePrimaryKeys ?? [];
   const defaultOrder = primaryKeys.length === 1 ? primaryKeys[0] : undefined;
+  const tupleRange = recordset?.tupleRange;
   const orderBy = recordset?.orderBy ?? defaultOrder ?? '';
   const orderOptions = [
     { value: '', label: t('transfer.mapping.recordset.orderRequired') },
@@ -203,8 +205,45 @@ function RecordsetEditor({
     update({ [name]: next });
   };
 
+  const updateTupleBound = (name: 'start' | 'end', patch: Partial<TransferRecordsetTupleBound>) => {
+    const current = tupleRange?.[name];
+    const next = {
+      ...(current ?? { values: primaryKeys.map(() => ''), inclusive: true }),
+      ...patch,
+    };
+    if (next.values.every((value) => !value.trim())) {
+      onChange({
+        ...(recordset ?? {}),
+        tupleRange: {
+          columns: primaryKeys,
+          ...(tupleRange?.start && name !== 'start' ? { start: tupleRange.start } : {}),
+          ...(tupleRange?.end && name !== 'end' ? { end: tupleRange.end } : {}),
+        },
+      });
+      return;
+    }
+    onChange({
+      ...(recordset ?? {}),
+      orderBy: undefined,
+      start: undefined,
+      end: undefined,
+      tupleRange: {
+        columns: primaryKeys,
+        ...(name === 'start'
+          ? { start: next }
+          : tupleRange?.start
+            ? { start: tupleRange.start }
+            : {}),
+        ...(name === 'end' ? { end: next } : tupleRange?.end ? { end: tupleRange.end } : {}),
+      },
+    });
+  };
+
   return (
-    <div className="space-y-2 rounded-lg border border-edge bg-surface-alt p-3" data-testid="data-transfer-recordset">
+    <div
+      className="space-y-2 rounded-lg border border-edge bg-surface-alt p-3"
+      data-testid="data-transfer-recordset"
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-sm font-medium">{t('transfer.mapping.recordset')}</div>
@@ -215,7 +254,13 @@ function RecordsetEditor({
           checked={Boolean(recordset)}
           data-testid="data-transfer-recordset-enable"
           onChange={(event) => {
-            onChange(event.target.checked ? { orderBy: defaultOrder } : undefined);
+            onChange(
+              event.target.checked
+                ? primaryKeys.length > 1
+                  ? { tupleRange: { columns: primaryKeys } }
+                  : { orderBy: defaultOrder }
+                : undefined,
+            );
           }}
         />
       </div>
@@ -223,57 +268,119 @@ function RecordsetEditor({
         <p className="text-xs text-fg-muted">{t('transfer.mapping.noRecordset')}</p>
       ) : (
         <div className="space-y-2" data-testid="data-transfer-recordset-editor">
-          <label className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-fg-muted">{t('transfer.mapping.recordsetOrder')}</span>
-            <Select
-              value={orderBy}
-              options={orderOptions}
-              onChange={(value) => update({ orderBy: value || undefined })}
-              className="!h-7 min-w-48 !text-xs"
-              triggerDataAttrs={{ 'data-testid': 'data-transfer-recordset-order' }}
-            />
-          </label>
-          {!orderBy && (
-            <p className="text-xs text-warning" data-testid="data-transfer-recordset-order-error">
-              {t('transfer.mapping.recordsetOrderRequired')}
-            </p>
-          )}
-          <div className="grid gap-2 sm:grid-cols-2">
-            {(['start', 'end'] as const).map((name) => {
-              const bound = recordset[name];
-              return (
-                <label key={name} className="flex flex-col gap-1 text-xs">
-                  <span className="text-fg-muted">
-                    {name === 'start'
-                      ? t('transfer.mapping.recordsetStart')
-                      : t('transfer.mapping.recordsetEnd')}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={bound?.value ?? ''}
-                      placeholder={t('transfer.mapping.recordsetUnbounded')}
-                      data-testid={`data-transfer-recordset-${name}`}
-                      onChange={(event) => updateBound(name, { value: event.target.value })}
-                      className="h-7 min-w-0 flex-1 rounded border border-edge bg-surface px-2 text-xs"
-                    />
-                    {bound && (
-                      <label className="flex shrink-0 items-center gap-1 text-fg-muted">
+          {tupleRange ? (
+            <div className="space-y-2" data-testid="data-transfer-recordset-tuple-editor">
+              <div className="text-xs text-fg-muted">
+                {t('transfer.mapping.recordsetOrder')}: {primaryKeys.join(' → ')}
+              </div>
+              <p
+                className="text-xs text-warning"
+                data-testid="data-transfer-recordset-tuple-collation-hint"
+              >
+                {t('transfer.mapping.recordsetTextCollationHint')}
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(['start', 'end'] as const).map((name) => {
+                  const bound = tupleRange[name];
+                  return (
+                    <div key={name} className="space-y-1 rounded border border-edge p-2 text-xs">
+                      <span className="text-fg-muted">
+                        {name === 'start'
+                          ? t('transfer.mapping.recordsetStart')
+                          : t('transfer.mapping.recordsetEnd')}
+                      </span>
+                      {primaryKeys.map((column, index) => (
+                        <label key={column} className="flex items-center gap-2">
+                          <span className="w-24 shrink-0 truncate font-mono">{column}</span>
+                          <input
+                            value={bound?.values[index] ?? ''}
+                            placeholder={t('transfer.mapping.recordsetUnbounded')}
+                            data-testid={`data-transfer-recordset-tuple-${name}-${index}`}
+                            onChange={(event) => {
+                              const values = bound?.values.slice() ?? primaryKeys.map(() => '');
+                              values[index] = event.target.value;
+                              updateTupleBound(name, { values });
+                            }}
+                            className="h-7 min-w-0 flex-1 rounded border border-edge bg-surface px-2 text-xs"
+                          />
+                        </label>
+                      ))}
+                      {bound && (
+                        <label className="flex items-center gap-1 text-fg-muted">
+                          <input
+                            type="checkbox"
+                            checked={bound.inclusive ?? true}
+                            data-testid={`data-transfer-recordset-tuple-${name}-inclusive`}
+                            onChange={(event) =>
+                              updateTupleBound(name, { inclusive: event.target.checked })
+                            }
+                          />
+                          {t('transfer.mapping.recordsetInclusive')}
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <>
+              <label className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-fg-muted">{t('transfer.mapping.recordsetOrder')}</span>
+                <Select
+                  value={orderBy}
+                  options={orderOptions}
+                  onChange={(value) => update({ orderBy: value || undefined })}
+                  className="!h-7 min-w-48 !text-xs"
+                  triggerDataAttrs={{ 'data-testid': 'data-transfer-recordset-order' }}
+                />
+              </label>
+              {!orderBy && (
+                <p
+                  className="text-xs text-warning"
+                  data-testid="data-transfer-recordset-order-error"
+                >
+                  {t('transfer.mapping.recordsetOrderRequired')}
+                </p>
+              )}
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(['start', 'end'] as const).map((name) => {
+                  const bound = recordset[name];
+                  return (
+                    <label key={name} className="flex flex-col gap-1 text-xs">
+                      <span className="text-fg-muted">
+                        {name === 'start'
+                          ? t('transfer.mapping.recordsetStart')
+                          : t('transfer.mapping.recordsetEnd')}
+                      </span>
+                      <div className="flex items-center gap-2">
                         <input
-                          type="checkbox"
-                          checked={bound.inclusive ?? true}
-                          data-testid={`data-transfer-recordset-${name}-inclusive`}
-                          onChange={(event) =>
-                            updateBound(name, { inclusive: event.target.checked })
-                          }
+                          value={bound?.value ?? ''}
+                          placeholder={t('transfer.mapping.recordsetUnbounded')}
+                          data-testid={`data-transfer-recordset-${name}`}
+                          onChange={(event) => updateBound(name, { value: event.target.value })}
+                          className="h-7 min-w-0 flex-1 rounded border border-edge bg-surface px-2 text-xs"
                         />
-                        {t('transfer.mapping.recordsetInclusive')}
-                      </label>
-                    )}
-                  </div>
-                </label>
-              );
-            })}
-          </div>
+                        {bound && (
+                          <label className="flex shrink-0 items-center gap-1 text-fg-muted">
+                            <input
+                              type="checkbox"
+                              checked={bound.inclusive ?? true}
+                              data-testid={`data-transfer-recordset-${name}-inclusive`}
+                              onChange={(event) =>
+                                updateBound(name, { inclusive: event.target.checked })
+                              }
+                            />
+                            {t('transfer.mapping.recordsetInclusive')}
+                          </label>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
           <label className="flex items-center gap-2 text-xs">
             <span className="text-fg-muted">{t('transfer.mapping.recordsetLimit')}</span>
             <input

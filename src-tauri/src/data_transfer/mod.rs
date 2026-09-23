@@ -18,17 +18,17 @@ pub mod structure;
 mod writer;
 
 pub use error::TransferError;
-pub use execute::{execute_transfer_data, DropCreateContext, ValueFormatter};
+pub use execute::{DropCreateContext, ValueFormatter, execute_transfer_data};
 pub use filter::{FilterLogic, SourceFilter};
 pub use mapping::inspect_tables;
 pub use model::{
     DdlPreviewItem, DdlPreviewKind, SqlFileCompression, SqlFileEncoding, SqlFileTarget,
     TableInspectResult, TableMapping, TransferExecutionResult, TransferJob, TransferMode,
     TransferPairingView, TransferPreview, TransferRecordset, TransferRecordsetBound,
-    TransferRunRequest, WriteMode,
+    TransferRecordsetTupleBound, TransferRecordsetTupleRange, TransferRunRequest, WriteMode,
 };
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
-pub use preview::{build_preview, TransferPreviewAdapters};
+pub use preview::{TransferPreviewAdapters, build_preview};
 pub use profile::TransferProfile;
 pub use structure::{column_ir_types_by_source, create_target_tables, source_schema_to_target_ir};
 

@@ -1,8 +1,8 @@
 //! Batch INSERT execute path (same-family and IR).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use datazen_driver_api::TableSchema;
 
@@ -231,6 +231,7 @@ pub async fn execute_transfer_data(
             mapping.and_then(|mapping| mapping.source_filter.as_ref()),
             mapping.and_then(|mapping| mapping.recordset.as_ref()),
             src_quote,
+            &src_family,
             |index, data_type| {
                 src_driver
                     .parameter_placeholder(index, data_type)

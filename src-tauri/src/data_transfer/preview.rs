@@ -404,6 +404,7 @@ mod tests {
             order_by: None,
             start: None,
             end: None,
+            tuple_range: None,
             limit: Some(25),
         });
         let schema = TableSchema {
@@ -459,7 +460,7 @@ mod tests {
         assert_eq!(preview.write_plans[0].estimated_rows, None);
         assert_eq!(
             preview.write_plans[0].recordset_preview.as_deref(),
-            Some(r#"ORDER BY "id" ASC LIMIT ?"#)
+            Some(r#"ORDER BY "id" ASC LIMIT 25"#)
         );
     }
 

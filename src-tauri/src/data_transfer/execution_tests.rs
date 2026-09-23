@@ -407,10 +407,9 @@ async fn bytes_and_strings_survive_bound_projection_and_commit() {
 
 #[tokio::test]
 async fn recordset_scope_shares_filter_order_and_bound_parameter_order() {
-    let source = driver(
-        vec![vec![Some(Value::Integer(2))]],
-        schema(&["id", "status"]),
-    );
+    let mut source_schema = schema(&["id", "status"]);
+    source_schema.columns[0].data_type = "INTEGER".into();
+    let source = driver(vec![vec![Some(Value::Integer(2))]], source_schema);
     let target = driver(vec![], schema(&["id"]));
     let mut job = job();
     job.tables = vec![TableMapping {
@@ -434,6 +433,7 @@ async fn recordset_scope_shares_filter_order_and_bound_parameter_order() {
                 value: serde_json::json!(5),
                 inclusive: false,
             }),
+            tuple_range: None,
             limit: Some(2),
         }),
     }];
@@ -568,16 +568,18 @@ fn same_named_columns_use_their_own_table_ir_and_missing_types_fail() {
         .unwrap();
         assert!(matches!(&params[0], Value::String(value) if value == expected));
     }
-    assert!(super::writer::bound_insert(
-        &driver,
-        "missing",
-        "target",
-        &[&binding],
-        &driver.schema,
-        &row,
-        &formatter
-    )
-    .is_err());
+    assert!(
+        super::writer::bound_insert(
+            &driver,
+            "missing",
+            "target",
+            &[&binding],
+            &driver.schema,
+            &row,
+            &formatter
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -675,10 +677,12 @@ async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
 
     assert!(result.partial);
     assert_eq!(result.rows_inserted, 0);
-    assert!(result.tables[0]
-        .error
-        .as_deref()
-        .is_some_and(|message| message.contains("structured relation support")));
+    assert!(
+        result.tables[0]
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("structured relation support"))
+    );
     let target_state = target.state.lock().unwrap();
     assert_eq!(target_state.calls, 0);
     assert!(target_state.metadata_refs.is_empty());

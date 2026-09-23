@@ -2,13 +2,58 @@
 
 use std::collections::HashMap;
 
-use super::super::error::{CmdExt, CommandError};
 use super::super::AppState;
+use super::super::error::{CmdExt, CommandError};
 use super::inspect::inspect_data_transfer_impl;
 use crate::data_transfer::{
-    build_preview, enforce_transfer_pairing, TransferJob, TransferPreview, TransferPreviewAdapters,
+    TransferJob, TransferPreview, TransferPreviewAdapters, build_preview, enforce_transfer_pairing,
 };
 use datazen_driver_api::{TableSchema, TableType};
+
+async fn count_scoped_source_rows(
+    driver: &dyn crate::db::DatabaseDriver,
+    handle: &crate::db::ConnectionHandle,
+    endpoint: &crate::data_transfer::model::Endpoint,
+    table: &str,
+    scope: &crate::data_transfer::recordset::SourceScope,
+    limit: Option<u64>,
+) -> Result<u64, CommandError> {
+    let relation = crate::data_sync::sql::qualify_relation_sql(
+        &driver.driver_type(),
+        Some(&endpoint.database),
+        endpoint.normalized_schema(),
+        table,
+        driver.quote_char(),
+    );
+    let mut sql = format!("SELECT COUNT(*) FROM {relation}");
+    if let Some(where_sql) = &scope.where_sql {
+        sql.push(' ');
+        sql.push_str(where_sql);
+    }
+    let result = driver
+        .query_with_params(handle, &sql, &scope.count_params)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    let value = result
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(Option::as_ref)
+        .ok_or_else(|| CommandError::Validation("source count query returned no count".into()))?;
+    let count = match value {
+        crate::db::Value::Integer(value) => u64::try_from(*value)
+            .map_err(|_| CommandError::Validation("source count was negative".into())),
+        crate::db::Value::String(value) => value.parse::<u64>().map_err(|_| {
+            CommandError::Validation("source count was not an unsigned integer".into())
+        }),
+        _ => {
+            return Err(CommandError::Validation(
+                "source count query returned an unsupported value".into(),
+            ));
+        }
+    }?;
+    Ok(limit.map_or(count, |limit| count.min(limit)))
+}
 
 /// Preview the source scope and SQL statements for a native-dialog-selected
 /// file target. The file path remains in the server registry and the plan only
@@ -194,6 +239,7 @@ async fn preview_sql_file_target(
             mapping.source_filter.as_ref(),
             mapping.recordset.as_ref(),
             src_driver.quote_char(),
+            &src_driver.driver_type(),
             |index, data_type| {
                 src_driver
                     .parameter_placeholder(index, data_type)
@@ -285,6 +331,7 @@ async fn preview_sql_file_target(
                 mapping.and_then(|mapping| mapping.source_filter.as_ref()),
                 mapping.and_then(|mapping| mapping.recordset.as_ref()),
                 src_driver.quote_char(),
+                &src_driver.driver_type(),
                 |index, data_type| {
                     src_driver
                         .parameter_placeholder(index, data_type)
@@ -301,6 +348,22 @@ async fn preview_sql_file_target(
                 },
             )
             .map_err(CommandError::from)?;
+            let estimated_rows = if mapping.is_some_and(|mapping| mapping.recordset.is_some()) {
+                Some(
+                    count_scoped_source_rows(
+                        src_driver.as_ref(),
+                        &src_handle,
+                        &job.source,
+                        &table.source_table,
+                        &scope,
+                        mapping
+                            .and_then(|mapping| mapping.recordset.as_ref().and_then(|r| r.limit)),
+                    )
+                    .await?,
+                )
+            } else {
+                table.source_row_count
+            };
             preview
                 .write_plans
                 .push(crate::data_transfer::model::WritePlanItem {
@@ -308,7 +371,7 @@ async fn preview_sql_file_target(
                     target_table: table.target_table.clone(),
                     write_mode: job.write_mode,
                     mapped_columns: table.column_mappings.clone(),
-                    estimated_rows: table.source_row_count,
+                    estimated_rows,
                     preamble: Vec::new(),
                     source_filter_preview: scope.where_sql,
                     recordset_preview: scope.recordset_sql,
@@ -486,6 +549,7 @@ pub(crate) async fn preview_data_transfer_impl(
             mapping.source_filter.as_ref(),
             mapping.recordset.as_ref(),
             src_driver.quote_char(),
+            &src_driver.driver_type(),
             |index, data_type| {
                 src_driver
                     .parameter_placeholder(index, data_type)
@@ -573,6 +637,7 @@ pub(crate) async fn preview_data_transfer_impl(
             mapping.source_filter.as_ref(),
             mapping.recordset.as_ref(),
             src_driver.quote_char(),
+            &src_driver.driver_type(),
             |index, data_type| {
                 src_driver
                     .parameter_placeholder(index, data_type)
@@ -591,8 +656,37 @@ pub(crate) async fn preview_data_transfer_impl(
         .map_err(|error| {
             CommandError::Validation(format!("cannot render typed source scope preview: {error}"))
         })?;
-        write_plan.source_filter_preview = scope.where_sql;
-        write_plan.recordset_preview = scope.recordset_sql;
+        write_plan.source_filter_preview = scope.where_sql.clone();
+        if let Some(recordset) = mapping.recordset.as_ref() {
+            if recordset.tuple_range.is_some() {
+                write_plan.recordset_preview = Some(
+                    crate::data_transfer::recordset::preview_summary(
+                        schema,
+                        recordset,
+                        src_driver.quote_char(),
+                    )
+                    .map_err(CommandError::from)?,
+                );
+            } else {
+                write_plan.recordset_preview = scope.recordset_sql.clone();
+            }
+            write_plan.estimated_rows = Some(
+                count_scoped_source_rows(
+                    src_driver.as_ref(),
+                    &src_handle,
+                    &job.source,
+                    &write_plan.source_table,
+                    &scope,
+                    mapping
+                        .recordset
+                        .as_ref()
+                        .and_then(|recordset| recordset.limit),
+                )
+                .await?,
+            );
+        } else {
+            write_plan.recordset_preview = scope.recordset_sql;
+        }
     }
 
     if matches!(
