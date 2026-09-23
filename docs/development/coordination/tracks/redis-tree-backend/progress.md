@@ -729,7 +729,9 @@ clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生
    `packages/drivers/redis/ui`、exclude 测试文件；**用后即删未提交**）实测 ⇒ 驱动 UI **非测试**文件
    `error TS` 恰 **12 条**：`console/consoleResultRenderer.tsx` TS6133 ×1 +
    `observe/SearchableInfoPanel.tsx`（TS6133 ×2 / TS2345 ×7 / TS2322 ×1 / TS2488 ×1）×11；
-   **本轨 4 个 ui 文件（BatchBar / ImportExport / redisInvoke / 新测试）0 命中** ⇒ 自报属实。
+   **本轨 4 个 ui 文件（BatchBar / ImportExport / redisInvoke / 新测试）0 命中** ⇒ 总数 12 属实。
+   （修复轮自报的分项里 SearchableInfoPanel 写成 "TS6133 ×3"，实测 ×2、且其分项和为 13≠12——
+   纯台账算术差，不影响"12 条全在本轨未触碰文件"的结论。）
    （同口径下另有测试文件与 `packages/ui/tid.ts`、codegen `generated.ts` 的噪声错误，不计入该 12。）
 3. **`consumed` 口径**：冻结注记与实现逐字一致（见阶段 1-2）——`consumed == 0` 承诺保留在
    `dbsize > 0` 快路径，降级路径改为一轮真 SCAN 的真实消耗。Wave 4 判"DBSIZE 快答"需
