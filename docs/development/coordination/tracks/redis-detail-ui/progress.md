@@ -1,8 +1,13 @@
 - 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
 - 状态: **TEST_FAILED**（第 1 轮 Tester 复验：门禁四件套独立重跑全绿，但登记 6 条 Bug，其中 BUG-001/002 属 PRD §4 I-1 的静默丢草稿类别 ⇒ 交原 Coder 修复，Bug 循环 1/5）
 - 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
-- Tester commit 链: `dbd9218e0`(阶段A/B 台账) · `da4bc9531`(补测 8 例) · `e0901a717`/`a3315e84e`/`6e4a89bf9`/`449db8059`/`9c02aefbe`(BUG-001..006) · `515eeb35e`/`307d60a0a`/`444d970b0`(补测 12 例)
-- 心跳: 2026-09-23 12:25（Tester · 最后 commit `c46c3a831` 后仍在收口 E2E 登记表）
+- Tester commit 链（12 笔，边测边 commit，无 >15min 无落盘区间）:
+  `dbd9218e0` 阶段 A/B 台账（BOOTSTRAP + 门禁 + E-1/E-2）→ `da4bc9531` 补测 I-1 支路 8 例（+3 skip 占位）
+  → `e0901a717` **BUG-001** → `a3315e84e` **BUG-002** → `6e4a89bf9` **BUG-003** → `449db8059` **BUG-004 + BUG-005**
+  → `9c02aefbe` **BUG-006 + bugs/README 索引** → `515eeb35e` 补测 StringEditor 支路 6 例 → `307d60a0a` 补测 invoke/ValueViewer 7 例
+  → `444d970b0` 补测截断徽标 2 例 → `c46c3a831` 复验记录 T-4..T-12 → `ca43d72d6` E2E 登记表 T-13
+- Tester 终态：`58 files / 546 passed / 3 skipped`（+21 例）· tsc 0 · vite build 0 · boundaries 1472 files / 0 blocking · **生产码零改动**
+- 心跳: 2026-09-23 12:26（Tester 收口；本节以下为复验记录）
 - 编码 commit: `b4d5df64d`(E-1 五枚页签) · `63c5ce0b3`(E-2 常驻编辑) · `96170add2`(E-3 I-5 收敛) · `116de7495`(E-4 键头行) · `f5a273cd2`(E-5 I-1 拦截)
 - 测试 commit: `fa469154c`(E-5 dirty-leave 旅程电池 +54 行：Esc 关闭 / 卸载悬起 / 非法 JSON 三条边角出口)
 - 门禁 commit: 见本文件所在 commit（`docs(coordination): W3-E detail-ui gates + self-verification record`）
