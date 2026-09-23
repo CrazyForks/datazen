@@ -868,3 +868,13 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
   - Redis Rust lib：`CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen-driver-redis --lib` — 342 passed / 0 failed / 4 ignored。
   - `git diff --check` — 通过。
 - **当前阶段：`READY_FOR_TEST`**。独立 Tester 复测入口为上述 targeted + 完整驱动 UI、TypeScript 和 Redis Rust lib 三件套；两条 Bug 文件均已改为 `待复测`。
+
+## 修复轮第 3 轮验收（Tester，2026-09-23）
+
+### BOOTSTRAP
+
+- Tester 为全新实例；worktree：`.worktrees/datazen-redis-kv-context-bar`，branch：`feature/redis-kv-context-bar`。
+- 起始 HEAD：`f47f063ac`；其父提交包含修复 `392e851aa` 与第 2 轮失败基线 `af25e5ae6`。
+- 起始 `git status --short` 仅为 ` M Cargo.lock`；diff 只有 `datazen-driver-redis` dependencies 增加 `flate2` 一行。确认这是已知 lockfile 漂移，保留且不暂存、不提交。
+- 必读：根 `AGENTS.md`、`docs/development/subagent/tester.md`、测试简报模板、本轨 progress、BUG-001/BUG-002；本轮仅写本轨账本与测试，不改生产代码，不碰 hub。
+- 本轮必须独立完成 A/B/C/D；修复前反向变异、修复后复测、全驱动 Vitest / Redis Rust lib / TypeScript、覆盖率与 E2E 登记均待执行。
