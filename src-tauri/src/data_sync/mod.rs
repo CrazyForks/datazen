@@ -9,6 +9,7 @@ pub mod compare;
 pub mod error;
 pub mod execute;
 pub mod filter;
+mod filter_values;
 pub mod gate;
 pub mod keyset;
 pub mod legacy;
@@ -16,6 +17,7 @@ pub mod mapping;
 pub mod model;
 pub mod pairing;
 pub mod profile;
+mod recordset;
 pub mod session;
 pub mod sql;
 pub mod state;
@@ -32,7 +34,7 @@ pub use execute::{
     execute_statement_batches_with_policy, execute_statements, execute_statements_with_policy,
     ExecutionResult, StatementBatchSource, StatementExecutor, SyncConflict,
 };
-pub use filter::{SyncFilterLogic, SyncRecordset, SyncRecordsetBound, SyncSourceFilter};
+pub use filter::{SyncFilterLogic, SyncSourceFilter};
 pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
 pub use keyset::{
     build_keyset_select_sql, build_keyset_select_sql_with_order,
@@ -49,6 +51,9 @@ pub use model::{
 };
 pub use pairing::{classify_data_sync_pair, require_data_sync_family, DataSyncPairingView};
 pub use profile::SyncProfile;
+pub use recordset::{
+    SyncRecordset, SyncRecordsetBound, SyncRecordsetTupleBound, SyncRecordsetTupleRange,
+};
 pub use session::SyncSession;
 pub use sql::{
     generate_table_sql, generate_table_sql_with_preview_formatter,

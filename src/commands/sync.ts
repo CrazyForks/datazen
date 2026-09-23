@@ -87,7 +87,21 @@ export interface DataSyncRecordset {
   orderBy?: string;
   start?: DataSyncRecordsetBound;
   end?: DataSyncRecordsetBound;
+  /** Complete ordered composite primary-key range; cannot mix scalar fields. */
+  tupleRange?: DataSyncRecordsetTupleRange;
   limit?: number;
+}
+
+export interface DataSyncRecordsetTupleRange {
+  columns: string[];
+  start?: DataSyncRecordsetTupleBound;
+  end?: DataSyncRecordsetTupleBound;
+}
+
+export interface DataSyncRecordsetTupleBound {
+  /** One lossless text value per key column, in `columns` order. */
+  values: string[];
+  inclusive?: boolean;
 }
 
 export interface SyncOptions {

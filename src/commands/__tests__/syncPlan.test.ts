@@ -237,6 +237,48 @@ describe('Data Sync immutable plan IPC', () => {
         },
       }),
     );
+
+    invoke.mockResolvedValueOnce({ planId: 'tuple-plan', selectionRevision: 2, tables: [] });
+    await syncCommands.compareDataSync(
+      'source-session',
+      'target-session',
+      ['events'],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { insert: true, update: true, delete: false },
+      {
+        events: {
+          filters: [],
+          recordset: {
+            tupleRange: {
+              columns: ['tenant_id', 'id'],
+              start: { values: ['9223372036854775808', '01'], inclusive: false },
+              end: { values: ['9223372036854775808', '99'], inclusive: true },
+            },
+          },
+        },
+      },
+    );
+    expect(invoke).toHaveBeenLastCalledWith(
+      'compare_data_sync',
+      expect.objectContaining({
+        filters: {
+          events: {
+            filters: [],
+            recordset: {
+              tupleRange: {
+                columns: ['tenant_id', 'id'],
+                start: { values: ['9223372036854775808', '01'], inclusive: false },
+                end: { values: ['9223372036854775808', '99'], inclusive: true },
+              },
+            },
+          },
+        },
+      }),
+    );
   });
 
   it('loads an opaque page and preserves selected keys without row payloads in compare', async () => {
