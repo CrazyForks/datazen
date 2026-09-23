@@ -215,7 +215,7 @@
   但向用户展示与筛选条件矛盾的事实（列表有行、树断言 `no-match`），且修复记录（本文件 BUG-001
   修复记录第 3-4 行「glob 语义对齐 Redis `MATCH`」）的声明在这 16 个面上不成立。
   若协调者认为与 BUG-001「两事实互相矛盾」同级可升 Major，由协调者裁定，Tester 给出证据。
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **涉及文件**
   - `packages/drivers/redis/ui/key-browser/keyTreeFilter.ts:43-56` —— `globToRegExp`：
     `*`→`.*`、`?`→`.`、其余转义 `[.+^${}()|[\]\\]`、`^...$` 锚定、大小写敏感
@@ -267,7 +267,7 @@
 - **严重度**：**Minor** —— 当前未观测到用户可见错误（helper 级 `nextActiveIndex` 夹紧有测），
   但修复轮明确声称的行为在全部 613 条测试里执行 0 次，回归（删守卫）不会让任何门禁变红；
   违反本仓「连续旅程测试：交互必须覆盖中间态并断言跃迁」原则对 I-9 的要求。
-- **状态**：`待修复`
+- **状态**：`修复中`
 - **涉及文件**
   - `packages/drivers/redis/ui/key-browser/KeyTreeList.tsx:171-178` —— `stepActiveIndex`
     的 `while (... !isNavigable(index))` 跨过循环；
