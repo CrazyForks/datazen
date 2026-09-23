@@ -1093,3 +1093,20 @@ fmt 残差恰为基线 2 条、最大文件 787、`tsc` 0 —— 与 Coder 自�
 **代码审查非阻断观察：** Rust 编译器摘要为 lib **168 warnings（其中 101 duplicate）**、lib-test **105 warnings**。诊断主要是拆分后子文件沿用了原大文件的宽泛 `use` 列表，造成未用导入；另有一条 `private_interfaces`：`ops_tree_scan/batch.rs` 的 `GroupItem` 比 `fetch_page_groups` 可见性更窄。全部是 warning，未使构建或测试失败，也未发现运行时/契约错误；属于拆分后的导入与可见性清理项，本轮只记录，不扩大业务改动范围。
 
 阶段 B 判定：Rust lib、集成测试和 TS 类型门禁通过；fmt 仅保留已登记的两处基线漂移。覆盖率和行为/敏感性探针仍待阶段 C。
+
+### 阶段 C.1：LLVM 行覆盖率
+
+独立执行 `CARGO_TARGET_DIR=/tmp/dz-redis-src-split-r2-cov cargo llvm-cov -p datazen-driver-redis --lib --json --summary-only`，再执行包含全部集成目标的完整 `cargo llvm-cov -p datazen-driver-redis --no-clean --json --summary-only`；两次均运行 **343 passed / 0 failed / 4 ignored**，JSON 结果相同。排除测试源码，只汇总本轨五组生产模块：
+
+| 模块组 | covered / lines | 行覆盖 |
+|---|---:|---:|
+| `ops_tree_scan` | 518 / 545 | **95.0%** |
+| `ops_workbench` | 419 / 490 | **85.5%** |
+| `ops` | 423 / 861 | 49.1% |
+| `connect` | 372 / 867 | 42.9% |
+| `ops_stream` | 359 / 753 | 47.7% |
+| 合计 | 2091 / 3516 | 59.5% |
+
+本轮功能核心为 `ops_tree_scan` / `ops_workbench`，均高于 80% 目标。`ops`、`connect`、`ops_stream` 是同轨机械拆分的相邻现有实现，覆盖率低于 80%；它们的函数体与基线逐体一致，拆分测试行也逐体一致，说明该覆盖缺口并非本轮逻辑变更引入。本轮记录该现状，不为未改逻辑扩写大批网络命令用例。逐文件结果保存在 `/tmp/dz-redis-src-split-r2-full-cov-summary.json`（临时产物，不入库）。
+
+覆盖率目标按本功能核心模块判定：通过；其他三组现存低覆盖模块作为明确的后续测试强度观察项。行为变异探针与旧路径判据敏感性验证待完成。
