@@ -3,6 +3,10 @@
 //! Redis UI, Workflow, generic IPC, and MCP all execute operations through
 //! `execute_command`. The Redis Tauri plugin is setup-only (Pub/Sub events).
 
+pub(crate) mod exec;
+
+pub use exec::execute_redis_command;
+
 use datazen_driver_api::{
     execute_command_definition, query_command_definition, query_stream_command_definition,
     schema_catalog_command_definitions, CommandCategory, DriverCommandDefinition,

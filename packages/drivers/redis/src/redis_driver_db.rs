@@ -311,7 +311,7 @@ impl DatabaseDriver for RedisDriver {
         command_id: &str,
         input: serde_json::Value,
     ) -> Result<CommandResult, DriverError> {
-        crate::commands_exec::execute_redis_command(self, handle, command_id, input).await
+        crate::commands::exec::execute_redis_command(self, handle, command_id, input).await
     }
 
     async fn cancel_query(&self, _handle: &ConnectionHandle) -> Result<(), DriverError> {

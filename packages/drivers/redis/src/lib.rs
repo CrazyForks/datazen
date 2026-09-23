@@ -5,7 +5,6 @@ use std::sync::{Arc, OnceLock};
 use datazen_driver_api::*;
 
 mod commands;
-mod commands_exec;
 mod connect;
 mod decode;
 mod ops;
