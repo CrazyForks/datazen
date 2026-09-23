@@ -36,108 +36,16 @@ export type KeyTreeRow =
 export const SEPARATOR_CHOICES = [':', '.', '/'] as const;
 export const DEFAULT_SEPARATOR = ':';
 
-/** Server-side default of `list_children` when no `sep` is sent. */
-export function separatorsFor(sep: string): string[] {
-  return sep ? [sep] : [DEFAULT_SEPARATOR];
-}
-
-/** Split a key into namespace segments using the first matching separator. */
-export function splitKeyNamespace(key: string, separators: string[]): string[] {
-  for (const sep of separators) {
-    if (key.includes(sep)) {
-      return key.split(sep).filter((s) => s.length > 0);
-    }
-  }
-  return [key];
-}
-
 /**
- * Build a flat list of tree rows from key entries.
- * Folders are collapsed unless their path is in `expanded`.
- */
-export function buildKeyTreeRows(
-  keys: KeyEntry[],
-  expanded: Set<string>,
-  separators: string[],
-): KeyTreeRow[] {
-  type Node = {
-    label: string;
-    path: string;
-    children: Map<string, Node>;
-    entry?: KeyEntry;
-  };
-
-  const root: Node = { label: '', path: '', children: new Map() };
-
-  for (const entry of keys) {
-    const parts = splitKeyNamespace(entry.key, separators);
-    let node = root;
-    let path = '';
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!;
-      path = path ? `${path}${separators[0] ?? ':'}${part}` : part;
-      const isLeaf = i === parts.length - 1;
-      if (!node.children.has(part)) {
-        node.children.set(part, { label: part, path, children: new Map() });
-      }
-      const child = node.children.get(part)!;
-      if (isLeaf) {
-        child.entry = entry;
-      }
-      node = child;
-    }
-  }
-
-  const rows: KeyTreeRow[] = [];
-
-  function walk(node: Node, depth: number) {
-    const folders = [...node.children.values()].sort((a, b) => a.label.localeCompare(b.label));
-    for (const child of folders) {
-      const hasChildren = child.children.size > 0;
-      if (hasChildren) {
-        const count = countLeaves(child);
-        rows.push({
-          kind: 'folder',
-          path: child.path,
-          label: child.label,
-          depth,
-          count,
-        });
-        if (expanded.has(child.path)) {
-          walk(child, depth + 1);
-        }
-      } else if (child.entry) {
-        rows.push({
-          kind: 'key',
-          entry: child.entry,
-          depth,
-          label: child.label,
-        });
-      }
-    }
-  }
-
-  walk(root, 0);
-  return rows;
-}
-
-function countLeaves(node: { children: Map<string, unknown>; entry?: KeyEntry }): number {
-  let n = node.entry ? 1 : 0;
-  for (const child of node.children.values()) {
-    n += countLeaves(child as { children: Map<string, unknown>; entry?: KeyEntry });
-  }
-  return n;
-}
-
-/**
- * True when `key` lives under `folderPrefix`.
+ * True when `key` lives under `folderPrefix` — the folder-checkbox cascade and
+ * the BUG-001 visible-key set both decide subtree membership with it.
  *
- * Server tree prefixes carry a trailing separator (`app:`), the client-built
- * fallback rows do not (`app`), and *either* may have been produced with a
- * separator other than the one now configured — so a bare `startsWith` would let
- * `app` swallow `apple`. The rule is therefore: the remainder must be non-empty
- * and the boundary must be a separator (the configured one, or any of
- * {@link SEPARATOR_CHOICES} for a prefix folded before the preference changed).
+ * A prefix carries its trailing separator (`app:`), but it may have been folded
+ * with a separator other than the one now configured (per-connection preference,
+ * a level loaded before it changed), and a key may simply not repeat it. A bare
+ * `startsWith` would let `app` swallow `apple`, so the rule is: the remainder
+ * must be non-empty **and** the boundary must be a separator — the configured
+ * one, or any of {@link SEPARATOR_CHOICES} for a foreign-folded prefix.
  */
 export function keyUnderFolder(key: string, folderPrefix: string, sep?: string): boolean {
   if (!key.startsWith(folderPrefix)) return false;

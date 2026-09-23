@@ -9,10 +9,12 @@ import type { TreeViewMode } from './treePreferences';
  * Two controls, both per-connection and both pure *view* state:
  *  - `树 / 列表` — fold namespaces, or list the loaded keys flat. The escape
  *    hatch for a keyspace whose names legitimately contain the separator;
- *  - 分隔符 `:` / `.` / `/` — the one character `list_children` groups on. It is
- *    sent to the server *and* used to fold the flat fallback list, so a change
- *    re-computes the whole tree immediately (state machine asserted in
- *    `keyTree.test.ts`, DOM journey in `keyTreeInteractionsJourney.test.tsx`).
+ *  - 分隔符 `:` / `.` / `/` — the one character `list_children` groups on, i.e.
+ *    grouping is server-side: the value is sent as `sep` *and* re-keys the tree's
+ *    reset trigger, so a change re-fetches and re-derives the whole tree
+ *    immediately. The state machine (levels + separator → rows, live path
+ *    `buildServerTreeRows`) is asserted in `keyTree.test.ts`; the DOM journey is
+ *    in `keyTreeInteractionsJourney.test.tsx`.
  *
  * `规则分组` (regex grouping) is P2 and deliberately absent (task book §1 D-3).
  */
