@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tester_recovery_tests.rs"]
+mod tester_recovery_tests;
 use crate::data_sync::{
     compare_table_pages_to_sink, ChangeOperation, RowChange, SliceRowSource, SyncOptions,
     TableResult,
@@ -462,6 +464,7 @@ fn stale_owner_store_is_reclaimed_after_its_lease_is_released() {
     let temporary = tempfile::tempdir().unwrap();
     let root = ensure_private_store_root(&temporary.path().join("stores")).unwrap();
     let owner = acquire_owner_lease(&root).unwrap();
+    assert!(format!("{owner:?}").contains(&owner.id.to_string()));
     let directory = create_store_directory(&root, &owner).unwrap();
     fs::write(directory.join("partial.rows"), b"incomplete").unwrap();
     let outside = temporary.path().join("outside.txt");
@@ -568,6 +571,9 @@ fn cleanup_refuses_paths_outside_the_feature_store_root() {
 
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     assert!(outside_store.join("keep.txt").exists());
+
+    remove_owned_store_directory(&root, &outside_store, owner);
+    assert!(outside_store.join("keep.txt").exists());
 }
 
 #[test]
@@ -588,6 +594,11 @@ fn partial_row_and_index_write_failures_abort_and_cannot_be_finalized() {
 
         assert!(error.to_string().contains(expected));
         assert!(!directory.exists());
+        assert!(writer
+            .begin_table(TableResult::matched("retry", "retry", Vec::new()))
+            .unwrap_err()
+            .contains(expected));
+        assert!(writer.finish_table(0).unwrap_err().contains(expected));
         assert!(writer.finish().unwrap_err().contains(expected));
         assert!(!directory.exists());
     }
@@ -673,5 +684,56 @@ fn live_store_owned_by_another_process_is_not_reclaimed() {
     assert!(
         !directory.exists(),
         "exited peer's comparison store was not reclaimed"
+    );
+}
+
+#[test]
+fn test_tester_abrupt_child_exit_releases_sqlite_owner_lease() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = ensure_private_store_root(&temporary.path().join("stores")).unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("comparison_owner_lease_child_process")
+        .env(CHILD_OWNER_ROOT_ENV, &root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let ready = root.join("child-store-path");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("lease child exited before publishing its store path: {status}");
+        }
+        if std::time::Instant::now() >= deadline {
+            fs::write(root.join("child-release"), b"release").unwrap();
+            let _ = child.wait();
+            panic!("lease child did not become ready");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let directory = PathBuf::from(fs::read_to_string(&ready).unwrap());
+    let owner_id = parse_store_directory_name(directory.file_name().unwrap().to_str().unwrap())
+        .unwrap()
+        .0;
+    let lease_path = root
+        .join(OWNER_DIRECTORY)
+        .join(format!("{owner_id}.sqlite"));
+    assert!(directory.exists());
+
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    assert!(!status.success(), "child should be terminated without Drop");
+
+    scavenge_stale_stores(&root);
+
+    assert!(
+        !directory.exists(),
+        "abruptly exited peer's comparison store was not reclaimed"
+    );
+    assert!(
+        !lease_path.exists(),
+        "abruptly exited peer's owner lease was not reaped"
     );
 }
