@@ -31,16 +31,93 @@ impl Default for PlanOptions<'_> {
     }
 }
 
+fn is_postgres_character_type_cast(cast_type: &str) -> bool {
+    let compact = cast_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+
+    [
+        "bpchar",
+        "character",
+        "char",
+        "charactervarying",
+        "varchar",
+        "text",
+    ]
+    .iter()
+    .any(|base| {
+        if compact == *base {
+            return true;
+        }
+        let Some(typmod) = compact
+            .strip_prefix(base)
+            .and_then(|suffix| suffix.strip_prefix('('))
+            .and_then(|suffix| suffix.strip_suffix(')'))
+        else {
+            return false;
+        };
+        !typmod.is_empty() && typmod.chars().all(|ch| ch.is_ascii_digit())
+    })
+}
+
+/// Returns the quoted SQL-standard string literal only when the expression is
+/// exactly a PostgreSQL character-type cast. Backslashes are rejected because
+/// PostgreSQL and MySQL can interpret them differently under their SQL modes.
+fn postgres_character_literal_cast(default: &str) -> Option<&str> {
+    let expression = default.trim();
+    let bytes = expression.as_bytes();
+    if bytes.first() != Some(&b'\'') {
+        return None;
+    }
+
+    let mut cursor = 1;
+    let mut literal_end = None;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => return None,
+            b'\'' if bytes.get(cursor + 1) == Some(&b'\'') => cursor += 2,
+            b'\'' => {
+                literal_end = Some(cursor + 1);
+                break;
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    let literal_end = literal_end?;
+    let literal = &expression[..literal_end];
+    let cast_type = expression[literal_end..].trim().strip_prefix("::")?.trim();
+    is_postgres_character_type_cast(cast_type).then_some(literal)
+}
+
 /// Strips source-dialect-specific default expressions that would be invalid
-/// in the target dialect (e.g. PostgreSQL `nextval()` in MySQL).
+/// in the target dialect (e.g. PostgreSQL `nextval()` in MySQL), while
+/// preserving simple character defaults after removing a known catalog cast.
 fn strip_dialect_specific_defaults(
     op: &mut super::operations::MigrationOperation,
     warnings: &mut Vec<String>,
-) {
+    requirements: &mut Vec<PlanRequirement>,
+) -> bool {
+    use super::operations::MigrationOperation;
+
+    let operation_key = op.key();
     let pg_patterns = ["nextval(", "::regclass", "::"];
+    let has_dialect_syntax = |default: &str| {
+        let lowered = default.to_ascii_lowercase();
+        pg_patterns.iter().any(|pattern| lowered.contains(pattern))
+    };
     let strip = |col: &mut super::types::ColumnSnapshot, table: &str, w: &mut Vec<String>| {
         if let Some(ref d) = col.default_value {
-            if pg_patterns.iter().any(|p| d.contains(p)) {
+            if let Some(literal) = postgres_character_literal_cast(d) {
+                w.push(format!(
+                    "Mapped PostgreSQL character default cast for {}.{} to a portable string literal",
+                    table, col.name
+                ));
+                col.default_value = Some(literal.to_string());
+            } else if has_dialect_syntax(d) {
                 w.push(format!(
                     "Stripped dialect-specific default for {}.{}: {}",
                     table, col.name, d
@@ -50,15 +127,44 @@ fn strip_dialect_specific_defaults(
         }
     };
     match op {
-        super::operations::MigrationOperation::AddColumn { table, column } => {
-            strip(column, table, warnings)
+        MigrationOperation::AddColumn { table, column } => {
+            strip(column, table, warnings);
+            true
         }
-        super::operations::MigrationOperation::CreateTable { table, columns, .. } => {
+        MigrationOperation::CreateTable { table, columns, .. } => {
             for c in columns {
                 strip(c, table, warnings);
             }
+            true
         }
-        _ => {}
+        MigrationOperation::SetDefault {
+            table,
+            column,
+            to: Some(default),
+            ..
+        } => {
+            if let Some(literal) = postgres_character_literal_cast(default) {
+                warnings.push(format!(
+                    "Mapped PostgreSQL character default cast for {table}.{column} to a portable string literal"
+                ));
+                *default = literal.to_string();
+                true
+            } else if has_dialect_syntax(default) {
+                warnings.push(format!(
+                    "Stripped dialect-specific default for {table}.{column}: {default}"
+                ));
+                requirements.push(PlanRequirement::Unsupported {
+                    operation: operation_key,
+                    reason: format!(
+                        "Cannot safely translate PostgreSQL default expression for MySQL column `{column}`"
+                    ),
+                });
+                false
+            } else {
+                true
+            }
+        }
+        _ => true,
     }
 }
 
@@ -73,6 +179,418 @@ fn resolve_type(
     } else {
         Ok(source_type.to_string())
     }
+}
+
+fn is_mysql_bit_boolean_type(data_type: &str) -> bool {
+    let compact = data_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    matches!(compact.as_str(), "bit" | "bit(1)")
+}
+
+fn is_mysql_boolean_type(data_type: &str) -> bool {
+    let compact = data_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    if is_mysql_bit_boolean_type(data_type) || matches!(compact.as_str(), "bool" | "boolean") {
+        return true;
+    }
+
+    let Some(suffix) = compact.strip_prefix("tinyint(1)") else {
+        return false;
+    };
+    matches!(
+        suffix,
+        "" | "unsigned" | "zerofill" | "unsignedzerofill" | "zerofillunsigned"
+    )
+}
+
+fn is_postgres_boolean_type(data_type: &str) -> bool {
+    matches!(
+        data_type.trim().to_ascii_lowercase().as_str(),
+        "bool" | "boolean"
+    )
+}
+
+fn is_postgres_numeric_type(data_type: &str) -> bool {
+    let compact = data_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    if compact.contains('[') {
+        return false;
+    }
+    let base = compact.split('(').next().unwrap_or(compact.as_str());
+    matches!(
+        base,
+        "smallint"
+            | "int2"
+            | "integer"
+            | "int"
+            | "int4"
+            | "bigint"
+            | "int8"
+            | "smallserial"
+            | "serial2"
+            | "serial"
+            | "serial4"
+            | "bigserial"
+            | "serial8"
+            | "numeric"
+            | "decimal"
+            | "real"
+            | "float4"
+            | "float8"
+            | "float"
+            | "doubleprecision"
+    )
+}
+
+fn normalized_mysql_type_base(data_type: &str) -> String {
+    data_type
+        .trim()
+        .to_ascii_lowercase()
+        .split('(')
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<String>()
+}
+
+fn is_mysql_character_type(data_type: &str) -> bool {
+    matches!(
+        normalized_mysql_type_base(data_type).as_str(),
+        "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set"
+    )
+}
+
+fn is_known_mysql_default_type(data_type: &str) -> bool {
+    matches!(
+        normalized_mysql_type_base(data_type).as_str(),
+        "tinyint"
+            | "smallint"
+            | "mediumint"
+            | "int"
+            | "integer"
+            | "bigint"
+            | "decimal"
+            | "numeric"
+            | "float"
+            | "double"
+            | "real"
+            | "bit"
+            | "bool"
+            | "boolean"
+            | "date"
+            | "time"
+            | "datetime"
+            | "timestamp"
+            | "year"
+    )
+}
+
+fn is_postgres_temporal_type(data_type: &str) -> bool {
+    let compact = data_type
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    matches!(
+        compact.as_str(),
+        "date"
+            | "time"
+            | "timewithtimezone"
+            | "timewithouttimezone"
+            | "timetz"
+            | "timestamp"
+            | "timestampwithtimezone"
+            | "timestampwithouttimezone"
+            | "timestamptz"
+            | "interval"
+    ) || compact.starts_with("timestamp(")
+        || compact.starts_with("time(")
+}
+
+fn is_plain_numeric_literal(value: &str) -> bool {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let mut digits = 0;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        digits += 1;
+        index += 1;
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            digits += 1;
+            index += 1;
+        }
+    }
+    if digits == 0 {
+        return false;
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if exponent_start == index {
+            return false;
+        }
+    }
+    index == bytes.len()
+}
+
+fn is_unambiguous_timestamp_expression(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "current_timestamp"
+            | "current_timestamp()"
+            | "current_date"
+            | "current_time"
+            | "localtime"
+            | "localtimestamp"
+            | "now()"
+    ) {
+        return true;
+    }
+
+    ["current_timestamp(", "localtime(", "localtimestamp("]
+        .iter()
+        .any(|prefix| {
+            normalized
+                .strip_prefix(prefix)
+                .and_then(|precision| precision.strip_suffix(')'))
+                .and_then(|precision| precision.parse::<u8>().ok())
+                .is_some_and(|precision| precision <= 6)
+        })
+}
+
+fn is_plain_temporal_literal(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.chars().any(|ch| ch.is_ascii_digit())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '-' | '+' | ':' | '.' | ' '))
+        && !value.starts_with("0000")
+}
+
+/// MySQL exposes character defaults as decoded values (for example `PENDING`),
+/// while PostgreSQL requires a string literal (`'PENDING'`). Quote only known
+/// MySQL character columns and reject values that could be metadata for an SQL
+/// expression; unknown types never get blindly quoted or passed through.
+fn apply_mysql_string_default_mapping(
+    column: &mut super::types::ColumnSnapshot,
+    source_type: &str,
+    target_type: &str,
+    should_translate: bool,
+) -> Result<(), String> {
+    if !should_translate {
+        return Ok(());
+    }
+    let Some(default) = column.default_value.as_deref() else {
+        return Ok(());
+    };
+
+    if is_mysql_character_type(source_type) {
+        // The boolean mapper has already handled strict 0/1 overrides to a
+        // PostgreSQL boolean. Any remaining default on a boolean target has
+        // already failed closed there.
+        if is_postgres_boolean_type(target_type) {
+            return Ok(());
+        }
+        if !is_postgres_character_type_cast(target_type) {
+            return Err(format!(
+                "Cannot safely translate MySQL string default `{default}` on column `{}` to PostgreSQL type `{target_type}`",
+                column.name
+            ));
+        }
+        let trimmed = default.trim();
+        let lowered = trimmed.to_ascii_lowercase();
+        let suspicious = trimmed.is_empty()
+            || trimmed
+                .chars()
+                .any(|ch| ch.is_control() || ch == '\\' || matches!(ch, '(' | ')'))
+            || matches!(
+                lowered.as_str(),
+                "current_timestamp"
+                    | "current_timestamp()"
+                    | "current_date"
+                    | "current_time"
+                    | "localtime"
+                    | "localtimestamp"
+                    | "now()"
+            );
+        if suspicious {
+            return Err(format!(
+                "Cannot safely translate MySQL default expression `{default}` on string column `{}`",
+                column.name
+            ));
+        }
+        column.default_value = Some(format!("'{}'", default.replace('\'', "''")));
+        return Ok(());
+    }
+
+    if matches!(
+        normalized_mysql_type_base(source_type).as_str(),
+        "date" | "time" | "datetime" | "timestamp"
+    ) {
+        if !is_postgres_temporal_type(target_type) {
+            return Err(format!(
+                "Cannot safely translate MySQL temporal default `{default}` on column `{}` to PostgreSQL type `{target_type}`",
+                column.name
+            ));
+        }
+        if is_unambiguous_timestamp_expression(default) {
+            return Ok(());
+        }
+        if is_plain_temporal_literal(default) {
+            column.default_value = Some(format!("'{}'", default.replace('\'', "''")));
+            return Ok(());
+        }
+        return Err(format!(
+            "Cannot safely translate MySQL temporal default `{default}` on column `{}`",
+            column.name
+        ));
+    }
+
+    if is_known_mysql_default_type(source_type) {
+        return Ok(());
+    }
+
+    // Explicitly preserve only defaults whose SQL meaning is unambiguous for
+    // the mapped PostgreSQL type. Everything else requires human review.
+    let safe_for_target = (is_postgres_numeric_type(target_type)
+        && is_plain_numeric_literal(default))
+        || (is_postgres_boolean_type(target_type)
+            && matches!(
+                default.trim().to_ascii_lowercase().as_str(),
+                "true" | "false"
+            ))
+        || (is_postgres_temporal_type(target_type) && is_unambiguous_timestamp_expression(default));
+    if safe_for_target {
+        Ok(())
+    } else {
+        Err(format!(
+            "Cannot safely translate MySQL default `{default}` on column `{}` with unknown source type `{source_type}`",
+            column.name
+        ))
+    }
+}
+
+fn translate_mysql_boolean_default(source_type: &str, default: &str) -> Option<&'static str> {
+    if is_mysql_bit_boolean_type(source_type) {
+        return match default.trim().to_ascii_lowercase().as_str() {
+            "b'1'" | "0b1" => Some("TRUE"),
+            "b'0'" | "0b0" => Some("FALSE"),
+            _ => None,
+        };
+    }
+
+    match default.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Some("TRUE"),
+        "0" | "false" => Some("FALSE"),
+        _ => None,
+    }
+}
+
+fn mapped_mysql_boolean_default(
+    source_type: &str,
+    target_type: &str,
+    default: &str,
+    should_translate: bool,
+) -> Result<Option<&'static str>, ()> {
+    if !should_translate {
+        return Ok(None);
+    }
+
+    let source_is_boolean = is_mysql_boolean_type(source_type);
+    let source_is_bit_boolean = is_mysql_bit_boolean_type(source_type);
+    let target_is_boolean = is_postgres_boolean_type(target_type);
+    let target_is_numeric = is_postgres_numeric_type(target_type);
+
+    if target_is_boolean {
+        if source_is_bit_boolean || source_is_boolean {
+            return translate_mysql_boolean_default(source_type, default)
+                .map(Some)
+                .ok_or(());
+        }
+
+        // An explicit type override can request a PostgreSQL boolean for a
+        // non-boolean MySQL type. Only exact numeric boolean literals have a
+        // safe, unambiguous mapping; expressions and other values fail closed.
+        return match default.trim() {
+            "1" => Ok(Some("TRUE")),
+            "0" => Ok(Some("FALSE")),
+            _ => Err(()),
+        };
+    }
+
+    if source_is_boolean {
+        if !target_is_numeric {
+            return Err(());
+        }
+
+        if source_is_bit_boolean {
+            return match default.trim().to_ascii_lowercase().as_str() {
+                "b'1'" | "0b1" => Ok(Some("1")),
+                "b'0'" | "0b0" => Ok(Some("0")),
+                _ => Err(()),
+            };
+        }
+
+        return match default.trim().to_ascii_lowercase().as_str() {
+            "1" | "0" => Ok(None),
+            "true" => Ok(Some("1")),
+            "false" => Ok(Some("0")),
+            _ => Err(()),
+        };
+    }
+
+    Ok(None)
+}
+
+fn apply_mysql_boolean_default_mapping(
+    column: &mut super::types::ColumnSnapshot,
+    source_type: &str,
+    target_type: &str,
+    should_translate: bool,
+) -> Result<(), String> {
+    if should_translate {
+        if let Some(default) = &column.default_value {
+            match mapped_mysql_boolean_default(source_type, target_type, default, should_translate)
+            {
+                Ok(Some(translated)) => column.default_value = Some(translated.to_string()),
+                Ok(None) => {}
+                Err(()) => {
+                    return Err(format!(
+                    "Cannot safely translate MySQL default `{default}` on column `{}` for PostgreSQL type `{target_type}`",
+                    column.name,
+                ));
+                }
+            }
+        }
+    }
+    apply_mysql_string_default_mapping(column, source_type, target_type, should_translate)
 }
 
 fn is_narrowing_nullability(src_nullable: bool, tgt_nullable: bool) -> bool {
@@ -95,15 +613,37 @@ fn apply_type_mapping(
     op: &mut super::operations::MigrationOperation,
     opts: &PlanOptions<'_>,
     table: &str,
+    source_schema: &TableSchema,
+    source_dialect: &str,
+    target_dialect: &str,
     requirements: &mut Vec<PlanRequirement>,
 ) -> bool {
+    let operation_key = op.key();
+    let translate_mysql_boolean_defaults = opts.cross_dialect
+        && normalize_dialect(source_dialect) == "mysql"
+        && normalize_dialect(target_dialect) == "postgresql";
     match op {
         super::operations::MigrationOperation::AddColumn { column, .. } => {
+            let source_type = column.data_type.clone();
             match resolve_type(opts, table, &column.name, &column.data_type) {
-                Ok(ty) => column.data_type = ty,
+                Ok(ty) => {
+                    if let Err(reason) = apply_mysql_boolean_default_mapping(
+                        column,
+                        &source_type,
+                        &ty,
+                        translate_mysql_boolean_defaults,
+                    ) {
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: operation_key.clone(),
+                            reason,
+                        });
+                        return false;
+                    }
+                    column.data_type = ty;
+                }
                 Err(reason) => {
                     requirements.push(PlanRequirement::Unsupported {
-                        operation: op.key(),
+                        operation: operation_key.clone(),
                         reason,
                     });
                     return false;
@@ -112,11 +652,26 @@ fn apply_type_mapping(
         }
         super::operations::MigrationOperation::CreateTable { columns, .. } => {
             for column in columns {
+                let source_type = column.data_type.clone();
                 match resolve_type(opts, table, &column.name, &column.data_type) {
-                    Ok(ty) => column.data_type = ty,
+                    Ok(ty) => {
+                        if let Err(reason) = apply_mysql_boolean_default_mapping(
+                            column,
+                            &source_type,
+                            &ty,
+                            translate_mysql_boolean_defaults,
+                        ) {
+                            requirements.push(PlanRequirement::Unsupported {
+                                operation: operation_key.clone(),
+                                reason,
+                            });
+                            return false;
+                        }
+                        column.data_type = ty;
+                    }
                     Err(reason) => {
                         requirements.push(PlanRequirement::Unsupported {
-                            operation: op.key(),
+                            operation: operation_key.clone(),
                             reason,
                         });
                         return false;
@@ -129,16 +684,195 @@ fn apply_type_mapping(
                 Ok(ty) => *to = ty,
                 Err(reason) => {
                     requirements.push(PlanRequirement::Unsupported {
-                        operation: op.key(),
+                        operation: operation_key.clone(),
                         reason,
                     });
                     return false;
                 }
             }
         }
+        super::operations::MigrationOperation::SetDefault { column, to, .. }
+            if translate_mysql_boolean_defaults && to.is_some() =>
+        {
+            if let Some(source_column) = source_schema
+                .columns
+                .iter()
+                .find(|source_column| source_column.name == *column)
+            {
+                match resolve_type(opts, table, column, &source_column.data_type) {
+                    Ok(target_type) => {
+                        let source_type = source_column.data_type.clone();
+                        let mut default_column = super::types::ColumnSnapshot {
+                            name: source_column.name.clone(),
+                            data_type: source_type.clone(),
+                            nullable: source_column.nullable,
+                            default_value: to.clone(),
+                            comment: source_column.comment.clone(),
+                            is_primary_key: source_column.is_primary_key,
+                            is_auto_increment: source_column.is_auto_increment,
+                        };
+                        if let Err(reason) = apply_mysql_boolean_default_mapping(
+                            &mut default_column,
+                            &source_type,
+                            &target_type,
+                            translate_mysql_boolean_defaults,
+                        ) {
+                            requirements.push(PlanRequirement::Unsupported {
+                                operation: operation_key.clone(),
+                                reason,
+                            });
+                            return false;
+                        }
+                        *to = default_column.default_value;
+                    }
+                    Err(reason) => {
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: operation_key.clone(),
+                            reason,
+                        });
+                        return false;
+                    }
+                }
+            } else {
+                requirements.push(PlanRequirement::Unsupported {
+                    operation: operation_key.clone(),
+                    reason: format!(
+                        "Cannot safely translate MySQL default on column `{column}` because source metadata is missing"
+                    ),
+                });
+                return false;
+            }
+        }
         _ => {}
     }
     true
+}
+
+/// PostgreSQL cannot always cast an existing default while changing a column
+/// type. For MySQL→PostgreSQL boolean mappings, make the transition explicit:
+/// drop the current default, change the type, then install the mapped source
+/// default. This also normalizes defaults whose raw source/target text matches
+/// (for example MySQL `1` versus PostgreSQL integer `1`).
+fn stage_mysql_boolean_type_change_defaults(
+    operations: &mut Vec<super::operations::MigrationOperation>,
+    source_schema: &TableSchema,
+    target_schema: &TableSchema,
+    source_dialect: &str,
+    target_dialect: &str,
+    requirements: &mut Vec<PlanRequirement>,
+) {
+    use super::operations::MigrationOperation;
+
+    if normalize_dialect(source_dialect) != "mysql"
+        || normalize_dialect(target_dialect) != "postgresql"
+    {
+        return;
+    }
+
+    let type_changes = operations
+        .iter()
+        .filter_map(|op| match op {
+            MigrationOperation::AlterColumnType {
+                table, column, to, ..
+            } if is_postgres_boolean_type(to) => Some((table.clone(), column.clone(), to.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if type_changes.is_empty() {
+        return;
+    }
+
+    let mut staged = Vec::new();
+    let mut staged_columns = HashSet::new();
+    let mut unsupported_columns = HashSet::new();
+
+    for (table, column, target_type) in type_changes {
+        let operation_key = format!("column:{table}.{column}");
+        if requirements.iter().any(|requirement| {
+            matches!(requirement,
+                PlanRequirement::Unsupported { operation, .. } if operation == &operation_key)
+        }) {
+            unsupported_columns.insert((table, column));
+            continue;
+        }
+
+        let Some(source_column) = source_schema
+            .columns
+            .iter()
+            .find(|source_column| source_column.name == column)
+        else {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: operation_key,
+                reason: "Cannot safely map PostgreSQL boolean default because the source column metadata is missing".into(),
+            });
+            unsupported_columns.insert((table, column));
+            continue;
+        };
+        let Some(target_column) = target_schema
+            .columns
+            .iter()
+            .find(|target_column| target_column.name == column)
+        else {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: operation_key,
+                reason: "Cannot safely stage PostgreSQL boolean type change because the target column metadata is missing".into(),
+            });
+            unsupported_columns.insert((table, column));
+            continue;
+        };
+
+        let desired_default = match source_column.default_value.as_deref() {
+            None => None,
+            Some(default) => match mapped_mysql_boolean_default(
+                &source_column.data_type,
+                &target_type,
+                default,
+                true,
+            ) {
+                Ok(mapped) => Some(mapped.unwrap_or(default).to_string()),
+                Err(()) => {
+                    requirements.push(PlanRequirement::Unsupported {
+                        operation: operation_key,
+                        reason: format!(
+                            "Cannot safely translate MySQL default `{default}` on column `{column}` for PostgreSQL type `{target_type}`"
+                        ),
+                    });
+                    unsupported_columns.insert((table, column));
+                    continue;
+                }
+            },
+        };
+
+        if let Some(current_default) = &target_column.default_value {
+            staged.push(MigrationOperation::SetDefault {
+                table: table.clone(),
+                column: column.clone(),
+                from: Some(current_default.clone()),
+                to: None,
+            });
+        }
+        if let Some(default) = desired_default {
+            staged.push(MigrationOperation::SetDefault {
+                table: table.clone(),
+                column: column.clone(),
+                from: None,
+                to: Some(default),
+            });
+        }
+        staged_columns.insert((table, column));
+    }
+
+    operations.retain(|op| match op {
+        MigrationOperation::AlterColumnType { table, column, .. } => {
+            !unsupported_columns.contains(&(table.clone(), column.clone()))
+        }
+        MigrationOperation::SetDefault { table, column, .. } => {
+            !staged_columns.contains(&(table.clone(), column.clone()))
+                && !unsupported_columns.contains(&(table.clone(), column.clone()))
+        }
+        _ => true,
+    });
+    operations.extend(staged);
 }
 
 fn effective_risk(
@@ -156,6 +890,7 @@ fn plan_single_table(
     table: &str,
     src: &TableSchema,
     tgt: &TableSchema,
+    source_dialect: &str,
     target_dialect: &str,
     opts: &PlanOptions<'_>,
     statements: &mut Vec<PlanStatement>,
@@ -192,14 +927,31 @@ fn plan_single_table(
     // Type mapping belongs at the boundary between source snapshot and target driver.
     // The IR remains dialect-neutral; only replace types before rendering.
     if opts.type_mapper.is_some() {
-        operations.retain_mut(|op| apply_type_mapping(op, opts, table, requirements));
+        operations.retain_mut(|op| {
+            apply_type_mapping(
+                op,
+                opts,
+                table,
+                src,
+                source_dialect,
+                target_dialect,
+                requirements,
+            )
+        });
     }
+
+    stage_mysql_boolean_type_change_defaults(
+        &mut operations,
+        src,
+        tgt,
+        source_dialect,
+        target_dialect,
+        requirements,
+    );
 
     // Cross-dialect: strip source-dialect-specific defaults before rendering.
     if opts.cross_dialect {
-        for op in &mut operations {
-            strip_dialect_specific_defaults(op, warnings);
-        }
+        operations.retain_mut(|op| strip_dialect_specific_defaults(op, warnings, requirements));
         operations.retain(|op| {
             if matches!(
                 op,
@@ -750,6 +1502,7 @@ pub fn build_schema_diff_plan_with_target_only(
             &deploy_table,
             src,
             tgt,
+            &src_d,
             &tgt_d,
             &opts,
             &mut statements,

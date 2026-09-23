@@ -335,7 +335,7 @@ pub fn format_compact_ddl(table_name: &str, schema: &TableSchema) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datazen_driver_api::{ColumnSchema, ForeignKeyInfo, IndexInfo};
+    use datazen_driver_api::{ColumnSchema, ForeignKeyDeferrability, ForeignKeyInfo, IndexInfo};
 
     #[test]
     fn format_compact_ddl_basic() {
@@ -427,6 +427,7 @@ mod tests {
                 referenced_columns: vec!["id".into()],
                 on_update: "NO ACTION".into(),
                 on_delete: "CASCADE".into(),
+                deferrability: ForeignKeyDeferrability::Unknown,
             }],
             check_constraints: vec![],
             table_options: Default::default(),

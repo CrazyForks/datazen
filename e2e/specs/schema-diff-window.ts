@@ -11,6 +11,7 @@ import {
   closeExtraWindows,
   invokeBackend,
   openSchemaDiffWindow,
+  selectDzOption,
   selectDzOptionInWrap,
   selectSchemaDiffEndpoints,
   stubClipboardCapture,
@@ -229,8 +230,7 @@ describe('结构对比窗口 (SD-001~SD-004, SD-LIM)', () => {
       { timeout: 8000, timeoutMsg: '等待 Schema Diff profile 保存完成超时' },
     );
 
-    const selector = await $('[data-testid="schema-diff-profile-select"]');
-    await selector.selectByVisibleText('E2E Schema Profile');
+    await selectDzOption('E2E Schema Profile', 'E2E Schema Profile');
     await $('[data-testid="schema-diff-profile-load"]').click();
     await browser.waitUntil(
       async () =>

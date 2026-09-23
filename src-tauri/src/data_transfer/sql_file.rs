@@ -1698,6 +1698,7 @@ mod tests {
                 referenced_columns: vec!["id".into()],
                 on_update: "NO ACTION".into(),
                 on_delete: "CASCADE".into(),
+                deferrability: datazen_driver_api::ForeignKeyDeferrability::Unknown,
             });
         let mut schemas = HashMap::new();
         schemas.insert("accounts".into(), parent_schema);

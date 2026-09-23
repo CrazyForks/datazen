@@ -112,11 +112,6 @@ impl SyncOptions {
                 "batchSize must be between 1 and 1000",
             ));
         }
-        if !self.insert && !self.update && !self.delete {
-            return Err(DataSyncError::validation(
-                "at least one of insert/update/delete must be enabled",
-            ));
-        }
         Ok(())
     }
 
@@ -588,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn options_reject_empty_ops_and_zero_batch() {
+    fn options_reject_zero_batch_but_allow_comparison_only() {
         let mut opts = SyncOptions::default();
         opts.batch_size = 0;
         assert!(opts.validate().is_err());
@@ -596,7 +591,7 @@ mod tests {
         opts.insert = false;
         opts.update = false;
         opts.delete = false;
-        assert!(opts.validate().is_err());
+        assert!(opts.validate().is_ok());
     }
 
     #[test]
@@ -688,6 +683,20 @@ mod tests {
         let mut chosen = del.clone();
         chosen.selected = true;
         assert!(chosen.eligible_for_changeset(&opts));
+    }
+
+    #[test]
+    fn options_with_all_write_operations_disabled_are_valid_for_comparison() {
+        let options = SyncOptions {
+            insert: false,
+            update: false,
+            delete: false,
+            ..SyncOptions::default()
+        };
+        assert!(options.validate().is_ok());
+        assert!(!options.allows(ChangeOperation::Insert));
+        assert!(!options.allows(ChangeOperation::Update));
+        assert!(!options.allows(ChangeOperation::Delete));
     }
 
     #[test]

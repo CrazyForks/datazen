@@ -420,6 +420,21 @@ pub struct ForeignKeyInfo {
     pub referenced_columns: Vec<String>,
     pub on_update: String,
     pub on_delete: String,
+    /// Deferral behavior when the driver can determine it. Older drivers and
+    /// catalogs that do not expose this metadata deserialize as `Unknown`.
+    #[serde(default)]
+    pub deferrability: ForeignKeyDeferrability,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ForeignKeyDeferrability {
+    /// The source catalog did not report this property.
+    #[default]
+    Unknown,
+    NotDeferrable,
+    DeferrableInitiallyImmediate,
+    DeferrableInitiallyDeferred,
 }
 
 /// A table-level CHECK constraint captured from a database catalog.

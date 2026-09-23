@@ -222,6 +222,28 @@ describe('数据传输真实迁移 (DTW-CL)', () => {
   it('DTW-X-002: 选择 data 模式并推进到对象/数据迁移', async () => {
     await openDataTransferWindow();
     await selectTransferEndpoints();
+
+    const sourceSession = await invokeBackend<string>('connect', { connectionId: SRC_ID });
+    const targetSession = await invokeBackend<string>('connect', { connectionId: TGT_ID });
+    try {
+      const inspected = await invokeBackend<
+        Array<{ sourceTable: string; sourceColumns: string[]; targetColumns: string[] }>
+      >('inspect_data_transfer', {
+        sourceDbSessionId: sourceSession,
+        targetDbSessionId: targetSession,
+        sourceDatabase: 'datazen_sync_src',
+        targetDatabase: 'datazen_sync_tgt',
+        mode: 'data',
+        tables: null,
+      });
+      const fixture = inspected.find((table) => table.sourceTable === TABLE);
+      expect(fixture?.sourceColumns).toContain('qty');
+      expect(fixture?.targetColumns).toContain('qty');
+    } finally {
+      await disconnectBackend(sourceSession);
+      await disconnectBackend(targetSession);
+    }
+
     await clickNext('transfer-step-endpoints'); // endpoints → setup
 
     // 默认 mode = data，直接 Next 经过 setup

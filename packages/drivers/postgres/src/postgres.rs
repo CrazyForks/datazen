@@ -424,6 +424,14 @@ impl DatabaseDriver for PostgresDriver {
         Self::get_server_info_impl(self, handle).await
     }
 
+    async fn physical_database_identity(
+        &self,
+        handle: &ConnectionHandle,
+        database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        Self::physical_database_identity_impl(self, handle, database).await
+    }
+
     async fn dump_table_ddl(
         &self,
         handle: &ConnectionHandle,

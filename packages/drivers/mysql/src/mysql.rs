@@ -34,6 +34,97 @@ use tokio::sync::{Mutex, RwLock};
 
 pub(crate) use type_decode::{decode_mysql_text, decode_mysql_text_idx, decode_mysql_text_opt};
 
+#[derive(Debug, PartialEq, Eq)]
+enum ClusterScopeDecision {
+    Cluster { scope: &'static str, id: String },
+    NodeFallback,
+    Unknown,
+}
+
+fn mysql_group_replication_scope(
+    group_name: Option<&str>,
+    member_state: Result<Option<&str>, ()>,
+) -> ClusterScopeDecision {
+    let Some(group_name) = group_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return if group_name.is_some() {
+            ClusterScopeDecision::NodeFallback
+        } else {
+            ClusterScopeDecision::Unknown
+        };
+    };
+
+    match member_state {
+        Err(()) => ClusterScopeDecision::Unknown,
+        Ok(None) => ClusterScopeDecision::NodeFallback,
+        Ok(Some(state)) if state.eq_ignore_ascii_case("ONLINE") => ClusterScopeDecision::Cluster {
+            scope: "mysql-group-replication",
+            id: group_name.to_string(),
+        },
+        Ok(Some(_)) => ClusterScopeDecision::Unknown,
+    }
+}
+
+fn mysql_group_replication_plugin_active(
+    plugin_statuses: Option<&HashMap<String, String>>,
+) -> Option<bool> {
+    let plugin_statuses = plugin_statuses?;
+    match plugin_statuses
+        .get("group_replication")
+        .map(String::as_str)
+        .map(str::to_ascii_uppercase)
+        .as_deref()
+    {
+        None | Some("INACTIVE") | Some("DISABLED") => Some(false),
+        Some("ACTIVE") => Some(true),
+        Some(_) => None,
+    }
+}
+
+fn mariadb_wsrep_scope(statuses: Option<&HashMap<String, String>>) -> ClusterScopeDecision {
+    let Some(statuses) = statuses else {
+        return ClusterScopeDecision::Unknown;
+    };
+    if statuses.is_empty() {
+        return ClusterScopeDecision::NodeFallback;
+    }
+
+    let Some(state_uuid) = statuses
+        .get("wsrep_cluster_state_uuid")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ClusterScopeDecision::Unknown;
+    };
+    let healthy = statuses
+        .get("wsrep_cluster_status")
+        .is_some_and(|value| value.eq_ignore_ascii_case("Primary"))
+        && statuses
+            .get("wsrep_connected")
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON"))
+        && statuses
+            .get("wsrep_ready")
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON"));
+    if healthy {
+        ClusterScopeDecision::Cluster {
+            scope: "mariadb-wsrep",
+            id: state_uuid.to_string(),
+        }
+    } else {
+        ClusterScopeDecision::Unknown
+    }
+}
+
+fn canonical_database_identity(driver: &str, scope: &str, id: &str, database: &str) -> String {
+    serde_json::json!({
+        "driver": driver,
+        "scope": scope,
+        "id": id,
+        "database": database,
+    })
+    .to_string()
+}
+
 pub struct MysqlDriver {
     pub(crate) pools: RwLock<HashMap<String, MySqlPool>>,
     /// Active schema selected via `use_database` (or connect config), keyed by pool_id.
@@ -163,7 +254,7 @@ impl MysqlDriver {
                     name,
                     data_type: decode_mysql_text(r, "COLUMN_TYPE"),
                     nullable: nullable == "YES",
-                    default_value: r.try_get("COLUMN_DEFAULT").ok(),
+                    default_value: decode_mysql_text_opt(r, "COLUMN_DEFAULT"),
                     comment: {
                         let s = decode_mysql_text(r, "COLUMN_COMMENT");
                         if s.is_empty() {
@@ -217,7 +308,7 @@ impl MysqlDriver {
                 name: name.clone(),
                 data_type: decode_mysql_text(r, "COLUMN_TYPE"),
                 nullable: nullable == "YES",
-                default_value: r.try_get("COLUMN_DEFAULT").ok(),
+                default_value: decode_mysql_text_opt(r, "COLUMN_DEFAULT"),
                 comment: {
                     let s = decode_mysql_text(r, "COLUMN_COMMENT");
                     if s.is_empty() {
@@ -271,6 +362,7 @@ impl MysqlDriver {
                     referenced_columns: ref_cols,
                     on_delete,
                     on_update,
+                    deferrability: ForeignKeyDeferrability::NotDeferrable,
                 });
             }
         }
@@ -481,6 +573,55 @@ impl MysqlDriver {
                     .and_then(|s| serde_json::from_str(&s).ok())
             })
         })
+    }
+
+    async fn physical_database_node_identity(
+        &self,
+        pool: &MySqlPool,
+        database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let driver = if self.is_mariadb { "mariadb" } else { "mysql" };
+        if let Ok(row) = sqlx::query("SELECT @@server_uuid AS server_uuid")
+            .fetch_one(pool)
+            .await
+        {
+            if let Ok(server_uuid) = row.try_get::<String, _>("server_uuid") {
+                let server_uuid = server_uuid.trim();
+                if !server_uuid.is_empty() {
+                    return Ok(Some(canonical_database_identity(
+                        driver,
+                        "node",
+                        server_uuid,
+                        database,
+                    )));
+                }
+            }
+        }
+
+        let Ok(row) = sqlx::query(
+            "SELECT @@hostname AS server_host, CAST(@@port AS CHAR) AS server_port, CAST(@@server_id AS CHAR) AS server_id",
+        )
+        .fetch_one(pool)
+        .await
+        else {
+            return Ok(None);
+        };
+        let (Ok(server_host), Ok(server_port), Ok(server_id)) = (
+            row.try_get::<String, _>("server_host"),
+            row.try_get::<String, _>("server_port"),
+            row.try_get::<String, _>("server_id"),
+        ) else {
+            return Ok(None);
+        };
+        let id = serde_json::json!({
+            "host": server_host,
+            "port": server_port,
+            "serverId": server_id,
+        })
+        .to_string();
+        Ok(Some(canonical_database_identity(
+            driver, "node", &id, database,
+        )))
     }
 }
 
@@ -889,7 +1030,7 @@ impl DatabaseDriver for MysqlDriver {
                     name,
                     data_type: col_type,
                     nullable: nullable == "YES",
-                    default_value: r.try_get("Default").ok(),
+                    default_value: decode_mysql_text_opt(r, "Default"),
                     comment,
                     is_auto_increment: extra.contains("auto_increment"),
                 }
@@ -1414,6 +1555,58 @@ impl DatabaseDriver for MysqlDriver {
         })
     }
 
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        let mut txs = self.transactions.lock().await;
+        if txs.contains_key(&handle.id) {
+            return Err(DriverError::TransactionError(
+                "A transaction is already open on this connection".into(),
+            ));
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        drop(pools);
+
+        self.apply_active_database(handle, &mut conn).await?;
+
+        // WITH CONSISTENT SNAPSHOT is only effective with REPEATABLE READ.
+        // Scope the isolation override to the next transaction so the pool's
+        // session defaults are not changed for later checkouts.
+        if let Err(e) =
+            Self::execute_text_on_conn(&mut conn, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                .await
+        {
+            let _ = conn.close().await;
+            return Err(DriverError::TransactionError(e.to_string()));
+        }
+
+        // MySQL and MariaDB support these transaction characteristics. If a
+        // server rejects one, close the connection so a pending one-shot
+        // isolation setting cannot leak into a later pooled transaction.
+        if let Err(e) = Self::execute_text_on_conn(
+            &mut conn,
+            "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY",
+        )
+        .await
+        {
+            let _ = conn.close().await;
+            return Err(DriverError::TransactionError(e.to_string()));
+        }
+
+        txs.insert(handle.id.clone(), conn);
+        Ok(TransactionHandle {
+            id: format!("mysql_snapshot_{}", uuid::Uuid::new_v4()),
+            connection_id: handle.id.clone(),
+        })
+    }
+
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
         let mut conn = self
             .transactions
@@ -1616,6 +1809,116 @@ impl DatabaseDriver for MysqlDriver {
             server_version: version,
             server_type: server_type.to_string(),
         })
+    }
+
+    async fn physical_database_identity(
+        &self,
+        handle: &ConnectionHandle,
+        _database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let Ok(database_row) = sqlx::query("SELECT DATABASE() AS database_name")
+            .fetch_one(pool)
+            .await
+        else {
+            return Ok(None);
+        };
+        let database: Option<String> = database_row.try_get("database_name").unwrap_or(None);
+        let Some(database) = database else {
+            return Ok(None);
+        };
+
+        let cluster_scope = if self.is_mariadb {
+            let Ok(rows) = sqlx::query("SHOW GLOBAL STATUS").fetch_all(pool).await else {
+                return Ok(None);
+            };
+            let mut statuses = HashMap::new();
+            let mut wsrep_detected = false;
+            for row in rows {
+                let Ok(name) = row.try_get::<String, _>(0) else {
+                    return Ok(None);
+                };
+                let name = name.to_ascii_lowercase();
+                if !name.starts_with("wsrep_") {
+                    continue;
+                }
+                wsrep_detected = true;
+                if let Ok(value) = row.try_get::<String, _>(1) {
+                    statuses.insert(name, value);
+                }
+            }
+            if wsrep_detected && statuses.is_empty() {
+                statuses.insert("wsrep_status_incomplete".to_string(), String::new());
+            }
+            mariadb_wsrep_scope(Some(&statuses))
+        } else {
+            let Ok(group_row) =
+                sqlx::query("SELECT @@GLOBAL.group_replication_group_name AS group_name")
+                    .fetch_one(pool)
+                    .await
+            else {
+                // Older or non-GR MySQL builds may not expose the variable at
+                // all. Only fall back when SHOW PLUGINS proves GR is absent or
+                // inactive; an active plugin with an unreadable variable is
+                // ambiguous and must fail closed.
+                let Ok(plugin_rows) = sqlx::query("SHOW PLUGINS").fetch_all(pool).await else {
+                    return Ok(None);
+                };
+                let mut plugin_statuses = HashMap::new();
+                for row in plugin_rows {
+                    let (Ok(name), Ok(status)) =
+                        (row.try_get::<String, _>(0), row.try_get::<String, _>(1))
+                    else {
+                        return Ok(None);
+                    };
+                    plugin_statuses.insert(name.to_ascii_lowercase(), status);
+                }
+                return match mysql_group_replication_plugin_active(Some(&plugin_statuses)) {
+                    Some(false) => self.physical_database_node_identity(pool, &database).await,
+                    Some(true) | None => Ok(None),
+                };
+            };
+            let Ok(group_name) = group_row.try_get::<String, _>("group_name") else {
+                return Ok(None);
+            };
+            let group_name = group_name.trim();
+            if group_name.is_empty() {
+                mysql_group_replication_scope(Some(group_name), Ok(None))
+            } else {
+                // A configured group name alone is not proof that this server
+                // is a healthy member. Failure to inspect membership must fail
+                // closed rather than treating a peer in that group as separate.
+                let membership = sqlx::query(
+                    "SELECT MEMBER_STATE AS member_state FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid",
+                )
+                .fetch_optional(pool)
+                .await;
+                match membership {
+                    Ok(None) => mysql_group_replication_scope(Some(group_name), Ok(None)),
+                    Ok(Some(row)) => match row.try_get::<String, _>("member_state") {
+                        Ok(state) => {
+                            mysql_group_replication_scope(Some(group_name), Ok(Some(&state)))
+                        }
+                        Err(_) => ClusterScopeDecision::Unknown,
+                    },
+                    Err(_) => ClusterScopeDecision::Unknown,
+                }
+            }
+        };
+
+        match cluster_scope {
+            ClusterScopeDecision::Cluster { scope, id } => Ok(Some(canonical_database_identity(
+                if self.is_mariadb { "mariadb" } else { "mysql" },
+                scope,
+                &id,
+                &database,
+            ))),
+            ClusterScopeDecision::Unknown => Ok(None),
+            ClusterScopeDecision::NodeFallback => {
+                self.physical_database_node_identity(pool, &database).await
+            }
+        }
     }
 
     async fn dump_table_ddl(

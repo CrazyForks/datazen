@@ -51,7 +51,8 @@ function workerDbName(): string {
 
 /**
  * Create a fresh, empty PostgreSQL database for the current worker,
- * then seed it with the standard E2E fixture tables (product, e2e_contract_*).
+ * then seed the standard E2E fixture tables (product, e2e_contract_*) in the
+ * schema configured on the worker's default connection.
  * Returns the database name (`e2e_wd_0`, `e2e_wd_1`, …).
  */
 export function createWorkerDatabase(): string {
@@ -80,7 +81,14 @@ export function createWorkerDatabase(): string {
   }
 
   // Seed standard fixture tables so specs that expect `product` etc. work.
+  const workerSchema = process.env.E2E_WORKER_SCHEMA?.trim();
+  const schemaSetup = workerSchema
+    ? `CREATE SCHEMA IF NOT EXISTS ${qIdent(workerSchema)};
+GRANT ALL PRIVILEGES ON SCHEMA ${qIdent(workerSchema)} TO PUBLIC;
+SET search_path TO ${qIdent(workerSchema)};`
+    : 'SET search_path TO public;';
   const seedSql = `
+${schemaSetup}
 CREATE TABLE IF NOT EXISTS product (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL DEFAULT 'item',

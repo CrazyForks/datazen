@@ -603,6 +603,18 @@ pub trait DatabaseDriver: Send + Sync {
         })
     }
 
+    /// Return a stable identity for the physical server and selected database
+    /// when the driver can discover one. Schema Diff uses it to reject aliases
+    /// that point both endpoints at the same database. This must not include
+    /// credentials or other secrets.
+    async fn physical_database_identity(
+        &self,
+        _handle: &ConnectionHandle,
+        _database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        Ok(None)
+    }
+
     /// Close whatever the driver opened for `database` on this handle — the
     /// right-click "close database connection" action.
     ///

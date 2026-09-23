@@ -33,6 +33,24 @@ fn format_mysql_index_col(s: &str, qi: &impl Fn(&str) -> String) -> String {
     qi(trimmed)
 }
 
+fn mysql_index_kind(index: &IndexInfo) -> Result<(&'static str, &'static str), String> {
+    match index.index_type.trim().to_ascii_uppercase().as_str() {
+        "BTREE" => Ok(("", " USING BTREE")),
+        "HASH" => Ok(("", " USING HASH")),
+        "FULLTEXT" if !index.is_unique => Ok(("FULLTEXT ", "")),
+        "RTREE" if !index.is_unique => Ok(("SPATIAL ", "")),
+        "FULLTEXT" | "RTREE" => Err(format!(
+            "MySQL cannot create a unique {} index",
+            index.index_type
+        )),
+        "" => Err("MySQL index type is missing; cannot safely recreate the index".into()),
+        _ => Err(format!(
+            "MySQL index type '{}' cannot be safely recreated",
+            index.index_type
+        )),
+    }
+}
+
 fn mysql_fk_action(raw: &str, clause: &str) -> Result<String, String> {
     let action = raw.trim().to_ascii_uppercase();
     if action.is_empty() || action == "NO ACTION" {
@@ -229,23 +247,28 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     summary: format!("ALTER DEFAULT {}.{}", table, column),
                 })
             }
-            MigrationOperation::CreateIndex { table, index } => Ok(MigrationStatement {
-                sql: format!(
-                    "CREATE {}INDEX {} ON {} ({})",
-                    if index.is_unique { "UNIQUE " } else { "" },
-                    qi(&index.name),
-                    qi(table),
-                    index
-                        .columns
-                        .iter()
-                        .map(|c| format_mysql_index_col(c, &qi))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                risk: MigrationRisk::Additive,
-                rollback_sql: Some(format!("DROP INDEX {} ON {}", qi(&index.name), qi(table))),
-                summary: format!("CREATE INDEX {}.{}", table, index.name),
-            }),
+            MigrationOperation::CreateIndex { table, index } => {
+                let (kind, method) = mysql_index_kind(index)?;
+                let uniqueness = if index.is_unique { "UNIQUE " } else { kind };
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "CREATE {}INDEX {}{} ON {} ({})",
+                        uniqueness,
+                        qi(&index.name),
+                        method,
+                        qi(table),
+                        index
+                            .columns
+                            .iter()
+                            .map(|c| format_mysql_index_col(c, &qi))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP INDEX {} ON {}", qi(&index.name), qi(table))),
+                    summary: format!("CREATE INDEX {}.{}", table, index.name),
+                })
+            }
             MigrationOperation::DropIndex { table, index } => Ok(MigrationStatement {
                 sql: format!("DROP INDEX {} ON {}", qi(&index.name), qi(table)),
                 risk: MigrationRisk::Destructive,
@@ -389,6 +412,11 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                     || foreign_key.columns.len() != foreign_key.referenced_columns.len()
                 {
                     return Err("foreign key must have a name and matching column lists".into());
+                }
+                if foreign_key.deferrability != ForeignKeyDeferrability::NotDeferrable {
+                    return Err(
+                        "MySQL cannot represent unknown or deferrable foreign key semantics".into(),
+                    );
                 }
                 let on_update = mysql_fk_action(&foreign_key.on_update, "ON UPDATE")?;
                 let on_delete = mysql_fk_action(&foreign_key.on_delete, "ON DELETE")?;
@@ -968,7 +996,7 @@ mod tests {
         let stmt = MysqlMigrationRenderer.render(&op).unwrap();
         assert_eq!(
             stmt.sql,
-            "CREATE INDEX `idx_demo_customers_region` ON `demo_customers` (`region`(255))"
+            "CREATE INDEX `idx_demo_customers_region` USING BTREE ON `demo_customers` (`region`(255))"
         );
 
         let unique_op = MigrationOperation::CreateIndex {
@@ -984,8 +1012,41 @@ mod tests {
         let unique_stmt = MysqlMigrationRenderer.render(&unique_op).unwrap();
         assert_eq!(
             unique_stmt.sql,
-            "CREATE UNIQUE INDEX `uq_demo_customers_name` ON `demo_customers` (`name`(255))"
+            "CREATE UNIQUE INDEX `uq_demo_customers_name` USING BTREE ON `demo_customers` (`name`(255))"
         );
+    }
+
+    #[test]
+    fn create_index_preserves_hash_fulltext_and_spatial_kinds() {
+        let render = |index_type: &str, is_unique| {
+            MysqlMigrationRenderer.render(&MigrationOperation::CreateIndex {
+                table: "articles".into(),
+                index: IndexInfo {
+                    name: "idx_articles_body".into(),
+                    columns: vec!["body".into()],
+                    is_unique,
+                    is_primary: false,
+                    index_type: index_type.into(),
+                },
+            })
+        };
+
+        assert_eq!(
+            render("hash", false).unwrap().sql,
+            "CREATE INDEX `idx_articles_body` USING HASH ON `articles` (`body`)"
+        );
+        assert_eq!(
+            render("FULLTEXT", false).unwrap().sql,
+            "CREATE FULLTEXT INDEX `idx_articles_body` ON `articles` (`body`)"
+        );
+        assert_eq!(
+            render("RTREE", false).unwrap().sql,
+            "CREATE SPATIAL INDEX `idx_articles_body` ON `articles` (`body`)"
+        );
+        assert!(render("FULLTEXT", true).is_err());
+        assert!(render("RTREE", true).is_err());
+        assert!(render("unknown", false).is_err());
+        assert!(render("", false).is_err());
     }
 
     #[test]
@@ -999,6 +1060,7 @@ mod tests {
                 referenced_columns: vec!["id".into()],
                 on_update: "CASCADE".into(),
                 on_delete: "RESTRICT".into(),
+                deferrability: ForeignKeyDeferrability::NotDeferrable,
             },
         };
         let stmt = MysqlMigrationRenderer.render(&op).unwrap();
@@ -1011,6 +1073,29 @@ mod tests {
             Some("ALTER TABLE `orders` DROP FOREIGN KEY `orders_user_id_fk`")
         );
         assert!(MysqlMigrationCapabilities.supports(&op));
+    }
+
+    #[test]
+    fn rejects_unknown_or_deferrable_foreign_key_semantics() {
+        for deferrability in [
+            ForeignKeyDeferrability::Unknown,
+            ForeignKeyDeferrability::DeferrableInitiallyImmediate,
+            ForeignKeyDeferrability::DeferrableInitiallyDeferred,
+        ] {
+            let op = MigrationOperation::AddForeignKey {
+                table: "orders".into(),
+                foreign_key: ForeignKeyInfo {
+                    name: "orders_user_id_fk".into(),
+                    columns: vec!["user_id".into()],
+                    referenced_table: "users".into(),
+                    referenced_columns: vec!["id".into()],
+                    on_update: "NO ACTION".into(),
+                    on_delete: "NO ACTION".into(),
+                    deferrability,
+                },
+            };
+            assert!(MysqlMigrationRenderer.render(&op).is_err());
+        }
     }
 
     #[test]

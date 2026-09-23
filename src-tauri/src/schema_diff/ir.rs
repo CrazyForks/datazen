@@ -1,7 +1,7 @@
 //! Schema Diff IR: convert snapshots into dialect-neutral operations.
 
 use super::{compare::diff_indexes, operations::MigrationOperation, types::ColumnChange};
-use crate::db::{ForeignKeyInfo, TableSchema};
+use crate::db::{ForeignKeyDeferrability, ForeignKeyInfo, TableSchema};
 use datazen_driver_api::TypeNormalizer;
 
 pub fn diff_to_operations(
@@ -196,6 +196,8 @@ fn foreign_key_definition_equal(left: &ForeignKeyInfo, right: &ForeignKeyInfo) -
         && left.referenced_columns == right.referenced_columns
         && normalize_action(&left.on_update) == normalize_action(&right.on_update)
         && normalize_action(&left.on_delete) == normalize_action(&right.on_delete)
+        && left.deferrability != ForeignKeyDeferrability::Unknown
+        && left.deferrability == right.deferrability
 }
 
 fn normalize_action(action: &str) -> String {
@@ -391,6 +393,7 @@ mod tests {
             referenced_columns: vec!["id".into()],
             on_update: "CASCADE".into(),
             on_delete: "CASCADE".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
         });
         let mut target = source.clone();
         target.foreign_keys[0].on_delete = "RESTRICT".into();
@@ -404,6 +407,59 @@ mod tests {
             op,
             MigrationOperation::AddForeignKey { foreign_key, .. }
                 if foreign_key.on_delete == "CASCADE"
+        )));
+    }
+
+    #[test]
+    fn foreign_key_deferrability_change_generates_drop_and_create_ops() {
+        let mut source = schema(vec![col("user_id")]);
+        source.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_user".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::DeferrableInitiallyDeferred,
+        });
+        let mut target = source.clone();
+        target.foreign_keys[0].deferrability =
+            ForeignKeyDeferrability::DeferrableInitiallyImmediate;
+
+        let ops = diff_to_operations("orders", &source, &target, None);
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::DropForeignKey { foreign_key, .. }
+                if foreign_key.deferrability == ForeignKeyDeferrability::DeferrableInitiallyImmediate
+        )));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::AddForeignKey { foreign_key, .. }
+                if foreign_key.deferrability == ForeignKeyDeferrability::DeferrableInitiallyDeferred
+        )));
+    }
+
+    #[test]
+    fn unknown_foreign_key_deferrability_is_not_assumed_equal() {
+        let mut source = schema(vec![col("user_id")]);
+        source.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_user".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::Unknown,
+        });
+        let ops = diff_to_operations("orders", &source, &source.clone(), None);
+
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOperation::DropForeignKey { .. })));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            MigrationOperation::AddForeignKey { foreign_key, .. }
+                if foreign_key.deferrability == ForeignKeyDeferrability::Unknown
         )));
     }
 

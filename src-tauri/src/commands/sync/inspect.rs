@@ -34,6 +34,30 @@ pub(crate) async fn inspect_data_sync_impl(
     let src_db = resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
     let tgt_db = resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
 
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("inspect_data_sync")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("inspect_data_sync")?;
+
+    let source_schema = metadata_schema(
+        src_driver.as_ref(),
+        source_schema.as_deref(),
+        None,
+        src_config.schema.as_deref(),
+    );
+    let target_schema = metadata_schema(
+        tgt_driver.as_ref(),
+        target_schema.as_deref(),
+        None,
+        tgt_config.schema.as_deref(),
+    );
+
     if is_self_sync(
         &source_db_session_id,
         &target_db_session_id,
@@ -46,17 +70,6 @@ pub(crate) async fn inspect_data_sync_impl(
             "self-sync of the same database is not allowed".into(),
         ));
     }
-
-    let (src_driver, src_handle) = state
-        .connection_manager
-        .get_session(&source_db_session_id)
-        .await
-        .cmd_err("inspect_data_sync")?;
-    let (tgt_driver, tgt_handle) = state
-        .connection_manager
-        .get_session(&target_db_session_id)
-        .await
-        .cmd_err("inspect_data_sync")?;
 
     let src_tables = filter_tables_by_schema(
         src_driver

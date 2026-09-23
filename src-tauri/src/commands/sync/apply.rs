@@ -11,6 +11,7 @@ use crate::data_sync::{
     mysql_placeholder, postgres_typed_placeholder, quote_ident_sql, ChangeSet, ComparisonResult,
     DataSyncError, SyncOptions, SyncSourceFilter, TableMapping, TableMappingStatus, TableResult,
 };
+use crate::services::metadata_schema;
 use std::collections::HashMap;
 
 fn ident_quote(family: &str) -> char {
@@ -122,18 +123,6 @@ async fn compare_data_sync_impl_inner(
         Some(id) => Some(super::jobs::ensure_job(id).await),
         None => None,
     };
-    let inspected = inspect_data_sync_impl(
-        state,
-        source_db_session_id.clone(),
-        target_db_session_id.clone(),
-        source_database.clone(),
-        target_database.clone(),
-        source_schema.clone(),
-        target_schema.clone(),
-        mappings,
-    )
-    .await?;
-    let wanted: std::collections::HashSet<String> = tables.into_iter().collect();
     let src_config = state
         .connection_manager
         .get_session_config(&source_db_session_id)
@@ -144,6 +133,10 @@ async fn compare_data_sync_impl_inner(
         .get_session_config(&target_db_session_id)
         .await
         .cmd_err("compare_data_sync")?;
+    let source_database_name =
+        super::types::resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
+    let target_database_name =
+        super::types::resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
     let family = crate::data_sync::require_data_sync_family(
         &src_config.database_type,
         &tgt_config.database_type,
@@ -159,6 +152,30 @@ async fn compare_data_sync_impl_inner(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("compare_data_sync")?;
+    let source_schema = metadata_schema(
+        src_driver.as_ref(),
+        source_schema.as_deref(),
+        None,
+        src_config.schema.as_deref(),
+    );
+    let target_schema = metadata_schema(
+        tgt_driver.as_ref(),
+        target_schema.as_deref(),
+        None,
+        tgt_config.schema.as_deref(),
+    );
+    let inspected = inspect_data_sync_impl(
+        state,
+        source_db_session_id.clone(),
+        target_db_session_id.clone(),
+        Some(source_database_name.clone()),
+        Some(target_database_name.clone()),
+        source_schema.clone(),
+        target_schema.clone(),
+        mappings,
+    )
+    .await?;
+    let wanted: std::collections::HashSet<String> = tables.into_iter().collect();
     state
         .sync_adapters
         .ensure_pair(&src_config.database_type, &tgt_config.database_type)
@@ -200,8 +217,8 @@ async fn compare_data_sync_impl_inner(
             .get_table_schema(
                 &src_handle,
                 &mapping.source_table,
-                src_config.database.as_deref().unwrap_or_default(),
-                src_config.schema.as_deref(),
+                &source_database_name,
+                source_schema.as_deref(),
             )
             .await
             .cmd_err("compare_data_sync")?;
@@ -209,8 +226,8 @@ async fn compare_data_sync_impl_inner(
             .get_table_schema(
                 &tgt_handle,
                 &mapping.target_table,
-                tgt_config.database.as_deref().unwrap_or_default(),
-                tgt_config.schema.as_deref(),
+                &target_database_name,
+                target_schema.as_deref(),
             )
             .await
             .cmd_err("compare_data_sync")?;
@@ -331,7 +348,7 @@ async fn compare_data_sync_impl_inner(
             src_driver.clone(),
             src_handle.clone(),
             mapping.source_table.clone(),
-            source_database.clone(),
+            Some(source_database_name.clone()),
             source_schema.clone(),
             column_names.clone(),
             pk_columns.clone(),
@@ -347,7 +364,7 @@ async fn compare_data_sync_impl_inner(
             tgt_driver.clone(),
             tgt_handle.clone(),
             mapping.target_table.clone(),
-            target_database.clone(),
+            Some(target_database_name.clone()),
             target_schema.clone(),
             column_names.clone(),
             pk_columns.clone(),
@@ -391,22 +408,8 @@ async fn compare_data_sync_impl_inner(
     let comparison = comparison_writer
         .finish()
         .map_err(CommandError::Validation)?;
-    let source_database_name =
-        super::types::resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
-    let target_database_name =
-        super::types::resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
-    let source_schema_name = source_schema
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| src_config.schema.clone());
-    let target_schema_name = target_schema
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| tgt_config.schema.clone());
+    let source_schema_name = source_schema.clone();
+    let target_schema_name = target_schema.clone();
     let mut source_entries = Vec::new();
     let mut target_entries = Vec::new();
     for table in comparison
@@ -419,8 +422,8 @@ async fn compare_data_sync_impl_inner(
             .get_table_schema(
                 &src_handle,
                 &table.table.source_table,
-                src_config.database.as_deref().unwrap_or_default(),
-                src_config.schema.as_deref(),
+                &source_database_name,
+                source_schema.as_deref(),
             )
             .await
             .cmd_err("compare_data_sync")?;
@@ -428,8 +431,8 @@ async fn compare_data_sync_impl_inner(
             .get_table_schema(
                 &tgt_handle,
                 &table.table.target_table,
-                tgt_config.database.as_deref().unwrap_or_default(),
-                tgt_config.schema.as_deref(),
+                &target_database_name,
+                target_schema.as_deref(),
             )
             .await
             .cmd_err("compare_data_sync")?;
@@ -544,6 +547,14 @@ pub(crate) async fn generate_data_sync_sql_impl(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("generate_data_sync_sql")?;
+    let target_database_name =
+        super::types::resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
+    let target_schema = metadata_schema(
+        tgt_driver.as_ref(),
+        target_schema.as_deref(),
+        None,
+        tgt_config.schema.as_deref(),
+    );
     state
         .sync_adapters
         .ensure_type(&tgt_config.database_type)
@@ -567,8 +578,8 @@ pub(crate) async fn generate_data_sync_sql_impl(
             .get_table_schema(
                 &tgt_handle,
                 &table.target_table,
-                tgt_config.database.as_deref().unwrap_or_default(),
-                tgt_config.schema.as_deref(),
+                &target_database_name,
+                target_schema.as_deref(),
             )
             .await
             .cmd_err("generate_data_sync_sql")?;
@@ -604,7 +615,7 @@ pub(crate) async fn generate_data_sync_sql_impl(
         let stmts = if family == "mysql" {
             generate_table_sql_with_preview_formatter_and_policy(
                 table,
-                target_database.as_deref(),
+                Some(&target_database_name),
                 &pk,
                 &column_names,
                 &column_types,

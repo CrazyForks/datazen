@@ -25,6 +25,10 @@ pub struct SyncConflict {
 pub struct ExecutionResult {
     pub applied: usize,
     pub rolled_back: bool,
+    /// Explains a confirmed rollback. A missing reason means execution
+    /// committed successfully or returned an error with an unknown outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_reason: Option<String>,
     /// Total rows reported by the database for successful statements.
     /// Defaults during deserialization so older persisted responses remain valid.
     #[serde(default)]
@@ -73,20 +77,43 @@ pub async fn execute_statements_with_policy(
         ));
     }
     if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-        return Err(DataSyncError::cancelled("execute cancelled"));
+        return Ok(ExecutionResult {
+            applied: 0,
+            rolled_back: true,
+            rollback_reason: Some("execute cancelled before any changes were applied".into()),
+            affected_rows: 0,
+            skipped: 0,
+            conflicts: Vec::new(),
+        });
     }
 
-    executor.begin().await?;
+    if let Err(error) = executor.begin().await {
+        return Ok(ExecutionResult {
+            applied: 0,
+            rolled_back: true,
+            rollback_reason: Some(format!(
+                "transaction could not start; no changes were applied: {error}"
+            )),
+            affected_rows: 0,
+            skipped: 0,
+            conflicts: Vec::new(),
+        });
+    }
     let mut applied = 0usize;
     let mut affected_rows = 0u64;
     let mut skipped = 0usize;
     let mut conflicts = Vec::new();
     for stmt in statements {
         if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-            executor.rollback().await?;
+            executor.rollback().await.map_err(|error| {
+                DataSyncError::validation(format!(
+                    "execute cancelled; rollback failed, outcome UNKNOWN: {error}"
+                ))
+            })?;
             return Ok(ExecutionResult {
                 applied,
                 rolled_back: true,
+                rollback_reason: Some("execute cancelled; all changes were rolled back".into()),
                 affected_rows,
                 skipped: 0,
                 conflicts: Vec::new(),
@@ -117,17 +144,43 @@ pub async fn execute_statements_with_policy(
                         });
                         continue;
                     }
-                    let _ = executor.rollback().await;
-                    return Err(DataSyncError::conflict(message));
+                    executor.rollback().await.map_err(|error| {
+                        DataSyncError::validation(format!(
+                            "{message}; rollback failed, outcome UNKNOWN: {error}"
+                        ))
+                    })?;
+                    return Ok(ExecutionResult {
+                        applied,
+                        rolled_back: true,
+                        rollback_reason: Some(message.clone()),
+                        affected_rows,
+                        skipped: 0,
+                        conflicts: vec![SyncConflict {
+                            table: stmt.table.clone(),
+                            operation,
+                            row_key: stmt.row_key.clone(),
+                            message,
+                        }],
+                    });
                 }
                 applied += 1;
                 affected_rows += affected;
             }
             Err(err) => {
-                let _ = executor.rollback().await;
-                return Err(DataSyncError::validation(format!(
-                    "execution failed after {applied} statements: {err}"
-                )));
+                let reason = format!("execution failed after {applied} statements: {err}");
+                executor.rollback().await.map_err(|rollback_error| {
+                    DataSyncError::validation(format!(
+                        "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
+                    ))
+                })?;
+                return Ok(ExecutionResult {
+                    applied,
+                    rolled_back: true,
+                    rollback_reason: Some(reason),
+                    affected_rows,
+                    skipped: 0,
+                    conflicts: Vec::new(),
+                });
             }
         }
     }
@@ -135,6 +188,7 @@ pub async fn execute_statements_with_policy(
     Ok(ExecutionResult {
         applied,
         rolled_back: false,
+        rollback_reason: None,
         affected_rows,
         skipped,
         conflicts,
@@ -234,6 +288,7 @@ mod tests {
         let json = serde_json::to_value(ExecutionResult {
             applied: 1,
             rolled_back: false,
+            rollback_reason: None,
             affected_rows: 3,
             skipped: 0,
             conflicts: Vec::new(),
@@ -267,10 +322,14 @@ mod tests {
             fail_at: Some(1),
             ..RecordingExecutor::default()
         };
-        let err = execute_statements(&[stmt("A"), stmt("B")], &mut exec, None)
+        let result = execute_statements(&[stmt("A"), stmt("B")], &mut exec, None)
             .await
-            .unwrap_err();
-        assert!(err.to_string().contains("execution failed after 1"));
+            .unwrap();
+        assert!(result.rolled_back);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("execution failed after 1")));
         assert!(exec.calls.contains(&"rollback".to_string()));
         assert!(!exec.calls.contains(&"commit".to_string()));
     }
@@ -305,11 +364,48 @@ mod tests {
         let mut exec = ZeroRowsExecutor { calls: Vec::new() };
         let mut update = stmt("UPDATE t");
         update.operation = ChangeOperation::Update;
-        let err = execute_statements(&[update], &mut exec, None)
+        let result = execute_statements(&[update], &mut exec, None)
+            .await
+            .unwrap();
+        assert!(result.rolled_back);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|message| message.contains("zero rows")));
+        assert_eq!(result.conflicts.len(), 1);
+        assert_eq!(exec.calls, vec!["begin", "execute", "rollback"]);
+    }
+
+    #[tokio::test]
+    async fn failed_rollback_keeps_the_write_outcome_unknown() {
+        struct RollbackFailureExecutor;
+        #[async_trait]
+        impl StatementExecutor for RollbackFailureExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                Ok(0)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                panic!("a conflicted statement must never commit")
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                Err(DataSyncError::validation("connection lost during rollback"))
+            }
+        }
+
+        let mut update = stmt("UPDATE t");
+        update.operation = ChangeOperation::Update;
+        let error = execute_statements(&[update], &mut RollbackFailureExecutor, None)
             .await
             .unwrap_err();
-        assert!(matches!(err, DataSyncError::Conflict(message) if message.contains("zero rows")));
-        assert_eq!(exec.calls, vec!["begin", "execute", "rollback"]);
+        assert!(error
+            .to_string()
+            .contains("rollback failed, outcome UNKNOWN"));
     }
 
     #[tokio::test]
@@ -389,15 +485,16 @@ mod tests {
         }
         let mut update = stmt("UPDATE t");
         update.operation = ChangeOperation::Update;
-        let err = execute_statements_with_policy(
+        let result = execute_statements_with_policy(
             &[update],
             &mut ZeroRowsExecutor,
             None,
             ConflictPolicy::Force,
         )
         .await
-        .unwrap_err();
-        assert!(matches!(err, DataSyncError::Conflict(_)));
+        .unwrap();
+        assert!(result.rolled_back);
+        assert_eq!(result.conflicts.len(), 1);
     }
 
     #[tokio::test]
@@ -406,15 +503,19 @@ mod tests {
             fail_at: Some(0),
             ..RecordingExecutor::default()
         };
-        let err = execute_statements_with_policy(
+        let result = execute_statements_with_policy(
             &[stmt("INSERT duplicate")],
             &mut exec,
             None,
             ConflictPolicy::Force,
         )
         .await
-        .unwrap_err();
-        assert!(err.to_string().contains("execution failed"));
+        .unwrap();
+        assert!(result.rolled_back);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("execution failed")));
         assert!(exec.calls.contains(&"rollback".to_string()));
         assert!(!exec.calls.contains(&"commit".to_string()));
     }
@@ -423,11 +524,48 @@ mod tests {
     async fn cancel_before_start() {
         let mut exec = RecordingExecutor::default();
         let flag = Arc::new(AtomicBool::new(true));
-        let err = execute_statements(&[stmt("A")], &mut exec, Some(flag))
+        let result = execute_statements(&[stmt("A")], &mut exec, Some(flag))
             .await
-            .unwrap_err();
-        assert!(matches!(err, DataSyncError::Cancelled(_)));
+            .unwrap();
+        assert!(result.rolled_back);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("before any changes")));
         assert!(exec.calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn begin_failure_confirms_no_statements_were_applied() {
+        struct BeginFailureExecutor;
+        #[async_trait]
+        impl StatementExecutor for BeginFailureExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                Err(DataSyncError::validation("database rejected transaction"))
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                panic!("failed begin must prevent statement execution")
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                panic!("failed begin must prevent commit")
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                panic!("failed begin must not attempt rollback")
+            }
+        }
+
+        let result = execute_statements(&[stmt("INSERT")], &mut BeginFailureExecutor, None)
+            .await
+            .unwrap();
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 0);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no changes were applied")));
     }
 
     #[tokio::test]

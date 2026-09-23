@@ -1,63 +1,58 @@
-# 数据迁移三件套协调总览
+# 数据迁移三件套交付跟踪
 
-范围：DataZen 的 **Data Sync、Data Transfer、Schema Diff**。本文件只记录该功能的已合入能力与尚存缺口；不包含 AI、查询构建器、Redis 或其他产品工作。
+范围：Data Sync、Data Transfer、Schema Diff。这里只记录这三项功能的实现状态、验证结果和发布门槛。
 
-最后核对：2026-09-22。集成分支：`codex/migration-navicat`。
+最后核对：2026-09-23。集成分支：`codex/migration-navicat`，已合入 `main`，集成提交 `13f40925`。
 
-## 核对依据
+## 已交付能力
 
-- 集成分支已合入 Schema Diff view、foreign key、target-only table、CHECK、table options、routine/trigger、PostgreSQL sequence；Data Sync immutable plan、snapshot、流式 ComparisonStore、disk index、conflict policy、row ranges、cross-page selection；Data Transfer immutable plan、SQL-file target、cross-dialect target、structure dependencies、recordset、profiles、编码与压缩。
-- 代码入口：`packages/driver-api/src/schema_migration.rs`、`packages/driver-api/src/schema_objects.rs`、`src-tauri/src/schema_diff/objects.rs`、`src-tauri/src/commands/sync/comparison_store.rs`、`src-tauri/src/data_transfer/model.rs` 与 `recordset.rs`。
-- 合并后的 focused 回归：Schema Diff 110、Data Sync 129 + commands/sync 58；前端定向套件 14 个文件 / 121 个测试通过。最近完整 Host Rust 基线为 1654 通过、3 忽略。
+- 三个功能均使用服务端计划与审阅后的单次执行；执行前校验连接、目标状态或 schema，并对只读目标和无法证明安全的操作拒绝写入。
+- Data Sync 支持同族数据库比较、私有磁盘比较存储、分页 review、跨页选择、过滤、冲突策略、配置文件、运行历史及真实 PostgreSQL/MySQL 执行。表级选择范围避免“全选”时把所有 row key 留在前端。
+- Data Transfer 支持参数化值传输、过滤与映射、跨方言目标、SQL 文件原子发布、结构依赖、recordset、profile、编码与压缩；数据库传输可以从已提交表边界恢复，遇到未知提交结果时不允许盲目重放。
+- Schema Diff 支持目标专属对象选择、CHECK、MySQL/MariaDB 表注释/engine/charset、同方言 view、PostgreSQL/MySQL routine 与 trigger、PostgreSQL sequence，以及 PostgreSQL enum/domain/composite/range 类型。没有可信身份、类型转换或 renderer 的操作继续 fail closed。
+- MySQL CHECK catalog 解析会忽略字符串与注释中的伪匹配；MySQL 参数化写入和二进制 SQL 字面量、SQLite 参数化事务写入与 BLOB 读取均有驱动级覆盖。
 
-## 已合入能力
+## 已完成的发布验证
 
-- 三件套均使用服务端不可变计划、一次性执行、目标快照校验、只读/自目标保护和可审查 SQL。
-- Data Sync 已有快照读取、精确键契约、过滤、分页、跨页选择、abort/skip/force 冲突策略、配置文件、运行历史和 Workflow 执行。比较生成通过流式 sink 写入有界的私有 framed store；manifest 会校验行帧、索引、insert/update/delete/unchanged 计数，损坏时对 summary/page/load 一致 fail-closed。
-- Data Transfer 已有无损值路径、过滤、单列 recordset、表/字段映射、SQL 文件原子发布、目标方言/命名空间、UTF-8/UTF-8 BOM、UTF-16LE/BE、gzip、结构依赖和配置文件。
-- Schema Diff 已有目标专属表选择、CHECK、MySQL/MariaDB 的表注释/engine/charset、同方言 view、PostgreSQL/MySQL 的 routine/trigger、PostgreSQL sequence，以及精确 overload/attached-relation 身份。
+- Vitest：482 个文件、4,986 项通过。
+- Host Rust：1,795 项通过、3 项环境测试忽略；Driver API、PostgreSQL、MySQL、SQLite crate 联合测试通过。
+- 前端类型检查与生产构建通过；WDIO 构建生成可运行的 `DataZen.app`。构建随后只在 macOS DMG 阶段失败，依用户明确要求不作为本功能阻塞项，详见 `AGENTS.md`。
+- Data Sync WDIO：4 个 spec、56 项通过；覆盖 PostgreSQL/MySQL 全旅程、执行后删除确认、并发写冲突回滚及真实数据库读回。
+- Schema Diff WDIO：7 个 spec、38 项通过；覆盖 PostgreSQL/MySQL 双向结构部署、联合主键、复合索引、宽类型与 profile。
+- Data Transfer WDIO：8 个 spec、40 项通过；覆盖 PG↔MySQL 宽数据真实传输、模式路径、类型映射与执行读回。
+- 本轮在获准的本机 PostgreSQL/MySQL 上完成了真实数据库用例。Data Sync 删除旅程第一次随整套运行出现一次行数超时，单独重跑和之后完整 4-spec 套件均通过；测试超时现会报告实际观察到的行数，便于定位后续回归。
+- 当前工作树执行 `git diff --check` 无空白错误；`main` 是集成分支祖先。此工作树的 `node_modules` 是本地目录，不链接主 checkout。
 
-## 已完成的本轮轨道
-
-- PostgreSQL sequence 已合入：IR、严格 quote_ident 身份校验、catalog DDL、create/replace/drop、目标快照、destructive gate、rollback 完整性和 replay/stale/cross-dialect fail-closed 均已覆盖。Replace 不再虚报可恢复 sequence counter；真实 PostgreSQL journey 仍待 R 环境。
-- Data Sync bounded comparison 已合入：流式生成、私有磁盘索引、取消清理、页读取、manifest counter 篡改回归和 64 MiB full-load fail-closed 均已独立复测。
-- Data Transfer SQL 文件编码与压缩已合入：UTF-16LE/BE、BOM、gzip、旧 profile 兼容和值回读均已独立复测；Windows 原生 picker/替换仍待 R 环境。
-
-## 剩余工作项
+## 仍未达到完整 Navicat 能力的工作
 
 ### Schema Diff
 
-1. 为 `ObjectKind::Type` 增加迁移契约和 renderer。目录层已能列出 PostgreSQL/SQL Server type，但现有对象计划器只接受 view、function、procedure、trigger、sequence。
-2. 建立跨方言 view/object 翻译器与能力契约；当前 view 及 routine/trigger/sequence 计划函数在源/目标方言不相同时直接拒绝执行。
-3. 将对象迁移由分类的固定排序扩展为完整依赖图，覆盖表、FK、view、sequence、routine、trigger、type 的创建、替换和删除顺序与循环报告。
-4. 实现 SQLite 需要 table rebuild 的变更路径，或在产品中完整呈现并处理不可回滚风险；当前 API 对这类操作明确返回不支持。
-5. 扩展表级能力：collation、partition、compression 与其他可由目标驱动可靠表达的选项；现有已覆盖范围仅限 MySQL/MariaDB comment、engine、charset。
-6. 补齐对象 catalog/DDL/renderer 的驱动矩阵；MySQL/SQLite sequence 目前明确 fail closed，其他驱动的 catalog 能力不能直接视为可迁移。
+1. 为跨方言 view、routine、trigger 和自定义类型提供可审查的语义转换；目前不能证明等价时会阻止执行。
+2. 完成覆盖自定义类型、表、FK、view、sequence、routine、trigger 的依赖 DAG，包含替换、删除顺序和循环报告。
+3. 实现 SQLite table rebuild 与完整风险/回滚处理；当前需要 rebuild 的变更会明确拒绝。
+4. 扩充可靠表达的表选项和驱动对象目录能力，例如 collation、partition、compression，并给每个注册驱动建立实际可执行的能力矩阵。
 
 ### Data Sync
 
-7. 让大计划的 SQL 预览和执行也按页/流读取 change index，避免 `ComparisonStore::load()` 为执行重新装入所有行；当前 64 MiB full-load ceiling 是明确的 P2 限制。
-8. 补齐大表故障恢复：进程异常后的临时索引回收、磁盘容量上限与长时间比较压测；取消清理、帧/索引损坏 fail-closed 已覆盖。
-9. 扩展 Sync 的 recordset/selection 到复合键 tuple 范围、多表预设和经过证明的恢复点；仍需保持键序和 source/target 比较语义一致。
-10. 增加冲突后的受控 recompare 旅程和能力提示：旧计划必须失效，新比较完成后才能再次执行。
-11. 将稳定快照和精确键比较覆盖到更多已注册驱动及真实数据库数据类型/排序规则，并明确不支持的家族。
+5. 取消当前比较结果约 10,000 个差异行 / 32 MiB 的硬上限；review 数据虽按页落盘读取，SQL 预览和执行仍会生成整个语句 `Vec`，超大迁移仍有大小限制与额外内存占用。
+6. 为比较存储增加异常退出回收、容量/磁盘不足控制和长时间大表压力测试；正常取消与计划释放已清理临时文件，manifest 损坏会 fail closed。
+7. 支持经过驱动排序契约证明的复合键 tuple 范围和恢复点，并把快照、排序与真实类型语义扩展至所有要声明支持的驱动。
+8. 为真正未知的提交/回滚结果提供安全的人工核对与恢复流程。确认回滚、乐观冲突、执行错误和事务启动失败现在会说明结果并自动重新比较；提交结果不确定时仍会隔离写入，避免误重放。
 
 ### Data Transfer
 
-12. 实现经过证明的 checkpoint 或 idempotent resumability；现有 Transfer recordset 代码明确声明它不是 checkpoint，且不会保存 OFFSET。
-13. 支持复合 tuple recordset 边界和经过验证的驱动专属范围语义；当前 `TransferRecordset` 只接受一个排序列和标量边界。
-14. 扩展跨方言结构语义：target database/schema 创建、类型/表达式/identity/generated 列、索引和 FK 的逐项转换；不能证明等价时必须在预览中阻断或逐对象披露。
-15. 让 Transfer 的批处理、取消与错误策略提供逐表已提交/回滚/未知统计，并验证 stop/continue 在事务边界上的实际行为。
+9. 把表级 checkpoint 扩展到大表内有界 chunk；提交结果不确定时需要可靠幂等或恢复证明。
+10. 支持复合 tuple recordset 边界和驱动专属排序语义；目前 recordset 只接受单一排序列和标量范围。
+11. 补足异构结构迁移中的目标 database/schema、identity/generated 列、类型/表达式、索引和 FK 映射；不能证明等价的对象必须明确阻断。
+12. 完善逐表已提交/回滚/未知行数和 stop/continue 策略，并验证不同驱动的真实事务边界。
 
-### 产品验收与驱动范围
+### 发布范围与跨平台验收
 
-16. 审计三个窗口的完整用户旅程：配置变化使预览失效、返回步骤保留配置、跨页选择和 SQL 导出与同一个服务端计划绑定。
-17. 建立并实现能力矩阵：PostgreSQL、MySQL/MariaDB、SQLite、SQL Server、DuckDB 等每个已注册驱动按 Sync、Transfer、Schema Diff 的具体能力测试；未注册的 Oracle、Snowflake 等必须先实现驱动。
-18. 补齐真实 PostgreSQL/MySQL source→target 旅程，覆盖对象变更、字节/数值精度、冲突、取消、失败回滚和 stale plan；当前 fixture/只读凭据仍缺失。
-19. 在 Windows 上验证 SQL 文件替换、桌面打包和 WebDriver 迁移旅程；macOS App/DMG 测试不能覆盖 Windows 文件替换语义。
-20. 完成发布前验收：独立复测、故障注入、大表内存/性能基准、Host/driver/frontend/WebDriver 全量回归与安装包验证。
+13. 为所有注册驱动列出 Sync、Transfer、Schema Diff 的能力矩阵与对应测试；只有真实实现并通过验证的能力才能对外标为支持。
+14. 扩展 PostgreSQL/MySQL 故障旅程，覆盖冲突、写入中取消、失败回滚、未知提交结果和 stale plan；现有真实旅程已验证基本读写、类型、跨方言结构、只读和 stale schema。
+15. 在 Windows 验证 SQL 文件 picker/原子替换、可运行包和迁移 WebDriver 旅程。当前环境是 macOS；DMG 阶段问题不属于本功能门槛。
+16. 在解除上述能力限制后补齐大表内存/性能基准、故障注入以及完整安装介质验证。
 
-## 结论边界
+## 发布判断
 
-- 上述项目来自提交历史和当前可执行/拒绝执行路径，不把文档中的历史“未开始”状态当作事实。
-- 不存在可靠 driver capability、精确对象身份、目标快照或 rollback 信息时，必须 fail closed；在第 16–20 项完成前不能宣称已全面追平 Navicat。
+当前实现已通过三件套 macOS WDIO 真实数据库主旅程和主要 Host/Driver 回归，但仍有明确的迁移规模、结构语义、驱动覆盖及 Windows 验收缺口。因此可以继续集成验证，尚不能宣称达到完整 Navicat 能力或满足跨平台正式发布标准。对于缺乏可靠身份、类型、快照、事务或 rollback 证明的操作，继续 fail closed。

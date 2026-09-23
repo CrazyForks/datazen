@@ -2,6 +2,162 @@
 
 use super::*;
 use datazen_driver_api::DatabaseDriver;
+use std::collections::HashMap;
+
+#[test]
+fn mysql_group_replication_members_share_canonical_database_identity() {
+    let member_a = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("ONLINE")));
+    let member_b = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("online")));
+    let ClusterScopeDecision::Cluster {
+        scope: scope_a,
+        id: id_a,
+    } = member_a
+    else {
+        panic!("healthy group member should have cluster identity");
+    };
+    let ClusterScopeDecision::Cluster {
+        scope: scope_b,
+        id: id_b,
+    } = member_b
+    else {
+        panic!("healthy group member should have cluster identity");
+    };
+
+    assert_eq!(
+        canonical_database_identity("mysql", scope_a, &id_a, "app"),
+        canonical_database_identity("mysql", scope_b, &id_b, "app")
+    );
+}
+
+#[test]
+fn mysql_group_and_database_are_part_of_canonical_identity() {
+    let group_a = mysql_group_replication_scope(Some("group-a"), Ok(Some("ONLINE")));
+    let group_b = mysql_group_replication_scope(Some("group-b"), Ok(Some("ONLINE")));
+    let ClusterScopeDecision::Cluster { scope, id: group_a } = group_a else {
+        panic!("healthy group member should have cluster identity");
+    };
+    let ClusterScopeDecision::Cluster { id: group_b, .. } = group_b else {
+        panic!("healthy group member should have cluster identity");
+    };
+
+    let app_a = canonical_database_identity("mysql", scope, &group_a, "app");
+    let app_b = canonical_database_identity("mysql", scope, &group_b, "app");
+    let other_database = canonical_database_identity("mysql", scope, &group_a, "other");
+    assert_ne!(app_a, app_b);
+    assert_ne!(app_a, other_database);
+}
+
+#[test]
+fn mysql_group_replication_unknown_or_unhealthy_members_fail_closed() {
+    assert_eq!(
+        mysql_group_replication_scope(None, Ok(None)),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Err(())),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Ok(Some("RECOVERING"))),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some(""), Ok(None)),
+        ClusterScopeDecision::NodeFallback
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Ok(None)),
+        ClusterScopeDecision::NodeFallback
+    );
+}
+
+#[test]
+fn mysql_group_replication_fallback_requires_known_plugin_absence_or_inactive_state() {
+    assert_eq!(mysql_group_replication_plugin_active(None), None);
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::new())),
+        Some(false)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "INACTIVE".to_string(),
+        )]))),
+        Some(false)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "ACTIVE".to_string(),
+        )]))),
+        Some(true)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "UNKNOWN".to_string(),
+        )]))),
+        None
+    );
+}
+
+#[test]
+fn mariadb_wsrep_members_share_identity_and_distinguish_cluster_and_database() {
+    let statuses = HashMap::from([
+        (
+            "wsrep_cluster_state_uuid".to_string(),
+            "cluster-uuid".to_string(),
+        ),
+        ("wsrep_cluster_status".to_string(), "Primary".to_string()),
+        ("wsrep_connected".to_string(), "ON".to_string()),
+        ("wsrep_ready".to_string(), "ON".to_string()),
+    ]);
+    let ClusterScopeDecision::Cluster { scope, id } = mariadb_wsrep_scope(Some(&statuses)) else {
+        panic!("healthy wsrep member should have cluster identity");
+    };
+    let primary = canonical_database_identity("mariadb", scope, &id, "app");
+    let peer = canonical_database_identity("mariadb", scope, &id, "app");
+    let other_cluster = canonical_database_identity("mariadb", scope, "other-uuid", "app");
+    let other_database = canonical_database_identity("mariadb", scope, &id, "other");
+    assert_eq!(primary, peer);
+    assert_ne!(primary, other_cluster);
+    assert_ne!(primary, other_database);
+}
+
+#[test]
+fn mariadb_wsrep_unknown_unhealthy_or_incomplete_status_fails_closed() {
+    assert_eq!(mariadb_wsrep_scope(None), ClusterScopeDecision::Unknown);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&HashMap::new())),
+        ClusterScopeDecision::NodeFallback
+    );
+
+    let incomplete = HashMap::from([(
+        "wsrep_cluster_state_uuid".to_string(),
+        "cluster-uuid".to_string(),
+    )]);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&incomplete)),
+        ClusterScopeDecision::Unknown
+    );
+
+    let unhealthy = HashMap::from([
+        (
+            "wsrep_cluster_state_uuid".to_string(),
+            "cluster-uuid".to_string(),
+        ),
+        (
+            "wsrep_cluster_status".to_string(),
+            "Non-Primary".to_string(),
+        ),
+        ("wsrep_connected".to_string(), "ON".to_string()),
+        ("wsrep_ready".to_string(), "ON".to_string()),
+    ]);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&unhealthy)),
+        ClusterScopeDecision::Unknown
+    );
+}
 
 #[test]
 fn format_sql_literal_keeps_binary_bytes_lossless() {
@@ -52,6 +208,19 @@ fn test_tester_check_parser_ignores_comments_and_quoted_identifiers() {
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0].name, "users_check");
     assert_eq!(checks[0].expression, "`check_col` <> 'CHECK (literal)'");
+}
+
+#[test]
+fn mysql_foreign_keys_are_explicitly_not_deferrable() {
+    let foreign_keys = MysqlDriver::parse_fk_from_create_table(
+        "CREATE TABLE `orders` (\n  CONSTRAINT `orders_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)\n)",
+    );
+
+    assert_eq!(foreign_keys.len(), 1);
+    assert_eq!(
+        foreign_keys[0].deferrability,
+        ForeignKeyDeferrability::NotDeferrable
+    );
 }
 
 #[test]
@@ -233,17 +402,17 @@ async fn begin_transaction_requires_pool() {
 }
 
 #[tokio::test]
-async fn begin_read_snapshot_fails_closed_when_unsupported() {
+async fn begin_read_snapshot_requires_pool() {
     let driver = MysqlDriver::new(false);
     let handle = ConnectionHandle {
         id: "conn".into(),
         pool_id: "missing-pool".into(),
     };
     let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
-    assert!(matches!(
-        err,
-        DriverError::Unsupported(message) if message.contains("stable read snapshots")
-    ));
+    assert!(
+        matches!(err, DriverError::ConnectionFailed(_)),
+        "expected ConnectionFailed, got {err:?}"
+    );
 }
 
 #[tokio::test]

@@ -1364,8 +1364,7 @@ describe('DataSyncWindow wizard', () => {
   it.each([
     {
       outcome: 'rollback',
-      expectedState: 'compared',
-      expectedError: 'sync.rolledBack',
+      expectedState: 'done',
     },
     {
       outcome: 'unknown',
@@ -1381,7 +1380,11 @@ describe('DataSyncWindow wizard', () => {
       compareDataSyncMock.mockResolvedValue([
         { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
       ]);
-      let resolveWrite!: (result: { applied: number; rolledBack: boolean }) => void;
+      let resolveWrite!: (result: {
+        applied: number;
+        rolledBack: boolean;
+        rollbackReason?: string;
+      }) => void;
       let rejectWrite!: (error: Error) => void;
       executeDataSyncMock.mockImplementationOnce(
         () =>
@@ -1404,10 +1407,23 @@ describe('DataSyncWindow wizard', () => {
       fireEvent.click(screen.getByTestId('data-sync-cancel'));
       await waitFor(() => expect(cancelDataSyncMock).toHaveBeenCalledTimes(1));
 
-      if (outcome === 'rollback') resolveWrite({ applied: 0, rolledBack: true });
-      else rejectWrite(new Error('commit response lost'));
+      if (outcome === 'rollback') {
+        resolveWrite({
+          applied: 0,
+          rolledBack: true,
+          rollbackReason: 'optimistic sync conflict; all changes were rolled back',
+        });
+      } else rejectWrite(new Error('commit response lost'));
 
-      expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(expectedError);
+      if (outcome === 'rollback') {
+        expect(await screen.findByTestId('data-sync-result')).toBeTruthy();
+        expect(screen.getByTestId('data-sync-execute-done')).toHaveTextContent(
+          'optimistic sync conflict; all changes were rolled back',
+        );
+        expect(screen.getByTestId('data-sync-re-compare')).toBeTruthy();
+      } else {
+        expect(await screen.findByTestId('data-sync-error')).toHaveTextContent(expectedError!);
+      }
       expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
         'data-sync-state',
         expectedState,
@@ -1420,13 +1436,17 @@ describe('DataSyncWindow wizard', () => {
         'data-sync-state',
         expectedState,
       );
-      expect(screen.getByTestId('data-sync-error')).toHaveTextContent(expectedError);
+      if (outcome === 'rollback') {
+        expect(screen.queryByTestId('data-sync-error')).toBeNull();
+      } else {
+        expect(screen.getByTestId('data-sync-error')).toHaveTextContent(expectedError!);
+      }
       expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.cancellingExecution');
       expect(screen.getByTestId('status-bar')).not.toHaveTextContent('sync.compareCancelled');
     },
   );
 
-  it('[tester] rollback preserves review and cancellation during generation never writes', async () => {
+  it('a confirmed rollback creates a fresh comparison plan before allowing another execute', async () => {
     inspectDataSyncMock.mockResolvedValue([
       { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
     ]);
@@ -1435,27 +1455,46 @@ describe('DataSyncWindow wizard', () => {
     ]);
     render(<DataSyncWindow />);
     await advanceToPreview();
-    executeDataSyncMock.mockResolvedValueOnce({ applied: 0, rolledBack: true });
+    executeDataSyncMock.mockResolvedValueOnce({
+      applied: 0,
+      rolledBack: true,
+      rollbackReason: 'target row changed; all changes were rolled back',
+    });
     fireEvent.click(screen.getByTestId('data-sync-start'));
-    await screen.findByTestId('data-sync-error');
-    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'compared');
-    fireEvent.click(screen.getByText('common.ok'));
-    let finish!: (rows: []) => void;
-    generateDataSyncSqlMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
+    await screen.findByTestId('data-sync-result');
+    expect(compareDataSyncMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'done');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
     );
-    fireEvent.click(screen.getByTestId('data-sync-start'));
-    await waitFor(() => expect(finish).toBeDefined());
-    fireEvent.click(screen.getByTestId('data-sync-cancel'));
-    await waitFor(() =>
-      expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'compared'),
-    );
-    finish([]);
-    await waitFor(() => expect(executeDataSyncMock).toHaveBeenCalledTimes(1));
+    expect(executeDataSyncMock).toHaveBeenCalledTimes(1);
     expect(applyDataSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a known write outcome when the follow-up comparison fails', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock
+      .mockResolvedValueOnce([
+        { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+      ])
+      .mockRejectedValueOnce(new Error('fresh compare failed'));
+    executeDataSyncMock.mockResolvedValueOnce({ applied: 1, rolledBack: false });
+
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('fresh compare failed');
+    expect(screen.getByTestId('data-sync-error')).not.toHaveTextContent('sync.executionUnknown');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'done');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'false',
+    );
+    expect(screen.getByTestId('data-sync-re-compare')).toBeTruthy();
   });
 
   it('[tester] saves the reviewed endpoint and option configuration as a profile', async () => {

@@ -398,10 +398,17 @@ async fn compare_table_schemas_impl_returns_diff_for_table() {
     let src = test.connect_config("src").await;
     let tgt = test.connect_config("tgt").await;
 
-    let schema_diff =
-        compare_table_schemas_impl(&test.state, src.clone(), tgt.clone(), "users".into())
-            .await
-            .unwrap();
+    let schema_diff = compare_table_schemas_impl(
+        &test.state,
+        src.clone(),
+        tgt.clone(),
+        "users".into(),
+        "users".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(schema_diff["table"], "users");
 }
 
@@ -800,10 +807,15 @@ async fn cancel_data_sync_stops_execute_before_start() {
         parameters: vec![],
         row_key: vec![],
     };
-    let err = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None)
+    let result = super::execute_data_sync_impl(&test.state, id, vec![stmt], Some(job), None)
         .await
-        .unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("cancel"), "{err}");
+        .unwrap();
+    assert!(result.rolled_back);
+    assert!(result
+        .rollback_reason
+        .as_deref()
+        .is_some_and(|reason| reason.to_lowercase().contains("cancel")));
+    assert_eq!(result.applied, 0);
 }
 
 #[tokio::test]

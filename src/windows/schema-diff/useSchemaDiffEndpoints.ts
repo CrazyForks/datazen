@@ -261,7 +261,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
             migrationPrefillRef,
             'source',
             schemas,
-            (current) => pickDefaultSchema(schemas, current),
+            (current) => {
+              const configured = sourceConn?.schema?.trim();
+              return configured && schemas.includes(configured)
+                ? configured
+                : pickDefaultSchema(schemas, current);
+            },
             prev,
           ),
         );
@@ -275,7 +280,7 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     return () => {
       cancelled = true;
     };
-  }, [sourceId, sourceDatabase, sourceConn?.databaseType, sourceSession]);
+  }, [sourceId, sourceDatabase, sourceConn?.databaseType, sourceConn?.schema, sourceSession]);
 
   useEffect(() => {
     const targetMeta = targetConn ? DB_REGISTRY[targetConn.databaseType] : undefined;
@@ -309,7 +314,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
             migrationPrefillRef,
             'target',
             schemas,
-            (current) => pickDefaultSchema(schemas, current),
+            (current) => {
+              const configured = targetConn?.schema?.trim();
+              return configured && schemas.includes(configured)
+                ? configured
+                : pickDefaultSchema(schemas, current);
+            },
             prev,
           ),
         );
@@ -323,7 +333,7 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     return () => {
       cancelled = true;
     };
-  }, [targetId, targetDatabase, targetConn?.databaseType, targetSession]);
+  }, [targetId, targetDatabase, targetConn?.databaseType, targetConn?.schema, targetSession]);
 
   const isSameEndpoint = useCallback(() => {
     const norm = (s: string) => s.trim();

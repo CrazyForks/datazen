@@ -1188,6 +1188,15 @@ export function DataSyncWindow() {
             const known = new Set(previous.map(selectedRowToken));
             const additions = pageRows
               .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .filter(
+                (row) =>
+                  !tableSelectionsRef.current.some(
+                    (scope) =>
+                      scope.sourceTable === table.sourceTable &&
+                      scope.targetTable === table.targetTable &&
+                      scopeSelectsOperation(scope, row.operation, syncOptions),
+                  ),
+              )
               .map((row) => ({
                 sourceTable: table.sourceTable,
                 targetTable: table.targetTable,
@@ -1302,6 +1311,7 @@ export function DataSyncWindow() {
     cancellingStatusJobRef.current = null;
 
     let writeStarted = false;
+    let executionResolved = false;
     try {
       const { source, target } = await refreshEndpointSessions();
       const srcConnId = source?.dbSessionId;
@@ -1381,14 +1391,10 @@ export function DataSyncWindow() {
               profileRef,
             )
           : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      writeStarted = false;
+      executionResolved = true;
+      writeInFlightRef.current = false;
       setLastExecutionResult(result);
-      if (result.rolledBack) {
-        setErrorMsg(t('sync.rolledBack'));
-        setErrorOpen(true);
-        setSyncState('compared');
-        setExecuteProgress('');
-        return;
-      }
 
       setExecuteProgress(t('sync.recomparing'));
       const recompareFilters = Object.fromEntries(
@@ -1464,8 +1470,16 @@ export function DataSyncWindow() {
         `${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`,
       );
       setErrorOpen(true);
-      if (writeStarted) setWriteOutcomeUncertain(true);
-      setSyncState(writeStarted ? 'unknown' : 'compared');
+      if (writeStarted) {
+        setWriteOutcomeUncertain(true);
+        setSyncState('unknown');
+      } else if (executionResolved) {
+        setWriteOutcomeUncertain(false);
+        setSyncState('done');
+        setStep('result');
+      } else {
+        setSyncState('compared');
+      }
       setExecuteProgress('');
     } finally {
       writeInFlightRef.current = false;
@@ -2174,9 +2188,18 @@ export function DataSyncWindow() {
             >
               <div
                 data-testid="data-sync-execute-done"
-                className="flex flex-wrap items-center gap-3 text-sm text-green-700 dark:text-green-400"
+                className={cn(
+                  'flex flex-wrap items-center gap-3 text-sm',
+                  lastExecutionResult?.rolledBack
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-green-700 dark:text-green-400',
+                )}
               >
-                <span>{t('sync.executeDone')}</span>
+                <span>
+                  {lastExecutionResult?.rolledBack
+                    ? lastExecutionResult.rollbackReason || t('sync.rolledBack')
+                    : t('sync.executeDone')}
+                </span>
                 {lastExecutionResult?.skipped ? (
                   <span className="text-amber-600 dark:text-amber-400">
                     {t('sync.conflictsSkipped', { count: lastExecutionResult.skipped })}

@@ -36,35 +36,45 @@ async fn load_sql_source_snapshot(
         .get_session(&job.source.db_session_id)
         .await
         .cmd_err("data_transfer_sql_file")?;
+    let config = state
+        .connection_manager
+        .get_session_config(&job.source.db_session_id)
+        .await
+        .cmd_err("data_transfer_sql_file")?;
+    let mut source = job.source.clone();
+    source.schema = crate::services::metadata_schema(
+        driver.as_ref(),
+        source.normalized_schema(),
+        None,
+        config.schema.as_deref(),
+    );
     let tables = driver
-        .get_tables(
-            &handle,
-            &job.source.database,
-            job.source.normalized_schema(),
-        )
+        .get_tables(&handle, &source.database, source.normalized_schema())
         .await
         .cmd_err("data_transfer_sql_file")?;
     let tables: Vec<_> = tables
         .into_iter()
-        .filter(|table| {
-            crate::data_transfer::metadata::table_in_endpoint_schema(&job.source, table)
-        })
+        .filter(|table| crate::data_transfer::metadata::table_in_endpoint_schema(&source, table))
         .collect();
     let mut schemas = HashMap::new();
     for table in tables
         .iter()
         .filter(|table| matches!(table.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             driver.as_ref(),
             &handle,
-            &job.source,
+            &source,
             &table.name,
         )
         .await
-        {
-            schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        schemas.insert(table.name.clone(), schema);
     }
     let inspected = crate::data_transfer::inspect_tables(
         &tables,
@@ -689,16 +699,20 @@ pub(crate) async fn execute_data_transfer_impl(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             src_driver.as_ref(),
             &src_handle,
             &job.source,
             &table.name,
         )
         .await
-        {
-            source_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        source_schemas.insert(table.name.clone(), schema);
     }
 
     let needs_adapters = !is_same_family(&pairing)

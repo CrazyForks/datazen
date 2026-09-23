@@ -46,7 +46,7 @@ vi.mock('../../../commands/connection', () => ({
   },
 }));
 
-function pgConn(id: string, name: string, database?: string): ConnectionConfig {
+function pgConn(id: string, name: string, database?: string, schema?: string): ConnectionConfig {
   return {
     id,
     name,
@@ -55,6 +55,7 @@ function pgConn(id: string, name: string, database?: string): ConnectionConfig {
     port: 5432,
     sslMode: 'prefer',
     database,
+    schema,
   };
 }
 
@@ -256,5 +257,29 @@ describe('useSchemaDiffEndpoints', () => {
       'session-mysql-tgt',
       'datazen_sync_src',
     );
+  });
+
+  it('prefers the configured connection schema over an empty public schema marker', async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      pgConn('pg-src', 'PG Src', 'worker_db', 'e2e_worker_0'),
+      pgConn('pg-tgt', 'PG Tgt', 'datazen_sync_tgt'),
+    ]);
+    vi.mocked(databaseCommands.getTables).mockResolvedValue([
+      { name: '', schema: 'public', tableType: 'systemTable' },
+      { name: 'e2e_contract_conn', schema: 'e2e_worker_0', tableType: 'table' },
+    ]);
+
+    const { result } = renderHook(() => useSchemaDiffEndpoints());
+    await waitFor(() => expect(result.current.connections).toHaveLength(2));
+
+    act(() => {
+      result.current.setSourceId('pg-src');
+      result.current.setSourceDatabase('worker_db');
+    });
+
+    await waitFor(() => {
+      expect(result.current.sourceSchemas).toEqual(['e2e_worker_0', 'public']);
+      expect(result.current.sourceSchema).toBe('e2e_worker_0');
+    });
   });
 });

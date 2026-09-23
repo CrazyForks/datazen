@@ -227,6 +227,32 @@ fn precedes(before: &MigrationOperation, after: &MigrationOperation) -> bool {
             AlterColumnType { column, .. } => columns.contains(column),
             _ => false,
         },
+        (
+            SetDefault {
+                table: default_table,
+                column: default_column,
+                to: None,
+                ..
+            },
+            AlterColumnType {
+                table: alter_table,
+                column: alter_column,
+                ..
+            },
+        ) if default_table == alter_table && default_column == alter_column => true,
+        (
+            AlterColumnType {
+                table: alter_table,
+                column: alter_column,
+                ..
+            },
+            SetDefault {
+                table: default_table,
+                column: default_column,
+                to: Some(_),
+                ..
+            },
+        ) if default_table == alter_table && default_column == alter_column => true,
         (DropIndex { index, .. }, DropColumn { column, .. }) => {
             index.columns.contains(&column.name)
         }
@@ -265,6 +291,14 @@ pub fn retain_dependency_closed(
                     (MigrationOperation::DropForeignKey { foreign_key: a, .. }, MigrationOperation::AddForeignKey { foreign_key: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
             let replacement = replacement || matches!((op, dependency),
                 (MigrationOperation::DropCheckConstraint { constraint: a, .. }, MigrationOperation::AddCheckConstraint { constraint: b, .. }) if a.name == b.name && op_table(op) == op_table(dependency));
+            // The old default must be dropped before changing a column type,
+            // but it must not be deployed alone if the type change is filtered.
+            let replacement = replacement || matches!((op, dependency),
+                (MigrationOperation::SetDefault { table: set_table, column: set_column, to: None, .. }, MigrationOperation::AlterColumnType { table: alter_table, column: alter_column, .. })
+                    if set_table == alter_table && set_column == alter_column)
+                || matches!((op, dependency),
+                    (MigrationOperation::AlterColumnType { table: alter_table, column: alter_column, .. }, MigrationOperation::SetDefault { table: set_table, column: set_column, to: None, .. })
+                        if set_table == alter_table && set_column == alter_column);
             !(precedes(dependency, op) || replacement) || previous.iter().any(|present| std::mem::discriminant(present) == std::mem::discriminant(dependency) && present.key() == dependency.key())
         }));
         if selected.len() == previous.len() {
@@ -464,7 +498,7 @@ mod tests {
 #[cfg(test)]
 mod replacement_tests {
     use super::*;
-    use crate::db::{ForeignKeyInfo, IndexInfo};
+    use crate::db::{ForeignKeyDeferrability, ForeignKeyInfo, IndexInfo};
     fn pk(add: bool) -> MigrationOperation {
         if add {
             MigrationOperation::AddPrimaryKey {
@@ -507,6 +541,7 @@ mod replacement_tests {
             referenced_columns: vec!["id".into()],
             on_update: "CASCADE".into(),
             on_delete: "RESTRICT".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
         };
         if add {
             MigrationOperation::AddForeignKey {
@@ -586,6 +621,41 @@ mod replacement_tests {
             }
         }
     }
+
+    #[test]
+    fn changing_column_type_orders_default_drop_and_replacement_as_one_transition() {
+        let drop_default = MigrationOperation::SetDefault {
+            table: "users".into(),
+            column: "active".into(),
+            from: Some("1".into()),
+            to: None,
+        };
+        let alter_type = MigrationOperation::AlterColumnType {
+            table: "users".into(),
+            column: "active".into(),
+            from: "integer".into(),
+            to: "boolean".into(),
+        };
+        let set_default = MigrationOperation::SetDefault {
+            table: "users".into(),
+            column: "active".into(),
+            from: None,
+            to: Some("TRUE".into()),
+        };
+        let all = vec![
+            set_default.clone(),
+            alter_type.clone(),
+            drop_default.clone(),
+        ];
+
+        let mut selected_without_type_change = vec![drop_default.clone()];
+        retain_dependency_closed(&all, &mut selected_without_type_change);
+        assert!(selected_without_type_change.is_empty());
+
+        let ordered = resolve_dependencies(all);
+        assert_eq!(ordered, vec![drop_default, alter_type, set_default]);
+    }
+
     #[test]
     fn column_drop_requires_removing_its_index_and_key() {
         let column = super::tests::snap("old");

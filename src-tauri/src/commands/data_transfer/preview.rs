@@ -32,7 +32,6 @@ async fn preview_sql_file_target(
         destination.normalized_compression(),
     )
     .map_err(CommandError::from)?;
-    job.source.schema = job.source.normalized_schema().map(str::to_string);
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
 
     let src_config = state
@@ -45,6 +44,12 @@ async fn preview_sql_file_target(
         .get_session(&job.source.db_session_id)
         .await
         .cmd_err("preview_data_transfer")?;
+    job.source.schema = crate::services::metadata_schema(
+        src_driver.as_ref(),
+        job.source.normalized_schema(),
+        None,
+        src_config.schema.as_deref(),
+    );
     let destination = job
         .sql_file_target
         .as_ref()
@@ -120,16 +125,20 @@ async fn preview_sql_file_target(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             src_driver.as_ref(),
             &src_handle,
             &job.source,
             &table.name,
         )
         .await
-        {
-            source_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        source_schemas.insert(table.name.clone(), schema);
     }
     if let Some((src_adapter, _)) = &adapters {
         crate::data_transfer::structure::enrich_source_types(
@@ -346,15 +355,28 @@ pub(crate) async fn preview_data_transfer_impl(
         .await
         .cmd_err("preview_data_transfer")?;
 
-    job.source.schema = job
-        .source
-        .normalized_schema()
-        .map(str::to_string)
-        .or_else(|| src_config.schema.clone());
-    target.schema = target
-        .normalized_schema()
-        .map(str::to_string)
-        .or_else(|| tgt_config.schema.clone());
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&job.source.db_session_id)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    let (target_driver, target_handle) = state
+        .connection_manager
+        .get_session(&target.db_session_id)
+        .await
+        .cmd_err("preview_data_transfer")?;
+    job.source.schema = crate::services::metadata_schema(
+        src_driver.as_ref(),
+        job.source.normalized_schema(),
+        None,
+        src_config.schema.as_deref(),
+    );
+    target.schema = crate::services::metadata_schema(
+        target_driver.as_ref(),
+        target.normalized_schema(),
+        None,
+        tgt_config.schema.as_deref(),
+    );
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
     crate::data_transfer::metadata::metadata_relation_ref(target, "")?;
 
@@ -373,17 +395,6 @@ pub(crate) async fn preview_data_transfer_impl(
         &job.tables,
     )
     .await?;
-
-    let (src_driver, src_handle) = state
-        .connection_manager
-        .get_session(&job.source.db_session_id)
-        .await
-        .cmd_err("preview_data_transfer")?;
-    let (target_driver, target_handle) = state
-        .connection_manager
-        .get_session(&target.db_session_id)
-        .await
-        .cmd_err("preview_data_transfer")?;
 
     let src_tables = src_driver
         .get_tables(
@@ -406,16 +417,20 @@ pub(crate) async fn preview_data_transfer_impl(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             src_driver.as_ref(),
             &src_handle,
             &job.source,
             &table.name,
         )
         .await
-        {
-            source_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        source_schemas.insert(table.name.clone(), schema);
     }
 
     // Capture target schemas for the immutable plan. A missing target table
@@ -431,16 +446,20 @@ pub(crate) async fn preview_data_transfer_impl(
             )
             && !table.target_table.trim().is_empty()
     }) {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             target_driver.as_ref(),
             &target_handle,
             target,
             &table.target_table,
         )
         .await
-        {
-            target_schemas.insert(table.target_table.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect target table '{}': {error}",
+                table.target_table
+            ))
+        })?;
+        target_schemas.insert(table.target_table.clone(), schema);
     }
 
     let target_read_only_ok = !tgt_config.read_only;

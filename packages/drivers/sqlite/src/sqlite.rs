@@ -130,6 +130,30 @@ fn db_path(config: &ConnectionConfig) -> Result<String, DriverError> {
         .map(|s| s.to_string())
 }
 
+fn sqlite_file_identity(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let file = same_file::Handle::from_path(path).ok()?;
+    let mut hasher = FileIdentityHasher::default();
+    std::hash::Hash::hash(&file, &mut hasher);
+    Some(serde_json::json!({"driver":"sqlite","fileId":hasher.0}).to_string())
+}
+
+#[derive(Default)]
+struct FileIdentityHasher(Vec<u8>);
+
+impl std::hash::Hasher for FileIdentityHasher {
+    fn finish(&self) -> u64 {
+        0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.extend_from_slice(bytes);
+    }
+}
+
 #[async_trait]
 impl DatabaseDriver for SqliteDriver {
     fn migration_renderer(
@@ -149,6 +173,26 @@ impl DatabaseDriver for SqliteDriver {
     }
     fn driver_type(&self) -> DatabaseType {
         "sqlite".to_string()
+    }
+
+    async fn physical_database_identity(
+        &self,
+        handle: &ConnectionHandle,
+        _database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let rows = sqlx::query("PRAGMA database_list")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| DriverError::QueryFailed(error.to_string()))?;
+        let main_file = rows.iter().find_map(|row| {
+            let name = row.try_get::<String, _>("name").ok()?;
+            (name == "main")
+                .then(|| row.try_get::<String, _>("file").ok())
+                .flatten()
+        });
+        Ok(main_file.as_deref().and_then(sqlite_file_identity))
     }
 
     fn ddl_atomicity(&self) -> DdlAtomicity {
@@ -415,6 +459,7 @@ impl DatabaseDriver for SqliteDriver {
                     referenced_columns: vec![to_col],
                     on_update,
                     on_delete,
+                    deferrability: ForeignKeyDeferrability::Unknown,
                 });
         }
 
@@ -797,6 +842,69 @@ mod tests {
             SqliteDriver::new().ddl_atomicity(),
             DdlAtomicity::Transactional
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_file_aliases_share_a_physical_database_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("datazen-sqlite-identity-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.db");
+        let alias_path = dir.join(".").join("app.db");
+        std::fs::File::create(&path).unwrap();
+        let driver = SqliteDriver::new();
+        let first = driver
+            .connect(&test_config(&path.to_string_lossy()))
+            .await
+            .unwrap();
+        let second = driver
+            .connect(&test_config(&alias_path.to_string_lossy()))
+            .await
+            .unwrap();
+
+        let first_identity = driver.physical_database_identity(&first, "").await.unwrap();
+        let second_identity = driver
+            .physical_database_identity(&second, "")
+            .await
+            .unwrap();
+        assert!(first_identity.is_some());
+        assert_eq!(first_identity, second_identity);
+
+        driver.disconnect(first).await.unwrap();
+        driver.disconnect(second).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sqlite_hard_links_share_a_physical_database_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("datazen-sqlite-hardlink-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.db");
+        let hard_link = dir.join("app-hard-link.db");
+        std::fs::File::create(&path).unwrap();
+        std::fs::hard_link(&path, &hard_link).unwrap();
+        let driver = SqliteDriver::new();
+        let first = driver
+            .connect(&test_config(&path.to_string_lossy()))
+            .await
+            .unwrap();
+        let second = driver
+            .connect(&test_config(&hard_link.to_string_lossy()))
+            .await
+            .unwrap();
+
+        let first_identity = driver.physical_database_identity(&first, "").await.unwrap();
+        let second_identity = driver
+            .physical_database_identity(&second, "")
+            .await
+            .unwrap();
+        assert_eq!(first_identity, second_identity);
+
+        driver.disconnect(first).await.unwrap();
+        driver.disconnect(second).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

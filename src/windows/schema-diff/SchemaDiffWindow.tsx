@@ -266,8 +266,18 @@ export function SchemaDiffWindow() {
           });
           continue;
         }
-        const table = pick.sourceName ?? pick.name;
-        results.push(await schemaDiffCommands.compareTableSchemas(srcConnId, tgtConnId, table));
+        const sourceTable = pick.sourceName ?? pick.name;
+        const targetTable = pick.targetName ?? pick.name.split('.').at(-1) ?? pick.name;
+        results.push(
+          await schemaDiffCommands.compareTableSchemas(
+            srcConnId,
+            tgtConnId,
+            sourceTable,
+            targetTable,
+            endpoints.sourceSchema || undefined,
+            endpoints.targetSchema || undefined,
+          ),
+        );
       }
       setDiffs(results);
       setSelectedTable(selected[0]?.name ?? null);
@@ -294,7 +304,11 @@ export function SchemaDiffWindow() {
     async (explicitOverrides?: ColumnTypeOverride[]) => {
       setError('');
       setDeployResult(null);
+      const sourcePicks = tablePicks.filter((row) => row.enabled && row.origin !== 'target-only');
       const sourceTables = enabledSourceTableNames(tablePicks);
+      const targetTables = sourcePicks.map(
+        (row) => row.targetName ?? row.name.split('.').at(-1) ?? row.name,
+      );
       const targetOnlyTables = enabledTargetOnlyTableNames(tablePicks);
       if (sourceTables.length === 0 && targetOnlyTables.length === 0) {
         setError(t('schemaDiff.tableRequired'));
@@ -312,7 +326,10 @@ export function SchemaDiffWindow() {
           sourceDbSessionId: srcConnId,
           targetDbSessionId: tgtConnId,
           tableNames: sourceTables,
+          targetTableNames: targetTables,
           targetOnlyTableNames: targetOnlyTables.length > 0 ? targetOnlyTables : undefined,
+          sourceSchema: endpoints.sourceSchema || undefined,
+          targetSchema: endpoints.targetSchema || undefined,
           allowDestructive,
           includeIndexes,
           typeOverrides: overridesToUse.length > 0 ? overridesToUse : undefined,

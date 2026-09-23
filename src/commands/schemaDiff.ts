@@ -203,18 +203,31 @@ export const schemaDiffCommands = {
 
   deleteProfile: (profileId: string) => invoke<void>('delete_schema_diff_profile', { profileId }),
 
-  compareTableSchemas: (sourceDbSessionId: string, targetDbSessionId: string, tableName: string) =>
+  compareTableSchemas: (
+    sourceDbSessionId: string,
+    targetDbSessionId: string,
+    sourceTableName: string,
+    targetTableName: string,
+    sourceSchema?: string,
+    targetSchema?: string,
+  ) =>
     invoke<TableSchemaDiff>('compare_table_schemas', {
       sourceDbSessionId,
       targetDbSessionId,
-      tableName,
+      sourceTableName,
+      targetTableName,
+      sourceSchema: sourceSchema ?? null,
+      targetSchema: targetSchema ?? null,
     }),
 
   preparePlan: (params: {
     sourceDbSessionId: string;
     targetDbSessionId: string;
     tableNames: string[];
+    targetTableNames?: string[];
     targetOnlyTableNames?: string[];
+    sourceSchema?: string;
+    targetSchema?: string;
     allowDestructive: boolean;
     includeIndexes?: boolean;
     typeOverrides?: ColumnTypeOverride[];
@@ -223,9 +236,12 @@ export const schemaDiffCommands = {
       sourceDbSessionId: params.sourceDbSessionId,
       targetDbSessionId: params.targetDbSessionId,
       tableNames: params.tableNames,
+      targetTableNames: params.targetTableNames,
       allowDestructive: params.allowDestructive,
       includeIndexes: params.includeIndexes,
       typeOverrides: params.typeOverrides,
+      sourceSchema: params.sourceSchema,
+      targetSchema: params.targetSchema,
       ...(params.targetOnlyTableNames && params.targetOnlyTableNames.length > 0
         ? { targetOnlyTableNames: params.targetOnlyTableNames }
         : {}),

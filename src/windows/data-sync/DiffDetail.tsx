@@ -96,6 +96,24 @@ export function DiffDetail({
     onUpdateRows(next);
   };
 
+  const handleSelectAllOperation = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
+    if (onSelectAllOperation) {
+      onSelectAllOperation(op);
+      return;
+    }
+    selectAllOp(op);
+  };
+
+  const handleClearAllOperation = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
+    if (onClearAllOperation) {
+      onClearAllOperation(op);
+      return;
+    }
+    onUpdateRows(
+      (table.rows ?? []).map((row) => (row.operation === op ? { ...row, selected: false } : row)),
+    );
+  };
+
   const maxCols = useMemo(() => {
     let max = 0;
     for (const r of pageRows) {
@@ -124,7 +142,7 @@ export function DiffDetail({
               size="sm"
               className="text-[10px]"
               data-testid="data-sync-select-all-INSERT"
-              onClick={() => onSelectAllOperation?.('INSERT') ?? selectAllOp('INSERT')}
+              onClick={() => handleSelectAllOperation('INSERT')}
             >
               {t('sync.selectAllInsert')}
             </Button>
@@ -134,7 +152,7 @@ export function DiffDetail({
                 size="sm"
                 className="text-[10px]"
                 data-testid="data-sync-clear-all-INSERT"
-                onClick={() => onClearAllOperation?.('INSERT')}
+                onClick={() => handleClearAllOperation('INSERT')}
               >
                 {t('sync.clearAllInsert')}
               </Button>
@@ -148,7 +166,7 @@ export function DiffDetail({
               size="sm"
               className="text-[10px]"
               data-testid="data-sync-select-all-UPDATE"
-              onClick={() => onSelectAllOperation?.('UPDATE') ?? selectAllOp('UPDATE')}
+              onClick={() => handleSelectAllOperation('UPDATE')}
             >
               {t('sync.selectAllUpdate')}
             </Button>
@@ -158,7 +176,7 @@ export function DiffDetail({
                 size="sm"
                 className="text-[10px]"
                 data-testid="data-sync-clear-all-UPDATE"
-                onClick={() => onClearAllOperation?.('UPDATE')}
+                onClick={() => handleClearAllOperation('UPDATE')}
               >
                 {t('sync.clearAllUpdate')}
               </Button>
@@ -172,7 +190,7 @@ export function DiffDetail({
               size="sm"
               className="text-[10px]"
               data-testid="data-sync-select-all-DELETE"
-              onClick={() => onSelectAllOperation?.('DELETE') ?? selectAllOp('DELETE')}
+              onClick={() => handleSelectAllOperation('DELETE')}
             >
               {t('sync.selectAllDelete')}
             </Button>
@@ -182,7 +200,7 @@ export function DiffDetail({
                 size="sm"
                 className="text-[10px]"
                 data-testid="data-sync-clear-all-DELETE"
-                onClick={() => onClearAllOperation?.('DELETE')}
+                onClick={() => handleClearAllOperation('DELETE')}
               >
                 {t('sync.clearAllDelete')}
               </Button>

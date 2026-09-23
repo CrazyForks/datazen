@@ -342,30 +342,38 @@ export async function runPostCompareReviewBranches(f: SyncJourneyFixture) {
   }
 
   await moveDataSyncBackTo('objects');
-  const toggledOff = await browser.execute((tableName: string) => {
+  const mappingRowCount = await $$('[data-testid="data-sync-mapping-row"]').length;
+  let disabledCount = 0;
+  for (let index = 0; index < mappingRowCount; index += 1) {
+    const row = (await $$('[data-testid="data-sync-mapping-row"]'))[index];
+    if (!row) continue;
+    const checkbox = await row.$('input[type="checkbox"]');
+    if (
+      (await checkbox.isEnabled().catch(() => false)) &&
+      (await checkbox.isSelected().catch(() => false))
+    ) {
+      await checkbox.click();
+      disabledCount += 1;
+      await browser.pause(100);
+    }
+  }
+  expect(disabledCount).toBeGreaterThan(0);
+  await browser.pause(400);
+  await expect(await $('[data-testid="data-sync-next"]')).toBeDisabled();
+
+  const fixtureEnabled = await browser.execute((tableName: string) => {
     const rows = document.querySelectorAll('[data-testid="data-sync-mapping-row"]');
     for (const row of rows) {
       if ((row.textContent || '').includes(tableName)) {
         const cb = row.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        cb?.click();
-        return true;
+        if (!cb || cb.disabled) return false;
+        cb.click();
+        return cb.checked;
       }
     }
     return false;
   }, f.table);
-  expect(toggledOff).toBe(true);
-  await browser.pause(400);
-  await expect(await $('[data-testid="data-sync-next"]')).toBeDisabled();
-
-  await browser.execute((tableName: string) => {
-    const rows = document.querySelectorAll('[data-testid="data-sync-mapping-row"]');
-    for (const row of rows) {
-      if ((row.textContent || '').includes(tableName)) {
-        const cb = row.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-        cb?.click();
-      }
-    }
-  }, f.table);
+  expect(fixtureEnabled).toBe(true);
   await browser.pause(300);
   await compareDataSyncObjects();
   await advanceDataSyncToPreview();
@@ -515,9 +523,14 @@ export async function runExecuteDeleteConfirmBranch(f: SyncJourneyFixture) {
     },
     { timeout: 120000, timeoutMsg: 'delete execute did not finish' },
   );
+  const executeError = await $('[data-testid="data-sync-error"]');
+  if (await executeError.isDisplayed().catch(() => false)) {
+    throw new Error(`delete execute error: ${await executeError.getText()}`);
+  }
 
   const postTgtSession = await connectConfig(f.tgtId);
   try {
+    let observedRowCount: number | undefined;
     await browser.waitUntil(
       async () => {
         const rows = await executeQuery(
@@ -526,9 +539,14 @@ export async function runExecuteDeleteConfirmBranch(f: SyncJourneyFixture) {
             ? `SELECT count(*)::int AS c FROM ${f.table}`
             : `SELECT count(*) AS c FROM ${f.table}`,
         );
-        return queryScalar(rows, 'c') === 5;
+        observedRowCount = queryScalar(rows, 'c');
+        return observedRowCount === 5;
       },
-      { timeout: 30000, interval: 1000, timeoutMsg: 'row count after delete execute not 5' },
+      {
+        timeout: 30000,
+        interval: 1000,
+        timeoutMsg: `row count after delete execute was ${observedRowCount}, expected 5`,
+      },
     );
 
     const orphan = await executeQuery(

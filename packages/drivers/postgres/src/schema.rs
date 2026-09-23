@@ -276,7 +276,9 @@ impl PostgresDriver {
                 ccu.table_name::text                                                 AS ref_table,
                 array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position)       AS ref_columns,
                 rc.update_rule::text,
-                rc.delete_rule::text
+                rc.delete_rule::text,
+                rc.is_deferrable::text,
+                rc.initially_deferred::text
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON kcu.constraint_name = tc.constraint_name
@@ -290,7 +292,8 @@ impl PostgresDriver {
             WHERE tc.constraint_type = 'FOREIGN KEY'
               AND tc.table_name = $1
               AND ($2::text IS NULL OR tc.table_schema = $2)
-            GROUP BY tc.constraint_name, ccu.table_name, rc.update_rule, rc.delete_rule
+            GROUP BY tc.constraint_name, ccu.table_name, rc.update_rule, rc.delete_rule,
+                     rc.is_deferrable, rc.initially_deferred
             ORDER BY tc.constraint_name
             "#,
         )
@@ -317,6 +320,10 @@ impl PostgresDriver {
                     referenced_columns,
                     on_update: r.get("update_rule"),
                     on_delete: r.get("delete_rule"),
+                    deferrability: parse_pg_fk_deferrability(
+                        &r.get::<String, _>("is_deferrable"),
+                        &r.get::<String, _>("initially_deferred"),
+                    ),
                 })
             })
             .collect();
@@ -451,6 +458,27 @@ impl PostgresDriver {
     }
 }
 
+fn parse_pg_fk_deferrability(
+    is_deferrable: &str,
+    initially_deferred: &str,
+) -> ForeignKeyDeferrability {
+    if is_deferrable.eq_ignore_ascii_case("NO") {
+        return ForeignKeyDeferrability::NotDeferrable;
+    }
+
+    if is_deferrable.eq_ignore_ascii_case("YES") {
+        return if initially_deferred.eq_ignore_ascii_case("YES") {
+            ForeignKeyDeferrability::DeferrableInitiallyDeferred
+        } else if initially_deferred.eq_ignore_ascii_case("NO") {
+            ForeignKeyDeferrability::DeferrableInitiallyImmediate
+        } else {
+            ForeignKeyDeferrability::Unknown
+        };
+    }
+
+    ForeignKeyDeferrability::Unknown
+}
+
 /// Collapse a foreign key's column arrays down to their ordered distinct columns.
 ///
 /// `information_schema` exposes the two sides of a foreign key as independent
@@ -492,7 +520,8 @@ fn parse_pg_check_definition(definition: &str) -> Option<String> {
 
 #[cfg(test)]
 mod schema_tests {
-    use super::{normalise_fk_columns, parse_pg_check_definition};
+    use super::{normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability};
+    use datazen_driver_api::ForeignKeyDeferrability;
 
     fn owned(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -550,5 +579,25 @@ mod schema_tests {
             Some("(amount >= 0)")
         );
         assert!(parse_pg_check_definition("UNIQUE (id)").is_none());
+    }
+
+    #[test]
+    fn parses_foreign_key_deferrability_from_catalog_values() {
+        assert_eq!(
+            parse_pg_fk_deferrability("NO", "NO"),
+            ForeignKeyDeferrability::NotDeferrable
+        );
+        assert_eq!(
+            parse_pg_fk_deferrability("YES", "NO"),
+            ForeignKeyDeferrability::DeferrableInitiallyImmediate
+        );
+        assert_eq!(
+            parse_pg_fk_deferrability("YES", "YES"),
+            ForeignKeyDeferrability::DeferrableInitiallyDeferred
+        );
+        assert_eq!(
+            parse_pg_fk_deferrability("YES", "unknown"),
+            ForeignKeyDeferrability::Unknown
+        );
     }
 }

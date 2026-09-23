@@ -108,4 +108,28 @@ describe('diff review journeys', () => {
     expect(screen.getByTestId('scope-state')).toHaveTextContent('true:1');
     expect(screen.getByTestId('data-sync-clear-all-UPDATE')).toBeTruthy();
   });
+
+  it('does not also select explicit rows when a table-scope handler is provided', () => {
+    const onUpdateRows = vi.fn();
+    const onSelectAllOperation = vi.fn();
+    render(
+      <DiffDetail
+        table={{
+          sourceTable: 'source',
+          targetTable: 'target',
+          status: 'MATCHED',
+          columns: ['id', 'name'],
+          rows: [changedRow(1)],
+        }}
+        options={{ insert: true, update: true, delete: false }}
+        onUpdateRows={onUpdateRows}
+        onSelectAllOperation={onSelectAllOperation}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('data-sync-select-all-UPDATE'));
+
+    expect(onSelectAllOperation).toHaveBeenCalledTimes(1);
+    expect(onUpdateRows).not.toHaveBeenCalled();
+  });
 });

@@ -275,6 +275,9 @@ describe('SchemaDiffWindow profile loading', () => {
       'source-session',
       'target-session',
       'public.users',
+      'public.users',
+      'public',
+      'public',
     );
     expect(schemaDiffCommands.compareTableSchemas).not.toHaveBeenCalledWith(
       'source-session',

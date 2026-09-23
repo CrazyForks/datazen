@@ -19,6 +19,10 @@ PASSED / READY_TO_MERGE
 
 ## Independent verification
 
+- 2026-09-23 integration checkpoint includes cross-dialect schema type planning/rendering, driver-owned migration defaults and literals, PostgreSQL/MySQL metadata resolution, Data Sync confirmed-rollback outcomes, and Data Transfer default-schema inspection. The changes remain in the integration worktree pending the independent review wave.
+- Fresh integration rerun: Host Rust 1,795 passed / 3 ignored; Driver API, PostgreSQL, MySQL, and SQLite crate unit suites passed; Vitest 482 files / 4,986 tests passed; `pnpm exec tsc --noEmit` passed.
+- Formatting and whitespace: `rustfmt --edition 2021 --check` passed for every changed tracked Rust file and `git diff --check` passed. Workspace-wide `cargo fmt --all -- --check` only reports ordering in ignored generated `src-tauri/src/driver_init.rs`.
+
 - Data Sync second-round Tester: Rust 1520 passed / 3 ignored, Vitest 43 passed, TypeScript and formatting checks passed; mixed valid/invalid profile CRUD regression closed.
 - Schema Diff third-round Tester: Rust 1520 passed / 3 ignored in serial and parallel runs, focused Rust 71 passed, Vitest 16 passed, TypeScript and formatting checks passed.
 - Integration Rust regression: 1525 passed / 3 ignored.

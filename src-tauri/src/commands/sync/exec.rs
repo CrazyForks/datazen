@@ -266,11 +266,6 @@ async fn generate_data_sync_sql_from_store_pages(
             );
         }
     }
-    if statements.is_empty() {
-        return Err(CommandError::Validation(
-            "change set is empty; nothing to execute".into(),
-        ));
-    }
     Ok(statements)
 }
 
@@ -351,6 +346,11 @@ pub(crate) async fn execute_data_sync_plan_impl(
         plan.target_schema.as_deref(),
     )
     .await?;
+    if statements.is_empty() {
+        return Err(CommandError::Validation(
+            "change set is empty; nothing to execute".into(),
+        ));
+    }
     // Claim immediately before the first transaction side effect. A failed
     // preflight leaves a valid plan available for a corrected comparison;
     // once claimed, an unknown result is never silently retried.

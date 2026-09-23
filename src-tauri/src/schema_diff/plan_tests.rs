@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::{ColumnSchema, ForeignKeyInfo, IndexInfo};
+use crate::db::{ColumnSchema, ForeignKeyDeferrability, ForeignKeyInfo, IndexInfo};
 
 fn col(name: &str, ty: &str) -> ColumnSchema {
     ColumnSchema {
@@ -354,6 +354,7 @@ fn foreign_keys_are_emitted_after_all_table_definitions() {
         referenced_columns: vec!["id".into()],
         on_update: "CASCADE".into(),
         on_delete: "RESTRICT".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
     });
     let users = schema(vec![col("id", "int")]);
     let plan = build_schema_diff_plan(
@@ -389,6 +390,7 @@ fn cross_dialect_foreign_key_reference_uses_target_relation_name() {
         referenced_columns: vec!["id".into()],
         on_update: "NO ACTION".into(),
         on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
     });
     let plan = build_schema_diff_plan(
         &[("public.orders".into(), source, schema(vec![]))],
@@ -586,6 +588,176 @@ fn cross_dialect_pg_to_mysql_does_not_translate_nextval() {
         .warnings
         .iter()
         .any(|w| w.contains("Cross-dialect plan without IR type mapper")));
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Backfill { column, .. } if column == "id"
+    )));
+}
+
+#[test]
+fn cross_dialect_pg_character_literal_casts_keep_portable_quoted_defaults() {
+    let mut code = col("code", "character varying(16)");
+    code.nullable = false;
+    code.default_value = Some("'CODE0001'::bpchar".into());
+    let mut label = col("label", "varchar(32)");
+    label.nullable = false;
+    label.default_value = Some("'unnamed'::character varying".into());
+    let mut owner = col("owner", "char(32)");
+    owner.nullable = false;
+    owner.default_value = Some("'owner''s'::varchar(32)".into());
+    let src = schema(vec![col("id", "integer"), code, label, owner]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().contains("char") {
+            Ok("VARCHAR(64)".into())
+        } else {
+            Ok("BIGINT".into())
+        }
+    };
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "postgresql",
+        "mysql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan.statements.iter().any(|statement| statement
+        .sql
+        .contains("`code` VARCHAR(64) NOT NULL DEFAULT 'CODE0001'")));
+    assert!(plan.statements.iter().any(|statement| statement
+        .sql
+        .contains("`label` VARCHAR(64) NOT NULL DEFAULT 'unnamed'")));
+    assert!(plan.statements.iter().any(|statement| statement
+        .sql
+        .contains("`owner` VARCHAR(64) NOT NULL DEFAULT 'owner''s'")));
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("::")));
+}
+
+#[test]
+fn cross_dialect_pg_unknown_cast_expressions_are_stripped_and_require_backfill() {
+    let mut function_default = col("function_default", "varchar(32)");
+    function_default.nullable = false;
+    function_default.default_value = Some("lower('NAME')::character varying".into());
+    let mut unknown_cast = col("unknown_cast", "varchar(32)");
+    unknown_cast.nullable = false;
+    unknown_cast.default_value = Some("'CODE0001'::custom_string_type".into());
+    let mut malformed_literal = col("malformed_literal", "varchar(32)");
+    malformed_literal.nullable = false;
+    malformed_literal.default_value = Some("'CODE0001::character varying".into());
+    let mut sequence_default = col("sequence_default", "bigint");
+    sequence_default.nullable = false;
+    sequence_default.default_value = Some("nextval('users_seq'::regclass)".into());
+    let src = schema(vec![
+        col("id", "integer"),
+        function_default,
+        unknown_cast,
+        malformed_literal,
+        sequence_default,
+    ]);
+    let tgt = schema(vec![col("id", "integer")]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().contains("char") {
+            Ok("VARCHAR(64)".into())
+        } else {
+            Ok("BIGINT".into())
+        }
+    };
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "postgresql",
+        "mysql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    for column in [
+        "function_default",
+        "unknown_cast",
+        "malformed_literal",
+        "sequence_default",
+    ] {
+        assert!(
+            plan.requirements.iter().any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Backfill { column: required, .. } if required == column
+            )),
+            "missing Backfill requirement for {column}: {:?}",
+            plan.requirements
+        );
+    }
+    assert!(!plan.statements.iter().any(|statement| {
+        statement.sql.contains("lower('NAME')")
+            || statement.sql.contains("custom_string_type")
+            || statement.sql.contains("nextval")
+            || statement.sql.contains("::regclass")
+    }));
+}
+
+#[test]
+fn cross_dialect_pg_set_default_maps_known_string_cast_and_blocks_unknown_expression() {
+    let mut source = col("label", "character varying(32)");
+    source.default_value = Some("'fresh'' label'::character varying".into());
+    let mut target = col("label", "VARCHAR(64)");
+    target.default_value = Some("'old label'".into());
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().contains("char") {
+            Ok("VARCHAR(64)".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+    let plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![source.clone()]),
+            schema(vec![target.clone()]),
+        )],
+        "postgresql",
+        "mysql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("SET DEFAULT 'fresh'' label'")));
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("::")));
+
+    source.default_value = Some("lower('fresh')::character varying".into());
+    target.default_value = Some("'old label'".into());
+    let unknown_plan = build_schema_diff_plan(
+        &[("users".into(), schema(vec![source]), schema(vec![target]))],
+        "postgresql",
+        "mysql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(unknown_plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. }
+            if reason.contains("PostgreSQL default expression")
+    )));
+    assert!(!unknown_plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("lower('fresh')")));
 }
 
 #[test]
@@ -854,6 +1026,830 @@ fn mysql_indexes_on_blob_text_columns_receive_prefix_length() {
         pg_region_stmt.sql
     );
     assert!(!pg_region_stmt.sql.contains("255"));
+}
+
+#[test]
+fn mysql_boolean_defaults_are_translated_for_postgres_add_columns() {
+    let mut enabled = col("enabled", "tinyint(1)");
+    enabled.default_value = Some("1".into());
+    let mut disabled = col("disabled", "BOOLEAN");
+    disabled.default_value = Some("0".into());
+    let mut explicit_true = col("explicit_true", "bool");
+    explicit_true.default_value = Some("TRUE".into());
+    let src = schema(vec![col("id", "int"), enabled, disabled, explicit_true]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)")
+            || matches!(ty.to_ascii_lowercase().as_str(), "bool" | "boolean")
+        {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| { statement.sql.contains("\"enabled\" boolean DEFAULT TRUE") }));
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| { statement.sql.contains("\"disabled\" boolean DEFAULT FALSE") }));
+    assert!(plan.statements.iter().any(|statement| {
+        statement
+            .sql
+            .contains("\"explicit_true\" boolean DEFAULT TRUE")
+    }));
+}
+
+#[test]
+fn mysql_boolean_defaults_are_translated_for_postgres_create_table() {
+    let mut enabled = col("enabled", "tinyint(1) unsigned");
+    enabled.default_value = Some("1".into());
+    let mut disabled = col("disabled", "tinyint(1)");
+    disabled.default_value = Some("false".into());
+    let src = schema(vec![col("id", "int"), enabled, disabled]);
+    let tgt = schema(vec![]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    let create = plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.starts_with("CREATE TABLE"))
+        .expect("CREATE TABLE statement");
+    assert!(create.sql.contains("\"enabled\" boolean DEFAULT TRUE"));
+    assert!(create.sql.contains("\"disabled\" boolean DEFAULT FALSE"));
+}
+
+#[test]
+fn mysql_string_defaults_are_quoted_for_postgres_add_create_and_set_default() {
+    let mut code = col("code", "char(8)");
+    code.default_value = Some("CODE0001".into());
+    let mut label = col("label", "varchar(32)");
+    label.default_value = Some("  fresh' label  ".into());
+    let mut amount = col("amount", "decimal(10,2)");
+    amount.default_value = Some("0.00".into());
+    let mut created_at = col("created_at", "datetime");
+    created_at.default_value = Some("CURRENT_TIMESTAMP(6)".into());
+    let mut event_date = col("event_date", "date");
+    event_date.default_value = Some("2026-09-23".into());
+    let source = schema(vec![
+        col("id", "int"),
+        code.clone(),
+        label.clone(),
+        amount.clone(),
+        created_at.clone(),
+        event_date.clone(),
+    ]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        let lower = ty.to_ascii_lowercase();
+        if lower.starts_with("char") || lower.starts_with("varchar") {
+            Ok("character varying(128)".into())
+        } else if lower.starts_with("decimal") {
+            Ok("numeric(10,2)".into())
+        } else if lower == "datetime" {
+            Ok("timestamp without time zone".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+    let add_plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            source.clone(),
+            schema(vec![col("id", "int")]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        add_plan.requirements.is_empty(),
+        "{:?}",
+        add_plan.requirements
+    );
+    let add_sql = add_plan
+        .statements
+        .iter()
+        .map(|statement| statement.sql.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(add_sql.contains("\"code\" character varying(128) DEFAULT 'CODE0001'"));
+    assert!(add_sql.contains("\"label\" character varying(128) DEFAULT '  fresh'' label  '"));
+    assert!(add_sql.contains("\"amount\" numeric(10,2) DEFAULT 0.00"));
+    assert!(
+        add_sql.contains("\"created_at\" timestamp without time zone DEFAULT CURRENT_TIMESTAMP(6)")
+    );
+    assert!(add_sql.contains("\"event_date\" date DEFAULT '2026-09-23'"));
+
+    let create_plan = build_schema_diff_plan(
+        &[("users".into(), source.clone(), schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        create_plan.requirements.is_empty(),
+        "{:?}",
+        create_plan.requirements
+    );
+    let create_sql = create_plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.starts_with("CREATE TABLE"))
+        .expect("CREATE TABLE statement")
+        .sql
+        .as_str();
+    assert!(create_sql.contains("\"code\" character varying(128) DEFAULT 'CODE0001'"));
+    assert!(create_sql.contains("\"label\" character varying(128) DEFAULT '  fresh'' label  '"));
+    assert!(create_sql
+        .contains("\"created_at\" timestamp without time zone DEFAULT CURRENT_TIMESTAMP(6)"));
+
+    let mut changed_label = label;
+    changed_label.default_value = Some("PENDING".into());
+    let mut target_label = col("label", "character varying(64)");
+    target_label.default_value = Some("'OLD'::character varying".into());
+    let set_plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![changed_label]),
+            schema(vec![target_label]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        set_plan.requirements.is_empty(),
+        "{:?}",
+        set_plan.requirements
+    );
+    assert!(set_plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("SET DEFAULT 'PENDING'")));
+}
+
+#[test]
+fn unsafe_mysql_string_defaults_fail_closed_for_postgres() {
+    for (source_type, default, target_type) in [
+        ("varchar(32)", "uuid()", "character varying(32)"),
+        ("geometry", "PENDING", "text"),
+        ("varchar(32)", "PENDING", "jsonb"),
+    ] {
+        let mut value = col("value", source_type);
+        value.default_value = Some(default.into());
+        let mapper = |_table: &str, _ty: &str, _name: &str| -> Result<String, String> {
+            Ok(target_type.into())
+        };
+        let plan = build_schema_diff_plan(
+            &[(
+                "users".into(),
+                schema(vec![col("id", "int"), value]),
+                schema(vec![col("id", "int")]),
+            )],
+            "mysql",
+            "postgresql",
+            PlanOptions {
+                type_mapper: Some(&mapper),
+                ..Default::default()
+            },
+        );
+        assert!(
+            plan.requirements.iter().any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Unsupported { reason, .. }
+                    if reason.contains("default") || reason.contains("Default")
+            )),
+            "expected Unsupported for {source_type} default {default}: {:?}",
+            plan.requirements
+        );
+        assert!(!plan
+            .statements
+            .iter()
+            .any(|statement| statement.sql.contains(default)));
+    }
+}
+
+#[test]
+fn mysql_bit_boolean_literals_are_translated_for_postgres() {
+    let mut enabled = col("enabled", "bit(1)");
+    enabled.default_value = Some("b'1'".into());
+    let mut disabled = col("disabled", "BIT");
+    disabled.default_value = Some("0b0".into());
+    let src = schema(vec![col("id", "int"), enabled, disabled]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.trim().to_ascii_lowercase().starts_with("bit") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let add_plan = build_schema_diff_plan(
+        &[("users".into(), src.clone(), schema(vec![col("id", "int")]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        add_plan.requirements.is_empty(),
+        "{:?}",
+        add_plan.requirements
+    );
+    assert!(add_plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"enabled\" boolean DEFAULT TRUE")));
+    assert!(add_plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"disabled\" boolean DEFAULT FALSE")));
+
+    let create_plan = build_schema_diff_plan(
+        &[("users".into(), src, schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    let create = create_plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.starts_with("CREATE TABLE"))
+        .expect("CREATE TABLE statement");
+    assert!(create.sql.contains("\"enabled\" boolean DEFAULT TRUE"));
+    assert!(create.sql.contains("\"disabled\" boolean DEFAULT FALSE"));
+}
+
+#[test]
+fn unknown_mysql_bit_boolean_default_blocks_postgres_ddl() {
+    let mut active = col("active", "bit(1)");
+    active.default_value = Some("1".into());
+    let src = schema(vec![col("id", "int"), active]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.trim().to_ascii_lowercase().starts_with("bit") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation.contains("active") && reason.contains("`1`")
+    )));
+}
+
+#[test]
+fn unknown_mysql_boolean_default_blocks_postgres_ddl() {
+    let mut active = col("active", "tinyint(1)");
+    active.default_value = Some("2".into());
+    let src = schema(vec![col("id", "int"), active]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src.clone(), tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation.contains("active") && reason.contains("`2`")
+    )));
+
+    let create_plan = build_schema_diff_plan(
+        &[("users".into(), src, schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(create_plan.statements.is_empty());
+    assert!(create_plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("`2`")
+    )));
+}
+
+#[test]
+fn changed_mysql_boolean_default_is_translated_for_postgres() {
+    let mut source_active = col("active", "tinyint(1)");
+    source_active.default_value = Some("0".into());
+    let source = schema(vec![source_active]);
+    let mut target_active = col("active", "boolean");
+    target_active.default_value = Some("TRUE".into());
+    let target = schema(vec![target_active]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), source, target)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    let set_default = plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.contains("SET DEFAULT FALSE"))
+        .expect("mapped ALTER DEFAULT statement");
+    assert!(set_default.sql.contains("SET DEFAULT FALSE"));
+    assert!(!set_default.sql.contains("SET DEFAULT 0"));
+}
+
+#[test]
+fn unknown_changed_mysql_boolean_default_blocks_postgres_default_ddl() {
+    let mut source_active = col("active", "tinyint(1)");
+    source_active.default_value = Some("2".into());
+    let source = schema(vec![source_active]);
+    let mut target_active = col("active", "boolean");
+    target_active.default_value = Some("TRUE".into());
+    let target = schema(vec![target_active]);
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), source, target)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation.contains("active") && reason.contains("`2`")
+    )));
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("SET DEFAULT 2")));
+}
+
+#[test]
+fn explicit_non_boolean_mysql_type_override_keeps_numeric_default() {
+    let mut active = col("active", "tinyint(1)");
+    active.default_value = Some("1".into());
+    let src = schema(vec![col("id", "int"), active]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper = |_table: &str, ty: &str, name: &str| -> Result<String, String> {
+        if name == "active" {
+            Ok("smallint".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| { statement.sql.contains("\"active\" smallint DEFAULT 1") }));
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DEFAULT TRUE")));
+}
+
+#[test]
+fn mysql_boolean_type_change_stages_defaults_around_postgres_alter_type() {
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+
+    // Raw defaults match, but their meaning changes with the mapped type.
+    let mut source_active = col("active", "tinyint(1)");
+    source_active.default_value = Some("1".into());
+    let mut target_active = col("active", "integer");
+    target_active.default_value = Some("1".into());
+    let plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![source_active.clone()]),
+            schema(vec![target_active]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    let drop_default = plan
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("DROP DEFAULT"))
+        .expect("old integer default is dropped");
+    let alter_type = plan
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("TYPE boolean"))
+        .expect("column is changed to boolean");
+    let set_default = plan
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("SET DEFAULT TRUE"))
+        .expect("mapped boolean default is installed");
+    assert!(drop_default < alter_type && alter_type < set_default);
+
+    // If the target has no default, there is nothing to drop, but the desired
+    // source default still follows the type change.
+    let plan_without_old_default = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![source_active]),
+            schema(vec![col("active", "integer")]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        plan_without_old_default.requirements.is_empty(),
+        "{:?}",
+        plan_without_old_default.requirements
+    );
+    let alter_type = plan_without_old_default
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("TYPE boolean"))
+        .expect("column is changed to boolean");
+    let set_default = plan_without_old_default
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("SET DEFAULT TRUE"))
+        .expect("mapped boolean default is installed");
+    assert!(alter_type < set_default);
+    assert!(!plan_without_old_default
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP DEFAULT")));
+}
+
+#[test]
+fn mysql_boolean_type_change_removes_old_default_before_alter_when_source_has_none() {
+    let mut target_active = col("active", "integer");
+    target_active.default_value = Some("1".into());
+    let mapper = |_table: &str, ty: &str, _name: &str| -> Result<String, String> {
+        if ty.to_ascii_lowercase().starts_with("tinyint(1)") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+    let plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![col("active", "tinyint(1)")]),
+            schema(vec![target_active]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    let drop_default = plan
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("DROP DEFAULT"))
+        .expect("old integer default is removed");
+    let alter_type = plan
+        .statements
+        .iter()
+        .position(|statement| statement.sql.contains("TYPE boolean"))
+        .expect("column is changed to boolean");
+    assert!(drop_default < alter_type);
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("SET DEFAULT")));
+}
+
+#[test]
+fn explicit_non_boolean_mysql_override_to_postgres_boolean_maps_only_zero_and_one() {
+    let mut enabled = col("enabled", "int");
+    enabled.default_value = Some("1".into());
+    let mut disabled = col("disabled", "int");
+    disabled.default_value = Some("0".into());
+    let src = schema(vec![col("id", "int"), enabled, disabled]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper = |_table: &str, ty: &str, name: &str| -> Result<String, String> {
+        if matches!(name, "active" | "enabled" | "disabled") {
+            Ok("boolean".into())
+        } else {
+            Ok(ty.into())
+        }
+    };
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"enabled\" boolean DEFAULT TRUE")));
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"disabled\" boolean DEFAULT FALSE")));
+
+    let mut source_existing = col("active", "int");
+    source_existing.default_value = Some("1".into());
+    let mut target_existing = col("active", "boolean");
+    target_existing.default_value = Some("FALSE".into());
+    let existing_column_plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![source_existing]),
+            schema(vec![target_existing]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        existing_column_plan.requirements.is_empty(),
+        "{:?}",
+        existing_column_plan.requirements
+    );
+    let default_statements = existing_column_plan
+        .statements
+        .iter()
+        .filter(|statement| statement.sql.contains("DEFAULT"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        default_statements.len(),
+        2,
+        "{:?}",
+        existing_column_plan.statements
+    );
+    assert!(default_statements[0].sql.contains("DROP DEFAULT"));
+    assert!(default_statements[1].sql.contains("SET DEFAULT TRUE"));
+
+    let mut invalid = col("active", "int");
+    invalid.default_value = Some("2".into());
+    let invalid_mapper =
+        |_table: &str, _ty: &str, _name: &str| -> Result<String, String> { Ok("boolean".into()) };
+    let invalid_plan = build_schema_diff_plan(
+        &[("users".into(), schema(vec![invalid]), schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&invalid_mapper),
+            ..Default::default()
+        },
+    );
+    assert!(invalid_plan.statements.is_empty());
+    assert!(invalid_plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("`2`")
+    )));
+
+    let mut invalid_source = col("active", "int");
+    invalid_source.default_value = Some("2".into());
+    let mut current_target = col("active", "boolean");
+    current_target.default_value = Some("FALSE".into());
+    let invalid_default_change = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![invalid_source]),
+            schema(vec![current_target]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(invalid_default_change.statements.is_empty());
+    assert!(invalid_default_change
+        .requirements
+        .iter()
+        .any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. } if reason.contains("`2`")
+        )));
+}
+
+#[test]
+fn mysql_bit_boolean_defaults_map_to_numeric_override_or_fail_closed() {
+    let mut enabled = col("enabled", "bit(1)");
+    enabled.default_value = Some("b'1'".into());
+    let mut disabled = col("disabled", "BIT");
+    disabled.default_value = Some("0b0".into());
+    let src = schema(vec![col("id", "int"), enabled, disabled]);
+    let tgt = schema(vec![col("id", "int")]);
+    let mapper =
+        |_table: &str, _ty: &str, _name: &str| -> Result<String, String> { Ok("smallint".into()) };
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src.clone(), tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"enabled\" smallint DEFAULT 1")));
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("\"disabled\" smallint DEFAULT 0")));
+
+    let create_plan = build_schema_diff_plan(
+        &[("users".into(), src.clone(), schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        create_plan.requirements.is_empty(),
+        "{:?}",
+        create_plan.requirements
+    );
+    let create = create_plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.starts_with("CREATE TABLE"))
+        .expect("CREATE TABLE statement");
+    assert!(create.sql.contains("\"enabled\" smallint DEFAULT 1"));
+    assert!(create.sql.contains("\"disabled\" smallint DEFAULT 0"));
+
+    let mut source_active = col("active", "bit(1)");
+    source_active.default_value = Some("b'1'".into());
+    let mut target_active = col("active", "smallint");
+    target_active.default_value = Some("0".into());
+    let default_change_plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(vec![source_active]),
+            schema(vec![target_active]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(
+        default_change_plan.requirements.is_empty(),
+        "{:?}",
+        default_change_plan.requirements
+    );
+    assert!(default_change_plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("SET DEFAULT 1")));
+
+    let mut invalid = col("active", "bit(1)");
+    invalid.default_value = Some("b'10'".into());
+    let invalid_plan = build_schema_diff_plan(
+        &[("users".into(), schema(vec![invalid]), schema(vec![]))],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+    assert!(invalid_plan.statements.is_empty());
+    assert!(invalid_plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("b'10'")
+    )));
 }
 
 #[test]

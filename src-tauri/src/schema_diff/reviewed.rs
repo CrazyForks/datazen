@@ -13,6 +13,8 @@ pub struct ReviewedPlan {
     pub target_session: String,
     pub target_pool: String,
     pub target_identity: serde_json::Value,
+    pub target_database_scope: Option<String>,
+    pub target_schema_scope: Option<String>,
     pub snapshots: Vec<(String, TableSchema)>,
     pub object_snapshots: Vec<SchemaObjectSnapshot>,
     created: Instant,
@@ -27,14 +29,33 @@ pub fn identity(config: &ConnectionConfig) -> serde_json::Value {
         "options":config.options,"tunnel":config.ssh_tunnel})
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhysicalDatabaseScope {
+    Same,
+    Different,
+    Unknown,
+}
+
 pub async fn freeze(
     plan: &mut SchemaDiffPlan,
     session: String,
     handle: &ConnectionHandle,
     config: &ConnectionConfig,
     snapshots: Vec<(String, TableSchema)>,
+    target_database_scope: Option<String>,
+    target_schema_scope: Option<String>,
 ) {
-    freeze_with_objects(plan, session, handle, config, snapshots, Vec::new()).await;
+    freeze_with_objects(
+        plan,
+        session,
+        handle,
+        config,
+        snapshots,
+        Vec::new(),
+        target_database_scope,
+        target_schema_scope,
+    )
+    .await;
 }
 
 pub async fn freeze_with_objects(
@@ -44,6 +65,8 @@ pub async fn freeze_with_objects(
     config: &ConnectionConfig,
     snapshots: Vec<(String, TableSchema)>,
     object_snapshots: Vec<SchemaObjectSnapshot>,
+    target_database_scope: Option<String>,
+    target_schema_scope: Option<String>,
 ) {
     let id = uuid::Uuid::new_v4().to_string();
     plan.plan_id = Some(id.clone());
@@ -66,6 +89,8 @@ pub async fn freeze_with_objects(
             target_session: session,
             target_pool: handle.pool_id.clone(),
             target_identity: identity(config),
+            target_database_scope,
+            target_schema_scope,
             snapshots,
             object_snapshots,
             created: Instant::now(),
@@ -78,6 +103,8 @@ pub async fn consume(
     session: &str,
     handle: &ConnectionHandle,
     config: &ConnectionConfig,
+    target_database_scope: Option<&str>,
+    target_schema_scope: Option<&str>,
 ) -> Result<ReviewedPlan, String> {
     let id = submitted
         .plan_id
@@ -87,7 +114,15 @@ pub async fn consume(
     let frozen = plans
         .get(id)
         .ok_or("Plan expired or already executed; compare again")?;
-    validate(frozen, submitted, session, handle, config)?;
+    validate(
+        frozen,
+        submitted,
+        session,
+        handle,
+        config,
+        target_database_scope,
+        target_schema_scope,
+    )?;
     plans
         .remove(id)
         .ok_or_else(|| "Plan already executed".into())
@@ -99,6 +134,8 @@ fn validate(
     session: &str,
     handle: &ConnectionHandle,
     config: &ConnectionConfig,
+    target_database_scope: Option<&str>,
+    target_schema_scope: Option<&str>,
 ) -> Result<(), String> {
     if frozen.created.elapsed() >= Duration::from_secs(1800) {
         return Err("Plan expired; compare again".into());
@@ -115,21 +152,96 @@ fn validate(
     if config.read_only {
         return Err("Target connection is read-only".into());
     }
+    if normalized_scope(target_database_scope)
+        != normalized_scope(frozen.target_database_scope.as_deref())
+        || normalized_scope(target_schema_scope)
+            != normalized_scope(frozen.target_schema_scope.as_deref())
+    {
+        return Err("Target database or schema scope changed after review; compare again".into());
+    }
     Ok(())
+}
+
+fn normalized_scope(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 /// Configuration identity is a conservative local check; driver-provided physical
 /// identity is required to recognize aliases and distinct tunnels to one server.
 pub fn same_endpoint(source: &ConnectionConfig, target: &ConnectionConfig) -> bool {
+    let source_dialect = crate::schema_diff::types::normalize_dialect(&source.database_type);
+    let target_dialect = crate::schema_diff::types::normalize_dialect(&target.database_type);
+    if source_dialect != target_dialect {
+        return false;
+    }
     let mut a = identity(source);
     let mut b = identity(target);
     if let Some(v) = a.as_object_mut() {
         v.remove("user");
+        v.insert("driver".into(), serde_json::Value::String(source_dialect));
     }
     if let Some(v) = b.as_object_mut() {
         v.remove("user");
+        v.insert("driver".into(), serde_json::Value::String(target_dialect));
     }
     a == b
+}
+
+/// Detect aliases that reach the same database through different connection
+/// settings. Database and schema names are only used as proof of distinct
+/// scopes when PostgreSQL's namespace rules make that conclusion reliable;
+/// MySQL database names may be case-folded and SQLite paths may be hard links.
+pub fn physical_database_scope(
+    source: &ConnectionConfig,
+    target: &ConnectionConfig,
+    source_identity: Option<&str>,
+    target_identity: Option<&str>,
+    source_schema_scope: Option<&str>,
+    target_schema_scope: Option<&str>,
+) -> PhysicalDatabaseScope {
+    let source_dialect = crate::schema_diff::types::normalize_dialect(&source.database_type);
+    let target_dialect = crate::schema_diff::types::normalize_dialect(&target.database_type);
+    if source_dialect != target_dialect {
+        return PhysicalDatabaseScope::Different;
+    }
+
+    let source_schema = source_schema_scope
+        .and_then(|value| normalized_scope(Some(value)))
+        .or_else(|| normalized_scope(source.schema.as_deref()));
+    let target_schema = target_schema_scope
+        .and_then(|value| normalized_scope(Some(value)))
+        .or_else(|| normalized_scope(target.schema.as_deref()));
+
+    if let (Some(left), Some(right)) = (source_identity, target_identity) {
+        if left != right {
+            return PhysicalDatabaseScope::Different;
+        }
+        if source_dialect == "postgresql"
+            && matches!((source_schema, target_schema), (Some(left), Some(right)) if left != right)
+        {
+            return PhysicalDatabaseScope::Different;
+        }
+        return PhysicalDatabaseScope::Same;
+    }
+
+    // PostgreSQL database names are case-sensitive catalog identities, and
+    // schemas are separate namespaces inside a database. These names can
+    // prove distinct scopes even when the server does not expose an identity.
+    if source_dialect == "postgresql" {
+        if matches!(
+            (normalized_scope(source.database.as_deref()), normalized_scope(target.database.as_deref())),
+            (Some(left), Some(right)) if left != right
+        ) || matches!((source_schema, target_schema), (Some(left), Some(right)) if left != right)
+        {
+            return PhysicalDatabaseScope::Different;
+        }
+    }
+
+    // MySQL can fold database names according to lower_case_table_names,
+    // while SQLite paths can be aliases (including hard links). If the
+    // driver could not provide a physical identity, spelling alone is not a
+    // safe reason to allow a migration.
+    PhysicalDatabaseScope::Unknown
 }
 
 pub fn validate_snapshot(
@@ -182,21 +294,82 @@ mod tests {
             id: "session".into(),
             pool_id: "pool".into(),
         };
-        freeze(&mut plan, "session".into(), &handle, &config, vec![]).await;
+        freeze(
+            &mut plan,
+            "session".into(),
+            &handle,
+            &config,
+            vec![],
+            config.database.clone(),
+            Some("public".into()),
+        )
+        .await;
         let mut tampered = plan.clone();
         tampered.warnings.push("client modification".into());
-        assert!(consume(&tampered, "session", &handle, &config)
-            .await
-            .is_err());
-        assert!(consume(&plan, "other", &handle, &config).await.is_err());
+        assert!(consume(
+            &tampered,
+            "session",
+            &handle,
+            &config,
+            config.database.as_deref(),
+            Some("public"),
+        )
+        .await
+        .is_err());
+        assert!(consume(
+            &plan,
+            "other",
+            &handle,
+            &config,
+            config.database.as_deref(),
+            Some("public"),
+        )
+        .await
+        .is_err());
         let mut changed = config.clone();
         changed.database = Some("other_database".into());
-        assert!(consume(&plan, "session", &handle, &changed).await.is_err());
+        assert!(consume(
+            &plan,
+            "session",
+            &handle,
+            &changed,
+            changed.database.as_deref(),
+            Some("public"),
+        )
+        .await
+        .is_err());
         changed = config.clone();
         changed.read_only = true;
-        assert!(consume(&plan, "session", &handle, &changed).await.is_err());
-        assert!(consume(&plan, "session", &handle, &config).await.is_ok());
-        assert!(consume(&plan, "session", &handle, &config).await.is_err());
+        assert!(consume(
+            &plan,
+            "session",
+            &handle,
+            &changed,
+            changed.database.as_deref(),
+            Some("public"),
+        )
+        .await
+        .is_err());
+        assert!(consume(
+            &plan,
+            "session",
+            &handle,
+            &config,
+            config.database.as_deref(),
+            Some("public"),
+        )
+        .await
+        .is_ok());
+        assert!(consume(
+            &plan,
+            "session",
+            &handle,
+            &config,
+            config.database.as_deref(),
+            Some("archive"),
+        )
+        .await
+        .is_err());
     }
     #[test]
     fn self_target_is_independent_of_user_and_persisted_connection_id() {
@@ -207,6 +380,131 @@ mod tests {
         assert!(same_endpoint(&a, &b));
         b.database = Some("other_database".into());
         assert!(!same_endpoint(&a, &b));
+    }
+
+    #[test]
+    fn physical_database_scope_detects_aliases_and_fails_closed_when_unknown() {
+        use PhysicalDatabaseScope::{Different, Same, Unknown};
+        let a = config();
+        let mut alias = a.clone();
+        alias.id = "alias".into();
+        alias.host = Some("db-alias.example".into());
+        assert_eq!(
+            physical_database_scope(
+                &a,
+                &alias,
+                Some("postgresql:cluster:app"),
+                Some("postgresql:cluster:app"),
+                None,
+                None,
+            ),
+            Same
+        );
+
+        let mut pg_alias = a.clone();
+        pg_alias.database_type = "postgres".into();
+        assert!(same_endpoint(&pg_alias, &a));
+        assert_eq!(
+            physical_database_scope(
+                &pg_alias,
+                &a,
+                Some("postgresql:cluster:app"),
+                Some("postgresql:cluster:app"),
+                None,
+                None,
+            ),
+            Same
+        );
+
+        alias.schema = Some("archive".into());
+        assert_eq!(
+            physical_database_scope(
+                &a,
+                &alias,
+                Some("postgresql:cluster:app"),
+                Some("postgresql:cluster:app"),
+                Some("public"),
+                Some("archive"),
+            ),
+            Different
+        );
+        assert_eq!(
+            physical_database_scope(
+                &a,
+                &alias,
+                Some("postgresql:cluster:app"),
+                Some("mysql:cluster:app"),
+                None,
+                None,
+            ),
+            Different
+        );
+        assert_eq!(
+            physical_database_scope(
+                &a,
+                &a,
+                Some("postgresql:cluster:app"),
+                Some("postgresql:cluster:app"),
+                Some("public"),
+                Some("archive"),
+            ),
+            Different
+        );
+        assert_eq!(
+            physical_database_scope(&a, &alias, None, None, None, None),
+            Unknown
+        );
+    }
+
+    #[test]
+    fn physical_scope_uses_mysql_identity_before_case_foldable_names() {
+        use PhysicalDatabaseScope::{Same, Unknown};
+        let mut source = config();
+        source.database_type = "mysql".into();
+        source.database = Some("AppDb".into());
+        let mut target = source.clone();
+        target.database = Some("appdb".into());
+
+        assert_eq!(
+            physical_database_scope(
+                &source,
+                &target,
+                Some("mysql:server:canonical-app-db"),
+                Some("mysql:server:canonical-app-db"),
+                None,
+                None,
+            ),
+            Same
+        );
+        assert_eq!(
+            physical_database_scope(&source, &target, None, None, None, None),
+            Unknown
+        );
+    }
+
+    #[test]
+    fn postgres_names_can_prove_distinct_database_or_schema_without_identity() {
+        use PhysicalDatabaseScope::Different;
+        let source = config();
+        let mut different_database = source.clone();
+        different_database.database = Some("another_db".into());
+        assert_eq!(
+            physical_database_scope(&source, &different_database, None, None, None, None),
+            Different
+        );
+
+        let target = source.clone();
+        assert_eq!(
+            physical_database_scope(
+                &source,
+                &target,
+                None,
+                None,
+                Some("public"),
+                Some("archive"),
+            ),
+            Different
+        );
     }
     #[test]
     fn target_snapshot_detects_structure_changed_after_review() {
@@ -327,10 +625,33 @@ mod tests {
             id: "concurrent".into(),
             pool_id: "concurrent_pool".into(),
         };
-        freeze(&mut plan, "concurrent".into(), &handle, &cfg, vec![]).await;
+        freeze(
+            &mut plan,
+            "concurrent".into(),
+            &handle,
+            &cfg,
+            vec![],
+            cfg.database.clone(),
+            cfg.schema.clone(),
+        )
+        .await;
         let (a, b) = tokio::join!(
-            consume(&plan, "concurrent", &handle, &cfg),
-            consume(&plan, "concurrent", &handle, &cfg)
+            consume(
+                &plan,
+                "concurrent",
+                &handle,
+                &cfg,
+                cfg.database.as_deref(),
+                cfg.schema.as_deref()
+            ),
+            consume(
+                &plan,
+                "concurrent",
+                &handle,
+                &cfg,
+                cfg.database.as_deref(),
+                cfg.schema.as_deref()
+            )
         );
         assert_ne!(a.is_ok(), b.is_ok());
     }
@@ -342,12 +663,39 @@ mod tests {
             id: "pooltest".into(),
             pool_id: "original".into(),
         };
-        freeze(&mut plan, "pooltest".into(), &handle, &cfg, vec![]).await;
+        freeze(
+            &mut plan,
+            "pooltest".into(),
+            &handle,
+            &cfg,
+            vec![],
+            cfg.database.clone(),
+            cfg.schema.clone(),
+        )
+        .await;
         let changed = ConnectionHandle {
             id: "pooltest".into(),
             pool_id: "replacement".into(),
         };
-        assert!(consume(&plan, "pooltest", &changed, &cfg).await.is_err());
-        assert!(consume(&plan, "pooltest", &handle, &cfg).await.is_ok());
+        assert!(consume(
+            &plan,
+            "pooltest",
+            &changed,
+            &cfg,
+            cfg.database.as_deref(),
+            cfg.schema.as_deref()
+        )
+        .await
+        .is_err());
+        assert!(consume(
+            &plan,
+            "pooltest",
+            &handle,
+            &cfg,
+            cfg.database.as_deref(),
+            cfg.schema.as_deref()
+        )
+        .await
+        .is_ok());
     }
 }

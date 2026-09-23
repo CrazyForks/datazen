@@ -111,16 +111,26 @@ describe('schemaDiffCommands wrappers', () => {
     invokeMock.mockResolvedValue(undefined);
   });
 
-  it('compareTableSchemas forwards session ids and table name', async () => {
+  it('compareTableSchemas forwards endpoint-specific table names and schemas', async () => {
     const diff = { table: 'users' } as unknown as TableSchemaDiff;
     invokeMock.mockResolvedValueOnce(diff);
-    await expect(schemaDiffCommands.compareTableSchemas('src-1', 'tgt-1', 'users')).resolves.toBe(
-      diff,
-    );
+    await expect(
+      schemaDiffCommands.compareTableSchemas(
+        'src-1',
+        'tgt-1',
+        'source.users',
+        'target.users',
+        'source',
+        'target',
+      ),
+    ).resolves.toBe(diff);
     expect(invokeMock).toHaveBeenCalledWith('compare_table_schemas', {
       sourceDbSessionId: 'src-1',
       targetDbSessionId: 'tgt-1',
-      tableName: 'users',
+      sourceTableName: 'source.users',
+      targetTableName: 'target.users',
+      sourceSchema: 'source',
+      targetSchema: 'target',
     });
   });
 

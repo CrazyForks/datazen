@@ -125,6 +125,11 @@ export interface ForeignKeyInfo {
   referencedColumns: string[];
   onUpdate?: string;
   onDelete?: string;
+  deferrability?:
+    | 'unknown'
+    | 'notDeferrable'
+    | 'deferrableInitiallyImmediate'
+    | 'deferrableInitiallyDeferred';
 }
 
 export interface TableSchema {

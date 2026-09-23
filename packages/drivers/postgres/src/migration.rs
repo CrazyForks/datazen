@@ -64,6 +64,21 @@ fn pg_fk_action(raw: &str, clause: &str) -> Result<String, String> {
     ))
 }
 
+fn pg_fk_deferrability(value: ForeignKeyDeferrability) -> Result<&'static str, String> {
+    match value {
+        ForeignKeyDeferrability::NotDeferrable => Ok(" NOT DEFERRABLE"),
+        ForeignKeyDeferrability::DeferrableInitiallyImmediate => {
+            Ok(" DEFERRABLE INITIALLY IMMEDIATE")
+        }
+        ForeignKeyDeferrability::DeferrableInitiallyDeferred => {
+            Ok(" DEFERRABLE INITIALLY DEFERRED")
+        }
+        ForeignKeyDeferrability::Unknown => {
+            Err("foreign key deferrability is unknown; cannot safely create the constraint".into())
+        }
+    }
+}
+
 fn pg_view_ident(view: &MigrationView) -> String {
     let quote = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
     match view.schema.as_deref().filter(|schema| !schema.is_empty()) {
@@ -212,6 +227,7 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 format!("\"{}\"", s.replace('\"', "\"\""))
             }
         };
+        let qi_identifier = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
         match op {
             MigrationOperation::CreateTable {
                 table,
@@ -325,23 +341,46 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                     summary: format!("ALTER DEFAULT {}.{}", table, column),
                 })
             }
-            MigrationOperation::CreateIndex { table, index } => Ok(MigrationStatement {
-                sql: format!(
-                    "CREATE {}INDEX {} ON {} ({})",
-                    if index.is_unique { "UNIQUE " } else { "" },
-                    qi(&index.name),
-                    qi(table),
-                    index
-                        .columns
-                        .iter()
-                        .map(|c| qi(c))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                risk: MigrationRisk::Additive,
-                rollback_sql: Some(format!("DROP INDEX {}", qi(&index.name))),
-                summary: format!("CREATE INDEX {}.{}", table, index.name),
-            }),
+            MigrationOperation::CreateIndex { table, index } => {
+                let index_type = index.index_type.trim();
+                if index_type.is_empty() {
+                    return Err(
+                        "PostgreSQL index type is missing; cannot safely recreate the index".into(),
+                    );
+                }
+                let index_type = match index_type.to_ascii_uppercase().as_str() {
+                    // MySQL reports these access methods in uppercase, while
+                    // PostgreSQL's built-in catalog names are lowercase.
+                    "BTREE" => "btree",
+                    "HASH" => "hash",
+                    "FULLTEXT" | "RTREE" | "SPATIAL" => {
+                        return Err(format!(
+                            "PostgreSQL cannot recreate MySQL {index_type} indexes directly"
+                        ));
+                    }
+                    // Preserve PostgreSQL extension access-method names from
+                    // pg_am exactly; quoted custom names may be case-sensitive.
+                    _ => index_type,
+                };
+                Ok(MigrationStatement {
+                    sql: format!(
+                        "CREATE {}INDEX {} ON {} USING {} ({})",
+                        if index.is_unique { "UNIQUE " } else { "" },
+                        qi(&index.name),
+                        qi(table),
+                        qi_identifier(index_type),
+                        index
+                            .columns
+                            .iter()
+                            .map(|c| qi(c))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    risk: MigrationRisk::Additive,
+                    rollback_sql: Some(format!("DROP INDEX {}", qi(&index.name))),
+                    summary: format!("CREATE INDEX {}.{}", table, index.name),
+                })
+            }
             MigrationOperation::DropIndex { index, .. } => Ok(MigrationStatement {
                 sql: format!("DROP INDEX {}", qi(&index.name)),
                 risk: MigrationRisk::Destructive,
@@ -444,9 +483,10 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                 }
                 let on_update = pg_fk_action(&foreign_key.on_update, "ON UPDATE")?;
                 let on_delete = pg_fk_action(&foreign_key.on_delete, "ON DELETE")?;
+                let deferrability = pg_fk_deferrability(foreign_key.deferrability)?;
                 Ok(MigrationStatement {
                     sql: format!(
-                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}){}{}",
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}){}{}{}",
                         qi(table),
                         qi(&foreign_key.name),
                         foreign_key
@@ -464,6 +504,7 @@ impl MigrationRenderer for PostgresMigrationRenderer {
                             .join(", "),
                         on_update,
                         on_delete,
+                        deferrability,
                     ),
                     risk: MigrationRisk::Additive,
                     rollback_sql: Some(format!(
@@ -842,6 +883,110 @@ mod tests {
             "ALTER TABLE \"users\" ALTER COLUMN \"name\" DROP NOT NULL"
         );
     }
+
+    #[test]
+    fn create_index_preserves_and_quotes_access_method() {
+        let statement = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateIndex {
+                table: "public.documents".into(),
+                index: IndexInfo {
+                    name: "documents_search_idx".into(),
+                    columns: vec!["search_vector".into()],
+                    is_unique: false,
+                    is_primary: false,
+                    index_type: "gin".into(),
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            statement.sql,
+            "CREATE INDEX \"documents_search_idx\" ON \"public\".\"documents\" USING \"gin\" (\"search_vector\")"
+        );
+
+        let extension_method = PostgresMigrationRenderer
+            .render(&MigrationOperation::CreateIndex {
+                table: "documents".into(),
+                index: IndexInfo {
+                    name: "documents_rum_idx".into(),
+                    columns: vec!["search_vector".into()],
+                    is_unique: false,
+                    is_primary: false,
+                    index_type: "rum".into(),
+                },
+            })
+            .unwrap();
+        assert!(extension_method.sql.contains(" USING \"rum\" "));
+
+        for (method, quoted) in [
+            ("custom.method", "\"custom.method\""),
+            ("odd\"name", "\"odd\"\"name\""),
+        ] {
+            let statement = PostgresMigrationRenderer
+                .render(&MigrationOperation::CreateIndex {
+                    table: "documents".into(),
+                    index: IndexInfo {
+                        name: "documents_search_idx".into(),
+                        columns: vec!["search_vector".into()],
+                        is_unique: false,
+                        is_primary: false,
+                        index_type: method.into(),
+                    },
+                })
+                .unwrap();
+            assert!(statement.sql.contains(&format!(" USING {quoted} (")));
+        }
+
+        for (mysql_method, pg_method) in [("BTREE", "btree"), ("HASH", "hash")] {
+            let statement = PostgresMigrationRenderer
+                .render(&MigrationOperation::CreateIndex {
+                    table: "documents".into(),
+                    index: IndexInfo {
+                        name: "documents_search_idx".into(),
+                        columns: vec!["search_vector".into()],
+                        is_unique: false,
+                        is_primary: false,
+                        index_type: mysql_method.into(),
+                    },
+                })
+                .unwrap();
+            assert!(statement.sql.contains(&format!(" USING \"{pg_method}\" (")));
+        }
+    }
+
+    #[test]
+    fn create_index_rejects_mysql_only_access_methods() {
+        for index_type in ["FULLTEXT", "RTREE", "SPATIAL"] {
+            let result = PostgresMigrationRenderer.render(&MigrationOperation::CreateIndex {
+                table: "documents".into(),
+                index: IndexInfo {
+                    name: "documents_search_idx".into(),
+                    columns: vec!["search_vector".into()],
+                    is_unique: false,
+                    is_primary: false,
+                    index_type: index_type.into(),
+                },
+            });
+            assert!(
+                result.is_err(),
+                "{index_type} must fail closed for PostgreSQL"
+            );
+        }
+    }
+
+    #[test]
+    fn create_index_rejects_missing_access_method() {
+        let result = PostgresMigrationRenderer.render(&MigrationOperation::CreateIndex {
+            table: "documents".into(),
+            index: IndexInfo {
+                name: "documents_idx".into(),
+                columns: vec!["id".into()],
+                is_unique: false,
+                is_primary: false,
+                index_type: " ".into(),
+            },
+        });
+        assert!(result.is_err());
+    }
     #[test]
     fn escapes_comment_quotes() {
         let op = MigrationOperation::SetComment {
@@ -1050,18 +1195,45 @@ mod tests {
                 referenced_columns: vec!["id".into()],
                 on_update: "CASCADE".into(),
                 on_delete: "SET NULL".into(),
+                deferrability: ForeignKeyDeferrability::NotDeferrable,
             },
         };
         let stmt = PostgresMigrationRenderer.render(&op).unwrap();
         assert_eq!(
             stmt.sql,
-            "ALTER TABLE \"orders\" ADD CONSTRAINT \"orders_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"public\".\"users\" (\"id\") ON UPDATE CASCADE ON DELETE SET NULL"
+            "ALTER TABLE \"orders\" ADD CONSTRAINT \"orders_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"public\".\"users\" (\"id\") ON UPDATE CASCADE ON DELETE SET NULL NOT DEFERRABLE"
         );
         assert_eq!(
             stmt.rollback_sql.as_deref(),
             Some("ALTER TABLE \"orders\" DROP CONSTRAINT \"orders_user_id_fkey\"")
         );
         assert!(PostgresMigrationCapabilities.supports(&op));
+    }
+
+    #[test]
+    fn renders_deferred_foreign_key_semantics_and_rejects_unknown() {
+        let mut operation = MigrationOperation::AddForeignKey {
+            table: "orders".into(),
+            foreign_key: ForeignKeyInfo {
+                name: "orders_user_id_fkey".into(),
+                columns: vec!["user_id".into()],
+                referenced_table: "users".into(),
+                referenced_columns: vec!["id".into()],
+                on_update: "NO ACTION".into(),
+                on_delete: "NO ACTION".into(),
+                deferrability: ForeignKeyDeferrability::DeferrableInitiallyDeferred,
+            },
+        };
+
+        let deferred = PostgresMigrationRenderer
+            .render(&operation)
+            .expect("deferred FK should render");
+        assert!(deferred.sql.ends_with("DEFERRABLE INITIALLY DEFERRED"));
+
+        if let MigrationOperation::AddForeignKey { foreign_key, .. } = &mut operation {
+            foreign_key.deferrability = ForeignKeyDeferrability::Unknown;
+        }
+        assert!(PostgresMigrationRenderer.render(&operation).is_err());
     }
 
     #[test]

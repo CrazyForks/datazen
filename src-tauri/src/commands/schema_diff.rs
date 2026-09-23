@@ -51,6 +51,61 @@ async fn list_schema_views(
         .map(|objects| objects.unwrap_or_default())
 }
 
+async fn ensure_distinct_schema_scope(
+    source_driver: &dyn datazen_driver_api::DatabaseDriver,
+    source_handle: &datazen_driver_api::ConnectionHandle,
+    source_config: &datazen_driver_api::ConnectionConfig,
+    target_driver: &dyn datazen_driver_api::DatabaseDriver,
+    target_handle: &datazen_driver_api::ConnectionHandle,
+    target_config: &datazen_driver_api::ConnectionConfig,
+    source_schema_scope: Option<&str>,
+    target_schema_scope: Option<&str>,
+) -> Result<(), CommandError> {
+    let source_identity = source_driver
+        .physical_database_identity(
+            source_handle,
+            source_config.database.as_deref().unwrap_or_default(),
+        )
+        .await
+        .ok()
+        .flatten();
+    let target_identity = target_driver
+        .physical_database_identity(
+            target_handle,
+            target_config.database.as_deref().unwrap_or_default(),
+        )
+        .await
+        .ok()
+        .flatten();
+
+    match crate::schema_diff::reviewed::physical_database_scope(
+        source_config,
+        target_config,
+        source_identity.as_deref(),
+        target_identity.as_deref(),
+        source_schema_scope,
+        target_schema_scope,
+    ) {
+        crate::schema_diff::reviewed::PhysicalDatabaseScope::Same => {
+            Err(reject_same_schema_scope())
+        }
+        crate::schema_diff::reviewed::PhysicalDatabaseScope::Different => Ok(()),
+        crate::schema_diff::reviewed::PhysicalDatabaseScope::Unknown => {
+            Err(reject_unverifiable_schema_scope())
+        }
+    }
+}
+
+fn reject_same_schema_scope() -> CommandError {
+    CommandError::Validation("Source and target must identify different database scopes".into())
+}
+
+fn reject_unverifiable_schema_scope() -> CommandError {
+    CommandError::Validation(
+        "Cannot verify that source and target are different database scopes; the driver must provide physical database identity".into(),
+    )
+}
+
 async fn fetch_schema_view(
     driver: &dyn datazen_driver_api::DatabaseDriver,
     handle: &datazen_driver_api::ConnectionHandle,
@@ -394,45 +449,27 @@ pub async fn prepare_schema_diff_plan(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_table_names: Option<Vec<String>>,
     target_only_table_names: Option<Vec<String>>,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
     type_overrides: Option<Vec<ColumnTypeOverride>>,
 ) -> Result<SchemaDiffPlan, CommandError> {
-    prepare_schema_diff_plan_impl(
+    let target_table_names = target_table_names.unwrap_or_else(|| table_names.clone());
+    prepare_schema_diff_plan_with_schemas_impl(
         &state,
         source_db_session_id,
         target_db_session_id,
         table_names,
+        target_table_names,
         target_only_table_names.unwrap_or_default(),
         allow_destructive,
         include_indexes,
         type_overrides,
-    )
-    .await
-}
-
-pub(crate) async fn prepare_schema_diff_plan_impl(
-    state: &AppState,
-    source_db_session_id: String,
-    target_db_session_id: String,
-    table_names: Vec<String>,
-    target_only_table_names: Vec<String>,
-    allow_destructive: bool,
-    include_indexes: Option<bool>,
-    type_overrides: Option<Vec<ColumnTypeOverride>>,
-) -> Result<SchemaDiffPlan, CommandError> {
-    prepare_schema_diff_plan_with_schemas_impl(
-        state,
-        source_db_session_id,
-        target_db_session_id,
-        table_names,
-        target_only_table_names,
-        allow_destructive,
-        include_indexes,
-        type_overrides,
-        None,
-        None,
+        source_schema,
+        target_schema,
     )
     .await
 }
@@ -458,6 +495,7 @@ pub(crate) async fn prepare_schema_diff_profile_plan_impl(
         state,
         source_db_session_id,
         target_db_session_id,
+        table_names.clone(),
         table_names,
         target_only_table_names,
         allow_destructive,
@@ -474,6 +512,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
     source_db_session_id: String,
     target_db_session_id: String,
     table_names: Vec<String>,
+    target_table_names: Vec<String>,
     target_only_table_names: Vec<String>,
     allow_destructive: bool,
     include_indexes: Option<bool>,
@@ -494,6 +533,11 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             "table_names and target_only_table_names must not both be empty".into(),
         ));
     }
+    if table_names.len() != target_table_names.len() {
+        return Err(CommandError::Validation(
+            "table_names and target_table_names must have the same length".into(),
+        ));
+    }
 
     let src_config = state
         .connection_manager
@@ -511,7 +555,15 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             "Target connection is read-only".into(),
         ));
     }
-    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config) {
+    let source_schema_scope = source_schema_override
+        .as_deref()
+        .or(src_config.schema.as_deref());
+    let target_schema_scope = target_schema_override
+        .as_deref()
+        .or(tgt_config.schema.as_deref());
+    if crate::schema_diff::reviewed::same_endpoint(&src_config, &tgt_config)
+        && source_schema_scope.map(str::trim) == target_schema_scope.map(str::trim)
+    {
         return Err(CommandError::Validation(
             "Source and target must identify different database scopes".into(),
         ));
@@ -527,9 +579,20 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_diff_plan")?;
+    ensure_distinct_schema_scope(
+        src_driver.as_ref(),
+        &src_handle,
+        &src_config,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_config,
+        source_schema_scope,
+        target_schema_scope,
+    )
+    .await?;
 
     let mut pairs = Vec::new();
-    for table in &table_names {
+    for (table, target_table) in table_names.iter().zip(&target_table_names) {
         let src_table = resolve_profile_table(
             &src_config.database_type,
             table,
@@ -537,7 +600,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         );
         let tgt_table = resolve_profile_table(
             &tgt_config.database_type,
-            table,
+            target_table,
             target_schema_override.as_deref(),
         );
         let src_schema = src_driver
@@ -708,6 +771,8 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             .map(|(table, _, target)| (table.clone(), target.clone()))
             .chain(target_only_snapshots)
             .collect(),
+        tgt_config.database.clone(),
+        target_schema_scope.map(str::to_owned),
     )
     .await;
 
@@ -769,6 +834,17 @@ pub async fn prepare_schema_view_plan(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_view_plan")?;
+    ensure_distinct_schema_scope(
+        src_driver.as_ref(),
+        &src_handle,
+        &src_config,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_config,
+        None,
+        None,
+    )
+    .await?;
     let source_available = list_schema_views(src_driver.as_ref(), &src_handle).await?;
     let target_available = list_schema_views(tgt_driver.as_ref(), &tgt_handle).await?;
     let (source_selected, target_selected) =
@@ -812,6 +888,8 @@ pub async fn prepare_schema_view_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
+        tgt_config.database.clone(),
+        tgt_config.schema.clone(),
     )
     .await;
     Ok(plan)
@@ -877,6 +955,17 @@ pub async fn prepare_schema_routine_trigger_plan(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_routine_trigger_plan")?;
+    ensure_distinct_schema_scope(
+        src_driver.as_ref(),
+        &src_handle,
+        &src_config,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_config,
+        None,
+        None,
+    )
+    .await?;
     let source_available = list_schema_objects(src_driver.as_ref(), &src_handle, kind).await?;
     let target_available = list_schema_objects(tgt_driver.as_ref(), &tgt_handle, kind).await?;
     let (source_selected, target_selected) =
@@ -919,6 +1008,8 @@ pub async fn prepare_schema_routine_trigger_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
+        tgt_config.database.clone(),
+        tgt_config.schema.clone(),
     )
     .await;
     Ok(plan)
@@ -970,6 +1061,17 @@ pub async fn prepare_schema_sequence_plan(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_sequence_plan")?;
+    ensure_distinct_schema_scope(
+        src_driver.as_ref(),
+        &src_handle,
+        &src_config,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_config,
+        None,
+        None,
+    )
+    .await?;
     let source_available = list_schema_objects(
         src_driver.as_ref(),
         &src_handle,
@@ -1022,6 +1124,8 @@ pub async fn prepare_schema_sequence_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
+        tgt_config.database.clone(),
+        tgt_config.schema.clone(),
     )
     .await;
     Ok(plan)
@@ -1073,6 +1177,17 @@ pub async fn prepare_schema_type_plan(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_type_plan")?;
+    ensure_distinct_schema_scope(
+        src_driver.as_ref(),
+        &src_handle,
+        &src_config,
+        tgt_driver.as_ref(),
+        &tgt_handle,
+        &tgt_config,
+        None,
+        None,
+    )
+    .await?;
     let source_available = list_schema_objects(
         src_driver.as_ref(),
         &src_handle,
@@ -1125,6 +1240,8 @@ pub async fn prepare_schema_type_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
+        tgt_config.database.clone(),
+        tgt_config.schema.clone(),
     )
     .await;
     Ok(plan)
@@ -1264,29 +1381,6 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
         .or(config.schema.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if target_database.is_some()
-        && effective_target_database != config.database.as_deref().map(str::trim)
-    {
-        return fail_schema_diff_deploy(
-            &state,
-            history_run,
-            CommandError::Validation(
-                "Target database changed after review; prepare the plan again".into(),
-            ),
-        )
-        .await;
-    }
-    if target_schema.is_some() && effective_target_schema != config.schema.as_deref().map(str::trim)
-    {
-        return fail_schema_diff_deploy(
-            &state,
-            history_run,
-            CommandError::Validation(
-                "Target schema changed after review; prepare the plan again".into(),
-            ),
-        )
-        .await;
-    }
     if require_rollback.unwrap_or(false)
         && (!plan.rollback_completeness.complete
             || !use_transaction.unwrap_or(true)
@@ -1328,20 +1422,22 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
         }
     }
 
-    let reviewed =
-        match crate::schema_diff::reviewed::consume(&plan, &target_db_session_id, &handle, &config)
-            .await
-        {
-            Ok(value) => value,
-            Err(error) => {
-                return fail_schema_diff_deploy(
-                    &state,
-                    history_run,
-                    CommandError::Validation(error),
-                )
+    let reviewed = match crate::schema_diff::reviewed::consume(
+        &plan,
+        &target_db_session_id,
+        &handle,
+        &config,
+        effective_target_database,
+        effective_target_schema,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
                 .await;
-            }
-        };
+        }
+    };
     for (table, snapshot) in &reviewed.snapshots {
         let current = match fetch_target_table_schema(
             driver.as_ref(),
@@ -1446,9 +1542,12 @@ pub(crate) async fn compare_table_schemas_impl(
     state: &AppState,
     source_db_session_id: String,
     target_db_session_id: String,
-    table_name: String,
+    source_table_name: String,
+    target_table_name: String,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
 ) -> Result<serde_json::Value, CommandError> {
-    tracing::info!(%source_db_session_id, %target_db_session_id, %table_name, "compare_table_schemas");
+    tracing::info!(%source_db_session_id, %target_db_session_id, %source_table_name, %target_table_name, "compare_table_schemas");
 
     let src_config = state
         .connection_manager
@@ -1472,15 +1571,15 @@ pub(crate) async fn compare_table_schemas_impl(
         .await
         .cmd_err("compare_table_schemas")?;
 
-    let src_table = resolve_table_for_dialect(&src_config.database_type, &table_name);
-    let tgt_table = resolve_table_for_dialect(&tgt_config.database_type, &table_name);
+    let src_table = resolve_table_for_dialect(&src_config.database_type, &source_table_name);
+    let tgt_table = resolve_table_for_dialect(&tgt_config.database_type, &target_table_name);
 
     let src_schema = src_driver
         .get_table_schema(
             &src_handle,
             &src_table,
             src_config.database.as_deref().unwrap_or_default(),
-            src_config.schema.as_deref(),
+            source_schema.as_deref().or(src_config.schema.as_deref()),
         )
         .await
         .cmd_err("compare_table_schemas")?;
@@ -1489,7 +1588,7 @@ pub(crate) async fn compare_table_schemas_impl(
         &tgt_handle,
         &tgt_table,
         tgt_config.database.as_deref().unwrap_or_default(),
-        tgt_config.schema.as_deref(),
+        target_schema.as_deref().or(tgt_config.schema.as_deref()),
     )
     .await
     .cmd_err("compare_table_schemas")?;
@@ -1540,7 +1639,7 @@ pub(crate) async fn compare_table_schemas_impl(
 
             let src_ir = src_adapter.table_to_ir(&src_schema, src_full_types.as_ref());
             let tgt_ir = tgt_src_adapter.table_to_ir(&tgt_schema, tgt_full_types.as_ref());
-            ir_diff = Some(diff_table_schemas_ir(&table_name, &src_ir, &tgt_ir));
+            ir_diff = Some(diff_table_schemas_ir(&source_table_name, &src_ir, &tgt_ir));
             source_ddl = Some(build_create_table_ddl(&src_ir, src_tgt_adapter.as_ref()));
             target_ddl = if tgt_ir.columns.is_empty() {
                 None
@@ -1559,11 +1658,12 @@ pub(crate) async fn compare_table_schemas_impl(
     };
     let normalizer = normalizer_holder.as_deref();
 
-    let diff = ir_diff
-        .unwrap_or_else(|| diff_table_schemas(&table_name, &src_schema, &tgt_schema, normalizer));
+    let diff = ir_diff.unwrap_or_else(|| {
+        diff_table_schemas(&source_table_name, &src_schema, &tgt_schema, normalizer)
+    });
 
     let mut result = serde_json::json!({
-        "table": table_name,
+        "table": source_table_name,
         "missingOnTarget": diff.missing_on_target,
         "extraOnTarget": diff.extra_on_target,
         "added": diff.added,
@@ -1577,7 +1677,7 @@ pub(crate) async fn compare_table_schemas_impl(
         result["targetDdl"] = serde_json::Value::String(ddl);
     }
 
-    tracing::info!(%table_name, "compare_table_schemas OK");
+    tracing::info!(%source_table_name, %target_table_name, "compare_table_schemas OK");
     Ok(result)
 }
 
@@ -1586,13 +1686,19 @@ pub async fn compare_table_schemas(
     state: State<'_, AppState>,
     source_db_session_id: String,
     target_db_session_id: String,
-    table_name: String,
+    source_table_name: String,
+    target_table_name: String,
+    source_schema: Option<String>,
+    target_schema: Option<String>,
 ) -> Result<serde_json::Value, CommandError> {
     compare_table_schemas_impl(
         &state,
         source_db_session_id,
         target_db_session_id,
-        table_name,
+        source_table_name,
+        target_table_name,
+        source_schema,
+        target_schema,
     )
     .await
 }

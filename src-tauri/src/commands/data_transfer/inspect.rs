@@ -10,6 +10,7 @@ use crate::data_transfer::{
     enforce_transfer_pairing, inspect_tables, structure::enrich_create_new_target_types,
     TableInspectResult, TableMapping, TransferMode,
 };
+use crate::services::metadata_schema;
 use datazen_driver_api::TableType;
 
 pub(crate) async fn inspect_data_transfer_impl(
@@ -40,19 +41,36 @@ pub(crate) async fn inspect_data_transfer_impl(
     let src_db = resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
     let tgt_db = resolve_db_name(target_database.as_deref(), tgt_config.database.as_deref());
 
+    let (src_driver, src_handle) = state
+        .connection_manager
+        .get_session(&source_db_session_id)
+        .await
+        .cmd_err("inspect_data_transfer")?;
+    let (tgt_driver, tgt_handle) = state
+        .connection_manager
+        .get_session(&target_db_session_id)
+        .await
+        .cmd_err("inspect_data_transfer")?;
+
     let source = crate::data_transfer::model::Endpoint {
         db_session_id: source_db_session_id.clone(),
         database: src_db.clone(),
-        schema: source_schema
-            .map(str::to_string)
-            .or(src_config.schema.clone()),
+        schema: metadata_schema(
+            src_driver.as_ref(),
+            source_schema,
+            None,
+            src_config.schema.as_deref(),
+        ),
     };
     let target = crate::data_transfer::model::Endpoint {
         db_session_id: target_db_session_id.clone(),
         database: tgt_db.clone(),
-        schema: target_schema
-            .map(str::to_string)
-            .or(tgt_config.schema.clone()),
+        schema: metadata_schema(
+            tgt_driver.as_ref(),
+            target_schema,
+            None,
+            tgt_config.schema.as_deref(),
+        ),
     };
     crate::data_transfer::metadata::metadata_relation_ref(&source, "")?;
     crate::data_transfer::metadata::metadata_relation_ref(&target, "")?;
@@ -70,17 +88,6 @@ pub(crate) async fn inspect_data_transfer_impl(
                 .into(),
         ));
     }
-
-    let (src_driver, src_handle) = state
-        .connection_manager
-        .get_session(&source_db_session_id)
-        .await
-        .cmd_err("inspect_data_transfer")?;
-    let (tgt_driver, tgt_handle) = state
-        .connection_manager
-        .get_session(&target_db_session_id)
-        .await
-        .cmd_err("inspect_data_transfer")?;
 
     let src_tables = src_driver
         .get_tables(&src_handle, &src_db, source.normalized_schema())
@@ -105,32 +112,40 @@ pub(crate) async fn inspect_data_transfer_impl(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             src_driver.as_ref(),
             &src_handle,
             &source,
             &table.name,
         )
         .await
-        {
-            source_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        source_schemas.insert(table.name.clone(), schema);
     }
     let mut target_schemas = HashMap::new();
     for table in tgt_tables
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             tgt_driver.as_ref(),
             &tgt_handle,
             &target,
             &table.name,
         )
         .await
-        {
-            target_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect target table '{}': {error}",
+                table.name
+            ))
+        })?;
+        target_schemas.insert(table.name.clone(), schema);
     }
 
     let mut source_row_counts = HashMap::new();
@@ -204,18 +219,22 @@ pub(crate) async fn inspect_sql_file_transfer_impl(
         .await
         .cmd_err("inspect_sql_file_transfer")?;
     let src_db = resolve_db_name(source_database.as_deref(), src_config.database.as_deref());
-    let source = crate::data_transfer::model::Endpoint {
-        db_session_id: source_db_session_id.clone(),
-        database: src_db.clone(),
-        schema: source_schema.or(src_config.schema.clone()),
-    };
-    crate::data_transfer::metadata::metadata_relation_ref(&source, "")?;
-
     let (src_driver, src_handle) = state
         .connection_manager
         .get_session(&source_db_session_id)
         .await
         .cmd_err("inspect_sql_file_transfer")?;
+    let source = crate::data_transfer::model::Endpoint {
+        db_session_id: source_db_session_id.clone(),
+        database: src_db.clone(),
+        schema: metadata_schema(
+            src_driver.as_ref(),
+            source_schema.as_deref(),
+            None,
+            src_config.schema.as_deref(),
+        ),
+    };
+    crate::data_transfer::metadata::metadata_relation_ref(&source, "")?;
     let source_tables = src_driver
         .get_tables(&src_handle, &src_db, source.normalized_schema())
         .await
@@ -230,16 +249,20 @@ pub(crate) async fn inspect_sql_file_transfer_impl(
         .iter()
         .filter(|t| matches!(t.table_type, TableType::Table))
     {
-        if let Ok(schema) = crate::data_transfer::metadata::load_table_schema(
+        let schema = crate::data_transfer::metadata::load_table_schema(
             src_driver.as_ref(),
             &src_handle,
             &source,
             &table.name,
         )
         .await
-        {
-            source_schemas.insert(table.name.clone(), schema);
-        }
+        .map_err(|error| {
+            CommandError::Validation(format!(
+                "failed to inspect source table '{}': {error}",
+                table.name
+            ))
+        })?;
+        source_schemas.insert(table.name.clone(), schema);
     }
 
     let mut source_row_counts = HashMap::new();
