@@ -140,3 +140,94 @@
    未提交 `Cargo.lock` 与 gitignored codegen；错误总量 11，未触发 >30 阈值。
 7. ✅ 测试断言纪律：新测试只用 i18n key（`redis.monitor.refresh`）、fixture 数据与调用计数断言，无英文文案字面量。
 8. ✅ vitest 计数对齐：基线 51/559 → 52/561（+1 文件 +2 测试 = 本轨新增，无既有用例改动）。
+
+---
+
+# 测试记录（第 1 轮 · Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd` · 2026-09-23）
+
+> 零信任复测：以下均为 Tester 独立实测，不采信 Coder 自报数字。BOOTSTRAP：worktree
+> `.worktrees/datazen-driver-ui-type-gate` / 分支 `feature/driver-ui-type-gate` / 起测时 `git status` 干净。
+
+## T1. 文件面审计 — **PASS**
+
+- `git status --porcelain=v1` 起测时空输出（无未提交残留）。
+- `git log --oneline 1b77ce149..HEAD` = 恰 4 个 commit，hash 与主题逐字对上 claim：
+  `132be63fc` docs 台账 → `b0d486347` tsconfig include → `e507cd74c` 2 真 bug 修复 → `c2d1c1c25` 零行为修复。
+- `git diff --stat 1b77ce149..HEAD` = 恰 5 个文件：`tsconfig.json`、`packages/drivers/redis/ui/observe/SearchableInfoPanel.tsx`、
+  新测试 `packages/drivers/redis/ui/__tests__/SearchableInfoPanel.test.tsx`、本轨 `progress.md`、本轨 `bugs.md`
+  —— 全部在 Coder 声明写面内，**零越界**（hub.md / i18n / scripts / Rust / tsconfig 其余部分 / 其他轨台账均未触碰；
+  `b0d486347` 的 tsconfig diff 仅 include 一行，exclude 未动）。
+- 逐 commit 面：`c2d1c1c25` 仅动 SearchableInfoPanel.tsx；`e507cd74c` 仅动该文件+新测试；`b0d486347` 仅 tsconfig；`132be63fc` 仅本轨台账。
+
+## T2. 独立门禁三连 — **PASS**（串行，逐字尾部）
+
+门禁 1 `npx tsc --noEmit`：
+```
+[exit 0]
+```
+
+门禁 2 `npx vitest run --config vitest.drivers.config.ts` 尾部：
+```
+ Test Files  52 passed (52)
+      Tests  561 passed (561)
+   Start at  11:51:48
+   Duration  8.86s (transform 4.25s, setup 19.40s, import 3.24s, tests 5.73s, environment 24.22s)
+
+[exit 0]
+```
+
+门禁 3 `node scripts/check-driver-import-boundaries.mjs` 全文：
+```
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1465 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[exit 0]
+```
+三门禁数字与 Coder claim **逐项一致**（52/561；0 blocking / 4 advisory 且 4 条 R3 行号逐字同基线）。
+
+## T3. 盲区证据复核 — **PASS**（含 1 条机制澄清）
+
+- 带 include 的 `--listFiles`：`consoleResultRenderer.tsx` 与 `SearchableInfoPanel.tsx` **均在程序内**，
+  驱动 UI 生产文件共 109 个入程序，`__tests__` 混入 0（exclude 生效）。
+- 反向验证（include 行临时移除 → tsc → 已 `git checkout` 还原，status 干净）：
+  - tsc **0 错**；
+  - `SearchableInfoPanel.tsx` **不在列表** ✅；驱动 UI 文件 109→92，差集恰 **17 文件**（含该面板、各驱动 meta/dialect 等）
+    ⇒ include 行真实生效，非摆设；
+  - 澄清（非缺陷）：`consoleResultRenderer.tsx` 反向后仍在列表（`/tmp` 两份 listFiles line 217 对照）——
+    链路 `src/extensions/generated.ts:12 → RedisConnectionView → RedisConsole.tsx:24 → consoleResultRenderer`，
+    由宿主 codegen 传递引入、与 include 无关。这**佐证** claim #6「SearchableInfoPanel 无生产消费者、
+    只有 include 能拉它入程序」与 claim #1「consoleResultRenderer 本就在门禁内、0 错属实」。
+
+## T4. 盘点复核 — **PASS**（生产逐码全中、测试 42/19 逐码全中）
+
+- **生产现态**：临时 config（extends 根 + drivers include + 既有 exclude，用完已删）→ `npx tsc --noEmit` **0 错**。
+- **生产基线回放**（claim #1 精确核验）：把 `1b77ce149` 版 SearchableInfoPanel.tsx 临时换入同命令跑+还原：
+  **恰 11 错、100% 在该文件**，码分布 `TS2345×7 / TS6133×2 / TS2322×1 / TS2488×1` —— 与 claim **逐码一致**；
+  `consoleResultRenderer` 命中 **0**（claim ±1 容差落点 = 0，属实）。
+- **测试侧 42/19**：按 Coder 清点口径（完整 include + drivers ui、仅排 src 测试，临时 config 已删）复现：
+  驱动测试 **42 错 / 19 文件**，码分布 `TS6133×7、TS7006×5、TS2580×6、TS2740×6、TS2339×5、TS2305×4、TS2322×4、
+  TS2307×3、TS2739×1、TS7016×1` —— 与 §2.2 **逐码一致**。
+  - 过程差异已查明（非 claim 错误）：include 仅 drivers 的临时配置数出 46 错——因未 seed
+    `packages/wapp-sdk/__tests__/vendor-node.d.ts` 的 `node:fs`/`node:path` ambient，`node:fs` 报 TS2307；
+    按 Coder 口径补齐后 node:fs/path 归位 TS2305×4、余 `node:stream/web`+`node:zlib` 为 TS2307×3 ⇒ 42。
+    19 文件数在两种口径下恒等。同口径另见 4 个非驱动 packages 测试 18 错（`packages/ui` / `extension-points` /
+    `wapp-sdk`），不属本轨 `packages/drivers/*/ui` 清点面，根 exclude 同样豁免。
+  - **抽查 3 文件错误属实**：`kvBarRound1Fixes.test.tsx:48` TS2740（mock 形状漂移）、
+    `mongodb/ui/__tests__/localePackRegistration.test.ts:20` TS2305 `node:fs.readdirSync`、
+    `redis/ui/__tests__/stringKeyValue.test.ts:176` TS2307 `node:zlib`；19 文件全部命中
+    `packages/**/__tests__/**` 与 `*.test.*` 两模式 ⇒ 与宿主测试（`src/**/__tests__/**`、`src/**/*.test.*`）
+    **同规则豁免**，且两模式为基线既有（`b0d486347` 未动 exclude）。§2.2 排除理由成立。
+
+## T5. 零行为修复源码核对 — **PASS**（变异见 T6）
+
+- `packages/ui/src/i18n.ts:74-80` `formatMessage`：仅 `template.replace(/\{(\w+)\}/g, …)`，无 token 必返原文；
+  `t(key, params?: I18nParams)` 签名 ⇒ 传 `string` 实锤 TS2345。
+- 7 条消息无 token：`packages/drivers/redis/locales/en.ts:354-359` 注册 6 条（zh-CN:264-269 同），
+  第 7 条 `redis.monitor.refresh` 全仓未注册（grep 仅命中调用点与本台账）⇒ 第二实参从未插值，剥参前后恒等
+  —— claim #3 成立，偏离项 #2（refresh 键缺注册）属实入账 §7-2。
+- `cn` / `formatBytes` 删除与 7 处剥参在 `c2d1c1c25` diff 中逐字核对无误。
+- 行号口径：claim 行号为**基线行号**（c2d1c1c25 净 -6 行：t() 114/133/141/142/144/161/166 → 现 108/127/135/136/138/155/160；
+  variant 127 → 现 121；for-of 224 → 现 218），全部对上。
