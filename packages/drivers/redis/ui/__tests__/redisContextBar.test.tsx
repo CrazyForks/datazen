@@ -746,6 +746,25 @@ describe('RedisContextBar — compact degradation (I-10)', () => {
     expect(overflowTypes.querySelector('[data-i18n-key="redis.contextBar.sampled"]')).not.toBeNull();
   });
 
+  it('[tester] preserves the no-limit memory meaning in compact overflow', async () => {
+    stubSources({
+      memory: {
+        sections: [{
+          name: 'Memory',
+          entries: [
+            { key: 'used_memory', value: '1258291' },
+            { key: 'maxmemory', value: '0' },
+          ],
+        }],
+      },
+    });
+    render(<RedisContextBar {...barProps(makeRelay(), { compact: true })} />);
+    await settle();
+
+    expect(screen.getByTestId('redis-context-overflow-memory').getAttribute('data-i18n-key'))
+      .toBe('redis.contextBar.memoryUnlimited');
+  });
+
   it('never drops the scan cluster, which is what a waiting user watches', async () => {
     stubSources();
     render(
