@@ -532,3 +532,59 @@ describe('Journey: TTL pill state machine (enter / in-state / exit)', () => {
     expect(ttlValueSlot().textContent).toContain('999');
   });
 });
+
+// ============================================================================
+// BUG-004: 退出跃迁补齐 —— Esc / 失焦（状态机 exit 不能只有显式关按钮）
+// ============================================================================
+describe('[redis-detail-ui-BUG-004] TTL 内联编辑的 Esc / 失焦退出跃迁', () => {
+  it('closes on Escape typed inside the editor, and re-entry still starts at the default mode', () => {
+    setupJourney({ keyName: 'bug004:esc', ttl: 300 });
+    openEditor();
+
+    // 状态内：焦点在秒数输入上按 Esc ⇒ 退出到折叠胶囊。
+    fireEvent.keyDown(screen.getByTestId('redis-ttl-input'), { key: 'Escape' });
+    expectCollapsed();
+
+    // 退出没破坏进入跃迁：重新点开仍落在文档默认的相对模式。
+    openEditor();
+  });
+
+  it('closes when focus leaves the container but stays when focus moves within it', () => {
+    setupJourney({ keyName: 'bug004:blur', ttl: 300 });
+    openEditor();
+    const ttlInput = screen.getByTestId('redis-ttl-input');
+    const modeButton = screen.getByTestId('redis-ttl-mode-absolute');
+
+    // 焦点从输入移到容器内的模式按钮 ⇒ 不得关闭。
+    fireEvent.blur(ttlInput, { relatedTarget: modeButton });
+    expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+
+    // 焦点离开容器 ⇒ 关闭。
+    fireEvent.blur(modeButton, { relatedTarget: document.body });
+    expectCollapsed();
+  });
+
+  it('ignores Escape while an apply is in flight (mirrors the disabled close button)', async () => {
+    // 永不落定的写命令 ⇒ busy 悬起，退出跃迁必须像关按钮一样被禁用。
+    const pendingInvoke = vi.fn<PluginInvokeFn>().mockImplementation(() => new Promise<void>(() => {}));
+    render(
+      <TtlControls
+        dbSessionId="test-sess"
+        dbIndex={0}
+        keyName="bug004:busy"
+        ttl={300}
+        onChanged={() => {}}
+        invoke={pendingInvoke}
+      />,
+    );
+    openEditor();
+    fireEvent.change(screen.getByTestId('redis-ttl-input'), { target: { value: '120' } });
+    fireEvent.click(screen.getByTestId('redis-ttl-set'));
+    await waitFor(() => expect(pendingInvoke).toHaveBeenCalled());
+
+    fireEvent.keyDown(screen.getByTestId('redis-ttl-input'), { key: 'Escape' });
+    // 应用中不退：错误/结果仍要可见，不被静默折叠。
+    expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+    expect(screen.queryByTestId('redis-ttl-close')).not.toBeNull();
+  });
+});

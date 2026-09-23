@@ -8,8 +8,11 @@
  * - in state: switch between the 3 modes (永不过期 / 相对 / 绝对 EXPIREAT),
  *   each mode runs its own apply through `gateWrite` — a successful apply
  *   calls `onChanged` (parent refetches, `ttl` prop re-syncs the inputs);
- * - exit: close button (`redis-ttl-close`), key switch (parent
- *   `key={detail.key}` unmount), or the parent replacing this row.
+ * - exit: close button (`redis-ttl-close`), **Escape anywhere inside the
+ *   editor** and **focus leaving the editor container** (BUG-004 — the state
+ *   machine must not be enter-only), key switch (parent `key={detail.key}`
+ *   unmount), or the parent replacing this row. The two new transitions
+ *   mirror the close button: both are ignored while an apply is in flight.
  *
  * Assertions contract: `data-testid` locators, `data-ttl-state` /
  * `data-ttl-open` / `data-ttl-mode` / `data-selected` state, `data-i18n-key`
@@ -119,7 +122,20 @@ export function TtlControls({
   }
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-edge bg-surface-alt p-2">
+    <div
+      className="flex w-full flex-wrap items-center gap-2 rounded-md border border-edge bg-surface-alt p-2"
+      // BUG-004: the two missing exit transitions, mirroring `redis-ttl-close`
+      // (disabled while `busy`): Escape bubbling from anywhere inside, and
+      // focus moving out of the container (`relatedTarget` inside ⇒ stay open).
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && !busy) setOpen(false);
+      }}
+      onBlur={(e) => {
+        if (!busy && !e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
+    >
       <div className="flex items-center gap-2">
         <span
           className="text-fg-secondary"
