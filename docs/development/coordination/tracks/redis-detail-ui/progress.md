@@ -576,3 +576,29 @@
 - **覆盖率**：不属四门禁，本轮未复跑；口径 B 仍以更正 1 的复算值 **85.57 / 88.64** 为准，本轮新增用例只增不减、生产码仅改 3 处编辑器分支，≥80% 结论无回归风险。
 - **偏差记录**：① BUG-001 采用「同键非毁式重取」而非 Tester 偏好的「同键也守卫」——H2 验收要求同键重取**零询问**（守卫化会自相矛盾），改后同键路径不销毁任何状态；② 未引入 draftGuard 一次性票据——每条对话框流程按构造 ≤1 次询问（create/rename→守卫化 `onSelectKey`，delete→守卫化 `onClearSelectedKey`，TTL/PERSIST→原位重取 0 询问）+ 同 tick 合并兜底，双弹已由 `[fix-selftest]` 用例排除；③ BUG-005 按修复纪律**追加更正**而非 bug 原建议的「就地改写」；④ `redisBigValue.ts` 判定逻辑未改（`big = truncated || overSentinel` 负责「是否只读」，正确），分支落在 `keyReadOnlyPolicy.ts` 的 reason 选取处。
 - **交接**：6 条 bug 交回**新一棒 Tester 复测**；本轮 fixer 自测（各文件绿）不替代复测判定。
+
+## 第 2 轮复测（round-2 Tester · 全新实例 · 只测不修）
+
+> 心跳 2026-09-23 13:19。复测基线 HEAD `b555270fb`（修复轮 base `09a2c9ccf`，9 commit）。
+> 阶段 A/B 结论（先落盘再继续）：
+
+### R2-A 文件面审计（`git diff 09a2c9ccf..HEAD --stat` + `git status`）
+
+- 树干净（`无文件要提交`）；diff 涉 18 文件，全部落在许可面：本轨台账 8（README + 6 bug + progress）、
+  `locales/en.ts`、`ui/__tests__/**` 5 文件、`key-browser/RedisWorkbench.tsx`、`value-editors/{StringEditor,TtlControls,keyReadOnlyPolicy}.tsx|ts`。
+- **禁改面零命中**：BatchBar / ImportExport / shared / redisInvoke / console / kv-bar / meta / 宿主 src / driver-sdk / Rust / scripts / hub / 他轨台账 均无 diff。
+- **`redisBigValue.ts` diff 为空**（自报一致，无需追矛盾）；`KeyWorkbenchDialogs.tsx` 亦无 diff（守卫经 Workbench 侧 props 落地，自报「如动」未动，符合）。
+- `en.ts` 仅新增 2 key：`redis.detail.saveFailed`、`redis.detail.readonly.bigValueComplete`（+8 行含注释），无他人 key 变动。
+- `RedisWorkbench.tsx` = **787 行 ≤ 800**。
+
+### R2-B 回归四门禁（提交态 `b555270fb`，串行实跑，逐字留尾）
+
+```text
+G1 vitest:  Test Files 58 passed (58) · Tests 556 passed (556) · skipped=0 · Duration 11.10s · exit=0
+G2 tsc:     tsc exit=0（0 error）
+G3 build:   ✓ built in 5.07s · vite exit=0（chunk 体积告警为既有现象；npx vite build 等价口径，见偏差⑤）
+G4 bound:   ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s)) · exit=0
+            R3 advisory 4 行逐字：locales.test.ts:107 / driverUiSetup.ts:25 / driverUiSetup.ts:26 / DocumentConnectionView.tsx:25
+```
+
+⇒ 四门禁与 fixer 自报（58/556/0、0、0、1472/0/4）**逐项吻合**。
