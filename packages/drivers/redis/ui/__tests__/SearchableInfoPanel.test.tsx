@@ -67,4 +67,24 @@ describe('SearchableInfoPanel', () => {
     // (border + transparent bg) used across sibling redis toolbars.
     expect(refreshBtn.className).toContain('border-edge');
   });
+
+  it('shows the matched/total stats arm once a search query is typed', async () => {
+    mockInvoke.mockResolvedValue(structuredReply);
+
+    render(<SearchableInfoPanel dbSessionId="test-session" />);
+    await act(async () => {
+      fireEvent.click(screen.getByText('redis.monitor.refresh'));
+    });
+
+    // Type a query that hits the fixture entry (entry key is the query).
+    const input = screen.getByPlaceholderText('redis.monitor.infoSearchPlaceholder');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'redis_version' } });
+    });
+
+    // search-true arm of the stats ternary renders its i18n key; the
+    // search-false arm's key must be absent (branch loc line 135 > 0).
+    expect(screen.getByText(/redis\.monitor\.infoMatched/)).toBeTruthy();
+    expect(screen.queryByText(/redis\.monitor\.infoEntries/)).toBeNull();
+  });
 });
