@@ -656,4 +656,40 @@ test_tester_list_children_survives_a_key_that_vanished_mid_page ... FAILED
   `read_dbsize_never_fails_and_reports_zero_when_refused` **红**（`left: 18446744073709551615, right: 0`）。
   还原 → 全绿，工作树干净。
 
+### 阶段 1-3 · BUG-002 定点复验 —— **通过**
+
+**TS 形状 vs Rust 序列化逐字段核对**：
+
+| `CountMatchingResult`（`ui/shared/redisInvoke.ts`） | Rust `CountOutcome`（`ops_tree_scan.rs:905-917`，`#[serde(rename_all="camelCase")]`） | 一致 |
+|---|---|---|
+| `count: number` | `pub count: u64` | ✅ |
+| `truncated: boolean` | `pub truncated: bool` | ✅ |
+| `consumed: number` | `pub consumed: u64` | ✅ |
+| `dbsize: number` | `pub dbsize: u64` | ✅ |
+
+四字段名/可空性逐字一致，无多余字段 ⇒ 与 `## 契约冻结` 的 `{count,truncated,consumed,dbsize}` 同源。
+
+**消费端改造核验**（`git show dc7f55db0`）：`invokeCountMatching` 返回 `Promise<CountMatchingResult>`，
+原 `as number` 断言消失；共享 `formatMatchCount`：`result.truncated ? \`${result.count}+\` : String(result.count)`
+⇒ **truncated ⇒ `${count}+` 逐字成立**；`BatchBar` state `CountMatchingResult | null`、渲染
+`data-testid="redis-pattern-match-count"`；`ImportExport` state 同型、按钮 `data-testid="redis-export-match-count"`、
+null ⇒ `'…'` 占位。`locales/` 零 diff（`+` 由数据产生，i18n 串未动）。
+**UI 面 grep 全量**：`count_matching` 仅 `BatchBar:95` 一处真实调用（另两处为 doc 注释与本节测试），
+无第三个漏网消费端；`delete_keys`/`keyEditorsInvokes` 的其余 `as number` 属未变更形状的命令，非同类缺陷。
+
+**8 例全绿**（`npx vitest run --config vitest.drivers.config.ts …treeUiBug002CountMatching.test.tsx`
+⇒ 8 passed）：1 helper（对象透传 + 命令入参）· 1 formatter（两态）· 3 BatchBar（census / n+ / 改 pattern 清旧值）·
+3 ImportExport（census / n+ / 失败回落占位）。断言全部走 `data-testid` + 数字/`[object` 反证，
+**零英文字面量**（`useI18n` 被 mock 成 echo `{count}` 替换值）✓。
+
+**独立变异（两处调用点各一次，还原缺陷渲染）**：
+- BatchBar 侧 `formatMatchCount(matchCount)` → `String(matchCount)`：**3 例红**
+  （`Expected: "42" / Received: "[object Object]"` 等），ImportExport 侧仍绿 ⇒ BatchBar 有独立防线。
+- ImportExport 侧同法：**2 例红**（census 与 `n+` 两例），失败回落例走 null 态不受影响 ⇒ 与自报数字一致。
+- 两次各自 `git checkout HEAD --` 还原 → 8/8 复绿，工作树干净。
+
+⇒ 两消费端各自可证，非只测 helper 的空壳（第 1 轮登记的原病根已闭）。
+
+
+
 
