@@ -417,3 +417,30 @@ Test Files  52 passed (52)
 BUG-003: `待复测（round-1 修复后）` → `待修复`（round-2 因 BUG-004 退回）→ **`待复测（round-2 覆盖核心已过，随 round-3 重证）`**
 BUG-004: `待修复` → **`待复测（round-2 修复后，裁决 A 落地）`**
 
+
+## 第 3 轮复测（门禁复跑 · Tester · 2026-09-23）
+
+**执行**：严格串行四门，`CARGO_TARGET_DIR=/tmp/dz-tg-r3v3`。
+
+门禁 1 `CARGO_TARGET_DIR=/tmp/dz-tg-r3v3 cargo test -p datazen-driver-redis --lib`:
+```
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.05s
+```
+
+门禁 2 `npx tsc --noEmit`:
+```
+[tsc 无输出 · exit 0]
+```
+
+门禁 3 `npx vitest run --config vitest.drivers.config.ts`:
+```
+ Test Files  52 passed (52)
+      Tests  563 passed (563)
+```
+
+门禁 4 `node scripts/check-driver-import-boundaries.mjs`:
+```
+[check-driver-import-boundaries] ok (1465 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+```
+
+四门尾部与 round-2 期望逐字一致（门禁 1 为 +1 serde pin test 后的 342 基线）；无新增 advisory。
