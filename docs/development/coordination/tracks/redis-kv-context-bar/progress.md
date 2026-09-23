@@ -625,3 +625,55 @@ Coder 建议的 `satisfies KvSlotState` 护栏一旦落地，**这个文件会�
 **3 红 ⇒ 「零驱动确认」被真实钉住**（`1 failed | 44 passed`）。还原后 `git status --porcelain` 净、`47 passed (47)`。
 
 **动作 5 结论：PASS。** 9/9 action 有精确 spy 断言；两个独立核点均以探针反证承重。
+
+## 动作 6 — 「死代码删除」claim 独立核验
+
+### (6-1) 待核验的 claim 原文（`progress.md` §5 变异 4）
+
+> `stopped` / `done` 去掉 `usedCount > 0` 项 — **0 failed（等价变异体）** ⇒ 判为死代码，当场删除冗余项；真实承重项（早退分支）改坏后 **5 failed**
+
+### (6-2) 现有痕迹
+
+`contextBarModel.ts:266-270` 留有一段注释（**HEAD 上唯一的「不可达」痕迹**）：
+> `Past the early return above, usedCount > 0 always holds, so the pair that separates "stopped early" from "wrapped" is cursor !== '0' … Re-testing usedCount here would be an unreachable branch — a branch no test can execute, which is worse than a shorter expression.`
+
+⚠️ **`git log --all -- contextBarModel.ts` 只有 `fdc46cd74` 一个 commit** —— 即**删除发生在文件首次提交之前**，仓库内**没有可 diff 的「删除前」状态**。故不能靠 `git log -p` 复核；改以**形式化 + 穷举**复核。
+
+### (6-3) 形式化论证（早退分支支配）
+
+```
+if (!scanning && usedCount === 0) return null;      // ← 早退
+…
+const stopped = usedCount > 0 && cursor !== '0' && !scanning;   // ← 被删的 `usedCount > 0` 项
+```
+`usedCount > 0` 为假的两种情形：
+- ① `!scanning && usedCount === 0` ⇒ **已在早退处 `return null`**，永远到不了 `stopped`；
+- ② `scanning === true` ⇒ 此时 `stopped = … && !scanning` **必为 `false`**，与 `usedCount` 无关。
+
+⇒ 两种情形下该项**都不改变返回值**，是**真不可达/不可观测**（严格说是「不可观测项」，因 `&&` 链短路而非语句块，故无分支覆盖可测）。**保留它会永久拉低分支覆盖且无任何判别力，删除是正确处置，不是删掉可达的保护逻辑。**
+
+### (6-4) 穷举复核（Tester 自制探针，已删除不留残）
+
+临时探针 `__tests__/__tester_probe_deadcode.test.ts` 同时实现两形态（含/不含该冗余项）并**穷举**输入空间：
+`scanning ∈ {true,false}` × `used ∈ {0,1,2,499,500,1000,50000,-1,NaN,Infinity,1.5}`（11）× `total` 同 11 档 × `cursor ∈ {'0','1','17','4294967295','','abc'}`（6）= **1452 组**。
+
+实测：`diffs` 恒为 `[]`（两形态**输出完全一致**）；且 `!scanning && used<=0` 的 12 组输入**全部早退返 `null`**（`reached === 0`，即 `stopped` 在这些输入上不可达）。
+`✓ 2 passed` ⇒ **claim 成立**。探针随即 `rm`，`git status --porcelain` 净（无 `??` 残留）。
+
+### (6-5) 反向核验：删完之后，剩下的项是否仍承重？（防「删掉了可达的保护逻辑」）
+
+Coder 自报「真实承重项（早退分支）改坏后 5 failed」。我独立重做，并**额外**测了它未报的第三项：
+
+| 探针 | 变异 | 实测 |
+|---|---|---|
+| **C1** | 删掉**早退** `if (!scanning && usedCount === 0) return null;` | **6 failed / 47**（含 `never claims completion from cursor '0' alone`、`does not claim completion from cursor '0' with nothing scanned`、`renders nothing for a fresh panel`）⇒ 与自报的「5」同量级且**更强**（我这条同时命中了 DOM 层用例） |
+| **C2** | `stopped = cursor !== '0' && !scanning` → `stopped = !scanning`（**忽略 cursor**） | **3 failed / 47**（`reports progress while scanning and completion only on a wrapped cursor` 等）⇒ **cursor 项独立承重** |
+| 复原 | `git checkout HEAD -- contextBarModel.ts` | `git status --porcelain` **净** |
+
+⇒ 删除**未触及**任何承重逻辑：早退分支（C1）与 cursor 项（C2）**各自都有专属用例钉住**。
+
+### (6-6) 另一处 `-22` 生产面复核（`KvStatusBar.tsx`）
+
+`KvStatusBar.tsx` 是本轨唯一另一处带删除的生产文件。逐行审阅其 22 行删除：**全部为 (i) 已被新功能取代的旧 docblock**（原文自述「PRD 其余状态事实…`not` exposed by `KvSlotState`；渲染它们意味着加宽已冻结的契约，故**登记为缺口而非在此伪造**」—— 该缺口本轨已合法落地，旧注释**反向失真**，删除正确）+ (ii) 结构性重构行（`parts` 数组与 import 改写）。**未删任何保护逻辑**：`useKvDirty` 仍在使用（`KvStatusBar.tsx:70`），`data-part` / `data-testid` / `getDirty` 语义全部保留。
+
+**动作 6 结论：PASS。** 删除项经**形式化 + 1452 组穷举**双证为真不可观测；剩余承重项经 C1/C2 探针反证仍然有效；无保护逻辑被误删。
