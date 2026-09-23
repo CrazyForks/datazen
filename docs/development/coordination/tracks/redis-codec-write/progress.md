@@ -1,5 +1,5 @@
 - 任务: 后端 codec 补齐到 §3.3 矩阵 + string 写路径 KEEPTTL 默认化与 PTTL/PX 回退（PRD §3.3 / §6）
-- 状态: **READY_FOR_TEST（第 1 轮 5 条 bug 已全部修复，待第 2 轮 Tester 复测；逐条修复点、commit 与门禁实跑见文末「修复轮自验记录」及 `bugs.md` 各条状态）**
+- 状态: **TEST_DONE**（第 2 轮 Tester 682f2878 复测通过、5 条 bug 全部闭环，已随 W3-C 合流 feat/redis-workspace-ux；状态归一化由协调者补记）
 - 编码 commit: ebbdfd7dd（交付头：`c0ad7078d`）
 - 测试 commit: 本轮 `docs(coordination): record bugs for redis-codec-write`（新增 12 例测试 + 台账）
 - 合并 commit: —

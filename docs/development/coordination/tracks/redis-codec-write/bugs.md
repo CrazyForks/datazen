@@ -11,7 +11,7 @@
 > 复现体一律 `#[ignore]` 挂账（本项目口径：Bug 的可执行证据留在仓库里，门禁仍绿），复跑：
 > `CARGO_TARGET_DIR=/tmp/w3c-test-cargo-target cargo test -p datazen-driver-redis --lib -- --ignored test_tester_`
 >
-> **修复轮（2026-09-22 20:48，bug-fix 代理）**：5 条全部转 `待验证（修复后）` —— BUG-001 `dfc1e0523`、BUG-002/003 `ec087a52d`、BUG-004 `8ce9285d8`、BUG-005 `fa6039116`。
+> **修复轮（2026-09-22 20:48，bug-fix 代理）**：5 条全部转 `已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） —— BUG-001 `dfc1e0523`、BUG-002/003 `ec087a52d`、BUG-004 `8ce9285d8`、BUG-005 `fa6039116`。
 > 三条复现体**未改动、保持 `#[ignore]`**，修复后同一条命令实跑 **3 passed**；四项门禁与 clippy 归属复跑见 `progress.md`「修复轮自验记录」。
 
 ---
@@ -19,7 +19,7 @@
 ## redis-codec-write-BUG-001 · 解码失败从「错误横幅」退化为「(empty)」：后端改 in-band，UI 唯一消费方不读 `ok`（本轨引入的可观察劣化）
 
 - **严重度**：中（回归级：改前该路径**有**可见错误，改后**没有**；不崩、不红，但 PRD §3.3 的失败可见性与「按 X 重试」承诺在真机 GUI 上归零）
-- **状态**：`待验证（修复后）` · 修复 commit `dfc1e0523`（`ValueViewer.tsx` recompute 读 `res.ok` ⇒ `{ok:false}` 进错误态并展示 `reason`，含 seq 过期保护；`redisInvoke.ts` 「Throws on reject」注释改为 C-3 口径、`DecodeValueResult` 键集对齐 C-2/C-3。复测要点：探针例 DOM 出现 `decode-failed`、无具名空态；「按 X 重试」按钮仍属 W3-E 未做；`ui/**` 仅该两文件、未新增测试文件）
+- **状态**：`已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） · 修复 commit `dfc1e0523`（`ValueViewer.tsx` recompute 读 `res.ok` ⇒ `{ok:false}` 进错误态并展示 `reason`，含 seq 过期保护；`redisInvoke.ts` 「Throws on reject」注释改为 C-3 口径、`DecodeValueResult` 键集对齐 C-2/C-3。复测要点：探针例 DOM 出现 `decode-failed`、无具名空态；「按 X 重试」按钮仍属 W3-E 未做；`ui/**` 仅该两文件、未新增测试文件）
 - **涉及文件**：
   - `packages/drivers/redis/ui/value-editors/ValueViewer.tsx:55-57`（`decoded = new TextEncoder().encode(res.json ?? '')` —— **`res.ok` 从未被读**，`json` 为 `null` 时解出 0 字节）
   - `packages/drivers/redis/ui/shared/redisInvoke.ts:214-231`（`DecodeValueResult { ok; json? }`，doc 注释仍写「**Throws on reject**」，现已是假话）
@@ -47,7 +47,7 @@
 ## redis-codec-write-BUG-002 · `zlib` / `deflate` 对截断与 1–2 字节载荷答「成功解出 0 字节」，C-1 的 header 校验与「选错必须失败」未被实现约束
 
 - **严重度**：中低（错误答案以 `ok:true` 出现 = 静默错数据；gzip 那条腿会失败，三条腿严格性不一致 ⇒ 用户按 GUI 提示能分辨，但无头路径不能）
-- **状态**：`待验证（修复后）` · 修复 commit `ec087a52d`（`Framing::decode` 入口门：Zlib 过 `looks_like_zlib_header`、Deflate 补最小长度；zlib/deflate 改手动 `inflate_stream` 驱动到显式 `StreamEnd`（无进展 ⇒ `Failed`，32 KiB 有界窗口 ⇒ `TooLarge`）；三腿统一「输入非空而输出 0 字节 ⇒ `Failed`」。复现体 `decode/tests.rs:398` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有 2 例新绿测钉住前缀截断与入口门）
+- **状态**：`已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） · 修复 commit `ec087a52d`（`Framing::decode` 入口门：Zlib 过 `looks_like_zlib_header`、Deflate 补最小长度；zlib/deflate 改手动 `inflate_stream` 驱动到显式 `StreamEnd`（无进展 ⇒ `Failed`，32 KiB 有界窗口 ⇒ `TooLarge`）；三腿统一「输入非空而输出 0 字节 ⇒ `Failed`」。复现体 `decode/tests.rs:398` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有 2 例新绿测钉住前缀截断与入口门）
 - **涉及文件**：
   - `packages/drivers/redis/src/decode/compress.rs`（`decode()` 用 `flate2::read::{ZlibDecoder,DeflateDecoder}` + `Read::take` 流式读；`looks_like_zlib_header()` 已实现但**只服务 `sniff_framing()`，不参与 decode 入口校验**）
   - 契约来源：`progress.md:112`（C-1 `zlib` = 「RFC 1950 zlib stream（`CM==8` + `(CMF<<8|FLG)%31==0` 头校验）」）、`progress.md:121`（C-1 附注「二者**绝不互相兜底**（选错必须失败，成功只有一种 framing）」）、`progress.md:24`（§1.2「zlib 与 gzip 的头部差异要各有用例，别用一个 'gzip 且允许 zlib' 混过去」）
@@ -70,7 +70,7 @@
 ## redis-codec-write-BUG-003 · 多成员 gzip 只解首个成员即算成功，尾部残留字节被静默丢弃 ⇒ `bytes` 少报
 
 - **严重度**：低（真实存在的存储形态：`cat a.gz b.gz` / 分块归档写进同一个 key；表现为「内容比实际短」而非崩溃）
-- **状态**：`待验证（修复后）` · 修复 commit `ec087a52d`（gzip 臂改用 `flate2::read::MultiGzDecoder`（= `GzDecoder::new(r).multi(true)` 公开等价，C-5 版本内），拼接成员全量解码、`bytes` 不再少报；尾随垃圾按 header-parse 失败传播，判定不依赖人读文本。复现体 `decode/tests.rs:424` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有绿测 `gzip_decodes_every_concatenated_member`。与 BUG-002 同文件同函数无法按 hunk 拆分，故同 commit）
+- **状态**：`已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） · 修复 commit `ec087a52d`（gzip 臂改用 `flate2::read::MultiGzDecoder`（= `GzDecoder::new(r).multi(true)` 公开等价，C-5 版本内），拼接成员全量解码、`bytes` 不再少报；尾随垃圾按 header-parse 失败传播，判定不依赖人读文本。复现体 `decode/tests.rs:424` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有绿测 `gzip_decodes_every_concatenated_member`。与 BUG-002 同文件同函数无法按 hunk 拆分，故同 commit）
 - **涉及文件**：`packages/drivers/redis/src/decode/compress.rs`（`GzDecoder` 默认单成员；未启用 `.multi(true)`，也未透出「残留未消费字节数」）
 - **描述（含量级）**：`flate2` 的 `GzDecoder` 读完第一个成员就报 EOF，第二成员起的全部字节被丢掉，而 `decode_value` 仍返回 `ok:true` 并给出第一成员的 `bytes`。C-2 承诺 `bytes` 是「结果字节数」，用户据此判断解压是否完整 ⇒ 数值本身少了。同一实现口径还会吞掉 gzip 之后的**尾部垃圾**（例如被追加过内容的值），也答成功。
 - **重现步骤**：
@@ -87,7 +87,7 @@
 ## redis-codec-write-BUG-004 · `keepTtlFallback` 的分诊口径是「SET 报错了」而不是「SET 因 KEEPTTL 被拒」⇒ 非 KEEPTTL 失败也会二次写入并被误标为回退
 
 - **严重度**：低-中（正常路径无影响；在 `WRONGTYPE` / `READONLY`（cluster 副本、failover）/ 连接类失败上会**重发一次写命令**并把「本服务器不支持 KEEPTTL」这个结论报给 UI）
-- **状态**：`待验证（修复后）` · 修复 commit `8ce9285d8`（`ops_write.rs` 新增 `is_keepttl_keyword_rejection`：小写后含 `keepttl`，或 `unknown option` + `'set'` 形态——恰好是本条建议修法的两种；`Err` 臂加守卫，其余错误**原样 `Err` 抛出**、不探 PTTL、不发第二笔写、`keepTtlFallback:false` 保留，对齐 C-3 末段与 C-4。复现体 `ops_write/tests.rs:357` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有 2 例新绿测）
+- **状态**：`已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） · 修复 commit `8ce9285d8`（`ops_write.rs` 新增 `is_keepttl_keyword_rejection`：小写后含 `keepttl`，或 `unknown option` + `'set'` 形态——恰好是本条建议修法的两种；`Err` 臂加守卫，其余错误**原样 `Err` 抛出**、不探 PTTL、不发第二笔写、`keepTtlFallback:false` 保留，对齐 C-3 末段与 C-4。复现体 `ops_write/tests.rs:357` **未改动、保持 `#[ignore]`**，`-- --ignored test_tester_` 实跑 **passed**；另有 2 例新绿测）
 - **涉及文件**：`packages/drivers/redis/src/ops_write.rs:63-91`（`match set_keeping_ttl(...) { Ok | Err(rejected) => … }`，`Err` 分支未做任何拒绝分类）
 - **描述（含量级）**：C-4（`progress.md:159`）把回退的前提写成「**被服务端拒绝**（旧版本 Redis / 代理）」，`ops_write.rs:11-13` 的文档注释进一步写死「it is **only** true when the server rejected `SET … KEEPTTL`」；实际代码是「任何 `Err` 都当 KEEPTTL 拒绝」。后果：
   1. 一次多余的往返（`PTTL` + 再 `SET`）—— 对 `READONLY`/临时断连这类错误，客户端可能已经把第一笔写落下去了，重发即**重复写**（`SET` 幂等，值相同 ⇒ 影响有限，但 `PX` 会把 TTL 缩短到刚读到的 `PTTL` 值）；
@@ -104,7 +104,7 @@
 ## redis-codec-write-BUG-005 · 台账失实：clippy 门禁行的 2 个 `error` 归属文件写错（实为 `ops.rs:881` + `ops_exec.rs:260`，非 `decode/pickle.rs` / `redis_value_preview.rs`）
 
 - **严重度**：低（无运行时影响；但 AGENTS.md 要求自报行必须真实可核，且「非本轨文件」这一句对 `ops.rs` 不成立 —— `ops.rs` 正是本轨改过的文件）
-- **状态**：`待验证（修复后）` · 修复 commit `fa6039116`（`progress.md` clippy 行归属改为 `ops.rs:881` / `ops_exec.rs:260` 并注明均在 `#[cfg(test)]`、基线即存在；修复轮 clippy 复跑逐文件清单确认该 2 error 就在两处、`decode/compress.rs`/`ops_write*`/`decode/tests.rs` 零诊断，「本轨文件 0 新增」结论不变）
+- **状态**：`已修复`（第 2 轮 Tester 复测通过，已随 W3-C 合流；协调者归一化补记） · 修复 commit `fa6039116`（`progress.md` clippy 行归属改为 `ops.rs:881` / `ops_exec.rs:260` 并注明均在 `#[cfg(test)]`、基线即存在；修复轮 clippy 复跑逐文件清单确认该 2 error 就在两处、`decode/compress.rs`/`ops_write*`/`decode/tests.rs` 零诊断，「本轨文件 0 新增」结论不变）
 - **涉及文件**：`docs/development/coordination/tracks/redis-codec-write/progress.md:178`（clippy 行）
 - **描述（含量级）**：原行写「既有 17-18 warning + 2 `approx_constant` error（`decode/pickle.rs`、`redis_value_preview.rs` 等，非本轨文件）」。复跑数量对得上，位置对不上：`decode/pickle.rs` 与 `redis_value_preview.rs` 里**零个** `approx_constant`（`git show 8981d3078:…` 两文件里 `3.14159` 命中数均为 0）。真正的两处都在**测试代码**里，且都不是本回合引入：`ops.rs:881`（W3-C 在 `ops.rs` 的唯一 hunk 是 `-U0` 后的一整块 24 行删除，不含 881；基线同一字面量在原 905 行）、`ops_exec.rs:260`（W3-C 零 diff）。结论「本轨文件 0 新增 clippy 诊断」仍成立，**依据**需要改正。
 - **重现步骤**：
