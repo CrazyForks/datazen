@@ -913,3 +913,29 @@ ii **19 failed**、iii **17 failed**、iv **4 failed**（后者为自带套件�
 ```
 
 （1487 files / **0 blocking** / 4 advisory，与自报**逐字吻合**；advisory 均为存量宿主引用。）
+
+### 5. 覆盖率回归（v8，`--coverage.include='packages/drivers/redis/ui/key-browser/**'`）—— PASS
+
+方法沿用第 2 轮的**严口径**：`git diff -U0` 的**新增行** ∩ `statementMap` / `branchMap`
+（`/tmp/r3/covaxis.mjs`，用后销毁）；`coverage-final.json` 取自 §3 的同一次采集
+`/tmp/r3/cov3/`（提交态、探针已删，**56 files / 697 tests**），非陈旧产物。
+
+| 轴 | 语句（本轮） | 第 2 轮语句 | 分支 ALL-sides（本轮） | 第 2 轮 ALL | 分支 ANY-side（本轮） | 第 2 轮 ANY |
+|---|---|---|---|---|---|---|
+| `f3a3eea19..HEAD`（**本回合**修复 diff） | **99.19%** (123/124) | 96.49%（其轴为 `f8a191b66..HEAD`） | **96.39%** (80/83) | 83.61% | **100.00%** (41/41) | 100.00% |
+| `8981d3078..HEAD`（**全轨**） | **88.79%** (840/946) | 87.68% (790/901) | **90.49%** (552/610) | 81.36% | **97.70%** (297/304) | 97.49% |
+
+- **六数全 ≥80% 地板 ✓**（最紧：全轨语句 **88.79%**），无一项下降：
+  本回合语句 96.49→**99.19**（+2.70pp）、ALL-sides 83.61→**96.39**（+12.78pp）；
+  全轨语句 87.68→**88.79**（+1.11pp）、ALL-sides 81.36→**90.49**（+9.13pp）、
+  ANY-side 97.49→**97.70**（+0.21pp）。
+- 本回合 diff 上**唯一语句缺口 1 点**（`keyTreeFilter.ts` 111 中 110 命中）与
+  **唯一 ALL-sides 分支缺口**（`KeyTreeList.tsx` 6 中 4）均为**防御性/不可达边界**，
+  非行为缺口：分别为 `matchSeq` 的 `nesting > MAX_NESTING` 保护（Redis 源码同款
+  「abusive pattern protection」）与 `stepActiveIndex` 的 `isNavigable(from)` 兜底；
+  该两者在各自轴上的 **ANY-side 均为 100%**（41/41），即条件两侧均被真实执行过。
+- 口径说明：第 2 轮自报本回合 99.11% 系按「根因 1 处不可达 catch」计 3 点，
+  与严口径的点计数差异已在第 2 轮 §8 记录；本轮**同一轴同一口径**下
+  自报（无独立数字，仅声明「新增测试文件使计数上涨」）与本 Tester 实测不冲突。
+- 逐文件（本回合轴）：`keyTreeFilter.ts` 110/111、`treeRowSpec.ts` 4/4、
+  `useKeyTree.ts` 3/3、`KeyTreeList.tsx` 6/6。
