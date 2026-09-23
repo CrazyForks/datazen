@@ -560,3 +560,22 @@ kvBarSlots            OK: all base makeRelay lines survive verbatim (28 base lin
 ⇒ **判定：不是缺陷**（无用例因此丧失保护力），但它是下一轮同型漂移的**头号候选**：
 Coder 建议的 `satisfies KvSlotState` 护栏一旦落地，**这个文件会立刻变红**，派发该小轨时须一并修它。
 已写入下方 R 回归清单。
+
+## 动作 4 — 三条硬约束的独立变异验证（Tester 自制探针）
+
+每项流程：改生产码 → 跑 `npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui/__tests__/redisContextBar.test.tsx` → 记红 → `git checkout HEAD -- <file>` → `git status --porcelain` 验净。
+基线：**`47 passed (47)`**；四次探针后复原重跑仍 **`47 passed (47)`**，`git diff HEAD -- packages/ src/` **空**。
+
+| # | 变异（生产码改写） | 结果 | 红在哪条断言 |
+|---|---|---|---|
+| **1a** | `deriveTypeChips` 哨兵：`sample: sampled < dbsize ? …` → **信任线上 `truncated`** `distribution.truncated ? …` | **BIT** 1 红 | `contextBarModel — sampled chips > recomputes the verdict instead of trusting the wire flag`<br>`AssertionError: expected { sampled: 5, dbsize: 5 } to be null`<br>（即「`sampled:5 / dbsize:5` 但 `truncated:true` 的矛盾载荷」被正确判为 `null`，变异后误标） |
+| **1b** | `useContextBarData`：失败/空分布 → `deriveTypeChips(...) ?? { chips: [], sample: null }`（**渲染 0 计数组**而非整组不渲染） | **BIT** 4 红 | ①`renders no chips at all when the read fails — and no zeros either`<br>②`treats an empty counts map as no chips rather than zero chips`<br>③`renders without a resolved db or any server reply`<br>④`survives malformed INFO and distribution replies`<br>（均为 `expected <span …(7)></span> to be null`，即 `[data-part="types"]` 本应缺席） |
+| **2** | `deriveMemoryReadout`：`max === null \|\| max <= 0 ? null : max` → `max === null ? 0 : max`（**`0` 回到 DOM**） | **BIT** 2 红 | ①`contextBarModel — memory > reads used / max and treats maxmemory 0 as no ceiling`<br>`AssertionError: expected +0 to be null`<br>②`RedisContextBar — memory with no ceiling > says "no limit" instead of printing max 0`<br>`AssertionError: expected '0' to be 'unlimited'`（**DOM 层 `data-max-bytes`**） |
+| **3** | `deriveScanReadout`：`totalCount > 0 ? … : null` → `: 100`（`total === 0` 时**画进度条**） | **BIT** 2 红 | ①`contextBarModel — scan budget > is silent while idle and unused, and reports the unknown-budget case`<br>`AssertionError: expected 100 to be null`<br>②`RedisContextBar — scan budget rendering branches > shows used only — no bar — when the ceiling is unknown`<br>`AssertionError: expected '100' to be 'unknown'`（**DOM 层 `data-budget-percent`**） |
+| **4**（加测） | `deriveTypeChips` chip 过滤：`count > 0` 条件去掉 ⇒ 0 计数类型进 chips | **BIT** 1 红 | `yields nothing for a failed / empty / malformed read — never zeros`<br>`AssertionError: expected { chips: [ { …(2) } ], …(1) } to be null` |
+
+### 结论
+
+- **三条硬约束全部被独立证实为「承重」**（4 组探针共 9 条断言红），且**每项都有模型层 + DOM 层两级断言**（1a 除外——它是纯模型判定，DOM 层的对应保护由 1b 与动作 5 的 chips 三态用例承担）。**零「注入后仍绿」。**
+- **`string 0` 反断言非空转（独立论证）**：渲染模板为 `{chip.type} {formatCompactCount(chip.count)}`（`RedisContextBar.tsx:171`），`formatCompactCount(0)` ⇒ `String(0)` ⇒ `"0"`。⇒ **`"string 0"` 是被测代码真实可产出的字符串**，`container.textContent).not.toContain('string 0')` 不是恒真式。（注：组件层目前的失败用例走的是 `deriveTypeChips` 返 `null` 的路径，因此该字符串由**生产过滤条件**保证不出现 —— 变异 4 恰是从模型层堵住它，两者互补。）
+- **两处 DOM 层断言直接钉在 `data-*` 属性**（`data-max-bytes="unlimited"`、`data-budget-percent="unknown"`），符合 AGENTS.md「数据属性解耦、禁几何反查」与断言纪律。
