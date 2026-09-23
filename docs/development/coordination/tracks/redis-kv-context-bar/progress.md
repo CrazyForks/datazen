@@ -787,3 +787,16 @@ All files          |   98.32 |    95.86 |   96.77 |     100 |
 - 必读：`AGENTS.md`、`docs/development/subagent/tester.md`、本轨 `progress.md`、测试简报模板、历史只读 `bugs.md`。
 - 验收依据：PRD §3.4 / 8-2、Wave-3 KV slot 契约和本轨已登记裁定。仓库内未找到 `post-review-hardening-plan.md`。
 - A 阶段已开始：当前已逐读上下文条模型、取数/合流、React 壳、动作菜单、状态条、slot action 契约、宿主 dispatcher 与接线，以及注册/codegen 变更和既有中继桩测试变更。其余新增测试逐文件审查与疑点复现继续进行中。
+
+## 阶段 A — 逐文件代码审查（已完成）
+
+审查范围为 `d049ceb4e..f55a6b98c` 的 28 个文件，并复核本轮仅新增的两条测试。产品代码覆盖：`contextBarModel.ts`、`useContextBarData.ts`、`dbKeyCounts.ts`、`RedisContextBar.tsx`、`ContextBarActions.tsx`、`KvStatusBar.tsx`、`useKvSelection.ts`、KV slot action 类型、宿主 dispatcher 与 `ContentView`/`ConnectionPage` 接线、Redis `kvWorkspace` 元数据、codegen 声明、locale 与 barrel export。测试面覆盖：上下文条与状态条新套件、slot 注册/文案护栏、5 个既有 relay 测试桩、状态条既有断言更新、宿主回调/dispatcher 测试。另审查两个台账文件与 `git diff --check`。
+
+验收标准按 PRD §3.4、§4 I-2/I-6、§7-4、8-2 裁定与 W3-A F-1/F-3 契约核对；仓库中无 `post-review-hardening-plan.md`。确认 W4 将 `selectDatabase` 请求复用宿主单一 `handleSelectKvDb`，仅新增一个 action 联合成员，`KvSlotState` 未改变；驱动组件未直接调用宿主/驱动命令，注册元数据与 codegen 路径一致；新增测试定位依赖 `data-*`/role/i18n key，未把英文翻译字面量作为断言目标；生产 Rust 文件无变更。
+
+审查发现并以 Tester 回归断言复现两项缺陷，已各自连同 bug 文件单独提交，状态待修复：
+
+- `redis-kv-context-bar-BUG-001`（提交 `a63f6bd0a`）：compact overflow 搬移 chips 后丢失 `sampled < dbsize` 的强制采样标记。
+- `redis-kv-context-bar-BUG-002`（提交 `78e660789`）：compact overflow 对 `maxBytes === null` 固定使用普通 memory 文案，丢失“无上限”语义。
+
+除上述两项外，本次静态审查未发现契约破坏或其他确认的逻辑缺陷。此前交付记录中提到的「无上限」与采样规则在宽布局的覆盖成立；缺口在 compact overflow 的派生呈现路径。
