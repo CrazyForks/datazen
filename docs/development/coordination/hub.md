@@ -78,6 +78,13 @@
   - `redis-kvbar-ui` —— 状态条 + 键属性侧栏 + 契约 F-2 中继接线（`contextBar` 全量版另立第二段 #69）。Bug 循环 3 轮（BUG-001~006），第 3 轮仅剩 1 条测试侧竞态，按相称性裁定**免第 4 轮 Tester**、由协调者合流复验 64 次 0 红 → `b1e991ab1` + 合流修复 `01d3ad269`。
   - **合流期新增缺陷（不属任一轨）**：两轨各自往 `ui/shared/meta.ts` 的同一个 `redisMeta` 对象里加了一个**同名 `kvWorkspace` 键**（相隔 15 行 ⇒ git 静默自动合并），运行时后者覆盖前者 ⇒ 状态条与侧栏能力位归零、两槽整体不渲染且无运行时报错；`tsc` 以 TS1117 拦住，双闸门护栏 `kvSlotRegistration.test.ts` 首跑 4 例红抓到它。`resolve-drivers.mjs` 的 `kvSlots` 块同形（那处是真冲突，手工合）。
   - **Wave 2 未完部分**：`redis-kv-contract`（#70，`KvSlotState` 按裁定 F-2.1 加宽，只加 workbench 私有事实且 getter 必须返回标量）→ `contextBar` 全量版（#69，消费新 getter；反向动作通道需先过协调者裁定）。
+- **Wave 3**（2026-09-23）：
+  - `redis-tree-backend` / `redis-kv-contract` / `redis-codec-write` / `redis-console-safety` / `redis-kvbar-ui` / `redis-overview` / `driver-ui-type-gate` / `redis-tree-ui` 八轨已合入；剩 `redis-detail-ui`。
+  - `driver-ui-type-gate` —— 驱动 UI 纳入根 tsc（详见「跨轨风险」首条），并顺带修掉 2 个真实行为 bug；其中挖出 **`info_filtered` 假契约**事件并形成裁决 A。
+  - `redis-tree-ui` —— R2 pattern 客户端过滤（glob 方言按 Redis `stringmatchlen` **字节级移植**，用真实 C 预言机 9216 例对拍 0 mismatch）+ 面包屑键盘旅程；Bug 循环 3 轮。
+  - **合流期语义冲突（不属任一轨）**：`redis-tree-ui` 把 `BatchBar.tsx`（465 行）拆成 `batchInvokes.ts`（invoke 层）+ `useBatchActions.tsx`（对话框），而 `redis-tree-backend`（W3-B）在同文件把 `count_matching` 消费端升到冻结契约 `CountMatchingResult`（对象 + `truncated` ⇒ 标签渲染 `n+`）。D 轨从更早 base 分出 ⇒ 机械取任一整侧都会出事：取 D 侧静默把契约退回 `Promise<number>`（`[object Object]` bug 复发），取 HEAD 侧丢掉模块拆分。
+  - **裁定与解法**：保留 D 的结构（拆分已验收），把 W3-B 的契约**移植**进 `batchInvokes.ts`（`invokeCountMatching` → `CountMatchingResult`、`formatMatchCount` 随迁、`useBatchActions` 渲染改走它），并把 W3-B 的回归测试按 D 的架构重写（`PatternStripHarness` = hook + strip + `actions.dialogs`，与原 workbench 挂载同形），**8 条断言一条不减**（含 `[object Object]` 反断言、`n+` 截断臂、`count_matching` 入参、切换清空陈旧计数）。
+  - **教训**：同一文件被两轨以不同"切法"改动时（一轨拆模块、一轨升契约），git 的文本合并会**静默丢失语义** —— 判据必须是契约/语义（哪一侧的形状被冻结、被谁消费），不是"哪个分支更新"。合流前应查两轨是否都碰过同一文件的**不同抽象层**。
 - **R 阶段**（待执行）：见下方「R 阶段清单」。
 
 ## 跨轨风险
