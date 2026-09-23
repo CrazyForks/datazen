@@ -442,6 +442,91 @@ fn resolve_profile_table(dialect: &str, table: &str, schema: Option<&str>) -> St
     format!("{schema}.{relation}")
 }
 
+fn target_table_identity(dialect: &str, schema: Option<&str>, name: &str) -> String {
+    if normalize_dialect(dialect) == "postgresql" {
+        if let Some(schema) = schema.map(str::trim).filter(|value| !value.is_empty()) {
+            return format!("{schema}.{name}");
+        }
+    }
+    name.to_string()
+}
+
+fn resolve_target_only_identity(
+    table: &str,
+    target_dialect: &str,
+    target_schema_scope: Option<&str>,
+    target_snapshot: &[crate::schema_diff::plan::TargetTableDependencySnapshot],
+) -> Result<String, CommandError> {
+    let dialect = normalize_dialect(target_dialect);
+    if dialect != "postgresql" {
+        return Ok(resolve_table_for_dialect(&dialect, table));
+    }
+
+    if table.contains('.') {
+        return Ok(table.to_string());
+    }
+
+    let mut candidates = target_snapshot.iter().filter(|snapshot| {
+        snapshot.name == table
+            && target_schema_scope
+                .map(str::trim)
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| snapshot.schema.as_deref() == Some(schema))
+                .unwrap_or(true)
+    });
+    let Some(candidate) = candidates.next() else {
+        return Err(CommandError::Validation(format!(
+            "Target-only table `{table}` was not found in the target schema snapshot"
+        )));
+    };
+    if candidates.next().is_some() {
+        return Err(CommandError::Validation(format!(
+            "Target-only table `{table}` has an ambiguous schema identity; select it with an explicit schema"
+        )));
+    }
+    Ok(candidate.identity.clone())
+}
+
+async fn fetch_target_table_dependency_snapshot(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+    database: &str,
+) -> Result<Vec<crate::schema_diff::plan::TargetTableDependencySnapshot>, CommandError> {
+    // Get all user tables in the database, not just the selected schema: a
+    // PostgreSQL FK may point across schemas, and dropping its parent must
+    // still account for a child outside the visible picker scope.
+    let tables = driver
+        .get_tables(handle, database, None)
+        .await
+        .map_err(CommandError::Driver)?;
+    let mut snapshots = Vec::new();
+    for table in tables {
+        if !matches!(table.table_type, datazen_driver_api::TableType::Table)
+            || table.name.trim().is_empty()
+        {
+            continue;
+        }
+        let identity =
+            target_table_identity(&driver.driver_type(), table.schema.as_deref(), &table.name);
+        let table_identifier = if normalize_dialect(&driver.driver_type()) == "postgresql" {
+            identity.clone()
+        } else {
+            table.name.clone()
+        };
+        let table_schema = driver
+            .get_table_schema(handle, &table_identifier, database, table.schema.as_deref())
+            .await
+            .map_err(CommandError::Driver)?;
+        snapshots.push(crate::schema_diff::plan::TargetTableDependencySnapshot {
+            identity,
+            name: table.name,
+            schema: table.schema,
+            table_schema,
+        });
+    }
+    Ok(snapshots)
+}
+
 /// Prepare a DDL deploy plan (source = desired → target).
 #[tauri::command]
 pub async fn prepare_schema_diff_plan(
@@ -672,6 +757,33 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         target_only_snapshots.push((tgt_table, tgt_schema));
     }
 
+    let target_dependency_snapshot = if target_only_tables.is_empty() {
+        Vec::new()
+    } else {
+        fetch_target_table_dependency_snapshot(
+            tgt_driver.as_ref(),
+            &tgt_handle,
+            tgt_config.database.as_deref().unwrap_or_default(),
+        )
+        .await
+        .cmd_err("prepare_schema_diff_plan")?
+    };
+    let target_only_drops = target_only_tables
+        .iter()
+        .map(|table| {
+            let identity = resolve_target_only_identity(
+                table,
+                &tgt_config.database_type,
+                target_schema_scope,
+                &target_dependency_snapshot,
+            )?;
+            Ok(crate::schema_diff::plan::TargetOnlyTableDrop {
+                table: table.clone(),
+                identity,
+            })
+        })
+        .collect::<Result<Vec<_>, CommandError>>()?;
+
     let src_d = normalize_dialect(&src_config.database_type);
     let tgt_d = normalize_dialect(&tgt_config.database_type);
     let include_indexes = include_indexes.unwrap_or(true);
@@ -734,9 +846,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             ))
         };
 
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_snapshot(
             &pairs,
-            &target_only_tables,
+            &target_only_drops,
+            &target_dependency_snapshot,
             &src_d,
             &tgt_d,
             PlanOptions {
@@ -747,9 +860,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             },
         )
     } else {
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_snapshot(
             &pairs,
-            &target_only_tables,
+            &target_only_drops,
+            &target_dependency_snapshot,
             &src_d,
             &tgt_d,
             PlanOptions {
@@ -1707,6 +1821,27 @@ pub async fn compare_table_schemas(
 mod tests {
     use super::*;
 
+    fn dependency_snapshot(
+        identity: &str,
+        name: &str,
+        schema: Option<&str>,
+    ) -> crate::schema_diff::plan::TargetTableDependencySnapshot {
+        crate::schema_diff::plan::TargetTableDependencySnapshot {
+            identity: identity.into(),
+            name: name.into(),
+            schema: schema.map(str::to_string),
+            table_schema: crate::db::TableSchema {
+                table_name: identity.into(),
+                columns: vec![],
+                primary_keys: vec![],
+                indexes: vec![],
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: Default::default(),
+            },
+        }
+    }
+
     fn test_profile() -> SchemaDiffProfile {
         let now = chrono::Utc::now();
         SchemaDiffProfile {
@@ -1742,6 +1877,37 @@ mod tests {
         assert!(is_table_missing_error("Table not found: users"));
         assert!(!is_table_missing_error("Connection refused"));
         assert!(!is_table_missing_error("Syntax error in SQL statement"));
+    }
+
+    #[test]
+    fn target_only_identity_preserves_postgres_schema_and_rejects_ambiguous_bare_names() {
+        let snapshot = vec![
+            dependency_snapshot("public.events", "events", Some("public")),
+            dependency_snapshot("archive.events", "events", Some("archive")),
+        ];
+        assert_eq!(
+            target_table_identity("postgresql", Some("archive"), "events"),
+            "archive.events"
+        );
+        assert_eq!(
+            resolve_target_only_identity("events", "postgresql", Some("archive"), &snapshot)
+                .unwrap(),
+            "archive.events"
+        );
+        assert_eq!(
+            resolve_target_only_identity("public.events", "postgresql", None, &snapshot).unwrap(),
+            "public.events"
+        );
+        assert!(
+            resolve_target_only_identity("events", "postgresql", None, &snapshot)
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous schema identity")
+        );
+        assert_eq!(
+            resolve_target_only_identity("app.events", "mysql", None, &snapshot).unwrap(),
+            "events"
+        );
     }
 
     #[test]

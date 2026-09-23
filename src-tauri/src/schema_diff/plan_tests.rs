@@ -25,6 +25,223 @@ fn schema(cols: Vec<ColumnSchema>) -> TableSchema {
     }
 }
 
+fn foreign_key(name: &str, referenced_table: &str) -> ForeignKeyInfo {
+    ForeignKeyInfo {
+        name: name.into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: referenced_table.into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::Unknown,
+    }
+}
+
+fn target_snapshot(
+    identity: &str,
+    schema_name: Option<&str>,
+    foreign_keys: Vec<ForeignKeyInfo>,
+) -> TargetTableDependencySnapshot {
+    let name = identity.rsplit('.').next().unwrap_or(identity).to_string();
+    let mut table_schema = schema(vec![col("id", "integer")]);
+    table_schema.table_name = identity.into();
+    table_schema.foreign_keys = foreign_keys;
+    TargetTableDependencySnapshot {
+        identity: identity.into(),
+        name,
+        schema: schema_name.map(str::to_string),
+        table_schema,
+    }
+}
+
+fn target_only_drop(table: &str, identity: &str) -> TargetOnlyTableDrop {
+    TargetOnlyTableDrop {
+        table: table.into(),
+        identity: identity.into(),
+    }
+}
+
+fn target_only_plan(
+    target_dialect: &str,
+    selected: &[TargetOnlyTableDrop],
+    target_snapshot: &[TargetTableDependencySnapshot],
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_snapshot(
+        &[],
+        selected,
+        target_snapshot,
+        target_dialect,
+        target_dialect,
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    )
+}
+
+#[test]
+fn target_only_table_drops_order_selected_children_before_parents_for_pg_and_mysql() {
+    for (dialect, parent, child, identity_prefix) in [
+        ("postgresql", "public.parent", "public.child", "public."),
+        ("mysql", "parent", "child", ""),
+    ] {
+        let plan = target_only_plan(
+            dialect,
+            &[
+                target_only_drop(parent, parent),
+                target_only_drop(child, child),
+            ],
+            &[
+                target_snapshot(
+                    child,
+                    (!identity_prefix.is_empty()).then_some("public"),
+                    vec![foreign_key("fk_child_parent", parent)],
+                ),
+                target_snapshot(
+                    parent,
+                    (!identity_prefix.is_empty()).then_some("public"),
+                    vec![],
+                ),
+            ],
+        );
+        let child_drop = plan
+            .statements
+            .iter()
+            .position(|statement| {
+                statement.sql.contains("DROP TABLE") && statement.sql.contains("child")
+            })
+            .expect("selected child drop should be rendered");
+        let parent_drop = plan
+            .statements
+            .iter()
+            .position(|statement| {
+                statement.sql.contains("DROP TABLE") && statement.sql.contains("parent")
+            })
+            .expect("selected parent drop should be rendered");
+        assert!(child_drop < parent_drop, "{dialect}: {:?}", plan.statements);
+        assert!(
+            plan.requirements.is_empty(),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn target_only_parent_drop_is_blocked_by_unselected_fk_child_for_pg_and_mysql() {
+    for (dialect, parent, child) in [
+        ("postgresql", "public.parent", "public.child"),
+        ("mysql", "parent", "child"),
+    ] {
+        let plan = target_only_plan(
+            dialect,
+            &[target_only_drop(parent, parent)],
+            &[
+                target_snapshot(
+                    child,
+                    (dialect == "postgresql").then_some("public"),
+                    vec![foreign_key("fk_child_parent", parent)],
+                ),
+                target_snapshot(
+                    parent,
+                    (dialect == "postgresql").then_some("public"),
+                    vec![],
+                ),
+            ],
+        );
+        assert!(!plan
+            .statements
+            .iter()
+            .any(|statement| statement.sql.contains("DROP TABLE")
+                && statement.sql.contains("parent")));
+        assert!(
+            plan.requirements.iter().any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Unsupported { reason, .. }
+                    if reason.contains(child) && reason.contains("foreign key")
+            )),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn postgres_target_drop_uses_exact_schema_identity_instead_of_basename() {
+    let plan = target_only_plan(
+        "postgresql",
+        &[target_only_drop("public.parent", "public.parent")],
+        &[
+            target_snapshot("public.parent", Some("public"), vec![]),
+            target_snapshot("archive.parent", Some("archive"), vec![]),
+            target_snapshot(
+                "archive.child",
+                Some("archive"),
+                vec![foreign_key("fk_archive_child_parent", "archive.parent")],
+            ),
+        ],
+    );
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP TABLE") && statement.sql.contains("parent")));
+}
+
+#[test]
+fn postgres_target_drop_fails_closed_on_unqualified_same_basename_fk() {
+    let plan = target_only_plan(
+        "postgresql",
+        &[target_only_drop("public.parent", "public.parent")],
+        &[
+            target_snapshot("public.parent", Some("public"), vec![]),
+            target_snapshot(
+                "public.child",
+                Some("public"),
+                vec![foreign_key("fk_child_parent", "parent")],
+            ),
+        ],
+    );
+    assert!(!plan
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP TABLE") && statement.sql.contains("parent")));
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("not schema-qualified")
+    )));
+}
+
+#[test]
+fn target_only_drop_cycle_and_missing_snapshot_fail_closed() {
+    let cycle = target_only_plan(
+        "mysql",
+        &[target_only_drop("a", "a"), target_only_drop("b", "b")],
+        &[
+            target_snapshot("a", None, vec![foreign_key("fk_a_b", "b")]),
+            target_snapshot("b", None, vec![foreign_key("fk_b_a", "a")]),
+        ],
+    );
+    assert!(!cycle
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP TABLE")));
+    assert!(cycle.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("cycle")
+    )));
+
+    let missing = target_only_plan("mysql", &[target_only_drop("missing", "missing")], &[]);
+    assert!(!missing
+        .statements
+        .iter()
+        .any(|statement| statement.sql.contains("DROP TABLE")));
+    assert!(missing.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { reason, .. } if reason.contains("complete target snapshot")
+    )));
+}
+
 #[test]
 fn pg_to_mysql_strips_schema_prefix_in_ddl() {
     let src = schema(vec![col("id", "int"), col("email", "text")]);
@@ -210,9 +427,10 @@ fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
 fn explicit_target_only_picker_does_not_invent_source_snapshot() {
     let source = schema(vec![col("id", "integer")]);
     let target = schema(vec![col("id", "integer")]);
-    let plan = build_schema_diff_plan_with_target_only(
+    let plan = build_schema_diff_plan_with_target_snapshot(
         &[("users".into(), source, target)],
-        &["archive".into()],
+        &[target_only_drop("archive", "archive")],
+        &[target_snapshot("archive", None, vec![])],
         "postgresql",
         "postgresql",
         PlanOptions {
@@ -236,9 +454,10 @@ fn explicit_target_only_picker_does_not_invent_source_snapshot() {
 
 #[test]
 fn explicit_target_only_picker_keeps_drop_rejected_by_default() {
-    let plan = build_schema_diff_plan_with_target_only(
+    let plan = build_schema_diff_plan_with_target_snapshot(
         &[],
-        &["archive".into()],
+        &[target_only_drop("archive", "archive")],
+        &[target_snapshot("archive", None, vec![])],
         "postgresql",
         "postgresql",
         PlanOptions {

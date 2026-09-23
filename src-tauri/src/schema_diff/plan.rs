@@ -5,7 +5,7 @@ use super::types::{
     RollbackCompleteness, SchemaDiffPlan, StatementRisk, TypeSuggestion,
 };
 use crate::db::TableSchema;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Optional mapper: (table, source_type_sql, column_name) → native type for target dialect.
 pub type TypeMapper<'a> = dyn Fn(&str, &str, &str) -> Result<String, String> + 'a;
@@ -18,6 +18,147 @@ pub struct PlanOptions<'a> {
     /// Set automatically by build_schema_diff_plan when source ≠ target dialect.
     #[doc(hidden)]
     pub cross_dialect: bool,
+}
+
+/// A target-only table selected for deletion. `identity` is the exact metadata
+/// identity used by foreign-key introspection; `table` is the identifier sent
+/// to the target dialect's DDL renderer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetOnlyTableDrop {
+    pub table: String,
+    pub identity: String,
+}
+
+/// One physical table in the complete target scope used to validate inbound
+/// foreign-key dependencies before target-only drops are exposed.
+#[derive(Debug, Clone)]
+pub struct TargetTableDependencySnapshot {
+    pub identity: String,
+    pub name: String,
+    pub schema: Option<String>,
+    pub table_schema: TableSchema,
+}
+
+fn relation_leaf(identity: &str) -> &str {
+    identity.rsplit('.').next().unwrap_or(identity)
+}
+
+/// Sort selected table drops child-before-parent and reject any parent whose
+/// inbound foreign-key dependents are outside the selected drop set.
+fn order_target_only_drops(
+    selected: &[TargetOnlyTableDrop],
+    target_snapshot: &[TargetTableDependencySnapshot],
+    target_dialect: &str,
+) -> (Vec<usize>, HashSet<usize>, Vec<PlanRequirement>) {
+    let mut blocked = HashSet::new();
+    let mut requirements = Vec::new();
+    let mut by_identity = HashMap::new();
+
+    for (index, drop) in selected.iter().enumerate() {
+        if by_identity.insert(drop.identity.as_str(), index).is_some() {
+            blocked.insert(index);
+            requirements.push(PlanRequirement::Unsupported {
+                operation: format!("drop-table:{}", drop.table),
+                reason: format!(
+                    "Target table identity `{}` was selected more than once",
+                    drop.identity
+                ),
+            });
+        }
+        if !target_snapshot
+            .iter()
+            .any(|snapshot| snapshot.identity == drop.identity)
+        {
+            blocked.insert(index);
+            requirements.push(PlanRequirement::Unsupported {
+                operation: format!("drop-table:{}", drop.table),
+                reason: format!(
+                    "Cannot verify foreign-key dependencies because target table `{}` is absent from the complete target snapshot",
+                    drop.identity
+                ),
+            });
+        }
+    }
+
+    let mut outgoing = vec![HashSet::new(); selected.len()];
+    let mut indegree = vec![0usize; selected.len()];
+    let mut add_edge = |child: usize, parent: usize| {
+        if outgoing[child].insert(parent) {
+            indegree[parent] += 1;
+        }
+    };
+
+    for child_snapshot in target_snapshot {
+        for foreign_key in &child_snapshot.table_schema.foreign_keys {
+            for (parent_index, parent) in selected.iter().enumerate() {
+                if foreign_key.referenced_table == parent.identity {
+                    if let Some(child_index) = by_identity.get(child_snapshot.identity.as_str()) {
+                        add_edge(*child_index, parent_index);
+                    } else {
+                        blocked.insert(parent_index);
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: format!("drop-table:{}", parent.table),
+                            reason: format!(
+                                "Cannot drop `{}` while foreign key `{}` on `{}` still references it; include the dependent table in the target-only drop selection or remove the foreign key first",
+                                parent.identity, foreign_key.name, child_snapshot.identity
+                            ),
+                        });
+                    }
+                } else if normalize_dialect(target_dialect) == "postgresql"
+                    && relation_leaf(&foreign_key.referenced_table)
+                        == relation_leaf(&parent.identity)
+                    && (!foreign_key.referenced_table.contains('.')
+                        || !parent.identity.contains('.'))
+                {
+                    // An unqualified PostgreSQL reference cannot safely be
+                    // assigned to a same-named relation in one of several
+                    // schemas. Never fall back to basename-only matching.
+                    blocked.insert(parent_index);
+                    requirements.push(PlanRequirement::Unsupported {
+                        operation: format!("drop-table:{}", parent.table),
+                        reason: format!(
+                            "Cannot verify whether foreign key `{}` on `{}` references `{}` because the PostgreSQL relation identity is not schema-qualified",
+                            foreign_key.name,
+                            child_snapshot.identity,
+                            parent.identity
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut ready = BTreeSet::new();
+    for (index, degree) in indegree.iter().enumerate() {
+        if *degree == 0 {
+            ready.insert(index);
+        }
+    }
+    let mut ordered = Vec::with_capacity(selected.len());
+    while let Some(index) = ready.pop_first() {
+        ordered.push(index);
+        for next in outgoing[index].iter().copied() {
+            indegree[next] -= 1;
+            if indegree[next] == 0 {
+                ready.insert(next);
+            }
+        }
+    }
+
+    for (index, degree) in indegree.iter().enumerate() {
+        if *degree > 0 {
+            blocked.insert(index);
+            requirements.push(PlanRequirement::Unsupported {
+                operation: format!("drop-table:{}", selected[index].table),
+                reason: format!(
+                    "Cannot safely order target-only table drops because foreign-key dependencies form a cycle involving `{}`",
+                    selected[index].identity
+                ),
+            });
+        }
+    }
+
+    (ordered, blocked, requirements)
 }
 
 impl Default for PlanOptions<'_> {
@@ -1523,6 +1664,34 @@ pub fn build_schema_diff_plan_with_target_only(
     target_dialect: &str,
     opts: PlanOptions<'_>,
 ) -> SchemaDiffPlan {
+    let selected = target_only_tables
+        .iter()
+        .map(|table| TargetOnlyTableDrop {
+            table: table.clone(),
+            identity: table.clone(),
+        })
+        .collect::<Vec<_>>();
+    build_schema_diff_plan_with_target_snapshot(
+        pairs,
+        &selected,
+        &[],
+        source_dialect,
+        target_dialect,
+        opts,
+    )
+}
+
+/// Build a plan with target-only table drops after checking the complete
+/// target snapshot for inbound foreign keys. Selected drops are sorted so
+/// dependent tables are dropped before their referenced parents.
+pub fn build_schema_diff_plan_with_target_snapshot(
+    pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[TargetOnlyTableDrop],
+    target_snapshot: &[TargetTableDependencySnapshot],
+    source_dialect: &str,
+    target_dialect: &str,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
     let mut statements = Vec::new();
     let mut warnings = Vec::new();
     let mut requirements = Vec::new();
@@ -1559,9 +1728,20 @@ pub fn build_schema_diff_plan_with_target_only(
         );
     }
 
-    for table in target_only_tables {
-        let deploy_table = resolve_table_for_dialect(&tgt_d, table);
-        tables.push(deploy_table.clone());
+    let (ordered_target_only, blocked_target_only, dependency_requirements) =
+        order_target_only_drops(target_only_tables, target_snapshot, &tgt_d);
+    requirements.extend(dependency_requirements);
+    tables.extend(
+        target_only_tables
+            .iter()
+            .map(|drop| resolve_table_for_dialect(&tgt_d, &drop.table)),
+    );
+    for drop_index in ordered_target_only {
+        let table = &target_only_tables[drop_index];
+        let deploy_table = resolve_table_for_dialect(&tgt_d, &table.table);
+        if blocked_target_only.contains(&drop_index) {
+            continue;
+        }
         plan_target_only_table(
             &deploy_table,
             &tgt_d,

@@ -273,6 +273,7 @@ impl PostgresDriver {
             SELECT
                 tc.constraint_name::text                                             AS fk_name,
                 array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position)       AS columns,
+                ccu.table_schema::text                                               AS ref_schema,
                 ccu.table_name::text                                                 AS ref_table,
                 array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position)       AS ref_columns,
                 rc.update_rule::text,
@@ -282,17 +283,18 @@ impl PostgresDriver {
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON kcu.constraint_name = tc.constraint_name
-             AND kcu.table_schema   = tc.table_schema
+             AND kcu.constraint_schema = tc.table_schema
             JOIN information_schema.constraint_column_usage ccu
               ON ccu.constraint_name = tc.constraint_name
-             AND ccu.table_schema   = tc.table_schema
+             AND ccu.constraint_schema = tc.table_schema
             JOIN information_schema.referential_constraints rc
               ON rc.constraint_name = tc.constraint_name
              AND rc.constraint_schema = tc.table_schema
             WHERE tc.constraint_type = 'FOREIGN KEY'
               AND tc.table_name = $1
               AND ($2::text IS NULL OR tc.table_schema = $2)
-            GROUP BY tc.constraint_name, ccu.table_name, rc.update_rule, rc.delete_rule,
+            GROUP BY tc.constraint_schema, tc.constraint_name, ccu.table_schema,
+                     ccu.table_name, rc.update_rule, rc.delete_rule,
                      rc.is_deferrable, rc.initially_deferred
             ORDER BY tc.constraint_name
             "#,
@@ -316,7 +318,10 @@ impl PostgresDriver {
                 Some(ForeignKeyInfo {
                     name: r.get("fk_name"),
                     columns,
-                    referenced_table: r.get("ref_table"),
+                    referenced_table: qualified_pg_table_identity(
+                        &r.get::<String, _>("ref_schema"),
+                        &r.get::<String, _>("ref_table"),
+                    ),
                     referenced_columns,
                     on_update: r.get("update_rule"),
                     on_delete: r.get("delete_rule"),
@@ -512,6 +517,10 @@ pub(crate) fn normalise_fk_columns(
     Some((from, to))
 }
 
+fn qualified_pg_table_identity(schema: &str, table: &str) -> String {
+    format!("{schema}.{table}")
+}
+
 fn parse_pg_check_definition(definition: &str) -> Option<String> {
     let expression = definition.trim().strip_prefix("CHECK ")?.trim();
     let expression = expression.strip_prefix('(')?.strip_suffix(')')?.trim();
@@ -520,11 +529,26 @@ fn parse_pg_check_definition(definition: &str) -> Option<String> {
 
 #[cfg(test)]
 mod schema_tests {
-    use super::{normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability};
+    use super::{
+        normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability,
+        qualified_pg_table_identity,
+    };
     use datazen_driver_api::ForeignKeyDeferrability;
 
     fn owned(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn postgres_foreign_key_identity_preserves_referenced_schema() {
+        assert_eq!(
+            qualified_pg_table_identity("archive", "events"),
+            "archive.events"
+        );
+        assert_ne!(
+            qualified_pg_table_identity("archive", "events"),
+            qualified_pg_table_identity("public", "events")
+        );
     }
 
     #[test]
