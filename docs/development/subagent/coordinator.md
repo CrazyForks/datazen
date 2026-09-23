@@ -13,6 +13,18 @@
 
 ## 2. 轨道准备 (Bootstrap)
 
+### 2.0 工具相对路径陷阱（W3 实证，**每条简报都必须写明**）
+
+`read` / `grep` / `glob` 等工具收到**相对路径**时，解析基准是**主检出**（harness 的会话工作目录，通常是 `/path/to/datazen`），**不是**子代理的 worktree。子代理以为自己在读 `packages/drivers/redis/src/ops.rs`，实际读到的是**主检出 `main` 分支上的那一份**。
+
+后果（实测，非理论）：
+- 主检出 `main` 与集成分支**已分叉**（W3 实测：`main` 独有 18 提交 / 基线独有 219 提交，基线**不是** `main` 的祖先）。
+- 同一路径 `packages/drivers/redis/src/ops.rs`：主检出 **1172 行**（含 `set_string_with_options`），子代理 worktree **1124 行**（无该函数）⇒ 子代理会看到**别的分支的代码**，并据此得出「函数已存在 / 已删除」的错误结论。
+- 更隐蔽的是它会**污染差异分析**：任务书里写的「合流过的函数」可能只存在于主检出。
+
+**规则**：派单简报必须写明「**一律用绝对路径**（`<worktree 绝对路径>/...`）」，或明示「源码检查走 `bash` 在工作目录内执行」。协调者自己复核时同样遵守。
+**合流前的连带检查**：`git log --oneline <baseline>..main -- <改动面>` 看主检出自基线以来有无独立提交 —— 有则在 `hub.md` 的 R 清单登记「前向合并（main → 集成分支）」条目，别让它烂在分叉里。
+
 主检出执行配套脚本创建隔离环境：
 ```bash
 scripts/new-feature-worktree.sh <track-id> <base-branch>

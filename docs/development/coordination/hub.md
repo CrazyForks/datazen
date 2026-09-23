@@ -103,6 +103,9 @@
 - **并行轨往同一个对象字面量加"同名键"是最坏的合并面**：git 会静默自动合并（不同 hunk），JS 只保留最后一个键 ⇒ 另一轨的贡献整块消失且不报错。派单前必须在 `progress.md` 写明"本轨往哪个对象的哪个键里写"，合流时逐个人工比对。已知三处：`ui/shared/meta.ts` 的 `kvWorkspace`、`scripts/resolve-drivers.mjs` 的 `kvSlots`、`packages/drivers/redis/locales/en.ts` 的扁平 key 表（key 表因 key 名互斥才安全）。`#69 contextBar` 全量版会同时碰这三处，合并顺序排在 `#70` 之后。
 - **同一文件不同抽象层的语义冲突**（W3 合流实证，`BatchBar.tsx`）：一轨拆模块、另一轨在同文件升契约时，git 只报少量文本冲突，**机械取任一整侧都会静默丢语义**。裁决依据必须是「哪侧形状被冻结/被谁消费/有无守卫测试」，保留结构方 + **移植**语义方，并把守卫测试按新结构重写（断言一条不减）。合流前用 `git log <merge-base>..<other> --name-only` 取交集逐文件判「文本 or 语义」。详见 `docs/development/subagent/coordinator.md` §6.1.1。
 - **验收句禁用析取式**（W3-E 实证，`redis-detail-ui` BUG-007）：写「消解**或**有界」等于给「只做一半」发通行证 —— 该 bug 只做了有界就过闸，残留态下点保存会**写到陈旧键名**（`SET … "user:1"` 而屏幕显示 `user:renamed`，静默写错键 + 复活已 RENAME 的旧键），到第 3 轮才被探针实测揪出（详见 `coordinator.md` §3.3 第 5、6 条）。**派单硬口径**：验收句只写唯一期望终态；确实接受两形态时，分别写清各自的验收锚点。同轮 Tester 的变异 (iii)「答 keep 也放行」在析取断言下**全绿**（假阴性），须自建探针才照出 —— 凡「注入后仍绿」一律按测试强度缺陷立案。
+- **工具相对路径陷阱**（W3 实证，`redis-src-split` 主动上报）：`read`/`grep`/`glob` 传**相对路径**时解析到**主检出**（`main`），不是子代理的 worktree。实测：同一 `packages/drivers/redis/src/ops.rs` 在主检出 **1172 行**（含 `set_string_with_options`）、在基线 worktree **1124 行**（无该函数）；`main` 与 `d049ceb4e` 分叉 **18 / 219** 提交。⇒ 派单简报必须写明「一律绝对路径」；协调者复核同样遵守。详见 `coordinator.md` §2.0。
+- **`Cargo.lock` 的 ` M` 漂移不是 codegen 残留，是真实 lockfile 失同步**（W3 实证，此前被误判并反复 revert）：`cdcfdc833` 把 `flate2` 加进 `packages/drivers/redis/Cargo.toml`（`decode/compress.rs` 真的用它），但**已提交的 `Cargo.lock` 里 `datazen-driver-redis` 依赖列表没有 `flate2`** ⇒ 每次跑 cargo 都会重写那一行 ⇒ 每个 worktree 测完都显示 ` M Cargo.lock`。**正确处置**：把该行提交（已由协调者在集成分支修正），而不是 revert。判据：`git diff Cargo.lock` 只含依赖名增删（如 `+ "flate2",`）时是同步，含版本漂移时另议。
+- **merge 态下索引即提交内容**：merge 未完成时 `git commit` 会把**整个索引**写进 merge commit，任何游离的 staged 改动都会被静默卷走（本项目已两次踩中：`Cargo.lock` 被 W3-B 合流卷走、`coordinator.md` 险些被 E 轨合流卷走）。**规则**：merge 进行中，协调者不得在该 worktree 里暂存任何无关改动；提交方必须只 `git add` 冲突文件，并在提交后用 `git show --stat HEAD` 自查变更列表。
 
 ## R 阶段清单
 
