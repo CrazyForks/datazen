@@ -37,6 +37,9 @@
 | redis-kv-context-bar | KV 上下文条全量版（PRD §3.4 / 裁定 8-2 = 全量，#69）+ **合并承担 statusBar 全量版**（协调者追加裁定） | **TEST_DONE**（第 3 轮独立复测通过；GUI E2E 旅程留待 R；已合入集成分支 `feat/redis-workspace-ux`） | `fdc46cd74`（① contextBar 全量版 + 裁定 (A) 契约扩展与宿主接线）+ `edc7ee051`（② statusBar 全量版） | 第 2 轮 `4c59a32f5`、`a63f6bd0a`、`78e660789`、`6d253d058`；第 3 轮 `8770a2adc`、`88c027010`、`0ef88f36f`、`ab76454a6` | `ec82e9606`（随后随 main `bbb92bc04` 前向合入 `feat/redis-workspace-ux`，合并 commit `77e0ad2ae`） |
 | redis-src-split | 把 redis 驱动 crate 超 800 行的文件按职责拆分，**零行为变更**（纯机械重构 + 测试保持全绿） | **TEST_DONE**（第 2 轮完整复测通过；BUG-001 已复测关闭；已合入集成分支 `feat/redis-workspace-ux`） | — | `63f54add0`（回归测试）+ `1b9e85b85`（TEST_DONE 终判与 BUG 状态） | `f780460e1`（随后随 main `bbb92bc04` 前向合入 `feat/redis-workspace-ux`，合并 commit `77e0ad2ae`） |
 | redis-p0-r-regression | Wave 3 `redis-src-split`、Wave 4 `redis-kv-context-bar` 合流并前向合入 main 后的集成回归 | **AUTOMATED_PASS / MANUAL_PENDING**（自动化回归已通过；真实 Redis 与桌面 GUI 旅程待人工验收） | — | `78e1ecbb2`（补齐 main 新增隧道字段的 Redis 测试 fixture，并清除合并造成的重复测试 mock 键） | `77e0ad2ae`（main `bbb92bc04` → `feat/redis-workspace-ux`） |
+| tunnel-backend | — | 未开始 | — | — | — |
+| tunnel-form | — | 未开始 | — | — | — |
+| tunnel-settings | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -71,6 +74,9 @@
 | redis-kv-context-bar | w4-redis-kv-context-bar-coder | .worktrees/datazen-redis-kv-context-bar | feature/redis-kv-context-bar | **TEST_DONE**（第 3 轮独立复测通过；GUI E2E 旅程留待 R；已合入集成分支 `feat/redis-workspace-ux`） | 2026-09-23 18:39（Rescuer 修复与三件套自验完成，`READY_FOR_TEST`） |
 | redis-src-split | w?-redis-src-split（Coder，全新实例） | `.worktrees/datazen-redis-src-split` | `feature/redis-src-split` | **TEST_DONE**（第 2 轮完整复测通过；BUG-001 已复测关闭；已合入集成分支 `feat/redis-workspace-ux`） | 2026-09-23（本回合收尾） |
 | redis-p0-r-regression | — | `.worktrees/datazen-redis-p0-integrate` | `feat/redis-workspace-ux` | **AUTOMATED_PASS / MANUAL_PENDING**（自动化回归已通过；真实 Redis 与桌面 GUI 旅程待人工验收） | 2026-09-23（自动化回归完毕，移交真 Redis / GUI 清单） |
+| tunnel-backend | — | — | `feature/tunnel-backend`（worktree `.worktrees/datazen-tunnel-backend`） | 未开始 | — |
+| tunnel-form | — | — | `feature/tunnel-form`（worktree `.worktrees/datazen-tunnel-form`） | 未开始 | — |
+| tunnel-settings | — | — | `feature/tunnel-settings`（worktree `.worktrees/datazen-tunnel-settings`） | 未开始 | — |
 
 ## 波次记录
 

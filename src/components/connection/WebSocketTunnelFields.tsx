@@ -2,10 +2,11 @@ import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import { Label } from './shared';
-import type { ConnectionFormState } from './useConnectionForm';
+import type { WebSocketTunnelFieldsValue } from './tunnelFieldContracts';
 
 export interface WebSocketTunnelFieldsProps {
-  form: ConnectionFormState;
+  /** Structural subset of `ConnectionFormState` (see `tunnelFieldContracts`). */
+  form: WebSocketTunnelFieldsValue;
 }
 
 export function WebSocketTunnelFields({ form }: WebSocketTunnelFieldsProps) {

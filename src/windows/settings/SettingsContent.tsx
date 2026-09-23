@@ -18,6 +18,7 @@ import { AiSettingsSection } from './AiSettingsSection';
 import { PromptSettingsSection } from './PromptSettingsSection';
 import { McpSettingsSection } from './McpSettingsSection';
 import { McpClientSection } from './McpClientSection';
+import { TunnelSettingsSection } from './TunnelSettingsSection';
 import { settingsSectionIconId } from '../../lib/hostLucideMap';
 import {
   KEYMAP_ACTIONS,
@@ -676,6 +677,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
           {activeSection === 'prompts' && <PromptSettingsSection />}
           {activeSection === 'mcpServer' && <McpSettingsSection settings={settings} />}
           {activeSection === 'mcpClient' && <McpClientSection />}
+          {activeSection === 'tunnels' && <TunnelSettingsSection />}
           {activeSection === 'extensions' && <DriverSettingsSection settings={settings} />}
         </div>
       </div>

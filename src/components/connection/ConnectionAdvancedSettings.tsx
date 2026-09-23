@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react';
 import type { TranslationKey } from '../../locales';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Select } from '../ui/Select';
+import { Button } from '../ui/Button';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
+import { openSettingsWindow } from '../../lib/windowManager';
 import { COLOR_KEYS, Label } from './shared';
 import { SshTunnelFields } from './SshTunnelFields';
 import { HttpProxyTunnelFields } from './HttpProxyTunnelFields';
 import { WebSocketTunnelFields } from './WebSocketTunnelFields';
+import { SaveTunnelDialog } from './SaveTunnelDialog';
 import { getDriverConnectionAdvanced } from '../../extensions/generated';
 import type { ConnectionFormState } from './useConnectionForm';
-import type { SslMode, TunnelKind } from '../../types';
+import type { SslMode, TunnelKind, TunnelSource } from '../../types';
 
 export interface ConnectionAdvancedSettingsProps {
   form: ConnectionFormState;
@@ -26,25 +29,44 @@ export function ConnectionAdvancedSettings({
   const { t } = useI18n();
   const isWindow = variant === 'window';
   const DriverAdvanced = getDriverConnectionAdvanced(form.formVariant);
-  const [showTunnel, setShowTunnel] = useState(form.tunnelKind !== 'none' || form.sshEnabled);
+  const [showTunnel, setShowTunnel] = useState(
+    form.tunnelSource !== 'none' || form.tunnelId !== null,
+  );
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
 
   useEffect(() => {
-    if (form.tunnelKind !== 'none' || form.sshEnabled) setShowTunnel(true);
-  }, [form.tunnelKind, form.sshEnabled]);
+    if (form.tunnelSource !== 'none' || form.tunnelId !== null) setShowTunnel(true);
+  }, [form.tunnelSource, form.tunnelId]);
 
-  const tunnelOptions: { value: TunnelKind; label: string }[] = [
+  /** Tunnel source is the single master control; `tunnelKind` is its inline sub-selector. */
+  const sourceOptions: { value: TunnelSource; label: string; disabled?: boolean }[] = [
     { value: 'none', label: t('newConn.tunnelNone') },
-    ...(form.supportsSSH ? [{ value: 'ssh' as const, label: t('newConn.tunnelSsh') }] : []),
-    { value: 'httpProxy', label: t('newConn.tunnelHttpProxy') },
-    { value: 'websocket', label: t('newConn.tunnelWebSocket') },
+    {
+      value: 'saved',
+      label: t('newConn.savedTunnel'),
+      disabled: form.savedTunnels.length === 0,
+    },
+    { value: 'inline', label: t('newConn.savedTunnelNone') },
   ];
 
+  const inlineKindOptions: { value: TunnelKind; label: string }[] = [
+    ...(form.supportsSSH ? [{ value: 'ssh' as const, label: t('newConn.tunnelSsh') }] : []),
+    { value: 'httpProxy' as const, label: t('newConn.tunnelHttpProxy') },
+    { value: 'websocket' as const, label: t('newConn.tunnelWebSocket') },
+  ];
+
+  const savedTunnelOptions = form.savedTunnels.map((tunnel) => ({
+    value: tunnel.id,
+    label: `${tunnel.name} (${tunnel.kind})`,
+  }));
+
+  const badgeKind = form.effectiveTunnelKind;
   const tunnelBadge =
-    form.tunnelKind === 'ssh'
+    badgeKind === 'ssh'
       ? 'SSH'
-      : form.tunnelKind === 'httpProxy'
+      : badgeKind === 'httpProxy'
         ? 'HTTP'
-        : form.tunnelKind === 'websocket'
+        : badgeKind === 'websocket'
           ? 'WS'
           : null;
 
@@ -192,48 +214,150 @@ export function ConnectionAdvancedSettings({
             'mt-3 space-y-4 rounded-md border border-edge p-4',
             isWindow ? 'bg-surface' : 'bg-surface-alt',
           )}
+          data-testid="new-conn-tunnel-panel"
         >
-          <div data-testid="new-conn-tunnel-kind">
-            <Label>{t('newConn.tunnelKind')}</Label>
-            <Select
-              value={form.tunnelKind}
-              options={tunnelOptions}
-              onChange={(v) => {
-                form.setTunnelId(null);
-                form.setTunnelKind(v as TunnelKind);
-              }}
-            />
-          </div>
-
-          {form.savedTunnels && form.savedTunnels.length > 0 && (
-            <div data-testid="new-conn-saved-tunnel">
-              <Label>{t('newConn.savedTunnel')}</Label>
-              <Select
-                value={form.tunnelId ?? ''}
-                options={[
-                  { value: '', label: t('newConn.savedTunnelNone') },
-                  ...form.savedTunnels.map((tun) => ({
-                    value: tun.id,
-                    label: `${tun.name} (${tun.kind})`,
-                  })),
-                ]}
-                onChange={(v) => form.setTunnelId(v || null)}
-              />
+          {form.tunnelRefMissing && (
+            <div
+              role="alert"
+              data-testid="new-conn-tunnel-missing"
+              className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-300"
+            >
+              {t('newConn.tunnelMissing')}
+              {/* Only mention picking another tunnel when one is actually listed:
+                  the guidance must never point at an unreachable action (BUG-002). */}
+              {form.savedTunnels.length > 0 && ` ${t('newConn.tunnelMissingAlt')}`}
             </div>
           )}
 
-          {!form.tunnelId && form.tunnelKind === 'ssh' && form.supportsSSH && (
-            <SshTunnelFields
-              form={form}
-              innerPanelClassName={isWindow ? 'bg-surface-alt' : 'bg-surface'}
+          <div data-testid="new-conn-tunnel-source">
+            <Label>{t('newConn.tunnelSource')}</Label>
+            <Select
+              value={form.tunnelSource}
+              options={sourceOptions}
+              onChange={(v) => form.setTunnelSource(v as TunnelSource)}
             />
+          </div>
+
+          {form.tunnelSource !== 'inline' && form.savedTunnels.length === 0 && (
+            <div
+              data-testid="new-conn-tunnel-empty"
+              className="space-y-2 rounded-md border border-dashed border-edge p-3"
+            >
+              <p className="text-xs text-fg-muted">{t('newConn.tunnelEmptyHint')}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => form.setTunnelSource('inline')}
+                  data-testid="new-conn-tunnel-create-entry"
+                >
+                  {t('newConn.tunnelCreateEntry')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => openSettingsWindow('tunnels')}
+                  data-testid="new-conn-tunnel-manage-entry"
+                >
+                  {t('newConn.tunnelManage')}
+                </Button>
+              </div>
+            </div>
           )}
-          {!form.tunnelId && form.tunnelKind === 'httpProxy' && (
-            <HttpProxyTunnelFields form={form} />
+
+          {form.tunnelSource === 'saved' && (
+            <div className="space-y-3" data-testid="new-conn-saved-tunnel">
+              <p className="text-xs text-fg-muted">{t('newConn.tunnelSavedHint')}</p>
+              <div>
+                <Label>{t('newConn.savedTunnel')}</Label>
+                <Select
+                  value={form.tunnelId ?? ''}
+                  options={savedTunnelOptions}
+                  onChange={(v) => form.setTunnelId(v || null)}
+                />
+              </div>
+              {form.savedTunnel && (
+                <div
+                  data-testid="new-conn-saved-tunnel-summary"
+                  className="flex items-center gap-2 text-xs text-fg"
+                >
+                  <span className="font-medium">{form.savedTunnel.name}</span>
+                  <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[11px] text-accent">
+                    {form.savedTunnel.kind}
+                  </span>
+                </div>
+              )}
+              {/* Unbinding refills the inline fields from the stored entity. When
+                  that entity is gone there is nothing to refill, and dropping the
+                  reference silently is deliberately refused — so the action does
+                  not apply to this state at all and must not be offered as a
+                  clickable dead end (tunnel-form-BUG-002). Switching the source to
+                  "None (direct)" is the reachable exit, as the alert states. */}
+              {!form.tunnelRefMissing && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={form.tunnelBusy}
+                  onClick={() => void form.unbindTunnel()}
+                  data-testid="new-conn-tunnel-unbind"
+                >
+                  {t('newConn.tunnelUnbind')}
+                </Button>
+              )}
+              {form.tunnelError && (
+                <div role="alert" className="text-xs text-red-400">
+                  {form.tunnelError}
+                </div>
+              )}
+            </div>
           )}
-          {!form.tunnelId && form.tunnelKind === 'websocket' && (
-            <WebSocketTunnelFields form={form} />
+
+          {form.tunnelSource === 'inline' && (
+            <div className="space-y-3" data-testid="new-conn-inline-tunnel">
+              <div data-testid="new-conn-tunnel-kind">
+                <Label>{t('newConn.tunnelKind')}</Label>
+                <Select
+                  value={form.tunnelKind}
+                  options={inlineKindOptions}
+                  onChange={(v) => form.setTunnelKind(v as TunnelKind)}
+                />
+              </div>
+
+              {form.tunnelKind === 'ssh' && form.supportsSSH && (
+                <SshTunnelFields
+                  form={form}
+                  innerPanelClassName={isWindow ? 'bg-surface-alt' : 'bg-surface'}
+                />
+              )}
+              {form.tunnelKind === 'httpProxy' && <HttpProxyTunnelFields form={form} />}
+              {form.tunnelKind === 'websocket' && <WebSocketTunnelFields form={form} />}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!form.tunnelInlineValid || form.tunnelBusy}
+                  onClick={() => setSaveDialogOpen(true)}
+                  data-testid="new-conn-tunnel-save-as"
+                >
+                  {t('newConn.tunnelSaveAs')}
+                </Button>
+                {form.tunnelError && (
+                  <span role="alert" className="text-xs text-red-400">
+                    {form.tunnelError}
+                  </span>
+                )}
+              </div>
+            </div>
           )}
+
+          <SaveTunnelDialog
+            open={saveDialogOpen}
+            onClose={() => setSaveDialogOpen(false)}
+            onSubmit={form.saveAsTunnel}
+            busy={form.tunnelBusy}
+            error={form.tunnelError}
+          />
         </div>
       )}
     </>

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useConnectionForm } from '../useConnectionForm';
+import type { SavedTunnelSummary } from '../../../types';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -31,9 +32,33 @@ vi.mock('../../../stores/connectionStore', () => ({
   ),
 }));
 
+const { tunnelStoreState } = vi.hoisted(() => ({
+  tunnelStoreState: {
+    summaries: [] as SavedTunnelSummary[],
+    loaded: true,
+    loading: false,
+    error: null as string | null,
+    load: vi.fn().mockResolvedValue(undefined),
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+    usage: vi.fn(),
+  },
+}));
+
+vi.mock('../../../stores/tunnelStore', () => ({
+  newTunnelId: () => 'tun_generated',
+  useTunnelStore: Object.assign(
+    vi.fn((selector: (s: typeof tunnelStoreState) => unknown) => selector(tunnelStoreState)),
+    { getState: () => tunnelStoreState },
+  ),
+}));
+
 describe('useConnectionForm tunnel kinds', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tunnelStoreState.summaries = [];
+    tunnelStoreState.loaded = true;
     testConnectionMock.mockResolvedValue({ serverVersion: '16.0', serverType: 'postgresql' });
   });
 
@@ -179,5 +204,94 @@ describe('useConnectionForm tunnel kinds', () => {
     });
     expect(result.current.sshEnabled).toBe(true);
     expect(result.current.tunnelKind).toBe('ssh');
+  });
+
+  it('references a saved tunnel by id without embedding inline tunnel config', async () => {
+    tunnelStoreState.summaries = [{ id: 'tun_ssh', name: 'Bastion', kind: 'ssh' }];
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'c-saved',
+        existingConnections: [
+          {
+            id: 'c-saved',
+            name: 'via-saved',
+            databaseType: 'postgresql',
+            host: 'db.internal',
+            port: 5432,
+            sslMode: 'prefer',
+            tunnelId: 'tun_ssh',
+            tunnelKind: 'ssh',
+          },
+        ],
+      }),
+    );
+
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelId).toBe('tun_ssh');
+    expect(result.current.savedTunnel?.name).toBe('Bastion');
+    expect(result.current.tunnelRefMissing).toBe(false);
+
+    await act(async () => {
+      await result.current.onTest();
+    });
+
+    const [config] = testConnectionMock.mock.calls[0] as [Record<string, unknown>];
+    expect(config.tunnelId).toBe('tun_ssh');
+    expect(config.tunnelKind).toBe('ssh');
+    expect(config.sshTunnel).toBeUndefined();
+  });
+
+  it('keeps a dangling tunnel reference and blocks saving until it is resolved', async () => {
+    tunnelStoreState.summaries = [];
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        editId: 'c-dangling',
+        existingConnections: [
+          {
+            id: 'c-dangling',
+            name: 'dangling',
+            databaseType: 'postgresql',
+            host: 'db.internal',
+            port: 5432,
+            sslMode: 'prefer',
+            tunnelId: 'tun_gone',
+            tunnelKind: 'ssh',
+          },
+        ],
+      }),
+    );
+
+    expect(result.current.tunnelId).toBe('tun_gone');
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelRefMissing).toBe(true);
+
+    await act(async () => {
+      await result.current.onSave();
+    });
+    expect(saveConnectionMock).not.toHaveBeenCalled();
+    expect(result.current.validate()).toBe(false);
+    expect(result.current.validationErrors.tunnelId).toBe('newConn.tunnelMissing');
+  });
+
+  it('does not clear the tunnel reference when the inline kind changes', async () => {
+    tunnelStoreState.summaries = [{ id: 'tun_ws', name: 'Relay', kind: 'websocket' }];
+    const { result } = renderHook(() => useConnectionForm());
+
+    act(() => {
+      result.current.setTunnelId('tun_ws');
+    });
+    expect(result.current.tunnelSource).toBe('saved');
+    expect(result.current.tunnelId).toBe('tun_ws');
+
+    // Changing the inline sub-kind while `saved` is an explicit unbind, and the
+    // reference is only cleared after the entity was read. `get_tunnel` cannot
+    // resolve here, so the reference must survive rather than be dropped.
+    await act(async () => {
+      result.current.setTunnelKind('httpProxy');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.tunnelId).toBe('tun_ws');
+    expect(result.current.tunnelSource).toBe('saved');
   });
 });

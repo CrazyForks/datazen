@@ -9,6 +9,12 @@ mod websocket;
 pub use http_proxy::HttpProxyTunnel;
 pub use websocket::WebSocketTunnel;
 
+/// Upstream-leg probes used by the standalone tunnel connectivity check: the
+/// HTTP-proxy / WebSocket `start` functions are lazy, so these perform the
+/// handshake that actually proves the endpoint is reachable.
+pub(crate) use http_proxy::verify_upstream as verify_http_proxy_upstream;
+pub(crate) use websocket::verify_upstream as verify_websocket_upstream;
+
 use crate::db::{
     ConnectionConfig, DriverError, HttpProxyTunnelConfig, TunnelKind, WebSocketTunnelConfig,
 };
