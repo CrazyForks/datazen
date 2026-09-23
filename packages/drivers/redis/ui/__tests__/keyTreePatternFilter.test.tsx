@@ -391,6 +391,33 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
   });
 
+  it('R1 counts the pattern-visible set even when the flat scan ignored the glob', async () => {
+    /*
+     * The wedge for the single-source rule. `scan_keys` is forced pattern-blind
+     * here (it answers all five keys whatever it was asked), so *nothing else on
+     * screen* can narrow anything: if R1's counter still reads 0 after `*nope`,
+     * it is reading the one filtered set (and so is 「全选已加载」 — same prop),
+     * not the flat list. An implementation wired to `scan.keys.length` shows 5
+     * rows' worth of keys against 0 painted rows — the BUG-001 lie in one number.
+     */
+    scanKeys.mockImplementation(async () => ({
+      keys: KEYSPACE.map((key) => entry(key)),
+      cursor: 0,
+      dbSize: KEYSPACE.length,
+      matched: KEYSPACE.length,
+    }));
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('5'));
+
+    await applyPattern('*nope');
+    await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('0'));
+    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    const empty = await screen.findByTestId('redis-tree-empty');
+    expect(empty.getAttribute('data-empty-state')).toBe('no-match');
+  });
+
   it('a folder with an open scan admits its remainder is unfiltered', async () => {
     // Root level stays mid-scan (cursor 41), so `app:`'s count is a lower bound.
     listChildren.mockImplementation(async (_s: string, _i: number, prefix: string) => {
