@@ -14,7 +14,7 @@ use datazen_driver_api::{
 };
 use serde_json::Value as JsonValue;
 
-use crate::ops_workbench::{
+use crate::ops::workbench::{
     CLUSTER_TYPE_SAMPLE_LIMIT, DEFAULT_TYPE_SAMPLE_LIMIT, KEY_INFO_PIPELINE_LEN,
     MAX_TYPE_SAMPLE_LIMIT, TYPE_PIPELINE_CHUNK,
 };

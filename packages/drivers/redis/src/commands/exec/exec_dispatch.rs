@@ -4,7 +4,7 @@ use datazen_driver_api::{CommandResult, ConnectionHandle, DriverError};
 use serde_json::Value as JsonValue;
 
 use crate::ops::ZsetMember;
-use crate::ops_io::RestoreKeyEntry;
+use crate::ops::io::RestoreKeyEntry;
 use crate::RedisDriver;
 
 fn req_str<'a>(input: &'a JsonValue, field: &str) -> Result<&'a str, DriverError> {
@@ -214,7 +214,7 @@ match command {
             )
         }
         "set_string" => {
-            let keep_ttl = crate::ops_write::keep_ttl_policy(&input);
+            let keep_ttl = crate::ops::write::keep_ttl_policy(&input);
             let outcome = driver
                 .plugin_set_string(
                     id,
@@ -227,7 +227,7 @@ match command {
             json_ok(outcome)
         }
         "set_string_raw" => {
-            let keep_ttl = crate::ops_write::keep_ttl_policy(&input);
+            let keep_ttl = crate::ops::write::keep_ttl_policy(&input);
             let b64 = req_str(&input, "dataB64")
                 .or_else(|_| req_str(&input, "data_b64"))?;
             let bytes = base64::Engine::decode(
@@ -519,7 +519,7 @@ match command {
                 .await?,
         ),
         "slowlog_reset" => {
-            crate::ops_observe::ensure_slowlog_reset_confirmed(req_bool(&input, "confirm")?)
+            crate::ops::observe::ensure_slowlog_reset_confirmed(req_bool(&input, "confirm")?)
                 .map_err(DriverError::InvalidConfig)?;
             driver.plugin_slowlog_reset(id).await?;
             Ok(ok())
@@ -560,20 +560,20 @@ match command {
             let buffer_size = input.get("bufferSize").and_then(JsonValue::as_u64).map(|n| n as usize);
             let plan = driver.connection_plan(&handle.pool_id).await
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            let monitor_id = crate::ops_monitor::start_monitor(&plan, buffer_size).await
+            let monitor_id = crate::ops::monitor::start_monitor(&plan, buffer_size).await
                 .map_err(|e| DriverError::QueryFailed(e))?;
             json_ok(serde_json::json!({ "monitorId": monitor_id }))
         }
         "monitor_stop" => {
             let monitor_id = req_str(&input, "monitorId")?;
-            crate::ops_monitor::stop_monitor(monitor_id)
+            crate::ops::monitor::stop_monitor(monitor_id)
                 .await
                 .map_err(|e| DriverError::QueryFailed(e))?;
             Ok(ok())
         }
         "monitor_get_buffer" => {
             let monitor_id = req_str(&input, "monitorId")?;
-            let events = crate::ops_monitor::get_monitor_buffer(monitor_id)
+            let events = crate::ops::monitor::get_monitor_buffer(monitor_id)
                 .await
                 .map_err(|e| DriverError::QueryFailed(e))?;
             json_ok(serde_json::json!({ "events": events }))
@@ -599,7 +599,7 @@ match command {
             let channels = opt_string_vec(&input, "channels");
             let patterns = opt_string_vec(&input, "patterns");
             json_ok(
-                crate::ops_pubsub::start_subscription(
+                crate::ops::pubsub::start_subscription(
                     driver,
                     handle.pool_id.clone(),
                     channels,
@@ -617,19 +617,19 @@ match command {
                 .ok_or_else(|| {
                     DriverError::InvalidConfig("command input requires 'subscriptionId'".into())
                 })?;
-            crate::ops_pubsub::unsubscribe(sub_id)
+            crate::ops::pubsub::unsubscribe(sub_id)
                 .await
                 .map_err(DriverError::QueryFailed)?;
             Ok(ok())
         }
         "pubsub_list_subscriptions" => {
             let conn_id = &handle.pool_id;
-            let subs = crate::ops_pubsub::list_active_subscriptions(conn_id).await;
+            let subs = crate::ops::pubsub::list_active_subscriptions(conn_id).await;
             json_ok(serde_json::json!({ "subscriptions": subs }))
         }
         "pubsub_stats" => {
             let conn_id = &handle.pool_id;
-            let stats = crate::ops_pubsub::pubsub_stats(conn_id).await;
+            let stats = crate::ops::pubsub::pubsub_stats(conn_id).await;
             json_ok(serde_json::json!({
                 "totalMessages": stats.total_messages,
                 "byChannel": stats.by_channel,

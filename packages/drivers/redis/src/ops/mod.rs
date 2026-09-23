@@ -5,15 +5,28 @@
 //! resolving for every caller.
 
 pub mod batch;
+pub mod cluster;
+pub mod exec;
 pub mod flush;
 pub mod hash;
+pub mod io;
+pub mod json;
+pub mod key_probe;
 pub mod keys;
 pub mod list;
+pub mod monitor;
+pub mod observe;
 pub mod parse;
+pub mod pubsub;
 pub mod scan;
 pub mod set;
+pub mod stream;
+pub mod tree;
 pub mod ttl;
 pub mod types;
+pub mod value_search;
+pub mod workbench;
+pub mod write;
 pub mod zset;
 
 pub use batch::batch_delete_pattern;

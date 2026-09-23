@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tauri::Emitter;
 
-use crate::ops_pubsub::{self, RedisPubSubMessageEvent};
+use crate::ops::pubsub::{self, RedisPubSubMessageEvent};
 
 /// Register the Redis plugin. No `plugin:redis|*` commands are exposed.
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
