@@ -1,6 +1,6 @@
 # migration-transfer-tuple-recordset
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 ## Scope
 
@@ -39,4 +39,10 @@ Extend deterministic Data Transfer recordset selection to complete composite pri
 
 ## Independent Tester
 
-- Pending fresh Tester review; review every changed file and assess changed-core coverage.
+- Fresh Tester reviewed the tuple-range model, resolution and SQL generation, bound normalization, preview/count path, transfer projection, UI editor, and both-direction WDIO journey. Ordered primary-key columns are validated as a complete tuple; predicates and `ORDER BY` share that order; all tuple values remain bound parameters. Legacy scalar JSON remains unchanged. Incomplete, reordered, nullable, unsupported, mixed, or invalid ranges fail closed.
+- The text/binary regression is covered in both unit and E2E tests: valid UTF-8 from a textual MySQL `utf8mb4_bin` column remains `a-雪` (`612DE99BAA`) in PostgreSQL `TEXT`, and byte-valued binary columns stay bytes. Invalid UTF-8 in a textual source is rejected.
+- Independent verification: `CARGO_TARGET_DIR=/Users/flyxl/code/datazen/.worktrees/datazen-migration-navicat/target CARGO_BUILD_JOBS=1 node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib data_transfer:: -- --quiet` passed 110/110; the integration Host suite passed 1811/1811 (3 ignored). Vitest passed 32/32, `pnpm exec tsc --noEmit` passed, and Prettier plus `git diff --check` passed. Cargo injection changes were removed. `cargo-llvm-cov` is unavailable, so Rust coverage was assessed from the changed paths and their focused tests rather than line instrumentation.
+- Targeted V8 coverage for `DataTransferWindow.tsx` and `ColumnMappingEditor.tsx`: 84.97% lines, 82.98% statements, 83.88% functions, and 71.81% branches. The lower combined branch number includes existing, unrelated wizard and column-mapping interactions; the changed tuple editor lines are covered, including complete ordered two-component bounds, inclusive toggles, UTF-8 values, and clearing the last component while retaining the opposite endpoint. Rust tests also cover three-component tuples.
+- WDIO against authorized local MySQL/PostgreSQL passed both transfer directions (2/2). After strengthening the test hook, a fresh isolated PostgreSQL→MySQL rerun also passed (1/1). Earlier teardown reused expired sessions and swallowed cleanup errors; the hook now obtains fresh sessions, attempts both drops and catalog assertions independently, disconnects each session independently, and fails after all cleanup attempts if any error remains. The final run emitted no stale-session error, and post-run catalogs contained no `dt_tuple_%` fixtures in either database. The E2E runner exited and port 4445 is closed.
+- Tester added one focused UI regression test for clearing a tuple endpoint and hardened only the WDIO fixture teardown. No product implementation defect remains open for this track; no `bugs.md` was needed.
+- Tester verification commit: `03c9e04b` (`test(data-transfer): verify tuple recordset track`).
