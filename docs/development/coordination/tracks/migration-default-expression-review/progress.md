@@ -2,7 +2,7 @@
 
 ## Phase
 
-READY_FOR_TEST
+PASSED
 
 ## Scope
 
@@ -25,5 +25,17 @@ Independent review of cross-dialect Schema Diff default-expression translation a
 - Regression and planner suite: `CARGO_TARGET_DIR=target/cargo-wt node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib schema_diff::plan::tests:: --offline` — 62 passed, 0 failed.
 - Formatting: `rustfmt --check --edition 2021 --config skip_children=true src-tauri/src/schema_diff/plan.rs src-tauri/src/schema_diff/plan_tests.rs` — passed.
 - `git diff --check` — passed.
-- No front-end or driver files changed, so front-end typecheck and driver-specific suites were not applicable. WDIO was not started because the coordinator reserved that runner; schedule independent Tester E2E/review.
-- Current state: READY_FOR_TEST. Tester must independently review the implementation and rerun verification before closing BUG-001.
+- No front-end or driver files changed, so front-end typecheck and driver-specific suites were not applicable. No separate WDIO journey was needed because the fix changes only backend DDL planning.
+- Coder state at handoff: READY_FOR_TEST. The independent Tester review and verification are recorded below.
+
+## Independent Tester result
+
+- Result: `TEST_DONE`; no additional implementation defect found. The original `BUG-001` is closed after independent verification.
+- Code review: verified numeric MySQL defaults now pass only when they are plain literals compatible with the mapped PostgreSQL type. MySQL-only expressions (`IFNULL`, `COALESCE`, arithmetic), malformed/source-specific numeric forms, integer overflow, and unsupported array targets produce `Unsupported` requirements instead of executable target DDL. Existing boolean translation remains covered. Add Column, Create Table, and Set Default paths are covered by planner regressions.
+- Independent Rust tests: `CARGO_TARGET_DIR=/Users/flyxl/code/datazen/.worktrees/datazen-migration-navicat/target CARGO_BUILD_JOBS=1 node scripts/with-driver-inject.mjs --drivers=basic -- cargo test -p datazen --lib schema_diff::plan::tests:: --offline` — 63 passed, 0 failed, 1742 filtered. A second LLVM-instrumented run also passed 63/63.
+- Tester-only boundary test: `test_tester_mysql_integer_defaults_follow_postgres_target_widths` verifies PostgreSQL smallint and bigint minima/maxima/overflow, integer-array rejection, and empty numeric metadata failing closed.
+- LLVM line coverage: the full changed planner file has 1219/1362 executable lines covered (89.50%). The reviewed numeric-default slices in `plan.rs` (lines 275–291, 316–396, and 513–527) cover 112/112 executable lines (100.00%). The instrumented run used all `schema_diff::plan::tests` and covered literal syntax, exponent parsing, empty/malformed values, target range branches, and fail-closed mapping paths.
+- Formatting and whitespace checks: `rustfmt --check --edition 2021 src-tauri/src/schema_diff/plan_tests.rs src-tauri/src/schema_diff/plan.rs` and `git diff --check` passed.
+- E2E: no UI or IPC behavior changed in this backend-only planner fix, so no WDIO journey was added or run. The planner regression tests cover the DDL acceptance and refusal paths directly.
+- Frontend checks were not applicable because no frontend or driver source changed.
+- Test code commit: `c279a5959d7951b7f2b8b0469ba9c153b3a62805`.
