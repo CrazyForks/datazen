@@ -812,3 +812,110 @@ branch 25 if loc357 counts [4,1]                ← 早退 4 / 落空 1（answer
   → `e89f4cf7f`（登记 BUG-009 + README 索引与判定）→ 本台账 commit。
 - **skip 处置**：`testerRound3Probe.test.tsx` D 组（BUG-008 正确期望）以 `describe.skip` 留在库内，
   **修复者取消 skip 即复验**；`round2Probe.test.tsx` P1b 已无 skip；`dirtyLeaveCoverage.test.tsx` 全文无 skip。
+
+## 修复轮第 3 回合（coder round-3 · BUG-008 高 + BUG-009 低）
+
+- 代理：**w3e-rescuer-r3**（全新实例 Rescue Coder；前任两名修复者连续零产出死亡 ⇒ 本回合按「精确到行 + 每步立即 commit」执行）。
+- 起点 HEAD `3e25a3c0f`（树净）。改动面**严格限定**在写锁内：`key-browser/KeyWorkbenchDialogs.tsx`、
+  `key-browser/RedisWorkbench.tsx`、`ui/__tests__/{round2Probe,testerRound3Probe}.test.tsx`、本轨台账。
+- commit 链：`c70ef8c9c`（BUG-008 修法 + P1a/P1b/探针改写 + D 组 unskip）→ `cbecba255`（BUG-009 注释瘦身）→ 本门禁 commit。
+
+### R3R-C BUG-008 修法（唯一期望终态：不一致态从源头消失）
+
+`KeyWorkbenchDialogs.tsx` `handleKeyCtxRename`：**先问守卫、后换键**。原序在守卫之前就
+`onUpdateSelectedKey(next)`（选中键先变成新名，`keyDetail.key` 未跟）⇒ 答 keep 时 RENAME 已生效而
+detail 仍是旧键 ⇒ 残留偏差⑥ ⇒ 此后保存用陈旧 `detail.key` 出网 ⇒ 静默写错键 + 复活已 RENAME 的旧键。
+现在选中键的改写**只由 `handleSelectKey`（`setSelectedKey` 唯一写入口）在守卫放行后完成**；
+`onUpdateSelectedKey` 这一路旁路 prop 随之删除（批量 `onUpdateSelectedKeys` 与守卫无关，保持原位）。
+
+**与简报伪码的偏差（重要，已在 BUG-008 台账详述）**：简报伪码末尾保留了一句**无条件**的
+`onUpdateSelectedKey(next)`。该句在答 keep 时**照样会执行**（`selectedKey` 是渲染期闭包值，
+`if (selectedKey === keyCtxDialog.key)` 读到的是**旧值**），会把 `selectedKey` 改成新名而 detail 留在旧键
+—— 正是 BUG-008 要消灭的偏差⑥。简报自身的原则（「答 keep ⇒ `onUpdateSelectedKey` 不执行」）要求它是
+**有条件**的；由于 `handleSelectKey` 已经承担换键，最终实现**删去该冗余调用**，语义与简报原则一致、
+与伪码字面不同。这是本回合唯一一处对简报的实质偏离，如需以伪码字面为准请协调者裁定后回退。
+
+### R3R-G 四门禁（严格串行，逐字留尾）
+
+**G1 `npx vitest run --config vitest.drivers.config.ts`** —— 基线 60 files / 563 passed / 1 skipped；
+D 组 unskip 后：
+
+```text
+ Test Files  60 passed (60)
+      Tests  564 passed (564)
+   Start at  15:59:24
+   Duration  11.70s (transform 5.06s, setup 24.00s, import 4.88s, tests 11.88s, environment 30.31s)
+```
+
+⇒ **564 passed / 0 skipped**，与预期（+1 由 skip 转正）逐位相符，无回归。
+
+**G2 `npx tsc --noEmit`**：
+
+```text
+[tsc exit: 0]
+```
+
+**G3 `npx vite build`**：
+
+```text
+dist/assets/main-Cc1kVl13.js                   1,640.68 kB │ gzip: 478.35 kB
+dist/assets/MainPage-Cg8Nygme.js               2,255.84 kB │ gzip: 661.15 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.69s
+[vite build exit: 0]
+```
+
+（chunk >500kB 为存量告警，非本回合引入。）
+
+**G4 `node scripts/check-driver-import-boundaries.mjs`**：
+
+```text
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[boundaries exit: 0]
+```
+
+⇒ 1474 files / 0 blocking / 4 advisory，与基线一致。
+
+### R3R-B BUG-009 处置（源码规模纪律）
+
+`RedisWorkbench.tsx` 实测行数：**805 → 795**（`wc -l`，≤800 ✅ 回到硬线内）。
+手法取自 BUG-009 建议 (a)：把 `:341-355` 的 15 行 BUG-007 说明性注释压缩为 6 行，守卫本体 3 行代码未动；
+根因与设计意图在 BUG-007/BUG-008 台账与 `round2Probe` 文件头各留一份，源码内不必三次重复。
+压缩后注释仍准确（该守卫现为**防御性收口**：正门已由 `handleKeyCtxRename` 的先问后改堵住）。
+
+### R3R-A 断言改写（P1a / P1b / 探针 A·B·C·D）
+
+- **P1a**（`round2Probe.test.tsx`）：由「标签=新名 / detail=旧键」改写为「**两者均为旧键**」。
+  前：`data-selected-key === 'user:renamed'` 且 `redis-header-key-name === 'user:1'`（钉住偏差⑥ 不一致态）；
+  后：`data-selected-key === 'user:1'` 且 `redis-header-key-name === 'user:1'`（钉住**不一致态不存在**），
+  草稿三件套（文本 / `data-string-dirty` / `isDraftDirty()`）与 `data-detail-state==='ready'` 原样保留。
+- **P1b**：不变式（草稿不得静默蒸发）保持，落点由「同键跨不一致态」改为「普通跨键切换」，
+  并补两条正断言（选择仍为 `user:1`、确实弹了守卫）。原 `expect.soft(... 'user:renamed')` 是在钉 BUG-008 的
+  不一致态本身，随修复反转为新语义。
+- **探针 A/B/C**：`expectDeviation6()` 由「标签=新名 / 键头=旧键」改为「两者同为 `user:1`」；
+  A/C 主体断言不变（先问、不先行重取、有界重问、一致态零询问），B 主体不变（答放弃才换到新名）。
+- **探针 D**：`describe.skip` 已取消，转为**验收断言**。因修复后答 keep 根本未改名，正确终态为
+  保存写向 `user:1`（用户所见键），断言 `target === data-selected-key === redis-header-key-name === 'user:1'`
+  且 `invokeSetString('sess-r3', 0, 'user:1', 'draft')` —— 即「写向用户看到的那个键」，BUG-008 的
+  「写向屏幕不存在的陈旧键」不再可达。
+- 断言纪律：新/改用例零英文文案字面量（`useI18n` stub 为 identity `t`，断的是 i18n key 与测试自造键名）、
+  零几何反查、无 vacuous 断言。
+
+### R3R-H 本轮修复判定
+
+- **`BUG-008` → `待复测（round-3 修复后）`**：不一致态不再产生（答 keep ⇒ 选中键与 detail 双双留旧键），
+  D 组由 skip 转正并绿；写错键路径不可达。**由全新 Tester 做第 4 轮复测裁定，本代理不自测代替。**
+- **`BUG-009` → `待复测（round-3 修复后）`**：805 → 795 行，回到 §5 硬线内；四门禁全绿。
+- 未触碰禁止面（hub.md / scripts / i18n / Rust / Cargo.* / 其他轨台账 / BUG-001~007 正文 /
+  StringEditor / TtlControls / keyReadOnlyPolicy / BatchBar / ImportExport / shared / redisInvoke /
+  console / kv-bar / meta / 宿主 src / driver-sdk）；`git status --porcelain` 收口为净。
+
