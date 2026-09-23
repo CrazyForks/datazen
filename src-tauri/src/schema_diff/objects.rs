@@ -211,6 +211,23 @@ fn unsupported_plan(
     }
 }
 
+fn order_object_operations(
+    operations: &[MigrationOperation],
+    object_scope: &str,
+    requirements: &mut Vec<PlanRequirement>,
+) -> Vec<MigrationOperation> {
+    match super::dependencies::try_resolve_dependencies(operations) {
+        Ok(ordered) => ordered,
+        Err(reason) => {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: object_scope.to_owned(),
+                reason: format!("Could not determine a safe operation order: {reason}"),
+            });
+            Vec::new()
+        }
+    }
+}
+
 /// Build a reviewed-plan-compatible migration plan for selected views.
 ///
 /// Source and target must be the same normalized dialect. The source DDL is
@@ -377,6 +394,7 @@ pub fn build_view_migration_plan_with_components(
         }
     }
 
+    let operations = order_object_operations(&operations, "view migration", &mut requirements);
     let mut statements = Vec::new();
     for operation in operations {
         let key = operation.key();
@@ -714,18 +732,8 @@ pub fn build_routine_trigger_migration_plan_with_components(
         }
     }
 
-    operations.sort_by_key(|operation| {
-        let priority = match operation {
-            MigrationOperation::CreateRoutine { .. } => 0,
-            MigrationOperation::ReplaceRoutine { .. } => 1,
-            MigrationOperation::CreateTrigger { .. } => 2,
-            MigrationOperation::ReplaceTrigger { .. } => 3,
-            MigrationOperation::DropTrigger { .. } => 4,
-            MigrationOperation::DropRoutine { .. } => 5,
-            _ => 6,
-        };
-        (priority, operation.key())
-    });
+    let operations =
+        order_object_operations(&operations, "routine/trigger migration", &mut requirements);
     let mut statements = Vec::new();
     for operation in operations {
         let key = operation.key();
@@ -963,15 +971,7 @@ pub fn build_sequence_migration_plan_with_components(
         }
     }
 
-    operations.sort_by_key(|operation| {
-        let priority = match operation {
-            MigrationOperation::CreateSequence { .. } => 0,
-            MigrationOperation::ReplaceSequence { .. } => 1,
-            MigrationOperation::DropSequence { .. } => 2,
-            _ => 3,
-        };
-        (priority, operation.key())
-    });
+    let operations = order_object_operations(&operations, "sequence migration", &mut requirements);
     let mut statements = Vec::new();
     for operation in operations {
         let key = operation.key();
@@ -1206,15 +1206,7 @@ pub fn build_type_migration_plan_with_components(
         }
     }
 
-    operations.sort_by_key(|operation| {
-        let priority = match operation {
-            MigrationOperation::CreateType { .. } => 0,
-            MigrationOperation::ReplaceType { .. } => 1,
-            MigrationOperation::DropType { .. } => 2,
-            _ => 3,
-        };
-        (priority, operation.key())
-    });
+    let operations = order_object_operations(&operations, "type migration", &mut requirements);
     let mut statements = Vec::new();
     for operation in operations {
         let key = operation.key();

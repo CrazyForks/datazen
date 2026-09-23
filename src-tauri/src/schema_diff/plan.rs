@@ -1165,15 +1165,16 @@ fn plan_single_table(
     if selected_count != operations.len() {
         warnings.push(format!("Skipped {} dependent operations on {table}; their prerequisites or replacement partners were excluded", selected_count - operations.len()));
     }
-    let count = operations.len();
-    let operations = super::dependencies::resolve_dependencies(operations);
-    if count != operations.len() {
-        requirements.push(PlanRequirement::Unsupported {
-            operation: table.into(),
-            reason: "Operation dependency cycle requires staged migration".into(),
-        });
-        return;
-    }
+    let operations = match super::dependencies::try_resolve_dependencies(&operations) {
+        Ok(operations) => operations,
+        Err(reason) => {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: table.into(),
+                reason: format!("Could not determine a safe operation order: {reason}"),
+            });
+            return;
+        }
+    };
     let Some(renderer) = driver.migration_renderer() else {
         requirements.push(super::types::PlanRequirement::Unsupported {
             operation: table.to_string(),
