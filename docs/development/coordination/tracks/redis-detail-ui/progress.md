@@ -1053,3 +1053,45 @@ BUG-001~007 正文。**文件面结论：通过。**
 （最后改动为更早的 `040e15bde`），亦属本 Tester 的禁改面（`console/`）。
 ⇒ 记为**观察项**（建议后续轨或拆分为按 group 的数据文件），**不登记为本轮 bug**：本轮未引入、未触及、且非逻辑膨胀。
 `RedisWorkbench.tsx` 795 行，重回硬线内，与其余文件（次大 `StreamEditor.tsx` 720）均合规。
+
+## R4-5 回归四门（提交态 `8ffb21abb` 起，串行、逐字留尾）
+
+**G1 · vitest drivers**（`npx vitest run --config vitest.drivers.config.ts`）：
+```
+ Test Files  60 passed (60)
+      Tests  564 passed (564)
+   Start at  16:11:21
+   Duration  11.25s (transform 5.32s, setup 22.88s, import 4.71s, tests 11.66s, environment 29.04s)
+```
+⇒ **60 files / 564 passed / 0 skipped** —— 与 Coder 自报逐位一致 ✅（≥60/564/0 skipped 期望达成；本 Tester **未新增测试文件**，
+temp 不变式探针（3 例）跑完即删，故 files 数保持 60）
+
+**G2 · `npx tsc --noEmit`**：
+```
+[tsc exit: 0]
+```
+⇒ **exit 0** ✅
+
+**G3 · `npx vite build`**：
+```
+dist/assets/main-Cc1kVl13.js                   1,640.68 kB │ gzip: 478.35 kB
+dist/assets/MainPage-Cg8Nygme.js               2,255.84 kB │ gzip: 661.15 kB
+(!) Some chunks are larger than 500 kB after minification. …
+✓ built in 4.83s
+[build exit: 0]
+```
+⇒ **exit 0 / `✓ built in 4.83s`** ✅（chunk 体积告警为项目既有基线现象，非本轮引入）
+
+**G4 · `node scripts/check-driver-import-boundaries.mjs`**：
+```
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1474 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[boundaries exit: 0]
+```
+⇒ **1474 files / 0 blocking / 4 advisory / exit 0** ✅ —— blocking 0 硬线达成，与基线一致
+
+**四门结论：全绿。** 复测期间所有变异注入均已 `git checkout HEAD --` 还原，`git status --porcelain` 为净。
