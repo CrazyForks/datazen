@@ -1,10 +1,10 @@
 - 任务: 根 `tsc --noEmit` 打通驱动 UI 类型盲区（REDIS_WORKSPACE_UX P0 R 清单第 9 项）：tsconfig 纳入 `packages/drivers/*/ui` + 清零清点出的生产类型错误
-- 状态: **READY_FOR_TEST**（三大门禁全绿、清单/修复/覆盖证据已录，等 Tester 复测）
+- 状态: **TEST_FAILED（第 1 轮，1 个 bug）**
 - 编码 commit: `c2d1c1c25` → `e507cd74c` → `b0d486347` → 本台账 commit
-- 测试 commit: —（Tester 由协调者另行指派）
-- 合并 commit: —
+- 测试 commit: `7b2731e42`（T1-T5 台账）→ `794dfac50`（BUG-003 登记）→ 本终局 commit（T6-T8 + 终判）
+- 合并 commit: —（TEST_FAILED，等 Coder 修复 BUG-003 后派新 Tester 复测）
 - 代理: driver-ui-type-gate-coder（子代理，session 见协调者登记）
-- 测试代理: —（全新实例，未复用编码代理）
+- 测试代理: driver-ui-type-gate-tester（全新实例 session-61319db9-6e5c-4f32-a35e-cad750b647dd，未复用编码代理）
 - Worktree: .worktrees/datazen-driver-ui-type-gate
 - 分支: feature/driver-ui-type-gate（基线 `feat/redis-workspace-ux` @ `1b77ce149`）
 - 心跳: 2026-09-23 11:47（全部目标完成，READY_FOR_TEST）
@@ -231,3 +231,73 @@
 - `cn` / `formatBytes` 删除与 7 处剥参在 `c2d1c1c25` diff 中逐字核对无误。
 - 行号口径：claim 行号为**基线行号**（c2d1c1c25 净 -6 行：t() 114/133/141/142/144/161/166 → 现 108/127/135/136/138/155/160；
   variant 127 → 现 121；for-of 224 → 现 218），全部对上。
+
+## T6. 变异验证矩阵 — **5 项全部闭环，无假绿**
+
+| # | 变异体 | 注入态实测（逐字） | 还原后实测 |
+|---|---|---|---|
+| M1 | `:127` `t('redis.monitor.refresh')` → `t('redis.monitor.refresh', 'Refresh')`（改回第二实参形态） | vitest 全量 **52 文件/561 测试全绿** ⇒ **变异不可感知（运行时，如实记录）**；`npx tsc --noEmit` **红**：`packages/drivers/redis/ui/observe/SearchableInfoPanel.tsx(127,57): error TS2345: Argument of type 'string' is not assignable to parameter of type 'I18nParams'.` `[exit 2]` ⇒ 本轨交付的类型门禁精准感知 | `git checkout --` 还原 → `git status` 空、tsc `[exit 0]` 绿 |
+| M2 | 同时还原两处修复（AB 态：`variant="outline"` + `[k, v]` 二元组解构） | 单跑新测试 **2 failed**，断言与 Coder 报告同类逐字吻合：`AssertionError: expected "vi.fn()" to be called 1 times, but got 2 times`（`47| expect(mockInvoke).toHaveBeenCalledTimes(1);`）与 `AssertionError: expected 'inline-flex items-center justify-cent…' to contain 'border-edge'` | — |
+| M3 | 仅 BUG-001 坏（outline，解构保持已修＝状态 A） | **1 failed**：仅 `border-edge` 断言；计数测试绿 ⇒ BUG-001 测试独立可红 | — |
+| M4 | 仅 BUG-002 坏（secondary + 二元组解构＝状态 B） | **1 failed**：仅 `toHaveBeenCalledTimes … got 2`；variant 测试绿 ⇒ BUG-002 测试独立可红 | — |
+| M5 | 两修复全还原 | **2 passed**；`git status --porcelain` 与 `git diff --stat` **双空**（字节级还原） | ✓ |
+
+- M1 风险评估：测试按契约 mock `t` 恒等（`t: (key) => key`），剥参类回归**必然**不可被 vitest 感知——防线即本轨交付的 tsc 门禁（实测 TS2345 @127,57 命中），残余风险**低**；此为「变异不可感知」的诚实记录，不作为绿灯粉饰。
+- 结论：BUG-001/BUG-002 的修复**真实有效且测试可感知**，Coder 报告的 2-failed 现场可复现。
+
+## T7. 覆盖率 — **不达标：登记 `bugs/driver-ui-type-gate-BUG-003.md`**
+
+命令（串行，Brief 口径）：`npx vitest run --config vitest.drivers.config.ts --coverage.enabled --coverage.reporter=json-summary --coverage.reporter=text`（补 `json` reporter 取行级明细）→ `[exit 0]`。
+
+`SearchableInfoPanel.tsx`：**行 35/46 = 76.08% · 分支 32/47 = 68.08% · 函数 13/15 = 86.66% · 语句 37/49 = 75.51%**
+（本轨无 80% 数值基线，不按总分判，按改动行从严判）。
+
+改动行逐行核（10 行：3, 108, 121, 127, 135, 136, 138, 155, 160, 218）：
+
+- ✅ **8/10 被执行**：:3 import、:108 placeholder、:121 variant（被 `border-edge` 断言钉住）、:127 `t()` 计数 4、
+  :136/:138 stats 常规臂、:160 infoHint、:218 解构计数 1；
+- ❌ **2/10 零执行（硬口径「改动行必须全被测到」被触犯）**：
+  - `branch@134 cond-expr [0,2] → loc#0 line 135 col 14 count 0` — search 真臂，两个测试从不向搜索框输入；
+  - `branch@153 binary-expr [4,2,0] → loc#2 line 154 col 10 count 0` — 空 section 提示终臂，测试 2 `rawInfo=''` 首项短路、
+    测试 1 fixture 恒含 1 section。
+- 未覆盖语句行全集 `21-24, 71-82, 92, 107-113`，**均非本轨改动行**（107/113 = onChange/clear 交互未测，既有缺口，不立案）。
+- ⇒ **BUG-003**（`bugs/driver-ui-type-gate-BUG-003.md`，状态 `待修复`，severity 低，含逐字证据/复现步骤/修复建议）。
+
+## T8. 台账与协议审阅
+
+- 状态行：起测 `READY_FOR_TEST` ✓；本终判翻 **`TEST_FAILED（第 1 轮，1 个 bug）`**，头部测试 commit/测试代理字段已回填。
+- 结构：T1-T8 + 逐字门禁尾 + 变异矩阵 + 覆盖数字 ✓；§2.1/§2.2/§3-§7/自验记录齐全 ✓。
+- §2.2 排除理由：**成立**（T4 抽查属实；exclude 两模式为基线既有、与宿主测试同规则豁免）✓。
+- §7 余项：#2 `redis.monitor.refresh` 键未注册、#3 42 个测试类型错误 —— 均已入账 ✓。
+- `bugs.md` 格式裁定（**观察项，不立案**）：该文件系 Coder 本轮**新建**单文件台账（基线 `1b77ce149` 不存在，`git cat-file -e` 实证），
+  2 条 bug 同文件，形式上与「一 Bug 一文件 / 不再新增单文件」相抵；**不判违规**理由：
+  (a) 两条均 `已修复`、无未关闭项——合入门禁（coordinator.md:101 计数 bugs.md）满足；
+  (b) 字段完整（严重度/状态/涉及文件/描述/重现/日志/N-check）；
+  (c) Coder 自报且修复已入 commit，不存在一 Bug 一文件所防的 Tester/修复者/复测者并发写冲突；
+  (d) 协议自身不自洽（tester.md:96 仍存「登记在 bugs.md」旧文）。
+  建议协调者后续统一口径把历史两条归一到 `bugs/` 目录（非本轨阻断项）。
+- 本轮 Tester 登记：`bugs/driver-ui-type-gate-BUG-003.md`（协议路径、一 Bug 一文件、独立 commit `794dfac50`）✓。
+
+## 偏差裁定（Deviation rulings）
+
+1. `redis.monitor.refresh` 键未注册（en.ts/zh-CN.ts 均缺）：**成立，报告不立案**——预存在（基线同缺、剥参不改行为）且 Coder 禁写 i18n；已入 §7-2 留协调者派轨。
+2. 42 个测试类型错误经 exclude 豁免：**成立**（T4 逐码 42/19 复现；exclude 基线既有；track 清点面限生产）。
+3. SearchableInfoPanel export-only、blast radius 0：**成立**（T3 机制佐证：仅 include 拉入程序，宿主无导入链）。
+4. consoleResultRenderer 实测 0（brief 预期 ×1、±1 容差）：**成立**，claim 本就报 0。
+5. 反向验证中 consoleResultRenderer 移除 include 后仍在程序：**非缺陷**——`src/extensions/generated.ts:12` 传递引入，
+   反证 claim #6，机制澄清入账 T3。
+
+## 终判（第 1 轮）
+
+**TEST_FAILED（第 1 轮，1 个 bug）** — `driver-ui-type-gate-BUG-003`（改动行 :135/:155 的 `t()` 调用在全部 561 测试下零执行，
+触犯本轨硬口径「改动行必须全被测到」）。
+
+其余验收项**全部通过**：文件面审计 ✓ · 三门禁逐字一致（tsc exit 0 / 52+561 / 0 blocking+4 advisory R3）✓ ·
+盲区证据（含 1 条机制澄清）✓ · 盘点 11 错与 42/19 逐码全中 ✓ · 零行为修复源码核对 ✓ ·
+变异矩阵 5 项闭环（M1 不可感知如实记录 + tsc 可感知）✓ · 台账结构与偏差入账 ✓。
+
+Tester 提交清单：
+
+1. `7b2731e42` `test(coordination): record round-1 tester audit, gates and inventory recheck for driver-ui-type-gate`
+2. `794dfac50` `test(coordination): register driver-ui-type-gate-BUG-003 changed-lines coverage gap`
+3. 本终局 commit `test(coordination): register bugs for driver-ui-type-gate`（T6-T8 + 偏差裁定 + 终判 + 状态行翻转）
