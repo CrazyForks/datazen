@@ -1449,6 +1449,67 @@ mod tests {
     }
 
     #[test]
+    fn tuple_columns_values_and_inclusive_endpoints_are_part_of_plan_fingerprint() {
+        let schema = datazen_driver_api::TableSchema {
+            table_name: "events".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let fingerprint = |filter: serde_json::Value| {
+            fingerprint_relations_with_filters(
+                "db",
+                Some("public"),
+                vec![(
+                    "events".into(),
+                    Some(schema.clone()),
+                    Some(serde_json::from_value(filter).unwrap()),
+                )],
+            )
+            .unwrap()
+        };
+        let base = serde_json::json!({
+            "filters": [],
+            "recordset": {"tupleRange": {
+                "columns": ["tenant_id", "id"],
+                "start": {"values": ["10", "20"], "inclusive": true},
+                "end": {"values": ["10", "99"], "inclusive": false}
+            }}
+        });
+        let changed_column = serde_json::json!({
+            "filters": [],
+            "recordset": {"tupleRange": {
+                "columns": ["tenant_id", "region"],
+                "start": {"values": ["10", "20"], "inclusive": true},
+                "end": {"values": ["10", "99"], "inclusive": false}
+            }}
+        });
+        let changed_value = serde_json::json!({
+            "filters": [],
+            "recordset": {"tupleRange": {
+                "columns": ["tenant_id", "id"],
+                "start": {"values": ["10", "21"], "inclusive": true},
+                "end": {"values": ["10", "99"], "inclusive": false}
+            }}
+        });
+        let changed_endpoint = serde_json::json!({
+            "filters": [],
+            "recordset": {"tupleRange": {
+                "columns": ["tenant_id", "id"],
+                "start": {"values": ["10", "20"], "inclusive": false},
+                "end": {"values": ["10", "99"], "inclusive": false}
+            }}
+        });
+        let base_hash = fingerprint(base);
+        assert_ne!(base_hash, fingerprint(changed_column));
+        assert_ne!(base_hash, fingerprint(changed_value));
+        assert_ne!(base_hash, fingerprint(changed_endpoint));
+    }
+
+    #[test]
     fn conflict_policy_has_a_distinct_plan_fingerprint() {
         assert_ne!(
             fingerprint_conflict_policy(ConflictPolicy::Abort),

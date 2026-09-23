@@ -4,6 +4,7 @@ mod apply;
 pub(crate) mod compare;
 mod comparison_store;
 mod exec;
+mod filter_validation;
 mod inspect;
 mod jobs;
 mod keyset_source;

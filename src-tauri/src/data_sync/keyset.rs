@@ -362,6 +362,45 @@ mod tests {
     }
 
     #[test]
+    fn tuple_filter_and_seek_share_driver_order_and_placeholder_sequence() {
+        let columns = vec!["tenant".into(), "id".into(), "value".into()];
+        let keys = vec!["tenant".into(), "id".into()];
+        let order = vec![r#""tenant" COLLATE "C""#.into(), r#""id""#.into()];
+        let filter_params = [Value::String("1".into()), Value::String("5".into())];
+        let (sql, params) = build_keyset_select_sql_with_order_and_filter(
+            "events",
+            None,
+            Some("public"),
+            "postgresql",
+            &columns,
+            &keys,
+            &order,
+            Some(&[Value::String("0".into()), Value::Integer(9)]),
+            25,
+            '"',
+            postgres_placeholder,
+            Some((
+                r#"WHERE ("tenant" COLLATE "C", "id") >= ($3::text, $4::integer)"#,
+                &filter_params,
+            )),
+        )
+        .unwrap();
+        assert!(matches!(
+            params.as_slice(),
+            [
+                Value::String(seek_tenant),
+                Value::Integer(seek_id),
+                Value::String(filter_tenant),
+                Value::String(filter_id),
+            ] if seek_tenant == "0" && *seek_id == 9 && filter_tenant == "1" && filter_id == "5"
+        ));
+        assert_eq!(
+            sql,
+            r#"SELECT "tenant", "id", "value" FROM "public"."events" WHERE ("tenant" COLLATE "C", "id") > ($1, $2) AND (("tenant" COLLATE "C", "id") >= ($3::text, $4::integer)) ORDER BY "tenant" COLLATE "C" ASC, "id" ASC LIMIT 25"#
+        );
+    }
+
+    #[test]
     fn rejects_empty_pk() {
         let err = build_keyset_select_sql(
             "t",
