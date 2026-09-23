@@ -269,7 +269,23 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
     getKeyRaw.mockResolvedValue(frame({ truncated: true, logicalLen: 6_000_000, rawB64: null }));
     editor();
     await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
-    expect(screen.getByTestId('redis-key-badge-truncated')).toBeTruthy();
+    // [tester] 徽标只断"存在"不够：它的具名文案（I-11：不许留白）此前无人钉。
+    const badge = screen.getByTestId('redis-key-badge-truncated');
+    expect(badge.getAttribute('data-i18n-key')).toBe('redis.detail.badge.truncated');
+  });
+
+  it('[tester] does NOT raise the truncation badge for an over-sentinel but complete payload', async () => {
+    // Backend truncates only above 5 MiB (`RAW_VALUE_MAX_BYTES`), while the
+    // frontend sentinel is 64 KiB — so a 100 KiB string is COMPLETE. The editor
+    // must still lock (I-5 ②), but the badge must not claim truncation.
+    getKeyRaw.mockResolvedValue(
+      frame({ logicalLen: 100_000, rawB64: 'aGVsbG8=', truncated: false }),
+    );
+    editor();
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
+    expect(screen.queryByTestId('redis-key-badge-truncated')).toBeNull();
+    // 现状缺口（BUG-006）：此时原因条仍用"载荷不完整"那枚 key，与徽标缺席自相
+    // 矛盾。正确期望见 bugs/redis-detail-ui-BUG-006.md（本轮不把错误文案钉成断言）。
   });
 
   it('prefers the byte-view reason while a byte view is active on a huge value', async () => {
