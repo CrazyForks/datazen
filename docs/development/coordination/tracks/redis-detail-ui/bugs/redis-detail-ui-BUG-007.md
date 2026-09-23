@@ -103,6 +103,7 @@ Tests  1 failed | 15 passed (16)   ← P1a/P2×2 与 dirtyLeaveCoverage 12/12 �
 | (ii) | 守卫条件改恒 `false`（`if (false)`） | **红** | P1b，同上三连红（`1 failed \| 3 passed`） |
 | (iii) | 守卫改「答 keep 也放行」（丢返回值 `await requestDraftLeave();`） | **绿（假阴性！）** | P1b **未能发现** —— 见 §3，已由本轮新探针补钉 |
 | (iv) | 删 round-1 的 `inPlace` 判定（`:365` 置 `false`） | **红** | `dirtyLeaveCoverage` 2 红：H2「refetches the selected key after a TTL apply…」+ H「a plain refetch of the already-selected key must pass I-1…」（`2 failed \| 21 passed`） |
+| (v) | 守卫**过度触发**（条件退化为 `if (key === selectedKey)`，丢掉不一致判定） | **红** | 新探针 C 组「一致态同键重点击不得吃守卫（零询问）」+ `dirtyLeaveCoverage` H2（`2 failed \| 17 passed \| 1 skipped`）⇒ 证明 C 组非空断言 |
 
 每项跑完均 `git checkout HEAD -- <file>` 还原，`git status --porcelain` 为空、`md5` 与 `git show HEAD:<file>` 逐字一致。
 
