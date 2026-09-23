@@ -919,3 +919,30 @@ dist/assets/MainPage-Cg8Nygme.js               2,255.84 kB │ gzip: 661.15 kB
   StringEditor / TtlControls / keyReadOnlyPolicy / BatchBar / ImportExport / shared / redisInvoke /
   console / kv-bar / meta / 宿主 src / driver-sdk）；`git status --porcelain` 收口为净。
 
+
+---
+
+# 第 4 轮 Tester 复测记录（round-4 · BUG-008 高 + BUG-009 低）
+
+Tester 全新实例（只测不修）· 起点 `3e25a3c0f` → 复测 HEAD `b7ef8a009`（修复轮第 3 回合，5 commit）
+· 范围：`c70ef8c9c`(BUG-008) + `cbecba255`(BUG-009) + 三笔台账 commit。
+
+## R4-1 文件面审计 ✅
+
+`git diff 3e25a3c0f..HEAD --name-status` → **恰 7 文件**，全部落在许可面：
+
+| 文件 | 增/删 | 归类 |
+| --- | --- | --- |
+| `packages/drivers/redis/ui/key-browser/KeyWorkbenchDialogs.tsx` | +6/−5 | 生产（BUG-008 修法） |
+| `packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx` | +6/−16 | 生产（BUG-008 prop 删除 + BUG-009 注释瘦身） |
+| `packages/drivers/redis/ui/__tests__/round2Probe.test.tsx` | +18/−10 | 测试（P1a/P1b 改写） |
+| `packages/drivers/redis/ui/__tests__/testerRound3Probe.test.tsx` | +40/−25 | 测试（探针 A/B/C/D + D 组 unskip） |
+| `.../bugs/redis-detail-ui-BUG-008.md` | +121/−1 | 台账 |
+| `.../bugs/redis-detail-ui-BUG-009.md` | +64/−1 | 台账 |
+| `.../progress.md` | +108/−1 | 台账 |
+
+**禁改面反向 grep ⇒ NONE**（exit 1，零命中）：
+`cargo|hub\.md|scripts/|locales|StringEditor|TtlControls|keyReadOnlyPolicy|BatchBar|ImportExport|redisInvoke|console|kv-bar|meta|packages/driver-sdk|src/|BUG-00[1-7]`
+⇒ 未触碰 Cargo.* / hub.md / scripts / i18n / StringEditor / TtlControls / keyReadOnlyPolicy / BatchBar /
+ImportExport / redisInvoke / console / kv-bar / meta / 宿主 `src/` / `packages/driver-sdk` / 其他轨台账 /
+BUG-001~007 正文。**文件面结论：通过。**
