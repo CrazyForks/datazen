@@ -1,7 +1,9 @@
 # `redis-src-split` 台账
 
 - 任务: 把 redis 驱动 crate 超 800 行的文件按职责拆分，**零行为变更**（纯机械重构 + 测试保持全绿）
-- 状态: **TEST_DONE**（第 2 轮完整复测通过；BUG-001 已复测关闭）
+- 状态: **TEST_DONE**（第 2 轮完整复测通过；BUG-001 已复测关闭；已合入集成分支 `feat/redis-workspace-ux`）
+- 测试 commit: `63f54add0`（回归测试）+ `1b9e85b85`（TEST_DONE 终判与 BUG 状态）
+- 合并 commit: `f780460e1`
 - 分支: `feature/redis-src-split`
 - Worktree: `.worktrees/datazen-redis-src-split`
 - 基线: `d049ceb4e`
