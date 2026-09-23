@@ -753,6 +753,18 @@ clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生
 差异说明：自报"21 条"含 lib/lib-test 双 profile 重复计数，按唯一位置为 20——与第 1 轮"21 条/20 位置"
 同形态，集合无差。
 
+### 阶段 3 · 红线与范围复核 —— **全部成立**
+
+| 红线 | 度量 | 判定 |
+|---|---|---|
+| `ops_workbench.rs` / `ops_workbench/tests.rs` 零增行 | `git diff --numstat 8981d3078..HEAD` 两文件 = **空输出（0 行）** | ✅ |
+| `commands_exec_dispatch.rs` 本轮零改动 | `git diff --numstat 6c69d157d..HEAD` = **空**（修复轮只动自己的文件）；其 473/480/487 三条 clippy 警告 blame 到 `49c550cda`（MONITOR 轨既有行） | ✅ |
+| `locales/` 零 diff | `git diff --numstat 8981d3078..HEAD -- src/locales packages/drivers/redis/locales` = **空** | ✅ |
+| ui 写面恰 4 文件 | `8981d3078..HEAD` 内 `packages/drivers/redis/ui/` 只有 `__tests__/treeUiBug002CountMatching.test.tsx`(+202/0) + `BatchBar.tsx`(+20/−8) + `ImportExport.tsx`(+11/−6) + `shared/redisInvoke.ts`(+16/0)；**与修复轮范围（`6c69d157d..HEAD`）完全相同** ⇒ 本轨 UI 改动全部出自 BUG-002 授权面，无顺带 | ✅ |
+| 冻结 JSON 形状零改动 | 修复轮 `progress.md` diff 中含冻结字段名的 JSON 行 **0 命中**（JSON 原文一字未动，只追加行为注记——已在 1-2 逐字核过）；`CountOutcome`/`ChildEntry`/`KeyEntry`/`KeyProbe` 结构体字段行在 `6c69d157d..HEAD` 增删 **0** | ✅ |
+| 新代码无裸 unwrap/expect | 修复轮新增行中的 `.unwrap()/.expect(` 共 6 处，**全部**在 `ops_tree_scan/tests.rs`（`#[cfg(test)]` 内，合法）；`read_dbsize` / `count_budgeted` / `list_children_page` 三个改动的生产函数体内 **0 处** | ✅ |
+
+
 
 
 
