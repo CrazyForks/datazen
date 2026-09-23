@@ -6,8 +6,8 @@ use super::apply::generate_data_sync_sql_impl;
 use super::comparison_store::{ComparisonStore, ComparisonTableMetadata};
 use super::plans::{self, SelectionMatcher, StoredSyncPlan, SyncRunRequest, SyncRunSelection};
 use crate::data_sync::{
-    execute_statements, execute_statements_with_policy, ExecutionResult, StatementExecutor,
-    SyncOptions,
+    execute_statement_batches_with_policy, execute_statements, DataSyncError, ExecutionResult,
+    StatementBatchSource, StatementExecutor, SyncOptions,
 };
 use crate::db::{ConnectionHandle, DatabaseDriver, TransactionHandle, Value};
 use async_trait::async_trait;
@@ -72,6 +72,11 @@ struct ValidatedSyncContext {
     target_driver: Arc<dyn DatabaseDriver>,
     target_handle: ConnectionHandle,
 }
+
+/// The IPC preview still returns a single JSON array, so keep that response
+/// explicitly bounded while the execution path consumes one generated page
+/// at a time.
+const SQL_PREVIEW_IPC_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 async fn validate_plan_context(
     state: &AppState,
@@ -213,32 +218,63 @@ async fn current_schema_fingerprint(
         .map_err(CommandError::Validation)
 }
 
-/// Generate SQL from a persisted comparison without reconstructing the
-/// complete ComparisonResult. Each selected page is released after SQL for
-/// that page has been produced; the returned SQL remains the public preview
-/// contract and is therefore allowed to grow with the requested preview.
-async fn generate_data_sync_sql_from_store_pages(
-    state: &AppState,
-    target_db_session_id: &str,
-    comparison: &ComparisonStore,
-    matcher: &SelectionMatcher,
-    options: &SyncOptions,
-    target_database: Option<&str>,
-    target_schema: Option<&str>,
-) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
-    let summaries = comparison.summaries().map_err(CommandError::Validation)?;
-    let mut statements = Vec::new();
-    for table in summaries
-        .iter()
-        .filter(|table| table.table.status == crate::data_sync::TableMappingStatus::Matched)
-    {
-        let mut offset = 0usize;
-        while offset < table.row_count {
-            let rows = comparison
+struct StoreSqlPageSource<'a> {
+    state: &'a AppState,
+    target_db_session_id: &'a str,
+    comparison: &'a ComparisonStore,
+    matcher: &'a SelectionMatcher,
+    options: &'a SyncOptions,
+    target_database: Option<&'a str>,
+    target_schema: Option<&'a str>,
+    summaries: Vec<ComparisonTableMetadata>,
+    table_index: usize,
+    row_offset: usize,
+}
+
+impl<'a> StoreSqlPageSource<'a> {
+    fn new(
+        state: &'a AppState,
+        target_db_session_id: &'a str,
+        comparison: &'a ComparisonStore,
+        matcher: &'a SelectionMatcher,
+        options: &'a SyncOptions,
+        target_database: Option<&'a str>,
+        target_schema: Option<&'a str>,
+    ) -> Result<Self, CommandError> {
+        let summaries = comparison.summaries().map_err(CommandError::Validation)?;
+        Ok(Self {
+            state,
+            target_db_session_id,
+            comparison,
+            matcher,
+            options,
+            target_database,
+            target_schema,
+            summaries,
+            table_index: 0,
+            row_offset: 0,
+        })
+    }
+
+    async fn next_sql_batch(
+        &mut self,
+    ) -> Result<Option<Vec<crate::data_sync::SqlStatement>>, CommandError> {
+        while self.table_index < self.summaries.len() {
+            let table = &self.summaries[self.table_index];
+            if table.table.status != crate::data_sync::TableMappingStatus::Matched
+                || self.row_offset >= table.row_count
+            {
+                self.table_index += 1;
+                self.row_offset = 0;
+                continue;
+            }
+
+            let rows = self
+                .comparison
                 .load_table_page(
                     &table.table.source_table,
                     &table.table.target_table,
-                    offset,
+                    self.row_offset,
                     plans::SYNC_COMPARISON_STREAM_PAGE_SIZE,
                 )
                 .map_err(CommandError::Validation)?;
@@ -247,26 +283,78 @@ async fn generate_data_sync_sql_from_store_pages(
                     "comparison page did not advance while generating SQL".into(),
                 ));
             }
-            offset = offset.saturating_add(rows.len());
-            let Some(table_page) = plans::selected_table_page(table, rows, matcher, options)
-                .map_err(CommandError::Validation)?
+            self.row_offset = self.row_offset.saturating_add(rows.len());
+            let Some(table_page) =
+                plans::selected_table_page(table, rows, self.matcher, self.options)
+                    .map_err(CommandError::Validation)?
             else {
                 continue;
             };
-            statements.extend(
-                generate_data_sync_sql_impl(
-                    state,
-                    target_db_session_id.to_string(),
-                    vec![table_page],
-                    options.clone(),
-                    target_database.map(str::to_string),
-                    target_schema.map(str::to_string),
-                )
-                .await?,
-            );
+            let statements = generate_data_sync_sql_impl(
+                self.state,
+                self.target_db_session_id.to_string(),
+                vec![table_page],
+                self.options.clone(),
+                self.target_database.map(str::to_string),
+                self.target_schema.map(str::to_string),
+            )
+            .await?;
+            if !statements.is_empty() {
+                return Ok(Some(statements));
+            }
+        }
+        Ok(None)
+    }
+}
+
+#[async_trait]
+impl StatementBatchSource for StoreSqlPageSource<'_> {
+    async fn next_batch(
+        &mut self,
+    ) -> Result<Option<Vec<crate::data_sync::SqlStatement>>, DataSyncError> {
+        self.next_sql_batch()
+            .await
+            .map_err(|error| DataSyncError::validation(error.to_string()))
+    }
+}
+
+/// SQL preview is still one IPC array, so reject it as soon as its serialized
+/// response would exceed the documented cap. Execution uses the same page
+/// source directly and never accumulates this preview vector.
+async fn generate_bounded_data_sync_sql_preview(
+    mut source: StoreSqlPageSource<'_>,
+) -> Result<Vec<crate::data_sync::SqlStatement>, CommandError> {
+    let mut statements = Vec::new();
+    let mut response_bytes = 2usize; // JSON array brackets
+    while let Some(batch) = source.next_sql_batch().await? {
+        for statement in batch {
+            append_bounded_preview_statement(&mut statements, &mut response_bytes, statement)?;
         }
     }
     Ok(statements)
+}
+
+fn append_bounded_preview_statement(
+    statements: &mut Vec<crate::data_sync::SqlStatement>,
+    response_bytes: &mut usize,
+    statement: crate::data_sync::SqlStatement,
+) -> Result<(), CommandError> {
+    let statement_bytes = serde_json::to_vec(&statement)
+        .map_err(|error| CommandError::Validation(error.to_string()))?
+        .len();
+    let separator_bytes = usize::from(!statements.is_empty());
+    let next_size = response_bytes
+        .saturating_add(separator_bytes)
+        .saturating_add(statement_bytes);
+    if next_size > SQL_PREVIEW_IPC_MAX_BYTES {
+        return Err(CommandError::Validation(format!(
+            "Data Sync SQL preview exceeds the {} MiB IPC limit; select fewer rows or operations",
+            SQL_PREVIEW_IPC_MAX_BYTES / (1024 * 1024)
+        )));
+    }
+    *response_bytes = next_size;
+    statements.push(statement);
+    Ok(())
 }
 
 fn validate_requested_options(
@@ -303,7 +391,7 @@ pub(crate) async fn generate_data_sync_sql_for_plan_impl(
     let matcher = plans::validate_selection_streaming(&plan.comparison, &selection, &options)
         .map_err(CommandError::Validation)?;
     let _context = validate_plan_context(state, &plan).await?;
-    generate_data_sync_sql_from_store_pages(
+    generate_bounded_data_sync_sql_preview(StoreSqlPageSource::new(
         state,
         &plan.target_db_session_id,
         &plan.comparison,
@@ -311,7 +399,7 @@ pub(crate) async fn generate_data_sync_sql_for_plan_impl(
         &options,
         Some(&plan.target_database),
         plan.target_schema.as_deref(),
-    )
+    )?)
     .await
 }
 
@@ -336,7 +424,7 @@ pub(crate) async fn execute_data_sync_plan_impl(
             .map_err(CommandError::Validation)?;
     let context = validate_plan_context(state, &plan).await?;
     let conflict_policy = request.options.conflict_policy;
-    let statements = generate_data_sync_sql_from_store_pages(
+    let mut source = StoreSqlPageSource::new(
         state,
         &plan.target_db_session_id,
         &plan.comparison,
@@ -344,9 +432,11 @@ pub(crate) async fn execute_data_sync_plan_impl(
         &request.options,
         Some(&plan.target_database),
         plan.target_schema.as_deref(),
-    )
-    .await?;
-    if statements.is_empty() {
+    )?;
+    let first_batch = source.next_sql_batch().await?.ok_or_else(|| {
+        CommandError::Validation("change set is empty; nothing to execute".into())
+    })?;
+    if first_batch.is_empty() {
         return Err(CommandError::Validation(
             "change set is empty; nothing to execute".into(),
         ));
@@ -370,10 +460,15 @@ pub(crate) async fn execute_data_sync_plan_impl(
         Some(id) => Some(super::jobs::ensure_job(id).await),
         None => None,
     };
-    let result =
-        execute_statements_with_policy(&statements, &mut executor, cancelled, conflict_policy)
-            .await
-            .map_err(CommandError::from);
+    let result = execute_statement_batches_with_policy(
+        first_batch,
+        &mut source,
+        &mut executor,
+        cancelled,
+        conflict_policy,
+    )
+    .await
+    .map_err(CommandError::from);
     if let Some(id) = request.job_id.as_deref() {
         super::jobs::remove_job(id).await;
     }
@@ -423,16 +518,15 @@ pub(crate) async fn execute_data_sync_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::sync::plans::{
-        SelectionMatcher, SyncRunSelection, SyncSelectionMode, SyncTableSelection,
-    };
+    use crate::commands::sync::plans::{SyncRunSelection, SyncSelectionMode, SyncTableSelection};
+    use crate::data_sync::execute::RecordingExecutor;
     use crate::data_sync::{
         ChangeOperation, ComparisonResult, ConflictPolicy, RowChange, TableResult,
     };
     use crate::testing::app_state::TestAppState;
 
     #[tokio::test]
-    async fn test_tester_streaming_sql_generation_preserves_cross_page_order_and_policy() {
+    async fn execution_streams_a_plan_larger_than_64_mib_in_order_without_full_load() {
         let test = TestAppState::with_tables().await;
         test.save_and_connect("sync-stream-target").await;
         let target_db_session_id = test.connect_config("sync-stream-target").await;
@@ -445,7 +539,7 @@ mod tests {
             vec![
                 Some(Value::Integer(0)),
                 Some(Value::String("x".repeat(
-                    super::super::comparison_store::COMPARISON_MEMORY_LIMIT + 1,
+                    super::super::comparison_store::COMPARISON_FULL_LOAD_LIMIT as usize + 1,
                 ))),
             ],
             &options,
@@ -498,8 +592,9 @@ mod tests {
                 excluded_rows: Vec::new(),
             }],
         };
-        let matcher = SelectionMatcher::new(&selection, &options).expect("selection should match");
-        let statements = generate_data_sync_sql_from_store_pages(
+        let matcher = plans::validate_selection_streaming(&comparison, &selection, &options)
+            .expect("selection should match the persisted comparison");
+        let mut source = StoreSqlPageSource::new(
             &test.state,
             &target_db_session_id,
             &comparison,
@@ -508,40 +603,75 @@ mod tests {
             Some("app"),
             None,
         )
-        .await
-        .expect("streamed SQL should generate");
+        .expect("stream source should initialize");
+        let first_batch = source
+            .next_sql_batch()
+            .await
+            .expect("first bounded page should generate")
+            .expect("first page should have statements");
 
-        assert_eq!(
-            statements.len(),
-            plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 1
-        );
+        assert_eq!(first_batch.len(), plans::SYNC_COMPARISON_STREAM_PAGE_SIZE);
         assert!(matches!(
-            statements
+            first_batch
                 .first()
                 .map(|statement| statement.row_key.as_slice()),
             Some([Value::Integer(0)])
         ));
-        assert!(matches!(
-            statements.last().map(|statement| statement.operation),
-            Some(ChangeOperation::Update)
-        ));
-        assert!(matches!(
-            statements.last().map(|statement| statement.row_key.as_slice()),
-            Some([Value::Integer(key)])
-                if *key == plans::SYNC_COMPARISON_STREAM_PAGE_SIZE as i64
-        ));
         assert_eq!(
-            statements
+            first_batch
                 .last()
                 .map(|statement| statement.parameters.len()),
             Some(2),
             "force policy must omit optimistic target-row predicates"
         );
+
+        let mut executor = RecordingExecutor::default();
+        let result = execute_statement_batches_with_policy(
+            first_batch,
+            &mut source,
+            &mut executor,
+            None,
+            ConflictPolicy::Force,
+        )
+        .await
+        .expect("streamed statements should execute");
+
+        assert_eq!(result.applied, plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 1);
+        assert!(!result.rolled_back);
+        assert_eq!(
+            executor.calls.len(),
+            plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 3
+        );
+        assert!(executor.calls[1].contains("INSERT"));
+        assert!(executor.calls[plans::SYNC_COMPARISON_STREAM_PAGE_SIZE].contains("INSERT"));
+        assert!(executor.calls[plans::SYNC_COMPARISON_STREAM_PAGE_SIZE + 1].contains("UPDATE"));
+        assert_eq!(executor.calls.last().map(String::as_str), Some("commit"));
         assert_eq!(comparison.full_load_calls(), 0);
         assert_eq!(
             test.mock.get_schema_calls(),
             2,
             "501 rows must be generated as two independently bounded pages"
         );
+    }
+
+    #[test]
+    fn sql_preview_rejects_a_statement_that_exceeds_the_ipc_bound() {
+        let statement = crate::data_sync::SqlStatement {
+            table: "users".into(),
+            operation: ChangeOperation::Insert,
+            sql: "INSERT INTO users VALUES (?)".into(),
+            preview_sql: "INSERT INTO users VALUES (?)".into(),
+            parameters: vec![Value::String("x".repeat(SQL_PREVIEW_IPC_MAX_BYTES + 1))],
+            row_key: vec![Value::Integer(1)],
+        };
+        let mut statements = Vec::new();
+        let mut response_bytes = 2;
+        let error =
+            append_bounded_preview_statement(&mut statements, &mut response_bytes, statement)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("16 MiB IPC limit"));
+        assert!(error.to_string().contains("select fewer rows"));
+        assert!(statements.is_empty());
     }
 }
