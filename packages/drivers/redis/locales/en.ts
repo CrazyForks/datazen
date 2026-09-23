@@ -501,6 +501,10 @@ const locale = {
   'redis.tree.empty.interrupted': 'Scan stopped — showing the {loaded} keys found so far',
   'redis.tree.empty.noPermission': 'This account cannot read the key space (ACL)',
   'redis.tree.navHint': '↑↓ move · →← fold · ⌘A select all · ⌘R refresh · Esc clear',
+  // BUG-001: the R2 pattern is applied to the rows already loaded. A folder whose
+  // own scan has not finished still holds keys the filter never saw, so its
+  // `(n+)` badge says the remainder is unfiltered instead of implying it was cut.
+  'redis.tree.filterUnloaded': '· rest unfiltered',
 } as const;
 
 export default locale;

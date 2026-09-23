@@ -57,18 +57,33 @@ export function KeyTreePane({
   onCreateKey,
   onRefresh,
 }: KeyTreePaneProps) {
-  const { tree: treeState, treeRows, emptyState, mode, separator, setMode, setSeparator } = view;
-  const loadedKeys = scan.keys.map((entry) => entry.key);
+  const {
+    tree: treeState,
+    treeRows,
+    visibleKeys,
+    emptyState,
+    mode,
+    separator,
+    setMode,
+    setSeparator,
+  } = view;
+  /*
+   * BUG-001 single source: the counter in R1, 「全选已加载」 and the folder
+   * checkbox cascade all read `view.visibleKeys` — the applied pattern's
+   * surviving key set — instead of `scan.keys`. They used to read the unfiltered
+   * flat list while the column painted unfiltered rows, which is how the tree
+   * could show 2 rows, report "0 loaded" and offer a select-all over nothing.
+   */
   const isKeyMode = search.searchMode === 'key';
 
-  const selectAllLoaded = () => selection.selectMany(loadedKeys);
+  const selectAllLoaded = () => selection.selectMany(visibleKeys);
 
   return (
     <>
       <KeyTreeHeader
         searchMode={search.searchMode}
         onSearchModeChange={search.setSearchMode}
-        loadedCount={scan.keys.length}
+        loadedCount={visibleKeys.length}
         totalCount={totalCount}
         scanning={scan.cursor !== 0}
         selectedCount={selection.selectionCount}
@@ -84,6 +99,13 @@ export function KeyTreePane({
           pattern={scan.searchPattern}
           onPatternChange={scan.setSearchPattern}
           onApply={() => search.applySearch(scan.searchPattern, fuzzy)}
+          onClearFilter={() => {
+            scan.setSearchPattern('');
+            // `''` resolves to `*` (toScanPattern), i.e. "no filter": the scan
+            // and the tree are re-run unfiltered, which is what makes the cleared
+            // row's exit observable rather than cosmetic.
+            search.applySearch('', fuzzy);
+          }}
           fuzzy={fuzzy}
           onFuzzyChange={onFuzzyChange}
           noTtlOnly={scan.noTtlOnly}
@@ -102,7 +124,7 @@ export function KeyTreePane({
       <KeyTreeColumn
         searchMode={search.searchMode}
         treeRows={treeRows}
-        allKeys={loadedKeys}
+        allKeys={visibleKeys}
         expandedFolders={treeState.expanded}
         onToggleFolder={treeState.toggleFolder}
         selectedKey={detail.selectedKey}
@@ -117,7 +139,14 @@ export function KeyTreePane({
         onLoadMore={scan.loadMore}
         separator={separator}
         emptyState={emptyState}
-        pattern={scan.searchPattern}
+        /*
+         * The pattern the empty state has to quote is the one that actually cut
+         * the rows (`view.filterPattern`), not necessarily what the input still
+         * shows: typing a pattern and then clearing the box must not produce a
+         * `no-match` message about an empty pattern.
+         */
+        pattern={view.filterPattern}
+        filterActive={view.filterActive}
         onSelectAllLoaded={selectAllLoaded}
         onRefresh={onRefresh}
         onClearSelection={selection.clearSelection}

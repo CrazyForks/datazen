@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KeyEntry } from '@datazen/driver-sdk';
 import { buildFlatTreeRows, buildServerTreeRows } from './keyTree';
-import { resolveTreeEmptyState, type TreeEmptyState } from './treeEmptyState';
+import {
+  countSelectableRows,
+  filterKeysByPattern,
+  filterTreeRowsByPattern,
+} from './keyTreeFilter';
+import {
+  isGlobalPattern,
+  resolveTreeEmptyState,
+  type TreeEmptyState,
+} from './treeEmptyState';
 import {
   readTreePrefs,
   treePrefsBucket,
@@ -74,7 +83,19 @@ export interface UseKeyTreeViewOptions {
   connectionId?: string;
   /* ── the flat `scan_keys` list, i.e. what `list` mode shows ─────────────── */
   loadedKeys: KeyEntry[];
+  /**
+   * What the search row currently holds (typed, maybe unapplied). Only the
+   * *filter detection* of I-11 reads it — an unapplied input cannot make rows
+   * disappear, so it must not be blamed for them either.
+   */
   pattern: string;
+  /**
+   * The pattern the current scan belongs to (D-2 / redis-tree-ui-BUG-001). This
+   * is the one that narrows the tree: it becomes the root `list_children` prefix
+   * (via `useKeyTree`) *and* the client-side glob filter over the loaded rows
+   * (via `keyTreeFilter`), and it re-keys the tree when it changes.
+   */
+  appliedPattern: string;
   loading: boolean;
   /** Scan cursor of the flat list still open. */
   scanOpen: boolean;
@@ -84,7 +105,9 @@ export interface UseKeyTreeViewOptions {
  * Composition of the two halves above: preferences → server-driven levels →
  * rows → named empty state. One call site, because the separator has to reach
  * both the `list_children` request *and* the row fold, and a second one anywhere
- * else is how the UI ends up claiming a `.` tree over a `:` scan.
+ * else is how the UI ends up claiming a `.` tree over a `:` scan. The same goes
+ * for the applied pattern: it reaches the request, the row filter and the reset
+ * trigger from here, so "what is on screen" has exactly one owner.
  */
 export function useKeyTreeView({
   connectionId,
@@ -95,37 +118,83 @@ export function useKeyTreeView({
   keyType,
   loadedKeys,
   pattern,
+  appliedPattern,
   loading,
   scanOpen,
 }: UseKeyTreeViewOptions) {
   const prefs = useTreePreferences({ connectionId, dbSessionId });
-  const tree = useKeyTree({ dbSessionId, dbIndex, enabled, noTtlOnly, keyType, separator: prefs.separator });
+  const tree = useKeyTree({
+    dbSessionId,
+    dbIndex,
+    enabled,
+    noTtlOnly,
+    keyType,
+    separator: prefs.separator,
+    appliedPattern,
+  });
 
   /*
    * The separator is not a client-side cosmetic: switching it re-fetches the
    * server levels (see `useKeyTree`), so `treeRows` keys off it here rather than
    * post-processing a `:`-built tree. `list` turns namespace folding off entirely,
    * which is the escape hatch for keys whose names contain the separator.
+   *
+   * The applied pattern then narrows whatever the fold produced (BUG-001): a
+   * folder survives on its own glob match, a surviving deep row pulls its
+   * non-matching ancestors back as breadcrumbs, and nothing matched ⇒ zero rows
+   * — which is exactly what makes I-11's `no-match` reachable in the default
+   * view. `list` mode shows the flat `scan_keys` output, which the *server*
+   * already cut with the same pattern, so it is never filtered a second time.
    */
   const treeRows = useMemo(() => {
     if (prefs.view === 'list') return buildFlatTreeRows(loadedKeys);
-    return buildServerTreeRows(tree.levels, tree.expanded, prefs.separator);
-  }, [prefs.view, prefs.separator, tree.levels, tree.expanded, loadedKeys]);
+    return filterTreeRowsByPattern(
+      buildServerTreeRows(tree.levels, tree.expanded, prefs.separator),
+      appliedPattern,
+    );
+  }, [prefs.view, prefs.separator, tree.levels, tree.expanded, loadedKeys, appliedPattern]);
 
   const scanning = tree.scanning || scanOpen;
+
+  /*
+   * Single source of truth for "which keys are on screen" (BUG-001). R1's
+   * counter, 「全选已加载」, the folder-checkbox cascade and I-11's `{loaded}`
+   * all read {@link visibleKeys}, so they can no longer disagree with the column
+   * about what the applied pattern kept — that contradiction pair is the bug.
+   *
+   *  - tree mode: the loaded key names cut by the same client-side glob that cut
+   *    the rows, so a *collapsed* matching folder still cascades over its whole
+   *    (matching) subtree, exactly as it did unfiltered;
+   *  - list mode: `scan_keys` already applied the pattern server-side, so the
+   *    names are used as they are — filtering twice would let two glob
+   *    implementations vote on one list.
+   */
+  const visibleKeys = useMemo(() => {
+    const loaded = loadedKeys.map((entry) => entry.key);
+    return prefs.view === 'list' ? loaded : filterKeysByPattern(loaded, appliedPattern);
+  }, [prefs.view, loadedKeys, appliedPattern]);
+
+  /*
+   * Which pattern the named empty state is allowed to blame. An *applied*
+   * pattern owns the verdict; the typed-but-unapplied input only counts while
+   * nothing narrower is in force (it is what the search row shows the user, and
+   * `resolveTreeEmptyState` must keep saying `no-match` for it).
+   */
+  const filterPattern = isGlobalPattern(appliedPattern) ? pattern : appliedPattern;
 
   const emptyState: TreeEmptyState | null = useMemo(
     () =>
       resolveTreeEmptyState({
-        rowCount: treeRows.length,
+        // Path breadcrumbs are decoration, not rows.
+        rowCount: countSelectableRows(treeRows),
         loading,
         rootError: tree.rootError,
         scanning,
-        pattern,
+        pattern: filterPattern,
         keyType,
         noTtlOnly,
       }),
-    [treeRows.length, loading, tree.rootError, scanning, pattern, keyType, noTtlOnly],
+    [treeRows, loading, tree.rootError, scanning, filterPattern, keyType, noTtlOnly],
   );
 
   return {
@@ -135,6 +204,11 @@ export function useKeyTreeView({
     setMode: prefs.setView,
     setSeparator: prefs.setSeparator,
     treeRows,
+    visibleKeys,
+    appliedPattern,
+    filterPattern,
+    /** A filter is in force ⇒ an unfiltered `(n+)` remainder must say so. */
+    filterActive: !isGlobalPattern(filterPattern),
     emptyState,
     scanning,
   };

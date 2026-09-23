@@ -23,6 +23,7 @@ import { useI18n } from '@datazen/ui';
 import { cn } from '@datazen/ui';
 import type { KeyTreeRow } from './keyTree';
 import { keyUnderFolder } from './keyTree';
+import { countSelectableRows, isBreadcrumbRow } from './keyTreeFilter';
 import { TREE_EMPTY_STATE_KEYS, type TreeEmptyState } from './treeEmptyState';
 import {
   ROW_HEIGHT,
@@ -63,7 +64,12 @@ const EMPTY_ICON: Record<TreeEmptyState, typeof Search> = {
 
 export interface KeyTreeListProps {
   treeRows: KeyTreeRow[];
-  /** All loaded key names — used for prefix cascade on folder checkboxes. */
+  /**
+   * The keys **visible** under the applied pattern (BUG-001 single source, owned
+   * by `useKeyTreeView`): the prefix cascade on folder checkboxes and R1's
+   * `{loaded}` both read this, so no surface can select or count a key the
+   * pattern rejected.
+   */
   allKeys: string[];
   expandedFolders: Set<string>;
   onToggleFolder: (path: string) => void;
@@ -83,6 +89,12 @@ export interface KeyTreeListProps {
   emptyState: TreeEmptyState | null;
   /** Pattern quoted back by the `no-match` state. */
   pattern: string;
+  /**
+   * A pattern is *applied* (not blank / `*`), so a folder whose level scan is
+   * still open must admit that part of its `(n+)` remainder is unfiltered
+   * (D-2 / BUG-001; the wording is `redis.tree.filterUnloaded`).
+   */
+  filterActive: boolean;
   /** I-9 chords the tree owns: select-all-loaded / refresh / leave selection. */
   onSelectAllLoaded: () => void;
   onRefresh: () => void;
@@ -117,18 +129,27 @@ export function KeyTreeList({
   separator,
   emptyState,
   pattern,
+  filterActive,
   onSelectAllLoaded,
   onRefresh,
   onClearSelection,
 }: KeyTreeListProps) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowCount = treeRows.length;
+  /*
+   * `paintedRows` is the grid the virtualizer and the sticky stack lay out over;
+   * `rowCount` is what `data-row-count`, R1's counter and every selection surface
+   * agree on (BUG-001 single source). They differ exactly by the breadcrumb rows
+   * the pattern filter back-fills as path context: painted, but not rows — not
+   * clickable, not checkable, not navigable (see `keyTreeFilter.ts`).
+   */
+  const paintedRows = treeRows.length;
+  const rowCount = countSelectableRows(treeRows);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeIndex, setActiveIndex] = useState(-1);
 
   const virtualizer = useVirtualizer({
-    count: rowCount + (hasMore ? 1 : 0),
+    count: paintedRows + (hasMore ? 1 : 0),
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 20,
@@ -136,12 +157,33 @@ export function KeyTreeList({
 
   const handleScroll = (e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop);
 
-  // Folder checkboxes select every key under the prefix from the full loaded
-  // key set, so collapsed (unexpanded) folders are selectable too.
+  /** Rows a keyboard user can land on: everything a breadcrumb is not. */
+  const isNavigable = (index: number): boolean => {
+    const row = treeRows[index];
+    return !!row && !isBreadcrumbRow(row);
+  };
+
+  /**
+   * One navigation step, skipping breadcrumbs. The clamp is `nextActiveIndex`'s
+   * (a step past either end stays put — I-9's exit rule), so a breadcrumb sitting
+   * between two real rows is passed through and never stopped on.
+   */
+  const stepActiveIndex = (from: number, direction: 1 | -1): number => {
+    const target = nextActiveIndex(from, direction, paintedRows);
+    let index = target;
+    while (index >= 0 && index < paintedRows && !isNavigable(index)) index += direction;
+    // Every row in that direction is a breadcrumb ⇒ stay on the current one.
+    if (index < 0 || index >= paintedRows) return target;
+    return index;
+  };
+
+  // Folder checkboxes select every key under the prefix from the *visible* key
+  // set (D-2 / BUG-001), so collapsed (unexpanded) folders are selectable too and
+  // a filter can never select a key the pattern rejected.
   const folderSelection = useMemo(() => {
     const map = new Map<string, { keys: string[]; all: boolean }>();
     for (const row of treeRows) {
-      if (row.kind !== 'folder') continue;
+      if (row.kind !== 'folder' || isBreadcrumbRow(row)) continue;
       const keys = allKeys.filter((k) => keyUnderFolder(k, row.path, separator));
       const all = keys.length > 0 && keys.every((k) => selectedKeys.has(k));
       map.set(row.path, { keys, all });
@@ -150,15 +192,23 @@ export function KeyTreeList({
   }, [treeRows, allKeys, selectedKeys, separator]);
 
   const sticky = useMemo(
-    () => stickyFolderChain(treeRows, firstVisibleIndex(scrollTop, rowCount)),
-    [treeRows, scrollTop, rowCount],
+    () => stickyFolderChain(treeRows, firstVisibleIndex(scrollTop, paintedRows)),
+    [treeRows, scrollTop, paintedRows],
   );
 
-  /** `(n)` for a complete level, `(n+)` while its scan is still open (I-4). */
-  const countLabel = (count: number, partial: boolean | undefined) =>
-    partial
-      ? t('redis.tree.folderPartial').replace('{count}', String(count))
-      : String(count);
+  /**
+   * `(n)` for a complete level, `(n+)` while its scan is still open (I-4). Under an
+   * applied pattern the `+` also carries the unloaded-tail hint: a level whose scan
+   * has not finished holds keys the client-side filter never saw, so the visible
+   * subset cannot be presented as the whole remainder (D-2 known limitation /
+   * redis-tree-ui-BUG-001). Only `level.partial` (⇒ `level.done === false`) adds
+   * it — a drained level is fully filtered and needs no caveat.
+   */
+  const countLabel = (count: number, partial: boolean | undefined) => {
+    if (!partial) return String(count);
+    const shown = t('redis.tree.folderPartial').replace('{count}', String(count));
+    return filterActive ? `${shown} ${t('redis.tree.filterUnloaded')}` : shown;
+  };
 
   /** Keep the active row inside the viewport by arithmetic on the row grid. */
   const revealRow = (index: number) => {
@@ -177,6 +227,10 @@ export function KeyTreeList({
    * and ↓ on the last stay put instead of flinging the viewport to the other end
    * of a 10k-key tree. Exit: `←` on a root row and `Esc` both leave selection
    * mode (`Esc` clears the checks, which is the visible half of the exit).
+   *
+   * Navigation runs over the painted grid but only ever *lands* on a real row:
+   * a pattern breadcrumb is path context, so `↑/↓` pass through it
+   * (`stepActiveIndex`) and no intent can select, toggle or delete it.
    */
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = treeNavAction(e);
@@ -196,17 +250,17 @@ export function KeyTreeList({
       return;
     }
     if (rowCount === 0) return;
-    const from = activeIndex < 0 ? -1 : Math.min(activeIndex, rowCount - 1);
-    const row = from >= 0 ? treeRows[from] : undefined;
+    const from = activeIndex < 0 ? -1 : Math.min(activeIndex, paintedRows - 1);
+    const row = from >= 0 && isNavigable(from) ? treeRows[from] : undefined;
 
     if (action === 'next' || action === 'previous') {
-      const next = nextActiveIndex(from, action === 'next' ? 1 : -1, rowCount);
+      const next = stepActiveIndex(from, action === 'next' ? 1 : -1);
       setActiveIndex(next);
       revealRow(next);
       return;
     }
     if (from < 0 || !row) {
-      const first = nextActiveIndex(-1, 1, rowCount);
+      const first = stepActiveIndex(-1, 1);
       setActiveIndex(first);
       revealRow(first);
       return;
@@ -215,8 +269,10 @@ export function KeyTreeList({
       if (row.kind === 'folder') {
         if (!expandedFolders.has(row.path)) onToggleFolder(row.path);
         else {
-          const child = firstChildIndex(treeRows, from);
-          if (child >= 0) {
+          let child = firstChildIndex(treeRows, from);
+          // Step into the subtree, past any breadcrumb the filter back-filled.
+          while (child >= 0 && child < paintedRows && !isNavigable(child)) child += 1;
+          if (child >= 0 && child < paintedRows) {
             setActiveIndex(child);
             revealRow(child);
           }
@@ -274,14 +330,17 @@ export function KeyTreeList({
                   role="button"
                   tabIndex={-1}
                   className={cn(
-                    'absolute left-0 flex w-full cursor-pointer items-center gap-1.5 border-b border-edge bg-surface pr-3 hover:bg-accent/5',
+                    'absolute left-0 flex w-full items-center gap-1.5 border-b border-edge bg-surface pr-3',
+                    // A filter breadcrumb stays decoration even while pinned.
+                    isBreadcrumbRow(row) ? 'opacity-70' : 'cursor-pointer hover:bg-accent/5',
                   )}
                   style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT, paddingLeft: rowIndent(row.depth) }}
-                  onClick={() => onToggleFolder(row.path)}
+                  onClick={isBreadcrumbRow(row) ? undefined : () => onToggleFolder(row.path)}
                   data-testid={`redis-tree-sticky-folder-${row.path}`}
                   data-sticky-depth={row.depth}
                   data-sticky-order={i}
                   data-partial={row.partial === true ? 'true' : 'false'}
+                  data-breadcrumb={isBreadcrumbRow(row) ? 'true' : 'false'}
                 >
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
                   <FolderOpen className="h-4 w-4 shrink-0 text-warning" />
@@ -298,7 +357,7 @@ export function KeyTreeList({
         )}
 
         {virtualizer.getVirtualItems().map((vRow) => {
-          if (vRow.index >= rowCount) {
+          if (vRow.index >= paintedRows) {
             return (
               <div
                 key="load-more"
@@ -327,10 +386,50 @@ export function KeyTreeList({
           const indent = rowIndent(row.depth);
 
           if (row.kind === 'folder') {
+            /*
+             * Breadcrumb arm (D-2 / BUG-001): the folder does not match the
+             * pattern itself — it is painted only so a surviving deeper row keeps
+             * its path. It therefore has no checkbox, no delete, no expansion
+             * click, and the renderer marks it (`data-breadcrumb`) so tests never
+             * have to guess from styling.
+             */
+            const breadcrumb = isBreadcrumbRow(row);
             const open = expandedFolders.has(row.path);
             const sel = folderSelection.get(row.path);
             const descendants = sel?.keys ?? [];
             const allChecked = sel?.all ?? false;
+            if (breadcrumb) {
+              return (
+                <div
+                  key={`crumb:${row.path}`}
+                  aria-hidden="true"
+                  className={cn(
+                    'absolute left-0 flex w-full items-center gap-1.5 border-b border-edge pr-3 opacity-70',
+                    vRow.index % 2 === 0 ? 'bg-surface' : 'bg-surface-raised/40',
+                  )}
+                  style={{ top: vRow.start, height: ROW_HEIGHT, paddingLeft: indent }}
+                  data-testid={`redis-tree-folder-${row.path}`}
+                  data-row-index={vRow.index}
+                  data-row-kind="folder"
+                  data-row-path={row.path}
+                  data-depth={row.depth}
+                  data-indent={indent}
+                  data-expanded={open ? 'true' : 'false'}
+                  data-active="false"
+                  data-breadcrumb="true"
+                >
+                  {open ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                  )}
+                  <Folder className="h-4 w-4 shrink-0 text-warning" />
+                  <span className="truncate font-mono text-xs font-medium text-fg-muted">
+                    {row.label}
+                  </span>
+                </div>
+              );
+            }
             return (
               <div
                 key={`folder:${row.path}`}
@@ -350,6 +449,7 @@ export function KeyTreeList({
                 data-indent={indent}
                 data-expanded={open ? 'true' : 'false'}
                 data-active={vRow.index === activeIndex ? 'true' : 'false'}
+                data-breadcrumb="false"
               >
                 <span
                   className="flex shrink-0 items-center justify-center"

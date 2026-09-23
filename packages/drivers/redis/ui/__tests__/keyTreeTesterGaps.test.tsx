@@ -239,15 +239,21 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     await waitFor(() => expect(childCalls().some((call) => call.opts.sep === '.')).toBe(true));
   });
 
-  it('pins today\'s split-brain: filtered scan + unfiltered rows (green, characterization)', async () => {
-    // This case asserts the *current* behaviour on purpose — it is the measurement
-    // behind BUG-001, and it is the one that must turn red (and be re-written to
-    // the filtered expectation) when the defect is fixed. Keeping it green today
-    // is what proves the skipped case above is not asking for something impossible:
-    // both halves of the contradiction are real and simultaneous.
+  it('keeps every filter surface on one side of the same fact (characterization, rewritten)', async () => {
+    // Rewritten by coder round-1 from the split-brain characterization it replaces
+    // (Tester kept it green to prove the contradiction was real; the fix makes it
+    // red, so it becomes the *consistency* assertion instead of being deleted).
+    // The four surfaces BUG-001 had at odds — R1's counter, the painted rows,
+    // the named empty state and 「全选已加载」 — must now agree about the visible
+    // set, in both directions of the filter transition.
     renderWorkbench();
     const tree = await screen.findByTestId('redis-key-tree');
     await screen.findByTestId('redis-tree-folder-app:');
+    const count = screen.getByTestId('redis-tree-count');
+
+    // Pre-condition: no filter ⇒ the counter and the rows agree on 2 visible keys.
+    await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('2'));
+    expect(tree.getAttribute('data-row-count')).toBe('2');
 
     const input = screen.getByTestId('redis-search-input');
     fireEvent.change(input, { target: { value: 'zzz' } });
@@ -255,18 +261,35 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
 
     // The flat `scan_keys` set really is empty after the pattern applies …
     await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('zzz'));
-    await waitFor(() => expect(screen.getByTestId('redis-tree-count').getAttribute('data-loaded')).toBe('0'));
-    // … while the tree column still paints both pre-filter rows …
-    expect(tree.getAttribute('data-row-count')).toBe('2');
+    await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('0'));
+    // … and the tree column now says the same thing instead of painting the
+    // pre-filter rows …
+    await waitFor(() => expect(tree.getAttribute('data-row-count')).toBe('0'));
+    // … so the named empty state is finally reachable …
+    const empty = await screen.findByTestId('redis-tree-empty');
+    expect(empty.getAttribute('data-empty-state')).toBe('no-match');
+    // … and 「全选已加载」 is disabled over an empty visible set rather than
+    // selecting an off-screen one.
+    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
+
+    // Exit transition: `Esc` clears input *and* filter — the tree repopulates.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    await waitFor(() => expect(tree.getAttribute('data-row-count')).toBe('2'));
+    await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('2'));
     expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
-    // … and `select all loaded` therefore selects nothing the user can see.
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true),
+      expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false),
     );
   });
 
-  it.skip('FIXME(redis-tree-ui-BUG-001): applying a pattern narrows the rendered tree rows', async () => {
+  it('FIXME(redis-tree-ui-BUG-001): applying a pattern narrows the rendered tree rows', async () => {
+    // Un-skipped by coder round-1. The fix is two-halved, per the coordinator's
+    // pure-client ruling (`list_children` keeps its contract): the applied pattern
+    // is routed into the root request as a *prefix* (`zzz` ⇒ scan `zzz*`), and it
+    // filters the loaded rows client-side in `keyTreeFilter.ts`.
     // Measured un-skipped on ef0d62d94 (this file: 2 failed / 5; the quote below is
     // the line vitest printed for this case):
     //   AssertionError: expected '2' to be '0'   // redis-key-tree[data-row-count]

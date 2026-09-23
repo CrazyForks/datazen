@@ -96,6 +96,12 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
      * D-3 + D-8 in a single owner: the R3 separator has to reach both the
      * `list_children` request and the row fold (two places, one value), and the
      * four named empty states (I-11) are derived from the same rows.
+     *
+     * BUG-001: the pattern joins them, as the **applied** one (`scan.appliedPattern`
+     * — the pattern the current scan belongs to), never the merely typed
+     * `searchPattern`. That is the difference between a decoration and a filter:
+     * it becomes the root `list_children` prefix, the client-side glob over the
+     * loaded rows, and a tree-reset trigger.
      */
     const treeView = useKeyTreeView({
       connectionId,
@@ -106,6 +112,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       keyType: scan.keyTypeFilter,
       loadedKeys: scan.keys,
       pattern: scan.searchPattern,
+      appliedPattern: scan.appliedPattern,
       loading: scan.keysLoading,
       scanOpen: scan.cursor !== 0,
     });

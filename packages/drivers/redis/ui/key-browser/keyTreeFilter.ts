@@ -62,14 +62,14 @@ export function globMatchesName(name: string, pattern: string): boolean {
   return re.test(name);
 }
 
-/** The identity a pattern is matched against for one row. */
+/**
+ * The identity a pattern is matched against, chosen by `row.kind` — the single
+ * place allowed to reach for `path` vs `entry.key`. Forking on whether some field
+ * is *present* instead would mis-handle a child-level leaf row, whose `entry.key`
+ * is absolute while a folder's `path` carries its trailing separator.
+ */
 function rowMatchTarget(row: KeyTreeRow): string {
   return row.kind === 'folder' ? row.path : row.entry.key;
-}
-
-/** A folder the server says is empty, at any depth — never painted. */
-function isEmptyFolder(row: KeyTreeRow): boolean {
-  return row.kind === 'folder' && row.count === 0;
 }
 
 /**
@@ -111,9 +111,10 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
     const row = rows[i]!;
     while (stack.length > row.depth) stack.pop();
     const isFolder = row.kind === 'folder';
+    // The fork is on `row.kind`, never on a field being present (`rowMatchTarget`).
     const match = isFolder
-      ? re.test(row.path) && row.count > 0
-      : re.test(row.entry.key);
+      ? re.test(rowMatchTarget(row)) && row.count > 0
+      : re.test(rowMatchTarget(row));
     matched[i] = match;
     if (match) for (const ancestor of stack) needed[ancestor] = true;
     if (isFolder) {

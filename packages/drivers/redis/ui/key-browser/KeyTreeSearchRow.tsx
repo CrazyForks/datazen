@@ -23,6 +23,14 @@ export interface KeyTreeSearchRowProps {
   onPatternChange: (pattern: string) => void;
   /** `Enter` / search button — resolves the pattern and restarts the scan. */
   onApply: () => void;
+  /**
+   * `Esc` — the row's exit transition: clear the input **and** the applied
+   * filter (redis-tree-ui-BUG-001). The pattern now owns the tree rows, so
+   * clearing only the text would leave the tree filtered by a pattern nothing on
+   * screen mentions; a cleared filter has to take effect the same way `Enter`
+   * does.
+   */
+  onClearFilter: () => void;
   fuzzy: boolean;
   onFuzzyChange: (fuzzy: boolean) => void;
   noTtlOnly: boolean;
@@ -37,6 +45,7 @@ export function KeyTreeSearchRow({
   pattern,
   onPatternChange,
   onApply,
+  onClearFilter,
   fuzzy,
   onFuzzyChange,
   noTtlOnly,
@@ -56,7 +65,7 @@ export function KeyTreeSearchRow({
           onChange={(e) => onPatternChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onApply();
-            if (e.key === 'Escape') onPatternChange('');
+            if (e.key === 'Escape') onClearFilter();
           }}
           placeholder={scope === 'key' ? t('redis.searchKeys') : t('redis.search.valuePlaceholder')}
           className="h-7 pl-7 text-xs"

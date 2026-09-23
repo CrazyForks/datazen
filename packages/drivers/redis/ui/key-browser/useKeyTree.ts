@@ -15,6 +15,39 @@ import {
 
 const PAGE_SIZE = 500;
 
+/**
+ * The `list_children` prefix the root request should send for an applied R2
+ * pattern (redis-tree-ui-BUG-001, the routing half of the fix).
+ *
+ * `list_children` has no pattern argument (its options are `sep` / `noTtlOnly` /
+ * `keyType`, and a Rust-side contract change is outside this track), but it does
+ * scan `{prefix}*` — so the *literal head* of the glob can be handed to the
+ * server as a prefix and narrows the level the tree walks instead of pretending:
+ *
+ *  - blank / `*` (no filter, or a pattern that opens with a star) ⇒ `''`, the
+ *    whole keyspace;
+ *  - `app:*` / `app:user:*` ⇒ the literal head, kept whole because it already
+ *    ends at a separator (`app:`);
+ *  - a head that stops inside a segment (`app:us*`) ⇒ cut back to the last
+ *    separator, since a prefix that is not a namespace boundary would pull in
+ *    siblings the pattern excludes;
+ *  - no separator at all (`zzz`) ⇒ the literal itself, i.e. scan `zzz*`.
+ *
+ * This is only a *server-side* narrowing: `keyTreeFilter.ts` still decides what
+ * is visible, so an over-broad prefix can never show a key the pattern rejected.
+ */
+export function patternToTreePrefix(pattern: string, sep: string): string {
+  const trimmed = pattern.trim();
+  if (!trimmed || trimmed === '*') return '';
+  const star = trimmed.indexOf('*');
+  const head = star === -1 ? trimmed : trimmed.slice(0, star);
+  if (!head) return '';
+  if (sep && head.endsWith(sep)) return head;
+  const lastSep = head.lastIndexOf(sep);
+  if (sep && lastSep >= 0) return head.slice(0, lastSep + sep.length);
+  return head;
+}
+
 export interface UseKeyTreeOptions {
   dbSessionId: string;
   dbIndex: number;
@@ -28,6 +61,14 @@ export interface UseKeyTreeOptions {
    * prefixes belong to one separator, so switching means a new tree.
    */
   separator?: string;
+  /**
+   * The R2 pattern **as applied** (D-2 / redis-tree-ui-BUG-001). Two effects: its
+   * literal head becomes the root `list_children` prefix (see
+   * {@link patternToTreePrefix}), and it joins the reset triggers — the levels a
+   * `zzz*` scan filled do not belong to the tree an `app:*` scan describes.
+   * The key-level filtering itself happens in `keyTreeFilter.ts`.
+   */
+  appliedPattern?: string;
 }
 
 /**
@@ -48,6 +89,7 @@ export function useKeyTree({
   noTtlOnly = false,
   keyType = 'all',
   separator,
+  appliedPattern = '',
 }: UseKeyTreeOptions) {
   const [levels, setLevels] = useState<Record<string, TreeLevel>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>());
@@ -60,6 +102,13 @@ export function useKeyTree({
   const reqSeq = useRef<Record<string, number>>({});
 
   const sep = separator && separator.length > 0 ? separator : DEFAULT_SEPARATOR;
+  /*
+   * What the *root* request asks the server for (BUG-001 routing half). The
+   * level keeps its state key `''` — that is what the row fold and the expand
+   * bookkeeping address — only the request is narrowed: `zzz` ⇒ scan `zzz*`,
+   * `app:*` ⇒ scan `app:*`, `*` / blank ⇒ scan `*` as before.
+   */
+  const rootPrefix = patternToTreePrefix(appliedPattern, sep);
 
   const writeLevel = useCallback((prefix: string, next: TreeLevel) => {
     levelsRef.current = { ...levelsRef.current, [prefix]: next };
@@ -71,6 +120,8 @@ export function useKeyTree({
       const seq = (reqSeq.current[prefix] ?? 0) + 1;
       reqSeq.current[prefix] = seq;
       const isRoot = prefix === '';
+      // The root level's *state key* stays `''`; only the request narrows.
+      const requestPrefix = isRoot ? rootPrefix : prefix;
       if (isRoot) setRootLoading(true);
       const before = levelsRef.current[prefix] ?? EMPTY_LEVEL;
       const started = beginFetch(before, mode);
@@ -79,7 +130,7 @@ export function useKeyTree({
         const result = await invokeListChildren(
           dbSessionId,
           dbIndex,
-          prefix,
+          requestPrefix,
           fetchCursorFor(before, mode),
           PAGE_SIZE,
           { sep, noTtlOnly, keyType },
@@ -93,14 +144,15 @@ export function useKeyTree({
         if (isRoot && reqSeq.current[prefix] === seq) setRootLoading(false);
       }
     },
-    [dbSessionId, dbIndex, noTtlOnly, keyType, sep, writeLevel],
+    [dbSessionId, dbIndex, noTtlOnly, keyType, sep, rootPrefix, writeLevel],
   );
 
   /**
    * Start over: this is a *different* tree (db switch, filter change, separator
-   * change), not a refresh. Still re-fetches every open prefix, because a folder
-   * left expanded has to be filled again — otherwise it renders as expanded and
-   * empty (I-4's "collapse and re-expand shows the same rows" needs it too).
+   * change, newly applied pattern), not a refresh. Still re-fetches every open
+   * prefix, because a folder left expanded has to be filled again — otherwise it
+   * renders as expanded and empty (I-4's "collapse and re-expand shows the same
+   * rows" needs it too).
    */
   const loadRoot = useCallback(() => {
     reqSeq.current = {};
@@ -115,8 +167,8 @@ export function useKeyTree({
   useEffect(() => {
     if (!enabled) return;
     loadRoot();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on db / filter / separator changes
-  }, [enabled, dbSessionId, dbIndex, noTtlOnly, keyType, sep]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on db / filter / separator / applied-pattern changes
+  }, [enabled, dbSessionId, dbIndex, noTtlOnly, keyType, sep, appliedPattern]);
 
   /** Expand or collapse a folder. Collapsing keeps the level (I-4). */
   const toggleFolder = useCallback(

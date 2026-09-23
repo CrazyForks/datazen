@@ -42,6 +42,11 @@ export interface KeyTreeColumnProps {
   separator: string;
   emptyState: TreeEmptyState | null;
   pattern: string;
+  /**
+   * A pattern is applied (D-2 / BUG-001): a folder whose scan is still open has
+   * to say that part of its `(n+)` remainder was never filtered.
+   */
+  filterActive: boolean;
   /** I-9 chords that are not row-local: `⌘A`, `⌘R`, `Esc`. */
   onSelectAllLoaded: () => void;
   onRefresh: () => void;
@@ -70,6 +75,7 @@ export function KeyTreeColumn({
   separator,
   emptyState,
   pattern,
+  filterActive,
   onSelectAllLoaded,
   onRefresh,
   onClearSelection,
@@ -105,6 +111,7 @@ export function KeyTreeColumn({
       separator={separator}
       emptyState={emptyState}
       pattern={pattern}
+      filterActive={filterActive}
       onSelectAllLoaded={onSelectAllLoaded}
       onRefresh={onRefresh}
       onClearSelection={onClearSelection}
