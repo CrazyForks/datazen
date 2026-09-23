@@ -1,6 +1,6 @@
 # redis-src-split-BUG-001 · `ops_tree_scan::meta_slots` 在拆分后失去根路径可达性（公开面集合减少 1 项）
 
-- **状态**：**待复测**（修复轮第 1 回合已修，commit `5f78065cb`，待第 2 轮 Tester 复测）
+- **状态**：**已修复**（第 2 轮 Tester 完整复测通过）
 - **严重度**：中（`pub mod` 层级可达路径丢失 —— 对外/对 crate 的路径契约变化；当前**无编译期破坏**，因本 crate 内暂无调用方，但属**真实公开面收缩**，违反本轨「零行为变更/公开面集合相等」的硬要求；合流后若 `main` 侧有任何 `crate::ops_tree_scan::meta_slots` 引用即编译失败）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例）· 2026-09-23
 - **登记依据**：第 1 轮验收**步骤 3「公开面集合相等」** —— `ops_tree_scan` 公开面 **20 → 19**，缺失 `meta_slots`
@@ -154,3 +154,13 @@ pub use meta::meta_slots;
   2. 公开面脚本 ⇒ `ops_tree_scan` **20 vs 20**，`missing: none / extra: none`；
   3. `git diff 197434dc4..5f78065cb -- packages/drivers/redis/src/ops_tree_scan/mod.rs` ⇒ **仅 +1 行**；
   4. 确认 `ops_tree_scan/meta.rs` 与拆分 commit 相比**逐字节未变**（`git diff 197434dc4..HEAD -- .../meta.rs` 空）。
+
+## 复测记录（round-2）
+
+- **Tester**：全新独立实例；日期：2026-09-23。
+- **修复版本**：当前测试基线 `6361a65db` 已包含修复 commit `5f78065cb`。
+- **正向路径**：新增 `test_tester_meta_slots_preserve_legacy_root_path` 通过（1 passed），在编译和运行时分别访问 `crate::ops_tree_scan::meta_slots::{TYPE, TTL, MEMORY}`，并与 `meta::meta_slots` 的定义值比较。
+- **反向敏感性**：临时从 `ops_tree_scan/mod.rs` 移除唯一的 `pub use meta::meta_slots;` 后重跑同一测试，编译以 `E0433: could not find meta_slots in ops_tree_scan` 失败；源文件随后逐字节恢复。
+- **公开面集合**：基线/current 根转发逐名比较为 `ops_tree_scan` **20/20**，无缺失、无多余；内存模拟移除该 re-export 后恰好缺少 `meta_slots`。
+- **完整复验**：`cargo test -p datazen-driver-redis` 通过，lib `343 passed; 0 failed; 4 ignored`，集成目标 `4/0/5`、`4/0/0`、`4/0/0`；BUG-001 不再复现。
+- **终判**：BUG-001 已修复并关闭。

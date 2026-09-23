@@ -1,7 +1,7 @@
 # `redis-src-split` 台账
 
 - 任务: 把 redis 驱动 crate 超 800 行的文件按职责拆分，**零行为变更**（纯机械重构 + 测试保持全绿）
-- 状态: **FIXED_PENDING_RETEST**（修复轮第 1 回合：BUG-001 已修 + ERR-01/ERR-02 已更正；待第 2 轮 Tester 复测）
+- 状态: **TEST_DONE**（第 2 轮完整复测通过；BUG-001 已复测关闭）
 - 分支: `feature/redis-src-split`
 - Worktree: `.worktrees/datazen-redis-src-split`
 - 基线: `d049ceb4e`
@@ -1109,4 +1109,39 @@ fmt 残差恰为基线 2 条、最大文件 787、`tsc` 0 —— 与 Coder 自�
 
 本轮功能核心为 `ops_tree_scan` / `ops_workbench`，均高于 80% 目标。`ops`、`connect`、`ops_stream` 是同轨机械拆分的相邻现有实现，覆盖率低于 80%；它们的函数体与基线逐体一致，拆分测试行也逐体一致，说明该覆盖缺口并非本轮逻辑变更引入。本轮记录该现状，不为未改逻辑扩写大批网络命令用例。逐文件结果保存在 `/tmp/dz-redis-src-split-r2-full-cov-summary.json`（临时产物，不入库）。
 
-覆盖率目标按本功能核心模块判定：通过；其他三组现存低覆盖模块作为明确的后续测试强度观察项。行为变异探针与旧路径判据敏感性验证待完成。
+覆盖率目标按本功能核心模块判定：通过；其他三组现存低覆盖模块作为明确的后续测试强度观察项。行为变异探针与旧路径判据敏感性验证见阶段 C.2。
+
+### 阶段 C.2：行为变异与公开边界敏感性
+
+在临时变异后串行运行既有测试，并逐字节恢复源文件：
+
+| 探针 | 变异 | 实测 |
+|---|---|---|
+| TS-01 | `ops/ttl.rs` 将 EXPIRE 秒数 `+1` | lib 全套仍 343/0/4；未感知，确认是基线既有覆盖空洞 |
+| 2 | `ops_tree_scan/budget.rs` 把开放游标满页标成 `truncated` | 指定 page-cost 测试失败，感知 |
+| TS-02 | 删除 `read_dbsize` 对负 DBSIZE 的 `n >= 0` 守卫 | lib 全套仍 343/0/4；未感知，确认是基线既有覆盖空洞 |
+| 4 | DBSIZE 被拒绝时降级值 `0 → 1` | 指定 dbsize-degradation 测试失败，感知 |
+| 5 | stream ID 接受多于一个 `-` | 指定 stream parser 测试失败，感知 |
+| 6 | `meta_slots::MEMORY` 常量 `2 → 3` | 指定 meta parser 测试失败，感知 |
+
+四个可感知探针都在对应主题测试中报红；TS-01/TS-02 与第一轮结果相同，属于函数体逐字不变的既有覆盖空洞，未作为本轨新 Bug。所有临时变异在 `finally` 路径恢复，SHA-256 与原文件相同。
+
+**BUG-001 正反向探针：**旧根路径回归测试正向 **1/1** 通过；临时去掉 `pub use meta::meta_slots;` 后，目标测试编译报 `E0433: could not find meta_slots in ops_tree_scan`，恢复后全套通过。公开面集合逐名独立复算：`ops` 38/38、`connect` 12/12、`ops_tree_scan` 20/20、`ops_workbench` 35/35、`ops_stream` 23/23；均无缺失/多余。移除 re-export 的模拟判据只缺 `meta_slots`，证明审计对 BUG-001 敏感。
+
+**ERR-01 / ERR-02 独立复算：**私有→`pub(crate)` 放宽共 **57** 项，分组为 `ops` 9、`connect` 25、`ops_tree_scan` 6、`ops_workbench` 10、`ops_stream` 7；当前新增声明中另有 10 项本来已是 `pub(crate)`，未误计为放宽。8 组输出文件行数逐一核对与 §2 更正值相符；其中 `ops_tree_scan/mod.rs` 当前 **107 行**（拆分 commit 的 106 行加 BUG-001 re-export），其他 ERR-02 更正项为 202/172/165/147/140/105/95。Tester 新增根路径回归测试后 `ops_tree_scan/tests.rs` 当前 285 行（拆分时 269 行）。源码树无 >800 行文件，最大仍为 `commands.rs` 787 行；`commandMeta.ts` 仍 873 行且未触碰。
+
+### 阶段 C.3：E2E 与 R 阶段回归登记
+
+本轨没有 UI 逻辑改动；驱动 E2E 按项目规则登记为合流后 R 阶段项，本轮未启动桌面 E2E 或外部 Redis 集群：
+
+| 用例 | 位置 | 前置条件 | 状态 |
+|---|---|---|---|
+| Standalone Redis 工作区旅程：Items 搜索/类型筛选/树浏览、详情与 TTL、Console、Monitor、Pub/Sub | `packages/drivers/redis/e2e/redis.ts` | `E2E_REDIS_*` 可达及 setup-demo-data 种子 | **留待 R 回归** |
+| Cluster / Sentinel 拓扑连接旅程 | `packages/drivers/redis/e2e/redis-topology.ts` | 分别提供 `E2E_REDIS_CLUSTER_NODES`、Sentinel nodes/master；可选基础设施 | **留待 R 回归** |
+| Rust 根路径编译契约与本轨全部 lib/集成套件 | 本台账 BUG-001 round-2 记录、`cargo test -p datazen-driver-redis` | 无外部服务 | **本轮已通过** |
+
+### 阶段 D：Tester 第 2 轮终判 — **TEST_DONE**
+
+最终在所有探针源文件已还原后串行执行 `CARGO_TARGET_DIR=/tmp/dz-redis-src-split-r2 cargo test -p datazen-driver-redis`：lib **343 passed / 0 failed / 4 ignored**；集成目标依次 **4 passed / 5 ignored**、**4 passed**、**4 passed**，0-test target 正常；进程退出码 0。新增根路径测试代码提交为 `63f54add0`。`npx --no-install tsc --noEmit` 通过；`cargo fmt --check -p datazen-driver-redis` 仅报基线已有的 `ops_observe.rs:280` 和 `:569` 两处漂移。LLVM 覆盖率：本功能核心 `ops_tree_scan` **95.0%**、`ops_workbench` **85.5%**；相邻机械拆分的 `ops`/`connect`/`ops_stream` 现有覆盖分别 **49.1%/42.9%/47.7%**，因无逻辑改动和函数体逐字一致，作为非阻断测试强度观察记录。
+
+BUG-001 已按本轮复测证据改为 **已修复**；`bugs/README.md` 登记第 2 轮无新增 Bug；旧兼容文件 `bugs.md` 保持只读。Cargo.lock 仍只有启动时预存的 `+ "flate2"` 变更，未暂存或提交。除该预存改动外，最终 worktree 仅有已提交的 Tester 代码/台账变更。
