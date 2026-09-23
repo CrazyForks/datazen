@@ -698,3 +698,52 @@ $ npx tsc --noEmit
 **步骤 4 结论：5/5 门禁 PASS，全部与 Coder 自报数字逐位一致。**
 **注意：BUG-001（`meta_slots` 根路径丢失）在本步门禁下不可见** —— 因 crate 内暂无调用方，
 `342/0/4` 仍全绿。这正是「公开面集合相等」必须作为**独立**判据的原因。
+
+### 步骤 5 — 行为等价抽查（变异探针，共 6 处）
+
+方法：在**拆分后的新文件**里改一处逻辑 → `CARGO_TARGET_DIR=/tmp/dz-split-tester cargo test -p datazen-driver-redis --lib`
+→ 必须变红并指出红在哪条测试 → `git checkout HEAD -- <file>` 还原 → 验 `git status --porcelain` 净 → 复跑确认回绿。
+
+**探针有效性前置验证**（防止「改了没编译进去」的假阴性）：先 `touch` 目标文件确认 cargo 确实 `Compiling`，
+再注入一处**语法错误**确认测试目标会编译失败 —— 两次都对，故下列「全绿」结论均为**真阴性**而非构建未生效。
+
+| # | 新文件 | 变异 | 结果 | 红的测试 |
+|---|---|---|---|---|
+| 1 | `ops/ttl.rs:21` | `apply_ttl_command` 的 `Expire` 分支：`secs as i64` → `secs as i64 + 1` | **全绿（未感知）** | — |
+| 2 | `ops_tree_scan/budget.rs:82` | `truncated: !(exhausted \|\| page_filled)` → `truncated: !exhausted` | **红（感知）** | `ops_tree_scan::tests::page_cost::a_full_page_with_an_open_cursor_is_pagination_not_truncation` |
+| 3 | `ops_tree_scan/budget.rs:120` | `read_dbsize` 的 `Some(n) if n >= 0` → `Some(n)`（去掉负数守卫） | **全绿（未感知）** | — |
+| 4 | `ops_tree_scan/budget.rs:133` | `read_dbsize` 的 `Err` 分支返回值 `0` → `1`（BUG-003 降级契约） | **红（感知，4 条）** | `dbsize_degradation::read_dbsize_never_fails_and_reports_zero_when_refused`、`dbsize_degradation::scan_keys_succeeds_when_dbsize_is_refused`、`dbsize_degradation::count_star_verifies_with_a_scan_when_dbsize_is_refused`、`dbsize_degradation::list_children_succeeds_with_own_attributes_when_dbsize_is_refused` |
+| 5 | `ops_stream/parse.rs:217` | `parse_stream_id` 的 `parts.len() != 2` → `parts.len() < 2` | **红（感知）** | `ops_stream::tests::test_tester_parse_stream_id_multiple_dashes` |
+| 6 | `ops_tree_scan/meta.rs:41` | `meta_slots::MEMORY` 常量 `2` → `3` | **红（感知，2 条）** | `ops_tree_scan::tests::batch_shapes::parse_meta_group_tells_absent_apart_from_unreadable`、`ops_tree_scan::tests::page_coverage::test_tester_scan_keys_page_with_memory_reports_bytes_and_falls_back_to_length` |
+
+**关键正向结论（证明拆分后的测试确实还压在那些代码上）**：
+`ops_tree_scan/tests/*`（本轮被拆成 8 个子模块）、`ops_stream/parse.rs`（本轮被拆出）、
+`ops_tree_scan/{budget,meta}.rs`（本轮被拆出）**都仍被 lib 测试目标编译并真实覆盖** ——
+探针 2/4/5/6 四条都精准红在**对应主题**的测试上，说明 `mod tests;` + `use super::*;` 的
+子模块化没有把测试变成「不再编译进测试目标的角落」。**拆分未削弱测试强度，这部分 PASS。**
+
+**如实登记的测试强度缺陷（探针 1 / 探针 3，注入不可感知）**：
+
+| 缺陷 | 位置 | 事实 | 判断 |
+|---|---|---|---|
+| TS-01 | `ops/ttl.rs:20-24`（`apply_ttl_command` 的 `TtlCommand::Expire` 分支） | 把发给 redis 的 `EXPIRE` 秒数整体 `+1`，**342 条 lib 测试全绿** | 该**网络发送分支**无测试覆盖 |
+| TS-02 | `ops_tree_scan/budget.rs:119-127`（`read_dbsize` 的 `Ok` 分支负数守卫） | 去掉 `n >= 0` 守卫，**342 条 lib 测试全绿** | `Ok` 分支的**负数回复**路径无测试覆盖 |
+
+**为什么 TS-01 / TS-02 不作为 `bugs/` 里的功能缺陷登记**（判据说明，避免误记）：
+两者都是**基线既有**的覆盖空洞，**不是本次拆分引入的** —— 探针打在**新文件里的原函数体**上，
+而这些函数体在步骤 2 已证**逐字来自基线**（未改一行）。拆分的验收判据是「零行为变更 /
+公开面集合相等 / 门禁数字逐位不变」，覆盖空洞不改变任何一项。
+但任务书明确要求「**如实登记为测试强度缺陷（不要当作无害）**」，故在此**逐条登记为 TS-01/TS-02**，
+并建议下一轮补测：
+- TS-01：给 `apply_ttl_command` 加一个 scripted-connection 单测，断言 `Expire(60)` 发出的命令是
+  `EXPIRE key 60`（现成的 `ShortReplyConn` 类 double 已可复用，见 `ops_workbench/tests/contract_helpers.rs`）；
+- TS-02：给 `read_dbsize` 补一条「DBSIZE 回 `Int(-1)` / 非法 bulk」的用例，断言返回 `0` 且不 panic。
+
+**探针 6 的额外价值**：它证明 `meta_slots` 的**取值**是有覆盖的（改常量即红），
+从而把 BUG-001 精确定位为**纯路径可见性缺陷**（值对、路径丢），而非「常量搬丢了」。
+
+**还原与洁净验证**：6 次探针全部 `git checkout HEAD -- <file>` 还原；
+`git status --porcelain` 仅剩既有 `Cargo.lock` 漂移；`grep -rn "_ZZ_PROBE|zz_syntax_probe"` 无残留；
+还原后复跑 `test result: ok. 342 passed; 0 failed; 4 ignored` —— **回绿确认**。
+
+**步骤 5 结论：4/6 探针感知（拆分后测试强度完好），2 处如实登记为覆盖空洞 TS-01/TS-02。**
