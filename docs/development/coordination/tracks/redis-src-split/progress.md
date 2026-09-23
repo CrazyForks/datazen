@@ -579,3 +579,51 @@ key_passphrase: None, insecure_skip_verify: false }` 一致）。归一化掉该
   非新增逻辑。
 
 **步骤 2 结论：PASS（8/8 文件行行有归属，303 个函数体逐字保留，无夹带代码）。**
+
+### 步骤 3 — 公开面集合相等（合流硬保证）
+
+脚本：`/tmp/dz-prov/pubname_final.py`（名字集合）+ `pubv3.py`（brace 配平的结构化对照）。
+口径按任务书：顶层 `pub fn/struct/enum/const/static/type/trait/mod` + `pub use` 转发，**名字集合**。
+
+| 原文件 | BASE 公开名 | HEAD 根可达名 | 缺失 | 多余 | 判定 |
+|---|---|---|---|---|---|
+| `src/ops.rs` | **38** | **38** | none | none | **PASS** |
+| `src/connect.rs` | **12** | **12** | none | none | **PASS** |
+| `src/ops_tree_scan.rs` | **20** | **19** | **`meta_slots`** | none | **FAIL → BUG-001** |
+| `src/ops_workbench.rs` | **35** | **35** | none | none | **PASS** |
+| `src/ops_stream.rs` | **23** | **23** | none | none | **PASS** |
+
+- `ops.rs` 38==38、`connect.rs` 12==12、`ops_stream.rs` 23==23：**集合完全相等**，与 Coder 自报一致。
+- `ops_workbench.rs` 35==35：**Coder 自报的「33→35 含 2 个嵌套 `pub mod`」解释成立** ——
+  BASE 顶层 `pub` **33 项 + 2 个内联 `pub mod`（`key_info_slots`/`memory_sample_slots`）** = 35 个公开名；
+  HEAD 由 35 条 `pub use` 逐一透出（含 :116 `pub use memory_sample::memory_sample_slots;`、
+  :138 `pub use shapes::key_info_slots;`），**35==35 无缺无溢**。Coder 的算术无误。
+- `ops_tree_scan.rs` **20→19**：Coder 自报「19==19」**口径不全** —— 19 只数了顶层 `pub` **项**，
+  漏掉了同在该文件**顶层**（brace 深度 0，已验证）的 `pub mod meta_slots`。
+
+**BUG-001 已登记**（`bugs/redis-src-split-BUG-001.md`）。关键证据：
+
+```
+$ grep -n "meta_slots" packages/drivers/redis/src/ops_tree_scan/mod.rs
+（无输出 —— 19 条 pub use 里没有 meta_slots）
+
+探针 A（在 mod.rs 追加 `const _ZZ_PROBE_meta_slots_root: usize = crate::ops_tree_scan::meta_slots::TYPE;`）
+  error[E0433]: failed to resolve: could not find `meta_slots` in `ops_tree_scan`
+探针 B（同一探针 + 先补一行 `pub use meta::meta_slots;`）
+  （编译通过，仅剩命名风格 warning）
+```
+
+⇒ 缺陷恰为**少一行 `pub use meta::meta_slots;`**；`meta_slots` 本体与 3 个常量已逐字在
+`ops_tree_scan/meta.rs:35-42`（步骤 2 已证），故修复不触碰任何函数体。
+**同类不对称**：另外 2 个嵌套 `pub mod` 都被显式 `pub use` 透出，唯 `meta_slots` 漏 —— 属遗漏。
+
+**结构性新增 `pub mod`（`ops.rs` 11 个 / `connect.rs` 8 个 / `ops_stream.rs` 5 个）**：
+这些是拆分自带的**新增路径**（`crate::ops::hash` 等），**纯增量、不遮蔽任何旧名**，且旧名经
+`pub use` 全部原样可达。任务书允许「新增 `pub use` 转发」，此处新增的是 `pub mod` + `pub use`，
+判定为**合规的结构性增量，非缺陷**（已逐名核验：BASE 名集合 ⊂ HEAD 根可达名集合，无 `missing`）。
+
+**再导出点解析验证**：`lib.rs` 的 `pub use connect::{build_connection_plan, ConnectionPlan,
+RedisLiveConn, TlsPlan, Topology};`（:35）与 `pub use ops::{set_settings_allow_flush,
+settings_allow_flush};`（:36）—— 5+2 个名字**全部**出现在步骤 4 的 `cargo check` 通过结果中（编译即证）。
+
+**步骤 3 结论：4/5 PASS，`ops_tree_scan.rs` FAIL → BUG-001（已登记）。**
