@@ -31,6 +31,7 @@
 | redis-console-safety | Console 危险命令分类改 fail-closed（PRD §4 I-7） | READY_FOR_TEST | 2068d36a8（rescuer 接管补齐；前任零编码 commit，工作区遗留已验收提交） | 2068d36a8（与编码同 commit，含 3 个新测试文件） | — |
 | redis-kv-contract | KV 契约加宽（F-2.1 标量 getter/setter）+ 反向动作通道 + AI KV 上下文注入（PRD §3.4 / §4 I-1、I-6） | READY_FOR_TEST | `499a90da1`（§1.1）+ `7bfb71f99`（§1.2）+ `9c5bd8208`（§1.3，接管轮补齐接线） | 随各编码 commit（`kvSlotState.test.ts` 46 例 / `useKvSlotActions.test.tsx` 15 例 / `kvAiContext.test.ts` 10 例 + `ContentToolbar.test.tsx` §1.3 4 例 + `ContentViewDrawers.test.tsx` §1.3 3 例 + `AiChatPanel.test.tsx` §1.3 3 例） | — |
 | redis-tree-backend | 键树扫描后端预算模型（PRD §3.2 扫描预算 6 条 / §4 I-2、I-3）+ 精确键短路 + pipeline 化 | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）+ 1c03f1595（契约冻结台账） | 15ce0c917（步骤 1-4：门禁复跑 + 契约逐字核对 + 3 条 Bug 登记 + `tests/tree_contract_tester.rs`） | — |
+| driver-ui-type-gate | 根 `tsc --noEmit` 打通驱动 UI 类型盲区（REDIS_WORKSPACE_UX P0 R 清单第 9 项）：tsconfig 纳入 `packages/drivers/*/ui` + 清零清点出的生产类型错误 | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | `c2d1c1c25` → `e507cd74c` → `b0d486347` → 本台账 commit | `7b2731e42`（T1-T5 台账）→ `794dfac50`（BUG-003 登记）→ 本终局 commit（T6-T8 + 终判） | —（TEST_FAILED，等 Coder 修复 BUG-003 后派新 Tester 复测） |
 
 ## 写锁台账
 
@@ -59,6 +60,7 @@
 | redis-console-safety | rescuer（接管 w3f-console-safety-coder；父 session-61319db9-6e5c-4f32-a35e-cad750b647dd） | .worktrees/datazen-redis-console-safety | feature/redis-console-safety | READY_FOR_TEST | 2026-09-22 20:40 |
 | redis-kv-contract | w3a-kv-contract-coder（死于 150 轮上限，§1.3 半成品）→ **w3a-kv-contract-rescuer（接管收尾：补 §1.3 接线 + 契约冻结 + 四道门禁）** | .worktrees/datazen-redis-kv-contract | feature/redis-kv-contract | READY_FOR_TEST | 2026-09-22 18:15（接管轮返回 `READY_FOR_TEST`） |
 | redis-tree-backend | w3b-tester-round2（全新实例，不复用第 1 轮 Tester、不用修复 Coder；同样串行 + 逐项 commit） | .worktrees/datazen-redis-tree-backend | feature/redis-tree-backend | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2026-09-23 10:11（round-2 Tester 判定时刻） |
+| driver-ui-type-gate | driver-ui-type-gate-tester（全新实例 session-61319db9-6e5c-4f32-a35e-cad750b647dd，未复用编码代理） | .worktrees/datazen-driver-ui-type-gate | feature/driver-ui-type-gate（基线 `feat/redis-workspace-ux` @ `1b77ce149`） | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | 2026-09-23 11:47（全部目标完成，READY_FOR_TEST） |
 
 ## 波次记录
 
