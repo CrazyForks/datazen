@@ -737,3 +737,42 @@ host-exit=0
 ⇒ **454 files / 4744 tests，0 失败**，与自报**逐字一致**（基线 453/4734 ⇒ +1 file / +10 tests，即 `ContentViewKvDbSwitch.test.tsx` 7 例 + `useKvSlotActions` 新增 3 例）。
 
 **动作 7 结论：PASS。五门全绿，五项数字与自报逐字吻合，无一处夸大。**
+
+## 动作 8 — 覆盖率（v8，`--coverage.all=false`，`--coverage.include='packages/drivers/redis/ui/kv-bar/**'`）
+
+命令：`npx vitest run --config vitest.drivers.config.ts --coverage --coverage.all=false --coverage.provider=v8 --coverage.reporter=text --coverage.include='packages/drivers/redis/ui/kv-bar/**'`（**全 drivers 套件，63 files / 874 tests**）。
+
+### 聚合（全 `kv-bar/**`）
+
+```
+All files          |   98.32 |    95.86 |   96.77 |     100 |
+```
+
+⇒ **语句 98.32% · 分支 95.86% · 函数 96.77% · 行 100%**。**本轨新增功能无历史基线可放宽，此水平判定合格。**
+
+### 逐文件（本轨新增/改动者加粗）
+
+| 文件 | % Stmts | % Branch | % Funcs | % Lines | 未覆盖行 |
+|---|---|---|---|---|---|
+| **`ContextBarActions.tsx`**（新） | **100** | **93.75** | **100** | **100** | 153 |
+| **`RedisContextBar.tsx`**（新） | **100** | **95.65** | **100** | **100** | 49-77 |
+| **`contextBarModel.ts`**（新） | **100** | **96.59** | **100** | **100** | 56, 161-162 |
+| **`dbKeyCounts.ts`**（新） | **94.11** | **86.36** | **88.88** | **100** | 51, 103, 108 |
+| **`useContextBarData.ts`**（新） | **93.22** | **87.5** | **86.66** | **100** | 90, 132, 146-158 |
+| **`useKvSelection.ts`**（改） | **100** | **100** | **100** | **100** | — |
+| **`KvStatusBar.tsx`**（改） | **100** | **96** | **100** | **100** | 153-157 |
+| `index.ts` | 0 | 0 | 0 | 0 | —（**见下，非缺口**） |
+| `KeyPropsSidebar.tsx` / `keyObjectInfo.ts` / `useKeyObjectInfo.ts` | 100 / 100 / 100 | 100 / 100 / 100 | 100 / 100 / 100 | 100 / 100 / 100 | —（既有文件，本轨未改） |
+
+### 残余未覆盖的定性（逐条判定，无一是「本轨新功能的保护空缺」）
+
+1. **`index.ts` 0% —— 是 v8 归因假象，非缺口。** 该文件是**纯 re-export barrel**（3 行 `export { … } from './…'`），v8 把 re-export 计入**源模块**，故 barrel 自身恒显示 0。**独立反证（Tester 探针，已删不留残）**：临时用例 `await import('…/kv-bar/index.ts')` 并断言 `typeof barrel.RedisContextBar === 'function'` ⇒ **`✓ 1 passed`**，证明该导出**真实可达**；且 `kvSlotRegistration.test.ts:135` 另以**读 registry 行 + 动态 `import(module)`** 的方式核验「组件名确实是所声明模块的导出」（见动作 1 的注册面结论）。⇒ **判定：假象，不立案。**
+2. **`RedisContextBar.tsx` 49-77**：`KvContextBarProps` 各 prop 的**默认解构/防御分支**（如 `database ?? …` 的空值侧）。空/敌意输入用例（`renders without a resolved db or any server reply` 等 4 例）已覆盖主要形态；残余为个别未走的 coalesce 侧。
+3. **`contextBarModel.ts` 56, 161-162**：`deriveDbOptions` 的 `maxDatabaseIndex` 缺省侧与 `sampled`/`dbsize` **非有限数**兜底（`Number.isFinite` 的 false 侧）。**变异 1a/4 已证明这两处的正常路径承重**。
+4. **`dbKeyCounts.ts` 51, 103, 108**：跨会话 `openReads` 的**并发合流竞态支路**（同 id 已在飞 ⇒ 复用 in-flight；`finally` 清理）。Coder 自报的变异 6（去掉 in-flight 合并 ⇒ 1 红）已证明**合流主路径**承重；残余为清理时序分支。
+5. **`useContextBarData.ts` 90, 132, 146-158**：`sectionsOf` 对**非对象 / 无 `sections` 键** reply 的 `[]` 兜底，与三个 async IIFE 的 **`catch {}` best-effort 分支**。注意组件层已有 `survives malformed INFO and distribution replies` 覆盖「reject/畸形」主形态；残余为更细的形状分支。
+6. **`ContextBarActions.tsx` 153 / `KvStatusBar.tsx` 153-157**：单个可选 prop 的默认/`undefined` 侧。
+
+⇒ **均为防御性兜底与竞态时序支路，而非「新功能主路径未测」**；行覆盖 **100%**，语句覆盖 ≥93.2%，最复杂的 `contextBarModel.ts`（315 行纯逻辑）达 **100% / 96.59%**。**不立案。**
+
+收尾 `git status --porcelain` **空**（barrel 探针已 `rm`）。
