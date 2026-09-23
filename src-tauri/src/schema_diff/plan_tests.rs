@@ -1374,6 +1374,83 @@ fn mysql_integer_literals_are_accepted_but_fractional_forms_fail_for_postgres_in
 }
 
 #[test]
+fn test_tester_mysql_integer_defaults_follow_postgres_target_widths() {
+    let defaults = [
+        ("small_min", "smallint", "-32768", true),
+        ("small_max", "smallint", "32767", true),
+        ("small_overflow", "smallint", "32768", false),
+        ("big_min", "bigint", "-9223372036854775808", true),
+        ("big_max", "bigint", "9223372036854775807", true),
+        ("big_overflow", "bigint", "9223372036854775808", false),
+        ("array_target", "integer[]", "1", false),
+        ("empty_numeric", "numeric", "", false),
+    ];
+    let mut source_columns = vec![col("id", "int")];
+    let mut target_types = std::collections::HashMap::new();
+    for (name, target_type, default, _) in defaults {
+        let mut value = col(name, "int");
+        value.default_value = Some(default.into());
+        source_columns.push(value);
+        target_types.insert(name, target_type);
+    }
+
+    let mapper = |_table: &str, _ty: &str, name: &str| -> Result<String, String> {
+        Ok(target_types.get(name).copied().unwrap_or("integer").into())
+    };
+    let plan = build_schema_diff_plan(
+        &[(
+            "users".into(),
+            schema(source_columns),
+            schema(vec![col("id", "integer")]),
+        )],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            type_mapper: Some(&mapper),
+            ..Default::default()
+        },
+    );
+
+    for (name, target_type, default, should_pass) in defaults {
+        let sql = plan
+            .statements
+            .iter()
+            .find(|statement| statement.sql.contains(&format!("\"{name}\"")));
+        let has_unsupported = plan.requirements.iter().any(|requirement| {
+            matches!(
+                requirement,
+                PlanRequirement::Unsupported { operation, reason }
+                    if operation.contains(name) || reason.contains(name)
+            )
+        });
+
+        if should_pass {
+            assert!(
+                !has_unsupported,
+                "{name} ({target_type} DEFAULT {default}) unexpectedly failed: {:?}",
+                plan.requirements
+            );
+            assert!(
+                sql.is_some_and(|statement| statement.sql.contains(&format!("DEFAULT {default}"))),
+                "{name} ({target_type} DEFAULT {default}) was not retained: {:?}",
+                plan.statements
+            );
+        } else {
+            assert!(
+                has_unsupported,
+                "{name} ({target_type} DEFAULT {default}) must fail closed: {:?}",
+                plan.requirements
+            );
+            assert!(
+                sql.is_none_or(|statement| !statement.sql.contains(&format!("DEFAULT {default}"))),
+                "unsupported {name} default leaked into target SQL: {:?}",
+                plan.statements
+            );
+        }
+    }
+}
+
+#[test]
 fn mysql_numeric_literal_defaults_are_preserved_for_postgres_create_and_set_default() {
     let mapper =
         |_table: &str, _ty: &str, _name: &str| -> Result<String, String> { Ok("numeric".into()) };
