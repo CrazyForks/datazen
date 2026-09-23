@@ -1,5 +1,8 @@
 - 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
-- 状态: READY_FOR_TEST
+- 状态: **TEST_FAILED**（第 1 轮 Tester 复验：门禁四件套独立重跑全绿，但登记 6 条 Bug，其中 BUG-001/002 属 PRD §4 I-1 的静默丢草稿类别 ⇒ 交原 Coder 修复，Bug 循环 1/5）
+- 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
+- Tester commit 链: `dbd9218e0`(阶段A/B 台账) · `da4bc9531`(补测 8 例) · `e0901a717`/`a3315e84e`/`6e4a89bf9`/`449db8059`/`9c02aefbe`(BUG-001..006) · `515eeb35e`/`307d60a0a`/`444d970b0`(补测 12 例)
+- 心跳: 2026-09-23 10:40（Tester）
 - 编码 commit: `b4d5df64d`(E-1 五枚页签) · `63c5ce0b3`(E-2 常驻编辑) · `96170add2`(E-3 I-5 收敛) · `116de7495`(E-4 键头行) · `f5a273cd2`(E-5 I-1 拦截)
 - 测试 commit: `fa469154c`(E-5 dirty-leave 旅程电池 +54 行：Esc 关闭 / 卸载悬起 / 非法 JSON 三条边角出口)
 - 门禁 commit: 见本文件所在 commit（`docs(coordination): W3-E detail-ui gates + self-verification record`）
@@ -271,3 +274,208 @@
 - `getByText('No expiry')` 全仓 `__tests__/` **零命中** ⇒ PRD §7-6 + 简报 §4-6 的「改写不是删除」达成（改写后的断言见 `ttlControlsJourney.test.tsx`，用 data-* 定位）✅
 
 **E-2 判定：通过，无 Bug。**
+
+### T-4 阶段 A · E-3 I-5 只读态收敛为两种
+
+- `keyReadOnlyPolicy.ts` 是穷举式判定：`BYTE_ONLY_VIEWS = ['hex','binary']` 恰好两枚，且实测 `VIEWS` 含这两枚（`keyReadOnlyPolicy.test.ts:39-45` 反向钉「只允许这两种命中」）；其余分支一律 `readOnly:false` ⇒ **无第三种只读态** ✅
+- 两种各带原因：`READ_ONLY_REASONS['binary-view'|'big-value']` ⇒ `redis.detail.readonly.binaryView` / `.bigValue`，两枚 key 实测在 `en.ts:488/490` 且文案含"为什么"（投影不可原样回写 / 载荷不完整防截断写覆盖）✅；`StringEditor.tsx:214-224` 渲染原因条并带 `data-readonly-reason` + `data-i18n-key`
+- 「只读 ⇒ 必有原因、可编辑 ⇒ 必无原因」被 `keyReadOnlyPolicy.test.ts:68-74` 用 `readOnly === (reason !== null)` 双向钉住 ✅
+- codec 不是只读轴：`resolveReadOnlyPolicy` 无 codec 入参 + 9 codec × 9 view 全枚举断言（`keyReadOnlyPolicy.test.ts:120-131`），`stringValueReadOnlyJourney.test.tsx:221-234` 另证预检档点满 9 个 codec 零次 `decode_value` ⇒ 旧「已解码 ⇒ 只能看」第三态确实消失 ✅
+- `get_key_raw` 失败（frame 缺席）⇒ 可编辑，不误判为"未知即巨大"（`redisBigValue.ts:53` + `:289-299` 用例）✅
+- 逻辑层双保险：`onEdit` 在 readOnly 时直接 return（`StringEditor.tsx:188-191`），DOM `readOnly` 之外再挡 jsdom 直派 change；保存按钮 `data-save-blocked-by="readonly"`（`:279`）✅
+- **`GETRANGE 0 65537` 哨兵：以等价实现落地，判定成立但台账表述需精确**
+  - `redisBigValue.ts` 用 `logicalLen > 65_536`（`BIG_VALUE_SENTINEL_BYTES = 65_536`，严格大于）代替真发 `GETRANGE`；`logicalLen` 对 string 键**确为字节数**——Tester 核 Rust 侧 `value_len_on` 的 string 臂走 `STRLEN`（`redis_driver_on.rs:196-197`），且 `BYTE_LENGTH_KEY_TYPES=['string']` 先按类型短路，避免拿十万成员 hash 的 HLEN 误判（`redisBigValue.test.ts` + `keyReadOnlyPolicy.test.ts:108-112` 双侧钉住）⇒ **语义等价成立，零额外往返**，符合 PRD §3.3「该探针的目的从来不是多一次往返，而是先量长度再决定要不要传整包」。
+  - 但两阈值不同源：后端 `RAW_VALUE_MAX_BYTES = 5 MiB`（`redis_driver_on.rs:300`）决定 `truncated`，前端 64 KiB 决定 `overSentinel` ⇒ 64 KiB~5 MiB 区间是"超哨兵但载荷完整"。当前两成因**共用同一枚"载荷不完整"文案** ⇒ 登记 **BUG-006（低）**。
+  - `## 留待 R 回归` 第 4 条仍要真连复验（本轨无 `GETRANGE` 通道，真实大值的可见性/性能只能真连）。
+
+### T-5 阶段 A · E-4 键头行 + 徽标行 + TTL pill
+
+| 验收点 | 实测 | 判定 |
+| ------ | ---- | ---- |
+| 键名等宽可截断带 `title` | `KeyHeaderRow.tsx:158-165` `font-mono truncate title={keyName}` + `data-testid="redis-header-key-name"`；`keyHeaderRowJourney.test.tsx:146-152` 断 `title` | ✅ |
+| 刷新**分裂按钮** 1s/5s/10s/30s/关 | `REFRESH_INTERVALS=[1000,5000,10000,30000,0]`（`:29`，恰 5 档 + `0` 表关）；菜单 `data-testid="redis-refresh-interval-{ms}"`；旅程 `getAllByRole('menuitem')===5` 逐档断 `data-i18n-key`/`data-selected` | ✅ |
+| 自动刷新 tick / 停拍 / **被拒即落关** | `:74-84` 定时器 + `:78-81` `ok===false ⇒ setIntervalMs(0)`；`keyHeaderRowJourney.test.tsx` Journey 4 用假定时器数拍（5000ms×3 拍 = 3 次）+ 拒 ⇒ 停 | ✅ |
+| 复制键名 / 复制插入语句 | `:222-247` 两枚按钮 + `data-copied`；旅程断 `writeText('user:1')` 与 `writeText('SET user:1 hello')`（服务器数据可钉） | ✅ |
+| 重命名**内联** | `:140-165` 输入框替换键名 + Enter/✕/✓ 三出口；三条用例（确认成功关 / 确认失败保持打开不吃输入 / 取消不出网） | ✅ |
+| 删除**危险色** + 确认框先行 | `:293-316` `text-danger` + `useBoundConfirmDialog`；取消 ⇒ `deleteKey` 零调用 | ✅ |
+| 插入语句"宁缺勿错" | `redisInsertStatement.ts` stream/JSON/module ⇒ `null` ⇒ 按钮隐藏（`:234` 条件渲染 + 旅程用例断 queryByTestId 为 null） | ✅ |
+| 徽标行 = 类型 \| 大小 \| TTL pill（**省一行高度**） | `KeyEditors.tsx:157-192` 单容器 `redis-key-badges`，TTL pill 在同一行；`keyHeaderRowJourney.test.tsx:156-172` 断三者同容器 + `data-key-type` + `data-i18n-key="redis.detail.badge.size"` | ✅ 旧独立 `TtlControls` 整行挂点已消失 |
+| 8-4 文案 key 语义可承载 | `永不过期`⇒`redis.noExpiry:131`；`自动换行`⇒`redis.view.wrap:211`；`大小: N B`⇒`redis.detail.badge.size:493 'Size: {n} B'`（`{n}` 承载数字）；`放弃`⇒`redis.detail.discard:507` + `.leave.discard:510` | ✅ 四枚均可承载 |
+| TTL pill **三态内联**状态机三要素 | 进入：`data-ttl-open=false→true`，确定性从 `relative` 起步（`TtlControls.tsx:110-114`）；态内：三枚 `data-ttl-mode` 互斥 + 各走 `gateWrite`；退出：**仅** `redis-ttl-close` 与切键卸载 | ⚠️ **缺 Esc / 失焦** ⇒ **BUG-004（中）** |
+| pill 非法输入 | 相对 TTL NaN/负 ⇒ `redis-ttl-error`；绝对时间非法 ⇒ 按钮 disabled（`ttlControlsJourney.test.tsx:303-334` 已把 jsdom 归一化行为写成显式契约） | ✅ |
+
+- 注（不是缺陷）：pill 展开态仍是**整行宽**（`w-full` + 容器 `flex-wrap`）⇒ 视觉上比"胶囊"占位大；简报诉求是"省一行高度"，实测确实少了原来独立的一行，判达成。
+- 变异自证：撤掉头行改名/删除守卫（M13/M14）**当时全绿** ⇒ 该两条 I-1 拦截无专属断言 ⇒ Tester 已在 `dirtyLeaveCoverage.test.tsx` B 组补齐，补齐后复跑 M13/M14 **各自变红**（见 T-11）。
+
+### T-6 阶段 A · E-5 底栏 + I-1 八拦截点
+
+**接线面实测与自报一致**：生产码 `await requestDraftLeave()` 恰 **12 处** = `KeyEditors ×3`(:114/121/134) + `RedisWorkbench ×7`(:257/298/309/322/370/697/739) + `RedisConnectionView:93` + `draftGuard.ts:6` 文档提及 1 处。**注意**：台账 §5 写的「8 个拦截点」是**语义计数**（8 类导航），与**守卫落点 11 处**不冲突；但台账表格只列了 8 行 + 编辑面内部 3 行，读者按 `grep -c` 对不上 ⇒ 台账需补一句「11 个调用点 / 8 类动作」（并入 BUG-005 的台账如实性）。
+
+**底栏**：`StringEditor.tsx:261-285` 仅 `jsonDirty` 时挂载，含放弃(`redis-string-discard`)/保存(`redis-string-save`)；`dirtyLeaveJourney.test.tsx:233-257` 断「干净⇒两枚都不存在 ⇒ 第一击出现 ⇒ 放弃回滚到服务器值且 `setString` 零调用」⇒ 是**行为**断言不是快照 ✅
+
+**八拦截点逐条独立核（不采信台账）**：全部经 jsdom 实测确认「① 弹层出现 ② 原动作未执行 ③ 继续编辑不丢草稿」，证据列：
+
+| # | 拦截点 | 守卫落点 | Tester 实测的「真的拦」证据 |
+| - | ------ | -------- | -------------------------- |
+| 1 | 切键 | `RedisWorkbench.tsx:370` | 点 `other:2` ⇒ 弹层 + `data-selected-key` 仍 `user:1` + textarea 仍 `draft`；继续编辑后三者不变；放弃后换键成功且新键从自己值起步 |
+| 2 | 切 db | `:257` | 点 `redis-db-db1` ⇒ 弹层 + 选中/脏不变；继续编辑 ⇒ `data-detail-state` 不变；放弃 ⇒ 落 `no-key`（编辑面随旧键卸载） |
+| 3 | 工具栏刷新 `refreshKeys` | `:298` | 经 handle 与 UI 两路都弹；`kvSlotRelay` 中继 dirty 在拦截期仍 `true` |
+| 4 | 工具栏整体刷新 `handleRefresh` | `:309` | `redis-refresh` 点击 ⇒ 弹层，`getKey` 调用数**不增**（拦截发生在重取前） |
+| 5 | 搜索 | `:322` | Enter ⇒ 弹层，`getDirty()`/选中键均不变；放弃后才清（M2 变异已证：撤守卫后该例变红） |
+| 6 | 关闭详情面板 | `:697` | `redis-detail-close` ⇒ 弹层，选中与草稿存活 |
+| 7 | 清空选中键（对话框出口） | `:739` | M9 变异当时全绿 ⇒ **原无专属断言**；Tester 补 G 组（右键删选中键）后复跑 M9 ⇒ **变红** |
+| 8 | 切页签 | `RedisConnectionView.tsx:93` | `redis-tab-console` ⇒ 弹层 + `data-active` 仍 `items=true/console=false`；keep-alive 下对话框经 portal 可见 |
+
+**编辑面内部三动作**（同走一个守卫，属附加拦截）：列头刷新 `KeyEditors.tsx:114`、重命名 `:121`、删除 `:134`。刷新已由 `dirtyLeaveJourney:323` 覆盖（M12 变异复跑变红）；改名/删除**当时无人钉**（M13/M14 存活）⇒ 本轮补齐。
+
+**「消掉静默清 dirty」的反事实核（本项是 E-5 的实质）**：
+- 旧写法 = `refreshKeys()` 里直接 `setEditorDirty(false)` 且无任何询问。Tester 撤掉守卫（M1）后跑套件：**`kvSlotRelay` 的 I-1 用例立刻变红**（断 `relay.getDirty()` 仍 `true` + 选中仍在），证明新断言测的是"被拦时不清"，不是"点了以后清"这种旧写法也能过的假守卫。
+- 同理 M2（撤搜索守卫）⇒ `kvSlotRelay` 搜索出口用例变红；M3（撤切 db 守卫）⇒ `guards 切db` 变红；M4（撤切页签守卫）/M5（撤切键守卫）⇒ 各自用例变红；M6（`reloadDetail` 退回 `refreshKeys()`）⇒ **两条**变红（头行刷新 + 保存后不关面板）。⇒ 六项反事实全部成立。
+- **但同一条反事实法暴露出守卫并不穷尽**：三处未覆盖出口（同键重点击、`onClearSelectedKey` 之外的 `onSelectKey` 四条对话框出口、以及 `refreshKeys` 被拒后仍继续的 `onSelectKey`）⇒ **BUG-001 / BUG-002**。这是本轮判 TEST_FAILED 的直接依据。
+
+**编辑器 `key={detail.key}` 重挂载**：`DetailColumn.tsx:96-97` 保留（W2 结论未回退），`kvSlotRelay.test.tsx` 有「不把上一把键的草稿漏进下一把」用例 ✅ —— 同一机制也是 BUG-001/002 的放大器（重挂 ⇒ cleanup 发 `dirty=false`）。
+
+**保存语义**：`invokeSetString` 只发 4 字段、payload **不含** `keepTtl`（`keyEditorsInvokes.test.ts` 双侧正向 + `not.toHaveProperty` 反向钉；`redisWorkbench.test.tsx` diff 显示断言按新形状改写而非删除）✅。后端 `set_string` 的 `keep_ttl` 默认 `unwrap_or(false)`（`commands_exec_mutate.rs:30-34` + `ops.rs:169-189` 只有 `keep_ttl=true` 才发 `SET ... KEEPTTL`）⇒ **本 worktree 现状是"保存即清 TTL"**，与简报"合流时若 C 未落地不传该参数即可"一致 ⇒ 不判 E 轨缺陷，但 **R 回归第 1/2 条必须在 C 合流后跑**（已在遗留事项内，Tester 补一条：`留待 R` 第 1 条需显式验「保存前设 TTL、保存后 TTL 仍在」）。
+
+### T-7 阶段 A · 越界审查（本轨关键）
+
+**`en.ts`**：diff 仅两类改动 = ① 删 `redis.stringModeView` / `.stringModeEdit` 两枚（E-2 删切换的必然结果）② 追加 17 枚 `redis.detail.*` + 一段说明注释。**无改他人 key、无重排** ✅（逐行核 diff）。台账 §en 注释称「其余 9 语言保留孤儿副本直到 i18n-sync 补」⇒ Tester 实测 9 个非 en 文件对 `stringMode` 命中数**均为 0**，即**根本不存在孤儿**（这些 key 从未进过非 en 语言；且 `i18n-sync-check` 的 driver pack 维度报 **0 issue**）⇒ 该注释是**不实陈述**，并入 **BUG-005（台账如实性）**。
+
+**禁改面零 diff（实测空输出，exit 0）**：`ui/key-browser/BatchBar.tsx` · `ui/key-browser/ImportExport.tsx` · `ui/shared/redisInvoke.ts` · `ui/console/**`（含 `redisConsoleDanger.ts`）· `ui/kv-bar/**` · `ui/shared/meta.ts` · `src/**` 宿主 · `packages/driver-sdk/**` · `packages/drivers/redis/src/**`（Rust）· `scripts/resolve-drivers.mjs`。`ui/key-browser/` 内其余 13 个文件亦零 diff。⇒ 简报 §2/§3 的禁改面全部遵守 ✅
+
+**`ui/key-browser/RedisWorkbench.tsx` 逐 hunk 判定（11 hunks，+109/-27，705→760 行，≤800 ✅）**：
+
+| # | hunk | 内容 | 判定 |
+| - | ---- | ---- | ---- |
+| 1 | `:36` | `import { requestDraftLeave }` | **必要**（E-5 接线） |
+| 2 | `:248-261` | `handleSelectDb` 转 async + **同库早退** + 守卫前置 | 守卫**必要**；早退**必要且正当**（初始自动选中会误弹 I-1），属行为改动如实登记。deps 补齐 `selectedDb/dbIndex` 是 async 化的正确性要求，非顺手重构 ✅ |
+| 3 | `:267-277` | 同上 deps 数组重排 | 与 #2 同一因果 ✅ |
+| 4 | `:287-292` | 调用点 `handleSelectDb(initial)` → `void handleSelectDb(initial)` | **必要**（void 适配，无语义变化） |
+| 5 | `:294-309` | `refreshKeys` 转 async + 守卫前置，body 逐行不变（仅提干 `if (!selectedDb) return`） | **必要**（E-5 核心）。⚠️ 语义扩注见下 |
+| 6 | `:309-313` | `handleRefresh` 转 async + 自身守卫 + `void refreshKeys()/loadDbSizes()` | **必要**；但**双重守卫**（自身 + `refreshKeys` 内）实测等价（干净态立即 true），撤自身守卫 M7 **不红** ⇒ 冗余但无害，见下方注 |
+| 7 | `:317` | `useImperativeHandle` 行未变（`refreshKeys, selectDatabase`） | ✅ 对外契约形状不变（`RedisWorkbenchHandle` 两枚签名 diff 为空）⇒ D 轨调用侧无需跟改 |
+| 8 | `:319-326` | `handleSearch` 转 async + 守卫前置 | **必要**（I-1 点名"搜索静默清 dirty"） |
+| 9 | `:353-378` | 新增 `handleSelectKeyGuarded`（同键早退 + 守卫）+ `reloadDetail` 由 `refreshKeys()` 改为「重取 detail + `scanRefresh()` + `tree.refresh()`」 | 守卫**必要**；`reloadDetail` 是**行为改动**（非纯接线），修的是 E-5 自引入回归（保存即关面板），M6 证明该改动被两条用例守住 ⇒ **判定：必要补丁，非顺手重构** ⚠️ 但同键早退引入 **BUG-001** |
+| 10 | `:482` / `:504` | 两处 `void refreshKeys()` / `void handleSearch()` | **必要** void 适配 |
+| 11 | `:654`, `:686-700`, `:734-742` | 树列 `onSelectKey` 换守卫版；`onRenamed` 加 `void`；`onClose`/`onClearSelectedKey` 包 IIFE 加守卫 | 守卫**必要**。⚠️ **`KeyWorkbenchDialogs` 的 `onSelectKey` 仍是裸 `handleSelectKey`（`:735`）⇒ 漏网，登记 BUG-002** |
+
+**结论**：**没有发现任何"顺手重构"**（无格式化重排、无命名改写、无无关组件抽取、无 deps 数组美化）；5 个回调转 async + 8 处 `void` 适配（自报 6，实测 8：`:290,:311,:312,:485,:504,:691` + IIFE 两枚内联）+ 1 处必要行为改动 + 1 处等价早退，**逐条可归因到 E-5**。`void` 计数差属台账口径（其把两枚 IIFE 记为"内联"），不影响判定。
+
+**越界的真正问题不是"改多了"而是"改漏了"**：守卫覆盖了树列与两个清空出口，但 `KeyWorkbenchDialogs` 的四条 `onSelectKey` 出口未接 ⇒ 简报「不碰 key-browser」的纪律被以"必要接线"名义突破是**可接受的**（协调者已裁 D 轨冲突面按符号合并），但接线不完备是**缺陷**（BUG-002）。
+
+**MonitorPanel 的重复慢日志子页（裁定 8-1 的残留，非本轨 diff）**：`ui/observe/MonitorPanel.tsx:87,127,338-` 仍在 `监控` 页签内渲染第二个慢日志表（自带 `slowlog_get`/`slowlog_reset` + **无具名未授权空态**，走通用 error 条），与新一级页签**并存两份实现**。MonitorPanel 本轨零 diff（在 D/E 之间的 observe/ 目录，简报未声明所有权）⇒ 不判越界，但 8-1 的意图（"升为一级"）留了个二极副本，且副本的 I-11 达标度低于新面板。⇒ 记为**协调者裁定项**（见 T-12），不单开 Bug（不属本轨交付面缺陷）。
+
+### T-8 阶段 B · 门禁独立重跑（数字核对表）
+
+| 门禁 | 自报 | Tester 实测（HEAD `3919307ce`，串行） | 差 |
+| ---- | ---- | ------------------------------------ | -- |
+| vitest drivers | 55 files / 525 passed / 0 skipped · 9.79s | **55 files / 525 passed / 0 skipped** · 10.35s | 0 ✅ |
+| `tsc --noEmit` | exit 0 | **exit 0** | 0 ✅ |
+| `vite build` | exit 0 · 4.76s | **exit 0** · `✓ built in 4.75s`（同一 chunk advisory） | 0 ✅ |
+| boundaries | 1469 files · 0 blocking · 4 advisory | **1469 files · 0 blocking · 4 advisory** | 0 ✅ |
+
+**Tester 补测后（HEAD `444d970b0`）复跑**：`58 files / 546 passed / 3 skipped`（3 枚 skip = BUG-001/002 的正确期望占位）· tsc **exit 0** · vite build **exit 0**（5.06s）· boundaries **1472 files · 0 blocking · 4 advisory**。「只许增不许红」满足（525→546，零红）。
+
+### T-9 阶段 C · 覆盖率独立复算
+
+**方法**：`npx vitest run --config vitest.drivers.config.ts --coverage --coverage.provider=v8 --coverage.all=false --coverage.reporter=json-summary`（不采信自报聚合，按 `git diff --name-only` 的两套集合自行求 Σcovered/Σtotal）。
+
+| 口径 | 自报 | **Tester 复算** | 判定 |
+| ---- | ---- | -------------- | ---- |
+| A（15 生产文件，含 `en.ts`） | 81.22 / 83.71 | **81.25 stmts / 83.74 lines**（bran 75.36 · funcs 78.42） | 吻合 ✅ |
+| **B**（A 剔 `RedisWorkbench` + 5 集合编辑器 + `JsonEditor`） | **86.25 / 88.74** | **85.57 / 88.64**（含 en.ts）；85.55 / 88.62（不含） | 差 0.68pp ⇒ **同判 ≥80%**，但自报值不可复现 ⇒ BUG-005 |
+| C（字面 glob `value-editors/**` + `RedisConnectionView` + `draftGuard`） | 55.43 / 56 | **56.32 / 57.00**（bran 57.52 · funcs 48.05） | 量级一致 |
+
+**口径 C 的「glob 放大」论证成立性核验（逐条）**：`git diff 8981d3078..HEAD --name-only` 对 `HashEditor|ListEditor|SetEditor|ZsetEditor|StreamEditor|StreamOverview|JsonEditor` 命中数 = **0**（base/HEAD 行数一致：`HashEditor` 264→264、`JsonEditor` 593→593）⇒ 这些低覆盖文件本轨**真没碰**；且 `git grep HashEditor|…` 在 base 与 HEAD 的 `ui/__tests__/` 均**零命中** ⇒ 其 0.67~1.66% 是 **Wave 3 之前的存量缺口**（集合编辑器从未有过单测），非 E 轨回归。**结论：C 非本轨缺口，判定与自报一致** ✅（但见 BUG-005 #1：同段把 `keyEditorsInvokes:306-321` 混入"非缺口"清单是错的）。
+
+**自报点名缺口逐条裁定（属验收面⇒补测；属 §2 明确不做⇒记非缺口）**：
+
+| 点名 | 实测未覆盖内容 | 裁定 | 处置 |
+| ---- | -------------- | ---- | ---- |
+| `StringEditor` 70.65%（解压支路 + gateWrite 拒绝） | 未覆盖含 `:148-150`(gateWrite 拒绝) / `:129-132`(JSON 三态) / `:169-184`(runDecompress) | **属验收面**（E-2/E-5 新建文件；且"需真连"说法经实测不成立） | ✅ **已补 6 例**：Safe Mode 拒保存（零出网 + 草稿保留）、JSON raw/pretty/minify（含"重排不置 dirty""编辑后切模式不覆盖草稿""保存只 4 字段"）、残缺 JSON 不出网+可修好续存、解压 进入/成功/判不出/抛错（真实 gzip 字节驱动本轨判定，仅桩掉 `tryDecompressString`）⇒ **95.65% stmts / 98.79% lines** |
+| `ValueViewer` 75.36%（`:124-138` 未知 view 兜底） | 实测未覆盖是 `copyText`/`downloadBytes`/`wrap` 三枚动作 + 1 处 seq 竞态；**不是**"未知 view 兜底"（台账行号失准） | **属验收面**（E-3 把 `showOutput` 改 `readOnly` 驱动，这三枚动作是新可达性形状） | ✅ **已补 5 例**：文本档复制渲染文本、字节档回退原始载荷、wrap 纯显示零命令、下载按键名出 blob、`showOutput=false` 只留两行控件 ⇒ **95.65% / 98.43%** |
+| `KeyEditors.tsx:217-244`（集合分派段） | 实测 = `:181/217/226/235/244` 五处 `onChanged={() => void onRefresh()}` 内联箭头（hash/list/set/zset 的回调），`:217-244` 区间其余为**存量 JSX** | **属 §2 明确不做**（集合编辑器本轮不接守卫、不验刷新回调） | 记非缺口。本轨自有行（`:95`/`:102-103`/`:114`）已由 A/B/C 组用例连带覆盖 ⇒ **80.43% stmts**（原 76.08） |
+| `keyEditorsInvokes.ts:306-321`（"集合类批量 invoke 辅助"） | **实为 `invokeRename`(:296-311) + `invokeDeleteKey`(:314-325)**，后者本轨 E-4 新建 ⇒ 归属写错 | **属验收面** | ✅ **已补 2 例**钉命令与载荷形状；并纠台账 ⇒ BUG-005 |
+| `RedisConnectionView.tsx:73` | `handleSelectDatabase` 转发（宿主 `selectTableRef` 通道） | 属 host 侧接线，非本轨改动行（diff 零命中 `:73`） | 记非缺口（不改） |
+| `draftGuard.ts:69` | `settleDraftLeave` 无悬起时早退（防御） | 防御分支，生产路径不可达 | 记非缺口 ✅ |
+| `SlowlogPanel.tsx:113-114` | `handleReset` 的 catch + `setState('failed')` | **属验收面**（E-1 新建面板的失败态） | ⏳ 未补：其 invoke 为可注入桩，补测可在下一轮以 3 行完成；本轮以 R 回归第 5 条兜底，记为**遗留补测项**（非 Bug） |
+| `RedisWorkbench.tsx` 70.16%（口径 A 内） | 右键菜单/批量/导入导出既有支路 | D 轨目录 + 存量 | 记非缺口（本轨 diff 行已由 A~G 组覆盖 ⇒ 升至 **77.73%**） |
+
+**口径 B 补测后复算**：**92.30% stmts / 95.34% lines**（bran 85.13 · funcs 90.12）；口径 A：**88.21 / 90.46** ⇒ 交付项 §4-5 的 ≥80% **达成且余量扩大**。
+
+### T-10 阶段 C · 旅程强度审查（`dirtyLeaveJourney.test.tsx` 11 例是否真断中间态）
+
+逐例判定（**无一条是摆设**）：
+
+1. `walks enter → in-state → exit for both leave answers` —— 断 `isLeavePending()` 的三次跃迁、`second === first`（并发合并同一 Promise）、以及**只有** `proceed=true` 才清 dirty（取消后 `isDraftDirty()` 仍 `true`）⇒ 状态机内核，强 ✅
+2. 脏底栏 —— 干净⇒两枚不存在 / 第一击⇒出现 / 放弃⇒值回滚 + `setString` 零调用 ⇒ 行为断言 ✅
+3. 切键 —— **三步**（弹层⇒未换键⇒继续编辑后草稿原样⇒放弃后换键成功且新键从自身值起步）⇒ 真中间态 ✅
+4. 切 db —— 同上 + 放弃后落 `no-key` ✅
+5. 工具栏刷新 —— 断 `getKey.mock.calls.length` 不变 ⇒ 「拦截发生在重取**之前**」，正是"动作未执行"的硬证据 ✅
+6. 头行刷新 —— 同上 + 放弃后 `getKey` 次数**增加** 且选中仍在（一条用例同时覆盖拦截与 `reloadDetail` 行为补丁）✅
+7. 保存先发布干净 —— 断 `setString` 调用长度为 4（无 keepTtl）+ 全程无弹层 + 保存后面板不关 + 再刷新自由通过 ✅
+8. 切页签 —— 断 `data-active` 双枚 + keep-alive 下 `stub-console` 出现 + 回滚后 textarea 值 ✅
+9. Esc —— 断 `document.querySelector('[role="dialog"]')` 存在再派 Escape ⇒ 动作取消 + 重取未发生 + 底栏仍在 ✅
+10. 卸载悬起 —— `isLeavePending()` 由 `true` 落 `false`（防悬死 await）✅
+11. 非法 JSON —— 先断**残缺中间态**（`{"a":` 已置 dirty）再断保存不出网 + 守卫未被触碰 ✅
+
+**但强度审查同时暴露覆盖面而非实现面的两处空洞**：① 台账 §5 表格里的 #7「清空选中键」等支路当时无人钉（M9 存活）；② 三处 §8-2 遗留项无专属断言 ⇒ 全部由 T-11 补齐。
+
+### T-11 阶段 C · 补测清单与变异自证（Tester 新增）
+
+**新增测试文件 / 用例（Tester 共 +21 例：18 断言 + 3 skip 占位）**：
+
+| 文件 | 用例 | 钉住的对象 |
+| ---- | ---- | ---------- |
+| `__tests__/dirtyLeaveCoverage.test.tsx`（新） | A 同库重点击不弹+异库仍弹 | M11 |
+| | B1 头行改名先问（未出网/继续编辑保草稿/放弃后 RENAME 出网且落 dirty=false） | M13 |
+| | B2 头行删除先问（`deleteKey` 零调用 ⇒ 放弃后恰一次） | M14 |
+| | C 批量删除：命令先落库 ⇒ 刷新撞守卫 ⇒ 选中/草稿存活 ⇒ 继续编辑不丢 | §8-2 批量对话框 |
+| | D 批量 TTL：`batch_set_ttl` 出网 ⇒ 弹层 ⇒ 放弃后才清 | §8-2 批量 TTL |
+| | E 列设置（仅无 TTL 过滤）：重扫**但不毁草稿 ⇒ 不该吃守卫** | §8-2 列设置（语义澄清） |
+| | G 右键删选中键：连续出口逐次拒绝不死锁 | M9 |
+| | F / H2（skip）创建键 · 右键 TTL 的 `onSelectKey` 旁路 ⇒ **正确期望** | BUG-002 |
+| | H（skip）同键重点击 ⇒ **正确期望** | BUG-001 |
+| `__tests__/stringEditorTesterGaps.test.tsx`（新） | Safe Mode 拒保存 / JSON 三态 / 非法中间态可修好续存 | 口径 B 缺口 |
+| `__tests__/stringEditorDecompressGaps.test.tsx`（新） | 解压 进入·成功·判不出·抛错必落 busy | 口径 B 缺口 |
+| `__tests__/keyEditorsInvokes.test.ts`（+2） | `invokeRename` / `invokeDeleteKey` 命令与载荷 | 台账误归属项 |
+| `__tests__/ValueViewer.test.tsx`（+5） | 复制/下载/wrap 可达性 + `showOutput=false` 形状 | 口径 B 缺口 |
+| `__tests__/stringValueReadOnlyJourney.test.tsx`（+1，改 1） | 截断徽标具名文案（`data-i18n-key`）+ 超哨兵但完整载荷**不亮**截断徽标 | I-11 / BUG-006 |
+
+**变异自证表（14 次，每次立即 `git checkout HEAD --` 还原并复跑；结束时 `git status` 干净，生产码零残留）**：
+
+| # | 变异 | 补测**前** | 补测**后** |
+| - | ---- | ---------- | ---------- |
+| M1 | `refreshKeys` 去守卫 | 红(1) `kvSlotRelay` I-1 | 红(1) |
+| M2 | `handleSearch` 去守卫 | 红(1) | 红(1) |
+| M3 | `handleSelectDb` 去守卫 | 红(1) | 红(1) |
+| M4 | 切页签去守卫 | 红(1) | 红(1) |
+| M5 | 切键去守卫（整体） | 红(1) | 红(1) |
+| M6 | `reloadDetail` 退回 `refreshKeys()` | **红(2)** | 红(2) |
+| M7 | `handleRefresh` 去**自身**守卫（仍留 `refreshKeys` 内守卫） | **全绿** | 全绿（等价冗余，判定无害，不登记） |
+| M8 | `onClose` 去守卫 | 红(1) | 红(1) |
+| **M9** | `onClearSelectedKey` 去守卫 | **全绿 ⇒ 当时无覆盖** | **红(1)** ✅ 已闭环 |
+| **M10** | 去掉同键重点击早退（一律走守卫） | 全绿 | 全绿*（正确期望用例 skip；见 BUG-001） |
+| **M11** | 去掉同库早退 | **全绿 ⇒ 当时无覆盖** | **红(1)** ✅ |
+| M12 | `refreshNow` 去守卫 | 红(1) | 红(1) |
+| **M13** | 头行改名去守卫 | **全绿 ⇒ 当时无覆盖** | **红(1)** ✅ |
+| **M14** | 头行删除去守卫 | **全绿 ⇒ 当时无覆盖** | **红(1)** ✅ |
+
+⇒ 四条"存活变异"全部转为"变红"，本轮补测具有真实证伪能力。**M10 的特殊性**：撤掉早退后无人变红，是因为**当前实现本身在这一点上错**（早退 ⇒ 不询问 ⇒ 静默丢草稿）；Tester 不把它钉成"必须询问"的断言（那会把一种错误固化），而是留 skip 用例表达正确期望 ⇒ **BUG-001**。
+
+### T-12 阶段 D · 判定与交接
+
+**结论：`TEST_FAILED`**（Bug 循环 1/5）。门禁四件套与三口径覆盖率全部独立复验通过（且补测后余量扩大），E-1/E-2/E-3 三条**无 Bug**；但 I-1（本轨最重的 E-5）存在两条静默丢草稿旁路 ⇒ 交付项 §1-5「现状缺陷必须一并消掉」未完整达成。
+
+**交协调者裁定的三项（非 Bug）**：
+
+1. **组合键归属**（按协调者裁定执行）：E 轨的拦截语义**不依赖任何键位** —— 八个拦截点全部挂在鼠标/焦点路径（行点击、db 按钮、工具栏按钮、页签按钮、面板关闭按钮、搜索 Enter），M1~M5/M8/M11~M14 变异皆以 `fireEvent.click/change/keyDown` 驱动并变红 ⇒ **无键位也照拦**。⇒ 确认：`⌘Y/⌥⌘Y/⌘R` 属 **W3-D D-7 验收面**，非 E 轨缺口（E 轨 diff 对 `app_menu.rs` 与宿主快捷键接线零改动，实测全仓仅 `CmdOrCtrl+,` / `CmdOrCtrl+N` 两枚 accelerator，redis UI 内唯一组合键是 `RedisConsole.tsx:210` 的 Mod+Enter）。
+2. **`MonitorPanel` 内重复的二极慢日志子页**：8-1 已把慢日志升为一级，但 `监控` 页签内的第二份实现（自带 `slowlog_get`/`slowlog_reset`，且其空态走通用 error 条、**缺 I-11 具名未授权文案**）仍在 ⇒ 本轨对 `observe/MonitorPanel.tsx` **零 diff**，不判越界；请裁定「移除二极子页」归 E 轨下一轮还是随 D/observe 轨收口。
+3. **「列设置」措辞对齐**：本仓 `ui/key-browser/` 内**不存在**列设置面板（无 `visibleColumns` / 列头设置 UI）；简报 §8-2 所称「列设置三处已吃到守卫」实为 `KeyBrowserControls` 的三枚**过滤**开关（类型 / 含内存 / 仅无 TTL），它们经 `useRedisKeyScan.ts:83` 的 effect 只重扫列表、**不碰 selection** ⇒ 因此**不需要**守卫也不毁草稿。Tester 已按此语义补 E 组用例（重扫发生 + 选中/草稿存活 + 不弹层）。若 Wave 4 真要加列设置面板，届时再纳入 I-1 面。
+
+**`## 留待 R 回归` 核对结论：6 条已列全，无缺项**；Tester 补两处判据细化（不新增条数）：
+- 第 1/2 条：本 worktree 后端 `keep_ttl` 默认 `false` ⇒ **当前真连必然丢 TTL**；R 跑时须显式验「保存前设 TTL ⇒ 保存后 `PTTL` 仍 >0」，若仍为 `-1` 则 W3-C 默认化未生效（这是 C 轨的账，不是 E 轨）。
+- 第 4 条：须同时看**两分支**文案（`truncated` ⇒ 不完整；超哨兵但完整 ⇒ 现在也说"不完整" = BUG-006）。
+- 建议追加第 7 条：**保存失败可见性**（真连只读副本 / 断链 ⇒ 现在零反馈，BUG-003），R 回归时可顺带验修复。
+
+**只测不修自证**：全程生产码零改动。探针期对 `StringEditor.tsx` / `ValueViewer.tsx` 的临时 testid 改动**已 `git checkout HEAD --` 还原**，并在还原后重写测试改用仓库既有口径（identity `t` ⇒ 文本即 key）；变异自证每次复跑后 `git status --porcelain` 均确认为空（仅新测试文件为 `??`）。
