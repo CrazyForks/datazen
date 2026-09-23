@@ -1,6 +1,6 @@
 # driver-ui-type-gate-BUG-003 · 新增特征测试未覆盖两处改动行：SearchableInfoPanel.tsx:135 / :155 的 `t()` 调用零执行
 
-- **状态**：待修复（round-2 复测核心全绿但验收第 4 项失败，按协议退回；详见文末复测记录）
+- **状态**：待复测（round-1 修复后）→ 待修复（round-2 复测核心全绿但验收第 4 项失败，按协议退回；详见文末复测记录） → **待复测（round-2 覆盖核心已过，随 round-3 重证）**
 - **严重度**：低（运行时行为无影响；验收口径阻断）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd` · 2026-09-23
 - **登记依据**：round-1 覆盖率复核（Tester 阶段 C，本轨无 80% 基线，从严口径「改动行必须全被测到」）
@@ -293,3 +293,12 @@ node scripts/check-driver-import-boundaries.mjs
 一问题一文件另立 BUG-004、本轨判 FAIL」执行：本 bug 待 BUG-004 裁决修复后随 round-3 一并复测
 （fixture 形状若变，line135/154 计数须重证）。复测循环计数：**2/5**（round-1 首判失败 1/5、
 round-2 复测未确认关闭 2/5）。
+
+
+## 修复记录（round-2）
+
+**Round-2 复测状态**：无代码改动。Round-2 覆盖核心实测全绿（10/10 coverage, mutations green, three gates green），按协议因同轮 BUG-004 判 FAIL 而回退。本轮仅保留证据链，等待 round-3 复检。
+
+### 状态流转
+
+`待修复` → **`待复测（round-1 修复后）`** → `待修复`（round-2 因验收第 4 项 mock 保真度失败退回）→ **`待复测（round-2 覆盖核心已过，随 round-3 重证）`**。

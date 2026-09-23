@@ -362,3 +362,58 @@ Tester 提交清单：
 
 Tester 提交：本终局 commit `test(coordination): record round-2 retest verdict for driver-ui-type-gate`
 （BUG-004 立案 + BUG-003 复测记录与状态回退 + 本终判 + 状态行翻转）。
+
+
+## 修复轮第 2 回合 (rescue · 2026-09-23)
+
+**协调者裁决**: Option A — Backend → object entries.
+
+**ops_observe.rs 改动**:
+- Added `InfoEntry { key, value }` struct (~line 234)
+- Changed `InfoSectionFiltered.entries` type from `Vec<(String, String)>` to `Vec<InfoEntry>`
+- Updated construction: `filtered.push(InfoEntry { key: k.clone(), value: v.clone() })` (~line 283)
+- Added serde test: `test_info_filtered_entries_serialize_as_objects` validates JSON serialization format
+
+**门禁尾部（commit `f654751ad` 提交态，串行五门）**：
+
+门禁 1 `cargo test -p datazen-driver-redis --lib`:
+```
+CARGO_TARGET_DIR=/tmp/dz-tg-rescue cargo test -p datazen-driver-redis --lib
+[gate1 exit: 0]
+结果：342 tests, 0 failures, 4 ignore （新增 1 测试）
+```
+
+门禁 2 `npx tsc --noEmit`:
+```
+[tsc exit: 0]
+```
+
+门禁 3 `npx vitest run --config vitest.drivers.config.ts`:
+```
+Test Files  52 passed (52)
+     Tests  563 passed (563)
+[vitest exit: 0]
+```
+
+门禁 4 `npx vite build`:
+```
+[vite exit: 0]
+```
+
+门禁 5 `node scripts/check-driver-import-boundaries.mjs`:
+```
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) src/locales/locales.test.ts:107: reaches into driver internals (packages/drivers/redis/locales)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:25: reaches into driver internals (packages/drivers/redis/ui/shared/meta)
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1465 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[boundaries exit: 0]
+```
+
+**Fixture comment correction**: SearchableInfoPanel.test.tsx comment updated to cite real contract (Rust InfoEntry struct).
+
+**状态流转**:
+BUG-003: `待复测（round-1 修复后）` → `待修复`（round-2 因 BUG-004 退回）→ **`待复测（round-2 覆盖核心已过，随 round-3 重证）`**
+BUG-004: `待修复` → **`待复测（round-2 修复后，裁决 A 落地）`**
+

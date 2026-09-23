@@ -1,6 +1,6 @@
 # driver-ui-type-gate-BUG-004 · 新增测试的 `info_filtered` mock 形状与真实 IPC 不一致：entries 对象数组 vs 后端二元组数组
 
-- **状态**：待修复
+- **状态**：待修复 → **待复测（round-2 修复后，裁决 A 落地）**
 - **严重度**：中（测试保真度失真 + 掩盖前后端线格式分歧；round-2 验收口径阻断；无运行时崩溃）
 - **登记人**：Tester `session-61319db9-6e5c-4f32-a35e-cad750b647dd`（全新实例）· 2026-09-23
 - **登记依据**：round-2 复测验收序列第 4 项「断言纪律 + **mock 形状与真实 IPC 一致**（对照 `redisInvoke` 侧的 `info_filtered` 结构）」——前 3 子项通过，末子项**失败**
@@ -105,3 +105,91 @@ grep `serialize_with|impl Serialize` **零命中**——不存在自定义序列
 - [x] 附逐字证据（Rust 234-243 + 链路 6 环 + fixture 21-26）
 - [x] 非猜测：serde 元组语义确定 + 全树无自定义序列化（grep 零命中）
 - [x] 修复方向二选一且标注先裁决、跨轨提示不越权
+
+---
+
+
+## 修复记录（round-2）
+
+**裁决**：Option A — Backend → object entries.
+
+**原因**：
+- 后端真实 wire: `ops_observe.rs:239` `entries: Vec<(String, String)>` serde 序列化为 `[["k","v"]]`（元组数组）。
+- 前端所有 fixture + production consumers (SearchableInfoPanel、kv-bar) 假设对象 `{key,value}`。
+- kv-bar 已 merged 到 integrate 且生产代码用对象 — 保持 tuple 会 live bug（maxmemory_policy 行永远不 render）。
+- Round-1 BUG-002 的裁定成立（object destructure correct）。
+
+**Ops Observe.rs 改动点（commit `f654751ad`）**：
+
+1. **New struct definition before `InfoSectionFiltered`** (~line 234):
+```rust
+/// Represents a single key-value entry in info_filtered output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoEntry {
+    pub key: String,
+    pub value: String,
+}
+```
+
+2. **Type change**: `InfoSectionFiltered.entries` from `Vec<(String, String)>` to `Vec<InfoEntry>`
+
+3. **Construction update** (~line 283):
+```rust
+filtered.push(InfoEntry { key: k.clone(), value: v.clone() });
+// was: filtered.push((k.clone(), v.clone()));
+```
+
+**Serde test added** (`test_info_filtered_entries_serialize_as_objects`):
+
+Validates that `InfoFilteredResult` with `InfoEntry` serializes to objects:
+```json
+{
+  "sections": [{"name": "Server", "entries": [{"key": "redis_version", "value": "7.2.0"}]}],
+  "totalEntries": 1,
+  "matchedEntries": 1
+}
+```
+
+**Fixture comment correction** (`packages/drivers/redis/ui/__tests__/SearchableInfoPanel.test.tsx`):
+- Old: `/** Structured wire shape of \`info_filtered\` (objects, not tuples — infoParse.ts). */`
+- New: `// Wire shape of \`info_filtered\` is defined by Rust \`InfoEntry\` struct (ops_observe.rs), serialized via serde. Objects are the contract.`
+
+**门禁尾部（commit `f654751ad` 提交态，串行）**：
+
+门禁 1 `cargo test -p datazen-driver-redis --lib`:
+```
+CARGO_TARGET_DIR=/tmp/dz-tg-rescue cargo test -p datazen-driver-redis --lib
+[gate1 exit: 0]
+结果：342 tests, 0 failures, 4 ignore （新增 1 测试）
+```
+
+门禁 2 `npx tsc --noEmit`:
+```
+[tsc exit: 0]
+```
+
+门禁 3 `npx vitest run --config vitest.drivers.config.ts`:
+```
+Test Files  52 passed (52)
+     Tests  563 passed (563)
+[vitest exit: 0]
+```
+
+门禁 4 `npx vite build`:
+```
+[vite exit: 0]
+```
+
+门禁 5 `node scripts/check-driver-import-boundaries.mjs`:
+```
+[check-driver-import-boundaries] 2 allow-listed reference(s) skipped
+[check-driver-import-boundaries] R3 (advisory) ... 4 advisory findings
+[check-driver-import-boundaries] ok (1465 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+[boundaries exit: 0]
+```
+
+**五门全部绿**：Cargo (+1 test → 342/0) + tsc (0) + Vitest (52/563) + Build (exit 0) + Boundaries (0 blocking / 4 advisory)。
+
+**状态流转**：
+`待修复` → **`待复测（round-2 修复后，裁决 A 落地）`**。awaiting round-3 retest.
