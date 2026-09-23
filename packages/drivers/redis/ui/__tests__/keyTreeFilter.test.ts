@@ -100,7 +100,7 @@ describe('[redis-tree-ui-BUG-001] globToRegExp mirrors Redis MATCH', () => {
 
 /* ── pattern → prefix (the routing half of the fix) ────────────────────────── */
 
-describe('[redis-tree-ui-BUG-001] visibleTreeRows forks on row.kind', () => {
+describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern forks on row.kind', () => {
   /** Root level: one folder + one loose key; `app:` expanded with two leaves. */
   function rows(): KeyTreeRow[] {
     return [

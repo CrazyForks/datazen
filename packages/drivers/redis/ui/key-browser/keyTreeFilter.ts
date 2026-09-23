@@ -141,9 +141,6 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
   return out;
 }
 
-/** View-layer name for {@link filterTreeRowsByPattern}. */
-export const visibleTreeRows = filterTreeRowsByPattern;
-
 /** A breadcrumb row is path context only: never selectable, never counted. */
 export function isBreadcrumbRow(row: KeyTreeRow): boolean {
   return row.kind === 'folder' && row.breadcrumb === true;
