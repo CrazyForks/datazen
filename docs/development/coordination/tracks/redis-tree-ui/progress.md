@@ -815,3 +815,61 @@ ii **19 failed**、iii **17 failed**、iv **4 failed**（后者为自带套件�
 
 结论：**PASS**，无新 bug。第 2 轮登记的 16 分歧面**全部闭合**，且闭合方式经真实 C 实现
 9216 例对拍 + 4 向突变双向验证，而非仅「自报新增用例」。
+
+### 3. BUG-004 键盘旅程复验 —— PASS（附「行号已漂移」的独立裁定）
+
+**运行**（提交态、串行）：`npx vitest run --config vitest.drivers.config.ts
+--coverage.enabled=true --coverage.provider=v8 --coverage.all=false
+--coverage.include='packages/drivers/redis/ui/key-browser/**' --coverage.reporter=json`
+⇒ `Test Files 56 passed (56)` / `Tests 697 passed (697)` / EXIT=0
+（**注意**：`vitest.drivers.config.ts` **无 `coverage` 块**，第 2 轮沿用的
+`--coverage.reporter=json` 单独并不会开启采集 —— 首次尝试只落到 9 月 22 日的
+**陈旧** `coverage/coverage-final.json`（其 `KeyTreeList.tsx` 唯一语句行止于 520，
+与当前 652 行不符，据此读到的「行号对不上」是陈旧产物而非代码问题）。
+本轮改用 `--coverage.enabled=true` 重新采集到 `/tmp/r3/cov3/` 后取数。）
+
+**hits 实测（`/tmp/r3/cov3/coverage-final.json`）**
+
+| 第 2 轮判据 | 第 2 轮实测 | 本轮实测 | 结论 |
+|---|---|---|---|
+| `KeyTreeList.tsx:174` | **0** | **13**（语句 `s18 L174`） | ✅ >0 |
+| `KeyTreeList.tsx:176` | **0** | **13**（该行现为**注释**；对应语义语句为 `s19 L182`=13） | ✅ |
+| `KeyTreeList.tsx:274` | **0** | **7**（语句 `s78 L274-299`，`→` 臂） | ✅ |
+
+**关键裁定：行号已漂移，`hits>0` 不可按原文照抄。** 修复 `492f5503d` 把
+`KeyTreeList.tsx` 里**两处内联的跨面包屑 while 循环抽成** `treeRowSpec.ts` 的
+`nextNavigableIndex()`，因此：
+- `:174` 已从「循环体」变为 **委托调用** `const walked = nextNavigableIndex(...)`（hits=13）；
+- `:176` 现为**注释行**（无语句），第 2 轮所指的「跨过体」语义已迁走；
+- 真正的跨过循环现在是 **`treeRowSpec.ts:167`** —— 语句 `s46/s47` 计数
+  **33 / 32**（`s47` 即循环体自增，第 2 轮该语义等价物为 0），分支
+  `b22 L167 [33,58,51]`、`b23 L168 [19,14]`、`b24 L168 [33,26]` **两侧全非零**；
+- `:274` 的 `→` 臂现走同一 helper（hits=7），不再是第二份内联拷贝。
+
+⇒ 判据「174/176/274 必须 >0」**在字面上：174=13>0、274=7>0 成立；176 因重构成为注释**。
+**结论：BUG-004 的实质判据（跨过守卫被真实执行、且不再有零证据的内联拷贝）成立**，
+且强度高于第 2 轮的「补一条旅程」——重构后**两臂共用同一被测 helper**。
+
+**旅程源码核验（非 vacuous）**：`keyTreeBreadcrumbKeyboardJourney.test.tsx`
+（339 行，5 例）确为**真键盘旅程**：
+- 驱动方式：`fireEvent.keyDown(tree(), { key: 'ArrowDown' | 'ArrowUp' | 'ArrowRight' | 'ArrowLeft' | 'Enter' })`
+  （`:182-184 press()`），非直接调内部函数；
+- 断言面：`data-active-index`、`data-active`、`data-breadcrumb`、`data-row-index`、`data-row-count`
+  —— 全 `data-*`，**零几何反查、零英文文案字面量**；
+- 前置事实先自证（`:208` setup 例断言面包屑确实在 index 0、键行在 index 1），
+  避免「拿一个没有面包屑的树证明不落在面包屑上」的空转；
+- 中间态齐全：`-1 → ↓ → 1`、`↑` 夹紧留在 1、连按三次不得爬上面包屑（`:249-257`）、
+  全面包屑树五种键均留 `-1`（`:268-271`）。
+
+**变异矩阵（2 发 2 中，逐发 `git checkout HEAD --` 复原 + `git status --porcelain` 验净）**
+
+| # | 突变 | 结果 | 观测 |
+|---|---|---|---|
+| A | `treeRowSpec.ts:167` **删除跨过循环**（删 `!isNavigable` 守卫） | **2 failed \| 3 passed**，EXIT=1 | `:232` 与 `:247` 均 `expected '0' to be '1'` —— `↓`/`↑` 落在面包屑（index 0）而非键行（index 1），**正是 BUG-004 复现** |
+| B | `KeyTreeList.tsx:182` **还原 round-1 行为**（`return target`） | **1 failed \| 4 passed**，EXIT=1 | `:250` `expected '0' to be '1'` —— 夹紧臂回到会落上面包屑的旧缺陷 |
+
+复原后复跑 journey + `keyTreeState` + `keyTreeInteractionsJourney` =
+**64 passed / 3 files / EXIT=0**，`git status --porcelain` 空（**CLEAN_OK 2/2**）。
+
+结论：**PASS**，无新 bug。第 2 轮「全部 613 条测试里执行 0 次、删守卫不会变红」的
+回归裸奔状态**已闭环**：现在删守卫（突变 A）或还原旧行为（突变 B）均立刻打红。
