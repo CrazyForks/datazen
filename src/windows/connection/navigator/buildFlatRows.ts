@@ -25,6 +25,29 @@ import { getCategoriesForDriver } from '../schema-tree/schemaTreeCategories';
 import type { UnifiedRow } from './types';
 import { flattenNamespaceTree, groupBySchema } from './utils';
 
+/**
+ * Whether the tree should mark `dbName` as open.
+ *
+ * Two things make a database open: the user opened it in the tree, or the
+ * driver still holds a per-database resource that "close database connection"
+ * could release (PostgreSQL caches one pool per foreign database). Drivers
+ * without such resources — MySQL serves every database from one pool — report
+ * nothing, and the tree's own expand state is then the only source of truth.
+ *
+ * Note this deliberately does NOT consult `isDbExpanded`: a global object
+ * search force-expands matching databases, which must not read as "open".
+ */
+function isDatabaseOpen(
+  expandedDbs: Set<string>,
+  openDbs: Record<string, Set<string>>,
+  dbSessionId: string,
+  dbName: string,
+  connId: string,
+): boolean {
+  if (expandedDbs.has(`${connId}::${dbName}`)) return true;
+  return openDbs[dbSessionId]?.has(dbName) ?? false;
+}
+
 export interface BuildNavigatorFlatRowsParams {
   grouped: { group: string; connections: ConnectionConfig[] }[];
   expandedGroups: Set<string>;
@@ -38,6 +61,8 @@ export interface BuildNavigatorFlatRowsParams {
   dbTablesMap: Record<string, TableInfo[]>;
   dbObjectsMap: Record<string, DatabaseObject[]>;
   loadingDbs: Set<string>;
+  /** Per-session set of databases with an open backend resource. */
+  openDbs: Record<string, Set<string>>;
   query: string;
   t: (key: I18nKey, params?: Record<string, string | number>) => string;
   usageState?: ConnectionLocatorUsageState;
@@ -57,6 +82,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     dbTablesMap,
     dbObjectsMap,
     loadingDbs,
+    openDbs,
     query,
     t,
   } = params;
@@ -329,6 +355,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             dbName,
             expanded: isDbExpanded,
             loading: isLoading,
+            isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
             depth: 2,
           });
 
@@ -416,6 +443,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           dbName,
           expanded: isDbExpanded,
           loading: schemaData.loading && schemaData.tables.length === 0,
+          isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
           depth: 2,
         });
 

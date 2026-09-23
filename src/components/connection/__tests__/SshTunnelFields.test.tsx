@@ -21,7 +21,9 @@ vi.mock('@datazen/ui', async (importOriginal) => {
       value: string;
       onChange: (v: string) => void;
       placeholder?: string;
-    }) => <input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />,
+    }) => (
+      <input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+    ),
   };
 });
 

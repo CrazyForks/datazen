@@ -138,9 +138,11 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub editor_completion_include_table_prefix: bool,
     /// Infer foreign keys from table structure and naming when the schema declares
-    /// none, and use them for JOIN suggestions and completion ranking. Default on;
-    /// predictions are always visually distinct from declared constraints.
-    #[serde(default = "default_true")]
+    /// none, and use them for JOIN suggestions, completion ranking and the ER
+    /// diagram. Off by default: a prediction is a guess, so it is opt-in. It can be
+    /// switched on in Settings → Editor or from the ER diagram's legend, and a
+    /// prediction is always visually distinct from a declared constraint.
+    #[serde(default)]
     pub enable_fk_prediction: bool,
     /// Keyboard shortcut preset ('default' | 'dbeaver' | 'navicat').
     #[serde(default = "default_keymap_preset")]
@@ -250,7 +252,7 @@ impl Default for AppSettings {
             ai_strict_egress: true,
             editor_completion_quote_policy: default_completion_quote_policy(),
             editor_completion_include_table_prefix: true,
-            enable_fk_prediction: true,
+            enable_fk_prediction: false,
             keymap_preset: default_keymap_preset(),
             custom_keymap: std::collections::HashMap::new(),
             sql_execution_strategy: default_sql_execution_strategy(),

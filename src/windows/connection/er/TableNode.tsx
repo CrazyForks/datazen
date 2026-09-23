@@ -1,52 +1,59 @@
-import { memo, Fragment, useEffect } from 'react';
-import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
+import { memo } from 'react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../../lib/cn';
 import { useI18n } from '../../../hooks/useI18n';
+import {
+  ER_COLLAPSED_FOOTER_HEIGHT,
+  ER_COLUMN_ROW_HEIGHT,
+  ER_HEADER_HEIGHT,
+  ER_NODE_WIDTH,
+  erColumnRowCenterY,
+} from './nodeMetrics';
 
 interface TableNodeData {
   tableName: string;
   columns: { name: string; type: string; isPk: boolean; isFk: boolean }[];
+  /**
+   * Columns an edge touches. Only these get per-row connection points, so a wide
+   * table does not carry four handles on every row.
+   */
+  handleColumns?: string[];
   highlighted?: boolean;
   dimmed?: boolean;
   collapsed?: boolean;
   [key: string]: unknown;
 }
 
-/**
- * Connection points are per column, not per table: a relationship is a statement
- * about two columns, and a line that lands on the node's vertical centre reads as
- * a claim about whatever row happens to sit there.
- */
-export const TableNode = memo(function TableNode({ id, data }: NodeProps) {
+export const TableNode = memo(function TableNode({ data }: NodeProps) {
   const { t } = useI18n();
-  const { tableName, columns, highlighted, dimmed, collapsed } = data as unknown as TableNodeData;
-  const updateNodeInternals = useUpdateNodeInternals();
-  const handleClass =
-    '!w-1.5 !h-1.5 !bg-accent opacity-0 transition-opacity group-hover:opacity-100';
-
-  // React Flow measures handles once; collapsing a table or scrolling its column
-  // list moves every connection point, and stale bounds leave the lines pointing
-  // at rows they no longer touch.
-  useEffect(() => {
-    updateNodeInternals(id);
-  }, [id, collapsed, columns.length, updateNodeInternals]);
+  const { tableName, columns, handleColumns, highlighted, dimmed, collapsed } =
+    data as unknown as TableNodeData;
+  const touched = new Set(handleColumns ?? []);
 
   return (
     <div
       data-testid="er-table-node"
       className={cn(
-        'group relative min-w-[180px] max-w-[280px] rounded-lg border shadow-md',
+        // Width is fixed, not fluid: `layoutErGraph` packs nodes by the width it
+        // is told, and a node free to render between 180px and 280px would be
+        // packed against a number that is often wrong.
+        'rounded-lg border shadow-md',
         highlighted ? 'border-accent bg-accent/5' : 'border-edge bg-surface',
         dimmed && 'opacity-30',
       )}
-      style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' }}
+      style={{
+        width: ER_NODE_WIDTH,
+        WebkitFontSmoothing: 'antialiased',
+        MozOsxFontSmoothing: 'grayscale',
+      }}
     >
       <div
         className={cn(
-          'flex items-center gap-1 rounded-t-lg px-3 py-2 text-xs font-semibold',
+          'flex items-center gap-1 rounded-t-lg px-3 text-xs font-semibold',
           highlighted ? 'bg-accent/15 text-accent' : 'bg-surface-alt text-fg',
         )}
+        style={{ height: ER_HEADER_HEIGHT }}
       >
         <button
           type="button"
@@ -63,15 +70,16 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps) {
         <span className="ml-auto text-[10px] font-normal text-fg-muted">{columns.length}</span>
       </div>
       {!collapsed && (
-        <div className="max-h-[300px] overflow-y-auto" onScroll={() => updateNodeInternals(id)}>
-          {columns.map((col) => (
+        <div>
+          {columns.map((col, index) => (
             <div
               key={col.name}
               className={cn(
-                'relative flex items-center gap-2 border-t border-edge/50 px-3 py-1 text-[11px]',
+                'flex items-center gap-2 border-t border-edge/50 px-3 text-[11px]',
                 col.isPk && 'bg-yellow-500/5',
                 col.isFk && 'bg-accent/5',
               )}
+              style={{ height: ER_COLUMN_ROW_HEIGHT }}
             >
               {col.isPk && (
                 <span className="shrink-0 rounded bg-yellow-500/20 px-1 text-[9px] font-bold text-yellow-500">
@@ -85,45 +93,79 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps) {
               )}
               <span className="truncate text-fg">{col.name}</span>
               <span className="ml-auto shrink-0 text-fg-muted">{col.type}</span>
-              <Handle
-                type="target"
-                id={`t:${col.name}`}
-                position={Position.Left}
-                className={handleClass}
-              />
-              <Handle
-                type="source"
-                id={`s:${col.name}`}
-                position={Position.Right}
-                className={handleClass}
-              />
+              {touched.has(col.name) && (
+                <>
+                  {/* Four variants, because an edge may leave or enter on either
+                      side: a cycle makes a relationship point leftwards. */}
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`${col.name}:s-r`}
+                    style={{ top: erColumnRowCenterY(index) }}
+                    className="!h-1.5 !w-1.5 !bg-accent"
+                  />
+                  <Handle
+                    type="source"
+                    position={Position.Left}
+                    id={`${col.name}:s-l`}
+                    style={{ top: erColumnRowCenterY(index) }}
+                    className="!h-1.5 !w-1.5 !bg-accent"
+                  />
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={`${col.name}:t-l`}
+                    style={{ top: erColumnRowCenterY(index) }}
+                    className="!h-1.5 !w-1.5 !bg-accent"
+                  />
+                  <Handle
+                    type="target"
+                    position={Position.Right}
+                    id={`${col.name}:t-r`}
+                    style={{ top: erColumnRowCenterY(index) }}
+                    className="!h-1.5 !w-1.5 !bg-accent"
+                  />
+                </>
+              )}
             </div>
           ))}
         </div>
       )}
       {collapsed && (
-        <>
-          <div className="border-t border-edge/50 px-3 py-1 text-[10px] text-fg-muted">
-            {columns.length} {t('erDiagram.columns')}
-          </div>
-          {/* Collapsing hides the rows, but the connection points must survive it or
-              every line into this table disappears with them. */}
-          <div className="pointer-events-none absolute inset-0 opacity-0">
-            {columns.map((col) => (
-              <Fragment key={col.name}>
-                <Handle type="target" id={`t:${col.name}`} position={Position.Left} />
-                <Handle type="source" id={`s:${col.name}`} position={Position.Right} />
-              </Fragment>
-            ))}
-          </div>
-        </>
+        <div
+          className="flex items-center border-t border-edge/50 px-3 text-[10px] text-fg-muted"
+          style={{ height: ER_COLLAPSED_FOOTER_HEIGHT }}
+        >
+          {columns.length} {t('erDiagram.columns')}
+        </div>
       )}
-      {columns.length === 0 && (
-        <>
-          <Handle type="target" position={Position.Left} className={handleClass} />
-          <Handle type="source" position={Position.Right} className={handleClass} />
-        </>
-      )}
+      {/* Node-level fallbacks, used when a column cannot be pointed at: a
+          collapsed table has no rows rendered, and a self-reference has no
+          left or right. */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="node:t-l"
+        className="!bg-accent !w-2 !h-2"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="node:s-r"
+        className="!bg-accent !w-2 !h-2"
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="node:s-l"
+        className="!bg-accent !w-2 !h-2"
+      />
+      <Handle
+        type="target"
+        position={Position.Right}
+        id="node:t-r"
+        className="!bg-accent !w-2 !h-2"
+      />
     </div>
   );
 });

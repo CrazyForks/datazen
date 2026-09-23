@@ -231,6 +231,33 @@ describe('tableDataStore (panel-scoped)', () => {
     );
   });
 
+  it('forwards the table schema so a non-default schema still resolves', async () => {
+    await useTableDataStore.getState().loadTableData({
+      panelId: PANEL,
+      dbSessionId: 'conn-1',
+      table: 'users',
+      database: 'db_b',
+      schema: 'sales',
+    });
+    // Omitting this made the host fall back to the connection default, which
+    // reads a table outside that default as missing.
+    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
+      expect.objectContaining({ table: 'users', database: 'db_b', schema: 'sales' }),
+    );
+
+    // Store-driven refreshes (paging) keep the same schema.
+    mockDatabaseCommands.getTableData.mockClear();
+    useTableDataStore.getState().setPage(PANEL, 1);
+    await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
+    expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, schema: 'sales' }),
+    );
+  });
+  // NOTE: upstream's "isolates pending changes when the database context
+  // changes" test was dropped here: it relied on the removed connection-scoped
+  // API (switchToTable / root pendingChanges). Pending-change isolation is now
+  // per-panel and covered by the slice-isolation tests above.
+
   it('uses the complete remembered context when no explicit target is given', async () => {
     await loadTable();
     expect(mockDatabaseCommands.getTableData).toHaveBeenCalledWith(

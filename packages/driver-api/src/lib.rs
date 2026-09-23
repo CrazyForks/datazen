@@ -23,6 +23,7 @@ pub mod sqlite_structure;
 pub mod sync;
 mod sync_taxonomy;
 mod traits;
+mod tunnel_types;
 mod types;
 
 pub use command::{
@@ -64,13 +65,14 @@ pub use sync::{
 };
 pub use sync_taxonomy::{normalize_driver_id, sync_category_of, sync_family_of};
 pub use traits::*;
+pub use tunnel_types::{HttpProxyTunnelConfig, SavedTunnel, TunnelKind, WebSocketTunnelConfig};
 pub use types::*;
 
 /// Protocol version for the driver API.
 ///
 /// Bump this when making breaking changes to `DatabaseDriver`, `KeyValueDriver`,
 /// or `DatabaseDriverFactory` traits.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Minimum protocol version the host still supports.
 ///

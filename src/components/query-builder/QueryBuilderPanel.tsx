@@ -161,7 +161,7 @@ export function QueryBuilderPanel({
 
   // ── Foreign key detection ──────────────────────────────
   const [fkRelations, setFkRelations] = useState<ForeignKeyRelation[]>([]);
-  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? true);
+  const fkPredictionEnabled = useSettingsStore((s) => s.settings.enableFkPrediction ?? false);
 
   useEffect(() => {
     if (selectedTables.length === 0) {
@@ -175,7 +175,12 @@ export function QueryBuilderPanel({
       const schemas: TableSchema[] = [];
       for (const tableName of selectedTables) {
         try {
-          const schema = await getCachedTableSchema(dbSessionId, tableName, currentDatabase ?? '');
+          const schema = await getCachedTableSchema(
+            dbSessionId,
+            tableName,
+            currentDatabase ?? '',
+            useSchemaStore.getState().schemaOfRelation(tableName, dbSessionId),
+          );
           schemas.push(schema);
           for (const fk of schema.foreignKeys) {
             // Composite keys are normalised to their ordered distinct columns

@@ -33,10 +33,7 @@ import {
   readEditorColorsFromElement,
   sqlPropertyNameHighlighting,
 } from '../../lib/themeEditorColors';
-import {
-  resolveEditorFontFamily,
-  HOST_DEFAULT_EDITOR_FONT,
-} from '@datazen/driver-sdk';
+import { resolveEditorFontFamily, HOST_DEFAULT_EDITOR_FONT } from '@datazen/driver-sdk';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { parseQualifiedPathParents } from '../../lib/sqlPathPrefix';
 import {
@@ -521,8 +518,9 @@ export function createCompletionExtensions(
     if (model && model.cursorIntent) {
       // Related-table ranking is part of prediction; with it off, completion
       // falls back to the plain schema order rather than losing any candidate.
+      // Prediction is opt-in, so only an explicit `true` turns it on.
       const relatedBoosts =
-        snapshot && useSettingsStore.getState().settings.enableFkPrediction !== false
+        snapshot && useSettingsStore.getState().settings.enableFkPrediction === true
           ? relatedTableBoosts(snapshot)
           : undefined;
       const completions = produceSchemaCompletions({

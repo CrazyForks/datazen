@@ -261,17 +261,17 @@ describe('settingsStore', () => {
     expect(applyThemePack).not.toHaveBeenCalled();
   });
 
-  it('enableFkPrediction defaults to on and can be turned off', async () => {
-    // On by default: the feature ships enabled, and a settings file written
-    // before it existed must not silently lose it.
-    expect(useSettingsStore.getState().settings.enableFkPrediction).toBe(true);
+  it('enableFkPrediction defaults to off and can be turned on', async () => {
+    // Off by default: inference is a guess, so it is opt-in rather than something
+    // an upgrade silently starts doing.
+    expect(useSettingsStore.getState().settings.enableFkPrediction).toBe(false);
 
     applyThemePack.mockResolvedValue({ ok: true });
     mockSettingsCommands.saveSettings.mockResolvedValue(undefined);
 
-    await useSettingsStore.getState().updateSettings({ enableFkPrediction: false });
+    await useSettingsStore.getState().updateSettings({ enableFkPrediction: true });
 
-    expect(useSettingsStore.getState().settings.enableFkPrediction).toBe(false);
+    expect(useSettingsStore.getState().settings.enableFkPrediction).toBe(true);
     expect(mockSettingsCommands.saveSettings).toHaveBeenCalled();
   });
 

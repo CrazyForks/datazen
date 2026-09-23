@@ -44,7 +44,11 @@ export function getAvailableLocales(): string[] {
 
 export type SupportedLocale = string;
 
-export function registerLocale(locale: string, label: string, translations: Record<string, string>): void {
+export function registerLocale(
+  locale: string,
+  label: string,
+  translations: Record<string, string>,
+): void {
   extensionLocales.set(locale, label);
   registerTranslations({ [locale]: translations });
 }

@@ -46,7 +46,9 @@ describe('[tester] localeSync defensive branches', () => {
     // Simulate an out-of-band engine change; the guard must NOT reset it back
     // when a settings mutation leaves `language` untouched.
     setLocale('fr');
-    setSettings({ connectionPoolSize: useSettingsStore.getState().settings.connectionPoolSize + 1 });
+    setSettings({
+      connectionPoolSize: useSettingsStore.getState().settings.connectionPoolSize + 1,
+    });
     expect(getLocale()).toBe('fr');
   });
 

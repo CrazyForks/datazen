@@ -863,7 +863,9 @@ ContentView
 └── ErDiagramView (src/windows/connection/ErDiagramView.tsx)
     ├── ReactFlow 画布（拖拽、缩放、平移）
     ├── TableNode — 自定义节点（表名、列列表含 PK/FK 徽章、可折叠列）
-    ├── FK 连线 — 动画箭头 + 列名标签
+    │   └── 列级连接点 — 仅对参与连线的列渲染，左右各 2 个（正/反向）
+    ├── interactionState.ts — 位置固定 / 悬停强调 / 标签落位（纯函数）
+    ├── FK 连线 — 动画箭头 + 列名标签，端点落在 FK 列行
     ├── 搜索栏 — 按表名搜索并高亮匹配节点（其余变暗）
     ├── 导出 — PNG / SVG（基于 html-to-image）
     └── 统计面板 — 表数量 + 关系数量
@@ -875,14 +877,95 @@ ContentView
 |------|------|
 | `ErDiagramView.tsx` | 主视图组件，获取 ER 数据、渲染画布、导出/搜索控制 |
 | `er/TableNode.tsx` | React Flow 自定义节点，渲染表名 + 列 + PK/FK 标记，支持折叠 |
-| `er/buildErGraph.ts` | `TableSchema[]` → React Flow nodes/edges 转换，自动布局 |
+| `er/buildErGraph.ts` | `TableSchema[]` → React Flow nodes/edges 转换（含焦点过滤、预测关系） |
+| `er/nodeMetrics.ts` | 节点尺寸**唯一来源**：宽度、表头、列行、折叠页脚、滚动上限 |
+| `er/layoutErGraph.ts` | 基于 dagre 的**分层（拓扑）布局** |
 
 ### 8.3 数据流
 
 1. 后端 `get_er_data(db_session_id, database)` 批量获取所有表的 `TableSchema`（含外键）
-2. `buildErGraph(schemas, focusTable?)` 生成 nodes 和 edges
-3. `focusTable` 参数控制焦点模式：仅显示目标表及其直接关联表
-4. React Flow 渲染，支持交互和导出
+2. `buildErGraph(schemas, focusTable?, predicted?, collapsedTables?)` 生成 nodes 和 edges；
+   节点只带**显式尺寸**，坐标由下一步决定
+3. `focusTable` 控制焦点模式：仅显示目标表及其直接关联表
+4. `layoutErGraph` 按外键方向分层定位
+5. React Flow 渲染，支持交互和导出
+
+### 8.4 布局：为什么是分层而不是网格
+
+早期实现是手写网格 —— 按后端返回顺序（`ORDER BY relname`，即字母序）把表
+`i` 放在 `(i % cols) * 300, floor(i / cols) * 高度`。字母序与外键拓扑毫无关系，
+实测后果：
+
+- **同一行内 y 跨度 672px**（12 表），因为行距用的是**节点自身**高度
+- 宽表在上时与下方节点**真实重叠 192px**
+- 10 条边跨越**无关节点 18 次**，而 React Flow 的边层在节点之下，穿越处被遮挡
+
+现在改用 dagre 分层布局（`rankdir: 'LR'`）：边方向是 child → parent，
+LR 会把 parent 排到右侧，于是边从子表右侧出发、进入父表左侧 —— 与
+`TableNode` 既有的 `source`(右) / `target`(左) 句柄方向一致，常见边是直线而非
+S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 0，重叠 0**。
+
+两条必须同时成立的约束：
+
+1. **尺寸必须显式**。`nodeMetrics.ts` 是唯一来源，`TableNode` 把每个值作为
+   inline height 应用（依赖全局 `box-sizing: border-box`，故 `height` 含边框）。
+   若二者漂移，布局就会按「不是实际渲染的尺寸」去排 —— 这正是旧网格把 40 列
+   的表预留 1000px、实际只渲染 340px 的原因。E2E `ER-010` 用真实 DOM 边界盒
+   断言零重叠，是这条约束的兜底。
+2. **折叠必须重排**。折叠改变节点高度，因此折叠状态提升到视图层
+   （`collapsedTables`）并作为 `buildErGraph` 的输入，折叠/展开都会重跑布局；
+   否则被折叠节点仍占着旧footprint，展开后会压到邻居。
+
+预测关系也参与布局，但权重低于声明约束（`DECLARED_WEIGHT` 2 vs
+`PREDICTED_WEIGHT` 1）：推测不应比约束更强烈地扭曲图。
+
+### 8.5 连线端点：指向列而不是节点中点
+
+早先每个节点只有**一个** `source`（右）与**一个** `target`（左）句柄，位置固定
+在侧边垂直中点 —— 30 列的表，FK 线指向第 ~15 行附近，而不是真正的外键列。
+
+现在按列生成连接点，但**只给参与连线的列**（`buildErGraph` 从边反推出
+`handleColumns`）：若每列都渲染，几百张表的 schema 会有上万个句柄。每个参与列
+渲染 4 个变体（`source` 左/右、`target` 左/右），因为**有环时关系会朝左**。
+
+方向由布局后的位置决定，而不是猜：分层 `LR` 布局下每条边都跨越不同 rank，因此
+**必然是水平的** —— 在无环 / 长链 / 有环三种形态下实测，vertical 边均为 0。于是
+只需比较两节点中心的 x：目标在右则从子表右侧出、进父表左侧，反之镜像。
+
+节点级句柄（`node:s-l/s-r/t-l/t-r`）保留为兜底：折叠的表没有渲染任何列行，
+自引用也没有左右可言。
+
+### 8.6 为什么取消列列表的内部滚动
+
+连接点必须位于节点内**可预测**的偏移处，而滚动容器里的行会随 `scrollTop` 移动 ——
+被滚出视口的列，其句柄会把连线端点甩到节点之外、压在其他节点上。**精确的列级
+连线与内部滚动互斥**，本模块保留前者。
+
+代价是宽表会变成很高的节点（60 列 = 1478px），因此 `defaultCollapsedTables` 在
+**初次加载时**把超过 `ER_AUTO_COLLAPSE_COLUMNS`(30) 列的表播种为折叠。注意这是
+**播种而非规则**：折叠判定只读调用方传入的集合，否则阈值会在每次重排时把表重新
+折叠，chevron 变成单向的 —— 用户永远无法展开宽表。
+
+### 8.7 交互状态（`er/interactionState.ts`）
+
+视图状态变换全部抽成**纯函数**，便于测试 —— 渲染 React Flow 需要浏览器才能量出任何
+几何信息，把逻辑埋在组件里就等于不可测。
+
+- **手工位置固定**：`applyPinnedPositions` 把用户拖拽过的节点位置叠加到新布局之上，
+  只覆盖被钉住的节点。schema 加载 / 折叠 / 聚焦都会重排，没有这一步每次都会丢掉
+  手工摆放。`重新布局` 按钮（`er-diagram-relayout`）清空钉子。
+- **悬停强调**：`hoveredNeighbourhood` 收集被悬停表及其**双向**关联表，
+  `applyHoverToEdges` / `applyHoverToNodes` 加粗关联边、压暗其余。
+  用**悬停而非点击**：点击节点会在工作区打开该表并离开 ER 视图，点击驱动的强调
+  用户根本看不到。
+- **标签按空间落位**：`fitEdgeLabel` 依据实际水平间距决定标签。实测 `ranksep=110`
+  时间距恒为 110px，约容纳 16 字符 —— 单列外键全部放得下，复合外键
+  （`tenant_id, account_id` 需 138px）放不下。此时**缩短而非丢弃**：退化为
+  `tenant_id +1`（即连线实际连接的那一列 + 其余数量），必要时再截断加省略号。
+  省略号自身占一个字符额度，预算必须扣除，否则窄间距下截断结果仍会溢出。
+
+**聚焦模式本就自动重排**：`visibleSchemas` 先过滤再交给 `buildErGraph` 布局，
+因此聚焦即重排，无需额外处理。
 
 ## 9. PathInput 控件
 

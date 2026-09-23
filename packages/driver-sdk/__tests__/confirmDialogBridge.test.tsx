@@ -86,8 +86,6 @@ describe('confirmDialogBridge (bound)', () => {
 
     render(<Probe />);
     expect(screen.getByTestId('result').textContent).toBe('function');
-    await expect(
-      confirmFn({ title: 't', message: 'm' }),
-    ).resolves.toBe(false);
+    await expect(confirmFn({ title: 't', message: 'm' })).resolves.toBe(false);
   });
 });

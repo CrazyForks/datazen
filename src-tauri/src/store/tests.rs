@@ -83,6 +83,10 @@ fn sample_connection_with_ssh() -> ConnectionConfig {
             passphrase: Some("key-passphrase".into()),
             jump: None,
         }),
+        tunnel_kind: None,
+        tunnel_id: None,
+        http_proxy_tunnel: None,
+        websocket_tunnel: None,
         color_tag: None,
         group: None,
         last_connected_at: None,
@@ -362,31 +366,33 @@ fn editor_completion_quote_policy_defaults_to_unquoted() {
 }
 
 #[test]
-fn fk_prediction_defaults_to_on() {
-    assert!(AppSettings::default().enable_fk_prediction);
-    assert!(AppSettings::default_for_first_run().enable_fk_prediction);
+fn fk_prediction_defaults_to_off() {
+    // A prediction is a guess, so it is opt-in: a fresh install must not present
+    // inferred relationships with the same weight as a declared constraint.
+    assert!(!AppSettings::default().enable_fk_prediction);
+    assert!(!AppSettings::default_for_first_run().enable_fk_prediction);
 }
 
 #[test]
-fn missing_enable_fk_prediction_defaults_to_on() {
+fn missing_enable_fk_prediction_defaults_to_off() {
     // Settings written before the feature existed have no key at all; they must
-    // come back with prediction on rather than silently off.
+    // come back with prediction off rather than silently on.
     let mut value = serde_json::to_value(AppSettings::default()).unwrap();
     value.as_object_mut().unwrap().remove("enableFkPrediction");
     let parsed: AppSettings = serde_json::from_value(value).unwrap();
-    assert!(parsed.enable_fk_prediction);
+    assert!(!parsed.enable_fk_prediction);
 }
 
 #[test]
 fn enable_fk_prediction_roundtrip() {
     let settings = AppSettings {
-        enable_fk_prediction: false,
+        enable_fk_prediction: true,
         ..AppSettings::default()
     };
     let json = serde_json::to_string(&settings).unwrap();
     assert!(json.contains("enableFkPrediction"));
     let parsed: AppSettings = serde_json::from_str(&json).unwrap();
-    assert!(!parsed.enable_fk_prediction);
+    assert!(parsed.enable_fk_prediction);
 }
 
 #[test]

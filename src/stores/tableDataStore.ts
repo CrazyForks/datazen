@@ -228,6 +228,9 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
         skipCount,
         filterLogic,
         database: context.database,
+        // The table's own schema, not a guess: without it the host falls back
+        // to the connection default and a table outside it reads as missing.
+        schema: context.schema ?? null,
       });
       commitFetchedPage(get, set, panelId, context, requestRevision, res);
     } catch (e) {

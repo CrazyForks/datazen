@@ -1,15 +1,10 @@
 import type { Node, Edge } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import type { TableSchema } from '../../../types';
-
-const NODE_BASE_HEIGHT = 40;
-const COL_HEIGHT = 24;
-/**
- * Generous gutters: a smoothstep route needs room to turn, and two lines leaving
- * the same pair of tables need room to separate.
- */
-const GAP_X = 400;
-const GAP_Y = 90;
+import { fitEdgeLabel } from './interactionState';
+import { layoutErGraph } from './layoutErGraph';
+import { ER_AUTO_COLLAPSE_COLUMNS, ER_NODE_WIDTH, erNodeHeight } from './nodeMetrics';
+import { ER_DECLARED_COLOR, ER_PREDICTED_COLOR, ER_PREDICTED_DASH } from './relationStyle';
 
 /** How an edge between two tables was established. */
 export type ErRelationKind = 'declared' | 'predicted';
@@ -34,8 +29,26 @@ export interface ErPredictedRelation {
   ambiguous?: boolean;
 }
 
-const DECLARED_COLOR = 'var(--c-accent, #3b82f6)';
-const PREDICTED_COLOR = 'var(--c-warning, #e39a27)';
+/**
+ * The tables a diagram starts collapsed on.
+ *
+ * The column list has no internal scroll, so a table of sixty columns is a
+ * 1478px node that would space its whole rank that far apart. Seeding the
+ * collapsed set — rather than forcing collapse in the graph builder — keeps the
+ * chevron working in both directions: the user can expand such a table, and it
+ * stays expanded.
+ */
+export function defaultCollapsedTables(schemas: readonly TableSchema[]): Set<string> {
+  return new Set(
+    schemas
+      .filter((schema) => schema.columns.length > ER_AUTO_COLLAPSE_COLUMNS)
+      .map((schema) => schema.tableName),
+  );
+}
+
+/** Shared empty set, so the default argument does not allocate per call. */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
+
 /** How quiet an ambiguous inference sits: still visible, never as loud as a constraint. */
 const AMBIGUOUS_OPACITY = 0.3;
 /**
@@ -51,7 +64,7 @@ const LABEL_BG_RADIUS = 3;
  * reach: leaving it fully saturated would put a bright chevron on a faint line.
  * `color-mix` is already a baseline here (globals.css).
  */
-const AMBIGUOUS_MARKER_COLOR = `color-mix(in oklab, ${PREDICTED_COLOR} ${AMBIGUOUS_OPACITY * 100}%, transparent)`;
+const AMBIGUOUS_MARKER_COLOR = `color-mix(in oklab, ${ER_PREDICTED_COLOR} ${AMBIGUOUS_OPACITY * 100}%, transparent)`;
 
 /**
  * The column a line attaches to. Connection points live on rendered rows, so a
@@ -93,42 +106,6 @@ export function dedupeSymmetricPredictions(
 }
 
 /**
- * Place related tables next to each other.
- *
- * An alphabetical grid can put two joined tables at opposite ends of the canvas,
- * and every line between them then has to travel over the whole diagram. Walking
- * out from the most connected table keeps each relationship short.
- */
-function orderByConnectivity(
-  schemas: readonly TableSchema[],
-  adjacency: Map<string, Set<string>>,
-): TableSchema[] {
-  const byName = new Map(schemas.map((s) => [s.tableName, s]));
-  const remaining = new Set(byName.keys());
-  const degree = (name: string) => adjacency.get(name)?.size ?? 0;
-  const rank = (names: string[]) =>
-    [...names].sort((a, b) => degree(b) - degree(a) || (a < b ? -1 : a > b ? 1 : 0));
-
-  const ordered: TableSchema[] = [];
-  while (remaining.size > 0) {
-    const queue = [rank([...remaining])[0]!];
-    remaining.delete(queue[0]!);
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      const schema = byName.get(current);
-      if (schema) ordered.push(schema);
-      for (const neighbour of rank(
-        [...(adjacency.get(current) ?? [])].filter((n) => remaining.has(n)),
-      )) {
-        remaining.delete(neighbour);
-        queue.push(neighbour);
-      }
-    }
-  }
-  return ordered;
-}
-
-/**
  * Build the ER diagram's nodes and edges.
  *
  * @param schemas    Every table in the database.
@@ -141,6 +118,7 @@ export function buildErGraph(
   schemas: TableSchema[],
   focusTable?: string,
   predicted: readonly ErPredictedRelation[] = [],
+  collapsedTables: ReadonlySet<string> = EMPTY_COLLAPSED,
 ): { nodes: Node[]; edges: Edge[] } {
   // Both kinds mark their columns as foreign keys — a predicted one is a foreign
   // key in everything but the constraint.
@@ -182,53 +160,27 @@ export function buildErGraph(
 
   const visibleNames = new Set(visibleSchemas.map((s) => s.tableName));
   const schemaByName = new Map(visibleSchemas.map((s) => [s.tableName, s]));
+  // The diagram draws the same guess only once even when the engine saw it from
+  // both ends, and it never shows a table that the focus filter has hidden.
   const predictions = dedupeSymmetricPredictions(
     predicted.filter((r) => visibleNames.has(r.fromTable) && visibleNames.has(r.toTable)),
   );
 
-  /** Undirected table→table links, used only to lay the tables out. */
-  const adjacency = new Map<string, Set<string>>();
-  const link = (a: string, b: string) => {
-    if (a === b || !visibleNames.has(a) || !visibleNames.has(b)) return;
-    for (const [from, to] of [
-      [a, b],
-      [b, a],
-    ] as const) {
-      const neighbours = adjacency.get(from) ?? new Set<string>();
-      neighbours.add(to);
-      adjacency.set(from, neighbours);
-    }
-  };
-  for (const schema of visibleSchemas) {
-    for (const fk of schema.foreignKeys) link(schema.tableName, fk.referencedTable);
-  }
-  for (const relation of predictions) link(relation.fromTable, relation.toTable);
 
-  const laidOut = orderByConnectivity(visibleSchemas, adjacency);
-  const cols = Math.max(1, Math.ceil(Math.sqrt(laidOut.length)));
-
-  // A row is as tall as its tallest table; using each node's own height would make
-  // the next row overlap whichever neighbour was shorter.
-  const heightOf = (schema: TableSchema) => NODE_BASE_HEIGHT + schema.columns.length * COL_HEIGHT;
-  const rowHeight = new Map<number, number>();
-  laidOut.forEach((schema, i) => {
-    const row = Math.floor(i / cols);
-    rowHeight.set(row, Math.max(rowHeight.get(row) ?? 0, heightOf(schema)));
-  });
-  const rowOffset = (row: number) => {
-    let y = 0;
-    for (let r = 0; r < row; r++) y += (rowHeight.get(r) ?? 0) + GAP_Y;
-    return y;
-  };
-
-  const nodes: Node[] = laidOut.map((schema, i) => {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
-
+  // Sizes are declared up front, exactly as `TableNode` renders them, and the
+  // positions come from the layout below — never from the node's index.
+  const nodes: Node[] = visibleSchemas.map((schema) => {
+    // Collapse is read from the caller's set and nothing else. Folding a
+    // "too wide to show" rule in here would make the chevron one-way: the user
+    // could never expand such a table, because the rule would re-collapse it on
+    // every relayout. The initial set is seeded by `defaultCollapsedTables`.
+    const collapsed = collapsedTables.has(schema.tableName);
     return {
       id: schema.tableName,
       type: 'tableNode',
-      position: { x: col * GAP_X, y: rowOffset(row) },
+      position: { x: 0, y: 0 },
+      width: ER_NODE_WIDTH,
+      height: erNodeHeight(schema.columns.length, collapsed),
       data: {
         tableName: schema.tableName,
         columns: schema.columns.map((c) => ({
@@ -238,6 +190,7 @@ export function buildErGraph(
           isFk: fkColumns.has(`${schema.tableName}.${c.name}`),
         })),
         highlighted: schema.tableName === focusTable,
+        collapsed,
       },
     };
   });
@@ -255,18 +208,23 @@ export function buildErGraph(
         id: `${schema.tableName}-${fk.name}`,
         source: schema.tableName,
         target: fk.referencedTable,
-        sourceHandle: fromColumn ? `s:${fromColumn}` : undefined,
-        targetHandle: toColumn ? `t:${toColumn}` : undefined,
-        label: fk.columns.join(', '),
         type: 'smoothstep',
         animated: true,
-        style: { stroke: DECLARED_COLOR },
-        markerEnd: { type: MarkerType.ArrowClosed, color: DECLARED_COLOR },
+        style: { stroke: ER_DECLARED_COLOR },
+        markerEnd: { type: MarkerType.ArrowClosed, color: ER_DECLARED_COLOR },
         labelStyle: { fontSize: 10, fill: 'var(--c-fg-muted, #888)' },
         labelBgStyle: LABEL_BG_STYLE,
         labelBgPadding: LABEL_BG_PADDING,
         labelBgBorderRadius: LABEL_BG_RADIUS,
-        data: { kind: 'declared' satisfies ErRelationKind },
+        // A composite foreign key spans several rows; the edge meets the first
+        // column the table actually reports (never a name it does not have),
+        // while the label still lists them all.
+        data: {
+          kind: 'declared' satisfies ErRelationKind,
+          sourceColumn: fromColumn || undefined,
+          targetColumn: toColumn || undefined,
+          columns: [...fk.columns],
+        },
       });
     }
   }
@@ -287,26 +245,20 @@ export function buildErGraph(
       id: relation.id,
       source: relation.fromTable,
       target: relation.toTable,
-      sourceHandle: fromColumn ? `s:${fromColumn}` : undefined,
-      targetHandle: toColumn ? `t:${toColumn}` : undefined,
-      // The line now says which column it joins by touching its row, so an
-      // ambiguous guess carries no label: a clique of identical labels is
-      // precisely what made this diagram unreadable.
-      label: ambiguous ? undefined : relation.columnPairs.map((pair) => pair.left).join(', '),
       type: 'smoothstep',
       // Not animated and dashed: this relationship is inferred, and the diagram
       // must not present it with the same certainty as a constraint.
       animated: false,
       style: {
-        stroke: PREDICTED_COLOR,
-        strokeDasharray: ambiguous ? '2 5' : '4 3',
+        stroke: ER_PREDICTED_COLOR,
+        strokeDasharray: ambiguous ? '2 5' : ER_PREDICTED_DASH,
         opacity: ambiguous ? AMBIGUOUS_OPACITY : 1,
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: ambiguous ? AMBIGUOUS_MARKER_COLOR : PREDICTED_COLOR,
+        color: ambiguous ? AMBIGUOUS_MARKER_COLOR : ER_PREDICTED_COLOR,
       },
-      labelStyle: { fontSize: 10, fill: PREDICTED_COLOR },
+      labelStyle: { fontSize: 10, fill: ER_PREDICTED_COLOR },
       labelBgStyle: LABEL_BG_STYLE,
       labelBgPadding: LABEL_BG_PADDING,
       labelBgBorderRadius: LABEL_BG_RADIUS,
@@ -314,9 +266,111 @@ export function buildErGraph(
         kind: 'predicted' satisfies ErRelationKind,
         score: relation.score,
         ambiguous,
+        sourceColumn: fromColumn || undefined,
+        targetColumn: toColumn || undefined,
+        columns: relation.columnPairs.map((pair) => pair.left),
       },
     });
   }
 
-  return { nodes, edges };
+  // A layered layout keyed on the relationships, not on the order the backend
+  // happened to return the tables in.
+  const laidOut = layoutErGraph(nodes, edges);
+
+  return { nodes: withHandleColumns(laidOut, edges), edges: withHandles(edges, laidOut) };
+}
+
+/**
+ * Record, per node, which columns an edge actually touches.
+ *
+ * `TableNode` renders connection points only for these columns rather than for
+ * every column: a wide table would otherwise carry four handles per row, and a
+ * schema of a few hundred tables would carry tens of thousands of them.
+ */
+function withHandleColumns(nodes: readonly Node[], edges: readonly Edge[]): Node[] {
+  const touched = new Map<string, Set<string>>();
+  const touch = (table: string, column: unknown) => {
+    if (typeof column !== 'string' || column.length === 0) return;
+    const set = touched.get(table);
+    if (set) set.add(column);
+    else touched.set(table, new Set([column]));
+  };
+
+  for (const edge of edges) {
+    const data = edge.data as { sourceColumn?: string; targetColumn?: string } | undefined;
+    touch(edge.source, data?.sourceColumn);
+    touch(edge.target, data?.targetColumn);
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      handleColumns: [...(touched.get(node.id) ?? [])],
+    },
+  }));
+}
+
+/** Handle id for a column, or the node-level fallback when there is no column. */
+function handleId(column: unknown, role: 's' | 't', side: 'l' | 'r', collapsed: boolean): string {
+  if (collapsed || typeof column !== 'string' || column.length === 0) return `node:${role}-${side}`;
+  return `${column}:${role}-${side}`;
+}
+
+/**
+ * Point each edge at the rows it actually joins.
+ *
+ * Every edge after a layered `LR` layout runs between two different ranks, so it
+ * is horizontal — measured across acyclic, chained and cyclic shapes, none was
+ * vertical. Which side it leaves and enters therefore depends only on which node
+ * is further right, and a reversed edge (a cycle) simply mirrors the pair.
+ */
+function withHandles(edges: readonly Edge[], nodes: readonly Node[]): Edge[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const centreOf = (id: string) => {
+    const node = byId.get(id);
+    if (!node) return undefined;
+    return {
+      x: node.position.x + (node.width ?? 0) / 2,
+      y: node.position.y + (node.height ?? 0) / 2,
+      collapsed: node.data?.collapsed === true,
+    };
+  };
+
+  return edges.map((edge) => {
+    const source = centreOf(edge.source);
+    const target = centreOf(edge.target);
+    const data = edge.data as { sourceColumn?: string; targetColumn?: string } | undefined;
+    if (!source || !target) return edge;
+
+    // A self-reference has no left/right to speak of; leave it on the node-level
+    // handles and let React Flow draw the loop.
+    if (edge.source === edge.target) {
+      return {
+        ...edge,
+        sourceHandle: handleId(data?.sourceColumn, 's', 'r', true),
+        targetHandle: handleId(data?.targetColumn, 't', 'l', true),
+      };
+    }
+
+    const forward = target.x >= source.x;
+    const typed = data as { columns?: string[]; ambiguous?: boolean } | undefined;
+    const columns = typed?.columns ?? [];
+    // The label is placed between the two nodes, so it can only be as wide as the
+    // gap between them.
+    const gap = forward
+      ? (byId.get(edge.target)?.position.x ?? 0) -
+        ((byId.get(edge.source)?.position.x ?? 0) + (byId.get(edge.source)?.width ?? 0))
+      : (byId.get(edge.source)?.position.x ?? 0) -
+        ((byId.get(edge.target)?.position.x ?? 0) + (byId.get(edge.target)?.width ?? 0));
+
+    return {
+      ...edge,
+      // An ambiguous guess carries no label: a clique of identical labels is
+      // precisely what made this diagram unreadable.
+      label: typed?.ambiguous ? undefined : fitEdgeLabel(columns, Math.max(gap, 0)),
+      sourceHandle: handleId(data?.sourceColumn, 's', forward ? 'r' : 'l', source.collapsed),
+      targetHandle: handleId(data?.targetColumn, 't', forward ? 'l' : 'r', target.collapsed),
+    };
+  });
 }

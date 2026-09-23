@@ -164,12 +164,16 @@ export function ContentView({
 
   const closeDetail = useCallback(() => setDetailOpen(false), []);
 
+  // The schema of a relation, for per-table metadata reads. Never falls back to
+  // `currentDatabase`: that is a *database*, and a schema-aware driver would
+  // resolve the table in the wrong namespace while a schema-less driver would
+  // reject the argument outright. `null` means "let the host/driver decide".
   const resolveTableSchema = useCallback(
     (table: string): string | null => {
       const hit = [...schemaTables, ...schemaViews].find((tbl) => tbl.name === table);
-      return hit?.schema ?? currentDatabase ?? null;
+      return hit?.schema ?? null;
     },
-    [schemaTables, schemaViews, currentDatabase],
+    [schemaTables, schemaViews],
   );
 
   const schemaTreeDbSessionId = sidebarConnCtx?.dbSessionId ?? dbSessionId;
@@ -228,6 +232,7 @@ export function ContentView({
     initialDatabase,
     lastTableSchema,
     schemaViews,
+    resolveTableSchema,
   });
 
   // The single KV action dispatcher sits on this side of the boundary: a context

@@ -516,13 +516,13 @@ describe('SettingsContent', () => {
     render(<SettingsContent initialSection="editor" />);
     await waitForSettingsLoad();
 
-    // On by default, and turning it off persists the choice.
+    // Off by default, and turning it on persists the choice.
     const toggle = screen.getByRole('switch', { name: 'settings.enableFkPrediction' });
-    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
 
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(updateSettingsMock).toHaveBeenCalledWith({ enableFkPrediction: false }),
+      expect(updateSettingsMock).toHaveBeenCalledWith({ enableFkPrediction: true }),
     );
   });
 

@@ -43,6 +43,7 @@ vi.mock('../../../lib/windowManager', () => ({
 }));
 
 const mockReorderConnections = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockGetOpenDatabases = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockSaveConnection = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const openDataSyncWindowMock = vi.hoisted(() => vi.fn());
 const openSchemaDiffWindowMock = vi.hoisted(() => vi.fn());
@@ -52,6 +53,7 @@ vi.mock('../../../commands/connection', () => ({
   connectionCommands: {
     reorderConnections: (...args: unknown[]) => mockReorderConnections(...args),
     saveConnection: (...args: unknown[]) => mockSaveConnection(...args),
+    getOpenDatabases: (...args: unknown[]) => mockGetOpenDatabases(...args),
   },
 }));
 
@@ -1916,6 +1918,160 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
       expect(useSchemaStore.getState().schemas.get('conn-sql')?.loading).toBe(false);
     });
     expect(container.querySelector('[data-tree-node="db"]')).toBeNull();
+  });
+
+  it('keeps marking a database node as open while the backend still holds its pool', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-pg', name: 'Local PG', databaseType: 'postgresql', port: 5432 }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-pg': { status: 'connected', dbSessionId: 'conn-1', connectionId: 'cfg-pg' },
+    };
+    mockGetTables.mockResolvedValue([]);
+    mockGetOpenDatabases.mockResolvedValue(['db_a']);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-pg" />,
+    );
+    await findByText('db_a');
+    await settleSessionLoad('conn-1');
+
+    // Expand then collapse: the node is no longer expanded, so the only thing
+    // that can keep the marker is the driver still holding a releasable pool.
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(mockGetOpenDatabases).toHaveBeenCalledWith('conn-1');
+    });
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(
+        container
+          .querySelector('[data-db-name="db_a"] [data-db-open]')!
+          .getAttribute('data-db-open'),
+      ).toBe('true');
+    });
+    // A database neither expanded nor reported by the driver stays bare.
+    expect(container.querySelector('[data-db-name="db_b"] [data-db-open]')).toBeNull();
+  });
+
+  it('shows no marker at all once the backend released the pool', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-pg', name: 'Local PG', databaseType: 'postgresql', port: 5432 }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-pg': { status: 'connected', dbSessionId: 'conn-1', connectionId: 'cfg-pg' },
+    };
+    mockGetTables.mockResolvedValue([]);
+    // The driver reports nothing open (e.g. the pool was just released).
+    mockGetOpenDatabases.mockResolvedValue([]);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-pg" />,
+    );
+    await findByText('db_a');
+    await settleSessionLoad('conn-1');
+
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(mockGetOpenDatabases).toHaveBeenCalledWith('conn-1');
+    });
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+
+    // A closed database renders nothing: the old hollow ring repeated the
+    // absence of a dot while implying the tree knew the pool state.
+    await waitFor(() => {
+      expect(container.querySelector('[data-db-name="db_a"] [data-db-open]')).toBeNull();
+    });
+  });
+
+  it('marks a database node as open as soon as the user expands it', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-pg', name: 'Local PG', databaseType: 'postgresql', port: 5432 }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-pg': { status: 'connected', dbSessionId: 'conn-1', connectionId: 'cfg-pg' },
+    };
+    mockGetTables.mockResolvedValue([]);
+    // Drivers with no releasable per-database resource report nothing, so the
+    // tree's own expand state must be enough to show a database as open.
+    mockGetOpenDatabases.mockResolvedValue([]);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-pg" />,
+    );
+    await findByText('db_a');
+    await settleSessionLoad('conn-1');
+
+    expect(container.querySelector('[data-db-name="db_a"] [data-db-open]')).toBeNull();
+
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(
+        container
+          .querySelector('[data-db-name="db_a"] [data-db-open]')!
+          .getAttribute('data-db-open'),
+      ).toBe('true');
+    });
+
+    // Collapsing it closes it again in the tree.
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(container.querySelector('[data-db-name="db_a"] [data-db-open]')).toBeNull();
+    });
+  });
+
+  it('shows no open marker when the driver reports no per-database resources', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-pg', name: 'Local PG', databaseType: 'postgresql', port: 5432 }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-pg': { status: 'connected', dbSessionId: 'conn-1', connectionId: 'cfg-pg' },
+    };
+    // A failed/absent report must not be rendered as "closed" — the tree would
+    // be claiming knowledge the driver never provided.
+    mockGetOpenDatabases.mockRejectedValue(new Error('unsupported'));
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-pg" />,
+    );
+    await findByText('db_a');
+    await settleSessionLoad('conn-1');
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-db-name="db_a"]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-db-name="db_a"] [data-db-open]')).toBeNull();
+  });
+
+  it('marks an auto-expanded single-database node as open', async () => {
+    // Single-database connections expand their configured database on connect,
+    // so it reads as open even though the driver reports no per-database pool.
+    connectionsState.connections = [
+      makeConn({
+        id: 'cfg-sql',
+        name: 'SQLite Conn',
+        databaseType: 'sqlite',
+        database: '/data/app.db',
+      }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-sql': { status: 'connected', dbSessionId: 'conn-sql', connectionId: 'cfg-sql' },
+    };
+    mockGetDatabases.mockResolvedValue(['/data/app.db']);
+    mockGetTables.mockResolvedValue([]);
+    mockGetOpenDatabases.mockResolvedValue([]);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-sql" />,
+    );
+    await findByText('/data/app.db');
+    await settleSessionLoad('conn-sql');
+
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-db-name="/data/app.db"] [data-db-open]'),
+      ).not.toBeNull();
+    });
   });
 
   it('shows a loading row while single-db tables are being fetched', async () => {

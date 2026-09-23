@@ -92,7 +92,6 @@ export function ContentViewDrawers({
       }),
     [connectionName, dbSessionId, currentDatabase, kvSelectedKey],
   );
-
   const detailPanelId =
     activePanel && (activePanel.type === 'table' || activePanel.type === 'view')
       ? activePanel.id
