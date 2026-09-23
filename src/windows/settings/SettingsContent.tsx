@@ -32,7 +32,12 @@ import { Slider } from '../../components/ui/Slider';
 import { DataCleanupSection } from './DataCleanupSection';
 import { AppearanceSection } from './AppearanceSection';
 import { SqlSnippetsCard } from './SqlSnippetsCard';
-import { parseSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from './settingsSections';
+import {
+  parseSettingsSection,
+  SETTINGS_NAV_GROUPS,
+  SETTINGS_SECTIONS,
+  type SettingsSection,
+} from './settingsSections';
 import { useExtension, sqlEditorEnhancedEP } from '@datazen/extension-points';
 import { SQL_SYNTAX_PRESETS } from '../../lib/themeEditorColors';
 import { SqlSyntaxPreview } from '../../components/SqlSyntaxPreview';
@@ -321,31 +326,42 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
             {t('common.back')}
           </Button>
         )}
-        {SETTINGS_SECTIONS.map((sec) => {
-          const isActive = activeSection === sec.id;
-          return (
-            <button
-              key={sec.id}
-              type="button"
-              data-testid={`settings-nav-${sec.id}`}
-              onClick={() => setActiveSection(sec.id)}
-              className={cn(
-                'flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors',
-                isActive
-                  ? 'bg-accent/15 font-medium text-accent'
-                  : 'text-fg-secondary hover:bg-surface-raised hover:text-fg',
-              )}
-            >
-              <ThemedIcon id={settingsSectionIconId(sec.id)} className="h-4 w-4 shrink-0" />
-              {t(sec.labelKey)}
-            </button>
-          );
-        })}
+        {SETTINGS_NAV_GROUPS.map((group) => (
+          <div
+            key={group.id}
+            className="flex flex-col gap-0.5 pt-2.5 first:pt-0"
+            data-testid={`settings-nav-group-${group.id}`}
+          >
+            <div className="px-3 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+              {t(group.labelKey)}
+            </div>
+            {SETTINGS_SECTIONS.filter((sec) => sec.group === group.id).map((sec) => {
+              const isActive = activeSection === sec.id;
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  data-testid={`settings-nav-${sec.id}`}
+                  onClick={() => setActiveSection(sec.id)}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors',
+                    isActive
+                      ? 'bg-accent/15 font-medium text-accent'
+                      : 'text-fg-secondary hover:bg-surface-raised hover:text-fg',
+                  )}
+                >
+                  <ThemedIcon id={settingsSectionIconId(sec.id)} className="h-4 w-4 shrink-0" />
+                  {t(sec.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       <div className="flex-1 overflow-y-auto px-8 py-6" data-testid="settings-content">
         <div
-          className="mx-auto max-w-lg space-y-5"
+          className="mx-auto max-w-2xl space-y-5"
           data-testid={`settings-section-${activeSection}`}
         >
           {activeSection === 'general' && (
@@ -364,6 +380,8 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 checkOnStartup={settings.checkForUpdatesOnStartup}
                 onCheckOnStartupChange={(v) => updateField('checkForUpdatesOnStartup', v)}
               />
+
+              {renderSectionContributions('general')}
 
               {appVersion && (
                 <div className="pt-4 border-t border-edge">
@@ -448,8 +466,6 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                   }
                 />
               </SettingRow>
-
-              {renderSectionContributions('general')}
             </>
           )}
 
@@ -667,10 +683,13 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
           )}
 
           {activeSection === 'appearance' && (
-            <AppearanceSection
-              settings={settings}
-              onThemeChange={(theme) => updateField('theme', theme)}
-            />
+            <>
+              <AppearanceSection
+                settings={settings}
+                onThemeChange={(theme) => updateField('theme', theme)}
+              />
+              {renderSectionContributions('appearance')}
+            </>
           )}
           {activeSection === 'ai' && <AiSettingsSection />}
           {activeSection === 'prompts' && <PromptSettingsSection />}

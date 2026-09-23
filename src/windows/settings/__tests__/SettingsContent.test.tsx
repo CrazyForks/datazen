@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { SettingsContent } from '../SettingsContent';
+import { SETTINGS_SECTIONS } from '../settingsSections';
 import type { AppSettings, PromptScenario } from '../../../types';
 
 const onCloseMock = vi.fn();
@@ -1247,6 +1248,98 @@ describe('SettingsContent', () => {
           },
         }),
       );
+    } finally {
+      unregister();
+    }
+  });
+
+  it('groups nav entries under application and integration headers', async () => {
+    render(<SettingsContent />);
+    await waitForSettingsLoad();
+
+    const nav = screen.getByTestId('settings-nav');
+    expect(within(nav).getByTestId('settings-nav-group-app')).toBeInTheDocument();
+    expect(within(nav).getByTestId('settings-nav-group-integration')).toBeInTheDocument();
+    for (const section of SETTINGS_SECTIONS) {
+      expect(within(nav).getByTestId(`settings-nav-${section.id}`)).toBeInTheDocument();
+    }
+    // Group headers are labels, never navigation targets.
+    expect(within(nav).queryByRole('button', { name: 'settings.nav.group.app' })).toBeNull();
+    expect(
+      within(nav).queryByRole('button', { name: 'settings.nav.group.integration' }),
+    ).toBeNull();
+  });
+
+  it('renders a general-targeted contribution in General and not under Data Browsing', async () => {
+    const { extensionRegistry, sqlEditorEnhancedEP } = await import('@datazen/extension-points');
+    const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
+      settingsContributions: [
+        {
+          extensionId: 'sql-editor-pro',
+          targetSection: 'general',
+          items: [
+            {
+              key: 'generalKnob',
+              label: 'General section knob',
+              type: 'boolean',
+              defaultValue: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    try {
+      render(<SettingsContent />);
+      await waitForSettingsLoad();
+
+      // General is the default section — the contribution belongs here.
+      expect(
+        within(screen.getByTestId('settings-section-general')).getByTestId(
+          'settings-contrib-sql-editor-pro',
+        ),
+      ).toBeInTheDocument();
+
+      // It must not leak into Data Browsing, where it used to render.
+      fireEvent.click(screen.getByTestId('settings-nav-dataBrowsing'));
+      expect(screen.queryByTestId('settings-contrib-sql-editor-pro')).not.toBeInTheDocument();
+    } finally {
+      unregister();
+    }
+  });
+
+  it('renders an appearance-targeted contribution in Appearance only', async () => {
+    const { extensionRegistry, sqlEditorEnhancedEP } = await import('@datazen/extension-points');
+    const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
+      settingsContributions: [
+        {
+          extensionId: 'sql-editor-pro',
+          targetSection: 'appearance',
+          items: [
+            {
+              key: 'appearanceKnob',
+              label: 'Appearance section knob',
+              type: 'boolean',
+              defaultValue: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    try {
+      render(<SettingsContent />);
+      await waitForSettingsLoad();
+
+      // Default section is General — an appearance contribution leaks nowhere.
+      expect(screen.queryByTestId('settings-contrib-sql-editor-pro')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('settings-nav-appearance'));
+      expect(
+        within(screen.getByTestId('settings-section-appearance')).getByTestId(
+          'settings-contrib-sql-editor-pro',
+        ),
+      ).toBeInTheDocument();
     } finally {
       unregister();
     }
