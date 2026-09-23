@@ -1,6 +1,6 @@
 # migration-sync-stream-execution
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 ## Scope
 
@@ -15,23 +15,42 @@ Keep one target transaction for the whole selected plan. Generate and execute a 
 - [x] One target transaction spans the run; later-page generation/execute failure and cancellation roll back prior writes, and rollback failure reports an unknown outcome.
 - [x] SQL preview follows the immutable plan and selected rows in order and rejects responses over 16 MiB with a clear validation message. Preview remains a bounded full IPC response.
 - [x] Unit tests cover >64 MiB execution, cross-page statement order, cancellation and source failure after writes, unknown rollback outcome, streamed Skip conflicts, and zero full-load calls.
-- [x] Existing PostgreSQL and MySQL WDIO journeys verify real writes and readback; the new PostgreSQL late-page optimistic-conflict journey verifies rollback and readback. The isolated track WDIO rerun is coordinated after the active Data Transfer lane finishes.
+- [x] Existing PostgreSQL and MySQL WDIO journeys verify real writes and readback; the new PostgreSQL late-page optimistic-conflict journey verifies rollback and readback. Fresh independent WDIO verification passed both new journeys in an isolated run.
 
 ## E2E registration
 
-- [x] Data Sync large-plan streaming execution: added `SYNC-REAL-026` using 5,000 changed rows × 14 KiB and `batchSize: 500` (ten execution pages, approximately 68 MiB total); asserts the 16 MiB preview limit, applied count, target count, and sampled value lengths. Its first WDIO attempt overlapped the Data Transfer app/WebDriver lane and is awaiting the coordinator-scheduled isolated rerun.
-- [x] Mid-run cancellation/late-page failure rollback: unit coverage includes cancellation and later-page source failure after writes; `SYNC-REAL-027` mutates row 500 after compare so the conflict occurs on the second 500-row execution page, then verifies the first page was rolled back by reading back the sole concurrently modified row. It passed in the initial WDIO attempt; isolated rerun is coordinated with the large-plan test.
+- [x] Data Sync large-plan streaming execution: `SYNC-REAL-026` uses 5,000 changed rows × 14 KiB and `batchSize: 500` (ten execution pages, approximately 68 MiB total); the isolated WDIO run passed the 16 MiB preview refusal, applied count, target count, and sampled value-length assertions.
+- [x] Late-page optimistic conflict rollback: `SYNC-REAL-027` changes row 500 after comparison so the conflict occurs on the second 500-row execution page; the isolated WDIO run passed and readback confirmed the first page was rolled back while preserving the concurrent value.
 
-## Self-validation
+## Coder self-validation (historical)
 
-- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib`: 1,801 passed, 0 failed, 3 ignored. Run with authorized local loopback access because the sandbox blocks WireMock/tunnel loopback binds.
-- `CARGO_TARGET_DIR=target/cargo-wt cargo test -p datazen --lib sync::`: 193 passed, 0 failed.
-- `npx vitest run src/commands/__tests__/syncPlan.test.ts`: 1 file and 7 tests passed.
-- `npx tsc --noEmit`: passed.
-- `git diff --check`: passed.
-- WDIO command for `SYNC-REAL-026|SYNC-REAL-027`: one passing test and one inconclusive preview-limit failure while another lane owned the shared app/WebDriver service (`Address already in use`). The running process exited; the coordinator will schedule a focused isolated rerun. No product conclusion is drawn from the preview assertion in that overlapped run.
-- Coder implementation commit: `cff9665b` (`feat(sync): stream comparison pages during execution`).
+Implementation commit: `cff9665b` (`feat(sync): stream comparison pages during execution`). At handoff, the coder reported 1,801 Host Rust tests passing (3 ignored), 193 focused Sync tests passing, the focused Vitest suite (7 tests), TypeScript typecheck, and diff validation passing.
 
-## Independent Tester
+The coder's first combined WDIO attempt overlapped the shared Data Transfer app/WebDriver lane: `SYNC-REAL-027` passed, while the large-plan preview assertion was inconclusive after an `Address already in use` service collision. That overlapped result is historical only and is superseded by the independent, isolated WDIO rerun below.
 
-- Pending fresh Tester; review every changed file, assess changed-core coverage (target at least 80%), rerun all checks and WDIO cases, and register all bugs before reporting.
+## Independent Tester verification
+
+### A. Review and correctness
+
+- Independently reviewed every changed implementation file from `920c515d` through `cff9665b`, plus the focused tests and E2E journey. No functional correctness defects were found.
+- Added Tester-only Rust tests for later-page execution failure rollback; empty, read-only, cancelled, and begin-failed preflight; empty generated pages; preview byte accounting and ordering; immutable-plan preview/execution; and preserving an empty plan after its no-op rejection.
+
+### B. Test and build checks
+
+- Final LLVM-instrumented `cargo test -p datazen --lib`: 1,811 passed, 0 failed, 3 ignored.
+- Focused frontend test `npx vitest run src/commands/__tests__/syncPlan.test.ts`: 1 file, 7 tests passed; `npx tsc --noEmit` passed.
+- `rustfmt --check` on both changed Rust files and `git diff --check` passed.
+
+### C. Changed-core coverage
+
+- Final full Host run LLVM line coverage: `commands/sync/exec.rs` 93.80%; `data_sync/execute.rs` 92.30%.
+- Changed paging/preview functions measured 88.89–100%; plan SQL preview 84.21%; plan execution 81.82%. Changed-core coverage is above the 80% target.
+
+### D. Isolated WDIO and cleanup
+
+- `CI=true pnpm e2e -- --suite data-sync --mochaOpts.grep 'SYNC-REAL-026|SYNC-REAL-027'`: 2/2 tests passed in the changed spec; 3 unrelated specs were skipped by the focused grep. `SYNC-REAL-026` verified the 5,000 × 14 KiB, ten-page (~68 MiB) PostgreSQL journey, the 16 MiB preview refusal, applied count, target count, and sampled value lengths. `SYNC-REAL-027` verified late-page conflict rollback and readback preserving the concurrent value.
+- The isolated rerun resolved the earlier `Address already in use` collision: the prior run had overlapped another WDIO owner on the shared app/WebDriver service, making its preview result inconclusive. The rerun was serialized after the Data Transfer lane released the service; the app and WDIO process exited cleanly. Both local PostgreSQL and MySQL fixture checks succeeded.
+- Tester worktree uses its own `node_modules` directory (not a symlink). Generated Cargo injection changes were restored; `Cargo.lock` is clean.
+- Non-blocking P3 hygiene note: the production build warns that `execute_statements` is an unused import in `commands/sync/exec.rs`; its remaining use is in a `#[cfg(test)]` helper, so the import can be gated with `#[cfg(test)]`. No functional impact; no correctness bug filed.
+
+Tester result: `TEST_DONE`; no correctness bugs registered.

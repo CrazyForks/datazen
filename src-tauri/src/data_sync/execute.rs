@@ -462,6 +462,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tester_stream_rejects_empty_first_batch_before_opening_a_transaction() {
+        let mut exec = RecordingExecutor::default();
+        let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
+        let error = execute_statement_batches_with_policy(
+            Vec::new(),
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("change set is empty"));
+        assert!(exec.calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tester_stream_rejects_read_only_before_opening_a_transaction() {
+        let mut exec = RecordingExecutor {
+            read_only: true,
+            ..RecordingExecutor::default()
+        };
+        let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
+        let error = execute_statement_batches_with_policy(
+            vec![stmt("INSERT")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("read-only"));
+        assert!(exec.calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tester_stream_cancelled_before_begin_does_not_open_a_transaction() {
+        let mut exec = RecordingExecutor::default();
+        let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("INSERT")],
+            &mut source,
+            &mut exec,
+            Some(cancelled),
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 0);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("before any changes")));
+        assert!(exec.calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tester_stream_begin_failure_reports_no_writes() {
+        struct BeginFailureExecutor(Vec<String>);
+        #[async_trait]
+        impl StatementExecutor for BeginFailureExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                self.0.push("begin".into());
+                Err(DataSyncError::validation("injected begin failure"))
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                self.0.push("execute".into());
+                Ok(1)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                self.0.push("commit".into());
+                Ok(())
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                self.0.push("rollback".into());
+                Ok(())
+            }
+        }
+
+        let mut exec = BeginFailureExecutor(Vec::new());
+        let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("INSERT")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 0);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no changes were applied")));
+        assert_eq!(exec.0, vec!["begin"]);
+    }
+
+    #[tokio::test]
+    async fn test_tester_stream_skips_empty_generated_batches_and_continues_in_order() {
+        let mut exec = RecordingExecutor::default();
+        let mut source = VecBatchSource(VecDeque::from([
+            Ok(Some(Vec::new())),
+            Ok(Some(vec![stmt("page-2")])),
+            Ok(None),
+        ]));
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.applied, 2);
+        assert_eq!(
+            exec.calls,
+            vec!["begin", "execute:1:page-1", "execute:1:page-2", "commit"]
+        );
+    }
+
+    #[tokio::test]
     async fn commits_all_statements() {
         let mut exec = RecordingExecutor::default();
         let result = execute_statements(&[stmt("INSERT 1"), stmt("INSERT 2")], &mut exec, None)
@@ -868,6 +1003,35 @@ mod tests {
             .is_some_and(|reason| reason.contains("statement generation failed after 1")));
         assert!(exec.calls.contains(&"rollback".to_string()));
         assert!(!exec.calls.contains(&"commit".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_tester_later_batch_statement_failure_rolls_back_prior_page() {
+        let mut exec = RecordingExecutor {
+            fail_at: Some(1),
+            ..RecordingExecutor::default()
+        };
+        let mut source = batch_source(vec![vec![stmt("page-2")]]);
+        let result = execute_statement_batches_with_policy(
+            vec![stmt("page-1")],
+            &mut source,
+            &mut exec,
+            None,
+            ConflictPolicy::Abort,
+        )
+        .await
+        .expect("a later-page statement failure should be reported as a confirmed rollback");
+
+        assert!(result.rolled_back);
+        assert_eq!(result.applied, 1);
+        assert!(result
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("execution failed after 1 statements")));
+        assert_eq!(
+            exec.calls,
+            vec!["begin", "execute:1:page-1", "execute:1:page-2", "rollback"]
+        );
     }
 
     #[tokio::test]

@@ -674,4 +674,250 @@ mod tests {
         assert!(error.to_string().contains("select fewer rows"));
         assert!(statements.is_empty());
     }
+
+    #[test]
+    fn test_tester_sql_preview_counts_each_statement_and_json_separator() {
+        let first = crate::data_sync::SqlStatement {
+            table: "users".into(),
+            operation: ChangeOperation::Insert,
+            sql: "INSERT INTO users VALUES (?)".into(),
+            preview_sql: "INSERT INTO users VALUES (?)".into(),
+            parameters: vec![Value::String("first".into())],
+            row_key: vec![Value::Integer(1)],
+        };
+        let second = crate::data_sync::SqlStatement {
+            parameters: vec![Value::String("second".into())],
+            row_key: vec![Value::Integer(2)],
+            ..first.clone()
+        };
+        let expected_bytes = 2
+            + serde_json::to_vec(&first).unwrap().len()
+            + 1
+            + serde_json::to_vec(&second).unwrap().len();
+        let mut statements = Vec::new();
+        let mut response_bytes = 2;
+
+        append_bounded_preview_statement(&mut statements, &mut response_bytes, first).unwrap();
+        append_bounded_preview_statement(&mut statements, &mut response_bytes, second).unwrap();
+
+        assert_eq!(statements.len(), 2);
+        assert_eq!(response_bytes, expected_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_tester_bounded_sql_preview_returns_selected_rows_in_order() {
+        let test = TestAppState::with_tables().await;
+        test.save_and_connect("sync-preview-target").await;
+        let target_db_session_id = test.connect_config("sync-preview-target").await;
+        let options = SyncOptions::default();
+        let rows = (1..=2)
+            .map(|key| {
+                RowChange::insert(
+                    vec![Value::Integer(key)],
+                    vec![
+                        Some(Value::Integer(key)),
+                        Some(Value::String(format!("name-{key}"))),
+                    ],
+                    &options,
+                )
+            })
+            .collect();
+        let mut table = TableResult::matched("users", "users", rows);
+        table.columns = vec!["id".into(), "name".into()];
+        table.column_types = vec!["integer".into(), "text".into()];
+        table.primary_keys = vec!["id".into()];
+        let comparison =
+            ComparisonStore::from_comparison(ComparisonResult::new(vec![table])).unwrap();
+        let selection = SyncRunSelection {
+            revision: 1,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                selection_mode: SyncSelectionMode::All,
+                operations: vec![ChangeOperation::Insert],
+                excluded_rows: Vec::new(),
+            }],
+        };
+        let matcher =
+            plans::validate_selection_streaming(&comparison, &selection, &options).unwrap();
+        let source = StoreSqlPageSource::new(
+            &test.state,
+            &target_db_session_id,
+            &comparison,
+            &matcher,
+            &options,
+            Some("app"),
+            None,
+        )
+        .unwrap();
+
+        let statements = generate_bounded_data_sync_sql_preview(source)
+            .await
+            .unwrap();
+
+        assert_eq!(statements.len(), 2);
+        let row_keys = statements
+            .iter()
+            .map(|statement| statement.row_key.as_slice())
+            .collect::<Vec<_>>();
+        assert_eq!(row_keys.len(), 2);
+        assert!(matches!(row_keys[0], [Value::Integer(1)]));
+        assert!(matches!(row_keys[1], [Value::Integer(2)]));
+    }
+
+    #[tokio::test]
+    async fn test_tester_plan_preview_and_execution_use_the_paged_path() {
+        use crate::testing::app_state::rich_mock_options;
+        use crate::testing::mock_driver::MockDriverOptions;
+
+        let test = TestAppState::with_options(MockDriverOptions {
+            parameterized_writes: true,
+            execute_rows_affected: 1,
+            ..rich_mock_options()
+        })
+        .await;
+        let (_, source_db_session_id) = test.save_and_connect("sync-plan-source").await;
+        let (_, target_db_session_id) = test.save_and_connect("sync-plan-target").await;
+        let options = SyncOptions::default();
+        let mut table = TableResult::matched(
+            "users",
+            "users",
+            vec![RowChange::insert(
+                vec![Value::Integer(7)],
+                vec![
+                    Some(Value::Integer(7)),
+                    Some(Value::String("plan-row".into())),
+                ],
+                &options,
+            )],
+        );
+        table.columns = vec!["id".into(), "name".into()];
+        table.column_types = vec!["integer".into(), "text".into()];
+        table.primary_keys = vec!["id".into()];
+        let fingerprint = plans::fingerprint_relations_with_filters(
+            "app",
+            None,
+            vec![(
+                "users".into(),
+                Some(crate::testing::mock_driver::MockDriver::default_table_schema("users")),
+                None,
+            )],
+        )
+        .unwrap();
+        let plan = plans::issue_plan(
+            source_db_session_id,
+            target_db_session_id,
+            "app".into(),
+            "app".into(),
+            None,
+            None,
+            test.mock.as_ref(),
+            test.mock.as_ref(),
+            fingerprint.clone(),
+            fingerprint,
+            ComparisonResult::new(vec![table]),
+            options.clone(),
+            false,
+        )
+        .unwrap();
+        let selection = SyncRunSelection {
+            revision: plan.selection_revision,
+            rows: Vec::new(),
+            scopes: vec![SyncTableSelection {
+                source_table: "users".into(),
+                target_table: "users".into(),
+                selection_mode: SyncSelectionMode::All,
+                operations: vec![ChangeOperation::Insert],
+                excluded_rows: Vec::new(),
+            }],
+        };
+        let sql = generate_data_sync_sql_for_plan_impl(
+            &test.state,
+            plan.plan_id.clone(),
+            selection.clone(),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(sql.len(), 1);
+
+        let result = execute_data_sync_plan_impl(
+            &test.state,
+            SyncRunRequest {
+                plan_id: plan.plan_id,
+                selection,
+                options,
+                job_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.applied, 1);
+        assert!(!result.rolled_back);
+        assert_eq!(test.mock.open_transaction_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_tester_empty_streamed_plan_is_rejected_without_consuming_the_plan() {
+        let test = TestAppState::with_tables().await;
+        let (_, source_db_session_id) = test.save_and_connect("sync-empty-source").await;
+        let (_, target_db_session_id) = test.save_and_connect("sync-empty-target").await;
+        let options = SyncOptions::default();
+        let mut table = TableResult::matched("users", "users", Vec::new());
+        table.columns = vec!["id".into(), "name".into()];
+        table.column_types = vec!["integer".into(), "text".into()];
+        table.primary_keys = vec!["id".into()];
+        let fingerprint = plans::fingerprint_relations_with_filters(
+            "app",
+            None,
+            vec![(
+                "users".into(),
+                Some(crate::testing::mock_driver::MockDriver::default_table_schema("users")),
+                None,
+            )],
+        )
+        .unwrap();
+        let preview = plans::issue_plan(
+            source_db_session_id,
+            target_db_session_id,
+            "app".into(),
+            "app".into(),
+            None,
+            None,
+            test.mock.as_ref(),
+            test.mock.as_ref(),
+            fingerprint.clone(),
+            fingerprint,
+            ComparisonResult::new(vec![table]),
+            options.clone(),
+            false,
+        )
+        .unwrap();
+        let request = SyncRunRequest {
+            plan_id: preview.plan_id.clone(),
+            selection: SyncRunSelection {
+                revision: preview.selection_revision,
+                rows: Vec::new(),
+                scopes: vec![SyncTableSelection {
+                    source_table: "users".into(),
+                    target_table: "users".into(),
+                    selection_mode: SyncSelectionMode::All,
+                    operations: vec![ChangeOperation::Insert],
+                    excluded_rows: Vec::new(),
+                }],
+            },
+            options,
+            job_id: None,
+        };
+
+        let error = execute_data_sync_plan_impl(&test.state, request)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("change set is empty"));
+        assert!(plans::peek_plan(&preview.plan_id).is_ok());
+        assert_eq!(test.mock.open_transaction_count(), 0);
+    }
 }
