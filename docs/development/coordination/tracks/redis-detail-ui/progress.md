@@ -1,5 +1,5 @@
 - 任务: 键详情常驻编辑重排 + I-1 dirty 拦截 + 8-1 五枚页签（PRD §3.3、§4 I-1/I-5、§8-1、§8-4）
-- 状态: **TEST_FAILED（第 2 轮，1 个 bug，Bug 循环 2/5）**（第 2 轮复测：文件面审计 + 四门禁全绿、6/6 已声明修复全部独立复验通过并翻「已修复」、偏差①②③④⑤ 成立；但偏差⑥ 不成立 ⇒ 新登记 **BUG-007**（I-1 静默毁草稿残留旁路，高）⇒ 交下一棒修复。第 1 轮历史状态：门禁全绿 + 登记 6 条 Bug、Bug 循环 1/5）
+- 状态: **READY_FOR_TEST（修复轮第 2 回合完成：BUG-007 已修复待复测，Bug 循环 2/5 → 待第 3 轮复测）**（第 2 轮复测判定 TEST_FAILED 历史：文件面审计 + 四门禁全绿、6/6 已声明修复翻「已修复」、偏差①-⑤ 成立；偏差⑥ 立案 **BUG-007**（I-1 静默毁草稿残留旁路，高）⇒ coder round-2 修复 `9714509b1` + P1b 转正，四门禁提交态复跑全绿（G1 `59 files/560 passed/0 skipped` · tsc 0 · build 0 · boundaries `1473/0/4`）。第 1 轮历史状态：门禁全绿 + 登记 6 条 Bug、Bug 循环 1/5）
 - 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
 - Tester commit 链（12 笔，边测边 commit，无 >15min 无落盘区间）:
   `dbd9218e0` 阶段 A/B 台账（BOOTSTRAP + 门禁 + E-1/E-2）→ `da4bc9531` 补测 I-1 支路 8 例（+3 skip 占位）
@@ -652,3 +652,4 @@ G4 bound:   ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory fi
 - **验收（靶向 44/44 绿）**：`round2Probe.test.tsx` P1b `describe.skip` → `describe`（skip 实际在该文件，`dirtyLeaveCoverage` 全文无 skip —— 简报笔误；断言逐字未改，diff 仅去 `.skip`）⇒ 4 断言全绿、P1a 保持绿；`round2Probe 4/4 · dirtyLeaveCoverage 12/12 · dirtyLeaveJourney 11/11 · keyHeaderRowJourney 11/11 · redisWorkbench 6/6`。
 - **commit 链**：`4cc510998`（BUG-007 状态→修复中）→ `9714509b1`（修复 + P1b 取消 skip）→ 本台账 commit → 门禁收口 commit。
 - **门禁（提交态复跑，逐字尾部随收口 commit 补录）**：G1 `npx vitest run --config vitest.drivers.config.ts`（round-2 基线 `59 files / 559 passed / 1 skipped`，P1b 转正 ⇒ 预期 `59 / 560 passed / 0 skipped`）· G2 `npx tsc --noEmit` → 0 · G3 `npx vite build` → 0（禁 `pnpm build`，pre-run deps check 会触 `pnpm install`）· G4 `node scripts/check-driver-import-boundaries.mjs`（round-2 基线 `1473 files / 0 blocking / 4 advisory`，本轮无新增文件）。
+- **门禁收口（提交态复跑，四门全绿 · 逐字尾部）**：G1 `Test Files  59 passed (59)` / `Tests  560 passed (560)` / `G1_EXIT=0`（= 基线 559 + P1b 转正，0 skipped）· G2 `npx tsc --noEmit` → `G2_EXIT=0`（0 错误）· G3 `✓ built in 10.91s` / `G3_EXIT=0`（chunk-size 提示为既有非阻断警告）· G4 `ok (1473 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` / `G4_EXIT=0`（2 allow-listed skipped；4 条 advisory 逐字同 round-2 基线）。收口 commit 即本节所在 commit。
