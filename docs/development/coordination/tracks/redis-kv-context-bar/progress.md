@@ -500,3 +500,63 @@ b83cf976ec5a3455c417e4c34b5d6e24
 **宿主接线精度**：`ContentView` 用 `useMemo` 把 `onSelectKvDb` 与活动面板的 `connectionId` 绑定；**未传时显式产出 `undefined`**（而非空壳闭包）⇒ 保持 `useKvSlotActions` 的 no-op + warn 分支**可达**。`useKvSlotActions` 的 `selectDatabase` 分支在无 `onSelectDatabase` 时走 `warnUnwired(action)`（仅 `console.warn`，**不抛**）⇒ F-3 ruling 1 成立。
 
 **动作 2 结论：PASS。** 裁定 (A) 三要素全部逐字落实。
+
+## 动作 3 — 中继桩「只加不改」审计
+
+### (3-1) 逐个文件的删除行统计（最硬的证据）
+
+| 文件 | 新增/删除 | 删除行内容 |
+|---|---|---|
+| `kvBarRound1Fixes.test.tsx` | `51 / 0` | **无** |
+| `kvBarRound2Fixes.test.tsx` | `51 / 0` | **无** |
+| `kvBarRound2Tester.test.tsx` | `51 / 0` | **无** |
+| `kvBarRound3Tester.test.tsx` | `51 / 0` | **无** |
+| `kvBarSlotTesterGaps.test.tsx` | `51 / 0` | **无** |
+| `kvBarSlots.test.tsx` | `62 / 2` | 仅动作 3-(3) 所述那 2 行（用例名 + 旧零命令断言） |
+
+⇒ **5 个文件 `-0`（纯新增，连一行都未改）；第 6 个文件的 2 行删除不在 `makeRelay` 块内**（在状态条断言块），与桩无关。
+
+### (3-2) 既有 5 个成员逐字不变（比「无删除行」更强的证明）
+
+对 6 个文件，把基线 `makeRelay` 块（`/^function makeRelay/,/^}/`）**逐行**在 HEAD 的对应块内做 `grep -Fxq` 全文匹配：
+
+```
+kvBarRound1Fixes      OK: all base makeRelay lines survive verbatim (28 base lines)
+kvBarRound2Fixes      OK: all base makeRelay lines survive verbatim (28 base lines)
+kvBarRound2Tester     OK: all base makeRelay lines survive verbatim (28 base lines)
+kvBarRound3Tester     OK: all base makeRelay lines survive verbatim (28 base lines)
+kvBarSlotTesterGaps   OK: all base makeRelay lines survive verbatim (28 base lines)
+kvBarSlots            OK: all base makeRelay lines survive verbatim (28 base lines)
+```
+
+⇒ 6 × 28 行基线桩代码**逐字存活**，含 `subscribe` / `getSelectedKey` / `selectKey` / `getDirty` / `setDirty` 全部 5 个原有成员。
+
+**点名核查协调者提出的典型削弱手法**（「例如 `getDirty` 改为返回常量」）：HEAD 上 6 个文件的 `getDirty: () => dirty` / `getSelectedKey: () => selectedKey` **均仍读闭包变量**，无一处退化为常量。`setDirty`/`selectKey` 的幂等 `if (next === dirty) return;` 早退也在基线行集合内。⇒ **未发现任何削弱测试的改动。**
+
+### (3-3) `kvBarSlots.test.tsx` 的 2 行删除 = 已申报的语义收窄
+
+删除行为 `it('renders the no-key state and asks the server for nothing', …)` 与 `expect(commandInvoke).not.toHaveBeenCalled()`，替换为 `key_object_info` 零调用 + `db_sizes` 唯一命令。该文件 diff 的**其余 4 条原断言全部保留**（`data-status-state` / `data-selected-key` / `[data-part="selected-key"]` 非空 + 后接 2 例）。
+
+⇒ 与 `bugs.md` 第 2 条、简报「按新语义更新但必须写明」的要求**逐条吻合**；属**语义收窄而非删除**，且在 action 4 的变异矩阵中被独立验证为**真正承重**（见下）。
+
+### (3-4) 「9 个文件有本地桩 / 6 个过期」口径核验 —— **口径成立，但有一个未申报的遗留**
+
+实测（`git grep -l makeRelay`）：
+
+| 口径 | 实测 |
+|---|---|
+| **基线**有本地 `makeRelay` 桩的文件 | **7**（6 个已加宽 + `kvSlotRelay.test.tsx`） |
+| 本轨**新增**带桩文件 | 2（`redisContextBar.test.tsx`、`kvStatusBarFull.test.tsx`） |
+| ⇒ HEAD 有桩文件 | **9** ✅ 与自报一致 |
+| 基线**过期的桩**（有 `: KvSlotState` 标注却只有 5 成员、且被测组件**会读**加宽 getter） | **6** ✅ 与自报一致 |
+
+**⚠️ 未申报遗留（记为观察项，非本轨缺陷）**：基线第 7 个带桩文件 `packages/drivers/redis/ui/__tests__/kvSlotRelay.test.tsx:116` 同样写着
+`function makeRelay(): KvSlotState & { published: … }` 却只实现 5 个成员，**本轨未加宽**。
+它**当前不红**，原因是**结构性安全**而非巧合：该文件注释自述「These tests pin the **publish** side」，
+它渲染的 `RedisWorkbench` / `DetailColumn` 对中继**只写不读** —— 实测 `key-browser/**` 对 8 个加宽 getter
+的读取命中数为 **0**（`grep` exit 1），唯一的中继调用是 `useKvSlotRelay.ts:37-38` 的
+`selectKey(null)` / `setDirty(false)`（写侧）。
+
+⇒ **判定：不是缺陷**（无用例因此丧失保护力），但它是下一轮同型漂移的**头号候选**：
+Coder 建议的 `satisfies KvSlotState` 护栏一旦落地，**这个文件会立刻变红**，派发该小轨时须一并修它。
+已写入下方 R 回归清单。
