@@ -1,12 +1,12 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: TEST_FAILED（第 1 轮 Tester：2 条 `待修复` = BUG-001 Major + BUG-002 Minor；四件套门禁全绿、D-0/D-1/D-3/D-4/D-6/D-7 与 D-5/D-8 判定顺序均通过）
-- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）
+- 状态: 修复轮第 1 回合完成 → READY_FOR_TEST（第 1 轮 Tester 的 BUG-001 Major + BUG-002 Minor 均已修并转绿，两条 `it.skip` 解 skip；等待第 2 轮 Tester 复测）
+- 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名收口）
 - 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、本 commit（覆盖率补测 + 判定收口）
 - 合并 commit: —
 - 代理: w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd
 - Worktree: .worktrees/datazen-redis-tree-ui
 - 分支: feature/redis-tree-ui
-- 心跳: 2026-09-22 22:57（Tester 第 1 轮）
+- 心跳: 2026-09-23 11:57（Coder 修复轮第 1 回合，HEAD = eb733a757 + 本台账 commit；四件套实测见「修复轮第 1 回合」§4）
 
 # W3-D `redis-tree-ui` 简报（协调者下发）
 
@@ -330,3 +330,151 @@ Tester 自带 diff 加权脚本（`git diff 8981d3078..HEAD` 新增行 × covera
   （`redisKeyWebContextMenu.test.tsx` 那条 `showNativeContextMenu` 用例改名，
   diff 显示断言体未动、只把读取路径从 `RedisWorkbench.tsx` 换成 D-0 拆出的 `useKeyRowActions.tsx`）
   ⇒ **无"删基线测试凑数"迹象**。
+
+---
+
+## 修复轮第 1 回合（Coder 全新实例，HEAD 起点 f8a191b66）
+
+> 任务：第 1 轮 Tester 的 BUG-001（Major）+ BUG-002（Minor）+ 协调者裁定的死代码收口。
+> 取证与裁定全部来自协调者交接（已内联任务书），本回合未重新取证。
+> 纪律：一步一 commit（7 个）、重型命令严格串行、写面按任务书锁定。
+
+### 1. BUG-002（Minor）— 刷新失败的层级永久「扫描中」
+
+`34ec2828d`。`treeLevels.ts` `markFetchFailed` 非 reset 分支由
+`{ ...level, loading:false, done: level.pass===null ? true : level.done, error:true }`
+改为 `{ ...level, loading:false, done:true, error:true, pass:null }`，并把语义写进注释：
+失败的权威 pass 被**放弃**（`pass:null`）且层级关闭（`done:true`）——`children` 保留
+最后良好子集（正是 I-4 的回退），下一次成功 `rescan` 重开 pass 并清 `error`（自愈）。
+核对无回归：`:90` reset 分支（`EMPTY_LEVEL` 重写，无 pass 概念）与 `:109` continue 分支
+（`pass===null` 时 `done` 语义不变）行为保持。
+
+测试：`keyTreeState.test.ts` 新增 `describe('[redis-tree-ui-BUG-002] …')` 3 例——
+状态机三要素完整（进入：开 pass 且 `anyLevelScanning` true；状态内/放弃：children 保留 +
+`pass===null` + `done:true` + `anyLevelScanning` false；退出：下一次成功 `applyFetch`
+清 `error`；外加 mid-pass 已有部分结果时的失败）；`keyTreeTesterGaps.test.tsx` 配对
+`it.skip` **解 skip 转绿**（未删）。
+
+### 2. BUG-001（Major）— 树视图 R2 pattern 是装饰件
+
+协调者裁定 = **纯客户端过滤路线**，不改 `list_children` 契约（已核实：Rust 侧 opts
+只有 `sep`/`noTtlOnly`/`keyType`，`commands_exec_dispatch.rs:26-41` 无 pattern 形参；
+基线 `useRedisKeyScan` 的 pattern 是全局 flat 语义，树视图过滤属 D-2 新行为）。
+**pattern→prefix 映射作为「取代之」的路线取消**（无基线先例）；本实现里 prefix 只做
+**服务端收窄**（不改变可见性判定），可见性一律由客户端过滤决定——见 §2.b。
+
+#### a) 纯函数（`03f3790f5`）
+新文件 `ui/key-browser/keyTreeFilter.ts`：
+- `globToRegExp` / `globMatchesName`：Redis `MATCH` 语义（`*`→`.*`、`?`→`.`、其余字符
+  逐字转义、锚定、大小写敏感）；空串/编译失败 → `null`，调用方按「过滤开着但什么都不
+  匹配」处理，**绝不**回退成「全匹配」。
+- `filterTreeRowsByPattern(rows, pattern)`：表驱动状态机。空/`*` pattern 原样返回（identity）；
+  **可见性按 `row.kind` 分叉**（`rowMatchTarget` 是唯一允许取 `path` / `entry.key` 的地方，
+  杜绝「按字段存在性分叉」——子级叶子 `entry.key` 是服务端回的**绝对键名**，folder `path`
+  带尾分隔符，两者对同一 pattern 含义一致）；文件夹匹配 ⇒ 只保自身，展开子行按自身匹配；
+  **不匹配的祖先补渲染为面包屑**（`KeyTreeRow.folder.breadcrumb?: boolean`）；
+  空文件夹（`count===0`）不显示；无匹配 ⇒ `[]`（这正是 `no-match` 在默认视图可达的前提）。
+- `countSelectableRows` / `isBreadcrumbRow`：面包屑不可点、不计 `data-row-count`、不进选择集。
+- `filterKeysByPattern`：可见键集的**单一事实源**（与行过滤在同一 pattern 上互相校验，
+  测试里做了交叉断言）。
+
+#### b) 接线（`307ce40df`）
+- `useKeyTree`：新增 `appliedPattern` 选项，进 **reset 触发项**（`[..., sep, appliedPattern]`），
+  并导出纯函数 `patternToTreePrefix(pattern, sep)` 做**根请求前缀路由**：
+  `*`/空 或前导 `*` ⇒ `''`（全键空间，行为不变）；`app:*`/`app:user:*` ⇒ 保留到分隔符边界的
+  字面头；头切在段内（`app:us*`）⇒ 回退到最后一个分隔符；无分隔符（`zzz`）⇒ 该字面本身
+  （扫 `zzz*`）。层级 **state key 仍是 `''`**（行折叠/展开簿记地址不变），只有请求被收窄；
+  子级请求继续用文件夹自身 prefix，故展开子树完全不受路由影响。
+  裁定细节：客户端过滤仍是唯一裁决者，路由只减少服务端扫描量——过宽的前缀不可能让
+  pattern 拒绝的键漏到屏上。
+- `useKeyTreeView`：`treeRows` = 折叠后套 `filterTreeRowsByPattern`（**tree 视图 only**；
+  `list` 视图是服务端已按同一 pattern 过滤的 `scan_keys` 输出，不再二次过滤）；
+  新增 `visibleKeys` / `filterPattern` / `filterActive` 三个派生出口。
+- `RedisWorkbench`：传 `scan.appliedPattern`（当前扫描所属的 pattern），不再是未应用的
+  `searchPattern`。
+- `KeyTreePane`：R1 计数 `data-loaded`、「全选已加载」、`KeyTreeColumn.allKeys`（文件夹
+  级联）与 I-11 的 `{loaded}` **全部改读 `visibleKeys`** ⇒ 「屏上 2 行 vs 计数 0 vs 全选空集」
+  这一矛盾对在结构上不可复现。`pattern` 展示源改 `view.filterPattern`。
+- `KeyTreeList`：面包屑渲染成 `data-breadcrumb='true'` 的独立分支（无 checkbox/无删除/
+  不可点折叠，sticky 头部同规则）；`data-row-count` 用 `countSelectableRows`（可导航行），
+  与 `paintedRows`（布局网格）分离；I-9 键盘经 `stepActiveIndex` **跨过**面包屑且
+  `→` 进子树时也跨；新增 `data-filter-active` / `data-filter-pattern` 便于按 data 断言。
+- **未加载余量提示**：仅 `row.partial`（⇒ `level.done===false`）且有 filter 时，在
+  `(n+)` 之后追加 `redis.tree.filterUnloaded`；`en.ts` 只追加这 **1 个** `redis.tree.*` key。
+- `KeyTreeSearchRow`：`Esc` 从「只清文本」升级为「清文本 **且** 重放空 pattern」
+  （`onClearFilter`）。理由：pattern 现在拥有行，只清输入会让树被一个屏幕上没有任何
+  痕迹的 pattern 过滤着（I-11 旅程 `:620` 钉的正是「Esc 把过滤器退回全键空间」）。
+
+#### c) 测试（`975e23e6b` + `eab9559bc` + `eb733a757`）
+- `keyTreeFilter.test.ts`：33 例表驱动（glob 矩阵含 `.`/`:` 转义与非法 `[`、prefix 路由、
+  面包屑补渲染、深度链、空文件夹规则、pre-order 保持、行过滤与键过滤交叉一致）。
+- 新旅程 `keyTreePatternFilter.test.tsx`（19 例）：`patternToTreePrefix` 矩阵（含分隔符维度：
+  `app.user:*` 在 sep `.` 下折在 `app.`）；DOM 全程——输 `zzz`+Enter ⇒ `data-row-count='0'`
+  + `data-empty-state='no-match'`（验收线），清空 ⇒ 行复原、空态消失、根请求回到 `''`；
+  `app:*` ⇒ 根请求前缀被路由且树在命名空间内重扎根；深匹配 ⇒ 父行为面包屑（无 checkbox、
+  点击不发请求）；R1 计数/全选/画出行在同一集合上双向一致；半截输入不重绘（typed vs
+  applied 分离在新管线下仍成立）；`(n+)` 提示随过滤器进/出。零英文字面量断言、零几何反查。
+- 一处 vacuous 断言自查后修正（`eab9559bc`）。
+
+### 3. 死代码收口（协调者裁定：删）— `406253a2f`、`eb733a757`
+
+`keyTree.ts` 删 `buildKeyTreeRows` / `splitKeyNamespace` / `separatorsFor`（+私有
+`countLeaves`），Grep 确认生产与测试调用方清零。`keyTree.test.ts` 的
+「R3 state machine」用例**改写**（非删除）为测 live path
+`buildServerTreeRows(levels, expanded, sep)`，状态机三要素齐（enter：两分隔符 ⇒ 两文件夹集；
+in-state：label 按折叠所用分隔符切 + 外来分隔符 fallback；exit：旧分隔符下仍展开的 prefix 在新
+回包到达前渲染为空，且 `(n+)` partial 旗标两臂）；另补「子级叶子保留绝对 `entry.key`、label
+只留末段」用例，正是 §2.a「按 kind 分叉、不按字段存在性分叉」的依据。
+`KeyTreeGroupRow.tsx` 与 `keyUnderFolder` 的文档注释同步去掉「客户端折叠 fallback 列表」
+的旧说法（改为：分组在**服务端**、sep 同时进请求与 reset 触发项）。别名 `visibleTreeRows`
+（无调用方）一并删除——本轮既然在清死代码，就不该顺手留下新的。
+
+### 4. 门禁实测（严格串行，均在 f8a191b66 + 本回合 7 commit 之上）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `npx vitest run --config vitest.drivers.config.ts` | **55 files / 607 tests passed，0 skipped**，exit 0（基线 53/551+2 skip：解 skip +2 转绿、新增 keyTreeFilter 33 + keyTreePatternFilter 19 + keyTreeState +3，只增不红）|
+| `npx tsc --noEmit` | **0 error**，exit 0 |
+| `node scripts/check-driver-import-boundaries.mjs` | **1486 files · 0 blocking · 4 advisory**，exit 0（advisory 为宿主既有引用，非本轨）|
+| `npx vite build` | **built in 5.12s**，exit 0（chunk>500kB 为既有告警）|
+
+覆盖率（v8，include=`packages/drivers/redis/ui/key-browser/**`，Tester 同口径
+= git diff 新增行 ∩ v8 statementMap 行命中）：
+- **本回合 diff 加权（`f8a191b66..HEAD`）**：Stmts **99.02%**（101/102）· Branch **100%**（57/57）。
+  唯一未命中语句是 `globToRegExp` 的 `catch → null` 分支体（`new RegExp` 在前置转义后不可
+  抛，属不可达防御）。
+- **全轨 diff 加权（`8981d3078..HEAD`）**：Stmts **87.60%**（636/726）· Branch **97.45%**（268/275）
+  ——Tester 终值 86.14/88.72，两轴均上升，未掉穿 80。
+
+### 5. 已知局限（登记，不阻断）
+
+1. **懒加载树下 pattern 只作用「已加载行集」**：`level.done===false` 的文件夹里仍有过滤器
+   从未见过的键，故其 `(n)`/`(n+)` 保持服务端计数并追加 `redis.tree.filterUnloaded`；
+   按 pattern 收窄 `list_children` 的**服务端**语义（`list_children` 加 pattern 形参）
+   属契约改动，留给 **R / Wave 4**（本轨 §2 亦已声明不调用 W3-B 新参数）。
+2. prefix 路由只做收窄、不做判定：`zzz*` 这类前缀扫描会让根层少取数据，但「哪些行可见」
+   仍由 `keyTreeFilter` 单独决定——两者不一致时以过滤为准（不会漏放、可能少放，方向安全）。
+3. Tester 追加的留待 R 第 4 条（真库 `list_children` 折叠语义）**依旧保留**：本实现选了
+   「客户端 glob 过滤为唯一裁决者」，真机复核只需确认 prefix 收窄不改变用户预期。
+4. folder 复选框级联改读 `visibleKeys` ⇒ 折叠态匹配文件夹勾选的是「匹配 pattern 的子键」，
+   未加载余量不在勾选内（与 1. 同源，Wave 4 服务端过滤后自然收敛）。
+
+### 6. 范围自查（红线）
+
+`git diff f8a191b66..HEAD --name-only` = 12 文件，全部落在
+`packages/drivers/redis/ui/key-browser/**`、`ui/__tests__/**`、
+`packages/drivers/redis/locales/en.ts`（+1 个 `redis.tree.*` key）、本轨 `bugs.md`/`progress.md`。
+**零越界**：未碰 `BatchBar.tsx`/`ImportExport.tsx`/`redisInvoke.ts`（count_matching 消费端归 W3-B）、
+`value-editors/**`、`console/**`、宿主 `src/**`、`driver-sdk/**`、`meta.ts`、`resolve-drivers.mjs`、
+Rust `src/**`、他轨台账、`hub.md`。
+未偷接 Wave 4：`KvSlotState` 仍只用既有 `selectKey`/`setDirty`；无新 getter/setter；
+无页脚三态/预算 UI/`key_probe`。单文件最大 `KeyTreeList.tsx` **635** 行 ≤800
+（`RedisWorkbench.tsx` 369 行，本回合只加了 1 处传参）。
+E 轨接线面（`requestDraftLeave` 守卫 / `reloadDetail` 不清选中 / `handleSelectDb` 同库早退）
+**未触碰**：本回合对 `RedisWorkbench.tsx` 的改动只在 `useKeyTreeView({...})` 的入参块。
+
+### 7. 结论
+
+两条 Bug 均修完并转绿（复测入口 `keyTreeTesterGaps.test.tsx` 6 例 0 skip、characterization
+按交接要求改写为一致性断言而未删、2 条 precondition 绿测保持绿），四件套全绿，
+覆盖率两口径均不降反升 ⇒ 状态置 **READY_FOR_TEST**，交第 2 轮 Tester。

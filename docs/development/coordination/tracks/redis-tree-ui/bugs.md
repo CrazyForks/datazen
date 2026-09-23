@@ -21,7 +21,7 @@
 
 - **严重度**：**Major** —— 向用户展示与筛选条件矛盾的事实（行还在、计数说 0），
   且本轨两个验收面（D-2 pattern 应用、D-8 `no-match` 具名可达）在默认视图下同时失效。
-- **状态**：`待修复`
+- **状态**：`待复测`
 - **涉及文件**
   - `packages/drivers/redis/ui/key-browser/useKeyTree.ts:79-86` —— `invokeListChildren(..., { sep, noTtlOnly, keyType })`，无 pattern
   - `packages/drivers/redis/ui/key-browser/useKeyTreeView.ts:89-113` —— `useKeyTree` 入参与 `treeRows` 派生都不含 pattern
@@ -73,12 +73,23 @@
   都在本轨验收面内，不属于 Wave 4。
 - **是否阻断合并**：是（Major，且是 D-2/D-8 的正面验收面）。
 
+### 修复记录（coder round-1）
+
+- 状态置 `待复测`。commit：`03f3790f5`（纯函数 `keyTreeFilter.ts`）+ `307ce40df`
+  （`appliedPattern` 接进行派生 / reset / 前缀路由 / 单一事实源）+ `975e23e6b`
+  （新旅程 `keyTreePatternFilter.test.tsx`）+ `406253a2f` / `eb733a757`（死代码收口）。
+- 采**纯客户端过滤**路线（协调者裁定，不改 `list_children` 契约）：glob 语义对齐
+  Redis `MATCH`，折叠态祖先补渲染为不可点面包屑（`data-breadcrumb`，不计
+  `data-row-count`），空文件夹不显示，可见性按 `row.kind` 分叉。
+- 本文件复测入口不变（`keyTreeTesterGaps.test.tsx` 全 6 例，0 skip）；
+  裁定细节、prefix 口径与懒加载 pattern 局限记在 `progress.md`「修复轮第 1 回合」。
+
 ---
 
 ## redis-tree-ui-BUG-002 — 刷新失败的层级把「扫描中」永久钉住
 
 - **严重度**：Minor —— 不展示错误数据、下一次成功刷新可自愈；但在此之间状态指示持续说谎。
-- **状态**：`待修复`
+- **状态**：`待复测`
 - **涉及文件**：`packages/drivers/redis/ui/key-browser/treeLevels.ts:118-122`（`markFetchFailed`）
   + `:124-131`（`anyLevelScanning`）
 - **实测日志摘录（`ef0d62d94`，un-skip 后运行）**
@@ -118,6 +129,15 @@
 - **是否本轨范围**：是。`treeLevels.ts` 由 D-5 新建，消费面 R1 计数（D-1）与 I-11（D-8）均在本轨。
 - **是否阻断合并**：不单独阻断（Minor，可自愈），但与 BUG-001 同属 I-11/R1 判定链，
   建议同回合一起修，避免两次改同一文件。
+
+### 修复记录（coder round-1）
+
+- 状态置 `待复测`。commit：`34ec2828d`。
+- `markFetchFailed` 非 reset 分支补 `pass: null` + `done: true`（失败的回填 pass 被
+  放弃，`children` 保留旧子集 = I-4 行为），`anyLevelScanning` 不再被永久钉 true；
+  `:90` reset 分支与 `:109` continue 分支未回归。
+- 测试：`keyTreeState.test.ts` 新增 `[redis-tree-ui-BUG-002]` 三态（进入 / 放弃 /
+  下一次成功自愈 + mid-pass 失败），`keyTreeTesterGaps.test.tsx` 对应 `it.skip` 解 skip 转绿。
 
 ---
 
