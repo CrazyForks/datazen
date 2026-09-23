@@ -18,9 +18,15 @@ Extend Data Transfer's deterministic recordset selection from one scalar key to 
 
 Replace category-based migration ordering with a validated dependency DAG over the supported selected objects and table operations. Report cycles and unresolved identities before execution; emit deterministic topological apply order and safe reverse rollback order. Do not claim cross-dialect semantic translation for an object whose renderer cannot prove equivalence.
 
+## Wave 1B — comparison-store lifecycle (independent files)
+
+### `migration-sync-store-recovery`
+
+Remove orphaned Data Sync comparison files after an app process exits unexpectedly, while proving that cleanup cannot delete stores owned by another active process. Make disk-pressure and partial-write failures explicit and ensure incomplete stores are removed. Preserve the current private-file permissions, streaming format, immutable-plan lifecycle, and bounded page reads.
+
 ## Later waves / release gates
 
-- Data Sync: comparison-store crash cleanup and disk pressure, tuple-range selection, additional registered-driver snapshot/order contracts, SQL preview paging/export, and operator reconciliation of genuinely unknown outcomes.
+- Data Sync: tuple-range selection, additional registered-driver snapshot/order contracts, SQL preview paging/export, and operator reconciliation of genuinely unknown outcomes.
 - Data Transfer: chunk-level resumability with a demonstrated idempotency/commit protocol, richer per-table outcome reporting, and heterogeneous structure mapping completeness.
 - Schema Diff: cross-dialect view/routine/trigger/type translation, SQLite table rebuild, broader table options, and per-driver catalog/capability validation.
 - Release: supported-driver capability matrix, PostgreSQL/MySQL failure journeys, Windows file picker/atomic replacement and migration WDIO journeys, performance/fault injection, and full installation validation. DMG-only packaging failure is excluded by user instruction and `AGENTS.md`.
