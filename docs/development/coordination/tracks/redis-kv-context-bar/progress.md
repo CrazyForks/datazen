@@ -929,4 +929,4 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
 - 两项修复分别经反向变异独立验证其原回归断言会红，修复态 targeted + 完整驱动 UI 都通过；宿主全套、Redis Rust lib、类型检查、coverage 与边界门均通过。覆盖率达到门槛（改动文件 100%，kv-bar 98.32% statements / 96.18% branches / 96.77% functions / 100% lines）。
 - 最终还原审计：两个反向变异均恢复原源码；`ContextBarActions.tsx` 与 Tester 回归测试无未提交 diff；`git diff --check` 通过。测试/coverage/codegen 产生物均为 gitignored。唯一工作区差异仍是已知 `Cargo.lock` `datazen-driver-redis` dependencies 的 `+ "flate2"`，明确保留、未暂存、未提交。
 - 本轮没有运行 Tauri GUI 或真 Redis；W4-KVBAR-01/02 的环境旅程以及前轮登记的 W4-KVBAR-03 至 07 均留待 R 阶段执行，不记作本轮通过项。
-- 第 3 轮无新缺陷，见 `bugs/README.md`；测试结果提交 hash 记录在本轮终判提交之后的 progress 更新中。
+- 第 3 轮无新缺陷，见 `bugs/README.md`；本轮终判测试提交：`0ef88f36f`。
