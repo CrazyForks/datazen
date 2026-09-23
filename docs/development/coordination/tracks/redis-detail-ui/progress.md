@@ -642,3 +642,13 @@ G4 bound:   ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory fi
 - **6 条已声明修复**：`BUG-001`~`BUG-006` 全部复验通过 ⇒ 状态翻 **`已修复`**，各 bug 文件已追加 `## 复测记录（round-2）`，`bugs/README.md` 6 行同步 + 新增 BUG-007 行。
 - **最终判定：`TEST_FAILED`（第 2 轮，1 个 bug，Bug 循环 2/5）**。理由：四门禁与文件面审计全绿、6/6 修复真实有效、偏差①-⑤ 成立，但偏差⑥ 的裁定结果是**存在生产可达的 I-1 静默数据丢失旁路** ⇒ 交付项 §1-5「现状缺陷必须一并消掉」未完整达成。
 - **本轮 commit 链**：`412caecb0`（R2-A/R2-B 门禁绿证）→ 探针用例 commit → 本判定 commit（6 bug 翻译 + BUG-007 + README + 本节）；全程生产码零改动（变异均即刻还原，终态 `git status` 干净）。
+
+## 修复轮第 2 回合（BUG-007 · coder round-2 · 2026-09-23）
+
+- **缺陷与根因**：偏差⑥ 执行序（`onUpdateSelectedKey(next)` 先于守卫）⇒ 答 keep 后 `selectedKey='user:renamed'` / `keyDetail.key='user:1'` 恒不收敛（P1a 钉住该态、要求保持绿）⇒ 下次同键树行点击走守卫同键旁路（`handleSelectKeyGuarded` :375-378）⇒ `inPlace=false`（:347）⇒ loading 翻转重挂载 ⇒ 草稿零询问蒸发（BUG-007，高 · I-1）。
+- **修法（Tester 建议 (b) 的等价手段，单点收口）**：`handleSelectKey` 顶部新增 `if (key === selectedKey && keyDetail?.key !== key) { if (!(await requestDraftLeave())) return; }` —— 同键但 detail 落后即先问 I-1：keep 原样返回（草稿与状态不动，每次同键点击重问 ⇒ **有界，永不静默**）；放弃/干净态放行（破坏性重取知情执行，取回 detail 携带新名 ⇒ 不一致**当场愈合**）。一处覆盖**全部**同键入口（树行 guarded handle、头行 `reloadDetail`、对话框回读），比仅改 `handleSelectKeyGuarded` 同键分支更宽。
+- **为何不选 (a)（保持一致，Tester 首选项被验收断言否决）**：P1a 同时钉死 `redis-header-key-name='user:1'`（detail 不跟名）与 `data-selected-key='user:renamed'`（选择=新名），(a) 两写法任一都会当场翻红 P1a；且 `key={detail.key}` 随 detail.key 变化重挂载 ⇒ 编辑器卸载清理按契约**立刻**毁草稿（守卫来不及问）——(a) 只是把「重取时毁草稿」提前为「改名时毁草稿」。故 (b) 为唯一同时满足 P1a+P1b 的路径，正合验收句「不一致消解或有界」。
+- **行为不回归核对（三维自查）**：① 彻底 —— 同键跨不一致三入口（树行 / 头行刷新 / 对话框回读）全收口于此；保存后 `reloadDetail` 草稿已 clean ⇒ 守卫无弹层直通，post-write 语义不变。② 无误伤 —— 一致态同键（BUG-001/H2 头行刷新、TTL/PERSIST 回读、保存回读）条件不成立，零询问原样；不同键切键 `key===selectedKey` 为 false ⇒ 新守卫不触发、`:379` 一问即止，一次动作至多一问保持。③ 下一步顺畅 —— keep 后继续编辑原草稿；放弃/保存后首次同键点击即重取并愈合不一致。
+- **验收（靶向 44/44 绿）**：`round2Probe.test.tsx` P1b `describe.skip` → `describe`（skip 实际在该文件，`dirtyLeaveCoverage` 全文无 skip —— 简报笔误；断言逐字未改，diff 仅去 `.skip`）⇒ 4 断言全绿、P1a 保持绿；`round2Probe 4/4 · dirtyLeaveCoverage 12/12 · dirtyLeaveJourney 11/11 · keyHeaderRowJourney 11/11 · redisWorkbench 6/6`。
+- **commit 链**：`4cc510998`（BUG-007 状态→修复中）→ `9714509b1`（修复 + P1b 取消 skip）→ 本台账 commit → 门禁收口 commit。
+- **门禁（提交态复跑，逐字尾部随收口 commit 补录）**：G1 `npx vitest run --config vitest.drivers.config.ts`（round-2 基线 `59 files / 559 passed / 1 skipped`，P1b 转正 ⇒ 预期 `59 / 560 passed / 0 skipped`）· G2 `npx tsc --noEmit` → 0 · G3 `npx vite build` → 0（禁 `pnpm build`，pre-run deps check 会触 `pnpm install`）· G4 `node scripts/check-driver-import-boundaries.mjs`（round-2 基线 `1473 files / 0 blocking / 4 advisory`，本轮无新增文件）。
