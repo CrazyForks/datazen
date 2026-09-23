@@ -430,3 +430,73 @@ src/extensions/generated.ts:195 { dbType: 'redis', slot: 'contextBar', component
    **不出现驱动侧确认框**（driver 不发确认，符合 F-3 ruling 2）。
 8. **宿主 `handleSelectKvDb` 的页签累积（GUI）**：连续切 5 个 db，确认一次创建/复用行为
    符合用户预期（未尽事项 2）。
+
+---
+
+# 第 1 轮验收（Tester `98225808-0d5b-438d-b1a5-c7b6a91a027d`，2026-09-23）
+
+基线 `d049ceb4e` → 终态 `6cde4b3e0`（4 commit）。只测不修；探针一律 `git checkout HEAD -- <file>` 还原并验净。
+
+## 动作 1 — 文件面审计（`git diff --name-only d049ceb4e..HEAD`，28 文件）
+
+| 分类 | 文件 | 结论 |
+|---|---|---|
+| (a) 本轨 `kv-bar/**` 新增 | `RedisContextBar.tsx` 236 / `ContextBarActions.tsx` 255 / `contextBarModel.ts` 315 / `useContextBarData.ts` 184 / `dbKeyCounts.ts` 121 | ✅ 与自报行数**逐字相符** |
+| (a) `kv-bar/**` 修改 | `KvStatusBar.tsx` +156/-22、`useKvSelection.ts` +70、`index.ts` +1 | ✅ 授权（statusBar 全量 + 导出） |
+| (a) 注册面 | `shared/meta.ts` +3/-2、`scripts/resolve-drivers.mjs` +4 | ✅ 见下 |
+| (b) 授权契约面 | `packages/driver-sdk/src/types/kv-slots.ts` +18/-1 | ✅ 见动作 2 |
+| (b) 授权宿主面 | `useKvSlotActions.ts` +48/-5、`ContentView.tsx` +34/-1、`ConnectionPage.tsx` +4 | ✅ 见动作 2 |
+| (c) 中继桩测试 | 6 个既有文件 + 2 个新增文件 | ✅ 见动作 3 |
+| (d) 台账 | `progress.md` 432、`bugs.md` 48 | ✅ 本轨专属 |
+
+**越界面检查（全部为阴性）**：
+- `key-browser/**`、`src/lib/kvSlotState.ts`、`hub.md`、他轨 `tracks/<other>/**`、`Cargo.toml`、`Cargo.lock`、codegen ⇒ **零命中**。
+- `scripts/` 下**仅** `resolve-drivers.mjs` 一个文件，内容**仅**为 `BASIC_PATH_FRONTEND.kvSlots` 加 4 行 `contextBar` 行（`component: 'RedisContextBar'` / `path: '../../packages/drivers/redis/ui/kv-bar'`），与既有 `statusBar` / `keyPropsSidebar` / `home` 行同构。**未动其他驱动、未动 BASIC 之外的任何 profile。**
+- 其他驱动 UI ⇒ 零命中（唯一 `packages/drivers/**` 改动全在 `drivers/redis/`）。
+
+**注册面三处精度核验（Coder 自报「`meta.ts` 是往同一对象加键、未新建同名键」）**：
+- `meta.ts`：diff 为 `kvWorkspace: {` 对象内**插入** `contextBar: true,`，非新增块；删掉的 2 行是「`contextBar` 暂缺」的旧注释。⇒ **属实**。
+- `resolve-drivers.mjs`：`kvSlots` 对象内插入，缩进/引号风格与邻居一致。⇒ **属实**。
+- `index.ts`：单行 `export { RedisContextBar } from './RedisContextBar';`。⇒ **属实**。
+
+**动作 1 结论：PASS。** 变更面严格落在授权范围内，无一越界。
+
+## 动作 2 — 裁定 (A) 契约核验
+
+### (A-1) `KvSlotAction` 恰好加一个成员
+
+基线 8 条 action 提取后与 HEAD 做 diff：
+
+```
+=== DIFF (base vs head) ===
+7a8
+> { type: 'selectDatabase'
+```
+
+⇒ **既有 8 条（`refresh` / `newKey` / `import` / `export` / `flushDb` / `openMonitor` / `openSettings` / `setScanBudget`）零改名、零删除，恰好新增 `| { type: 'selectDatabase'; database: string }` 一条。**
+
+### (A-2) `KvSlotState` 一字未动
+
+抽取 `export interface KvSlotState { … }` 块（**含注释**）逐字比对，两版 md5 相同：
+
+```
+KvSlotState IDENTICAL (incl. comments)
+b83cf976ec5a3455c417e4c34b5d6e24
+b83cf976ec5a3455c417e4c34b5d6e24
+```
+
+⇒ **`KvSlotState` 零 diff（连 JSDoc 都未动）**。Coder 新增的 JSDoc 明确论证「为何是 action 而非 state」，与动作 3 的桩加宽事实自洽。
+
+### (A-3) 只有一个开面板入口
+
+| 检查 | 期望 | 实测 |
+|---|---|---|
+| `grep -n "addPanel\|nextPanelId" src/windows/connection/ContentView.tsx` | 空 | **空**（exit 1） |
+| `grep -c "onSelectKvDb={handleSelectKvDb}" src/windows/connection/ConnectionPage.tsx` | 2 | **2**（L696 既有导航树 + L778 本轨新增；定义在 L360） |
+| `ContentView.tsx` 含 `databaseType === 'redis'` / `type: 'redis-db'` | 无 | **无**（exit 1） |
+
+**「复用已有回调、非新建第二份」的独立反证**：`git show d049ceb4e:src/windows/connection/ConnectionPage.tsx | grep -n handleSelectKvDb` ⇒ 基线**已存在** `L360`（定义）与 `L696`（调用）。本轨 `ConnectionPage.tsx` 的 diff **仅 4 行**（2 行注释 + 2 行 JSX prop），`handleSelectKvDb` 的**函数体零改动**。⇒ **确为复用，未新建第二份开面板逻辑。**
+
+**宿主接线精度**：`ContentView` 用 `useMemo` 把 `onSelectKvDb` 与活动面板的 `connectionId` 绑定；**未传时显式产出 `undefined`**（而非空壳闭包）⇒ 保持 `useKvSlotActions` 的 no-op + warn 分支**可达**。`useKvSlotActions` 的 `selectDatabase` 分支在无 `onSelectDatabase` 时走 `warnUnwired(action)`（仅 `console.warn`，**不抛**）⇒ F-3 ruling 1 成立。
+
+**动作 2 结论：PASS。** 裁定 (A) 三要素全部逐字落实。
