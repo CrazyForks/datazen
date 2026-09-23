@@ -659,3 +659,62 @@ gaps 文件头注释 + 两例绿标题来历标记）+ `stringKeyValue.test.ts` 
 ⇒ **BUG-003**；断言纪律/覆盖执行计数暴露「键盘跨面包屑」声称行为 0 执行、0 旅程
 ⇒ **BUG-004**。新 bug 有据即立案 ⇒ 判定 **TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）**，
 交协调者排修复轮第 2 回合。本轮生产代码零改动，commit = `test(coordination): ...`（仅台账两文件）。
+
+## 修复轮第 2 回合（round-2）
+
+修复 commit：`698b18174`（BUG-003：`keyTreeFilter.ts` glob 方言按 Redis `stringmatchlen` 字节级移植）、
+`492f5503d`（BUG-004 + BUG-003 尾部：面包屑键盘旅程锁定 + 仅字面头做前缀路由）。
+基线：vitest 55 files/613 passed/0 skipped；tsc 0；build exit 0；boundaries 1486 files·0 blocking·4 advisory。
+新增测试文件令计数上涨，实际数字如下（逐字尾部，串行执行）。
+
+### 1. vitest drivers
+
+`npx vitest run --config vitest.drivers.config.ts` → 尾部：
+
+```
+ Test Files  56 passed (56)
+      Tests  697 passed (697)
+   Start at  14:55:19
+   Duration  18.73s (transform 11.33s, setup 36.52s, import 9.71s, tests 15.38s, environment 53.79s)
+```
+
+（55→56 files、613→697 tests，全部 passed，**0 skipped**；`Duration` 为环境相关量。）
+
+### 2. tsc
+
+`npx tsc --noEmit; echo "tsc exit=$?"` → 尾部：
+
+```
+tsc exit=0
+```
+
+（输出 0 行，退出码 0。）
+
+### 3. build
+
+`npx vite build` → 尾部：
+
+```
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 6.10s
+build exit=0
+```
+
+（两条 >500kB chunk 警告为存量基线，非本轨引入；退出码 0。）
+
+### 4. boundaries
+
+`node scripts/check-driver-import-boundaries.mjs` → 尾部：
+
+```
+[check-driver-import-boundaries] R3 (advisory) src/test/driverUiSetup.ts:26: reaches into driver internals (packages/drivers/mongodb/ui/meta)
+[check-driver-import-boundaries] R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25: reaches into driver internals (packages/drivers/mongodb/ui/mongodbFind)
+[check-driver-import-boundaries] ok (1487 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+```
+
+（1486→1487 files 为新增测试文件所致；**0 blocking**、4 advisory 与基线一致。）
+
+### 5. 结论
+
+四门全部 PASS，无失败项；产物零改动（本轮仅台账两文件变更）。BUG-003/BUG-004 已翻 `待复测`，交第 3 轮 Tester。
