@@ -302,10 +302,11 @@ describe('[tester][round-2][偏差⑥] 右键重命名选中键 + 脏草稿的�
 // ============================================================================
 // P1b. 顺藤：不一致态下的「同键重点击」（BUG-001 不变式必须继续成立）
 // ============================================================================
-// BUG-007（第 2 轮 Tester 登记）：本用例断的是**正确**不变式，当前 HEAD 上必红 ——
+// BUG-007（第 2 轮 Tester 登记）：本用例断的是**正确**不变式 —— round-2 修复前必红：
 // 重命名+脏+「继续编辑」后点新名行 ⇒ 走未守卫的破坏路径，草稿三断言静默蒸发。
-// 按第 1 轮先例（已知错误行为本轮不钉成红断言）先 skip，修复者改完取消跳过即可复验。
-describe.skip('[tester][round-2][偏差⑥] 不一致态下的同键重点击不得静默毁草稿', () => {
+// 修复（`RedisWorkbench.handleSelectKey` 顶部：同键但 `keyDetail.key` 不一致 ⇒ 先过
+// `requestDraftLeave`，答 keep 则原样返回）已落地，按本文件约定取消 skip 转为验收断言。
+describe('[tester][round-2][偏差⑥] 不一致态下的同键重点击不得静默毁草稿', () => {
   it('re-clicking the renamed row after rename+keep must keep (or re-ask about) the draft', async () => {
     renderWorkbench();
     await selectAndDraft();

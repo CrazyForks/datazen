@@ -338,6 +338,24 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
     const handleSelectKey = useCallback(
       async (key: string) => {
+        // BUG-007: `selectedKey` and `keyDetail.key` can disagree — the ctx
+        // rename updates the selection BEFORE the guard answers (deviation ⑥;
+        // the round-2 probe P1a pins label=new / detail=old, so the pair never
+        // resyncs on its own while the draft lives). A same-key refetch across
+        // that gap is NOT the in-place one (`inPlace` below needs both to
+        // match): it flips `loading`, `key={detail.key}` remounts the editor,
+        // and its unmount cleanup wipes the draft silently — the BUG-001 class
+        // again. Re-ask here instead: one choke point covering EVERY same-key
+        // entry (tree row via the guarded handle, header reload via
+        // `reloadDetail`, dialog refetches). Ask-free paths stay ask-free:
+        // consistent-state refetches (`keyDetail.key === key`, BUG-001/H2) and
+        // post-write reloads (draft already clean ⇒ the guard resolves with no
+        // dialog). Discard heals the gap (the fresh detail carries the new
+        // key); keep leaves it, but every next same-key click re-asks —
+        // bounded, never silent.
+        if (key === selectedKey && keyDetail?.key !== key) {
+          if (!(await requestDraftLeave())) return;
+        }
         // BUG-001: refetching the detail that is ALREADY mounted must not flip
         // `DetailColumn` into `loading` — the loading branch replaces the
         // editor, and its unmount cleanup wipes the draft silently. Same-key
