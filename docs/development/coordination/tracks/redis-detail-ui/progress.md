@@ -2,7 +2,7 @@
 - 状态: **TEST_FAILED**（第 1 轮 Tester 复验：门禁四件套独立重跑全绿，但登记 6 条 Bug，其中 BUG-001/002 属 PRD §4 I-1 的静默丢草稿类别 ⇒ 交原 Coder 修复，Bug 循环 1/5）
 - 第 1 轮 Tester: **w3e-tester-r1**（全新实例，只测不修）· 复验记录见本文件末尾「第 1 轮 Tester 复验记录」· Bug 见 `bugs/`（一 Bug 一文件，索引 `bugs/README.md`）
 - Tester commit 链: `dbd9218e0`(阶段A/B 台账) · `da4bc9531`(补测 8 例) · `e0901a717`/`a3315e84e`/`6e4a89bf9`/`449db8059`/`9c02aefbe`(BUG-001..006) · `515eeb35e`/`307d60a0a`/`444d970b0`(补测 12 例)
-- 心跳: 2026-09-23 10:40（Tester）
+- 心跳: 2026-09-23 12:25（Tester · 最后 commit `c46c3a831` 后仍在收口 E2E 登记表）
 - 编码 commit: `b4d5df64d`(E-1 五枚页签) · `63c5ce0b3`(E-2 常驻编辑) · `96170add2`(E-3 I-5 收敛) · `116de7495`(E-4 键头行) · `f5a273cd2`(E-5 I-1 拦截)
 - 测试 commit: `fa469154c`(E-5 dirty-leave 旅程电池 +54 行：Esc 关闭 / 卸载悬起 / 非法 JSON 三条边角出口)
 - 门禁 commit: 见本文件所在 commit（`docs(coordination): W3-E detail-ui gates + self-verification record`）
@@ -479,3 +479,24 @@
 - 建议追加第 7 条：**保存失败可见性**（真连只读副本 / 断链 ⇒ 现在零反馈，BUG-003），R 回归时可顺带验修复。
 
 **只测不修自证**：全程生产码零改动。探针期对 `StringEditor.tsx` / `ValueViewer.tsx` 的临时 testid 改动**已 `git checkout HEAD --` 还原**，并在还原后重写测试改用仓库既有口径（identity `t` ⇒ 文本即 key）；变异自证每次复跑后 `git status --porcelain` 均确认为空（仅新测试文件为 `??`）。
+
+### T-13 阶段 C/D · E2E 登记表（Tester 补登，`tester.md` §2-阶段C-3）
+
+> 禁 live e2e（简报 §5）⇒ 本轮**不跑** `pnpm e2e` / `tauri:build:webdriver`。下表按「本机可执行（jsdom 单测已覆盖，R 阶段仅需回归）」与「留待 R 回归（需真连 Redis / GUI 手感）」两档标注；驱动特定路径按 AGENTS.md 落 `packages/drivers/redis/e2e/`（本轨**未**新增 e2e 文件，理由：E-1..E-5 全为前端交互，命令面零改动，`slowlog_get`/`set_string` 契约未变）。
+
+| # | 场景 | 档位 | 前置条件 / 判据 |
+| - | ---- | ---- | -------------- |
+| 1 | 五枚一级页签顺序与激活态（8-1） | 本机可执行 ⇒ R 回归 | `redisTabBarJourney.test.tsx` 已钉 `data-tab-count=5` + `data-active`；R 只需目视确认页签条宽度不溢出 |
+| 2 | 慢日志一级页签真连：有 / 无 `SLOWLOG` 权限、Redis < 2.2.1 | **留待 R** | 对应原 §7-5；判据 = `data-slowlog-state` 在 `unauthorized` 且 `.unauthorizedHint` 可见（**不得**显示 0 条） |
+| 3 | 常驻编辑：无查看/编辑切换、编辑区始终可写 | 本机可执行 ⇒ R 回归 | `stringValueReadOnlyJourney.test.tsx:161-175` 反向钉 `redis-string-mode-toggle` 不存在 |
+| 4 | I-5 只读态①（Hex/Binary + 原因文案） | 本机可执行 ⇒ R 回归 | 断 `data-readonly-reason="binary-view"`；R 目视文案是否可读 |
+| 5 | I-5 只读态②（真连大 value 两分支） | **留待 R**（= 原 §7-4） | 64 KiB~5 MiB「完整但超大」与 >5 MiB「截断」两键各看一次；连带验 **BUG-006** 文案是否分化 |
+| 6 | 徽标行 `大小: N B` 真实数值格式 | **留待 R** | `MEMORY USAGE` 真值 + `formatSize` 千分位；jsdom 只验 key 与存在性 |
+| 7 | TTL pill 三态内联真连（EXPIRE / PERSIST / EXPIREAT） | **留待 R** | 真键上看 `TTL` 回读；**修复 BUG-004 后**加验 Esc 收起 |
+| 8 | 自动刷新 1s/5s/10s/30s tick 手感 + dirty 时被拦即落关 | **留待 R**（= 原 §7-3） | jsdom 已验状态机（假定时器），未验计时器真实节奏与菜单定位 |
+| 9 | I-1 八拦截点 + 编辑面三动作（切键/切 db/刷新/搜索/关面板/切页签/改名/删除） | 本机可执行 ⇒ R 回归 | `dirtyLeaveJourney` 11 + `dirtyLeaveCoverage` 8（+3 skip）+ M1~M14 变异自证 |
+| 10 | **同键重点击 / 创建键 / 右键 TTL 后草稿去向**（BUG-001/002 修复复验） | **留待 R**（新增） | 真连手测：改值不保存 ⇒ 再点同一行 ⇒ 期望「弹放弃询问」或「草稿仍在」，二者其一；修复后取消对应 skip 用例 |
+| 11 | **保存失败可见性**（BUG-003） | **留待 R**（建议补入 §7 作第 7 条） | replica-only 会话或保存瞬间断链 ⇒ 期望出现错误提示且草稿不被吞 |
+| 12 | `SET ... KEEPTTL` 真连往返（含 W3-C 默认化） | **留待 R**（= 原 §7-1/2） | 本 worktree 后端默认 `false` ⇒ **当前必然丢 TTL**；C 合流后必验「保存前设 TTL ⇒ 保存后 `PTTL>0`」 |
+| 13 | `DraftLeaveDialog` 焦点陷阱 / Esc 可达 / z 序（与 keep-alive 隐藏页签叠层） | **留待 R**（= 原 §7-6） | 暗色主题目视；jsdom 已验 `@datazen/ui` Dialog 的 Tab 环与 Escape→`settleDraftLeave(false)` 语义 |
+| 14 | 无键位环境下 I-1 仍成立（鼠标路径） | 本机可执行 | Tester 全部变异用例皆以 `fireEvent.*` 驱动 ⇒ 证明拦截不依赖 ⌘Y/⌘R（键位属 W3-D D-7） |
