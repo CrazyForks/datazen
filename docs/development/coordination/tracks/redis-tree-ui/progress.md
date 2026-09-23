@@ -1,5 +1,5 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: **TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）**（第 2 轮 Tester 判定，2026-09-23：BUG-001/BUG-002 复测通过已翻「已修复」；新登记 redis-tree-ui-BUG-003、redis-tree-ui-BUG-004 均 Minor 待修复，等修复轮第 2 回合）
+- 状态: **READY_FOR_TEST（修复轮第 2 回合完成，待第 3 轮 Tester）**
 - 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee + d1581baf2（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例/gaps 头注释）
 - 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、f8a191b66（覆盖率补测 + 判定收口）；**round-2**：本 commit（第 2 轮复测判定 + BUG-003/004 登记）
 - 合并 commit: —
