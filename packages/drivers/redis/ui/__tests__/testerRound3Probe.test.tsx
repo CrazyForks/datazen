@@ -371,28 +371,16 @@ describe('[tester][round-3] 一致态同键重点击不得吃守卫（零询问�
 });
 
 // ============================================================================
-// D. 遗留项 2 取证：不一致态下「保存」写向哪个键？（裁定用事实，非猜测）
+// D. [BUG-008] 不一致态下「保存」写错目标键 —— 正确期望，修复者取消 skip 即复验
 // ============================================================================
-describe('[tester][round-3] 不一致态下的保存目标键（遗留项 2 取证）', () => {
-  it('records which key a save targets while label=new / detail=old', async () => {
-    renderWorkbench();
-    await selectAndDraft();
-    await renameSelectedKeep();
-    expectDeviation6();
-
-    // 用户带着草稿点「保存」。
-    fireEvent.click(screen.getByTestId('redis-string-dirty-bar'));
-    fireEvent.click(screen.getByTestId('redis-string-save'));
-    await waitFor(() => expect(setString).toHaveBeenCalled());
-
-    // 记录事实：SET 的目标键 = detail.key（旧名）。服务器此刻只有 user:renamed。
-    const target = setString.mock.calls[0][2] as string;
-    console.log('[round-3 取证] 保存目标键 =', JSON.stringify(target));
-    console.log('[round-3 取证] 树标签选中 = user:renamed / 编辑器头 =', JSON.stringify(headerKeyName()));
-    expect(target).toBe('user:1');
-  });
-
-  it('records the full post-save state: which key the panel shows next', async () => {
+// 复测 round-3 取证（本文件曾以探针形态实测，事实见 bugs/redis-detail-ui-BUG-008.md）：
+// 偏差⑥ 态（树标签 `user:renamed` / `detail.key` 仍是 `user:1`）下点「保存」，
+// `StringEditor.tsx:155` 用 `detail.key` 出网 ⇒ `SET db0 user:1 'draft'` ——
+// 写向 RENAME 前的旧名：① 与屏幕显示的目标键不一致（静默写错）② 复活已不存在的键
+// ③ 紧接着 `reloadDetail` 回读新名 ⇒ 可见结果仍是服务端旧值，用户草稿"凭空消失"。
+// 按第 1 轮先例（已知错误行为不钉成绿断言）：正确期望以 skip 形式留在下面。
+describe.skip('[redis-detail-ui-BUG-008] 不一致态下的保存必须写到用户看到的那个键', () => {
+  it('saves to the key the panel shows, not the stale detail.key', async () => {
     renderWorkbench();
     await selectAndDraft();
     await renameSelectedKeep();
@@ -403,20 +391,10 @@ describe('[tester][round-3] 不一致态下的保存目标键（遗留项 2 取�
     await waitFor(() => expect(setString).toHaveBeenCalled());
     await flush(120);
 
+    // 正确期望：保存目标 = 面板显示/列表选中的键。
     const target = setString.mock.calls[0][2] as string;
-    const after = {
-      saveTarget: target,
-      treeSelected: column().getAttribute('data-selected-key'),
-      headerKeyName: headerKeyName(),
-      inputValue: input().value,
-      draftDirty: isDraftDirty(),
-      detailState: column().getAttribute('data-detail-state'),
-      refetched: getKey.mock.calls.map((c) => c[2]),
-    };
-    console.log('[round-3 取证] 保存后状态 =', JSON.stringify(after, null, 2));
-    console.log('[round-3 取证] SET 实参 =', JSON.stringify(setString.mock.calls[0]));
-    // 事实断言（不预设裁定）：保存写向旧键，而面板随后回读的是新键。
-    expect(target).toBe('user:1');
-    expect(after.refetched).toContain('user:renamed');
+    expect(column().getAttribute('data-selected-key')).toBe('user:renamed');
+    expect(headerKeyName()).toBe('user:renamed');
+    expect(target).toBe('user:renamed');
   });
 });
