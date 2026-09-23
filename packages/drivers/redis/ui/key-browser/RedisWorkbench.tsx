@@ -5,83 +5,53 @@ import {
   useImperativeHandle,
   useMemo,
   useState,
-  type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { Database, FolderInput, Loader2, Plus, RefreshCw, Search } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
-import { Input } from '@datazen/ui';
-import {
-  useBoundSchemaStore,
-  useBoundSettingsStore,
-  showNativeContextMenu,
-  readBooleanField,
-  useBoundConfirmDialog,
-  type KvSlotState,
-} from '@datazen/driver-sdk';
+import { Database } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
-import { invokeGetKey, invokeDbSizes } from '../shared/redisInvoke';
-import type { KeyDetail } from '../shared/types';
-import { BatchBar, invokeDeleteKeys, invokeBatchDeletePattern } from './BatchBar';
-import { hasRedisJson } from '../value-editors/hasRedisJson';
+import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
+import { BatchPatternBar } from './BatchBar';
 import { ImportExport } from './ImportExport';
-import { invokeModulesList } from '../value-editors/JsonEditor';
-import { buildRedisKeyContextMenuItems } from './redisKeyContextMenu';
-import { KeyBrowserControls } from './KeyBrowserControls';
-import { SafeModeBadge } from '../shared/SafeModeBadge';
-import type { KeyTreeDeleteTarget } from './KeyTreeList';
-import { KeyTreeColumn } from './KeyTreeColumn';
+import { KeyTreePane } from './KeyTreePane';
+import { useBatchActions } from './useBatchActions';
 import { DetailColumn } from './DetailColumn';
-import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
-import { useValueSearch } from '../value-search/useValueSearch';
 import { useRedisKeyScan } from './useRedisKeyScan';
-import { useKeyTree } from './useKeyTree';
-import { useRedisGate } from '../shared/useRedisGate';
-import { buildServerTreeRows } from './keyTree';
-import {
-  KeyWorkbenchDialogs,
-  openKeyCtxDelete,
-  openKeyCtxRename,
-  openKeyCtxTtl,
-  type KeyCtxDialog,
-} from './KeyWorkbenchDialogs';
+import { useKeyTreeView } from './useKeyTreeView';
+import { KeyWorkbenchDialogs } from './KeyWorkbenchDialogs';
+import { mergeDatabases, dbIndexOfName } from './workbenchDatabases';
+import { DbSidebar } from './DbSidebar';
+import { BatchSummaryBanner, WorkbenchToolbar } from './WorkbenchToolbar';
+import { useWorkbenchSplit } from './useWorkbenchSplit';
+import { useKeySelection } from './useKeySelection';
+import { useKeyDetailState } from './useKeyDetailState';
+import { useKeyRowActions } from './useKeyRowActions';
+import { useKvSlotRelay } from './useKvSlotRelay';
+import { useWorkbenchSearch } from './useWorkbenchSearch';
+import { useDbKeyCounts } from './useDbKeyCounts';
+import { useCreateTypes, useReJsonModules } from './useReJsonModules';
+import { useWorkbenchOverlays } from './useWorkbenchOverlays';
 
-const REDIS_DB_COUNT = 16;
+export type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes';
+import type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes';
 
-export interface RedisWorkbenchProps {
-  dbSessionId: string;
-  initialDatabase?: string;
-  hideSidebar?: boolean;
-  onDbIndexChange?: (dbIndex: number) => void;
-  onDatabaseChange?: (database: string) => void;
-  onKeysChange?: (keys: string[]) => void;
-  /**
-   * Host-owned selection/dirty atom of this panel (`driver-sdk` `KvSlotState`),
-   * forwarded by `RedisConnectionView`. The workbench is the only writer: the
-   * host-rendered KV slots read selection and dirtiness from here instead of
-   * calling back into the driver (PRD §7-2, contract F-2). Absent when the
-   * driver declares no KV slot capability, so every publish below is optional.
-   */
-  kvSlotState?: KvSlotState;
-}
-
-export interface RedisWorkbenchHandle {
-  refreshKeys: () => void;
-  selectDatabase: (db: string) => void;
-}
-
-function allRedisDbs(): string[] {
-  return Array.from({ length: REDIS_DB_COUNT }, (_, i) => `db${i}`);
-}
-
-function mergeDatabases(fromServer: string[]): string[] {
-  const extras = fromServer.filter((db) => !/^db(\d+)$/.test(db));
-  return [...allRedisDbs(), ...extras];
-}
-
+/**
+ * 屏 B of the Redis workbench: database picker + key tree (left) + key detail
+ * (right).
+ *
+ * This file is deliberately a *composition*. After the D-0 split every block of
+ * the previous 705-line wall owns a module (`DbSidebar`, `WorkbenchToolbar`,
+ * `KeyTreePane` — the whole left column, R1/R2/R3 header plus the list —,
+ * `DetailColumn`, `useRedisKeyScan`/`useKeyTreeView`, the `useKey*` state hooks,
+ * `useWorkbenchOverlays` and `KeyWorkbenchDialogs`). What stays here is only what
+ * genuinely has to be shared: the single writers of selection and detail state,
+ * the refresh fan-out (including the I-8 "refresh without dropping the
+ * selection" variant), the host KV relay (contract F-2) and the imperative handle
+ * the host tabs drive.
+ */
 export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchProps>(
   function RedisWorkbench(
     {
       dbSessionId,
+      connectionId,
       initialDatabase,
       hideSidebar,
       onDbIndexChange,
@@ -106,167 +76,96 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
 
     const [selectedDb, setSelectedDb] = useState<string | null>(null);
     const [dbIndex, setDbIndex] = useState(0);
-    const [selectedKey, setSelectedKey] = useState<string | null>(null);
-    const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
-    const [keyDetail, setKeyDetail] = useState<KeyDetail | null>(null);
-    const [keyDetailLoading, setKeyDetailLoading] = useState(false);
-    // Unsaved draft of the mounted detail editor, mirrored to the host relay
-    // below. `DetailColumn` owns who reports it; this state is what gets published.
-    const [editorDirty, setEditorDirty] = useState(false);
-    const [batchSummary, setBatchSummary] = useState<string | null>(null);
-    const [modules, setModules] = useState<string[] | null>(null);
-    const [importExportOpen, setImportExportOpen] = useState(false);
-    const [createOpen, setCreateOpen] = useState(false);
-    const [flushDialog, setFlushDialog] = useState<'db' | 'all' | null>(null);
-    const [keyCtxDialog, setKeyCtxDialog] = useState<KeyCtxDialog>(null);
-    const [dbCounts, setDbCounts] = useState<Record<number, number>>({});
-    const [searchMode, setSearchMode] = useState<SearchMode>('key');
-    const [treeWidth, setTreeWidth] = useState(360);
+    // R2 chip: wrap a literal input in `*…*` when applying (see toScanPattern).
+    const [fuzzyPattern, setFuzzyPattern] = useState(false);
 
-    const startSplitDrag = useCallback(
-      (e: ReactMouseEvent) => {
-        e.preventDefault();
-        const startX = e.clientX;
-        const startWidth = treeWidth;
-        const onMove = (ev: globalThis.MouseEvent) => {
-          const next = Math.min(900, Math.max(220, startWidth + ev.clientX - startX));
-          setTreeWidth(next);
-        };
-        const onUp = () => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-        };
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-      },
-      [treeWidth],
-    );
+    const overlays = useWorkbenchOverlays();
+    const { treeWidth, startSplitDrag } = useWorkbenchSplit();
+    const selection = useKeySelection();
+    const detail = useKeyDetailState(dbSessionId, dbIndex);
 
-    const {
-      keys,
-      cursor,
-      dbSize,
-      keysLoading,
-      searchPattern,
-      setSearchPattern,
-      keyTypeFilter,
-      setKeyTypeFilter,
-      withMemory,
-      setWithMemory,
-      noTtlOnly,
-      setNoTtlOnly,
-      loadKeys,
-      resetSelectionState,
-      refresh: scanRefresh,
-      loadMore,
-      search: scanSearch,
-    } = useRedisKeyScan({
+    // Flat `scan_keys` list — kept as one object (`scan.*`) because 屏 B reads a
+    // dozen of its fields and a destructure block is 18 lines of noise.
+    const scan = useRedisKeyScan({
       dbSessionId,
       dbIndex,
       enabled: selectedDb !== null,
     });
 
-    const { gateWrite, gateDialog } = useRedisGate();
-    const [confirmDelete, confirmDeleteDialog] = useBoundConfirmDialog();
-
-    const tree = useKeyTree({
+    /*
+     * D-3 + D-8 in a single owner: the R3 separator has to reach both the
+     * `list_children` request and the row fold (two places, one value), and the
+     * four named empty states (I-11) are derived from the same rows.
+     *
+     * BUG-001: the pattern joins them, as the **applied** one (`scan.appliedPattern`
+     * — the pattern the current scan belongs to), never the merely typed
+     * `searchPattern`. That is the difference between a decoration and a filter:
+     * it becomes the root `list_children` prefix, the client-side glob over the
+     * loaded rows, and a tree-reset trigger.
+     */
+    const treeView = useKeyTreeView({
+      connectionId,
       dbSessionId,
       dbIndex,
       enabled: selectedDb !== null,
-      noTtlOnly,
-      keyType: keyTypeFilter,
+      noTtlOnly: scan.noTtlOnly,
+      keyType: scan.keyTypeFilter,
+      loadedKeys: scan.keys,
+      pattern: scan.searchPattern,
+      appliedPattern: scan.appliedPattern,
+      loading: scan.keysLoading,
+      scanOpen: scan.cursor !== 0,
     });
-
-    const {
-      state: valueSearchState,
-      start: startValueSearch,
-      cancel: cancelValueSearch,
-      reset: resetValueSearch,
-    } = useValueSearch({ dbSessionId, dbIndex });
-
-    // Exit transition: leaving value search (mode → key, or db/session change)
-    // tears down any running task so no stale scan keeps polling.
-    useEffect(() => {
-      if (searchMode === 'key') resetValueSearch();
-    }, [searchMode, dbIndex, dbSessionId, resetValueSearch]);
-
-    const treeRows = useMemo(
-      () => buildServerTreeRows(tree.levels, tree.expanded),
-      [tree.levels, tree.expanded],
-    );
 
     useEffect(() => {
       void loadForConnection(dbSessionId, { skipLoadTables: true });
     }, [dbSessionId, loadForConnection]);
 
-    useEffect(() => {
-      let cancelled = false;
-      setModules(null);
-      void invokeModulesList(dbSessionId)
-        .then((list) => {
-          if (!cancelled) setModules(list);
-        })
-        .catch(() => {
-          if (!cancelled) setModules([]);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }, [dbSessionId]);
+    // Stable identities: `scan` / `treeView` are fresh objects every render, and
+    // listing them in a dependency array would churn every callback below.
+    const tree = treeView.tree;
+    const { setSearchPattern, resetSelectionState, loadKeys, refresh: scanRefresh } = scan;
 
-    const loadDbSizes = useCallback(() => {
-      void invokeDbSizes(dbSessionId)
-        .then((sizes) => {
-          const map: Record<number, number> = {};
-          for (const s of sizes) map[s.db] = s.keys;
-          setDbCounts(map);
-        })
-        .catch(() => {
-          /* counts are best-effort enrichment */
-        });
-    }, [dbSessionId]);
+    const modules = useReJsonModules(dbSessionId);
+    const { dbCounts, loadDbSizes } = useDbKeyCounts(
+      dbSessionId,
+      dbIndex,
+      selectedDb,
+      scan.dbSize,
+    );
+    const createTypes = useCreateTypes(modules);
 
-    // Fetch key counts for every db when entering Items for a session.
-    useEffect(() => {
-      loadDbSizes();
-    }, [loadDbSizes]);
+    /** Drop the mounted detail *and* the checkbox selection (db switch, refresh). */
+    const clearFocus = useCallback(() => {
+      detail.clearDetail();
+      selection.clearSelection();
+    }, [detail.clearDetail, selection.clearSelection]);
 
-    // Keep the active db's count fresh from scan_keys' dbSize, zero extra commands.
-    useEffect(() => {
-      if (selectedDb) {
-        setDbCounts((prev) => (prev[dbIndex] === dbSize ? prev : { ...prev, [dbIndex]: dbSize }));
-      }
-    }, [selectedDb, dbIndex, dbSize]);
-
-    const createTypes = useMemo(() => {
-      const base = ['string', 'hash', 'list', 'set', 'zset'];
-      if (modules && hasRedisJson(modules)) {
-        return [...base, 'ReJSON'];
-      }
-      return base;
-    }, [modules]);
+    const search = useWorkbenchSearch({
+      dbSessionId,
+      dbIndex,
+      clearFocus,
+      runKeySearch: scan.search,
+    });
 
     const handleSelectDb = useCallback(
       (db: string) => {
-        const idx = parseInt(db.replace('db', ''), 10) || 0;
+        const idx = dbIndexOfName(db);
         setSelectedDb(db);
         setDbIndex(idx);
         onDbIndexChange?.(idx);
         onDatabaseChange?.(db);
-        setSelectedKey(null);
-        setSelectedKeys(new Set());
-        setKeyDetail(null);
-        setEditorDirty(false);
+        clearFocus();
         setSearchPattern('*');
         resetSelectionState();
         void loadKeys(idx, '*', 0, true);
       },
-      [loadKeys, resetSelectionState, setSearchPattern, onDatabaseChange, onDbIndexChange],
+      [clearFocus, setSearchPattern, resetSelectionState, loadKeys, onDatabaseChange, onDbIndexChange],
     );
 
     useEffect(() => {
-      onKeysChange?.(keys.map((entry) => entry.key));
-    }, [keys, onKeysChange]);
+      onKeysChange?.(scan.keys.map((entry) => entry.key));
+    }, [scan.keys, onKeysChange]);
 
     useEffect(() => {
       if (databases.length > 0 && !selectedDb) {
@@ -278,15 +177,11 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     }, [databases, initialDatabase, selectedDb, handleSelectDb]);
 
     const refreshKeys = useCallback(() => {
-      if (selectedDb) {
-        setSelectedKey(null);
-        setSelectedKeys(new Set());
-        setKeyDetail(null);
-        setEditorDirty(false);
-        scanRefresh();
-        tree.refresh();
-      }
-    }, [selectedDb, scanRefresh, tree]);
+      if (!selectedDb) return;
+      clearFocus();
+      scanRefresh();
+      tree.refresh();
+    }, [selectedDb, clearFocus, scanRefresh, tree.refresh]);
 
     const handleRefresh = useCallback(() => {
       void loadForConnection(dbSessionId, { skipLoadTables: true });
@@ -294,331 +189,107 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
 
+    /*
+     * I-8 (D-6): a batch write reloads the *data* only. `refreshKeys` also drops
+     * the selection, which would silently undo "failed keys stay selected" the
+     * moment the post-write refresh lands, so the batch controller gets this one.
+     */
+    const refreshAfterWrite = useCallback(() => {
+      scanRefresh();
+      tree.refresh();
+    }, [scanRefresh, tree.refresh]);
+
     useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb }), [
       refreshKeys,
       handleSelectDb,
     ]);
 
-    const handleSearch = useCallback(() => {
-      setSelectedKey(null);
-      setSelectedKeys(new Set());
-      setKeyDetail(null);
-      setEditorDirty(false);
-      if (searchMode === 'key') {
-        scanSearch();
-        return;
-      }
-      const query = searchPattern.trim();
-      if (!query) {
-        resetValueSearch();
-        return;
-      }
-      startValueSearch({ mode: searchMode, query, pattern: '*' });
-    }, [searchMode, scanSearch, searchPattern, startValueSearch, resetValueSearch]);
-
-    const handleSelectKey = useCallback(
-      async (key: string) => {
-        setSelectedKey(key);
-        setKeyDetailLoading(true);
-        try {
-          const detail = await invokeGetKey(dbSessionId, dbIndex, key);
-          setKeyDetail(detail);
-        } catch (e) {
-          console.error('get_key failed:', e);
-          setKeyDetail(null);
-        } finally {
-          setKeyDetailLoading(false);
-        }
-      },
-      [dbSessionId, dbIndex],
-    );
-
     const reloadDetail = useCallback(async () => {
-      if (!selectedKey) return;
-      await handleSelectKey(selectedKey);
+      if (!detail.selectedKey) return;
+      await detail.selectKey(detail.selectedKey);
       refreshKeys();
-    }, [selectedKey, handleSelectKey, refreshKeys]);
+    }, [detail, refreshKeys]);
 
-    /* ── host KV relay ───────────────────────────────────────────────────────
-     * Contract F-2: the host-rendered KV slots never ask the workbench for
-     * anything — they read selection and dirtiness off the per-panel
-     * `KvSlotState` the host hands down. Publishing is write-only and
-     * field-granular (`selectKey` / `setDirty`), so a slot subscribing to
-     * `getSelectedKey()` re-renders on selection, not on every state change.
-     *
-     * Dirty invariant: `editorDirty` can only be true while a detail editor with
-     * an unsaved draft is mounted — `StringEditor` publishes `false` when it
-     * unmounts, and the paths that drop the selection reset it here.
-     */
-    useEffect(() => {
-      kvSlotState?.selectKey(selectedKey);
-    }, [kvSlotState, selectedKey]);
+    // Contract F-2: publish selection + draft flag into the host's KV atom.
+    useKvSlotRelay(kvSlotState, dbSessionId, detail.selectedKey, detail.editorDirty);
 
-    useEffect(() => {
-      kvSlotState?.setDirty(editorDirty);
-    }, [kvSlotState, editorDirty]);
+    // Row context menu + hover delete (confirm → write gate → refresh).
+    const { handleKeyContextMenu, handleDeleteRow, actionDialogs } = useKeyRowActions({
+      dbSessionId,
+      dbIndex,
+      onRefreshKeys: refreshKeys,
+      onBatchSummary: overlays.setBatchSummary,
+      onKeyCtxDialog: overlays.setKeyCtxDialog,
+    });
 
-    useEffect(() => {
-      if (!kvSlotState) return;
-      return () => {
-        // Unmount / session swap: a later mount must not inherit a key that is
-        // no longer rendered, nor a draft that no longer exists.
-        kvSlotState.selectKey(null);
-        kvSlotState.setDirty(false);
-      };
-    }, [kvSlotState, dbSessionId]);
-
-    const toggleKeySelection = (key: string, checked: boolean) => {
-      setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        if (checked) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-    };
-
-    const toggleKeysSelection = (keysToToggle: string[], checked: boolean) => {
-      setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        for (const key of keysToToggle) {
-          if (checked) next.add(key);
-          else next.delete(key);
-        }
-        return next;
-      });
-    };
-
-    const handleKeyContextMenu = useCallback(
-      (e: ReactMouseEvent, key: string) => {
-        e.preventDefault();
-        e.stopPropagation();
-        void showNativeContextMenu(
-          buildRedisKeyContextMenuItems({
-            labels: {
-              copyKey: t('common.copyName'),
-              setTtl: t('redis.setTtl'),
-              rename: t('redis.renameKey'),
-              delete: t('common.delete'),
-            },
-            handlers: {
-              onCopyKey: () => {
-                void navigator.clipboard.writeText(key);
-              },
-              onSetTtl: () => setKeyCtxDialog(openKeyCtxTtl(key)),
-              onRename: () => setKeyCtxDialog(openKeyCtxRename(key)),
-              onDelete: () => setKeyCtxDialog(openKeyCtxDelete(key)),
-            },
-          }),
-          { x: e.clientX, y: e.clientY },
-        );
-      },
-      [t],
-    );
-
-    const handleDeleteRow = useCallback(
-      async (target: KeyTreeDeleteTarget) => {
-        const ok = await confirmDelete({
-          title: t('redis.delete'),
-          message:
-            target.kind === 'folder'
-              ? t('redis.deleteFolderConfirm')
-                  .replace('{count}', String(target.count))
-                  .replace('{label}', target.label)
-              : t('redis.deleteKeyConfirm').replace('{key}', target.key),
-          confirmLabel: t('common.delete'),
-          cancelLabel: t('common.cancel'),
-          kind: 'warning',
-        });
-        if (!ok) return;
-        if (!(await gateWrite('write-op'))) return;
-        try {
-          const deleted =
-            target.kind === 'folder'
-              ? (await invokeBatchDeletePattern(dbSessionId, dbIndex, `${target.prefix}*`)).deleted
-              : await invokeDeleteKeys(dbSessionId, dbIndex, [target.key]);
-          setBatchSummary(t('redis.deleted').replace('{count}', String(deleted)));
-          refreshKeys();
-        } catch (e) {
-          setBatchSummary(e instanceof Error ? e.message : String(e));
-        }
-      },
-      [confirmDelete, gateWrite, dbSessionId, dbIndex, t, refreshKeys],
-    );
+    // One controller for every batch write; the R1 header and the pattern strip
+    // are two trigger surfaces over the same dialogs (D-1).
+    const batchActions = useBatchActions({
+      dbSessionId,
+      dbIndex,
+      selectedKeys: [...selection.selectedKeys],
+      searchPattern: scan.searchPattern,
+      onRemoveFromSelection: selection.removeKeys,
+      onRefresh: refreshAfterWrite,
+      onSummary: overlays.setBatchSummary,
+    });
 
     return (
       <div className="flex min-h-0 flex-1">
         {!hideSidebar && (
-          <aside className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-edge bg-surface-alt">
-            <div className="border-b border-edge p-2">
-              <div className="mb-2">
-                <SearchModeTabs mode={searchMode} onChange={setSearchMode} />
-              </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-muted" />
-                <Input
-                  value={searchPattern}
-                  onChange={(e) => setSearchPattern(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSearch();
-                  }}
-                  placeholder={
-                    searchMode === 'key'
-                      ? t('redis.searchKeys')
-                      : t('redis.search.valuePlaceholder')
-                  }
-                  className="h-7 pl-7 text-xs"
-                  data-testid="redis-search-input"
-                />
-              </div>
-            </div>
-
-            {loading && (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t('common.loading')}
-              </div>
-            )}
-
-            {databases.map((db) => (
-              <button
-                key={db}
-                type="button"
-                className={cn(
-                  'flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
-                  selectedDb === db
-                    ? 'bg-accent/10 text-accent font-medium'
-                    : 'text-fg-secondary hover:bg-surface-raised hover:text-fg',
-                )}
-                aria-current={selectedDb === db ? 'page' : undefined}
-                data-testid={`redis-db-${db}`}
-                onClick={() => handleSelectDb(db)}
-              >
-                <Database className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 truncate">{db}</span>
-                {dbCounts[Number(db.replace('db', ''))] != null && (
-                  <span className="ml-auto shrink-0 text-[11px] text-fg-muted">
-                    ({dbCounts[Number(db.replace('db', ''))]})
-                  </span>
-                )}
-              </button>
-            ))}
-          </aside>
+          <DbSidebar
+            loading={loading}
+            databases={databases}
+            selectedDb={selectedDb}
+            dbCounts={dbCounts}
+            onSelectDb={handleSelectDb}
+          />
         )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {selectedDb ? (
             <>
-              <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-edge bg-surface-alt px-3 py-1.5 text-xs text-fg-secondary">
-                <span>{selectedDb}</span>
-                <span className="text-edge">|</span>
-                <span>{t('redis.dbSize').replace('{count}', String(dbSize))}</span>
-                <span className="text-edge">|</span>
-                <span>
-                  {t('redis.loadedCount').replace('{count}', String(keys.length))}
-                  {cursor !== 0 && ` (${t('redis.loadMore')}…)`}
-                </span>
-                {searchMode === 'key' && (
-                  <KeyBrowserControls
-                    keyType={keyTypeFilter}
-                    onKeyTypeChange={setKeyTypeFilter}
-                    withMemory={withMemory}
-                    onWithMemoryChange={setWithMemory}
-                    noTtlOnly={noTtlOnly}
-                    onNoTtlOnlyChange={setNoTtlOnly}
-                  />
-                )}
-                <div className="flex-1" />
-                <SafeModeBadge />
-                <Button
-                  variant="secondary"
-                  className="h-7 gap-1 px-2 text-xs"
-                  title={t('connWin.refresh')}
-                  data-testid="redis-refresh"
-                  onClick={handleRefresh}
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {t('redis.refresh')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="h-7 gap-1 px-2 text-xs"
-                  data-testid="redis-create-key"
-                  onClick={() => setCreateOpen(true)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('redis.createKey')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="h-7 gap-1 px-2 text-xs"
-                  onClick={() => setImportExportOpen(true)}
-                >
-                  <FolderInput className="h-3.5 w-3.5" />
-                  {t('redis.importExportTitle')}
-                </Button>
-                {allowFlush && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      className="h-7 px-2 text-xs text-danger"
-                      onClick={() => setFlushDialog('db')}
-                    >
-                      {t('redis.flushDb')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      className="h-7 px-2 text-xs text-danger"
-                      onClick={() => setFlushDialog('all')}
-                    >
-                      {t('redis.flushAll')}
-                    </Button>
-                  </>
-                )}
-              </div>
-
-              {batchSummary && (
-                <div className="shrink-0 border-b border-edge bg-surface-alt px-3 py-1 text-xs text-fg-secondary">
-                  {batchSummary}
-                  <button
-                    type="button"
-                    className="ml-2 text-fg-muted hover:text-fg"
-                    onClick={() => setBatchSummary(null)}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-
-              <BatchBar
-                dbSessionId={dbSessionId}
-                dbIndex={dbIndex}
-                selectedKeys={[...selectedKeys]}
-                searchPattern={searchPattern}
-                onClearSelection={() => setSelectedKeys(new Set())}
-                onRefresh={refreshKeys}
-                onSummary={setBatchSummary}
+              <WorkbenchToolbar
+                selectedDb={selectedDb}
+                dbSize={scan.dbSize}
+                loadedCount={scan.keys.length}
+                hasMore={scan.cursor !== 0}
+                withMemory={scan.withMemory}
+                onWithMemoryChange={scan.setWithMemory}
+                allowFlush={allowFlush}
+                onImportExport={() => overlays.setImportExportOpen(true)}
+                onFlushDb={() => overlays.setFlushDialog('db')}
+                onFlushAll={() => overlays.setFlushDialog('all')}
               />
 
+              <BatchSummaryBanner
+                summary={overlays.batchSummary}
+                onDismiss={() => overlays.setBatchSummary(null)}
+              />
+
+              <BatchPatternBar actions={batchActions} dbIndex={dbIndex} />
+
               <div className="flex min-h-0 flex-1">
-                <div className="flex min-w-0 shrink-0 flex-col" style={{ width: treeWidth }}>
-                  <KeyTreeColumn
-                    searchMode={searchMode}
-                    treeRows={treeRows}
-                    allKeys={keys.map((k) => k.key)}
-                    expandedFolders={tree.expanded}
-                    onToggleFolder={tree.toggleFolder}
-                    selectedKey={selectedKey}
-                    selectedKeys={selectedKeys}
-                    onSelectKey={handleSelectKey}
-                    onToggleKey={toggleKeySelection}
-                    onToggleKeys={toggleKeysSelection}
+                <div
+                  className="flex min-w-0 shrink-0 flex-col"
+                  style={{ width: treeWidth }}
+                  data-testid="redis-tree-pane"
+                  data-tree-width={treeWidth}
+                >
+                  <KeyTreePane
+                    view={treeView}
+                    scan={scan}
+                    search={search}
+                    selection={selection}
+                    detail={detail}
+                    batch={batchActions}
                     onKeyContextMenu={handleKeyContextMenu}
                     onDeleteRow={handleDeleteRow}
-                    loading={keysLoading}
-                    hasMore={cursor !== 0}
-                    onLoadMore={loadMore}
-                    valueSearchState={valueSearchState}
-                    onCancelValueSearch={cancelValueSearch}
+                    totalCount={scan.dbSize}
+                    fuzzy={fuzzyPattern}
+                    onFuzzyChange={setFuzzyPattern}
+                    onCreateKey={() => overlays.setCreateOpen(true)}
+                    onRefresh={handleRefresh}
                   />
                 </div>
 
@@ -634,28 +305,24 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                   <DetailColumn
                     dbSessionId={dbSessionId}
                     dbIndex={dbIndex}
-                    selectedKey={selectedKey}
-                    detail={keyDetail}
-                    detailLoading={keyDetailLoading}
+                    selectedKey={detail.selectedKey}
+                    detail={detail.keyDetail}
+                    detailLoading={detail.detailLoading}
                     modules={modules}
                     onRefresh={reloadDetail}
                     onRenamed={(newKey) => {
-                      setSelectedKey(newKey);
+                      detail.retargetKey(newKey);
                       refreshKeys();
                     }}
-                    onDirtyChange={setEditorDirty}
-                    onClose={() => {
-                      setSelectedKey(null);
-                      setKeyDetail(null);
-                      setEditorDirty(false);
-                    }}
+                    onDirtyChange={detail.setEditorDirty}
+                    onClose={detail.clearDetail}
                   />
                 </div>
               </div>
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center text-fg-muted">
-              <div className="text-center">
+              <div className="text-center" data-testid="redis-select-db-state">
                 <Database className="mx-auto h-10 w-10 opacity-20" />
                 <div className="mt-3 text-sm">{t('redis.selectDb')}</div>
               </div>
@@ -666,12 +333,12 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         <ImportExport
           dbSessionId={dbSessionId}
           dbIndex={dbIndex}
-          selectedKeys={[...selectedKeys]}
-          searchPattern={searchPattern}
-          open={importExportOpen}
-          onOpenChange={setImportExportOpen}
+          selectedKeys={[...selection.selectedKeys]}
+          searchPattern={scan.searchPattern}
+          open={overlays.importExportOpen}
+          onOpenChange={overlays.setImportExportOpen}
           onRefresh={refreshKeys}
-          onSummary={setBatchSummary}
+          onSummary={overlays.setBatchSummary}
         />
 
         <KeyWorkbenchDialogs
@@ -679,26 +346,23 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
           dbIndex={dbIndex}
           allowFlush={allowFlush}
           createTypes={createTypes}
-          selectedKey={selectedKey}
+          selectedKey={detail.selectedKey}
           onRefreshKeys={refreshKeys}
-          onSelectKey={handleSelectKey}
-          onClearSelectedKey={() => {
-            setSelectedKey(null);
-            setKeyDetail(null);
-          }}
-          onUpdateSelectedKey={setSelectedKey}
-          onUpdateSelectedKeys={setSelectedKeys}
-          onBatchSummary={setBatchSummary}
-          createOpen={createOpen}
-          onCreateOpenChange={setCreateOpen}
-          flushDialog={flushDialog}
-          onFlushDialogChange={setFlushDialog}
-          keyCtxDialog={keyCtxDialog}
-          onKeyCtxDialogChange={setKeyCtxDialog}
+          onSelectKey={detail.selectKey}
+          onClearSelectedKey={detail.clearDetail}
+          onUpdateSelectedKey={detail.retargetKey}
+          onUpdateSelectedKeys={selection.update}
+          onBatchSummary={overlays.setBatchSummary}
+          createOpen={overlays.createOpen}
+          onCreateOpenChange={overlays.setCreateOpen}
+          flushDialog={overlays.flushDialog}
+          onFlushDialogChange={overlays.setFlushDialog}
+          keyCtxDialog={overlays.keyCtxDialog}
+          onKeyCtxDialogChange={overlays.setKeyCtxDialog}
         />
 
-        {gateDialog}
-        {confirmDeleteDialog}
+        {actionDialogs}
+        {batchActions.dialogs}
       </div>
     );
   },

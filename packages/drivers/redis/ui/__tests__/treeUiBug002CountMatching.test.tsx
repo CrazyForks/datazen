@@ -40,12 +40,9 @@ vi.mock('../shared/useRedisGate', () => ({
   useRedisGate: () => ({ gateWrite: async () => true, gateDialog: null }),
 }));
 
-import {
-  BatchBar,
-  formatMatchCount,
-  invokeCountMatching,
-  type BatchBarProps,
-} from '../key-browser/BatchBar';
+import { formatMatchCount, invokeCountMatching } from '../key-browser/BatchBar';
+import { useBatchActions } from '../key-browser/useBatchActions';
+import { BatchPatternBar } from '../key-browser/BatchBar';
 import { ImportExport, type ImportExportProps } from '../key-browser/ImportExport';
 import type { CountMatchingResult } from '../shared/redisInvoke';
 
@@ -54,16 +51,36 @@ function outcome(overrides: Partial<CountMatchingResult> = {}): CountMatchingRes
   return { count: 777, truncated: false, consumed: 1000, dbsize: 90_000, ...overrides };
 }
 
-function batchProps(overrides: Partial<BatchBarProps> = {}): BatchBarProps {
-  return {
-    dbSessionId: 'sess',
-    dbIndex: 3,
-    selectedKeys: ['app:a'],
-    searchPattern: 'app:*',
-    onClearSelection: () => {},
+/**
+ * Harness for the pattern strip (D-1 moved the dialogs into `useBatchActions`,
+ * so the strip alone cannot open them). Renders the same pair the workbench
+ * mounts: the controller hook's dialogs plus the strip that triggers them.
+ */
+function PatternStripHarness({
+  dbSessionId = 'sess',
+  dbIndex = 3,
+  selectedKeys = ['app:a'],
+  searchPattern = 'app:*',
+}: {
+  dbSessionId?: string;
+  dbIndex?: number;
+  selectedKeys?: string[];
+  searchPattern?: string;
+}) {
+  const actions = useBatchActions({
+    dbSessionId,
+    dbIndex,
+    selectedKeys,
+    searchPattern,
+    onRemoveFromSelection: () => {},
     onRefresh: async () => {},
-    ...overrides,
-  };
+  });
+  return (
+    <>
+      <BatchPatternBar actions={actions} dbIndex={dbIndex} />
+      {actions.dialogs}
+    </>
+  );
 }
 
 function exportProps(overrides: Partial<ImportExportProps> = {}): ImportExportProps {
@@ -122,15 +139,18 @@ describe('BatchBar pattern dialog', () => {
   /** Open the dialog, type a pattern, and let the blur-triggered count land. */
   async function openAndCount(payload: CountMatchingResult) {
     commandInvoke.mockResolvedValue(payload);
-    render(<BatchBar {...batchProps()} />);
-    expect(screen.queryByTestId('redis-pattern-match-count')).toBeNull();
+    render(<PatternStripHarness />);
+    expect(screen.queryByTestId('redis-batch-pattern-count')).toBeNull();
 
-    fireEvent.click(screen.getByText('redis.deletePattern'));
-    const input = screen.getByPlaceholderText('redis.pattern');
+    fireEvent.click(screen.getByTestId('redis-batch-pattern'));
+    // `request()` awaits the write gate before the dialog mounts, so wait for
+    // the confirm marker rather than assuming the inputs exist synchronously.
+    await screen.findByTestId('redis-batch-pattern-confirm');
+    const input = screen.getByTestId('redis-batch-pattern-input');
     fireEvent.change(input, { target: { value: 'app:*' } });
     fireEvent.blur(input);
 
-    const label = await screen.findByTestId('redis-pattern-match-count');
+    const label = await screen.findByTestId('redis-batch-pattern-count');
     return { label };
   }
 
@@ -150,10 +170,10 @@ describe('BatchBar pattern dialog', () => {
     const { label } = await openAndCount(outcome({ count: 42 }));
     expect(label.textContent).toBe('42');
     // Typing resets the read, so the old number cannot be quoted for a new filter.
-    fireEvent.change(screen.getByPlaceholderText('redis.pattern'), {
+    fireEvent.change(screen.getByTestId('redis-batch-pattern-input'), {
       target: { value: 'other:*' },
     });
-    expect(screen.queryByTestId('redis-pattern-match-count')).toBeNull();
+    expect(screen.queryByTestId('redis-batch-pattern-count')).toBeNull();
   });
 });
 

@@ -484,6 +484,36 @@ const locale = {
   'redis.keyProps.freq': 'Access frequency',
   'redis.keyProps.maxmemoryPolicy': 'Eviction policy',
   'redis.keyProps.refresh': 'Reload key attributes',
+
+  // ── Key tree, column header / rows / empty states (PRD §3.2 R1~R3, I-4/I-8/I-9/I-11) ──
+  // Track redis-tree-ui. Appended as an isolated `redis.tree.*` namespace so the
+  // concurrent W3-E / W3-F blocks below never touch these keys.
+  'redis.tree.loadedOfTotal': 'Loaded {loaded} of {total} keys',
+  'redis.tree.selectAll': 'Select all loaded keys',
+  'redis.tree.clearSelection': 'Clear selection',
+  'redis.tree.fuzzyHint': 'Fuzzy: wrap a literal in *…* when applying',
+  'redis.tree.groupTree': 'Tree',
+  'redis.tree.groupList': 'List',
+  'redis.tree.separator': 'Separator',
+  'redis.tree.separatorHint': 'Namespace separator used to build the tree',
+  'redis.tree.loadedSubset': '{loaded} of {total}',
+  'redis.tree.folderPartial': '{count}+',
+  'redis.tree.batchResult': 'Succeeded {ok} / failed {failed}',
+  'redis.tree.batchResultToggle': 'Show per-key failures',
+  'redis.tree.error.unknown': 'Unknown error',
+  'redis.tree.error.noAcl': 'Not authorized',
+  'redis.tree.error.keyGone': 'Key no longer exists',
+  'redis.tree.error.badValue': 'Value type rejected the command',
+  'redis.tree.error.network': 'Connection lost',
+  'redis.tree.empty.none': 'This database has no keys yet',
+  'redis.tree.empty.noMatch': 'No key matches "{pattern}"',
+  'redis.tree.empty.interrupted': 'Scan stopped — showing the {loaded} keys found so far',
+  'redis.tree.empty.noPermission': 'This account cannot read the key space (ACL)',
+  'redis.tree.navHint': '↑↓ move · →← fold · ⌘A select all · ⌘R refresh · Esc clear',
+  // BUG-001: the R2 pattern is applied to the rows already loaded. A folder whose
+  // own scan has not finished still holds keys the filter never saw, so its
+  // `(n+)` badge says the remainder is unfiltered instead of implying it was cut.
+  'redis.tree.filterUnloaded': '· rest unfiltered',
 } as const;
 
 export default locale;

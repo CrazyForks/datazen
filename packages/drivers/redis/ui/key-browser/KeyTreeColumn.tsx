@@ -16,6 +16,7 @@ import type { KeyTreeRow } from './keyTree';
 import { KeyTreeList, type KeyTreeDeleteTarget } from './KeyTreeList';
 import { ValueSearchResults } from '../value-search/ValueSearchResults';
 import type { SearchMode } from './SearchModeTabs';
+import type { TreeEmptyState } from './treeEmptyState';
 import type { ValueSearchState } from '../value-search/useValueSearch';
 
 export interface KeyTreeColumnProps {
@@ -37,6 +38,19 @@ export interface KeyTreeColumnProps {
   loading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
+  /** R3 separator (D-3) + I-11 named empty state (D-8). */
+  separator: string;
+  emptyState: TreeEmptyState | null;
+  pattern: string;
+  /**
+   * A pattern is applied (D-2 / BUG-001): a folder whose scan is still open has
+   * to say that part of its `(n+)` remainder was never filtered.
+   */
+  filterActive: boolean;
+  /** I-9 chords that are not row-local: `⌘A`, `⌘R`, `Esc`. */
+  onSelectAllLoaded: () => void;
+  onRefresh: () => void;
+  onClearSelection: () => void;
   /* ── value search ─────────────────────────────────────────────────────── */
   valueSearchState: ValueSearchState;
   onCancelValueSearch: () => void;
@@ -58,6 +72,13 @@ export function KeyTreeColumn({
   loading,
   hasMore,
   onLoadMore,
+  separator,
+  emptyState,
+  pattern,
+  filterActive,
+  onSelectAllLoaded,
+  onRefresh,
+  onClearSelection,
   valueSearchState,
   onCancelValueSearch,
 }: KeyTreeColumnProps) {
@@ -87,6 +108,13 @@ export function KeyTreeColumn({
       loading={loading}
       hasMore={hasMore}
       onLoadMore={onLoadMore}
+      separator={separator}
+      emptyState={emptyState}
+      pattern={pattern}
+      filterActive={filterActive}
+      onSelectAllLoaded={onSelectAllLoaded}
+      onRefresh={onRefresh}
+      onClearSelection={onClearSelection}
     />
   );
 }
