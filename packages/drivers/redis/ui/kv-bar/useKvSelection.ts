@@ -22,3 +22,73 @@ export function useKvSelectedKey(state: KvSlotState): string | null {
 export function useKvDirty(state: KvSlotState): boolean {
   return useSyncExternalStore(state.subscribe, state.getDirty);
 }
+
+/**
+ * Keys currently materialised in the tree (status bar `loaded n`).
+ *
+ * One `useSyncExternalStore` per field, and the getter is passed **by
+ * reference**: F-1's scalar rule exists precisely so these can be handed to the
+ * store directly. Wrapping a getter — `useSyncExternalStore(sub, () =>
+ * ({command: state.getLastWriteCommand(), ms: state.getLastWriteDurationMs()}))`
+ * — builds a new snapshot object on every call and loops forever, so composite
+ * reads below are composed from two separate subscriptions instead.
+ */
+export function useKvLoadedCount(state: KvSlotState): number {
+  return useSyncExternalStore(state.subscribe, state.getLoadedCount);
+}
+
+/**
+ * Last SCAN cursor the tree reported; `'0'` means it wrapped.
+ *
+ * Reading `'0'` **alone does not mean the scan finished** (F-1): a fresh panel
+ * also reports `'0'`. Renderers must pair it with {@link useKvLoadedCount} /
+ * {@link useKvScanBudgetUsed} before claiming completion — see
+ * `contextBarModel.deriveScanReadout` for the pair used by the context bar.
+ */
+export function useKvScanCursor(state: KvSlotState): string {
+  return useSyncExternalStore(state.subscribe, state.getScanCursor);
+}
+
+/** Whether a scan is in flight right now (drives the progress cluster). */
+export function useKvScanning(state: KvSlotState): boolean {
+  return useSyncExternalStore(state.subscribe, state.isScanning);
+}
+
+/** `COUNT` already consumed by the current user action; `0` = not in play. */
+export function useKvScanBudgetUsed(state: KvSlotState): number {
+  return useSyncExternalStore(state.subscribe, state.getScanBudgetUsed);
+}
+
+/** Budget ceiling for the current action; `0` = unknown (F-1). Never rendered as a fraction. */
+export function useKvScanBudgetTotal(state: KvSlotState): number {
+  return useSyncExternalStore(state.subscribe, state.getScanBudgetTotal);
+}
+
+/** Multi-selection size. The keys themselves stay in the workbench (PRD I-8). */
+export function useKvSelectionCount(state: KvSlotState): number {
+  return useSyncExternalStore(state.subscribe, state.getSelectionCount);
+}
+
+/** The two halves of the last acknowledged write. */
+export interface KvLastWrite {
+  /** e.g. `SET app:cache:session:1`; `null` ⇒ no write recorded yet. */
+  command: string | null;
+  /** Server round trip in ms; `null` while unknown. */
+  durationMs: number | null;
+}
+
+/**
+ * Last write the server acknowledged.
+ *
+ * Composed from **two** scalar subscriptions rather than one wrapping getter,
+ * because F-2.1's rule is that a getter returning a fresh object would make
+ * `useSyncExternalStore` see a new snapshot every render. Two subscriptions to
+ * two frozen scalars keep the snapshot identity stable; the object this hook
+ * returns is built during render, which is fine — it is not fed back into the
+ * store as a snapshot.
+ */
+export function useKvLastWrite(state: KvSlotState): KvLastWrite {
+  const command = useSyncExternalStore(state.subscribe, state.getLastWriteCommand);
+  const durationMs = useSyncExternalStore(state.subscribe, state.getLastWriteDurationMs);
+  return { command, durationMs };
+}

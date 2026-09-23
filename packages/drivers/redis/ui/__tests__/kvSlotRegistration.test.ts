@@ -51,11 +51,16 @@ import en from '../../locales/en';
 /**
  * Rows this build ships: one per KV slot Redis fills, with the module the
  * codegen must import the component from. This table is the **only**
- * track-scoped fact in the file — `contextBar` (owned by Rescuer-B) is not
- * asserted as "missing forever", only as "missing while this table says so", and
- * adding a row here re-checks both gates plus the export at once.
+ * track-scoped fact in the file — adding a row here re-checks both gates plus
+ * the export at once, which is exactly what the Wave-4 context bar track did
+ * when it shipped the fourth slot.
  */
 const SHIPPED_ROWS: Array<{ slot: string; component: string; module: string }> = [
+  {
+    slot: 'contextBar',
+    component: 'RedisContextBar',
+    module: 'packages/drivers/redis/ui/kv-bar',
+  },
   { slot: 'statusBar', component: 'RedisKvStatusBar', module: 'packages/drivers/redis/ui/kv-bar' },
   {
     slot: 'keyPropsSidebar',

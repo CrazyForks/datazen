@@ -52,6 +52,17 @@ export interface ContentViewProps {
   nodeContextMenuRef?: MutableRefObject<((payload: NodeContextMenuPayload) => void) | undefined>;
   actionsRef?: MutableRefObject<ConnectionViewActions | undefined>;
   onSelectConnection?: (connectionId: string) => void;
+  /**
+   * Bind the workspace to a KV driver's logical database.
+   *
+   * This is `ConnectionPage`'s `handleSelectKvDb` — the very callback the
+   * navigation tree already calls — threaded down (not re-implemented) so the
+   * driver context bar's db selector reaches the same single
+   * activate-or-open implementation. It is handed to {@link useKvSlotActions} as
+   * `onSelectDatabase`, with the connection supplied here because only this
+   * layer knows which one the active panel belongs to.
+   */
+  onSelectKvDb?: (connectionId: string, dbName: string) => void;
 }
 
 export function ContentView({
@@ -59,6 +70,7 @@ export function ContentView({
   nodeContextMenuRef,
   actionsRef,
   onSelectConnection,
+  onSelectKvDb,
 }: ContentViewProps) {
   const { t } = useI18n();
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
@@ -220,7 +232,28 @@ export function ContentView({
 
   // The single KV action dispatcher sits on this side of the boundary: a context
   // bar asks, the host decides (and ignores what it cannot do). See useKvSlotActions.
-  const kvActions = useKvSlotActions({ onRefresh: handlers.handleRefresh });
+  //
+  // `selectDatabase` resolves against the connection the ACTIVE panel belongs to
+  // (`connectionId`, already resolved by useConnectionWorkspaceMeta). Bound here
+  // rather than inside the dispatcher because the panel is the only thing that
+  // knows the connection, and the callback itself stays ConnectionPage's.
+  //
+  // `undefined` when the host never handed `onSelectKvDb` down — that is what
+  // keeps the dispatcher's documented no-op + warning path reachable (a host
+  // without the callback must degrade, not silently call a hollow wrapper).
+  const selectKvDatabase = useMemo(
+    () =>
+      onSelectKvDb
+        ? (database: string) => {
+            onSelectKvDb(connectionId, database);
+          }
+        : undefined,
+    [onSelectKvDb, connectionId],
+  );
+  const kvActions = useKvSlotActions({
+    onRefresh: handlers.handleRefresh,
+    onSelectDatabase: selectKvDatabase,
+  });
 
   // Driver-contributable KV surfaces (context bar / status bar / key-props sidebar /
   // connection home). Every binding stays `undefined` unless the driver both declares
