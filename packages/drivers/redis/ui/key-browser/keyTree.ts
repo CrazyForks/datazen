@@ -16,6 +16,14 @@ export type KeyTreeRow =
        * total).
        */
       partial?: boolean;
+      /**
+       * Rendered only as a **path breadcrumb** of a row the R2 pattern matched
+       * (redis-tree-ui-BUG-001, see `keyTreeFilter.ts`): the folder does not
+       * match the pattern itself — it only owns rows that do. Such a row is
+       * decoration: not clickable, no checkbox, not counted by
+       * `data-row-count`, not part of any selection set.
+       */
+      breadcrumb?: boolean;
     }
   | { kind: 'key'; entry: KeyEntry; depth: number; label: string };
 
