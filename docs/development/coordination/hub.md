@@ -101,6 +101,8 @@
 - **驱动不得 import `src/**`**：`KV_SLOT_NAMES` 之类宿主常量在驱动侧不可见，用 driver-sdk 的 `KvSlotName` 或由宿主把判定结果作 props 传入（W1-B 已按此形状生成槽位）。
 - **文案改动无护栏兜底**：护栏已删，"新测试零可见英文字面量"退化为纯人工评审口径（原则六）；派单时把该口径写进 Coder/Tester 验收标准，不要再提议脚本。
 - **并行轨往同一个对象字面量加"同名键"是最坏的合并面**：git 会静默自动合并（不同 hunk），JS 只保留最后一个键 ⇒ 另一轨的贡献整块消失且不报错。派单前必须在 `progress.md` 写明"本轨往哪个对象的哪个键里写"，合流时逐个人工比对。已知三处：`ui/shared/meta.ts` 的 `kvWorkspace`、`scripts/resolve-drivers.mjs` 的 `kvSlots`、`packages/drivers/redis/locales/en.ts` 的扁平 key 表（key 表因 key 名互斥才安全）。`#69 contextBar` 全量版会同时碰这三处，合并顺序排在 `#70` 之后。
+- **同一文件不同抽象层的语义冲突**（W3 合流实证，`BatchBar.tsx`）：一轨拆模块、另一轨在同文件升契约时，git 只报少量文本冲突，**机械取任一整侧都会静默丢语义**。裁决依据必须是「哪侧形状被冻结/被谁消费/有无守卫测试」，保留结构方 + **移植**语义方，并把守卫测试按新结构重写（断言一条不减）。合流前用 `git log <merge-base>..<other> --name-only` 取交集逐文件判「文本 or 语义」。详见 `docs/development/subagent/coordinator.md` §6.1.1。
+- **验收句禁用析取式**（W3-E 实证，`redis-detail-ui` BUG-007）：写「消解**或**有界」等于给「只做一半」发通行证 —— 该 bug 只做了有界就过闸，残留态下点保存会**写到陈旧键名**（`SET … "user:1"` 而屏幕显示 `user:renamed`，静默写错键 + 复活已 RENAME 的旧键），到第 3 轮才被探针实测揪出（详见 `coordinator.md` §3.3 第 5、6 条）。**派单硬口径**：验收句只写唯一期望终态；确实接受两形态时，分别写清各自的验收锚点。同轮 Tester 的变异 (iii)「答 keep 也放行」在析取断言下**全绿**（假阴性），须自建探针才照出 —— 凡「注入后仍绿」一律按测试强度缺陷立案。
 
 ## R 阶段清单
 
