@@ -7,8 +7,9 @@
 
 use super::filter_values::{in_values, scalar_value, value_to_json};
 use super::recordset::{
-    build_predicate, recordset_limit, validate_recordset, validate_tuple_range_order, SyncRecordset,
+    build_predicate, recordset_limit, validate_recordset, validate_tuple_range_order,
 };
+pub use super::recordset::{SyncRecordset, SyncRecordsetBound};
 use crate::data_sync::sql::quote_ident_sql;
 use crate::data_sync::DataSyncError;
 use crate::db::{TableSchema, Value};

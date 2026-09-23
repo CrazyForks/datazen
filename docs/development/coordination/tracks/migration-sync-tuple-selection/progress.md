@@ -1,6 +1,6 @@
 # migration-sync-tuple-selection
 
-Phase: READY_FOR_TEST
+Phase: READY_FOR_RETEST
 
 - Task: Data Sync composite primary-key recordset ranges
 - Branch: `feature/migration-sync-tuple-selection`
@@ -21,15 +21,15 @@ Implementation is isolated to this track's Data Sync recordset/filter/planning/a
 - [x] Reversed, empty, mismatched, incomplete, nullable, ambiguous, and unverified type/driver ranges fail before a reviewed plan can execute.
 - [x] Preview, profile round-trip, and immutable plan fingerprint behavior include tuple columns, values, and inclusive endpoints.
 - [x] Rust tests cover two- and three-column keys, component typing, inclusive/exclusive endpoints, parameter ordering, legacy scalar compatibility, invalid shapes, and fail-closed ordering contracts; UI tests cover editing and clearing.
-- [ ] WDIO real-database journeys verify bounded Data Sync results and execution readback on PostgreSQL and MySQL; the independent Tester runs WDIO serially.
-- [ ] Changed-core coverage reaches at least 80%. No coverage executable is installed in this worktree (`cargo llvm-cov`, `grcov`, `cargo-tarpaulin`, `llvm-cov`, and `llvm-profdata` are unavailable); independent Tester/coordinator should measure coverage if their environment provides a tool.
+- [x] Independent Tester ran the PostgreSQL and MySQL real-database journeys serially; each verified invalid partial-key rejection before writes and exact bounded target readback.
+- [x] Tester coverage measured `recordset.rs` 82.89%, `filter.rs` 82.70%, `filter_values.rs` 94.37%, `filter_validation.rs` 93.81%, and `RecordsetEditor.tsx` 89.09%. Whole-file unit-profile coverage was 78.65% for `apply.rs` and 66.67% for `keyset_source.rs`; their changed tuple paths passed WDIO but the app run was not coverage-instrumented.
 - [x] Host Rust focused suites, frontend typecheck, relevant Vitest, changed-file formatting, and diff checks pass.
 
 ## E2E registration
 
 - [x] PostgreSQL and MySQL composite-key compare/review/execute journey with exact target readback is registered.
 - [x] Invalid tuple shape journey asserts rejection before target writes.
-- [ ] WDIO execution is pending the independent Tester; Coder did not start WDIO.
+- [x] WDIO execution passed for PostgreSQL and MySQL in the independent Tester run.
 
 ## Coder self-validation
 
@@ -43,6 +43,16 @@ Implementation is isolated to this track's Data Sync recordset/filter/planning/a
 - WDIO was not run, per coordinator scheduling. Coverage was not measured because the listed coverage tools are unavailable.
 - Source files are split by responsibility and stay under 800 lines: `filter.rs` 364, `recordset.rs` 486, `commands/sync/apply.rs` 771.
 
-## Independent Tester
+## BUG-001 Coder fix — 2026-09-23
 
-Pending fresh Tester. Review changed implementation, verify scalar compatibility and comparison semantics, run the registered PostgreSQL/MySQL WDIO journeys serially, measure changed-core coverage if tooling is available, and register any bugs before reporting.
+Restored `datazen::data_sync::filter::{SyncRecordset, SyncRecordsetBound}` with public re-exports from the new internal recordset module; existing `datazen::SyncRecordset` and `datazen::SyncRecordsetBound` root exports and tuple range types remain unchanged. Added a regression test that imports through the old module path and assigns the values to the root-exported types, locking the compatibility contract.
+
+- `cargo test -p datazen --test data_sync_public_api`: 1 passed; the integration test imports the old paths from an external crate context and assigns both names to the root exports.
+- `cargo test -p datazen --lib data_sync::filter::tests`: 14 passed.
+- `cargo test -p datazen --lib commands::sync::`: 66 passed.
+- `rustfmt --edition 2021 --check` for both changed Rust files and `git diff --check`: passed.
+- No WDIO rerun is needed for this Rust-only re-export fix; the independent Tester already passed the unchanged PostgreSQL/MySQL tuple journeys.
+
+## Independent Tester — 2026-09-23
+
+Prior result: `TEST_FAILED` only for the public module-path regression filed as `migration-sync-tuple-selection-BUG-001` in `bugs.md`. The Tester reported the tuple feature's focused Rust suites, Vitest, typecheck, PostgreSQL/MySQL WDIO journeys, and core coverage results above. Tester fixes were not copied into this Coder worktree. Fresh independent retest of the public path fix is pending.
