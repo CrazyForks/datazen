@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-001 · 树内重点击「已选中的键」会静默销毁未保存草稿（无 I-1 弹层）
 
 - **严重度**：高（I-1 的同一失败类别——"用户草稿无痕消失"——在本轨宣称已消灭后，仍以另一条路径存在；且触发姿势是树内最普通的点击）
-- **状态**：`修复中`
+- **状态**：`待复测（round-1 修复后）`
 - **发现**：W3-E 第 1 轮 Tester 复验（全新实例，HEAD `3919307ce` → 补测 commit `da4bc9531`）
 - **涉及文件**：
   - `packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx:364-374`（`handleSelectKeyGuarded` 的同键旁路：`key === selectedKey` ⇒ 直接 `handleSelectKey(key)`，**不经过** `requestDraftLeave`）
@@ -44,3 +44,10 @@
 ## 影响范围
 
 不阻断其余门禁（三口径复验全绿）；影响 dirty 主链路的用户可信度：PRD §3.3 底栏 / §4 I-1 / 简报 §1-5「静默清 dirty 必须消掉」。与 BUG-002 同根（未守卫的选中键变更出口），建议同一轮修。
+
+## 修复记录（round-1）
+
+- **commit**：`a82dce41d`（与 BUG-002 同轮同一 commit：`fix(redis-detail-ui): BUG-001 同键重取非毁式 + BUG-002 对话框出口接守卫，取消 3 条 skip 并补双弹排除自测`）。
+- **修法（建议 (b) 的 Workbench 侧落地）**：`RedisWorkbench.tsx handleSelectKey` 计算 `inPlace = key === selectedKey && keyDetail?.key === key`；同键重取**不再翻 `detailLoading`** ⇒ `DetailColumn` 不切 loading 分支、编辑面不卸载、`StringEditor` cleanup 不触发，草稿与脏位原样；同键重取失败也保留旧 detail（不再 `setKeyDetail(null)`）。换键路径行为不变（照旧 loading → ready）。
+- **为何不是 (a)**：(a)「同键也询问」会让 BUG-002-H2 期望的 `leaveDialog()` 为 `null`（零弹窗 + 草稿保留）直接失败，且 H2 明确要求「同键重取后无交互不弹守卫」；(b) 从根上让「刷新当前键」不触碰草稿，问/不问两侧不再有数据损失不对称。同键早退本身保留（它现在是非毁式重取，无需询问）。
+- **复验**：`npx vitest run --config vitest.drivers.config.ts dirtyLeaveCoverage` ⇒ **12/12 绿**，含原 skip 用例 `[redis-detail-ui-BUG-001] 同键重点击不得静默丢草稿`：`input().value==='draft'`、`data-string-dirty==='true'`、`isDraftDirty()===true`；同文件其余守卫用例（A/B/C/D/E/G/双弹自测）全部保持绿。

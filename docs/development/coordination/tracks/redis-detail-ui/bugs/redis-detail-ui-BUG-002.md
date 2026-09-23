@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-002 · 对话框出口的 `onSelectKey` 未接守卫 ⇒ 创建键 / 右键 TTL / 重命名后静默丢草稿
 
 - **严重度**：中（同 BUG-001 的 I-1 旁路类别；触发面比 BUG-001 窄——要求「已有一把选中键 + 恰好一个未保存草稿」，且动作本身是服务端写操作而非纯导航，部分用户会预期草稿被换掉。但**结果同样是零提示的草稿蒸发**，与简报 E-5「消掉静默清 dirty」直接冲突）
-- **状态**：`修复中`
+- **状态**：`待复测（round-1 修复后）`
 - **发现**：W3-E 第 1 轮 Tester 复验（补测 commit `da4bc9531`）
 - **涉及文件**：
   - `packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx:735`（`onSelectKey={handleSelectKey}` —— 传给 `KeyWorkbenchDialogs` 的是**未守卫**的原始回调；对比 `:657` 树列已换成 `handleSelectKeyGuarded`）
@@ -56,3 +56,12 @@ H2 组（右键 TTL）：`set_ttl` 出网 ⇒ 无 `redis-draft-discard` ⇒ 选�
 ## 影响范围
 
 与 BUG-001 同根，建议同一轮修。不阻断门禁；PRD §4 I-1 的旁路之一。
+
+## 修复记录（round-1）
+
+- **commit**：`a82dce41d`（与 BUG-001 同轮同 commit，见 `redis-detail-ui-BUG-001.md` 修复记录）。
+- **修法（三处，全部在 `RedisWorkbench.tsx`，`KeyWorkbenchDialogs.tsx` 零改动）**：
+  1. `onSelectKey` 改接 `handleSelectKeyGuarded`（原 `:735`）：创建 / 右键重命名的**换键**出口先问后跳（F 组期望）；右键 TTL / PERSIST 的**同键**重取落进 BUG-001 的非毁式支路 ⇒ 零弹窗、草稿原样（H2 组期望）。
+  2. 新增 `refreshKeysForDialogs` 接管对话框侧 `onRefreshKeys`（原 `:734`）：**脏时**仅 `scanRefresh() + tree.refresh()` 重扫列表——不动选中、不动详情、不动脏位、不再进守卫；**干净时**走原 `refreshKeys`（今日行为不变）。毁草稿的那半（清选中）收敛到各自已守卫的 `onSelectKey` / `onClearSelectedKey` 出口。BatchBar / 工具栏 / 句柄的 `refreshKeys` 保持原守卫语义（C/D/kvSlotRelay 既有期望不动）。
+  3. **双弹排除**：简报建议的 `draftGuard` 一次性票据按现场判断**未加码**——本设计下每条对话框动作的守卫询问 ≤ 1 次（创建/重命名→`onSelectKey` 一次；删除→`onClearSelectedKey` 一次；TTL/PERSIST→零次），`draftGuard` 既有的同 tick pending 合并（`draftGuard.ts:58`）作兜底。新增自测 `[fix-selftest] 对话框出口一次动作只询问一次守卫`（创建 + 对话框删除两条）：首次询问点「继续编辑」后长 `flush(60)` 断言**无二次弹窗、无悬起 pending、草稿与选中原样**。
+- **复验**：原 skip 用例 F 组 `[redis-detail-ui-BUG-002] 创建键后的跳转不得静默丢草稿` 与 H2 组 `[redis-detail-ui-BUG-002] 右键 TTL 作用于选中键后不得静默丢草稿` 转绿；`dirtyLeaveCoverage.test.tsx` **12/12 绿**。
