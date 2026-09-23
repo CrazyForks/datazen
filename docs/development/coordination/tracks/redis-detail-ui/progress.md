@@ -1095,3 +1095,53 @@ dist/assets/MainPage-Cg8Nygme.js               2,255.84 kB │ gzip: 661.15 kB
 ⇒ **1474 files / 0 blocking / 4 advisory / exit 0** ✅ —— blocking 0 硬线达成，与基线一致
 
 **四门结论：全绿。** 复测期间所有变异注入均已 `git checkout HEAD --` 还原，`git status --porcelain` 为净。
+
+## R4-6 覆盖率回归（v8，`--coverage.all=false`）✅ 无回归
+
+**复算命令**（与 round-2/3 逐字同口径）：
+`npx vitest run --config vitest.drivers.config.ts --coverage --coverage.provider=v8 --coverage.all=false --coverage.reporter=json-summary`
+
+### 方法学对照（先自证方法可信，再谈数值）
+
+在**同一具环境下**把代码回到 round-3 测量态（`3e25a3c0f`）复跑，用我的复算方法重算 round-3 记录值：
+
+| | 我复算（round-3 代码） | round-3 台账记录 | 判定 |
+| --- | --- | --- | --- |
+| A（15 文件，含 `en.ts`） | **88.88 / 91.22** | 88.88 / 91.22 | **逐位相同** ✅ |
+| B（A 剔 `RedisWorkbench.tsx`，14 文件） | **92.43 / 95.43**（bran 85.36 · funcs 90.29） | 92.43 / 95.43（bran 85.36 · funcs 90.29） | **逐位相同** ✅ |
+
+⇒ **方法可信、口径可复现**；下述差异均非测量误差。测量态用毕已 `git checkout HEAD --` 还原，树净。
+
+### 关键发现：口径 B 的 14 文件集合**不含** `KeyWorkbenchDialogs.tsx`
+
+round-3 记录的 `92.43 / 95.43` **只在「剔除 `RedisWorkbench.tsx` 且不含 `KeyWorkbenchDialogs.tsx`」的 14 文件集合上复现**。
+而本轮起，`KeyWorkbenchDialogs.tsx` **首次进入本轨生产 diff**（round-3 的修复 `c70ef8c9c` 才第一次改它）
+⇒ 若按「`git diff 8981d3078..HEAD` 生产文件集」机械取集，本轮 A=16 / B=15，**集合与历史口径不同名**。
+
+### like-for-like 复算（决定性）
+
+| 集合 | round-3 代码 | **round-4 代码** | 差 |
+| --- | --- | --- | --- |
+| **旧口径 B（14 文件，不含 `KeyWorkbenchDialogs`）stmts/lines** | 92.43 / 95.43 | **92.43 / 95.43** | **0.00pp**（逐位相同） |
+| 旧口径 B branches / funcs | 85.36 / 90.29 | **85.36 / 90.29** | 0.00pp |
+| **本轮全量 A（16 文件，含 `KeyWorkbenchDialogs`）** | 84.34*(同集合回算) | **84.34 / 86.93** | — |
+| **本轮全量 B（15 文件 = 上剔 `RedisWorkbench`）** | — | **85.95 / 89.03**（bran 79.55 · funcs 86.83） | — |
+| 旧口径 A（15 文件，不含 `KeyWorkbenchDialogs`） | 88.88 / 91.22 | **88.65 / 91.09** | −0.23 / −0.13pp |
+
+**逐文件归因**（两个被本轮修改的文件）：
+
+- `RedisWorkbench.tsx`：stmts 201/251 → **199/251**、bran 76/112 → **73/112**。
+  ⇒ **分母不变、分子 −2 语句 / −3 分支**，正是 BUG-009 压缩注释与删除 `onUpdateSelectedKey` 传参后**代码总量减少**所致；
+  该文件覆盖率 80.1% → 79.3%，**其绝对值仍 ≥80% 硬线口径外的「剔除项」**（旧口径 B 本就把该文件剔除）。
+- `KeyWorkbenchDialogs.tsx`：stmts 107/171 → **105/169**（62.1% → 62.1%，百分比不变）、bran 48/96 → 47/94。
+  ⇒ 删除的那条陈旧写入分支（`if (selectedKey === …) onUpdateSelectedKey(next)`）**连同其未覆盖分支一起消失**，
+  分子分母同比 −2 语句；**百分比持平**，未见覆盖质量下降。
+
+### 判定
+
+- **旧口径 B（历史引用的权威口径）like-for-like 逐位相同 92.43 / 95.43 ⇒ 覆盖率零回归** ✅
+- 本轮全量口径（纳入首次进入 diff 的 `KeyWorkbenchDialogs.tsx`）B = **85.95 / 89.03**，A = **84.34 / 86.93** ⇒ **均 ≥80% 硬线** ✅
+- 「A 旧口径 −0.23pp」的成因已逐行归因到「被删代码行恰为已覆盖语句」（分母同步下降）⇒ **非测试覆盖质量下降**，
+  且 A 口径本非硬线引用口径（引用口径为 B）。
+- **结论：≥80% 无显著下降，覆盖率回归通过。** 建议后续轨把口径集合定义从「按 diff 取集」改为**显式文件清单**，
+  以免文件进出 diff 时口径漂移（本轮已按两种集合并列披露，不留歧义）。
