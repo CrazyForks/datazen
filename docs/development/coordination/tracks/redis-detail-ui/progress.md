@@ -1002,3 +1002,35 @@ BUG-001~007 正文。**文件面结论：通过。**
 且忠实整体回退 (ii-a) 也转红。⇒ **修复的因果面被有效钉住，测试强度充分。**
 
 > 复测结论：**变异矩阵通过**（3 项中有意义的两项 + 忠实回退项全部转红，无关项保持绿）。
+
+## R4-3 协调者裁定的独立验证 ✅（裁定成立）
+
+裁定内容：简报伪码末尾的无条件 `onUpdateSelectedKey(next)` 应**删除且不回退**（`handleSelectKey` 已承担换键，该调用冗余且有害）。
+
+### 逐路径核对「是否有合法路径丢失选中键更新」
+
+`KeyWorkbenchDialogs.tsx` 中 `onSelectKey` 的全部 4 个调用点（`grep` 实证）逐一核对：
+
+| 路径 | 行 | 选中键更新由谁完成 | 删除 `onUpdateSelectedKey` 后 |
+| --- | --- | --- | --- |
+| 创建键成功 | `:106` | `handleSelectKey(name)`（守卫：`name !== selectedKey` ⇒ 干净态直通） | **不受影响** —— 本就不经该 prop |
+| TTL 设置 / PERSIST | `:159` / `:178` | `handleSelectKey(keyCtxDialog.key)`（同键，守卫 `key === selectedKey` 直通） | **不受影响** |
+| 右键重命名 | `:211` | `handleSelectKey(next)` —— 答放弃/干净态时**确实写入 `next`**（`RedisWorkbench:357`） | **不受影响**；答 keep ⇒ 本就未改名 ⇒ 选中键**应当**留旧键（这正是修复语义） |
+| 删除键 | `:228` | `onClearSelectedKey()`（**保留**，未被本次删除波及） | **不受影响** |
+| 批量选中集合 | `:198` / `:230` | `onUpdateSelectedKeys`（复数，**保留**） | **不受影响**，与选中键正交 |
+
+### 合法路径实证（temp 探针，3 路径全绿后已删除、树净）
+
+```
+[INV-1]  target=user:1        panel=user:1        selected=user:1        (rename + dirty + 答 keep 后保存)
+[INV-2a] panel=user:renamed   selected=user:renamed  input=renamed-value (rename + dirty + 答放弃 ⇒ 已换到新名)
+[INV-2b] target=user:renamed  panel=user:renamed  selected=user:renamed  (新键上再编辑并保存)
+[INV-3]  panel=user:renamed   selected=user:renamed  input=renamed-value (rename 干净态 ⇒ 已换到新名)
+```
+
+- **答放弃 / 干净态 ⇒ 选中键确实变为 `next`**（`handleSelectKey` 内 `setSelectedKey` 完成，`INV-2a` / `INV-3` 实证）⇒ 无合法路径丢失选中键更新。
+- **答 keep ⇒ 未改名 ⇒ 选中键留旧键**，与 `detail.key` 一致（`INV-1`）⇒ 保存目标 === 显示键 === 选中键。
+- 守卫语义佐证（`draftGuard.ts:56-65`）：`!dirty ⇒ Promise.resolve(true)` 立即放行、`dirty ⇒` 悬起并**在动作前**询问 —— 故「删除后才发生的既成事实」不可能绕过守卫。
+- 边缘核对：**头部行改名**（`KeyEditors.handleRename` `:119-128` → `onRenamed` → `RedisWorkbench:724 setSelectedKey(newKey)`）**本就不经 `onUpdateSelectedKey`**，`requestDraftLeave()` 拒绝时直接 `return false` 且不写服务端 ⇒ 无部分态。该路径与本轮删除正交，**未受影响**。
+
+**独立结论：裁定成立。** 删除 `onUpdateSelectedKey` 后无任何合法路径丢失选中键更新；该调用在答 keep 时确实会重造偏差⑥（已由 R4-2 变异 (ii) 实测转红佐证）⇒ **删除正确、不回退正确**。
