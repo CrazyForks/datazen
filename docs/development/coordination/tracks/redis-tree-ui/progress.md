@@ -1,7 +1,7 @@
 - 任务: 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11）
-- 状态: 修复轮第 1 回合完成 → READY_FOR_TEST（第 1 轮 Tester 的 BUG-001 Major + BUG-002 Minor 均已修并转绿，两条 `it.skip` 解 skip；等待第 2 轮 Tester 复测）
+- 状态: **TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）**（第 2 轮 Tester 判定，2026-09-23：BUG-001/BUG-002 复测通过已翻「已修复」；新登记 redis-tree-ui-BUG-003、redis-tree-ui-BUG-004 均 Minor 待修复，等修复轮第 2 回合）
 - 编码 commit: 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee + d1581baf2（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例/gaps 头注释）
-- 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、本 commit（覆盖率补测 + 判定收口）
+- 测试 commit: 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、f8a191b66（覆盖率补测 + 判定收口）；**round-2**：本 commit（第 2 轮复测判定 + BUG-003/004 登记）
 - 合并 commit: —
 - 代理: w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd
 - Worktree: .worktrees/datazen-redis-tree-ui
@@ -493,3 +493,169 @@ E 轨接线面（`requestDraftLeave` 守卫 / `reloadDetail` 不清选中 / `han
 两条 Bug 均修完并转绿（复测入口 `keyTreeTesterGaps.test.tsx` 6 例 0 skip、characterization
 按交接要求改写为一致性断言而未删、2 条 precondition 绿测保持绿），四件套全绿，
 覆盖率两口径均不降反升 ⇒ 状态置 **READY_FOR_TEST**，交第 2 轮 Tester。
+
+---
+
+## 第 2 轮复测记录（第 2 轮 Tester，全新实例，2026-09-23）
+
+> 判定：**TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）**
+> —— briefed 的 BUG-001 / BUG-002 复测**通过**（已翻 `已修复` 并各附复测记录）；
+> 边界推导与断言纪律扫描**新登记 2 条**：`redis-tree-ui-BUG-003`、`redis-tree-ui-BUG-004`（均 Minor，`待修复`）。
+> 本轮只测不修：生产代码零改动；8 发反向突变逐一 `git checkout HEAD --` 复原，
+> 每发后 `git status --porcelain` 验空（CLEAN_OK 8/8）。
+
+### 1. 文件面审计 —— PASS
+
+`git diff --name-only f8a191b66..HEAD` = **19 文件**，逐文件核对全在申报写入面内：
+台账 2（`bugs.md` / `progress.md`）+ `packages/drivers/redis/locales/en.ts` +
+测试 5（`keyTree.test.ts`、`keyTreeFilter.test.ts`、`keyTreePatternFilter.test.tsx`、
+`keyTreeState.test.ts`、`keyTreeTesterGaps.test.tsx`）+ 源码 11（`key-browser/` 下
+`KeyTreeColumn.tsx`、`KeyTreeGroupRow.tsx`、`KeyTreeList.tsx`、`KeyTreePane.tsx`、
+`KeyTreeSearchRow.tsx`、`RedisWorkbench.tsx`、`keyTree.ts`、`keyTreeFilter.ts`、
+`treeLevels.ts`、`useKeyTree.ts`、`useKeyTreeView.ts`）。
+红线：`KeyTreeList.tsx` **635** 行 ≤800；`RedisWorkbench.tsx` **369** 行且 diff 仅
+`appliedPattern: scan.appliedPattern` 传参与注释；**零越界**（未碰他轨台账、`hub.md`、
+`redisInvoke.ts`、`value-editors/**`、`console/**`、宿主 `src/**`、`driver-sdk/**`、
+`meta.ts`、`resolve-drivers.mjs`、tsconfig、scripts、Cargo.*、其他语言 locales）。
+en.ts 只读核审：+4 行 = 3 行注释 + 1 个新 key `redis.tree.filterUnloaded` ✓。
+
+### 2. BUG-001 glob 边界推导表（`/tmp/glob_boundary.mjs`，用后按约销毁）
+
+Redis 7.2 `stringmatchlen_impl`（nocase=0）字节级忠实移植 × 产品 `globToRegExp`
+（`keyTreeFilter.ts:43-56`）忠实移植；脚本自检 **15/15 PASS**（自检期望修正 1 处：
+`h*o` 确实匹配 `hello`）。64 行矩阵结果：
+
+| 方言面 | 样例（pattern / key） | Redis MATCH | 客户端 glob | 一致 |
+|---|---|---|---|---|
+| 核心：字面量/锚定/大小写/`*` 折叠/`?`/元字符字面（`( ) $ ^ + { } \|` 等） | `hello/hello` T、`user/User` F、`h*o/hello` T、`a**b/axb` T | 同左 | 同左 | ✅ **25/25** |
+| 类 `[...]` | `h[ae]llo/hello`、`*[0-9]/user1`、`user[0-9]/user5`、`h[^e]llo/hallo`、`h[a-b]llo/hbllo` | 全 T | 全 F（`[` `]` `-` 被转义为字面量） | ❌ |
+| 转义 `\` | `a\b/ab`、`\*lit/*lit` | T / T | F / F | ❌ |
+| 转义反向 | `a\b/a\b` | F | T | ❌ |
+| 换行字节 | `a?c/a\nc`、`*x/a\nx`、`a*b/a\nb` | 全 T | 全 F（`.` 不跨 `\n`） | ❌ |
+| 多字节 `?` | `?/é`、`?/用` | F / F | T / T | ❌ |
+| 多字节 `?` 反向 | `??/é`、`???/用` | T / T | F / F | ❌ |
+
+合计 **16 处分歧**（类 5 + 转义 3 + 换行字节 3 + 多字节 `?` 5，以脚本矩阵输出为准）。
+**跨视图场景（脚本实跑）**：pattern `*[0-9]`、键集 `['user1','user2','cache:9']` ⇒
+扁平列表（服务端 `SCAN MATCH`）**3 行命中**；树（客户端 `globToRegExp`）**0 行 + `no-match`**
+（`data-row-count='0'`）。产品 `patternHasGlob = /[*?[\]\\]/` 把 `[`/`\` 认作 glob 字符原样
+下发服务端 ⇒ 邀请用户写类表达式，树却无法求值 ⇒ **登记 BUG-003**。
+
+### 3. 反向突变矩阵（8 发 8 中，逐发复原 CLEAN_OK 8/8）
+
+| # | 突变（生产代码） | 变红的测试 → 观测 |
+|---|---|---|
+| i | `globToRegExp` 去锚定（`new RegExp(source)`） | `keyTreeFilter.test.ts` → **3 failed \| 35 passed**（含「folder-only match 不走私子行」），exit=1 |
+| ii | `globToRegExp` 加 `'i'` 标志 | `keyTreeFilter.test.ts` → **1 failed**（`glob user vs User ⇒ false`），exit=1 |
+| iii-a | `countSelectableRows` 改数全部行 | `keyTreeFilter.test.ts` → **2 failed**（child-only 回填面包屑 / 深匹配保留祖先链），exit=1 |
+| iii-b | `KeyTreeList.tsx:400` 面包屑分支改可点（`const breadcrumb = false`） | `keyTreePatternFilter.test.tsx` → **1 failed \| 19 passed**（「non-interactive breadcrumb」），exit=1 |
+| iv | probe 臂 `hasVisibleDescendant(target)` → `false` | 纯测+旅程 → **2 failed \| 56 passed**（probe describe +「a folder with an open scan」），exit=1 |
+| v | `useKeyTree.ts:111` `rootPrefix = ''`（去前缀路由） | → **4 failed \| 22 passed**（prefix 路由旅程×3 + gaps `FIXME(redis-tree-ui-BUG-001)`），exit=1 |
+| vi | `treeLevels.ts` `markFetchFailed` 还原旧行为（`pass` 保留、`done` 不恒 true） | `keyTreeState`+gaps → **3 failed \| 42 passed**（BUG-002 进入/放弃、mid-pass、`FIXME(redis-tree-ui-BUG-002)`），exit=1 |
+| C5 | `useKeyTreeView.ts` 树模式 `visibleKeys` → `loaded`（计数读未过滤集） | → **1 failed \| 25 passed**（「R1 counts the pattern-visible set even when the flat scan ignored the glob」`data-loaded='0'` 楔子），exit=1 |
+
+日志 `/tmp/mut_i.log`、`mut_ii.log`、`mut_iii.log`、`mut_iiib.log`、`mut_iv.log`、
+`mut_v.log`、`mut_vi.log`、`mut_c5.log`（证据摘录已进 `bugs.md` 复测记录，文件按约销毁）。
+
+### 4. R1 计数一致性证据
+
+- **单一源**：`KeyTreePane:86 loadedCount={visibleKeys.length}` → `KeyTreeHeader:87 全选
+  disabled={!isKeyMode \|\| loadedCount===0}`；`useKeyTreeView:160-168` 行过滤与 `:186-189`
+  `visibleKeys` 共用 `filterKeysByPattern`；`data-row-count` 走 `countSelectableRows`。
+  全选 / `data-loaded` / I-11 空态 / 级联计数无第二事实源。
+- **C5 楔子**（不靠读码，靠断言）：patternFilter L415 与 gaps L266 型断言
+  （`scanKeys` 故意忽略 pattern、`scan_keys` 收窄到 0）要求 `data-loaded='0'` ——
+  突变 C5（树行去过滤）直接打红 ⇒ 计数读的是 pattern-visible 集，钉死。
+- 配合突变 iii-a（计数与行脱钩即红）、v（前缀路由丢即红），三方一致性闭环。
+
+### 5. 两项 coder 自发决策独立裁定
+
+**(a) Esc 同时清文本并重放空 filter —— 维持（不立案）。**
+`KeyTreeSearchRow:68` Escape → `onClearFilter`；`KeyTreePane:102-108` = `setSearchPattern('')`
++ `search.applySearch('')` ⇒ `toScanPattern('')='*'` ⇒ 扫描与树在同一次跃迁回到全键空间。
+若只清文本：applied pattern 仍在裁行而输入框已空 —— 正是 BUG-001「屏幕上无痕迹的过滤态」
+同类谎言；且空态引用源 `KeyTreePane:148 pattern={view.filterPattern}` 要求二者同进退，
+否则空态会引用一个已不存在的 pattern。旅程钉住：`keyTreePatternFilter` Esc 用例
+（childPrefixes 含 `''`、行恢复、`data-filter-active` 归位）。
+
+**(b) 折叠文件夹 probe 臂（`87b5e4620`）—— 维持（不立案）。**
+probe 与计数**同读同一已加载键集**（`hasVisibleDescendant` ← `filterKeysByPattern(loadedKeys)`
+= 计数源），无第二事实源；若删 probe 走严格 glob：`*user*` 下 `app:user:1` 保留在
+`visibleKeys`（计数 ≥1）而 `app:` 文件夹行被抹 ⇒「计数说有、屏幕不可达」——
+**重新制造 BUG-001 矛盾对**，恰是修复要消灭的东西。约束已钉：空文件夹永不被救
+（`row.count>0` 前置）、优先级 self-match > breadcrumb > probe；突变 iv 在纯测+旅程双层
+打红 **2 failed** 证明该臂被锁定而非装饰。懒加载余量（probe 只看已加载集）已记修复轮 §5 已知限制。
+
+### 6. un-skip 门 —— PASS
+
+`npx vitest run --config vitest.drivers.config.ts packages/drivers/redis/ui/__tests__/keyTreeTesterGaps.test.tsx`
+⇒ `Test Files 1 passed (1)` / **`Tests 6 passed (6)`，0 skipped，EXIT=0**。
+6 例均为具体断言（`data-loaded` / `data-row-count` / childPrefixes / invoke 参数），
+无降级占位；两例标题保留 `FIXME(id)` 前缀仅为来历标记（文件头注释已说明），非 skip 残留；
+全仓 `.skip(` / `it.todo` **0 命中**。
+
+### 7. 断言纪律 —— PASS
+
+- 几何反查：`getBoundingClientRect|offsetTop|clientHeight|getBoundingClientRect` 等在
+  `__tests__` **0 命中**（数据属性解耦 ✓，AGENTS「禁止视口几何坐标反查」）。
+- 空断言：改动 5 文件内 0 处裸存在性目标断言当结论（仅 patternFilter 两处 `findBy*`
+  前置，后随具体 `data-*` 断言）；无 `xLength` 型空数组断言当强断言的情形。
+- 文案：断言全走恒等 `t` 的 i18n key / `data-*` 状态值，**零英文 copy 字面量**断言
+  （改动文件内）。
+- `.skip(` / `it.todo`：0。
+
+### 8. 四门（串行执行，原文尾）
+
+1. **vitest drivers**：`Test Files  55 passed (55)` / `Tests  613 passed (613)` /
+   `Duration 10.50s (transform 5.10s, setup 21.36s, import 5.06s, tests 8.74s, environment 28.68s)` / **EXIT=0**
+   （自报 55/613/0 skipped 逐字吻合；skipped grep = 0）。
+2. **tsc**：`npx tsc --noEmit` → **EXIT=0**，输出 **0 行**。
+3. **build**：`npm run build` → **EXIT=0**，`✓ built in 4.76s`
+   （>500kB chunk 警告为存量基线，与自报 4.52s 同量级）。
+4. **boundaries**：`ok (1486 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))` / **EXIT=0**
+   —— 1486/0/4 与自报**逐字吻合**。
+
+**覆盖率复算**（v8 `--coverage.provider=v8` → `/tmp/cov_round2/coverage-final.json`，
+本 Tester 方法 = `git diff -U0` 新增行 ∩ `statementMap`/`branchMap`；文件用后销毁）：
+
+| 轴 | 语句（本 Tester 严口径=范围交叠） | 自报语句 | 分支 ALL-sides | 分支 ANY-side | 自报分支 |
+|---|---|---|---|---|---|
+| `f8a191b66..HEAD`（本轮修复） | **96.49%** (165/171) | 99.11% | 83.61% (51/61) | **100.00%** (61/61) | 100% |
+| `8981d3078..HEAD`（全轨） | **87.68%** (790/901) | 87.77% | 81.36% (227/279) | **97.49%** (272/279) | 97.49% |
+
+- 分支 ANY-side（≥1 侧命中）两轴与自报**逐数吻合**（100.00 / 97.49）⇒ 自报口径复原成功；
+- 语句：track 轴 87.68 vs 87.77（Δ0.09pp，单语句交叠口径边缘差）；round 轴 96.49 vs 99.11 ——
+  差异全部可归因：自报按「根因 1 处不可达 catch」计，本 Tester 按语句点计
+  `globToRegExp` throw 不可达路径 3 点（L54/L107/L196 同一根因）
+  + 键盘跨面包屑循环 3 点（`KeyTreeList:174/176/274`，即 BUG-004 证据）；
+- **四数全 ≥80% 地板 ✓**（最紧：track ALL-sides 分支 81.36%）。
+- 全轨 miss 尾巴另有 `useWorkbenchSearch.ts:61`、`workbenchDatabases.ts:29`、
+  `useWorkbenchSplit.ts:31-42`（round-1 期存量，不属本轮义务）。
+
+### 9. 死代码零残留 —— PASS
+
+`git diff f8a191b66..HEAD` 无 revert/半成品残留；round-1 清理 commit
+（`406253a2f` 退役 fold helpers、`eb733a757` 删 `visibleTreeRows` 别名）之后**无新增孤儿**：
+`keyTreeFilter` 导出面（`globToRegExp`/`filterTreeRowsByPattern`/`filterKeysByPattern`/
+`isBreadcrumbRow`/`countSelectableRows`）全部被 `useKeyTreeView`/`KeyTreeList`/测试消费；
+`treeLevels` 导出被 `useKeyTree` 消费；`tsc --noEmit` 0 错。
+全仓 redis ui `FIXME|@ts-ignore|@ts-expect-error|eslint-disable|\.skip\(|it\.todo` 逐条核过：
+均为存量既有项（带理由的 `exhaustive-deps`/`no-unnecessary-condition`、他轨 kvBar 注释、
+gaps 文件头注释 + 两例绿标题来历标记）+ `stringKeyValue.test.ts` 存量 `@ts-expect-error`，
+**本轮零新增死代码/抑制**。
+
+### 10. 台账写入（本 commit 的唯一变更）
+
+- `bugs.md`：BUG-001/BUG-002 状态 `待复测` → **`已修复`** + 各附 `## 复测记录（round-2）`；
+  新增 `redis-tree-ui-BUG-003`（跨视图 glob 方言矛盾）、`redis-tree-ui-BUG-004`
+  （键盘跨面包屑零旅程锁定）各一节、均 `待修复`；头部新增第 2 轮判定块。
+- `progress.md`：状态行翻 **TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）** + 本记录。
+
+### 11. 结论
+
+两条 briefed bug 复测**通过**（突变 8/8、C5 楔子、un-skip 6/0、四门 55/613 全绿、
+覆盖率两口径两轴 ≥80% 且 ANY-side 与自报逐数吻合）；两项自发决策均**维持**（§5 证据）；
+但 glob 边界推导暴露修复自选「纯客户端过滤」路线与服务端 MATCH 的 16 处方言分歧
+⇒ **BUG-003**；断言纪律/覆盖执行计数暴露「键盘跨面包屑」声称行为 0 执行、0 旅程
+⇒ **BUG-004**。新 bug 有据即立案 ⇒ 判定 **TEST_FAILED（第 2 轮，2 个 bug，Bug 循环 2/5）**，
+交协调者排修复轮第 2 回合。本轮生产代码零改动，commit = `test(coordination): ...`（仅台账两文件）。
