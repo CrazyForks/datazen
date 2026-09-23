@@ -80,7 +80,11 @@
 
 ## 跨轨风险
 
-- **根 `tsc` 对驱动 UI 全盲**（W3-B 修复轮实证，`tsconfig.json:26` include 不含 `packages/drivers/*/ui`）：驱动 UI 的形状级泄漏（如 `count_matching` out 改对象后消费端仍 `as number`）根 tsc 结构性免疫，vitest 是唯一网——既有 12 条驱动 UI 类型错误（`consoleResultRenderer.tsx` ×1、`SearchableInfoPanel.tsx` ×11）也一直被遮蔽。Wave 4 消费新形状时Tester 必须补 data-testid 断言层；发布前另立回合清存量后纳入门禁。
+- **根 `tsc` 对驱动 UI 全盲** — ✅ **已关闭**（`driver-ui-type-gate` 轨 TEST_DONE，合流 `5524f8dce`）：`tsconfig.json:26` include 追加 `packages/drivers/*/ui`，`--listFiles` 实测驱动 UI 生产文件 109 个入程序、`__tests__` 混入 0；清掉 11 条生产 `error TS`（全在 `SearchableInfoPanel.tsx`：TS2345×7/TS6133×2/TS2322×1/TS2488×1；`consoleResultRenderer.tsx` 实测 0 条，非 1 条）。清理中挖出并修掉 2 个**真实行为 bug**（非纯类型）：`variant="outline"` 非法枚举值致按钮无样式、`reconstructInfo` 元组/对象解构错配致结构化回复被静默吞并二次 IPC。合流后 integrate 树 `npx tsc --noEmit` 0 错。
+  - **残余**：驱动 UI `__tests__` 仍有 **42 条 error TS / 19 文件**未清，经由根 tsconfig 既有的 `packages/**/__tests__/**`、`*.test.*` exclude 豁免（与宿主测试同规则）⇒ 测试侧类型错误仍在门禁外，留作独立轨。文件行数自动门禁仍缺（仓内无）。
+- **`info_filtered` 的 wire shape 曾是"假契约"**（跨轨实证，裁决 A，合流 `5524f8dce`）：后端 `InfoSectionFiltered.entries` 原为 `Vec<(String, String)>`（serde ⇒ `[["k","v"]]` 元组数组），但前端**两个**生产消费端（`observe/SearchableInfoPanel.tsx` 的 `reconstructInfo`、kv-bar `keyObjectInfo.ts` 读 `maxmemory_policy`）与全部 fixture 都按**对象** `{key,value}` 写——线上零转换（`json_ok`→宿主透传→`unwrapData`→`as` 断言）。后果：kv-bar 淘汰策略行在真连下**永远不渲染**（`entry.key` 恒 undefined ⇒ find 不中 ⇒ 按 §3.4 静默降级），且 type-gate 轨 round-1 的"真实 bug 修复"一度把前端改向对象、被 round-2 Tester 以「mock ≠ 真实 IPC」判 FAIL。
+  - **协调者裁决 A**：后端改为对象（新增 `InfoEntry { key, value }` struct、`entries: Vec<InfoEntry>`、`en.ts` 不动）+ serde pin 测试 `test_info_filtered_entries_serialize_as_objects` 钉死对象形状；前端**零改动**（本就按目标契约写）。理由：仓内元组消费者为零，kv-bar 已合流且按对象写，对象更自描述。
+  - **教训（Wave 4/后续轨通用）**：fixture 里"对方说这是真实 wire shape"的**注释不是证据**——凡是跨 IPC 的形状，必须有一侧（首选后端 serde 单测）钉死契约，否则前后端各按自己的假想写、测试全绿而真连静默降级。Wave 4 消费 W3-B 冻结契约时逐字引用 `progress.md` 的契约段，不要从 fixture 反推。
 - **预算口径**：BUG-003 修复后 `count_matching` 降级路径的 `consumed` 会从 0 变一轮真 SCAN——Wave 4 判"DBSIZE 快答"须用 `dbsize > 0 && consumed == 0`，不能只看 `consumed == 0`。
 - **Wave 2 契约已冻结**：`type_distribution` / `key_object_info` 的声明面（字段与类型）与 `b1e1f4010` 逐字节相同，UI 侧照 W1-A progress.md 的契约段消费，不得反向要求后端改形状。
 - **Cluster 往返预算不是"一次 pipeline"**：standalone/sentinel `key_object_info` = 2 次往返，Cluster = 7 次；`type_distribution` 在 Cluster 采样窗硬限 200。UI 必须渲染 `truncated` 的"采样 N/M"标注，否则会把采样读成精确分布。
@@ -98,5 +102,6 @@
 - [ ] SELECT 哨兵项：`select_db` 按 `current_db` 短路（#55，P1 候选）在真连下确认少 1 次往返。
 - [ ] Wave 2 全部 GUI 走查（上下文条 / 键属性侧栏 / 屏 A 让位）留待人工，单测不替代。
 - [ ] `RedisWorkbench.tsx`（680 行）拆分与 `cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件拆分（800 行红线）；**+ W3-B 的 `ops_tree_scan.rs`（修复轮后 988 行，建议切 `ops_tree_scan/{batch,page}.rs`）与其 `tests.rs`（1072+ 行）**。
-- [ ] 驱动 UI 纳入类型门禁：先清 `packages/drivers/*/ui` 的 12 条存量 `error TS`（W3-B 实测清单），再把该面加进根 `tsconfig.json` include（或建 `tsconfig.drivers.json` 独立跑）；同时评估加一条自动单文件行数门禁（仓内现无）。
-- [ ] 轨道 worktree / feature 分支清理（三条已合入的可在 R 阶段末删除）。
+- [x] ~~驱动 UI 纳入类型门禁~~ — ✅ **已达成**（`driver-ui-type-gate`，合流 `5524f8dce`）：11 条存量生产 `error TS` 已清、`packages/drivers/*/ui` 已进根 `tsconfig.json` include、合流后 integrate 树 tsc 0 错。**剩余**：驱动 UI `__tests__` 的 42 条 error TS / 19 文件仍被既有 exclude 豁免（另立轨）；自动单文件行数门禁仍未建。
+- [x] ~~`RedisWorkbench.tsx` 行数~~ — 已由三轨共同消化：E 轨后 787 行、D 轨侧 369 行（E/D 合流后以实际为准，≤800 维持）。**未完成**：`cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件（1070+ 行）、`ops_tree_scan.rs`（988 行）与其 `tests.rs`（1072+ 行）的拆分留 R 阶段。
+- [x] ~~轨道 worktree / feature 分支清理~~（三条已合入的可在 R 阶段末删除）：`redis-tree-backend`、`redis-kv-contract`、`redis-codec-write`、`redis-console-safety`、`redis-kvbar-ui`、`redis-overview`、`driver-ui-type-gate` 共 **7 条**已清理；剩 `redis-tree-ui`、`redis-detail-ui` 两条在飞，合流后清理。
