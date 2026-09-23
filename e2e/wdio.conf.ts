@@ -256,6 +256,7 @@ export const config: WebdriverIO.Config = {
     // Schema Diff only (`pnpm e2e:schema-diff`)
     'schema-diff': [
       './specs/schema-diff-window.ts',
+      './specs/schema-diff-dependency-order.ts',
       './specs/schema-diff-diverse-types.ts',
       './specs/schema-diff-cross-dialect.ts',
       './specs/schema-diff-options-matrix.ts',
