@@ -878,3 +878,12 @@ kv-bar 聚合实测为 **98.32% statements / 96.14% branches / 96.77% functions 
 - 起始 `git status --short` 仅为 ` M Cargo.lock`；diff 只有 `datazen-driver-redis` dependencies 增加 `flate2` 一行。确认这是已知 lockfile 漂移，保留且不暂存、不提交。
 - 必读：根 `AGENTS.md`、`docs/development/subagent/tester.md`、测试简报模板、本轨 progress、BUG-001/BUG-002；本轮仅写本轨账本与测试，不改生产代码，不碰 hub。
 - 本轮必须独立完成 A/B/C/D；修复前反向变异、修复后复测、全驱动 Vitest / Redis Rust lib / TypeScript、覆盖率与 E2E 登记均待执行。
+
+### 阶段 A — 修复审查（已完成）
+
+- 审阅范围：`af25e5ae6..392e851aa`。修复提交仅修改 `packages/drivers/redis/ui/kv-bar/ContextBarActions.tsx`；将 overflow props 收窄为模型类型以访问 `sample` / `maxBytes`，紧凑类型分布行追加采样提示，无上限内存改用 `memoryUnlimited` 词条与参数。没有其他文件或范围外逻辑改动。
+- Tester 原有两个 `[tester]` 回归断言相对 `af25e5ae6` 零 diff，名称、输入和关键断言均未删改或弱化。
+- BUG-001 独立反向变异：仅移除 compact overflow 中 `types.sample` 子树，运行该 Tester 用例得到 1 failed / 48 skipped，断言报 `expected null not to be null`（`:746`）；恢复后源文件字节相同。
+- BUG-002 独立反向变异：仅令 overflow memory `i18nKey` 固定为普通 memory key，运行该 Tester 用例得到 1 failed / 48 skipped，实测 `redis.contextBar.memory`、预期 `redis.contextBar.memoryUnlimited`（`:765`）；恢复后源文件字节相同。
+- 两条 Bug 均为 `待复测`，本轮复测前仍未变更终态；修复提交 `392e851aa`、READY_FOR_TEST 台账提交 `f47f063ac` 与 progress 记录一致。审查暂未发现第三项缺陷。
+- 源码反向探针均已还原，进入 B 前 `git diff -- packages/drivers/redis/ui/kv-bar/ContextBarActions.tsx` 为空；B 门禁尚未运行。
