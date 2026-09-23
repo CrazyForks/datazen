@@ -18,7 +18,7 @@ vi.mock('../shared/redisInvoke', () => ({
   redisCommandInvoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-/** Structured wire shape of `info_filtered` (objects, not tuples — infoParse.ts). */
+// Wire shape of `info_filtered` is defined by Rust `InfoEntry` struct (ops_observe.rs), serialized via serde. Objects are the contract.
 const structuredReply = {
   sections: [{ name: 'Server', entries: [{ key: 'redis_version', value: '7.2.0' }] }],
   totalEntries: 1,
