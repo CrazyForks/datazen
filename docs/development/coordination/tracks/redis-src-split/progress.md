@@ -1,7 +1,7 @@
 # `redis-src-split` 台账
 
 - 任务: 把 redis 驱动 crate 超 800 行的文件按职责拆分，**零行为变更**（纯机械重构 + 测试保持全绿）
-- 状态: **READY_FOR_TEST**
+- 状态: **TEST_FAILED（第 1 轮，1 个 bug）**
 - 分支: `feature/redis-src-split`
 - Worktree: `.worktrees/datazen-redis-src-split`
 - 基线: `d049ceb4e`
@@ -817,7 +817,7 @@ Coder 台账 §4 的放宽清单**逐条名字与我实测一致**，但 `connec
 
 | 审阅项 | 结果 |
 |---|---|
-| `progress.md` 头部 `READY_FOR_TEST` | ✅ 存在（:5 `- 状态: **READY_FOR_TEST**`） |
+| `progress.md` 头部 `READY_FOR_TEST` | ✅ 存在（审阅时位于 :5 `- 状态: **READY_FOR_TEST**`；本轮终判已按协议翻为 `TEST_FAILED`） |
 | 拆分前后行数表 | ✅ 存在（§2，8 行，一文件一 commit 列全） |
 | 每步门禁尾部 | ✅ 存在（§5，步骤 1-9 逐字 `test result` / fmt 残差） |
 | 未完成项声明 | ✅ 存在（§7 第 1 条明确 `ui/console/consoleCompletion/commandMeta.ts` 873 行留给下一轮，附原因） |
@@ -878,3 +878,49 @@ $ find packages/drivers/redis/src/ops_tree_scan -name "*.rs" -exec wc -l {} + | 
 
 **步骤 7 结论：审阅项 5/5 存在；基线行数 8/8 正确；拆分后行数 55/63 正确、8 处誊写偏差（已登记为勘误）；
 未完成项声明与实际一致。**
+
+---
+
+## 9. Tester 第 1 轮终判：**TEST_FAILED（1 个 bug）**
+
+**判据汇总**
+
+| 验收动作 | 结果 |
+|---|---|
+| 1 文件面审计（正向 71 路径 + 反向 7 类禁改路径） | **PASS** |
+| 2 逐行原文比对（8 文件 / 9611 非空行 / 303 个条目函数体） | **PASS（8/8）** |
+| 3 公开面集合相等（5 个拆分文件） | **FAIL（4/5）→ BUG-001** |
+| 4 门禁独立复跑（lib / 集成 / fmt / 行数 / tsc） | **PASS（5/5，数字逐位命中）** |
+| 5 行为等价抽查（6 处变异探针） | **PASS（4/6 感知）**；另有覆盖空洞 TS-01/TS-02 |
+| 6 `pub(crate)` 放宽审计（抽样 5 + 全量泄漏扫描） | **PASS**；另有台账计数勘误 |
+| 7 台账审阅 | **PASS**；另有行数表誊写勘误 |
+
+**阻断项（唯一）**
+
+- **BUG-001**（`bugs/redis-src-split-BUG-001.md`）：`crate::ops_tree_scan::meta_slots` 在拆分后
+  **失去根路径可达性**，`ops_tree_scan` 公开面 **20 → 19**。编译级探针双向证明：
+  路径解析失败（E0433），补一行 `pub use meta::meta_slots;` 即恢复。
+
+**非阻断项（如实记录，不计入 bug 数）**
+
+- **TS-01 / TS-02**（步骤 5）：`ops/ttl.rs` 的 `Expire` 网络发送分支、`ops_tree_scan/budget.rs`
+  的 `read_dbsize` 负数守卫，**注入变异后 342 条测试全绿** ⇒ 覆盖空洞。**均为基线既有**，
+  非本次拆分引入（函数体经步骤 2 证实逐字未改），故不影响「零行为变更」判定。
+- **台账勘误 ×2**（步骤 6/7）：`§4` 放宽计数 `connect.rs` 20→实测 25（合计 52→实测 57）；
+  `§2` 行数表 `ops_tree_scan` 行 8 个数字偏差 ±1~±8。均为**说明性文字**误差，
+  不影响任何实质判据（≤800 行已独立验证通过）。
+
+**为什么「门禁全绿」不等于通过**：步骤 4 实测 `342 passed; 0 failed; 4 ignored`、5 目标全绿、
+fmt 残差恰为基线 2 条、最大文件 787、`tsc` 0 —— 与 Coder 自报**逐位一致**。
+但 BUG-001 在此门禁下**完全不可见**（crate 内暂无 `meta_slots` 调用方，故编译与测试都不报）。
+这正是任务书把「公开面集合相等」列为**独立硬判据**的原因：纯机械重构的验收
+必须同时满足「行行有归属」与「公开面集合相等」，二者缺一不可。
+
+**给下一轮 Coder 的最小修复动作**
+
+1. `packages/drivers/redis/src/ops_tree_scan/mod.rs` 的 `pub use` 区补一行 `pub use meta::meta_slots;`
+   （建议紧邻 :77-81 的 `meta::*` 分组）；
+2. 复跑 `cargo test -p datazen-driver-redis --lib`（应仍 `342 passed; 0 failed; 4 ignored`）+
+   复跑本轨步骤 3 的公开面脚本（`ops_tree_scan` 应回到 **20 vs 20**）；
+3. 顺手修 §2 `ops_tree_scan` 行数表的 8 个数字与 §4 的 `connect.rs` 计数；
+4. （可选，独立一轮）补 TS-01/TS-02 两条覆盖，以及 `commandMeta.ts` 873 行的 TS 侧拆分。
