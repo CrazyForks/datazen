@@ -2,7 +2,7 @@
 
 ## migration-default-expression-review-BUG-001 — MySQL numeric default expressions pass through to PostgreSQL
 
-- 状态：待修复
+- 状态：待复测
 - 级别：P2
 - 描述：跨方言 Schema Diff 将 MySQL 数值类型默认表达式原样放入 PostgreSQL DDL。`apply_mysql_string_default_mapping` 对 `is_known_mysql_default_type` 直接返回成功，因此不会识别 MySQL 专属函数，也不会生成 `Unsupported` requirement。合法的 MySQL 表达式默认值 `IFNULL(1, 2)` 被计划为 PostgreSQL 默认值；目标 PostgreSQL 没有 `IFNULL` 函数，计划执行会失败。
 - 重现步骤：
@@ -15,3 +15,5 @@
 - 影响范围：MySQL→PostgreSQL Schema Diff 对数值列使用 MySQL 函数或其他不兼容表达式默认值的表，会生成目标端无效 DDL，阻断迁移；计划将该操作标记为 Additive，未向调用方提示需人工翻译。
 - 相关测试：`src-tauri/src/schema_diff/plan_tests.rs` 中的 `[tester]` 用例。
 - 建议：只允许明确可移植的数值字面量透传，无法证明语义可移植的数值表达式 fail closed，并由回归用例验证。
+- 修复提交：`0cfd3aab0e6d6ddf82eb1133247bbb0a75706a12`。目前只允许与 PostgreSQL 目标数值类型兼容的纯数值字面量；整数目标额外检查整数词法和有符号范围。MySQL 专属函数/表达式、十六进制/位字符串及不兼容字面量均成为 `Unsupported`。
+- 回归状态：原 Tester 复现及 Schema Diff planner 定向套件已由 Coder 自验通过；等待独立 Tester review 和复测后再标记已修复。
