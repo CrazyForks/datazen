@@ -216,6 +216,49 @@ describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern forks on row.kind', ()
   });
 });
 
+/* ── the collapsed-subtree probe (why a folder survives without matching) ──── */
+
+describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern probes collapsed subtrees', () => {
+  /*
+   * A *collapsed* folder's children were never folded into rows, so the row list
+   * cannot answer "does anything under here match?" — the caller's filtered key
+   * set can, via `hasVisibleDescendant`. Without the probe, `*user*` would blank
+   * the `app:` folder that demonstrably contains `app:user:1`, and R1's counter
+   * (reading that same key set) would disagree with the tree all over again.
+   */
+  const collapsed: KeyTreeRow[] = [rowFolder('app:', 0, 2), rowKey('root-plain', 0)];
+
+  it('a collapsed folder whose subtree can match stays an ordinary clickable row', () => {
+    const out = filterTreeRowsByPattern(collapsed, '*user*', (path) => path === 'app:');
+    expect(ids(out)).toEqual(['f:app:']);
+    expect(isBreadcrumbRow(out[0]!)).toBe(false);
+    expect(countSelectableRows(out)).toBe(1);
+  });
+
+  it('a collapsed folder whose subtree cannot match is dropped', () => {
+    // `root-*` hits the loose key; `app:` fails the glob and the probe says no
+    // matching key lives under it ⇒ the folder goes, the leaf stays.
+    expect(ids(filterTreeRowsByPattern(collapsed, 'root-*', () => false))).toEqual([
+      'k:root-plain',
+    ]);
+    expect(ids(filterTreeRowsByPattern(collapsed, 'zzz*', () => false))).toEqual([]);
+  });
+
+  it('the probe defaults to false — no caller, no unwarranted survival', () => {
+    expect(ids(filterTreeRowsByPattern(collapsed, '*user*'))).toEqual([]);
+    expect(ids(filterTreeRowsByPattern(collapsed, '*user*', undefined))).toEqual([]);
+  });
+
+  it('a folder matching on its own needs no probe', () => {
+    expect(ids(filterTreeRowsByPattern(collapsed, 'app:*', () => false))).toEqual(['f:app:']);
+  });
+
+  it('an empty folder is never revived by the probe', () => {
+    const empty: KeyTreeRow[] = [rowFolder('app:', 0, 0)];
+    expect(ids(filterTreeRowsByPattern(empty, '*user*', () => true))).toEqual([]);
+  });
+});
+
 /* ── the selectable key set (single source of truth) ───────────────────────── */
 
 describe('[redis-tree-ui-BUG-001] filterKeysByPattern is the one set everything reads', () => {
@@ -234,7 +277,7 @@ describe('[redis-tree-ui-BUG-001] filterKeysByPattern is the one set everything 
     expect(filterKeysByPattern(keys, '[')).toEqual([]);
   });
 
-  it('agrees with the row filter about what is visible', () => {
+  it('agrees with the row filter about which leaves are visible', () => {
     const rows: KeyTreeRow[] = [
       rowFolder('app:', 0),
       rowKey('app:user:1', 1),

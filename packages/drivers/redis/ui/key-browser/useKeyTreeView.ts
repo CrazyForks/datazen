@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KeyEntry } from '@datazen/driver-sdk';
-import { buildFlatTreeRows, buildServerTreeRows } from './keyTree';
+import { buildFlatTreeRows, buildServerTreeRows, keyUnderFolder } from './keyTree';
 import {
   countSelectableRows,
   filterKeysByPattern,
@@ -148,9 +148,23 @@ export function useKeyTreeView({
    */
   const treeRows = useMemo(() => {
     if (prefs.view === 'list') return buildFlatTreeRows(loadedKeys);
+    /*
+     * A *collapsed* folder's subtree is the one thing the folded rows cannot
+     * speak about, so the filter is handed a probe over the filtered key set:
+     * the folder survives — clickable, expandable — when the pattern admits any
+     * key under its prefix. That key set is the flat `scan_keys` result cut by
+     * the same glob, and it is also what 「全选已加载」 and the folder checkbox
+     * cascade read, so a folder and the counter cannot drift apart again.
+     * `*user*` therefore keeps `app:`; `zzz*` drops it.
+     */
+    const visible = filterKeysByPattern(
+      loadedKeys.map((entry) => entry.key),
+      appliedPattern,
+    );
     return filterTreeRowsByPattern(
       buildServerTreeRows(tree.levels, tree.expanded, prefs.separator),
       appliedPattern,
+      (folderPath) => visible.some((key) => keyUnderFolder(key, folderPath, prefs.separator)),
     );
   }, [prefs.view, prefs.separator, tree.levels, tree.expanded, loadedKeys, appliedPattern]);
 

@@ -86,10 +86,19 @@ function rowMatchTarget(row: KeyTreeRow): string {
  *    **breadcrumb** (`breadcrumb: true`) so the row never floats without its
  *    path. It is decoration: not clickable, no checkbox, excluded from
  *    `data-row-count` and from every selection set;
+ *  - a non-matching folder whose *subtree* holds a key that matches (per
+ *    `hasVisibleDescendant`, i.e. the caller's filtered key set) survives as a
+ *    normal clickable row — that is what keeps `*user*` from blanking the
+ *    `app:` folder it obviously contains, while a pattern with nothing under it
+ *    (`zzz`) does drop it;
  *  - nothing matched ⇒ `[]`, which is what makes I-11's `no-match` reachable in
  *    the default (tree) view.
  */
-export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): KeyTreeRow[] {
+export function filterTreeRowsByPattern(
+  rows: KeyTreeRow[],
+  pattern: string,
+  hasVisibleDescendant: (folderPath: string) => boolean = () => false,
+): KeyTreeRow[] {
   const trimmed = pattern.trim();
   if (isGlobalPattern(trimmed)) return rows;
 
@@ -104,6 +113,7 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
    * folder row at depth `d` on the current path.
    */
   const matched = new Array<boolean>(rows.length);
+  const candidate = new Array<boolean>(rows.length);
   const needed = new Array<boolean>(rows.length);
   const stack: number[] = [];
 
@@ -112,9 +122,17 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
     while (stack.length > row.depth) stack.pop();
     const isFolder = row.kind === 'folder';
     // The fork is on `row.kind`, never on a field being present (`rowMatchTarget`).
+    const target = rowMatchTarget(row);
     const match = isFolder
-      ? re.test(rowMatchTarget(row)) && row.count > 0
-      : re.test(rowMatchTarget(row));
+      ? re.test(target) && row.count > 0
+      : re.test(target);
+    // A folder whose *own* name fails the glob is not automatically irrelevant:
+    // a collapsed subtree is judged by `hasVisibleDescendant` (the caller's
+    // filtered key set), because that is the only honest source for keys the tree
+    // never loaded. Such a folder stays an ordinary, expandable row.
+    const probed =
+      !match && isFolder && row.count > 0 && hasVisibleDescendant(target);
+    if (probed) candidate[i] = true;
     matched[i] = match;
     if (match) for (const ancestor of stack) needed[ancestor] = true;
     if (isFolder) {
@@ -127,6 +145,13 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
     }
   }
 
+  /*
+  /*
+   * Emit precedence: a row that matches on its own wins; an ancestor of one does
+   * so as a breadcrumb; and only a folder with *no* painted survivor underneath
+   * may instead be kept by the probe (its whole subtree is unloaded, so
+   * expanding it is the user's only way in — it stays a normal clickable row).
+   */
   const out: KeyTreeRow[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
@@ -134,9 +159,14 @@ export function filterTreeRowsByPattern(rows: KeyTreeRow[], pattern: string): Ke
       out.push(row);
       continue;
     }
+    // Precedence: a survivor's ancestor comes back as a *breadcrumb* (it is
+    // already painted as a path, so making it inert is the honest reading), and
+    // only a folder with nothing painted beneath it may be kept by the probe.
     if (needed[i] && row.kind === 'folder' && row.count > 0) {
       out.push({ ...row, breadcrumb: true });
+      continue;
     }
+    if (candidate[i]) out.push(row);
   }
   return out;
 }
