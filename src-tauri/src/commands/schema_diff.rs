@@ -734,9 +734,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             ))
         };
 
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only_schemas(
             &pairs,
             &target_only_tables,
+            &target_only_snapshots,
             &src_d,
             &tgt_d,
             PlanOptions {
@@ -747,9 +748,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             },
         )
     } else {
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only_schemas(
             &pairs,
             &target_only_tables,
+            &target_only_snapshots,
             &src_d,
             &tgt_d,
             PlanOptions {

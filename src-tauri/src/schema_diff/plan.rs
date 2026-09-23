@@ -1443,7 +1443,7 @@ fn plan_target_only_table(
     table: &str,
     target_dialect: &str,
     allow_destructive: bool,
-    statements: &mut Vec<PlanStatement>,
+    operations: &mut Vec<super::operations::MigrationOperation>,
     warnings: &mut Vec<String>,
     requirements: &mut Vec<PlanRequirement>,
 ) {
@@ -1489,27 +1489,105 @@ fn plan_target_only_table(
         });
         return;
     }
-    let Some(renderer) = driver.migration_renderer() else {
-        requirements.push(PlanRequirement::Unsupported {
-            operation: operation.key(),
-            reason: format!(
-                "Driver {} does not expose schema migration rendering",
-                target_dialect
-            ),
-        });
+    operations.push(operation);
+}
+
+fn selected_target_drop_dependencies(
+    target_only_tables: &[String],
+    target_only_schemas: &[(String, TableSchema)],
+    target_dialect: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let selected_tables = target_only_tables
+        .iter()
+        .map(|table| resolve_table_for_dialect(target_dialect, table))
+        .collect::<Vec<_>>();
+    let mut dependencies = Vec::new();
+    for (raw_child_table, schema) in target_only_schemas {
+        let child_table = resolve_table_for_dialect(target_dialect, raw_child_table);
+        if !selected_tables.iter().any(|table| table == &child_table) {
+            continue;
+        }
+        for foreign_key in &schema.foreign_keys {
+            let reference = foreign_key.referenced_table.as_str();
+            let exact = selected_tables
+                .iter()
+                .filter(|candidate| candidate.as_str() == reference)
+                .cloned()
+                .collect::<Vec<_>>();
+            let basename_matches = if exact.is_empty() {
+                let basename = reference.rsplit('.').next().unwrap_or(reference);
+                selected_tables
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.rsplit('.').next().unwrap_or(candidate) == basename
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            match exact.as_slice() {
+                [] if !basename_matches.is_empty() => {
+                    return Err(format!(
+                        "foreign key {} references `{reference}`, which only matches selected target-only tables by basename ({})",
+                        foreign_key.name,
+                        basename_matches.join(", ")
+                    ));
+                }
+                [] => {}
+                [referenced_table] if referenced_table != &child_table => {
+                    dependencies.push((child_table.clone(), referenced_table.clone()));
+                }
+                [_] => {}
+                _ => {
+                    return Err(format!(
+                        "foreign key {} references `{reference}`, which matches multiple selected target-only tables",
+                        foreign_key.name
+                    ));
+                }
+            }
+        }
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+fn render_target_only_tables(
+    operations: &[super::operations::MigrationOperation],
+    target_dialect: &str,
+    statements: &mut Vec<PlanStatement>,
+    requirements: &mut Vec<PlanRequirement>,
+) {
+    let Some(driver) = datazen_driver_api::create_driver(target_dialect) else {
         return;
     };
-    match renderer.render(&driver_operation) {
-        Ok(statement) => statements.push(PlanStatement {
-            sql: statement.sql,
-            risk: StatementRisk::Destructive,
-            rollback_sql: statement.rollback_sql,
-            summary: statement.summary,
-        }),
-        Err(reason) => requirements.push(PlanRequirement::Unsupported {
-            operation: operation.key(),
-            reason,
-        }),
+    let Some(renderer) = driver.migration_renderer() else {
+        for operation in operations {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: operation.key(),
+                reason: format!(
+                    "Driver {} does not expose schema migration rendering",
+                    target_dialect
+                ),
+            });
+        }
+        return;
+    };
+    for operation in operations {
+        let driver_operation = operation.to_driver_api();
+        match renderer.render(&driver_operation) {
+            Ok(statement) => statements.push(PlanStatement {
+                sql: statement.sql,
+                risk: StatementRisk::Destructive,
+                rollback_sql: statement.rollback_sql,
+                summary: statement.summary,
+            }),
+            Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                operation: operation.key(),
+                reason,
+            }),
+        }
     }
 }
 
@@ -1520,6 +1598,27 @@ fn plan_target_only_table(
 pub fn build_schema_diff_plan_with_target_only(
     pairs: &[(String, TableSchema, TableSchema)],
     target_only_tables: &[String],
+    source_dialect: &str,
+    target_dialect: &str,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_only_schemas(
+        pairs,
+        target_only_tables,
+        &[],
+        source_dialect,
+        target_dialect,
+        opts,
+    )
+}
+
+/// Build a plan with target-only snapshots available for dependency ordering.
+/// The snapshots let destructive drops follow known FK dependencies across
+/// selected target-only tables.
+pub fn build_schema_diff_plan_with_target_only_schemas(
+    pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
+    target_only_schemas: &[(String, TableSchema)],
     source_dialect: &str,
     target_dialect: &str,
     opts: PlanOptions<'_>,
@@ -1544,6 +1643,7 @@ pub fn build_schema_diff_plan_with_target_only(
     };
 
     let mut tables = Vec::new();
+    let mut target_only_operations = Vec::new();
     for (table, src, tgt) in pairs {
         tables.push(table.clone());
         let deploy_table = resolve_table_for_dialect(&tgt_d, table);
@@ -1567,10 +1667,40 @@ pub fn build_schema_diff_plan_with_target_only(
             &deploy_table,
             &tgt_d,
             opts.allow_destructive,
-            &mut statements,
+            &mut target_only_operations,
             &mut warnings,
             &mut requirements,
         );
+    }
+
+    if !target_only_operations.is_empty() {
+        match selected_target_drop_dependencies(target_only_tables, target_only_schemas, &tgt_d) {
+            Ok(dependencies) => {
+                match super::dependencies::try_resolve_dependencies_with_table_drop_edges(
+                    &target_only_operations,
+                    &dependencies,
+                ) {
+                    Ok(ordered) => render_target_only_tables(
+                        &ordered,
+                        &tgt_d,
+                        &mut statements,
+                        &mut requirements,
+                    ),
+                    Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                        operation: "target-only-table-drop-order".into(),
+                        reason: format!(
+                            "Could not determine a safe target-only table drop order: {reason}"
+                        ),
+                    }),
+                }
+            }
+            Err(reason) => {
+                requirements.push(PlanRequirement::Unsupported {
+                    operation: "target-only-table-drop-order".into(),
+                    reason,
+                });
+            }
+        }
     }
 
     statements = reorder_foreign_key_statements(statements);

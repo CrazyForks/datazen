@@ -381,6 +381,171 @@ fn foreign_keys_are_emitted_after_all_table_definitions() {
 }
 
 #[test]
+fn missing_tables_keep_source_foreign_keys_in_the_reviewed_plan() {
+    let mut child = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    child.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let plan = build_schema_diff_plan(
+        &[
+            (
+                "a_parent".into(),
+                schema(vec![col("id", "int")]),
+                schema(vec![]),
+            ),
+            ("z_child".into(), child, schema(vec![])),
+        ],
+        "postgresql",
+        "postgresql",
+        PlanOptions::default(),
+    );
+
+    let fk = plan
+        .statements
+        .iter()
+        .position(|statement| statement.summary.starts_with("ADD FOREIGN KEY"))
+        .expect("source FK must remain in the reviewed plan");
+    let parent = plan
+        .statements
+        .iter()
+        .position(|statement| {
+            statement.sql.contains("CREATE TABLE") && statement.sql.contains("a_parent")
+        })
+        .expect("parent table create");
+    let child = plan
+        .statements
+        .iter()
+        .position(|statement| {
+            statement.sql.contains("CREATE TABLE") && statement.sql.contains("z_child")
+        })
+        .expect("child table create");
+    assert!(parent < fk && child < fk);
+}
+
+#[test]
+fn existing_table_foreign_key_difference_creates_an_add_operation() {
+    let mut source = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    source.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let target = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    let plan = build_schema_diff_plan(
+        &[("child".into(), source, target)],
+        "postgresql",
+        "postgresql",
+        PlanOptions::default(),
+    );
+
+    let fk = plan
+        .statements
+        .iter()
+        .find(|statement| statement.summary.starts_with("ADD FOREIGN KEY"))
+        .expect("missing source FK must produce an ADD operation");
+    assert!(fk.sql.contains("fk_child_parent"));
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+}
+
+#[test]
+fn target_only_tables_drop_child_before_selected_parent_on_both_dialects() {
+    let tables = vec!["a_parent".into(), "z_child".into()];
+    let parent_schema = schema(vec![col("id", "int")]);
+    let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    child_schema.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "a_parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let target_schemas = vec![
+        ("a_parent".into(), parent_schema),
+        ("z_child".into(), child_schema),
+    ];
+
+    for dialect in ["postgresql", "mysql"] {
+        let plan = build_schema_diff_plan_with_target_only_schemas(
+            &[],
+            &tables,
+            &target_schemas,
+            dialect,
+            dialect,
+            PlanOptions {
+                allow_destructive: true,
+                ..PlanOptions::default()
+            },
+        );
+        let child_drop = plan
+            .statements
+            .iter()
+            .position(|statement| statement.summary.ends_with("z_child"))
+            .expect("child DROP TABLE");
+        let parent_drop = plan
+            .statements
+            .iter()
+            .position(|statement| statement.summary.ends_with("a_parent"))
+            .expect("parent DROP TABLE");
+        assert!(child_drop < parent_drop, "{dialect}: {:?}", plan.statements);
+        assert!(
+            plan.requirements.is_empty(),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn target_only_drop_refuses_basename_only_foreign_key_identity() {
+    let tables = vec![
+        "public.a_parent".into(),
+        "other.a_parent".into(),
+        "z_child".into(),
+    ];
+    let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    child_schema.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "a_parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let target_schemas = vec![("z_child".into(), child_schema)];
+    let plan = build_schema_diff_plan_with_target_only_schemas(
+        &[],
+        &tables,
+        &target_schemas,
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation == "target-only-table-drop-order" && reason.contains("basename")
+    )));
+}
+
+#[test]
 fn cross_dialect_foreign_key_reference_uses_target_relation_name() {
     let mut source = schema(vec![col("user_id", "int")]);
     source.foreign_keys.push(ForeignKeyInfo {

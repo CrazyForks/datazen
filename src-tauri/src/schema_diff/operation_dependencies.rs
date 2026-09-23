@@ -536,6 +536,13 @@ pub fn retain_dependency_closed(
 pub(super) fn try_resolve_dependencies(
     ops: &[MigrationOperation],
 ) -> Result<Vec<MigrationOperation>, String> {
+    try_resolve_dependencies_with_table_drop_edges(ops, &[])
+}
+
+pub(super) fn try_resolve_dependencies_with_table_drop_edges(
+    ops: &[MigrationOperation],
+    dependent_before_referenced: &[(String, String)],
+) -> Result<Vec<MigrationOperation>, String> {
     reject_ambiguous_references(ops).map_err(|error| error.to_string())?;
 
     let identities = ops.iter().map(operation_identity).collect::<Vec<_>>();
@@ -552,6 +559,20 @@ pub(super) fn try_resolve_dependencies(
                     .add_dependency(&identities[before_index], &identities[after_index])
                     .map_err(|error| error.to_string())?;
             }
+        }
+    }
+
+    for (dependent_table, referenced_table) in dependent_before_referenced {
+        let dependent = ops.iter().position(|operation| {
+            matches!(operation, MigrationOperation::DropTable { table } if table == dependent_table)
+        });
+        let referenced = ops.iter().position(|operation| {
+            matches!(operation, MigrationOperation::DropTable { table } if table == referenced_table)
+        });
+        if let (Some(dependent), Some(referenced)) = (dependent, referenced) {
+            graph
+                .add_dependency(&identities[dependent], &identities[referenced])
+                .map_err(|error| error.to_string())?;
         }
     }
 

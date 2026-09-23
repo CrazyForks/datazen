@@ -15,6 +15,19 @@ pub(super) fn try_resolve_dependencies(
     super::operation_dependencies::try_resolve_dependencies(ops)
 }
 
+/// Resolve the normal operation graph plus explicit target-table drop edges.
+/// Each pair is `(dependent_table, referenced_table)`: the dependent table
+/// must be dropped before the table it references.
+pub(super) fn try_resolve_dependencies_with_table_drop_edges(
+    ops: &[MigrationOperation],
+    dependent_before_referenced: &[(String, String)],
+) -> Result<Vec<MigrationOperation>, String> {
+    super::operation_dependencies::try_resolve_dependencies_with_table_drop_edges(
+        ops,
+        dependent_before_referenced,
+    )
+}
+
 pub fn resolve_dependencies(ops: Vec<MigrationOperation>) -> Vec<MigrationOperation> {
     super::operation_dependencies::resolve_dependencies(ops)
 }

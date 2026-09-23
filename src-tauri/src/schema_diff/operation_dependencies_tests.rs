@@ -125,6 +125,45 @@ fn drop_bucket_sorts_deterministically() {
 }
 
 #[test]
+fn explicit_table_drop_dependencies_place_dependent_before_referenced_table() {
+    let ops = vec![
+        MigrationOperation::DropTable {
+            table: "a_parent".into(),
+        },
+        MigrationOperation::DropTable {
+            table: "z_child".into(),
+        },
+    ];
+    let dependencies = vec![("z_child".into(), "a_parent".into())];
+    let sorted = try_resolve_dependencies_with_table_drop_edges(&ops, &dependencies).unwrap();
+
+    assert!(matches!(sorted[0], MigrationOperation::DropTable { ref table } if table == "z_child"));
+    assert!(
+        matches!(sorted[1], MigrationOperation::DropTable { ref table } if table == "a_parent")
+    );
+}
+
+#[test]
+fn cyclic_table_drop_dependencies_fail_closed() {
+    let ops = vec![
+        MigrationOperation::DropTable {
+            table: "a_parent".into(),
+        },
+        MigrationOperation::DropTable {
+            table: "z_child".into(),
+        },
+    ];
+    let dependencies = vec![
+        ("z_child".into(), "a_parent".into()),
+        ("a_parent".into(), "z_child".into()),
+    ];
+    let error = try_resolve_dependencies_with_table_drop_edges(&ops, &dependencies)
+        .expect_err("a dependency cycle must not produce drop SQL");
+
+    assert!(error.contains("cycle"), "{error}");
+}
+
+#[test]
 fn sequence_operations_have_deterministic_create_replace_drop_order() {
     let make = |name: &str| {
         datazen_driver_api::MigrationSequence {
