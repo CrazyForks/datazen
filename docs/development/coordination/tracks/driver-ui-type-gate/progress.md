@@ -444,3 +444,18 @@ test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; fi
 ```
 
 四门尾部与 round-2 期望逐字一致（门禁 1 为 +1 serde pin test 后的 342 基线）；无新增 advisory。
+
+## 第 3 轮关键核对（跨契约交叉验证 · Tester · 2026-09-23）
+
+1. **文件面**：`git diff 4288cc820..HEAD --stat` = **恰好 5 个文件** —
+   `packages/drivers/redis/src/ops_observe.rs`（+47/-）、
+   `packages/drivers/redis/ui/__tests__/SearchableInfoPanel.test.tsx`（2 ±）、
+   `bugs/driver-ui-type-gate-BUG-003.md`、`bugs/driver-ui-type-gate-BUG-004.md`、
+   `tracks/driver-ui-type-gate/progress.md`。**零越界文件**，改动面与裁决 A 声明一致 ✓
+2. **fixture 注释**：`SearchableInfoPanel.test.tsx:21` 现为
+   `// Wire shape of `info_filtered` is defined by Rust `InfoEntry` struct (ops_observe.rs), serialized via serde. Objects are the contract.`；
+   该文件 `grep infoParse` **零命中**，已不再引用 `infoParse.ts` ✓
+3. **Rust 契约**：`ops_observe.rs:245` `pub struct InfoEntry { pub key: String, pub value: String }` 存在；
+   `ops_observe.rs:237-240` `InfoSectionFiltered { name: String, entries: Vec<InfoEntry> }` 已由二元组数组切换为对象数组 ✓
+4. **两侧结构一致**：`ui/observe/infoParse.ts:1-4` `InfoSection { name: string; entries: Array<{ key: string; value: string }> }`
+   与 Rust `InfoEntry` 逐字段同形（`key`/`value` 均 String ↔ string），串行化为对象数组，链路零转换 → **裁决 A（Backend → object entries）落地成功** ✓
