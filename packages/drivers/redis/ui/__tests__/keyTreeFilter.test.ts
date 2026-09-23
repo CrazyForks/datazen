@@ -6,9 +6,9 @@
  * must be applied client-side to the loaded rows. The three things that are easy
  * to get wrong and impossible to see from a DOM test are exactly what is
  * table-driven here:
- *  1. glob semantics matching Redis `MATCH` (`*`, `?`, escaped literals) rather
- *     than "substring" or "startsWith", so the tree and the flat list cannot
- *     disagree about one pattern;
+ *  1. glob semantics being Redis `MATCH` itself (byte-wise, classes, escapes) and
+ *     not a regex approximation, so the tree and the flat list cannot disagree
+ *     about one pattern (BUG-003 closed the 16 faces a regex-shaped port missed);
  *  2. forking visibility on `row.kind`, **not** on the presence of a `key`
  *     field — a child-level leaf row carries an absolute key, a folder row
  *     carries its full prefix, and both must meet the same pattern;
@@ -22,10 +22,118 @@ import {
   countSelectableRows,
   filterKeysByPattern,
   filterTreeRowsByPattern,
-  globMatchesName,
-  globToRegExp,
   isBreadcrumbRow,
+  redisGlobMatch,
 } from '../key-browser/keyTreeFilter';
+
+
+/* ── independent reference: literal transliteration of Redis 7.2 util.c ───── */
+
+/**
+ * `stringmatchlen(pattern, patternLen, string, stringLen, nocase = 0)` rendered
+ * straight out of the C source: windowed byte cursors, the same loop shape, the
+ * same fall-through from the `\` arm into the literal compare. Written from
+ * `src/util.c`, not from `keyTreeFilter.ts`, so a shared mistake in the port's
+ * *structure* is unlikely (a shared mistake in reading the C is still possible —
+ * hence the hand table above, whose verdicts were each checked against the C
+ * statements quoted in the port's comments).
+ */
+function refStringmatchlen(pattern: Uint8Array, str: Uint8Array): boolean {
+  const impl = (
+    pOff: number,
+    pLen: number,
+    sOff: number,
+    sLen: number,
+    skip: { v: number },
+    nesting: number,
+  ): boolean => {
+    const at = (b: Uint8Array, o: number, i: number) => (o + i < b.length ? b[o + i] : 0);
+    if (nesting > 1000) return false;
+    while (pLen > 0 && sLen > 0) {
+      const c = at(pattern, pOff, 0);
+      if (c === 0x2a) {
+        while (pLen > 0 && at(pattern, pOff, 1) === 0x2a) {
+          pOff++;
+          pLen--;
+        }
+        if (pLen === 1) return true;
+        while (sLen > 0) {
+          if (impl(pOff + 1, pLen - 1, sOff, sLen, skip, nesting + 1)) return true;
+          if (skip.v) return false;
+          sOff++;
+          sLen--;
+        }
+        skip.v = 1;
+        return false;
+      } else if (c === 0x3f) {
+        sOff++;
+        sLen--;
+      } else if (c === 0x5b) {
+        pOff++;
+        pLen--;
+        let not = false;
+        if (at(pattern, pOff, 0) === 0x5e) {
+          not = true;
+          pOff++;
+          pLen--;
+        }
+        let match = false;
+        for (;;) {
+          if (at(pattern, pOff, 0) === 0x5c && pLen >= 2) {
+            pOff++;
+            pLen--;
+            if (at(pattern, pOff, 0) === at(str, sOff, 0)) match = true;
+          } else if (at(pattern, pOff, 0) === 0x5d) {
+            break;
+          } else if (pLen === 0) {
+            pOff--;
+            pLen++;
+            break;
+          } else if (pLen >= 3 && at(pattern, pOff, 1) === 0x2d) {
+            let start = at(pattern, pOff, 0);
+            let end = at(pattern, pOff, 2);
+            if (start > end) {
+              const t = start;
+              start = end;
+              end = t;
+            }
+            pOff += 2;
+            pLen -= 2;
+            const ch = at(str, sOff, 0);
+            if (ch >= start && ch <= end) match = true;
+          } else {
+            if (at(pattern, pOff, 0) === at(str, sOff, 0)) match = true;
+          }
+          pOff++;
+          pLen--;
+        }
+        if (not) match = !match;
+        if (!match) return false;
+        sOff++;
+        sLen--;
+      } else {
+        if (c === 0x5c && pLen >= 2) {
+          pOff++;
+          pLen--;
+        }
+        if (at(pattern, pOff, 0) !== at(str, sOff, 0)) return false;
+        sOff++;
+        sLen--;
+      }
+      pOff++;
+      pLen--;
+      if (sLen === 0) {
+        while (at(pattern, pOff, 0) === 0x2a) {
+          pOff++;
+          pLen--;
+        }
+        break;
+      }
+    }
+    return pLen === 0 && sLen === 0;
+  };
+  return impl(0, pattern.length, 0, str.length, { v: 0 }, 0);
+}
 
 /* ── fixtures ─────────────────────────────────────────────────────────────── */
 
@@ -54,49 +162,228 @@ function ids(rows: KeyTreeRow[]): string[] {
   });
 }
 
-/* ── glob compilation ─────────────────────────────────────────────────────── */
+/* ── the Redis MATCH dialect (BUG-003) ─────────────────────────────────────── */
 
-describe('[redis-tree-ui-BUG-001] globToRegExp mirrors Redis MATCH', () => {
-  it.each([
-    // pattern      name              expected
-    ['*', 'anything', true],
-    ['app:*', 'app:user:1', true],
-    ['app:*', 'appuser:1', false],
-    ['app:*', 'other:1', false],
-    ['*', '', true],
-    ['a?c', 'abc', true],
-    ['a?c', 'ac', false],
-    ['a?c', 'aXXc', false],
-    ['user', 'user', true],
-    ['user', 'username', false],
-    ['user', 'User', false],
-    ['*user*', 'app:user:1', true],
-    ['*user*', 'app:admin:1', false],
-    ['app.user*', 'app.user:1', true],
-    // `.` must stay a literal: an unescaped dot would let `appXuser:1` through.
-    ['app.user:1', 'appXuser:1', false],
-    // `:` is not special in either grammar.
-    ['app:user:1', 'app:user:1', true],
-    ['root-plain', 'root-plain', true],
-    ['root-plain', 'root-plainx', false],
-  ] as const)('glob %s vs %s ⇒ %s', (pattern, name, expected) => {
-    expect(globMatchesName(name, pattern)).toBe(expected);
+/*
+ * Every expectation below is read off Redis 7.2 `stringmatchlen_impl` by hand
+ * (`src/util.c`, `nocase = 0`) — deliberately **not** computed by a second copy of
+ * the matcher: an oracle that shares the implementation's assumptions cannot
+ * catch a wrong port. The `BUG-003:<face>` tags name the divergence faces the
+ * round-2 Tester measured against a faithful C port, so "the port is complete"
+ * stays a checkable claim.
+ */
+const REDIS_MATCH_CASES: ReadonlyArray<readonly [string, string, boolean, string]> = [
+  /* core dialect (aligned in round 1 — kept so a "fix" cannot regress it) */
+  ['*', 'anything', true, 'core trailing star takes the rest'],
+  // A lone `*` does NOT match the empty key: Redis' loop never runs on an empty
+  // string and the final test demands both sides be consumed (`pLen === 0 &&
+  // sLen === 0`) — caught by the differential below, against a common assumption.
+  ['*', '', false, 'core star needs a byte to anchor on'],
+  ['a*', 'abc', true, 'core'],
+  ['*c', 'abc', true, 'core'],
+  ['a*c', 'abbbc', true, 'core star spans bytes'],
+  ['a*c', 'ac', true, 'core star may span nothing (caught a port bug)'],
+  ['app:*', 'app:user:1', true, 'core namespace glob'],
+  ['app:*', 'appuser:1', false, 'core `:` is a literal'],
+  ['app:*', 'other:1', false, 'core'],
+  ['a?c', 'abc', true, 'core one byte'],
+  ['a?c', 'ac', false, 'core `?` is not optional'],
+  ['a?c', 'aXXc', false, 'core `?` is not a run'],
+  ['user', 'user', true, 'core exact'],
+  ['user', 'username', false, 'core anchored'],
+  ['user', 'User', false, 'core case sensitive'],
+  ['*user*', 'app:user:1', true, 'core substring'],
+  ['*user*', 'app:admin:1', false, 'core'],
+  ['root-plain', 'root-plain', true, 'core'],
+  ['root-plain', 'root-plainx', false, 'core'],
+  ['app.user*', 'app.user:1', true, 'core `.` literal'],
+  ['app.user:1', 'appXuser:1', false, 'core `.` is not any-char'],
+  ['app:user:1', 'app:user:1', true, 'core `:` literal'],
+  ['a+b', 'a+b', true, 'core `+` literal'],
+  ['a(b)', 'a(b)', true, 'core parens literal'],
+  ['x|y', 'x|y', true, 'core `|` literal'],
+  ['a$b^', 'a$b^', true, 'core `$^` literal'],
+  ['a{2}', 'a{2}', true, 'core braces literal'],
+
+  /* face: class matching a set of bytes */
+  ['h[ae]llo', 'hello', true, 'BUG-003:class-set'],
+  ['h[ae]llo', 'hallo', true, 'BUG-003:class-set'],
+  ['h[ae]llo', 'hillo', false, 'BUG-003:class-set'],
+  /* face: class with a range */
+  ['*[0-9]', 'user1', true, 'BUG-003:class-range (the reported cross-view case)'],
+  ['*[0-9]', 'user2', true, 'BUG-003:class-range'],
+  ['*[0-9]', 'cache:9', true, 'BUG-003:class-range'],
+  ['*[0-9]', 'userx', false, 'BUG-003:class-range outside'],
+  ['user[0-9]', 'user5', true, 'BUG-003:class-range'],
+  ['h[a-b]llo', 'hbllo', true, 'BUG-003:class-range'],
+  ['h[a-b]llo', 'hcllo', false, 'BUG-003:class-range outside'],
+  ['h[b-a]llo', 'hallo', true, 'BUG-003:class-range operands swapped'],
+  /* face: negated class (Redis DOES support `^`; `!` is NOT the negation char) */
+  ['h[^e]llo', 'hallo', true, 'BUG-003:class-negate'],
+  ['h[^e]llo', 'hello', false, 'BUG-003:class-negate'],
+  ['user[^9]', 'user5', true, 'BUG-003:class-negate'],
+  ['user[^9]', 'user9', false, 'BUG-003:class-negate'],
+  ['h[!e]llo', 'hallo', false, 'BUG-003:class-negate-not-bang'],
+  /* face: `\` escape inside a class */
+  ['a[\\]]b', 'a]b', true, 'BUG-003:class-escape'],
+  ['a[\\]]b', 'a[b', false, 'BUG-003:class-escape'],
+  /* face: unterminated class falls back to a literal `[` */
+  // An unterminated class is *not* demoted to the literal whole: Redis rewinds
+  // onto `[` and then compares `[` literally, so `[abc` matches only a 4-char
+  // `[abc`-less key prefix — `'[abc' vs '[abc'` is false (the `[` eats one byte,
+  // `abc` must then line up with nothing). All three rows verified against the
+  // transliteration below.
+  /*
+   * An unterminated class does **not** degrade to a literal `[` — Redis rewinds
+   * onto the last class byte, `match` stays 0 and the arm returns false, so the
+   * whole pattern fails. Two consequences worth pinning (both read off the C, and
+   * both are things a "reasonable" implementation gets wrong in opposite
+   * directions):
+   *  - a normal unterminated class matches nothing at all;
+   *  - an unterminated **negated** class matches *any* byte, because the empty
+   *    match set is inverted.
+   */
+  ['[abc', '[abc', false, 'BUG-003:class-unterminated'],
+  ['user[0-9', 'user[0-9', false, 'BUG-003:class-unterminated'],
+  ['x[ab', 'x[b', false, 'BUG-003:class-unterminated'],
+  ['x[ab', 'xab', false, 'BUG-003:class-unterminated'],
+  // An unterminated *negated* class is the mirror image: its empty match set is
+  // inverted, so it consumes one byte as "any" and `user[^9` matches `user5`.
+  ['user[^9', 'user5', true, 'BUG-003:class-unterminated-negated'],
+  ['user[^9', 'user55', false, 'BUG-003:class-unterminated-negated length'],
+  ['[^abc', 'x', true, 'BUG-003:class-unterminated-negated'],
+  /* face: `\` escapes the next byte outside a class */
+  ['a\\b', 'ab', true, 'BUG-003:escape-literal'],
+  ['a\\b', 'a\\b', false, 'BUG-003:escape-literal consumes the backslash'],
+  ['\\*lit', '*lit', true, 'BUG-003:escape-star'],
+  ['\\*lit', 'lit', false, 'BUG-003:escape-star consumes the star'],
+  /* face: `\` at end of pattern keeps matching the backslash */
+  ['ab\\', 'ab\\', true, 'BUG-003:trailing-backslash'],
+  /* face: `*` spans newlines (byte-wise, unlike JS `.`) */
+  ['a*b', 'a\nb', true, 'BUG-003:star-across-newline'],
+  ['*x', 'a\nx', true, 'BUG-003:star-across-newline'],
+  /* face: `?` consumes one byte of any value, newline included */
+  ['a?c', 'a\nc', true, 'BUG-003:question-is-a-byte'],
+  ['a?c', 'a\x00c', true, 'BUG-003:question-matches-NUL'],
+  /* faces: `?` counts BYTES, so a multi-byte key matches per UTF-8 length */
+  ['?', 'é', false, 'BUG-003:multibyte-? (é is 2 bytes)'],
+  ['??', 'é', true, 'BUG-003:multibyte-??'],
+  ['?', 'x', true, 'BUG-003:ascii-?'],
+  ['???', '用', true, 'BUG-003:multibyte-??? (用 is 3 bytes)'],
+  ['??????', '用', false, 'BUG-003:multibyte-six-? overshoots'],
+  ['?', '用', false, 'BUG-003:multibyte-? one byte of three'],
+  /* face: literal multibyte prefix compares byte-wise */
+  ['é*', 'é:x', true, 'BUG-003:multibyte-literal-prefix'],
+  ['é*', 'e:x', false, 'BUG-003:multibyte-literal-prefix'],
+  /* face: an empty pattern is "no pattern", never "match the empty key" */
+  ['', 'anything', false, 'BUG-003:blank-is-no-filter'],
+  ['', '', false, 'BUG-003:blank-is-no-filter'],
+];
+
+describe('[redis-tree-ui-BUG-001/003] redisGlobMatch is Redis MATCH, not a regex approximation', () => {
+  it.each(REDIS_MATCH_CASES)('%j vs %j ⇒ %j  (%s)', (pattern, key, expected) => {
+    expect(redisGlobMatch(key, pattern)).toBe(expected);
   });
 
-  it('blank is not compiled (a filter that is off is handled upstream)', () => {
-    expect(globToRegExp('')).toBeNull();
-    expect(globMatchesName('anything', '')).toBe(false);
-  });
-
-  it('escapes metacharacters instead of throwing on them', () => {
-    // Unterminated `[` is legal in a key name and would throw as a RegExp.
-    for (const pattern of ['a[b', 'a(b+', 'x|y', 'a{2', 'a$b^', 'back\\slash']) {
-      const re = globToRegExp(pattern);
-      expect(re, `${pattern} must compile or degrade to null`).not.toBeNull();
-      expect(re!.test(pattern)).toBe(true);
+  it('covers all 16 reported divergence faces', () => {
+    const faces = new Set<string>();
+    for (const [, , , note] of REDIS_MATCH_CASES) {
+      const tag = note.split(' ')[0];
+      if (tag.startsWith('BUG-003:')) faces.add(tag);
     }
+    /*
+     * The 16 faces from the round-2 matrix, mapped onto the tags this table uses:
+     * class ×5 (set / range / negate / escape / unterminated, plus the two
+     * sub-faces the reference exposed: `!` is not negation and an unterminated
+     * *negated* class matches anything), escape ×3, newline ×3, multibyte `?` ×5.
+     */
+    const reported = [
+      'BUG-003:class-set',
+      'BUG-003:class-range',
+      'BUG-003:class-negate',
+      'BUG-003:class-negate-not-bang',
+      'BUG-003:class-escape',
+      'BUG-003:class-unterminated',
+      'BUG-003:class-unterminated-negated',
+      'BUG-003:escape-literal',
+      'BUG-003:escape-star',
+      'BUG-003:trailing-backslash',
+      'BUG-003:star-across-newline',
+      'BUG-003:question-is-a-byte',
+      'BUG-003:question-matches-NUL',
+      'BUG-003:multibyte-?',
+      'BUG-003:multibyte-??',
+      'BUG-003:multibyte-???',
+      'BUG-003:multibyte-six-?',
+      'BUG-003:ascii-?',
+      'BUG-003:multibyte-literal-prefix',
+      'BUG-003:blank-is-no-filter',
+    ];
+    const missing = reported.filter((face) => !faces.has(face));
+    expect(missing).toEqual([]);
+    expect(faces.size).toBeGreaterThanOrEqual(16);
+  });
+
+  /*
+   * Differential oracle. The matcher below is a *literal transliteration* of the
+   * C source (kept in the test on purpose: it mirrors the upstream shape —
+   * pointer+length windows, `while (patternLen && stringLen)`, fall-through — and
+   * is written from `util.c`, not from `keyTreeFilter.ts`). If the production port
+   * and an independent rendering of the same C ever disagree, this test names the
+   * pair. It is what caught the `*`-cannot-span-nothing bug during this round:
+   * the hand-written table below did not pin `a*c` vs `ac`, the differential did.
+   *
+   * The one excluded combination is the blank pattern: Redis' `stringmatchlen`
+   * with an empty pattern matches only the empty string, while the product layer
+   * defines blank as "no filter" (handled upstream by `isGlobalPattern`), so the
+   * reference and the port deliberately differ there and the pair is skipped.
+   */
+  const REF_PATTERNS = [
+    '*', 'a*', '*c', 'a*c', 'app:*', 'a?c', 'user', '*user*', 'root-plain', 'app.user*',
+    'h[ae]llo', '*[0-9]', 'user[0-9]', 'h[a-b]llo', 'h[b-a]llo', 'h[^e]llo', 'a[\\]]b',
+    '[abc', 'user[0-9', 'a\\b', '\\*lit', 'ab\\', '*x', '?', '??', '???', '??????',
+    '?????', 'é*', 'a??c', '**', '**a**', 'a**b', '[]a]', '[^a]', '[!a]', 'x\\', '\\\\',
+    '*a*a*a*a*a*', '?[a-c]', '[a-c]?', '\\?',
+  ] as const;
+  const REF_KEYS = [
+    '', 'a', 'ac', 'abc', 'a\nc', 'a\x00c', 'ab', 'a\\b', '*lit', '[abc', 'user5',
+    'user[0-9', 'hello', 'hallo', 'hillo', 'hbllo', 'hcllo', 'a]b', 'a[b', 'x', 'é',
+    'é:x', 'e:x', '用', '用ab', 'aaaaab', 'aaa', 'cache:9', 'user1', 'app:user:1',
+    'appXuser:1', 'root-plain', 'a{2}', 'a(b)', 'a$b^', 'x|y', '[]a]', '[!a]', ']',
+  ] as const;
+
+  it('agrees with a literal C transliteration on every pattern/key pair', () => {
+    const enc = new TextEncoder();
+    const mismatches: string[] = [];
+    for (const pattern of REF_PATTERNS) {
+      if (pattern.length === 0) continue; // blank: product policy, see above
+      for (const key of REF_KEYS) {
+        const got = redisGlobMatch(key, pattern);
+        const want = refStringmatchlen(enc.encode(pattern), enc.encode(key));
+        if (got !== want) {
+          mismatches.push(`${JSON.stringify(pattern)} vs ${JSON.stringify(key)}: port=${got} ref=${want}`);
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  /*
+   * Redis' `skipLongerMatches` early-out is what keeps a pattern of many `*`
+   * groups off an exponential backtracking blowup. The claim worth pinning is
+   * "terminates fast AND keeps the right verdict" — the verdict here is *true*
+   * (a trailing `*` takes the remainder), which is itself a hand-table row I
+   * initially guessed wrong, so it is recorded rather than smoothed over.
+   */
+  it('a many-star pattern is bounded by the early-out, not exponential', () => {
+    const start = Date.now();
+    expect(redisGlobMatch('a'.repeat(30) + 'b', '*a*a*a*a*a*a*a*a*a*a*')).toBe(true);
+    expect(redisGlobMatch('a'.repeat(30) + 'b', '*a*a*a*a*a*a*a*a*a*ab')).toBe(true);
+    expect(redisGlobMatch('a'.repeat(30), '*a*a*a*a*a*a*a*a*a*ab')).toBe(false);
+    expect(Date.now() - start).toBeLessThan(500);
   });
 });
+
 
 /* ── pattern → prefix (the routing half of the fix) ────────────────────────── */
 

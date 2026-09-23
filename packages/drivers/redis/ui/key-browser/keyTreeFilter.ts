@@ -12,9 +12,19 @@ import { isGlobalPattern } from './treeEmptyState';
  * is what makes the glob semantics, the breadcrumb back-fill and the "nothing
  * matched" result testable without a DOM.
  *
- * The semantics mirror Redis' own `MATCH` glob (`*` = any run, `?` = one char,
- * everything else literal, case-sensitive, anchored): one pattern must not mean
- * "substring" in the flat list and "exact" in the tree.
+ * The matcher is a **port of Redis' own `stringmatchlen_impl`** (`src/util.c`,
+ * 7.2, `nocase = 0`) — byte-level alphabet, `[...]` classes with `^` negation,
+ * `-` ranges, `\` escapes, the unterminated-class fallback, and a `?` that
+ * consumes one *byte*. That fidelity is the whole point (redis-tree-ui-BUG-003):
+ * a regex-shaped approximation is *almost* the same dialect, and "almost" is what
+ * let the list view show three keys for `*[0-9]` while the tree asserted
+ * `no-match` about the very same keys. `patternHasGlob` already treats `[` and
+ * `\` as glob characters and sends them to the server verbatim, so the product
+ * invites class expressions — both views must then mean the same thing by them.
+ *
+ * Redis matches on the **UTF-8 bytes** of a key, so names are encoded before
+ * comparison and a `?` over a multi-byte character consumes one byte, exactly as
+ * it does server-side.
  *
  * Visibility forks on `row.kind` — never on whether a `key` field happens to be
  * present. A child-level leaf row's `entry.key` is the *full* key the server
@@ -28,38 +38,187 @@ import { isGlobalPattern } from './treeEmptyState';
  * the gap. Full-keyset matching belongs to R / Wave 4.
  */
 
-/** Regex metacharacters that must lose their power when the glob has no star. */
-const REGEX_METACHARACTERS = /[.+^${}()|[\]\\]/g;
+/* Redis compares raw bytes; these are the metacharacters of that grammar. */
+const BYTE_ASTERISK = 0x2a; /* * */
+const BYTE_QUESTION = 0x3f; /* ? */
+const BYTE_OPEN_BRACKET = 0x5b; /* [ */
+const BYTE_CLOSE_BRACKET = 0x5d; /* ] */
+const BYTE_CARET = 0x5e; /* ^ */
+const BYTE_HYPHEN = 0x2d; /* - */
+const BYTE_BACKSLASH = 0x5c; /* \ */
 
-/**
- * Compile a Redis MATCH glob into an anchored, case-sensitive RegExp.
- *
- * `*` → `.*`, `?` → `.`, every other character escaped verbatim (so `:` and `.`
- * inside key names stay literals). A blank pattern or one that cannot compile
- * yields `null`; callers must treat `null` as "the filter matches nothing",
- * never as "match everything" — silently widening a broken pattern is the same
- * class of lie BUG-001 is about.
- */
-export function globToRegExp(pattern: string): RegExp | null {
-  if (pattern.length === 0) return null;
-  let source = '';
-  for (const char of pattern) {
-    if (char === '*') source += '.*';
-    else if (char === '?') source += '.';
-    else source += char.replace(REGEX_METACHARACTERS, '\\$&');
-  }
-  try {
-    return new RegExp(`^${source}$`);
-  } catch {
-    return null;
-  }
+/** Recursion ceiling copied from Redis ("protection against abusive patterns"). */
+const MAX_NESTING = 1000;
+
+const utf8Encoder = new TextEncoder();
+
+/** A byte window — the `char *ptr, int len` pair Redis threads through. */
+interface ByteSeq {
+  readonly bytes: Uint8Array;
+  readonly from: number;
+  readonly len: number;
 }
 
-/** Does `name` match the glob `pattern`? Blank / uncompilable ⇒ no. */
-export function globMatchesName(name: string, pattern: string): boolean {
-  const re = globToRegExp(pattern);
-  if (!re) return false;
-  return re.test(name);
+function encode(value: string): ByteSeq {
+  const bytes = utf8Encoder.encode(value);
+  return { bytes, from: 0, len: bytes.length };
+}
+
+/** Byte at `i`, or 0: what C reads once `len` is exhausted (the NUL). */
+function byteAt(seq: ByteSeq, i: number): number {
+  return i < seq.len ? seq.bytes[seq.from + i] : 0;
+}
+
+function sliceOf(seq: ByteSeq, from: number, len: number): ByteSeq {
+  return { bytes: seq.bytes, from: seq.from + from, len };
+}
+
+/**
+ * `stringmatchlen_impl(pattern, patternLen, string, stringLen, 0,
+ * &skipLongerMatches, nesting)` — ported arm by arm from Redis 7.2 `src/util.c`,
+ * quirks included: consecutive `*` collapse, a trailing `*` matching an empty
+ * remainder, the `skipLongerMatches` early-out that keeps a pathological pattern
+ * from backtracking exponentially, the unterminated-class rewind (so `[abc`
+ * matches the literal), `[^...]` negation, `[a-b]` ranges with the operands
+ * swapped when inverted, and `\` escaping the byte that follows it.
+ *
+ * `state.skip` is the by-reference `skipLongerMatches` flag Redis threads
+ * through the recursion.
+ */
+function matchSeq(pattern: ByteSeq, str: ByteSeq, state: { skip: number }, nesting: number): boolean {
+  if (nesting > MAX_NESTING) return false;
+  let p = 0;
+  let pLen = pattern.len;
+  let s = 0;
+  let sLen = str.len;
+
+  while (pLen > 0 && sLen > 0) {
+    const c = byteAt(pattern, p);
+
+    if (c === BYTE_ASTERISK) {
+      while (pLen > 0 && byteAt(pattern, p + 1) === BYTE_ASTERISK) {
+        p++;
+        pLen--;
+      }
+      if (pLen === 1) return true; // a trailing `*` takes the rest, even nothing
+      /*
+       * Redis tries the remainder *before* consuming a byte (`while (stringLen)`
+       * recurses with the current `string`), which is what lets `*` span nothing:
+       * `a*c` matches `ac` and `*x` matches `x`. Starting one byte in was a real
+       * port bug, caught by cross-checking against a literal transliteration.
+       */
+      while (sLen > 0) {
+        if (matchSeq(sliceOf(pattern, p + 1, pLen - 1), sliceOf(str, s, sLen), state, nesting + 1)) {
+          return true;
+        }
+        if (state.skip !== 0) return false;
+        s++;
+        sLen--;
+      }
+      // Nothing matched the tail from any position: an earlier `*` need not try
+      // a longer substring either (Redis' early-termination note).
+      state.skip = 1;
+      return false;
+    }
+
+    if (c === BYTE_QUESTION) {
+      s++;
+      sLen--;
+    } else if (c === BYTE_OPEN_BRACKET) {
+      p++;
+      pLen--;
+      const negated = byteAt(pattern, p) === BYTE_CARET;
+      if (negated) {
+        p++;
+        pLen--;
+      }
+      let hit = false;
+      for (;;) {
+        const cur = byteAt(pattern, p);
+        if (cur === BYTE_BACKSLASH && pLen >= 2) {
+          p++;
+          pLen--;
+          if (byteAt(pattern, p) === byteAt(str, s)) hit = true;
+        } else if (cur === BYTE_CLOSE_BRACKET) {
+          break;
+        } else if (pLen === 0) {
+          p--;
+          pLen++;
+          break;
+        } else if (pLen >= 3 && byteAt(pattern, p + 1) === BYTE_HYPHEN) {
+          let start = cur;
+          let end = byteAt(pattern, p + 2);
+          if (start > end) {
+            const swap = start;
+            start = end;
+            end = swap;
+          }
+          p += 2;
+          pLen -= 2;
+          const ch = byteAt(str, s);
+          if (ch >= start && ch <= end) hit = true;
+        } else if (cur === byteAt(str, s)) {
+          hit = true;
+        }
+        p++;
+        pLen--;
+      }
+      if (negated) hit = !hit;
+      if (!hit) return false;
+      s++;
+      sLen--;
+    } else {
+      if (c === BYTE_BACKSLASH && pLen >= 2) {
+        // `\` escapes the next byte and *falls through* to the literal compare,
+        // exactly as the C `switch` has no `break` here.
+        p++;
+        pLen--;
+      }
+      if (byteAt(pattern, p) !== byteAt(str, s)) return false;
+      s++;
+      sLen--;
+    }
+
+    p++;
+    pLen--;
+    if (sLen === 0) {
+      while (byteAt(pattern, p) === BYTE_ASTERISK) {
+        p++;
+        pLen--;
+      }
+      break;
+    }
+  }
+
+  return pLen === 0 && sLen === 0;
+}
+
+/**
+ * Compile an R2 pattern into the byte sequence the matcher walks. `null` means
+ * "there is no pattern to match": a blank pattern is *not* Redis' "match the
+ * empty key" — the R2 row already treats blank as "filter off" upstream, and
+ * callers must keep reading `null` that way rather than as "match everything".
+ */
+export function compileGlob(pattern: string): ByteSeq | null {
+  const trimmed = pattern.trim();
+  return trimmed.length === 0 ? null : encode(trimmed);
+}
+
+/** A reusable predicate over key names for one compiled pattern. */
+export type GlobMatcher = (name: string) => boolean;
+
+/** Compile once, match many: the row and key filters take this path per render. */
+export function globMatcher(compiled: ByteSeq | null): GlobMatcher {
+  if (!compiled) return () => false;
+  return (name: string) => matchSeq(compiled, encode(name), { skip: 0 }, 0);
+}
+
+/**
+ * Does `name` match the Redis MATCH glob `pattern`? Single-call convenience over
+ * {@link globMatcher}; prefer compiling once when matching a list.
+ */
+export function redisGlobMatch(name: string, pattern: string): boolean {
+  return globMatcher(compileGlob(pattern))(name);
 }
 
 /**
@@ -99,12 +258,9 @@ export function filterTreeRowsByPattern(
   pattern: string,
   hasVisibleDescendant: (folderPath: string) => boolean = () => false,
 ): KeyTreeRow[] {
-  const trimmed = pattern.trim();
-  if (isGlobalPattern(trimmed)) return rows;
+  if (isGlobalPattern(pattern)) return rows;
 
-  const re = globToRegExp(trimmed);
-  // A pattern that cannot compile must not fall back to the unfiltered tree.
-  if (!re) return [];
+  const matches = globMatcher(compileGlob(pattern));
 
   /*
    * Two passes, because an ancestor can be needed by a descendant that appears
@@ -124,8 +280,8 @@ export function filterTreeRowsByPattern(
     // The fork is on `row.kind`, never on a field being present (`rowMatchTarget`).
     const target = rowMatchTarget(row);
     const match = isFolder
-      ? re.test(target) && row.count > 0
-      : re.test(target);
+      ? matches(target) && row.count > 0
+      : matches(target);
     // A folder whose *own* name fails the glob is not automatically irrelevant:
     // a collapsed subtree is judged by `hasVisibleDescendant` (the caller's
     // filtered key set), because that is the only honest source for keys the tree
@@ -145,7 +301,6 @@ export function filterTreeRowsByPattern(
     }
   }
 
-  /*
   /*
    * Emit precedence: a row that matches on its own wins; an ancestor of one does
    * so as a breadcrumb; and only a folder with *no* painted survivor underneath
@@ -190,9 +345,6 @@ export function countSelectableRows(rows: KeyTreeRow[]): number {
  * which set is on screen). Blank / `*` ⇒ the input unchanged.
  */
 export function filterKeysByPattern(keys: string[], pattern: string): string[] {
-  const trimmed = pattern.trim();
-  if (isGlobalPattern(trimmed)) return keys;
-  const re = globToRegExp(trimmed);
-  if (!re) return [];
-  return keys.filter((key) => re.test(key));
+  if (isGlobalPattern(pattern)) return keys;
+  return keys.filter(globMatcher(compileGlob(pattern)));
 }
