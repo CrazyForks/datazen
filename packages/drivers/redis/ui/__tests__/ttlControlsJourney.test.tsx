@@ -1,21 +1,32 @@
 /**
- * TtlControls E2E Journey Tests
+ * TtlControls 三态内联编辑器连续旅程（本轨 E-4，PRD §3.3 徽标行 / 裁定 8-4）。
  *
- * Each journey is self-contained:
- *   1. Prepare  — mock invoke + render TtlControls with a fresh key/TTL
- *   2. Act      — simulate user interaction (input, button clicks)
- *   3. Assert   — verify correct Redis commands were dispatched
- *   4. Clean    — verify no leaked state / cleanup calls
+ * 每条旅程自含四步：准备（mock invoke + 渲染）→ 行为（点开 TTL 胶囊、切模式、
+ * 点击应用）→ 断言（Redis 命令载荷 + data-* 状态跃迁）→ 清理。
+ *
+ * 状态机三要素（AGENTS.md 状态机思维）：
+ * - 进入：点折叠胶囊（`data-ttl-open=false` → `true`），编辑器总是落在相对 TTL 模式；
+ * - 状态内：三种模式（永不过期 / 相对 / 绝对 EXPIREAT）各自应用并触发 onChanged；
+ * - 退出：`redis-ttl-close` 回到折叠态（→ `data-ttl-open=false`），或切键卸载。
+ *
+ * 断言口径（§7-6 / 裁定 8-4）：定位用 `data-testid`，状态用 `data-ttl-state` /
+ * `data-ttl-open` / `data-ttl-mode` / `data-selected`，模式标签只断言其 i18n key
+ * （`data-i18n-key`），不读英文字面量。下方 map 仅为让 `t()` 返回可渲染文本。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Components take `useI18n` from the single @datazen/ui runtime; keep the
 // assertions locale-independent by overriding only that hook.
+//
+// The map below exists ONLY so `t()` returns something renderable — no
+// assertion in this file reads a rendered copy. Locating and state checks go
+// through the `data-*` contract on TtlControls (see
+// docs/development/interaction-and-testing-principles.md, "断言与 i18n 文案解耦").
 vi.mock('@datazen/ui', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
-    t: (key: string) => {
+    t: (key: string, params?: Record<string, unknown>) => {
       const map: Record<string, string> = {
         'redis.ttl': 'TTL',
         'redis.noExpiry': 'No expiry',
@@ -26,8 +37,11 @@ vi.mock('@datazen/ui', async (importOriginal) => ({
         'redis.expireAtInvalid': 'Invalid expire datetime',
         'redis.setExpireAt': 'Set expire at',
         'redis.persist': 'Persist',
+        'redis.detail.ttl.modeRelative': 'Relative TTL',
+        'redis.detail.ttl.modeAbsolute': 'Absolute time (EXPIREAT)',
       };
-      return map[key] ?? key;
+      const raw = map[key] ?? key;
+      return params && params.n != null ? raw.replace('{n}', String(params.n)) : raw;
     },
   }),
 }));
@@ -40,8 +54,56 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: render TtlControls with a mock invoke function
+// Helpers: render TtlControls with a mock invoke function + data-* locators
 // ---------------------------------------------------------------------------
+
+/** The TTL read-out slot; state is `no-expiry` | `seconds`, never rendered copy. */
+function ttlValueSlot() {
+  return screen.getByTestId('redis-ttl-value');
+}
+
+function expectCollapsed() {
+  expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('false');
+  expect(screen.queryByTestId('redis-ttl-close')).toBeNull();
+}
+
+function expectNoExpiryState() {
+  const slot = ttlValueSlot();
+  expect(slot.getAttribute('data-ttl-state')).toBe('no-expiry');
+  // Slot must render a resolved label, not an empty hole.
+  expect((slot.textContent ?? '').trim().length).toBeGreaterThan(0);
+}
+
+function expectSecondsState(seconds: number) {
+  const slot = ttlValueSlot();
+  expect(slot.getAttribute('data-ttl-state')).toBe('seconds');
+  // The numeric TTL is data, not copy — pinning it keeps the real intent.
+  expect(slot.textContent).toContain(String(seconds));
+}
+
+/** Enter transition: click the pill, editor opens (always in relative mode). */
+function openEditor() {
+  expectCollapsed();
+  fireEvent.click(screen.getByTestId('redis-ttl-value'));
+  expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+  expectSelectedMode('relative');
+}
+
+function selectMode(mode: 'relative' | 'absolute' | 'no-expiry') {
+  fireEvent.click(screen.getByTestId(`redis-ttl-mode-${mode}`));
+  expectSelectedMode(mode);
+}
+
+function expectSelectedMode(mode: 'relative' | 'absolute' | 'no-expiry') {
+  expect(screen.getByTestId(`redis-ttl-mode-${mode}`).getAttribute('data-selected')).toBe(
+    'true',
+  );
+}
+
+function datetimeInput(): HTMLInputElement {
+  return screen.getByTestId('redis-ttl-datetime') as HTMLInputElement;
+}
+
 function setupJourney(opts: {
   keyName: string;
   ttl: number;
@@ -75,16 +137,18 @@ describe('Journey: Set relative TTL on key without expiry', () => {
       ttl: -1,
     });
 
-    // Verify initial state: "No expiry" displayed
-    expect(screen.getByText('No expiry')).toBeTruthy();
+    // Verify initial state: collapsed pill reports the no-expiry state
+    expectNoExpiryState();
+    // 进入跃迁：点胶囊 ⇒ 编辑器打开且默认相对模式。
+    openEditor();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
     // Type a relative TTL value
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
+    const ttlInput = screen.getByTestId('redis-ttl-input');
     fireEvent.change(ttlInput, { target: { value: '3600' } });
 
-    // Click "Set TTL" button
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
+    // Click the relative-TTL apply action
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
     fireEvent.click(setTtlBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -116,19 +180,19 @@ describe('Journey: Set absolute expiry via EXPIREAT', () => {
       ttl: 600,
     });
 
-    // Verify initial TTL display shows "600 s"
-    expect(screen.getByText('600 s')).toBeTruthy();
+    // Verify initial TTL state carries the numeric TTL (collapsed)
+    expectSecondsState(600);
+    openEditor();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Find the datetime-local input specifically by its type attribute
-    const datetimeInput = document.querySelector(
-      'input[type="datetime-local"]',
-    ) as HTMLInputElement;
+    // 切到绝对时间模式，datetime 输入才属于当前状态。
+    selectMode('absolute');
+    const input = datetimeInput();
     // Use a fixed future time: 2030-01-15T12:00
-    fireEvent.change(datetimeInput, { target: { value: '2030-01-15T12:00' } });
+    fireEvent.change(input, { target: { value: '2030-01-15T12:00' } });
 
-    // Click "Set expire at" button
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
+    // Click the absolute-expiry apply action
+    const expireAtBtn = screen.getByTestId('redis-ttl-expire-at');
     fireEvent.click(expireAtBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -170,12 +234,13 @@ describe('Journey: Remove TTL via PERSIST', () => {
       ttl: 120,
     });
 
-    // Verify initial TTL display shows "120 s"
-    expect(screen.getByText('120 s')).toBeTruthy();
+    expectSecondsState(120);
+    openEditor();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Click "Persist" button
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    // 持久化属于「永不过期」模式，先切模式再点应用。
+    selectMode('no-expiry');
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -204,12 +269,13 @@ describe('Journey: Error on invalid TTL input', () => {
       keyName: 'journey4:error-key',
       ttl: 300,
     });
+    openEditor();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
+    const ttlInput = screen.getByTestId('redis-ttl-input');
     fireEvent.change(ttlInput, { target: { value: '-5' } });
 
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
     fireEvent.click(setTtlBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -218,9 +284,11 @@ describe('Journey: Error on invalid TTL input', () => {
       expect(invoke).not.toHaveBeenCalled();
     });
 
-    // Error message should be displayed
+    // The inline error slot must appear and carry a resolved message
+    // (the copy itself is an i18n value and is deliberately not asserted).
     await waitFor(() => {
-      expect(screen.getByText('TTL (seconds)')).toBeTruthy();
+      const errorSlot = screen.getByTestId('redis-ttl-error');
+      expect((errorSlot.textContent ?? '').trim().length).toBeGreaterThan(0);
     });
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
@@ -238,25 +306,29 @@ describe('Journey: Error on invalid datetime', () => {
       keyName: 'journey5:dt-key',
       ttl: -1,
     });
+    openEditor();
+    selectMode('absolute');
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Find the datetime-local input specifically by its type attribute
-    const datetimeInput = document.querySelector(
-      'input[type="datetime-local"]',
-    ) as HTMLInputElement;
-    expect(datetimeInput).toBeTruthy();
+    const input = datetimeInput();
+    expect(input).toBeTruthy();
     // Set a value that Date.parse cannot parse
-    fireEvent.change(datetimeInput, { target: { value: 'not-a-date' } });
+    fireEvent.change(input, { target: { value: 'not-a-date' } });
 
-    // Click "Set expire at" button
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
+    // Click the absolute-expiry apply action
+    const expireAtBtn = screen.getByTestId('redis-ttl-expire-at');
     fireEvent.click(expireAtBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
-    // Button should be disabled when expireAtLocal is empty/invalid, so no invoke
+    // jsdom normalises an unparsable `datetime-local` value to '', so the real
+    // contract here is "the apply action stays disabled ⇒ nothing is sent".
+    // [tester] That used to be proven only through the absence of the invoke,
+    // which stays green even if the guard on the button is dropped — pin the
+    // disabled property itself (a DOM-state anchor, no rendered copy).
     await waitFor(() => {
       expect(invoke).not.toHaveBeenCalled();
     });
+    expect(screen.getByTestId('redis-ttl-expire-at')).toBeDisabled();
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
     cleanup();
@@ -273,16 +345,11 @@ describe('Journey: TTL set → persist → set again cycle', () => {
       keyName: 'journey6:lifecycle-key',
       ttl: -1,
     });
-    const ttlInput = screen.getByPlaceholderText('TTL (seconds)');
-    const setTtlBtn = screen.getByRole('button', { name: 'Set TTL' });
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
-    const expireAtBtn = screen.getByRole('button', { name: 'Set expire at' });
-    // Find datetime-local by type attribute
-    const datetimeInput = document.querySelector(
-      'input[type="datetime-local"]',
-    ) as HTMLInputElement;
+    openEditor();
 
     // ── 2. Act: Step A — Set TTL ─────────────────────────────────────────
+    const ttlInput = screen.getByTestId('redis-ttl-input');
+    const setTtlBtn = screen.getByTestId('redis-ttl-set');
     fireEvent.change(ttlInput, { target: { value: '7200' } });
     fireEvent.click(setTtlBtn);
 
@@ -298,7 +365,8 @@ describe('Journey: TTL set → persist → set again cycle', () => {
     // ── 3. Act: Step B — Persist ─────────────────────────────────────────
     invoke.mockClear();
     onChanged.mockClear();
-    fireEvent.click(persistBtn);
+    selectMode('no-expiry');
+    fireEvent.click(screen.getByTestId('redis-ttl-persist'));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('redis', 'set_ttl', {
@@ -312,8 +380,9 @@ describe('Journey: TTL set → persist → set again cycle', () => {
     // ── 4. Act: Step C — Set EXPIREAT ───────────────────────────────────
     invoke.mockClear();
     onChanged.mockClear();
-    fireEvent.change(datetimeInput, { target: { value: '2035-06-01T00:00' } });
-    fireEvent.click(expireAtBtn);
+    selectMode('absolute');
+    fireEvent.change(datetimeInput(), { target: { value: '2035-06-01T00:00' } });
+    fireEvent.click(screen.getByTestId('redis-ttl-expire-at'));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('redis', 'set_ttl', {
@@ -342,9 +411,11 @@ describe('Journey: Different session and db index', () => {
       dbSessionId: 'custom-session-abc',
       dbIndex: 3,
     });
+    openEditor();
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    selectMode('no-expiry');
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -366,7 +437,7 @@ describe('Journey: Different session and db index', () => {
 // Journey 8: TTL = -1 (no expiry) shows correct display
 // ============================================================================
 describe('Journey: No-expiry display and persist when already expired', () => {
-  it('shows "No expiry" for ttl=-1, and persist resets input fields', async () => {
+  it('reports the no-expiry TTL state for ttl=-1, and persist resets input fields', async () => {
     // ── 1. Prepare ───────────────────────────────────────────────────────
     const { invoke, onChanged } = setupJourney({
       keyName: 'journey8:no-expiry-key',
@@ -374,11 +445,13 @@ describe('Journey: No-expiry display and persist when already expired', () => {
     });
 
     // ── 2. Act ───────────────────────────────────────────────────────────
-    // Verify "No expiry" text
-    expect(screen.getByText('No expiry')).toBeTruthy();
+    // Verify the TTL slot is in the no-expiry state (collapsed)
+    expectNoExpiryState();
+    openEditor();
 
     // Persist should still work (noop but verify command)
-    const persistBtn = screen.getByRole('button', { name: 'Persist' });
+    selectMode('no-expiry');
+    const persistBtn = screen.getByTestId('redis-ttl-persist');
     fireEvent.click(persistBtn);
 
     // ── 3. Assert ────────────────────────────────────────────────────────
@@ -390,8 +463,128 @@ describe('Journey: No-expiry display and persist when already expired', () => {
         ttlSeconds: -1,
       });
     });
+    expect(onChanged).toHaveBeenCalledOnce();
 
     // ── 4. Clean ─────────────────────────────────────────────────────────
     cleanup();
+  });
+});
+
+// ============================================================================
+// Journey 9: pill state machine — enter / in-state / exit (三要素)
+// ============================================================================
+describe('Journey: TTL pill state machine (enter / in-state / exit)', () => {
+  it('opens in relative mode, switches modes, closes, and re-enters fresh', () => {
+    const { rerender } = setupJourney({
+      keyName: 'journey9:pill-machine',
+      ttl: -1,
+    });
+
+    // 进入前：折叠胶囊带状态，编辑器控件不存在。
+    expectNoExpiryState();
+    expectCollapsed();
+    expect(screen.queryByTestId('redis-ttl-input')).toBeNull();
+    expect(screen.queryByTestId('redis-ttl-persist')).toBeNull();
+
+    // 进入：点胶囊 ⇒ 打开，且总是落在相对模式（确定性进入条件）。
+    openEditor();
+    expect(screen.getByTestId('redis-ttl-input')).toBeTruthy();
+
+    // 状态内：三枚模式按钮各带自己的 i18n key，选中态互斥跃迁。
+    expect(screen.getByTestId('redis-ttl-mode-no-expiry').getAttribute('data-i18n-key')).toBe(
+      'redis.noExpiry',
+    );
+    expect(screen.getByTestId('redis-ttl-mode-relative').getAttribute('data-i18n-key')).toBe(
+      'redis.detail.ttl.modeRelative',
+    );
+    expect(screen.getByTestId('redis-ttl-mode-absolute').getAttribute('data-i18n-key')).toBe(
+      'redis.detail.ttl.modeAbsolute',
+    );
+    selectMode('absolute');
+    expect(screen.getByTestId('redis-ttl-mode-relative').getAttribute('data-selected')).toBe(
+      'false',
+    );
+    expect(datetimeInput()).toBeTruthy();
+
+    // 退出：关闭按钮回到折叠态，编辑器控件整体卸载。
+    fireEvent.click(screen.getByTestId('redis-ttl-close'));
+    expectCollapsed();
+    expect(screen.queryByTestId('redis-ttl-mode-absolute')).toBeNull();
+    expect(screen.queryByTestId('redis-ttl-datetime')).toBeNull();
+
+    // 重新进入：又从相对模式开始（退出清掉了状态内选择）。
+    fireEvent.click(screen.getByTestId('redis-ttl-value'));
+    expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+    expectSelectedMode('relative');
+
+    // 属性 ttl 变化（成功应用后父级回读）⇒ 输入与胶囊读数跟随服务器真值。
+    rerender(
+      <TtlControls
+        dbSessionId="test-sess"
+        dbIndex={0}
+        keyName="journey9:pill-machine"
+        ttl={999}
+        onChanged={() => {}}
+        invoke={vi.fn<PluginInvokeFn>().mockResolvedValue(undefined)}
+      />,
+    );
+    expect((screen.getByTestId('redis-ttl-input') as HTMLInputElement).value).toBe('999');
+    expect(ttlValueSlot().textContent).toContain('999');
+  });
+});
+
+// ============================================================================
+// BUG-004: 退出跃迁补齐 —— Esc / 失焦（状态机 exit 不能只有显式关按钮）
+// ============================================================================
+describe('[redis-detail-ui-BUG-004] TTL 内联编辑的 Esc / 失焦退出跃迁', () => {
+  it('closes on Escape typed inside the editor, and re-entry still starts at the default mode', () => {
+    setupJourney({ keyName: 'bug004:esc', ttl: 300 });
+    openEditor();
+
+    // 状态内：焦点在秒数输入上按 Esc ⇒ 退出到折叠胶囊。
+    fireEvent.keyDown(screen.getByTestId('redis-ttl-input'), { key: 'Escape' });
+    expectCollapsed();
+
+    // 退出没破坏进入跃迁：重新点开仍落在文档默认的相对模式。
+    openEditor();
+  });
+
+  it('closes when focus leaves the container but stays when focus moves within it', () => {
+    setupJourney({ keyName: 'bug004:blur', ttl: 300 });
+    openEditor();
+    const ttlInput = screen.getByTestId('redis-ttl-input');
+    const modeButton = screen.getByTestId('redis-ttl-mode-absolute');
+
+    // 焦点从输入移到容器内的模式按钮 ⇒ 不得关闭。
+    fireEvent.blur(ttlInput, { relatedTarget: modeButton });
+    expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+
+    // 焦点离开容器 ⇒ 关闭。
+    fireEvent.blur(modeButton, { relatedTarget: document.body });
+    expectCollapsed();
+  });
+
+  it('ignores Escape while an apply is in flight (mirrors the disabled close button)', async () => {
+    // 永不落定的写命令 ⇒ busy 悬起，退出跃迁必须像关按钮一样被禁用。
+    const pendingInvoke = vi.fn<PluginInvokeFn>().mockImplementation(() => new Promise<void>(() => {}));
+    render(
+      <TtlControls
+        dbSessionId="test-sess"
+        dbIndex={0}
+        keyName="bug004:busy"
+        ttl={300}
+        onChanged={() => {}}
+        invoke={pendingInvoke}
+      />,
+    );
+    openEditor();
+    fireEvent.change(screen.getByTestId('redis-ttl-input'), { target: { value: '120' } });
+    fireEvent.click(screen.getByTestId('redis-ttl-set'));
+    await waitFor(() => expect(pendingInvoke).toHaveBeenCalled());
+
+    fireEvent.keyDown(screen.getByTestId('redis-ttl-input'), { key: 'Escape' });
+    // 应用中不退：错误/结果仍要可见，不被静默折叠。
+    expect(ttlValueSlot().getAttribute('data-ttl-open')).toBe('true');
+    expect(screen.queryByTestId('redis-ttl-close')).not.toBeNull();
   });
 });

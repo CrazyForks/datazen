@@ -10,6 +10,11 @@ use datazen_driver_api::{
 };
 use serde_json::Value as JsonValue;
 
+use crate::ops_workbench::{
+    CLUSTER_TYPE_SAMPLE_LIMIT, DEFAULT_TYPE_SAMPLE_LIMIT, KEY_INFO_PIPELINE_LEN,
+    MAX_TYPE_SAMPLE_LIMIT, TYPE_PIPELINE_CHUNK,
+};
+
 fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
     let category = match id {
         id if id.starts_with("pubsub_") => CommandCategory::PubSub,
@@ -21,8 +26,10 @@ fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
         "flush_db" | "flush_all" | "slowlog_reset" => CommandCategory::Admin,
         "scan_keys" | "get_key" | "get_key_raw" | "db_sizes" | "list_children" | "info"
         | "memory_sample" | "slowlog_get" | "modules_list" | "cluster_nodes" | "count_matching"
-        | "scan_values" | "scan_abort" | "decode_value" | "monitor_start" | "monitor_stop"
-        | "monitor_get_buffer" => CommandCategory::Observe,
+        | "key_probe" | "scan_values" | "scan_abort" | "decode_value" | "monitor_start"
+        | "monitor_stop" | "monitor_get_buffer" | "type_distribution" | "key_object_info" => {
+            CommandCategory::Observe
+        }
         _ => CommandCategory::Mutate,
     };
     let mut metadata = DriverCommandMetadata {
@@ -84,7 +91,8 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
                     "count": { "type": "integer" },
                     "keyType": { "type": "string", "description": "Optional Redis TYPE filter (string/hash/list/set/zset/stream)" },
                     "withMemory": { "type": "boolean", "description": "When true, size uses MEMORY USAGE (bytes)" },
-                    "noTtlOnly": { "type": "boolean", "description": "When true, only include keys without expiry (TTL == -1)" }
+                    "noTtlOnly": { "type": "boolean", "description": "When true, only include keys without expiry (TTL == -1)" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; unrelated to the value-search key cap" }
                 }),
                 &[],
             ),
@@ -109,7 +117,9 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
                     "count": { "type": "integer" },
                     "sep": { "type": "string", "description": "Separator char (default ':')" },
                     "noTtlOnly": { "type": "boolean" },
-                    "keyType": { "type": "string" }
+                    "withMemory": { "type": "boolean", "description": "When true, size uses MEMORY USAGE (bytes)" },
+                    "keyType": { "type": "string" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; unrelated to the value-search key cap" }
                 }),
                 &["prefix"],
             ),
@@ -118,6 +128,13 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "get_key",
             "Get key",
             "Load the full value for a Redis key",
+            "redis:allow-info",
+            object_schema(serde_json::json!({ "dbIndex": db, "key": key }), &["key"]),
+        ),
+        cmd(
+            "key_probe",
+            "Key probe",
+            "Probe one key's attributes (EXISTS + TYPE + PTTL + MEMORY USAGE) without reading its value",
             "redis:allow-info",
             object_schema(serde_json::json!({ "dbIndex": db, "key": key }), &["key"]),
         ),
@@ -169,11 +186,11 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "decode_value",
             "Decode value",
-            "Parse-only decode of a base64 payload (msgpack / pickle / php / java) into a JSON tree; never executes host-language objects",
+            "Parse-only decode of a base64 payload (none / base64 / gzip / zlib / deflate / msgpack / pickle / php / java) into a byte or JSON view; never executes host-language objects",
             "redis:allow-info",
             object_schema(
                 serde_json::json!({
-                    "codec": { "type": "string", "enum": ["msgpack", "pickle", "php", "java"] },
+                    "codec": { "type": "string", "enum": ["none", "base64", "gzip", "zlib", "deflate", "msgpack", "pickle", "php", "java"] },
                     "data": { "type": "string", "description": "base64-encoded raw bytes" }
                 }),
                 &["codec", "data"],
@@ -182,14 +199,14 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "set_string",
             "Set string",
-            "SET a string key (optional KEEPTTL)",
+            "SET a string key; keeps the existing TTL by default (SET … KEEPTTL, PTTL+PX fallback) and answers { ok, keepTtl, keepTtlFallback }",
             "redis:allow-set-string",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
                     "key": key,
                     "value": { "type": "string" },
-                    "keepTtl": { "type": "boolean" }
+                    "keepTtl": { "type": "boolean", "description": "Defaults to true; pass false to clear the expiry" }
                 }),
                 &["key", "value"],
             ),
@@ -197,14 +214,14 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "set_string_raw",
             "Set string (binary)",
-            "SET a string key from base64 raw bytes (binary-safe; optional KEEPTTL)",
+            "SET a string key from base64 raw bytes (binary-safe); same TTL default as set_string",
             "redis:allow-set-string",
             object_schema(
                 serde_json::json!({
                     "dbIndex": db,
                     "key": key,
                     "dataB64": { "type": "string", "description": "base64-encoded raw bytes" },
-                    "keepTtl": { "type": "boolean" }
+                    "keepTtl": { "type": "boolean", "description": "Defaults to true; pass false to clear the expiry" }
                 }),
                 &["key", "dataB64"],
             ),
@@ -410,7 +427,11 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "Count keys matching a pattern",
             "redis:allow-count-matching",
             object_schema(
-                serde_json::json!({ "dbIndex": db, "pattern": { "type": "string" } }),
+                serde_json::json!({
+                    "dbIndex": db,
+                    "pattern": { "type": "string" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; the reply's `truncated` says the count is a floor" }
+                }),
                 &["pattern"],
             ),
         ),
@@ -434,7 +455,9 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
         cmd(
             "memory_sample",
             "Memory sample",
-            "Sample large keys",
+            "Sample large keys with type/ttl, MEMORY USAGE+TYPE+PTTL resolved one pipeline \
+             per 256 keys (on Cluster every key is one addressed batch to its own shard); \
+             reports key/type/bytes/ttlMs/missing/truncated",
             "redis:allow-memory-sample",
             object_schema(
                 serde_json::json!({ "dbIndex": db, "limit": { "type": "integer" } }),
@@ -447,6 +470,47 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "MEMORY USAGE for a specific key",
             "redis:allow-memory-sample",
             object_schema(serde_json::json!({ "key": { "type": "string" } }), &["key"]),
+        ),
+        cmd(
+            "type_distribution",
+            "Type distribution",
+            &format!(
+                "SCAN-sampled key type counts, TYPE resolved one pipeline per {} keys \
+                 (on Cluster every key is one command, addressed to the shard that owns it, \
+                 and the sample covers one pinned shard while dbsize sums all masters); \
+                 never KEYS; reports sampled/dbsize/truncated",
+                TYPE_PIPELINE_CHUNK
+            ),
+            "redis:allow-info",
+            object_schema(
+                serde_json::json!({
+                    "dbIndex": db,
+                    "sampleLimit": { "type": "integer", "minimum": 0, "description": format!(
+                        "Sample window in keys. Defaults to {}; values above {} are clamped to {}, never rejected. \
+                         A Cluster connection clamps further to {} because it sends one command per sampled key",
+                        DEFAULT_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, MAX_TYPE_SAMPLE_LIMIT, CLUSTER_TYPE_SAMPLE_LIMIT
+                    ) }
+                }),
+                &[],
+            ),
+        ),
+        cmd(
+            "key_object_info",
+            "Key object info",
+            &format!(
+                "MEMORY USAGE / OBJECT ENCODING / IDLETIME / FREQ / PTTL / TYPE in one pipeline \
+                 (on Cluster the same {} commands go one at a time, each addressed to the shard \
+                 that owns the key); the command layer adds one SELECT per call, so a call is 2 \
+                 round trips on a single node and {} on Cluster. A missing key replies \
+                 missing=true instead of failing",
+                KEY_INFO_PIPELINE_LEN,
+                KEY_INFO_PIPELINE_LEN + 1
+            ),
+            "redis:allow-memory-sample",
+            object_schema(
+                serde_json::json!({ "dbIndex": db, "key": key }),
+                &["key"],
+            ),
         ),
         cmd(
             "info_filtered",

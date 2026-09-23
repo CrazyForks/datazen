@@ -4,6 +4,8 @@ use redis::AsyncCommands;
 use redis::FromRedisValue;
 use serde::Serialize;
 
+use crate::connect::Topology;
+use crate::ops_workbench::SlotRoutedConnection;
 use crate::redis_driver::parse_scan_result;
 
 /// Default number of keys to sample when `limit` is omitted or zero.
@@ -50,6 +52,16 @@ pub fn parse_info_sections(raw: &str) -> Vec<(String, Vec<(String, String)>)> {
 pub struct MemorySample {
     pub key: String,
     pub bytes: u64,
+    /// Redis `TYPE`; `None` when unreadable or the key expired after sampling.
+    /// Serialized as `type` (matches the `key_object_info` sidebar contract).
+    #[serde(rename = "type")]
+    pub key_type: Option<String>,
+    /// `PTTL` in milliseconds: `-1` no expiry, `-2` gone, `>0` remaining,
+    /// `None` when the reply could not be read.
+    pub ttl_ms: Option<i64>,
+    /// The key vanished between the `SCAN` that found it and the field read —
+    /// a distinguishable empty state, not an error.
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,9 +93,22 @@ where
     cmd.query_async(conn).await.map_err(|e| e.to_string())
 }
 
-pub async fn memory_sample<C>(conn: &mut C, limit: u32) -> Result<MemorySampleResult, String>
+/// Cursor-sample a database's largest keys, reading `MEMORY USAGE`, `TYPE` and
+/// `PTTL` for each in the batched primitive
+/// [`crate::ops_workbench::fetch_memory_sample_fields`] (see that fn for why the
+/// read is one pipeline on a single node but addressed per key on a cluster).
+///
+/// The `SCAN` loop below is topology-agnostic on purpose — a cluster `SCAN`
+/// reaching different masters is a separate pre-existing concern tracked on its
+/// own, and out of scope here, which is why the batched field read is addressed
+/// by each key's own slot rather than assuming the sample is single-shard.
+pub async fn memory_sample<C>(
+    conn: &mut C,
+    limit: u32,
+    topology: Topology,
+) -> Result<MemorySampleResult, String>
 where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
+    C: redis::aio::ConnectionLike + SlotRoutedConnection + Send,
 {
     let limit = limit.max(1) as usize;
     let db_size: u64 = redis::cmd("DBSIZE")
@@ -119,17 +144,16 @@ where
         }
     };
 
+    let fields = crate::ops_workbench::fetch_memory_sample_fields(conn, &keys, topology).await?;
+
     let mut samples = Vec::with_capacity(keys.len());
-    for key in keys {
-        let bytes: Option<u64> = redis::cmd("MEMORY")
-            .arg("USAGE")
-            .arg(&key)
-            .query_async(conn)
-            .await
-            .map_err(|e| e.to_string())?;
+    for (key, field) in keys.into_iter().zip(fields) {
         samples.push(MemorySample {
             key,
-            bytes: bytes.unwrap_or(0),
+            bytes: field.bytes.unwrap_or(0),
+            key_type: field.key_type,
+            ttl_ms: field.ttl_ms,
+            missing: field.missing,
         });
     }
 
@@ -212,7 +236,15 @@ where
 #[serde(rename_all = "camelCase")]
 pub struct InfoSectionFiltered {
     pub name: String,
-    pub entries: Vec<(String, String)>,
+    pub entries: Vec<InfoEntry>,
+}
+
+/// Represents a single key-value entry in info_filtered output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoEntry {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -248,7 +280,7 @@ where
             };
             if is_match {
                 matched_count += 1;
-                filtered.push((k.clone(), v.clone()));
+                filtered.push(InfoEntry { key: k.clone(), value: v.clone() });
             }
         }
 
@@ -409,6 +441,40 @@ mod tests {
     }
 
     #[test]
+    fn memory_sample_serializes_the_bigkey_contract() {
+        // Screen A's Top-5 rows read `type` / `ttlMs` / `missing`; `keyType`
+        // (the sidebar's field) must NOT appear here.
+        let sample = MemorySample {
+            key: "big".into(),
+            bytes: 4096,
+            key_type: Some("hash".into()),
+            ttl_ms: Some(-1),
+            missing: false,
+        };
+        let json = serde_json::to_value(&sample).expect("MemorySample must serialize");
+        assert_eq!(json["type"], serde_json::json!("hash"));
+        assert_eq!(json["ttlMs"], serde_json::json!(-1));
+        assert_eq!(json["bytes"], serde_json::json!(4096));
+        assert_eq!(json["missing"], serde_json::json!(false));
+        assert!(
+            json.get("keyType").is_none(),
+            "big-key type serializes as `type`, not `keyType`"
+        );
+
+        // A deleted key answers a distinguishable empty state, not an error.
+        let gone = MemorySample {
+            key: "gone".into(),
+            bytes: 0,
+            key_type: None,
+            ttl_ms: Some(-2),
+            missing: true,
+        };
+        let json = serde_json::to_value(&gone).expect("serialize");
+        assert_eq!(json["missing"], serde_json::json!(true));
+        assert!(json["type"].is_null());
+    }
+
+    #[test]
     fn slowlog_reset_gate_rejects_without_confirm() {
         let err = ensure_slowlog_reset_confirmed(false).unwrap_err();
         assert!(err.contains("confirm"));
@@ -496,5 +562,40 @@ mod tests {
             }
         }
         assert_eq!(matched, 1);
+    }
+
+    #[test]
+    fn test_info_filtered_entries_serialize_as_objects() {
+        use serde_json;
+
+        let result = crate::ops_observe::InfoFilteredResult {
+            sections: vec![
+                crate::ops_observe::InfoSectionFiltered {
+                    name: "Server".to_string(),
+                    entries: vec![
+                        crate::ops_observe::InfoEntry {
+                            key: "redis_version".to_string(),
+                            value: "7.2.0".to_string(),
+                        },
+                    ],
+                },
+            ],
+            total_entries: 1,
+            matched_entries: 1,
+        };
+
+        let json = serde_json::to_value(&result).expect("serialize");
+        let expected = serde_json::json!({
+            "sections": [
+                {
+                    "name": "Server",
+                    "entries": [{"key": "redis_version", "value": "7.2.0"}]
+                }
+            ],
+            "totalEntries": 1,
+            "matchedEntries": 1
+        });
+
+        assert_eq!(json, expected);
     }
 }

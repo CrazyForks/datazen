@@ -7,20 +7,25 @@ import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
 import { RedisConsole } from '../console/RedisConsole';
 import { MonitorPanel } from '../observe/MonitorPanel';
 import { PubSubPanel } from '../observe/PubSubPanel';
+import { SlowlogPanel } from '../observe/SlowlogPanel';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
+import { requestDraftLeave } from '../shared/draftGuard';
 
-type ActiveTab = 'items' | 'console' | 'monitor' | 'pubsub';
+/**
+ * 右列一级页签（裁定 8-1 = **5 枚**：键详情 / 命令行 / 发布订阅 / 监控 / 慢日志）。
+ * 慢日志由 `MonitorPanel` 的二极子页升为一级，独立组件见 `observe/SlowlogPanel`。
+ */
+export type ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor' | 'slowlog';
 
-const TABS: ActiveTab[] = ['items', 'console', 'monitor', 'pubsub'];
+/** 页签顺序即 PRD §3.3 右列页签条顺序（发布订阅在监控之前）。 */
+export const TABS: ActiveTab[] = ['items', 'console', 'pubsub', 'monitor', 'slowlog'];
 
-const TAB_LABEL_KEYS: Record<
-  ActiveTab,
-  'redis.items' | 'redis.console' | 'redis.monitor' | 'redis.pubsub'
-> = {
+const TAB_LABEL_KEYS: Record<ActiveTab, string> = {
   items: 'redis.items',
   console: 'redis.console',
   monitor: 'redis.monitor',
   pubsub: 'redis.pubsub',
+  slowlog: 'redis.slowlog',
 };
 
 function parseRedisDbIndex(database?: string): number {
@@ -41,6 +46,10 @@ export function RedisConnectionView({
   hideSidebar,
   isActive = true,
   selectTableRef,
+  // Host-owned selection/dirty atom of this panel; only present when the driver
+  // declared a KV workspace capability. The workbench is its single writer, so
+  // this view just forwards it (contract F-2 — no bare getter on the render path).
+  kvSlotState,
 }: ConnectionViewProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<ActiveTab>('items');
@@ -76,18 +85,30 @@ export function RedisConnectionView({
   }, [selectTableRef, handleSelectDatabase, isActive]);
 
   const handleTabClick = useCallback((tab: ActiveTab) => {
-    setActiveTab(tab);
-    setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
-  }, []);
+    if (tab === activeTab) return;
+    // I-1: switching tabs hides the workbench, so an unsaved draft would be
+    // stranded. Ask first; the leave dialog lives inside the dirty editor and
+    // portals to `document.body`, so it stays visible on the hidden tab.
+    void (async () => {
+      if (!(await requestDraftLeave())) return;
+      setActiveTab(tab);
+      setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
+    })();
+  }, [activeTab]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4">
+      <div
+        className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4"
+        data-testid="redis-tab-bar"
+        data-tab-count={TABS.length}
+      >
         {TABS.map((tab) => (
           <button
             key={tab}
             type="button"
             data-testid={`redis-tab-${tab}`}
+            data-active={activeTab === tab ? 'true' : 'false'}
             className={cn(
               'relative px-4 py-3 text-sm transition-colors',
               activeTab === tab ? 'text-fg font-medium' : 'text-fg-secondary hover:text-fg',
@@ -123,6 +144,7 @@ export function RedisConnectionView({
             onDbIndexChange={setDbIndex}
             onDatabaseChange={handleDatabaseChange}
             onKeysChange={setKeySuggestions}
+            kvSlotState={kvSlotState}
           />
         </div>
       )}
@@ -150,6 +172,11 @@ export function RedisConnectionView({
       {visitedTabs.includes('pubsub') && (
         <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'pubsub' && 'hidden')}>
           <PubSubPanel dbSessionId={dbSessionId} />
+        </div>
+      )}
+      {visitedTabs.includes('slowlog') && (
+        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'slowlog' && 'hidden')}>
+          <SlowlogPanel dbSessionId={dbSessionId} />
         </div>
       )}
     </div>

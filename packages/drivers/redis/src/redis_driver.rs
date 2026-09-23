@@ -11,9 +11,7 @@ use crate::connect::{
     build_connection_plan, looks_like_connection_loss, open_live_conn, open_pinned_node_conn,
     ConnectionPlan, RedisLiveConn,
 };
-use crate::redis_driver_on::{
-    get_key_detail_on, get_key_raw_on, info_server_on, scan_keys_with_info_on, select_db_on,
-};
+use crate::redis_driver_on::{get_key_detail_on, get_key_raw_on, info_server_on, select_db_on};
 use crate::with_redis_conn;
 
 pub(crate) struct RedisConn {
@@ -21,14 +19,22 @@ pub(crate) struct RedisConn {
     pub(crate) live: RedisLiveConn,
 }
 
-macro_rules! with_live_op {
-    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident| $body:expr) => {{
+/// Like [`with_live_op!`], but hands the operation the connection topology.
+///
+/// Some batch shapes are only safe on a single-node transport: a cluster
+/// connection re-folds per-command errors and pins a pipeline to one slot, so
+/// `ops_workbench` has to issue those probes command by command. The topology is
+/// read once up front — Sentinel failover swaps the connection but not the
+/// variant, so it stays valid across the retry below.
+macro_rules! with_live_op_topo {
+    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident, $topo:ident| $body:expr) => {{
         let handle = ConnectionHandle {
             id: $connection_id.to_string(),
             pool_id: $connection_id.to_string(),
         };
         let mut conns = $self.connections.write().await;
         let rc = RedisDriver::get_conn(&mut conns, &handle)?;
+        let $topo = rc.live.topology();
         RedisDriver::select_db(&mut rc.live, $db_index)
             .await
             .map_err(DriverError::QueryFailed)?;
@@ -44,6 +50,12 @@ macro_rules! with_live_op {
             result = with_redis_conn!(&mut rc.live, |$conn| $body);
         }
         result.map_err(DriverError::QueryFailed)
+    }};
+}
+
+macro_rules! with_live_op {
+    ($self:expr, $connection_id:expr, $db_index:expr, |$conn:ident| $body:expr) => {{
+        with_live_op_topo!($self, $connection_id, $db_index, |$conn, _topology| $body)
     }};
 }
 
@@ -76,6 +88,21 @@ macro_rules! plugin_on_db {
             $($arg: $arg_ty,)*
         ) -> Result<$ret, DriverError> {
             with_live_op!(self, connection_id, db_index, |$conn| ($body).await)
+        }
+    };
+}
+
+/// [`plugin_on_db!`] for operations whose request shape depends on the
+/// topology; they receive it as the second closure argument.
+macro_rules! plugin_on_db_topo {
+    ($name:ident, ($($arg:ident: $arg_ty:ty),*) -> $ret:ty, |$conn:ident, $topo:ident| $body:expr) => {
+        pub async fn $name(
+            &self,
+            connection_id: &str,
+            db_index: u32,
+            $($arg: $arg_ty,)*
+        ) -> Result<$ret, DriverError> {
+            with_live_op_topo!(self, connection_id, db_index, |$conn, $topo| ($body).await)
         }
     };
 }
@@ -146,6 +173,13 @@ impl RedisDriver {
         }
     }
 
+    /// One page of the flat key browser, under one COUNT budget.
+    ///
+    /// `budget` is the optional cumulative `COUNT` cap for the *whole* action
+    /// (PRD §3.2); `None` derives it from the `DBSIZE` read inside the op. The
+    /// topology travels because the per-page attribute batches are one pipeline
+    /// on a single node but one addressed batch per key on a cluster.
+    #[allow(clippy::too_many_arguments)]
     pub async fn scan_keys_with_info(
         &self,
         handle: &ConnectionHandle,
@@ -156,7 +190,8 @@ impl RedisDriver {
         key_type: Option<&str>,
         with_memory: bool,
         no_ttl_only: bool,
-    ) -> Result<(u64, Vec<KeyEntry>, u64), DriverError> {
+        budget: Option<u64>,
+    ) -> Result<crate::ops_tree_scan::ScanKeysPage, DriverError> {
         let t0 = std::time::Instant::now();
         tracing::info!(db_index, %pattern, cursor, count, "redis scan_keys_with_info: acquiring lock");
         let mut conns = self.connections.write().await;
@@ -165,20 +200,22 @@ impl RedisDriver {
             "redis scan_keys_with_info: lock acquired"
         );
         let rc = Self::get_conn(&mut conns, handle)?;
+        let topology = rc.live.topology();
         Self::select_db(&mut rc.live, db_index)
             .await
             .map_err(DriverError::QueryFailed)?;
         let pattern = pattern.to_string();
         let key_type = key_type.map(str::to_string);
-        with_redis_conn!(&mut rc.live, |conn| scan_keys_with_info_on(
+        with_redis_conn!(&mut rc.live, |conn| crate::ops_tree_scan::scan_keys_page(
             conn,
-            db_index,
             &pattern,
             cursor,
             count,
             key_type.as_deref(),
             with_memory,
             no_ttl_only,
+            budget,
+            topology,
             t0
         )
         .await)
@@ -286,6 +323,11 @@ impl RedisDriver {
     }
 
     /// List direct children under a key prefix (leaf keys + virtual folders).
+    ///
+    /// `budget` and `with_memory` behave exactly as in
+    /// [`scan_keys_with_info`](Self::scan_keys_with_info): one cumulative COUNT
+    /// cap per action, and `MEMORY USAGE` inside the page's meta batch.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_children(
         &self,
         handle: &ConnectionHandle,
@@ -296,7 +338,9 @@ impl RedisDriver {
         sep: Option<&str>,
         no_ttl_only: bool,
         key_type: Option<&str>,
-    ) -> Result<(Vec<crate::ops_tree::ChildEntry>, u64), DriverError> {
+        with_memory: bool,
+        budget: Option<u64>,
+    ) -> Result<crate::ops_tree::ChildrenPage, DriverError> {
         let t0 = std::time::Instant::now();
         tracing::info!(db_index, %prefix, cursor, count, "redis list_children: acquiring lock");
         let mut conns = self.connections.write().await;
@@ -305,13 +349,14 @@ impl RedisDriver {
             "redis list_children: lock acquired"
         );
         let rc = Self::get_conn(&mut conns, handle)?;
+        let topology = rc.live.topology();
         Self::select_db(&mut rc.live, db_index)
             .await
             .map_err(DriverError::QueryFailed)?;
         let prefix = prefix.to_string();
         let sep = sep.map(str::to_string);
         let key_type = key_type.map(str::to_string);
-        with_redis_conn!(&mut rc.live, |conn| crate::ops_tree::list_children_on(
+        with_redis_conn!(&mut rc.live, |conn| crate::ops_tree::list_children_page(
             conn,
             &prefix,
             cursor,
@@ -319,6 +364,10 @@ impl RedisDriver {
             sep.as_deref(),
             no_ttl_only,
             key_type.as_deref(),
+            with_memory,
+            budget,
+            topology,
+            t0
         )
         .await)
     }
@@ -353,8 +402,8 @@ impl RedisDriver {
         Ok(crate::ops_value_search::abort_task(&session, requested).await)
     }
 
-    plugin_on_db!(plugin_set_string, (key: &str, value: &str, keep_ttl: bool) -> (), |conn| crate::ops::set_string_with_options(conn, key, value, keep_ttl));
-    plugin_on_db!(plugin_set_string_bytes, (key: &str, bytes: &[u8], keep_ttl: bool) -> (), |conn| crate::ops_write::set_string_bytes(conn, key, bytes, keep_ttl));
+    plugin_on_db!(plugin_set_string, (key: &str, value: &str, keep_ttl: Option<bool>) -> crate::ops_write::SetStringOutcome, |conn| crate::ops_write::set_string_with_ttl_policy(conn, key, value.as_bytes(), keep_ttl));
+    plugin_on_db!(plugin_set_string_bytes, (key: &str, bytes: &[u8], keep_ttl: Option<bool>) -> crate::ops_write::SetStringOutcome, |conn| crate::ops_write::set_string_with_ttl_policy(conn, key, bytes, keep_ttl));
     plugin_on_db!(plugin_set_expire_at, (key: &str, expire_at: i64) -> (), |conn| crate::ops::set_expire_at(conn, key, expire_at));
     plugin_on_db!(plugin_hash_set, (key: &str, field: &str, value: &str) -> (), |conn| crate::ops::hash_set(conn, key, field, value));
     plugin_on_db!(plugin_hash_del, (key: &str, fields: &[String]) -> (), |conn| crate::ops::hash_del(conn, key, fields));
@@ -376,7 +425,15 @@ impl RedisDriver {
     plugin_on_db!(plugin_set_ttl, (key: &str, ttl_seconds: i64) -> (), |conn| crate::ops::set_ttl(conn, key, ttl_seconds));
     plugin_on_db!(plugin_batch_delete_pattern, (pattern: &str) -> crate::ops::BatchDeleteResult, |conn| crate::ops::batch_delete_pattern(conn, pattern));
     plugin_on_db!(plugin_batch_set_ttl, (keys: &[String], ttl_seconds: i64) -> crate::ops::BatchSetTtlResult, |conn| crate::ops::batch_set_ttl(conn, keys, ttl_seconds));
-    plugin_on_db!(plugin_count_matching, (pattern: &str) -> u64, |conn| crate::ops::count_matching(conn, pattern));
+    // Key-tree census under one action budget: `truncated` says the number is a
+    // floor (the UI renders `n+`), and `*` / an exact key name answer without
+    // scanning at all. The topology is passed because the exact-key short circuit
+    // sends one addressed `EXISTS` on a cluster.
+    plugin_on_db_topo!(plugin_count_matching, (pattern: &str, budget: Option<u64>) -> crate::ops_tree_scan::CountOutcome, |conn, topology| crate::ops_tree_scan::count_budgeted(conn, pattern, budget, topology));
+    // Key-attribute probe for one named key: `EXISTS + TYPE + PTTL + MEMORY
+    // USAGE` in one batch, never a value read. On a cluster the batch is
+    // addressed to the shard owning the key, where it stays in one slot.
+    plugin_on_db_topo!(plugin_key_probe, (key: &str) -> crate::ops_key_probe::KeyProbe, |conn, topology| crate::ops_key_probe::key_probe(conn, key, topology));
     plugin_on_db!(plugin_flush_db, () -> (), |conn| crate::ops::flush_db(conn));
 
     pub async fn plugin_batch_rename_prefix(
@@ -464,10 +521,26 @@ impl RedisDriver {
         limit: Option<u32>,
     ) -> Result<crate::ops_observe::MemorySampleResult, DriverError> {
         let limit = crate::ops_observe::resolve_memory_sample_limit(limit);
-        with_live_op!(self, connection_id, db_index, |conn| {
-            crate::ops_observe::memory_sample(conn, limit).await
+        // The topology is passed because the batched MEMORY/TYPE/PTTL read is a
+        // single pipeline on a single node but has to be addressed key by key on
+        // a cluster (a cross-slot pipeline is rejected with `CROSSSLOT`).
+        with_live_op_topo!(self, connection_id, db_index, |conn, topology| {
+            crate::ops_observe::memory_sample(conn, limit, topology).await
         })
     }
+
+    // Workbench KV context bar: cursor-sampled type distribution. The sample
+    // window is clamped inside the op, so an oversized `sampleLimit` never
+    // turns into an error; the topology is passed in because a cluster
+    // connection cannot carry the cross-key TYPE batch.
+    // (Plain comment: rustdoc ignores macro invocations.)
+    plugin_on_db_topo!(plugin_type_distribution, (sample_limit: Option<u64>) -> crate::ops_workbench::TypeDistribution, |conn, topology| crate::ops_workbench::type_distribution(conn, sample_limit, topology));
+
+    // Key-attribute sidebar: every attribute in one batch, degraded per field;
+    // a missing key is a successful reply with `missing: true`. On a cluster
+    // connection the same six commands are sent one at a time, which is what
+    // keeps `OBJECT FREQ` from failing the whole probe there.
+    plugin_on_db_topo!(plugin_key_object_info, (key: &str) -> crate::ops_workbench::KeyObjectInfo, |conn, topology| crate::ops_workbench::key_object_info(conn, key, topology));
 
     pub async fn plugin_slowlog_get(
         &self,

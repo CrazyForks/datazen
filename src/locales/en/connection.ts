@@ -274,5 +274,16 @@ const pack = {
   'connSettings.title': 'Connection Settings',
   'connSettings.description': 'Configure display and behavior for this connection',
   'connection.dashboard.title': 'Dashboard',
+  // KV workspace slot actions handled by the host (W3-A §1.2). Namespace
+  // `redis.kvSlot.*` is host-owned copy for the KV panel; the driver keeps its
+  // own `redis.*` pack in packages/drivers/redis/locales.
+  'redis.kvSlot.flushTitle': 'Flush the current database',
+  'redis.kvSlot.flushMessage':
+    'Every key in the database this panel is bound to will be deleted. This cannot be undone.',
+  'redis.kvSlot.flushBlocked':
+    'Safe Mode blocks flushing a database. Turn Safe Mode off in Settings to continue.',
+  // KV context facts injected into an AI request (W3-A §1.3).
+  'redis.ai.context.tooltip': 'Ask the assistant about the selected key',
+  'redis.ai.context.attached': 'Asking about key',
 } as const;
 export default pack;

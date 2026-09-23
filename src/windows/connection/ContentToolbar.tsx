@@ -9,16 +9,20 @@ import {
   TableProperties,
 } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
+import { useKvSlotSelectedKey } from '../../hooks/useKvSlotSelectedKey';
 import {
   estimateExpandedToolbarWidth,
   TOOLBAR_GAP,
   useCompactToolbar,
 } from '../../hooks/useCompactToolbar';
 import { openDocsWindow } from '../../lib/windowManager';
+import { hasKvAiFacts } from '../../lib/kvAiContext';
 import { tid } from '../../lib/tid';
 import { DetailPanelToggle } from '../../components/DataTable/DetailPanelToggle';
 import { ToolbarShell } from '../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../components/ui/ToolbarButton';
+import type { KvContextBarBinding } from './useKvWorkspaceSlots';
+import type { KvSlotState } from '@datazen/driver-sdk';
 
 /** Minimum toolbar width (px) to show text labels for the visible left-side actions. */
 export function contentToolbarExpandedMinWidth({
@@ -62,6 +66,20 @@ export interface ContentToolbarProps {
   aiChatOpen: boolean;
   detailPanelApplicable: boolean;
   detailOpen: boolean;
+  /**
+   * Driver-contributed KV context bar for the 48px left cluster. Absent (or not
+   * provided by this build) ⇒ the toolbar keeps its plain spacer, exactly as
+   * before KV slots existed.
+   */
+  contextBarSlot?: KvContextBarBinding;
+  /**
+   * State relay of the active KV panel; `undefined` unless the active panel belongs
+   * to a key-value driver (`isKeyValue` metadata, so no driver id is named here).
+   * The toolbar needs it for the AI button (§1.3): while no key is in scope the
+   * assistant would be handed nothing about a KV panel, so the button is not
+   * rendered at all instead of opening a chat with no context.
+   */
+  kvPanelState?: KvSlotState;
   onNewQuery: () => void;
   onCreateTable: () => void;
   onOpenErDiagram: () => void;
@@ -81,6 +99,8 @@ export function ContentToolbar({
   aiChatOpen,
   detailPanelApplicable,
   detailOpen,
+  contextBarSlot,
+  kvPanelState,
   onNewQuery,
   onCreateTable,
   onOpenErDiagram,
@@ -100,9 +120,30 @@ export function ContentToolbar({
     detailPanelApplicable,
   });
   const { ref: toolbarRef, compact } = useCompactToolbar(expandedMinWidth);
+  const ContextBar = contextBarSlot?.Component;
+
+  // PRD §3.4 / W3-A §1.3: on a KV panel the assistant has exactly one host-owned
+  // fact to be told about — the selected key — so without one the button is not
+  // rendered. Relational panels keep their existing behaviour (`contextTables`).
+  const kvSelectedKey = useKvSlotSelectedKey(kvPanelState);
+  const showAiChat = !kvPanelState || hasKvAiFacts({ selectedKey: kvSelectedKey });
 
   return (
     <ToolbarShell ref={toolbarRef} className="h-12 min-h-[48px] px-3">
+      {/*
+        KV context bar: the driver's 48px left cluster. It takes the spacer's
+        flex-1 so the band is actually filled instead of pushing an empty gap
+        into the middle (P-1). Absent ⇒ the plain spacer below, unchanged.
+      */}
+      {ContextBar && contextBarSlot && (
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2"
+          data-slot="kv-context-bar"
+          data-testid="conn-toolbar-kv-context-bar"
+        >
+          <ContextBar {...contextBarSlot.props} compact={compact} />
+        </div>
+      )}
       {showNewQuery && (
         <ToolbarButton
           compact={compact}
@@ -173,7 +214,7 @@ export function ContentToolbar({
         />
       )}
 
-      <div className="flex-1" />
+      {!ContextBar && <div className="flex-1" />}
 
       <ToolbarButton
         compact
@@ -184,14 +225,19 @@ export function ContentToolbar({
         onClick={() => openDocsWindow('ai')}
       />
 
-      <ToolbarButton
-        compact
-        variant={aiChatOpen ? 'secondary' : 'ghost'}
-        label="AI"
-        icon={<MessageSquare className="h-3.5 w-3.5" />}
-        onClick={onToggleAiChat}
-        data-testid="conn-toolbar-ai"
-      />
+      {showAiChat && (
+        <ToolbarButton
+          compact
+          variant={aiChatOpen ? 'secondary' : 'ghost'}
+          // On a KV panel the tooltip says what the assistant will be told about;
+          // elsewhere the button keeps its pre-track title (nothing else changes).
+          title={kvPanelState ? t('redis.ai.context.tooltip') : undefined}
+          label="AI"
+          icon={<MessageSquare className="h-3.5 w-3.5" />}
+          onClick={onToggleAiChat}
+          data-testid="conn-toolbar-ai"
+        />
+      )}
 
       {detailPanelApplicable && <DetailPanelToggle open={detailOpen} onToggle={onToggleDetail} />}
     </ToolbarShell>

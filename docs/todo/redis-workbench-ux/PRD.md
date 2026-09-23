@@ -1,6 +1,6 @@
 # PRD: Redis 工作区信息密度与布局重构（Redis Workspace Density & Layout）
 
-> Feature ID: `REDIS_WORKSPACE_UX` · Version: `1.1.0` · Status: **P0 Approved**（§8-1~8-5 五条全部裁定，进入实现）
+> Feature ID: `REDIS_WORKSPACE_UX` · Version: `1.1.0` · Status: **P0 Approved**（§8-1~8-6 六条全部裁定，进入实现；8-6 为第 1 轮修复回合追加）
 > 原型：`docs/todo/redis-workbench-ux/prototype.html`（浏览器直接打开，零依赖/零 CDN，用 `src/styles/themes.css` 的真实 token）
 > 原型含 **4 个可切换屏**：① 现状诊断（P-1/P-2/P-3 左右对照，含代码行号）② 屏 A 连接总览 ③ 屏 B 双栏工作区 ④ 扫描预算模型（6 个状态机取值 + 请求序列 + 不变量）。
 > 屏 B 顶部提供可点状态开关：键属性侧栏 / 自动换行 / 模拟 dirty / 大 value 哨兵 / Hex 只读 / sticky 分组头 / 扫描中；页内已实现 dirty 拦截、TTL 内联三态、批量选择、扫描页脚三态、zset 内联行编辑、Stream Groups 下钻、明暗主题切换。
@@ -209,7 +209,7 @@ Redis 连接窗口（宿主薄壳）
 1. 所有新组件/逻辑落 `packages/drivers/redis/ui/**`，**禁止** import 宿主 `src/**`（护栏 R1 blocking）。
 2. 需要宿主能力（确认对话框、右键菜单、设置读写）只能走 `@datazen/driver-sdk` 的 `bind*` / `useBound*` 桥；缺能力就先扩展 driver-sdk 并保留宿主薄再导出，不得相对路径回宿主。
 3. 文案只改 `packages/drivers/redis/locales/en.ts`，其余 9 语言由 i18n-sync 回合补。`i18n-sync-check` 在开发期**不构成门禁**（§8.2 已核实：pre-commit 不跑、CI `continue-on-error`、`release.yml` 不跑），所以"改英文会红"的从来不是完整性检查，而是**钉死英文值的测试断言**。
-4. 屏 A 若要宿主在"未选 db"时让位给驱动渲染，需走 `DatabaseTypeMeta.connectionView` / 新 EP 契约，由 `@datazen/extension-points` 承载 —— **禁止**宿主硬编码 `databaseType === 'redis'` 分支（当前 `ConnectionWorkspaceHome` 的 KV 判定应改为能力判定）。
+4. 屏 A 让位、上下文条/状态条/键属性侧栏三处槽位，一律走 **codegen 驱动贡献槽位**（`scripts/resolve-drivers.mjs` 的 `kvSlots` 声明 + `getDriverKvSlot` lookup + `DatabaseTypeMeta.kvWorkspace` 能力位），**不走 `@datazen/extension-points`**。未选 db 时由驱动槽位承接 Redis 默认连接总览；宿主不得硬编码 `databaseType === 'redis'` 分支，`ConnectionWorkspaceHome` 通过能力判定展示工作区。EP 是宿主**特权扩展点**（SQL Editor Pro 那类需要 CodeMirror Compartment 与 <5ms 键入延迟的扩展），驱动贡献 UI 属**驱动贡献通道**，把驱动槽位塞进 EP 是错误分层。契约细节以 `docs/development/coordination/tracks/redis-host-slots/progress.md` §契约冻结 F-1/F-2/F-3 为准。
 5. 单文件 800 行红线；`RedisWorkbench.tsx` 现 680 行，本轮必须**先拆再改**（拆出 `KeyTreeColumn.tsx`、`DetailColumn.tsx`）。
 6. **禁止在测试中断言可见文案字符串**（本轮裁定新增）：组件测试一律按 `data-*` 标识 / `role` / i18n **key** 断言，不得写 `getByText('No expiry')` 这类字面量。理由：`en.ts` 是唯一的翻译 source，术语随时会因产品口径改写（本轮 8-4 就是），把英文串钉进断言等于把文案变更成本从 1 个 locale 文件放大到 N 个测试文件。
    - 本轮需清点的存量：`src/locales/locales.test.ts:108-109`（`redis.batchDelete === 'Delete selected'`、`redis.console === 'Console'`）、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx:21,79,378`（`getByText('No expiry')`）。**处理方式 = 改写为 key/属性断言后删掉字面量**，不是把断言整条删掉（删掉会丢覆盖，Tester 按覆盖率补回来）。
@@ -226,7 +226,7 @@ Redis 连接窗口（宿主薄壳）
 | P2 | 规则分组 + hash field TTL + 搜索历史/键模板 + 键盘导航全覆盖 | 同上 |
 | GUI 人工清单 | 真连 Redis 走 6 种类型 + Safe Mode 拦截 + 大 value 只读 + 切语言 + 扫描预算中断 + dirty 拦截切键 + **屏 A 大 key 行跳转 + 类型分布采样标注** | 交用户本地打勾（子代理不跑 `pnpm e2e`） |
 
-### 8.1 裁定记录（2026-09-21，5/5 全部裁定完毕）
+### 8.1 裁定记录（2026-09-21 首批 5/5；8-6 于 2026-09-22 追加，共 6/6）
 
 | # | 议题 | 裁定 | 落点 |
 |---|---|---|---|
@@ -235,6 +235,7 @@ Redis 连接窗口（宿主薄壳）
 | 8-3 | 死按钮修正 | **M**：`DetailPanelToggle` → 键属性侧栏（`MEMORY USAGE` / `OBJECT ENCODING` / `IDLETIME` / `FREQ` / `maxmemory_policy`） | §3.4；`key_object_info` 提前进 P0（§6） |
 | 8-4 | 文案口径 | **照抄**参考图：`永不过期` / `自动换行` / `大小: N B` / `放弃`；并**改掉钉死英文值的存量断言**，改为 key/属性断言 | `locales/en.ts` + §7-6 + §8.2 |
 | 8-5 | 屏 A 定位 | **保留**为 Redis 连接的默认落地屏（未选任何 db 时） | §3.0、§3.1 |
+| 8-6 | 屏 A 大 key 行「类型 / TTL」来源（第 1 轮 BUG-003） | **(A) 扩 `memory_sample` payload**：后端在同一次 `memory_sample` 调用内为每个采样键批读 `MEMORY USAGE` + `TYPE` + `PTTL`——单节点整样一次 pipeline（≤`256` 键/批，屏 A Top-5 即一次往返）；cluster 无法用普通 pipeline（两词命令被客户端路由表错键 + 混槽 `CROSSSLOT`），改为**每键一次同槽寻址批次**（`route_pipeline` 定向该键所属分片），往返数与原「每键一次 `MEMORY USAGE`」实现持平（= 键数 N），批次被折叠拒绝时该键回退为逐命令寻址以保住「单字段被拒只降级该字段」契约。前端 `MemoryCard` 补类型/TTL 两列并共用 `typeTone` 徽标链路，凑齐 §3.1 卡 2「键名/类型/字节/TTL」四列 | §3.1 卡 2；屏 A「四命令零 SCAN」不变量不动；`OverviewJumpTarget.key` 增可选 `keyType`（BUG-001 类型链路）；`TTL=-1` 永不过期 / `-2` 键消失为 Rust 测试钉住的可区分空态 |
 
 ### 8.2 i18n 断言的执行时机（已核实，用于 8-4）
 
@@ -266,7 +267,7 @@ Redis 连接窗口（宿主薄壳）
 | Wave | 轨道 | 范围 | 独占文件面 | 依赖 |
 |---|---|---|---|---|
 | W1 | `redis-cmds-p0` | `type_distribution` + `key_object_info`（Rust，pipeline + 采样位 + 键不存在空态） | `packages/drivers/redis/src/**` | — |
-| W1 | `redis-host-slots` | 宿主 KV **能力判定**改造（去 `databaseType==='redis'` 硬编码）+ 上下文条/状态条**槽位** + `detailPanelApplicable` 修正 + `connectionView` 让位 + driver-sdk/EP 契约补口 | `src/windows/connection/ContentToolbar.tsx`、`ContentView.tsx`、`ContentViewDrawers.tsx`、`ConnectionWorkspaceHome.tsx`、`packages/driver-sdk/**`、`packages/extension-points/**` | — |
+| W1 | `redis-host-slots` | 宿主 KV **能力判定**改造（去 `databaseType==='redis'` 硬编码）+ 上下文条/状态条/键属性侧栏/屏 A **四个 codegen 驱动贡献槽位** + `detailPanelApplicable` 修正 + driver-sdk 槽位契约 | `src/windows/connection/ContentToolbar.tsx`、`ContentView.tsx`、`ContentViewDrawers.tsx`、`ConnectionWorkspaceHome.tsx`、`src/lib/databaseMeta.ts`、`packages/driver-sdk/**`、`scripts/resolve-drivers.mjs` | — |
 | W1 | `redis-assert-policy` | §7-6 断言口径清理 + 约定落笔进文档 | `src/locales/locales.test.ts`、`packages/drivers/redis/ui/__tests__/ttlControlsJourney.test.tsx` | — |
 | W2 | `redis-kvbar-ui` | 驱动侧 KV 上下文条（全量）+ 状态条内容 + 键属性侧栏 UI | `packages/drivers/redis/ui/kv-bar/**`（新目录） | W1 三轨 |
 | W2 | `redis-overview` | 屏 A 七区块 + `redisBrowseHistory.ts` + KV 快捷动作 | `packages/drivers/redis/ui/overview/**`（新目录） | W1 `redis-host-slots` |

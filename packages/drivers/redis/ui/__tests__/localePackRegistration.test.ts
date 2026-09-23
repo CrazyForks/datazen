@@ -64,8 +64,16 @@ describe('[tester] redis locale pack self-registration via ui entry module', () 
   it('registers the pack through the meta.ts side effect (t() resolves real strings)', () => {
     // The active locale is 'en' (only the host wires setLocale, and it does
     // not run in this suite), so this is the app's normal lookup path.
-    expect(t('redis.batchDelete')).toBe('Delete selected');
-    expect(t('redis.console')).toBe('Console');
+    //
+    // Expected copy is read back from the shipped dictionary instead of being
+    // hard-coded: renaming a term in `locales/en.ts` is a copy change and must
+    // not require touching this file. The `not.toBe(key)` guards keep the
+    // assertion honest — an unregistered key echoes verbatim, which would make
+    // a bare dictionary comparison impossible to distinguish from a miss.
+    expect(t('redis.batchDelete')).toBe(en['redis.batchDelete']);
+    expect(t('redis.batchDelete')).not.toBe('redis.batchDelete');
+    expect(t('redis.console')).toBe(en['redis.console']);
+    expect(t('redis.console')).not.toBe('redis.console');
     // An unregistered key would echo verbatim — guard against a false green.
     expect(t('redis.definitelyNotAKey')).toBe('redis.definitelyNotAKey');
     expect(driverKeysOf('en').length).toBeGreaterThan(100);

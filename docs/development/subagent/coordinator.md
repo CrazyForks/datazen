@@ -13,6 +13,18 @@
 
 ## 2. 轨道准备 (Bootstrap)
 
+### 2.0 工具相对路径陷阱（W3 实证，**每条简报都必须写明**）
+
+`read` / `grep` / `glob` 等工具收到**相对路径**时，解析基准是**主检出**（harness 的会话工作目录，通常是 `/path/to/datazen`），**不是**子代理的 worktree。子代理以为自己在读 `packages/drivers/redis/src/ops.rs`，实际读到的是**主检出 `main` 分支上的那一份**。
+
+后果（实测，非理论）：
+- 主检出 `main` 与集成分支**已分叉**（W3 实测：`main` 独有 18 提交 / 基线独有 219 提交，基线**不是** `main` 的祖先）。
+- 同一路径 `packages/drivers/redis/src/ops.rs`：主检出 **1172 行**（含 `set_string_with_options`），子代理 worktree **1124 行**（无该函数）⇒ 子代理会看到**别的分支的代码**，并据此得出「函数已存在 / 已删除」的错误结论。
+- 更隐蔽的是它会**污染差异分析**：任务书里写的「合流过的函数」可能只存在于主检出。
+
+**规则**：派单简报必须写明「**一律用绝对路径**（`<worktree 绝对路径>/...`）」，或明示「源码检查走 `bash` 在工作目录内执行」。协调者自己复核时同样遵守。
+**合流前的连带检查**：`git log --oneline <baseline>..main -- <改动面>` 看主检出自基线以来有无独立提交 —— 有则在 `hub.md` 的 R 清单登记「前向合并（main → 集成分支）」条目，别让它烂在分叉里。
+
 主检出执行配套脚本创建隔离环境：
 ```bash
 scripts/new-feature-worktree.sh <track-id> <base-branch>
@@ -44,23 +56,35 @@ scripts/new-feature-worktree.sh <track-id> <base-branch>
 
 ### 3.2 Bug 修复循环
 
-Tester 完成完整测试后统一上报 Bug 清单。协调者收到 `TEST_FAILED` 后启动修复循环：
+Tester 完成完整测试后交回判定；Bug 在证实当下即逐条落盘（一 Bug 一文件），终报汇总清单。协调者收到 `TEST_FAILED` 后启动修复循环：
 
 ```text
-Tester 完成完整测试 → 一并上报 Bug 清单 + TEST_FAILED
+Tester 跑完 4 阶段 → 交回 Bug 清单 + TEST_FAILED（各条已在 bugs/ 目录逐文件落盘）
 → 协调者 resume 原 Coder agent 修复全部 Bug
 → Coder 修复并提交 → 协调者派发全新 Tester 完整复测
 → 通过 → 闭环 / 不通过 → 回到循环起点
 ```
 
 **规则**：
-1. **完整上报**：Tester 跑完全部测试阶段后统一上报，不逐个中断。
+1. **逐条落盘、统一交回**：Tester 每证实一条 Bug 立即单独 commit 其 `bugs/<bug-id>.md`（死亡免疫，判定不丢）；但 TEST_FAILED 状态机上报仍须等 4 阶段全部跑完，不逐个中断。
 2. **复用原 Coder**：优先 `Task(resume=<coder-agent-id>)` 恢复原编码 Coder，利用已有上下文。仅不可恢复时用 Rescuer。
 3. **修复后必须复测**：Coder 修复并返回 `READY_FOR_TEST` 后，协调者**必须**派发全新 Tester 完整复测。Coder 的自验不能替代 Tester，禁止跳过复测直接合入。
 4. **全新 Tester**：每轮复测使用全新 Tester 实例。
 4. **最大 5 轮**：同一轨道超过 5 轮仍有 Bug，标记 `ESCALATED` 上报用户。
 5. **Bug 状态流转**：`待修复` → `修复中` → `待复测` → `已修复` 或回到 `待修复`。
-6. **修复简报**：包含完整 Bug 清单 + "仅修复这些 Bug" 纪律约束。
+6. **修复简报**：必须包含完整 Bug 清单（ID + 描述 + 重现步骤 + 日志）+ "仅修复这些 Bug" 纪律约束 + 本文件 §3.3 的四份模板件。
+
+### 3.3 修复回合简报的强制要素（W3 实证教训）
+
+派发任何修复/复测/续跑代理时，简报必须自带以下四件，缺一即可能让整个回合报废：
+
+1. **交接手册**：新派实例（与死者不同会话）看不到死者的对话与推理。若修复方案依赖协调者的裁定/取证结论，把**具体落点（文件:行号）+ 已验证的修复方式 + 需审计确认的点**写进简报正文。反例：W3-B/D 两棒的交接结论只存在于已死代理的上下文里，新实例从零重新取证，两棒死亡期间零产出。
+2. **写锁声明**：明写「你是该 worktree 唯一写者」，并列出禁写文件与授权文件（跨轨修复需**显式授权**越界文件，如"仅许动这 3 个 ui 文件 + 新测试"）。
+3. **死亡免疫协议**：一步一 commit（禁止超过 15 分钟无 commit 区间）、重型命令严格串行一次一条、收口前在提交态复跑门禁。本环境的代理死亡多为服务错误/瞬时网络，且**常在长阅读/长思考区间无落盘时发生**——落盘频率就是损失上限。
+4. **Bug 文件写面**：修复者只改 `- **状态**：` 行 + 追加 `## 修复记录（round-N）` 块；正文归登记 Tester。禁改他人区段（一 Bug 一文件后，这是唯一仍可能冲突的共享面）。
+5. **验收句禁用析取式**（W3 实证教训）：写「消解**或**有界」「A **或** B」这类析取验收句，等于给「只做一半」发通行证 —— W3 `redis-detail-ui` BUG-007 的验收句是「消解或有界」，修复只做了有界就过闸；随后第 3 轮 Tester 用探针实测出残留态下点保存会**写到陈旧键名**（`SET … "user:1"`，而屏幕显示 `user:renamed`），即析取的后半支掩盖了一个高危数据错误。**规则**：验收句只写**唯一期望终态**；若两种实现都接受，必须分别写清「A 形态的验收锚点」与「B 形态的验收锚点」，而不是用「或」把它们并成一句。
+6. **析取式断言会让变异假阴性**：同轮 Tester 的变异 (iii)「答 keep 也放行」在析取断言下**全绿**（悬起未答时前半支恒真），只有自建探针才照出盲区。**规则**：修复回合简报要求 Coder 对**每条**变异注入都能指出「红在哪条断言」；出现「注入后仍绿」必须当作**测试强度缺陷**立案，不得当作无害。
+
 
 ## 4. 活性监控与死亡恢复
 
@@ -77,7 +101,7 @@ Tester 完成完整测试 → 一并上报 Bug 清单 + TEST_FAILED
 
 ## 5. 方案 B 进度总览聚合
 
-各子代理仅提交各自 `tracks/<track-id>/progress.md` 与 `bugs.md`。
+各子代理仅提交各自 `tracks/<track-id>/progress.md` 与 `bugs/` 目录（一 Bug 一文件）。
 协调者在以下节点运行聚合脚本：
 ```bash
 node scripts/aggregate-hub.mjs
@@ -88,7 +112,7 @@ node scripts/aggregate-hub.mjs
 ## 6. 合流验证与清理
 
 ### 6.1 逐轨合并
-**合入前提条件**：只有 Tester 返回 `TEST_DONE`（PASSED）且 `bugs.md` 无未关闭 Bug 时，才能合入。Coder 的 `READY_FOR_TEST` 不满足合入条件——必须经过 Tester 复测。
+**合入前提条件**：只有 Tester 返回 `TEST_DONE`（PASSED）且 `tracks/<track-id>/bugs/` 无未关闭 Bug（历史单文件 `bugs.md` 同样计）时，才能合入。Coder 的 `READY_FOR_TEST` 不满足合入条件——必须经过 Tester 复测。
 
 协调者在集成分支合入该轨：
 ```bash
@@ -97,6 +121,18 @@ git merge --no-ff feature/<track-id> -m "feat(coordination): merge track <track-
 合并后在集成分支运行快速健全性检查：
 - `npx tsc --noEmit`
 - 定向单元测试 `cargo test -p datazen --lib` / `npx vitest run`
+
+### 6.1.1 冲突裁决：区分「文本冲突」与「语义冲突」（W3 实证教训）
+
+机械冲突（两侧改同一批行）git 会报，人眼能看；**语义冲突 git 不报**，必须在合流前主动查：
+
+- **同文件不同抽象层**：一轨拆模块（如把 465 行组件拆成 `batchInvokes.ts` + `useBatchActions.tsx`），另一轨在同一文件升契约（如把 `count_matching` 消费端从 `Promise<number>` 升到冻结对象 `CountMatchingResult`）。D 轨从更早 base 分出 ⇒ 只有少数几行真冲突，**机械取任一整侧都会静默丢失语义**：取拆分侧把契约退回旧形状（`[object Object]` bug 复活），取契约侧丢掉模块拆分。
+- **裁决依据是契约/语义，不是分支新旧**：先问「哪一侧的形状被冻结、被谁消费、有没有守卫测试」，再决定保留谁的结构、把谁的语义**移植**进去。
+- **合流清单**：`git log --oneline <merge-base>..<other> -- <file>` 检查两轨是否都碰过同一文件的**不同抽象层**；`--name-only` 取交集，逐个判「文本 or 语义」。
+- **移植必须带上守卫测试**：把被移植方的回归测试按新结构重写（如把渲染整组件的用例改成「hook + 触发条 + `actions.dialogs`」三段式），**断言一条不减** —— 否则重构会让旧 bug 在测试绿灯下复活（W3 `redis-tree-ui` 合流实证：8 条断言全部保留，含 `[object Object]` 反断言与 `n+` 截断臂）。
+- **「触发条件是否真重叠」优先于二选一**（W3-E 实证，I-1 vs I-8）：批量写后的刷新该走「过 draft 守卫 + 清选择」还是「只刷数据 + 保选择」？两轨的验收测试互斥——**看似必须二选一**。但 Rescuer 判出 I-1 的触发条件是「动作会毁掉草稿」、I-8 的前提是「**干净态**刷新不能清选择」，**两者互不重叠**，遂落成 `if (isDraftDirty()) { 守卫 → 拒绝即 return } else { clearFocus() } ; scanRefresh(); tree.refresh();`，两侧同时满足、无需裁定。**协议**：遇到「A 轨测试要 X、B 轨测试要非 X」时，先问「两者的前置条件是否真的在同一区间」，而不是立刻上报互斥。协调者复核时应对这种**新构造的分支**做双向变异（关掉脏分支应只红 A 轨用例、干净路径加 `clearFocus` 应只红 B 轨用例），确认两侧都真被钉住而非「恰好没踩到」。
+- **机械拆分/重命名的独立硬判据：「公开面集合相等」**（W3 `redis-src-split` 实证）：把 8 个超限文件拆成模块目录后，`cargo test 342/0/4` 逐位不变、`fmt` 无新漂移、逐行溯源 8/8 PASS——**但仍有 1 个真回归**：`ops_tree_scan.rs` 顶层的 `pub mod meta_slots` 在 `mod.rs` 的 `pub use` 区被漏掉，旧路径 `crate::ops_tree_scan::meta_slots` 静默断裂，而**门禁完全看不见**（crate 内暂无调用方）。⇒ **重构的验收必须包含「公开面/导出名集合相等」这条独立判据**（`pub fn/struct/enum/const/type/mod/use` 名集合逐文件对照 BASE vs HEAD），并注意口径：**内联 `pub mod` 也算公开名**（漏计会得出「19==19」的假 PASS）。配套的编译级双向探针（改前报 E0433、补一行后编译通过）是最硬的证据形式。
+- **改名/迁移必须登记对照表**（W3-E 合流实证）：D 轨把刷新/新建按钮从工具栏搬到列头并改名 `redis-refresh`→`redis-tree-refresh`、`redis-create-key`→`redis-tree-create-key`、`redis-no-ttl-only`→`redis-tree-chip-no-ttl`（还把 checkbox 换成 chip `<button data-active>`），生产码语义完好，但 E 轨 5 个旅程测试按旧名点击 ⇒ **合流后 9 例红**。⇒ 凡跨轨改名/迁移 `data-testid`、导出名、函数名，必须在 `progress.md` 登记「旧名 → 新名（+ 控件形状变化）」对照，否则消费轨会在合流时集体失效。
 
 ### 6.2 Worktree 与分支清理
 确认合入主线且无残留后执行规范清理：

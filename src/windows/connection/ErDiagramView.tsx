@@ -304,10 +304,10 @@ function ErDiagramInner({
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (onSelectTable && node.data?.tableName) {
-        onSelectTable(node.data.tableName as string, null, database);
+        onSelectTable(node.data.tableName as string, schema, database);
       }
     },
-    [onSelectTable],
+    [onSelectTable, schema, database],
   );
 
   const handleFocusTable = useCallback(
@@ -335,7 +335,7 @@ function ErDiagramInner({
           handlers: {
             onOpenTable: onSelectTable
               ? () => {
-                  onSelectTable(tableName, null, database);
+                  onSelectTable(tableName, schema, database);
                 }
               : undefined,
             onCopyName: () => {
@@ -349,7 +349,7 @@ function ErDiagramInner({
         { x: event.clientX, y: event.clientY },
       );
     },
-    [t, onSelectTable, handleFocusTable],
+    [t, onSelectTable, handleFocusTable, schema, database],
   );
 
   const handleExportPng = useCallback(async () => {

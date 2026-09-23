@@ -214,8 +214,10 @@ const locale = {
   'redis.view.invalidUtf8': 'Not valid UTF-8 (shown with replacement characters)',
   'redis.view.empty': '(empty)',
   'redis.view.noData': 'No binary value available.',
-  'redis.stringModeView': 'View',
-  'redis.stringModeEdit': 'Edit',
+  // E-2 (PRD §3.3): the string "View / Edit" toggle was deleted — the editor is
+  // resident, so `redis.stringModeView` / `redis.stringModeEdit` are gone from the
+  // source of truth. The other nine locales keep their orphan copies until the
+  // pre-release i18n-sync pass (AGENTS.md "i18n 国际化规则").
   'redis.seconds': 's',
   'redis.selectDb': 'Select a database',
   'redis.selectKeyHint': 'Select a key to view details',
@@ -308,6 +310,15 @@ const locale = {
   'redis.console.dangerDanger': 'Dangerous',
   'redis.console.dangerUltra': 'Destructive',
   'redis.console.dangerWarning': '⚠ This command may be destructive. Execute with caution.',
+  // Console fail-closed safety (PRD §4 I-7). Copy lives under its own namespace
+  // so it never lands in the lazily loaded `redis.console.*` domain pack.
+  'redis.consoleSafety.badgeUnknown': 'Unknown · blocked',
+  'redis.consoleSafety.blockedDestructive':
+    'Blocked: {commands} are destructive or server-wide commands and will not run from the Console.',
+  'redis.consoleSafety.blockedUnknown':
+    'Blocked: {commands} is not a recognised Redis command, so the Console refused to run it.',
+  'redis.consoleSafety.blockedHint':
+    'Use the key browser instead of KEYS, the settings and info panels instead of CONFIG, and enable Allow Flush in the Redis connection settings for FLUSHDB/FLUSHALL.',
   // Console completion popup
   'redis.completion.loading': 'Loading keys…',
   'redis.grp.key': 'key',
@@ -352,6 +363,229 @@ const locale = {
   'redis.monitor.memoryUsageHint': 'Enter a key to check its memory usage',
   'redis.monitor.memoryUsageBytes': '{bytes} bytes',
   'redis.monitor.infoFiltered': 'Info (filtered)',
+
+  // ── 屏 A · Redis connection overview (kvSlots.connectionHome) ──
+  // Shared shell / states (PRD I-11: every block owns a named empty state).
+  'redis.overview.loading': 'Loading…',
+  'redis.overview.connected': 'Connected',
+  'redis.overview.refresh': 'Refresh',
+  'redis.overview.retry': 'Try again',
+  'redis.overview.loadFailed': 'Could not load this block',
+  'redis.overview.empty.default': 'Nothing to show yet',
+  'redis.overview.unauthorized.default': 'Not authorized for this data source',
+  'redis.overview.jump.pendingTree':
+    'Opening a database panel from the overview is not wired to the host yet — pick the database in the left navigation tree.',
+  'redis.overview.jump.pendingPanel':
+    'This action needs an open database panel — pick a database in the left navigation tree first.',
+  'redis.overview.jump.failed': 'Could not hand the request to the workspace.',
+  'redis.overview.unit.bits': '{value}-bit',
+  'redis.overview.unit.days': '{value} days',
+  'redis.overview.unit.clients': '{value}',
+  'redis.overview.unit.opsPerSec': '{value} /s',
+  'redis.overview.unit.microseconds': '{value} µs',
+  'redis.overview.timeAgo.seconds': '{value}s ago',
+  'redis.overview.timeAgo.minutes': '{value}m ago',
+  'redis.overview.timeAgo.hours': '{value}h ago',
+  'redis.overview.timeAgo.days': '{value}d ago',
+
+  // Header banner pills (clickable → monitor sub-page).
+  'redis.overview.pill.version': 'version',
+  'redis.overview.pill.mode': 'mode',
+  'redis.overview.pill.usedMemory': 'used',
+
+  // Card 1 · Server overview
+  'redis.overview.server.title': 'Server',
+  'redis.overview.server.version': 'Redis version',
+  'redis.overview.server.mode': 'Mode',
+  'redis.overview.server.arch': 'Architecture',
+  'redis.overview.server.uptime': 'Uptime',
+  'redis.overview.server.connectedClients': 'Connected clients',
+  'redis.overview.server.blockedClients': 'Blocked clients',
+  'redis.overview.server.opsPerSec': 'Ops / sec',
+  'redis.overview.server.totalCommands': 'Commands processed',
+  'redis.overview.server.evictedKeys': 'Evicted keys',
+  'redis.overview.server.expiredKeys': 'Expired keys',
+  'redis.overview.server.empty': 'INFO reported no server fields',
+  'redis.overview.server.unauthorized': 'Not authorized to read INFO',
+  'redis.overview.mode.standalone': 'standalone',
+  'redis.overview.mode.cluster': 'cluster',
+  'redis.overview.mode.sentinel': 'sentinel',
+
+  // Card 2 · Memory + big keys
+  'redis.overview.memory.title': 'Memory',
+  'redis.overview.memory.used': 'used_memory',
+  'redis.overview.memory.max': 'maxmemory',
+  'redis.overview.memory.maxUnlimited': 'maxmemory (no limit)',
+  'redis.overview.memory.unlimited': 'unlimited',
+  'redis.overview.memory.usedPercent': 'Used of max',
+  'redis.overview.memory.fragRatio': 'Fragmentation ratio',
+  'redis.overview.memory.policy': 'Eviction policy',
+  'redis.overview.memory.bigKeys': 'Top 5 big keys',
+  'redis.overview.memory.sampledDb': 'sampled from {db}',
+  'redis.overview.memory.truncated': 'Sample window exhausted — bigger keys may exist',
+  'redis.overview.memory.empty': 'No memory stats in INFO',
+  'redis.overview.memory.unauthorized': 'Not authorized to read memory stats',
+  'redis.overview.memory.bigKeysEmpty': 'No keys found by the memory sampler',
+  'redis.overview.memory.bigKeysUnauthorized':
+    'Big-key sampling is not authorized for this connection',
+  'redis.overview.memory.bigKeysUnauthorizedHint':
+    'Grant the redis:allow-memory-sample permission to list the largest keys.',
+  'redis.overview.memory.bigKeyGone': 'gone',
+  'redis.overview.typeUnknown': 'unknown',
+
+  // Card 3 · Key space grid
+  'redis.overview.keyspace.title': 'Key Space',
+  'redis.overview.keyspace.summary': '{dbCount} databases · {nonEmpty} non-empty · {totalKeys} keys',
+  'redis.overview.keyspace.empty': 'Every database is empty on this server',
+  'redis.overview.keyspace.unauthorized': 'Not authorized to read database sizes',
+
+  // Card 4 · Slowlog
+  'redis.overview.slowlog.title': 'Slow queries',
+  'redis.overview.slowlog.duration': 'Duration',
+  'redis.overview.slowlog.command': 'Command',
+  'redis.overview.slowlog.client': 'Client',
+  'redis.overview.slowlog.noClient': 'no client info',
+  'redis.overview.slowlog.empty':
+    'SLOWLOG GET is empty — no command has crossed the slowlog threshold (slowlog-log-slower-than) since the last reset.',
+  'redis.overview.slowlog.unauthorized': 'Not authorized to read the slow log',
+  'redis.overview.slowlog.unauthorizedHint':
+    'Grant the redis:allow-slowlog-get permission to enable this block.',
+
+  // Quick actions (KV semantics, not SQL)
+  'redis.overview.actions.title': 'Quick actions',
+  'redis.overview.action.browseDb': 'Browse keys',
+  'redis.overview.action.console': 'Console',
+  'redis.overview.action.pubsub': 'Publish / Subscribe',
+  'redis.overview.action.importExport': 'Import / Export',
+  'redis.overview.action.newKey': 'New key',
+
+  // Recently browsed keys (connection-scoped localStorage)
+  'redis.overview.recent.title': 'Recently browsed keys',
+  'redis.overview.recent.empty': 'Keys you open will be listed here for quick access.',
+  'redis.overview.recent.clear': 'Clear history',
+
+  // ── KV workspace slots (PRD §3.4) ───────────────────────────────────────────
+  // Bottom status bar, full version. The db label, the key name and the last
+  // write command are server data, not copy; only the wrappers are translated.
+  // `redis.dbSize` / `redis.loadedCount` above are reused verbatim so the
+  // wording matches the workbench toolbar.
+  'redis.contextBar.status.noKey': 'No key selected',
+  'redis.contextBar.status.unsaved': 'Unsaved changes',
+  'redis.contextBar.status.scanCursor': 'cursor {cursor}',
+  // Shown instead when something was loaded but the cursor never wrapped — the
+  // paired judgement F-1 demands, so a partial tree is never read as complete.
+  'redis.contextBar.status.scanStopped': 'cursor {cursor} (partial)',
+  'redis.contextBar.status.selected': '{count} selected',
+  'redis.contextBar.status.lastWrite': '{command} ({ms}ms)',
+  // ── 48px context bar, full version (PRD §3.4, ruling 8-2 = full) ───────────
+  // Server values (the `db{n}` label, a TYPE token, a byte count) are data, not
+  // copy; only the wrappers below are translated.
+  'redis.contextBar.db': 'Database',
+  'redis.contextBar.dbSelect': 'Switch the database this panel is bound to',
+  'redis.contextBar.memory': 'used {used} / max {max}',
+  // `maxmemory 0` is Redis' way of saying "no ceiling" — it gets its own word so
+  // no renderer can print `max 0` (the same call 屏 A's memory gauge makes).
+  'redis.contextBar.memoryUnlimited': 'used {used} / max no limit',
+  'redis.contextBar.types': 'Key types',
+  // §3.4 hard constraint: a sampled distribution must say so, in the chips group.
+  'redis.contextBar.sampled': 'sampled {sampled}/{dbsize}',
+  'redis.contextBar.scanning': 'Scanning {used}/{total} budget',
+  // Rendered instead when the ceiling is unknown (`scanBudgetTotal === 0`), so no
+  // fraction is implied that the relay cannot back.
+  'redis.contextBar.scanUsed': 'Scanned {used}',
+  'redis.contextBar.scanBudget': 'Scan budget',
+  'redis.contextBar.budget.10k': '10k keys per action',
+  'redis.contextBar.budget.50k': '50k keys per action',
+  'redis.contextBar.budget.200k': '200k keys per action',
+  'redis.contextBar.budget.1M': '1M keys per action',
+  'redis.contextBar.driverSettings': 'Driver settings',
+  'redis.contextBar.more': 'More actions',
+  // Key-props sidebar (ruling 8-3 = M). `redis.ttl` / `redis.noExpiry` above are
+  // reused here so the wording matches the key tree and the detail editor.
+  'redis.keyProps.title': 'Key Attributes',
+  'redis.keyProps.noKey': 'No key selected',
+  'redis.keyProps.noKeyHint': 'Select a key in the tree to read its server attributes.',
+  'redis.keyProps.loading': 'Reading key attributes…',
+  'redis.keyProps.failed': 'Could not read key attributes',
+  'redis.keyProps.missing': 'Key expired or was deleted',
+  'redis.keyProps.unavailable': 'Unavailable',
+  'redis.keyProps.freqUnavailable': 'Unavailable (LFU eviction off)',
+  'redis.keyProps.type': 'Type',
+  'redis.keyProps.memory': 'Memory',
+  'redis.keyProps.encoding': 'Encoding',
+  'redis.keyProps.idle': 'Idle time',
+  'redis.keyProps.freq': 'Access frequency',
+  'redis.keyProps.maxmemoryPolicy': 'Eviction policy',
+  'redis.keyProps.refresh': 'Reload key attributes',
+
+  // ── Key tree, column header / rows / empty states (PRD §3.2 R1~R3, I-4/I-8/I-9/I-11) ──
+  // Track redis-tree-ui. Appended as an isolated `redis.tree.*` namespace so the
+  // concurrent W3-E / W3-F blocks below never touch these keys.
+  'redis.tree.loadedOfTotal': 'Loaded {loaded} of {total} keys',
+  'redis.tree.selectAll': 'Select all loaded keys',
+  'redis.tree.clearSelection': 'Clear selection',
+  'redis.tree.fuzzyHint': 'Fuzzy: wrap a literal in *…* when applying',
+  'redis.tree.groupTree': 'Tree',
+  'redis.tree.groupList': 'List',
+  'redis.tree.separator': 'Separator',
+  'redis.tree.separatorHint': 'Namespace separator used to build the tree',
+  'redis.tree.loadedSubset': '{loaded} of {total}',
+  'redis.tree.folderPartial': '{count}+',
+  'redis.tree.batchResult': 'Succeeded {ok} / failed {failed}',
+  'redis.tree.batchResultToggle': 'Show per-key failures',
+  'redis.tree.error.unknown': 'Unknown error',
+  'redis.tree.error.noAcl': 'Not authorized',
+  'redis.tree.error.keyGone': 'Key no longer exists',
+  'redis.tree.error.badValue': 'Value type rejected the command',
+  'redis.tree.error.network': 'Connection lost',
+  'redis.tree.empty.none': 'This database has no keys yet',
+  'redis.tree.empty.noMatch': 'No key matches "{pattern}"',
+  'redis.tree.empty.interrupted': 'Scan stopped — showing the {loaded} keys found so far',
+  'redis.tree.empty.noPermission': 'This account cannot read the key space (ACL)',
+  'redis.tree.navHint': '↑↓ move · →← fold · ⌘A select all · ⌘R refresh · Esc clear',
+  // BUG-001: the R2 pattern is applied to the rows already loaded. A folder whose
+  // own scan has not finished still holds keys the filter never saw, so its
+  // `(n+)` badge says the remainder is unfiltered instead of implying it was cut.
+  'redis.tree.filterUnloaded': '· rest unfiltered',
+  // ── W3-E key detail (PRD §3.3 screen B right column) ─────────────────────────
+  // Read-only reasons (I-5), key header row, badge row and the TTL pill live
+  // here. Tab labels, the wrap checkbox (`redis.view.wrap`) and the TTL words
+  // (`redis.noExpiry` / `redis.setTtl` …) reuse the existing `redis.*` keys
+  // above — this namespace must stay the only thing this track appends to
+  // `en.ts` (conflict surface §3).
+  'redis.detail.badge.truncated': 'Payload truncated by the size budget',
+  'redis.detail.readonly.binaryView':
+    'Byte view: the rendered hex/bits are a projection, not the stored bytes — switch back to a text view to edit.',
+  'redis.detail.readonly.bigValue':
+    'Large value: the payload is incomplete, so editing is read-only to stop a truncated write overwriting it.',
+  // BUG-006: the over-sentinel-only branch (64 KiB sentinel vs. the backend's
+  // 5 MiB truncation cap) — the payload here IS complete, so the copy must
+  // not claim truncation (its truncated badge stays unlit right next to it).
+  'redis.detail.readonly.bigValueComplete':
+    'Large value: the payload is complete but over the editable size budget, so editing stays read-only to avoid a partial write-back replacing it.',
+  // Badge row: `大小: N B` (ruling 8-4) — `n` is server data (MEMORY USAGE).
+  'redis.detail.badge.size': 'Size: {n} B',
+  // Key header row (ruling 8-4 copy semantics; refresh/rename/delete labels
+  // reuse `redis.refresh` / `redis.renameKey` / `redis.delete` above).
+  'redis.detail.header.copyKey': 'Copy key name',
+  'redis.detail.header.copyInsert': 'Copy insert statement',
+  'redis.detail.header.renameInput': 'New key name',
+  'redis.detail.header.autoRefresh': 'Auto refresh interval',
+  'redis.detail.refresh.interval': '{n} s',
+  'redis.detail.refresh.off': 'Off',
+  // TTL pill: 3-state inline editor (永不过期 reuses `redis.noExpiry`).
+  'redis.detail.ttl.modeRelative': 'Relative TTL',
+  'redis.detail.ttl.modeAbsolute': 'Absolute time (EXPIREAT)',
+  // I-1 dirty interception (E-5): the bottom bar's discard action and the
+  // 放弃更改 / 继续编辑 leave dialog shown before any draft-destroying jump.
+  'redis.detail.discard': 'Discard',
+  'redis.detail.leave.title': 'Unsaved changes',
+  'redis.detail.leave.description': 'This key has unsaved changes.',
+  'redis.detail.leave.discard': 'Discard changes',
+  'redis.detail.leave.keepEditing': 'Keep editing',
+  // BUG-003: visible feedback when the backend rejects `set_string`. The
+  // draft is untouched, so the copy says why nothing was committed.
+  'redis.detail.saveFailed': 'Save failed — {error}',
 } as const;
 
 export default locale;
