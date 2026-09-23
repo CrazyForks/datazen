@@ -536,3 +536,43 @@
 - §5 状态机表「**8 个拦截点**」按**动作类别**计数（8 类导航/操作）：表格本身成立，保留；
 - 但 `await requestDraftLeave()` 的**生产码调用点实测 11 处** = `KeyEditors.tsx ×3`（:114/:121/:134）+ `RedisWorkbench.tsx ×7`（:257/:298/:309/:322/:370/:697/:739）+ `RedisConnectionView.tsx ×1`（:93）；另有 `draftGuard.ts:6` **文档提及 1 处**（不计调用点，连同它对上 T-6 的「12 处」口径）。
 - 此后引用一律写「**11 个调用点 / 8 类动作**」；§5 表 8 行 + 编辑面内部 3 行 = 11，与 `grep -c` 对齐（原 T-6 注「台账需补一句」由本节兑现）。
+
+### 修复轮 round-1 · 完成核对（fixer · 2026-09-23）
+
+- **6 条 bug 全部** `待复测（round-1 修复后）`：各自 bug 文件已追加 `## 修复记录（round-1）`，`bugs/README.md` 汇总表 6 行状态列同步 `待复测`（6/6）。
+- **修复 commit 链**（`feature/redis-detail-ui`，base `09a2c9ccf` 之上，按序）：
+
+  | commit | 内容 |
+  | ------ | ---- |
+  | `d987ddb2d` | 起手：6 个 bug 状态行置 `修复中` + README 对应行 |
+  | `a82dce41d` | BUG-001 同键重取非毁式 + BUG-002 对话框四出口接守卫；取消 3 条 `describe.skip` 并新增双弹排除自测 |
+  | `d68b98f40` | BUG-001/002 台账 → 待复测 + 修复记录；README 行 12-13 |
+  | `449dba5fd` | BUG-003 `StringEditor.save()` `.catch` + `redis.detail.saveFailed` + 验收用例 |
+  | `a26aee76c` | BUG-004 TTL 内联编辑 Esc/失焦退出跃迁（`busy` 忽略）+ 3 条旅程用例 |
+  | `18a4d0c48` | BUG-006 只读文案按 `truncated`/超哨兵分支，新增 `redis.detail.readonly.bigValueComplete` |
+  | `c9e647f2e` | BUG-005 台账四条就地更正（本记录区上半部分） |
+  | `a06889d9e` | BUG-003/004/005/006 台账流转 + README 行 14-17 同步 |
+
+- **门禁四件套**（严格串行、逐条跑在已提交状态 `a06889d9e` 上，输出为原样尾部）：
+
+  ```text
+  G1  npx vitest run --config vitest.drivers.config.ts
+   Test Files  58 passed (58)
+        Tests  556 passed (556)
+
+  G2  npx tsc --noEmit
+  tsc exit=0
+
+  G3  npx vite build
+  ✓ built in 4.89s
+  vite exit=0
+
+  G4  node scripts/check-driver-import-boundaries.mjs
+  [check-driver-import-boundaries] ok (1472 file(s) scanned · 0 blocking violation(s) · 4 advisory finding(s))
+  boundaries exit=0
+  ```
+
+- **基线对照**：G1 从「58 files / 546 passed / 3 skipped」→「**58 / 556 / 0 skipped**」（3 条原 skip 全部转正 + 7 条新增用例；skipped=0、passed ≥549 达标）。原 skip 所在文件复跑：`dirtyLeaveCoverage.test.tsx` → **12 passed (12)**。G4 与基线 1472 / 0 / 4 完全一致。G3 因 `pnpm build` 的 pre-run deps 检查要执行 `pnpm install`（本轨禁令 + 模块目录为 symlink）而改用简报许可的等价备选 `npx vite build`（chunk 体积告警为既有现象）。
+- **覆盖率**：不属四门禁，本轮未复跑；口径 B 仍以更正 1 的复算值 **85.57 / 88.64** 为准，本轮新增用例只增不减、生产码仅改 3 处编辑器分支，≥80% 结论无回归风险。
+- **偏差记录**：① BUG-001 采用「同键非毁式重取」而非 Tester 偏好的「同键也守卫」——H2 验收要求同键重取**零询问**（守卫化会自相矛盾），改后同键路径不销毁任何状态；② 未引入 draftGuard 一次性票据——每条对话框流程按构造 ≤1 次询问（create/rename→守卫化 `onSelectKey`，delete→守卫化 `onClearSelectedKey`，TTL/PERSIST→原位重取 0 询问）+ 同 tick 合并兜底，双弹已由 `[fix-selftest]` 用例排除；③ BUG-005 按修复纪律**追加更正**而非 bug 原建议的「就地改写」；④ `redisBigValue.ts` 判定逻辑未改（`big = truncated || overSentinel` 负责「是否只读」，正确），分支落在 `keyReadOnlyPolicy.ts` 的 reason 选取处。
+- **交接**：6 条 bug 交回**新一棒 Tester 复测**；本轮 fixer 自测（各文件绿）不替代复测判定。
