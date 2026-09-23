@@ -772,6 +772,10 @@ export function ConnectionPage() {
               nodeContextMenuRef={nodeContextMenuRef}
               actionsRef={actionsRef}
               onSelectConnection={handleSelectConnection}
+              // Same callback the navigation tree gets: a driver context bar's db
+              // selector must land on the one activate-or-open implementation,
+              // never on a second copy of it inside ContentView.
+              onSelectKvDb={handleSelectKvDb}
             />
           )}
 

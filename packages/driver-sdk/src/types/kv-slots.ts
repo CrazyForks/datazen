@@ -131,7 +131,24 @@ export type KvSlotAction =
   | { type: 'flushDb' }
   | { type: 'openMonitor' }
   | { type: 'openSettings' }
-  | { type: 'setScanBudget'; value: number };
+  | { type: 'setScanBudget'; value: number }
+  /**
+   * Ask the host to make `database` the panel's database — "switch the db
+   * selector" in PRD §3.4 terms.
+   *
+   * Same class of member as the `setScanBudget` above: the host owns which
+   * database the workspace is showing, so the slot states the intent and the
+   * host decides how to satisfy it (today: activate the KV panel already bound
+   * to that db, or open one). A host that does not handle it yet is a no-op +
+   * warning like any other unwired action — the slot must still render its
+   * selector, because hiding a control the user can see a need for is the
+   * dead-surface failure PRD P-3 exists to prevent.
+   *
+   * Deliberately an action and **not** a member of {@link KvSlotState}: the
+   * relay carries subscribable per-panel *state*, while this is a one-shot
+   * request with no value to observe back.
+   */
+  | { type: 'selectDatabase'; database: string };
 
 /** Props every in-panel KV slot receives from the host. */
 export interface KvPanelSlotProps {

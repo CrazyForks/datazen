@@ -38,12 +38,35 @@ const DRIVER_SETTINGS_SECTION = 'extensions';
  * {@link KvSlotAction} belongs to the drive side of the panel (creating a key,
  * importing/exporting keys, MONITOR, the scan-budget counter) or needs a driver
  * command the host must not name, so it warns instead of guessing.
+ *
+ * `selectDatabase` joined the list once the capability was found to already
+ * exist — `ConnectionPage`'s `handleSelectKvDb` (the navigation tree's and 屏 A's
+ * db entry point) was merely never threaded into the slot channel. A capability
+ * that already exists is wiring, not a new mechanism, so this is now a real
+ * branch rather than a warning.
  */
-const WIRED_ACTIONS: readonly KvSlotAction['type'][] = ['refresh', 'openSettings'];
+const WIRED_ACTIONS: readonly KvSlotAction['type'][] = [
+  'refresh',
+  'openSettings',
+  'selectDatabase',
+];
 
 export interface UseKvSlotActionsArgs {
   /** Refresh the active panel — the same sink the toolbar's own refresh uses. */
   onRefresh: () => void;
+  /**
+   * Bind the workspace to `database` — the context bar's db selector.
+   *
+   * Supplied by the host with `ConnectionPage`'s `handleSelectKvDb`, i.e. the
+   * **same** callback the navigation tree and 屏 A's key-space grid call, so
+   * there is exactly one "activate the panel for this db / open one" path in the
+   * tree. Optional: a host that has not threaded it through degrades to the
+   * documented no-op + warning instead of hiding the driver's selector.
+   *
+   * Only the `database` label travels over the wire; the connection is the one
+   * the panel belongs to, which this host already knows.
+   */
+  onSelectDatabase?: (database: string) => void;
 }
 
 export interface KvSlotActionDispatcher {
@@ -76,14 +99,19 @@ function warnUnwired(action: KvSlotAction): void {
   );
 }
 
-export function useKvSlotActions({ onRefresh }: UseKvSlotActionsArgs): KvSlotActionDispatcher {
+export function useKvSlotActions({
+  onRefresh,
+  onSelectDatabase,
+}: UseKvSlotActionsArgs): KvSlotActionDispatcher {
   const { t } = useI18n();
   const [confirm, dialog] = useConfirmDialog();
 
-  // Latest `t` / `onRefresh` without folding them into `request`'s identity.
-  const latest = useRef({ t, onRefresh });
+  // Latest `t` / `onRefresh` / `onSelectDatabase` without folding them into
+  // `request`'s identity: the callback rides inside the memoised KV slot props
+  // bundle, so a churning `request` would re-render every driver slot.
+  const latest = useRef({ t, onRefresh, onSelectDatabase });
   useEffect(() => {
-    latest.current = { t, onRefresh };
+    latest.current = { t, onRefresh, onSelectDatabase };
   });
 
   /**
@@ -122,6 +150,21 @@ export function useKvSlotActions({ onRefresh }: UseKvSlotActionsArgs): KvSlotAct
         case 'openSettings':
           openSettingsWindow(DRIVER_SETTINGS_SECTION);
           return;
+        case 'selectDatabase': {
+          // The workspace-level db switch. When the host threaded its own
+          // `handleSelectKvDb` through, the request lands on it verbatim (one
+          // implementation of "activate or open this db's panel", shared with
+          // the navigation tree). Without it the request degrades like any other
+          // unwired action — never a throw, and never a reason to hide the
+          // driver's selector (contract F-3 ruling 1).
+          const selectDatabase = latest.current.onSelectDatabase;
+          if (!selectDatabase) {
+            warnUnwired(action);
+            return;
+          }
+          selectDatabase(action.database);
+          return;
+        }
         case 'flushDb':
           // The gate runs first, always: an unwired executor must never become a
           // way to skip it. Approving only gets as far as the warning below —

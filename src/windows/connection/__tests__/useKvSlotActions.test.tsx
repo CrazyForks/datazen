@@ -37,8 +37,14 @@ const UNWIRED: KvSlotAction[] = [
 /** Where the mounted dispatcher's `request` lives, for calls outside render. */
 let request: (action: KvSlotAction) => void;
 
-function Harness({ onRefresh }: { onRefresh: () => void }) {
-  const dispatcher = useKvSlotActions({ onRefresh });
+function Harness({
+  onRefresh,
+  onSelectDatabase,
+}: {
+  onRefresh: () => void;
+  onSelectDatabase?: (database: string) => void;
+}) {
+  const dispatcher = useKvSlotActions({ onRefresh, onSelectDatabase });
   request = dispatcher.request;
   // The dialog is part of the dispatcher's return value: a host that forgot to
   // render it could not gate a dangerous action, so the tests drive it for real.
@@ -77,6 +83,51 @@ describe('useKvSlotActions — wired actions', () => {
 
     expect(windowManager.openSettingsWindow).toHaveBeenCalledWith('extensions');
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('useKvSlotActions — selectDatabase is really wired, not warned', () => {
+  it('forwards the db label to the host sink and warns about nothing', () => {
+    const onSelectDatabase = vi.fn();
+    render(<Harness onRefresh={vi.fn()} onSelectDatabase={onSelectDatabase} />);
+
+    act(() => request({ type: 'selectDatabase', database: 'db3' }));
+
+    expect(onSelectDatabase).toHaveBeenCalledTimes(1);
+    expect(onSelectDatabase).toHaveBeenCalledWith('db3');
+    // The whole point of the ruling: this is no longer a degradation path.
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('degrades to a warning when the host threaded no sink through', () => {
+    const onRefresh = vi.fn();
+    render(<Harness onRefresh={onRefresh} />);
+
+    expect(() => {
+      act(() => request({ type: 'selectDatabase', database: 'db3' }));
+    }).not.toThrow();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('"selectDatabase"');
+    // The warning must advertise that this one *is* wireable, so a host that
+    // dropped the prop can tell a missing sink from a missing capability.
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('selectDatabase');
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it('reaches the newest sink through the frozen request identity', () => {
+    const stale = vi.fn();
+    const fresh = vi.fn();
+    const { rerender } = render(<Harness onRefresh={vi.fn()} onSelectDatabase={stale} />);
+    const initial = request;
+
+    rerender(<Harness onRefresh={vi.fn()} onSelectDatabase={fresh} />);
+    act(() => initial({ type: 'selectDatabase', database: 'db9' }));
+
+    expect(stale).not.toHaveBeenCalled();
+    expect(fresh).toHaveBeenCalledWith('db9');
+    expect(request).toBe(initial);
   });
 });
 
