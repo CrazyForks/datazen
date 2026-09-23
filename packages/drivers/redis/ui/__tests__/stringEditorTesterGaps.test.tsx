@@ -46,6 +46,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { isDraftDirty } from '../shared/draftGuard';
 
 const SAFE_MODE = { current: false };
 
@@ -197,5 +198,41 @@ describe('[tester] JSON 三态在常驻编辑面上的切换（PRD §3.3 保留�
     fireEvent.click(screen.getByTestId('redis-string-save'));
     await waitFor(() => expect(setString).toHaveBeenCalledOnce());
     await waitFor(() => expect(surface().getAttribute('data-string-dirty')).toBe('false'));
+  });
+});
+
+// ============================================================================
+// BUG-003: 后端拒绝 set_string ⇒ 可见反馈 + 草稿原样 + 零未处理 rejection
+// ============================================================================
+describe('[redis-detail-ui-BUG-003] 保存被后端拒绝的可见反馈', () => {
+  it('surfaces the rejection, keeps the draft dirty, and recovers on the next save', async () => {
+    setString.mockRejectedValueOnce(new Error('WRONGTYPE bad'));
+    renderEditor(PRETTY);
+    await waitFor(() => expect(surface()).toBeTruthy());
+
+    fireEvent.change(input(), { target: { value: '{"a":9}' } });
+    await waitFor(() => expect(surface().getAttribute('data-string-dirty')).toBe('true'));
+
+    fireEvent.click(screen.getByTestId('redis-string-save'));
+
+    // 可见错误锚点：data-i18n-key 恰为本轮新增的 redis.detail.* key（identity t）。
+    // `save()` 链路上的 `.catch` 吃掉了 rejection ⇒ vitest 收尾处不会出现
+    // unhandled rejection（有则整跑失败）；这里同时钉住「可见」这一半。
+    const err = await screen.findByTestId('redis-string-save-error');
+    expect(err.getAttribute('data-i18n-key')).toBe('redis.detail.saveFailed');
+    expect(setString).toHaveBeenCalledOnce();
+
+    // 被拒 ⇒ 零静默：草稿值、编辑面脏位、守卫脏位都原样，底栏与保存按钮仍在。
+    expect(surface().getAttribute('data-string-dirty')).toBe('true');
+    expect(input().value).toBe('{"a":9}');
+    expect(isDraftDirty()).toBe(true);
+    expect(save()).not.toBeNull();
+
+    // 退出跃迁：链路恢复后再次保存 ⇒ 错误消失、脏位落 false、不卡死。
+    fireEvent.click(screen.getByTestId('redis-string-save'));
+    await waitFor(() => expect(setString).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId('redis-string-save-error')).toBeNull());
+    await waitFor(() => expect(surface().getAttribute('data-string-dirty')).toBe('false'));
+    expect(isDraftDirty()).toBe(false);
   });
 });

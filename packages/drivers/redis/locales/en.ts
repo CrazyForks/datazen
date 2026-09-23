@@ -509,6 +509,9 @@ const locale = {
   'redis.detail.leave.description': 'This key has unsaved changes.',
   'redis.detail.leave.discard': 'Discard changes',
   'redis.detail.leave.keepEditing': 'Keep editing',
+  // BUG-003: visible feedback when the backend rejects `set_string`. The
+  // draft is untouched, so the copy says why nothing was committed.
+  'redis.detail.saveFailed': 'Save failed — {error}',
 } as const;
 
 export default locale;

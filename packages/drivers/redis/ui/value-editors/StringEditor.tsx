@@ -74,6 +74,7 @@ export function StringEditor({
   const { t } = useI18n();
   const [value, setValue] = useState(() => initialStringEditorValue(detail.value));
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonDisplay, setJsonDisplay] = useState<JsonTextMode>('pretty');
   const [jsonDirty, setJsonDirty] = useState(false);
@@ -117,6 +118,7 @@ export function StringEditor({
     setValue(jsonDisplay === 'pretty' ? serverValue : formatJson(serverValue, jsonDisplay));
     setJsonDirty(false);
     setJsonError(null);
+    setSaveError(null);
     publishDraftDirty(false);
     onDirtyChange?.(false);
   };
@@ -144,6 +146,7 @@ export function StringEditor({
       setJsonError(null);
     }
     setSaving(true);
+    setSaveError(null);
     void (async () => {
       if (gateWrite && !(await gateWrite('write-op'))) {
         setSaving(false);
@@ -160,6 +163,12 @@ export function StringEditor({
           publishDraftDirty(false);
           onDirtyChange?.(false);
           onSaved();
+        })
+        .catch((e) => {
+          // BUG-003: a rejected write must surface visibly instead of dying as
+          // an unhandled rejection. The `.then` above never ran, so the draft
+          // and its dirty flag stay untouched — nothing to clean up here.
+          setSaveError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => setSaving(false));
     })();
@@ -191,6 +200,7 @@ export function StringEditor({
     setValue(next);
     setJsonDirty(true);
     setJsonError(null);
+    setSaveError(null);
   };
 
   return (
@@ -280,6 +290,17 @@ export function StringEditor({
           >
             {t('common.save')}
           </Button>
+        </div>
+      )}
+      {/* BUG-003: rejected `set_string` — visible feedback, draft stays live. */}
+      {saveError && (
+        <div
+          className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger"
+          data-testid="redis-string-save-error"
+          data-i18n-key="redis.detail.saveFailed"
+          role="alert"
+        >
+          {t('redis.detail.saveFailed').replace('{error}', saveError)}
         </div>
       )}
       <DraftLeaveDialog onDiscard={restoreServerValue} />
