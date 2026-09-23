@@ -735,6 +735,17 @@ describe('RedisContextBar — compact degradation (I-10)', () => {
     expect(screen.getByTestId('redis-context-overflow-types').textContent).toContain('string 30');
   });
 
+  it('[tester] keeps the mandatory sample marker with compact overflow chips', async () => {
+    stubSources({
+      distribution: { counts: { string: 30 }, sampled: 48, dbsize: 100, truncated: true },
+    });
+    render(<RedisContextBar {...barProps(makeRelay(), { compact: true })} />);
+    await settle();
+
+    const overflowTypes = screen.getByTestId('redis-context-overflow-types');
+    expect(overflowTypes.querySelector('[data-i18n-key="redis.contextBar.sampled"]')).not.toBeNull();
+  });
+
   it('never drops the scan cluster, which is what a waiting user watches', async () => {
     stubSources();
     render(
