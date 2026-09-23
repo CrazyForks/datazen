@@ -23,7 +23,7 @@
       "@datazen/ui": ["./packages/ui/src/index.ts"]
     }
   },
-  "include": ["src", "packages/driver-sdk", "packages/extension-points", "packages/wapp-sdk", "packages/ui"],
+  "include": ["src", "packages/driver-sdk", "packages/extension-points", "packages/wapp-sdk", "packages/ui", "packages/drivers/*/ui"],
   "exclude": [
     "src/**/__tests__/**",
     "src/**/*.test.ts",
