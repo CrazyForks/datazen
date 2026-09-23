@@ -1,7 +1,7 @@
 # redis-detail-ui-BUG-004 · TTL pill 内联编辑器缺 Esc / 失焦 退出跃迁（E-4 验收项未达，且与同轨键头行改名不对称）
 
 - **严重度**：中（不丢数据、不阻断门禁，但它是简报 E-4 点名的验收要素之一，也是 PRD §4 I-9 的键盘规则；同一轨的**另一个**内联编辑器（键头行改名）已经实现了 Escape 退出，TTL pill 没有 ⇒ 同一屏两个内联编辑面行为不一致）
-- **状态**：`修复中`
+- **状态**：`待复测（round-1 修复后）`
 - **发现**：W3-E 第 1 轮 Tester 复验（HEAD `3919307ce`，jsdom 实测）
 - **涉及文件**：`packages/drivers/redis/ui/value-editors/TtlControls.tsx:121-249`（展开态整体无 `onKeyDown` / `onBlur`；退出只挂了 `redis-ttl-close` 按钮 `:149-157`）
 - **对照实现（正确的参照物就在本轨）**：`packages/drivers/redis/ui/value-editors/KeyHeaderRow.tsx:144-150` —— 内联改名输入框有
@@ -52,3 +52,9 @@ TTL pill 的展开态**不响应 Esc、不响应失焦**：
 ## 影响范围
 
 E-4 验收项之一未达 ⇒ 本条目单列为 Bug，不连带推翻 E-4 其余交付（键头行动作组、徽标行合并、8-4 文案 key 均已实测通过，见 `progress.md` T-5）。属交互一致性 + 键盘可达性，优先级低于 BUG-001/002（数据丢失类）。
+
+## 修复记录（round-1）
+
+- **commit**：`a26aee76c`（`fix(redis-detail-ui): BUG-004 TTL 内联编辑补 Esc/失焦两条退出跃迁并补旅程用例`）。
+- **修法**：`TtlControls.tsx` 展开态容器（原 `:121-122` 整块 div）补两条退出跃迁：① `onKeyDown` 拦 `Escape` ⇒ `setOpen(false)`（键帽从输入/模式按钮冒泡上来，参照 `KeyHeaderRow.tsx:144-150` 同形）；② `onBlur` 用 `e.currentTarget.contains(e.relatedTarget as Node | null)` 判定焦点**离开整块**才收——`relatedTarget` 仍在容器内（如模式按钮间跳焦点）不误收。两条都按关按钮（`redis-ttl-close` `disabled={busy}`）的口径在应用悬起（`busy`）时忽略，避免折叠掉在途结果。组件头注释的 exit 清单同步更新（状态机三要素补全）。
+- **复验**：`ttlControlsJourney.test.tsx` 新增 3 条（Esc 退出 + 重进仍默认相对模式 / 容器内焦点不收、离容器才收 / `busy` 悬起时 Esc 不收），断 `data-ttl-open` 与 `redis-ttl-close` 存在性，不断文案。整文件 **12/12 绿**。
