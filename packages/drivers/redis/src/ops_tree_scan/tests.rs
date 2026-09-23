@@ -26,6 +26,22 @@ use crate::ops_workbench::SlotRoutedBatchFuture;
 
 use super::*;
 
+#[test]
+fn test_tester_meta_slots_preserve_legacy_root_path() {
+    assert_eq!(
+        crate::ops_tree_scan::meta_slots::TYPE,
+        crate::ops_tree_scan::meta::meta_slots::TYPE
+    );
+    assert_eq!(
+        crate::ops_tree_scan::meta_slots::TTL,
+        crate::ops_tree_scan::meta::meta_slots::TTL
+    );
+    assert_eq!(
+        crate::ops_tree_scan::meta_slots::MEMORY,
+        crate::ops_tree_scan::meta::meta_slots::MEMORY
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Scripted connection double
 // ---------------------------------------------------------------------------

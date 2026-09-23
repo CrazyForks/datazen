@@ -1059,3 +1059,24 @@ fmt 残差恰为基线 2 条、最大文件 787、`tsc` 0 —— 与 Coder 自�
    复跑本轨步骤 3 的公开面脚本（`ops_tree_scan` 应回到 **20 vs 20**）；
 3. 顺手修 §2 `ops_tree_scan` 行数表的 8 个数字与 §4 的 `connect.rs` 计数；
 4. （可选，独立一轮）补 TS-01/TS-02 两条覆盖，以及 `commandMeta.ts` 873 行的 TS 侧拆分。
+
+## 10. Tester 第 2 轮复测（进行中）
+
+### BOOTSTRAP 与阶段 A：独立代码审查（2026-09-23）
+
+- Worktree: `/Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-redis-src-split`
+- Branch / HEAD: `feature/redis-src-split` / `6361a65db`
+- 对照基线：`d049ceb4e`；BUG-001 修复 `5f78065cb` 是当前 HEAD 的祖先，修复仅为 `ops_tree_scan/mod.rs` 增加 `pub use meta::meta_slots;`。
+- 启动时唯一工作区改动为既存 `Cargo.lock` 的 `+ "flate2"`；保留、不暂存、不提交。
+- `post-review-hardening-plan.md` 在本 worktree 内未找到；本轮逐项按本文件 §3/§4 的纯机械拆分、公开面集合、≤800 行及零行为变更验收要求核对。
+
+**8 组源文件拆分审查：**按基线版本与当前变更文件集合，以词法花括号扫描提取函数体，折叠空白并剔除唯一允许的 `pub(crate)` 前缀后逐体多重集合比较。共核对 **429 个函数定义，缺失 0、额外 0**。逐行非空行多重集合核对在剔除 `pub(crate)` 后剩余 **9 条**差异，全部是以下函数签名因可见性前缀长度触发 rustfmt 换行；9 项签名规范化比较均通过，未见参数、约束、返回类型或函数体变化：
+
+- `ops.rs`: `parse_hash_scan_result`、`apply_ttl_command`
+- `connect.rs`: `parse_tls`、`opt_string`、`load_tls_certificates`
+- `ops_tree_scan.rs`: `pipeline_raw`、`fold_command_answer`
+- `ops_workbench.rs`: `pipeline_raw`、`routed_single`
+
+新增代码仅有模块拆分所需的模块声明/import/re-export 及 BUG-001 的根路径转发；未发现函数体增删或重写。顶层公开名称集合独立从基线声明与当前 `mod.rs` 转发逐名构造，结果：`ops` 38/38、`connect` 12/12、`ops_tree_scan` 20/20、`ops_workbench` 35/35、`ops_stream` 23/23，均无缺失/多余；旧路径 `crate::ops_tree_scan::meta_slots` 已包含在 20 项中。新 Rust 文件均 ≤800 行，`commandMeta.ts` 的 873 行仍留待后续轨道且未触碰。
+
+为锁定 BUG-001 的 crate 内根路径契约，新增 `test_tester_meta_slots_preserve_legacy_root_path`：分别编译并比较 `TYPE`、`TTL`、`MEMORY` 的旧根路径与模块内定义路径。阶段 A 判定 **PASS**；阶段 B/C/D 待完成。
