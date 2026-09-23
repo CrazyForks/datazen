@@ -1034,3 +1034,22 @@ BUG-001~007 正文。**文件面结论：通过。**
 - 边缘核对：**头部行改名**（`KeyEditors.handleRename` `:119-128` → `onRenamed` → `RedisWorkbench:724 setSelectedKey(newKey)`）**本就不经 `onUpdateSelectedKey`**，`requestDraftLeave()` 拒绝时直接 `return false` 且不写服务端 ⇒ 无部分态。该路径与本轮删除正交，**未受影响**。
 
 **独立结论：裁定成立。** 删除 `onUpdateSelectedKey` 后无任何合法路径丢失选中键更新；该调用在答 keep 时确实会重造偏差⑥（已由 R4-2 变异 (ii) 实测转红佐证）⇒ **删除正确、不回退正确**。
+
+## R4-4 BUG-009 复验 ✅
+
+- `wc -l packages/drivers/redis/ui/key-browser/RedisWorkbench.tsx` ⇒ **795**（自报 795 ✅）⇒ **≤800 硬线内** ✅
+- `git diff --numstat 3e25a3c0f..HEAD -- .../RedisWorkbench.tsx` ⇒ `6	16`（**净 −10**：805 → 795；其中含 BUG-008 删除的 `onUpdateSelectedKey={setSelectedKey}` 一行 + BUG-009 注释瘦身）
+- BUG-009 独立 commit `cbecba255` 实测 `1 file changed, 6 insertions(+), 15 deletions(-)` ⇒ 与自报 `6 15` **逐位一致**（14 行注释 + 1 行空行/续行合并）。
+- **守卫 3 行代码未被改动** —— 逐字取证：`if (key === selectedKey && keyDetail?.key !== key) { if (!(await requestDraftLeave())) return; }`
+  在 `3e25a3c0f` 与 `HEAD` 两版**字节比对 md5 相同**（`94a07d6d0aa78eddce048aee04585896`，`diff` exit 0）⇒ 只压缩注释，语义零改动 ✅
+- 手法核对：`git show cbecba255` diff 全为注释行的增删，无任何代码行改动。
+
+**结论：BUG-009 复验通过。**
+
+### 附：规模纪律体检（advisory，非本轮回归）
+
+全 `packages/drivers/redis/ui` 扫描，唯一 >800 行为 `console/consoleCompletion/commandMeta.ts`（**873**）——
+它是**静态命令元数据表**（Redis 官方命令分类/语法/一行描述），非逻辑代码，且**不在本轮 diff 内**
+（最后改动为更早的 `040e15bde`），亦属本 Tester 的禁改面（`console/`）。
+⇒ 记为**观察项**（建议后续轨或拆分为按 group 的数据文件），**不登记为本轮 bug**：本轮未引入、未触及、且非逻辑膨胀。
+`RedisWorkbench.tsx` 795 行，重回硬线内，与其余文件（次大 `StreamEditor.tsx` 720）均合规。
