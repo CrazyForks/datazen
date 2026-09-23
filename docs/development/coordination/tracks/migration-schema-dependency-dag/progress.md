@@ -40,7 +40,7 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 
 ## Self-validation
 
-- Coder commit: `090a9e64`.
+- Coder implementation commit: `d0545a3d`.
 - `CARGO_TARGET_DIR=target/cargo-wt RUST_TEST_THREADS=1 cargo test -p datazen --lib schema_diff::`: 148 passed, 0 failed after the final basename-only fail-closed regression.
 - `npx vitest run src/windows/schema-diff/__tests__`: 47 passed.
 - `npx tsc --noEmit`: passed.
