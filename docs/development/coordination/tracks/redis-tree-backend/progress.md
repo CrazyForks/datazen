@@ -690,6 +690,35 @@ null ⇒ `'…'` 占位。`locales/` 零 diff（`+` 由数据产生，i18n 串�
 
 ⇒ 两消费端各自可证，非只测 helper 的空壳（第 1 轮登记的原病根已闭）。
 
+### 阶段 1-4 · R-1（预算 0 双口径收口）—— **通过**
+
+`git show a0444e1c1`：`tree_scan_budget` 改为 `match requested.filter(|raw| *raw > 0)` ⇒ `Some(0)` 在进
+clamp **之前**就折进 `None` 派生档，与冻结句"缺失或 0 ⇒ 派生档"一致；钉死旧语义的
+`assert_eq!(tree_scan_budget(Some(0), 0), 1)` 被换成 `a_zero_request_is_the_derived_tier_not_a_one_round_budget`。
+该单测对 dbsize 档 `0 / 40_000（=80k 缩放档）/ 9_000_000（=硬顶）` 三形断言
+`Some(0) == None`（外加 `Some(0),0 == DEFAULT`、`Some(0),9M == HARD`）⇒ **全等覆盖三档** ✓。
+命令层防线复核：`commands_exec_dispatch.rs:22 / :63 / :391` 三处
+`.and_then(JsonValue::as_u64).filter(|v| *v > 0)` 均在（scan_keys / list_children / count_matching 各一）✓。
+`cargo test --lib tree_budget` ⇒ 14 passed / 0 failed（含本条与既有预算套件）。两层语义现已同向。
+
+### 阶段 1-5 · `331e95b51` 附带改动审查 —— **通过（附 1 条表面瑕疵）**
+
+- **死片段无人 include**：全 crate `grep include!` 仅 `commands_exec.rs:117` 一处，目标
+  `commands_exec_dispatch.rs` ⇒ `commands_exec_all_arms.rs` / `commands_exec_mutate.rs` 确不参与编译 ✓。
+- **对齐 live 签名**：两片段内 `count_matching` 臂现为四参 `(id, db, pattern,
+  input…as_u64().filter(|v| *v > 0))`，与 live 臂（`commands_exec_dispatch.rs:391-395`）的
+  `plugin_count_matching` 入参与 budget 折叠表达式**逐字符同型** ⇒ "误接线的定时炸弹"解除（再被
+  include 也只会因他因报错，不会以退役的三参形状静默存活）。头注释含「DEAD FRAGMENT / do not
+  include!」指引 ✓。
+  - **表面瑕疵（非缺陷）**：两文件的 DEAD FRAGMENT 注释块各出现**两段近义重复**（4 行版 + 4 行版，
+    其中一段引 `redis-tree-backend BUG-002 note 4`、另一段引 `redis-tree-backend-BUG-002 note 4`），
+    系 `git show 331e95b51` 同一次提交内两稿同存（该 commit 的 +8 行注释即为两段）⇒ 纯注释冗余，
+    不影响编译与语义，不判 Bug，留清理项。
+- **`count_budgeted` 的"空 pattern 与 `*` 统一全量"不改冻结 out 形状**：函数返回仍是
+  `CountOutcome{count,truncated,consumed,dbsize}`（4 字段 camelCase），`matches_all` 判定只影响
+  内部是否发 SCAN / 是否带 `MATCH` 实参；入参 schema（`commands.rs` 的 `pattern` 必填串）未动 ⇒
+  对 Wave 4 与所有既有测试透明（阶段 2 门禁全量为证）。
+
 
 
 
