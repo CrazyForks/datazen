@@ -505,3 +505,34 @@
 | 12 | `SET ... KEEPTTL` 真连往返（含 W3-C 默认化） | **留待 R**（= 原 §7-1/2） | 本 worktree 后端默认 `false` ⇒ **当前必然丢 TTL**；C 合流后必验「保存前设 TTL ⇒ 保存后 `PTTL>0`」 |
 | 13 | `DraftLeaveDialog` 焦点陷阱 / Esc 可达 / z 序（与 keep-alive 隐藏页签叠层） | **留待 R**（= 原 §7-6） | 暗色主题目视；jsdom 已验 `@datazen/ui` Dialog 的 Tab 环与 Escape→`settleDraftLeave(false)` 语义 |
 | 14 | 无键位环境下 I-1 仍成立（鼠标路径） | 本机可执行 | Tester 全部变异用例皆以 `fireEvent.*` 驱动 ⇒ 证明拦截不依赖 ⌘Y/⌘R（键位属 W3-D D-7） |
+
+## 修复轮 round-1（fixer · 2026-09-23）
+
+> 对应 `bugs/README.md` 第 1 轮 Tester 登记的 6 条 bug。本节为**修复轮新增记录区**：历史章节（上方自验记录 / Tester 复验记录）一律保留原文不删，口径更正以本节为准（BUG-005 的「台账如实性」缺陷就地在此更正）。
+
+### BUG-005 更正 1 · 口径 B 自报值不可复现，以 Tester 复算为准（≥80% 结论不变）
+
+- 原文（自验记录 §6 覆盖率表口径 B 行）：**86.25% stmts / 88.74% lines**（自报）。
+- 复算（Tester T-9，同一 v8 配置、`--coverage.all=false`；B = 剔除 `RedisWorkbench.tsx` + 5 个集合编辑器 + `JsonEditor.tsx`）：
+  - **85.57% stmts / 88.64% lines（含 `en.ts`）** ← 引用口径 B 以此为准；
+  - 85.55% stmts / 88.62% lines（不含 `en.ts`）。
+- 差 0.68pp / 0.10pp ⇒ **两值同判 ≥80%**，原结论不变；自报值不可复现，本节起作废。
+- 口径 A 自报 81.22/83.71 → 复算 **81.25/83.74**（吻合，无需更正）。口径 C「偏低非缺口」判定**成立**（复算 56.32/57.00，与自报 55.43/56 同量级；低分 100% 来自 base 即 0.67~1.66% 且本轨零 diff 的 5 个集合编辑器 + 未触及的 `JsonEditor.tsx` 55.05%），但其清单里混入的一条按更正 2 移出。
+- 复算命令：见 `bugs/redis-detail-ui-BUG-005.md`「重现步骤」§2。
+
+### BUG-005 更正 2 · `keyEditorsInvokes.ts:306-325` 的缺口属本轨验收面，不是「存量集合辅助」
+
+- 实测归属：`:296-311` = `invokeRename`、`:314-325` = `invokeDeleteKey`；后者是本轨 E-4 **新建**的单键删除入口（`git diff 8981d3078..HEAD` 明确含该函数）。
+- 原文把 `:306-321` 记作「集合类批量 invoke 辅助（本轨未动其语义）」是**归属错误** ⇒ 该缺口属本轨验收面，**应补测而非记为非缺口**（Tester 已在 T-11 补测覆盖 `invokeRename` / `invokeDeleteKey`，引用时一并注明）。
+- 真正属 §2「明确不做」的集合辅助（base 即零覆盖、本轨零 diff）仅：`:63-68` `invokeHashDel` · `:96-102` `invokeListSet` · `:112-117` `invokeListPop` · `:127-132` `invokeListIndex` · `:143-149` `invokeListRem` · `:174-179` `invokeSetRemove` · `:204-209` `invokeZsetRemove`。
+
+### BUG-005 更正 3 · 「其余 9 语言保留孤儿副本」系不实陈述，作废
+
+- 原文（自验记录 §en 注释核对处）称删除 `redis.stringModeView` / `.stringModeEdit` 后「其余 9 语言保留孤儿副本直到 i18n-sync 补」。
+- 实测（Tester T-7）：9 个非 `en.ts` 语言文件对 `stringMode` 的命中数**均为 0**（这两枚 key 从未进过非 en 语言）；`node scripts/i18n-sync-check.mjs` 的 driver pack 维度报 **0 issue** ⇒ **不存在孤儿副本**，该注释为不实陈述，本节起作废。
+
+### BUG-005 更正 4 · 「8 个拦截点」是语义计数，调用点实测 11 处（按 T-6 注并入本缺陷）
+
+- §5 状态机表「**8 个拦截点**」按**动作类别**计数（8 类导航/操作）：表格本身成立，保留；
+- 但 `await requestDraftLeave()` 的**生产码调用点实测 11 处** = `KeyEditors.tsx ×3`（:114/:121/:134）+ `RedisWorkbench.tsx ×7`（:257/:298/:309/:322/:370/:697/:739）+ `RedisConnectionView.tsx ×1`（:93）；另有 `draftGuard.ts:6` **文档提及 1 处**（不计调用点，连同它对上 T-6 的「12 处」口径）。
+- 此后引用一律写「**11 个调用点 / 8 类动作**」；§5 表 8 行 + 编辑面内部 3 行 = 11，与 `grep -c` 对齐（原 T-6 注「台账需补一句」由本节兑现）。
