@@ -225,12 +225,13 @@ pub struct ColumnMapping {
     pub target_native_type: Option<String>,
 }
 
-/// A bounded source recordset selected by a deterministic single-column order.
+/// A bounded source recordset selected by deterministic source key order.
 ///
-/// `order_by` may be omitted only when the inspected source schema has exactly
-/// one effective primary-key column. Bounds are JSON on the IPC boundary so the
-/// server can convert them using the inspected source column type before
-/// binding them. This is a selection scope, never a resumable checkpoint.
+/// `order_by`/`start`/`end` retain the original scalar IPC/profile form.
+/// `tuple_range` is the unambiguous extension for complete composite primary
+/// keys. Bounds are JSON on the IPC boundary so the server can convert every
+/// component using inspected source column types before binding them. This is
+/// a selection scope, never a resumable checkpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransferRecordsetBound {
@@ -242,16 +243,41 @@ pub struct TransferRecordsetBound {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransferRecordset {
-    /// One source column. Composite ordering is deliberately rejected in this
-    /// wave because a scalar bound cannot express an unambiguous tuple range.
+    /// Legacy scalar source column. Omitted only when a tuple range is used or
+    /// when a single effective primary-key column supplies the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<TransferRecordsetBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<TransferRecordsetBound>,
+    /// Complete, ordered composite primary-key range. Its presence is distinct
+    /// from the legacy scalar shape, which keeps old profiles byte-for-byte
+    /// stable when deserialized and serialized again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tuple_range: Option<TransferRecordsetTupleRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRecordsetTupleRange {
+    /// Must exactly match the complete source primary key in declared order.
+    pub columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<TransferRecordsetTupleBound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<TransferRecordsetTupleBound>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransferRecordsetTupleBound {
+    /// One typed scalar value for each key column, preserving IPC precision.
+    pub values: Vec<serde_json::Value>,
+    #[serde(default = "default_true")]
+    pub inclusive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

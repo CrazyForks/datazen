@@ -3,7 +3,6 @@
 use crate::db::Value;
 
 use super::error::TransferError;
-use super::filter::json_to_value;
 
 #[derive(Debug, Clone)]
 pub(crate) enum BoundKey {
@@ -29,6 +28,7 @@ enum BoundKind {
     Float,
     Boolean,
     Text,
+    Unsupported,
 }
 
 fn bound_kind(data_type: &str) -> BoundKind {
@@ -78,7 +78,41 @@ fn bound_kind(data_type: &str) -> BoundKind {
     {
         return BoundKind::Float;
     }
-    BoundKind::Text
+    if matches!(
+        base_without_spaces.as_str(),
+        "char"
+            | "character"
+            | "varchar"
+            | "nvarchar"
+            | "nchar"
+            | "text"
+            | "tinytext"
+            | "mediumtext"
+            | "longtext"
+            | "citext"
+    ) || matches!(base, "character varying" | "national character varying")
+    {
+        return BoundKind::Text;
+    }
+    BoundKind::Unsupported
+}
+
+/// Recordset comparison accepts only scalar types with an explicit canonical
+/// representation. Unknown/custom types must not inherit text semantics.
+pub(crate) fn ensure_supported_bound_type(
+    data_type: &str,
+    name: &str,
+) -> Result<(), TransferError> {
+    if matches!(bound_kind(data_type), BoundKind::Unsupported) {
+        return Err(TransferError::validation(format!(
+            "recordset {name} source type '{data_type}' has no verified ordering contract"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn is_text_bound_type(data_type: &str) -> bool {
+    matches!(bound_kind(data_type), BoundKind::Text)
 }
 
 fn raw_bound_text(value: &serde_json::Value, name: &str) -> Result<String, TransferError> {
@@ -155,39 +189,25 @@ pub(crate) fn canonical_bound_value(
                 _ => {
                     return Err(TransferError::validation(format!(
                         "recordset {name} bound '{text}' is not a valid boolean"
-                    )))
+                    )));
                 }
             };
             Ok((Value::Bool(value), BoundKey::Unsigned(u128::from(value))))
         }
-        BoundKind::Text => {
-            let value = match raw {
-                serde_json::Value::String(value) => Value::String(value.clone()),
-                serde_json::Value::Null => {
-                    return Err(TransferError::validation(format!(
-                        "recordset {name} bound cannot be NULL"
-                    )))
-                }
-                _ => json_to_value(raw)?,
-            };
-            let key = match &value {
-                Value::String(value) | Value::Timestamp(value) => BoundKey::Text(value.clone()),
-                Value::Integer(value) => BoundKey::Signed(i128::from(*value)),
-                Value::Float(value) if value.is_finite() => BoundKey::Float(*value),
-                Value::Bool(value) => BoundKey::Unsigned(u128::from(*value)),
-                Value::Float(_) => {
-                    return Err(TransferError::validation(format!(
-                        "recordset {name} bound must be a finite number"
-                    )))
-                }
-                _ => {
-                    return Err(TransferError::validation(format!(
-                        "recordset {name} bound must be a scalar"
-                    )))
-                }
-            };
-            Ok((value, key))
-        }
+        BoundKind::Text => match raw {
+            serde_json::Value::String(value) => {
+                Ok((Value::String(value.clone()), BoundKey::Text(value.clone())))
+            }
+            serde_json::Value::Null => Err(TransferError::validation(format!(
+                "recordset {name} bound cannot be NULL"
+            ))),
+            _ => Err(TransferError::validation(format!(
+                "recordset {name} bound must be a string for source type {data_type}"
+            ))),
+        },
+        BoundKind::Unsupported => Err(TransferError::validation(format!(
+            "recordset {name} source type '{data_type}' has no verified ordering contract"
+        ))),
     }
 }
 

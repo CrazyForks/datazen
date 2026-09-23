@@ -379,13 +379,42 @@ fn projected_rows_keep_skips_reorder_and_subsets() {
         assert!(map_row_values(&[], &schema, &refs).is_err());
     }
 }
+
+#[test]
+fn projected_text_bytes_decode_as_utf8_while_binary_bytes_remain_bytes() {
+    let mut source_schema = schema(&["tenant", "payload"]);
+    source_schema.columns[0].data_type = "VARCHAR(64)".into();
+    source_schema.columns[1].data_type = "BLOB".into();
+    let mappings = [mapping("tenant", "tenant"), mapping("payload", "payload")];
+    let refs = mappings.iter().collect::<Vec<_>>();
+    let row = vec![
+        Some(Value::Bytes("a-雪".as_bytes().to_vec())),
+        Some(Value::Bytes(vec![0, 255])),
+    ];
+
+    let projected = map_row_values(&row, &source_schema, &refs).unwrap();
+    assert!(matches!(&projected[0], Some(Value::String(value)) if value == "a-雪"));
+    assert!(matches!(&projected[1], Some(Value::Bytes(value)) if value == &[0, 255]));
+
+    let invalid = vec![
+        Some(Value::Bytes(vec![0xff])),
+        Some(Value::Bytes(vec![0, 255])),
+    ];
+    assert!(map_row_values(&invalid, &source_schema, &refs)
+        .unwrap_err()
+        .to_string()
+        .contains("not valid UTF-8"));
+}
+
 #[tokio::test]
 async fn bytes_and_strings_survive_bound_projection_and_commit() {
     let row = vec![
         Some(Value::Bytes((0..=255).collect())),
         Some(Value::String("'\\\n\0unicode雪".into())),
     ];
-    let source = driver(vec![row.clone()], schema(&["skipped", "blob", "text"]));
+    let mut source_schema = schema(&["skipped", "blob", "text"]);
+    source_schema.columns[1].data_type = "BLOB".into();
+    let source = driver(vec![row.clone()], source_schema);
     let target = driver(vec![], schema(&["payload", "label"]));
     let result = run(
         &source,
@@ -407,10 +436,9 @@ async fn bytes_and_strings_survive_bound_projection_and_commit() {
 
 #[tokio::test]
 async fn recordset_scope_shares_filter_order_and_bound_parameter_order() {
-    let source = driver(
-        vec![vec![Some(Value::Integer(2))]],
-        schema(&["id", "status"]),
-    );
+    let mut source_schema = schema(&["id", "status"]);
+    source_schema.columns[0].data_type = "INTEGER".into();
+    let source = driver(vec![vec![Some(Value::Integer(2))]], source_schema);
     let target = driver(vec![], schema(&["id"]));
     let mut job = job();
     job.tables = vec![TableMapping {
@@ -434,6 +462,7 @@ async fn recordset_scope_shares_filter_order_and_bound_parameter_order() {
                 value: serde_json::json!(5),
                 inclusive: false,
             }),
+            tuple_range: None,
             limit: Some(2),
         }),
     }];

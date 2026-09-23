@@ -266,12 +266,14 @@ const pack = {
     'Only matching source rows are copied. Values are bound parameters.',
   'transfer.mapping.recordset': 'Source recordset range',
   'transfer.mapping.recordsetHint':
-    'Select one ordered source column with optional bounds or a limit. This selects rows for this run; it is not a restart checkpoint.',
+    'Select a source key range with optional bounds or a limit. Composite keys use every primary-key column in its declared order. This selects rows for this run; it is not a restart checkpoint.',
   'transfer.mapping.noRecordset':
     'No recordset range; all source rows matching the filter are copied.',
   'transfer.mapping.recordsetOrder': 'Order by',
   'transfer.mapping.recordsetOrderRequired':
-    'Choose one source column. A table without a single primary key cannot use the automatic order.',
+    'Choose one source column. Composite primary keys use their full declared order automatically.',
+  'transfer.mapping.recordsetTextCollationHint':
+    'When both bounds are set, text key components must match; differing text bounds are rejected when the source collation is unknown.',
   'transfer.mapping.recordsetStart': 'Start bound',
   'transfer.mapping.recordsetEnd': 'End bound',
   'transfer.mapping.recordsetUnbounded': 'Unbounded',

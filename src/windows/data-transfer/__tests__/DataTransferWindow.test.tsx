@@ -291,7 +291,7 @@ async function dismissLimitationsDialog() {
   });
 }
 
-async function advanceToMappingStep() {
+async function advanceToMappingStep(inspectedRows = inspectRows) {
   const { DataTransferWindow } = await import('../DataTransferWindow');
   render(<DataTransferWindow />);
 
@@ -310,7 +310,7 @@ async function advanceToMappingStep() {
 
   fireEvent.click(screen.getByTestId('data-transfer-mode-data'));
 
-  inspectTransferMock.mockResolvedValue(inspectRows);
+  inspectTransferMock.mockResolvedValue(inspectedRows);
   // setup → objects
   fireEvent.click(screen.getByTestId('data-transfer-next'));
 
@@ -608,6 +608,58 @@ describe('DataTransferWindow', () => {
     fireEvent.click(screen.getByTestId('data-transfer-next'));
     await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
     expect(previewTransferMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends complete composite primary-key tuple bounds in declared order', async () => {
+    const compositeRows: TransferTableResult[] = [
+      {
+        ...inspectRows[0],
+        sourceColumns: ['tenant', 'sequence', 'payload'],
+        sourcePrimaryKeys: ['tenant', 'sequence'],
+        sourceColumnTypes: { tenant: 'TEXT', sequence: 'BIGINT', payload: 'TEXT' },
+        columnMappings: [
+          { sourceColumn: 'tenant', targetColumn: 'tenant', skip: false },
+          { sourceColumn: 'sequence', targetColumn: 'sequence', skip: false },
+          { sourceColumn: 'payload', targetColumn: 'payload', skip: false },
+        ],
+      },
+    ];
+    await advanceToMappingStep(compositeRows);
+
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-enable'));
+    expect(screen.getByTestId('data-transfer-recordset-tuple-editor')).toBeTruthy();
+    expect(screen.getByTestId('data-transfer-recordset-tuple-collation-hint')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-tuple-start-0'), {
+      target: { value: 'a-雪' },
+    });
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-tuple-start-1'), {
+      target: { value: '-3' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-recordset-tuple-start-inclusive'));
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-tuple-end-0'), {
+      target: { value: 'a-雪' },
+    });
+    fireEvent.change(screen.getByTestId('data-transfer-recordset-tuple-end-1'), {
+      target: { value: '9223372036854775806' },
+    });
+
+    fireEvent.click(screen.getByTestId('data-transfer-next'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-preview')).toBeTruthy());
+    expect(previewTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tables: [
+          expect.objectContaining({
+            recordset: {
+              tupleRange: {
+                columns: ['tenant', 'sequence'],
+                start: { values: ['a-雪', '-3'], inclusive: false },
+                end: { values: ['a-雪', '9223372036854775806'], inclusive: true },
+              },
+            },
+          }),
+        ],
+      }),
+    );
   });
 
   it('sends the selected registered SQL file dialect into preview', async () => {

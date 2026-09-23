@@ -52,11 +52,24 @@ export interface TransferRecordsetBound {
 }
 
 export interface TransferRecordset {
-  /** One source column. Composite order/ranges are rejected by the server in this wave. */
+  /** Legacy scalar source column, retained for existing IPC and profiles. */
   orderBy?: string;
   start?: TransferRecordsetBound;
   end?: TransferRecordsetBound;
+  /** Complete source primary-key tuple, in the declared key order. */
+  tupleRange?: TransferRecordsetTupleRange;
   limit?: number;
+}
+
+export interface TransferRecordsetTupleRange {
+  columns: string[];
+  start?: TransferRecordsetTupleBound;
+  end?: TransferRecordsetTupleBound;
+}
+
+export interface TransferRecordsetTupleBound {
+  values: string[];
+  inclusive?: boolean;
 }
 
 export interface TransferOptions {
