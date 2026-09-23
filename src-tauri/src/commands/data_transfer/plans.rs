@@ -24,6 +24,29 @@ enum PlanState {
     Consumed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResumeCheckpointState {
+    Available,
+    InFlight,
+}
+
+/// Server-owned progress for the bounded resumability contract.
+///
+/// The completed set contains committed source tables only. It deliberately
+/// has no row offset or client-provided payload: a resume reuses the immutable
+/// plan's source boundary and starts the next table transaction from its
+/// beginning.
+#[derive(Debug, Clone)]
+pub(crate) struct TransferResumeCheckpoint {
+    pub(crate) token: String,
+    pub(crate) plan_id: String,
+    pub(crate) source_boundary: String,
+    pub(crate) target_boundary: String,
+    pub(crate) selected_tables: Vec<String>,
+    pub(crate) completed_tables: Vec<String>,
+    state: ResumeCheckpointState,
+}
+
 /// Data needed to reproduce and validate the server-side execution plan.
 /// This type is deliberately not serialized into the IPC response.
 #[derive(Debug, Clone)]
@@ -146,12 +169,14 @@ pub(crate) fn driver_protocol_version(driver: &dyn DatabaseDriver) -> u32 {
 
 pub(crate) struct TransferPlanStore {
     plans: Mutex<HashMap<String, StoredTransferPlan>>,
+    checkpoints: Mutex<HashMap<String, TransferResumeCheckpoint>>,
 }
 
 impl TransferPlanStore {
     pub(crate) fn new() -> Self {
         Self {
             plans: Mutex::new(HashMap::new()),
+            checkpoints: Mutex::new(HashMap::new()),
         }
     }
 
@@ -288,6 +313,170 @@ impl TransferPlanStore {
         plan.state = PlanState::Consumed;
         Ok(plan.clone())
     }
+
+    pub(crate) fn create_checkpoint(
+        &self,
+        plan_id: &str,
+        selected_tables: Vec<String>,
+        completed_tables: Vec<String>,
+    ) -> Result<String, TransferError> {
+        let plans = self
+            .plans
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let plan = plans.get(plan_id).ok_or_else(|| {
+            TransferError::validation("transfer plan is unknown or has expired; return to preview")
+        })?;
+        if plan.expires_at <= Instant::now() {
+            return Err(TransferError::validation(
+                "transfer plan has expired; return to preview",
+            ));
+        }
+        if plan.state != PlanState::Consumed {
+            return Err(TransferError::validation(
+                "transfer plan was not claimed; restart from preview",
+            ));
+        }
+        let source_boundary = source_boundary_fingerprint(plan)?;
+        let target_boundary = target_boundary_fingerprint(plan)?;
+        let token = Uuid::new_v4().to_string();
+        let checkpoint = TransferResumeCheckpoint {
+            token: token.clone(),
+            plan_id: plan_id.to_string(),
+            source_boundary,
+            target_boundary,
+            selected_tables,
+            completed_tables,
+            state: ResumeCheckpointState::Available,
+        };
+        drop(plans);
+        let mut checkpoints = self
+            .checkpoints
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        checkpoints.insert(token.clone(), checkpoint);
+        Ok(token)
+    }
+
+    pub(crate) fn peek_checkpoint(
+        &self,
+        token: &str,
+        plan_id: &str,
+    ) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
+        let plans = self
+            .plans
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let checkpoint = self
+            .checkpoints
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let saved = checkpoint.get(token).ok_or_else(|| {
+            TransferError::validation("resume token is unknown, consumed, or expired")
+        })?;
+        if saved.token != token {
+            return Err(TransferError::validation(
+                "resume token registry entry is invalid",
+            ));
+        }
+        if saved.plan_id != plan_id {
+            return Err(TransferError::validation(
+                "resume token does not belong to this transfer plan",
+            ));
+        }
+        if saved.state != ResumeCheckpointState::Available {
+            return Err(TransferError::validation(
+                "resume token is already running or its prior outcome is unknown",
+            ));
+        }
+        let plan = plans.get(plan_id).ok_or_else(|| {
+            TransferError::validation("transfer plan is unknown or has expired; return to preview")
+        })?;
+        if plan.expires_at <= Instant::now() {
+            return Err(TransferError::validation(
+                "transfer plan has expired; return to preview",
+            ));
+        }
+        Ok((plan.clone(), saved.clone()))
+    }
+
+    pub(crate) fn claim_checkpoint(
+        &self,
+        token: &str,
+        plan_id: &str,
+    ) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
+        let plans = self
+            .plans
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let mut checkpoints = self
+            .checkpoints
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let saved = checkpoints.get_mut(token).ok_or_else(|| {
+            TransferError::validation("resume token is unknown, consumed, or expired")
+        })?;
+        if saved.token != token {
+            return Err(TransferError::validation(
+                "resume token registry entry is invalid",
+            ));
+        }
+        if saved.plan_id != plan_id {
+            return Err(TransferError::validation(
+                "resume token does not belong to this transfer plan",
+            ));
+        }
+        if saved.state != ResumeCheckpointState::Available {
+            return Err(TransferError::validation(
+                "resume token is already running or its prior outcome is unknown",
+            ));
+        }
+        let plan = plans.get(plan_id).ok_or_else(|| {
+            TransferError::validation("transfer plan is unknown or has expired; return to preview")
+        })?;
+        if plan.expires_at <= Instant::now() {
+            return Err(TransferError::validation(
+                "transfer plan has expired; return to preview",
+            ));
+        }
+        saved.state = ResumeCheckpointState::InFlight;
+        Ok((plan.clone(), saved.clone()))
+    }
+
+    pub(crate) fn update_checkpoint(
+        &self,
+        token: &str,
+        completed_tables: Vec<String>,
+        finished: bool,
+    ) -> Result<(), TransferError> {
+        let mut checkpoints = self
+            .checkpoints
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        if finished {
+            checkpoints.remove(token);
+            return Ok(());
+        }
+        let saved = checkpoints.get_mut(token).ok_or_else(|| {
+            TransferError::validation("resume token is unknown, consumed, or expired")
+        })?;
+        if saved.state != ResumeCheckpointState::InFlight {
+            return Err(TransferError::validation(
+                "resume checkpoint is not in flight",
+            ));
+        }
+        saved.completed_tables = completed_tables;
+        saved.state = ResumeCheckpointState::Available;
+        Ok(())
+    }
+
+    /// Unknown commit/rollback outcomes are never resumable. Removing the
+    /// checkpoint forces a fresh preview instead of risking duplicate writes.
+    pub(crate) fn invalidate_checkpoint(&self, token: &str) {
+        if let Ok(mut checkpoints) = self.checkpoints.lock() {
+            checkpoints.remove(token);
+        }
+    }
 }
 
 impl Default for TransferPlanStore {
@@ -327,6 +516,63 @@ pub(crate) fn peek_plan(id: &str) -> Result<StoredTransferPlan, TransferError> {
 
 pub(crate) fn claim_plan(id: &str) -> Result<StoredTransferPlan, TransferError> {
     global_store().claim(id)
+}
+
+pub(crate) fn source_boundary_fingerprint(
+    plan: &StoredTransferPlan,
+) -> Result<String, TransferError> {
+    let bytes = serde_json::to_vec(&(plan.source_schema_fingerprint.as_str(), &plan.filter))
+        .map_err(|error| {
+            TransferError::validation(format!("cannot fingerprint source boundary: {error}"))
+        })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub(crate) fn target_boundary_fingerprint(
+    plan: &StoredTransferPlan,
+) -> Result<String, TransferError> {
+    let bytes = serde_json::to_vec(&(
+        plan.target_schema_fingerprint.as_str(),
+        &plan.target_scope_fingerprint,
+    ))
+    .map_err(|error| {
+        TransferError::validation(format!("cannot fingerprint target boundary: {error}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub(crate) fn peek_checkpoint(
+    token: &str,
+    plan_id: &str,
+) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
+    global_store().peek_checkpoint(token, plan_id)
+}
+
+pub(crate) fn claim_checkpoint(
+    token: &str,
+    plan_id: &str,
+) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
+    global_store().claim_checkpoint(token, plan_id)
+}
+
+pub(crate) fn create_checkpoint(
+    plan_id: &str,
+    selected_tables: Vec<String>,
+    completed_tables: Vec<String>,
+) -> Result<String, TransferError> {
+    global_store().create_checkpoint(plan_id, selected_tables, completed_tables)
+}
+
+pub(crate) fn update_checkpoint(
+    token: &str,
+    completed_tables: Vec<String>,
+    finished: bool,
+) -> Result<(), TransferError> {
+    global_store().update_checkpoint(token, completed_tables, finished)
+}
+
+pub(crate) fn invalidate_checkpoint(token: &str) {
+    global_store().invalidate_checkpoint(token)
 }
 
 #[cfg(test)]
@@ -623,5 +869,61 @@ mod tests {
                 serde_json::from_value::<TransferRunRequest>(serde_json::Value::Object(payload));
             assert!(request.is_err(), "client field {field} must be rejected");
         }
+    }
+
+    #[test]
+    fn resume_checkpoint_is_opaque_single_flight_and_consumed_on_success() {
+        let store = TransferPlanStore::new();
+        let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
+        let preview = TransferPreview {
+            plan_id: String::new(),
+            pairing_path: "direct".into(),
+            mode: TransferMode::Data,
+            write_mode: WriteMode::Insert,
+            ddl: vec![],
+            write_plans: vec![],
+            warnings: vec![],
+            can_execute: true,
+            block_reason: None,
+        };
+        let id = store
+            .issue_with_ttl(
+                job(),
+                &preview,
+                driver.as_ref(),
+                driver.as_ref(),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+                Duration::from_secs(60),
+            )
+            .unwrap();
+        store.claim(&id).unwrap();
+        let token = store
+            .create_checkpoint(&id, vec!["users".into()], Vec::new())
+            .unwrap();
+        assert_ne!(token, id);
+        let (_, checkpoint) = store.peek_checkpoint(&token, &id).unwrap();
+        assert_eq!(checkpoint.selected_tables, vec!["users"]);
+        assert!(store.claim_checkpoint(&token, &id).is_ok());
+        assert!(store.peek_checkpoint(&token, &id).is_err());
+        store
+            .update_checkpoint(&token, vec!["users".into()], false)
+            .unwrap();
+        let (_, checkpoint) = store.peek_checkpoint(&token, &id).unwrap();
+        assert_eq!(checkpoint.completed_tables, vec!["users"]);
+        store.claim_checkpoint(&token, &id).unwrap();
+        store.update_checkpoint(&token, Vec::new(), true).unwrap();
+        assert!(store.peek_checkpoint(&token, &id).is_err());
+    }
+
+    #[test]
+    fn run_request_accepts_only_opaque_resume_token_field() {
+        let request = serde_json::from_value::<TransferRunRequest>(serde_json::json!({
+            "planId": "opaque-plan",
+            "resumeToken": "opaque-checkpoint",
+        }))
+        .unwrap();
+        assert_eq!(request.resume_token.as_deref(), Some("opaque-checkpoint"));
     }
 }

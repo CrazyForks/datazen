@@ -1,6 +1,6 @@
 //! Batch INSERT execute path (same-family and IR).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -103,6 +103,7 @@ pub async fn execute_transfer_data(
     drop_create: Option<&DropCreateContext<'_>>,
     target_read_only: bool,
     cancelled: Option<Arc<AtomicBool>>,
+    completed_tables: Option<&HashSet<String>>,
 ) -> Result<TransferExecutionResult, TransferError> {
     let target = job.database_target()?;
     if target_read_only {
@@ -120,6 +121,7 @@ pub async fn execute_transfer_data(
             rows_inserted: 0,
             cancelled: false,
             partial: false,
+            resume_token: None,
         });
     }
 
@@ -148,8 +150,13 @@ pub async fn execute_transfer_data(
                     rows_inserted: total_rows,
                     cancelled: true,
                     partial: true,
+                    resume_token: None,
                 });
             }
+        }
+
+        if completed_tables.is_some_and(|completed| completed.contains(&table.source_table)) {
+            continue;
         }
 
         if is_self_table_overwrite(
@@ -269,6 +276,7 @@ pub async fn execute_transfer_data(
                         rows_inserted: total_rows,
                         cancelled: true,
                         partial,
+                        resume_token: None,
                     });
                 }
                 if job.options.stop_on_error {
@@ -480,6 +488,7 @@ pub async fn execute_transfer_data(
                 rows_inserted: total_rows,
                 cancelled: true,
                 partial: true,
+                resume_token: None,
             });
         }
         if partial && job.options.stop_on_error {
@@ -492,6 +501,7 @@ pub async fn execute_transfer_data(
         rows_inserted: total_rows,
         cancelled: false,
         partial,
+        resume_token: None,
     })
 }
 
@@ -521,6 +531,7 @@ pub async fn execute_same_family_data(
         None,
         target_read_only,
         cancelled,
+        None,
     )
     .await
 }

@@ -203,6 +203,19 @@ fn table_mapping_auto_sets_same_name() {
     assert!(!m.create_new);
 }
 
+#[test]
+fn resume_checkpoint_binds_the_effective_subselection() {
+    let mut job = plan_job("source".into(), "target".into());
+    job.tables.push(TableMapping::auto("orders"));
+    let selection = TransferRunSelection {
+        source_tables: Some(vec!["orders".into()]),
+    };
+    assert_eq!(
+        super::exec::selected_source_tables(&job, &selection),
+        vec!["orders"]
+    );
+}
+
 #[tokio::test]
 async fn test_tester_preview_execute_plan_is_opaque_and_one_shot() {
     use crate::testing::app_state::TestAppState;
@@ -225,6 +238,7 @@ async fn test_tester_preview_execute_plan_is_opaque_and_one_shot() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -238,6 +252,7 @@ async fn test_tester_preview_execute_plan_is_opaque_and_one_shot() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -315,6 +330,7 @@ async fn sql_file_target_uses_opaque_path_and_publishes_atomic_output() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -380,6 +396,7 @@ async fn sql_file_empty_selection_keeps_server_discovered_tables() {
             },
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -523,6 +540,7 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -608,6 +626,7 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -647,6 +666,7 @@ async fn test_tester_disabled_existing_table_does_not_invalidate_plan() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -685,6 +705,7 @@ async fn test_tester_changed_driver_contract_fails_before_execution() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -741,6 +762,7 @@ async fn test_tester_read_only_change_fails_before_target_write() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -754,7 +776,7 @@ async fn test_tester_read_only_change_fails_before_target_write() {
 }
 
 #[tokio::test]
-async fn test_tester_execution_failure_consumes_plan_and_rejects_retry() {
+async fn transfer_partial_run_returns_resume_token_and_completes_once_recovered() {
     use crate::testing::app_state::TestAppState;
     use crate::testing::mock_driver::MockDriver;
 
@@ -777,6 +799,7 @@ async fn test_tester_execution_failure_consumes_plan_and_rejects_retry() {
         selection: TransferRunSelection::default(),
         options: TransferRunOptions::default(),
         job_id: None,
+        resume_token: None,
     };
     let first = super::execute_data_transfer_impl(&test.state, request.clone())
         .await
@@ -787,11 +810,39 @@ async fn test_tester_execution_failure_consumes_plan_and_rejects_retry() {
         .error
         .as_deref()
         .is_some_and(|error| error.contains("source scan failure")));
+    let resume_token = first
+        .resume_token
+        .clone()
+        .expect("safe table-boundary failure should be resumable");
 
-    let retry = super::execute_data_transfer_impl(&test.state, request)
-        .await
-        .expect_err("a failed run must not be silently replayable");
-    assert!(retry.to_string().contains("already consumed"), "{retry}");
+    test.registry
+        .register_test_driver(
+            "postgres",
+            MockDriver::new("postgres", transfer_plan_test_options()),
+        )
+        .await;
+    let resumed = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            resume_token: Some(resume_token.clone()),
+            ..request.clone()
+        },
+    )
+    .await
+    .expect("a safe partial run should resume from its table boundary");
+    assert!(!resumed.partial);
+    assert_eq!(resumed.rows_inserted, 1);
+
+    let retry = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            resume_token: Some(resume_token),
+            ..request
+        },
+    )
+    .await
+    .expect_err("a completed resume token must not be replayable");
+    assert!(retry.to_string().contains("consumed"), "{retry}");
 }
 
 #[tokio::test]
@@ -814,6 +865,7 @@ async fn test_tester_invalid_selection_and_unknown_plan_are_rejected() {
             },
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await
@@ -830,6 +882,7 @@ async fn test_tester_invalid_selection_and_unknown_plan_are_rejected() {
             selection: TransferRunSelection::default(),
             options: TransferRunOptions::default(),
             job_id: None,
+            resume_token: None,
         },
     )
     .await

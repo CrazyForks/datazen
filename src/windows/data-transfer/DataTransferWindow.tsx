@@ -95,6 +95,7 @@ export function DataTransferWindow() {
   const [tables, setTables] = useState<TransferTableResult[]>([]);
   const [preview, setPreview] = useState<TransferPreview | null>(null);
   const [result, setResult] = useState<TransferExecutionResult | null>(null);
+  const [resumeToken, setResumeToken] = useState<string | null>(null);
   const [step, setStep] = useState<WizardStep>('endpoints');
   const [batchSize, setBatchSize] = useState(DEFAULT_TRANSFER_OPTIONS.batchSize ?? 500);
   const [stopOnError, setStopOnError] = useState(true);
@@ -648,6 +649,7 @@ export function DataTransferWindow() {
       try {
         const p = await transferCommands.preview(job);
         setPreview(p);
+        setResumeToken(null);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -665,7 +667,7 @@ export function DataTransferWindow() {
     [refreshEndpointSessions, buildJob, t],
   );
 
-  const runExecute = useCallback(async () => {
+  const runExecute = useCallback(async (resumeTokenOverride?: string) => {
     const sessions = await refreshEndpointSessions();
     const job = buildJob(sessions);
     if (!job) return;
@@ -706,6 +708,9 @@ export function DataTransferWindow() {
         selection,
         options: { confirmedDestructive },
         jobId,
+        ...(resumeTokenOverride || resumeToken
+          ? { resumeToken: resumeTokenOverride ?? resumeToken ?? undefined }
+          : {}),
       };
       const profileRef = selectedProfile
         ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
@@ -714,6 +719,7 @@ export function DataTransferWindow() {
         ? await transferCommands.execute(request, profileRef)
         : await transferCommands.execute(request);
       setResult(execResult);
+      setResumeToken(execResult.resumeToken ?? null);
       setStep('result');
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -731,6 +737,7 @@ export function DataTransferWindow() {
     destinationMode,
     tables.length,
     confirmedDestructive,
+    resumeToken,
     t,
   ]);
 
@@ -1546,6 +1553,16 @@ export function DataTransferWindow() {
             >
               {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {executing ? t('transfer.executing') : t('transfer.execute')}
+            </Button>
+          ) : step === 'result' && result?.resumeToken ? (
+            <Button
+              variant="run"
+              data-testid="data-transfer-resume"
+              disabled={executing}
+              onClick={() => void runExecute(result.resumeToken ?? undefined)}
+            >
+              {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {t('common.retry')}
             </Button>
           ) : step !== 'result' ? (
             <Button

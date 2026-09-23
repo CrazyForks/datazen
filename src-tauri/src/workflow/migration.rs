@@ -507,6 +507,7 @@ async fn run_transfer(
                 confirmed_destructive: destructive_policy == UnattendedDestructivePolicy::Allow,
             },
             job_id: None,
+            resume_token: None,
         };
         let result = crate::commands::execute_data_transfer_impl(state, request)
             .await
@@ -520,6 +521,7 @@ async fn run_transfer(
                 "tables": result.tables.len(),
                 "partial": result.partial,
                 "cancelled": result.cancelled,
+                "resumeToken": result.resume_token,
             }),
             committed: result.rows_inserted,
             failed,

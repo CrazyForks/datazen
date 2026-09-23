@@ -1,6 +1,7 @@
 //! Execute Data Transfer (structure + data, same-family and IR).
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -459,6 +460,55 @@ fn apply_selection(job: &mut TransferJob, selection: &TransferRunSelection) {
     }
 }
 
+pub(super) fn selected_source_tables(
+    job: &TransferJob,
+    selection: &TransferRunSelection,
+) -> Vec<String> {
+    job.tables
+        .iter()
+        .filter(|table| table.enabled)
+        .filter(|table| {
+            selection.source_tables.as_ref().map_or(true, |selected| {
+                selected.iter().any(|name| name == &table.source_table)
+            })
+        })
+        .map(|table| table.source_table.clone())
+        .collect()
+}
+
+/// The first resumability slice is intentionally narrow. Every completed unit
+/// is an existing target table committed in its own transaction, so replaying
+/// a resume token can only start an uncommitted table from its source boundary.
+fn supports_bounded_resume(job: &TransferJob) -> bool {
+    job.sql_file_target.is_none()
+        && job.mode == TransferMode::Data
+        && job.write_mode == crate::data_transfer::WriteMode::Insert
+        && plans::participating_tables(job).all(|table| !table.create_new)
+}
+
+fn has_unknown_outcome(result: &TransferExecutionResult) -> bool {
+    result.tables.iter().any(|table| {
+        table
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("outcome UNKNOWN"))
+    })
+}
+
+fn completed_tables_from_result(prior: &[String], result: &TransferExecutionResult) -> Vec<String> {
+    let mut completed: HashSet<String> = prior.iter().cloned().collect();
+    completed.extend(
+        result
+            .tables
+            .iter()
+            .filter(|table| table.success)
+            .map(|table| table.source_table.clone()),
+    );
+    let mut completed: Vec<_> = completed.into_iter().collect();
+    completed.sort();
+    completed
+}
+
 pub(crate) async fn execute_data_transfer_impl(
     state: &AppState,
     request: TransferRunRequest,
@@ -468,13 +518,52 @@ pub(crate) async fn execute_data_transfer_impl(
             "execute_data_transfer requires a preview planId".into(),
         ));
     }
-    let plan = plans::peek_plan(&request.plan_id).map_err(CommandError::from)?;
+    let (plan, checkpoint) = match request.resume_token.as_deref() {
+        Some(token) => plans::peek_checkpoint(token, &request.plan_id)
+            .map(|(plan, checkpoint)| (plan, Some(checkpoint)))
+            .map_err(CommandError::from)?,
+        None => (
+            plans::peek_plan(&request.plan_id).map_err(CommandError::from)?,
+            None,
+        ),
+    };
     if !plan.can_execute {
         return Err(CommandError::Validation(
             "transfer preview is blocked; return to comparison".into(),
         ));
     }
     validate_selection(&plan.job, &request.selection)?;
+    if checkpoint.is_some() && !supports_bounded_resume(&plan.job) {
+        return Err(CommandError::Validation(
+            "this transfer plan is outside the bounded resume contract; return to comparison"
+                .into(),
+        ));
+    }
+    if let Some(saved) = &checkpoint {
+        if plans::source_boundary_fingerprint(&plan).map_err(CommandError::from)?
+            != saved.source_boundary
+            || plans::target_boundary_fingerprint(&plan).map_err(CommandError::from)?
+                != saved.target_boundary
+        {
+            return Err(CommandError::Validation(
+                "resume token boundary no longer matches the immutable transfer plan".into(),
+            ));
+        }
+    }
+    let effective_selection = if let Some(saved) = &checkpoint {
+        if request.selection.source_tables.is_some()
+            && selected_source_tables(&plan.job, &request.selection) != saved.selected_tables
+        {
+            return Err(CommandError::Validation(
+                "resume token is bound to a different table selection".into(),
+            ));
+        }
+        TransferRunSelection {
+            source_tables: Some(saved.selected_tables.clone()),
+        }
+    } else {
+        request.selection.clone()
+    };
     if plan.job.write_mode.is_destructive()
         && !plan.job.options.confirmed_destructive
         && !request.options.confirmed_destructive
@@ -485,6 +574,12 @@ pub(crate) async fn execute_data_transfer_impl(
     }
 
     if plan.job.sql_file_target.is_some() {
+        if request.resume_token.is_some() {
+            return Err(CommandError::Validation(
+                "SQL-file transfers cannot be resumed; the atomic output must be regenerated"
+                    .into(),
+            ));
+        }
         return execute_sql_file_target(state, &plan, &request).await;
     }
 
@@ -492,9 +587,30 @@ pub(crate) async fn execute_data_transfer_impl(
     // changed read-only policy sends the user back to comparison without
     // burning a still-valid plan; once claimed, retries are always refused.
     let context = validate_plan_context(state, &plan).await?;
-    let claimed = plans::claim_plan(&request.plan_id).map_err(CommandError::from)?;
+    let job_id = request.job_id.clone();
+    let cancelled = match job_id.as_deref() {
+        Some(id) => Some(jobs::ensure_job(id).await),
+        None => None,
+    };
+    if cancelled
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+    {
+        return Err(CommandError::Validation(
+            "transfer cancelled before start".into(),
+        ));
+    }
+    let (claimed, claimed_checkpoint) = match request.resume_token.as_deref() {
+        Some(token) => plans::claim_checkpoint(token, &request.plan_id)
+            .map(|(plan, checkpoint)| (plan, Some(checkpoint)))
+            .map_err(CommandError::from)?,
+        None => (
+            plans::claim_plan(&request.plan_id).map_err(CommandError::from)?,
+            None,
+        ),
+    };
     let mut job = claimed.job;
-    apply_selection(&mut job, &request.selection);
+    apply_selection(&mut job, &effective_selection);
     let src_config = context.src_config;
     let tgt_config = context.tgt_config;
     let src_driver = context.src_driver;
@@ -503,20 +619,13 @@ pub(crate) async fn execute_data_transfer_impl(
     let tgt_handle = context.tgt_handle;
     let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
         .map_err(CommandError::from)?;
-    let job_id = request.job_id;
-
-    let cancelled = match job_id.as_deref() {
-        Some(id) => Some(jobs::ensure_job(id).await),
-        None => None,
-    };
-
-    if let Some(flag) = &cancelled {
-        if flag.load(Ordering::SeqCst) {
-            return Err(CommandError::Validation(
-                "transfer cancelled before start".into(),
-            ));
-        }
-    }
+    let resume_completed = claimed_checkpoint.as_ref().map(|checkpoint| {
+        checkpoint
+            .completed_tables
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>()
+    });
 
     let mut inspected = inspect_data_transfer_impl(
         state,
@@ -676,6 +785,7 @@ pub(crate) async fn execute_data_transfer_impl(
                 rows_inserted: 0,
                 cancelled: cancelled_flag,
                 partial: true,
+                resume_token: None,
             });
         }
     }
@@ -745,6 +855,7 @@ pub(crate) async fn execute_data_transfer_impl(
             drop_create.as_ref(),
             tgt_config.read_only,
             cancelled.clone(),
+            resume_completed.as_ref(),
         )
         .await
         .map_err(CommandError::from)?;
@@ -755,14 +866,39 @@ pub(crate) async fn execute_data_transfer_impl(
         all_tables.extend(data_result.tables);
     }
 
-    if let Some(id) = job_id.as_deref() {
-        jobs::remove_job(id).await;
-    }
-
-    Ok(TransferExecutionResult {
+    let mut output = TransferExecutionResult {
         tables: all_tables,
         rows_inserted: total_rows,
         cancelled: cancelled_flag,
         partial,
-    })
+        resume_token: None,
+    };
+    if let Some(token) = request.resume_token.as_deref() {
+        if has_unknown_outcome(&output) {
+            plans::invalidate_checkpoint(token);
+        } else if output.partial || output.cancelled {
+            let checkpoint = claimed_checkpoint.as_ref().ok_or_else(|| {
+                CommandError::Validation("resume checkpoint was not claimed".into())
+            })?;
+            let completed = completed_tables_from_result(&checkpoint.completed_tables, &output);
+            plans::update_checkpoint(token, completed, false).map_err(CommandError::from)?;
+            output.resume_token = Some(token.to_string());
+        } else {
+            plans::update_checkpoint(token, Vec::new(), true).map_err(CommandError::from)?;
+        }
+    } else if (output.partial || output.cancelled)
+        && supports_bounded_resume(&job)
+        && !has_unknown_outcome(&output)
+    {
+        let selected_tables = selected_source_tables(&job, &effective_selection);
+        let completed = completed_tables_from_result(&[], &output);
+        let token = plans::create_checkpoint(&request.plan_id, selected_tables, completed)
+            .map_err(CommandError::from)?;
+        output.resume_token = Some(token);
+    }
+    if let Some(id) = job_id.as_deref() {
+        jobs::remove_job(id).await;
+    }
+
+    Ok(output)
 }
