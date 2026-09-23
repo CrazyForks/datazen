@@ -256,7 +256,8 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
     );
     editor();
 
-    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
+    // BUG-006 后：超哨兵（truncated=false）⇒ 载荷完整，走 bigValueComplete 文案。
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValueComplete'));
     expect(reason()!.querySelector('[data-big-value-bytes]')!.getAttribute('data-big-value-bytes')).toBe(
       String(bytes),
     );
@@ -282,10 +283,11 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
       frame({ logicalLen: 100_000, rawB64: 'aGVsbG8=', truncated: false }),
     );
     editor();
-    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
+    // BUG-006 已修：完整载荷（truncated=false、rawB64 有值）⇒ 原因条说"完整但超
+    // 预算"，与旁边缺席的 truncated 徽标不再自相矛盾；真截断分支仍走旧 key
+    // （见上一条用例与 `keyReadOnlyPolicy.test.ts` 的分支断言）。
+    await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValueComplete'));
     expect(screen.queryByTestId('redis-key-badge-truncated')).toBeNull();
-    // 现状缺口（BUG-006）：此时原因条仍用"载荷不完整"那枚 key，与徽标缺席自相
-    // 矛盾。正确期望见 bugs/redis-detail-ui-BUG-006.md（本轮不把错误文案钉成断言）。
   });
 
   it('prefers the byte-view reason while a byte view is active on a huge value', async () => {

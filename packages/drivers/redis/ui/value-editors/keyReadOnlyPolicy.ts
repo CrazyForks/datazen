@@ -30,6 +30,17 @@ export const READ_ONLY_REASONS: Record<ReadOnlyReasonId, ReadOnlyReason> = {
   'big-value': { id: 'big-value', i18nKey: 'redis.detail.readonly.bigValue' },
 };
 
+/**
+ * BUG-006: I-5 只读态② 的第二个成因 —— 超哨兵但**载荷完整**（后端截断阈值
+ * 5 MiB、前端哨兵 64 KiB ⇒ 64 KiB ~ 5 MiB 是常态区间，`truncated === false`）。
+ * 同一个 `big-value` 状态（定位 id / data 口径不变），但文案事实必须分支：
+ * 真截断才说"载荷不完整"，否则与旁边缺席的 truncated 徽标自相矛盾。
+ */
+export const BIG_VALUE_COMPLETE_REASON: ReadOnlyReason = {
+  id: 'big-value',
+  i18nKey: 'redis.detail.readonly.bigValueComplete',
+};
+
 export interface ReadOnlyPolicy {
   readOnly: boolean;
   /** 只读时非空；可编辑时恒为 null（I-5 的"必须给原因"由此保证）。 */
@@ -57,7 +68,11 @@ export function resolveReadOnlyPolicy(input: {
     return { readOnly: true, reason: READ_ONLY_REASONS['binary-view'], bigValue };
   }
   if (bigValue.big) {
-    return { readOnly: true, reason: READ_ONLY_REASONS['big-value'], bigValue };
+    // BUG-006: two causes, two honest copies (same `big-value` state):
+    // backend-truncated ⇒ the payload really is incomplete; over-sentinel-only
+    // ⇒ the payload is COMPLETE and merely over the editable size budget.
+    const reason = bigValue.truncated ? READ_ONLY_REASONS['big-value'] : BIG_VALUE_COMPLETE_REASON;
+    return { readOnly: true, reason, bigValue };
   }
   return { readOnly: false, reason: null, bigValue };
 }

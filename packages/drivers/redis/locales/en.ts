@@ -489,6 +489,11 @@ const locale = {
     'Byte view: the rendered hex/bits are a projection, not the stored bytes — switch back to a text view to edit.',
   'redis.detail.readonly.bigValue':
     'Large value: the payload is incomplete, so editing is read-only to stop a truncated write overwriting it.',
+  // BUG-006: the over-sentinel-only branch (64 KiB sentinel vs. the backend's
+  // 5 MiB truncation cap) — the payload here IS complete, so the copy must
+  // not claim truncation (its truncated badge stays unlit right next to it).
+  'redis.detail.readonly.bigValueComplete':
+    'Large value: the payload is complete but over the editable size budget, so editing stays read-only to avoid a partial write-back replacing it.',
   // Badge row: `大小: N B` (ruling 8-4) — `n` is server data (MEMORY USAGE).
   'redis.detail.badge.size': 'Size: {n} B',
   // Key header row (ruling 8-4 copy semantics; refresh/rename/delete labels

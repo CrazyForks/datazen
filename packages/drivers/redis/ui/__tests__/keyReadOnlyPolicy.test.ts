@@ -105,6 +105,18 @@ describe('resolveReadOnlyPolicy — payload dimension', () => {
     expect(policy.bigValue.bytes).toBe(BIG_VALUE_SENTINEL_BYTES + 1);
   });
 
+  // BUG-006：I-5 ② 的两个成因必须各说各的事实文案（同一 big-value 状态）。
+  it('splits the big-value copy: truncated says incomplete, over-sentinel says complete', () => {
+    const truncatedPolicy = resolveReadOnlyPolicy({ frame: TRUNCATED, view: 'utf8' });
+    expect(truncatedPolicy.reason?.i18nKey).toBe(READ_ONLY_REASONS['big-value'].i18nKey);
+
+    const overPolicy = resolveReadOnlyPolicy({ frame: OVER_SENTINEL, view: 'utf8' });
+    expect(overPolicy.reason?.i18nKey).toBe('redis.detail.readonly.bigValueComplete');
+    // 定位口径不变：仍是 big-value 只读态，分支只换文案事实。
+    expect(overPolicy.reason?.id).toBe('big-value');
+    expect(overPolicy.readOnly).toBe(true);
+  });
+
   it('keeps a large collection editable (element count is not bytes)', () => {
     const policy = resolveReadOnlyPolicy({ frame: HUGE_HASH, view: 'utf8' });
     expect(policy.readOnly).toBe(false);
