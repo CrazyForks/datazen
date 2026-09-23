@@ -29,6 +29,7 @@ describe('settingsSections (F7 registration)', () => {
       'prompts',
       'mcpServer',
       'mcpClient',
+      'tunnels',
       'extensions',
     ]);
     expect(SETTINGS_NAV_GROUPS.map((g) => g.id)).toEqual(['app', 'integration']);
@@ -49,6 +50,7 @@ describe('settingsSections (F7 registration)', () => {
       'prompts',
       'mcpServer',
       'mcpClient',
+      'tunnels',
       'extensions',
     ]);
   });

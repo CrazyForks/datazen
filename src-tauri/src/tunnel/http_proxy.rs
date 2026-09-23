@@ -27,17 +27,7 @@ impl HttpProxyTunnel {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<Self, DriverError> {
-        let scheme = proxy.scheme.to_ascii_lowercase();
-        if scheme != "http" && scheme != "https" {
-            return Err(DriverError::HttpProxyTunnelError(format!(
-                "unsupported HTTP proxy scheme '{scheme}'; use http or https"
-            )));
-        }
-        if proxy.host.trim().is_empty() {
-            return Err(DriverError::HttpProxyTunnelError(
-                "HTTP proxy host is empty".into(),
-            ));
-        }
+        let scheme = normalize_scheme(proxy)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -50,17 +40,9 @@ impl HttpProxyTunnel {
         let proxy_host = proxy.host.clone();
         let proxy_port = proxy.port;
         let remote_host = remote_host.to_string();
-        let timeout = Duration::from_secs(u64::from(proxy.connect_timeout_secs.max(1)));
-        let extra_headers: Vec<(String, String)> = proxy
-            .headers
-            .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-        let auth_header = extra_headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
-            .map(|(_, value)| value.clone())
-            .or_else(|| basic_auth_header(proxy.username.as_deref(), proxy.password.as_deref()));
+        let timeout = connect_timeout(proxy);
+        let extra_headers = proxy_headers(proxy);
+        let auth_header = resolve_auth_header(proxy, &extra_headers);
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
 
@@ -128,6 +110,144 @@ impl Drop for HttpProxyTunnel {
     }
 }
 
+/// Lowercased and validated proxy scheme (`http` / `https`).
+fn normalize_scheme(proxy: &HttpProxyTunnelConfig) -> Result<String, DriverError> {
+    let scheme = proxy.scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(DriverError::HttpProxyTunnelError(format!(
+            "unsupported HTTP proxy scheme '{scheme}'; use http or https"
+        )));
+    }
+    if proxy.host.trim().is_empty() {
+        return Err(DriverError::HttpProxyTunnelError(
+            "HTTP proxy host is empty".into(),
+        ));
+    }
+    Ok(scheme)
+}
+
+fn proxy_headers(proxy: &HttpProxyTunnelConfig) -> Vec<(String, String)> {
+    proxy
+        .headers
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default()
+}
+
+/// An explicit `Proxy-Authorization` header wins; otherwise derive Basic auth.
+fn resolve_auth_header(
+    proxy: &HttpProxyTunnelConfig,
+    extra_headers: &[(String, String)],
+) -> Option<String> {
+    extra_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("proxy-authorization"))
+        .map(|(_, value)| value.clone())
+        .or_else(|| basic_auth_header(proxy.username.as_deref(), proxy.password.as_deref()))
+}
+
+fn connect_timeout(proxy: &HttpProxyTunnelConfig) -> Duration {
+    Duration::from_secs(u64::from(proxy.connect_timeout_secs.max(1)))
+}
+
+/// Dial the proxy host (TLS is applied separately by [`tls_connect`]).
+async fn dial_proxy(
+    proxy_host: &str,
+    proxy_port: u16,
+    timeout: Duration,
+) -> Result<TcpStream, DriverError> {
+    tokio::time::timeout(timeout, TcpStream::connect((proxy_host, proxy_port)))
+        .await
+        .map_err(|_| DriverError::HttpProxyTunnelError("connect to proxy timed out".into()))?
+        .map_err(|e| {
+            DriverError::HttpProxyTunnelError(format!(
+                "connect to proxy {proxy_host}:{proxy_port}: {e}"
+            ))
+        })
+}
+
+/// Wrap `socket` in TLS for an `https://` proxy.
+async fn tls_connect<S>(
+    proxy_host: &str,
+    socket: S,
+    timeout: Duration,
+) -> Result<tokio_rustls::client::TlsStream<S>, DriverError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    // `ClientConfig::builder()` panics when both provider features are compiled
+    // in and no process default exists (tunnel-backend-BUG-004). Installing one
+    // is idempotent, so this is safe on every connection and also covers library
+    // and test embedders that never go through `main()`.
+    crate::tls::install_default_crypto_provider();
+
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+    };
+    let tls_config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let server_name = if let Ok(ip) = proxy_host.parse::<std::net::IpAddr>() {
+        ServerName::IpAddress(IpAddr::from(ip))
+    } else {
+        ServerName::try_from(proxy_host.to_owned()).map_err(|e| {
+            DriverError::HttpProxyTunnelError(format!("invalid HTTPS proxy host: {e}"))
+        })?
+    };
+    let connector = TlsConnector::from(std::sync::Arc::new(tls_config));
+    tokio::time::timeout(timeout, connector.connect(server_name, socket))
+        .await
+        .map_err(|_| DriverError::HttpProxyTunnelError("TLS proxy handshake timed out".into()))?
+        .map_err(|e| DriverError::HttpProxyTunnelError(format!("TLS proxy handshake failed: {e}")))
+}
+
+/// Prove the proxy endpoint is reachable **and** accepts a `CONNECT` for
+/// `remote_host:remote_port`, then close the throwaway connection.
+///
+/// [`HttpProxyTunnel::start`] is lazy — it only binds the local listener and
+/// spawns the accept loop — so on its own it reports success even for an
+/// unreachable proxy. This is the step that actually establishes the upstream
+/// leg, and it is what the standalone tunnel connectivity probe uses.
+///
+/// Every stage is bounded by `connect_timeout_secs`: dial, TLS handshake and the
+/// CONNECT handshake itself ([`perform_connect_within`]). A proxy that accepts
+/// TCP but never answers must yield `Err` instead of hanging the caller forever.
+pub(crate) async fn verify_upstream(
+    proxy: &HttpProxyTunnelConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<(), DriverError> {
+    let scheme = normalize_scheme(proxy)?;
+    let timeout = connect_timeout(proxy);
+    let extra_headers = proxy_headers(proxy);
+    let auth_header = resolve_auth_header(proxy, &extra_headers);
+
+    let socket = dial_proxy(&proxy.host, proxy.port, timeout).await?;
+    if scheme == "https" {
+        let mut upstream = tls_connect(&proxy.host, socket, timeout).await?;
+        perform_connect_within(
+            &mut upstream,
+            remote_host,
+            remote_port,
+            auth_header.as_deref(),
+            &extra_headers,
+            timeout,
+        )
+        .await
+    } else {
+        let mut upstream = socket;
+        perform_connect_within(
+            &mut upstream,
+            remote_host,
+            remote_port,
+            auth_header.as_deref(),
+            &extra_headers,
+            timeout,
+        )
+        .await
+    }
+}
+
 async fn connect_and_copy(
     inbound: &mut TcpStream,
     scheme: &str,
@@ -140,36 +260,10 @@ async fn connect_and_copy(
     timeout: Duration,
     cancel: &CancellationToken,
 ) -> Result<(), DriverError> {
-    let socket = tokio::time::timeout(timeout, TcpStream::connect((proxy_host, proxy_port)))
-        .await
-        .map_err(|_| DriverError::HttpProxyTunnelError("connect to proxy timed out".into()))?
-        .map_err(|e| {
-            DriverError::HttpProxyTunnelError(format!(
-                "connect to proxy {proxy_host}:{proxy_port}: {e}"
-            ))
-        })?;
+    let socket = dial_proxy(proxy_host, proxy_port, timeout).await?;
 
     if scheme == "https" {
-        let roots = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-        };
-        let tls_config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        let server_name = if let Ok(ip) = proxy_host.parse::<std::net::IpAddr>() {
-            ServerName::IpAddress(IpAddr::from(ip))
-        } else {
-            ServerName::try_from(proxy_host.to_owned()).map_err(|e| {
-                DriverError::HttpProxyTunnelError(format!("invalid HTTPS proxy host: {e}"))
-            })?
-        };
-        let connector = TlsConnector::from(std::sync::Arc::new(tls_config));
-        let mut upstream = tokio::time::timeout(timeout, connector.connect(server_name, socket))
-            .await
-            .map_err(|_| DriverError::HttpProxyTunnelError("TLS proxy handshake timed out".into()))?
-            .map_err(|e| {
-                DriverError::HttpProxyTunnelError(format!("TLS proxy handshake failed: {e}"))
-            })?;
+        let mut upstream = tls_connect(proxy_host, socket, timeout).await?;
         establish_and_copy(
             inbound,
             &mut upstream,
@@ -210,18 +304,15 @@ async fn establish_and_copy<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    tokio::time::timeout(
+    perform_connect_within(
+        upstream,
+        remote_host,
+        remote_port,
+        auth_header,
+        extra_headers,
         timeout,
-        perform_connect(
-            upstream,
-            remote_host,
-            remote_port,
-            auth_header,
-            extra_headers,
-        ),
     )
-    .await
-    .map_err(|_| DriverError::HttpProxyTunnelError("CONNECT handshake timed out".into()))??;
+    .await?;
 
     tokio::select! {
         _ = cancel.cancelled() => Ok(()),
@@ -266,6 +357,36 @@ fn base64_encode(bytes: &[u8]) -> String {
         });
     }
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// Send the `CONNECT` request and read its status line, bounded by `timeout`.
+///
+/// [`perform_connect`] has no internal deadline — it reads the status line byte
+/// by byte — so **every** caller must bound it. A proxy that accepts the TCP
+/// connection but never answers (a half-dead squid, a port forwarded to a dead
+/// backend, a SYN-only firewall) would otherwise hang the caller forever; for
+/// the standalone probe that means an IPC command whose future never settles.
+///
+/// This is the single place where the handshake is bounded, so the data path
+/// ([`establish_and_copy`]) and the probe ([`verify_upstream`]) provably share
+/// the same timeout semantics.
+async fn perform_connect_within<S>(
+    stream: &mut S,
+    remote_host: &str,
+    remote_port: u16,
+    auth_header: Option<&str>,
+    extra_headers: &[(String, String)],
+    timeout: Duration,
+) -> Result<(), DriverError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    tokio::time::timeout(
+        timeout,
+        perform_connect(stream, remote_host, remote_port, auth_header, extra_headers),
+    )
+    .await
+    .map_err(|_| DriverError::HttpProxyTunnelError("CONNECT handshake timed out".into()))?
 }
 
 async fn perform_connect<S>(
@@ -423,5 +544,239 @@ mod tests {
         local.read_exact(&mut response).await.unwrap();
         assert_eq!(&response, b"pong");
         proxy_task.await.unwrap();
+    }
+    /// [tester] (c) — the refactor extracted these helpers out of the
+    /// production data path. Pin each one's semantics directly, including the
+    /// `connect_timeout_secs.max(1)` floor that no end-to-end test reaches.
+    #[test]
+    fn test_tester_extracted_helpers_keep_their_semantics() {
+        let base = HttpProxyTunnelConfig {
+            enabled: true,
+            host: "proxy.internal".into(),
+            port: 3128,
+            scheme: "HTTP".into(),
+            username: None,
+            password: None,
+            headers: None,
+            connect_timeout_secs: 0,
+        };
+
+        assert_eq!(normalize_scheme(&base).expect("scheme"), "http");
+        assert_eq!(
+            connect_timeout(&base),
+            Duration::from_secs(1),
+            "a zero timeout must fall back to 1s"
+        );
+
+        let mut configured = base.clone();
+        configured.connect_timeout_secs = 7;
+        assert_eq!(connect_timeout(&configured), Duration::from_secs(7));
+
+        assert!(normalize_scheme(&configured).is_ok());
+
+        let mut bad_scheme = base.clone();
+        bad_scheme.scheme = "socks5".into();
+        assert!(normalize_scheme(&bad_scheme)
+            .expect_err("socks5 must be rejected")
+            .to_string()
+            .contains("unsupported HTTP proxy scheme"));
+
+        let mut empty_host = base.clone();
+        empty_host.host = "   ".into();
+        assert!(normalize_scheme(&empty_host)
+            .expect_err("blank host must be rejected")
+            .to_string()
+            .contains("host is empty"));
+
+        assert!(proxy_headers(&base).is_empty());
+        let mut with_headers = base.clone();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Corp".to_string(), "1".to_string());
+        with_headers.headers = Some(headers);
+        assert_eq!(
+            proxy_headers(&with_headers),
+            vec![("X-Corp".to_string(), "1".to_string())]
+        );
+
+        // Explicit header wins over derived Basic credentials.
+        let mut both = with_headers.clone();
+        both.username = Some("u".into());
+        both.password = Some("p".into());
+        let mut explicit = std::collections::HashMap::new();
+        explicit.insert(
+            "proxy-authorization".to_string(),
+            "Bearer explicit".to_string(),
+        );
+        both.headers = Some(explicit);
+        let resolved = resolve_auth_header(&both, &proxy_headers(&both)).expect("explicit auth");
+        assert_eq!(resolved, "Bearer explicit");
+
+        // Basic credentials are derived when no header is present.
+        let derived = resolve_auth_header(&with_headers_with_credentials(), &[]).expect("basic");
+        assert_eq!(derived, "Basic dTpw");
+
+        // No credentials and no header -> no auth header.
+        assert!(resolve_auth_header(&base, &[]).is_none());
+    }
+
+    fn with_headers_with_credentials() -> HttpProxyTunnelConfig {
+        HttpProxyTunnelConfig {
+            enabled: true,
+            host: "proxy.internal".into(),
+            port: 3128,
+            scheme: "http".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+            headers: None,
+            connect_timeout_secs: 3,
+        }
+    }
+
+    /// `tunnel-backend-BUG-004` evidence ②: the **data path** must surface a TLS
+    /// failure as `Err` instead of panicking.
+    ///
+    /// `connect_and_copy` is the exact function the accept loop's per-connection
+    /// task runs, so before the fix `ClientConfig::builder()` panicked inside
+    /// that spawned task: the forwarder died silently and the tunnel still looked
+    /// alive. A panic here would fail this test instead of being swallowed by a
+    /// detached `JoinHandle`.
+    #[tokio::test]
+    async fn https_data_path_reports_tls_failure_without_panicking() {
+        // A plain TCP "https proxy": it accepts, then never speaks TLS.
+        let proxy = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let proxy_port = proxy.local_addr().expect("fixture addr").port();
+        let proxy_task = tokio::spawn(async move {
+            let (stream, _) = proxy.accept().await.expect("accept");
+            // Hold the connection open without answering the ClientHello.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(stream);
+        });
+
+        // The inbound (client) half of the local listener. `connect_and_copy`
+        // only touches it after the CONNECT succeeds, so any live stream works.
+        let inbound_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind inbound");
+        let inbound_addr = inbound_listener.local_addr().expect("inbound addr");
+        let (connected, accepted) =
+            tokio::join!(TcpStream::connect(inbound_addr), inbound_listener.accept());
+        let mut inbound = connected.expect("connect inbound");
+        let _server_side = accepted.expect("accept inbound");
+
+        let cancel = CancellationToken::new();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            connect_and_copy(
+                &mut inbound,
+                "https",
+                "127.0.0.1",
+                proxy_port,
+                "db.internal",
+                5432,
+                None,
+                &[],
+                Duration::from_secs(1),
+                &cancel,
+            ),
+        )
+        .await
+        .expect("the https data path must be bounded, not hang");
+
+        assert!(
+            outcome.is_err(),
+            "a non-TLS endpoint under scheme=https must fail, got {outcome:?}"
+        );
+
+        proxy_task.abort();
+    }
+
+    /// [tester] BUG-003 (a)2/(a)3 — `perform_connect_within` is the single
+    /// bounded entry that **both** `verify_upstream` branches (`http` and
+    /// `https`) and the data path call for the CONNECT read. A peer that accepts
+    /// the TCP connection and then never answers (the "SYN-only firewall" /
+    /// half-dead-squid shape) must yield `Err("CONNECT handshake timed out")`
+    /// inside the budget instead of pending forever.
+    ///
+    /// This is the strongest hermetic proof available for the `https` branch's
+    /// CONNECT stage: the branch reaches this exact helper, but a `https` fixture
+    /// cannot get past `tls_connect` without a certificate that chains to a
+    /// `webpki-roots` CA.
+    #[tokio::test]
+    async fn test_tester_connect_read_is_bounded_when_the_peer_never_answers() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent peer");
+        let addr = listener.local_addr().expect("fixture addr");
+        let fixture = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            // Never write a byte, never close.
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(stream);
+        });
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect silent peer");
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            perform_connect_within(
+                &mut stream,
+                "db.internal",
+                5432,
+                None,
+                &[],
+                Duration::from_millis(700),
+            ),
+        )
+        .await
+        .expect("the CONNECT read must be bounded, not hang");
+        let elapsed = started.elapsed();
+
+        let err = outcome.expect_err("a silent peer must fail the CONNECT handshake");
+        assert!(
+            err.to_string().contains("timed out"),
+            "the timeout must be identifiable in the error: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the CONNECT read must stop at the deadline, took {elapsed:?}"
+        );
+
+        fixture.abort();
+    }
+
+    /// [tester] BUG-003 (a)3 — characterisation guard for the root cause:
+    /// `perform_connect` itself has **no** internal deadline, so the
+    /// `perform_connect_within` wrapper is load-bearing.
+    ///
+    /// If this ever starts returning inside the window, the inner function grew
+    /// its own deadline and the wrapper's rationale (and the doc comment on it)
+    /// must be revisited.
+    #[tokio::test]
+    async fn test_tester_raw_perform_connect_is_unbounded_so_the_wrapper_is_load_bearing() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind silent peer");
+        let addr = listener.local_addr().expect("fixture addr");
+        let fixture = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(stream);
+        });
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect silent peer");
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(500),
+            perform_connect(&mut stream, "db.internal", 5432, None, &[]),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "perform_connect must have no internal deadline (that is why \
+             perform_connect_within exists), but it returned: {outcome:?}"
+        );
+
+        fixture.abort();
     }
 }

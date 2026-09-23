@@ -31,17 +31,7 @@ impl WebSocketTunnel {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<Self, DriverError> {
-        if cfg.url.trim().is_empty() {
-            return Err(DriverError::WebSocketTunnelError(
-                "WebSocket tunnel URL is empty".into(),
-            ));
-        }
-        let mode = cfg.mode.to_ascii_lowercase();
-        if mode != "datazen_v1" && mode != "raw_binary" {
-            return Err(DriverError::WebSocketTunnelError(format!(
-                "Unknown WebSocket tunnel mode '{mode}'; use datazen_v1 or raw_binary"
-            )));
-        }
+        let mode = validate_config(cfg)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -51,23 +41,11 @@ impl WebSocketTunnel {
             .map_err(|e| DriverError::WebSocketTunnelError(format!("get local port: {e}")))?
             .port();
 
-        let url = if mode == "raw_binary" {
-            raw_binary_url(&cfg.url, &remote_host, remote_port)?
-        } else {
-            cfg.url.clone()
-        };
+        let url = resolve_url(cfg, &mode, remote_host, remote_port)?;
         let auth_token = cfg.auth_token.clone();
-        let extra_headers: Vec<(String, String)> = cfg
-            .headers
-            .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-        let timeout = Duration::from_secs(u64::from(cfg.connect_timeout_secs.max(1)));
-        let ping_interval = if cfg.ping_interval_secs == 0 {
-            None
-        } else {
-            Some(Duration::from_secs(u64::from(cfg.ping_interval_secs)))
-        };
+        let extra_headers = ws_headers(cfg);
+        let timeout = ws_timeout(cfg);
+        let ping_interval = ws_ping_interval(cfg);
         let remote_host = remote_host.to_string();
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
@@ -134,6 +112,84 @@ impl Drop for WebSocketTunnel {
     }
 }
 
+/// Validated tunnel config: non-empty URL plus lowercased mode
+/// (`datazen_v1` / `raw_binary`).
+fn validate_config(cfg: &WebSocketTunnelConfig) -> Result<String, DriverError> {
+    if cfg.url.trim().is_empty() {
+        return Err(DriverError::WebSocketTunnelError(
+            "WebSocket tunnel URL is empty".into(),
+        ));
+    }
+    let mode = cfg.mode.to_ascii_lowercase();
+    if mode != "datazen_v1" && mode != "raw_binary" {
+        return Err(DriverError::WebSocketTunnelError(format!(
+            "Unknown WebSocket tunnel mode '{mode}'; use datazen_v1 or raw_binary"
+        )));
+    }
+    Ok(mode)
+}
+
+fn ws_headers(cfg: &WebSocketTunnelConfig) -> Vec<(String, String)> {
+    cfg.headers
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default()
+}
+
+fn ws_timeout(cfg: &WebSocketTunnelConfig) -> Duration {
+    Duration::from_secs(u64::from(cfg.connect_timeout_secs.max(1)))
+}
+
+fn ws_ping_interval(cfg: &WebSocketTunnelConfig) -> Option<Duration> {
+    if cfg.ping_interval_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(u64::from(cfg.ping_interval_secs)))
+    }
+}
+
+/// Effective relay URL: `raw_binary` injects the target host/port as query keys.
+fn resolve_url(
+    cfg: &WebSocketTunnelConfig,
+    mode: &str,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<String, DriverError> {
+    if mode == "raw_binary" {
+        raw_binary_url(&cfg.url, remote_host, remote_port)
+    } else {
+        Ok(cfg.url.clone())
+    }
+}
+
+/// Prove the relay endpoint is reachable **and**, in `datazen_v1` mode, that it
+/// accepts an `open` for `remote_host:remote_port`; then close the throwaway
+/// connection.
+///
+/// [`WebSocketTunnel::start`] is lazy — it only binds the local listener and
+/// spawns the accept loop — so on its own it reports success even for an
+/// unreachable relay. This is the step that actually establishes the upstream
+/// leg, and it is what the standalone tunnel connectivity probe uses.
+pub(crate) async fn verify_upstream(
+    cfg: &WebSocketTunnelConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<(), DriverError> {
+    let mode = validate_config(cfg)?;
+    let url = resolve_url(cfg, &mode, remote_host, remote_port)?;
+    let extra_headers = ws_headers(cfg);
+    let timeout = ws_timeout(cfg);
+
+    let mut ws = connect_ws(&url, cfg.auth_token.as_deref(), &extra_headers, timeout).await?;
+    if mode == "datazen_v1" {
+        let channel_id = open_datazen_channel(&mut ws, remote_host, remote_port, timeout).await?;
+        let close = serde_json::json!({ "op": "close", "id": channel_id });
+        let _ = ws.send(Message::Text(close.to_string().into())).await;
+    }
+    let _ = ws.close(None).await;
+    Ok(())
+}
+
 fn raw_binary_url(
     raw_url: &str,
     remote_host: &str,
@@ -194,6 +250,11 @@ async fn connect_ws(
     extra_headers: &[(String, String)],
     timeout: Duration,
 ) -> Result<WsStream, DriverError> {
+    // `wss://` hands off to rustls inside tungstenite; install the process-wide
+    // provider first so its `ClientConfig::builder()` cannot panic
+    // (tunnel-backend-BUG-004). Idempotent, so it is safe per connection.
+    crate::tls::install_default_crypto_provider();
+
     let mut request = url
         .into_client_request()
         .map_err(|e| DriverError::WebSocketTunnelError(format!("invalid WebSocket URL: {e}")))?;
@@ -445,5 +506,76 @@ mod tests {
         let url =
             raw_binary_url("ws://relay/tunnel?token=x&host=old", "db.internal", 5432).unwrap();
         assert_eq!(url, "ws://relay/tunnel?token=x&host=db.internal&port=5432");
+    }
+    /// [tester] (c) — direct semantics of the helpers extracted out of the
+    /// production WebSocket data path.
+    #[test]
+    fn test_tester_extracted_helpers_keep_their_semantics() {
+        let base = WebSocketTunnelConfig {
+            enabled: true,
+            url: "ws://relay/tunnel".into(),
+            auth_token: None,
+            headers: None,
+            connect_timeout_secs: 0,
+            ping_interval_secs: 0,
+            mode: "DATaZen_V1".into(),
+        };
+
+        assert_eq!(validate_config(&base).expect("mode"), "datazen_v1");
+        assert_eq!(
+            ws_timeout(&base),
+            Duration::from_secs(1),
+            "a zero timeout must fall back to 1s"
+        );
+        assert_eq!(ws_ping_interval(&base), None, "0 disables keepalives");
+        assert!(ws_headers(&base).is_empty());
+        assert_eq!(
+            resolve_url(&base, "datazen_v1", "db.internal", 5432).expect("url"),
+            "ws://relay/tunnel"
+        );
+
+        let mut bad_mode = base.clone();
+        bad_mode.mode = "sse".into();
+        assert!(validate_config(&bad_mode)
+            .expect_err("unknown mode must be rejected")
+            .to_string()
+            .contains("Unknown WebSocket tunnel mode"));
+
+        let mut empty_url = base.clone();
+        empty_url.url = "   ".into();
+        assert!(validate_config(&empty_url)
+            .expect_err("blank url must be rejected")
+            .to_string()
+            .contains("URL is empty"));
+
+        let mut configured = base.clone();
+        configured.connect_timeout_secs = 9;
+        configured.ping_interval_secs = 5;
+        assert_eq!(ws_timeout(&configured), Duration::from_secs(9));
+        assert_eq!(ws_ping_interval(&configured), Some(Duration::from_secs(5)));
+
+        let mut with_headers = base.clone();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Relay".to_string(), "1".to_string());
+        with_headers.headers = Some(headers);
+        assert_eq!(
+            ws_headers(&with_headers),
+            vec![("X-Relay".to_string(), "1".to_string())]
+        );
+
+        let mut raw = base.clone();
+        raw.mode = "raw_binary".into();
+        raw.url = "ws://relay/tunnel?token=x&host=stale".into();
+        assert_eq!(
+            resolve_url(&raw, "raw_binary", "db.internal", 5432).expect("raw url"),
+            "ws://relay/tunnel?token=x&host=db.internal&port=5432"
+        );
+
+        let mut invalid = raw.clone();
+        invalid.url = "not a url".into();
+        assert!(
+            resolve_url(&invalid, "raw_binary", "db.internal", 5432).is_err(),
+            "an unparsable relay URL must be rejected"
+        );
     }
 }

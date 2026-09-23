@@ -5,38 +5,47 @@ import { PathInput } from '@datazen/ui';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { Label } from './shared';
-import type { ConnectionFormState } from './useConnectionForm';
+import type { SshTunnelFieldsValue } from './tunnelFieldContracts';
 
 export interface SshTunnelFieldsProps {
-  form: ConnectionFormState;
+  /** Structural subset of `ConnectionFormState` (see `tunnelFieldContracts`). */
+  form: SshTunnelFieldsValue;
   /** Window variant uses bg-surface-alt for inner panel; dialog uses bg-surface */
   innerPanelClassName?: string;
+  /**
+   * Hide the "use SSH tunnel" checkbox. The settings tunnel editor owns the
+   * kind with its own selector, so a second toggle there would be a dead control.
+   */
+  showEnableToggle?: boolean;
 }
 
 export function SshTunnelFields({
   form,
   innerPanelClassName = 'bg-surface',
+  showEnableToggle = true,
 }: SshTunnelFieldsProps) {
   const { t } = useI18n();
   if (!form.supportsSSH) return null;
 
   return (
     <div>
-      <label
-        data-testid="new-conn-ssh-tunnel"
-        className="flex items-center gap-2 text-sm text-fg-secondary"
-      >
-        <input
-          type="checkbox"
-          data-testid="new-conn-ssh-tunnel-checkbox"
-          checked={form.sshEnabled}
-          onChange={(e) => form.setSshEnabled(e.target.checked)}
-          className="h-4 w-4 rounded border-edge bg-surface accent-accent focus:ring-accent/25"
-        />
-        {t('newConn.sshTunnel')}
-      </label>
+      {showEnableToggle && (
+        <label
+          data-testid="new-conn-ssh-tunnel"
+          className="flex items-center gap-2 text-sm text-fg-secondary"
+        >
+          <input
+            type="checkbox"
+            data-testid="new-conn-ssh-tunnel-checkbox"
+            checked={form.sshEnabled}
+            onChange={(e) => form.setSshEnabled(e.target.checked)}
+            className="h-4 w-4 rounded border-edge bg-surface accent-accent focus:ring-accent/25"
+          />
+          {t('newConn.sshTunnel')}
+        </label>
+      )}
 
-      {form.sshEnabled && (
+      {(showEnableToggle ? form.sshEnabled : true) && (
         <div
           className={cn(
             'mt-3 grid grid-cols-1 gap-3 rounded-md border border-edge p-3 md:grid-cols-2',

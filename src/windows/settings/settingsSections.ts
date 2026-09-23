@@ -11,7 +11,17 @@ export type SettingsSection =
   | 'prompts'
   | 'mcpServer'
   | 'mcpClient'
+  | 'tunnels'
   | 'extensions';
+
+/**
+ * Section labels are host translation keys. `TranslationKey` is derived from the
+ * zh-CN pack, and the i18n rule for development is "en only" — so a freshly
+ * added en key is not part of that union yet and must be listed explicitly.
+ * Listing it here still fails type-checking on a typo, unlike widening the whole
+ * array to the loose `I18nKey` (`TranslationKey | string`).
+ */
+export type SettingsSectionLabelKey = TranslationKey | 'settings.tunnels.title';
 
 /**
  * Nav groups only bucket the flat section list for display. Section ids, their
@@ -27,7 +37,7 @@ export const SETTINGS_NAV_GROUPS: { id: SettingsNavGroup; labelKey: I18nKey }[] 
 
 export const SETTINGS_SECTIONS: {
   id: SettingsSection;
-  labelKey: TranslationKey;
+  labelKey: SettingsSectionLabelKey;
   group: SettingsNavGroup;
 }[] = [
   { id: 'general', labelKey: 'settings.general', group: 'app' },
@@ -40,6 +50,7 @@ export const SETTINGS_SECTIONS: {
   { id: 'prompts', labelKey: 'settings.prompts', group: 'integration' },
   { id: 'mcpServer', labelKey: 'settings.mcp.title', group: 'integration' },
   { id: 'mcpClient', labelKey: 'settings.mcpClient.title', group: 'integration' },
+  { id: 'tunnels', labelKey: 'settings.tunnels.title', group: 'integration' },
   { id: 'extensions', labelKey: 'settings.extensions.title', group: 'integration' },
 ];
 
