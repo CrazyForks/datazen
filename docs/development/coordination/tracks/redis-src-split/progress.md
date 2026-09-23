@@ -627,3 +627,74 @@ RedisLiveConn, TlsPlan, Topology};`（:35）与 `pub use ops::{set_settings_allo
 settings_allow_flush};`（:36）—— 5+2 个名字**全部**出现在步骤 4 的 `cargo check` 通过结果中（编译即证）。
 
 **步骤 3 结论：4/5 PASS，`ops_tree_scan.rs` FAIL → BUG-001（已登记）。**
+
+### 步骤 4 — 门禁独立复跑（提交态 `2e3d0c6b7`，Tester 自己的 target 目录，逐字留尾）
+
+**4.1 单元测试** — `CARGO_TARGET_DIR=/tmp/dz-split-tester cargo test -p datazen-driver-redis --lib`
+
+```
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.05s
+```
+
+→ **逐位命中 Coder 自报的 `342 passed; 0 failed; 4 ignored`，PASS。**
+
+**4.2 集成测试** — `CARGO_TARGET_DIR=/tmp/dz-split-tester cargo test -p datazen-driver-redis`
+
+```
+     Running unittests src/lib.rs (/tmp/dz-split-tester/debug/deps/datazen_driver_redis-7b8202e24996fc60)
+running 346 tests
+test result: ok. 342 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/tree_contract_tester.rs (/tmp/dz-split-tester/debug/deps/tree_contract_tester-462a41d80c275261)
+running 9 tests
+test result: ok. 4 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/tree_scan_budget.rs (/tmp/dz-split-tester/debug/deps/tree_scan_budget-f368da5a5b931df8)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/workbench_commands.rs (/tmp/dz-split-tester/debug/deps/workbench_commands-70bfad61f163c4f4)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   Doc-tests datazen_driver_redis
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+→ **5 个目标全绿**（lib 342/0/4、tree_contract_tester 4/0/5、tree_scan_budget 4/0/0、
+workbench_commands 4/0/0、doc-tests 0/0/0），与 Coder 自报一致，PASS。
+
+**4.3 `cargo fmt --check`** — 残余**恰为基线既有 2 条**，**无新增漂移**：
+
+```
+$ CARGO_TARGET_DIR=/tmp/dz-split-tester cargo fmt --check -p datazen-driver-redis 2>&1 \
+    | grep "^Diff in" | sed 's|.*/redis/||' | sort | uniq -c
+   1 src/ops_observe.rs:280:
+   1 src/ops_observe.rs:569:
+```
+
+→ 与 Coder 自报的基线残差**逐条相同**；**新拆分的 8 组文件里零漂移**，PASS。
+
+**4.4 单文件规模** — `find <worktree>/packages/drivers/redis/src -name "*.rs" -exec wc -l {} + | sort -rn | head -5`
+
+```
+   23526 total
+     787 packages/drivers/redis/src/commands.rs
+     786 packages/drivers/redis/src/redis_driver.rs
+     708 packages/drivers/redis/src/commands_exec_dispatch.rs
+     684 packages/drivers/redis/src/ops_tree_scan/tests/page_coverage.rs
+     601 packages/drivers/redis/src/ops_observe.rs
+```
+
+超 800 行文件：**空**。最大 **787 = `commands.rs`**，与 Coder 自报「最大 787 `commands.rs`」**逐位一致**，PASS。
+（8 个被拆原文件全部转为 `mod.rs` 或子模块，最大 `ops/mod.rs` 490。）
+
+**4.5 `npx tsc --noEmit`**
+
+```
+$ npx tsc --noEmit
+（无输出）   --- tsc exit: 0 ---
+```
+
+→ **0 错误**。本轨未触碰 TS，符合预期，PASS。
+
+**步骤 4 结论：5/5 门禁 PASS，全部与 Coder 自报数字逐位一致。**
+**注意：BUG-001（`meta_slots` 根路径丢失）在本步门禁下不可见** —— 因 crate 内暂无调用方，
+`342/0/4` 仍全绿。这正是「公开面集合相等」必须作为**独立**判据的原因。
