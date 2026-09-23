@@ -88,3 +88,97 @@ describe('ValueViewer', () => {
     expect(screen.getByText('redis.view.noData')).toBeTruthy();
   });
 });
+
+/* ── [tester] 第 1 轮复验补测：E-3 之后输出区只在只读档出现 ─────────────────
+ * 台账 §6 记 `ValueViewer.tsx` 75.36%，未覆盖为 `:124-138` 渲染兜底支路。实测
+ * 未覆盖的是 `copyText`(:118-121) / `downloadBytes`(:123-139) / `wrap`(:212) 与
+ * 一次 `seq` 竞态守卫(:105)：E-3 把 `showOutput` 改成 `readOnly` 驱动后，这三枚
+ * 动作**只有**在只读预览态才可达（宿主常驻编辑面传 `showOutput={false}`），属本
+ * 轨验收面的新可达性形状，故在此钉住。
+ */
+describe('[tester] ValueViewer read-only preview actions (E-3 reachability)', () => {
+  const writeText = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it('copies the rendered text when a text view is active', async () => {
+    const { container } = render(<ValueViewer dbSessionId="sess-1" frame={frame} />);
+    // 默认 utf8 文本视图 ⇒ 复制的是渲染后的文本，不是 base64 载荷。
+    const copy = await screen.findByTestId('redis-view-copy');
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const payload = writeText.mock.calls[0]?.[0] as string;
+    // 载荷是服务器数据：4 字节 hostile 序列的 utf8 渲染（含替换符），不该等于 b64。
+    expect(payload).not.toBe(HOSTILE_B64);
+    expect(container).toBeTruthy();
+  });
+
+  it('copies the raw payload when the active view is a byte projection', async () => {
+    render(<ValueViewer dbSessionId="sess-1" frame={frame} />);
+    fireEvent.click(screen.getByTestId('redis-view-hex'));
+    await screen.findByTestId('redis-value-hex');
+    writeText.mockClear();
+
+    fireEvent.click(screen.getByTestId('redis-view-copy'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    // hex 档没有文本渲染 ⇒ 回退到原始 base64（保住字节，不复制半截 hex）。
+    expect(writeText.mock.calls[0]?.[0]).toBe(HOSTILE_B64);
+  });
+
+  it('toggles wrapping without touching the payload', async () => {
+    render(<ValueViewer dbSessionId="sess-1" frame={frame} />);
+    const wrap = screen.getByTestId('redis-view-wrap') as HTMLInputElement;
+    expect(wrap.checked).toBe(true);
+    fireEvent.click(wrap);
+    expect(wrap.checked).toBe(false);
+    fireEvent.click(wrap);
+    expect(wrap.checked).toBe(true);
+    // 换行是纯显示开关：不发任何命令。
+    expect(decodeValue).not.toHaveBeenCalled();
+  });
+
+  it('downloads the raw bytes named after the key', async () => {
+    const create = vi.fn(() => 'blob:data:stub');
+    const revoke = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { value: create, configurable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revoke, configurable: true });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+
+    render(<ValueViewer dbSessionId="sess-1" frame={frame} />);
+    fireEvent.click(screen.getByTestId('redis-view-download'));
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+  });
+
+  it('renders only the codec/view rows when the host keeps the output (showOutput=false)', () => {
+    render(
+      <ValueViewer
+        dbSessionId="sess-1"
+        frame={frame}
+        view="hex"
+        codec="none"
+        showOutput={false}
+      />,
+    );
+    const viewer = screen.getByTestId('redis-value-viewer');
+    expect(viewer.getAttribute('data-show-output')).toBe('false');
+    // 预检档不留第二份输出：复制 / 下载 / 换行 全部不存在（它们只在只读预览态可达）。
+    expect(screen.queryByTestId('redis-view-copy')).toBeNull();
+    expect(screen.queryByTestId('redis-view-download')).toBeNull();
+    expect(screen.queryByTestId('redis-view-wrap')).toBeNull();
+    // 两行控件仍在，用户才切得回文本档。
+    expect(screen.getByTestId('redis-view-group')).toBeTruthy();
+    expect(screen.getByTestId('redis-codec-group')).toBeTruthy();
+  });
+});

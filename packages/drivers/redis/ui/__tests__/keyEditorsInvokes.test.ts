@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   invokeCreateKey,
+  invokeDeleteKey,
+  invokeRename,
   invokeSetExpireAt,
   invokeSetString,
   invokeSetTtl,
@@ -276,5 +278,37 @@ describe('invokeZsetScan (PR-3)', () => {
     await invokeZsetScan('sess-1', 0, 'z', 0, 100, undefined, invoke);
     const args = invoke.mock.calls[0][2] as Record<string, unknown>;
     expect(args).not.toHaveProperty('matchPattern');
+  });
+});
+
+/* ── [tester] 第 1 轮复验补测：键头行两个新入口的出网形状 ─────────────────────
+ * 台账 §6 把 `keyEditorsInvokes:306-321` 归给「集合类批量 invoke 辅助（本轨未动其
+ * 语义）」并据此记为非缺口。实测该区间是 `invokeRename`(:296-311) 与
+ * `invokeDeleteKey`(:314-325)，后者是**本轨 E-4 新建**的单键删除入口 —— 属验收面，
+ * 故在此钉住其命令与载荷（键头行的两个写动作经 UI 旅程时被 mock 掉，真实函数当时
+ * 零覆盖）。见 bugs/redis-detail-ui-BUG-005.md。
+ */
+describe('[tester] invokeRename (E-4 header rename wire shape)', () => {
+  it('sends the rename command with both key names and nothing else', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
+    await invokeRename('sess-9', 2, 'user:1', 'user:renamed', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'rename', {
+      dbSessionId: 'sess-9',
+      dbIndex: 2,
+      key: 'user:1',
+      newKey: 'user:renamed',
+    });
+  });
+});
+
+describe('[tester] invokeDeleteKey (E-4 header delete wire shape)', () => {
+  it('reuses the batch delete command with a one-element key list', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(1);
+    await invokeDeleteKey('sess-9', 0, 'user:1', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'delete_keys', {
+      dbSessionId: 'sess-9',
+      dbIndex: 0,
+      keys: ['user:1'],
+    });
   });
 });
