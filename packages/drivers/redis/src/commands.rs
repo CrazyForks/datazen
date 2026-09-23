@@ -26,8 +26,8 @@ fn redis_command_metadata(id: &str) -> DriverCommandMetadata {
         "flush_db" | "flush_all" | "slowlog_reset" => CommandCategory::Admin,
         "scan_keys" | "get_key" | "get_key_raw" | "db_sizes" | "list_children" | "info"
         | "memory_sample" | "slowlog_get" | "modules_list" | "cluster_nodes" | "count_matching"
-        | "scan_values" | "scan_abort" | "decode_value" | "monitor_start" | "monitor_stop"
-        | "monitor_get_buffer" | "type_distribution" | "key_object_info" => {
+        | "key_probe" | "scan_values" | "scan_abort" | "decode_value" | "monitor_start"
+        | "monitor_stop" | "monitor_get_buffer" | "type_distribution" | "key_object_info" => {
             CommandCategory::Observe
         }
         _ => CommandCategory::Mutate,
@@ -91,7 +91,8 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
                     "count": { "type": "integer" },
                     "keyType": { "type": "string", "description": "Optional Redis TYPE filter (string/hash/list/set/zset/stream)" },
                     "withMemory": { "type": "boolean", "description": "When true, size uses MEMORY USAGE (bytes)" },
-                    "noTtlOnly": { "type": "boolean", "description": "When true, only include keys without expiry (TTL == -1)" }
+                    "noTtlOnly": { "type": "boolean", "description": "When true, only include keys without expiry (TTL == -1)" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; unrelated to the value-search key cap" }
                 }),
                 &[],
             ),
@@ -116,7 +117,9 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
                     "count": { "type": "integer" },
                     "sep": { "type": "string", "description": "Separator char (default ':')" },
                     "noTtlOnly": { "type": "boolean" },
-                    "keyType": { "type": "string" }
+                    "withMemory": { "type": "boolean", "description": "When true, size uses MEMORY USAGE (bytes)" },
+                    "keyType": { "type": "string" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; unrelated to the value-search key cap" }
                 }),
                 &["prefix"],
             ),
@@ -125,6 +128,13 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "get_key",
             "Get key",
             "Load the full value for a Redis key",
+            "redis:allow-info",
+            object_schema(serde_json::json!({ "dbIndex": db, "key": key }), &["key"]),
+        ),
+        cmd(
+            "key_probe",
+            "Key probe",
+            "Probe one key's attributes (EXISTS + TYPE + PTTL + MEMORY USAGE) without reading its value",
             "redis:allow-info",
             object_schema(serde_json::json!({ "dbIndex": db, "key": key }), &["key"]),
         ),
@@ -417,7 +427,11 @@ pub fn redis_command_definitions() -> Vec<DriverCommandDefinition> {
             "Count keys matching a pattern",
             "redis:allow-count-matching",
             object_schema(
-                serde_json::json!({ "dbIndex": db, "pattern": { "type": "string" } }),
+                serde_json::json!({
+                    "dbIndex": db,
+                    "pattern": { "type": "string" },
+                    "budget": { "type": "integer", "description": "Cumulative SCAN COUNT cap for this one action — key-tree budget: default 50000, scaled up by DBSIZE (x2) up to a hard cap of 1000000; the reply's `truncated` says the count is a floor" }
+                }),
                 &["pattern"],
             ),
         ),

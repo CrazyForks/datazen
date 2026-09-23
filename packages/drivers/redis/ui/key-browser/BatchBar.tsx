@@ -4,7 +4,11 @@ import { Button } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
-import { redisCommandInvoke, type RedisInvokeFn } from '../shared/redisInvoke';
+import {
+  redisCommandInvoke,
+  type CountMatchingResult,
+  type RedisInvokeFn,
+} from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
 
 export interface BatchDeleteResult {
@@ -87,12 +91,20 @@ export async function invokeCountMatching(
   dbIndex: number,
   pattern: string,
   invoke: PluginInvokeFn = redisCommandInvoke,
-): Promise<number> {
+): Promise<CountMatchingResult> {
   return (await invoke('redis', 'count_matching', {
     dbSessionId: dbSessionId,
     dbIndex: dbIndex,
     pattern,
-  })) as number;
+  })) as CountMatchingResult;
+}
+
+/**
+ * The count as the label wants it: a budget-truncated answer is a floor, so it
+ * carries the `+` suffix that tells the user more keys exist uncounted.
+ */
+export function formatMatchCount(result: CountMatchingResult): string {
+  return result.truncated ? `${result.count}+` : String(result.count);
 }
 
 export interface BatchBarProps {
@@ -125,7 +137,7 @@ export function BatchBar({
   const [persistMode, setPersistMode] = useState(false);
   const [oldPrefix, setOldPrefix] = useState('');
   const [newPrefix, setNewPrefix] = useState('');
-  const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [matchCount, setMatchCount] = useState<CountMatchingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const showSummary = useCallback(
@@ -149,8 +161,8 @@ export function BatchBar({
 
   const loadPatternCount = async (pattern: string) => {
     try {
-      const count = await invokeCountMatching(dbSessionId, dbIndex, pattern);
-      setMatchCount(count);
+      const result = await invokeCountMatching(dbSessionId, dbIndex, pattern);
+      setMatchCount(result);
     } catch {
       setMatchCount(null);
     }
@@ -364,8 +376,8 @@ export function BatchBar({
             className="h-8 font-mono text-xs"
           />
           {matchCount !== null && (
-            <p className="text-xs text-fg-muted">
-              {t('redis.matchCount').replace('{count}', String(matchCount))}
+            <p className="text-xs text-fg-muted" data-testid="redis-pattern-match-count">
+              {t('redis.matchCount').replace('{count}', formatMatchCount(matchCount))}
             </p>
           )}
           {error && <p className="text-danger">{error}</p>}

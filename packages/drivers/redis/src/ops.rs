@@ -140,30 +140,6 @@ where
     scan_keys(conn, Some(pattern), None).await
 }
 
-pub async fn count_matching<C>(conn: &mut C, pattern: &str) -> Result<u64, String>
-where
-    C: AsyncCommands + redis::aio::ConnectionLike + Send,
-{
-    if pattern == "*" {
-        let dbsize: i64 = redis::cmd("DBSIZE")
-            .query_async(conn)
-            .await
-            .map_err(|e| e.to_string())?;
-        return Ok(dbsize.max(0) as u64);
-    }
-    let mut total = 0u64;
-    let mut cursor = 0u64;
-    loop {
-        let (next, batch) = scan_batch(conn, cursor, 200, Some(pattern), None).await?;
-        total += batch.len() as u64;
-        cursor = next;
-        if cursor == 0 {
-            break;
-        }
-    }
-    Ok(total)
-}
-
 pub async fn hash_set<C>(conn: &mut C, key: &str, field: &str, value: &str) -> Result<(), String>
 where
     C: AsyncCommands + redis::aio::ConnectionLike + Send,

@@ -212,6 +212,22 @@ export async function invokeScanAbort(
 export type BackendCodec = 'msgpack' | 'pickle' | 'php' | 'java';
 
 /**
+ * Payload of the `count_matching` driver command (W3-B key-tree budget freeze).
+ *
+ * This replaced a bare number on the wire, so every consumer must read
+ * `.count` — an `as number` cast here compiles clean and renders
+ * `[object Object]` (redis-tree-backend-BUG-002). `truncated` is the partial
+ * answer: the budget ran out before the cursor wrapped, so `count` is a floor
+ * and the UI has to label it `n+`.
+ */
+export interface CountMatchingResult {
+  count: number;
+  truncated: boolean;
+  consumed: number;
+  dbsize: number;
+}
+
+/**
  * In-band envelope of `decode_value`, key set per contracts C-2/C-3.
  *
  * A payload that fails to decode does **not** reject: it resolves with
