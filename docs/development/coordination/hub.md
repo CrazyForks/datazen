@@ -32,6 +32,7 @@
 | redis-kv-contract | KV 契约加宽（F-2.1 标量 getter/setter）+ 反向动作通道 + AI KV 上下文注入（PRD §3.4 / §4 I-1、I-6） | READY_FOR_TEST | `499a90da1`（§1.1）+ `7bfb71f99`（§1.2）+ `9c5bd8208`（§1.3，接管轮补齐接线） | 随各编码 commit（`kvSlotState.test.ts` 46 例 / `useKvSlotActions.test.tsx` 15 例 / `kvAiContext.test.ts` 10 例 + `ContentToolbar.test.tsx` §1.3 4 例 + `ContentViewDrawers.test.tsx` §1.3 3 例 + `AiChatPanel.test.tsx` §1.3 3 例） | — |
 | redis-tree-backend | 键树扫描后端预算模型（PRD §3.2 扫描预算 6 条 / §4 I-2、I-3）+ 精确键短路 + pipeline 化 | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）+ 1c03f1595（契约冻结台账） | 15ce0c917（步骤 1-4：门禁复跑 + 契约逐字核对 + 3 条 Bug 登记 + `tests/tree_contract_tester.rs`） | — |
 | driver-ui-type-gate | 根 `tsc --noEmit` 打通驱动 UI 类型盲区（REDIS_WORKSPACE_UX P0 R 清单第 9 项）：tsconfig 纳入 `packages/drivers/*/ui` + 清零清点出的生产类型错误 | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | `c2d1c1c25` → `e507cd74c` → `b0d486347` → 本台账 commit | `7b2731e42`（T1-T5 台账）→ `794dfac50`（BUG-003 登记）→ 本终局 commit（T6-T8 + 终判） | —（TEST_FAILED，等 Coder 修复 BUG-003 后派新 Tester 复测） |
+| redis-tree-ui | 键树列头三行 + 行规格 + sticky 分组头 + 选择/键盘（PRD §3.2 R1~R3、§4 I-4、I-8、I-9、I-11） | **TEST_DONE（第 3 轮复测通过，Tester e7c9c98b，2026-09-23）** | 01f6396cd（D-0 拆分）、d591a9891（D-1/D-2 列头+搜索行）、a26ef97fc（D-3..D-8）、95040148f（批量错误分类 + 树状态机测试）、da04fd11b（14 条 DOM 旅程 + 注释修正）、ef0d62d94（台账 READY_FOR_TEST）；**修复轮 R1**：34ec2828d（BUG-002）、03f3790f5 + 307ce40df + 975e23e6b + eab9559bc + 406253a2f + eb733a757 + 87b5e4620 + 42c16bbee + d1581baf2（BUG-001 纯函数/接线/旅程/断言修正/死代码/别名/折叠子树 probe/楔形用例/gaps 头注释） | 9dc9ad2a2（门禁+范围审查）、8c39e2743（Bug 草稿）、bd22678e4（BUG-001/002 红测证实）、a68418d41（代码审查+旅程强度）、f8a191b66（覆盖率补测 + 判定收口）；**round-2**：本 commit（第 2 轮复测判定 + BUG-003/004 登记） | — |
 
 ## 写锁台账
 
@@ -61,6 +62,7 @@
 | redis-kv-contract | w3a-kv-contract-coder（死于 150 轮上限，§1.3 半成品）→ **w3a-kv-contract-rescuer（接管收尾：补 §1.3 接线 + 契约冻结 + 四道门禁）** | .worktrees/datazen-redis-kv-contract | feature/redis-kv-contract | READY_FOR_TEST | 2026-09-22 18:15（接管轮返回 `READY_FOR_TEST`） |
 | redis-tree-backend | w3b-tester-round2（全新实例，不复用第 1 轮 Tester、不用修复 Coder；同样串行 + 逐项 commit） | .worktrees/datazen-redis-tree-backend | feature/redis-tree-backend | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2026-09-23 10:11（round-2 Tester 判定时刻） |
 | driver-ui-type-gate | driver-ui-type-gate-tester（全新实例 session-61319db9-6e5c-4f32-a35e-cad750b647dd，未复用编码代理） | .worktrees/datazen-driver-ui-type-gate | feature/driver-ui-type-gate（基线 `feat/redis-workspace-ux` @ `1b77ce149`） | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | 2026-09-23 11:47（全部目标完成，READY_FOR_TEST） |
+| redis-tree-ui | w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd | .worktrees/datazen-redis-tree-ui | feature/redis-tree-ui | **TEST_DONE（第 3 轮复测通过，Tester e7c9c98b，2026-09-23）** | 2026-09-23 11:57（Coder 修复轮第 1 回合，HEAD = eb733a757 + 本台账 commit；四件套实测见「修复轮第 1 回合」§4） |
 
 ## 波次记录
 
