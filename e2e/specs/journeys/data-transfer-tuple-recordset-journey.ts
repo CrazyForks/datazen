@@ -95,6 +95,29 @@ function queryText(value: unknown): string {
   return String(value);
 }
 
+async function fixtureTableExists(
+  dbSessionId: string,
+  type: DriverType,
+  table: string,
+): Promise<boolean> {
+  const sql =
+    type === 'postgresql'
+      ? `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '${table}'`
+      : `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '${table}'`;
+  const rows = parseQueryRows(
+    await invokeBackend<QueryResultPayload>('execute_query', { dbSessionId, sql }),
+  );
+  const rawCount = rows[0]?.[0];
+  if (rawCount === undefined || rawCount === null) {
+    throw new Error(`fixture catalog query returned no count for ${table}`);
+  }
+  const count = Number(queryText(rawCount));
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`fixture catalog query returned an invalid count for ${table}`);
+  }
+  return count > 0;
+}
+
 describe('Data Transfer composite tuple recordset journeys', () => {
   for (const route of routes) {
     describe(route.label, () => {
@@ -165,26 +188,55 @@ describe('Data Transfer composite tuple recordset journeys', () => {
       });
 
       after(async () => {
+        const cleanupErrors: string[] = [];
+        const cleanupSessions: string[] = [];
         try {
-          const source = sourceSession ?? (await connectBackend(sourceId));
-          const target = targetSession ?? (await connectBackend(targetId));
           await withSafeModeOff(async () => {
-            await invokeBackend('execute_query', {
-              dbSessionId: source,
-              sql: `DROP TABLE IF EXISTS ${table}`,
-            });
-            await invokeBackend('execute_query', {
-              dbSessionId: target,
-              sql: `DROP TABLE IF EXISTS ${table}`,
-            });
+            for (const endpoint of [
+              { label: 'source', id: sourceId, type: route.sourceType },
+              { label: 'target', id: targetId, type: route.targetType },
+            ] as const) {
+              let cleanupSession: string | undefined;
+              try {
+                // The transfer window may have released the sessions created in
+                // before(); ask the connection manager for a live session before
+                // attempting fixture cleanup.
+                cleanupSession = await connectBackend(endpoint.id);
+                cleanupSessions.push(cleanupSession);
+                await invokeBackend('execute_query', {
+                  dbSessionId: cleanupSession,
+                  sql: `DROP TABLE IF EXISTS ${table}`,
+                });
+                if (await fixtureTableExists(cleanupSession, endpoint.type, table)) {
+                  throw new Error(`fixture table ${table} still exists after DROP`);
+                }
+              } catch (error) {
+                cleanupErrors.push(
+                  `${endpoint.label} (${endpoint.type}): ${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+            }
           });
-          if (!sourceSession) await disconnectBackend(source);
-          if (!targetSession) await disconnectBackend(target);
-        } catch {
-          /* Best-effort cleanup after a failed database journey. */
+        } catch (error) {
+          cleanupErrors.push(
+            `Safe Mode cleanup wrapper: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
-        if (sourceSession) await disconnectBackend(sourceSession);
-        if (targetSession) await disconnectBackend(targetSession);
+        for (const [label, session] of [
+          ...cleanupSessions.map(
+            (session, index) => [`cleanup session ${index + 1}`, session] as const,
+          ),
+          ...(sourceSession ? [['original source session', sourceSession] as const] : []),
+          ...(targetSession ? [['original target session', targetSession] as const] : []),
+        ]) {
+          try {
+            await disconnectBackend(session);
+          } catch (error) {
+            cleanupErrors.push(
+              `disconnect ${label}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         try {
           await invokeBackend('delete_connection', { id: sourceId });
         } catch {
@@ -197,6 +249,9 @@ describe('Data Transfer composite tuple recordset journeys', () => {
         }
         await closeExtraWindows(mainWindow);
         await browser.switchToWindow(mainWindow);
+        if (cleanupErrors.length > 0) {
+          throw new Error(`fixture cleanup failed:\n${cleanupErrors.join('\n')}`);
+        }
       });
 
       it('transfers only the selected inclusive/exclusive composite key range', async () => {
