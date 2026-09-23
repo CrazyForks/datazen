@@ -7,9 +7,9 @@
 
 | Bug ID | 严重度 | 状态 | 标题 |
 |---|---|---|---|
-| redis-tree-backend-BUG-001 | **高** | 待复测 | `list_children` 叶子属性按**位置**回填，行集一被缩短就整体错位（`noTtlOnly` / 键中途消失即触发）——本轨引入的**回归** |
-| redis-tree-backend-BUG-002 | **高** | 待复测 | `count_matching` out 由 `u64` 改对象，**驱动 UI 既有消费端未跟改**（`BatchBar` / `ImportExport` 仍 `as number`），界面渲染 `[object Object]`；tsc/vitest 全绿只因该路径零测试 |
-| redis-tree-backend-BUG-003 | 中 | 待复测 | DBSIZE 读失败时三条键树命令**整条报错**，而 `## 契约冻结` 明写"DBSIZE 不可得 ⇒ 回落默认档"；较基线是**能力回退**（旧代码 `unwrap_or(0)` 容忍） |
+| redis-tree-backend-BUG-001 | **高** | 已修复（round-2 Tester 复验通过） | `list_children` 叶子属性按**位置**回填，行集一被缩短就整体错位（`noTtlOnly` / 键中途消失即触发）——本轨引入的**回归** |
+| redis-tree-backend-BUG-002 | **高** | 已修复（round-2 Tester 复验通过） | `count_matching` out 由 `u64` 改对象，**驱动 UI 既有消费端未跟改**（`BatchBar` / `ImportExport` 仍 `as number`），界面渲染 `[object Object]`；tsc/vitest 全绿只因该路径零测试 |
+| redis-tree-backend-BUG-003 | 中 | 已修复（round-2 Tester 复验通过） | DBSIZE 读失败时三条键树命令**整条报错**，而 `## 契约冻结` 明写"DBSIZE 不可得 ⇒ 回落默认档"；较基线是**能力回退**（旧代码 `unwrap_or(0)` 容忍） |
 
 ---
 
@@ -106,6 +106,15 @@ assertion `left == right` failed: leaf rows must keep page order
 - **复测入口**：`cargo test -p datazen-driver-redis --lib list_children`（4 passed）；全量 lib **299 passed / 0 failed / 1 ignored**
   （基线 291 + 本条摘掉的 2 条 RED pin）。
 
+### 复测记录（round-2）
+
+- **判定：已修复。** 复验人：第 2 轮 Tester（全新实例）。HEAD `008fbfb75`。
+- 审计 a–e 四项独立复核（按 key 关联 HashMap / retain 在富化后且与基线 `8981d3078` 同序 /
+  gone 不入 attrs 无占位值 / 两条 release warn）——详见 `progress.md` `## 第 2 轮 Tester 复验记录` 阶段 1-1。
+- 两条转正用例绿；**两次独立变异**：retain 挪回富化前 ⇒ 用例 1 红（+dbsize 交叉用例同红）；
+  去掉 `!gone.contains(key)` ⇒ 用例 2 红。各自还原后复跑绿 ⇒ 修复由用例真实钉住，非空壳。
+- 全量门禁 299/0/1 + 4/0 + 4/5 ignored + 4/0 + fmt/clippy/tsc/vitest/boundaries 全绿（阶段 2 表）。
+
 ---
 
 ## redis-tree-backend-BUG-002 · 高 · `count_matching` 形状变更漏改驱动 UI 消费端
@@ -196,6 +205,18 @@ Wave 4 上线树预算 UI 后，`n+` 消费的是新形状，问题会被误读�
   「DEAD FRAGMENT：本文件无人 `include!`，勿 include」说明。两文件不参与编译，门禁无感。
 - **复测入口**：`npx vitest run --config vitest.drivers.config.ts` ⇒ **48 files / 464 tests passed**
   （基线 47/456 + 本文件 8 例）。
+
+### 复测记录（round-2）
+
+- **判定：已修复。** HEAD `008fbfb75`。
+- `CountMatchingResult` 四字段与 Rust `CountOutcome`（camelCase serde）逐字段一致；
+  `formatMatchCount` 的 `truncated ⇒ ${count}+` 逐字成立；UI 面 grep 确认无第三个漏网消费端
+  （`delete_keys` 等其余 `as number` 属未变更形状的命令）。
+- `treeUiBug002CountMatching.test.tsx` **8/8 绿**，断言全部 `data-testid` + 数字，零英文字面量。
+- **两次独立变异**：BatchBar 渲染改回 `String(matchCount)` ⇒ 3 例红（收到 `[object Object]`）；
+  ImportExport 同法 ⇒ 2 例红（`renders .count after the estimate is requested`、`renders n+ for a truncated count`）。
+  两侧各自有防线、还原后 8/8 复绿 ⇒ 该测试文件不是只测 helper 的空壳（本清单"为什么四道门禁全部漏过"的病根已闭）。
+- 改动 hunk 覆盖率：`BatchBar` 8/8 语句、`ImportExport` 6/6 语句 = **100%**；`redisInvoke.ts` 的 +16 行为纯类型声明（零运行时语句），由 tsc exit 0 与两消费端用例钉住。
 
 ---
 
@@ -296,6 +317,22 @@ test result: ok. 1 passed; 0 failed; ...
 - **复测入口**：`cargo test -p datazen-driver-redis --lib dbsize`／`... count_star`；
   全量 lib **299 passed / 0 failed / 1 ignored**。真连侧证仍挂 R-9。
 
+### 复测记录（round-2）
+
+- **判定：已修复。** HEAD `008fbfb75`。
+- `read_dbsize` 签名实测无 `Result`（`-> u64`），三条命令的调用点全为裸 `.await`，硬依赖在类型层面已不可重建；
+  refused / 不可解析两臂各自 release `warn!` ⇒ `0`，与基线 `unwrap_or(0)` 同语义（该基线行第 1 轮已 `git show` 核过）。
+- 修复轮自报 5 条用例全绿且语义到位：三条命令在"仅 DBSIZE 报错、其余健康"替身下**全部成功**、
+  `dbsize == 0`、`consumed` 落默认档首轮（1000）；`count_matching("*")` dbsize==0 走**恰一轮**真 SCAN
+  且不带 `MATCH`（冗余已消）、空库与空 pattern 两形俱在；`dbsize > 0` 快路径 `consumed == 0` 未被削弱。
+- **`## 契约冻结` 追加注记与实现逐字对照成立**（无"注记不实"型新 Bug）；一条文字精度提示（"一轮"=至少一轮、
+  预算内扫尽）记入 `progress.md` 阶段 1-2，不改判。
+- **两次独立变异**：去掉 `&& dbsize > 0` ⇒ `count_star_verifies…` 红（`0` vs `2`，即假答复活）；
+  把"不可解析 ⇒ 0"改成返回垃圾值 ⇒ `read_dbsize_never_fails…` 红。还原后全绿。
+- BUG-001/003 交叉项（降级路径扰动属性绑定）由 `list_children_succeeds_with_own_attributes_when_dbsize_is_refused`
+  钉住，且该用例在变异 1（retain 前移）下同红 ⇒ 交叉防线有效。真连侧证仍挂 R-9（本轨禁 live）。
+
+
 ---
 
 ## 审查发现（非缺陷，不阻断，随修复回合顺手收）
@@ -306,6 +343,9 @@ test result: ok. 1 passed; 0 failed; ...
   `tree_scan_budget(Some(0), 0) == 1`，注释称"typo, not scan nothing"）。两句对"0"的语义**相反**，
   今日靠分发臂的 `filter` 才没被外部走到。建议：要么 op 文档/单测改成与冻结一致（0 ⇒ None 语义），
   要么在冻结里删掉"`0`"字样、改成"缺失或 **<1**"。二选一，别两套并存。
+  > **round-2 复核**：已按"改实现"一支收口（`a0444e1c1`）——`tree_scan_budget` 以
+  > `requested.filter(|raw| *raw > 0)` 把 `Some(0)` 折进派生档，替换后的单测对 dbsize 三档断言
+  > `Some(0) ≡ None`；命令层三处 `.filter(|v| *v > 0)` 仍在 ⇒ 两层同向，双口径消除。**已闭环。**
 - **R-2（已自查撤销）**：曾疑 `ops_tree_budget.rs:60` "继承自 `ops_workbench::MAX_SCAN_ROUNDS`"
   为不实注释。Tester 复核 `ops_workbench.rs:149` 确为 `MAX_SCAN_ROUNDS: u32 = 64`、
   `MAX_STALLED_SCAN_ROUNDS` 亦为 16，与 `MAX_TREE_SCAN_ROUNDS = 64` / `MAX_TREE_STALLED_ROUNDS = 16`

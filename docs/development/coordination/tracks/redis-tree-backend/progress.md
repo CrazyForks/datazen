@@ -1,26 +1,30 @@
 - 任务: 键树扫描后端预算模型（PRD §3.2 扫描预算 6 条 / §4 I-2、I-3）+ 精确键短路 + pipeline 化
-- 状态: **READY_FOR_TEST**（修复轮第 1 回合：BUG-001/002/003 + R-1 全修，四件套提交态复跑全绿 ⇒ 待第 2 轮全新 Tester 完整复测）
+- 状态: **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证）
+  + R-1 口径闭环 + 全量门禁 8 项逐字复现 + 红线全成立 + 覆盖率达标；**无新 Bug 登记**）
 - 编码 commit: 2bd626867（实现：6 个交付单元）+ fb5f0ca5d（契约集成测试）+ 1c03f1595（契约冻结台账）
 - 修复轮 commit: `b7abb440c`（保全前任 BUG-001 WIP，审计 a-e 五项全到位）+ `4380fc09b`（BUG-003）
   + `a0444e1c1`（R-1）+ `dc7f55db0`（BUG-002）+ `331e95b51`（count 兜底收尾 + 死片段对齐 + 本回合台账）
   + `c1e9dc933`（rustfmt 收尾，纯本回合 hunk）
 - 测试 commit: 15ce0c917（步骤 1-4：门禁复跑 + 契约逐字核对 + 3 条 Bug 登记 + `tests/tree_contract_tester.rs`）
   + f1910f08e（步骤 5-8：append-only/预算/cluster/红线/覆盖率/E2E + 22 条补测 + BUG-001 双 RED pin）
+  + round-2 复验：348ec4195 → … → 本判定 commit（见 `## 第 2 轮 Tester 复验记录` 阶段 5）
 - 合并 commit: —
 - 代理: w3b-tree-backend-rescuer（session-61319db9-6e5c-4f32-a35e-cad750b647dd，接管阵亡 coder 的未提交现场）
 - 修复代理: 第 1 轮 Coder 全新实例（前任修复代理连续 3 次死于服务错误、零新 commit；本实例按任务书内联裁定
   从 WIP 续作，一步一 commit、重型命令严格串行）
 - 测试代理: w3b-tester-round1（全新实例，与 Coder/Rescuer 不同会话；前两轮 Tester 均死于并行重负载，
   本轮全程串行执行重型命令 + 每完成一步即 commit 落盘）
+- 复测代理: w3b-tester-round2（全新实例，不复用第 1 轮 Tester、不用修复 Coder；同样串行 + 逐项 commit）
 - Worktree: .worktrees/datazen-redis-tree-backend
 - 分支: feature/redis-tree-backend
-- 心跳: 2026-09-23 00:10
+- 心跳: 2026-09-23 10:11（round-2 Tester 判定时刻）
 - 缺陷（全部「待修复」）: **BUG-001 高** `list_children` 叶子属性错位（本轨回归，release 静默错数据）
   · **BUG-002 高** `count_matching` 形状变更漏改驱动 UI 消费端（既有功能被打破）
   · **BUG-003 中** DBSIZE 失败 ⇒ 三条键树命令整条报错（冻结承诺的降级路径不可达 + 基线能力回退）
   详见本目录 `bugs.md`；审查发现 R-1/R-3/R-4/R-5（非缺陷）与撤销项 R-2 亦在该文件。
-- 缺陷（修复轮第 1 回合处置）: **BUG-001 / BUG-002 / BUG-003 全部「待复测」**；
-  **R-1 已按冻结口径收口**（`tree_scan_budget` 把 `Some(0)` 折进派生档 + 原钉死旧语义的单测换掉）；
+- 缺陷（修复轮第 1 回合处置）: **BUG-001 / BUG-002 / BUG-003 全部「已修复」**（round-2 Tester 复验通过，
+  bugs.md 汇总与各节 `### 复测记录（round-2）` 为据）；
+  **R-1 已按冻结口径收口并复验闭环**（`tree_scan_budget` 把 `Some(0)` 折进派生档 + 原钉死旧语义的单测换掉）；
   R-3/R-4/R-5 是 Wave 4 的口径知情项，本回合未动（不属本回合修复范围）。
 
 
@@ -794,6 +798,23 @@ release warn** 的宏字段与文案行（`tracing` 默认 subscriber 下短路�
 
 ⇒ **无缺口需补测**：阶段 1 的四次定点复验已把每条新分支走绿，本轮未新增测试文件（禁改生产码同样遵守）。
 整文件百分比（BatchBar 29%、ImportExport 25%）是两组件大量本轨未触碰代码摊薄，非本回合改动面的覆盖。
+
+### 阶段 5 · 判定 —— **TEST_DONE**
+
+- 三条 Bug（BUG-001 高 / BUG-002 高 / BUG-003 中）定点复验**全部通过**，每条均以独立变异反证用例有牙；
+  R-1 口径闭环；`331e95b51` 附带改动（死片段对齐 + `count_budgeted` 收尾）审查通过且不触冻结形状。
+- 全量门禁 8 项逐字复现（lib 299/0/1、集成 4/0 + 4/5ignored + 4/0、fmt 0、clippy 同集合 0 新增、
+  tsc 0、vitest 48/464、**补跑的 driver-import-boundaries 0 blocking**、编译告警 0）。
+- 红线全成立；覆盖率 Rust 94.71–98.18% / TS 改动 hunk 100%，达标且无缺口。
+- **新发现缺陷：无**（`bugs/redis-tree-backend-BUG-004.md` 起的新格式文件未创建）。
+  两条非阻断备忘（死片段注释双段冗余、冻结注记"一轮"文字精度）已分别记于阶段 1-5 / 1-2，留清理项，不判 Bug。
+- R 清单不变（R-1..R-10；R-10 已随两条 RED pin 摘除而闭环，R-9 真连侧证保留挂账）。
+- 本回合（Tester round-2）commit 序列：`348ec4195`（阶段 1-1）→ `169901c72`（1-2）→ `0bd1066c6`（1-3）
+  → `be7495d89`（1-4/1-5）→ `ea35435bc` + `b8e525b4c`（1-补：裁定事实复核与 12 条分项算术勘正）
+  → `b56735831`（阶段 2）→ `1e9b309f4`（阶段 3）→ `3369d419c`（阶段 4）→ 本判定 commit。
+- 下一步：协调者可推进合流（本轨 bug 循环在第 2 轮闭环，未触及 5 轮上限）；ops_tree_scan.rs 988 行的
+  拆分裁定、驱动 UI 纳入 tsc 门禁的存量债评估、`consumed` 双条件判据的 Wave 4 交底，三项均已复核属实、归属协调者。
+
 
 
 
