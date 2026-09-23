@@ -612,3 +612,48 @@ test_tester_list_children_survives_a_key_that_vanished_mid_page ... FAILED
 ⇒ 两条 pin 用例分别钉住两条触发路径（`noTtlOnly` 过滤 / 页内键消失）且互相独立：
 (b) 失效只红第一条，(c) 失效只红第二条。还原后复跑 5/5 绿，工作树干净。
 
+### 阶段 1-2 · BUG-003 定点复验 —— **通过**
+
+**签名收紧核验**（`git show 4380fc09b` + 现文件）：`read_dbsize` 现为 `pub(crate) async fn read_dbsize<C>(conn) -> u64`
+（`ops_tree_scan.rs:447`）——**签名无 `Result`**，任何调用方无法再升回硬依赖 ✓。三分支齐：
+可解析正整数 ⇒ 值；不可解析回复 ⇒ release `warn!` + `0`（`:457-462`）；服务端 `Err` ⇒ release `warn!` + `0`（`:464-470`）。
+三处调用点全部裸 `.await`（`ops_tree_scan.rs:824` `scan_keys_page` / `ops_tree.rs:180` `list_children_page` /
+`ops_tree_scan.rs:937` `count_budgeted`），全 crate grep 无 `read_dbsize(…)?` 残留 ✓。
+
+**替身零信任核验**：`TreeConn` 的 `dbsize_refused` 仅在 `args.first() == "DBSIZE"` 时回错（tests.rs:92），
+其余命令照常应答 —— 正是"仅 DBSIZE 报错、其余健康"的形态。
+
+**五条修复用例全绿**（`--lib dbsize` 12 passed 含既有条目；`--lib count_star` 3 passed）：
+- `read_dbsize_never_fails_and_reports_zero_when_refused`：refused ⇒ `0`、garbled bulk ⇒ `0`、
+  且 `tree_scan_budget(None, 0) == DEFAULT_TREE_BUDGET`（"不可得 ⇒ 默认档"从文字变事实）✓
+- `scan_keys_succeeds_when_dbsize_is_refused`：**成功** + `dbsize == 0` + `consumed == TREE_SCAN_MIN_ROUND_COUNT(1000)`
+  = 默认档首轮 ✓
+- `list_children_succeeds_with_own_attributes_when_dbsize_is_refused`：成功 + 属性绑定不受降级扰动
+  （交叉钉 BUG-001）✓
+- `count_star_verifies_with_a_scan_when_dbsize_is_refused`：三形（有键库 ⇒ `count` 来自 SCAN 非 0、
+  **恰一轮** SCAN、断言 `!contains("MATCH")` 证"冗余 `MATCH *` 已消"；空库 ⇒ `count=0`/`truncated=false`；
+  空 pattern 与 `*` 同路）✓
+- `count_star_still_short_circuits_when_dbsize_answers`：`dbsize=42` ⇒ `count=42`/`consumed=0`/
+  `singles == ["DBSIZE"]`（快路径未被削弱）✓
+
+**冻结追加注记逐字对照**（`## 契约冻结` `count_matching` 段）：
+"仅 `dbsize > 0` 时生效" ⇔ `if matches_all && dbsize > 0` ✓；"服务端拒绝 / 不可解析回复 ⇒ `0` +
+`tracing::warn!`，与基线 `unwrap_or(0)` 同语义" ⇔ 两臂 + 基线对照（第 1 轮已核 `git show 8981d3078`）✓；
+"`dbsize == 0` 不发假答：改走一轮真 SCAN 后再出 `count`（空库多付一轮、游标即刻归零，`truncated`
+仍 `false`）" ⇔ `count_star_verifies…` 三形 ✓；"该轮不再发冗余 `SCAN … MATCH *`，空 pattern 与 `*`
+统一按全量处理"（预算段追加句）⇔ `matches_all = pattern.is_empty() || pattern == "*"` +
+`match_pat = (!matches_all).then_some(pattern)` ✓；"形状四字段与 `consumed == 0` 的既有承诺在
+`dbsize > 0` 快路径上原样保持" ⇔ `CountOutcome` camelCase 四字段 + `short_circuits` 用例 ✓。
+⇒ **注记与实际行为逐字一致，无"注记不实"型新 Bug。** 一条文字精度提示（非缺陷）：注记的"一轮"
+是最小轮数口径——大库 + DBSIZE 被拒时会扫到游标归零或预算尽（预算尽 ⇒ `truncated=true`，与冻结正文
+"truncated ⇒ count 为下界"一致），Wave 4 引用时按"至少一轮、预算内扫尽"理解即可，不改判。
+
+**独立变异（两次）**：
+- 变异 C：去掉 `&& dbsize > 0`（恢复"0 也短路"的假答形态）⇒
+  `count_star_verifies_with_a_scan_when_dbsize_is_refused` **红**（`left: 0, right: 2`），
+  快路径用例仍绿 ⇒ 降级路径与快路径各自有钉。还原 → 12/12 复绿。
+- 变异 D：把"不可解析回复 ⇒ 0"臂改成返回 `u64::MAX` ⇒
+  `read_dbsize_never_fails_and_reports_zero_when_refused` **红**（`left: 18446744073709551615, right: 0`）。
+  还原 → 全绿，工作树干净。
+
+
