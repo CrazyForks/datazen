@@ -30,7 +30,7 @@ Keep one target transaction for the whole selected plan. Generate and execute a 
 - `npx tsc --noEmit`: passed.
 - `git diff --check`: passed.
 - WDIO command for `SYNC-REAL-026|SYNC-REAL-027`: one passing test and one inconclusive preview-limit failure while another lane owned the shared app/WebDriver service (`Address already in use`). The running process exited; the coordinator will schedule a focused isolated rerun. No product conclusion is drawn from the preview assertion in that overlapped run.
-- Coder implementation commit: pending final commit.
+- Coder implementation commit: `cff9665b` (`feat(sync): stream comparison pages during execution`).
 
 ## Independent Tester
 
