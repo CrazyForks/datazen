@@ -118,7 +118,7 @@ export function SearchableInfoPanel({
           )}
         </div>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={fetchInfo}
           disabled={loading}
@@ -215,7 +215,7 @@ function reconstructInfo(result: FilteredInfoResult): string {
   const lines: string[] = [];
   for (const sec of result.sections) {
     lines.push(`# ${sec.name}`);
-    for (const [k, v] of sec.entries) {
+    for (const { key: k, value: v } of sec.entries) {
       lines.push(`${k}:${v}`);
     }
   }
