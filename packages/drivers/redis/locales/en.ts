@@ -463,10 +463,18 @@ const locale = {
   'redis.overview.recent.clear': 'Clear history',
 
   // ── KV workspace slots (PRD §3.4) ───────────────────────────────────────────
-  // Bottom status bar. The db label and the key name are server data, not copy;
-  // only the two placeholders below are translated.
+  // Bottom status bar, full version. The db label, the key name and the last
+  // write command are server data, not copy; only the wrappers are translated.
+  // `redis.dbSize` / `redis.loadedCount` above are reused verbatim so the
+  // wording matches the workbench toolbar.
   'redis.contextBar.status.noKey': 'No key selected',
   'redis.contextBar.status.unsaved': 'Unsaved changes',
+  'redis.contextBar.status.scanCursor': 'cursor {cursor}',
+  // Shown instead when something was loaded but the cursor never wrapped — the
+  // paired judgement F-1 demands, so a partial tree is never read as complete.
+  'redis.contextBar.status.scanStopped': 'cursor {cursor} (partial)',
+  'redis.contextBar.status.selected': '{count} selected',
+  'redis.contextBar.status.lastWrite': '{command} ({ms}ms)',
   // ── 48px context bar, full version (PRD §3.4, ruling 8-2 = full) ───────────
   // Server values (the `db{n}` label, a TYPE token, a byte count) are data, not
   // copy; only the wrappers below are translated.

@@ -713,10 +713,16 @@ describe('RedisContextBar — compact degradation (I-10)', () => {
 
   it('moves the decorations into the overflow menu rather than losing them', async () => {
     stubSources();
-    const { rerender } = render(<RedisContextBar {...barProps(makeRelay())} />);
+    // One relay across both renders: the relay *is* the panel identity the
+    // source read is scoped to, so swapping it would re-fetch and the compact
+    // assertions below would run before the new reply landed — and would not be
+    // describing the same band either.
+    const state = makeRelay();
+    const { rerender } = render(<RedisContextBar {...barProps(state)} />);
     await settle();
+    expect(screen.getByTestId('redis-context-types')).not.toBeNull();
 
-    rerender(<RedisContextBar {...barProps(makeRelay(), { compact: true })} />);
+    rerender(<RedisContextBar {...barProps(state, { compact: true })} />);
 
     // The identifying fields stay in the band.
     expect(screen.getByTestId('redis-context-db')).not.toBeNull();

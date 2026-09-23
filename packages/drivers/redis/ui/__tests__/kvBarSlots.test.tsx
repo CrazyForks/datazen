@@ -46,6 +46,16 @@ function makeRelay(): KvSlotState {
   const listeners = new Set<() => void>();
   let selectedKey: string | null = null;
   let dirty = false;
+  // F-1 widened scalars (W3-A §1.1). Kept in step with the frozen contract —
+  // the slots read these, so a relay missing them is not a KvSlotState at all.
+  let loadedCount = 0;
+  let scanCursor = '0';
+  let scanning = false;
+  let budgetUsed = 0;
+  let budgetTotal = 0;
+  let selectionCount = 0;
+  let lastWriteCommand: string | null = null;
+  let lastWriteDurationMs: number | null = null;
   const notify = () => {
     for (const listener of listeners) listener();
   };
@@ -66,6 +76,47 @@ function makeRelay(): KvSlotState {
     setDirty(next) {
       if (next === dirty) return;
       dirty = next;
+      notify();
+    },
+    // ── W3-A §1.1 widening. Setters are idempotent, like the host atom. ──
+    getLoadedCount: () => loadedCount,
+    setLoadedCount(next) {
+      if (next === loadedCount) return;
+      loadedCount = next;
+      notify();
+    },
+    getScanCursor: () => scanCursor,
+    setScanCursor(next) {
+      if (next === scanCursor) return;
+      scanCursor = next;
+      notify();
+    },
+    isScanning: () => scanning,
+    setScanning(next) {
+      if (next === scanning) return;
+      scanning = next;
+      notify();
+    },
+    getScanBudgetUsed: () => budgetUsed,
+    getScanBudgetTotal: () => budgetTotal,
+    setScanBudget(used, total) {
+      if (used === budgetUsed && total === budgetTotal) return;
+      budgetUsed = used;
+      budgetTotal = total;
+      notify();
+    },
+    getSelectionCount: () => selectionCount,
+    setSelectionCount(next) {
+      if (next === selectionCount) return;
+      selectionCount = next;
+      notify();
+    },
+    getLastWriteCommand: () => lastWriteCommand,
+    getLastWriteDurationMs: () => lastWriteDurationMs,
+    recordWrite(command, durationMs) {
+      if (command === lastWriteCommand && durationMs === lastWriteDurationMs) return;
+      lastWriteCommand = command;
+      lastWriteDurationMs = durationMs;
       notify();
     },
   };
@@ -166,14 +217,23 @@ describe('key_object_info client (pure)', () => {
 });
 
 describe('RedisKvStatusBar (statusBar slot)', () => {
-  it('renders the no-key state and asks the server for nothing', () => {
+  it('renders the no-key state and issues no key read without a selection', () => {
     const relay = makeRelay();
     render(<RedisKvStatusBar {...slotProps(relay)} />);
     const bar = screen.getByTestId('redis-kv-status-bar');
     expect(bar.getAttribute('data-status-state')).toBe('no-key');
     expect(bar.getAttribute('data-selected-key')).toBe('');
     expect(bar.querySelector('[data-part="selected-key"]')).not.toBeNull();
-    expect(commandInvoke).not.toHaveBeenCalled();
+    // Narrowed by the Wave-4 full status bar. What this case has always been
+    // about — selection drives the *key* read, so no selection means no
+    // `key_object_info` traffic — is asserted directly now, because the bar
+    // additionally reads `db_sizes` for the PRD §3.4 `52 keys` field, which by
+    // design does not depend on any selection. The old blanket
+    // `not.toHaveBeenCalled()` pinned "the bar issues exactly zero commands",
+    // an E-track statement of the pre-widening contract that the widened
+    // contract deliberately replaces.
+    expect(commandInvoke.mock.calls.filter(([, name]) => name === 'key_object_info')).toEqual([]);
+    expect(commandInvoke.mock.calls.map(([, name]) => name)).toEqual(['db_sizes']);
   });
 
   it('follows the relay: selection alone drives the read', async () => {

@@ -59,6 +59,9 @@ export function RedisContextBar({
   const { t } = useI18n();
   const layout = contextBarLayout(compact);
   const { dbOptions, keysInDb, memory, types } = useContextBarData({
+    // The relay is the panel's identity, which is what lets the status bar's own
+    // count read join this one instead of duplicating `db_sizes` (dbKeyCounts).
+    scope: state,
     dbSessionId,
     dbIndex,
     maxDatabaseIndex: MAX_DB_INDEX,

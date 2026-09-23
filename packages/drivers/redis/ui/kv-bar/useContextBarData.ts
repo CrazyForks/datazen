@@ -24,13 +24,10 @@
  * a fast db switch can never paint the previous database's numbers.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KvSlotState } from '@datazen/driver-sdk';
 import type { InfoSection } from '../observe/infoParse';
-import {
-  invokeDbSizes,
-  redisCommandInvoke,
-  type DbSize,
-  type RedisInvokeFn,
-} from '../shared/redisInvoke';
+import { redisCommandInvoke, type DbSize, type RedisInvokeFn } from '../shared/redisInvoke';
+import { sharedDbSizes } from './dbKeyCounts';
 import {
   deriveDbOptions,
   deriveMemoryReadout,
@@ -62,6 +59,12 @@ export interface ContextBarData {
 }
 
 export interface UseContextBarDataArgs {
+  /**
+   * The panel's relay object. Not read as state here — it is the **identity**
+   * that lets the status bar's own `db_sizes` read join this one instead of
+   * issuing a second copy of a 32-round-trip command.
+   */
+  scope: KvSlotState;
   dbSessionId: string;
   /** Numeric db the panel is bound to; `undefined` until one is resolved. */
   dbIndex: number | undefined;
@@ -96,6 +99,7 @@ function sectionsOf(reply: unknown): InfoSection[] {
  * `useKeyObjectInfo.readToken` records for the key read).
  */
 export function useContextBarData({
+  scope,
   dbSessionId,
   dbIndex,
   maxDatabaseIndex,
@@ -121,7 +125,10 @@ export function useContextBarData({
 
     void (async () => {
       try {
-        const sizes = await invokeDbSizes(dbSessionId, invoke);
+        // Shared with the status bar's own count read: both slots describe the
+        // same panel, and `db_sizes` is `SELECT` + `DBSIZE` per database, so two
+        // unmerged reads would double a 32-round-trip command on every switch.
+        const sizes = await sharedDbSizes(scope, dbSessionId, invoke);
         if (stale()) return;
         setDbSizes(Array.isArray(sizes) ? sizes : []);
       } catch {
@@ -154,7 +161,7 @@ export function useContextBarData({
         /* no memory section readable ⇒ the memory cluster is not rendered */
       }
     })();
-  }, [dbSessionId, dbIndex, attempt, invoke]);
+  }, [scope, dbSessionId, dbIndex, attempt, invoke]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 

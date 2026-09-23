@@ -49,6 +49,16 @@ function makeRelay(): KvSlotState {
   const listeners = new Set<() => void>();
   let selectedKey: string | null = null;
   let dirty = false;
+  // F-1 widened scalars (W3-A §1.1). Kept in step with the frozen contract —
+  // the slots read these, so a relay missing them is not a KvSlotState at all.
+  let loadedCount = 0;
+  let scanCursor = '0';
+  let scanning = false;
+  let budgetUsed = 0;
+  let budgetTotal = 0;
+  let selectionCount = 0;
+  let lastWriteCommand: string | null = null;
+  let lastWriteDurationMs: number | null = null;
   const notify = () => {
     for (const listener of listeners) listener();
   };
@@ -69,6 +79,47 @@ function makeRelay(): KvSlotState {
     setDirty(next) {
       if (next === dirty) return;
       dirty = next;
+      notify();
+    },
+    // ── W3-A §1.1 widening. Setters are idempotent, like the host atom. ──
+    getLoadedCount: () => loadedCount,
+    setLoadedCount(next) {
+      if (next === loadedCount) return;
+      loadedCount = next;
+      notify();
+    },
+    getScanCursor: () => scanCursor,
+    setScanCursor(next) {
+      if (next === scanCursor) return;
+      scanCursor = next;
+      notify();
+    },
+    isScanning: () => scanning,
+    setScanning(next) {
+      if (next === scanning) return;
+      scanning = next;
+      notify();
+    },
+    getScanBudgetUsed: () => budgetUsed,
+    getScanBudgetTotal: () => budgetTotal,
+    setScanBudget(used, total) {
+      if (used === budgetUsed && total === budgetTotal) return;
+      budgetUsed = used;
+      budgetTotal = total;
+      notify();
+    },
+    getSelectionCount: () => selectionCount,
+    setSelectionCount(next) {
+      if (next === selectionCount) return;
+      selectionCount = next;
+      notify();
+    },
+    getLastWriteCommand: () => lastWriteCommand,
+    getLastWriteDurationMs: () => lastWriteDurationMs,
+    recordWrite(command, durationMs) {
+      if (command === lastWriteCommand && durationMs === lastWriteDurationMs) return;
+      lastWriteCommand = command;
+      lastWriteDurationMs = durationMs;
       notify();
     },
   };
