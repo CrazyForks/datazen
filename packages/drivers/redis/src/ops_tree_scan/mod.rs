@@ -77,6 +77,7 @@ pub use count::CountOutcome;
 pub use meta::build_meta_pipeline;
 pub(crate) use meta::fetch_key_meta;
 pub use meta::meta_fields_per_key;
+pub use meta::meta_slots;
 pub use meta::parse_meta_group;
 pub use meta::KeyMeta;
 pub(crate) use page::scan_keys_page;
