@@ -229,7 +229,10 @@ async function openWorkspaceMode() {
 }
 
 async function sampleCard() {
-  return $(`[data-testid="wapp-card"][data-wapp-id="${WAPP_ID}"]`);
+  // The card testid was renamed: the management page renders
+  // `extension-card` (with data-wapp-id) — `wapp-card` no longer exists in
+  // src/, so every lookup through this helper timed out.
+  return $(`[data-testid="extension-card"][data-wapp-id="${WAPP_ID}"]`);
 }
 
 async function waitForSampleCard(timeout = 15000) {

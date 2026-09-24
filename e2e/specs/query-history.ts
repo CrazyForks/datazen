@@ -9,6 +9,8 @@ import { expect, browser, $ } from '@wdio/globals';
 import { t } from '../i18n.js';
 import {
   closeExtraWindows,
+  connectBackend,
+  disconnectBackend,
   executeSQL,
   openQueryTab,
   openSeededPgConnectionWindow,
@@ -34,6 +36,19 @@ describe('查询历史 database 分组 (QH)', () => {
 
   before(async () => {
     mainWindow = await browser.getWindowHandle();
+    // A previous spec can leave a backend session for the seeded connection
+    // bound to its (now dropped) worker database; openSeededPgConnectionWindow
+    // would reuse that session, the marker records would land under a
+    // database that never matches the UI's selected database, and the history
+    // "current" scope would permanently fall back to grouped headers (QH-002).
+    // Kill any leaked session first so the UI connect creates a fresh one on
+    // this run's worker database.
+    try {
+      const leaked = await connectBackend('conn_e2e_pg');
+      if (leaked) await disconnectBackend(leaked);
+    } catch {
+      /* no leaked session */
+    }
     await openSeededPgConnectionWindow(mainWindow);
     await openQueryTab();
     // 产生两条带当前库上下文的历史记录
@@ -56,6 +71,19 @@ describe('查询历史 database 分组 (QH)', () => {
   });
 
   it('QH-002: 当前库作用域可见刚执行的记录，且无分组头', async () => {
+    // Wait for the observable resolved state: the scope fallback (which
+    // renders group headers + a hint inside the "current" scope) must be gone
+    // before counting headers — counting against a still-resolving sidebar
+    // races the history/database context update.
+    await browser.waitUntil(
+      async () =>
+        !(await $('[data-testid="history-scope-fallback-hint"]').isExisting().catch(() => false)),
+      {
+        timeout: 10000,
+        timeoutMsg:
+          'history scope fallback still active — marker records did not resolve to the selected database',
+      },
+    );
     const body = await $('body').getText();
     expect(body).toContain('qh_marker_a');
     expect(body).toContain('qh_marker_b');
