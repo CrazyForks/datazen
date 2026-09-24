@@ -106,7 +106,7 @@ export function RedisOverviewHome({
         onRefresh={data.refresh}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
         {hintKey ? (
           <div
             role="status"
@@ -127,7 +127,7 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div data-overview-grid className="flex flex-col gap-2">
+        <div data-overview-grid className="flex min-h-0 flex-1 flex-col gap-2">
           {/* 1. Instance: Server + Memory side-by-side, full width */}
           <InstanceCard
             status={data.info.status}
@@ -136,27 +136,27 @@ export function RedisOverviewHome({
             onRetry={data.refresh}
           />
 
-          {/* 2. Performance: Slowlog + Big Keys, full width */}
-          <PerformanceCard
-            slowlogStatus={data.slowlog.status}
-            slowlogRows={slowlogRows}
-            memoryStatus={data.memory.status}
-            bigKeys={bigKeys}
-            sampledDbIndex={dbIndex}
-            truncated={data.memory.data?.truncated === true}
-            onRetry={data.refresh}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
-          />
-
-          {/* 3. Navigation: Quick Actions + Recent Keys, full width */}
-          <NavigationCard
-            defaultDbIndex={dbIndex}
-            recentEntries={recent.slice(0, RECENT_KEYS_LIMIT)}
-            onJump={handleJump}
-            onClearRecent={handleClearRecent}
-            jumpHandler={onOpenTarget}
-          />
+          {/* 2+3. Performance + Navigation side-by-side */}
+          <div className="grid min-h-0 grid-cols-2 gap-2" style={{ flex: '1 1 0' }}>
+            <PerformanceCard
+              slowlogStatus={data.slowlog.status}
+              slowlogRows={slowlogRows}
+              memoryStatus={data.memory.status}
+              bigKeys={bigKeys}
+              sampledDbIndex={dbIndex}
+              truncated={data.memory.data?.truncated === true}
+              onRetry={data.refresh}
+              onJump={handleJump}
+              jumpHandler={onOpenTarget}
+            />
+            <NavigationCard
+              defaultDbIndex={dbIndex}
+              recentEntries={recent.slice(0, RECENT_KEYS_LIMIT)}
+              onJump={handleJump}
+              onClearRecent={handleClearRecent}
+              jumpHandler={onOpenTarget}
+            />
+          </div>
         </div>
       </div>
     </div>

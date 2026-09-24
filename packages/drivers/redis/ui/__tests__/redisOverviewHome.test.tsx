@@ -154,17 +154,27 @@ beforeEach(() => {
 });
 
 describe('屏 A 组装', () => {
-  it('renders the banner plus three full-width cards in a vertical stack', () => {
+  it('renders the banner plus three cards in a two-row layout', () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
 
     expect(container.querySelector('[data-overview-banner]')).not.toBeNull();
     expect(ids(container, 'data-overview-card').sort()).toEqual(['actions', 'server', 'slowlog']);
 
     const grid = container.querySelector('[data-overview-grid]');
-    expect(grid?.classList.contains('flex-col')).toBe(true);
-    for (const card of container.querySelectorAll('[data-overview-card]')) {
-      expect(card.parentElement).toBe(grid);
-    }
+    expect(grid).not.toBeNull();
+    // InstanceCard is a direct child of grid; PerformanceCard + NavigationCard
+    // share a side-by-side grid wrapper as the second row.
+    const serverCard = container.querySelector('[data-overview-card="server"]');
+    expect(serverCard?.parentElement).toBe(grid);
+    const slowlogCard = container.querySelector('[data-overview-card="slowlog"]');
+    expect(slowlogCard?.parentElement).not.toBe(grid); // inside 2-col wrapper
+    const actionsCard = container.querySelector('[data-overview-card="actions"]');
+    expect(actionsCard?.parentElement).not.toBe(grid); // inside 2-col wrapper
+    // The two-col wrapper is the second child of grid.
+    const secondRow = grid?.children[1];
+    expect(secondRow?.classList.contains('grid-cols-2')).toBe(true);
+    expect(secondRow?.contains(slowlogCard)).toBe(true);
+    expect(secondRow?.contains(actionsCard)).toBe(true);
   });
 
   it('sources the whole screen through the four whitelisted commands only', async () => {
