@@ -222,7 +222,10 @@ export function useConnectionContextMenu({
               kind === 'table' ? () => handlers.handleOpenStructure(name) : undefined,
             onCopyName: kind === 'table' || kind === 'view' ? () => copyText(name) : undefined,
             onCopyDdl: kind === 'table' || kind === 'view' ? () => copyDdl() : undefined,
-            onFocusEr: kind === 'table' ? () => handlers.handleOpenErDiagram(name) : undefined,
+            onFocusEr:
+              kind === 'table'
+                ? () => handlers.handleOpenErDiagram(name, database || undefined)
+                : undefined,
             onExport:
               kind === 'table' || kind === 'view'
                 ? () => requestExport(name, schema ?? null, database)

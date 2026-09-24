@@ -3,24 +3,53 @@ import { DB_REGISTRY } from '../../../lib/databaseTypes';
 import { connectionCommands } from '../../../commands/connection';
 import { databaseCommands } from '../../../commands/database';
 import { useSchemaStore } from '../../../stores/schemaStore';
+import type { LoadForConnectionOptions } from '../../../stores/schemaStoreHelpers';
 import type { ConnectionConfig, DatabaseObject, TableInfo } from '../../../types';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
 import { shouldUseMultiDatabaseTree } from './utils';
 import { useExpandedDbCacheRefresh } from '../schema-tree/useExpandedDbCacheRefresh';
+
+/**
+ * Pin `currentDatabase` on ONE session entry without touching any other
+ * session. The updater returns ONLY `{ schemas }`: spreading the whole state
+ * back would re-inject the stale flattened top-level fields, and
+ * `mergePartialIntoStore` would then re-apply that stale `currentDatabase` to
+ * the ACTIVE session's entry — silently clobbering this pin whenever the
+ * target row's session === active session (the old raw-setState path had
+ * exactly this latent bug).
+ */
+function pinCurrentDatabase(
+  dbSessionId: string,
+  dbName: string,
+  options?: { onlyKnownDatabases?: boolean },
+): void {
+  useSchemaStore.setState((state) => {
+    const entry = state.schemas.get(dbSessionId);
+    if (!entry || entry.currentDatabase === dbName) return { schemas: state.schemas };
+    // Path-hierarchy namespace leaves call activateDatabase with their fetch
+    // PATH ('public', '558/hive/snap'), not a real database. Pinning that as
+    // currentDatabase would corrupt the root prefix that ensureNamespacePath
+    // builds fetch paths from. Only a database the session actually knows
+    // moves the pointer; an unloaded list trusts the caller.
+    if (
+      options?.onlyKnownDatabases &&
+      entry.databases.length > 0 &&
+      !entry.databases.includes(dbName)
+    ) {
+      return { schemas: state.schemas };
+    }
+    const next = new Map(state.schemas);
+    next.set(dbSessionId, { ...entry, currentDatabase: dbName });
+    return { schemas: next };
+  });
+}
 
 export function useNavigatorDbState(
   activeConnections: Record<string, ConnectionEntry | undefined>,
   connections: ConnectionConfig[],
   expandedDbs: Set<string>,
   expandedCats: Set<string>,
-  loadForConnection: (
-    dbSessionId: string,
-    opts: {
-      preferredDatabase?: string;
-      skipLoadTables?: boolean;
-      databaseType: ConnectionConfig['databaseType'];
-    },
-  ) => Promise<void>,
+  loadForConnection: (dbSessionId: string, options?: LoadForConnectionOptions) => Promise<void>,
   ensureNamespacePath: (segments: string[], dbSessionId: string) => Promise<void>,
 ) {
   const [dbTablesMap, setDbTablesMap] = useState<Record<string, TableInfo[]>>({});
@@ -55,7 +84,11 @@ export function useNavigatorDbState(
       try {
         const all = await databaseCommands.getTables(dbSessionId, dbName);
         setDbTablesMap((prev) => ({ ...prev, [tableKey]: all }));
-        useSchemaStore.getState().setLoadedTables(dbName, all, dbSessionId);
+        // Background cache fills stay neutral: the pointer is owned by the
+        // user's last tree click, not by whichever fan-out finishes last.
+        useSchemaStore
+          .getState()
+          .setLoadedTables(dbName, all, dbSessionId, { pinCurrentDatabase: false });
       } catch {
         // ignore
       }
@@ -74,13 +107,10 @@ export function useNavigatorDbState(
         useSchemaStore.getState().setLoadedTables(dbName, cached, dbSessionId);
         return;
       }
-      useSchemaStore.setState((state) => {
-        const entry = state.schemas.get(dbSessionId);
-        if (!entry || entry.currentDatabase === dbName) return state;
-        const next = new Map(state.schemas);
-        next.set(dbSessionId, { ...entry, currentDatabase: dbName });
-        return { ...state, schemas: next };
-      });
+      // Cache miss: nothing fetched yet, so the pointer still has to move —
+      // but only for a database this session actually knows (namespace leaves
+      // pass fetch PATHs here; see pinCurrentDatabase).
+      pinCurrentDatabase(dbSessionId, dbName, { onlyKnownDatabases: true });
     },
     [dbTablesMap],
   );
@@ -182,10 +212,13 @@ export function useNavigatorDbState(
       const isPluginManaged = isCustomTree || isPathHierarchy;
       const isMultiDb = shouldUseMultiDatabaseTree(meta, conn.database);
 
+      // Background reload: never steal the active session from the connection
+      // the user is currently working on (refreshAllConnections fans out).
       await loadForConnection(entry.dbSessionId, {
         preferredDatabase: conn.database,
         skipLoadTables: isMultiDb || isPluginManaged,
         databaseType: conn.databaseType,
+        activate: false,
       });
 
       await refreshOpenDatabases(entry.dbSessionId);
@@ -244,6 +277,9 @@ export function useNavigatorDbState(
           preferredDatabase: dbName,
           skipLoadTables: false,
           databaseType: conn.databaseType,
+          // Refreshing one connection's database must not re-focus that
+          // session over the one the user is working in.
+          activate: false,
         });
         await refreshOpenDatabases(entry.dbSessionId);
       }
@@ -287,8 +323,22 @@ export function useNavigatorDbState(
 
   const toggleDb = useCallback(
     async (_connectionId: string, dbSessionId: string, dbName: string) => {
+      // The click itself owns the selection: pin synchronously so the pointer
+      // moves even on cache hits, in-flight fetches, and before the IPC
+      // resolves. Previously currentDatabase only changed as an async side
+      // effect of getTables completing inside setLoadedTables — skipped on
+      // every early-return below — which is why clicking a database did not
+      // move the pointer (and "查看 ER" then showed a stale database) in a
+      // non-reproducible subset of interactions.
+      pinCurrentDatabase(dbSessionId, dbName);
       const tableKey = `${dbSessionId}::${dbName}`;
-      if (dbTablesMap[tableKey]) return;
+      if (dbTablesMap[tableKey]) {
+        // Cache hit: still refresh the flat session tables so legacy
+        // flat-field consumers see the clicked database's list (the pin
+        // above already happened; this re-pins the same value).
+        useSchemaStore.getState().setLoadedTables(dbName, dbTablesMap[tableKey], dbSessionId);
+        return;
+      }
       if (loadingDbs.has(tableKey)) return;
 
       setLoadingDbs((prev) => new Set(prev).add(tableKey));

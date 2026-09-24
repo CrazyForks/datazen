@@ -46,7 +46,7 @@ export interface PanelContentRendererProps {
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
   onSelectTable: (table: string, schema: string | null, database: string) => void;
-  onOpenErDiagram: (focus?: string) => void;
+  onOpenErDiagram: (focus?: string, database?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
   resolveTableSchema: (table: string) => string | null;
@@ -129,7 +129,7 @@ interface SqlPanelContentProps {
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
   onSelectTable: (table: string, schema: string | null, database: string) => void;
-  onOpenErDiagram: (focus?: string) => void;
+  onOpenErDiagram: (focus?: string, database?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
   resolveTableSchema: (table: string) => string | null;
@@ -344,7 +344,9 @@ function SqlPanelContent({
           schema={(panel as ErDiagramPanel).schema ?? null}
           focusTable={(panel as ErDiagramPanel).focusTable}
           onSelectTable={onSelectTable}
-          onFocusTable={(table) => onOpenErDiagram(table)}
+          // A node focus inside the diagram must keep the diagram's own
+          // database bound, not re-follow the session pointer.
+          onFocusTable={(table) => onOpenErDiagram(table, erDatabase)}
         />
       </div>
     );

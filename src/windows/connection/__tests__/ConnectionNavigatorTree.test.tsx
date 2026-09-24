@@ -632,6 +632,30 @@ describe('ConnectionNavigatorTree multi-db table selection', () => {
     expect(onSelectTable).toHaveBeenCalledWith('users', null, 'db_a');
   });
 
+  it('re-pins currentDatabase when re-expanding an already-cached database', async () => {
+    const { findByText, queryAllByText } = render(<ConnectionNavigatorTree {...baseProps} />);
+
+    await ensureDbTableVisible(findByText, queryAllByText, 'db_a', 'users');
+    await ensureDbTableVisible(findByText, queryAllByText, 'db_b', 'orders');
+    await waitFor(() => {
+      expect(useSchemaStore.getState().currentDatabase).toBe('db_b');
+    });
+
+    mockGetTables.mockClear();
+
+    // Collapse db_a, then re-expand it: the tables are already cached, so no
+    // getTables call fires — yet the pointer must follow the click. The
+    // original bug pinned only as a side effect of the fetch, so cache hits
+    // left currentDatabase behind and "查看 ER" opened a stale database.
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    fireEvent.click((await findByText('db_a')).closest('button')!);
+    await waitFor(() => {
+      expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
+    });
+    await findByText('users');
+    expect(mockGetTables).not.toHaveBeenCalledWith('conn-1', 'db_a');
+  });
+
   it('passes postgresql schema when opening a table under a schema node', async () => {
     connectionsState.connections = [
       {
@@ -754,6 +778,30 @@ describe('ConnectionNavigatorTree refresh', () => {
       expect(mockGetTables).toHaveBeenCalledWith('conn-1', 'db_a');
     });
     expect(viewRefresh).not.toHaveBeenCalled();
+  });
+
+  it('refreshing a background connection keeps the active session focused', async () => {
+    connectionsState.connections = [MYSQL_CONN, makeConn({ id: 'cfg-other', name: 'Other MySQL' })];
+    activeConnectionsState.connections = {
+      'cfg-mysql': { status: 'connected', dbSessionId: 'conn-1', connectionId: 'cfg-mysql' },
+      'cfg-other': { status: 'connected', dbSessionId: 'conn-2', connectionId: 'cfg-other' },
+    };
+    const navigatorRef = createRef<ConnectionNavigatorTreeHandle>();
+    const view = render(<ConnectionNavigatorTree {...baseProps} ref={navigatorRef} />);
+    await view.findByText('db_a');
+    useSchemaStore.getState().setActiveConnection('conn-1');
+    mockGetDatabases.mockClear();
+
+    await navigatorRef.current!.refreshConnection('cfg-other');
+
+    // The other session did reload…
+    await waitFor(() => {
+      expect(mockGetDatabases).toHaveBeenCalledWith('conn-2');
+    });
+    // …but it must not steal the active session (and with it the flattened
+    // top-level currentDatabase that query panels read) from the connection
+    // the user is actually working on.
+    expect(useSchemaStore.getState().activeDbSessionId).toBe('conn-1');
   });
 
   it('database context menu refresh reloads tables for multi-db', async () => {
@@ -2376,7 +2424,8 @@ describe('ConnectionNavigatorTree multi-db tree variants', () => {
     expect(mockWriteText).toHaveBeenCalledWith('db_a');
 
     await openMenuAndPick(dbButton, 'view-er-diagram');
-    expect(openErDiagram).toHaveBeenCalled();
+    // Explicit database: a reused ER tab must re-bind to the right-clicked one.
+    expect(openErDiagram).toHaveBeenCalledWith(undefined, 'db_a');
 
     await openMenuAndPick(dbButton, 'query-history');
     expect(openQueryHistory).toHaveBeenCalled();
@@ -2427,7 +2476,8 @@ describe('ConnectionNavigatorTree schema context menu', () => {
     expect(mockWriteText).toHaveBeenCalledWith('public');
 
     await openMenuAndPick(schemaButton, 'view-er-diagram');
-    expect(openErDiagram).toHaveBeenCalled();
+    // Same contract for schema nodes: pass the owning database explicitly.
+    expect(openErDiagram).toHaveBeenCalledWith(undefined, 'db_a');
 
     await openMenuAndPick(schemaButton, 'query-history');
     expect(openQueryHistory).toHaveBeenCalled();
@@ -2976,6 +3026,26 @@ describe('ConnectionNavigatorTree path-hierarchy namespace trees', () => {
     await waitFor(() => {
       expect(mockGetTables).toHaveBeenCalledWith('conn-doris', 'db_x/emptydir');
     });
+  });
+
+  it('keeps the store pointer off namespace fetch paths when a table menu opens a query', async () => {
+    const newQuery = vi.fn();
+    const { container, findByText } = await renderNamespaceTree({ viewActions: { newQuery } });
+
+    fireEvent.click((await findByText('public')).closest('button')!);
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
+    });
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_x');
+
+    const leafButton = container.querySelector('[data-item-name="users"]')!.closest('button')!;
+    await triggerContextMenuAction(leafButton, 'new-query');
+
+    expect(newQuery).toHaveBeenCalled();
+    // The leaf's `database` is the namespace fetch path (`public`), not a real
+    // database: the store pointer must stay on db_x so ensureNamespacePath
+    // keeps prefixing fetches with the right database root.
+    expect(useSchemaStore.getState().currentDatabase).toBe('db_x');
   });
 
   it('search prunes unmatched namespaces and force-expands matches', async () => {
