@@ -2,9 +2,18 @@
 
 use serde_json::{json, Value as JsonValue};
 
+mod dependencies;
+use dependencies::parse_object_dependency_catalog;
+
 use crate::command::{
     CommandAccessLevel, CommandCategory, CommandResult, DriverCommandDefinition,
     DriverCommandMetadata,
+};
+use crate::schema_dependencies::{
+    mysql_dependency_grants_are_complete, postgres_sequence_dependencies_sql,
+    postgres_table_dependencies_sql, postgres_trigger_dependencies_sql,
+    postgres_type_dependencies_sql, view_dependencies_sql, SchemaObjectDependencies,
+    SequenceDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL, MYSQL_UDF_CATALOG_SQL,
 };
 use crate::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql_with_metadata, DatabaseObject,
@@ -14,7 +23,12 @@ use crate::traits::DatabaseDriver;
 use crate::types::{ColumnInfo, DriverError, QueryResult, Value};
 use crate::ConnectionHandle;
 
-const SCHEMA_OBJECT_COMMANDS: &[&str] = &["list_objects", "get_object_ddl", "list_privileges"];
+const SCHEMA_OBJECT_COMMANDS: &[&str] = &[
+    "list_objects",
+    "get_object_ddl",
+    "get_object_dependencies",
+    "list_privileges",
+];
 
 pub fn is_schema_object_command(command: &str) -> bool {
     SCHEMA_OBJECT_COMMANDS.contains(&command)
@@ -90,6 +104,101 @@ pub fn schema_object_command_definitions() -> Vec<DriverCommandDefinition> {
                     "ddl": { "type": "string" }
                 },
                 "required": ["ddl"]
+            })),
+            permissions: vec!["driver.query".into()],
+            metadata: DriverCommandMetadata::new(CommandCategory::Query, CommandAccessLevel::Read)
+                .hide_from_workflow(),
+        },
+        DriverCommandDefinition {
+            id: "get_object_dependencies".into(),
+            name: "Get Object Dependencies".into(),
+            description: Some(
+                "Return direct structured schema dependencies and whether the catalog is complete"
+                    .into(),
+            ),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["table", "view", "function", "procedure", "trigger", "sequence", "type"] },
+                    "name": { "type": "string" },
+                    "schema": { "type": ["string", "null"] },
+                    "signature": { "type": ["string", "null"] },
+                    "targetSchema": { "type": ["string", "null"] },
+                    "targetName": { "type": ["string", "null"] }
+                },
+                "required": ["kind", "name"]
+            }),
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "complete": { "type": "boolean" },
+                    "dependencies": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "schema": { "type": ["string", "null"] },
+                                "name": { "type": "string" },
+                                "signature": { "type": ["string", "null"] },
+                                "targetSchema": { "type": ["string", "null"] },
+                                "targetName": { "type": ["string", "null"] }
+                            },
+                            "required": ["kind", "name"]
+                        }
+                    },
+                    "typeDependencyUsages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "dependency": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": { "type": "string" },
+                                        "schema": { "type": ["string", "null"] },
+                                        "name": { "type": "string" },
+                                        "signature": { "type": ["string", "null"] }
+                                    },
+                                    "required": ["kind", "name"]
+                                },
+                                "usage": { "type": "string", "enum": ["column_type", "expression", "constraint"] },
+                                "columnName": { "type": "string" }
+                            },
+                            "required": ["dependency", "usage"]
+                        }
+                    },
+                    "sequenceDependencyUsages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sequence": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": { "type": "string" },
+                                        "schema": { "type": ["string", "null"] },
+                                        "name": { "type": "string" }
+                                    },
+                                    "required": ["kind", "name"]
+                                },
+                                "ownerTable": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": { "type": "string" },
+                                        "schema": { "type": ["string", "null"] },
+                                        "name": { "type": "string" }
+                                    },
+                                    "required": ["kind", "name"]
+                                },
+                                "columnName": { "type": "string" },
+                                "usage": { "type": "string", "enum": ["column_default", "owned_by"] }
+                            },
+                            "required": ["sequence", "ownerTable", "columnName", "usage"]
+                        }
+                    }
+                },
+                "required": ["complete", "dependencies"]
             })),
             permissions: vec!["driver.query".into()],
             metadata: DriverCommandMetadata::new(CommandCategory::Query, CommandAccessLevel::Read)
@@ -185,6 +294,12 @@ pub async fn execute_schema_object_command<D: DatabaseDriver + ?Sized>(
             let ddl = extract_object_ddl_checked(&result)?;
             Ok(CommandResult::new(json!({ "ddl": ddl })))
         }
+        "get_object_dependencies" => {
+            let result = execute_object_dependencies(driver, db_type, handle, &input).await;
+            Ok(CommandResult::new(serde_json::to_value(result).map_err(
+                |error| DriverError::QueryFailed(format!("serialize dependency catalog: {error}")),
+            )?))
+        }
         "list_privileges" => {
             let Some(sql) = list_privileges_sql(db_type) else {
                 return Ok(CommandResult::new(json!({ "grants": [] })));
@@ -197,6 +312,127 @@ pub async fn execute_schema_object_command<D: DatabaseDriver + ?Sized>(
             "unsupported schema object command: {other}"
         ))),
     }
+}
+
+async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
+    driver: &D,
+    db_type: &str,
+    handle: &ConnectionHandle,
+    input: &JsonValue,
+) -> SchemaObjectDependencies {
+    let Some(kind) = input["kind"].as_str().and_then(ObjectKind::parse) else {
+        return SchemaObjectDependencies::incomplete();
+    };
+    let Some(name) = input["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return SchemaObjectDependencies::incomplete();
+    };
+    let schema = input["schema"]
+        .as_str()
+        .map(str::trim)
+        .filter(|schema| !schema.is_empty());
+    let target_schema = input["targetSchema"]
+        .as_str()
+        .map(str::trim)
+        .filter(|schema| !schema.is_empty());
+    let target_name = input["targetName"]
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let family = crate::schema_objects::dialect_family(db_type);
+    let sql = match (family, kind) {
+        (_, ObjectKind::View) => view_dependencies_sql(db_type, name, schema),
+        ("postgresql", ObjectKind::Trigger) => Some(postgres_trigger_dependencies_sql(
+            name,
+            schema,
+            target_schema,
+            target_name,
+        )),
+        ("postgresql", ObjectKind::Table) => Some(postgres_table_dependencies_sql(name, schema)),
+        ("postgresql", ObjectKind::Sequence) => {
+            Some(postgres_sequence_dependencies_sql(name, schema))
+        }
+        ("postgresql", ObjectKind::Type) => Some(postgres_type_dependencies_sql(name, schema)),
+        // MySQL trigger bodies and all routine bodies can have opaque SQL
+        // dependencies. Trigger targets are separately represented as
+        // structured metadata and added by the Host planner.
+        _ => None,
+    };
+    let Some(sql) = sql else {
+        return SchemaObjectDependencies::incomplete();
+    };
+    let required_sequence_usage = match (family, kind) {
+        ("postgresql", ObjectKind::Table) => Some(SequenceDependencyUsageKind::ColumnDefault),
+        ("postgresql", ObjectKind::Sequence) => Some(SequenceDependencyUsageKind::OwnedBy),
+        _ => None,
+    };
+    let Ok(query_result) = driver.query(handle, &sql).await else {
+        return SchemaObjectDependencies::incomplete();
+    };
+    let Ok((
+        selected_count,
+        unsupported_count,
+        dependencies,
+        type_dependency_usages,
+        type_usage_complete,
+        sequence_dependency_usages,
+        sequence_usage_complete,
+    )) = parse_object_dependency_catalog(
+        &query_result,
+        family == "postgresql" && kind == ObjectKind::Table,
+        required_sequence_usage,
+    )
+    else {
+        return SchemaObjectDependencies::incomplete();
+    };
+    let mut complete = selected_count == Some(1)
+        && unsupported_count == Some(0)
+        && type_usage_complete
+        && sequence_usage_complete;
+
+    if family == "mysql" && kind == ObjectKind::View {
+        complete = complete && mysql_dependency_catalog_visibility(driver, handle).await;
+    }
+
+    SchemaObjectDependencies {
+        complete,
+        dependencies,
+        type_dependency_usages,
+        sequence_dependency_usages: required_sequence_usage
+            .and_then(|_| complete.then_some(sequence_dependency_usages)),
+    }
+}
+
+async fn mysql_dependency_catalog_visibility<D: DatabaseDriver + ?Sized>(
+    driver: &D,
+    handle: &ConnectionHandle,
+) -> bool {
+    let Ok(grants_result) = driver.query(handle, MYSQL_DEPENDENCY_GRANTS_SQL).await else {
+        return false;
+    };
+    let grant_strings = grants_result
+        .rows
+        .iter()
+        .filter_map(|row| value_as_string(row.first().and_then(Option::as_ref)))
+        .collect::<Vec<_>>();
+    if !mysql_dependency_grants_are_complete(&grant_strings) {
+        return false;
+    }
+    let Ok(udf_result) = driver.query(handle, MYSQL_UDF_CATALOG_SQL).await else {
+        return false;
+    };
+    let Some(index) = column_index(&udf_result.columns, &["udf_count"]) else {
+        return false;
+    };
+    udf_result
+        .rows
+        .first()
+        .and_then(|row| value_as_string(row.get(index).and_then(Option::as_ref)))
+        .and_then(|count| count.parse::<i64>().ok())
+        == Some(0)
 }
 
 fn value_as_string(value: Option<&Value>) -> Option<String> {
@@ -345,151 +581,4 @@ pub fn parse_privilege_list(result: &QueryResult) -> Result<Vec<PrivilegeGrant>,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::ColumnInfo;
-
-    fn col(name: &str) -> ColumnInfo {
-        ColumnInfo {
-            name: name.into(),
-            data_type: "text".into(),
-            nullable: true,
-        }
-    }
-
-    #[test]
-    fn command_definitions_include_schema_object_commands() {
-        let defs = schema_object_command_definitions();
-        let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
-        assert!(ids.contains(&"list_objects"));
-        assert!(ids.contains(&"get_object_ddl"));
-        assert!(ids.contains(&"list_privileges"));
-    }
-
-    #[test]
-    fn parse_object_list_maps_name_and_schema() {
-        let result = QueryResult {
-            columns: vec![col("schema"), col("name")],
-            rows: vec![vec![
-                Some(Value::String("public".into())),
-                Some(Value::String("fn_ok".into())),
-            ]],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        let objects = parse_object_list(&result, "function").unwrap();
-        assert_eq!(objects.len(), 1);
-        assert_eq!(objects[0].name, "fn_ok");
-        assert_eq!(objects[0].schema.as_deref(), Some("public"));
-    }
-
-    #[test]
-    fn parse_object_list_preserves_routine_and_trigger_identity() {
-        let result = QueryResult {
-            columns: vec![
-                col("schema"),
-                col("name"),
-                col("signature"),
-                col("target_schema"),
-                col("target_name"),
-            ],
-            rows: vec![vec![
-                Some(Value::String("public".into())),
-                Some(Value::String("lookup".into())),
-                Some(Value::String("integer".into())),
-                Some(Value::String("public".into())),
-                Some(Value::String("orders".into())),
-            ]],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        let objects = parse_object_list(&result, "function").unwrap();
-        assert_eq!(objects[0].signature.as_deref(), Some("integer"));
-        assert_eq!(objects[0].target_schema.as_deref(), Some("public"));
-        assert_eq!(objects[0].target_name.as_deref(), Some("orders"));
-    }
-
-    #[test]
-    fn parse_object_list_preserves_empty_zero_argument_signature() {
-        let result = QueryResult {
-            columns: vec![col("name"), col("signature")],
-            rows: vec![vec![
-                Some(Value::String("zero_arg".into())),
-                Some(Value::String(String::new())),
-            ]],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        let objects = parse_object_list(&result, "function").unwrap();
-        assert_eq!(objects[0].signature.as_deref(), Some(""));
-    }
-
-    #[test]
-    fn parse_object_list_empty_when_no_columns() {
-        let result = QueryResult {
-            columns: vec![],
-            rows: vec![],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        assert!(parse_object_list(&result, "function").unwrap().is_empty());
-    }
-
-    #[test]
-    fn extract_object_ddl_prefers_named_column() {
-        let result = QueryResult {
-            columns: vec![col("Function"), col("Create Function")],
-            rows: vec![vec![
-                Some(Value::String("fn_ok".into())),
-                Some(Value::String("CREATE FUNCTION fn_ok() ...".into())),
-            ]],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        let ddl = extract_object_ddl(&result);
-        assert!(ddl.contains("CREATE FUNCTION"));
-    }
-
-    #[test]
-    fn checked_ddl_rejects_missing_and_ambiguous_results() {
-        let empty = QueryResult {
-            columns: vec![col("ddl")],
-            rows: vec![],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        assert!(extract_object_ddl_checked(&empty).is_err());
-
-        let ambiguous = QueryResult {
-            columns: vec![col("ddl")],
-            rows: vec![
-                vec![Some(Value::String("CREATE FUNCTION a()".into()))],
-                vec![Some(Value::String("CREATE FUNCTION a(integer)".into()))],
-            ],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        assert!(extract_object_ddl_checked(&ambiguous).is_err());
-    }
-
-    #[test]
-    fn parse_privilege_list_skips_incomplete_rows() {
-        let result = QueryResult {
-            columns: vec![col("grantee"), col("schema"), col("name"), col("privilege")],
-            rows: vec![
-                vec![
-                    Some(Value::String("alice".into())),
-                    Some(Value::String("public".into())),
-                    Some(Value::String("users".into())),
-                    Some(Value::String("SELECT".into())),
-                ],
-                vec![None, None, None, None],
-            ],
-            rows_affected: None,
-            execution_time_ms: 0,
-        };
-        let grants = parse_privilege_list(&result).unwrap();
-        assert_eq!(grants.len(), 1);
-        assert_eq!(grants[0].grantee, "alice");
-    }
-}
+mod tests;
