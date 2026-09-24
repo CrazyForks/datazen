@@ -113,7 +113,10 @@ async function reachDeploy() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.endpoints.sourceDatabase = 'source';
   state.endpoints.targetDatabase = 'target';
+  state.endpoints.sourceSchema = '';
+  state.endpoints.targetSchema = '';
   state.endpoints.isCrossDialect = false;
   state.endpoints.validateEndpoints.mockReturnValue(true);
   state.endpoints.ensureConnected.mockImplementation(async (side) => `${side}-session`);
@@ -756,6 +759,12 @@ describe('complete schema migration wizard journeys', () => {
   });
 
   it.each([
+    {
+      endpoint: 'source database',
+      change: () => {
+        state.endpoints.sourceDatabase = 'other-source';
+      },
+    },
     {
       endpoint: 'target database',
       change: () => {
