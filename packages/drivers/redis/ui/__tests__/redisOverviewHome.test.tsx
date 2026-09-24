@@ -158,7 +158,11 @@ describe('屏 A 组装', () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
 
     expect(container.querySelector('[data-overview-banner]')).not.toBeNull();
-    expect(ids(container, 'data-overview-card').sort()).toEqual(['actions', 'server', 'slowlog']);
+    expect(ids(container, 'data-overview-card').sort()).toEqual([
+      'actions',
+      'performance',
+      'server',
+    ]);
 
     const grid = container.querySelector('[data-overview-grid]');
     expect(grid).not.toBeNull();
@@ -166,7 +170,7 @@ describe('屏 A 组装', () => {
     // share a side-by-side grid wrapper as the second row.
     const serverCard = container.querySelector('[data-overview-card="server"]');
     expect(serverCard?.parentElement).toBe(grid);
-    const slowlogCard = container.querySelector('[data-overview-card="slowlog"]');
+    const slowlogCard = container.querySelector('[data-overview-card="performance"]');
     expect(slowlogCard?.parentElement).not.toBe(grid); // inside 2-col wrapper
     const actionsCard = container.querySelector('[data-overview-card="actions"]');
     expect(actionsCard?.parentElement).not.toBe(grid); // inside 2-col wrapper
@@ -179,7 +183,7 @@ describe('屏 A 组装', () => {
 
   it('sources the whole screen through the four whitelisted commands only', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() => expect(cardState(container, 'slowlog')).toBe('ready'));
+    await waitFor(() => expect(cardState(container, 'performance')).toBe('ready'));
 
     expect(issuedCommands()).toEqual(['db_sizes', 'info', 'memory_sample', 'slowlog_get']);
     expect(redisInvoke).toHaveBeenCalledTimes(4);
@@ -191,12 +195,12 @@ describe('屏 A 组装', () => {
 
   it('binds every block to the command it reads, so 区块空态有名字', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() => expect(cardState(container, 'slowlog')).toBe('ready'));
+    await waitFor(() => expect(cardState(container, 'performance')).toBe('ready'));
 
     expect(container.querySelector('[data-overview-card-source="server"]')?.textContent).toBe(
       'info',
     );
-    expect(container.querySelector('[data-overview-card-source="slowlog"]')?.textContent).toBe(
+    expect(container.querySelector('[data-overview-card-source="performance"]')?.textContent).toBe(
       'slowlog_get + memory_sample',
     );
   });
@@ -525,8 +529,8 @@ describe('卡 4 — 慢查询', () => {
   it('explains an empty SLOWLOG with the SLOWLOG GET semantics (I-11)', async () => {
     stub({ slowlog_get: [], memory_sample: { samples: [], truncated: false } });
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() => expect(cardState(container, 'slowlog')).toBe('empty'));
-    expect(container.querySelector('[data-overview-empty="slowlog"]')).not.toBeNull();
+    await waitFor(() => expect(cardState(container, 'performance')).toBe('empty'));
+    expect(container.querySelector('[data-overview-empty="performance"]')).not.toBeNull();
     expect(container.querySelector('[data-overview-slowlog-row]')).toBeNull();
   });
 
@@ -784,7 +788,7 @@ describe('失败与重试', () => {
     expect(container.querySelector('[data-overview-failed="server"]')).not.toBeNull();
     expect(container.querySelector('[data-overview-card-action="server"]')).toBeNull();
     // INFO 挂了不影响 Performance card
-    expect(cardState(container, 'slowlog')).toBe('ready');
+    expect(cardState(container, 'performance')).toBe('ready');
 
     const before = redisInvoke.mock.calls.length;
     fireEvent.click(container.querySelector('[data-overview-retry="server"]') as Element);

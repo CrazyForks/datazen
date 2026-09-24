@@ -16,7 +16,7 @@ export type OverviewCardState = OverviewSourceStatus | 'empty';
 
 export interface OverviewCardProps {
   /** Stable id used in `data-overview-card` — one per 屏 A block. */
-  cardId: 'server' | 'memory' | 'keyspace' | 'slowlog' | 'actions' | 'recent';
+  cardId: 'server' | 'memory' | 'keyspace' | 'slowlog' | 'performance' | 'actions' | 'recent';
   titleKey: string;
   /** Backend command name this block reads (raw token, not UI copy). */
   source?: string;

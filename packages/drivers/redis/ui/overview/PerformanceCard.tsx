@@ -75,7 +75,7 @@ export function PerformanceCard({
 
   return (
     <OverviewCard
-      cardId="slowlog"
+      cardId="performance"
       titleKey="redis.overview.performance.title"
       source="slowlog_get + memory_sample"
       status={cardStatus}
