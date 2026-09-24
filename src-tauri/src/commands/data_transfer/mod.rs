@@ -237,6 +237,23 @@ pub async fn execute_data_transfer(
     result
 }
 
+/// Arm a one-shot Data Transfer commit acknowledgement loss for one exact
+/// target table. This IPC exists only in debug webdriver builds; execution
+/// calls the real driver commit first and consumes the arm only after success.
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+#[tauri::command]
+pub fn arm_data_transfer_test_commit_ack_loss(target_table: String) -> Result<(), CommandError> {
+    crate::data_transfer::execute::arm_test_commit_ack_loss(&target_table)
+        .map_err(CommandError::Validation)
+}
+
+/// Clear a still-armed Data Transfer test fault during WDIO cleanup.
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+#[tauri::command]
+pub fn reset_data_transfer_test_commit_ack_loss() -> bool {
+    crate::data_transfer::execute::clear_test_commit_ack_loss()
+}
+
 pub(crate) fn transfer_rollback_history_outcome(result: &TransferExecutionResult) -> &'static str {
     // SQL-file output does not use target database transactions or typed
     // per-table outcomes. Preserve its existing run-history contract here.

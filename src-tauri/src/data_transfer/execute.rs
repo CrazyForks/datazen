@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+use std::sync::Mutex;
 
 use datazen_driver_api::TableSchema;
 
@@ -17,6 +19,49 @@ use super::model::{
     TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use super::structure::{drop_and_recreate_table, table_eligible_for_data};
+
+/// One-shot fault seam used only by unit tests and debug webdriver builds.
+/// It is keyed to one exact target table and is consumed only after the real
+/// driver commit call has returned success.
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+static TEST_COMMIT_ACK_LOSS_TABLE: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+pub(crate) fn arm_test_commit_ack_loss(target_table: &str) -> Result<(), String> {
+    let target_table = target_table.trim();
+    if target_table.is_empty() {
+        return Err("target table must be non-empty".into());
+    }
+    let mut armed = TEST_COMMIT_ACK_LOSS_TABLE
+        .lock()
+        .map_err(|_| "Data Transfer test fault state is unavailable".to_string())?;
+    if armed.is_some() {
+        return Err("a Data Transfer commit acknowledgement loss is already armed".into());
+    }
+    *armed = Some(target_table.to_string());
+    Ok(())
+}
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+pub(crate) fn clear_test_commit_ack_loss() -> bool {
+    TEST_COMMIT_ACK_LOSS_TABLE
+        .lock()
+        .map(|mut armed| armed.take().is_some())
+        .unwrap_or(false)
+}
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+fn consume_test_commit_ack_loss(target_table: &str) -> bool {
+    let Ok(mut armed) = TEST_COMMIT_ACK_LOSS_TABLE.lock() else {
+        return false;
+    };
+    if armed.as_deref() == Some(target_table) {
+        armed.take();
+        true
+    } else {
+        false
+    }
+}
 
 pub struct DropCreateContext<'a> {
     pub src_adapter: &'a dyn crate::transfer::adapter::SyncSourceAdapter,
@@ -648,7 +693,24 @@ pub async fn execute_transfer_data_with_write_observer(
             partial = true;
             TableExecutionOutcome::Unknown
         } else {
-            TableExecutionOutcome::Committed
+            #[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+            {
+                if consume_test_commit_ack_loss(&table.target_table) {
+                    table_error = Some(
+                        "debug test seam: target commit succeeded but its acknowledgement was dropped"
+                            .into(),
+                    );
+                    table_rows = 0;
+                    partial = true;
+                    TableExecutionOutcome::Unknown
+                } else {
+                    TableExecutionOutcome::Committed
+                }
+            }
+            #[cfg(not(any(test, all(debug_assertions, feature = "webdriver"))))]
+            {
+                TableExecutionOutcome::Committed
+            }
         };
         total_rows += table_rows;
 

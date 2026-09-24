@@ -210,6 +210,12 @@ export interface TransferRunRequest {
   resumeToken?: string;
 }
 
+type DataTransferE2eRunCapture = {
+  args: { request: TransferRunRequest; profile?: { id: string; revision: string } };
+  response?: TransferExecutionResult;
+  error?: string;
+};
+
 export interface TransferPairingView {
   path: string;
   supported: boolean;
@@ -270,11 +276,26 @@ export const transferCommands = {
 
   preview: (job: TransferJob) => invoke<TransferPreview>('preview_data_transfer', { job }),
 
-  execute: (request: TransferRunRequest, profile?: { id: string; revision: string }) =>
-    invoke<TransferExecutionResult>('execute_data_transfer', {
-      request,
-      ...(profile ? { profile } : {}),
-    }),
+  execute: async (request: TransferRunRequest, profile?: { id: string; revision: string }) => {
+    const args = { request, ...(profile ? { profile } : {}) };
+    const captures = import.meta.env.VITE_E2E
+      ? (
+          globalThis as typeof globalThis & {
+            __dataTransferRunCalls?: DataTransferE2eRunCapture[];
+          }
+        ).__dataTransferRunCalls
+      : undefined;
+    const capture: DataTransferE2eRunCapture | null = captures ? { args } : null;
+    if (capture && captures) captures.push(capture);
+    try {
+      const response = await invoke<TransferExecutionResult>('execute_data_transfer', args);
+      if (capture) capture.response = response;
+      return response;
+    } catch (error) {
+      if (capture) capture.error = String(error);
+      throw error;
+    }
+  },
 
   cancel: (jobId: string) => invoke<boolean>('cancel_data_transfer', { jobId }),
 };

@@ -456,6 +456,12 @@ pub fn run() {
             crate::commands::delete_transfer_profile,
             crate::commands::get_transfer_profiles,
             crate::commands::save_transfer_profile,
+            // This post-commit acknowledgement-loss seam is intentionally
+            // absent from release builds and from non-webdriver builds.
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            crate::commands::arm_data_transfer_test_commit_ack_loss,
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            crate::commands::reset_data_transfer_test_commit_ack_loss,
             // ── 结构比对 ──
             crate::commands::cancel_schema_diff_deploy,
             crate::commands::compare_table_schemas,

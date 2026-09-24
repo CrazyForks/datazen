@@ -1,24 +1,31 @@
 # migration-transfer-unknown-outcome-fence-BUG-003 · 缺少真实跨库 commit acknowledgement loss 验证
 
-- **严重度**：P2（发布阻断：关键跨库未知结果路径没有候选构建上的端到端证据）
-- **状态**：待修复
+- **严重度**：P2（发布阻断：关键跨库未知结果路径需要独立候选复测）
+- **状态**：READY_FOR_TEST
 - **涉及文件**：
-  - `packages/drivers/postgres/e2e/data-transfer-rollback-continue-pg-mysql.ts`
-  - `packages/drivers/mysql/e2e/data-transfer-rollback-continue-mysql-pg.ts`
   - `src-tauri/src/data_transfer/execute.rs`
-  - `src-tauri/src/commands/data_transfer/exec.rs`
-  - `src-tauri/src/data_transfer/model.rs`
-- **描述**：候选提交包含 Rust mock 中的 commit/rollback acknowledgement-loss 测试，但新增的两个方向性 WDIO journey 只触发普通主键冲突，验证确认回滚后继续写入后续表。它们不制造提交已生效但响应丢失（或提交未生效但响应丢失），也不验证跨 PG↔MySQL unknown outcome 下无后续写入、旧计划不可重放、history 标记 unknown、旧 resume token 被失效，以及目标端读回结果。普通约束错误不能代表 acknowledgement loss。缺少该集成证据时，无法确认真实驱动/事务栈的边界行为与 UI/history 状态满足此轨验收条件。
-- **重现步骤**：
-  1. 检查候选 `750f65e2f5cc5772d4d1c0ac90cf41cb246a3aa1` 的上述两个 WDIO spec；均只包含已知约束冲突和后续表成功写入。
-  2. 搜索 spec 和被调用测试命令，确认没有 commit/rollback acknowledgement-loss 控制点，也没有未知 history、token invalidation、plan replay 或对应 readback 断言。
-  3. 运行独立 Tester 的 `pnpm tauri:build:webdriver`：候选构建在 Tauri `beforeBuildCommand` 的 Host TypeScript 检查处退出，报告 `ConnectionPage.tsx:718` 参数数量错误及 `PanelContentRenderer.tsx:100` 的 `kvSlotState` 类型错误；因此没有可证明来自候选的 app 可供安全 WDIO 验证。已有调试 app 比候选提交早，不能作为该提交的证据。
-- **实测证据**：
-  - 独立确认当前两个 spec 是安全、唯一 fixture 的 confirmed-rollback journey；未运行它们，因为没有 candidate-provenance app。
-  - focused Rust: 151/151；Rust 改动可执行行覆盖率：354/409（86.55%）。focused UI：44/44。上述检查不能替代真实 PG↔MySQL acknowledgement-loss journey。
-  - 没有运行 WDIO、启动旧 app、创建 DB fixture 或 DATAZEN_DATA_DIR。
-- **修复要求**：由原 Coder 增加仅测试构建可用、可控且可观察的 commit-acknowledgement-loss 注入路径；为 PostgreSQL→MySQL 和 MySQL→PostgreSQL 各新增使用唯一 fixture 的真实数据库 WDIO journey。覆盖提交响应丢失后立即停止所有后续写入、旧计划不可重放、history outcome 为 unknown、先前 resume token 被失效、以及目标端读回；覆盖注入动作之后的最终副作用观察，但不得根据常规 constraint failure 推断未知结果。修复后由全新 Tester 在候选构建上直接运行指定 specs 并验证 fixture/数据目录清理。
+  - `src-tauri/src/commands/data_transfer/mod.rs`
+  - `src-tauri/src/bootstrap/run.rs`
+  - `src/commands/transfer.ts`
+  - `packages/drivers/postgres/e2e/data-transfer-commit-ack-loss-pg-mysql.ts`
+  - `packages/drivers/mysql/e2e/data-transfer-commit-ack-loss-mysql-pg.ts`
 
-## 复测记录
+## 缺陷
 
-本轮没有复测，因为候选 webdriver 构建被上述既有 Host 类型错误阻断，且没有可安全使用的候选 app。当前状态保持 `待修复`。
+Rust mock 能验证 commit/rollback acknowledgement loss 的状态机，但真实 PG↔MySQL WDIO 旅程此前只触发普通主键冲突。常规约束失败不能证明提交响应丢失后的未知结果、停止后续写入、计划/检查点失效、历史 outcome 和目标端实际状态。
+
+## 修复与边界
+
+增加仅在测试和 debug WebDriver 构建中可用的精确目标表一次性 fault seam。它先调用真实目标驱动的 `commit`；仅当该调用成功返回后才丢弃 acknowledgement 并返回 typed `unknown`。这是受控的 commit-ack 边界注入，不是真实网络分区。Release 构建不包含 arm/reset IPC、全局故障状态或环境变量开关。
+
+前端的被动调用记录只在 `VITE_E2E` 构建且 WDIO 明确安装 recorder 时记录原始请求与响应，不替换 IPC、不伪造结果。两条方向旅程使用不同且唯一的数据库、表和连接配置；MySQL 表显式指定 InnoDB。清理仅删除本轮生成的数据库/连接配置和私有 app-data。
+
+## 候选验证
+
+- PG→MySQL: 1 个 WDIO journey 通过。
+- MySQL→PG: 1 个 WDIO journey 通过。
+- 两方向均断言真实请求报告 `unknown` 且行数为 `null`，后续表为 `notStarted` 且目标未写入；回读确认未知表的目标事务实际已提交；Transfer 历史为 `unknown`；无 resume token/UI 恢复操作；旧计划和旧检查点请求重放均被拒绝。
+- 使用候选 `pnpm tauri:build:webdriver` 产物；可执行文件 SHA-256：`c31f3f2b2350a6b8cbb92dddaa7c4dba64f350a75f9def69a71497cf536862f8`。构建产出 app 与可执行文件，最终失败仅发生在用户排除的 DMG 打包步骤。
+- WDIO 后 PostgreSQL 与 MySQL catalog 均无 `dz_dt_ack_%` fixture 数据库；候选进程已停止，4445 端口已释放，两个私有测试 app-data 目录已删除。
+
+独立 Tester 应从该提交重建候选、核验二进制 provenance，并串行复测两条 ack-loss 旅程及已有 confirmed-rollback/continue journeys。未确认真实网络中断行为；验证范围明确限于真实数据库驱动 commit 成功返回之后的受控 acknowledgement-loss 注入。

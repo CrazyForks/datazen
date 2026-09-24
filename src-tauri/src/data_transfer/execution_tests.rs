@@ -682,6 +682,59 @@ async fn unknown_commit_stops_later_tables_and_hides_unconfirmed_rows() {
 }
 
 #[tokio::test]
+async fn debug_commit_ack_loss_seam_targets_one_successful_commit_once() {
+    const ACK_LOSS_TABLE: &str = "e2e_ack_loss_target_once";
+
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    super::execute::arm_test_commit_ack_loss(ACK_LOSS_TABLE).unwrap();
+
+    let result = run(
+        &source,
+        &target,
+        &[
+            inspected("e2e_ack_loss_before", vec![mapping("id", "id")]),
+            inspected(ACK_LOSS_TABLE, vec![mapping("id", "id")]),
+            inspected("e2e_ack_loss_later", vec![mapping("id", "id")]),
+        ],
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(result.tables[1].rows_inserted, None);
+    assert_eq!(
+        result.tables[2].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(target.state.lock().unwrap().committed.len(), 2);
+    assert!(
+        !super::execute::clear_test_commit_ack_loss(),
+        "the target-specific fault must be consumed once"
+    );
+
+    let repeated_target_commit = run(
+        &source,
+        &target,
+        &[inspected(ACK_LOSS_TABLE, vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+    assert_eq!(
+        repeated_target_commit.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed),
+        "the fault must not affect another commit after its one-shot use"
+    );
+}
+
+#[tokio::test]
 async fn unknown_rollback_stops_later_tables_and_hides_unconfirmed_rows() {
     let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
     let mut target = driver(vec![], schema(&["id"]));

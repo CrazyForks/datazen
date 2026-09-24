@@ -15,6 +15,12 @@
 - **Coder change:** Report confirmed surviving preamble effects as `partiallyApplied` with a known zero row count when no row transaction commits, preserve `unknown` if rollback or DDL acknowledgement is uncertain, and disable resume checkpoints for those modes. Added coverage for post-preamble reinspection/begin failures and confirmed rollback.
 - **Evidence:** Focused Rust tests verify partial outcomes and no resumable checkpoint for destructive modes; Transfer UI displays the per-table partial label and explanation. Shared migration history renders the partial label with amber warning styling.
 
+## migration-transfer-unknown-outcome-fence-BUG-003 — P2
+
+- **Status:** READY_FOR_TEST. Coder added a debug/WebDriver-only post-commit acknowledgement-loss seam and both real PG↔MySQL direction journeys passed; a fresh independent Tester must rebuild and repeat them.
+- **Description:** The previous live journeys exercised ordinary constraint failures only, so they could not establish behavior when a real target commit succeeds but its acknowledgement disappears.
+- **Evidence:** Both unique-fixture WDIO journeys assert unknown row counts, stop before the later table, verify committed target rows by readback, confirm Transfer history `unknown`, ensure no token/replay remains, and check cleanup. The injected fault occurs only after the actual driver commit returns successfully; it does not simulate a network partition.
+
 ## Deferred gap outside this track
 
 Large-table bounded chunk/recovery remains separate work. Current Transfer still has table-level, not mid-table, checkpoints; it does not promise bounded memory for fallback materialization or guaranteed interruption of an active source query. This track does not add a chunk cursor or claim those behaviors.

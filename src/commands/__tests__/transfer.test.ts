@@ -1,6 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.fn();
+type CapturedTransferRun = {
+  args: { request: { planId: string }; profile?: { id: string; revision: string } };
+  response?: { tables: unknown[]; rowsInserted: number };
+  error?: string;
+};
+const e2eGlobal = globalThis as typeof globalThis & {
+  __dataTransferRunCalls?: CapturedTransferRun[];
+};
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -9,7 +17,14 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('transferCommands.inspect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('VITE_E2E', '');
+    delete e2eGlobal.__dataTransferRunCalls;
     invokeMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete e2eGlobal.__dataTransferRunCalls;
   });
 
   it('passes source-only SQL-file inspection to the host', async () => {
@@ -114,6 +129,35 @@ describe('transferCommands.inspect', () => {
         jobId: 'cancel-token',
       },
     });
+  });
+
+  it('records the real request and response only when the E2E recorder is enabled', async () => {
+    vi.stubEnv('VITE_E2E', '1');
+    const response = { tables: [], rowsInserted: 4 };
+    invokeMock.mockResolvedValue(response);
+    e2eGlobal.__dataTransferRunCalls = [];
+    const { transferCommands } = await import('../transfer');
+    const request = { planId: 'opaque-e2e-plan' };
+    const profile = { id: 'profile-1', revision: 'revision-2' };
+
+    await expect(transferCommands.execute(request, profile)).resolves.toBe(response);
+
+    expect(invokeMock).toHaveBeenCalledWith('execute_data_transfer', { request, profile });
+    expect(e2eGlobal.__dataTransferRunCalls).toEqual([{ args: { request, profile }, response }]);
+  });
+
+  it('records a rejected E2E request without swallowing its error', async () => {
+    vi.stubEnv('VITE_E2E', '1');
+    invokeMock.mockRejectedValue(new Error('commit outcome unknown'));
+    e2eGlobal.__dataTransferRunCalls = [];
+    const { transferCommands } = await import('../transfer');
+    const request = { planId: 'opaque-e2e-plan' };
+
+    await expect(transferCommands.execute(request)).rejects.toThrow('commit outcome unknown');
+
+    expect(e2eGlobal.__dataTransferRunCalls).toEqual([
+      { args: { request }, error: 'Error: commit outcome unknown' },
+    ]);
   });
 
   it('routes pairing classification through the transfer IPC', async () => {

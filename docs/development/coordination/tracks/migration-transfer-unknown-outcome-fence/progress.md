@@ -1,11 +1,11 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
 - Worktree: `.worktrees/datazen-migration-transfer-unknown-outcome-fence`
-- Baseline: `codex/migration-navicat` at `23a7c8a5` (main and Sync history integration included)
+- Baseline: latest integrated `codex/migration-navicat` (includes main and Sync history integration)
 
 ## Confirmed defect
 
@@ -29,7 +29,7 @@ This track covers database Data and Structure+Data transactions. SQL-file output
 - [x] Focused Rust tests simulate commit applied-but-response-lost, commit not applied-but-response-lost, rollback failure, confirmed rollback continuation, preflight failure, confirmed truncate/drop-create preambles followed by reinspection/begin failures, and checkpoint invalidation; assert later table calls and row counts precisely.
 - [x] An order-sensitive self-overwrite test places a valid table before a conflicting selected table and proves validation rejects the run before any write/DDL. The history error mapper classifies the observer as `notStarted`, not unknown.
 - [x] Destructive preamble modes cannot mint or accept a resumable checkpoint that could replay a known partial application.
-- [ ] PostgreSQL→MySQL and MySQL→PostgreSQL WDIO failure journeys use unique fixtures and prove confirmed rollback/continue behavior with `stop_on_error=false`; commit acknowledgement loss is tested with a controllable mock/fault injector, never inferred from normal DB errors.
+- [x] PostgreSQL→MySQL and MySQL→PostgreSQL WDIO journeys use unique fixtures and prove commit acknowledgement loss after a real successful target commit; assert unknown rows, later-table stop, target readback, history, token invalidation, and plan/checkpoint replay rejection. The separate confirmed-rollback/continue journeys remain available for the independent Tester run.
 - [x] Focused Transfer Rust tests pass and changed production executable-line coverage is ≥80%; focused UI, formatter, and diff checks pass. Host TypeScript still reports two unrelated Connection/Redis integration diagnostics, recorded below.
 
 ## Boundaries
@@ -90,3 +90,14 @@ Tester final status: **TEST_FAILED**. See `bugs/migration-transfer-unknown-outco
 - Self-overwrite validation is run against the full eligible selection before Structure+Data DDL or any table write, so a later conflicting table cannot turn earlier valid tables into a partially executed run. The data executor keeps the same guard for direct callers.
 - SQL-file per-table results retain `outcome: None`; Transfer run-history mapping has an explicit compatibility path that preserves the pre-existing SQL-file partial outcome while this track changes only database-target outcomes.
 - Final Coder status: `READY_FOR_TEST`; the Tester owns real PG/MySQL WDIO validation. The mainline TypeScript diagnostics above are not caused by this Transfer patch and remain a repository-level integration blocker to resolve outside this track.
+
+## Ack-loss journey completion (2026-09-24)
+
+This section supersedes the initial Tester `TEST_FAILED` and the earlier Coder notes saying no live database journeys had run. BUG-003 is addressed in this candidate and awaits a fresh independent Tester run.
+
+- Added a debug/test-only, exact-target-table, one-shot fault seam. It is armed explicitly; it runs the real target driver's `commit` and synthesizes a lost acknowledgement only after that call returns success. This is an injected commit-ack boundary, not a real network partition. The production/release build has no arm/reset IPC or fault state.
+- The two dedicated WDIO specs ran serially against the candidate app: `data-transfer-commit-ack-loss-pg-mysql.ts` (1 passing) and `data-transfer-commit-ack-loss-mysql-pg.ts` (1 passing). Both prove the request/response through the passive `VITE_E2E` command recorder, unknown outcome with `rowsInserted=null`, later table `notStarted`, committed target readback, Transfer run history `unknown`, absent resume token/UI action, and rejection of both the consumed original plan and old checkpoint request.
+- Candidate binary built with `pnpm tauri:build:webdriver`; executable SHA-256: `c31f3f2b2350a6b8cbb92dddaa7c4dba64f350a75f9def69a71497cf536862f8`. The `.app` executable matched. The build produced the app and binary; only the excluded DMG packaging step failed.
+- Focused Rust: 152 passed; changed production executable-line coverage: 742/814 (91.15%). Focused Transfer UI/command Vitest: 44/44. Host TypeScript: passed. Changed Rust `rustfmt`, changed TypeScript Prettier, and `git diff --check`: passed.
+- Each spec creates unique source/target databases, tables, and connection IDs. MySQL tables explicitly use InnoDB. After both runs, PG and MySQL catalogs contained no `dz_dt_ack_%` databases; only those exact generated database names were dropped. The app was stopped, port 4445 released, and both private `/private/tmp/datazen-transfer-ack-loss-20260924*` app-data directories were removed.
+- No Cargo build or WDIO process remains active. The shared Cargo target is released. An independent Tester should rebuild the fresh commit, verify binary provenance, run both acknowledgement-loss journeys and the existing confirmed-rollback/continue journeys serially, and report final status.
