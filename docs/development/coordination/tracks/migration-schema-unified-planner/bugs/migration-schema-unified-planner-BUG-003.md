@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-003 · PostgreSQL live mixed-object plan blocks supported dependency chains
 
 - **严重度**：P1（阻断）
-- **状态**：待修复
+- **状态**：已修复
 - **涉及文件**：`packages/driver-api/src/schema_migration.rs`、`packages/drivers/postgres/src/schema.rs`、`packages/driver-api/src/schema_dependencies/postgres.rs`、`src-tauri/src/schema_diff/unified.rs`、`src-tauri/src/commands/schema_diff/unified_plan.rs`、`e2e/specs/schema-diff-unified-planner.ts`
 
 ## 描述
@@ -25,3 +25,10 @@
 独立 WebdriverIO 运行得到 `postgresql-create` 失败，计划面板显示 `0 语句` 和以上三条 `不支持` blocker。另一个 object-only blocked case 同样被第一条 view-definition blocker 抢先阻断，因此不能把它计为缺失 dependency 的验收通过。PG 正向和负向 fixture 清理后均通过精确 catalog 计数：`source_remaining=0 target_remaining=0`；目标从未部署任何 statement。
 
 该缺陷阻断 PostgreSQL unified mixed-object migration；对应 live acceptance 需在修复并由全新 Tester 复测后才能通过。
+
+## 复测记录（round-2）
+
+- 复测基于修复提交 `b36a2bee`，在独立 verification worktree 使用真实 Host UI/IPC 与本机 PostgreSQL 完成。
+- opt-in `schema_function_dependency_catalog` live regression passed 1/1：精确 enum identity 保留；无引用 passthrough function 为 `complete=true` 且 dependencies 为空；含隐藏表读取的 function 为 `complete=false`。精确 UUID fixture 的 type/table/functions 在清理后全部不存在。
+- unified WDIO PostgreSQL 正向/拒绝边界通过 2/2。正向 journey 检查统一 reviewed SQL 顺序，部署后读回 type、owned sequence、两张表、FK、function、trigger 和 view；拒绝 journey 的 deploy disabled 且 target object count 为 0。两个 journey 的 source/target fixture 清理均为 0/0。
+- 据此，BUG-003 的 PostgreSQL 验收缺陷标记为已修复。跨库 track 仍因独立 MySQL BUG-004 未通过整体验收。
