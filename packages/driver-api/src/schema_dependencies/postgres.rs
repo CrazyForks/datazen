@@ -505,6 +505,7 @@ pub(super) fn postgres_view_dependencies_sql(name: &str, schema_filter: &str) ->
             JOIN pg_catalog.pg_class AS referenced ON referenced.oid = dependency.refobjid
             JOIN pg_catalog.pg_namespace AS referenced_ns ON referenced_ns.oid = referenced.relnamespace
             WHERE referenced.relkind IN ('r', 'p', 'f', 'v', 'm', 'S', 'c')
+              AND referenced.oid <> selected.oid
 
             UNION
 
@@ -557,6 +558,7 @@ pub(super) fn postgres_view_dependencies_sql(name: &str, schema_filter: &str) ->
             JOIN pg_catalog.pg_namespace AS referenced_ns ON referenced_ns.nspname = usage.table_schema
             JOIN pg_catalog.pg_class AS referenced
               ON referenced.relnamespace = referenced_ns.oid AND referenced.relname = usage.table_name
+            WHERE referenced.oid <> selected.oid
 
             UNION
 

@@ -95,6 +95,11 @@ mod tests {
         assert!(sql.contains("information_schema.view_routine_usage"));
         assert!(sql.contains("pg_catalog.nameconcatoid(procedure.proname, procedure.oid)"));
         assert!(sql.contains("pg_catalog.pg_get_function_identity_arguments(procedure.oid)"));
+        assert_eq!(
+            sql.matches("referenced.oid <> selected.oid").count(),
+            2,
+            "both pg_depend and view_table_usage edges must exclude the selected view by OID"
+        );
         assert!(sql.contains("view_rel.relname = 'view''name'"));
         assert!(sql.contains("view_ns.nspname = 'sales'"));
         assert!(sql.contains("unsupported_count"));
