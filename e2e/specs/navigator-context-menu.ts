@@ -16,6 +16,7 @@ import {
   setSafeMode,
   confirmWebDialog,
   invokeBackend,
+  connectBackend,
   queryScalar,
   type QueryResultPayload,
   stubClipboardCapture,
@@ -26,6 +27,26 @@ import {
 const TEST_TABLE = '_e2e_ctx_menu';
 const DROP_SCHEMA = '_e2e_nav_drop_schema';
 const SEEDED_CONN_ID = 'conn_e2e_pg';
+
+/**
+ * 清掉上一个 spec 残留的 seeded 连接后端会话。
+ *
+ * WDIO 全程复用同一个 Tauri 进程，而每个 spec 的 worker 数据库是按 spec
+ * 创建后即删除的；Rust 侧 `connect` 对同一 connectionId 会复用仍存活的会话，
+ * 于是本 spec 的 UI 连接拿到的是绑在已删除 worker 库上的旧会话，
+ * `execute_query` / `get_databases` 全部报
+ * `database "e2e_w..." does not exist`，before 钩子里的
+ * `pgTableExists(...)` 直接抛错导致整文件 before all hook 失败。
+ * 这里强制探测并断开残留会话，随后 UI 连接会基于本 spec 的 worker 库新建会话。
+ */
+async function dropLeakedSeededSession() {
+  try {
+    const leaked = await connectBackend(SEEDED_CONN_ID);
+    if (leaked) await disconnectBackend(leaked);
+  } catch {
+    /* 无残留会话 */
+  }
+}
 
 async function pgScalar(dbSessionId: string, sql: string, database?: string): Promise<number> {
   const payload = await invokeBackend<QueryResultPayload>('execute_query', {
@@ -78,8 +99,34 @@ async function pgDatabaseExists(dbSessionId: string, database: string): Promise<
   return dbs.includes(database);
 }
 
+/**
+ * 关闭可能残留的右键菜单并等待其真正消失（无菜单时立即成功）。
+ * 关闭失败不再被 .catch 静默吞掉——会带 timeoutMsg 抛错（e2e-ops-menu-BUG-001）。
+ */
+async function closeAnyMenu() {
+  await browser.execute(() => {
+    // WebContextMenu 在 window 上监听 mousedown，用 rootRef.contains(e.target)
+    // 判断点按是否落在菜单外。派发目标必须是 Node：
+    //  - 向 document 派发不冒泡的事件 → 到不了 window 监听器（原始缺陷）；
+    //  - 向 window 派发 → e.target === window（非 Node），contains() 按 WebIDL
+    //    抛 TypeError → hide() 永不执行（BUG-001 实测）；
+    //  - document.body 既是 Node、又位于菜单 portal root 之外（body 是其祖先）
+    //    → 冒泡到 window，contains(body) 为 false → hide() 正常关闭。
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await browser.waitUntil(
+    async () => {
+      const menu = await $('[data-testid="web-context-menu"]');
+      return !(await menu.isExisting());
+    },
+    { timeout: 3000, timeoutMsg: '右键菜单未关闭' },
+  );
+}
+
 /** Right-click a DOM element matched by selector + text filter via JS dispatch. */
 async function rightClick(selector: string, textMatch?: string) {
+  // 先确定性关闭残留菜单，避免下面的等待把旧菜单误判为"新菜单已渲染"
+  await closeAnyMenu();
   await browser.execute(
     (sel: string, text: string | undefined) => {
       let el: Element | null = null;
@@ -108,13 +155,23 @@ async function rightClick(selector: string, textMatch?: string) {
     selector,
     textMatch,
   );
-  await browser.pause(500);
+  // 菜单是异步构建的（先 await 后端命令再 show），固定 pause(500) 会与本 spec
+  // 首次打开（reload 后模块重新加载，较慢）竞争 → 等待真实菜单出现；
+  // 目标节点没有菜单处理器时保持旧语义（getMenuText() 返回 ''）不抛错。
+  await browser
+    .waitUntil(
+      async () => (await $('[data-testid="web-context-menu"]')).isExisting(),
+      { timeout: 8000, timeoutMsg: '右键菜单未渲染' },
+    )
+    .catch(() => {
+      /* 无菜单的目标节点 */
+    });
 }
 
 /** Dismiss any open web context menu. */
 async function dismissMenu() {
-  await browser.execute(() => document.dispatchEvent(new MouseEvent('mousedown')));
-  await browser.pause(300);
+  await closeAnyMenu();
+  await browser.pause(200);
 }
 
 /** Get the visible web context menu text (all items). */
@@ -155,30 +212,32 @@ async function hasMenuItemId(id: string): Promise<boolean> {
 }
 
 async function hoverSubmenuTrigger(triggerTestId: string) {
+  // 菜单异步渲染：先等触发项真实出现；缺失时快速失败，而不是静默跳过
+  // 导致后续 hasSubmenuItem 断言在"菜单没开"的状态下误报。
   const trigger = await $(`[data-testid="${triggerTestId}"]`);
-  if (await trigger.isExisting()) {
-    // Real pointer hover (.moveTo()) does not reliably open submenus under the
-    // WebKit WebDriver. WebContextMenu opens a submenu on onMouseEnter / onFocus,
-    // so dispatch those DOM events deterministically, then wait for the panel.
-    await trigger.moveTo().catch(() => {});
-    await browser.execute((id: string) => {
-      const t = document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
-      t?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
-      t?.dispatchEvent(new MouseEvent('focus', { bubbles: true }));
-      t?.focus();
-    }, triggerTestId);
-    await browser
-      .waitUntil(
-        () =>
-          browser.execute(() => {
-            const sub = document.querySelector('[data-testid="web-context-submenu"]');
-            return !!sub && sub.querySelectorAll('button').length > 0;
-          }),
-        { timeout: 3000, timeoutMsg: '子菜单未打开' },
-      )
-      .catch(() => {});
-    await browser.pause(200);
-  }
+  await trigger.waitForExist({
+    timeout: 8000,
+    timeoutMsg: `子菜单触发项未出现: ${triggerTestId}`,
+  });
+  // Real pointer hover (.moveTo()) does not reliably open submenus under the
+  // WebKit WebDriver. WebContextMenu opens a submenu on onMouseEnter / onFocus,
+  // so dispatch those DOM events deterministically, then wait for the panel.
+  await trigger.moveTo().catch(() => {});
+  await browser.execute((id: string) => {
+    const t = document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
+    t?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+    t?.dispatchEvent(new MouseEvent('focus', { bubbles: true }));
+    t?.focus();
+  }, triggerTestId);
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const sub = document.querySelector('[data-testid="web-context-submenu"]');
+        return !!sub && sub.querySelectorAll('button').length > 0;
+      }),
+    { timeout: 5000, timeoutMsg: '子菜单未打开' },
+  );
+  await browser.pause(200);
 }
 
 async function hasSubmenuItem(itemId: string): Promise<boolean> {
@@ -274,6 +333,11 @@ describe('导航树上下文菜单 (Navigator Context Menu)', () => {
 
   before(async () => {
     mainWindow = await browser.getWindowHandle();
+    // 先清掉上一个 spec 残留的 seeded 后端会话（见 dropLeakedSeededSession 注释），
+    // 再让 UI 连接基于本 spec 的 worker 库新建会话，否则下面的建表 SQL 与
+    // pgTableExists 断言会因 `database "e2e_w..." does not exist` 抛错，
+    // 导致整个 before all hook 失败。
+    await dropLeakedSeededSession();
     await connectSeededPgInWorkspace();
     await stubClipboardCapture();
     await browser.pause(1500);
