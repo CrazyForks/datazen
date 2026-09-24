@@ -8,9 +8,13 @@ import { expect, browser, $ } from '@wdio/globals';
 import {
   captureJourneyStep,
   clickFirstTable,
+  clickNavigatorRefresh,
   connectSeededPgInWorkspace,
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
+  expandConnectedConnectionInNavigator,
+  expandSchemaTableCategory,
   openQueryTab,
   waitForSchemaTreeLoaded,
 } from '../helpers.js';
@@ -83,7 +87,9 @@ describe('Schema 树完整性 (TC-TREE-001~006)', () => {
 
   it('TC-TREE-003: 点击表名应打开数据 tab', async () => {
     const tableName = await clickFirstTable();
-    expect(tableName).toBeTruthy();
+    // Plain guard: the wdio `expect` typings collapse to `never` for this
+    // string matcher chain, so assert without them.
+    if (!tableName) throw new Error('clickFirstTable 未返回表名');
     await browser.pause(1000);
     const body = await $('body').getText();
     expect(
@@ -127,21 +133,22 @@ describe('Schema 树完整性 (TC-TREE-001~006)', () => {
     await withSafeModeOff(async () => {
       await executeSQL(`DROP TABLE IF EXISTS ${testTable}`);
     });
-    await executeSQL(`CREATE TABLE ${testTable} (id INT PRIMARY KEY, val TEXT)`);
+    // Checked DDL: a swallowed backend error would otherwise surface only
+    // as a tree-assertion timeout much later.
+    await executeSQLChecked(`CREATE TABLE ${testTable} (id INT PRIMARY KEY, val TEXT)`);
     await browser.pause(1000);
-    await browser.execute(() => {
-      const aside = document.querySelector('aside');
-      if (!aside) return;
-      const refreshBtns = Array.from(aside.querySelectorAll('button'));
-      const btn = refreshBtns.find((b) => {
-        const title = b.getAttribute('title') || b.getAttribute('aria-label') || '';
-        return title.includes('刷新') || title.includes('Refresh');
-      });
-      if (btn) (btn as HTMLElement).click();
-    });
-    await browser.pause(2000);
-    const body = await $('body').getText();
-    expect(body.includes(testTable)).toBe(true);
+    // Refresh via the stable test id — scanning for any button titled
+    // "刷新" could match an unrelated control — then re-expand: a refresh
+    // rebuilds the navigator DOM and collapses the tree, so the new table
+    // node only renders after the connection and Tables category expand.
+    await clickNavigatorRefresh();
+    await expandConnectedConnectionInNavigator();
+    await expandSchemaTableCategory();
+    // Conditioned assertion instead of a one-shot read after a fixed pause.
+    await browser.waitUntil(
+      async () => (await $('body').getText()).includes(testTable),
+      { timeout: 20000, timeoutMsg: `刷新后 schema 树未显示 ${testTable}` },
+    );
     await captureJourneyStep('schema-tree-refreshed');
     await withSafeModeOff(async () => {
       await executeSQL(`DROP TABLE IF EXISTS ${testTable}`);
