@@ -107,7 +107,25 @@ async fn view_dependency_catalog_returns_exact_table_and_routine_edges_when_visi
             .await
             .map_err(|error| error.to_string())?
             .data;
-        Ok::<_, String>((result, raw_rows))
+        let missing_view = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"view","schema":database,"name":format!("{view_name}_missing")}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let routine = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"function","schema":database,"name":routine_name}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        Ok::<_, String>((result, raw_rows, missing_view, routine))
     }
     .await;
 
@@ -123,7 +141,8 @@ async fn view_dependency_catalog_returns_exact_table_and_routine_edges_when_visi
             .unwrap_or_else(|error| panic!("fixture cleanup failed for owned object: {error}"));
     }
     driver.disconnect(handle).await.expect("disconnect");
-    let (result, raw_rows) = lookup.expect("create fixtures and query dependency catalog");
+    let (result, raw_rows, missing_view, routine) =
+        lookup.expect("create fixtures and query dependency catalog");
 
     assert_eq!(
         result["complete"], true,
@@ -133,6 +152,19 @@ async fn view_dependency_catalog_returns_exact_table_and_routine_edges_when_visi
         raw_rows.len(),
         2,
         "raw query returns table and routine edges"
+    );
+    assert_eq!(
+        result["dependencies"].as_array().map(Vec::len),
+        Some(2),
+        "view catalog contains exactly the expected direct edges: {result}"
+    );
+    assert_eq!(
+        missing_view["complete"], false,
+        "missing view identity must fail closed: {missing_view}"
+    );
+    assert_eq!(
+        routine["complete"], false,
+        "opaque routine dependencies must fail closed: {routine}"
     );
     assert_has_dependency(&result, "table", &database, &table_name);
     assert_has_dependency(&result, "function", &database, &routine_name);

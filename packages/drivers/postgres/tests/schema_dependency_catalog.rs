@@ -68,6 +68,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
     let fk_child = format!("dz_mig_dep_fk_child_{suffix}");
     let serial_table = format!("dz_mig_dep_serial_table_{suffix}");
     let serial_sequence = format!("{serial_table}_id_seq");
+    let ambiguous_schema = format!("dz_mig_dep_schema_{suffix}");
 
     let driver = PostgresDriver::new();
     let handle = driver
@@ -98,6 +99,17 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
                 &format!(
                     "CREATE VIEW public.{view_name} AS SELECT public.{view_function}(id) AS id FROM public.{base_table}"
                 ),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        driver
+            .execute(&handle, &format!("CREATE SCHEMA {ambiguous_schema}"))
+            .await
+            .map_err(|error| error.to_string())?;
+        driver
+            .execute(
+                &handle,
+                &format!("CREATE VIEW {ambiguous_schema}.{view_name} AS SELECT 1 AS id"),
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -224,6 +236,33 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             .await
             .map_err(|error| error.to_string())?
             .data;
+        let ambiguous_view = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"view","name":view_name}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let missing_view = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"view","schema":"public","name":format!("{view_name}_missing")}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let routine = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"function","schema":"public","name":view_function,"signature":"integer"}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
         let trigger = driver
             .execute_command(
                 &handle,
@@ -322,6 +361,9 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             .data;
         Ok::<_, String>((
             view,
+            ambiguous_view,
+            missing_view,
+            routine,
             trigger,
             table,
             expression_table_dependencies,
@@ -338,6 +380,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
 
     // Drop only the unique objects created above, even if setup or lookup failed.
     for sql in [
+        format!("DROP SCHEMA IF EXISTS {ambiguous_schema} CASCADE"),
         format!("DROP VIEW IF EXISTS public.{view_name}"),
         format!("DROP TABLE IF EXISTS public.{trigger_table} CASCADE"),
         format!("DROP FUNCTION IF EXISTS public.{trigger_function}()"),
@@ -362,6 +405,9 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
     driver.disconnect(handle).await.expect("disconnect");
     let (
         view,
+        ambiguous_view,
+        missing_view,
+        routine,
         trigger,
         table,
         expression_table_dependencies,
@@ -374,6 +420,18 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         fk_child_dependencies,
     ) = lookup.expect("create fixtures and query dependency catalog");
 
+    assert_eq!(
+        ambiguous_view["complete"], false,
+        "ambiguous view identity must fail closed: {ambiguous_view}"
+    );
+    assert_eq!(
+        missing_view["complete"], false,
+        "missing view identity must fail closed: {missing_view}"
+    );
+    assert_eq!(
+        routine["complete"], false,
+        "opaque routine dependencies must fail closed: {routine}"
+    );
     assert_dependencies(
         &view,
         &[
@@ -446,6 +504,11 @@ fn assert_type_usages(data: &Value, expected: &[(&str, &str, &str, Option<&str>)
     let usages = data["typeDependencyUsages"]
         .as_array()
         .expect("typeDependencyUsages array in driver command result");
+    assert_eq!(
+        usages.len(),
+        expected.len(),
+        "type usage catalog contains missing or unexpected usage edges for {expected:?}: {data}"
+    );
     for (schema, name, usage, column_name) in expected {
         assert!(
             usages.iter().any(|entry| {
@@ -471,6 +534,11 @@ fn assert_dependencies(data: &Value, expected: &[(&str, &str, &str, Option<&str>
     let dependencies = data["dependencies"]
         .as_array()
         .expect("dependencies array in driver command result");
+    assert_eq!(
+        dependencies.len(),
+        expected.len(),
+        "dependency catalog contains missing or unexpected edges for {expected:?}: {data}"
+    );
     for (kind, schema, name, signature) in expected {
         assert!(
             dependencies.iter().any(|dependency| {
