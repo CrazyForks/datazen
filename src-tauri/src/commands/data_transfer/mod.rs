@@ -1,5 +1,7 @@
 //! Data Transfer IPC commands.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 mod exec;
 mod inspect;
 mod jobs;
@@ -12,12 +14,14 @@ mod tests;
 
 use super::error::CommandError;
 use super::AppState;
+use crate::data_transfer::model::TableExecutionOutcome;
 use crate::data_transfer::{
     classify_transfer_pair as classify_transfer_pair_impl, TableInspectResult,
     TransferExecutionResult, TransferJob, TransferMode, TransferPreview, TransferProfile,
     TransferRunRequest,
 };
 pub(crate) use exec::execute_data_transfer_impl;
+pub(crate) use exec::execute_data_transfer_impl_with_write_observer;
 pub(crate) use inspect::{inspect_data_transfer_impl, inspect_sql_file_transfer_impl};
 pub(crate) use jobs::cancel_job;
 pub(crate) use preview::preview_data_transfer_impl;
@@ -199,7 +203,9 @@ pub async fn execute_data_transfer(
                 .await;
         }
     }
-    let result = execute_data_transfer_impl(&state, request).await;
+    let write_started = AtomicBool::new(false);
+    let result =
+        execute_data_transfer_impl_with_write_observer(&state, request, Some(&write_started)).await;
     match &result {
         Ok(value) => {
             crate::commands::history::finish_migration_run(
@@ -210,22 +216,91 @@ pub async fn execute_data_transfer(
                 value.rows_inserted,
                 value.tables.iter().filter(|table| !table.success).count() as u64,
                 0,
-                if value.partial {
-                    "unknown"
-                } else {
-                    "notRequired"
-                },
+                transfer_rollback_history_outcome(value),
             )
             .await
         }
         Err(_) => {
             crate::commands::history::finish_migration_run(
-                &state, run, false, false, 0, 1, 0, "unknown",
+                &state,
+                run,
+                false,
+                false,
+                0,
+                1,
+                0,
+                transfer_error_history_outcome(write_started.load(Ordering::SeqCst)),
             )
             .await
         }
     }
     result
+}
+
+/// Arm a one-shot Data Transfer commit acknowledgement loss for one exact
+/// target table. This IPC exists only in debug webdriver builds; execution
+/// calls the real driver commit first and consumes the arm only after success.
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+#[tauri::command]
+pub fn arm_data_transfer_test_commit_ack_loss(target_table: String) -> Result<(), CommandError> {
+    crate::data_transfer::execute::arm_test_commit_ack_loss(&target_table)
+        .map_err(CommandError::Validation)
+}
+
+/// Clear a still-armed Data Transfer test fault during WDIO cleanup.
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+#[tauri::command]
+pub fn reset_data_transfer_test_commit_ack_loss() -> bool {
+    crate::data_transfer::execute::clear_test_commit_ack_loss()
+}
+
+pub(crate) fn transfer_rollback_history_outcome(result: &TransferExecutionResult) -> &'static str {
+    // SQL-file output does not use target database transactions or typed
+    // per-table outcomes. Preserve its existing run-history contract here.
+    if result.tables.iter().all(|table| table.outcome.is_none()) {
+        return if result.partial {
+            "unknown"
+        } else {
+            "notRequired"
+        };
+    }
+
+    if result
+        .tables
+        .iter()
+        .any(|table| table.outcome == Some(TableExecutionOutcome::Unknown))
+    {
+        "unknown"
+    } else if result
+        .tables
+        .iter()
+        .any(|table| table.outcome == Some(TableExecutionOutcome::PartiallyApplied))
+    {
+        "partiallyApplied"
+    } else if result
+        .tables
+        .iter()
+        .any(|table| table.outcome == Some(TableExecutionOutcome::RolledBack))
+    {
+        "rolledBack"
+    } else if result.partial
+        && result
+            .tables
+            .iter()
+            .all(|table| table.outcome == Some(TableExecutionOutcome::NotStarted))
+    {
+        "notStarted"
+    } else {
+        "notRequired"
+    }
+}
+
+pub(crate) fn transfer_error_history_outcome(write_started: bool) -> &'static str {
+    if write_started {
+        "unknown"
+    } else {
+        "notStarted"
+    }
 }
 
 #[tauri::command]

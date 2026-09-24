@@ -147,10 +147,11 @@ describe('MigrationRunHistoryDialog Data Sync recovery action', () => {
 
   it.each([
     { operation: 'dataSync' as const, outcome: 'unknown' },
+    { operation: 'dataSync' as const, outcome: 'partiallyApplied' },
     { operation: 'schemaDiff' as const, outcome: 'unknown' },
     { operation: 'dataTransfer' as const, outcome: 'notRequired' },
   ])(
-    'preserves non-Transfer warning semantics for $operation/$outcome',
+    '[tester] preserves non-Transfer warning semantics for $operation/$outcome',
     async ({ operation, outcome }) => {
       const selectedRun: MigrationRunRecord = {
         ...run,

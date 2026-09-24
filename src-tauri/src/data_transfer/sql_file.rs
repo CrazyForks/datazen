@@ -861,9 +861,10 @@ pub async fn execute_with_target(
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
-                rows_inserted: 0,
+                rows_inserted: Some(0),
                 success: false,
                 error: Some("source schema not loaded".into()),
+                outcome: None,
             });
             if job.options.stop_on_error {
                 break;
@@ -881,9 +882,10 @@ pub async fn execute_with_target(
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
-                rows_inserted: 0,
+                rows_inserted: Some(0),
                 success: true,
                 error: None,
+                outcome: None,
             });
             continue;
         }
@@ -892,9 +894,10 @@ pub async fn execute_with_target(
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
-                rows_inserted: 0,
+                rows_inserted: Some(0),
                 success: false,
                 error: Some("no column mappings".into()),
+                outcome: None,
             });
             if job.options.stop_on_error {
                 break;
@@ -1007,9 +1010,10 @@ pub async fn execute_with_target(
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
-                rows_inserted: 0,
+                rows_inserted: Some(0),
                 success: false,
                 error: Some(err),
+                outcome: None,
             });
             if job.options.stop_on_error {
                 break;
@@ -1019,9 +1023,10 @@ pub async fn execute_with_target(
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
-                rows_inserted: rows,
+                rows_inserted: Some(rows),
                 success: true,
                 error: None,
+                outcome: None,
             });
         }
     }
