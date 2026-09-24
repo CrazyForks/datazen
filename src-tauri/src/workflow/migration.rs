@@ -512,24 +512,7 @@ async fn run_transfer(
         let result = crate::commands::execute_data_transfer_impl(state, request)
             .await
             .map_err(|error| WorkflowError::Step(error.to_string()))?;
-        let failed = result.tables.iter().filter(|table| !table.success).count() as u64;
-        Ok(MigrationOutcome {
-            result: serde_json::json!({
-                "operation": "dataTransfer",
-                "planId": preview.plan_id,
-                "rowsInserted": result.rows_inserted,
-                "tables": result.tables.len(),
-                "partial": result.partial,
-                "cancelled": result.cancelled,
-                "resumeToken": result.resume_token,
-            }),
-            committed: result.rows_inserted,
-            failed,
-            conflicts: 0,
-            cancelled: result.cancelled,
-            success: !result.partial && !result.cancelled && failed == 0,
-            rollback_outcome: crate::commands::transfer_rollback_history_outcome(&result),
-        })
+        Ok(transfer_migration_outcome(preview.plan_id, result))
     }
     .await;
     release_session(state, &source).await;
@@ -537,6 +520,30 @@ async fn run_transfer(
         release_session(state, target).await;
     }
     operation
+}
+
+fn transfer_migration_outcome(
+    plan_id: String,
+    result: crate::data_transfer::model::TransferExecutionResult,
+) -> MigrationOutcome {
+    let failed = result.tables.iter().filter(|table| !table.success).count() as u64;
+    MigrationOutcome {
+        result: serde_json::json!({
+            "operation": "dataTransfer",
+            "planId": plan_id,
+            "rowsInserted": result.rows_inserted,
+            "tables": result.tables.len(),
+            "partial": result.partial,
+            "cancelled": result.cancelled,
+            "resumeToken": result.resume_token,
+        }),
+        committed: result.rows_inserted,
+        failed,
+        conflicts: 0,
+        cancelled: result.cancelled,
+        success: !result.partial && !result.cancelled && failed == 0,
+        rollback_outcome: crate::commands::transfer_rollback_history_outcome(&result),
+    }
 }
 
 async fn run_sync(
@@ -783,7 +790,9 @@ fn token_variable_names(steps: &[crate::workflow::model::WorkflowStep]) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_transfer::model::TransferOptions;
+    use crate::data_transfer::model::{
+        TableExecutionOutcome, TableExecutionResult, TransferExecutionResult, TransferOptions,
+    };
     use crate::data_transfer::{TransferMode, TransferProfile, WriteMode};
     use crate::store::MigrationRunFilter;
     use crate::testing::app_state::TestAppState;
@@ -791,6 +800,32 @@ mod tests {
         WorkflowDefinition, WorkflowMigrationOperation, WorkflowStep, WorkflowVisibility,
     };
     use chrono::Utc;
+
+    #[test]
+    fn workflow_transfer_history_preserves_partial_and_unknown_outcomes() {
+        for (table_outcome, expected_history_outcome) in [
+            (TableExecutionOutcome::PartiallyApplied, "partiallyApplied"),
+            (TableExecutionOutcome::Unknown, "unknown"),
+        ] {
+            let migration = transfer_migration_outcome(
+                "plan-1".into(),
+                TransferExecutionResult {
+                    tables: vec![TableExecutionResult::database(
+                        "users",
+                        "users",
+                        None,
+                        table_outcome,
+                        Some("injected outcome".into()),
+                    )],
+                    partial: true,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(migration.rollback_outcome, expected_history_outcome);
+            assert!(!migration.success);
+            assert_eq!(migration.result["planId"], "plan-1");
+        }
+    }
 
     #[tokio::test]
     async fn unattended_destructive_transfer_is_rejected_before_connection_resolution() {

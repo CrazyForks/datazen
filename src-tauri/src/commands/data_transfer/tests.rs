@@ -708,7 +708,9 @@ async fn sql_file_target_executes_after_source_type_enrichment() {
     )
     .await
     .expect("execution should use the same enriched source snapshot as preview");
-    assert!(error.tables.iter().all(|table| table.success));
+    assert!(error.tables.iter().all(|table| {
+        table.success && table.rows_inserted == Some(0) && table.outcome.is_none()
+    }));
 }
 
 #[tokio::test]

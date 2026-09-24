@@ -1,11 +1,11 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: CODING
+Phase: READY_FOR_TEST
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
 - Worktree: `.worktrees/datazen-migration-transfer-unknown-outcome-fence`
-- Baseline: current `codex/migration-navicat`
+- Baseline: `codex/migration-navicat` at `23a7c8a5` (main and Sync history integration included)
 
 ## Confirmed defect
 
@@ -25,12 +25,12 @@ This track covers database Data and Structure+Data transactions. SQL-file output
 - [x] After commit or rollback becomes unknown, the executor stops before touching the next table even when `stop_on_error=false`.
 - [x] A statement failure with a confirmed successful rollback can continue when `stop_on_error=false` and stops when it is `true`.
 - [x] Unknown outcomes cannot create or preserve a resume checkpoint; a prior checkpoint is invalidated and the old plan cannot be replayed.
-- [x] Transfer table UI and Transfer history payload encode confirmed rollback, unknown, not-started, and confirmed destructive-preamble partial application distinctly. Shared history behavior for Data Sync and Schema Diff is unchanged. Shared history label/dialog test is pending with the Sync owner.
-- [ ] Focused Rust tests simulate commit applied-but-response-lost, commit not applied-but-response-lost, rollback failure, confirmed rollback continuation, preflight failure, confirmed truncate/drop-create preambles followed by reinspection/begin failures, and checkpoint invalidation; assert later table calls and row counts precisely. Re-run after shared Cargo target is released.
-- [ ] An order-sensitive self-overwrite test places a valid table before a conflicting selected table and proves validation rejects the run before any write/DDL, with history remaining `notStarted` rather than `unknown`.
-- [ ] Destructive preamble modes cannot mint or accept a resumable checkpoint that could replay a known partial application.
+- [x] Transfer table UI and Transfer history payload encode confirmed rollback, unknown, not-started, and confirmed destructive-preamble partial application distinctly. Shared history behavior for Data Sync and Schema Diff is unchanged; the merged shared history dialog labels `partiallyApplied` in amber.
+- [x] Focused Rust tests simulate commit applied-but-response-lost, commit not applied-but-response-lost, rollback failure, confirmed rollback continuation, preflight failure, confirmed truncate/drop-create preambles followed by reinspection/begin failures, and checkpoint invalidation; assert later table calls and row counts precisely.
+- [x] An order-sensitive self-overwrite test places a valid table before a conflicting selected table and proves validation rejects the run before any write/DDL. The history error mapper classifies the observer as `notStarted`, not unknown.
+- [x] Destructive preamble modes cannot mint or accept a resumable checkpoint that could replay a known partial application.
 - [ ] PostgreSQL→MySQL and MySQL→PostgreSQL WDIO failure journeys use unique fixtures and prove confirmed rollback/continue behavior with `stop_on_error=false`; commit acknowledgement loss is tested with a controllable mock/fault injector, never inferred from normal DB errors.
-- [ ] Changed-core coverage ≥80% after the confirmed-preamble follow-up; rerun after shared Cargo target is released. Focused Host/UI checks, formatting, and `git diff --check` pass.
+- [x] Focused Transfer Rust tests pass and changed production executable-line coverage is ≥80%; focused UI, formatter, and diff checks pass. Host TypeScript still reports two unrelated Connection/Redis integration diagnostics, recorded below.
 
 ## Boundaries
 
@@ -47,16 +47,18 @@ This track covers database Data and Structure+Data transactions. SQL-file output
 
 ## Tester
 
-This checkpoint is not a Coder handoff: the track remains `CODING`, and it is not ready for Tester. Cargo tests and updated changed-core coverage have not been rerun after the confirmed-preamble/self-overwrite additions because the shared target is occupied by Sync Tester. Do not start this track's Cargo, app, or WDIO work until the parent releases those resources. After Coder validation and handoff, run the required WDIO journeys serially with a dedicated `DATAZEN_DATA_DIR`, then verify cleanup and release port 4445. Shared history rendering for `partiallyApplied` also needs the Sync owner’s locale/dialog/test integration before merge.
+Independent Tester handoff is ready for the two WDIO journeys. Run them serially with a dedicated `DATAZEN_DATA_DIR`, then verify fixture cleanup and release port 4445. `e2e/wdio.conf.ts` creates and drops its own uniquely named PostgreSQL worker database and cleans the app-data passed to the app; it does not honor `E2E_SKIP_WORKER_DATABASE`. Do not use `e2e/run.mjs` or setup scripts that mutate shared fixtures. The merged Sync history dialog includes the Transfer `partiallyApplied` label and warning style. The Coder did not run WDIO or access local databases.
 
 ## Coder self-validation
 
-- Previous Rust/coverage run before the confirmed-preamble follow-up: 123 passed; changed executable coverage 1036/1093 (94.8%); strict changed production-core coverage 309/350 (88.3%). These figures are provisional until the updated Transfer suite runs with the shared target.
-- Previous strict per-file ratios: `commands/data_transfer/exec.rs` 28/37 (75.7%); `commands/data_transfer/mod.rs` 24/36 (66.7%); `data_transfer/execute.rs` 149/160 (93.1%); `data_transfer/model.rs` 16/16 (100%); `data_transfer/structure.rs` 92/100 (92.0%); `workflow/migration.rs` 0/1. The remaining uncovered lines were mostly IPC wrapper/history workflow glue not entered by those library unit tests.
-- Host UI test after adding destructive-preamble coverage: `DataTransferWindow.test.tsx` 34 passed, 0 failed; TypeScript check passed.
-- Rust formatting, Prettier, and `git diff --check` passed.
-- No WDIO, black-box, or live database tests were run by the Coder. Before WDIO, use a dedicated `DATAZEN_DATA_DIR`: `e2e/wdio.conf.ts` creates and drops its own uniquely named PostgreSQL worker database and cleans the app-data passed to the app; it does not honor `E2E_SKIP_WORKER_DATABASE`. Do not use `e2e/run.mjs` or setup scripts that mutate shared fixtures. Run the two new direction-specific specs serially after the Schema lane releases the harness, inspect fixture cleanup, and release port 4445.
-- Transfer history now sends `partiallyApplied`; the Sync owner must add its shared run-history display label and regression assertion. This worktree intentionally does not edit the shared dialog, locale, or shared history test.
+- `CARGO_TARGET_DIR=/Users/flyxl/code/datazen/.worktrees/datazen-migration-navicat/target/cargo-wt RUSTFLAGS='-C instrument-coverage' LLVM_PROFILE_FILE=/private/tmp/datazen-transfer-final-%p-%m.profraw cargo test -p datazen --lib transfer -- --test-threads=1`: 151 passed, 0 failed. This includes commit response loss after/before effect, rollback failure, confirmed rollback continuation/stop, unknown stop, checkpoint invalidation, Structure+Data and destructive-preamble partial outcomes, self-overwrite prevalidation, Transfer history mapping, and workflow partial/unknown mapping.
+- Changed production executable-line coverage, measured from the Transfer diff against `codex/migration-navicat` with `xcrun llvm-profdata`/`xcrun llvm-cov`: **354/409 (86.55%)**. Per-file: `commands/data_transfer/exec.rs` 30/41; `commands/data_transfer/mod.rs` 0/0; `data_transfer/execute.rs` 192/222; `data_transfer/mod.rs` 0/0; `data_transfer/model.rs` 16/16; `data_transfer/sql_file.rs` 4/10; `data_transfer/structure.rs` 93/100; `workflow/migration.rs` 19/20.
+- Whole-file line coverage for the selected production files is **71.67% aggregate** and is separate from the changed-line gate: `exec.rs` 74.20%, command `mod.rs` 15.64%, `execute.rs` 86.30%, `model.rs` 91.19%, `sql_file.rs` 81.87%, `structure.rs` 92.60%, and `workflow/migration.rs` 23.03%. The low full-file values include unrelated IPC/history/workflow branches; the changed production lines exceed the track gate.
+- Focused Host UI suites: `DataTransferWindow.test.tsx` plus `MigrationRunHistoryDialog.test.tsx`, 43 passed, 0 failed. The per-table partial label is backed by `transfer.tableOutcome.partiallyApplied: Partially applied` in the English sync domain and a focused Transfer result assertion; the merged shared-history test checks the partial label and amber warning style.
+- `pnpm install --offline --frozen-lockfile` completed with the existing `node_modules` physical directory (not a symlink). Explicit `node scripts/resolve-drivers.mjs --codegen-only --drivers=basic` refreshed ignored driver-generated files without Cargo injection.
+- Host `pnpm exec tsc --noEmit` still exits 2 with two unrelated integrated Connection/Redis diagnostics: `src/windows/connection/ConnectionPage.tsx:718` passes two arguments where the signature accepts at most one; `src/windows/connection/PanelContentRenderer.tsx:100` passes `kvSlotState`, absent from `ConnectionViewProps`. The generated `getDriverKvSlot` diagnostic was fixed by codegen. These files are outside the Transfer track and were not edited here.
+- Prettier, `rustfmt --edition 2021 --check` on changed Rust files, and `git diff --check` pass. pnpm prints a non-fatal registry error only while checking for an available pnpm update; the invoked checks exit successfully.
+- No WDIO, black-box, or live database tests were run by the Coder. The two direction-specific WDIO specs remain Tester-owned. Large-table bounded chunk/recovery and mid-query cancellation remain separate gaps; this track does not add chunk cursors or promise bounded memory.
 - Self-overwrite validation is run against the full eligible selection before Structure+Data DDL or any table write, so a later conflicting table cannot turn earlier valid tables into a partially executed run. The data executor keeps the same guard for direct callers.
 - SQL-file per-table results retain `outcome: None`; Transfer run-history mapping has an explicit compatibility path that preserves the pre-existing SQL-file partial outcome while this track changes only database-target outcomes.
-- Checkpoint status: this commit preserves ongoing work only. The UI/type/format/diff checks are current; Rust test results and strict coverage ratios above predate the latest core changes and must not be treated as final or as Tester-ready evidence.
+- Final Coder status: `READY_FOR_TEST`; the Tester owns real PG/MySQL WDIO validation. The mainline TypeScript diagnostics above are not caused by this Transfer patch and remain a repository-level integration blocker to resolve outside this track.

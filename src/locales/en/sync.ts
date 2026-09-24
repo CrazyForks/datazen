@@ -264,6 +264,7 @@ const pack = {
     'The database did not confirm whether the current write committed or rolled back. Verify the target data before retrying.',
   'transfer.tableOutcome.committed': 'Committed',
   'transfer.tableOutcome.rolledBack': 'Rolled back',
+  'transfer.tableOutcome.partiallyApplied': 'Partially applied',
   'transfer.tableOutcome.notStarted': 'Not started',
   'transfer.tableOutcome.unknown': 'Unknown',
   'transfer.historyOutcome.notRequired': 'Not required',
