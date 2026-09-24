@@ -117,7 +117,7 @@ document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); // 
 
 ## 修复记录（round-1）
 
-- **修复提交**：`__FIX_SHA_BACKFILL__`（修复内容在 message 为 `fix(e2e): resolve e2e-ops-menu-BUG-001 …` 的首个提交内；commit 无法包含自身 SHA，故由紧随其后的回填提交写入本行）
+- **修复提交**：`74f2854e6a174802b37c873644105d6c77ff3c9b`（修复内容在 message 为 `fix(e2e): resolve e2e-ops-menu-BUG-001 …` 的首个提交内；commit 无法包含自身 SHA，故由紧随其后的回填提交写入本行）
 - **修复方式（仅测试侧，未动 `src/`）**：三个 spec 的 `closeAnyMenu()` 派发目标由 `window` 改为 `document.body`——body 是 Node，且是菜单 portal root 的祖先（`rootRef.contains(body)` 为 false），冒泡到 window 监听器后 `hide()` 正常执行；同时移除 `waitUntil` 上吞错的 `.catch`，关闭失败将带 `右键菜单未关闭` timeoutMsg 抛错（菜单本就不存在时 `waitUntil` 立即成功；`rightClick` 中面向"无菜单目标"语义的 `.catch` 保留，navigator 负向断言依赖）。
 - **src/ 防御性补充未采纳**：生产真实 mousedown 的 target 必然是 Node，非 Node target 仅出现在合成 `window.dispatchEvent`（测试侧模式）中；按本轮"仅修 Bug、不改应用代码"约束未改 `WebContextMenu.onDown`，`if (!(e.target instanceof Node)) return;` 防御加固建议由协调者评估后另行派发。
 - **验证**：
