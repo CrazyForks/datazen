@@ -24,3 +24,9 @@ driver_error=Query failed: error returned from database: 1064 (42000): You have 
 ```
 
 随机 source/target fixture 清理后的 catalog 计数均为 0，部署未执行。该错误阻断 MySQL unified view selection 及其 FK→view mixed-plan WDIO journey。
+
+## 复测记录（round-2）
+
+- 使用修复 `b36a2bee` 构建的独立 Host app 再跑 unified MySQL WDIO 正向和拒绝边界，两例均在 source view catalog discovery 处复现同一 `1064 (42000)` reserved alias 错误；`information_schema.views` 的精确 fixture row 数仍为 1，Driver IPC 返回匹配数为 0。
+- 正向与拒绝用例各自执行精确 source/target cleanup，两个 teardown 都确认计数为 0/0。此轮没有部署写入，也没有运行全局 worker database setup/teardown。
+- BUG-004 保持待修复，MySQL unified view acceptance 仍被阻断。
