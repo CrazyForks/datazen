@@ -31,10 +31,9 @@ const RECENT_KEYS_LIMIT = 3;
 /**
  * 屏 A — Redis 连接总览（`kvSlots.connectionHome` 的驱动贡献）。
  *
- * Three full-width cards stacked vertically — no 2-col grid alignment issues:
- *  1. InstanceCard (Server + Memory side-by-side)
- *  2. PerformanceCard (Slowlog + Big Keys)
- *  3. NavigationCard (Quick Actions + Recent Keys)
+ * Two-row layout that fits a single viewport without scrollbars:
+ *  Row 1: InstanceCard (Server + Memory side-by-side, full width)
+ *  Row 2: PerformanceCard (Slowlog + Big Keys) ‖ NavigationCard (Quick Actions + Recent Keys)
  *
  * All fed by the commands in `useOverviewData`, zero SCAN.
  */
