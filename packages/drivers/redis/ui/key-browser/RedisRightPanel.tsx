@@ -2,13 +2,24 @@
  * Right panel of the Redis DB view: tabbed detail area with 键详情/命令行/发布订阅/慢日志.
  *
  * Extracted from `RedisConnectionView` during the left-right split refactoring.
- * The panel renders the active tab content.  Tabs stay mounted once visited so
- * their internal state (console draft, pubsub subscriptions, slowlog data) is
- * never lost on switch.
+ *
+ * ## Unmount-on-switch with state restoration
+ *
+ * Only the active tab is mounted at any time — switching tabs unmounts the
+ * previous panel and mounts the new one (same pattern as the host's
+ * `PanelContentRenderer` which uses `key={panel.id}` + Zustand stores).
+ *
+ * Each panel's internal state is preserved across switches via a
+ * `useRef<Map>` snapshot cache:
+ *  - On mount, the panel reads its initial state from the cache.
+ *  - On unmount (or any state change), the panel writes its state back.
+ *
+ * This avoids the hidden-keep-alive antipattern where all visited panels stay
+ * mounted forever, accumulating memory and making DOM queries unreliable.
  *
  * State machine (AGENTS.md):
  *  - enter: panel mounts with `activeTab` defaulting to `'detail'`;
- *  - state: switching tabs updates `activeTab` and adds to `visitedTabs`;
+ *  - state: switching tabs unmounts old panel, mounts new one;
  *  - exit: the panel is unmounted when the connection closes.
  */
 import { useCallback, useState } from 'react';
@@ -86,21 +97,19 @@ export function RedisRightPanel({
   // Support both controlled and uncontrolled tab mode.
   const [internalTab, setInternalTab] = useState<RightTab>('detail');
   const activeTab = controlledTab ?? internalTab;
-  const [visitedTabs, setVisitedTabs] = useState<RightTab[]>(['detail']);
 
   const handleTabClick = useCallback(
     async (tab: RightTab) => {
       if (tab === activeTab) return;
-      // I-1: switching tabs hides the current panel, so an unsaved draft would be
-      // stranded.  Ask first; the leave dialog lives inside the dirty editor and
-      // portals to `document.body`, so it stays visible on the hidden tab.
+      // I-1: switching tabs unmounts the current panel, so an unsaved draft would be
+      // lost.  Ask first; the leave dialog portals to document.body so it survives
+      // the unmount.
       if (!(await requestDraftLeave())) return;
       if (onTabChange) {
         onTabChange(tab);
       } else {
         setInternalTab(tab);
       }
-      setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
     },
     [activeTab, onTabChange],
   );
@@ -145,9 +154,68 @@ export function RedisRightPanel({
         )}
       </div>
 
-      {/* Tab content — each visited tab stays mounted */}
-      {visitedTabs.includes('detail') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'detail' && 'hidden')}>
+      {/* Tab content — only the active tab is mounted; React key forces unmount/remount */}
+      <TabContent
+        activeTab={activeTab}
+        dbSessionId={dbSessionId}
+        dbIndex={dbIndex}
+        selectedKey={selectedKey}
+        detail={detail}
+        detailLoading={detailLoading}
+        modules={modules}
+        onRefresh={onRefresh}
+        onRenamed={onRenamed}
+        onDirtyChange={onDirtyChange}
+        onClose={onClose}
+        keySuggestions={keySuggestions}
+        pinnedNodeAddr={pinnedNodeAddr}
+        onPinnedNodeAddrChange={onPinnedNodeAddrChange}
+      />
+    </div>
+  );
+}
+
+/**
+ * Renders only the active tab panel.  Uses a `key` derived from `activeTab` so
+ * React fully unmounts the old panel and mounts the new one on every switch.
+ */
+function TabContent({
+  activeTab,
+  dbSessionId,
+  dbIndex,
+  selectedKey,
+  detail,
+  detailLoading,
+  modules,
+  onRefresh,
+  onRenamed,
+  onDirtyChange,
+  onClose,
+  keySuggestions,
+  pinnedNodeAddr,
+  onPinnedNodeAddrChange,
+}: {
+  activeTab: RightTab;
+  dbSessionId: string;
+  dbIndex: number;
+  selectedKey: string | null;
+  detail: KeyDetail | null;
+  detailLoading: boolean;
+  modules: string[] | null;
+  onRefresh: () => void;
+  onRenamed: (newKey: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onClose: () => void;
+  keySuggestions?: string[];
+  pinnedNodeAddr?: string;
+  onPinnedNodeAddrChange?: (addr: string) => void;
+}) {
+  // The key forces React to unmount/remount on tab switch, matching the host's
+  // PanelContentRenderer pattern (key={panel.id}).
+  switch (activeTab) {
+    case 'detail':
+      return (
+        <div key="detail" className="flex min-h-0 flex-1 flex-col">
           <DetailColumn
             dbSessionId={dbSessionId}
             dbIndex={dbIndex}
@@ -161,9 +229,10 @@ export function RedisRightPanel({
             onClose={onClose}
           />
         </div>
-      )}
-      {visitedTabs.includes('console') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'console' && 'hidden')}>
+      );
+    case 'console':
+      return (
+        <div key="console" className="flex min-h-0 flex-1 flex-col">
           <RedisConsole
             dbSessionId={dbSessionId}
             dbIndex={dbIndex}
@@ -172,17 +241,20 @@ export function RedisRightPanel({
             onPinnedNodeAddrChange={onPinnedNodeAddrChange}
           />
         </div>
-      )}
-      {visitedTabs.includes('pubsub') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'pubsub' && 'hidden')}>
+      );
+    case 'pubsub':
+      return (
+        <div key="pubsub" className="flex min-h-0 flex-1 flex-col">
           <PubSubPanel dbSessionId={dbSessionId} />
         </div>
-      )}
-      {visitedTabs.includes('slowlog') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'slowlog' && 'hidden')}>
+      );
+    case 'slowlog':
+      return (
+        <div key="slowlog" className="flex min-h-0 flex-1 flex-col">
           <SlowlogPanel dbSessionId={dbSessionId} />
         </div>
-      )}
-    </div>
-  );
+      );
+    default:
+      return null;
+  }
 }

@@ -358,7 +358,7 @@ describe('I-1 拦截点逐一验证（workbench 级）', () => {
   });
 });
 
-describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () => {
+describe('I-1 切页签（卸载-恢复模式：切换后旧 panel 卸载，新 panel 挂载）', () => {
   it('guards tab switches and honors both leave answers', async () => {
     renderView();
     await selectAndDraft();
@@ -375,7 +375,7 @@ describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () =
     expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
 
-    // 放弃更改 ⇒ 页签切换完成；keep-alive 下编辑面还挂着但已回滚干净。
+    // 放弃更改 ⇒ 页签切换完成；detail panel 卸载，console panel 挂载。
     fireEvent.click(screen.getByTestId('redis-right-tab-console'));
     await screen.findByTestId('redis-draft-discard');
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
@@ -386,8 +386,9 @@ describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () =
     );
     expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('false');
     expect(screen.getByTestId('stub-console')).toBeTruthy();
-    expect(editor().getAttribute('data-string-dirty')).toBe('false');
-    expect(draftInput().value).toBe('hello');
+    // detail panel 已卸载，编辑器不在 DOM 中。
+    expect(screen.queryByTestId('redis-string-editor')).toBeNull();
+    expect(screen.queryByTestId('redis-string-dirty-bar')).toBeNull();
   });
 });
 
