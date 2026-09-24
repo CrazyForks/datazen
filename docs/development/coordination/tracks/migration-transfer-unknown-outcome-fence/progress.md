@@ -1,6 +1,6 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
@@ -101,3 +101,35 @@ This section supersedes the initial Tester `TEST_FAILED` and the earlier Coder n
 - Focused Rust: 152 passed; changed production executable-line coverage: 742/814 (91.15%). Focused Transfer UI/command Vitest: 44/44. Host TypeScript: passed. Changed Rust `rustfmt`, changed TypeScript Prettier, and `git diff --check`: passed.
 - Each spec creates unique source/target databases, tables, and connection IDs. MySQL tables explicitly use InnoDB. After both runs, PG and MySQL catalogs contained no `dz_dt_ack_%` databases; only those exact generated database names were dropped. The app was stopped, port 4445 released, and both private `/private/tmp/datazen-transfer-ack-loss-20260924*` app-data directories were removed.
 - No Cargo build or WDIO process remains active. The shared Cargo target is released. An independent Tester should rebuild the fresh commit, verify binary provenance, run both acknowledgement-loss journeys and the existing confirmed-rollback/continue journeys serially, and report final status.
+
+## Fresh independent Tester report — 2026-09-24 (candidate `595e34365e5df915ff63e7028269e5af23c8856f`)
+
+Tester branch: `feature/migration-transfer-unknown-outcome-fresh-tester-20260924`.
+Final status: **TEST_FAILED**. BUG-004 was registered and committed separately as `967b2162`; no production or candidate E2E code was modified by this Tester.
+
+### Bootstrap and Phase A — review
+
+- Confirmed the assigned worktree and branch, clean initial state, and exact candidate HEAD. Ran `node scripts/generate-builtin-locales.mjs`; `pnpm install --offline --frozen-lockfile` completed successfully. `node_modules` is a physical directory, not a symlink. pnpm's prepare step printed a non-fatal permission error trying to lock the main checkout's `.git/config`; dependency installation and generated-driver preparation nevertheless completed with exit code 0.
+- `docs/development/post-review-hardening-plan.md` is absent in this candidate. Checked the implementation against this track's acceptance criteria and recorded that process limit rather than substituting an unrelated plan.
+- Reviewed the changed Transfer transaction and structure paths, typed outcomes/row-count serialization, unknown-result checkpoint invalidation, history/workflow mapping, Transfer UI, VITE_E2E capture, WebDriver registration gates, dedicated config, and both directions' new and confirmed-rollback specs. No production logic defect was established by source review. The capture records only the real IPC request and returned response/error; it does not replace or stub `invoke`.
+- Confirmed the arm/reset IPC definitions and registration use `cfg(all(debug_assertions, feature = "webdriver"))`; the internal exact-table one-shot seam is compiled under tests or that same debug/WebDriver combination and is consumed only after real target `commit()` returns `Ok`. It does not model a network partition.
+- **BUG-004 (P1)**: both new acknowledgement-loss specs set a shared cleanup flag before database creation and unconditionally `DROP DATABASE IF EXISTS` for both timestamp-derived names. There is no pre-create catalog collision check or separate ownership flag set only after each successful `CREATE`. A collision or partial setup error can therefore drop a database the current run did not create. The defect and safe repair requirements are in `bugs/migration-transfer-unknown-outcome-fence-BUG-004.md`; both ack-loss specs were not run.
+
+### Phase B — independent checks
+
+- Focused instrumented Rust suite, serialized on the shared Cargo target: `cargo test -p datazen --lib transfer -- --test-threads=1` — **152 passed, 0 failed**.
+- Focused UI/command Vitest (`DataTransferWindow.test.tsx`, `MigrationRunHistoryDialog.test.tsx`) — **44 passed, 0 failed**.
+- Host TypeScript `pnpm exec tsc --noEmit` — **passed, exit 0**.
+- LLVM coverage was independently merged and intersected with the candidate-vs-`codex/migration-navicat` zero-context diff; `#[cfg(test)]` code was excluded. Changed production executable lines: **387/445 = 87.0%**. Per file: command `exec.rs` 30/41; data-transfer `execute.rs` 225/258; `model.rs` 16/16; `sql_file.rs` 4/10; `structure.rs` 93/100; workflow `migration.rs` 19/20. `commands/data_transfer/mod.rs` adds only code excluded from the unit-test instrumentation build and therefore has 0 executable changed lines in this measurement; the WebDriver build below confirms both gated command names are present. The changed-production-line gate is above 80%.
+- `rustfmt --edition 2021 --check` on all changed Rust files, Prettier on all changed TS/TSX/E2E/locale files, and `git diff --check codex/migration-navicat...HEAD` — **passed**. The pnpm registry update check prints a non-fatal fetch warning in this offline environment.
+
+### Phase C — coverage-driven tests
+
+- The candidate already contains focused Rust state-machine tests and the two VITE_E2E recorder tests; the 152 Rust and 44 Vitest cases passed independently. No redundant tester test was added. BUG-004 concerns destructive test-fixture ownership and requires a Coder repair before those live cases can safely execute.
+
+### Phase D — candidate build and live journeys
+
+- Ran `VITE_E2E=1 pnpm tauri:build:webdriver` from this worktree using the serialized shared Cargo target. Vite, Rust, and the debug WebDriver binary built successfully; `.app` was produced. The command's only failure was the subsequent `bundle_dmg.sh` step, which is excluded by project instruction.
+- Fresh debug binary and `.app/Contents/MacOS/datazen` have the same SHA-256: `824be4302259b39a727b736be4e79524f16afbc7a0b7e42831388442f9d6edab` (built 2026-09-24 19:06:14 CST). The embedded bundle contains `/assets/DataTransferWindow-CxqT7CrE.js`; the corresponding fresh `dist` chunk contains `__dataTransferRunCalls`. The binary also contains both `arm_data_transfer_test_commit_ack_loss` and `reset_data_transfer_test_commit_ack_loss`, confirming the debug/WebDriver IPC registration is in this candidate artifact.
+- **No WDIO journey was run.** The two ack-loss specs are paused by BUG-004 because their cleanup can delete an unowned database. Before considering the existing fixed-name rollback journeys, read-only catalog queries found both `dz_mig_0910_transfer_src` and `dz_mig_0910_transfer_tgt` already exist in MySQL (neither exists in PostgreSQL). Per the no-touch rule those shared MySQL databases were not opened, modified, or dropped, and the two old journeys are blocked. No app was started, no database was created/dropped, no private `DATAZEN_DATA_DIR` was created, `dz_dt_ack_` catalogs are empty, and port 4445 is free.
+- Tester conclusion: **`TEST_FAILED` / Phase `FAILED`** pending BUG-004 repair and a fresh full run of both ack-loss and confirmed-rollback journeys with safe fixture ownership. The previously reported Coder WDIO passes are not independent Tester evidence.
