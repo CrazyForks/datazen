@@ -1,21 +1,15 @@
 import { Clock, Search, Sparkles } from 'lucide-react';
-import { Input, Select, cn, useI18n } from '@datazen/ui';
-import { KEY_TYPE_FILTERS } from './keyTree';
+import { Input, cn, useI18n } from '@datazen/ui';
 
 /**
  * Row R2 of the key-tree column header (PRD §3.2 屏 B 左列): the pattern input
  * plus the filters that shape what the pattern means.
  *
- * The three chips are toggles over existing scan parameters, not decoration:
+ * The two chips are toggles over existing scan parameters, not decoration:
  *  - `* 模糊` wraps a *literal* input into `*input*` when applying (see
  *    {@link toScanPattern}); a pattern that already carries a glob char is sent
  *    verbatim, so the chip can never silently widen a hand-written glob;
- *  - `仅无过期` maps to `noTtlOnly` (server-side filter, re-scans);
- *  - `类型 ▾` maps to `keyType` — kept from the previous toolbar on purpose: the
- *    reference product has no type filter, so this is a differentiator (PRD §3.2).
- *
- * Key templates and the per-connection pattern history are P2 and deliberately
- * not here (task book §1 D-2).
+ *  - `仅无过期` maps to `noTtlOnly` (server-side filter, re-scans).
  */
 
 export interface KeyTreeSearchRowProps {
@@ -35,8 +29,6 @@ export interface KeyTreeSearchRowProps {
   onFuzzyChange: (fuzzy: boolean) => void;
   noTtlOnly: boolean;
   onNoTtlOnlyChange: (noTtlOnly: boolean) => void;
-  keyType: string;
-  onKeyTypeChange: (keyType: string) => void;
   /** Value / all scope: the input holds a substring query, not a glob. */
   scope: 'key' | 'value' | 'all';
 }
@@ -50,8 +42,6 @@ export function KeyTreeSearchRow({
   onFuzzyChange,
   noTtlOnly,
   onNoTtlOnlyChange,
-  keyType,
-  onKeyTypeChange,
   scope,
 }: KeyTreeSearchRowProps) {
   const { t } = useI18n();
@@ -92,24 +82,6 @@ export function KeyTreeSearchRow({
         label={t('redis.noTtlOnly')}
         onClick={() => onNoTtlOnlyChange(!noTtlOnly)}
       />
-      <div
-        className="shrink-0"
-        data-testid="redis-tree-chip-type"
-        data-key-type={keyType}
-      >
-        <Select
-          value={keyType}
-          onChange={(value) => onKeyTypeChange(value)}
-          options={KEY_TYPE_FILTERS.map((item) => ({
-            value: item.value,
-            label: t(item.labelKey as 'redis.type'),
-          }))}
-          className="h-7 min-w-24 text-xs"
-          title={t('redis.filterByType')}
-          aria-label={t('redis.filterByType')}
-          triggerDataAttrs={{ 'data-testid': 'redis-tree-type-filter' }}
-        />
-      </div>
     </div>
   );
 }

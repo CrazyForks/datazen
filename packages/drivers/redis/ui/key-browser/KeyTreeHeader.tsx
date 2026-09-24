@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { CheckSquare, Clock, ListChecks, Plus, RefreshCw, Trash2, XSquare } from 'lucide-react';
-import { Button, cn, useI18n } from '@datazen/ui';
+import { CheckSquare, ListChecks, Plus, RefreshCw } from 'lucide-react';
+import { Button, useI18n } from '@datazen/ui';
 import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
 
 /**
@@ -16,8 +16,8 @@ import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
  * exhausted, `N+` while it is not — an unfinished scan never presents a partial
  * subset as a total.
  *
- * Later rows (R2 search, R3 grouping) mount as `children` so the header stays one
- * bordered block instead of three sibling divs in the workbench.
+ * R2 search and R3 grouping rows mount as `children` so the header stays one
+ * bordered block instead of sibling divs in the workbench.
  */
 
 export interface KeyTreeHeaderProps {
@@ -29,11 +29,7 @@ export interface KeyTreeHeaderProps {
   totalCount: number;
   /** Scan cursor still open ⇒ the loaded set is partial (`N+`). */
   scanning: boolean;
-  selectedCount: number;
   onSelectAll: () => void;
-  onClearSelection: () => void;
-  onBatchTtl: () => void;
-  onBatchDelete: () => void;
   onRefresh: () => void;
   onCreateKey: () => void;
   children?: ReactNode;
@@ -45,18 +41,13 @@ export function KeyTreeHeader({
   loadedCount,
   totalCount,
   scanning,
-  selectedCount,
   onSelectAll,
-  onClearSelection,
-  onBatchTtl,
-  onBatchDelete,
   onRefresh,
   onCreateKey,
   children,
 }: KeyTreeHeaderProps) {
   const { t } = useI18n();
   const isKeyMode = searchMode === 'key';
-  const hasSelection = selectedCount > 0;
   const loadedLabel = scanning ? `${loadedCount}+` : String(loadedCount);
 
   return (
@@ -67,6 +58,7 @@ export function KeyTreeHeader({
     >
       <div className="flex items-center gap-2">
         <SearchModeTabs mode={searchMode} onChange={onSearchModeChange} />
+        <span className="h-4 w-px shrink-0 bg-edge" />
         <span
           className="min-w-0 truncate text-[11px] text-fg-muted"
           data-testid="redis-tree-count"
@@ -87,38 +79,6 @@ export function KeyTreeHeader({
             disabled={!isKeyMode || loadedCount === 0}
             onClick={onSelectAll}
           />
-          <HeaderIcon
-            testId="redis-tree-clear-selection"
-            labelKey="redis.tree.clearSelection"
-            Icon={XSquare}
-            disabled={!hasSelection}
-            onClick={onClearSelection}
-          />
-          <HeaderIcon
-            testId="redis-tree-batch-ttl"
-            labelKey="redis.batchTtl"
-            Icon={Clock}
-            disabled={!isKeyMode || !hasSelection}
-            onClick={onBatchTtl}
-          />
-          <HeaderIcon
-            testId="redis-tree-batch-delete"
-            labelKey="redis.batchDelete"
-            Icon={Trash2}
-            danger
-            disabled={!isKeyMode || !hasSelection}
-            onClick={onBatchDelete}
-          >
-            {hasSelection && (
-              <span
-                className="absolute -right-1 -top-1 rounded-full bg-accent px-1 text-[9px] leading-tight text-surface"
-                data-testid="redis-tree-batch-delete-count"
-                data-count={selectedCount}
-              >
-                {selectedCount}
-              </span>
-            )}
-          </HeaderIcon>
           <HeaderIcon
             testId="redis-tree-refresh"
             labelKey="connWin.refresh"
@@ -143,25 +103,16 @@ interface HeaderIconProps {
   labelKey: string;
   Icon: typeof ListChecks;
   disabled?: boolean;
-  danger?: boolean;
   onClick: () => void;
   children?: ReactNode;
 }
 
-function HeaderIcon({
-  testId,
-  labelKey,
-  Icon,
-  disabled,
-  danger,
-  onClick,
-  children,
-}: HeaderIconProps) {
+function HeaderIcon({ testId, labelKey, Icon, disabled, onClick, children }: HeaderIconProps) {
   const { t } = useI18n();
   return (
     <Button
       variant="ghost"
-      className={cn('relative h-7 w-7 shrink-0 p-0', danger && 'text-danger')}
+      className="relative h-7 w-7 shrink-0 p-0"
       title={t(labelKey)}
       aria-label={t(labelKey)}
       data-testid={testId}

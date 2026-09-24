@@ -12,7 +12,7 @@ import { useKeyTreeView } from './useKeyTreeView';
 import { KeyWorkbenchDialogs } from './KeyWorkbenchDialogs';
 import { mergeDatabases, dbIndexOfName } from './workbenchDatabases';
 import { DbSidebar } from './DbSidebar';
-import { BatchSummaryBanner, WorkbenchToolbar } from './WorkbenchToolbar';
+import { BatchSummaryBanner } from './WorkbenchToolbar';
 import { useWorkbenchSplit } from './useWorkbenchSplit';
 import { useKeySelection } from './useKeySelection';
 import { useKeyDetailState } from './useKeyDetailState';
@@ -280,19 +280,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {selectedDb ? (
             <>
-              <WorkbenchToolbar
-                selectedDb={selectedDb}
-                dbSize={scan.dbSize}
-                loadedCount={scan.keys.length}
-                hasMore={scan.cursor !== 0}
-                withMemory={scan.withMemory}
-                onWithMemoryChange={scan.setWithMemory}
-                allowFlush={allowFlush}
-                onImportExport={() => overlays.setImportExportOpen(true)}
-                onFlushDb={() => overlays.setFlushDialog('db')}
-                onFlushAll={() => overlays.setFlushDialog('all')}
-              />
-
               <BatchSummaryBanner
                 summary={overlays.batchSummary}
                 onDismiss={() => overlays.setBatchSummary(null)}
@@ -313,7 +300,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     search={search}
                     selection={selection}
                     detail={detail}
-                    batch={batchActions}
                     onKeyContextMenu={handleKeyContextMenu}
                     onDeleteRow={handleDeleteRow}
                     totalCount={scan.dbSize}
