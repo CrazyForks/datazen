@@ -260,6 +260,7 @@ export const config: WebdriverIO.Config = {
     'schema-diff': [
       './specs/schema-diff-window.ts',
       './specs/schema-diff-dependency-order.ts',
+      './specs/schema-diff-unified-planner.ts',
       './specs/schema-diff-diverse-types.ts',
       './specs/schema-diff-cross-dialect.ts',
       './specs/schema-diff-options-matrix.ts',

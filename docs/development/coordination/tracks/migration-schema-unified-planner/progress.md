@@ -1,6 +1,6 @@
 # migration-schema-unified-planner
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 
 - Task: One reviewed Schema Diff deployment plan across selected object kinds
 - Branch: `feature/migration-schema-unified-planner`
@@ -71,3 +71,12 @@ The Host implementation is not yet release-ready: the integrated driver view sel
 - The unified command layer is reported separately at 7/830 executable lines (0.8%): `unified_plan.rs` 0/540, `catalog.rs` 0/191, and `revalidation.rs` 7/99 (7.1%) from unit scope. WDIO app-runtime profiles should cover the IPC path if the instrumented build permits it.
 - Added focused test-only `test_tester_...` cases in `objects.rs`, operation dependency tests, unified-object tests, table-catalog tests, and the Driver API migration parser. Corrections after the first instrumented compile keep duplicate-object requirements as the safety assertion even when review SQL remains present; the MySQL DEFINER fixture exercises header parsing without PostgreSQL-only signature metadata, with a separate PostgreSQL identity-argument check. No product bug was proven by these fixture corrections.
 - The 80% aggregate Host-core and migration-helper gates now pass. Webdriver build/run, PostgreSQL/MySQL journeys and fixture cleanup, integrated live catalog fixtures, and WDIO runtime coverage remain outstanding.
+
+### Fresh Tester WDIO blocker · 2026-09-25
+
+- Added `e2e/specs/schema-diff-unified-planner.ts` and registered it in the `schema-diff` suite. It exercises PG `type → BIGSERIAL owned sequence → parent/child FK → function/trigger → view` and MySQL `parent/child FK → view` through the unified object picker and reviewed plan, with separate unselected-dependency/no-write cases for each dialect.
+- The required `pnpm tauri:build:webdriver` command compiled the webdriver app and frontend but exited 1 in the final macOS DMG packaging script (`bundle_dmg.sh`). The app binary and `.app` bundle exist and were launched directly. A sandboxed first launch could not bind loopback; the authorized loopback retry opened the isolated webdriver endpoint successfully (HTTP 200).
+- Direct WDIO invocation used `E2E_SKIP_WORKER_DATABASE=1`, port 49177, and a unique worktree `DATAZEN_DATA_DIR`. It did not run the global worker database setup/teardown path. PG valid and object-only cases exposed blocker `BUG-003`; the latter was stopped by the same view parser error before it could establish the missing-dependency assertion. MySQL fixture views exist in `information_schema.views`, while Host `get_database_objects(kind='view')` returned no match with a driver command error; exact error detail remains under investigation.
+- First WDIO attempt had test-harness sequencing/diagnostic issues; its four fixture cleanup checks all reported source=0/target=0. The corrected run also cleaned every PG fixture source and target to zero. PG target plans had zero executable statements. MySQL fixtures were cleaned to zero after the catalog assertion failures.
+- `pnpm exec tsc --noEmit -p e2e/tsconfig.json` reports 125 existing E2E-wide type errors in unrelated specs/helpers; it reports none in the new planner spec. The project’s required `npx tsc --noEmit` passed before adding this E2E-only file.
+- WDIO acceptance remains failed pending product repair and a fresh tester rerun. Integrated standalone driver catalog live fixtures and runtime coverage extraction remain outstanding.
