@@ -1,5 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { TableSchemaDiff } from '../types';
+import type { DatabaseObject, TableSchemaDiff } from '../types';
+
+export type SchemaDiffObjectKind =
+  | 'view'
+  | 'function'
+  | 'procedure'
+  | 'trigger'
+  | 'sequence'
+  | 'type';
+
+/** Exact object identity used by the reviewed unified schema migration plan. */
+export type SchemaDiffObjectIdentity = Omit<DatabaseObject, 'kind'> & {
+  kind: SchemaDiffObjectKind;
+};
 
 export type StatementRisk = 'additive' | 'destructive' | 'rewrite';
 
@@ -247,6 +260,45 @@ export const schemaDiffCommands = {
         : {}),
     };
     return invoke<SchemaDiffPlanIpc>('prepare_schema_diff_plan', request).then(normalizePlan);
+  },
+
+  prepareUnifiedPlan: (params: {
+    sourceDbSessionId: string;
+    targetDbSessionId: string;
+    tableNames: string[];
+    targetTableNames?: string[];
+    targetOnlyTableNames?: string[];
+    sourceSchema?: string;
+    targetSchema?: string;
+    allowDestructive: boolean;
+    includeIndexes?: boolean;
+    typeOverrides?: ColumnTypeOverride[];
+    sourceObjects: SchemaDiffObjectIdentity[];
+    targetObjects: SchemaDiffObjectIdentity[];
+  }) => {
+    const exactIdentity = (object: SchemaDiffObjectIdentity) => ({
+      kind: object.kind,
+      schema: object.schema ?? null,
+      name: object.name,
+      signature: object.signature ?? null,
+      targetSchema: object.targetSchema ?? null,
+      targetName: object.targetName ?? null,
+    });
+    const request = {
+      sourceDbSessionId: params.sourceDbSessionId,
+      targetDbSessionId: params.targetDbSessionId,
+      tableNames: params.tableNames,
+      targetTableNames: params.targetTableNames,
+      targetOnlyTableNames: params.targetOnlyTableNames,
+      sourceSchema: params.sourceSchema,
+      targetSchema: params.targetSchema,
+      allowDestructive: params.allowDestructive,
+      includeIndexes: params.includeIndexes,
+      typeOverrides: params.typeOverrides,
+      sourceObjects: params.sourceObjects.map(exactIdentity),
+      targetObjects: params.targetObjects.map(exactIdentity),
+    };
+    return invoke<SchemaDiffPlanIpc>('prepare_schema_unified_plan', request).then(normalizePlan);
   },
 
   prepareViewPlan: (params: {

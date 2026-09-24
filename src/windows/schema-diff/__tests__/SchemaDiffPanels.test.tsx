@@ -6,6 +6,7 @@ import { SchemaDiffPlanPanel } from '../SchemaDiffPlanPanel';
 import { SchemaDiffDeployPanel } from '../SchemaDiffDeployPanel';
 import { SchemaDiffTableListPanel } from '../SchemaDiffTableListPanel';
 import { SchemaDiffObjectsStep } from '../SchemaDiffObjectsStep';
+import { SchemaDiffUnifiedObjectsPicker } from '../SchemaDiffUnifiedObjectsPicker';
 import { formatSchemaDiffText, SchemaDiffPanel } from '../../../components/schema/SchemaDiffPanel';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -92,6 +93,33 @@ describe('SchemaDiffObjectsStep target-only picker', () => {
     expect(screen.getByTestId('schema-diff-table-origin-archive')).toHaveTextContent(
       'schemaDiff.targetOnly',
     );
+  });
+});
+
+describe('SchemaDiffUnifiedObjectsPicker discovery errors', () => {
+  it('surfaces partial catalog failures and offers an explicit retry', () => {
+    const onRetry = vi.fn();
+    render(
+      <SchemaDiffUnifiedObjectsPicker
+        loading={false}
+        sourceObjects={[]}
+        targetObjects={[]}
+        selectedSourceKeys={[]}
+        selectedTargetKeys={[]}
+        errors={{ source: { function: 'permission denied' }, target: {} }}
+        onToggleSource={vi.fn()}
+        onToggleTarget={vi.fn()}
+        onSelectAll={vi.fn()}
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('schemaDiff.objectPartialLoad');
+    expect(screen.getByTestId('schema-diff-object-error-source-function')).toHaveTextContent(
+      'schemaDiff.objectLoadFailed',
+    );
+    fireEvent.click(screen.getByTestId('schema-diff-object-retry'));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });
 

@@ -16,6 +16,7 @@ import {
   type ColumnTypeOverride,
   type SchemaDiffConfigJson,
   type SchemaDiffDeployResult,
+  type SchemaDiffObjectIdentity,
   type SchemaDiffPlan,
   type SchemaDiffProfile,
 } from '../../commands/schemaDiff';
@@ -41,6 +42,8 @@ import { SCHEMA_DIFF_LIMITATION_KEYS } from './schemaDiffLimitationKeys';
 import { SchemaDiffTableListPanel } from './SchemaDiffTableListPanel';
 import { SchemaDiffRightPanel } from './SchemaDiffRightPanel';
 import { SchemaDiffObjectsStep } from './SchemaDiffObjectsStep';
+import { SchemaDiffUnifiedObjectsPicker } from './SchemaDiffUnifiedObjectsPicker';
+import { useSchemaDiffUnifiedObjects } from './useSchemaDiffUnifiedObjects';
 import { useSchemaDiffEndpoints } from './useSchemaDiffEndpoints';
 import {
   enabledTableNames,
@@ -80,6 +83,7 @@ export function SchemaDiffWindow() {
   const [step, setStep] = useState<WizardStep>('endpoints');
   const [tablePicks, setTablePicks] = useState<SchemaDiffTablePick[]>([]);
   const [objectsLoading, setObjectsLoading] = useState(false);
+  const unifiedObjects = useSchemaDiffUnifiedObjects();
   const [diffs, setDiffs] = useState<TableSchemaDiff[]>([]);
   const [plan, setPlan] = useState<SchemaDiffPlan | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -155,6 +159,7 @@ export function SchemaDiffWindow() {
       return;
     }
     setTablePicks([]);
+    unifiedObjects.clear();
     setDiffs([]);
     setPlan(null);
     setDeployResult(null);
@@ -169,6 +174,7 @@ export function SchemaDiffWindow() {
     endpoints.targetDatabase,
     endpoints.sourceSchema,
     endpoints.targetSchema,
+    unifiedObjects.clear,
   ]);
 
   const showClipboardFeedback = useCallback((kind: ClipboardFeedback) => {
@@ -218,6 +224,12 @@ export function SchemaDiffWindow() {
         databaseCommands.getTables(srcConnId, endpoints.sourceDatabase),
         databaseCommands.getTables(tgtConnId, endpoints.targetDatabase),
       ]);
+      await unifiedObjects.load(
+        srcConnId,
+        tgtConnId,
+        endpoints.sourceSchema,
+        endpoints.targetSchema,
+      );
       setTablePicks(
         mergeSchemaDiffTablePicks(
           sourceRows,
@@ -232,7 +244,7 @@ export function SchemaDiffWindow() {
     } finally {
       setObjectsLoading(false);
     }
-  }, [endpoints]);
+  }, [endpoints, unifiedObjects.load]);
 
   const runCompare = useCallback(async (): Promise<boolean> => {
     setError('');
@@ -310,8 +322,15 @@ export function SchemaDiffWindow() {
         (row) => row.targetName ?? row.name.split('.').at(-1) ?? row.name,
       );
       const targetOnlyTables = enabledTargetOnlyTableNames(tablePicks);
-      if (sourceTables.length === 0 && targetOnlyTables.length === 0) {
-        setError(t('schemaDiff.tableRequired'));
+      const sourceObjects = unifiedObjects.selectedSourceObjects;
+      const targetObjects = unifiedObjects.selectedTargetObjects;
+      if (
+        sourceTables.length === 0 &&
+        targetOnlyTables.length === 0 &&
+        sourceObjects.length === 0 &&
+        targetObjects.length === 0
+      ) {
+        setError(t('schemaDiff.selectionRequired'));
         return;
       }
       if (!endpoints.validateEndpoints()) return;
@@ -322,7 +341,7 @@ export function SchemaDiffWindow() {
         const tgtConnId = await endpoints.ensureConnected('target');
         if (!srcConnId || !tgtConnId) return;
         const overridesToUse = explicitOverrides ?? typeOverrides;
-        const next = await schemaDiffCommands.preparePlan({
+        const tablePlanParams = {
           sourceDbSessionId: srcConnId,
           targetDbSessionId: tgtConnId,
           tableNames: sourceTables,
@@ -333,7 +352,15 @@ export function SchemaDiffWindow() {
           allowDestructive,
           includeIndexes,
           typeOverrides: overridesToUse.length > 0 ? overridesToUse : undefined,
-        });
+        };
+        const next =
+          sourceObjects.length > 0 || targetObjects.length > 0
+            ? await schemaDiffCommands.prepareUnifiedPlan({
+                ...tablePlanParams,
+                sourceObjects,
+                targetObjects,
+              })
+            : await schemaDiffCommands.preparePlan(tablePlanParams);
         setPlan(next);
         setUseTransaction(dialectSupportsTransactionalDdl(next.targetDialect));
         setConfirmText('');
@@ -343,7 +370,16 @@ export function SchemaDiffWindow() {
         setLoading(false);
       }
     },
-    [allowDestructive, endpoints, includeIndexes, tablePicks, t, typeOverrides],
+    [
+      allowDestructive,
+      endpoints,
+      includeIndexes,
+      tablePicks,
+      t,
+      typeOverrides,
+      unifiedObjects.selectedSourceObjects,
+      unifiedObjects.selectedTargetObjects,
+    ],
   );
 
   const handleApplyTypeOverrides = useCallback(() => {
@@ -441,6 +477,18 @@ export function SchemaDiffWindow() {
   const goNext = useCallback(async () => {
     const next = STEPS[stepIndex + 1];
     if (step === 'objects' && next === 'compare') {
+      if (
+        selectedTables.length === 0 &&
+        unifiedObjects.selectedSourceObjects.length === 0 &&
+        unifiedObjects.selectedTargetObjects.length === 0
+      ) {
+        setError(t('schemaDiff.selectionRequired'));
+        return;
+      }
+      if (selectedTables.length === 0) {
+        setStep('plan');
+        return;
+      }
       const ok = await runCompare();
       if (ok) setStep('compare');
       return;
@@ -453,7 +501,17 @@ export function SchemaDiffWindow() {
       await loadSourceTables();
     }
     if (next) setStep(next);
-  }, [step, stepIndex, runCompare, tablePicks.length, loadSourceTables]);
+  }, [
+    step,
+    stepIndex,
+    runCompare,
+    tablePicks.length,
+    loadSourceTables,
+    selectedTables.length,
+    unifiedObjects.selectedSourceObjects.length,
+    unifiedObjects.selectedTargetObjects.length,
+    t,
+  ]);
 
   const goBack = () => {
     const prev = STEPS[stepIndex - 1];
@@ -465,6 +523,9 @@ export function SchemaDiffWindow() {
       prev.map((row) => (row.name === name ? { ...row, enabled: !row.enabled } : row)),
     );
   };
+
+  const toggleUnifiedObject = (side: 'source' | 'target') => (object: SchemaDiffObjectIdentity) =>
+    unifiedObjects.toggle(side, object);
 
   const handleCopySummary = async () => {
     if (diffs.length === 0) return;
@@ -530,6 +591,7 @@ export function SchemaDiffWindow() {
               : { name, enabled: true, origin: 'source-only' as const, sourceName: name },
           ),
         );
+        unifiedObjects.clear();
         setAllowDestructive(Boolean(cfg.allowDestructive));
         setIncludeIndexes(cfg.includeIndexes ?? true);
         setRequireRollback(Boolean(cfg.requireRollback));
@@ -545,7 +607,7 @@ export function SchemaDiffWindow() {
         setImportConfigError(e instanceof Error ? e.message : String(e));
       }
     },
-    [endpoints, t],
+    [endpoints, t, unifiedObjects.clear],
   );
 
   const handleOpenImportConfig = () => {
@@ -559,6 +621,7 @@ export function SchemaDiffWindow() {
     async (profile: SchemaDiffProfile) => {
       setObjectsLoading(true);
       setError('');
+      unifiedObjects.clear();
       try {
         const srcConnId = await endpoints.ensureConnected('source');
         const tgtConnId = await endpoints.ensureConnected('target');
@@ -567,6 +630,12 @@ export function SchemaDiffWindow() {
           databaseCommands.getTables(srcConnId, profile.sourceDatabase),
           databaseCommands.getTables(tgtConnId, profile.targetDatabase),
         ]);
+        await unifiedObjects.load(
+          srcConnId,
+          tgtConnId,
+          profile.sourceSchema ?? '',
+          profile.targetSchema ?? '',
+        );
         const selected = new Set([...profile.tables, ...(profile.targetOnlyTables ?? [])]);
         const picks = mergeSchemaDiffTablePicks(
           sourceRows,
@@ -590,7 +659,7 @@ export function SchemaDiffWindow() {
         setObjectsLoading(false);
       }
     },
-    [endpoints],
+    [endpoints, unifiedObjects.clear, unifiedObjects.load],
   );
 
   useEffect(() => {
@@ -632,6 +701,7 @@ export function SchemaDiffWindow() {
         targetName: name,
       })),
     ]);
+    unifiedObjects.clear();
     setAllowDestructive(profile.allowDestructive);
     setIncludeIndexes(profile.includeIndexes);
     setRequireRollback(profile.requireRollback);
@@ -642,7 +712,7 @@ export function SchemaDiffWindow() {
     planAutoRequestedRef.current = false;
     setPendingProfileLoad(profile);
     setError('');
-  }, [endpoints, profiles, selectedProfileId]);
+  }, [endpoints, profiles, selectedProfileId, unifiedObjects.clear]);
 
   const handleSaveProfile = useCallback(async () => {
     const name = profileName.trim();
@@ -819,17 +889,34 @@ export function SchemaDiffWindow() {
           )}
 
           {step === 'objects' && (
-            <SchemaDiffObjectsStep
-              loading={objectsLoading}
-              tables={tablePicks}
-              onToggle={toggleTable}
-              onSelectAll={() =>
-                setTablePicks((prev) => prev.map((row) => ({ ...row, enabled: true })))
-              }
-              onSelectNone={() =>
-                setTablePicks((prev) => prev.map((row) => ({ ...row, enabled: false })))
-              }
-            />
+            <div
+              className="min-h-0 flex-1 space-y-3 overflow-auto"
+              data-testid="schema-diff-objects-step"
+            >
+              <SchemaDiffObjectsStep
+                loading={objectsLoading}
+                tables={tablePicks}
+                onToggle={toggleTable}
+                onSelectAll={() =>
+                  setTablePicks((prev) => prev.map((row) => ({ ...row, enabled: true })))
+                }
+                onSelectNone={() =>
+                  setTablePicks((prev) => prev.map((row) => ({ ...row, enabled: false })))
+                }
+              />
+              <SchemaDiffUnifiedObjectsPicker
+                loading={objectsLoading}
+                sourceObjects={unifiedObjects.sourceObjects}
+                targetObjects={unifiedObjects.targetObjects}
+                selectedSourceKeys={unifiedObjects.selectedSourceKeys}
+                selectedTargetKeys={unifiedObjects.selectedTargetKeys}
+                errors={unifiedObjects.errors}
+                onToggleSource={toggleUnifiedObject('source')}
+                onToggleTarget={toggleUnifiedObject('target')}
+                onSelectAll={unifiedObjects.selectAll}
+                onRetry={() => void loadSourceTables()}
+              />
+            </div>
           )}
 
           {step === 'compare' && (

@@ -4,6 +4,7 @@ import { SchemaDiffWindow } from '../SchemaDiffWindow';
 import { schemaDiffCommands, type SchemaDiffPlan } from '../../../commands/schemaDiff';
 import { databaseCommands } from '../../../commands/database';
 import { fileCommands } from '../../../commands/file';
+import type { DatabaseObject } from '../../../types';
 
 const state = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -48,7 +49,9 @@ vi.mock('../../../lib/schemaDiffLimitationsPrefs', () => ({
   isSchemaDiffLimitationsDismissed: () => true,
   setSchemaDiffLimitationsDismissed: vi.fn(),
 }));
-vi.mock('../../../commands/database', () => ({ databaseCommands: { getTables: vi.fn() } }));
+vi.mock('../../../commands/database', () => ({
+  databaseCommands: { getTables: vi.fn(), getDatabaseObjects: vi.fn() },
+}));
 vi.mock('../../../commands/file', () => ({ fileCommands: { saveTextWithDialog: vi.fn() } }));
 vi.mock('../../../commands/schemaDiff', async (original) => ({
   ...(await original<typeof import('../../../commands/schemaDiff')>()),
@@ -58,6 +61,7 @@ vi.mock('../../../commands/schemaDiff', async (original) => ({
     deleteProfile: vi.fn().mockResolvedValue(undefined),
     compareTableSchemas: vi.fn(),
     preparePlan: vi.fn(),
+    prepareUnifiedPlan: vi.fn(),
     executeDeploy: vi.fn(),
   },
 }));
@@ -107,6 +111,7 @@ beforeEach(() => {
   state.endpoints.validateEndpoints.mockReturnValue(true);
   state.endpoints.ensureConnected.mockImplementation(async (side) => `${side}-session`);
   vi.mocked(databaseCommands.getTables).mockResolvedValue([{ name: 'users', tableType: 'table' }]);
+  vi.mocked(databaseCommands.getDatabaseObjects).mockResolvedValue([]);
   vi.mocked(schemaDiffCommands.compareTableSchemas).mockResolvedValue({
     table: 'users',
     added: [],
@@ -114,6 +119,7 @@ beforeEach(() => {
     changed: [],
   });
   vi.mocked(schemaDiffCommands.preparePlan).mockResolvedValue(plan());
+  vi.mocked(schemaDiffCommands.prepareUnifiedPlan).mockResolvedValue(plan());
   vi.mocked(schemaDiffCommands.executeDeploy).mockResolvedValue({
     status: 'committed',
     executedCount: 1,
@@ -129,6 +135,114 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('complete schema migration wizard journeys', () => {
+  it('selects mixed schema objects by exact identity and submits one unified plan', async () => {
+    const sourceObjects = [
+      { kind: 'view', schema: 'public', name: 'orders_view' },
+      { kind: 'type', schema: 'public', name: 'order_state' },
+      { kind: 'sequence', schema: 'public', name: 'orders_id_seq' },
+      {
+        kind: 'function',
+        schema: 'public',
+        name: 'calculate_total',
+        signature: 'integer, numeric',
+      },
+      { kind: 'procedure', schema: 'public', name: 'refresh_orders', signature: '' },
+      {
+        kind: 'trigger',
+        schema: 'public',
+        name: 'audit_order',
+        targetSchema: 'public',
+        targetName: 'orders',
+      },
+    ] as unknown as DatabaseObject[];
+    const targetObjects = [
+      ...sourceObjects.map((object) => ({ ...object })),
+      { kind: 'view', schema: 'public', name: 'archive_view' },
+    ] as DatabaseObject[];
+    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) => {
+      const rows = sessionId === 'source-session' ? sourceObjects : targetObjects;
+      return rows.filter((object) => object.kind === kind);
+    });
+    vi.mocked(schemaDiffCommands.prepareUnifiedPlan).mockResolvedValue(
+      plan({
+        planId: 'mixed-plan-1',
+        tables: ['users', 'view:public:orders_view', 'function:public:calculate_total'],
+      }),
+    );
+
+    render(<SchemaDiffWindow />);
+    next();
+    await screen.findByTestId('schema-diff-unified-object-picker');
+
+    expect(screen.getByTestId('schema-diff-object-row-source-view-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-diff-object-row-source-type-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-diff-object-row-source-sequence-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-diff-object-row-source-function-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-diff-object-row-source-procedure-0')).toBeInTheDocument();
+    expect(screen.getByTestId('schema-diff-object-row-source-trigger-0')).toBeInTheDocument();
+    const sourceTriggerGroup = screen.getByTestId('schema-diff-object-kind-source-trigger');
+    const targetTriggerGroup = screen.getByTestId('schema-diff-object-kind-target-trigger');
+    fireEvent.click(within(sourceTriggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    fireEvent.click(within(targetTriggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-trigger-0')).getByRole('checkbox'),
+    ).not.toBeChecked();
+    const objectPicker = screen.getByTestId('schema-diff-unified-object-picker');
+    fireEvent.click(within(objectPicker).getByText('schemaDiff.objectSelectAllSource'));
+    fireEvent.click(within(objectPicker).getByText('schemaDiff.objectSelectAllTarget'));
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-trigger-0')).getByRole('checkbox'),
+    ).toBeChecked();
+    const targetOnlyViewCheckbox = within(
+      screen.getByTestId('schema-diff-object-row-target-view-1'),
+    ).getByRole('checkbox');
+    expect(targetOnlyViewCheckbox).toBeChecked();
+    fireEvent.click(targetOnlyViewCheckbox);
+    expect(targetOnlyViewCheckbox).not.toBeChecked();
+    const targetTriggerCheckbox = within(
+      screen.getByTestId('schema-diff-object-row-target-trigger-0'),
+    ).getByRole('checkbox');
+    expect(targetTriggerCheckbox).toBeChecked();
+    fireEvent.click(targetTriggerCheckbox);
+    expect(targetTriggerCheckbox).not.toBeChecked();
+
+    next();
+    await screen.findByTestId('schema-diff-detail-panel');
+    next();
+    await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalledOnce());
+
+    const call = vi.mocked(schemaDiffCommands.prepareUnifiedPlan).mock.calls[0]?.[0];
+    expect(call).toMatchObject({
+      sourceDbSessionId: 'source-session',
+      targetDbSessionId: 'target-session',
+      tableNames: ['users'],
+      allowDestructive: false,
+      sourceObjects: [
+        { kind: 'view', schema: 'public', name: 'orders_view' },
+        { kind: 'type', schema: 'public', name: 'order_state' },
+        { kind: 'sequence', schema: 'public', name: 'orders_id_seq' },
+        {
+          kind: 'function',
+          schema: 'public',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+        },
+        { kind: 'procedure', schema: 'public', name: 'refresh_orders', signature: '' },
+        {
+          kind: 'trigger',
+          schema: 'public',
+          name: 'audit_order',
+          targetSchema: 'public',
+          targetName: 'orders',
+        },
+      ],
+      targetObjects: sourceObjects.filter(
+        (object) => object.kind !== 'trigger' && object.name !== 'archive_view',
+      ),
+    });
+    expect(schemaDiffCommands.preparePlan).not.toHaveBeenCalled();
+  });
+
   it('selects a target-only table without sending it through source comparison', async () => {
     vi.mocked(databaseCommands.getTables).mockImplementation(async (sessionId) =>
       sessionId === 'source-session'
@@ -284,7 +398,7 @@ describe('complete schema migration wizard journeys', () => {
     await screen.findByTestId('schema-diff-table-row');
     fireEvent.click(screen.getByText('common.deselectAll'));
     next();
-    await screen.findByText('schemaDiff.tableRequired');
+    await screen.findByText('schemaDiff.selectionRequired');
     expect(schemaDiffCommands.compareTableSchemas).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByTestId('schema-diff-table-row')).getByRole('checkbox'));
     vi.mocked(schemaDiffCommands.compareTableSchemas).mockRejectedValueOnce('compare failed');

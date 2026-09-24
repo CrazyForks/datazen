@@ -261,6 +261,90 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('prepareUnifiedPlan sends exact mixed object identities with the table scope', async () => {
+    invokeMock.mockResolvedValueOnce(samplePlan({ planId: 'unified-review-1' }));
+    const sourceObjects = [
+      {
+        kind: 'function' as const,
+        schema: 'public',
+        name: 'calculate_total',
+        signature: 'integer, numeric',
+      },
+      {
+        kind: 'trigger' as const,
+        schema: 'public',
+        name: 'audit_row',
+        targetSchema: 'public',
+        targetName: 'orders',
+      },
+    ];
+    const targetObjects = [
+      {
+        kind: 'function' as const,
+        schema: 'app',
+        name: 'calculate_total',
+        signature: 'integer, numeric',
+      },
+    ];
+
+    await expect(
+      schemaDiffCommands.prepareUnifiedPlan({
+        sourceDbSessionId: 'source-session',
+        targetDbSessionId: 'target-session',
+        tableNames: ['public.orders'],
+        targetTableNames: ['app.orders'],
+        sourceSchema: 'public',
+        targetSchema: 'app',
+        allowDestructive: false,
+        includeIndexes: true,
+        typeOverrides: [{ table: 'orders', column: 'amount', targetType: 'DECIMAL(12,2)' }],
+        sourceObjects,
+        targetObjects,
+      }),
+    ).resolves.toMatchObject({ planId: 'unified-review-1' });
+
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_unified_plan', {
+      sourceDbSessionId: 'source-session',
+      targetDbSessionId: 'target-session',
+      tableNames: ['public.orders'],
+      targetTableNames: ['app.orders'],
+      targetOnlyTableNames: undefined,
+      sourceSchema: 'public',
+      targetSchema: 'app',
+      allowDestructive: false,
+      includeIndexes: true,
+      typeOverrides: [{ table: 'orders', column: 'amount', targetType: 'DECIMAL(12,2)' }],
+      sourceObjects: [
+        {
+          kind: 'function',
+          schema: 'public',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+          targetSchema: null,
+          targetName: null,
+        },
+        {
+          kind: 'trigger',
+          schema: 'public',
+          name: 'audit_row',
+          signature: null,
+          targetSchema: 'public',
+          targetName: 'orders',
+        },
+      ],
+      targetObjects: [
+        {
+          kind: 'function',
+          schema: 'app',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+          targetSchema: null,
+          targetName: null,
+        },
+      ],
+    });
+  });
+
   it('forwards explicit target-only selectors without changing source selectors', async () => {
     invokeMock.mockResolvedValueOnce(samplePlan({ tables: ['users', 'archive'] }));
     await schemaDiffCommands.preparePlan({
