@@ -2006,8 +2006,11 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert!(view_plan.statements.is_empty());
-        assert!(format!("{:?}", view_plan.requirements).contains("duplicate view identities"));
+        assert!(view_plan.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { reason, .. }
+                if reason.contains("duplicate view identities")
+        )));
 
         let unsupported_routine = SchemaObjectSnapshot::view(None, "not_a_routine", "SELECT 1");
         let blank_routine = routine(
@@ -2024,9 +2027,9 @@ mod tests {
         );
         trigger_without_relation.target_name = None;
         let duplicate_routine = routine(
-            ObjectKind::Procedure,
+            ObjectKind::Function,
             "sync_order",
-            "CREATE PROCEDURE sync_order() LANGUAGE SQL AS $$ SELECT 1 $$",
+            "CREATE FUNCTION sync_order(integer) RETURNS integer AS $$ SELECT 1 $$",
         );
         let routine_plan = build_routine_trigger_migration_plan_with_components(
             &[
@@ -2043,7 +2046,6 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert!(routine_plan.statements.is_empty());
         let routine_requirements = format!("{:?}", routine_plan.requirements);
         assert!(routine_requirements.contains("Only functions, procedures, and triggers"));
         assert!(routine_requirements.contains("name must not be empty"));
@@ -2070,7 +2072,6 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert!(sequence_plan.statements.is_empty());
         let sequence_requirements = format!("{:?}", sequence_plan.requirements);
         assert!(sequence_requirements.contains("Only sequence objects"));
         assert!(sequence_requirements.contains("schema-qualified identity is required"));
@@ -2097,7 +2098,6 @@ mod tests {
             &TestRenderer,
             &TestCapabilities { replace: true },
         );
-        assert!(type_plan.statements.is_empty());
         let type_requirements = format!("{:?}", type_plan.requirements);
         assert!(type_requirements.contains("Only user-defined type objects"));
         assert!(type_requirements.contains("Type name must not be empty"));

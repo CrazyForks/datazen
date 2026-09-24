@@ -1,4 +1,6 @@
 use super::*;
+use crate::schema_diff::operations::MigrationOperation as HostMigrationOperation;
+use crate::schema_diff::types::ColumnSnapshot;
 use std::collections::{BTreeSet, HashMap};
 
 fn dependency_snapshot(
@@ -15,7 +17,7 @@ fn dependency_snapshot(
 
 fn inspect_source_dependencies(
     snapshot: &SchemaObjectDependencySnapshot,
-    operations: &[MigrationOperation],
+    operations: &[HostMigrationOperation],
     target_catalog: &BTreeSet<SchemaObjectIdentity>,
     created: &HashMap<SchemaObjectIdentity, usize>,
     dropped: &HashMap<SchemaObjectIdentity, usize>,
@@ -23,7 +25,7 @@ fn inspect_source_dependencies(
     let node_keys = vec!["table:public.items".to_owned(); operations.len()];
     let mut edges = Vec::new();
     let mut requirements = Vec::new();
-    super::super::unified_validation::validate_table_catalog_dependencies(
+    crate::schema_diff::unified_validation::validate_table_catalog_dependencies(
         std::slice::from_ref(snapshot),
         operations,
         target_catalog,
@@ -37,6 +39,18 @@ fn inspect_source_dependencies(
         Some("test_db"),
     );
     (edges, requirements)
+}
+
+fn column_snapshot(name: &str, data_type: &str) -> ColumnSnapshot {
+    ColumnSnapshot {
+        name: name.into(),
+        data_type: data_type.into(),
+        nullable: true,
+        default_value: None,
+        comment: None,
+        is_primary_key: false,
+        is_auto_increment: false,
+    }
 }
 
 fn type_identity(schema: &str, name: &str) -> SchemaObjectIdentity {
@@ -54,9 +68,9 @@ fn type_identity(schema: &str, name: &str) -> SchemaObjectIdentity {
 fn test_tester_table_dependency_catalog_requires_complete_exact_target_proof() {
     let state_type = type_identity("public", "order_state");
     let snapshot = dependency_snapshot("items", Some(vec![state_type.clone()]));
-    let operations = [MigrationOperation::CreateTable {
+    let operations = [HostMigrationOperation::CreateTable {
         table: "public.items".into(),
-        columns: vec![column("state", "public.order_state")],
+        columns: vec![column_snapshot("state", "public.order_state")],
         primary_keys: Vec::new(),
     }];
     let empty = BTreeSet::new();
@@ -93,7 +107,7 @@ fn test_tester_table_dependency_catalog_requires_complete_exact_target_proof() {
     assert!(exact_requirements.is_empty());
 
     let operations_with_created_type = [
-        MigrationOperation::CreateType {
+        HostMigrationOperation::CreateType {
             type_definition: datazen_driver_api::MigrationType {
                 schema: Some("public".into()),
                 name: "order_state".into(),
@@ -123,12 +137,12 @@ fn test_tester_table_dependency_catalog_requires_complete_exact_target_proof() {
 fn test_tester_table_drop_catalog_orders_dependents_and_requires_selected_foreign_key_removal() {
     let child_schema = table("orders", vec![], vec![foreign_key("public.users")]);
     let target_dependencies = [("public.orders".into(), child_schema)];
-    let parent_only = [MigrationOperation::DropTable {
+    let parent_only = [HostMigrationOperation::DropTable {
         table: "public.users".into(),
     }];
     let mut edges = Vec::new();
     let mut requirements = Vec::new();
-    super::super::unified_validation::validate_table_drop_catalog(
+    crate::schema_diff::unified_validation::validate_table_drop_catalog(
         &parent_only,
         &target_dependencies,
         &mut edges,
@@ -141,16 +155,16 @@ fn test_tester_table_drop_catalog_orders_dependents_and_requires_selected_foreig
     assert!(format!("{requirements:?}").contains("Unselected target table"));
 
     let child_and_parent = [
-        MigrationOperation::DropTable {
+        HostMigrationOperation::DropTable {
             table: "public.users".into(),
         },
-        MigrationOperation::DropTable {
+        HostMigrationOperation::DropTable {
             table: "public.orders".into(),
         },
     ];
     edges.clear();
     requirements.clear();
-    super::super::unified_validation::validate_table_drop_catalog(
+    crate::schema_diff::unified_validation::validate_table_drop_catalog(
         &child_and_parent,
         &target_dependencies,
         &mut edges,
@@ -163,17 +177,17 @@ fn test_tester_table_drop_catalog_orders_dependents_and_requires_selected_foreig
     assert!(requirements.is_empty());
 
     let foreign_key_only = [
-        MigrationOperation::DropTable {
+        HostMigrationOperation::DropTable {
             table: "public.users".into(),
         },
-        MigrationOperation::DropForeignKey {
+        HostMigrationOperation::DropForeignKey {
             table: "public.orders".into(),
             foreign_key: foreign_key("public.users"),
         },
     ];
     edges.clear();
     requirements.clear();
-    super::super::unified_validation::validate_table_drop_catalog(
+    crate::schema_diff::unified_validation::validate_table_drop_catalog(
         &foreign_key_only,
         &target_dependencies,
         &mut edges,
@@ -187,7 +201,7 @@ fn test_tester_table_drop_catalog_orders_dependents_and_requires_selected_foreig
 
 #[test]
 fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_first() {
-    let drop_type = MigrationOperation::DropType {
+    let drop_type = HostMigrationOperation::DropType {
         type_definition: datazen_driver_api::MigrationType {
             schema: Some("public".into()),
             name: "order_state".into(),
@@ -196,7 +210,7 @@ fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_fi
     };
     let mut edges = Vec::new();
     let mut requirements = Vec::new();
-    super::super::unified_validation::validate_custom_type_drops(
+    crate::schema_diff::unified_validation::validate_custom_type_drops(
         std::slice::from_ref(&drop_type),
         &[],
         &mut edges,
@@ -213,7 +227,7 @@ fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_fi
     )];
     edges.clear();
     requirements.clear();
-    super::super::unified_validation::validate_custom_type_drops(
+    crate::schema_diff::unified_validation::validate_custom_type_drops(
         std::slice::from_ref(&drop_type),
         &dependent_table,
         &mut edges,
@@ -225,14 +239,14 @@ fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_fi
     assert!(format!("{requirements:?}").contains("Unchanged target column"));
 
     let remove_table_first = [
-        MigrationOperation::DropTable {
+        HostMigrationOperation::DropTable {
             table: "public.items".into(),
         },
         drop_type.clone(),
     ];
     edges.clear();
     requirements.clear();
-    super::super::unified_validation::validate_custom_type_drops(
+    crate::schema_diff::unified_validation::validate_custom_type_drops(
         &remove_table_first,
         &dependent_table,
         &mut edges,
@@ -246,7 +260,7 @@ fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_fi
 
     let ambiguous_types = [
         drop_type,
-        MigrationOperation::DropType {
+        HostMigrationOperation::DropType {
             type_definition: datazen_driver_api::MigrationType {
                 schema: Some("archive".into()),
                 name: "order_state".into(),
@@ -260,7 +274,7 @@ fn test_tester_custom_type_drop_requires_a_complete_catalog_and_removes_users_fi
     )];
     edges.clear();
     requirements.clear();
-    super::super::unified_validation::validate_custom_type_drops(
+    crate::schema_diff::unified_validation::validate_custom_type_drops(
         &ambiguous_types,
         &unqualified_user,
         &mut edges,
