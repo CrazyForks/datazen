@@ -1,6 +1,6 @@
 # Track: e2e-schema-tree — 9 个失败 E2E 用例修复
 
-- **Phase**: READY_FOR_TEST
+- **Phase**: PASSED（READY_TO_MERGE，Tester 第 1 轮 TEST_DONE；E2E 实跑见下方登记表【留待 R 回归】）
 - **范围**: 仅 `e2e/helpers.ts`（本轨独占）与 9 个失败 spec；未改动 `src/`、`src-tauri/`、`packages/`、`e2e/wdio.conf.ts`
 - **验证方式**: `npx tsc --noEmit -p e2e/tsconfig.json` + 逻辑评审（worktree 无 webdriver 编译产物，未实际跑 E2E；由协调者合并后复跑）
 
@@ -45,3 +45,74 @@
 
 - **新增错误：0**（逐文件逐错误码 diff 仅含删除项）；清除 13 个：helpers×4、schema-tree-completeness×1、sqlite×2、table-edit/table-filter/table-structure 各 1，以及顺带修复的 mysql.ts×3（同一联合类型根因）。
 - **剩余 59 个为分支基线预存错误**，全部位于本轨修改权限之外的文件：`e2e/lib/screenshotTrace.ts`、`e2e/lib/testDataLifecycle.ts`（各 1）与其他轨道的 27 个 spec（navigator-context-menu×14、ai-context-tables×6、connection-window×3、drag-drop-groups×3、homepage-features×4、main-window×3、multi-database×3、workflow-window×2、i18n-10-locales×2、ops-process-server×2、data-dashboard-*×6、system-locale/ui-window-ops/chart-views 等各 1-2），均为同一 wdio 类型漂移（`Promise<number>` 长度比较、`Browser` 类型导入等）。修复它们需改动 29 个非本轨文件，存在跨轨冲突风险，**超出本轨授权范围**，已上报协调者另行调度类型清理轨。
+
+## Tester 第 1 轮（阶段 A–D，验证 commit `d970f0d723a5f5a14bfcb8d8b059d7ba2a69f810`）
+
+### 阶段 A 代码评审（全部通过，无确认缺陷）
+
+- **根因证据独立复核**：失败日志中 raw SQL 落在已 drop 的 worker 库（`database "e2e_w…" does not exist`）与 `get_tables database=<新库>` 同时出现；worker 库建/删周期、`waitForSchemaTreeLoaded` 超时栈与 9 个在轨 spec 的失败签名逐条对上；`seedDefaultPgConnection` 仅经 `save_connection` 带外换库、不断开会话 —— 分裂脑机制与修复方向自洽（测试夹具产物，非正常 UI 流程缺陷）。
+- **`await $$().length` 语义闭环（此前最大疑点）**：wdio 9.27 类型 `ChainablePromiseArray.length: Promise<number>`；运行时 `@wdio/utils` 的 `ELEMENT_PROPS` 显式含 `"length"`（proxy `get → target.then(res => res.length)`）→ `helpers.ts:372` 运行时返回 number，与既有 `(await $$()).length` 写法等价；且基线错误 `helpers.ts(320,39) TS2365` 正是旧写法不可编译的实证，新写法才是可编译形式。**非缺陷**。
+- **健康路径零回归**：`waitForSchemaTreeLoaded` 首查通过在 `pass > 0 && pass % 3 === 0` 刷新门控之前直接返回，签名/timeoutMsg 逐字节保持；`waitForTableInSidebar` 保留 `finally { setNavigatorSearch('') }` 与原 timeoutMsg。
+- **清理路径容错保持**：6 个 table spec + object-filter 的 after 钩子全部仍为容错 `executeSQL`；`executeSQLChecked` 快速失败仅限 before/测试体 DDL；object-filter after 拆两个独立 try（先无条件清 include 过滤，再独立 DROP）。
+- **探针副作用评估**：健康路径 ≈2 IPC、零 UI 改动；dirty 路径 disconnect+reload 均发生在连接入口（采样 hotkeys/ui-window-ops/backup-window/er-diagram/unified-tab-bar/client-parity + `openSeededPgConnectionWindow` 3 处等 ~11 外部调用方，语义兼容）；整体 try/catch warn-only fail-open，探针自身失败不阻塞。
+- **零文案合规**：新增/改动断言均为 data-*、表名、数据回读；中文仅出现在 timeoutMsg/失败消息/日志。
+- **观察项（不构成缺陷）**：① TC-TREE-006 的 body 级扫描弱于树节点断言，但该弱形态在基线已存在（非本次回归，新代码 polling + 稳定 testid 刷新已严格改善）；② 同一日志中 12 个非本轨失败 spec（如 navigator-context-menu before 钩子）具相同死库签名，预期被共享探针顺带修复 —— 属他轨范围，已上报协调者。
+
+### 阶段 B 独立验证（实测 = 自报，全部通过）
+
+- BOOTSTRAP 心跳 ✓；`node scripts/generate-builtin-locales.mjs` 重写 `src/locales/builtinLocales.ts`，git 状态干净 ✓。
+- `npx tsc --noEmit -p e2e/tsconfig.json`（tsc 5.9.3）：
+  - 实测 **59** 个错误；本轨文件（helpers + 9 spec + 新增 tester spec）**0** 个；
+  - 基线独立复现：`git archive 6fb1571f7` 全树归档 + 现有 node_modules 软链 + `node_modules/.bin/tsc -p e2e/tsconfig.json` = **72**（首次 e2e-only 归档得 74，多出的 `e2e/i18n.ts` TS2307/TS2538 系缺 `src/` 的环境产物，全树复跑即消失）；
+  - 逐行 comm diff（72 vs 59）：**新增 0、清除 13**，清除明细与 Coder 自报完全一致：helpers×4（292/303/320/2414）、schema-tree-completeness×1、sqlite×2、table-edit/table-filter/table-structure 各 1、mysql×3。
+- worktree 无 `src-tauri/target`（无 webdriver 编译产物），本轮禁构建 → 全量 E2E **【留待 R 回归】**。
+- 附注：`/tmp/tsc-round1.txt` 在生成其排序副本后被外部并发进程同名覆写（共享 /tmp 撞名，内容为另一棵树的输出）；本次核验所用证据文件（`tsc-baseline-full.txt` / `tsc-round1-sorted.txt` / `tsc-tester-final2.txt`）经逐行双向 diff 复核，结论不受影响。
+
+### 阶段 C 覆盖与登记
+
+**改动文件覆盖率**：11 个 Coder 改动文件（helpers + 9 spec）全部由既有 E2E 用例直接驱动，另有 1 个新增 tester spec → **12/12 = 100%**（≥80% 达标）。
+
+| 修复点 | 覆盖方式与登记用例 |
+| --- | --- |
+| 分裂脑探针 `ensureSeededPgSessionFresh` | **新增闭环断言** TC-TESTER-SF-001~003（见下）+ ~11 处调用方 before 钩子入口 |
+| `executeSQLChecked` 快速失败（7 spec before DDL） | 各 spec before 钩子即失败面：OPS-FILTER-001~005、TC-TABLE-009~014、TD 组、DE 组、TF 组、IDX 组、TS 组的 before 阶段 |
+| `waitVisibleTableNames` 条件轮询 | OPS-FILTER-003（三表可见 + PLAIN 不可见）、OPS-FILTER-005（恢复可见） |
+| `waitForSchemaTreeLoaded` 强化（try/catch + 每 3 轮刷新） | TC-TREE-001/002/006、sqlite `should show tables in sidebar` 等 |
+| `waitForTableInSidebar` 强化 | object-filter before 环门 + 各表 spec 树等待路径 |
+| after 钩子过滤器跨文件隔离 | OPS-FILTER-005（清空恢复）；跨文件验证需全量跑（见复跑入口） |
+| 一次性读取 → `waitUntil` 轮询 | sqlite 9 用例、TC-TABLE-009~014、TC-TREE-006 |
+| 类型卫生（13 错误清除） | 阶段 B tsc 门禁实证，运行时零行为变化经调用方采样评审 |
+
+**新增测试（测试子代理第 1 轮）**：`e2e/specs/test_tester-session-fresh.ts`（3 个 it，tsc 0 错误，零文案纯数据回读）——把分裂脑不变量升级为显式闭环断言：活会话 `SELECT current_database()` === 连接配置 `database`。
+- `TC-TESTER-SF-001`：UI 连接（`connectSeededPgInWorkspace`）后健康不变量；
+- `TC-TESTER-SF-002`：复用已存在工具栏的入口 `openSeededPgConnectionWindow`（历史"跳过 connect"陈旧漏洞路径）同样保持会话新鲜；
+- `TC-TESTER-SF-003`：带外 `save_connection` 改指 `postgres` 制造脏会话（与 wdio 换库同款手法），断言入口探针自愈后不变量恢复；after 钩子容错还原配置 database。
+
+**E2E 登记表（全部【留待 R 回归】，共 85 个 it = 在轨 82 + 新增 3）**：
+
+| Spec | 用例（登记） | it 数 |
+| --- | --- | --- |
+| object-filter | OPS-FILTER-001~005 | 5 |
+| schema-tree-completeness | TC-TREE-001~006 | 6 |
+| sqlite | sidebar/views/data/structure/SQL×2/stream/indexes/view-data | 9 |
+| table-batch-ops | TC-TABLE-009~014 | 6 |
+| table-data | TD-001~008 + SEL-001/DEL-001 + TC-TABLE-004/008/009 | 16 |
+| table-edit | DE-002/002b/003/003b/004/005/006~008 | 8 |
+| table-filter | TF-001~011 + TF-AI-001 | 12 |
+| table-indexes | IDX-001~006 | 5 |
+| table-structure | TS-001~009 | 15 |
+| **test_tester-session-fresh（新增）** | **TC-TESTER-SF-001~003** | **3** |
+
+复跑入口（R 轮，需 webdriver 构建后）：
+
+```bash
+pnpm e2e:skip-build -- --spec e2e/specs/object-filter.ts,e2e/specs/schema-tree-completeness.ts,e2e/specs/sqlite.ts,e2e/specs/table-batch-ops.ts,e2e/specs/table-data.ts,e2e/specs/table-edit.ts,e2e/specs/table-filter.ts,e2e/specs/table-indexes.ts,e2e/specs/table-structure.ts,e2e/specs/test_tester-session-fresh.ts
+```
+
+跨文件污染验证（object-filter after 钩子隔离 + 探针跨 spec 自愈）需全量跑：`pnpm e2e:skip-build`（或冒烟子集 `pnpm e2e:parallel:smoke`）。
+
+### 阶段 D 结论
+
+- **TEST_DONE（PASSED）**，待测 commit `d970f0d72`；测试提交 = 本 commit（`test(e2e): verify e2e-schema-tree with integration tests`）。
+- Bugs：第 1 轮无（`bugs/README.md`）。
+- 实测 vs 自报：tsc 59/0/0新增/13清除 —— **完全一致**；E2E 实跑数字本轮无法产出（无编译产物、禁构建），全部 85 个 it 登记【留待 R 回归】。
