@@ -1,7 +1,7 @@
 # e2e-ops-menu-BUG-001 · RC-3 关闭修复无效：closeAnyMenu 向 window 派发 mousedown 使 onDown 抛 TypeError，菜单从未真正关闭
 
 - **严重度**：高
-- **状态**：待复测
+- **状态**：已修复
 - **涉及文件**：
   - `e2e/specs/ops-process-server.ts`（`closeAnyMenu()` L45-62 / `dismissMenu()`）
   - `e2e/specs/ops-ddl-backup.ts`（`closeAnyMenu()` / `dismissMenu()`）
@@ -124,3 +124,25 @@ document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); // 
   - vitest 真实组件（临时取证文件，运行后已删除）：`document.body` 派发冒泡 `mousedown` → 菜单从 DOM 消失（根菜单、子菜单已打开两场景），2/2 通过。
   - `npx tsc --noEmit -p e2e/tsconfig.json`：HEAD 70 → 修复后 70，逐条归一化 diff 完全一致（相对 HEAD 零新增、零移除）。
 - **复测入口**：主检出 `pnpm tauri:build:webdriver` 后执行 `pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`；回归用例 `[tester] OPS-PROC-T001` 必须转绿。
+
+## 复测记录（round-1）
+
+- **复测结论**：✅ 修复有效，BUG-001 关闭（状态 → 已修复）。复测 Tester 为全新独立实例。
+- **修复范围审查（零信任独立核实）**：
+  - `git diff --stat 7f56d244b..HEAD`（修复轮两个 commit）：仅 5 文件——3 spec + 本 BUG 文件 + progress.md；`src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、`e2e/lib/` 逐一核对**零改动**（与修复者自报一致）。
+  - 三份 `closeAnyMenu()` 函数体逐字节比对 **MD5 完全一致**（`af01c39a0f3631ae88a4c71ee5434d04` ×3）——Round 1 指出的"三份复制"本轮至少行为完全一致。
+- **关闭机理独立验证（vitest 真组件，jsdom，5/5 通过）**：新增正式回归测试
+  `src/components/ui/__tests__/test_tester_web_context_menu_close_dispatch.test.tsx`（`[tester]` / `test_tester_` 前缀）：
+  1. `document.body` 派发冒泡 mousedown → 根菜单从 DOM 消失 ✅；
+  2. 根菜单 + 子菜单已打开 → 两者均关闭 ✅；
+  3. 菜单未打开时 body 派发为安全 no-op（"菜单本不存在 → waitUntil 首轮即真"的组件侧对应）✅；
+  4. **负例**：`window` 派发（round-0 写法）→ 菜单**仍在 DOM**（`hide()` 未执行），window error 事件捕获到 `TypeError: Failed to execute 'contains' on 'Node': parameter 1 is not of type 'Node'` ✅——即 BUG-001 机理在当前 HEAD 上原样可复现（证明修复靠"换派发目标"而非掩盖）；
+  5. 直接复现 `onDown` 第 175 行表达式 `menu.contains(window)` 抛 WebIDL TypeError ✅。
+  - **机制结论**：`WebContextMenu` 经 `createPortal(..., document.body)`（源码第 239 行）挂载，菜单面板是 body 的子节点 → `rootRef.contains(body)` 恒 false（body 是祖先非后代）；body 上以 `bubbles: true` 派发沿 body → html → document → window 冒泡，window 监听器为 bubble 阶段（第 181 行无 capture 标志）→ `hide()` 正常执行。修复论证严谨成立。已核查 `src/` 内 6 处 document 级 mousedown 监听器均无 `stopPropagation()`，生产环境冒泡链无截断风险。
+- **移除 `.catch` 后的失败信号复核**：3 个 spec 的 `dismissMenu`/`closeAnyMenu` 调用链上 `waitUntil(3000, timeoutMsg 右键菜单未关闭)` 均**无 `.catch`**——关闭失败真实抛错（不再被吞）；`waitUntil` 条件 `!menu.isExisting()` 在"菜单本不存在"时首轮即真、立即成功；navigator `rightClick` 面向"无菜单目标 → getMenuText()==''"语义的 `.catch`（L166-168）**保留完整**，ops 两 spec 的 `rightClick` 本轮未触碰（本就要求菜单必现）。
+- **tsc 独立实测 vs 自报**：自报「70 → 70，逐条归一化 diff 完全一致」→ 独立重跑 `npx tsc --noEmit -p e2e/tsconfig.json` = **70 errors**（navigator 14 + helpers 4 + lib 2 + 其它 spec 50），并临时 checkout `7f56d244b` 三 spec 跑基线对照 = **70**，归一化（去行列号 + 排序）diff **完全一致，零新增零移除**；原始差异仅为 +4 行注释导致的行号位移。**核对通过**。
+- **完整回归（阶段 C）**：`npx vitest run` 全量 **484 文件 / 5060 测试全绿**（含新增 5 条 + 既有 `WebContextMenu.test.tsx` 7/7）；RC-1 `dropLeakedSeededSession` 三处 before 调用在位（proc L241 / ddl L198 / nav L340）；Round 1 的 5 条非 Bug 发现逐条核对**原样在位、未被修复轮恶化**（`?? items[0]` 兜底 L81、kill 按钮静默 return L473、`[data-dt-row]` 全文档扫描 L179、navigator 无菜单 rightClick 等满 8s、三份复制）。
+- **新增 Bug**：无。
+- **【留待 R 回归】**：完整 E2E 需主检出 `pnpm tauri:build:webdriver` 后执行
+  `pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`；
+  回归用例 `[tester] OPS-PROC-T001` **必须转绿**（其断言链经复核为真实失败信号：menu isExisting 断言 → dismissMenu → waitUntil 消失 → 末置 expect false）。

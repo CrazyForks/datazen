@@ -1,6 +1,6 @@
 # Track: e2e-ops-menu — E2E 运维菜单用例修复
 
-- **状态**: READY_FOR_TEST（修复轮第 1 回合：`e2e-ops-menu-BUG-001` 已修复，待复测；测试记录见文末「测试记录」，修复细节见文末「修复轮第 1 回合」）
+- **状态**: PASSED（复测第 1 轮：`e2e-ops-menu-BUG-001` 已修复，完整回归通过，无新增 Bug；复测记录见文末「复测记录（第 2 轮 · 测试子代理）」）
 - **分支**: `feature/e2e-ops-menu`
 - **改动范围**: 仅 `e2e/specs/` 三个 spec 文件 + 本进度文件。未触碰 `src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、`e2e/lib/**`。
 
@@ -232,3 +232,58 @@ pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigato
 - **复测入口**: 主检出 `pnpm tauri:build:webdriver` 后
   `pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`；
   `[tester] OPS-PROC-T001` 必须转绿。
+
+## 复测记录（第 2 轮 · 测试子代理）
+
+**结论：TEST_DONE** — `e2e-ops-menu-BUG-001` 复测通过，状态 → **已修复**；无新增 Bug。复测 commit 见本区段末。
+
+### 阶段 A · 修复代码审查（零信任独立核实）
+
+| 审查项 | 结论 |
+| --- | --- |
+| 修复范围越界检查 | ✅ `git diff --stat 7f56d244b..HEAD` 仅 5 文件（3 spec + BUG 文件 + progress.md）；`src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、`e2e/lib/` 零改动（`git diff --name-only 84d9100..HEAD -- <以上>` 为空） |
+| body 派发冒泡链 | ✅ `bubbles: true` 沿 body → html → document → window 冒泡；`WebContextMenu.tsx:181` window 监听器为 bubble 阶段（无 capture 标志）→ 必然到达；已核查 `src/` 内 6 处 document 级 mousedown 监听器（globalTextSelection / QueryToolbarMoreMenu / TableColumnFilter / ThemeToggle / MenuBar / ContextPicker）**均无 `stopPropagation()`**，无截断风险 |
+| `contains(body)` 恒 false 论证 | ✅ 严谨：`WebContextMenu.tsx:220-240` `createPortal(..., document.body)` —— 菜单面板直接是 body 的**子节点**，body 是其祖先而非后代，`rootRef.contains(body)` / `subRef.contains(body)` 恒 false → `hide()` 执行 |
+| 移除 `.catch` 后「菜单本不存在」路径 | ✅ `waitUntil` 条件 `!menu.isExisting()` 首轮即真 → 立即成功，不受移除 `.catch` 影响 |
+| rightClick「无菜单目标」语义 | ✅ navigator-context-menu.ts L166-168 `.catch` 完整保留（`getMenuText()==''` 负向断言依赖）；ops 两 spec 的 rightClick 本轮未触碰 |
+| 三份 closeAnyMenu 一致性 | ✅ 函数体逐字节 MD5 三份完全相同（`af01c39a0f3631ae88a4c71ee5434d04`）——Round 1「三份复制」发现本轮至少已行为一致 |
+| Round 1 五条非 Bug 发现未恶化 | ✅ 逐条核对原样在位：① `?? items[0]` 兜底（ops-process-server.ts:81）② kill 按钮静默 return（:473）③ `[data-dt-row]` 全文档扫描（:179）④ navigator 无菜单 rightClick 等满 8s（语义保留）⑤ 三份复制（本轮一致，helpers 抽取仍留建议） |
+| `src/` 防御未采纳声明 | ✅ 属实未改；`WebContextMenu.onDown` 非 Node 防御仍属协调者另行派发事项（非本轨缺陷，负例测试已把机理钉死） |
+
+### 阶段 B · 独立复验
+
+- BOOTSTRAP：worktree `.worktrees/datazen-e2e-ops-menu`、分支 `feature/e2e-ops-menu`、status clean、被测 HEAD `7a2529b75`（修复 `74f2854e6` + 回填 `7a2529b75`）。
+- `node scripts/generate-builtin-locales.mjs` ✅（写入 en/zh-CN，status 仍 clean）。
+- **tsc 独立实测 vs 自报**：自报「70 → 70，归一化 diff 完全一致」→ 独立 `npx tsc --noEmit -p e2e/tsconfig.json` = **70 errors**（navigator 14 + helpers 4 + lib 2 + 其它 spec 50，与自报分布吻合）；临时 checkout `7f56d244b` 三 spec 跑修复前对照 = **70**；归一化（去行列号 + 排序）diff **NORMALIZED_IDENTICAL — 零新增零移除**，原始差异仅 +4 行注释引起的行号位移。**核对通过**。
+- **关闭机制独立验证（vitest 真组件）**：新增正式回归测试 `src/components/ui/__tests__/test_tester_web_context_menu_close_dispatch.test.tsx`（5 条）：
+  - body 派发 → 根菜单关闭 ✅；body 派发 → 根菜单 + 子菜单已开均关闭 ✅（修复者自报 2/2 独立重现）；
+  - 无菜单时 body 派发安全 no-op ✅；
+  - **负例**：window 派发 → 菜单仍在 DOM + window error 捕获 `TypeError: … parameter 1 is not of type 'Node'` ✅ —— BUG-001 机理在修复后 HEAD 上原样可复现（证明修复靠换派发目标，非掩盖）；
+  - 直接 `menu.contains(window)` 抛 WebIDL TypeError ✅。
+  - 实测：该文件 5/5 + 既有 `WebContextMenu.test.tsx` 7/7 = **12/12 通过**。
+- 全量 `npx vitest run`：**484 文件 / 5060 测试全绿**（零回归）。
+- 完整 E2E：**【留待 R 回归】**（worktree 无二进制禁构建，同 Round 1 限制）。
+
+### 阶段 C · 完整回归审查
+
+- Round 1 已通过的结论抽样复核：RC-1 `dropLeakedSeededSession` 三处 before 调用在位（proc L241 / ddl L198 / nav L340），本轮未被触碰；RC-2 waitUntil 菜单渲染路径未动；零文案合规——本轮 spec 改动仅新增中文注释与 `timeoutMsg` 错误文案，无新增定位器/断言字面量。
+- **BUG-001 断言链复核**：3 个 spec 的 `dismissMenu` → `closeAnyMenu` → `waitUntil(3000, 右键菜单未关闭)` 全链**无 `.catch`**——关闭失败真实抛错，失败信号不再被吞。`[tester] OPS-PROC-T001` 断言链（menu isExisting → dismissMenu → waitUntil 消失 → 末置 expect false）为真实硬断言。
+
+**E2E 登记表（复测轮确认，与 Round 1 一致）**（前置：主检出 `pnpm tauri:build:webdriver`）：
+
+```bash
+pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts
+```
+
+| 用例 | 执行条件 | 状态 |
+| --- | --- | --- |
+| OPS-PROC-001 ~ 004、OPS-SS-002、OPS-PL-002、`[tester] OPS-PROC-T001`（**必须转绿**） | 同上复跑入口；依赖 seeded PG + worker 库 | 【留待 R 回归】 |
+| OPS-DDL-001 ~ 003 | 同上 | 【留待 R 回归】 |
+| navigator before-all + NCM 全量用例 | 同上 | 【留待 R 回归】 |
+
+### 阶段 D · 判定
+
+- BUG-001：**已修复**（BUG 文件状态行已改判并追加 `## 复测记录（round-1）`）。
+- 新增 Bug：**无**。
+- Phase：**PASSED**。
+- 测试 commit：见下方 `test(e2e): verify e2e-ops-menu round-2 …` 提交。
