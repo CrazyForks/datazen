@@ -46,8 +46,8 @@ pub use schema_catalog_commands::{
     try_execute_schema_catalog_command,
 };
 pub use schema_migration::{
-    format_type, migration_object_kind, parse_type_parts, validate_check_expression,
-    validate_migration_identifier, validate_object_definition,
+    format_type, migration_object_kind, parse_type_parts, split_sequence_definition,
+    validate_check_expression, validate_migration_identifier, validate_object_definition,
     validate_object_definition_with_identity, validate_sequence_definition_with_identity,
     validate_type_definition_with_identity, validate_view_definition, MigrationCapabilities,
     MigrationColumn, MigrationOperation, MigrationRenderer, MigrationRequirement, MigrationRisk,

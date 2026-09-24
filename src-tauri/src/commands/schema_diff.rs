@@ -1,5 +1,7 @@
 //! Schema Diff Deploy IPC commands.
 
+pub mod unified_plan;
+
 use super::error::{CmdExt, CommandError};
 use super::sync::compare::diff_table_schemas_ir;
 use super::AppState;
@@ -1803,6 +1805,60 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
             return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
                 .await;
         }
+    }
+    if reviewed.has_complete_target_object_catalog {
+        let mut current_catalog_complete = true;
+        let (_, current_object_catalog) = match unified_plan::read_target_object_catalog(
+            driver.as_ref(),
+            &handle,
+            config.database.as_deref().unwrap_or_default(),
+            &config.database_type,
+            reviewed.target_dependency_schema_scope.as_deref(),
+            &mut current_catalog_complete,
+        )
+        .await
+        {
+            value if current_catalog_complete => value,
+            _ => {
+                return fail_schema_diff_deploy(
+                    &state,
+                    history_run,
+                    CommandError::Validation(
+                        "Target object dependency catalog can no longer be proved complete; compare again".into(),
+                    ),
+                )
+                .await
+            }
+        };
+        if let Err(error) = crate::schema_diff::reviewed::validate_object_dependency_catalog(
+            &reviewed.object_dependency_catalog,
+            &current_object_catalog,
+        ) {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
+        let current_table_catalog = match unified_plan::read_target_table_identities(
+            driver.as_ref(),
+            &handle,
+            config.database.as_deref().unwrap_or_default(),
+            &config.database_type,
+            reviewed.target_dependency_schema_scope.as_deref(),
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
+        };
+        if let Err(error) = crate::schema_diff::reviewed::validate_table_identity_catalog(
+            &reviewed.target_table_identity_catalog,
+            &current_table_catalog,
+        ) {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
+    }
+    if let Err(error) = unified_plan::revalidate_source_snapshot(&state, &reviewed).await {
+        return fail_schema_diff_deploy(&state, history_run, error).await;
     }
     let plan = reviewed.plan;
     let cancelled = match job_id.as_deref() {

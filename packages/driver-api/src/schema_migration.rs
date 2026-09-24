@@ -387,6 +387,134 @@ pub fn validate_sequence_definition_with_identity(
     Ok(())
 }
 
+/// Validate catalog-generated PostgreSQL sequence DDL and return the CREATE
+/// statement plus its optional exact `OWNED BY` relation identity. The Host
+/// may use the identity to order reviewed operations, but SQL must still be
+/// rendered by the database driver.
+pub fn split_sequence_definition(
+    definition: &str,
+    schema: Option<&str>,
+    name: &str,
+) -> Result<
+    (
+        String,
+        Option<String>,
+        Option<(String, String, String)>,
+        Option<String>,
+    ),
+    String,
+> {
+    validate_sequence_definition_with_identity(definition, schema, name)?;
+    let statements = split_sequence_statements(definition.trim())?;
+    let create_statement = statements
+        .first()
+        .ok_or("sequence definition must contain CREATE SEQUENCE")?
+        .trim()
+        .to_owned();
+    let ownership = statements
+        .get(1)
+        .map(|statement| parse_sequence_ownership(statement, schema, name))
+        .transpose()?;
+    let ownership_statement = statements
+        .get(1)
+        .map(|statement| statement.trim().to_owned());
+    let ownership_reset_statement = statements
+        .get(1)
+        .map(|statement| ownership_reset_statement(statement))
+        .transpose()?;
+    Ok((
+        create_statement,
+        ownership_statement,
+        ownership,
+        ownership_reset_statement,
+    ))
+}
+
+fn ownership_reset_statement(statement: &str) -> Result<String, String> {
+    let bytes = statement.as_bytes();
+    let mut tokens: Vec<(Option<String>, usize)> = Vec::new();
+    let mut index = 0;
+    let mut quoted = false;
+    while index < bytes.len() {
+        if quoted {
+            if bytes[index] == b'"' {
+                if bytes.get(index + 1) == Some(&b'"') {
+                    index += 2;
+                    continue;
+                }
+                quoted = false;
+            }
+            index += 1;
+            continue;
+        }
+        match bytes[index] {
+            b'"' => {
+                quoted = true;
+                tokens.push((None, index));
+                index += 1;
+            }
+            byte if byte.is_ascii_whitespace() => index += 1,
+            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
+                {
+                    index += 1;
+                }
+                tokens.push((Some(statement[start..index].to_ascii_uppercase()), index));
+            }
+            _ => {
+                tokens.push((None, index));
+                index += 1;
+            }
+        }
+    }
+    let by_end = tokens
+        .windows(2)
+        .find_map(|pair| match (&pair[0].0, &pair[1].0) {
+            (Some(owned), Some(by)) if owned == "OWNED" && by == "BY" => Some(pair[1].1),
+            _ => None,
+        })
+        .ok_or("validated sequence ownership clause is missing OWNED BY")?;
+    Ok(format!("{} NONE", statement[..by_end].trim_end()))
+}
+
+fn parse_sequence_ownership(
+    statement: &str,
+    schema: Option<&str>,
+    name: &str,
+) -> Result<(String, String, String), String> {
+    let tokens = executable_sql_tokens(statement);
+    let mut index = 0;
+    expect_word(&tokens, &mut index, "ALTER")?;
+    expect_word(&tokens, &mut index, "SEQUENCE")?;
+    validate_sequence_identity(&tokens, &mut index, schema, name)?;
+    expect_word(&tokens, &mut index, "OWNED")?;
+    expect_word(&tokens, &mut index, "BY")?;
+    let owner = consume_qualified_identifier(&tokens, &mut index)
+        .ok_or("sequence OWNED BY relation is missing")?;
+    if owner.len() != 3 || index != tokens.len() {
+        return Err(
+            "sequence OWNED BY relation must be schema-qualified table column identity".into(),
+        );
+    }
+    let mut owner = owner
+        .into_iter()
+        .map(sequence_identifier_value)
+        .collect::<Option<Vec<_>>>()
+        .ok_or("sequence OWNED BY relation contains an invalid identifier")?;
+    Ok((owner.remove(0), owner.remove(0), owner.remove(0)))
+}
+
+fn sequence_identifier_value(token: ExecutableSqlToken) -> Option<String> {
+    match token {
+        ExecutableSqlToken::Word(value) => Some(value.to_ascii_lowercase()),
+        ExecutableSqlToken::Identifier(value) => Some(value),
+        ExecutableSqlToken::Symbol(_) => None,
+    }
+}
+
 /// Validate a driver-owned user-defined type definition before it becomes a
 /// reviewed migration statement. Only one CREATE TYPE/CREATE DOMAIN statement
 /// is accepted, with an optional trailing semicolon. The declaration identity
@@ -1386,6 +1514,65 @@ mod type_parts_tests {
     }
 
     #[test]
+    fn sequence_definition_split_returns_exact_validated_owner_identity() {
+        let ddl = "CREATE SEQUENCE public.orders_id_seq AS bigint; ALTER SEQUENCE public.orders_id_seq OWNED BY public.orders.id;";
+        let (create, ownership_statement, ownership, ownership_reset_statement) =
+            split_sequence_definition(ddl, Some("public"), "orders_id_seq").unwrap();
+        assert_eq!(create, "CREATE SEQUENCE public.orders_id_seq AS bigint");
+        assert_eq!(
+            ownership_statement.as_deref(),
+            Some("ALTER SEQUENCE public.orders_id_seq OWNED BY public.orders.id")
+        );
+        assert_eq!(
+            ownership,
+            Some(("public".into(), "orders".into(), "id".into()))
+        );
+        assert_eq!(
+            ownership_reset_statement.as_deref(),
+            Some("ALTER SEQUENCE public.orders_id_seq OWNED BY NONE")
+        );
+
+        let (quoted_create, quoted_owner, quoted_identity, quoted_reset) =
+            split_sequence_definition(
+                "CREATE SEQUENCE \"public\".\"OWNED BY\" AS bigint; ALTER SEQUENCE \"public\".\"OWNED BY\" OWNED BY \"public\".\"CaseTable\".\"Id\";",
+                Some("public"),
+                "OWNED BY",
+            )
+            .unwrap();
+        assert_eq!(
+            quoted_create,
+            "CREATE SEQUENCE \"public\".\"OWNED BY\" AS bigint"
+        );
+        assert_eq!(
+            quoted_owner.as_deref(),
+            Some("ALTER SEQUENCE \"public\".\"OWNED BY\" OWNED BY \"public\".\"CaseTable\".\"Id\"")
+        );
+        assert_eq!(
+            quoted_identity,
+            Some(("public".into(), "CaseTable".into(), "Id".into()))
+        );
+        assert_eq!(
+            quoted_reset.as_deref(),
+            Some("ALTER SEQUENCE \"public\".\"OWNED BY\" OWNED BY NONE")
+        );
+
+        let (plain_create, plain_ownership_statement, plain_ownership, plain_reset) =
+            split_sequence_definition(
+                "CREATE SEQUENCE \"public\".\"plain_seq\" AS integer;",
+                Some("public"),
+                "plain_seq",
+            )
+            .unwrap();
+        assert_eq!(
+            plain_create,
+            "CREATE SEQUENCE \"public\".\"plain_seq\" AS integer"
+        );
+        assert_eq!(plain_ownership_statement, None);
+        assert_eq!(plain_ownership, None);
+        assert_eq!(plain_reset, None);
+    }
+
+    #[test]
     fn sequence_definition_validation_rejects_scripts_literals_comments_and_ambiguous_owner() {
         let valid = "CREATE SEQUENCE \"public\".\"s\" AS integer INCREMENT BY -1 MINVALUE -2147483648 MAXVALUE 2147483647 START WITH 1 CACHE 2 CYCLE;";
         for unsafe_ddl in [
@@ -1395,6 +1582,7 @@ mod type_parts_tests {
             "CREATE SEQUENCE \"public\".\"s\" AS integer START WITH '1'",
             "CREATE SEQUENCE \"public\".\"s\" AS integer; ALTER SEQUENCE \"public\".\"other\" OWNED BY \"public\".\"t\".\"id\"",
             "CREATE SEQUENCE \"public\".\"s\" AS integer; ALTER SEQUENCE \"public\".\"s\" OWNED BY \"public\".\"t\"",
+            "CREATE SEQUENCE \"public\".\"s\" AS integer; ALTER SEQUENCE \"public\".\"s\" OWNED BY \"public\".\"t\".\"id\" -- OWNED BY \"public\".\"evil\".\"column\"",
         ] {
             assert!(validate_sequence_definition_with_identity(unsafe_ddl, Some("public"), "s").is_err(), "{unsafe_ddl}");
         }

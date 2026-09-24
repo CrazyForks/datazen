@@ -1,5 +1,6 @@
 //! Dialect-neutral schema migration operations.
 
+use super::object_identity::SequenceOwnershipIdentity;
 use super::types::{ColumnSnapshot, StatementRisk};
 use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
 use datazen_driver_api::TableOptions;
@@ -128,6 +129,18 @@ pub enum MigrationOperation {
     CreateSequence {
         sequence: MigrationSequence,
     },
+    /// Internal unified-plan node: create a sequence before its owner table,
+    /// then attach ownership through `SetSequenceOwnership`.
+    CreateSequenceUnowned {
+        sequence: MigrationSequence,
+        ownership: SequenceOwnershipIdentity,
+    },
+    /// Internal unified-plan node rendered from the driver's validated
+    /// sequence DDL after the owner table exists.
+    SetSequenceOwnership {
+        sequence: MigrationSequence,
+        ownership: SequenceOwnershipIdentity,
+    },
     ReplaceSequence {
         current: MigrationSequence,
         desired: MigrationSequence,
@@ -233,6 +246,8 @@ impl MigrationOperation {
                 trigger.target_name
             ),
             Self::CreateSequence { sequence }
+            | Self::CreateSequenceUnowned { sequence, .. }
+            | Self::SetSequenceOwnership { sequence, .. }
             | Self::ReplaceSequence {
                 desired: sequence, ..
             }
@@ -466,6 +481,10 @@ impl MigrationOperation {
                 trigger: trigger.clone(),
             },
             Self::CreateSequence { sequence } => O::CreateSequence {
+                sequence: sequence.clone(),
+            },
+            Self::CreateSequenceUnowned { sequence, .. }
+            | Self::SetSequenceOwnership { sequence, .. } => O::CreateSequence {
                 sequence: sequence.clone(),
             },
             Self::ReplaceSequence { current, desired } => O::ReplaceSequence {

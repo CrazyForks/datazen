@@ -123,7 +123,9 @@ fn operation_identity(op: &MigrationOperation) -> OperationNodeIdentity {
         CreateTrigger { .. } => OperationAction::CreateTrigger,
         ReplaceTrigger { .. } => OperationAction::ReplaceTrigger,
         DropTrigger { .. } => OperationAction::DropTrigger,
-        CreateSequence { .. } => OperationAction::CreateSequence,
+        CreateSequence { .. } | CreateSequenceUnowned { .. } | SetSequenceOwnership { .. } => {
+            OperationAction::CreateSequence
+        }
         ReplaceSequence { .. } => OperationAction::ReplaceSequence,
         DropSequence { .. } => OperationAction::DropSequence,
         CreateType { .. } => OperationAction::CreateType,
@@ -204,6 +206,8 @@ fn migration_object_identity(op: &MigrationOperation) -> MigrationObjectIdentity
             target_name: trigger.target_name.clone(),
         },
         CreateSequence { sequence }
+        | CreateSequenceUnowned { sequence, .. }
+        | SetSequenceOwnership { sequence, .. }
         | ReplaceSequence {
             desired: sequence, ..
         }
@@ -233,6 +237,8 @@ fn operation_transition(op: &MigrationOperation) -> String {
         MigrationOperation::SetComment { to, .. } => format!("comment:{to:?}"),
         MigrationOperation::SetAutoIncrement { to, .. } => format!("auto_increment:{to}"),
         MigrationOperation::SetTableOptions { to, .. } => format!("table_options:{to:?}"),
+        MigrationOperation::CreateSequenceUnowned { .. } => "phase:create-unowned".into(),
+        MigrationOperation::SetSequenceOwnership { .. } => "phase:set-ownership".into(),
         _ => String::new(),
     }
 }
@@ -271,6 +277,8 @@ fn op_table(op: &MigrationOperation) -> &str {
         }
         | MigrationOperation::DropTrigger { trigger } => &trigger.name,
         MigrationOperation::CreateSequence { sequence }
+        | MigrationOperation::CreateSequenceUnowned { sequence, .. }
+        | MigrationOperation::SetSequenceOwnership { sequence, .. }
         | MigrationOperation::ReplaceSequence {
             desired: sequence, ..
         }
@@ -543,6 +551,27 @@ pub(super) fn try_resolve_dependencies_with_table_drop_edges(
     ops: &[MigrationOperation],
     dependent_before_referenced: &[(String, String)],
 ) -> Result<Vec<MigrationOperation>, String> {
+    let extra_edges = dependent_before_referenced
+        .iter()
+        .filter_map(|(dependent_table, referenced_table)| {
+            let dependent = ops.iter().position(|operation| {
+                matches!(operation, MigrationOperation::DropTable { table } if table == dependent_table)
+            });
+            let referenced = ops.iter().position(|operation| {
+                matches!(operation, MigrationOperation::DropTable { table } if table == referenced_table)
+            });
+            dependent.zip(referenced)
+        })
+        .collect::<Vec<_>>();
+    try_resolve_dependencies_with_operation_edges(ops, &extra_edges)
+}
+
+/// Resolve the normal operation graph plus explicit cross-category edges.
+/// Each pair is `(prerequisite operation index, dependent operation index)`.
+pub(super) fn try_resolve_dependencies_with_operation_edges(
+    ops: &[MigrationOperation],
+    extra_edges: &[(usize, usize)],
+) -> Result<Vec<MigrationOperation>, String> {
     reject_ambiguous_references(ops).map_err(|error| error.to_string())?;
 
     let identities = ops.iter().map(operation_identity).collect::<Vec<_>>();
@@ -562,18 +591,16 @@ pub(super) fn try_resolve_dependencies_with_table_drop_edges(
         }
     }
 
-    for (dependent_table, referenced_table) in dependent_before_referenced {
-        let dependent = ops.iter().position(|operation| {
-            matches!(operation, MigrationOperation::DropTable { table } if table == dependent_table)
-        });
-        let referenced = ops.iter().position(|operation| {
-            matches!(operation, MigrationOperation::DropTable { table } if table == referenced_table)
-        });
-        if let (Some(dependent), Some(referenced)) = (dependent, referenced) {
-            graph
-                .add_dependency(&identities[dependent], &identities[referenced])
-                .map_err(|error| error.to_string())?;
-        }
+    for (prerequisite, dependent) in extra_edges {
+        let prerequisite = identities.get(*prerequisite).ok_or_else(|| {
+            format!("unified dependency references missing operation {prerequisite}")
+        })?;
+        let dependent = identities.get(*dependent).ok_or_else(|| {
+            format!("unified dependency references missing operation {dependent}")
+        })?;
+        graph
+            .add_dependency(prerequisite, dependent)
+            .map_err(|error| error.to_string())?;
     }
 
     let ordered = graph
