@@ -64,9 +64,53 @@ async function withFixture<T>(
       [fixture.sourceId, fixture.targetId],
       [fixture.lateChildTable, fixture.childTable, fixture.parentTable],
     );
-    await closeExtraWindows(mainWindow);
-    await browser.switchToWindow(mainWindow);
+    try {
+      await assertFixtureTablesAbsent(fixture);
+    } finally {
+      await closeExtraWindows(mainWindow);
+      await browser.switchToWindow(mainWindow);
+    }
   }
+}
+
+async function assertFixtureTablesAbsent(fixture: DialectFixture): Promise<void> {
+  const tableNames = [fixture.lateChildTable, fixture.childTable, fixture.parentTable];
+  const endpoints = [
+    { label: 'source', config: fixture.sourceConfig },
+    { label: 'target', config: fixture.targetConfig },
+  ];
+  const counts: number[] = [];
+
+  for (const endpoint of endpoints) {
+    await invokeBackend('save_connection', { config: endpoint.config });
+    let session: string | undefined;
+    try {
+      session = await invokeBackend<string>('connect', { connectionId: endpoint.config.id });
+      const names = tableNames.map((name) => `'${name}'`).join(', ');
+      const sql =
+        fixture.dialect === 'postgresql'
+          ? `SELECT count(*)::int AS c FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name IN (${names})`
+          : `SELECT count(*) AS c FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name IN (${names})`;
+      const result = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: session,
+        sql,
+      });
+      const count = queryScalar(result, 'c');
+      counts.push(count);
+      if (count !== 0) {
+        throw new Error(
+          `${fixture.dialect} ${endpoint.label} fixture cleanup left ${count} named tables`,
+        );
+      }
+    } finally {
+      if (session) await disconnectBackend(session);
+      await invokeBackend('delete_connection', { id: endpoint.config.id });
+    }
+  }
+
+  console.log(`[SD-DAG cleanup] ${fixture.dialect} source=${counts[0]} target=${counts[1]}`);
 }
 
 async function setupFixture(fixture: DialectFixture, scenario: Scenario) {
