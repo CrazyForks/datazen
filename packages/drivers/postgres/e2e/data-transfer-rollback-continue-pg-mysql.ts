@@ -236,6 +236,11 @@ describe('Data Transfer PG→MySQL confirmed rollback continuation', function ()
         await invokeBackend('delete_connection', { id: targetAdminId }).catch(() => undefined);
       if (mainWindow) await closeExtraWindows(mainWindow).catch(() => undefined);
     }
+    const remainingConnections = await invokeBackend<Array<{ id: string }>>('get_connections');
+    const remainingFixtureIds = remainingConnections
+      .filter(({ id }) => [sourceId, targetId, sourceAdminId, targetAdminId].includes(id))
+      .map(({ id }) => id);
+    expect(remainingFixtureIds).toEqual([]);
     if (cleanupErrors.length > 0) {
       throw new Error(`Transfer fixture cleanup incomplete: ${cleanupErrors.join('; ')}`);
     }

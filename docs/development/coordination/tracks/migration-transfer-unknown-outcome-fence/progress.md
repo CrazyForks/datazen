@@ -1,6 +1,6 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: READY_FOR_TEST
+Phase: PASSED
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
@@ -140,16 +140,18 @@ The fresh Tester registered BUG-004 after finding that the two ack-loss fixtures
 
 Both specs now check both exact catalog names before any create, mark each database owned only after that database's own create call succeeds, and drop only databases owned by this run. Admin and fixture configs/sessions have per-entry save/cleanup state, so partial setup cannot turn an unconfirmed database into a cleanup target. Host TypeScript, Prettier, and diff checks pass; full E2E-project typecheck reports existing harness errors but none in these two specs. No app was started and no database journey was run; ready for a fresh Tester.
 
-## Fresh independent Tester report — round 3, candidate `d9cdd47ce7e95f3e02e715e147c12070081e3471` (in progress)
+## Fresh independent Tester report — round 3, candidate `d9cdd47ce7e95f3e02e715e147c12070081e3471`
 
 Tester worktree: `.worktrees/datazen-migration-transfer-unknown-outcome-fresh-tester-r2`, branch `feature/migration-transfer-unknown-outcome-fresh-tester-r2`.
+
+Final status: **TEST_DONE / READY_TO_MERGE**. Tester additions and report are committed on this branch.
 
 ### Bootstrap and Phase A — source review
 
 - Confirmed a clean initial worktree at the exact assigned candidate commit. Ran `node scripts/generate-builtin-locales.mjs` and `pnpm install --offline --frozen-lockfile`; install exited 0. `node_modules` is a physical directory in this worktree (device/inode checked), not a link to the main checkout. pnpm's prepare hook printed a non-fatal permission error while trying to lock the main checkout's `.git/config`; dependency install and generation completed.
 - `docs/development/post-review-hardening-plan.md` is absent in this candidate. Reviewed the documented acceptance criteria and source paths instead.
 - Reviewed the candidate's Data Transfer result model, executor transaction/DDL outcome handling, checkpoint invalidation, history/workflow mapping, UI result display, passive `VITE_E2E` IPC recorder, debug/WebDriver fault seam registration, both acknowledgement-loss specs, and BUG-004 ownership repair. The original BUG-004 condition is closed by source inspection: both exact catalogs are queried before any create; each ownership flag is set only after its own `CREATE DATABASE` returns successfully; cleanup drops only the corresponding owned database. The fault seam runs the actual commit first, matches one exact target table, is one-shot, and its IPC registration is limited to debug WebDriver builds. No production defect established so far.
-- Added Tester-owned, test-only isolated versions of both confirmed-rollback/continue journeys. Each uses unique per-run database/table/connection names, preflights both exact catalogs before either create, gates cleanup by each successful create, and has independent config/session cleanup. Added `e2e/wdio.migration-transfer-rollback-continue.conf.ts`, which overrides the shared DB/app-data reset hooks. These two journeys have not run yet.
+- Added Tester-owned, test-only isolated versions of both confirmed-rollback/continue journeys. Each uses unique per-run database/table/connection names, preflights both exact catalogs before either create, gates cleanup by each successful create, and has independent config/session cleanup. Added `e2e/wdio.migration-transfer-rollback-continue.conf.ts`, which overrides the shared DB/app-data reset hooks. Both journeys passed in Phase D.
 
 ### Phase B — independent checks
 
@@ -157,12 +159,18 @@ Tester worktree: `.worktrees/datazen-migration-transfer-unknown-outcome-fresh-te
 - Focused Transfer UI, shared migration-history UI, and Transfer command Vitest — **54 passed, 0 failed** across three files.
 - Host `pnpm exec tsc --noEmit` — **passed, exit 0**.
 - Independently merged LLVM profiles and intersected executable lines with the candidate-vs-`codex/migration-navicat` diff, excluding `#[cfg(test)]` regions. Changed production executable-line coverage: **420/491 = 85.54%**. Per file: `commands/data_transfer/exec.rs` 30/41; `commands/data_transfer/mod.rs` 33/46; `data_transfer/execute.rs` 225/258; `model.rs` 16/16; `sql_file.rs` 4/10; `structure.rs` 93/100; `workflow/migration.rs` 19/20. `bootstrap/run.rs` and `data_transfer/mod.rs` had no instrumented changed executable lines; the WebDriver build will verify gated IPC registration.
-- Full E2E-project TypeScript check reports 125 existing harness/driver typing errors; there are **no diagnostics** in either ack-loss spec, either isolated rollback spec, or either migration WDIO config. Changed-Rust `rustfmt`, Prettier on changed TypeScript/E2E/locale files, and `git diff --check` are pending the final pre-build check.
+- Full E2E-project TypeScript check reports 125 existing harness/driver typing errors; there are **no diagnostics** in either ack-loss spec, either isolated rollback spec, or either migration WDIO config. Changed-Rust `rustfmt`, Prettier on changed TypeScript/E2E/locale files, and `git diff --check` pass.
 
 ### Phase C — coverage-driven tests
 
-- Existing Rust state-machine tests, UI outcome tests, and recorder tests meet the measured 80% changed-production-line threshold. Added the two safe rollback/continue real-database journeys to cover confirmed rollback with `stop_on_error=false`; they remain pending live WDIO execution.
+- Existing Rust state-machine tests, UI outcome tests, and recorder tests meet the measured 80% changed-production-line threshold. Added the two safe rollback/continue real-database journeys to cover confirmed rollback with `stop_on_error=false`. Added explicit `get_connections` readback assertions to all four journeys so cleanup verifies the run's source, target, and admin configs were deleted.
 
 ### Phase D — candidate build and live journeys
 
-- Pending. No app or WDIO process has been started in this round; no database fixture has been created or modified. Run the two ack-loss journeys first, then the two isolated rollback journeys, serially, after the required fresh candidate build.
+- Built the candidate with `VITE_E2E=1 pnpm tauri:build:webdriver` in this fresh worktree. The debug executable and `.app/Contents/MacOS/datazen` have the same SHA-256: `8498db55f680760d653c357d0ff9b01b8e72afd0f065d0ede27678ca708cfe30` (2026-09-24 19:43:28 CST). The binary contains the arm/reset acknowledgement-loss IPC names and debug seam text; the fresh bundled DataTransfer chunk contains `__dataTransferRunCalls`. Build output and app were produced; the only nonzero step was the user-excluded DMG packaging stage.
+- Ran the required WDIO journeys serially with the dedicated no-reset configs: PG→MySQL ack-loss (1 passing), MySQL→PG ack-loss (1 passing), PG→MySQL rollback/continue (1 passing), and MySQL→PG rollback/continue (1 passing). Both ack-loss journeys assert actual target commit readback after the injected lost acknowledgement, `unknown` with `rowsInserted=null`, later table `notStarted` and untouched, history `unknown`, no resume UI/token, and rejection of both the original plan and checkpoint replay. Both rollback journeys assert the conflicting table is `rolledBack`, the later table commits and reads back, and the prior target row remains.
+- Each fixture performs exact PG and MySQL catalog preflight before any create and sets ownership only after its own successful create. Each WDIO cleanup `get_connections` readback found no run-specific connection IDs. Read-only post-run catalog checks found no `dz_dt_ack_%` or `dz_dt_rb_%` database in PostgreSQL or MySQL. The failed first attempt at the final rollback spec stopped in `before` due to a missing test helper import before any create; a separate read-only catalog check and WDIO IPC audit confirmed no databases or `e2e_dt_rb_` configs remained. After adding the import, the final spec passed.
+- The app was stopped; `lsof` found no listener on port 4445; the private `/private/tmp/datazen-transfer-fresh-tester-r3` app-data directory was removed. No Cargo or WDIO process remains active, and the shared Cargo target lease is released.
+- No new candidate product bug was found. BUG-004 ownership behavior is independently verified and BUG-003 live-journey gap is closed by the four candidate-provenance runs; see the appended round-3 retest notes in both bug files.
+
+Tester final status: **TEST_DONE / READY_TO_MERGE**. The final tester commit records the four journeys and cleanup assertions.
