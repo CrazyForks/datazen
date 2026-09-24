@@ -6,10 +6,10 @@ import { redisMeta } from '../shared/meta';
 import redisIcon from '../icons/redis.svg';
 
 /**
- * 屏 A 头部横幅 —— 压缩到 56px（PRD §3.1 第一行）。
+ * 屏 A 头部横幅 —— 压缩到 48px（h-12）。
  *
  * Layout: [icon] [name] [pills…] ··························· [Refresh]
- * Height is fixed at `h-14` = 56px.
+ * Height is fixed at `h-12` = 48px.
  */
 export interface RedisOverviewBannerProps {
   connectionName: string;
