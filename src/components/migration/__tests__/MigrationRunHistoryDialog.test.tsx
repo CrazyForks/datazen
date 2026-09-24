@@ -144,4 +144,35 @@ describe('MigrationRunHistoryDialog Data Sync recovery action', () => {
     expect(rollback).toHaveTextContent('legacyOutcome');
     expect(rollback).toHaveAttribute('data-outcome', 'legacyOutcome');
   });
+
+  it.each([
+    { operation: 'dataSync' as const, outcome: 'unknown' },
+    { operation: 'schemaDiff' as const, outcome: 'unknown' },
+    { operation: 'dataTransfer' as const, outcome: 'notRequired' },
+  ])(
+    'preserves non-Transfer warning semantics for $operation/$outcome',
+    async ({ operation, outcome }) => {
+      const selectedRun: MigrationRunRecord = {
+        ...run,
+        operation,
+        rollbackOutcome: outcome,
+      };
+      vi.mocked(historyCommands.listMigrationRuns).mockResolvedValue({
+        items: [selectedRun],
+        total: 1,
+        offset: 0,
+        limit: 25,
+      });
+      render(<MigrationRunHistoryDialog operation={operation} />);
+      fireEvent.click(screen.getByText('migrationHistory.open'));
+      fireEvent.click(await screen.findByText(/failed/));
+
+      const rollback = await screen.findByTestId('migration-history-rollback-outcome');
+      expect(rollback).toHaveAttribute('data-outcome', outcome);
+      expect(rollback).toHaveTextContent(
+        operation === 'dataTransfer' ? 'transfer.historyOutcome.notRequired' : outcome,
+      );
+      expect(rollback).not.toHaveClass('text-amber-700');
+    },
+  );
 });

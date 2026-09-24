@@ -326,6 +326,19 @@ describe('Data Sync unknown outcome history recovery', () => {
           expect(await valueAt(fixture.targetSession, fixture.names.target, fixture.table)).toBe(
             expectedValue,
           );
+          const historyAfterReplay = await invokeBackend<{ items: MigrationRun[] }>(
+            'list_migration_runs',
+            {
+              filter: { operation: 'dataSync', profileId: fixture.profileId },
+              offset: 0,
+              limit: 10,
+            },
+          );
+          expect(
+            historyAfterReplay.items.filter(
+              (item) => item.outcome === 'unknown' && item.profileId === fixture.profileId,
+            ),
+          ).toHaveLength(1);
 
           await openDataSyncWindow(mainHandle);
           await $('[data-testid="migration-history-open"]').click();
