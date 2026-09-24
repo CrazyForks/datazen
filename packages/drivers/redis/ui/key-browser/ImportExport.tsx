@@ -5,8 +5,12 @@ import { Dialog } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { fileCommands } from '@datazen/driver-sdk';
 import { useI18n } from '@datazen/ui';
-import { invokeScanKeys, redisCommandInvoke } from '../shared/redisInvoke';
-import { invokeCountMatching } from './BatchBar';
+import {
+  invokeScanKeys,
+  redisCommandInvoke,
+  type CountMatchingResult,
+} from '../shared/redisInvoke';
+import { formatMatchCount, invokeCountMatching } from './BatchBar';
 import { useRedisGate } from '../shared/useRedisGate';
 import {
   base64ToZip,
@@ -96,7 +100,7 @@ export function ImportExport({
   const { gateWrite, gateDialog } = useRedisGate();
   const [exportMode, setExportMode] = useState<ExportMode>('selected');
   const [patternInput, setPatternInput] = useState(searchPattern);
-  const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [matchCount, setMatchCount] = useState<CountMatchingResult | null>(null);
   const [replaceExisting, setReplaceExisting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,8 +132,8 @@ export function ImportExport({
 
   const loadPatternCount = async () => {
     try {
-      const count = await invokeCountMatching(dbSessionId, dbIndex, patternInput.trim() || '*');
-      setMatchCount(count);
+      const result = await invokeCountMatching(dbSessionId, dbIndex, patternInput.trim() || '*');
+      setMatchCount(result);
     } catch {
       setMatchCount(null);
     }
@@ -290,12 +294,13 @@ export function ImportExport({
                     type="button"
                     className="h-7 px-2 text-xs"
                     variant="ghost"
+                    data-testid="redis-export-match-count"
                     onClick={() => void loadPatternCount()}
                     disabled={busy}
                   >
                     {t('redis.matchCount').replace(
                       '{count}',
-                      matchCount == null ? '…' : String(matchCount),
+                      matchCount == null ? '…' : formatMatchCount(matchCount),
                     )}
                   </Button>
                 </div>

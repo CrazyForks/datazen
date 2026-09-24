@@ -42,7 +42,7 @@ export function CompletionPopup({
 
   return (
     <div
-      className="absolute bottom-1 left-3 z-20 max-h-64 w-[420px] overflow-auto rounded-md border border-edge bg-surface shadow-lg"
+      className="absolute bottom-full left-3 mb-1 z-20 max-h-64 w-[420px] overflow-auto rounded-md border border-edge bg-surface shadow-lg"
       data-testid="redis-completion-popup"
       role="listbox"
     >

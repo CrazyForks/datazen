@@ -17,6 +17,7 @@ import {
   executeSQL,
   clickTableInSidebar,
   switchSubTab,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 // ── helpers ─────────────────────────────────────────────────────────
@@ -141,11 +142,7 @@ describe('PostgreSQL 字段类型前端展示 (PG-TYPE-001~015)', () => {
     `);
 
     // Refresh sidebar
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    if (await refreshBtn.isExisting()) {
-      await refreshBtn.click();
-      await browser.pause(2000);
-    }
+    if (await $('[data-testid="navigator-refresh"]').isExisting()) await clickNavigatorRefresh();
   });
 
   after(async () => {
@@ -437,11 +434,7 @@ describe('MySQL 字段类型前端展示 (MY-TYPE-001~020)', () => {
     `);
 
     // Refresh sidebar
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    if (await refreshBtn.isExisting()) {
-      await refreshBtn.click();
-      await browser.pause(2000);
-    }
+    if (await $('[data-testid="navigator-refresh"]').isExisting()) await clickNavigatorRefresh();
   });
 
   after(async () => {

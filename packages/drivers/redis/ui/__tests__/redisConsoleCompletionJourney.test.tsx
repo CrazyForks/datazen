@@ -147,8 +147,8 @@ describe('RedisConsole completion — key mode', () => {
     const first = screen.getByTestId('redis-completion-item-0');
     expect(first.textContent).toContain('user:1');
 
-    // Enter accepts the candidate (no execution, popup closes with trailing space).
-    fireEvent.keyDown(input, { key: 'Enter' });
+    // Tab accepts the candidate (no execution, popup closes with trailing space).
+    fireEvent.keyDown(input, { key: 'Tab' });
     await waitFor(() => {
       expect(input.value).toBe('SET user:1 ');
     });

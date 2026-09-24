@@ -57,6 +57,29 @@ if (planContent) {
   }
 }
 
+// Bug 开放态计数：新格式为 bugs/<id>.md 一 Bug 一文件（消除多人共写单文件的合并冲突）；
+// 旧格式单文件 bugs.md 保留兼容（历史轮次台账只读）。状态行命中开放态即计数；
+// 文件名以 -closed- 开头或目录内 README.md 不计（归档件）。
+const OPEN_BUG_RE = /状态[:：]\s*(?:\*\*)?(待验证|待修复|修复中|待复测|新建|OPEN)/i;
+function countOpenBugs(trackId) {
+  let n = 0;
+  const dir = path.join(TRACKS_DIR, trackId, 'bugs');
+  if (fs.existsSync(dir)) {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.md') || f === 'README.md' || f.startsWith('-closed-') || f.startsWith('closed-')) continue;
+      const content = fs.readFileSync(path.join(dir, f), 'utf8');
+      if (OPEN_BUG_RE.test(content)) n += 1;
+    }
+  }
+  const legacy = path.join(TRACKS_DIR, trackId, 'bugs.md');
+  if (fs.existsSync(legacy)) {
+    const bugContent = fs.readFileSync(legacy, 'utf8');
+    const openMatches = bugContent.match(/状态[:：]\s*(待验证|待修复|新建|OPEN)/gi);
+    if (openMatches) n += openMatches.length;
+  }
+  return n;
+}
+
 // 解析单个 progress.md
 function parseProgress(trackId, content) {
   const data = {
@@ -73,13 +96,17 @@ function parseProgress(trackId, content) {
     unresolvedBugs: 0,
   };
 
-  const lines = content.split('\n');
-  for (const line of lines) {
+  // 只读文件头部（首个 `## ` 之前）的元信息条目。正文里的 `- …: …` 叙述行（覆盖率、
+  // 拓扑分支、禁止事项等）不是台账字段，把它们当字段读会让总览表整行错位。
+  // 另外字段名必须是短词：含反引号/括号或超过 24 字符的"键"必然是句子而非字段。
+  const headerLines = content.split('\n').slice(0, content.split('\n').findIndex((l) => l.startsWith('## ')) === -1 ? content.split('\n').length : content.split('\n').findIndex((l) => l.startsWith('## ')));
+  for (const line of headerLines) {
     const trimmed = line.trim();
     const kvMatch = trimmed.match(/^[-*]\s*([^:]+):\s*(.+)$/);
     if (!kvMatch) continue;
     const key = kvMatch[1].trim().toLowerCase();
     const val = kvMatch[2].trim();
+    if (key.length > 24 || key.includes('`') || key.includes('（')) continue;
 
     if (key === 'phase' || key === '状态') data.phase = val;
     else if (key.includes('编码 commit') || key === 'coding_commit' || key === 'codingcommit') data.codingCommit = val;
@@ -92,15 +119,8 @@ function parseProgress(trackId, content) {
     else if (key.includes('task') || key.includes('任务')) data.task = val;
   }
 
-  // 检查 bugs.md
-  const bugsPath = path.join(TRACKS_DIR, trackId, 'bugs.md');
-  if (fs.existsSync(bugsPath)) {
-    const bugContent = fs.readFileSync(bugsPath, 'utf8');
-    const openMatches = bugContent.match(/状态[:：]\s*(待验证|待修复|新建|OPEN)/gi);
-    if (openMatches) {
-      data.unresolvedBugs = openMatches.length;
-    }
-  }
+  // 检查 Bug 登记（新格式 bugs/<id>.md 一 Bug 一文件；旧格式单文件 bugs.md 兼容读取）
+  data.unresolvedBugs = countOpenBugs(trackId);
 
   return data;
 }

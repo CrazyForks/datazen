@@ -2,6 +2,7 @@ import { forwardRef } from 'react';
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { AiChatPanel, QuestionBlock } from '../AiChatPanel';
+import { buildKvAiContext } from '../../../lib/kvAiContext';
 import type { AiChatDraftRequest } from '../../../windows/connection/query/aiDraftBridge';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -459,5 +460,91 @@ describe('AiChatPanel — AI Draft Bridge (S3-B2)', () => {
     );
     // Still only 1 call.
     expect(onDraftConsumed).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * W3-A §1.3: on a KV panel the assistant is told the host-owned facts about the
+ * key in scope, and the user sees that before sending. The context is built with
+ * the same source the drawer uses, so this cannot drift from `kvAiContext.ts`.
+ */
+describe('AiChatPanel — KV panel context (W3-A §1.3)', () => {
+  const kvContext = buildKvAiContext({
+    connectionName: 'KV Local',
+    dbSessionId: 'sess-1',
+    database: 'db7',
+    selectedKey: 'user:42',
+  });
+
+  it('sends the question with the host fact block attached', () => {
+    const { getByTestId } = render(
+      <AiChatPanel dbSessionId="sess-1" database="db7" kvContext={kvContext} />,
+    );
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'why is this key big?' } });
+    fireEvent.click(getByTestId('chat-send'));
+
+    const payload = aiState.sendChatMessage.mock.calls[0]?.[0];
+    expect(payload?.dbSessionId).toBe('sess-1');
+    // The block rides inside the message content — there is no KV wire field, and
+    // inventing one would mean a new backend command (out of this track).
+    expect(typeof payload?.content).toBe('string');
+    expect(payload?.content as string).toContain('selected_key=user:42');
+    expect(payload?.content as string).toContain('connection=KV Local');
+    expect(payload?.content as string).toMatch(/^why is this key big\?\n\n\[kv-context\]/);
+  });
+
+  it('shows the egress chip naming the key the block is about', () => {
+    const { getByTestId } = render(
+      <AiChatPanel dbSessionId="sess-1" database="db7" kvContext={kvContext} />,
+    );
+    const chip = getByTestId('ai-kv-context-chip');
+    // Asserted through the data attribute + i18n key: the visible label is copy.
+    expect(chip.getAttribute('data-key-name')).toBe('user:42');
+    expect(chip.textContent).toContain('redis.ai.context.attached');
+  });
+
+  it('sends a plain message and shows no chip without KV context', () => {
+    const { getByTestId, queryByTestId } = render(<AiChatPanel dbSessionId="sess-1" />);
+    expect(queryByTestId('ai-kv-context-chip')).not.toBeInTheDocument();
+
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'hello' } });
+    fireEvent.click(getByTestId('chat-send'));
+    expect(aiState.sendChatMessage).toHaveBeenCalledWith({
+      dbSessionId: 'sess-1',
+      database: undefined,
+      content: 'hello',
+      contextFiles: undefined,
+      contextTables: undefined,
+    });
+  });
+
+  // [tester] The drawer stays open across a key switch (keep-alive tabs): every
+  // send must carry the block for the key in scope *now*, and the chip must
+  // name that key — not the one from when the panel was first opened.
+  it('[tester] follows a key switch between sends', () => {
+    const ctxOrders = buildKvAiContext({
+      connectionName: 'KV Local',
+      dbSessionId: 'sess-1',
+      database: 'db7',
+      selectedKey: 'orders:99',
+    });
+    const { getByTestId, rerender } = render(
+      <AiChatPanel dbSessionId="sess-1" database="db7" kvContext={kvContext} />,
+    );
+
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'first' } });
+    fireEvent.click(getByTestId('chat-send'));
+
+    rerender(<AiChatPanel dbSessionId="sess-1" database="db7" kvContext={ctxOrders} />);
+    expect(getByTestId('ai-kv-context-chip').getAttribute('data-key-name')).toBe('orders:99');
+
+    fireEvent.change(getByTestId('chat-input'), { target: { value: 'second' } });
+    fireEvent.click(getByTestId('chat-send'));
+
+    const first = aiState.sendChatMessage.mock.calls[0]?.[0];
+    const second = aiState.sendChatMessage.mock.calls[1]?.[0];
+    expect(aiState.sendChatMessage).toHaveBeenCalledTimes(2);
+    expect(first?.content as string).toContain('selected_key=user:42');
+    expect(second?.content as string).toContain('selected_key=orders:99');
   });
 });

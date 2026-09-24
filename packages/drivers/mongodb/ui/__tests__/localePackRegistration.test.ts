@@ -60,8 +60,15 @@ describe('[tester] mongodb locale pack self-registration via ui entry module', (
   it('registers the pack through the meta.ts side effect (t() resolves real strings)', () => {
     // Active locale is 'en': only the host wires setLocale, and it does not
     // run in this suite.
-    expect(t('mongo.collections')).toBe('Collections');
-    expect(t('mongo.noIdHint')).toBe('Document must include an _id field to save or delete');
+    //
+    // Expected copy comes from the shipped dictionary, never a hard-coded
+    // English string — `locales/en.ts` is the single source of truth, so a term
+    // rename must not ripple into this file. The key-echo guards below keep
+    // the check honest (an unregistered key would also "equal" its own value).
+    expect(t('mongo.collections')).toBe(en['mongo.collections']);
+    expect(t('mongo.collections')).not.toBe('mongo.collections');
+    expect(t('mongo.noIdHint')).toBe(en['mongo.noIdHint']);
+    expect(t('mongo.noIdHint')).not.toBe('mongo.noIdHint');
     // An unregistered key would echo verbatim — guard against a false green.
     expect(t('mongo.definitelyNotAKey')).toBe('mongo.definitelyNotAKey');
     expect(driverKeysOf('en')).toEqual(Object.keys(en));

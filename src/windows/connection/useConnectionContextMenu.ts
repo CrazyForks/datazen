@@ -222,7 +222,10 @@ export function useConnectionContextMenu({
               kind === 'table' ? () => handlers.handleOpenStructure(name) : undefined,
             onCopyName: kind === 'table' || kind === 'view' ? () => copyText(name) : undefined,
             onCopyDdl: kind === 'table' || kind === 'view' ? () => copyDdl() : undefined,
-            onFocusEr: kind === 'table' ? () => handlers.handleOpenErDiagram(name) : undefined,
+            onFocusEr:
+              kind === 'table'
+                ? () => handlers.handleOpenErDiagram(name, database || undefined)
+                : undefined,
             onExport:
               kind === 'table' || kind === 'view'
                 ? () => requestExport(name, schema ?? null, database)
@@ -286,17 +289,10 @@ export function useConnectionContextMenu({
                       t('schemaTree.truncate'),
                       sql,
                       () => {
-                        const store = useTableDataStore.getState();
-                        if (store.activeTable === name) {
-                          void store.loadTableData({
-                            dbSessionId: ctx.dbSessionId,
-                            table: name,
-                            connectionId: ctx.connectionId,
-                            driverType: ctx.databaseType,
-                            database: currentDatabase,
-                            schema,
-                          });
-                        }
+                        // Drop the cached rows of any open tab on this table; its
+                        // effect re-fetches the truncated page.
+                        useTableDataStore.getState().invalidateCachedData(ctx.dbSessionId, name);
+                        invalidateSchemaCache(ctx.dbSessionId, name);
                       },
                     );
                   }

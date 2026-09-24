@@ -24,7 +24,6 @@ export interface KeyWorkbenchDialogsProps {
   onRefreshKeys: () => void;
   onSelectKey: (key: string) => Promise<void>;
   onClearSelectedKey: () => void;
-  onUpdateSelectedKey: (key: string) => void;
   onUpdateSelectedKeys: (updater: (prev: Set<string>) => Set<string>) => void;
   onBatchSummary: (msg: string) => void;
   createOpen: boolean;
@@ -44,7 +43,6 @@ export function KeyWorkbenchDialogs({
   onRefreshKeys,
   onSelectKey,
   onClearSelectedKey,
-  onUpdateSelectedKey,
   onUpdateSelectedKeys,
   onBatchSummary,
   createOpen,
@@ -196,9 +194,7 @@ export function KeyWorkbenchDialogs({
     try {
       await invokeRename(dbSessionId, dbIndex, keyCtxDialog.key, next);
       closeKeyCtxDialog();
-      if (selectedKey === keyCtxDialog.key) {
-        onUpdateSelectedKey(next);
-      }
+      // The batch-selection rename follows the key itself and is guard-independent.
       onUpdateSelectedKeys((prev) => {
         if (!prev.has(keyCtxDialog.key)) return prev;
         const updated = new Set(prev);
@@ -207,6 +203,11 @@ export function KeyWorkbenchDialogs({
         return updated;
       });
       onRefreshKeys();
+      // BUG-008: ask the guard first, move the selection second. `onSelectKey` is
+      // `handleSelectKeyGuarded` — on 继续编辑 it returns here and `handleSelectKey`
+      // (which owns `setSelectedKey`) never runs. Moving the selection before this
+      // line split `selectedKey` from `keyDetail.key`; `StringEditor` saves with
+      // `detail.key`, so the next 保存 silently wrote the OLD key.
       await onSelectKey(next);
     } catch (err) {
       setKeyCtxError(err instanceof Error ? err.message : String(err));

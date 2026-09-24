@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useI18n } from '../../hooks/useI18n';
 import type { ConnectionOpenTarget } from '../../lib/connectionViews/types';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { useTableDataStore } from '../../stores/tableDataStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import {
   usePanelStore,
@@ -40,7 +41,7 @@ export interface PanelHandlers {
   handleEditTableStructure: (name: string) => void;
   handleOpenStructure: (name: string) => void;
   handleExitStructureEditing: (panelId: string) => void;
-  handleOpenErDiagram: (focus?: string) => void;
+  handleOpenErDiagram: (focus?: string, targetDatabase?: string) => void;
   handleOpenObjects: () => void;
   handleOpenDbObject: (
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
@@ -300,8 +301,11 @@ export function usePanelHandlers({
   );
 
   const handleOpenErDiagram = useCallback(
-    (focus?: string) => {
+    (focus?: string, targetDatabase?: string) => {
       if (!sidebarConnCtx) return;
+      // Target database: an explicit argument (tree context menu) wins; a bare
+      // invocation (toolbar) follows the current selection.
+      const erDatabase = targetDatabase ?? currentDatabase ?? initialDatabase ?? undefined;
       // "Current panel" semantics: the diagram is database-wide, so it inherits
       // the schema of the panel the user is looking at rather than the
       // connection default. Focusing a relation wins over the active panel.
@@ -312,8 +316,13 @@ export function usePanelHandlers({
       const schema = focused ?? panelSchema(active);
       const existing = connPanels.find((p) => p.type === 'er-diagram');
       if (existing) {
+        // Reuse rule: an explicit target or a bare (focus-less) invocation
+        // re-binds the tab; a focus-only call from inside the diagram keeps
+        // the diagram's own database.
+        const rebind = (targetDatabase !== undefined || !focus) && erDatabase !== undefined;
         storeUpdatePanel(existing.id, {
           ...(focus ? { focusTable: focus } : {}),
+          ...(rebind ? { database: erDatabase } : {}),
           schema,
         });
         setActivePanel(existing.id);
@@ -323,6 +332,10 @@ export function usePanelHandlers({
         ...sidebarConnCtx,
         type: 'er-diagram',
         id: nextPanelId('er'),
+        // Bind the target database for the tab's lifetime, the same way query and
+        // table panels do. Reading the session-wide `currentDatabase` at render
+        // time made the diagram silently follow whichever tab was last active.
+        database: erDatabase,
         focusTable: focus,
         schema,
       };
@@ -337,6 +350,8 @@ export function usePanelHandlers({
       addPanel,
       setActivePanel,
       storeUpdatePanel,
+      currentDatabase,
+      initialDatabase,
     ],
   );
 
@@ -616,6 +631,7 @@ export function usePanelHandlers({
 
   const handleRefresh = useCallback(() => {
     if (!sidebarConnCtx?.dbSessionId) return;
+    useTableDataStore.getState().invalidateCachedData(sidebarConnCtx.dbSessionId);
     if (currentDatabase) {
       void loadTables(currentDatabase);
     } else {

@@ -36,6 +36,7 @@ import { PrivilegeView } from './PrivilegeView';
 import { ProcessListView } from './ProcessListView';
 import { ServerStatusView } from './ServerStatusView';
 import type { ContentViewCallbacks } from './query/aiDraftBridge';
+import type { KvSlotState } from '@datazen/driver-sdk';
 
 export interface PanelContentRendererProps {
   activePanel: Panel | null;
@@ -45,7 +46,7 @@ export interface PanelContentRendererProps {
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
   onSelectTable: (table: string, schema: string | null, database: string) => void;
-  onOpenErDiagram: (focus?: string) => void;
+  onOpenErDiagram: (focus?: string, database?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
   resolveTableSchema: (table: string) => string | null;
@@ -53,6 +54,12 @@ export interface PanelContentRendererProps {
   onUpdatePanelData: (panelId: string, data: unknown) => void;
   /** S3-B2: Navigation and AI draft bridge callbacks from ContentView. */
   callbacks?: ContentViewCallbacks;
+  /**
+   * Host-owned selection/dirty atom of a KV panel, forwarded to the driver's
+   * connection view so the workbench can publish what the KV slots read.
+   * Undefined for non-KV panels.
+   */
+  kvSlotState?: KvSlotState;
 }
 
 export function PanelContentRenderer({
@@ -69,6 +76,7 @@ export function PanelContentRenderer({
   resolveTableSchema,
   onUpdatePanelData,
   callbacks,
+  kvSlotState,
 }: PanelContentRendererProps) {
   if (!activePanel) {
     return null;
@@ -89,6 +97,7 @@ export function PanelContentRenderer({
         initialDatabase={kvPanel.dbName}
         hideSidebar
         isActive
+        kvSlotState={kvSlotState}
       />
     );
   }
@@ -120,7 +129,7 @@ interface SqlPanelContentProps {
   onExitStructureEditing: (panelId: string) => void;
   onEditTableStructure: (name: string) => void;
   onSelectTable: (table: string, schema: string | null, database: string) => void;
-  onOpenErDiagram: (focus?: string) => void;
+  onOpenErDiagram: (focus?: string, database?: string) => void;
   onClosePanel: (panelId: string) => void;
   onRefresh: () => void;
   resolveTableSchema: (table: string) => string | null;
@@ -168,6 +177,7 @@ function SqlPanelContent({
         <div className="flex min-h-0 flex-1 flex-col">
           {panel.subTab === 'data' && (
             <TableView
+              panelId={panel.id}
               dbSessionId={panel.dbSessionId}
               database={panel.database ?? currentDatabase ?? ''}
               connectionId={panel.connectionId}
@@ -253,6 +263,7 @@ function SqlPanelContent({
         <div className="flex min-h-0 flex-1 flex-col">
           {(panel as ViewPanel).subTab === 'data' && (
             <TableView
+              panelId={panel.id}
               dbSessionId={panel.dbSessionId}
               connectionId={panel.connectionId}
               database={(panel as ViewPanel).database ?? currentDatabase ?? ''}
@@ -322,16 +333,20 @@ function SqlPanelContent({
     );
   }
 
-  if (panel.type === 'er-diagram' && currentDatabase) {
+  if (panel.type === 'er-diagram') {
+    const erDatabase = (panel as ErDiagramPanel).database ?? currentDatabase;
+    if (!erDatabase) return null;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <ErDiagramView
           dbSessionId={panel.dbSessionId}
-          database={currentDatabase}
+          database={erDatabase}
           schema={(panel as ErDiagramPanel).schema ?? null}
           focusTable={(panel as ErDiagramPanel).focusTable}
           onSelectTable={onSelectTable}
-          onFocusTable={(table) => onOpenErDiagram(table)}
+          // A node focus inside the diagram must keep the diagram's own
+          // database bound, not re-follow the session pointer.
+          onFocusTable={(table) => onOpenErDiagram(table, erDatabase)}
         />
       </div>
     );

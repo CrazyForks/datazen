@@ -7,12 +7,14 @@ import { useTableDataStore } from '../../stores/tableDataStore';
 import { cn } from '../../lib/cn';
 
 interface NlFilterInputProps {
+  /** Table/view panel whose filter state this input drives. */
+  panelId: string;
   dbSessionId: string;
   database: string;
   tableName: string;
 }
 
-export function NlFilterInput({ dbSessionId, database, tableName }: NlFilterInputProps) {
+export function NlFilterInput({ panelId, dbSessionId, database, tableName }: NlFilterInputProps) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -27,9 +29,7 @@ export function NlFilterInput({ dbSessionId, database, tableName }: NlFilterInpu
   const parseFilter = useAiStore((s) => s.parseFilter);
   const clearNlFilter = useAiStore((s) => s.clearNlFilter);
 
-  const setFilters = useTableDataStore((s) => s.setFilters);
-  const clearFilters = useTableDataStore((s) => s.clearFilters);
-  const columns = useTableDataStore((s) => s.columns);
+  const columns = useTableDataStore((s) => s.byPanel.get(panelId)?.columns) ?? [];
 
   useEffect(() => {
     clearNlFilter();
@@ -51,8 +51,9 @@ export function NlFilterInput({ dbSessionId, database, tableName }: NlFilterInpu
 
     if (abortRef.current) return;
 
-    const currentActive = useTableDataStore.getState().activeTable;
-    if (currentActive !== targetTable) return;
+    const slice = useTableDataStore.getState().byPanel.get(panelId);
+    if (slice?.context?.table !== targetTable || slice?.context?.dbSessionId !== dbSessionId)
+      return;
 
     if (filters && filters.length > 0) {
       // Metadata may still be loading when the user parses a filter. Only
@@ -75,7 +76,7 @@ export function NlFilterInput({ dbSessionId, database, tableName }: NlFilterInpu
         }
       }
       setValidationError(null);
-      setFilters(filters);
+      useTableDataStore.getState().setFilters(panelId, filters);
     }
   };
 
@@ -83,7 +84,7 @@ export function NlFilterInput({ dbSessionId, database, tableName }: NlFilterInpu
 
   const handleClear = () => {
     clearNlFilter();
-    clearFilters();
+    useTableDataStore.getState().clearFilters(panelId);
     setValidationError(null);
   };
 

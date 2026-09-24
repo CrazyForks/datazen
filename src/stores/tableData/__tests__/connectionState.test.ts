@@ -1,16 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activeTableContext,
-  buildTableChangeContext,
+  buildTableContext,
   editKey,
-  emptyConnectionTableState,
   emptyTableState,
   extractErrorMessage,
-  flattenActive,
-  getState,
-  patchConnection,
   rowsToRecords,
-  syncFlat,
   toCellValue,
 } from '../connectionState';
 
@@ -21,7 +15,10 @@ describe('[tester] tableData/connectionState', () => {
         { name: 'id', dataType: 'int', isPrimaryKey: true, isNullable: false },
         { name: 'name', dataType: 'text', isPrimaryKey: false, isNullable: true },
       ],
-      [[1, 'Alice'], [2, null]],
+      [
+        [1, 'Alice'],
+        [2, null],
+      ],
     );
     expect(records).toEqual([
       { id: 1, name: 'Alice' },
@@ -36,56 +33,36 @@ describe('[tester] tableData/connectionState', () => {
     expect(extractErrorMessage({}, 'fallback')).toBe('fallback');
   });
 
-  it('flattenActive and patchConnection preserve per-connection slices', () => {
-    const perConnection = new Map<string, ReturnType<typeof emptyConnectionTableState>>();
-    const conn = emptyConnectionTableState();
-    conn.activeTable = 'users';
-    conn.activeTableKey = 'users-key';
-    const tableState = emptyTableState();
-    tableState.rows = [{ id: 1 }];
-    conn.tableStates.set('users-key', tableState);
-    perConnection.set('sess-1', conn);
-
-    const flat = flattenActive(perConnection, 'sess-1');
-    expect(flat.activeTable).toBe('users');
-    expect(flat.rows).toEqual([{ id: 1 }]);
-
-    const patched = patchConnection(perConnection, 'sess-1', { connectionId: 'cfg-1' });
-    expect(patched.get('sess-1')?.connectionId).toBe('cfg-1');
-  });
-
-  it('buildTableChangeContext merges params with connection defaults', () => {
-    const conn = emptyConnectionTableState();
-    conn.connectionId = 'cfg-1';
-    conn.databaseType = 'postgres';
-    conn.activeDatabase = 'app';
-    conn.activeSchema = 'public';
+  it('buildTableContext defaults every optional target field to null', () => {
+    expect(buildTableContext({ dbSessionId: 'sess-1', table: 'users' })).toEqual({
+      connectionId: null,
+      dbSessionId: 'sess-1',
+      driverType: null,
+      database: null,
+      schema: null,
+      table: 'users',
+    });
 
     expect(
-      buildTableChangeContext(conn, { dbSessionId: 'sess-1', table: 'users' }),
+      buildTableContext({
+        dbSessionId: 'sess-1',
+        table: 'users',
+        connectionId: 'cfg-1',
+        driverType: 'postgres',
+        database: 'app',
+        schema: 'sales',
+      }),
     ).toEqual({
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       driverType: 'postgres',
       database: 'app',
-      schema: 'public',
+      schema: 'sales',
       table: 'users',
     });
-
-    expect(
-      buildTableChangeContext(conn, {
-        dbSessionId: 'sess-1',
-        table: 'users',
-        database: 'other',
-        schema: 'sales',
-      }).database,
-    ).toBe('other');
   });
 
-  it('activeTableContext returns context from active table key', () => {
-    const conn = emptyConnectionTableState();
-    expect(activeTableContext(conn)).toBeNull();
-
+  it('emptyTableState starts an unloaded panel with no staged changes', () => {
     const ctx = {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
@@ -94,16 +71,21 @@ describe('[tester] tableData/connectionState', () => {
       schema: null,
       table: 'users',
     };
-    conn.activeTableKey = 'key-1';
-    conn.tableStates.set('key-1', { ...emptyTableState(ctx), context: ctx });
-    expect(activeTableContext(conn)).toEqual(ctx);
+    const ts = emptyTableState(ctx);
+    expect(ts.context).toBe(ctx);
+    expect(ts.columns).toEqual([]);
+    expect(ts.rows).toEqual([]);
+    expect(ts.page).toBe(0);
+    expect(ts.detailRowIndex).toBeNull();
+    expect(ts.pendingChanges.size).toBe(0);
+    expect(ts.requestRevision).toBe(0);
+    expect(ts.loadingRevision).toBeNull();
+    expect(emptyTableState().context).toBeNull();
   });
 
   it('utility helpers behave consistently', () => {
     expect(editKey(2, 'name')).toBe('2:name');
     expect(toCellValue(null)).toBeNull();
     expect(toCellValue('x')).toBe('x');
-    expect(getState(new Map(), null).page).toBe(0);
-    expect(syncFlat(null, null, new Map()).tableName).toBeNull();
   });
 });

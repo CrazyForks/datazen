@@ -56,9 +56,11 @@ describe('Redis key web context menu', () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it('wires RedisWorkbench key rows to showNativeContextMenu with client coords', () => {
+  it('wires key rows to showNativeContextMenu with client coords', () => {
+    // D-0 split moved the row actions out of the workbench wall into the hook
+    // that owns them; the assertion is unchanged (seam + coords, not copy).
     const src = fs.readFileSync(
-      path.resolve(import.meta.dirname, '../key-browser/RedisWorkbench.tsx'),
+      path.resolve(import.meta.dirname, '../key-browser/useKeyRowActions.tsx'),
       'utf8',
     );
     expect(src).toContain('showNativeContextMenu');

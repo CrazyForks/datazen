@@ -20,7 +20,7 @@ export function SettingRow({
 }) {
   return (
     <div className="flex items-start gap-4">
-      <div className="flex min-h-9 w-32 shrink-0 items-center gap-1">
+      <div className="flex min-h-9 w-40 shrink-0 items-center gap-1">
         <span className="min-w-0 text-sm leading-5 text-fg-secondary">{label}</span>
         {hint && <SettingHint label={label} text={hint} />}
       </div>

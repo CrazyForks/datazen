@@ -4,8 +4,9 @@
 # 用法:  bash scripts/ci-local.sh
 # 或  :  pnpm ci:local
 #
-# 逐条镜像 ci.yml 的 jobs.test 步骤（跳过仅 CI runner 需要的 Linux 系统依赖安装，
-# 以及 needs ubuntu 的步骤）。任一步失败立即以非零码退出（set -euo pipefail）。
+# 逐条镜像 ci.yml 的 frontend + rust 两个并行 job 的步骤（本地串行执行；
+# 跳过仅 CI runner 需要的 Linux 系统依赖安装，以及聚合 job ci）。任一步失败
+# 立即以非零码退出（set -euo pipefail）。
 #
 # 可选环境变量:
 #   CI_LOCAL_SKIP_CARGO=1   跳过全部 cargo 测试（仅跑前端 / 守护检查，更快）
@@ -110,19 +111,15 @@ FEATURES="$(node -e "console.log(JSON.parse(require('fs').readFileSync('.driver-
 printf '  cargo features: %s\n' "$FEATURES"
 
 # --------------------------------------------------------------------------
-step "7/11 Rust unit tests (datazen-driver-api --lib)"
-cargo test -p datazen-driver-api --lib || fail "cargo test driver-api"
+step "7/11 Rust unit tests (driver API + basic path drivers, 合并一次 cargo 调用)"
+cargo test --lib -p datazen-driver-api -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis || fail "cargo test driver-api + basic drivers"
 
 # --------------------------------------------------------------------------
 step "8/11 Rust unit tests (datazen --lib --features $FEATURES)"
 cargo test -p datazen --lib --features "$FEATURES" || fail "cargo test datazen"
 
 # --------------------------------------------------------------------------
-step "9/11 Rust unit tests (basic path drivers)"
-cargo test -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis --lib || fail "cargo test basic drivers"
-
-# --------------------------------------------------------------------------
-step "9.5/11 Restore managed files (driver-file-stash restore)"
+step "9/11 Restore managed files (driver-file-stash restore)"
 node scripts/driver-file-stash.mjs restore || fail "driver-file-stash restore"
 
 # --------------------------------------------------------------------------

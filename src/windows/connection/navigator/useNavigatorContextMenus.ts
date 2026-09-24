@@ -461,7 +461,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
               : undefined,
             onNewQuery: () => {
               onSelectConnection(connectionId);
-              useSchemaStore.setState({ currentDatabase: dbName });
+              useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
               viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
@@ -473,7 +473,12 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             },
             onViewErDiagram: () => {
               onSelectConnection(connectionId);
-              viewActions?.openErDiagram?.();
+              // Mirror onNewQuery: pin the clicked database, then pass it
+              // explicitly so a reused ER tab re-binds even if this closure
+              // holds props from a previous render (contextmenu fires without
+              // a preceding click, so no fresh render is guaranteed).
+              useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
+              viewActions?.openErDiagram?.(undefined, dbName);
             },
             onExecuteSqlFile:
               viewActions?.openSqlFile && !readOnly && !safeMode
@@ -491,7 +496,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             onCreateSchema: dbMeta?.supportsCreateSchema
               ? () => {
                   onSelectConnection(connectionId);
-                  useSchemaStore.setState({ currentDatabase: dbName });
+                  useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
                   viewActions?.openCreateSchema?.();
                 }
               : undefined,
@@ -648,7 +653,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             },
             onNewQuery: () => {
               onSelectConnection(connectionId);
-              useSchemaStore.setState({ currentDatabase: dbName });
+              useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
               viewActions?.newQuery?.(undefined, { database: dbName, schema: null });
             },
             onQueryHistory: () => {
@@ -673,7 +678,9 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             },
             onViewErDiagram: () => {
               onSelectConnection(connectionId);
-              viewActions?.openErDiagram?.();
+              // Same contract as the database menu: pin + explicit target.
+              useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
+              viewActions?.openErDiagram?.(undefined, dbName);
             },
             onDropSchema:
               dbSessionId && !schemaName.startsWith('pg_') && schemaName !== 'information_schema'
@@ -773,7 +780,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
 
       const handleGenerateTableSql = async (type: GeneratedSqlType) => {
         onSelectConnection(connectionId);
-        useSchemaStore.setState({ currentDatabase: dbName });
+        useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
         await activateDatabase(dbSessionId, dbName);
         const dbType = conn?.databaseType ?? 'postgresql';
         const schemaState = useSchemaStore.getState().schemas.get(dbSessionId);
@@ -796,7 +803,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
 
       const handleGenerateDdl = async () => {
         onSelectConnection(connectionId);
-        useSchemaStore.setState({ currentDatabase: dbName });
+        useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
         try {
           let ddl = '';
           try {
@@ -876,12 +883,14 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
               kind === 'table' && supportsErDiagram
                 ? () => {
                     onSelectConnection(connectionId);
-                    viewActions?.openErDiagram?.(name);
+                    // Explicit database: pass the right-clicked table's own
+                    // database so a reused ER tab re-binds to it.
+                    viewActions?.openErDiagram?.(name, dbName);
                   }
                 : undefined,
             onNewQuery: () => {
               onSelectConnection(connectionId);
-              useSchemaStore.setState({ currentDatabase: dbName });
+              useSchemaStore.getState().setCurrentDatabase(dbName, dbSessionId);
               if (kind === 'table') {
                 const query = buildQueryOpenContext(
                   {
