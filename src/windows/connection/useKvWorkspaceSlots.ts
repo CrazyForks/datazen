@@ -51,6 +51,14 @@ export interface KvKeyPropsSidebarBinding {
 export interface KvConnectionHomeBinding {
   Component: ComponentType<ConnectionHomeSlotProps>;
   props: ConnectionHomeSlotProps;
+  /**
+   * Host-supplied 屏 A → 屏 B jump bridge.
+   *
+   * When present the driver overview's Quick Actions / Key Space / Big Key /
+   * Recent Key clicks are "wired" and navigate to 屏 B. When absent the
+   * overview degrades to a guidance hint (overviewNavigation planOverviewJump).
+   */
+  onOpenTarget?: (target: { kind: string; dbIndex?: number; key?: string; keyType?: string | null; section?: string }) => void;
 }
 
 export interface KvWorkspaceSlots {
@@ -89,6 +97,11 @@ export interface UseKvWorkspaceSlotsArgs {
    * the memoised props bundle the driver slots memo on.
    */
   onSlotAction: (action: KvSlotAction) => void;
+  /**
+   * Host callback to open/activate a database panel (ConnectionPage's
+   * `handleSelectKvDb`). Used by the 屏 A → 屏 B jump bridge.
+   */
+  onSelectKvDb?: (database: string) => void;
 }
 
 /**
@@ -121,6 +134,7 @@ export function useKvWorkspaceSlots({
   connectionContext,
   initialDatabase,
   onSlotAction,
+  onSelectKvDb,
 }: UseKvWorkspaceSlotsArgs): KvWorkspaceSlots {
   const panelMeta = databaseType ? DB_REGISTRY[databaseType] : undefined;
   const dbIndex = resolveKvDatabaseIndex(panelMeta, database);
@@ -181,6 +195,40 @@ export function useKvWorkspaceSlots({
       'connectionHome',
     );
     if (!Component) return undefined;
+
+    // 屏 A → 屏 B jump bridge: translate the driver's OverviewJumpTarget into
+    // host-level panel-opening actions. When the host did not thread
+    // `onSelectKvDb`, every jump degrades to a hint (the driver's
+    // `planOverviewJump` handles the fallback).
+    const onOpenTarget = onSelectKvDb
+      ? (target: { kind: string; dbIndex?: number; key?: string; keyType?: string | null; section?: string }) => {
+          switch (target.kind) {
+            case 'database':
+            case 'newKey':
+            case 'key': {
+              // Open / activate the db panel for the target database.
+              const dbNum = typeof target.dbIndex === 'number' ? target.dbIndex : 0;
+              onSelectKvDb(`db${dbNum}`);
+              // TODO: for 'key' jumps also select the specific key in the workbench.
+              break;
+            }
+            case 'console':
+            case 'pubsub':
+            case 'monitor':
+            case 'importExport': {
+              // These targets belong to an already-open panel. Open the
+              // default database panel (db0) — the user can then switch tabs
+              // via the panel UI. A follow-up can refine this by threading a
+              // "pending tab" state into the panel.
+              onSelectKvDb(initialDatabase ?? 'db0');
+              break;
+            }
+            default:
+              console.warn('[kvSlots] unhandled overview jump target:', target);
+          }
+        }
+      : undefined;
+
     return {
       Component,
       props: {
@@ -190,8 +238,9 @@ export function useKvWorkspaceSlots({
         databaseType: homeContext.databaseType,
         initialDatabase,
       },
+      onOpenTarget,
     };
-  }, [homeContext, initialDatabase]);
+  }, [homeContext, initialDatabase, onSelectKvDb]);
 
   return { contextBar, statusBar, keyPropsSidebar, connectionHome, panelState };
 }

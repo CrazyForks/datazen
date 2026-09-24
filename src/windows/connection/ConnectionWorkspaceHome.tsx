@@ -292,7 +292,8 @@ export function ConnectionWorkspaceHome({
           data-slot="kv-connection-home"
           data-testid="home-kv-connection-home"
         >
-          <ConnectionHome {...connectionHomeSlot.props} />
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- RedisOverviewHome extends ConnectionHomeSlotProps with onOpenTarget */}
+          <ConnectionHome {...(connectionHomeSlot.props as any)} {...(connectionHomeSlot.onOpenTarget ? { onOpenTarget: connectionHomeSlot.onOpenTarget } : {})} />
         </div>
       </div>
     );

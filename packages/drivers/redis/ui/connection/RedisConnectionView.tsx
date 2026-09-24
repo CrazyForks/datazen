@@ -7,25 +7,23 @@ import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
 import { RedisConsole } from '../console/RedisConsole';
 import { MonitorPanel } from '../observe/MonitorPanel';
 import { PubSubPanel } from '../observe/PubSubPanel';
-import { SlowlogPanel } from '../observe/SlowlogPanel';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
 import { requestDraftLeave } from '../shared/draftGuard';
 
 /**
- * 右列一级页签（裁定 8-1 = **5 枚**：键详情 / 命令行 / 发布订阅 / 监控 / 慢日志）。
- * 慢日志由 `MonitorPanel` 的二极子页升为一级，独立组件见 `observe/SlowlogPanel`。
+ * 右列一级页签（裁定 8-1 = **4 枚**：键详情 / 命令行 / 发布订阅 / 监控）。
+ * 慢日志作为 Monitor 的子页签，不再独立为一级 Tab。
  */
-export type ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor' | 'slowlog';
+export type ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor';
 
 /** 页签顺序即 PRD §3.3 右列页签条顺序（发布订阅在监控之前）。 */
-export const TABS: ActiveTab[] = ['items', 'console', 'pubsub', 'monitor', 'slowlog'];
+export const TABS: ActiveTab[] = ['items', 'console', 'pubsub', 'monitor'];
 
 const TAB_LABEL_KEYS: Record<ActiveTab, string> = {
   items: 'redis.items',
   console: 'redis.console',
   monitor: 'redis.monitor',
   pubsub: 'redis.pubsub',
-  slowlog: 'redis.slowlog',
 };
 
 function parseRedisDbIndex(database?: string): number {
@@ -172,11 +170,6 @@ export function RedisConnectionView({
       {visitedTabs.includes('pubsub') && (
         <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'pubsub' && 'hidden')}>
           <PubSubPanel dbSessionId={dbSessionId} />
-        </div>
-      )}
-      {visitedTabs.includes('slowlog') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'slowlog' && 'hidden')}>
-          <SlowlogPanel dbSessionId={dbSessionId} />
         </div>
       )}
     </div>
