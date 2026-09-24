@@ -1,6 +1,6 @@
 # Track e2e-spec-rest — progress
 
-- **Phase: READY_FOR_TEST**
+- **Phase: READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。）
 - Rescue mode: TEST-CASE-side fixes only (no app code, no shared e2e files).
 - Evidence log (read-only): `/var/folders/2y/5w1_2qg97r7b9bfv20b4nybh0000gn/T/dsh-subprocess-ZGoJj1/dsh-subprocess-35692-3-34e6b482ee2a-stdout.log` (quoted as `log:<line>`).
 - Full E2E re-run NOT performed (no compiled webdriver binary in this worktree) → parent harness must run the suite.
@@ -24,6 +24,25 @@ fixed under its rules** (shared/other-track files are read-only here):
 **Request to coordinator:** waive criterion (1) for this track (evidence: byte-identical
 baseline + zero errors in the 7 target files), or open a separate shared-file cleanup
 track for `e2e/helpers.ts` + `e2e/lib/**` + the remaining specs.
+
+**Tester 独立实测（round 1，零信任复跑，@ dc2185620）：**
+
+- 生成物已备（`node scripts/generate-builtin-locales.mjs` 正常），连续两次
+  `npx tsc --noEmit -p e2e/tsconfig.json` 输出**逐字节一致**：exit 2，**99 行输出 =
+  70 条主错误（`error TS` 行）+ 29 条类型详情续行**。自报「99 pre-existing error
+  lines」按总行数计，与独立实测对账一致（口径差异仅为「主错误 vs 含续行总行数」）。
+- 7 个目标 spec：**0 错误** ✓。
+- 基线回环（7 spec 临时 checkout 至父提交 `dc2185620^` 重跑后立即恢复，工作区已
+  clean）：**101 行 / 72 条主错误**；`diff` 基线 vs HEAD 输出的**唯一差异**恰为
+  `e2e/specs/workflow-window.ts(368,9)` 与 `(384,11)` 两条 TS2365 →
+  **零新增错误、净 −2**，与自报一致。
+- 错误分布全部落在本轨改窗外：navigator-context-menu 14、ai-context-tables 6、
+  homepage-features 4、helpers.ts 4、mysql/multi-database/main-window/drag-drop-
+  groups/connection-window 各 3、sqlite/ops-process-server/i18n-10-locales/
+  data-dashboard-sql-add/data-dashboard-refresh 各 2、其余 17 文件各 1（含
+  `lib/screenshotTrace` / `lib/testDataLifecycle`）——与 §1 豁免说明一致。
+- 未复核项：自报中「main checkout `73822e02` 57 primary errors」一句在主 checkout
+  上验证（本轨规则不触碰主 checkout），仅作为背景陈述采信，不进入本轨验收依据。
 
 ## 2. Per-spec root causes and fixes (all 7)
 
@@ -189,6 +208,23 @@ protocol interaction). No app code was modified.
    databases.
 4. **tsc baseline debt** (criterion 1): fix `e2e/helpers.ts` ×4 + `e2e/lib/**` ×2 +
    remaining specs, or gate CI on the changed-files subset; see §1.
+5. **`e2e/helpers.ts` → `expandNewConnectionSshSection()`** (:120): still selects the
+   stale `[data-testid="new-conn-ssh-toggle"]`, which exists nowhere in `src/`; its only
+   caller is `e2e/specs/client-parity.ts:268`. `client-parity.ts` was **not part of**
+   this full-run suite (no RUNNING line in the evidence log), so it did not fail this
+   round — latent same-root-cause breakage, matching CM-002's diagnosis. When shared
+   files open up, switch it to the `new-conn-tunnel-toggle` flow.
+6. **Split-brain leak is bigger than `query-history.ts`** (Tester finding, evidence
+   from the read-only log): object-browser [0-16] (4 passing, 8.1s) left a leaked
+   `conn_e2e_pg` session bound to its dropped worker DB `e2e_w22915_0_h9pi`; the backend
+   then logged a dead-database error storm **09:36:50–09:39:03** (`log:3316–3610`) whose
+   window overlaps this run's other failures — object-filter [0-17] (2 failing),
+   ops-ddl-backup [0-18] (1 failing), ops-process-server [0-19], and QH-002 [0-22].
+   Additionally navigator-context-menu's failure carries the same signature against a
+   different dead worker DB (`e2e_w18868_0_4r71`, `log:3227-3229`, re-printed
+   `log:10206-10207`). The `query-history.ts`-local cleanup (§2.3a) protects only that
+   spec; item 3 above (global `before()` guard) is the real closure. Out of this
+   track's edit scope — for coordinator dispatch.
 
 ## 5. Changed files (this track)
 
@@ -203,3 +239,56 @@ protocol interaction). No app code was modified.
 
 No app code (`src/`, `src-tauri/`, `packages/`) and no shared e2e files
 (`e2e/helpers.ts`, `e2e/wdio.conf.ts`, `e2e/lib/**`) were touched.
+
+Tester round 1 additionally hardened `e2e/specs/sql-editor-productivity.ts`
+SE-PROD-020 with the same doc-sync/selection-landed `waitUntil` guards as SE-PROD-021
+(latent same-root-cause race; assertions unchanged, zero-text locators only) and added
+`bugs/README.md`. Still no app code and no shared e2e files touched.
+
+## 6. E2E 登记表（Tester 阶段 C）
+
+前置条件（复跑任一本轨用例均需要）：`pnpm tauri:build:webdriver` 产出的 webdriver
+binary + `node scripts/generate-builtin-locales.mjs` + 可用的 Postgres 测试库
+（`E2E_PG_DB` / `E2E_WORKER_SCHEMA`，由 `e2e/setup-e2e-env.sh` 置备）。本 worktree
+为 binary-free，故本机一律不执行。
+
+| spec | 本轮失败用例（Rescuer 已修） | 受改动波及 / 连带用例 | 状态 |
+| --- | --- | --- | --- |
+| `journeys/query-row-limit-journey.ts` | QLIMIT-003、QLIMIT-004、QLIMIT-005（均死于 `openQueryTab` 入口） | QLIMIT-001、QLIMIT-002、QLIMIT-006（共享 `before()` 与顺序依赖） | 【留待 R 回归】 |
+| `new-connection.ts` | CM-002「展开高级设置应显示 SSL、分组和 SSH 选项」 | 该 describe 内全部用例（走同一新建连接对话框） | 【留待 R 回归】 |
+| `query-history.ts` | QH-002 | QH-001、QH-003～QH-005（`before()` 新增泄漏会话清理，影响整个 spec） | 【留待 R 回归】 |
+| `sql-editor-productivity.ts` | SE-PROD-021 | SE-PROD-020（Tester 加固同根因遗留竞态，断言未改）及同 spec 其余 SE-PROD-* | 【留待 R 回归】 |
+| `sql-query.ts` | SQ-001、SQ-012 | before()/after() 连接管理不变，仅两条用例体内改动 | 【留待 R 回归】 |
+| `wapps.spec.ts` | J1-001、J4-001、J4-002、J5-001 | 全部经 `sampleCard()` / `waitForSampleCard()` 的用例 | 【留待 R 回归】 |
+| `workflow-window.ts` | 「执行后默认显示第一个 step 结果」 | 同 spec 历史记录计数用例（`:368/:384` 类型修复，runtime-identical） | 【留待 R 回归】 |
+
+复跑入口（R 回归一次覆盖本轨全部 7 spec）：
+
+```bash
+pnpm e2e:skip-build -- --spec journeys/query-row-limit-journey.ts,new-connection.ts,query-history.ts,sql-editor-productivity.ts,sql-query.ts,wapps.spec.ts,workflow-window.ts
+```
+
+## 7. Tester 验证记录（round 1）
+
+- **阶段 A（审查）**：`git show dc2185620` 确认仅 8 个文件（7 spec + 本文件，+444/−61），
+  未触碰 `src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、
+  `e2e/lib/**`。8 处根因自报（§2.1–2.7 + workflow-window）逐条对照失败日志与
+  `src/` 现行实现**独立复核全部成立**：QLIMIT 会话被 `browser.url()` 全量刷新摧毁 ✓；
+  CM-002 `new-conn-ssh-toggle` 为陈旧 testid、现行流为 tunnel-toggle→inline ✓
+  （placeholder `ssh.example.com` 系源码字面量，非 i18n，零文案规则不适用）✓;
+  QH-002 split-brain 会话绑定已销毁 worker DB（日志 `database "e2e_w22915_0_h9pi"
+  does not exist`）✓；SE-PROD-021 陈旧 doc 静默跳过 dispatch（日志 `Expected: >= 3
+  Received: 1`）✓；SQ-001 应用侧 cancel 链路正确（09:56:46.688 `cancel_query` →
+  `Query cancelled`），卡死在 WebKit WebDriver 协议层，in-page click 绕过不掩盖应用
+  回归 ✓；SQ-012 会话不在 `E2E_PG_DB`、`CREATE SCHEMA IF NOT EXISTS` 前置合理 ✓；
+  wapps `wapp-card` 为陈旧 testid、现行为 `extension-card[data-wapp-id]`（4 失败用例
+  J1-001/J4-001/J4-002/J5-001 均经同一 `waitForSampleCard`）✓；workflow-window 断言
+  违背 `workflowStepResultOrder` 默认 `'desc'`（`settingsStore.ts:47` + 单测背书）✓。
+- **阶段 B（独立复验）**：tsc 门实测见 §1「Tester 独立实测」——与自报零差异（口径已对账）。
+  未跑 vitest：Rescuer 改动 0 个生产文件，`src/**` 与 `npx vitest run` 的被测面完全
+  未变（HEAD 工作区生产代码与基线逐文件相同），覆盖率数字改动前后不变、不适用
+  ≥80% 判据。
+- **阶段 C（补齐）**：E2E 登记表见 §6；测试侧加固 SE-PROD-020（同根因遗留竞态，
+  零文案断言，原断言 `≥2` 未改）；§4 新增 2 条共享文件/跨轨发现。
+- **阶段 D（判定）**：无新增 Bug（`bugs/README.md` 记录「第 1 轮：无」）。
+- **测试 commit**：见下方「测试 commit」行（本轮两次提交：主提交 + hash 回填）。

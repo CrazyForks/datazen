@@ -269,7 +269,31 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
 
   it('SE-PROD-020: Mod+D 应选择下一个匹配项', async () => {
     await setEditorContent('SELECT test_col, test_col, test_col FROM t');
-    await browser.pause(300);
+    // Same stale-doc race as SE-PROD-021 (latent here — this case passed the
+    // failing run only by timing luck): setEditorContent writes through the DOM
+    // while CodeMirror's state document syncs asynchronously. Dispatching the
+    // selection against a stale doc silently finds no 'test_col' (indexOf === -1
+    // → the dispatch below is skipped) and leaves a collapsed cursor, so Mod+D
+    // would select nothing. Wait for the observable state instead of a fixed
+    // pause. [tester]
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const editors = Array.from(document.querySelectorAll('.cm-editor'));
+          for (let i = editors.length - 1; i >= 0; i--) {
+            const view = (editors[i] as any)?.cmView?.view;
+            if (
+              view &&
+              view.state.doc
+                .toString()
+                .includes('SELECT test_col, test_col, test_col FROM t')
+            )
+              return true;
+          }
+          return false;
+        }),
+      { timeout: 5000, timeoutMsg: 'editor state doc did not sync to SE-PROD-020 content' },
+    );
 
     // Select the first 'test_col'
     await browser.execute(() => {
@@ -289,7 +313,25 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
         cmView.dispatch({ selection: { anchor: idx, head: idx + 8 } });
       }
     });
-    await browser.pause(200);
+    // Confirm the initial selection dispatch actually landed before pressing
+    // Mod+D — otherwise the key press would act on a collapsed cursor. [tester]
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const editors = Array.from(document.querySelectorAll('.cm-editor'));
+          for (let i = editors.length - 1; i >= 0; i--) {
+            const view = (editors[i] as any)?.cmView?.view;
+            if (!view) continue;
+            const ranges = view.state.selection.ranges;
+            if (ranges.length !== 1) continue;
+            return (
+              view.state.doc.sliceString(ranges[0].from, ranges[0].to) === 'test_col'
+            );
+          }
+          return false;
+        }),
+      { timeout: 5000, timeoutMsg: 'initial test_col selection did not land for SE-PROD-020' },
+    );
 
     // Press Mod+d to select next occurrence
     await browser.keys(['Meta', 'd']);
