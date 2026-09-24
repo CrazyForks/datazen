@@ -291,4 +291,5 @@ pnpm e2e:skip-build -- --spec journeys/query-row-limit-journey.ts,new-connection
 - **阶段 C（补齐）**：E2E 登记表见 §6；测试侧加固 SE-PROD-020（同根因遗留竞态，
   零文案断言，原断言 `≥2` 未改）；§4 新增 2 条共享文件/跨轨发现。
 - **阶段 D（判定）**：无新增 Bug（`bugs/README.md` 记录「第 1 轮：无」）。
-- **测试 commit**：见下方「测试 commit」行（本轮两次提交：主提交 + hash 回填）。
+- **测试 commit**：`570d8c087` — `test(e2e): verify e2e-spec-rest with integration tests`
+  （本行 hash 固化于随后的回填提交）。
