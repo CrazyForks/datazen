@@ -1,6 +1,6 @@
 # migration-schema-unified-planner
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
 
 - Task: One reviewed Schema Diff deployment plan across selected object kinds
 - Branch: `feature/migration-schema-unified-planner`
@@ -45,7 +45,7 @@ An unselected dependency may be accepted only when the target snapshot proves it
 
 ## Independent Tester
 
-The previous independent WDIO run failed on `BUG-003` and `BUG-004`. `BUG-003` is now fixed in commit `b36a2bee` and awaits a fresh independent re-test; `BUG-004` remains an open MySQL view-catalog blocker. Run real UI/IPC WDIO and live catalog checks before changing either status. `SERIAL`/`BIGSERIAL` creation is supported only when exact driver ownership/default usage metadata and a selected owner table operation prove the staged plan; unsupported/malformed attribution blocks before writes.
+The fresh round-2 tester confirmed the PostgreSQL fix in `b36a2bee` with both live catalog assertions and real UI/IPC WDIO. `BUG-004` remains an open MySQL view-catalog blocker, so the track still fails the cross-dialect acceptance gate. `SERIAL`/`BIGSERIAL` creation is supported only when exact driver ownership/default usage metadata and a selected owner table operation prove the staged plan; unsupported/malformed attribution blocks before writes.
 
 ### Tester checkpoint · 2026-09-25
 
@@ -112,3 +112,15 @@ The previous independent WDIO run failed on `BUG-003` and `BUG-004`. `BUG-003` i
 - The live regression passed 1/1: the no-reference PL/pgSQL passthrough function reports `complete=true` and an empty dependency array; the function containing a hidden table read reports `complete=false`; and the table snapshot returns the exact `public.<fixture enum>` identity.
 - The fixture drops only its four exact UUID objects and then queries the PostgreSQL catalogs to assert the enum type, table, and both functions are all absent. This teardown check passed. The first sandboxed connection attempt failed with `Operation not permitted`; rerunning with approved local-loopback access passed. No application target objects or shared fixture objects were touched.
 - Unified WDIO retest and BUG-003 status remain pending; this checkpoint alone does not close BUG-003.
+
+### Fresh Tester R2 unified WDIO result · 2026-09-25 · `TEST_FAILED`
+
+- Reviewed the `b36a2bee` fix diff. The view validator allows one trailing terminator while rejecting additional statements; PostgreSQL user-defined column types retain `udt_schema`/`udt_name`; routine dependencies remain fail-closed except the exact PL/pgSQL `BEGIN RETURN NEW; END[;]` empty-dependency proof. No additional issue was found in the reviewed patch.
+- Built the verification app once with the required `pnpm tauri:build:webdriver`, `DATAZEN_DRIVERS=postgres,mysql,sqlite`, an absolute worktree-local `CARGO_TARGET_DIR`, `CARGO_INCREMENTAL=0`, and `CARGO_PROFILE_{DEV,TEST}_DEBUG=0`. The frontend and app binary compiled; the command exited 1 only in the final `bundle_dmg.sh` step, which is explicitly excluded. The app binary and `.app` bundle were available for WDIO. This build was not coverage-instrumented; no command-layer runtime profile is claimed for this round.
+- Ran `e2e/specs/schema-diff-unified-planner.ts` directly with `E2E_SKIP_WORKER_DATABASE=1`, `E2E_SKIP_TEARDOWN=1`, isolated port `49177`, and an isolated app data directory. No global worker database setup, teardown, or shared-fixture reset ran.
+- PostgreSQL WDIO passed 2/2. The positive case inspected one reviewed order (custom type and unowned sequence before the owner table; owner phase and FK after required tables; function before trigger; view after its dependencies), deployed the plan, and read back the type, sequence ownership, tables, FK, function, trigger, and view. The invalid unselected-view-dependency case kept deploy disabled and observed zero target objects.
+- MySQL WDIO failed 2/2 at the already registered `BUG-004`: `information_schema.views` held one fixture row, while object listing returned no match because the query failed with `1064 (42000)` near `schema, TABLE_NAME AS name`. The positive and negative journeys therefore stop at catalog discovery before planning.
+- All four unique fixture journeys reported exact source and target cleanup counts of 0/0. The isolated app was terminated by the wrapper after WDIO. Redacted WDIO output is preserved at `target/cargo-unified-planner-tester/wdio-r2-unified-planner.log`; app output is at `target/cargo-unified-planner-tester/wdio-r2-app.log`.
+- Changed-core line coverage previously measured in this track remains Host planner 85.0%, migration helper 86.6%, and changed Driver API catalog 85.5%. It was measured before `b36a2bee`; this non-instrumented app rerun did not produce an updated coverage report, so those figures do not establish coverage for the new fix lines. Existing unified command-layer unit-only coverage is 7/830 (0.8%).
+- Status: `BUG-003` is now `已修复` based on its live catalog regression and both passing PostgreSQL WDIO journeys. `BUG-004` remains `待修复`; the track stays `FAILED` and the tester result is `TEST_FAILED` until MySQL listing and its positive/negative journeys pass.
+- Tester report commits: `17567f43` closes `BUG-003` after independent PostgreSQL retest; `97da20b4` records the repeat `BUG-004` MySQL blocker. The progress checkpoint is committed separately.
