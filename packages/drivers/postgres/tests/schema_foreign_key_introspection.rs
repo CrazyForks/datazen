@@ -114,7 +114,10 @@ async fn selected_table_schema_preserves_foreign_key_metadata() {
         source_schema.foreign_keys[0].columns,
         vec!["parent_id".to_string()]
     );
-    assert_eq!(source_schema.foreign_keys[0].referenced_table, parent);
+    assert_eq!(
+        source_schema.foreign_keys[0].referenced_table,
+        format!("public.{parent}")
+    );
     assert_eq!(
         source_schema.foreign_keys[0].referenced_columns,
         vec!["id".to_string()]

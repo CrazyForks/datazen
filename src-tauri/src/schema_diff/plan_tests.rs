@@ -210,9 +210,11 @@ fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
 fn explicit_target_only_picker_does_not_invent_source_snapshot() {
     let source = schema(vec![col("id", "integer")]);
     let target = schema(vec![col("id", "integer")]);
-    let plan = build_schema_diff_plan_with_target_only(
+    let target_catalog = vec![("archive".into(), schema(vec![col("id", "integer")]))];
+    let plan = build_schema_diff_plan_with_target_only_catalog(
         &[("users".into(), source, target)],
         &["archive".into()],
+        Some(&target_catalog),
         "postgresql",
         "postgresql",
         PlanOptions {
@@ -459,28 +461,32 @@ fn existing_table_foreign_key_difference_creates_an_add_operation() {
 
 #[test]
 fn target_only_tables_drop_child_before_selected_parent_on_both_dialects() {
-    let tables = vec!["a_parent".into(), "z_child".into()];
-    let parent_schema = schema(vec![col("id", "int")]);
-    let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
-    child_schema.foreign_keys.push(ForeignKeyInfo {
-        name: "fk_child_parent".into(),
-        columns: vec!["parent_id".into()],
-        referenced_table: "a_parent".into(),
-        referenced_columns: vec!["id".into()],
-        on_update: "NO ACTION".into(),
-        on_delete: "NO ACTION".into(),
-        deferrability: ForeignKeyDeferrability::NotDeferrable,
-    });
-    let target_schemas = vec![
-        ("a_parent".into(), parent_schema),
-        ("z_child".into(), child_schema),
-    ];
-
     for dialect in ["postgresql", "mysql"] {
-        let plan = build_schema_diff_plan_with_target_only_schemas(
+        let (parent, child, parent_ref) = if dialect == "postgresql" {
+            ("public.a_parent", "public.z_child", "public.a_parent")
+        } else {
+            ("a_parent", "z_child", "a_parent")
+        };
+        let tables = vec![parent.to_string(), child.to_string()];
+        let parent_schema = schema(vec![col("id", "int")]);
+        let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+        child_schema.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: parent_ref.into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        });
+        let target_schemas = vec![
+            (parent.to_string(), parent_schema),
+            (child.to_string(), child_schema),
+        ];
+        let plan = build_schema_diff_plan_with_target_only_catalog(
             &[],
             &tables,
-            &target_schemas,
+            Some(&target_schemas),
             dialect,
             dialect,
             PlanOptions {
@@ -508,6 +514,350 @@ fn target_only_tables_drop_child_before_selected_parent_on_both_dialects() {
 }
 
 #[test]
+fn pg_target_schema_context_resolves_bare_selected_names_to_qualified_catalog_identity() {
+    let parent_schema = schema(vec![col("id", "int")]);
+    let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    child_schema.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "public.parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let catalog = vec![
+        ("public.parent".into(), parent_schema),
+        ("public.child".into(), child_schema),
+    ];
+    let plan = build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
+        &[],
+        &["parent".into(), "child".into()],
+        Some(&catalog),
+        "postgresql",
+        "postgresql",
+        None,
+        Some("public"),
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert_eq!(plan.statements.len(), 2, "{:?}", plan.statements);
+    let child_drop = plan
+        .statements
+        .iter()
+        .position(|statement| statement.summary.ends_with("child"))
+        .expect("child DROP TABLE");
+    let parent_drop = plan
+        .statements
+        .iter()
+        .position(|statement| statement.summary.ends_with("parent"))
+        .expect("parent DROP TABLE");
+    assert!(child_drop < parent_drop, "{:?}", plan.statements);
+
+    let blocked = build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
+        &[],
+        &["parent".into()],
+        Some(&catalog),
+        "postgresql",
+        "postgresql",
+        None,
+        Some("public"),
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+    assert!(blocked.statements.is_empty(), "{:?}", blocked.statements);
+    assert!(
+        blocked.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { operation, reason }
+                if operation == "target-only-table-drop-order"
+                    && reason.contains("unselected target table")
+        )),
+        "{:?}",
+        blocked.requirements
+    );
+}
+
+#[test]
+fn target_only_parent_drop_is_blocked_when_dependent_child_is_unselected() {
+    for dialect in ["postgresql", "mysql"] {
+        let (parent, child, parent_ref) = if dialect == "postgresql" {
+            ("public.parent", "public.child", "public.parent")
+        } else {
+            ("parent", "child", "parent")
+        };
+        let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+        child_schema.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: parent_ref.into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        });
+        let selected_child = if dialect == "postgresql" {
+            "public.selected_child"
+        } else {
+            "selected_child"
+        };
+        let source_selected_child = schema(vec![col("id", "int"), col("parent_id", "int")]);
+        let mut target_selected_child = source_selected_child.clone();
+        target_selected_child.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_selected_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: parent_ref.into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        });
+        let catalog = vec![
+            (parent.to_string(), schema(vec![col("id", "int")])),
+            (child.to_string(), child_schema),
+            (selected_child.to_string(), target_selected_child.clone()),
+        ];
+        let plan = build_schema_diff_plan_with_target_only_catalog(
+            &[(
+                selected_child.into(),
+                source_selected_child,
+                target_selected_child,
+            )],
+            &[parent.to_string()],
+            Some(&catalog),
+            dialect,
+            dialect,
+            PlanOptions {
+                allow_destructive: true,
+                ..PlanOptions::default()
+            },
+        );
+
+        assert!(
+            plan.statements.is_empty(),
+            "{dialect}: {:?}",
+            plan.statements
+        );
+        assert!(
+            plan.requirements.iter().any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Unsupported { operation, reason }
+                    if operation == "target-only-table-drop-order"
+                        && reason.contains("unselected target table")
+                        && reason.contains("select the dependent table")
+            )),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn paired_child_does_not_hide_a_foreign_key_retained_by_the_source() {
+    for dialect in ["postgresql", "mysql"] {
+        let (parent, child, parent_ref) = if dialect == "postgresql" {
+            ("public.parent", "public.child", "public.parent")
+        } else {
+            ("parent", "child", "parent")
+        };
+        let mut child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+        child_schema.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: parent_ref.into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        });
+        let catalog = vec![
+            (parent.to_string(), schema(vec![col("id", "int")])),
+            (child.to_string(), child_schema.clone()),
+        ];
+        let plan = build_schema_diff_plan_with_target_only_catalog(
+            &[(child.into(), child_schema.clone(), child_schema)],
+            &[parent.to_string()],
+            Some(&catalog),
+            dialect,
+            dialect,
+            PlanOptions {
+                allow_destructive: true,
+                ..PlanOptions::default()
+            },
+        );
+
+        assert!(
+            plan.statements.is_empty(),
+            "{dialect}: {:?}",
+            plan.statements
+        );
+        assert!(
+            plan.requirements.iter().any(|requirement| matches!(
+                requirement,
+                PlanRequirement::Unsupported { operation, reason }
+                    if operation == "target-only-table-drop-order"
+                        && reason.contains("select the dependent table")
+            )),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn paired_child_can_remove_its_foreign_key_before_parent_drop() {
+    for dialect in ["postgresql", "mysql"] {
+        let (parent, child, parent_ref) = if dialect == "postgresql" {
+            ("public.parent", "public.child", "public.parent")
+        } else {
+            ("parent", "child", "parent")
+        };
+        let source_child = schema(vec![col("id", "int"), col("parent_id", "int")]);
+        let mut target_child = source_child.clone();
+        target_child.foreign_keys.push(ForeignKeyInfo {
+            name: "fk_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: parent_ref.into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        });
+        let catalog = vec![
+            (parent.to_string(), schema(vec![col("id", "int")])),
+            (child.to_string(), target_child.clone()),
+        ];
+        let plan = build_schema_diff_plan_with_target_only_catalog(
+            &[(child.into(), source_child, target_child)],
+            &[parent.to_string()],
+            Some(&catalog),
+            dialect,
+            dialect,
+            PlanOptions {
+                allow_destructive: true,
+                ..PlanOptions::default()
+            },
+        );
+
+        let drop_fk = plan
+            .statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("DROP FOREIGN KEY"))
+            .unwrap_or_else(|| panic!("{dialect}: {:?}", plan.statements));
+        let drop_parent = plan
+            .statements
+            .iter()
+            .position(|statement| {
+                statement.summary.starts_with("DROP TABLE ")
+                    && statement
+                        .summary
+                        .ends_with(parent.rsplit('.').next().unwrap())
+            })
+            .expect("parent DROP TABLE");
+        assert!(drop_fk < drop_parent, "{dialect}: {:?}", plan.statements);
+        assert!(
+            plan.requirements.is_empty(),
+            "{dialect}: {:?}",
+            plan.requirements
+        );
+    }
+}
+
+#[test]
+fn mysql_drop_dependency_uses_exact_database_qualified_identity() {
+    let parent_schema = schema(vec![col("id", "int")]);
+    let archive_parent_schema = schema(vec![col("id", "int")]);
+    let mut archive_child_schema = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    archive_child_schema.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_archive_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "archive.parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let catalog = vec![
+        ("parent".into(), parent_schema),
+        ("archive.parent".into(), archive_parent_schema),
+        ("archive.child".into(), archive_child_schema.clone()),
+    ];
+    let plan = build_schema_diff_plan_with_target_only_catalog_in_scope(
+        &[],
+        &["parent".into()],
+        Some(&catalog),
+        "mysql",
+        "mysql",
+        Some("app"),
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
+    assert!(plan.statements[0].sql.contains("DROP TABLE `parent`"));
+
+    archive_child_schema.foreign_keys[0].referenced_table = "app.parent".into();
+    let catalog = vec![
+        ("parent".into(), schema(vec![col("id", "int")])),
+        ("archive.parent".into(), schema(vec![col("id", "int")])),
+        ("archive.child".into(), archive_child_schema),
+    ];
+    let blocked = build_schema_diff_plan_with_target_only_catalog_in_scope(
+        &[],
+        &["parent".into()],
+        Some(&catalog),
+        "mysql",
+        "mysql",
+        Some("app"),
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+    assert!(blocked.statements.is_empty(), "{:?}", blocked.statements);
+    assert!(
+        blocked.requirements.iter().any(|requirement| matches!(
+            requirement,
+            PlanRequirement::Unsupported { operation, reason }
+                if operation == "target-only-table-drop-order"
+                    && reason.contains("unselected target table")
+        )),
+        "{:?}",
+        blocked.requirements
+    );
+}
+
+#[test]
+fn target_only_drop_is_blocked_when_dependency_catalog_cannot_be_read() {
+    let plan = build_schema_diff_plan_with_target_only_catalog(
+        &[],
+        &["parent".into()],
+        None,
+        "mysql",
+        "mysql",
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty());
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation == "target-only-table-drop-order" && reason.contains("dependency boundary")
+    )));
+}
+
+#[test]
 fn target_only_drop_refuses_basename_only_foreign_key_identity() {
     let tables = vec![
         "public.a_parent".into(),
@@ -525,10 +875,10 @@ fn target_only_drop_refuses_basename_only_foreign_key_identity() {
         deferrability: ForeignKeyDeferrability::NotDeferrable,
     });
     let target_schemas = vec![("z_child".into(), child_schema)];
-    let plan = build_schema_diff_plan_with_target_only_schemas(
+    let plan = build_schema_diff_plan_with_target_only_catalog(
         &[],
         &tables,
-        &target_schemas,
+        Some(&target_schemas),
         "postgresql",
         "postgresql",
         PlanOptions {

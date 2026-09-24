@@ -18,17 +18,23 @@ The Coder changeset addresses the three earlier findings; independent retest res
 
 ## migration-schema-dependency-dag-BUG-003 — target-only dependent tables drop parent-first (P1)
 
-- Status: `TEST_FAILED`
+- Status: `READY_FOR_TEST` (previous independent retest failed PostgreSQL; fresh retest pending)
 - Fix: production plan preparation now passes the selected target-only table snapshots into planning. Known FK references form child-before-parent edges in the DropTable DAG before SQL rendering; ambiguous basename-only references and cycles produce an unsupported requirement rather than a guessed destructive plan.
 - Regression coverage: `target_only_tables_drop_child_before_selected_parent_on_both_dialects`, `target_only_drop_refuses_basename_only_foreign_key_identity`, `explicit_table_drop_dependencies_place_dependent_before_referenced_table`, and `cyclic_table_drop_dependencies_fail_closed`.
 - Independent retest: MySQL `SD-DAG-mysql-003` passed; reviewed SQL dropped child before parent, deployment completed, and read-back found no fixture tables/FK. PostgreSQL `SD-DAG-postgresql-003` failed closed before deployment: the plan displayed no statements and an `Unsupported` requirement for `target-only-table-drop-order`. The FK's referenced-table identity was a bare table name while the selected target identity was `public.<name>`, so the exact identity check could not match them. Preserve schema identity from introspection (or resolve the reference unambiguously) before forming the DAG edge; do not weaken this to a basename-only match. The failed plan was not deployed.
+- Coder repair: PostgreSQL FK introspection now returns `ref_schema.ref_table`; MySQL `SHOW CREATE TABLE` parsing retains the full `REFERENCES database.table` path. Dependency analysis compares schema/database-qualified identity while DROP rendering keeps the target database's normal relation name. Same-basename relations in different MySQL databases never create a guessed edge.
+- Coder regression coverage: Host tests assert PostgreSQL/MySQL selected child-before-parent order, strict basename rejection, and MySQL same-basename relations across databases. The corrected PostgreSQL live metadata fixture passed 1/1 previously; fresh WDIO plan/deploy/read-back remains required.
 
 ## migration-schema-dependency-dag-BUG-004 — dropping only a referenced parent ignores an unselected FK child (P1)
 
-- Status: `TEST_FAILED` (independently reproduced on PostgreSQL and MySQL)
+- Status: `READY_FOR_TEST` (previously reproduced on PostgreSQL and MySQL; fresh retest pending)
 - Evidence: plan-only WDIO journeys selected a target-only parent while leaving its FK child unselected. On both dialects, the plan had no blocking requirement and exposed an executable `DROP TABLE <parent>` statement. Neither plan was deployed. Each spec's `finally` removed its unique-prefix fixtures; PostgreSQL cleanup was additionally verified with a read-only `information_schema` count of zero. A first PostgreSQL retry used an invalid relative spec path and failed before fixture setup; it was later rerun successfully using the absolute spec path.
 - Expected behavior: use the target schema snapshot's dependency boundary to block parent-only drops with an actionable requirement, or otherwise produce a plan that cannot issue a known-invalid drop. Do not deploy a parent-only plan while a known FK dependent remains outside the selected operation set.
 - This is independent of BUG-003: ordering selected child and parent operations does not validate dependents omitted from the selection.
+- Coder repair: plan preparation reads the complete target dependency catalog before exposing destructive table-drop SQL. PostgreSQL scans all target schemas; bare PostgreSQL selections use the proven target schema context (`default_schema()` is `public`). MySQL scans every database only after the active identity proves a direct global `SELECT ON *.*` or `ALL PRIVILEGES ON *.*` grant and `SHOW GRANTS` contains no `REVOKE`. Role-only grants and partial revokes fail closed. The catalog includes exact schema/database identities for unselected child tables.
+- Before any reviewed table DROP, deploy re-enumerates the complete catalog under the same visibility gate and 30-second timeout, compares the exact relation identity set, and validates every frozen schema/FK snapshot before issuing DDL. A newly created inbound-FK child after review is rejected as a catalog change; no table is dropped.
+- If dependency scope is not provably complete, any catalog read errors, or its bounded 30-second read times out, the planner exposes an actionable unsupported requirement with no statements; the UI cannot deploy it. No automatic cascade is used.
+- WDIO boundary specs now wait for the blocker, assert no statements and disabled deploy, and read back that fixture tables/FK remain. New PostgreSQL/MySQL stale-catalog journeys prepare an executable parent-only drop, add a dependent child after review, attempt deployment, and assert rejection plus parent/late-child/FK read-back. MySQL journeys explicitly skip when the visibility gate blocks planning; Tester must record the skip separately from pass and rerun with direct global SELECT/ALL and no partial revokes to verify the positive drop path.
 
 ## Coder verification
 
@@ -39,6 +45,15 @@ The Coder changeset addresses the three earlier findings; independent retest res
 - Opt-in real PostgreSQL FK introspection: 1 passed; unique fixtures cleaned up by the test.
 - TypeScript typecheck passed. Coder did not run WDIO; that window is reserved for the fresh independent Tester.
 - Changed-added-executable production lines: 90/107 covered (84.1%) by Rust source instrumentation and the focused unit/driver tests. PostgreSQL FK query execution was additionally exercised by the opt-in integration test. See `progress.md` for tool paths and per-file rates.
+
+## BUG-003/004 repair verification
+
+- `CARGO_TARGET_DIR=target/cargo-wt ... cargo test -p datazen --lib schema_diff:: -- --test-threads=1`: 162 passed, 0 failed. Coverage includes PG/MySQL child-first drops, bare PostgreSQL selection with schema-qualified catalog identity, unselected-dependent blocking with zero statements, paired child retained/removed FK boundaries, strict MySQL cross-database identity with same-basename relations, and stale relation/schema catalog rejection.
+- `cargo test -p datazen-driver-api --lib schema_migration -- --test-threads=1`: 15 passed. The new full-catalog visibility capability has a compatibility-safe default and is forwarded by `ReuseDriver`.
+- `cargo test -p datazen-driver-postgres -- --test-threads=1`: 132 library tests passed; driver integration/doc tests passed, with existing isolated-fixture tests ignored. Opt-in live PostgreSQL FK introspection previously passed 1/1 after the schema-qualified query change.
+- `cargo test -p datazen-driver-mysql -- --test-threads=1`: 115 library tests passed, including qualified FK parsing and grant-gate tests; 4 cross-database integration tests and package integration/doc checks passed.
+- Host `pnpm exec tsc --noEmit` passed. E2E project typecheck still reports unrelated pre-existing shared-helper/spec/generated-alias diagnostics; no diagnostics reference `schema-diff-dependency-order.ts`. Prettier and `git diff --check` passed. Coder did not run WDIO.
+- Full-catalog scan latency was not measured on a representative large database by Coder; the scanner logs `table_count` and `elapsed_ms`, and aborts after 30 seconds. Fresh Tester must record realistic catalog scan duration and independently verify deployment disable/read-back.
 
 ## Independent Tester verification
 

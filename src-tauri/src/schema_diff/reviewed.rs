@@ -16,6 +16,8 @@ pub struct ReviewedPlan {
     pub target_database_scope: Option<String>,
     pub target_schema_scope: Option<String>,
     pub snapshots: Vec<(String, TableSchema)>,
+    pub has_complete_target_dependency_catalog: bool,
+    pub target_dependency_schema_scope: Option<String>,
     pub object_snapshots: Vec<SchemaObjectSnapshot>,
     created: Instant,
 }
@@ -45,7 +47,7 @@ pub async fn freeze(
     target_database_scope: Option<String>,
     target_schema_scope: Option<String>,
 ) {
-    freeze_with_objects(
+    freeze_internal(
         plan,
         session,
         handle,
@@ -54,6 +56,33 @@ pub async fn freeze(
         Vec::new(),
         target_database_scope,
         target_schema_scope,
+        false,
+        None,
+    )
+    .await;
+}
+
+pub async fn freeze_with_dependency_catalog(
+    plan: &mut SchemaDiffPlan,
+    session: String,
+    handle: &ConnectionHandle,
+    config: &ConnectionConfig,
+    snapshots: Vec<(String, TableSchema)>,
+    target_database_scope: Option<String>,
+    target_schema_scope: Option<String>,
+    dependency_schema_scope: Option<String>,
+) {
+    freeze_internal(
+        plan,
+        session,
+        handle,
+        config,
+        snapshots,
+        Vec::new(),
+        target_database_scope,
+        target_schema_scope,
+        true,
+        dependency_schema_scope,
     )
     .await;
 }
@@ -67,6 +96,34 @@ pub async fn freeze_with_objects(
     object_snapshots: Vec<SchemaObjectSnapshot>,
     target_database_scope: Option<String>,
     target_schema_scope: Option<String>,
+) {
+    freeze_internal(
+        plan,
+        session,
+        handle,
+        config,
+        snapshots,
+        object_snapshots,
+        target_database_scope,
+        target_schema_scope,
+        false,
+        None,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn freeze_internal(
+    plan: &mut SchemaDiffPlan,
+    session: String,
+    handle: &ConnectionHandle,
+    config: &ConnectionConfig,
+    snapshots: Vec<(String, TableSchema)>,
+    object_snapshots: Vec<SchemaObjectSnapshot>,
+    target_database_scope: Option<String>,
+    target_schema_scope: Option<String>,
+    has_complete_target_dependency_catalog: bool,
+    target_dependency_schema_scope: Option<String>,
 ) {
     let id = uuid::Uuid::new_v4().to_string();
     plan.plan_id = Some(id.clone());
@@ -92,6 +149,8 @@ pub async fn freeze_with_objects(
             target_database_scope,
             target_schema_scope,
             snapshots,
+            has_complete_target_dependency_catalog,
+            target_dependency_schema_scope,
             object_snapshots,
             created: Instant::now(),
         },

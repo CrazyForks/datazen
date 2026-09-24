@@ -224,6 +224,39 @@ fn mysql_foreign_keys_are_explicitly_not_deferrable() {
 }
 
 #[test]
+fn mysql_foreign_key_parser_preserves_referenced_database_identity() {
+    let foreign_keys = MysqlDriver::parse_fk_from_create_table(
+        "CREATE TABLE `child` (\n  CONSTRAINT `fk_child_parent` FOREIGN KEY (`parent_id`) REFERENCES `archive``db`.`parent` (`id`)\n)",
+    );
+
+    assert_eq!(foreign_keys.len(), 1);
+    assert_eq!(foreign_keys[0].referenced_table, "archive`db.parent");
+    assert_eq!(foreign_keys[0].referenced_columns, ["id"]);
+}
+
+#[test]
+fn mysql_server_wide_catalog_visibility_requires_direct_global_select_without_revokes() {
+    assert!(MysqlDriver::grants_prove_server_wide_catalog_visibility(&[
+        "GRANT SELECT ON *.* TO 'datazen'@'localhost'".into(),
+    ]));
+    assert!(MysqlDriver::grants_prove_server_wide_catalog_visibility(&[
+        "GRANT ALL PRIVILEGES ON *.* TO 'datazen'@'localhost' WITH GRANT OPTION".into(),
+    ]));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &["GRANT SELECT ON `app`.* TO 'datazen'@'localhost'".into(),]
+    ));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &["GRANT 'catalog_reader'@'%' TO 'datazen'@'localhost'".into(),]
+    ));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &[
+            "GRANT SELECT ON *.* TO 'datazen'@'localhost'".into(),
+            "REVOKE SELECT ON `private`.* FROM 'datazen'@'localhost'".into(),
+        ]
+    ));
+}
+
+#[test]
 fn build_use_database_sql_quotes_and_trims() {
     assert_eq!(
         MysqlDriver::build_use_database_sql("mydb").unwrap(),

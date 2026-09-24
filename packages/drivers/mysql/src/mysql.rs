@@ -345,11 +345,8 @@ impl MysqlDriver {
             // Pattern: CONSTRAINT `name` FOREIGN KEY (`cols`) REFERENCES `table` (`cols`) ...
             let fk_name = Self::extract_backtick_after(trimmed, "CONSTRAINT");
             let fk_cols = Self::extract_backtick_list_after(trimmed, "FOREIGN KEY");
-            let ref_table = Self::extract_backtick_after(trimmed, "REFERENCES");
-            let ref_cols = Self::extract_backtick_list_after(
-                trimmed,
-                &format!("REFERENCES `{}`", ref_table.replace('`', "``")),
-            );
+            let ref_table = Self::extract_qualified_table_after(trimmed, "REFERENCES");
+            let ref_cols = Self::extract_backtick_list_after(trimmed, "REFERENCES");
 
             let on_delete = Self::extract_rule(trimmed, "ON DELETE");
             let on_update = Self::extract_rule(trimmed, "ON UPDATE");
@@ -502,6 +499,96 @@ impl MysqlDriver {
             }
         }
         String::new()
+    }
+
+    fn extract_qualified_table_after(s: &str, keyword: &str) -> String {
+        let Some(pos) = s.find(keyword) else {
+            return String::new();
+        };
+        let after = s[pos + keyword.len()..].trim_start();
+        let bytes = after.as_bytes();
+        let mut index = 0;
+        let mut parts = Vec::new();
+        loop {
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index >= bytes.len() || bytes[index] == b'(' {
+                return String::new();
+            }
+            let part = if bytes[index] == b'`' {
+                index += 1;
+                let content_start = index;
+                let mut value = String::new();
+                let mut closed = false;
+                while index < bytes.len() {
+                    if bytes[index] == b'`' {
+                        if index + 1 < bytes.len() && bytes[index + 1] == b'`' {
+                            index += 2;
+                        } else {
+                            value = after[content_start..index].replace("``", "`");
+                            index += 1;
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                if !closed {
+                    return String::new();
+                }
+                value
+            } else {
+                let start = index;
+                while index < bytes.len()
+                    && bytes[index] != b'.'
+                    && bytes[index] != b'('
+                    && !bytes[index].is_ascii_whitespace()
+                {
+                    index += 1;
+                }
+                after[start..index].to_string()
+            };
+            if part.is_empty() || part.contains('.') {
+                return String::new();
+            }
+            parts.push(part);
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index < bytes.len() && bytes[index] == b'.' {
+                index += 1;
+                continue;
+            }
+            if index == bytes.len() || bytes[index] == b'(' || bytes[index].is_ascii_whitespace() {
+                return parts.join(".");
+            }
+            return String::new();
+        }
+    }
+
+    fn grants_prove_server_wide_catalog_visibility(grants: &[String]) -> bool {
+        let has_global_select = grants.iter().any(|grant| {
+            let upper = grant.trim().to_ascii_uppercase();
+            if !upper.starts_with("GRANT ") {
+                return false;
+            }
+            let Some(on) = upper.find(" ON *.* TO ") else {
+                return false;
+            };
+            upper[6..on]
+                .split(',')
+                .map(str::trim)
+                .any(|privilege| matches!(privilege, "SELECT" | "ALL PRIVILEGES"))
+        });
+        has_global_select
+            && !grants.iter().any(|grant| {
+                grant
+                    .trim_start()
+                    .to_ascii_uppercase()
+                    .starts_with("REVOKE ")
+            })
     }
 
     /// Extract a parenthesized list of backtick-quoted identifiers after a keyword.
@@ -843,6 +930,23 @@ impl DatabaseDriver for MysqlDriver {
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
         Ok(rows.iter().map(|r| decode_mysql_text_idx(r, 0)).collect())
+    }
+
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let rows = sqlx::query("SHOW GRANTS FOR CURRENT_USER()")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| DriverError::QueryFailed(error.to_string()))?;
+        let grants = rows
+            .iter()
+            .map(|row| decode_mysql_text_idx(row, 0))
+            .collect::<Vec<_>>();
+        Ok(Self::grants_prove_server_wide_catalog_visibility(&grants))
     }
 
     async fn get_tables(

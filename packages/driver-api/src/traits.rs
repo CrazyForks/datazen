@@ -215,6 +215,18 @@ pub trait DatabaseDriver: Send + Sync {
 
     async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError>;
 
+    /// Whether the current database identity can inspect the full foreign-key
+    /// dependency catalog across every database on this server. Destructive
+    /// planners must fail closed when this cannot be proven. Drivers that do
+    /// not have a server-wide namespace or cannot prove complete visibility
+    /// keep the default `false`.
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        Ok(false)
+    }
+
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,

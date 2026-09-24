@@ -1,6 +1,6 @@
 # migration-schema-dependency-dag
 
-Phase: TEST_FAILED
+Phase: READY_FOR_TEST
 
 ## Scope
 
@@ -36,6 +36,8 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 
 - [ ] Tester: WDIO PostgreSQL and MySQL case for supported table-structure dependency order (create/drop table, FK, custom type, trigger) with database read-back.
 - [ ] Tester: WDIO rejection path for an unsafe / unsupported renderer and visible actionable plan error.
+- [ ] Tester: run both stale-catalog journeys (prepare parent-only DROP, add a dependent child after review, reject before writes, read back both tables/FK); MySQL must have complete-catalog visibility. Report privilege-gated skips separately from passes.
+- [ ] Tester: positively verify MySQL selected child/parent drop and read-back with direct global SELECT/ALL and no partial revokes; a skip leaves this release path unverified.
 - [ ] Follow-on unified-planner track: mixed table/object selection and deploy journey across supported kinds; register its cross-category cases there.
 
 ## Self-validation
@@ -54,7 +56,7 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 - Coverage attempt used `RUSTFLAGS=-Cinstrument-coverage`, `CARGO_INCREMENTAL=0`, and CommandLineTools `xcrun llvm-profdata` / `xcrun llvm-cov`. On newly added executable production lines, 90/107 were covered (84.1%): `plan.rs` 70/82, `operation_dependencies.rs` 14/15, `dependencies.rs` 5/5, `schema.rs` 1/1, and `commands/schema_diff.rs` 0/4. The changed command wrapper lines require the independent WDIO run; the driver query itself was exercised by the opt-in integration test. Whole-file rates include pre-existing code and are lower in `operation_dependencies.rs` (71.1%) and PostgreSQL `schema.rs` (49.7%).
 - `rustfmt --edition 2021 --config skip_children=true --check` on changed Rust sources, `git diff --check`, and `npx tsc --noEmit`: passed.
 
-## Independent Tester
+## Previous Independent Tester Result
 
 - Status: `TEST_FAILED`. BUG-001 and BUG-002 passed independent live PostgreSQL journeys. BUG-003 passed on MySQL but failed closed on PostgreSQL due to a qualified/unqualified FK reference identity mismatch. Independent plan-only checks additionally reproduced BUG-004 on both PostgreSQL and MySQL: selecting just a referenced target parent exposes a `DROP TABLE` with no requirement while its FK child is left unselected. Neither failing plan was deployed.
 - The original six serial WDIO journeys produced 5 passed and 1 failed: PG create+FK and existing-table FK passed; MySQL create+FK, existing-table FK, and reverse-order target-only drop passed; PostgreSQL target-only drop failed with an unsupported `target-only-table-drop-order` requirement and zero statements. Both parent-only boundary tests independently showed the unsafe executable drop on their respective dialects.
@@ -64,3 +66,16 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 - Independent instrumented Host Schema Diff suite passed 154/154 using `RUSTFLAGS=-Cinstrument-coverage`, `CARGO_INCREMENTAL=0`, `xcrun llvm-profdata`, and `xcrun llvm-cov`. Measured whole-file line rates: `plan.rs` 89.21%, `operation_dependencies.rs` 71.09%, `operation_dependency_references.rs` 81.12%, `dependencies.rs` 86.36%, and `commands/schema_diff.rs` 15.52% (the latter includes substantial pre-existing code). The live PostgreSQL integration profile showed changed FK catalog query lines executed twice and reference normalization once. These file-level numbers do not independently certify ≥80% coverage across all changed executable lines.
 - Formal webdriver Tauri build produced the app binary used by WDIO; the overall packaging command later exited in the DMG hook. DMG packaging is explicitly excluded from this feature gate.
 - This changeset does not close the separate combined-plan/unified-planner release blocker above.
+
+## BUG-003/004 Coder Repair Handoff
+
+- Phase: `READY_FOR_TEST`. The previous independent `TEST_FAILED` findings remain historical evidence; these fixes await a fresh independent Tester and are not marked passed.
+- BUG-003 preserves PostgreSQL `referenced_schema.referenced_table` from the catalog and MySQL `REFERENCES database.table` identity. The target-drop DAG compares strict full relation identities; PostgreSQL bare selections use the proven target schema (`default_schema()` is `public`) for dependency matching while renderer operation names remain unchanged. Exact selected child-to-parent matches create edges; basename-only matches fail closed.
+- BUG-004 scans the PostgreSQL target catalog across schemas. MySQL first proves direct global `SELECT ON *.*` or `ALL PRIVILEGES ON *.*` via `SHOW GRANTS FOR CURRENT_USER()` and rejects any partial `REVOKE` or role-only grant, then enumerates every database. If complete visibility cannot be proven or catalog reading fails/times out, the reviewed plan contains an actionable requirement and zero executable statements. MySQL selected child/parent drops remain available to accounts meeting the visibility gate.
+- Before any reviewed table DROP runs, deploy re-enumerates the complete target catalog under the same visibility gate and a 30-second bound, then compares the exact relation identity set and every frozen schema/FK snapshot. Newly added/removed relations or changed schemas/FKs reject the one-shot plan before any write.
+- Cross-database MySQL FK references retain exact qualified identities; same-basename tables in different databases do not produce guessed edges. Catalog reads remain N+1 metadata queries; logs include table count and elapsed milliseconds, but large-database end-to-end latency still needs independent observation.
+- Catalog reading remains N+1 table-schema metadata reads, bounded by a 30-second timeout. Successful reads log table count and elapsed milliseconds. Coder did not measure full-catalog latency against a representative production-sized database; fresh Tester must record realistic PostgreSQL and MySQL scan durations.
+- Host Schema Diff tests: 162 passed. New regressions cover PostgreSQL default-schema identity and late catalog relation/schema changes. Driver API migration tests: 15 passed. PostgreSQL driver tests: 132 passed, plus the separately run opt-in real PostgreSQL FK introspection test (1 passed). MySQL driver tests: 115 library tests passed, plus 4 cross-database integration tests and package integration/doc checks.
+- `pnpm exec tsc --noEmit`: passed. The E2E project typecheck reports existing workspace errors in shared helpers, other specs, and generated extension aliases; none reference the changed WDIO spec. Prettier on the changed spec and `git diff --check` passed.
+- Coder did not run WDIO. Parent-only boundary journeys wait for an actionable blocker, assert zero statements and disabled deploy, and verify fixture tables/FK remain. The positive MySQL selected child/parent drop journey explicitly skips when the account lacks proven global catalog visibility; Tester must report this as skipped, never passed. If skipped, successful MySQL child-before-parent deploy/read-back remains an open release blocker and must be rerun with direct global SELECT/ALL and no partial revokes.
+- The unified cross-category reviewed planner remains a separate release blocker and is not implemented by this repair.

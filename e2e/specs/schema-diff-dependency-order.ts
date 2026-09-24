@@ -29,7 +29,7 @@ import {
 } from '../lib/schemaDiffFixtures.js';
 
 type Dialect = 'postgresql' | 'mysql';
-type Scenario = 'missing-target' | 'missing-fk' | 'target-only';
+type Scenario = 'missing-target' | 'missing-fk' | 'target-only' | 'target-parent-only';
 
 type DialectFixture = {
   dialect: Dialect;
@@ -41,6 +41,7 @@ type DialectFixture = {
   targetConfig: ReturnType<typeof pgConnectionConfig> | ReturnType<typeof mysqlConnectionConfig>;
   parentTable: string;
   childTable: string;
+  lateChildTable: string;
   foreignKey: string;
 };
 
@@ -61,7 +62,7 @@ async function withFixture<T>(
   } finally {
     await teardownSchemaDiffFixture(
       [fixture.sourceId, fixture.targetId],
-      [fixture.childTable, fixture.parentTable],
+      [fixture.lateChildTable, fixture.childTable, fixture.parentTable],
     );
     await closeExtraWindows(mainWindow);
     await browser.switchToWindow(mainWindow);
@@ -74,6 +75,10 @@ async function setupFixture(fixture: DialectFixture, scenario: Scenario) {
   try {
     await withSafeModeOff(async () => {
       for (const session of [source, target]) {
+        await invokeBackend('execute_query', {
+          dbSessionId: session,
+          sql: `DROP TABLE IF EXISTS ${fixture.lateChildTable}`,
+        });
         await invokeBackend('execute_query', {
           dbSessionId: session,
           sql: `DROP TABLE IF EXISTS ${fixture.childTable}`,
@@ -92,6 +97,12 @@ async function setupFixture(fixture: DialectFixture, scenario: Scenario) {
       }
       if (scenario === 'target-only') {
         await createParentChild(target, fixture, true);
+      }
+      if (scenario === 'target-parent-only') {
+        await invokeBackend('execute_query', {
+          dbSessionId: target,
+          sql: `CREATE TABLE ${fixture.parentTable} (id INT PRIMARY KEY)${engineClause(fixture)}`,
+        });
       }
     });
   } finally {
@@ -180,19 +191,22 @@ function assertForeignKeyPlanOrder(fixture: DialectFixture, statements: string[]
   }
 }
 
-async function foreignKeyCount(fixture: DialectFixture): Promise<number> {
+async function foreignKeyCount(
+  fixture: DialectFixture,
+  childTable = fixture.childTable,
+): Promise<number> {
   const session = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
   try {
     const sql =
       fixture.dialect === 'postgresql'
         ? `SELECT count(*)::int AS c FROM information_schema.table_constraints
            WHERE constraint_schema = 'public'
-             AND table_name = '${fixture.childTable}'
+             AND table_name = '${childTable}'
              AND constraint_name = '${fixture.foreignKey}'
              AND constraint_type = 'FOREIGN KEY'`
         : `SELECT count(*) AS c FROM information_schema.table_constraints
            WHERE constraint_schema = DATABASE()
-             AND table_name = '${fixture.childTable}'
+             AND table_name = '${childTable}'
              AND constraint_name = '${fixture.foreignKey}'
              AND constraint_type = 'FOREIGN KEY'`;
     const result = await invokeBackend<QueryResultPayload>('execute_query', {
@@ -205,17 +219,36 @@ async function foreignKeyCount(fixture: DialectFixture): Promise<number> {
   }
 }
 
+async function tableExists(fixture: DialectFixture, table: string): Promise<boolean> {
+  const session = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
+  try {
+    const sql =
+      fixture.dialect === 'postgresql'
+        ? `SELECT count(*)::int AS c FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = '${table}'`
+        : `SELECT count(*) AS c FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = '${table}'`;
+    const result = await invokeBackend<QueryResultPayload>('execute_query', {
+      dbSessionId: session,
+      sql,
+    });
+    return queryScalar(result, 'c') > 0;
+  } finally {
+    await disconnectBackend(session);
+  }
+}
+
 async function tableCount(fixture: DialectFixture): Promise<number> {
   const session = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
   try {
     const sql =
       fixture.dialect === 'postgresql'
         ? `SELECT count(*)::int AS c FROM information_schema.tables
-           WHERE table_schema = 'public'
-             AND table_name IN ('${fixture.childTable}', '${fixture.parentTable}')`
+         WHERE table_schema = 'public'
+             AND table_name IN ('${fixture.childTable}', '${fixture.lateChildTable}', '${fixture.parentTable}')`
         : `SELECT count(*) AS c FROM information_schema.tables
-           WHERE table_schema = DATABASE()
-             AND table_name IN ('${fixture.childTable}', '${fixture.parentTable}')`;
+         WHERE table_schema = DATABASE()
+             AND table_name IN ('${fixture.childTable}', '${fixture.lateChildTable}', '${fixture.parentTable}')`;
     const result = await invokeBackend<QueryResultPayload>('execute_query', {
       dbSessionId: session,
       sql,
@@ -230,13 +263,15 @@ async function deployPlan(fixture: DialectFixture, step: string, destructive = f
   await captureJourneyStep(step);
   await advanceSchemaDiffToReview();
   if (destructive) {
-    const confirmation = await $('[data-testid="schema-diff-deploy-panel"] input[placeholder="DEPLOY"]');
+    const confirmation = await $(
+      '[data-testid="schema-diff-deploy-panel"] input[placeholder="DEPLOY"]',
+    );
     await confirmation.setValue('DEPLOY');
   }
   await deploySchemaDiffPlan();
 }
 
-async function assertTargetOnlyDropOrder(fixture: DialectFixture) {
+async function assertTargetOnlyDropOrder(fixture: DialectFixture): Promise<boolean> {
   const allowDestructive = await $('[data-testid="schema-diff-allow-destructive"]');
   if (!(await allowDestructive.isSelected())) await allowDestructive.click();
   const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
@@ -247,9 +282,12 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture) {
     await browser.waitUntil(
       async () => {
         const statements = await readPlanStatements();
+        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+        const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
         return (
-          statements.some((sql) => sql.includes(fixture.parentTable)) &&
-          statements.some((sql) => sql.includes(fixture.childTable))
+          (statements.some((sql) => sql.includes(fixture.parentTable)) &&
+            statements.some((sql) => sql.includes(fixture.childTable))) ||
+          (fixture.dialect === 'mysql' && requirementText.includes('direct global select'))
         );
       },
       { timeout: 30000, timeoutMsg: 'target-only drop plan did not regenerate' },
@@ -267,6 +305,18 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture) {
       `target-only drop plan did not regenerate; plan=${await planPanel.getText().catch(() => '<unavailable>')}; requirements=${await requirements.getText().catch(() => '<none>')}; statements=${statements.join('\n') || '<none>'}; errors=${visibleErrors.join(' | ') || '<none>'}`,
     );
   }
+  const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+  const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+  if (fixture.dialect === 'mysql' && requirementText.includes('direct global select')) {
+    expect(await readPlanStatements()).toEqual([]);
+    await advanceSchemaDiffToReview();
+    const deploy = await $('[data-testid="schema-diff-deploy"]');
+    await deploy.waitForDisplayed({ timeout: 8000 });
+    expect(await deploy.isEnabled()).toBe(false);
+    expect(await tableCount(fixture)).toBe(2);
+    expect(await foreignKeyCount(fixture)).toBe(1);
+    return false;
+  }
   const statements = await readPlanStatements();
   const childDrop = statements.findIndex(
     (sql) => /\bDROP\s+TABLE\b/i.test(sql) && sql.includes(fixture.childTable),
@@ -280,6 +330,7 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture) {
   // parent is dropped. This order must come from the reviewed plan, not DB
   // cascade behavior.
   expect(childDrop).toBeLessThan(parentDrop);
+  return true;
 }
 
 function createFixture(dialect: Dialect, scenario: Scenario): DialectFixture {
@@ -311,6 +362,7 @@ function createFixture(dialect: Dialect, scenario: Scenario): DialectFixture {
     targetConfig,
     parentTable,
     childTable,
+    lateChildTable: `${childTable}_late`,
     foreignKey,
   };
 }
@@ -353,10 +405,11 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
       });
     });
 
-    it(`SD-DAG-${dialect}-003: drops target-only dependent tables in reverse dependency order`, async () => {
+    it(`SD-DAG-${dialect}-003: drops target-only dependent tables in reverse dependency order`, async function () {
       await withFixture(dialect, 'target-only', mainWindow, async (fixture) => {
         await openPlan(fixture);
-        await assertTargetOnlyDropOrder(fixture);
+        const canDeploy = await assertTargetOnlyDropOrder(fixture);
+        if (!canDeploy) this.skip();
         await deployPlan(fixture, `schema-dag-${dialect}-target-only-drop`, true);
         expect(await tableCount(fixture)).toBe(0);
         expect(await foreignKeyCount(fixture)).toBe(0);
@@ -378,19 +431,124 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
         const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
         await regenerate.waitForClickable({ timeout: 10000 });
         await regenerate.click();
+        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
         await browser.waitUntil(
           async () =>
-            (await readPlanStatements()).some((sql) => sql.includes(fixture.parentTable)),
-          { timeout: 30000, timeoutMsg: 'selected parent drop plan did not regenerate' },
+            (await requirements.isExisting()) &&
+            ((await requirements.getText()).includes('unselected target table') ||
+              (dialect === 'mysql' &&
+                (await requirements.getText()).toLowerCase().includes('direct global select'))),
+          {
+            timeout: 30000,
+            timeoutMsg: 'parent-only drop did not show the unselected FK dependent requirement',
+          },
         );
 
-        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+        const requirementText = await requirements.getText();
         const statements = await readPlanStatements();
-        if (!(await requirements.isExisting())) {
-          throw new Error(
-            `unsafe boundary: selecting only referenced parent exposed an executable DROP while its FK child remained unselected; statements=${statements.join('\n')}`,
-          );
+        if (dialect === 'mysql' && requirementText.toLowerCase().includes('direct global select')) {
+          expect(statements).toEqual([]);
+          await advanceSchemaDiffToReview();
+          const deploy = await $('[data-testid="schema-diff-deploy"]');
+          await deploy.waitForDisplayed({ timeout: 8000 });
+          expect(await deploy.isEnabled()).toBe(false);
+          expect(await tableCount(fixture)).toBe(2);
+          expect(await foreignKeyCount(fixture)).toBe(1);
+          return;
         }
+        if (!requirementText.includes('select the dependent table')) {
+          throw new Error(`parent-only boundary requirement is not actionable: ${requirementText}`);
+        }
+        expect(statements).toEqual([]);
+
+        await advanceSchemaDiffToReview();
+        const deploy = await $('[data-testid="schema-diff-deploy"]');
+        await deploy.waitForDisplayed({ timeout: 8000 });
+        expect(await deploy.isEnabled()).toBe(false);
+        expect(await tableCount(fixture)).toBe(2);
+        expect(await foreignKeyCount(fixture)).toBe(1);
+      });
+    });
+  }
+
+  for (const dialect of ['postgresql', 'mysql'] as const) {
+    it(`SD-DAG-boundary-${dialect}-new-dependent-after-review-blocks-deploy`, async function () {
+      await withFixture(dialect, 'target-parent-only', mainWindow, async (fixture) => {
+        await openSchemaDiffWindow();
+        await selectSchemaDiffEndpoints(fixture.sourceName, fixture.targetName);
+        await setSchemaDiffTables(fixture.parentTable);
+        await clickSchemaDiffCompare();
+        await clickSchemaDiffGeneratePlan();
+
+        const allowDestructive = await $('[data-testid="schema-diff-allow-destructive"]');
+        if (!(await allowDestructive.isSelected())) await allowDestructive.click();
+        const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
+        await regenerate.waitForClickable({ timeout: 10000 });
+        await regenerate.click();
+        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+        await browser.waitUntil(
+          async () => {
+            const statements = await readPlanStatements();
+            const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+            return (
+              statements.some((sql) => /\bDROP\s+TABLE\b/i.test(sql)) ||
+              (dialect === 'mysql' && requirementText.includes('direct global select'))
+            );
+          },
+          {
+            timeout: 30000,
+            timeoutMsg: 'parent-only plan did not resolve to DROP or visibility requirement',
+          },
+        );
+
+        const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+        if (dialect === 'mysql' && requirementText.includes('direct global select')) {
+          expect(await readPlanStatements()).toEqual([]);
+          await advanceSchemaDiffToReview();
+          const deploy = await $('[data-testid="schema-diff-deploy"]');
+          expect(await deploy.isEnabled()).toBe(false);
+          this.skip();
+        }
+        const statements = await readPlanStatements();
+        expect(statements.filter((sql) => /\bDROP\s+TABLE\b/i.test(sql))).toHaveLength(1);
+        expect(statements[0]).toContain(fixture.parentTable);
+
+        const target = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
+        try {
+          await withSafeModeOff(async () => {
+            const parent =
+              dialect === 'postgresql' ? `public.${fixture.parentTable}` : fixture.parentTable;
+            await invokeBackend('execute_query', {
+              dbSessionId: target,
+              sql: `CREATE TABLE ${fixture.lateChildTable} (
+                id INT PRIMARY KEY,
+                parent_id INT NOT NULL,
+                CONSTRAINT ${fixture.foreignKey} FOREIGN KEY (parent_id) REFERENCES ${parent}(id)
+              )${engineClause(fixture)}`,
+            });
+          });
+        } finally {
+          await disconnectBackend(target);
+        }
+
+        await advanceSchemaDiffToReview();
+        const confirmation = await $(
+          '[data-testid="schema-diff-deploy-panel"] input[placeholder="DEPLOY"]',
+        );
+        await confirmation.setValue('DEPLOY');
+        let deployError = '';
+        try {
+          await deploySchemaDiffPlan({ assertSuccess: false });
+        } catch (error) {
+          deployError = String(error);
+        }
+        expect(deployError.toLowerCase()).toContain('catalog changed after review');
+        expect(deployError.toLowerCase()).toContain(fixture.lateChildTable.toLowerCase());
+        expect(await tableExists(fixture, fixture.parentTable)).toBe(true);
+        expect(await tableExists(fixture, fixture.lateChildTable)).toBe(true);
+        expect(await tableExists(fixture, fixture.childTable)).toBe(false);
+        expect(await foreignKeyCount(fixture, fixture.lateChildTable)).toBe(1);
+        expect(await foreignKeyCount(fixture, fixture.childTable)).toBe(0);
       });
     });
   }

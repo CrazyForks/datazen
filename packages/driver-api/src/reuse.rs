@@ -133,6 +133,15 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.get_databases(handle).await
     }
 
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        self.inner
+            .has_complete_foreign_key_catalog_visibility(handle)
+            .await
+    }
+
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,

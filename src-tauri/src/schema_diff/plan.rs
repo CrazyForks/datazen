@@ -1494,32 +1494,72 @@ fn plan_target_only_table(
 
 fn selected_target_drop_dependencies(
     target_only_tables: &[String],
-    target_only_schemas: &[(String, TableSchema)],
+    selected_pair_tables: &[String],
+    target_dependency_schemas: &[(String, TableSchema)],
     target_dialect: &str,
+    target_database: Option<&str>,
+    target_schema: Option<&str>,
 ) -> Result<Vec<(String, String)>, String> {
     let selected_tables = target_only_tables
         .iter()
-        .map(|table| resolve_table_for_dialect(target_dialect, table))
+        .map(|table| {
+            (
+                target_drop_relation_identity(
+                    target_dialect,
+                    table,
+                    target_database,
+                    target_schema,
+                ),
+                resolve_table_for_dialect(target_dialect, table),
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected_pair_tables = selected_pair_tables
+        .iter()
+        .map(|table| {
+            target_drop_relation_identity(target_dialect, table, target_database, target_schema)
+        })
         .collect::<Vec<_>>();
     let mut dependencies = Vec::new();
-    for (raw_child_table, schema) in target_only_schemas {
-        let child_table = resolve_table_for_dialect(target_dialect, raw_child_table);
-        if !selected_tables.iter().any(|table| table == &child_table) {
-            continue;
-        }
+    for (raw_child_table, schema) in target_dependency_schemas {
+        let child_table = target_drop_relation_identity(
+            target_dialect,
+            raw_child_table,
+            target_database,
+            target_schema,
+        );
+        let selected_child_operation = selected_tables
+            .iter()
+            .find(|(identity, _)| identity == &child_table)
+            .map(|(_, operation)| operation.as_str());
+        let child_is_selected = selected_child_operation.is_some();
         for foreign_key in &schema.foreign_keys {
             let reference = foreign_key.referenced_table.as_str();
+            if reference.trim().is_empty() {
+                return Err(format!(
+                    "foreign key {} on `{child_table}` has no resolvable referenced-table identity",
+                    foreign_key.name
+                ));
+            }
+            let reference_identity = target_drop_relation_identity(
+                target_dialect,
+                reference,
+                target_database,
+                target_schema,
+            );
             let exact = selected_tables
                 .iter()
-                .filter(|candidate| candidate.as_str() == reference)
+                .filter(|(candidate, _)| candidate == &reference_identity)
                 .cloned()
                 .collect::<Vec<_>>();
             let basename_matches = if exact.is_empty() {
-                let basename = reference.rsplit('.').next().unwrap_or(reference);
                 selected_tables
                     .iter()
-                    .filter(|candidate| {
-                        candidate.rsplit('.').next().unwrap_or(candidate) == basename
+                    .filter(|(candidate, _)| {
+                        if reference_identity.contains('.') && candidate.contains('.') {
+                            return false;
+                        }
+                        candidate.rsplit('.').next() == reference_identity.rsplit('.').next()
                     })
                     .cloned()
                     .collect::<Vec<_>>()
@@ -1531,12 +1571,35 @@ fn selected_target_drop_dependencies(
                     return Err(format!(
                         "foreign key {} references `{reference}`, which only matches selected target-only tables by basename ({})",
                         foreign_key.name,
-                        basename_matches.join(", ")
+                        basename_matches
+                            .iter()
+                            .map(|(identity, _)| identity.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
                 [] => {}
-                [referenced_table] if referenced_table != &child_table => {
-                    dependencies.push((child_table.clone(), referenced_table.clone()));
+                [(referenced_table, referenced_operation)]
+                    if referenced_table != &child_table && child_is_selected =>
+                {
+                    dependencies.push((
+                        selected_child_operation.unwrap_or_default().to_string(),
+                        referenced_operation.clone(),
+                    ));
+                }
+                [(referenced_table, _)]
+                    if referenced_table != &child_table
+                        && selected_pair_tables.contains(&child_table) =>
+                {
+                    // The paired source/target table diff is selected too.
+                    // Its DDL is planned before the target-only drops, so it
+                    // can remove its FK before the referenced parent drops.
+                }
+                [(referenced_table, _)] if referenced_table != &child_table => {
+                    return Err(format!(
+                        "foreign key {} on unselected target table `{child_table}` references selected drop `{referenced_table}`; select the dependent table too or remove the foreign key before dropping the parent",
+                        foreign_key.name
+                    ));
                 }
                 [_] => {}
                 _ => {
@@ -1553,12 +1616,46 @@ fn selected_target_drop_dependencies(
     Ok(dependencies)
 }
 
+fn target_drop_relation_identity(
+    dialect: &str,
+    table: &str,
+    target_database: Option<&str>,
+    target_schema: Option<&str>,
+) -> String {
+    match normalize_dialect(dialect).as_str() {
+        "mysql" => {
+            let table = table.trim();
+            if table.contains('.') {
+                table.to_string()
+            } else if let Some(database) = target_database.filter(|value| !value.trim().is_empty())
+            {
+                format!("{}.{}", database.trim(), table)
+            } else {
+                table.to_string()
+            }
+        }
+        "postgresql" => {
+            let table = table.trim();
+            if table.contains('.') {
+                table.to_string()
+            } else if let Some(schema) = target_schema.filter(|value| !value.trim().is_empty()) {
+                format!("{}.{}", schema.trim(), table)
+            } else {
+                table.to_string()
+            }
+        }
+        _ => resolve_table_for_dialect(dialect, table),
+    }
+}
+
 fn render_target_only_tables(
     operations: &[super::operations::MigrationOperation],
     target_dialect: &str,
     statements: &mut Vec<PlanStatement>,
     requirements: &mut Vec<PlanRequirement>,
 ) {
+    let initial_statement_count = statements.len();
+    let initial_requirement_count = requirements.len();
     let Some(driver) = datazen_driver_api::create_driver(target_dialect) else {
         return;
     };
@@ -1589,6 +1686,9 @@ fn render_target_only_tables(
             }),
         }
     }
+    if requirements.len() > initial_requirement_count {
+        statements.truncate(initial_statement_count);
+    }
 }
 
 /// Build a plan for source tables plus explicitly selected target-only tables.
@@ -1602,25 +1702,96 @@ pub fn build_schema_diff_plan_with_target_only(
     target_dialect: &str,
     opts: PlanOptions<'_>,
 ) -> SchemaDiffPlan {
-    build_schema_diff_plan_with_target_only_schemas(
+    build_schema_diff_plan_with_target_only_catalog(
         pairs,
         target_only_tables,
-        &[],
+        None,
         source_dialect,
         target_dialect,
         opts,
     )
 }
 
-/// Build a plan with target-only snapshots available for dependency ordering.
-/// The snapshots let destructive drops follow known FK dependencies across
-/// selected target-only tables.
+/// Compatibility wrapper for callers that only have selected target-only
+/// snapshots. Those snapshots cannot prove the absence of unselected FK
+/// dependents, so destructive target-only plans fail closed. Callers with a
+/// complete target table catalog should use
+/// [`build_schema_diff_plan_with_target_only_catalog`].
 pub fn build_schema_diff_plan_with_target_only_schemas(
     pairs: &[(String, TableSchema, TableSchema)],
     target_only_tables: &[String],
-    target_only_schemas: &[(String, TableSchema)],
+    _target_only_schemas: &[(String, TableSchema)],
     source_dialect: &str,
     target_dialect: &str,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_only_catalog(
+        pairs,
+        target_only_tables,
+        None,
+        source_dialect,
+        target_dialect,
+        opts,
+    )
+}
+
+/// Build a destructive target-only plan against the complete target table
+/// catalog. A missing catalog is fail-closed because it cannot prove that a
+/// selected parent has no unselected foreign-key dependents.
+pub fn build_schema_diff_plan_with_target_only_catalog(
+    pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
+    target_dependency_schemas: Option<&[(String, TableSchema)]>,
+    source_dialect: &str,
+    target_dialect: &str,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_only_catalog_in_scope(
+        pairs,
+        target_only_tables,
+        target_dependency_schemas,
+        source_dialect,
+        target_dialect,
+        None,
+        opts,
+    )
+}
+
+/// Catalog-aware variant that receives the target database scope for dialects
+/// where a database is part of relation identity (MySQL family). Renderer
+/// operations still use the target database's unqualified table name.
+pub fn build_schema_diff_plan_with_target_only_catalog_in_scope(
+    pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
+    target_dependency_schemas: Option<&[(String, TableSchema)]>,
+    source_dialect: &str,
+    target_dialect: &str,
+    target_database: Option<&str>,
+    opts: PlanOptions<'_>,
+) -> SchemaDiffPlan {
+    build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
+        pairs,
+        target_only_tables,
+        target_dependency_schemas,
+        source_dialect,
+        target_dialect,
+        target_database,
+        None,
+        opts,
+    )
+}
+
+/// Catalog-aware variant that receives both target database and schema
+/// context. Context is used only for dependency identity matching; rendered
+/// operations retain the table identifier supplied by the caller.
+pub fn build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
+    pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
+    target_dependency_schemas: Option<&[(String, TableSchema)]>,
+    source_dialect: &str,
+    target_dialect: &str,
+    target_database: Option<&str>,
+    target_schema: Option<&str>,
     opts: PlanOptions<'_>,
 ) -> SchemaDiffPlan {
     let mut statements = Vec::new();
@@ -1643,6 +1814,29 @@ pub fn build_schema_diff_plan_with_target_only_schemas(
     };
 
     let mut tables = Vec::new();
+    let selected_drop_identities = target_only_tables
+        .iter()
+        .map(|table| target_drop_relation_identity(&tgt_d, table, target_database, target_schema))
+        .collect::<Vec<_>>();
+    let selected_pair_tables = pairs
+        .iter()
+        .filter_map(|(table, source, _)| {
+            let source_retains_drop_dependency = source.foreign_keys.iter().any(|foreign_key| {
+                let reference = target_drop_relation_identity(
+                    &tgt_d,
+                    &foreign_key.referenced_table,
+                    target_database,
+                    target_schema,
+                );
+                selected_drop_identities
+                    .iter()
+                    .any(|drop_identity| reference == *drop_identity)
+            });
+            (!source_retains_drop_dependency).then(|| {
+                target_drop_relation_identity(&tgt_d, table, target_database, target_schema)
+            })
+        })
+        .collect::<Vec<_>>();
     let mut target_only_operations = Vec::new();
     for (table, src, tgt) in pairs {
         tables.push(table.clone());
@@ -1674,7 +1868,21 @@ pub fn build_schema_diff_plan_with_target_only_schemas(
     }
 
     if !target_only_operations.is_empty() {
-        match selected_target_drop_dependencies(target_only_tables, target_only_schemas, &tgt_d) {
+        let dependencies = target_dependency_schemas
+            .ok_or_else(|| {
+                "Cannot verify the target foreign-key dependency boundary. Confirm catalog access, then retry; select dependent tables or remove their foreign keys before dropping a parent.".to_string()
+            })
+            .and_then(|catalog| {
+                selected_target_drop_dependencies(
+                    target_only_tables,
+                    &selected_pair_tables,
+                    catalog,
+                    &tgt_d,
+                    target_database,
+                    target_schema,
+                )
+            });
+        match dependencies {
             Ok(dependencies) => {
                 match super::dependencies::try_resolve_dependencies_with_table_drop_edges(
                     &target_only_operations,
@@ -1686,15 +1894,19 @@ pub fn build_schema_diff_plan_with_target_only_schemas(
                         &mut statements,
                         &mut requirements,
                     ),
-                    Err(reason) => requirements.push(PlanRequirement::Unsupported {
-                        operation: "target-only-table-drop-order".into(),
-                        reason: format!(
-                            "Could not determine a safe target-only table drop order: {reason}"
-                        ),
-                    }),
+                    Err(reason) => {
+                        statements.clear();
+                        requirements.push(PlanRequirement::Unsupported {
+                            operation: "target-only-table-drop-order".into(),
+                            reason: format!(
+                                "Could not determine a safe target-only table drop order: {reason}"
+                            ),
+                        });
+                    }
                 }
             }
             Err(reason) => {
+                statements.clear();
                 requirements.push(PlanRequirement::Unsupported {
                     operation: "target-only-table-drop-order".into(),
                     reason,

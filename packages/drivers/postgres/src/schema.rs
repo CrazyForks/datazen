@@ -271,6 +271,7 @@ impl PostgresDriver {
                 con.conname::text AS fk_name,
                 array_agg(src_att.attname::text ORDER BY src_key.ordinality) AS columns,
                 ref_class.relname::text AS ref_table,
+                ref_ns.nspname::text AS ref_schema,
                 array_agg(ref_att.attname::text ORDER BY src_key.ordinality) AS ref_columns,
                 CASE con.confupdtype
                     WHEN 'a' THEN 'NO ACTION'
@@ -292,6 +293,7 @@ impl PostgresDriver {
             JOIN pg_catalog.pg_class src_class ON src_class.oid = con.conrelid
             JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src_class.relnamespace
             JOIN pg_catalog.pg_class ref_class ON ref_class.oid = con.confrelid
+            JOIN pg_catalog.pg_namespace ref_ns ON ref_ns.oid = ref_class.relnamespace
             JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS src_key(attnum, ordinality)
               ON true
             JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS ref_key(attnum, ordinality)
@@ -303,7 +305,7 @@ impl PostgresDriver {
             WHERE con.contype = 'f'
               AND src_class.relname = $1
               AND ($2::text IS NULL OR src_ns.nspname = $2)
-            GROUP BY con.oid, con.conname, ref_class.relname, con.confupdtype,
+            GROUP BY con.oid, con.conname, ref_class.relname, ref_ns.nspname, con.confupdtype,
                      con.confdeltype, con.condeferrable, con.condeferred
             ORDER BY con.conname
             "#,
@@ -326,7 +328,11 @@ impl PostgresDriver {
                 Some(ForeignKeyInfo {
                     name: r.get("fk_name"),
                     columns,
-                    referenced_table: r.get("ref_table"),
+                    referenced_table: format!(
+                        "{}.{}",
+                        r.get::<String, _>("ref_schema"),
+                        r.get::<String, _>("ref_table")
+                    ),
                     referenced_columns,
                     on_update: r.get("update_rule"),
                     on_delete: r.get("delete_rule"),
