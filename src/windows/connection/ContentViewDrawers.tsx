@@ -7,8 +7,16 @@ import { rowToRecord } from '../../lib/rowToRecord';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { DetailPanel } from '../../components/DataTable/DetailPanel';
 import { AiChatPanel } from '../../components/ai/AiChatPanel';
-import type { DatabaseType } from '../../types';
+import { buildKvAiContext } from '../../lib/kvAiContext';
+import { useKvSlotSelectedKey } from '../../hooks/useKvSlotSelectedKey';
+import type { ColumnSchema, DatabaseType } from '../../types';
+import type { KvSlotState } from '@datazen/driver-sdk';
 import type { AiChatDraftRequest } from './query/aiDraftBridge';
+import type { KvKeyPropsSidebarBinding } from './useKvWorkspaceSlots';
+
+const NO_COLUMNS: ColumnSchema[] = [];
+const NO_ROWS: Record<string, unknown>[] = [];
+const NO_SELECTED: Set<number> = new Set();
 
 export interface ContentViewDrawersProps {
   activePanel: Panel | null;
@@ -16,8 +24,24 @@ export interface ContentViewDrawersProps {
   aiChatOpen: boolean;
   detailPanelApplicable: boolean;
   dbSessionId: string;
+  connectionName: string;
   currentDatabase: string | null;
   databaseType: DatabaseType | undefined;
+  /**
+   * Relay of the active KV panel (`undefined` on a relational panel). Read here
+   * only through a leaf subscription, to build the assistant's KV context (§1.3);
+   * the drawer itself keeps rendering the same way either way.
+   */
+  kvPanelState?: KvSlotState;
+  /** Collapse request wired to the driver's own close control. */
+  onCloseDetail: () => void;
+  /**
+   * Driver-contributed key-props sidebar for a KV panel's detail drawer. Present ⇒
+   * the drawer renders it instead of the row-detail table, which on a KV panel was
+   * an empty grid behind a working-looking toggle (P-3). Absent ⇒ the row table,
+   * unchanged.
+   */
+  keyPropsSidebarSlot?: KvKeyPropsSidebarBinding;
   /** S3-B2: pending AI draft request from ContentView coordinator. */
   pendingDraftRequest: AiChatDraftRequest | null;
   /** S3-B2: called after AiChatPanel writes the draft to its textarea. */
@@ -36,8 +60,12 @@ export function ContentViewDrawers({
   aiChatOpen,
   detailPanelApplicable,
   dbSessionId,
+  connectionName,
   currentDatabase,
   databaseType,
+  kvPanelState,
+  onCloseDetail,
+  keyPropsSidebarSlot,
   pendingDraftRequest,
   onDraftConsumed,
 }: ContentViewDrawersProps) {
@@ -50,12 +78,31 @@ export function ContentViewDrawers({
     storageKey: 'connection.aiSidebar',
   });
 
-  const tableColumns = useTableDataStore((s) => s.columns);
-  const tableRows = useTableDataStore((s) => s.rows);
-  const selectedRows = useTableDataStore((s) => s.selectedRows);
-  const detailRowIndex = useTableDataStore((s) => s.detailRowIndex);
-  const updateCell = useTableDataStore((s) => s.updateCell);
-  const applyColumnToRows = useTableDataStore((s) => s.applyColumnToRows);
+  // W3-A §1.3: the assistant gets whatever the host really owns about this panel.
+  // Subscribing to the one scalar here — instead of the workspace passing a key
+  // down — keeps a key-tree selection from re-rendering the whole content column.
+  const kvSelectedKey = useKvSlotSelectedKey(kvPanelState);
+  const kvAiContext = useMemo(
+    () =>
+      buildKvAiContext({
+        connectionName,
+        dbSessionId,
+        database: currentDatabase,
+        selectedKey: kvSelectedKey,
+      }),
+    [connectionName, dbSessionId, currentDatabase, kvSelectedKey],
+  );
+  const detailPanelId =
+    activePanel && (activePanel.type === 'table' || activePanel.type === 'view')
+      ? activePanel.id
+      : null;
+  const tableSlice = useTableDataStore((s) =>
+    detailPanelId ? s.byPanel.get(detailPanelId) : undefined,
+  );
+  const tableColumns = tableSlice?.columns ?? NO_COLUMNS;
+  const tableRows = tableSlice?.rows ?? NO_ROWS;
+  const selectedRows = tableSlice?.selectedRows ?? NO_SELECTED;
+  const detailRowIndex = tableSlice?.detailRowIndex ?? null;
 
   const activeQueryExec = usePanelStore((s) =>
     activePanel?.type === 'query' ? s.queryExec.get(activePanel.id) : undefined,
@@ -103,34 +150,52 @@ export function ContentViewDrawers({
 
   const handleDetailFieldEdit = useCallback(
     (row: number, col: string, value: unknown) => {
+      const store = useTableDataStore.getState();
       if (activePanel?.type === 'table') {
         if (selectedRows.size > 1) {
-          applyColumnToRows(col, value, [...selectedRows]);
+          store.applyColumnToRows(activePanel.id, col, value, [...selectedRows]);
         } else {
-          updateCell(row, col, value);
+          store.stageCellChange(activePanel.id, row, col, value);
         }
       } else if (activePanel?.type === 'query' && activeQueryExec) {
         updateResultCell(activePanel.id, activeQueryExec.activeResultIdx, row, col, value);
       }
     },
-    [activePanel, activeQueryExec, updateCell, updateResultCell, applyColumnToRows, selectedRows],
+    [activePanel, activeQueryExec, updateResultCell, selectedRows],
   );
+
+  const Sidebar = keyPropsSidebarSlot?.Component;
 
   return (
     <>
-      {detailPanelApplicable && (
-        <DetailPanel
-          open={detailOpen}
-          columns={detailColumnDefs}
-          row={detailRow}
-          rowIndex={detailRowIdx}
-          selectedRows={
-            activePanel?.type === 'table' || activePanel?.type === 'view' ? selectedRows : undefined
-          }
-          editable
-          onFieldEdit={handleDetailFieldEdit}
-        />
-      )}
+      {detailPanelApplicable &&
+        (Sidebar && keyPropsSidebarSlot ? (
+          // KV panel with a driver-contributed key-props sidebar: the same drawer
+          // slot now carries real content instead of an empty row grid (P-3).
+          // The sidebar owns its own container (width / border / scroll) just like
+          // DetailPanel does, and is expected to render nothing while `open` is false.
+          <div
+            data-slot="kv-key-props-sidebar"
+            data-testid="conn-kv-key-props-sidebar"
+            className="flex min-w-0 shrink-0"
+          >
+            <Sidebar {...keyPropsSidebarSlot.props} open={detailOpen} onClose={onCloseDetail} />
+          </div>
+        ) : (
+          <DetailPanel
+            open={detailOpen}
+            columns={detailColumnDefs}
+            row={detailRow}
+            rowIndex={detailRowIdx}
+            selectedRows={
+              activePanel?.type === 'table' || activePanel?.type === 'view'
+                ? selectedRows
+                : undefined
+            }
+            editable
+            onFieldEdit={handleDetailFieldEdit}
+          />
+        ))}
 
       {aiChatOpen && dbSessionId && (
         <>
@@ -151,6 +216,7 @@ export function ContentViewDrawers({
                   updateQuerySql(activePanel.id, sql);
                 }
               }}
+              kvContext={kvAiContext}
               draftRequest={pendingDraftRequest}
               onDraftConsumed={onDraftConsumed}
             />

@@ -8,6 +8,7 @@ import {
   clickTableInSidebar,
   switchSubTab,
   waitForNewQueryButton,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 /**
@@ -46,8 +47,7 @@ describe('详情面板 (DP-001~DP-004)', () => {
         ('Bob', 200, '{"role":"user"}')
     `);
 
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(2000);
   });
 

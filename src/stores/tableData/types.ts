@@ -1,6 +1,5 @@
 import type { ColumnSchema, FilterCondition, SortCondition } from '../../types';
 import type {
-  CommitPendingChangesResult,
   PendingRowChange,
   PendingStatus,
   RowChangePlan,
@@ -15,7 +14,11 @@ export interface CellEdit {
   pkSnapshot: Record<string, unknown>;
 }
 
-/** Per-table state slice */
+/**
+ * Table-data state for one panel (tab). The panel is the unit of lifetime and of
+ * cache scope: page/filters/selection/staged edits belong to the tab that set them,
+ * never to the session, so two tabs on the same table never overwrite each other.
+ */
 export interface TableState {
   context: TableChangeContext | null;
   columns: ColumnSchema[];
@@ -37,10 +40,11 @@ export interface TableState {
   rowIdentityAnchors: Map<number, string>;
   previewPlan: RowChangePlan | null;
   pendingStatus: PendingStatus;
-  lastCommitResult: CommitPendingChangesResult | null;
   selectedRows: Set<number>;
   lastSelectedIndex: number | null;
   editingCell: { row: number; col: string } | null;
+  /** Row highlighted by the detail drawer. */
+  detailRowIndex: number | null;
   loading: boolean;
   /** Monotonic revision of the latest requested page/filter/sort state. */
   requestRevision: number;
@@ -48,17 +52,4 @@ export interface TableState {
   loadingRevision: number | null;
   error: string | null;
   visibleColumns: string[] | null;
-}
-
-/** Per-connection table-data state */
-export interface ConnectionTableState {
-  activeTable: string | null;
-  activeTableKey: string | null;
-  connectionId: string | null;
-  databaseType: string | null;
-  /** F1: last target database used for table data loads on this session. */
-  activeDatabase: string | null;
-  activeSchema: string | null;
-  tableStates: Map<string, TableState>;
-  detailRowIndex: number | null;
 }

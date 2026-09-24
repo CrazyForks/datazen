@@ -18,6 +18,7 @@ import {
   asideHasSchemaSections,
   connectionNavigatorAside,
   waitForNewQueryButton,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 const TABLE_BASIC = '_e2e_mysql_basic';
@@ -109,11 +110,7 @@ describe('MySQL 数据库支持 (MY-001~MY-020)', () => {
     `);
 
     // Refresh sidebar
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    if (await refreshBtn.isExisting()) {
-      await refreshBtn.click();
-      await browser.pause(2000);
-    }
+    if (await $('[data-testid="navigator-refresh"]').isExisting()) await clickNavigatorRefresh();
   });
 
   after(async () => {

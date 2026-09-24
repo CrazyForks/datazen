@@ -16,6 +16,7 @@ import {
   executeSQL,
   openQueryTab,
   withSafeModeOff,
+  clickNavigatorRefresh,
 } from '../helpers.js';
 
 const STAMP = Date.now().toString(36);
@@ -305,8 +306,7 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     await closeExtraWindows(mainWindow);
     await connectSeededPgInWorkspace();
     await browser.pause(1500);
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(1500);
     await expandSchemaTables();
     const names = await visibleTableNames();
@@ -343,8 +343,7 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     await closeExtraWindows(mainWindow);
     await connectSeededPgInWorkspace();
     await browser.pause(1500);
-    const refreshBtn = await $(`button[title="${t('connWin.refresh')} (⌘R)"]`);
-    await refreshBtn.click();
+    await clickNavigatorRefresh();
     await browser.pause(1500);
     await expandSchemaTables();
     const names = await visibleTableNames();

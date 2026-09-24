@@ -5,6 +5,8 @@ const SCHEMA_CHANGING_DDL =
 
 const SCHEMA_MUTATING_DDL = /^(CREATE|ALTER|DROP|TRUNCATE|RENAME|COMMENT\s+ON)\b/i;
 
+const DATA_MODIFYING_DML = /^(INSERT|UPDATE|DELETE|REPLACE|MERGE|CALL)\b/i;
+
 function normalizeStatementHead(stmt: string): string {
   return stmt.trim().replace(/\s+/g, ' ');
 }
@@ -31,4 +33,16 @@ export function isSchemaMutatingStatement(stmt: string): boolean {
 /** True when any statement in the script mutates database schema. */
 export function sqlMayMutateSchema(sql: string): boolean {
   return splitSqlStatements(sql).some(isSchemaMutatingStatement);
+}
+
+/** True when a statement writes table data (DML or TRUNCATE). */
+export function isDataModifyingStatement(stmt: string): boolean {
+  const head = normalizeStatementHead(stmt);
+  if (!head) return false;
+  return DATA_MODIFYING_DML.test(head) || /^TRUNCATE\b/i.test(head);
+}
+
+/** True when any statement in the script writes table data. */
+export function sqlContainsDataModifying(stmt: string): boolean {
+  return splitSqlStatements(stmt).some(isDataModifyingStatement);
 }

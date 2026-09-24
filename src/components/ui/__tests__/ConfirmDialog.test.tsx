@@ -72,7 +72,7 @@ describe('ConfirmDialog', () => {
         onCancel={onCancel}
       />,
     );
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByTestId('confirm-dialog-cancel'));
     expect(onCancel).toHaveBeenCalledOnce();
   });
 

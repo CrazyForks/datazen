@@ -23,6 +23,9 @@ import { PanelContentRenderer } from './PanelContentRenderer';
 import { usePanelHandlers } from './usePanelHandlers';
 import { useConnectionContextMenu } from './useConnectionContextMenu';
 import { useConnectionWorkspaceMeta } from './useConnectionWorkspaceMeta';
+import { useKvWorkspaceSlots } from './useKvWorkspaceSlots';
+import { useKvSlotActions } from './useKvSlotActions';
+import { pruneKvSlotStates } from '../../lib/kvSlotState';
 import { ContentViewDialogs } from './ContentViewDialogs';
 import { ContentViewDrawers } from './ContentViewDrawers';
 import { ConnectionWorkspaceHome } from './ConnectionWorkspaceHome';
@@ -34,9 +37,13 @@ import type {
   ConnectionViewActions,
   NodeContextMenuPayload,
 } from '../../lib/connectionViews/types';
-import type { DatabaseType } from '../../types';
+import type { ColumnSchema, DatabaseType } from '../../types';
 import type { SchemaTreeNodeContextMenuPayload } from '../../lib/schemaTreeContextMenu';
 import type { AiChatDraftRequest, ContentViewCallbacks } from './query/aiDraftBridge';
+
+const NO_COLUMNS: ColumnSchema[] = [];
+const NO_ROWS: Record<string, unknown>[] = [];
+const NO_SELECTION: Set<number> = new Set();
 
 export interface ContentViewProps {
   selectTableRef?: MutableRefObject<
@@ -45,6 +52,17 @@ export interface ContentViewProps {
   nodeContextMenuRef?: MutableRefObject<((payload: NodeContextMenuPayload) => void) | undefined>;
   actionsRef?: MutableRefObject<ConnectionViewActions | undefined>;
   onSelectConnection?: (connectionId: string) => void;
+  /**
+   * Bind the workspace to a KV driver's logical database.
+   *
+   * This is `ConnectionPage`'s `handleSelectKvDb` — the very callback the
+   * navigation tree already calls — threaded down (not re-implemented) so the
+   * driver context bar's db selector reaches the same single
+   * activate-or-open implementation. It is handed to {@link useKvSlotActions} as
+   * `onSelectDatabase`, with the connection supplied here because only this
+   * layer knows which one the active panel belongs to.
+   */
+  onSelectKvDb?: (connectionId: string, dbName: string) => void;
 }
 
 export function ContentView({
@@ -52,6 +70,7 @@ export function ContentView({
   nodeContextMenuRef,
   actionsRef,
   onSelectConnection,
+  onSelectKvDb,
 }: ContentViewProps) {
   const { t } = useI18n();
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
@@ -69,12 +88,20 @@ export function ContentView({
   const schemaViews = useSchemaStore((s) => s.views);
   const loadForConnection = useSchemaStore((s) => s.loadForConnection);
 
-  const tableColumns = useTableDataStore((s) => s.columns);
-  const tableRows = useTableDataStore((s) => s.rows);
-  const totalRows = useTableDataStore((s) => s.totalRows);
-  const selectedRows = useTableDataStore((s) => s.selectedRows);
-  const tableName = useTableDataStore((s) => s.tableName);
-  const setDbType = useTableDataStore((s) => s.setDatabaseType);
+  const isTablePanel = activePanel?.type === 'table' || activePanel?.type === 'view';
+  const tableSlice = useTableDataStore((s) =>
+    isTablePanel && activePanelId ? s.byPanel.get(activePanelId) : undefined,
+  );
+  const tableColumns = tableSlice?.columns ?? NO_COLUMNS;
+  const tableRows = tableSlice?.rows ?? NO_ROWS;
+  const totalRows = tableSlice?.totalRows ?? 0;
+  const selectedRows = tableSlice?.selectedRows ?? NO_SELECTION;
+  const tableName =
+    activePanel?.type === 'table'
+      ? activePanel.tableName
+      : activePanel?.type === 'view'
+        ? (activePanel as ViewPanel).viewName
+        : undefined;
 
   const {
     sidebarConnCtx,
@@ -95,6 +122,8 @@ export function ContentView({
     connectingDbType,
     recentPanels,
     statusDatabase,
+    isKvPanel,
+    connectionId,
   } = useConnectionWorkspaceMeta(activePanel);
 
   const [aiChatOpen, setAiChatOpen] = useState(false);
@@ -133,6 +162,8 @@ export function ContentView({
     (activePanel.type !== 'table' || activePanel.subTab === 'data') &&
     (activePanel.type !== 'view' || (activePanel as ViewPanel).subTab === 'data');
 
+  const closeDetail = useCallback(() => setDetailOpen(false), []);
+
   // The schema of a relation, for per-table metadata reads. Never falls back to
   // `currentDatabase`: that is a *database*, and a schema-aware driver would
   // resolve the table in the wrong namespace while a schema-less driver would
@@ -144,10 +175,6 @@ export function ContentView({
     },
     [schemaTables, schemaViews],
   );
-
-  useEffect(() => {
-    if (databaseType) setDbType(databaseType);
-  }, [databaseType, setDbType]);
 
   const schemaTreeDbSessionId = sidebarConnCtx?.dbSessionId ?? dbSessionId;
   const schemaTreeDatabaseType = sidebarConnCtx?.databaseType ?? databaseType;
@@ -175,6 +202,17 @@ export function ContentView({
     knownPanelIdsRef.current = liveIds;
   }, [allPanels, destroyQbForPanel]);
 
+  // Table-data slices live and die with their panel; prune the ones left behind
+  // when a tab (or a whole connection) closes.
+  useEffect(() => {
+    const store = useTableDataStore.getState();
+    const liveIds = new Set(allPanels.map((p) => p.id));
+    for (const panelId of store.byPanel.keys()) {
+      if (!liveIds.has(panelId)) store.removePanel(panelId);
+    }
+    pruneKvSlotStates(liveIds);
+  }, [allPanels]);
+
   // Keep the session-level `currentDatabase` aligned with the ACTIVE panel's
   // bound database. Without this, loadForConnection/schema-tree defaults can
   // re-pin it to the first database on a reload (e.g. Settings round-trip)
@@ -195,6 +233,49 @@ export function ContentView({
     lastTableSchema,
     schemaViews,
     resolveTableSchema,
+  });
+
+  // The single KV action dispatcher sits on this side of the boundary: a context
+  // bar asks, the host decides (and ignores what it cannot do). See useKvSlotActions.
+  //
+  // `selectDatabase` resolves against the connection the ACTIVE panel belongs to
+  // (`connectionId`, already resolved by useConnectionWorkspaceMeta). Bound here
+  // rather than inside the dispatcher because the panel is the only thing that
+  // knows the connection, and the callback itself stays ConnectionPage's.
+  //
+  // `undefined` when the host never handed `onSelectKvDb` down — that is what
+  // keeps the dispatcher's documented no-op + warning path reachable (a host
+  // without the callback must degrade, not silently call a hollow wrapper).
+  const selectKvDatabase = useMemo(
+    () =>
+      onSelectKvDb
+        ? (database: string) => {
+            onSelectKvDb(connectionId, database);
+          }
+        : undefined,
+    [onSelectKvDb, connectionId],
+  );
+  const kvActions = useKvSlotActions({
+    onRefresh: handlers.handleRefresh,
+    onSelectDatabase: selectKvDatabase,
+  });
+
+  // Driver-contributable KV surfaces (context bar / status bar / key-props sidebar /
+  // connection home). Every binding stays `undefined` unless the driver both declares
+  // the capability and contributed a component, so non-KV and pre-Wave-2 drivers render
+  // exactly as before.
+  const kvSlots = useKvWorkspaceSlots({
+    activePanel,
+    isKvPanel,
+    databaseType,
+    database: statusDatabase,
+    dbSessionId,
+    connectionId,
+    connectionName,
+    connectionContext: sidebarConnCtx,
+    initialDatabase,
+    onSlotAction: kvActions.request,
+    onSelectKvDb: selectKvDatabase,
   });
 
   const handleOpenSqlFile = useCallback(() => {
@@ -391,6 +472,8 @@ export function ContentView({
           aiChatOpen={aiChatOpen}
           detailPanelApplicable={detailPanelApplicable}
           detailOpen={detailOpen}
+          contextBarSlot={kvSlots.contextBar}
+          kvPanelState={kvSlots.panelState}
           onNewQuery={() => handlers.handleNewQuery()}
           onCreateTable={handlers.handleCreateTable}
           onOpenErDiagram={() => handlers.handleOpenErDiagram()}
@@ -399,7 +482,6 @@ export function ContentView({
           onBatchExport={handleOpenBatchExportFromToolbar}
           onToggleAiChat={() => setAiChatOpen((v) => !v)}
           onToggleDetail={() => setDetailOpen((p) => !p)}
-          onRefresh={handlers.handleRefresh}
         />
       )}
 
@@ -440,6 +522,7 @@ export function ContentView({
                   currentConnectionId: sidebarConnCtx?.connectionId,
                 });
               }}
+              connectionHomeSlot={kvSlots.connectionHome}
             />
           ) : (
             <PanelContentRenderer
@@ -457,6 +540,7 @@ export function ContentView({
               onUpdatePanelData={(id, data) =>
                 storeUpdatePanel(id, data as Parameters<typeof storeUpdatePanel>[1])
               }
+              kvSlotState={kvSlots.panelState}
               callbacks={callbacks}
             />
           )}
@@ -468,8 +552,12 @@ export function ContentView({
           aiChatOpen={aiChatOpen}
           detailPanelApplicable={detailPanelApplicable}
           dbSessionId={dbSessionId}
+          connectionName={connectionName}
           currentDatabase={currentDatabase}
           databaseType={databaseType}
+          kvPanelState={kvSlots.panelState}
+          onCloseDetail={closeDetail}
+          keyPropsSidebarSlot={kvSlots.keyPropsSidebar}
           pendingDraftRequest={pendingDraftRequest}
           onDraftConsumed={handleDraftConsumed}
         />
@@ -483,6 +571,7 @@ export function ContentView({
           tableName={tableName ?? ''}
           columnCount={tableColumns.length}
           totalRows={totalRows}
+          statusBarSlot={kvSlots.statusBar}
         />
       )}
 
@@ -518,6 +607,7 @@ export function ContentView({
       />
 
       {confirmActionDialog}
+      {kvActions.dialog}
     </div>
   );
 }

@@ -31,20 +31,29 @@ const aiState = vi.hoisted(() => ({
   }),
 }));
 
-const tableState = vi.hoisted(() => ({
-  activeTable: 'users',
-  columns: [{ name: 'name' }],
+const tableStore = vi.hoisted(() => ({
+  byPanel: new Map<string, unknown>(),
   setFilters: vi.fn(),
   clearFilters: vi.fn(),
 }));
+
+const PANEL = 'panel-1';
+
+/** The parse result is only applied when the panel slice still points at that table. */
+function seedPanelSlice(
+  context: { table: string; dbSessionId?: string },
+  columns: { name: string }[],
+) {
+  tableStore.byPanel.set(PANEL, { context: { dbSessionId: 'c1', ...context }, columns });
+}
 
 vi.mock('../../../stores/aiStore', () => ({
   useAiStore: (sel: (s: typeof aiState) => unknown) => sel(aiState),
 }));
 
 vi.mock('../../../stores/tableDataStore', () => ({
-  useTableDataStore: Object.assign((sel: (s: typeof tableState) => unknown) => sel(tableState), {
-    getState: () => tableState,
+  useTableDataStore: Object.assign((sel: (s: typeof tableStore) => unknown) => sel(tableStore), {
+    getState: () => tableStore,
   }),
 }));
 
@@ -62,16 +71,18 @@ beforeEach(() => {
   aiState.parsedFilters = null;
   aiState.isParsingFilter = false;
   aiState.nlFilterError = null;
-  tableState.activeTable = 'users';
-  tableState.columns = [{ name: 'name' }];
+  tableStore.byPanel = new Map();
+  seedPanelSlice({ table: 'users' }, [{ name: 'name' }]);
 });
+
+function renderInput() {
+  return render(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
+}
 
 describe('NlFilterInput', () => {
   it('shows not configured button', async () => {
     aiState.isConfigured = false;
-    const { getByText } = render(
-      <NlFilterInput dbSessionId="c1" database="db" tableName="users" />,
-    );
+    const { getByText } = renderInput();
     fireEvent.click(getByText('common.aiNotConfigured'));
     await waitFor(() => {
       expect(openSettingsWindow).toHaveBeenCalledWith('ai');
@@ -79,13 +90,11 @@ describe('NlFilterInput', () => {
   });
 
   it('expands, parses, and applies filters', async () => {
-    const { container, getByText, rerender } = render(
-      <NlFilterInput dbSessionId="c1" database="db" tableName="users" />,
-    );
+    const { container, getByText, rerender } = renderInput();
     fireEvent.click(container.querySelector('button')!);
     const input = container.querySelector('input')!;
     fireEvent.change(input, { target: { value: 'active users' } });
-    rerender(<NlFilterInput dbSessionId="c1" database="db" tableName="users" />);
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
     fireEvent.click(getByText('smartFilter.parse'));
     await waitFor(() => {
       expect(aiState.parseFilter).toHaveBeenCalledWith({
@@ -93,30 +102,30 @@ describe('NlFilterInput', () => {
         database: 'db',
         table: 'users',
       });
-      expect(tableState.setFilters).toHaveBeenCalled();
+      expect(tableStore.setFilters).toHaveBeenCalledWith(PANEL, [
+        { column: 'name', operator: 'eq', value: 'x' },
+      ]);
     });
   });
 
   it('shows parsing, error, and parsed states', () => {
     aiState.isParsingFilter = true;
-    const { container, rerender, getByText } = render(
-      <NlFilterInput dbSessionId="c1" database="db" tableName="users" />,
-    );
+    const { container, rerender, getByText } = renderInput();
     fireEvent.click(container.querySelector('button')!);
     expect(getByText('smartFilter.parsing')).toBeInTheDocument();
 
     aiState.isParsingFilter = false;
     aiState.nlFilterError = 'bad prompt';
-    rerender(<NlFilterInput dbSessionId="c1" database="db" tableName="users" />);
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
     expect(getByText('bad prompt')).toBeInTheDocument();
 
     aiState.nlFilterError = null;
     aiState.parsedFilters = [];
-    rerender(<NlFilterInput dbSessionId="c1" database="db" tableName="users" />);
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
     expect(getByText('smartFilter.noFilters')).toBeInTheDocument();
 
     aiState.parsedFilters = [{ column: 'a' }, { column: 'b' }];
-    rerender(<NlFilterInput dbSessionId="c1" database="db" tableName="users" />);
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
     expect(getByText('smartFilter.parsed')).toBeInTheDocument();
   });
 
@@ -124,29 +133,39 @@ describe('NlFilterInput', () => {
     aiState.parseFilter.mockResolvedValueOnce([
       { column: 'category', operator: 'eq', value: 'shipped' },
     ]);
-    const { container, getByText, rerender } = render(
-      <NlFilterInput dbSessionId="c1" database="db" tableName="users" />,
-    );
+    const { container, getByText, rerender } = renderInput();
     fireEvent.click(container.querySelector('button')!);
     fireEvent.change(container.querySelector('input')!, { target: { value: 'shipped' } });
-    rerender(<NlFilterInput dbSessionId="c1" database="db" tableName="users" />);
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
     fireEvent.click(getByText('smartFilter.parse'));
 
     await waitFor(() => {
       expect(getByText('smartFilter.invalidColumns')).toBeInTheDocument();
     });
-    expect(tableState.setFilters).not.toHaveBeenCalled();
+    expect(tableStore.setFilters).not.toHaveBeenCalled();
+  });
+
+  it('ignores a parse result when the panel moved to another table', async () => {
+    seedPanelSlice({ table: 'orders' }, [{ name: 'name' }]);
+    const { container, getByText, rerender } = renderInput();
+    fireEvent.click(container.querySelector('button')!);
+    fireEvent.change(container.querySelector('input')!, { target: { value: 'active' } });
+    rerender(<NlFilterInput panelId={PANEL} dbSessionId="c1" database="db" tableName="users" />);
+    fireEvent.click(getByText('smartFilter.parse'));
+
+    await waitFor(() => {
+      expect(aiState.parseFilter).toHaveBeenCalled();
+    });
+    expect(tableStore.setFilters).not.toHaveBeenCalled();
   });
 
   it('clears and collapses on X click', () => {
     aiState.nlFilterInput = 'test';
-    const { container } = render(
-      <NlFilterInput dbSessionId="c1" database="db" tableName="users" />,
-    );
+    const { container } = renderInput();
     fireEvent.click(container.querySelector('button')!);
     const closeBtn = Array.from(container.querySelectorAll('button')).pop()!;
     fireEvent.click(closeBtn);
     expect(aiState.clearNlFilter).toHaveBeenCalled();
-    expect(tableState.clearFilters).toHaveBeenCalled();
+    expect(tableStore.clearFilters).toHaveBeenCalledWith(PANEL);
   });
 });

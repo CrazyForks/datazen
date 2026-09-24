@@ -308,6 +308,21 @@ describe('schemaStore.loadTables', () => {
     expect(state.views.map((t) => t.name)).toEqual(['v1']);
     expect(state.columnMap).toEqual({});
   });
+
+  it('setLoadedTables with pinCurrentDatabase:false fills tables but keeps the pointer', () => {
+    useSchemaStore.setState({ currentDatabase: 'other' });
+    useSchemaStore
+      .getState()
+      .setLoadedTables(
+        'db1',
+        [{ name: 't1', tableType: 'table', schema: null, rowCount: null }],
+        undefined,
+        { pinCurrentDatabase: false },
+      );
+    const state = useSchemaStore.getState();
+    expect(state.currentDatabase).toBe('other');
+    expect(state.tables.map((t) => t.name)).toEqual(['t1']);
+  });
 });
 
 describe('schemaStore.switchDatabase', () => {
