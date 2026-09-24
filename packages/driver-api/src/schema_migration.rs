@@ -1635,31 +1635,38 @@ mod type_parts_tests {
     }
 
     #[test]
-    fn test_tester_mysql_definer_and_nested_routine_signature_are_validated_from_header() {
-        let definition = "CREATE DEFINER=`migrator`@`%` FUNCTION `app`.`sum_amount`(IN p_amount DECIMAL(10,2), OUT p_label VARCHAR(20)) RETURNS DECIMAL(10,2) RETURN p_amount";
+    fn test_tester_mysql_definer_nested_arguments_and_postgres_identity_validation() {
+        let mysql_definition = "CREATE DEFINER=`migrator`@`%` FUNCTION `app`.`sum_amount`(IN p_amount DECIMAL(10,2), OUT p_label VARCHAR(20)) RETURNS DECIMAL(10,2) RETURN p_amount";
         assert!(validate_object_definition_with_identity(
-            definition,
+            mysql_definition,
             ObjectKind::Function,
             "sum_amount",
-            Some("DECIMAL(10,2), VARCHAR(20)"),
+            None,
+        )
+        .is_ok());
+        assert_eq!(
+            object_declaration_identity(mysql_definition),
+            Some((
+                ObjectKind::Function,
+                "sum_amount".into(),
+                Some("IN P_AMOUNT DECIMAL(10, 2), OUT P_LABEL VARCHAR(20)".into()),
+            ))
+        );
+        let postgres_definition = "CREATE FUNCTION app.sum_amount(p_amount numeric, p_label character varying) RETURNS numeric LANGUAGE SQL AS $$ SELECT p_amount $$";
+        assert!(validate_object_definition_with_identity(
+            postgres_definition,
+            ObjectKind::Function,
+            "sum_amount",
+            Some("numeric, character varying"),
         )
         .is_ok());
         assert!(validate_object_definition_with_identity(
-            definition,
+            postgres_definition,
             ObjectKind::Function,
             "sum_amount",
-            Some("INTEGER, VARCHAR(20)"),
+            Some("integer, character varying"),
         )
         .is_err());
-
-        assert_eq!(
-            object_declaration_identity(definition),
-            Some((
-                ObjectKind::Function,
-                "SUM_AMOUNT".into(),
-                Some("IN P_AMOUNT DECIMAL(10,2), OUT P_LABEL VARCHAR(20)".into()),
-            ))
-        );
         assert!(object_declaration_identity("CREATE DEFINER FUNCTION f() RETURNS int").is_none());
         assert!(object_declaration_identity("CREATE DEFINER = FUNCTION f() RETURNS int").is_none());
     }
