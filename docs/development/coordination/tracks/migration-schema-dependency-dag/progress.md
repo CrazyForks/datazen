@@ -1,6 +1,6 @@
 # migration-schema-dependency-dag
 
-Phase: TEST_FAILED
+Phase: READY_FOR_TEST
 
 ## Scope
 
@@ -22,7 +22,7 @@ This track covers the existing independent planner boundaries. It does **not** i
 - [ ] A combined reviewed plan represents supported dependencies across all selected table, view, routine, trigger, sequence, and type operations and validates them against source/target snapshots.
 - [ ] Dependencies inside opaque view/routine SQL bodies are extracted or supplied as driver metadata; unresolved references block execution instead of being silently omitted.
 - [ ] End-to-end mixed-kind apply and reverse drop are verified on PostgreSQL and MySQL using WDIO, with rendered SQL and read-back assertions.
-- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes all supported WDIO cases without failures, and files any bugs. Fresh R3 focused checks passed, but candidate `14e8ca1a` remains `TEST_FAILED`: PostgreSQL's two unchanged FK plans were falsely rejected as stale (BUG-005), three WDIO journeys timed out inconclusively, and changed-production executable coverage was 269/658 (40.9%). See [TEST_FAILED.md](./TEST_FAILED.md).
+- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes all supported WDIO cases without failures, and files any bugs. Fresh R3 candidate `14e8ca1a` failed: PostgreSQL's two unchanged FK plans were falsely rejected as stale (BUG-005), three WDIO journeys timed out inconclusively, and changed-production executable coverage was 269/658 (40.9%). The Coder repair below fixes BUG-005 and independently measures 588/688 changed executable lines (85.5%); fresh WDIO and coverage verification are still required. See [TEST_FAILED.md](./TEST_FAILED.md).
 
 The targeted graph and planner unit tests below pass, but they do not satisfy these cross-category and live-database acceptance items. Do not mark this track PASSED until its supported boundary is independently reviewed; do not treat that result as closing the unified-plan release blocker.
 
@@ -87,4 +87,16 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 - WDIO completed 5 passing and 5 failing journeys. MySQL create+FK, add-FK, and selected child-before-parent deploy/read-back passed; parent-only unselected-dependent blocking passed for PostgreSQL and MySQL. Two PostgreSQL no-change FK plans failed stale validation. PostgreSQL selected-drop and the two stale-after-review journeys timed out without deploying a rejected/stale plan.
 - MySQL catalog visibility was proven and its positive selected-drop path passed, but this run emitted no catalog scan duration/count log. Changed-production executable coverage is below the 80% gate; the app-runtime profile did not flush.
 - Test setup incident and cleanup are documented in the report. After direct WDIO execution, read-only verification confirmed no `sd_dag_*` fixtures or temporary connection IDs remained; the app stopped and port 4445 was released.
-- Do not merge this candidate. Resume the original Coder for BUG-005 and coverage remediation, then dispatch a fresh Tester for full retest. The combined cross-category planner remains a separate release blocker.
+- The R3 candidate's BUG-005 and coverage findings are addressed in the Coder handoff below. Dispatch a fresh Tester for full retest before merge. The combined cross-category planner remains a separate release blocker.
+
+## BUG-005 Coder Repair Handoff
+
+- Phase: `READY_FOR_TEST`. BUG-005 is fixed in this candidate and awaits fresh independent retest; Coder does not mark it PASSED.
+- Root cause: PostgreSQL prepare snapshots retained `public.table` in `TableSchema.table_name`, while deploy fetched the same relation as `table` with schema `public` supplied separately. Snapshot comparison treated this presentation difference as a target mutation.
+- Fix: reviewed snapshot validation now checks the reported relation name against the frozen full identity, allowing a qualified frozen identity to match a bare driver name only when schema is already known separately. It rejects differing qualified schemas and rejects a qualified reported name when the reviewed identity is unqualified. It excludes only the redundant serialized `tableName` presentation field before comparing all structural snapshot data, preserving stale-schema detection.
+- Regression coverage: direct reviewed-snapshot tests cover the qualified-to-bare unchanged PG case, FK mutations, wrong schema, wrong relation, and an unqualified identity reported as `archive.table`. Focused command tests cover both unchanged PostgreSQL FK deploy journeys (create missing parent/child+FK and add FK to an existing table), and a real schema mutation after review still rejects before any write.
+- Changed-line coverage: 588/688 mapped added executable production lines covered (85.5%), using the Tester baseline `906b42fc` and the same test-only exclusions listed in R3. The earlier 658-line denominator grew by 30 mapped executable lines from the BUG-005 snapshot-identity fix. Per-file: `commands/schema_diff.rs` 258/299; `schema_diff/plan.rs` 179/206; `schema_diff/reviewed.rs` 70/85; `driver-api/reuse.rs` 2/2; `driver-api/traits.rs` 2/2; MySQL `mysql.rs` 77/86; PostgreSQL `schema.rs` 0/8. The instrumented run covered Host and driver unit tests; this worktree had no live PG/MySQL integration credentials configured, and the app-runtime profile remains unavailable. The prior independent R3 report separately recorded one successful live PG FK-introspection integration test, without coverage instrumentation.
+- Instrumented serial suites passed: Host Schema Diff 173/173; Driver API 156/156; MySQL driver 116/116; PostgreSQL driver 132/132. Host TypeScript passed. Targeted Rust formatting, changed-spec Prettier, and `git diff --check` passed. Workspace-wide `cargo fmt --all -- --check` only flags ignored generated `src-tauri/src/driver_init.rs` ordering.
+- WDIO stale-element handling was updated in the dependency-order spec to query fresh elements after React rerenders and retry stale reads. No production UI change was made. Coder did not run WDIO; fresh Tester must rerun the three formerly inconclusive journeys and all acceptance cases.
+- The WDIO workspace typecheck continues to report pre-existing diagnostics in shared helpers, unrelated specs, and generated extension aliases; no diagnostic referred to the changed dependency-order spec. This does not replace fresh E2E execution.
+- This repair does not close the separate combined-plan/unified-planner release blocker.

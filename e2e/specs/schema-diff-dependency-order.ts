@@ -151,8 +151,20 @@ async function openPlan(fixture: DialectFixture) {
 async function readPlanStatements(): Promise<string[]> {
   const elements = await $$('[data-testid="schema-diff-plan-panel"] li pre');
   const statements: string[] = [];
-  for (const element of elements) statements.push(await element.getText());
+  for (const element of elements) {
+    try {
+      statements.push(await element.getText());
+    } catch (error) {
+      if (String(error).toLowerCase().includes('stale element reference')) return [];
+      throw error;
+    }
+  }
   return statements;
+}
+
+async function readPlanRequirementText(): Promise<string> {
+  const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+  return (await requirements.getText().catch(() => '')).toLowerCase();
 }
 
 function assertForeignKeyPlanOrder(fixture: DialectFixture, statements: string[]) {
@@ -282,8 +294,7 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture): Promise<boole
     await browser.waitUntil(
       async () => {
         const statements = await readPlanStatements();
-        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
-        const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+        const requirementText = await readPlanRequirementText();
         return (
           (statements.some((sql) => sql.includes(fixture.parentTable)) &&
             statements.some((sql) => sql.includes(fixture.childTable))) ||
@@ -295,18 +306,17 @@ async function assertTargetOnlyDropOrder(fixture: DialectFixture): Promise<boole
   } catch {
     const statements = await readPlanStatements();
     const planPanel = await $('[data-testid="schema-diff-plan-panel"]');
-    const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+    const requirementText = await readPlanRequirementText();
     const errors = await $$('.error-message');
     const visibleErrors: string[] = [];
     for (const error of errors) {
       if (await error.isDisplayed().catch(() => false)) visibleErrors.push(await error.getText());
     }
     throw new Error(
-      `target-only drop plan did not regenerate; plan=${await planPanel.getText().catch(() => '<unavailable>')}; requirements=${await requirements.getText().catch(() => '<none>')}; statements=${statements.join('\n') || '<none>'}; errors=${visibleErrors.join(' | ') || '<none>'}`,
+      `target-only drop plan did not regenerate; plan=${await planPanel.getText().catch(() => '<unavailable>')}; requirements=${requirementText || '<none>'}; statements=${statements.join('\n') || '<none>'}; errors=${visibleErrors.join(' | ') || '<none>'}`,
     );
   }
-  const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
-  const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+  const requirementText = await readPlanRequirementText();
   if (fixture.dialect === 'mysql' && requirementText.includes('direct global select')) {
     expect(await readPlanStatements()).toEqual([]);
     await advanceSchemaDiffToReview();
@@ -431,20 +441,21 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
         const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
         await regenerate.waitForClickable({ timeout: 10000 });
         await regenerate.click();
-        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
         await browser.waitUntil(
-          async () =>
-            (await requirements.isExisting()) &&
-            ((await requirements.getText()).includes('unselected target table') ||
-              (dialect === 'mysql' &&
-                (await requirements.getText()).toLowerCase().includes('direct global select'))),
+          async () => {
+            const requirementText = await readPlanRequirementText();
+            return (
+              requirementText.includes('unselected target table') ||
+              (dialect === 'mysql' && requirementText.includes('direct global select'))
+            );
+          },
           {
             timeout: 30000,
             timeoutMsg: 'parent-only drop did not show the unselected FK dependent requirement',
           },
         );
 
-        const requirementText = await requirements.getText();
+        const requirementText = await readPlanRequirementText();
         const statements = await readPlanStatements();
         if (dialect === 'mysql' && requirementText.toLowerCase().includes('direct global select')) {
           expect(statements).toEqual([]);
@@ -485,11 +496,10 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
         const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
         await regenerate.waitForClickable({ timeout: 10000 });
         await regenerate.click();
-        const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
         await browser.waitUntil(
           async () => {
             const statements = await readPlanStatements();
-            const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+            const requirementText = await readPlanRequirementText();
             return (
               statements.some((sql) => /\bDROP\s+TABLE\b/i.test(sql)) ||
               (dialect === 'mysql' && requirementText.includes('direct global select'))
@@ -501,7 +511,7 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
           },
         );
 
-        const requirementText = (await requirements.getText().catch(() => '')).toLowerCase();
+        const requirementText = await readPlanRequirementText();
         if (dialect === 'mysql' && requirementText.includes('direct global select')) {
           expect(await readPlanStatements()).toEqual([]);
           await advanceSchemaDiffToReview();

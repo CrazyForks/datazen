@@ -31,6 +31,11 @@ pub struct MockDriverOptions {
     pub count_total: i64,
     pub databases: Vec<String>,
     pub tables: Vec<TableInfo>,
+    /// Per-database table schemas for Schema Diff command tests. When a
+    /// database is present, a missing table resolves to an empty schema.
+    pub table_schemas_by_database: HashMap<String, HashMap<String, TableSchema>>,
+    /// Simulate a MySQL identity with proven server-wide catalog visibility.
+    pub complete_foreign_key_catalog_visibility: bool,
     pub explain_plan: ExplainResult,
     pub server_version: String,
     pub extra_commands: Vec<DriverCommandDefinition>,
@@ -98,6 +103,8 @@ impl Default for MockDriverOptions {
             count_total: 0,
             databases: Vec::new(),
             tables: Vec::new(),
+            table_schemas_by_database: HashMap::new(),
+            complete_foreign_key_catalog_visibility: false,
             explain_plan: ExplainResult {
                 plan_text: String::new(),
                 plan_json: None,
@@ -149,10 +156,14 @@ pub struct MockDriver {
     use_database_calls: Mutex<Vec<String>>,
     qualify_calls: Mutex<Vec<(Option<String>, Option<String>)>>,
     close_database_calls: Mutex<Vec<String>>,
+    table_schemas_by_database: Mutex<HashMap<String, HashMap<String, TableSchema>>>,
+    table_lists_by_database: Mutex<HashMap<String, Vec<TableInfo>>>,
 }
 
 impl MockDriver {
     pub fn new(db_type: impl Into<DatabaseType>, opts: MockDriverOptions) -> Arc<Self> {
+        let table_schemas_by_database = opts.table_schemas_by_database.clone();
+        let table_lists_by_database = opts.tables_by_database.clone();
         Arc::new(Self {
             db_type: db_type.into(),
             opts,
@@ -170,6 +181,8 @@ impl MockDriver {
             use_database_calls: Mutex::new(Vec::new()),
             qualify_calls: Mutex::new(Vec::new()),
             close_database_calls: Mutex::new(Vec::new()),
+            table_schemas_by_database: Mutex::new(table_schemas_by_database),
+            table_lists_by_database: Mutex::new(table_lists_by_database),
         })
     }
 
@@ -231,6 +244,21 @@ impl MockDriver {
 
     pub fn get_schema_calls(&self) -> u32 {
         self.get_schema_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn set_table_schema_for_test(&self, database: &str, table: &str, schema: TableSchema) {
+        if let Ok(mut schemas) = self.table_schemas_by_database.lock() {
+            schemas
+                .entry(database.to_string())
+                .or_default()
+                .insert(table.to_string(), schema);
+        }
+    }
+
+    pub fn add_table_for_test(&self, database: &str, table: TableInfo) {
+        if let Ok(mut tables) = self.table_lists_by_database.lock() {
+            tables.entry(database.to_string()).or_default().push(table);
+        }
     }
 
     pub fn query_calls(&self) -> u32 {
@@ -362,6 +390,13 @@ impl DatabaseDriver for MockDriver {
         Ok(self.opts.databases.clone())
     }
 
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        Ok(self.opts.complete_foreign_key_catalog_visibility)
+    }
+
     async fn get_tables(
         &self,
         _handle: &ConnectionHandle,
@@ -371,10 +406,10 @@ impl DatabaseDriver for MockDriver {
         validate_schema_target(self, database, schema, SchemaScope::AnySchema)?;
         if !self.opts.tables_by_database.is_empty() {
             return Ok(self
-                .opts
-                .tables_by_database
-                .get(database)
-                .cloned()
+                .table_lists_by_database
+                .lock()
+                .ok()
+                .and_then(|tables| tables.get(database).cloned())
                 .unwrap_or_default());
         }
         Ok(self.opts.tables.clone())
@@ -389,6 +424,26 @@ impl DatabaseDriver for MockDriver {
     ) -> Result<TableSchema, DriverError> {
         validate_schema_target(self, database, schema, SchemaScope::ExactSchema)?;
         self.get_schema_calls.fetch_add(1, Ordering::Relaxed);
+        let per_database_schema = self
+            .table_schemas_by_database
+            .lock()
+            .ok()
+            .and_then(|schemas| {
+                schemas
+                    .get(database)
+                    .map(|tables| tables.get(table).cloned())
+            });
+        if let Some(schema) = per_database_schema {
+            return Ok(schema.unwrap_or_else(|| TableSchema {
+                table_name: table.to_string(),
+                columns: Vec::new(),
+                primary_keys: Vec::new(),
+                indexes: Vec::new(),
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                table_options: Default::default(),
+            }));
+        }
         if let Some(columns) = self.columns_for_database(database, table) {
             let primary_keys = columns
                 .iter()

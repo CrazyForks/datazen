@@ -235,6 +235,38 @@ fn mysql_foreign_key_parser_preserves_referenced_database_identity() {
 }
 
 #[test]
+fn mysql_foreign_key_reference_parser_handles_unquoted_and_malformed_identities() {
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES archive.parent (id)",
+            "REFERENCES",
+        ),
+        "archive.parent"
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive` . `parent` (id)",
+            "REFERENCES",
+        ),
+        "archive.parent"
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive.parent` (id)",
+            "REFERENCES",
+        ),
+        ""
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive.parent (id)",
+            "REFERENCES",
+        ),
+        ""
+    );
+}
+
+#[test]
 fn mysql_server_wide_catalog_visibility_requires_direct_global_select_without_revokes() {
     assert!(MysqlDriver::grants_prove_server_wide_catalog_visibility(&[
         "GRANT SELECT ON *.* TO 'datazen'@'localhost'".into(),

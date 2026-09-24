@@ -308,9 +308,46 @@ pub fn validate_snapshot(
     reviewed: &TableSchema,
     current: &TableSchema,
 ) -> Result<(), String> {
-    if serde_json::to_value(reviewed).map_err(|e| e.to_string())?
-        != serde_json::to_value(current).map_err(|e| e.to_string())?
+    fn relation_presentation_matches(identity: &str, reported_name: &str) -> bool {
+        let (identity_scope, identity_relation) = identity
+            .rsplit_once('.')
+            .map_or((None, identity), |(scope, relation)| {
+                (Some(scope), relation)
+            });
+        let (reported_scope, reported_relation) = reported_name
+            .rsplit_once('.')
+            .map_or((None, reported_name), |(scope, relation)| {
+                (Some(scope), relation)
+            });
+
+        identity_relation == reported_relation
+            && match (identity_scope, reported_scope) {
+                (Some(identity_scope), Some(reported_scope)) => identity_scope == reported_scope,
+                // Drivers may report an unqualified name after a schema has
+                // already been supplied as a separate argument. The frozen
+                // snapshot key remains the authoritative scoped identity.
+                (Some(_), None) | (None, None) => true,
+                // An unqualified frozen identity cannot prove that a
+                // newly-qualified driver name belongs to the same schema.
+                (None, Some(_)) => false,
+            }
+    }
+
+    if !relation_presentation_matches(table, &reviewed.table_name)
+        || !relation_presentation_matches(table, &current.table_name)
     {
+        return Err(format!("Target schema changed for {table}; compare again"));
+    }
+
+    let mut reviewed_value = serde_json::to_value(reviewed).map_err(|e| e.to_string())?;
+    let mut current_value = serde_json::to_value(current).map_err(|e| e.to_string())?;
+    if let Some(object) = reviewed_value.as_object_mut() {
+        object.remove("tableName");
+    }
+    if let Some(object) = current_value.as_object_mut() {
+        object.remove("tableName");
+    }
+    if reviewed_value != current_value {
         return Err(format!("Target schema changed for {table}; compare again"));
     }
     Ok(())
@@ -589,6 +626,80 @@ mod tests {
             index_type: "btree".into(),
         });
         assert!(validate_snapshot("t", &old, &current).is_err());
+    }
+
+    #[test]
+    fn pg_target_snapshot_accepts_qualified_prepare_name_and_bare_deploy_name() {
+        let empty_missing = TableSchema {
+            table_name: "public.missing".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let mut deployed_missing = empty_missing.clone();
+        deployed_missing.table_name = "missing".into();
+        assert!(validate_snapshot("public.missing", &empty_missing, &deployed_missing).is_ok());
+
+        let existing = TableSchema {
+            table_name: "public.child".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "parent_id".into(),
+                data_type: "integer".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: false,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let mut unchanged = existing.clone();
+        unchanged.table_name = "child".into();
+        assert!(validate_snapshot("public.child", &existing, &unchanged).is_ok());
+
+        let mut changed = unchanged.clone();
+        changed
+            .foreign_keys
+            .push(datazen_driver_api::ForeignKeyInfo {
+                name: "fk_child_parent".into(),
+                columns: vec!["parent_id".into()],
+                referenced_table: "public.parent".into(),
+                referenced_columns: vec!["id".into()],
+                on_update: "NO ACTION".into(),
+                on_delete: "NO ACTION".into(),
+                deferrability: datazen_driver_api::ForeignKeyDeferrability::NotDeferrable,
+            });
+        assert!(validate_snapshot("public.child", &existing, &changed).is_err());
+
+        let mut wrong_schema = unchanged.clone();
+        wrong_schema.table_name = "archive.child".into();
+        assert!(validate_snapshot("public.child", &existing, &wrong_schema).is_err());
+
+        let mut wrong_table = unchanged;
+        wrong_table.table_name = "other_child".into();
+        assert!(validate_snapshot("public.child", &existing, &wrong_table).is_err());
+
+        let mut unqualified_reviewed = existing.clone();
+        unqualified_reviewed.table_name = "child".into();
+        let unexpectedly_qualified = TableSchema {
+            table_name: "archive.child".into(),
+            columns: vec![],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        assert!(
+            validate_snapshot("child", &unqualified_reviewed, &unexpectedly_qualified).is_err()
+        );
     }
 
     #[test]

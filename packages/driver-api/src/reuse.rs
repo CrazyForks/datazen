@@ -561,6 +561,7 @@ mod tests {
         rows: usize,
         precise_cancel: bool,
         ddl_atomicity: Option<DdlAtomicity>,
+        full_fk_catalog_visibility: bool,
     }
 
     impl FakeDriver {
@@ -571,6 +572,7 @@ mod tests {
                 rows,
                 precise_cancel: false,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             })
         }
 
@@ -581,6 +583,7 @@ mod tests {
                 rows,
                 precise_cancel: true,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             })
         }
 
@@ -591,7 +594,15 @@ mod tests {
                 rows,
                 precise_cancel: false,
                 ddl_atomicity: Some(atomicity),
+                full_fk_catalog_visibility: false,
             })
+        }
+
+        fn with_full_fk_catalog_visibility(mut self: Arc<Self>) -> Arc<Self> {
+            Arc::get_mut(&mut self)
+                .expect("fake driver is uniquely owned")
+                .full_fk_catalog_visibility = true;
+            self
         }
 
         fn statement(&self, sql: &str) -> StatementResult {
@@ -620,6 +631,13 @@ mod tests {
 
         fn ddl_atomicity(&self) -> DdlAtomicity {
             self.ddl_atomicity.unwrap_or(DdlAtomicity::Unknown)
+        }
+
+        async fn has_complete_foreign_key_catalog_visibility(
+            &self,
+            _handle: &ConnectionHandle,
+        ) -> Result<bool, DriverError> {
+            Ok(self.full_fk_catalog_visibility)
         }
 
         async fn connect(
@@ -887,6 +905,7 @@ mod tests {
                 rows: QUERY_STREAM_BATCH_SIZE + 2,
                 precise_cancel: false,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             },
         };
         let handle = ConnectionHandle {
@@ -926,6 +945,21 @@ mod tests {
             .iter()
             .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. })));
         assert!(matches!(events.last(), Some(QueryStreamEvent::Done { .. })));
+    }
+
+    #[tokio::test]
+    async fn reuse_driver_forwards_complete_fk_catalog_visibility() {
+        let inner = FakeDriver::new(0, false).with_full_fk_catalog_visibility();
+        let reuse = ReuseDriver::new(inner, "mariadb");
+        let handle = ConnectionHandle {
+            id: "h".into(),
+            pool_id: "p".into(),
+        };
+
+        assert!(reuse
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("forward visibility query"));
     }
 
     #[tokio::test]

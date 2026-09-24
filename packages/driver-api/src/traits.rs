@@ -1155,6 +1155,20 @@ mod structure_defaults_tests {
     }
 
     #[tokio::test]
+    async fn default_fk_catalog_visibility_fails_closed() {
+        let driver = StubDriver;
+        let handle = ConnectionHandle {
+            id: "conn".into(),
+            pool_id: "pool".into(),
+        };
+
+        assert!(!driver
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("default visibility capability"));
+    }
+
+    #[tokio::test]
     async fn default_read_snapshot_fails_closed() {
         let driver = StubDriver;
         let handle = ConnectionHandle {
