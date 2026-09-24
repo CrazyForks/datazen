@@ -5,6 +5,16 @@ import type { SchemaDiffObjectLoadErrors } from './SchemaDiffUnifiedObjectsPicke
 import { schemaDiffObjectIdentityKey } from './schemaDiffObjectIdentity';
 import type { DatabaseObject } from '../../types';
 
+export interface SchemaDiffObjectCatalog {
+  sourceObjects: SchemaDiffObjectIdentity[];
+  targetObjects: SchemaDiffObjectIdentity[];
+}
+
+export interface SchemaDiffObjectSelectionRestore {
+  missingSource: number;
+  missingTarget: number;
+}
+
 const OBJECT_KINDS: SchemaDiffObjectKind[] = [
   'view',
   'type',
@@ -91,13 +101,13 @@ export function useSchemaDiffUnifiedObjects() {
       targetDbSessionId: string,
       sourceSchema: string,
       targetSchema: string,
-    ) => {
+    ): Promise<SchemaDiffObjectCatalog | null> => {
       const requestId = ++requestIdRef.current;
       const [source, target] = await Promise.all([
         listObjects(sourceDbSessionId, sourceSchema),
         listObjects(targetDbSessionId, targetSchema),
       ]);
-      if (requestId !== requestIdRef.current) return;
+      if (requestId !== requestIdRef.current) return null;
 
       setSourceObjects(source.objects);
       setTargetObjects(target.objects);
@@ -106,6 +116,31 @@ export function useSchemaDiffUnifiedObjects() {
       setSelectedSourceKeys([]);
       setSelectedTargetKeys([]);
       setErrors({ source: source.errors, target: target.errors });
+      return { sourceObjects: source.objects, targetObjects: target.objects };
+    },
+    [],
+  );
+
+  const restoreSelection = useCallback(
+    (
+      catalog: SchemaDiffObjectCatalog,
+      desiredSourceObjects: SchemaDiffObjectIdentity[],
+      desiredTargetObjects: SchemaDiffObjectIdentity[],
+    ): SchemaDiffObjectSelectionRestore => {
+      const sourceKeys = new Set(catalog.sourceObjects.map(schemaDiffObjectIdentityKey));
+      const targetKeys = new Set(catalog.targetObjects.map(schemaDiffObjectIdentityKey));
+      const selectedSourceKeys = desiredSourceObjects
+        .map(schemaDiffObjectIdentityKey)
+        .filter((key) => sourceKeys.has(key));
+      const selectedTargetKeys = desiredTargetObjects
+        .map(schemaDiffObjectIdentityKey)
+        .filter((key) => targetKeys.has(key));
+      setSelectedSourceKeys([...new Set(selectedSourceKeys)]);
+      setSelectedTargetKeys([...new Set(selectedTargetKeys)]);
+      return {
+        missingSource: desiredSourceObjects.length - selectedSourceKeys.length,
+        missingTarget: desiredTargetObjects.length - selectedTargetKeys.length,
+      };
     },
     [],
   );
@@ -140,6 +175,7 @@ export function useSchemaDiffUnifiedObjects() {
     errors,
     clear,
     load,
+    restoreSelection,
     toggle,
     selectAll,
   };

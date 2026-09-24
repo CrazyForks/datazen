@@ -108,6 +108,7 @@ async function reachDeploy() {
 beforeEach(() => {
   vi.clearAllMocks();
   state.endpoints.targetDatabase = 'target';
+  state.endpoints.isCrossDialect = false;
   state.endpoints.validateEndpoints.mockReturnValue(true);
   state.endpoints.ensureConnected.mockImplementation(async (side) => `${side}-session`);
   vi.mocked(databaseCommands.getTables).mockResolvedValue([{ name: 'users', tableType: 'table' }]);
@@ -475,6 +476,38 @@ describe('complete schema migration wizard journeys', () => {
     fireEvent.change(text, { target: { value: '{"version":1}' } });
     fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
     await screen.findByText('schemaDiff.invalidConfig');
+    const duplicateRoutine = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'integer, numeric',
+    };
+    fireEvent.change(text, {
+      target: {
+        value: JSON.stringify({
+          version: 2,
+          sourceConnectionId: 'src',
+          targetConnectionId: 'tgt',
+          tables: [],
+          sourceObjects: [duplicateRoutine, duplicateRoutine],
+        }),
+      },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
+    await screen.findByText('schemaDiff.invalidConfig');
+    fireEvent.change(text, {
+      target: {
+        value: JSON.stringify({
+          version: 2,
+          sourceConnectionId: 'src',
+          targetConnectionId: 'tgt',
+          tables: [],
+          sourceObjects: [{ ...duplicateRoutine, signature: '   ' }],
+        }),
+      },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
+    await screen.findByText('schemaDiff.invalidConfig');
     fireEvent.change(text, {
       target: {
         value: JSON.stringify({
@@ -488,6 +521,7 @@ describe('complete schema migration wizard journeys', () => {
     });
     fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
     await screen.findByTestId('schema-diff-objects-panel');
+    await waitFor(() => expect(screen.getByTestId('schema-diff-next')).toBeEnabled());
     expect(state.endpoints.setSourceId).toHaveBeenCalledWith('src');
     expect(state.endpoints.setTargetId).toHaveBeenCalledWith('tgt');
     next();
@@ -496,6 +530,182 @@ describe('complete schema migration wizard journeys', () => {
     await screen.findByTestId('schema-diff-copy-sql');
     next();
     expect(screen.getByLabelText('schemaDiff.requireRollback')).toBeChecked();
+  });
+
+  it('round-trips exact routine and trigger selections through config export and import', async () => {
+    const routine: DatabaseObject = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'integer, numeric',
+    };
+    const trigger: DatabaseObject = {
+      kind: 'trigger',
+      schema: 'public',
+      name: 'audit_orders',
+      targetSchema: 'public',
+      targetName: 'orders',
+    };
+    vi.mocked(databaseCommands.getTables).mockResolvedValue([]);
+    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) =>
+      (sessionId === 'source-session' ? [routine] : [trigger]).filter(
+        (object) => object.kind === kind,
+      ),
+    );
+    vi.mocked(fileCommands.saveTextWithDialog).mockResolvedValue(true);
+
+    render(<SchemaDiffWindow />);
+    next();
+    await screen.findByTestId('schema-diff-unified-object-picker');
+    fireEvent.click(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    );
+    const triggerGroup = screen.getByTestId('schema-diff-object-kind-target-trigger');
+    fireEvent.click(within(triggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    fireEvent.click(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    );
+    next();
+    await screen.findByTestId('schema-diff-copy-sql');
+    await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByTestId('schema-diff-export-config'));
+    await waitFor(() => expect(fileCommands.saveTextWithDialog).toHaveBeenCalled());
+    const exportedText = vi.mocked(fileCommands.saveTextWithDialog).mock.calls[0]?.[0];
+    const exported = JSON.parse(exportedText ?? '{}');
+    expect(exported).toMatchObject({
+      sourceObjects: [
+        {
+          kind: 'function',
+          schema: 'public',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+        },
+      ],
+      targetObjects: [
+        {
+          kind: 'trigger',
+          schema: 'public',
+          name: 'audit_orders',
+          targetSchema: 'public',
+          targetName: 'orders',
+        },
+      ],
+    });
+
+    fireEvent.click(screen.getByTestId('schema-diff-import-config'));
+    fireEvent.change(screen.getByTestId('schema-diff-import-config-text'), {
+      target: { value: exportedText },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-next')).toBeEnabled());
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    ).toBeChecked();
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    ).toBeChecked();
+    next();
+    await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalledTimes(2));
+    expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sourceObjects: [
+          {
+            kind: 'function',
+            schema: 'public',
+            name: 'calculate_total',
+            signature: 'integer, numeric',
+            targetSchema: null,
+            targetName: null,
+          },
+        ],
+        targetObjects: [
+          {
+            kind: 'trigger',
+            schema: 'public',
+            name: 'audit_orders',
+            signature: null,
+            targetSchema: 'public',
+            targetName: 'orders',
+          },
+        ],
+      }),
+    );
+  });
+
+  it('preserves cross-dialect imported object selections and lets table migration continue after clearing them', async () => {
+    state.endpoints.isCrossDialect = true;
+    const routine: DatabaseObject = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'integer',
+    };
+    const view: DatabaseObject = {
+      kind: 'view',
+      schema: 'public',
+      name: 'orders_view',
+    } as DatabaseObject;
+    const trigger: DatabaseObject = {
+      kind: 'trigger',
+      schema: 'public',
+      name: 'audit_orders',
+      targetSchema: 'public',
+      targetName: 'orders',
+    };
+    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) =>
+      (sessionId === 'source-session' ? [routine, view] : [trigger]).filter(
+        (object) => object.kind === kind,
+      ),
+    );
+    render(<SchemaDiffWindow />);
+    await reachPlan();
+
+    fireEvent.click(screen.getByTestId('schema-diff-import-config'));
+    fireEvent.change(screen.getByTestId('schema-diff-import-config-text'), {
+      target: {
+        value: JSON.stringify({
+          version: 2,
+          sourceConnectionId: 'src',
+          targetConnectionId: 'tgt',
+          tables: ['users'],
+          sourceObjects: [routine],
+          targetObjects: [trigger],
+          allowDestructive: false,
+        }),
+      },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
+    await waitFor(() => expect(screen.getByTestId('schema-diff-next')).toBeEnabled());
+    expect(screen.getByTestId('schema-diff-cross-dialect-objects-note')).toHaveTextContent(
+      'schemaDiff.crossDialectObjectNote',
+    );
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    ).toBeChecked();
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-view-0')).getByRole('checkbox'),
+    ).toBeDisabled();
+    const triggerGroup = screen.getByTestId('schema-diff-object-kind-target-trigger');
+    fireEvent.click(within(triggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    ).toBeChecked();
+
+    next();
+    await screen.findByText('schemaDiff.crossDialectObjectBlocked');
+    expect(schemaDiffCommands.prepareUnifiedPlan).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('schema-diff-clear-object-selections'));
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    ).not.toBeChecked();
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    ).not.toBeChecked();
+    next();
+    await screen.findByTestId('schema-diff-detail-panel');
+    next();
+    await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalledTimes(2));
+    expect(schemaDiffCommands.prepareUnifiedPlan).not.toHaveBeenCalled();
   });
 
   it('clears reviewed artifacts when endpoint changes', async () => {

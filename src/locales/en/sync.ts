@@ -358,6 +358,11 @@ const pack = {
   'schemaDiff.regeneratePlan': 'Regenerate',
   'schemaDiff.crossDialectNote':
     'Cross-dialect plans map types via sync IR; unsupported types are skipped with warnings.',
+  'schemaDiff.crossDialectObjectNote':
+    'Schema objects use dialect-specific DDL and cannot migrate across database types. Saved selections are preserved; clear them to continue with table migration.',
+  'schemaDiff.crossDialectObjectBlocked':
+    'Clear the selected schema objects before continuing with a cross-dialect table migration.',
+  'schemaDiff.clearObjectSelections': 'Clear selected schema objects',
   'schemaDiff.warnings': 'Warnings',
   'schemaDiff.statements': 'statements',
   'schemaDiff.emptyPlan': 'No executable plan statements were generated',
@@ -384,7 +389,12 @@ const pack = {
     'Save the current endpoints, scope, table selection, and diff options.',
   'schemaDiff.profileNamePlaceholder': 'Profile name',
   'schemaDiff.profileNameRequired': 'Enter a profile name',
-  'schemaDiff.profileSetupRequired': 'Select both endpoints and at least one table before saving',
+  'schemaDiff.profileSetupRequired':
+    'Select both endpoints and at least one table or schema object before saving',
+  'schemaDiff.objectIdentityIncomplete':
+    'Routine selections require a signature, and trigger selections require their target table.',
+  'schemaDiff.savedObjectsMissing':
+    '{count} saved schema object selection(s) could not be restored because the exact identity is unavailable.',
   'schemaDiff.stepCompare': 'Compare',
   'schemaDiff.stepPlan': 'Plan',
   'schemaDiff.stepReview': 'Review / Deploy',

@@ -2050,6 +2050,8 @@ mod tests {
             target_schema: None,
             target_only_tables: vec![],
             tables: vec!["users".into()],
+            source_objects: vec![],
+            target_objects: vec![],
             allow_destructive: false,
             include_indexes: true,
             require_rollback: false,

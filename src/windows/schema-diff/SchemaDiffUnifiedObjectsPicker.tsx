@@ -14,9 +14,11 @@ interface SchemaDiffUnifiedObjectsPickerProps {
   selectedSourceKeys: string[];
   selectedTargetKeys: string[];
   errors: SchemaDiffObjectLoadErrors;
+  crossDialect: boolean;
   onToggleSource: (object: SchemaDiffObjectIdentity) => void;
   onToggleTarget: (object: SchemaDiffObjectIdentity) => void;
   onSelectAll: (side: 'source' | 'target', selected: boolean) => void;
+  onClearSelections: () => void;
   onRetry: () => void;
 }
 
@@ -43,12 +45,14 @@ function ObjectSideList({
   objects,
   selectedKeys,
   errorByKind,
+  crossDialect,
   onToggle,
 }: {
   side: 'source' | 'target';
   objects: SchemaDiffObjectIdentity[];
   selectedKeys: Set<string>;
   errorByKind: SchemaDiffObjectLoadErrors['source'];
+  crossDialect: boolean;
   onToggle: (object: SchemaDiffObjectIdentity) => void;
 }) {
   const { t } = useI18n();
@@ -97,6 +101,7 @@ function ObjectSideList({
                             type="checkbox"
                             aria-label={`${t(side === 'source' ? 'schemaDiff.objectSource' : 'schemaDiff.objectTarget')}: ${label}`}
                             checked={selectedKeys.has(key)}
+                            disabled={crossDialect && !selectedKeys.has(key)}
                             onChange={() => onToggle(object)}
                           />
                           <span className="min-w-0 flex-1 break-all font-mono">{label}</span>
@@ -121,14 +126,17 @@ export function SchemaDiffUnifiedObjectsPicker({
   selectedSourceKeys,
   selectedTargetKeys,
   errors,
+  crossDialect,
   onToggleSource,
   onToggleTarget,
   onSelectAll,
+  onClearSelections,
   onRetry,
 }: SchemaDiffUnifiedObjectsPickerProps) {
   const { t } = useI18n();
   const sourceErrors = Object.keys(errors.source).length > 0;
   const targetErrors = Object.keys(errors.target).length > 0;
+  const hasSelectedObjects = selectedSourceKeys.length > 0 || selectedTargetKeys.length > 0;
 
   return (
     <section
@@ -152,6 +160,26 @@ export function SchemaDiffUnifiedObjectsPicker({
           </button>
         )}
       </div>
+      {crossDialect && (
+        <div
+          className="mb-3 rounded border border-warning/40 bg-warning/5 p-2 text-xs text-fg-muted"
+          role="status"
+          data-testid="schema-diff-cross-dialect-objects-note"
+        >
+          <p>{t('schemaDiff.crossDialectNote')}</p>
+          <p className="mt-1">{t('schemaDiff.crossDialectObjectNote')}</p>
+          {hasSelectedObjects && (
+            <button
+              type="button"
+              className="mt-2 text-accent hover:underline"
+              data-testid="schema-diff-clear-object-selections"
+              onClick={onClearSelections}
+            >
+              {t('schemaDiff.clearObjectSelections')}
+            </button>
+          )}
+        </div>
+      )}
       {(sourceErrors || targetErrors) && (
         <p className="mb-3 text-xs text-warning" role="status">
           {t('schemaDiff.objectPartialLoad')}
@@ -175,6 +203,7 @@ export function SchemaDiffUnifiedObjectsPicker({
                 <button
                   type="button"
                   className="text-accent hover:underline"
+                  disabled={crossDialect}
                   onClick={() => onSelectAll('source', true)}
                 >
                   {t('schemaDiff.objectSelectAllSource')}
@@ -193,6 +222,7 @@ export function SchemaDiffUnifiedObjectsPicker({
               objects={sourceObjects}
               selectedKeys={new Set(selectedSourceKeys)}
               errorByKind={errors.source}
+              crossDialect={crossDialect}
               onToggle={onToggleSource}
             />
           </div>
@@ -208,6 +238,7 @@ export function SchemaDiffUnifiedObjectsPicker({
                 <button
                   type="button"
                   className="text-accent hover:underline"
+                  disabled={crossDialect}
                   onClick={() => onSelectAll('target', true)}
                 >
                   {t('schemaDiff.objectSelectAllTarget')}
@@ -226,6 +257,7 @@ export function SchemaDiffUnifiedObjectsPicker({
               objects={targetObjects}
               selectedKeys={new Set(selectedTargetKeys)}
               errorByKind={errors.target}
+              crossDialect={crossDialect}
               onToggle={onToggleTarget}
             />
           </div>

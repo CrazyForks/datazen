@@ -157,6 +157,9 @@ export interface SchemaDiffConfigJson {
   targetConnectionId: string;
   tables: string[];
   targetOnlyTables?: string[];
+  /** Optional to keep v2 configs exported before unified object selection compatible. */
+  sourceObjects?: SchemaDiffObjectIdentity[];
+  targetObjects?: SchemaDiffObjectIdentity[];
   allowDestructive: boolean;
   includeIndexes?: boolean;
   requireRollback?: boolean;
@@ -175,6 +178,9 @@ export interface SchemaDiffProfile {
   targetSchema?: string | null;
   tables: string[];
   targetOnlyTables?: string[];
+  /** Optional for profiles persisted before unified object selection was introduced. */
+  sourceObjects?: SchemaDiffObjectIdentity[];
+  targetObjects?: SchemaDiffObjectIdentity[];
   allowDestructive: boolean;
   includeIndexes: boolean;
   requireRollback: boolean;
