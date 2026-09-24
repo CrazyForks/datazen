@@ -14,6 +14,13 @@ pub enum DataSyncError {
     Incompatible(String),
     #[error("{0}")]
     Cancelled(String),
+    /// The request failed before a transaction could issue any target writes.
+    #[error("{0}")]
+    NotStarted(String),
+    /// A write or transaction-finalization request may have reached the target,
+    /// but no confirmed commit or rollback result is available.
+    #[error("{0}")]
+    OutcomeUnknown(String),
 }
 
 impl DataSyncError {
@@ -32,6 +39,14 @@ impl DataSyncError {
     pub fn cancelled(msg: impl Into<String>) -> Self {
         Self::Cancelled(msg.into())
     }
+
+    pub fn not_started(msg: impl Into<String>) -> Self {
+        Self::NotStarted(msg.into())
+    }
+
+    pub fn outcome_unknown(msg: impl Into<String>) -> Self {
+        Self::OutcomeUnknown(msg.into())
+    }
 }
 
 #[cfg(test)]
@@ -44,6 +59,14 @@ mod tests {
         assert_eq!(DataSyncError::conflict("changed").to_string(), "changed");
         assert_eq!(DataSyncError::incompatible("no pk").to_string(), "no pk");
         assert_eq!(DataSyncError::cancelled("user").to_string(), "user");
+        assert_eq!(
+            DataSyncError::not_started("preflight").to_string(),
+            "preflight"
+        );
+        assert_eq!(
+            DataSyncError::outcome_unknown("lost commit").to_string(),
+            "lost commit"
+        );
         let t = DataSyncError::IllegalTransition {
             from: "comparing".into(),
             to: "executing".into(),
