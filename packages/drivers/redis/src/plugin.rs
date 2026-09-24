@@ -15,8 +15,8 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("redis")
         .setup(|app, _api| {
             let handle = app.clone();
-            ops_pubsub::set_pubsub_emitter(Arc::new(move |event: RedisPubSubMessageEvent| {
-                let _ = handle.emit(ops_pubsub::EVENT_NAME, &event);
+            pubsub::set_pubsub_emitter(Arc::new(move |event: RedisPubSubMessageEvent| {
+                let _ = handle.emit(pubsub::EVENT_NAME, &event);
             }));
             Ok(())
         })
