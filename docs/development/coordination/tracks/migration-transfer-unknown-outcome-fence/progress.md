@@ -139,3 +139,30 @@ Final status: **TEST_FAILED**. BUG-004 was registered and committed separately a
 The fresh Tester registered BUG-004 after finding that the two ack-loss fixtures could drop same-named databases without proving this run created them. The report-only commits were fast-forwarded into this branch. This repair is limited to the two ack-loss fixtures and BUG-004 tracking: add exact catalog preflight, per-database ownership set only after successful `CREATE DATABASE`, and cleanup gated by that ownership; independently track admin configs/sessions so partial setup cannot widen deletion. No database journey will run in this Coder phase.
 
 Both specs now check both exact catalog names before any create, mark each database owned only after that database's own create call succeeds, and drop only databases owned by this run. Admin and fixture configs/sessions have per-entry save/cleanup state, so partial setup cannot turn an unconfirmed database into a cleanup target. Host TypeScript, Prettier, and diff checks pass; full E2E-project typecheck reports existing harness errors but none in these two specs. No app was started and no database journey was run; ready for a fresh Tester.
+
+## Fresh independent Tester report — round 3, candidate `d9cdd47ce7e95f3e02e715e147c12070081e3471` (in progress)
+
+Tester worktree: `.worktrees/datazen-migration-transfer-unknown-outcome-fresh-tester-r2`, branch `feature/migration-transfer-unknown-outcome-fresh-tester-r2`.
+
+### Bootstrap and Phase A — source review
+
+- Confirmed a clean initial worktree at the exact assigned candidate commit. Ran `node scripts/generate-builtin-locales.mjs` and `pnpm install --offline --frozen-lockfile`; install exited 0. `node_modules` is a physical directory in this worktree (device/inode checked), not a link to the main checkout. pnpm's prepare hook printed a non-fatal permission error while trying to lock the main checkout's `.git/config`; dependency install and generation completed.
+- `docs/development/post-review-hardening-plan.md` is absent in this candidate. Reviewed the documented acceptance criteria and source paths instead.
+- Reviewed the candidate's Data Transfer result model, executor transaction/DDL outcome handling, checkpoint invalidation, history/workflow mapping, UI result display, passive `VITE_E2E` IPC recorder, debug/WebDriver fault seam registration, both acknowledgement-loss specs, and BUG-004 ownership repair. The original BUG-004 condition is closed by source inspection: both exact catalogs are queried before any create; each ownership flag is set only after its own `CREATE DATABASE` returns successfully; cleanup drops only the corresponding owned database. The fault seam runs the actual commit first, matches one exact target table, is one-shot, and its IPC registration is limited to debug WebDriver builds. No production defect established so far.
+- Added Tester-owned, test-only isolated versions of both confirmed-rollback/continue journeys. Each uses unique per-run database/table/connection names, preflights both exact catalogs before either create, gates cleanup by each successful create, and has independent config/session cleanup. Added `e2e/wdio.migration-transfer-rollback-continue.conf.ts`, which overrides the shared DB/app-data reset hooks. These two journeys have not run yet.
+
+### Phase B — independent checks
+
+- Focused instrumented Rust suite, serialized on the confirmed-exclusive shared Cargo target: `cargo test -p datazen --lib transfer -- --test-threads=1` — **152 passed, 0 failed**.
+- Focused Transfer UI, shared migration-history UI, and Transfer command Vitest — **54 passed, 0 failed** across three files.
+- Host `pnpm exec tsc --noEmit` — **passed, exit 0**.
+- Independently merged LLVM profiles and intersected executable lines with the candidate-vs-`codex/migration-navicat` diff, excluding `#[cfg(test)]` regions. Changed production executable-line coverage: **420/491 = 85.54%**. Per file: `commands/data_transfer/exec.rs` 30/41; `commands/data_transfer/mod.rs` 33/46; `data_transfer/execute.rs` 225/258; `model.rs` 16/16; `sql_file.rs` 4/10; `structure.rs` 93/100; `workflow/migration.rs` 19/20. `bootstrap/run.rs` and `data_transfer/mod.rs` had no instrumented changed executable lines; the WebDriver build will verify gated IPC registration.
+- Full E2E-project TypeScript check reports 125 existing harness/driver typing errors; there are **no diagnostics** in either ack-loss spec, either isolated rollback spec, or either migration WDIO config. Changed-Rust `rustfmt`, Prettier on changed TypeScript/E2E/locale files, and `git diff --check` are pending the final pre-build check.
+
+### Phase C — coverage-driven tests
+
+- Existing Rust state-machine tests, UI outcome tests, and recorder tests meet the measured 80% changed-production-line threshold. Added the two safe rollback/continue real-database journeys to cover confirmed rollback with `stop_on_error=false`; they remain pending live WDIO execution.
+
+### Phase D — candidate build and live journeys
+
+- Pending. No app or WDIO process has been started in this round; no database fixture has been created or modified. Run the two ack-loss journeys first, then the two isolated rollback journeys, serially, after the required fresh candidate build.

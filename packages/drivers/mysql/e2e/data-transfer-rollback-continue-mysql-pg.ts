@@ -15,9 +15,6 @@ import {
 } from '../../../../e2e/helpers.js';
 import { t } from '../../../../e2e/i18n.js';
 
-const SOURCE_DATABASE = 'dz_mig_0910_transfer_src';
-const TARGET_DATABASE = 'dz_mig_0910_transfer_tgt';
-
 function pgConfig(id: string, name: string, database: string) {
   return {
     id,
@@ -48,89 +45,199 @@ function mysqlConfig(id: string, name: string, database: string) {
 
 describe('Data Transfer MySQL→PG confirmed rollback continuation', function () {
   this.timeout(180_000);
-  let mainWindow: string;
   const stamp = Date.now().toString(36);
+  let mainWindow: string | undefined;
   const sourceId = `e2e_dt_rb_mpg_src_${stamp}`;
   const targetId = `e2e_dt_rb_mpg_tgt_${stamp}`;
+  const sourceAdminId = `e2e_dt_rb_mpg_src_admin_${stamp}`;
+  const targetAdminId = `e2e_dt_rb_mpg_tgt_admin_${stamp}`;
+  const sourceDatabase = `dz_dt_rb_mpg_src_${stamp}`;
+  const targetDatabase = `dz_dt_rb_mpg_tgt_${stamp}`;
   const sourceName = `DT rollback MySQL source ${stamp}`;
   const targetName = `DT rollback PG target ${stamp}`;
   const failedTable = `dt_rollback_a_fail_${stamp}`;
   const continuedTable = `dt_rollback_b_continue_${stamp}`;
+  let sourceAdminConfigSaved = false;
+  let targetAdminConfigSaved = false;
+  let sourceConfigSaved = false;
+  let targetConfigSaved = false;
+  let sourceDatabaseCreated = false;
+  let targetDatabaseCreated = false;
 
   before(async () => {
     mainWindow = await browser.getWindowHandle();
     await invokeBackend('save_connection', {
-      config: mysqlConfig(sourceId, sourceName, SOURCE_DATABASE),
+      config: mysqlConfig(sourceAdminId, `DT rollback admin MySQL ${stamp}`, 'mysql'),
     });
+    sourceAdminConfigSaved = true;
     await invokeBackend('save_connection', {
-      config: pgConfig(targetId, targetName, TARGET_DATABASE),
+      config: pgConfig(targetAdminId, `DT rollback admin PG ${stamp}`, 'postgres'),
     });
-    const sourceSession = await connectBackend(sourceId);
-    const targetSession = await connectBackend(targetId);
+    targetAdminConfigSaved = true;
+
+    let sourceAdminSession: string | undefined;
+    let targetAdminSession: string | undefined;
     try {
+      const sourceAdmin = await connectBackend(sourceAdminId);
+      sourceAdminSession = sourceAdmin;
+      const targetAdmin = await connectBackend(targetAdminId);
+      targetAdminSession = targetAdmin;
+      const sourceCatalog = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: sourceAdmin,
+        sql: `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${sourceDatabase}'`,
+      });
+      const targetCatalog = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetAdmin,
+        sql: `SELECT datname FROM pg_database WHERE datname = '${targetDatabase}'`,
+      });
+      if (parseQueryRows(sourceCatalog).length > 0 || parseQueryRows(targetCatalog).length > 0) {
+        throw new Error(
+          `Refusing to use pre-existing Transfer fixture database ${sourceDatabase} or ${targetDatabase}`,
+        );
+      }
       await withSafeModeOff(async () => {
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: sourceAdmin,
+          sql: `CREATE DATABASE \`${sourceDatabase}\``,
+        });
+        sourceDatabaseCreated = true;
+        await invokeBackend('execute_query', {
+          dbSessionId: targetAdmin,
+          sql: `CREATE DATABASE ${targetDatabase}`,
+        });
+        targetDatabaseCreated = true;
+      });
+    } finally {
+      if (sourceAdminSession) await disconnectBackend(sourceAdminSession);
+      if (targetAdminSession) await disconnectBackend(targetAdminSession);
+    }
+
+    await invokeBackend('save_connection', {
+      config: mysqlConfig(sourceId, sourceName, sourceDatabase),
+    });
+    sourceConfigSaved = true;
+    await invokeBackend('save_connection', {
+      config: pgConfig(targetId, targetName, targetDatabase),
+    });
+    targetConfigSaved = true;
+
+    let sourceSession: string | undefined;
+    let targetSession: string | undefined;
+    try {
+      const source = await connectBackend(sourceId);
+      sourceSession = source;
+      const target = await connectBackend(targetId);
+      targetSession = target;
+      await withSafeModeOff(async () => {
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
           sql: `CREATE TABLE ${failedTable} (id INT PRIMARY KEY, payload TEXT NOT NULL) ENGINE=InnoDB`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: source,
           sql: `INSERT INTO ${failedTable} VALUES (1, 'source row collides')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: targetSession,
+          dbSessionId: target,
           sql: `CREATE TABLE ${failedTable} (id INT PRIMARY KEY, payload TEXT NOT NULL)`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: targetSession,
+          dbSessionId: target,
           sql: `INSERT INTO ${failedTable} VALUES (1, 'preserve this row')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: source,
           sql: `CREATE TABLE ${continuedTable} (id INT PRIMARY KEY, payload TEXT NOT NULL) ENGINE=InnoDB`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: source,
           sql: `INSERT INTO ${continuedTable} VALUES (7, 'copied after rollback')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: targetSession,
+          dbSessionId: target,
           sql: `CREATE TABLE ${continuedTable} (id INT PRIMARY KEY, payload TEXT NOT NULL)`,
         });
       });
     } finally {
-      await disconnectBackend(sourceSession);
-      await disconnectBackend(targetSession);
+      if (sourceSession) await disconnectBackend(sourceSession);
+      if (targetSession) await disconnectBackend(targetSession);
     }
   });
 
   after(async () => {
-    try {
-      const sourceSession = await connectBackend(sourceId);
-      const targetSession = await connectBackend(targetId);
-      try {
-        await withSafeModeOff(async () => {
-          for (const table of [failedTable, continuedTable]) {
-            await invokeBackend('execute_query', {
-              dbSessionId: sourceSession,
-              sql: `DROP TABLE IF EXISTS ${table}`,
-            });
-            await invokeBackend('execute_query', {
-              dbSessionId: targetSession,
-              sql: `DROP TABLE IF EXISTS ${table}`,
-            });
-          }
-        });
-      } finally {
-        await disconnectBackend(sourceSession);
-        await disconnectBackend(targetSession);
-      }
-    } catch {
-      // Best-effort cleanup; fixture names are unique to this run.
+    if (mainWindow) {
+      await browser.url('tauri://localhost').catch(() => undefined);
+      await browser.pause(400);
+      await closeExtraWindows(mainWindow).catch(() => undefined);
     }
-    await invokeBackend('delete_connection', { id: sourceId }).catch(() => undefined);
-    await invokeBackend('delete_connection', { id: targetId }).catch(() => undefined);
-    await closeExtraWindows(mainWindow);
+    let sourceAdminSession: string | undefined;
+    let targetAdminSession: string | undefined;
+    const cleanupErrors: string[] = [];
+    try {
+      if (sourceDatabaseCreated && sourceAdminConfigSaved) {
+        try {
+          sourceAdminSession = await connectBackend(sourceAdminId);
+        } catch (error) {
+          cleanupErrors.push(
+            `cannot reconnect MySQL admin for ${sourceDatabase}: ${String(error)}`,
+          );
+        }
+      }
+      if (targetDatabaseCreated && targetAdminConfigSaved) {
+        try {
+          targetAdminSession = await connectBackend(targetAdminId);
+        } catch (error) {
+          cleanupErrors.push(`cannot reconnect PG admin for ${targetDatabase}: ${String(error)}`);
+        }
+      }
+      if (sourceDatabaseCreated && sourceAdminSession) {
+        try {
+          const sourceAdmin = sourceAdminSession;
+          await withSafeModeOff(() =>
+            invokeBackend('execute_query', {
+              dbSessionId: sourceAdmin,
+              sql: `DROP DATABASE IF EXISTS \`${sourceDatabase}\``,
+            }),
+          );
+          sourceDatabaseCreated = false;
+        } catch (error) {
+          cleanupErrors.push(
+            `failed to drop owned MySQL database ${sourceDatabase}: ${String(error)}`,
+          );
+        }
+      }
+      if (targetDatabaseCreated && targetAdminSession) {
+        try {
+          const targetAdmin = targetAdminSession;
+          await withSafeModeOff(() =>
+            invokeBackend('execute_query', {
+              dbSessionId: targetAdmin,
+              sql: `DROP DATABASE IF EXISTS ${targetDatabase} WITH (FORCE)`,
+            }),
+          );
+          targetDatabaseCreated = false;
+        } catch (error) {
+          cleanupErrors.push(
+            `failed to drop owned PG database ${targetDatabase}: ${String(error)}`,
+          );
+        }
+      }
+    } finally {
+      if (sourceAdminSession) await disconnectBackend(sourceAdminSession);
+      if (targetAdminSession) await disconnectBackend(targetAdminSession);
+      if (sourceConfigSaved)
+        await invokeBackend('delete_connection', { id: sourceId }).catch(() => undefined);
+      if (targetConfigSaved)
+        await invokeBackend('delete_connection', { id: targetId }).catch(() => undefined);
+      if (sourceAdminConfigSaved)
+        await invokeBackend('delete_connection', { id: sourceAdminId }).catch(() => undefined);
+      if (targetAdminConfigSaved)
+        await invokeBackend('delete_connection', { id: targetAdminId }).catch(() => undefined);
+      if (mainWindow) await closeExtraWindows(mainWindow).catch(() => undefined);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Transfer fixture cleanup incomplete: ${cleanupErrors.join('; ')}`);
+    }
   });
 
   it('rolls back the conflicting table and copies the later table', async () => {
