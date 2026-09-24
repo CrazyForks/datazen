@@ -1,9 +1,11 @@
 //! MySQL dialect SQL for schema object browser queries (list / DDL / privileges).
 
 use datazen_driver_api::schema_dependencies::view_dependencies_sql;
+use datazen_driver_api::schema_object_commands::parse_object_list;
 use datazen_driver_api::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql, ObjectKind,
 };
+use datazen_driver_api::{ColumnInfo, QueryResult, Value};
 
 #[test]
 fn procedure_list_uses_information_schema() {
@@ -44,10 +46,57 @@ fn routines_and_triggers_preserve_identity_and_mysql_has_no_sequences() {
 fn view_queries_return_view_body_metadata_contract() {
     let list = list_objects_sql("mysql", ObjectKind::View).unwrap();
     assert!(list.contains("information_schema.VIEWS"));
-    assert!(list.contains("TABLE_SCHEMA AS schema"));
+    assert!(list.contains("TABLE_SCHEMA AS `schema`"));
     let ddl = object_ddl_sql("mysql", ObjectKind::View, "active_users", None).unwrap();
     assert!(ddl.contains("VIEW_DEFINITION AS ddl"));
     assert!(ddl.contains("TABLE_NAME = 'active_users'"));
+}
+
+#[test]
+fn object_lists_quote_reserved_schema_alias_and_preserve_parser_contract() {
+    for kind in [
+        ObjectKind::Function,
+        ObjectKind::Procedure,
+        ObjectKind::Trigger,
+        ObjectKind::View,
+    ] {
+        let sql = list_objects_sql("mysql", kind).unwrap();
+        assert!(
+            sql.contains("AS `schema`"),
+            "{kind:?} list must retain the `schema` result name with MySQL quoting: {sql}"
+        );
+        assert!(
+            !sql.contains("AS schema"),
+            "{kind:?} list must not emit the unquoted reserved alias: {sql}"
+        );
+    }
+
+    // MySQL returns the quoted identifier's alias as the same `schema` field
+    // name consumed by the shared object-list parser.
+    let result = QueryResult {
+        columns: vec![
+            ColumnInfo {
+                name: "schema".into(),
+                data_type: "varchar".into(),
+                nullable: false,
+            },
+            ColumnInfo {
+                name: "name".into(),
+                data_type: "varchar".into(),
+                nullable: false,
+            },
+        ],
+        rows: vec![vec![
+            Some(Value::String("fixture_db".into())),
+            Some(Value::String("fixture_view".into())),
+        ]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+    let objects = parse_object_list(&result, ObjectKind::View.as_str()).unwrap();
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].schema.as_deref(), Some("fixture_db"));
+    assert_eq!(objects[0].name, "fixture_view");
 }
 
 #[test]

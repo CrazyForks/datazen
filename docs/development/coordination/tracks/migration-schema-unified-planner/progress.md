@@ -124,3 +124,9 @@ The fresh round-2 tester confirmed the PostgreSQL fix in `b36a2bee` with both li
 - Changed-core line coverage previously measured in this track remains Host planner 85.0%, migration helper 86.6%, and changed Driver API catalog 85.5%. It was measured before `b36a2bee`; this non-instrumented app rerun did not produce an updated coverage report, so those figures do not establish coverage for the new fix lines. Existing unified command-layer unit-only coverage is 7/830 (0.8%).
 - Status: `BUG-003` is now `已修复` based on its live catalog regression and both passing PostgreSQL WDIO journeys. `BUG-004` remains `待修复`; the track stays `FAILED` and the tester result is `TEST_FAILED` until MySQL listing and its positive/negative journeys pass.
 - Tester report commits: `17567f43` closes `BUG-003` after independent PostgreSQL retest; `97da20b4` records the repeat `BUG-004` MySQL blocker. The progress checkpoint is committed separately.
+
+### Coder BUG-004 repair checkpoint · 2026-09-25
+
+- Commit `49fa1eb7` quotes the MySQL `schema` result alias with backticks for function, procedure, trigger, and view catalog queries while retaining the shared parser's expected result-column name.
+- Coder checks passed: MySQL driver crate (116 library tests and 15 non-ignored integration tests; 2 isolated-database tests ignored), Driver API library (172/172), `cargo fmt --all -- --check`, and `git diff --check`. New assertions cover all four SQL query strings and the shared `parse_object_list` schema-field contract.
+- Fresh independent MySQL live/WDIO retest is pending. BUG-004 remains `待复测`; the overall track remains `FAILED` until the new four-case WDIO suite and required regression checks pass.

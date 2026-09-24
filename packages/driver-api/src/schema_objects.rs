@@ -122,21 +122,21 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
                 .into(),
         ),
         ("mysql", ObjectKind::Function) => Some(
-            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+            "SELECT ROUTINE_SCHEMA AS `schema`, ROUTINE_NAME AS name \
              FROM information_schema.ROUTINES \
              WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'FUNCTION' \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("mysql", ObjectKind::Procedure) => Some(
-            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+            "SELECT ROUTINE_SCHEMA AS `schema`, ROUTINE_NAME AS name \
              FROM information_schema.ROUTINES \
              WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'PROCEDURE' \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("mysql", ObjectKind::Trigger) => Some(
-            "SELECT TRIGGER_SCHEMA AS schema, TRIGGER_NAME AS name, \
+            "SELECT TRIGGER_SCHEMA AS `schema`, TRIGGER_NAME AS name, \
                     EVENT_OBJECT_SCHEMA AS target_schema, EVENT_OBJECT_TABLE AS target_name \
              FROM information_schema.TRIGGERS \
              WHERE TRIGGER_SCHEMA = DATABASE() \
@@ -144,7 +144,7 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
                 .into(),
         ),
         ("mysql", ObjectKind::View) => Some(
-            "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name \
+            "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS name \
              FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() \
              ORDER BY 1, 2"
                 .into(),
