@@ -265,6 +265,23 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
     await dismissMenu();
   });
 
+  // [tester] RC-3 关闭路径回归断言（e2e-ops-menu-BUG-001 复现用例）：
+  // closeAnyMenu/dismissMenu 内部的 waitUntil 失败被 .catch 吞掉，"菜单已关闭"
+  // 此前无任何硬断言验证。这里显式要求 dismissMenu 后菜单必须真正从 DOM 消失，
+  // 防止关闭派发再次静默失效（window 派发 mousedown 时 onDown 的
+  // rootRef.contains(window) 抛 TypeError → hide() 不执行）。
+  it('[tester] OPS-PROC-T001: dismissMenu 后右键菜单必须真正关闭', async () => {
+    await rightClickConn();
+    const menu = await $('[data-testid="web-context-menu"]');
+    expect(await menu.isExisting()).toBe(true);
+    await dismissMenu();
+    await browser.waitUntil(
+      async () => !(await menu.isExisting()),
+      { timeout: 3000, timeoutMsg: 'dismissMenu 后右键菜单仍未从 DOM 消失（RC-3 关闭派发失效）' },
+    );
+    expect(await menu.isExisting()).toBe(false);
+  });
+
   it('OPS-PROC-002: 打开进程列表面板并出现至少一行', async () => {
     await rightClickConn();
     await hoverServerSubmenu();
