@@ -149,22 +149,20 @@ async function openPlan(fixture: DialectFixture) {
 }
 
 async function readPlanStatements(): Promise<string[]> {
-  const elements = await $$('[data-testid="schema-diff-plan-panel"] li pre');
-  const statements: string[] = [];
-  for (const element of elements) {
-    try {
-      statements.push(await element.getText());
-    } catch (error) {
-      if (String(error).toLowerCase().includes('stale element reference')) return [];
-      throw error;
-    }
-  }
-  return statements;
+  return browser.execute(() =>
+    Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="schema-diff-plan-panel"] li pre'),
+    ).map((element) => element.textContent?.trim() ?? ''),
+  );
 }
 
 async function readPlanRequirementText(): Promise<string> {
-  const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
-  return (await requirements.getText().catch(() => '')).toLowerCase();
+  return browser.execute(() => {
+    const requirements = document.querySelector<HTMLElement>(
+      '[data-testid="schema-diff-plan-requirements"]',
+    );
+    return requirements?.textContent?.trim().toLowerCase() ?? '';
+  });
 }
 
 function assertForeignKeyPlanOrder(fixture: DialectFixture, statements: string[]) {
@@ -523,13 +521,24 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
         expect(statements.filter((sql) => /\bDROP\s+TABLE\b/i.test(sql))).toHaveLength(1);
         expect(statements[0]).toContain(fixture.parentTable);
 
-        const target = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
+        const mutationConnectionId = `${fixture.targetId}_mutation`;
+        let mutationSession: string | undefined;
         try {
+          await invokeBackend('save_connection', {
+            config: {
+              ...fixture.targetConfig,
+              id: mutationConnectionId,
+              name: `${fixture.targetName}-MUTATION`,
+            },
+          });
+          mutationSession = await invokeBackend<string>('connect', {
+            connectionId: mutationConnectionId,
+          });
           await withSafeModeOff(async () => {
             const parent =
               dialect === 'postgresql' ? `public.${fixture.parentTable}` : fixture.parentTable;
             await invokeBackend('execute_query', {
-              dbSessionId: target,
+              dbSessionId: mutationSession,
               sql: `CREATE TABLE ${fixture.lateChildTable} (
                 id INT PRIMARY KEY,
                 parent_id INT NOT NULL,
@@ -538,7 +547,8 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
             });
           });
         } finally {
-          await disconnectBackend(target);
+          if (mutationSession) await disconnectBackend(mutationSession);
+          await invokeBackend('delete_connection', { id: mutationConnectionId });
         }
 
         await advanceSchemaDiffToReview();
