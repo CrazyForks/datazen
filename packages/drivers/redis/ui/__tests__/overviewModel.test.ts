@@ -301,8 +301,8 @@ describe('buildKeySpaceModel — PRD 卡 3', () => {
   });
 });
 
-describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
-  it('sorts by bytes descending and caps at five rows', () => {
+describe('buildBigKeyRows — PRD 卡 2 Top3', () => {
+  it('sorts by bytes descending and caps at three rows', () => {
     const rows = buildBigKeyRows({
       samples: [
         { key: 'small', bytes: 10 },
@@ -313,13 +313,13 @@ describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
         { key: 'a6', bytes: 60 },
       ],
     });
-    expect(rows.map((row) => row.key)).toEqual(['huge', 'mid', 'a6', 'a5', 'a4']);
-    expect(rows.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.map((row) => row.key)).toEqual(['huge', 'mid', 'a6']);
+    expect(rows.map((row) => row.rank)).toEqual([1, 2, 3]);
     expect(rows[0]?.bytes).toBe(5000);
   });
 
   it('honours the shared Top-N budget', () => {
-    expect(BIG_KEY_LIMIT).toBe(5);
+    expect(BIG_KEY_LIMIT).toBe(3);
     expect(buildBigKeyRows({ samples: [{ key: 'a', bytes: 1 }] }, 1)).toHaveLength(1);
   });
 
@@ -388,7 +388,7 @@ describe('buildSlowlogRows — PRD 卡 4', () => {
     expect(rows[1]?.client).toBeNull();
   });
 
-  it('orders by slowlog id descending so the Top5 is stable across proxies', () => {
+  it('orders by slowlog id descending so the Top3 is stable across proxies', () => {
     const rows = buildSlowlogRows([
       { id: 1, timestamp: 1, durationUs: 10, command: ['A'] },
       { id: 7, timestamp: 2, durationUs: 20, command: ['B'] },

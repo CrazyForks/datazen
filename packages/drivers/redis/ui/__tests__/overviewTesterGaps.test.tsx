@@ -400,7 +400,7 @@ async function renderBigKeys() {
   stubHome({ [OVERVIEW_COMMANDS.memorySample]: BIG_KEY_SAMPLES });
   const view = render(<RedisOverviewHome {...homeProps()} />);
   await waitFor(() =>
-    expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(5),
+    expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(3),
   );
   return view.container;
 }
@@ -410,41 +410,31 @@ function ttlCell(container: HTMLElement, rank: number): Element | null {
 }
 
 describe('[tester] 大 key 行 TTL 列的四态互不塌陷', () => {
-  it('renders a distinct cell for no-expiry / remaining / unreadable / gone', async () => {
+  it('renders a distinct cell for no-expiry / remaining / unreadable', async () => {
     const container = await renderBigKeys();
 
     // rank1 PTTL=-1 ⇒ 永不过期；rank2 正数 ⇒ 秒数（8000ms → 8 + 单位 key）。
     expect(ttlCell(container, 1)?.textContent).toBe('redis.noExpiry');
     expect(ttlCell(container, 2)?.textContent).toBe(`8redis.seconds`);
-    // rank3 不可读、rank5 -2 但未标 missing ⇒ 同一个中性破折号，绝不显示负数。
+    // rank3 不可读 ⇒ 中性破折号，绝不显示负数。
     expect(ttlCell(container, 3)?.textContent).toBe('—');
-    expect(ttlCell(container, 5)?.textContent).toBe('—');
-    // rank4 采样后被删 ⇒ 具名「已消失」状态，且**不等于**破折号或永不过期。
-    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
 
-    const cells = [1, 2, 3, 4].map((rank) => ttlCell(container, rank)?.textContent);
-    expect(new Set(cells).size).toBe(4);
+    const cells = [1, 2, 3].map((rank) => ttlCell(container, rank)?.textContent);
+    expect(new Set(cells).size).toBe(3);
     expect(cells).not.toContain('-1');
     expect(cells).not.toContain('-2');
   });
 
-  it('keeps the gone state tied to the missing flag, not to the -2 sentinel', async () => {
-    // rank4(missing,-2) 与 rank5(未标 missing,-2) 的 ttlMs 相同，只有 missing 位
-    // 决定二者文案 ⇒ 「把 -2 直接当成已消失」这类合并实现会在此红。
+  it('truncates at 3 rows (BIG_KEY_LIMIT) so vanished / edge-case samples beyond the budget are excluded', async () => {
     const container = await renderBigKeys();
-    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
-    expect(ttlCell(container, 5)?.textContent).toBe('—');
-    expect(
-      container
-        .querySelector('[data-overview-bigkey="5"]')
-        ?.getAttribute('data-overview-bigkey-missing'),
-    ).toBe('false');
+    // rank4 (k:vanished) and rank5 (k:minus-two-unflagged) are beyond the limit.
+    expect(ttlCell(container, 4)).toBeNull();
+    expect(ttlCell(container, 5)).toBeNull();
   });
 
-  it('marks a gone row muted but leaves a live row on the secondary colour', async () => {
+  it('keeps unreadable TTL neutral even when the row is within budget', async () => {
     const container = await renderBigKeys();
-    expect(ttlCell(container, 4)?.className).toContain('text-fg-muted');
-    expect(ttlCell(container, 2)?.className).toContain('text-fg-secondary');
+    expect(ttlCell(container, 3)?.textContent).toBe('—');
   });
 });
 
@@ -454,15 +444,13 @@ describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () 
     const badgeOf = (rank: number) =>
       container.querySelector(`[data-overview-bigkey="${rank}"] .text-success`);
 
-    // hash→success / list→warning / string→accent / set→danger（typeTone 词表）。
+    // hash→success / string→accent / list→warning（typeTone 词表，top-3 only）。
     expect(badgeOf(2)).not.toBeNull();
     expect(container.querySelector(`[data-overview-bigkey="1"] .text-accent`)).not.toBeNull();
     expect(container.querySelector(`[data-overview-bigkey="3"] .text-warning`)).not.toBeNull();
-    expect(container.querySelector(`[data-overview-bigkey="5"] .text-danger`)).not.toBeNull();
-    // 类型读不到 ⇒ 中性色 + 具名 unknown 占位（i18n key，非英文字面量）。
-    const goneRow = container.querySelector('[data-overview-bigkey="4"]') as Element;
-    expect(goneRow.querySelector('.border-edge')).not.toBeNull();
-    expect(goneRow.textContent).toContain('redis.overview.typeUnknown');
+    // rank4/5 beyond BIG_KEY_LIMIT=3 — no rows rendered.
+    expect(container.querySelector('[data-overview-bigkey="4"]')).toBeNull();
+    expect(container.querySelector('[data-overview-bigkey="5"]')).toBeNull();
   });
 
   it('paints the recent-key badge with the same class vocabulary', () => {

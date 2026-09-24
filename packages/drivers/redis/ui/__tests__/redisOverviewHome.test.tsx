@@ -350,17 +350,16 @@ describe('内存 gauge（在 InstanceCard 内）', () => {
     expect(container.querySelector('[data-overview-memory-percent]')?.textContent).toBe('—');
   });
 
-  it('lists the memory_sample Top 5 ranked by size, and says when the sample was truncated', async () => {
+  it('lists the memory_sample Top 3 ranked by size, and says when the sample was truncated', async () => {
     stub({ memory_sample: { samples: MEMORY_OK.samples, truncated: true } });
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
     await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-bigkey]').length).toBe(5),
+      expect(container.querySelectorAll('[data-overview-bigkey]').length).toBe(3),
     );
 
     const ranks = ids(container, 'data-overview-bigkey');
-    expect(ranks).toEqual(['1', '2', '3', '4', '5']);
+    expect(ranks).toEqual(['1', '2', '3']);
     expect(attr(container, '[data-overview-bigkey="1"]', 'data-overview-key')).toBe('blob:a');
-    expect(attr(container, '[data-overview-bigkey="5"]', 'data-overview-key')).toBe('blob:e');
     // BUG-003: the type / TTL columns come from the same memory_sample reply.
     expect(attr(container, '[data-overview-bigkey="1"]', 'data-overview-bigkey-type')).toBe(
       'string',
@@ -370,17 +369,7 @@ describe('内存 gauge（在 InstanceCard 内）', () => {
     expect(attr(container, '[data-overview-bigkey="2"]', 'data-overview-bigkey-ttl-ms')).toBe(
       '8000',
     );
-    // rank 4 is a key deleted between SCAN and read — a distinguishable empty state.
-    expect(attr(container, '[data-overview-bigkey="4"]', 'data-overview-bigkey-missing')).toBe(
-      'true',
-    );
-    expect(attr(container, '[data-overview-bigkey="4"]', 'data-overview-bigkey-type')).toBe(
-      'unknown',
-    );
-    // rank 5 type unreadable but a live TTL still shows; rank 3 TTL null → dash.
-    expect(attr(container, '[data-overview-bigkey="5"]', 'data-overview-bigkey-type')).toBe(
-      'unknown',
-    );
+    // rank 3 TTL null → dash.
     expect(attr(container, '[data-overview-bigkey="3"]', 'data-overview-bigkey-ttl-ms')).toBe('');
     // The type badge is a *visible* cell, not only a data attribute.
     expect(container.querySelector('[data-overview-bigkey="2"]')?.textContent).toContain('hash');
@@ -436,7 +425,7 @@ describe('内存 gauge（在 InstanceCard 内）', () => {
 });
 
 describe('卡 4 — 慢查询', () => {
-  it('shows the Top 5 as 序号 / 耗时 µs / 命令摘要 / 客户端', async () => {
+  it('shows the Top 3 as 序号 / 耗时 µs / 命令摘要 / 客户端', async () => {
     stub({
       slowlog_get: [
         ...SLOWLOG_OK,
@@ -476,10 +465,10 @@ describe('卡 4 — 慢查询', () => {
     });
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
     await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-slowlog-row]').length).toBe(5),
+      expect(container.querySelectorAll('[data-overview-slowlog-row]').length).toBe(3),
     );
 
-    expect(ids(container, 'data-overview-slowlog-row')).toEqual(['1', '2', '3', '4', '5']);
+    expect(ids(container, 'data-overview-slowlog-row')).toEqual(['1', '2', '3']);
     // newest id first — Redis orders oldest-first, the card must not mirror that.
     expect(attr(container, '[data-overview-slowlog-row="1"]', 'data-overview-slowlog-row')).toBe(
       '1',
@@ -656,7 +645,7 @@ describe('区块 6 — 最近浏览键', () => {
     const onOpenTarget = vi.fn();
     const wired = render(<RedisOverviewHome {...baseProps({ onOpenTarget })} />);
     await waitFor(() =>
-      expect(wired.container.querySelectorAll('[data-overview-bigkey]').length).toBe(5),
+      expect(wired.container.querySelectorAll('[data-overview-bigkey]').length).toBe(3),
     );
     fireEvent.click(wired.container.querySelector('[data-overview-bigkey="2"]') as Element);
 

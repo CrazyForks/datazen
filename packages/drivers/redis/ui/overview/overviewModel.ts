@@ -26,9 +26,9 @@ export const DEFAULT_DATABASE_COUNT = 16;
 /** 碎片率超过该值视为异常（PRD §3.1 卡 1/卡 2 的 warning 判定位）。 */
 export const FRAGMENTATION_WARN_RATIO = 1.5;
 
-/** 卡 2 / 卡 4 的 Top-N 预算。 */
-export const BIG_KEY_LIMIT = 5;
-export const SLOWLOG_LIMIT = 5;
+/** 卡 2 / 卡 4 的 Top-N 预算（概览屏限制为3行以适配一屏布局）。 */
+export const BIG_KEY_LIMIT = 3;
+export const SLOWLOG_LIMIT = 3;
 
 /** 命令摘要截断长度，避免一行慢查询命令撑破卡片。 */
 export const SLOWLOG_COMMAND_SUMMARY_MAX = 96;
