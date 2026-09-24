@@ -70,6 +70,44 @@ async function valueAt(session: string, database: string, table: string): Promis
   return response.results?.[0]?.rows?.[0]?.[0];
 }
 
+/** Observe a non-idempotent IPC exactly once; never retry an execution request. */
+async function invokeBackendOnce<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  const raw = await browser.executeAsync(
+    (command: string, argsJson: string, done: (value: string) => void) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: {
+            invoke: (command: string, args: unknown) => Promise<unknown>;
+          };
+        }
+      ).__TAURI_INTERNALS__;
+      if (!internals) {
+        done(JSON.stringify({ ok: false, error: 'Tauri IPC is unavailable in this window' }));
+        return;
+      }
+      let payload: unknown;
+      try {
+        payload = JSON.parse(argsJson);
+      } catch (error) {
+        done(JSON.stringify({ ok: false, error: String(error) }));
+        return;
+      }
+      void internals.invoke(command, payload).then(
+        (value) => done(JSON.stringify({ ok: true, value })),
+        (error: unknown) => done(JSON.stringify({ ok: false, error: String(error) })),
+      );
+    },
+    cmd,
+    JSON.stringify(args),
+  );
+  if (typeof raw !== 'string') {
+    throw new Error(`one-shot IPC returned a non-string envelope for ${cmd}`);
+  }
+  const envelope = JSON.parse(raw) as { ok: true; value: T } | { ok: false; error: string };
+  if (!envelope.ok) throw new Error(`one-shot IPC rejected ${cmd}: ${envelope.error}`);
+  return envelope.value;
+}
+
 async function openDataSyncWindow(mainHandle: string) {
   await browser.url('tauri://localhost/window.html?window=data-sync');
   await browser.pause(800);
@@ -194,7 +232,7 @@ async function setUpAndExecuteUnknown(databaseType: DatabaseType, fault: Fault) 
       scopes: [],
     };
     const profileRef = { id: profileId, revision: profile.updatedAt };
-    const response = await invokeBackend<ExecutionResponse>('execute_data_sync', {
+    const response = await invokeBackendOnce<ExecutionResponse>('execute_data_sync', {
       request: {
         planId: preview.planId,
         selection,
@@ -275,7 +313,7 @@ describe('Data Sync unknown outcome history recovery', () => {
             expectedValue,
           );
 
-          const replay = await invokeBackend<ExecutionResponse>('execute_data_sync', {
+          const replay = await invokeBackendOnce<ExecutionResponse>('execute_data_sync', {
             request: {
               planId: fixture.planId,
               selection: fixture.selection,

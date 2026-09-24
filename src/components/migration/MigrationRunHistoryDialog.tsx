@@ -23,13 +23,26 @@ export function MigrationRunHistoryDialog({
   const [selected, setSelected] = useState<MigrationRunRecord | null>(null);
   const [error, setError] = useState('');
 
-  const rollbackLabel = (run: MigrationRunRecord) => {
-    if (run.operation !== 'dataTransfer') return run.rollbackOutcome;
-    const knownOutcomes = ['notRequired', 'notStarted', 'rolledBack', 'unknown'] as const;
-    if (!knownOutcomes.includes(run.rollbackOutcome as (typeof knownOutcomes)[number])) {
-      return run.rollbackOutcome;
+  const rollbackDisplay = (run: MigrationRunRecord) => {
+    if (run.operation !== 'dataTransfer') {
+      return { label: run.rollbackOutcome, className: '' };
     }
-    return t(`transfer.historyOutcome.${run.rollbackOutcome}`);
+    const knownOutcomes = [
+      'notRequired',
+      'notStarted',
+      'rolledBack',
+      'unknown',
+      'partiallyApplied',
+    ] as const;
+    if (!knownOutcomes.includes(run.rollbackOutcome as (typeof knownOutcomes)[number])) {
+      return { label: run.rollbackOutcome, className: '' };
+    }
+    const isUncertain =
+      run.rollbackOutcome === 'unknown' || run.rollbackOutcome === 'partiallyApplied';
+    return {
+      label: t(`transfer.historyOutcome.${run.rollbackOutcome}`),
+      className: isUncertain ? 'font-medium text-amber-700 dark:text-amber-400' : '',
+    };
   };
 
   const reconcileSelected = async () => {
@@ -112,7 +125,14 @@ export function MigrationRunHistoryDialog({
                 {selected.conflictCount}
               </div>
               <div>
-                {t('migrationHistory.rollback')}: {rollbackLabel(selected)}
+                {t('migrationHistory.rollback')}:{' '}
+                <span
+                  data-testid="migration-history-rollback-outcome"
+                  data-outcome={selected.rollbackOutcome}
+                  className={rollbackDisplay(selected).className}
+                >
+                  {rollbackDisplay(selected).label}
+                </span>
               </div>
               {selected.profileId && (
                 <div>

@@ -2001,6 +2001,11 @@ export function DataSyncWindow() {
     void handleCompare();
   }, [handleCompare]);
 
+  const lastExecutionOutcome =
+    lastExecutionResult?.outcome ?? (lastExecutionResult?.rolledBack ? 'rolled_back' : 'committed');
+  const lastExecutionIsUnknown = lastExecutionOutcome === 'unknown';
+  const lastExecutionWasRolledBack = lastExecutionOutcome === 'rolled_back';
+
   // All hooks above. Gate the body on the `sync` locale pack so the UI never
   // renders raw/un-translated `t('sync.*')` keys before it is imported.
   if (!localesReady) {
@@ -2343,15 +2348,18 @@ export function DataSyncWindow() {
                 data-testid="data-sync-execute-done"
                 className={cn(
                   'flex flex-wrap items-center gap-3 text-sm',
-                  lastExecutionResult?.rolledBack
+                  lastExecutionIsUnknown || lastExecutionWasRolledBack
                     ? 'text-amber-700 dark:text-amber-400'
                     : 'text-green-700 dark:text-green-400',
                 )}
+                role="status"
               >
                 <span>
-                  {lastExecutionResult?.rolledBack
-                    ? lastExecutionResult.rollbackReason || t('sync.rolledBack')
-                    : t('sync.executeDone')}
+                  {lastExecutionIsUnknown
+                    ? t('sync.executionUnknown')
+                    : lastExecutionWasRolledBack
+                      ? lastExecutionResult?.rollbackReason || t('sync.rolledBack')
+                      : t('sync.executeDone')}
                 </span>
                 {lastExecutionResult?.skipped ? (
                   <span className="text-amber-600 dark:text-amber-400">

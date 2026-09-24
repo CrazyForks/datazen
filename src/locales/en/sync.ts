@@ -270,6 +270,7 @@ const pack = {
   'transfer.historyOutcome.notStarted': 'Not started',
   'transfer.historyOutcome.rolledBack': 'Rolled back',
   'transfer.historyOutcome.unknown': 'Unknown',
+  'transfer.historyOutcome.partiallyApplied': 'Partially applied',
   'transfer.success': 'Success',
   'transfer.step.endpoints': 'Endpoints',
   'transfer.step.setup': 'Setup',

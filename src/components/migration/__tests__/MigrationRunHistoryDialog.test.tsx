@@ -84,7 +84,7 @@ describe('MigrationRunHistoryDialog Data Sync recovery action', () => {
     expect(screen.queryByTestId('migration-run-reconcile')).not.toBeInTheDocument();
   });
 
-  it('renders a readable Transfer rollback outcome in shared history', async () => {
+  it('keeps historical Transfer unknown outcomes localized and visibly warned', async () => {
     const transferRun = { ...run, operation: 'dataTransfer' as const };
     vi.mocked(historyCommands.listMigrationRuns).mockResolvedValue({
       items: [transferRun],
@@ -96,8 +96,52 @@ describe('MigrationRunHistoryDialog Data Sync recovery action', () => {
     fireEvent.click(screen.getByText('migrationHistory.open'));
     fireEvent.click(await screen.findByText(/failed/));
 
-    expect(
-      await screen.findByText('migrationHistory.rollback: transfer.historyOutcome.unknown'),
-    ).toBeInTheDocument();
+    const rollback = await screen.findByTestId('migration-history-rollback-outcome');
+    expect(rollback).toHaveTextContent('transfer.historyOutcome.unknown');
+    expect(rollback).toHaveClass('text-amber-700');
+    expect(rollback).toHaveAttribute('data-outcome', 'unknown');
+  });
+
+  it('renders a localized warning for partially applied Transfer outcomes', async () => {
+    const transferRun = {
+      ...run,
+      operation: 'dataTransfer' as const,
+      rollbackOutcome: 'partiallyApplied',
+    };
+    vi.mocked(historyCommands.listMigrationRuns).mockResolvedValue({
+      items: [transferRun],
+      total: 1,
+      offset: 0,
+      limit: 25,
+    });
+    render(<MigrationRunHistoryDialog operation="dataTransfer" />);
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+
+    const rollback = await screen.findByTestId('migration-history-rollback-outcome');
+    expect(rollback).toHaveTextContent('transfer.historyOutcome.partiallyApplied');
+    expect(rollback).toHaveClass('text-amber-700');
+    expect(rollback).toHaveAttribute('data-outcome', 'partiallyApplied');
+  });
+
+  it('preserves unrecognized historical Transfer rollback values', async () => {
+    const transferRun = {
+      ...run,
+      operation: 'dataTransfer' as const,
+      rollbackOutcome: 'legacyOutcome',
+    };
+    vi.mocked(historyCommands.listMigrationRuns).mockResolvedValue({
+      items: [transferRun],
+      total: 1,
+      offset: 0,
+      limit: 25,
+    });
+    render(<MigrationRunHistoryDialog operation="dataTransfer" />);
+    fireEvent.click(screen.getByText('migrationHistory.open'));
+    fireEvent.click(await screen.findByText(/failed/));
+
+    const rollback = await screen.findByTestId('migration-history-rollback-outcome');
+    expect(rollback).toHaveTextContent('legacyOutcome');
+    expect(rollback).toHaveAttribute('data-outcome', 'legacyOutcome');
   });
 });

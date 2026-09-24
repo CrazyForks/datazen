@@ -1515,8 +1515,11 @@ describe('DataSyncWindow wizard', () => {
     expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('sync.executionUnknown');
     await screen.findByTestId('data-sync-result');
     const completionLabel = screen.getByTestId('data-sync-execute-done');
+    expect(completionLabel).toHaveTextContent('sync.executionUnknown');
     expect(completionLabel).not.toHaveTextContent('sync.executeDone');
     expect(completionLabel).not.toHaveClass('text-green-700');
+    expect(completionLabel).toHaveClass('text-amber-700');
+    expect(completionLabel).toHaveAttribute('role', 'status');
     expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'unknown');
     expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
       'data-write-outcome-uncertain',
