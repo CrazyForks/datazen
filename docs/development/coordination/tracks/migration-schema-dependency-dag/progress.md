@@ -1,6 +1,6 @@
 # migration-schema-dependency-dag
 
-Phase: READY_FOR_TEST
+Phase: TEST_FAILED
 
 ## Scope
 
@@ -22,7 +22,7 @@ This track covers the existing independent planner boundaries. It does **not** i
 - [ ] A combined reviewed plan represents supported dependencies across all selected table, view, routine, trigger, sequence, and type operations and validates them against source/target snapshots.
 - [ ] Dependencies inside opaque view/routine SQL bodies are extracted or supplied as driver metadata; unresolved references block execution instead of being silently omitted.
 - [ ] End-to-end mixed-kind apply and reverse drop are verified on PostgreSQL and MySQL using WDIO, with rendered SQL and read-back assertions.
-- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes all supported WDIO cases without failures, and files any bugs. Focused checks completed, but the independent WDIO retest found BUG-003 on PostgreSQL and BUG-004 on both dialects; the changed-executable-line coverage threshold was not independently certified.
+- [ ] Independent Tester review confirms changed-core coverage ≥80%, re-runs focused checks, executes all supported WDIO cases without failures, and files any bugs. Fresh R3 focused checks passed, but candidate `14e8ca1a` remains `TEST_FAILED`: PostgreSQL's two unchanged FK plans were falsely rejected as stale (BUG-005), three WDIO journeys timed out inconclusively, and changed-production executable coverage was 269/658 (40.9%). See [TEST_FAILED.md](./TEST_FAILED.md).
 
 The targeted graph and planner unit tests below pass, but they do not satisfy these cross-category and live-database acceptance items. Do not mark this track PASSED until its supported boundary is independently reviewed; do not treat that result as closing the unified-plan release blocker.
 
@@ -37,7 +37,7 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 - [ ] Tester: WDIO PostgreSQL and MySQL case for supported table-structure dependency order (create/drop table, FK, custom type, trigger) with database read-back.
 - [ ] Tester: WDIO rejection path for an unsafe / unsupported renderer and visible actionable plan error.
 - [ ] Tester: run both stale-catalog journeys (prepare parent-only DROP, add a dependent child after review, reject before writes, read back both tables/FK); MySQL must have complete-catalog visibility. Report privilege-gated skips separately from passes.
-- [ ] Tester: positively verify MySQL selected child/parent drop and read-back with direct global SELECT/ALL and no partial revokes; a skip leaves this release path unverified.
+- [x] Tester: positively verify MySQL selected child/parent drop and read-back with direct global SELECT/ALL and no partial revokes; R3 passed this journey with the local account's proven global catalog visibility.
 - [ ] Follow-on unified-planner track: mixed table/object selection and deploy journey across supported kinds; register its cross-category cases there.
 
 ## Self-validation
@@ -79,3 +79,12 @@ The follow-on work is tracked at [migration-schema-unified-planner](../migration
 - `pnpm exec tsc --noEmit`: passed. The E2E project typecheck reports existing workspace errors in shared helpers, other specs, and generated extension aliases; none reference the changed WDIO spec. Prettier on the changed spec and `git diff --check` passed.
 - Coder did not run WDIO. Parent-only boundary journeys wait for an actionable blocker, assert zero statements and disabled deploy, and verify fixture tables/FK remain. The positive MySQL selected child/parent drop journey explicitly skips when the account lacks proven global catalog visibility; Tester must report this as skipped, never passed. If skipped, successful MySQL child-before-parent deploy/read-back remains an open release blocker and must be rerun with direct global SELECT/ALL and no partial revokes.
 - The unified cross-category reviewed planner remains a separate release blocker and is not implemented by this repair.
+
+## Fresh Independent Tester R3
+
+- Phase: `TEST_FAILED`; report: [TEST_FAILED.md](./TEST_FAILED.md); confirmed production finding: [BUG-005](./bugs/migration-schema-dependency-dag-BUG-005.md).
+- Focused validation passed: Host Schema Diff 162/162, Driver API migration 15/15, PostgreSQL 132 plus live FK-introspection 1/1, MySQL 115 plus 4 cross-database integration tests, Host TypeScript, formatting, and diff checks.
+- WDIO completed 5 passing and 5 failing journeys. MySQL create+FK, add-FK, and selected child-before-parent deploy/read-back passed; parent-only unselected-dependent blocking passed for PostgreSQL and MySQL. Two PostgreSQL no-change FK plans failed stale validation. PostgreSQL selected-drop and the two stale-after-review journeys timed out without deploying a rejected/stale plan.
+- MySQL catalog visibility was proven and its positive selected-drop path passed, but this run emitted no catalog scan duration/count log. Changed-production executable coverage is below the 80% gate; the app-runtime profile did not flush.
+- Test setup incident and cleanup are documented in the report. After direct WDIO execution, read-only verification confirmed no `sd_dag_*` fixtures or temporary connection IDs remained; the app stopped and port 4445 was released.
+- Do not merge this candidate. Resume the original Coder for BUG-005 and coverage remediation, then dispatch a fresh Tester for full retest. The combined cross-category planner remains a separate release blocker.
