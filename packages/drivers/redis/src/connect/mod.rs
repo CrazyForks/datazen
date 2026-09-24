@@ -34,8 +34,6 @@ macro_rules! with_redis_conn {
     };
 }
 
-use std::time::Duration;
-
 #[cfg(test)]
 use datazen_driver_api::SslMode;
 #[cfg(test)]
@@ -46,6 +44,7 @@ mod tests {
     use super::*;
     use datazen_driver_api::ConnectionConfig;
     use serde_json::json;
+    use std::time::Duration;
 
     fn base_config() -> ConnectionConfig {
         ConnectionConfig {

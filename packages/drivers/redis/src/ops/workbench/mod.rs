@@ -97,15 +97,18 @@ use std::pin::Pin;
 
 #[allow(unused_imports)]
 use futures_util::FutureExt;
+#[allow(unused_imports)]
 use redis::aio::ConnectionLike;
 #[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 #[allow(unused_imports)]
 use redis::RedisFuture;
+#[allow(unused_imports)]
 use redis::Value as RValue;
 #[allow(unused_imports)]
 use serde::Serialize;
 
+#[allow(unused_imports)]
 use crate::connect::Topology;
 #[allow(unused_imports)]
 use crate::driver::parse_scan_result;
@@ -119,52 +122,74 @@ pub(crate) mod transport;
 
 pub use distribution::type_distribution;
 pub use key_info::key_object_info;
+#[allow(unused_imports)]
 pub use memory_sample::build_memory_sample_pipeline;
 pub(crate) use memory_sample::fetch_memory_sample_fields;
 #[allow(unused_imports)]
 pub use memory_sample::memory_sample_slots;
+#[allow(unused_imports)]
 pub use memory_sample::parse_memory_sample_fields;
 #[allow(unused_imports)]
 pub use memory_sample::MemorySampleFields;
+#[allow(unused_imports)]
 pub use memory_sample::MEMORY_SAMPLE_FIELDS_PER_KEY;
+#[allow(unused_imports)]
 pub use memory_sample::MEMORY_SAMPLE_KEYS_PER_PIPELINE;
 pub use primitives::cluster_scan_anchor_slot;
+#[allow(unused_imports)]
 pub use primitives::is_sample_truncated;
+#[allow(unused_imports)]
 pub use primitives::resolve_type_sample_limit;
+#[allow(unused_imports)]
 pub use primitives::sample_window_for;
+#[allow(unused_imports)]
 pub use primitives::CLUSTER_SCAN_ANCHOR;
 pub use primitives::CLUSTER_TYPE_SAMPLE_LIMIT;
 pub use primitives::DEFAULT_TYPE_SAMPLE_LIMIT;
 pub use primitives::KEY_INFO_PIPELINE_LEN;
+#[allow(unused_imports)]
 pub use primitives::MAX_SCAN_ROUNDS;
+#[allow(unused_imports)]
 pub use primitives::MAX_STALLED_SCAN_ROUNDS;
 pub use primitives::MAX_TYPE_SAMPLE_LIMIT;
 pub use primitives::TTL_MISSING;
 pub use primitives::TTL_NO_EXPIRY;
 pub use primitives::TYPE_PIPELINE_CHUNK;
+#[allow(unused_imports)]
 pub use primitives::TYPE_SCAN_COUNT;
+#[allow(unused_imports)]
 pub use shapes::build_key_info_pipeline;
 pub use shapes::is_unusable_reply;
+#[allow(unused_imports)]
 pub use shapes::key_info_slots;
+#[allow(unused_imports)]
 pub use shapes::parse_key_info;
 pub use shapes::parse_opt_int;
+#[allow(unused_imports)]
 pub use shapes::parse_opt_string;
 pub use shapes::parse_type_token;
 pub use shapes::type_reply_says_absent;
 pub use shapes::KeyObjectInfo;
 pub use shapes::TypeDistribution;
+#[allow(unused_imports)]
 pub use transport::SlotRoutedBatchFuture;
 pub use transport::SlotRoutedConnection;
 
+#[allow(unused_imports)]
 pub(crate) use distribution::sample_types;
 #[allow(unused_imports)]
 pub(crate) use shapes::slot;
+#[allow(unused_imports)]
 pub(crate) use shapes::unreadable_key_state;
+#[allow(unused_imports)]
 pub(crate) use transport::fetch_dbsize;
+#[allow(unused_imports)]
 pub(crate) use transport::is_connection_level_failure;
 #[allow(unused_imports)]
 pub(crate) use transport::issue_batch;
+#[allow(unused_imports)]
 pub(crate) use transport::master_route;
+#[allow(unused_imports)]
 pub(crate) use transport::pipeline_raw;
 #[allow(unused_imports)]
 pub(crate) use transport::routed_sequential;

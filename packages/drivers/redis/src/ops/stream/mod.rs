@@ -28,7 +28,6 @@ pub use groups::xinfo_groups;
 pub use groups::xpending;
 pub use overview::stream_overview;
 pub use types::resolve_stream_overview_limit;
-pub use types::validate_xgroup_name;
 pub use types::ConsumerInfo;
 #[allow(unused_imports)]
 pub use types::StreamEntry;
@@ -45,11 +44,6 @@ pub use types::XrangeResult;
 #[allow(unused_imports)]
 pub use types::DEFAULT_STREAM_OVERVIEW_LIMIT;
 
-pub(crate) use parse::parse_stream_entry;
-pub(crate) use parse::parse_stream_id;
-pub(crate) use parse::parse_xinfo_consumers;
-pub(crate) use parse::parse_xinfo_groups;
-pub(crate) use parse::parse_xpending_entries;
 #[allow(unused_imports)]
 pub(crate) use parse::value_to_string;
 #[allow(unused_imports)]
@@ -58,6 +52,11 @@ pub(crate) use parse::value_to_u64;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::parse::{
+        parse_stream_entry, parse_stream_id, parse_xinfo_consumers, parse_xinfo_groups,
+        parse_xpending_entries,
+    };
+    use super::types::validate_xgroup_name;
 
     #[test]
     fn validate_xgroup_name_rejects_empty() {

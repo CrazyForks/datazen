@@ -40,15 +40,19 @@
 //! established 口径, and it is strictly better than the pre-budget behaviour,
 //! where a multi-page tree walk mixed shards cursor by cursor.
 
+#[allow(unused_imports)]
 use std::time::Instant;
 
 #[allow(unused_imports)]
 use datazen_driver_api::{DriverError, KeyEntry};
+#[allow(unused_imports)]
 use redis::aio::ConnectionLike;
 #[allow(unused_imports)]
 use redis::cluster_routing::get_slot;
+#[allow(unused_imports)]
 use redis::Value as RValue;
 
+#[allow(unused_imports)]
 use crate::connect::Topology;
 #[allow(unused_imports)]
 use crate::ops::key_probe::key_exists;
@@ -83,10 +87,14 @@ pub(crate) use budget::read_dbsize;
 pub(crate) use budget::scan_budgeted;
 pub(crate) use count::count_budgeted;
 pub use count::CountOutcome;
+#[allow(unused_imports)]
 pub use meta::build_meta_pipeline;
 pub(crate) use meta::fetch_key_meta;
+#[allow(unused_imports)]
 pub use meta::meta_fields_per_key;
+#[allow(unused_imports)]
 pub use meta::meta_slots;
+#[allow(unused_imports)]
 pub use meta::parse_meta_group;
 pub use meta::KeyMeta;
 pub(crate) use page::scan_keys_page;
@@ -117,12 +125,18 @@ pub(crate) use transport::fold_command_answer;
 pub(crate) use transport::is_connection_level_failure;
 #[allow(unused_imports)]
 pub(crate) use transport::pipeline_raw;
+#[allow(unused_imports)]
 pub use value::build_value_pipeline;
+#[allow(unused_imports)]
 pub use value::extract_hscan_preview;
 pub(crate) use value::fetch_key_values;
+#[allow(unused_imports)]
 pub use value::has_preview_command;
+#[allow(unused_imports)]
 pub use value::length_command_for;
+#[allow(unused_imports)]
 pub use value::parse_value_group;
+#[allow(unused_imports)]
 pub use value::render_preview;
 pub use value::ValueFields;
 

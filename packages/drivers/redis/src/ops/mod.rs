@@ -40,7 +40,6 @@ pub use flush::settings_allow_flush;
 pub use hash::hash_del;
 pub use hash::hash_scan;
 pub use hash::hash_set;
-pub(crate) use hash::parse_hash_scan_result;
 pub use keys::delete_keys;
 pub use keys::rename_key;
 pub use keys::set_expire_at;
@@ -51,13 +50,6 @@ pub use list::list_push;
 pub use list::list_range;
 pub use list::list_rem;
 pub use list::list_set;
-pub(crate) use parse::parse_cursor_from_value;
-pub(crate) use parse::parse_flat_string_array;
-pub(crate) use parse::parse_flat_string_pairs;
-pub(crate) use parse::parse_scan_result_generic;
-pub(crate) use parse::parse_string_array;
-pub(crate) use parse::parse_zscan_result;
-pub(crate) use parse::value_to_string;
 pub(crate) use scan::scan_batch;
 pub use scan::scan_keys;
 #[allow(unused_imports)]
@@ -67,14 +59,10 @@ pub use set::set_remove;
 pub use set::set_scan;
 #[allow(unused_imports)]
 pub(crate) use ttl::apply_ttl_command;
-pub use types::plan_rename_prefix;
-pub use types::resolve_expire_at;
-pub use types::resolve_ttl;
 pub use types::BatchDeleteResult;
 pub use types::BatchRenameResult;
 pub use types::BatchSetTtlResult;
 pub use types::KeyError;
-pub use types::TtlCommand;
 pub use zset::zset_add;
 pub use zset::zset_remove;
 pub use zset::zset_scan;
@@ -83,6 +71,15 @@ pub use zset::ZsetMember;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::ops::hash::parse_hash_scan_result;
+    #[allow(unused_imports)]
+    use crate::ops::parse::{
+        parse_cursor_from_value, parse_flat_string_array, parse_flat_string_pairs,
+        parse_scan_result_generic, parse_string_array, parse_zscan_result, value_to_string,
+    };
+    #[allow(unused_imports)]
+    use crate::ops::types::{plan_rename_prefix, resolve_expire_at, resolve_ttl, TtlCommand};
 
     #[test]
     fn plan_rename_prefix_rewrites() {

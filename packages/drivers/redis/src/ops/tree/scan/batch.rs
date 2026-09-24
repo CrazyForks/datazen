@@ -97,7 +97,7 @@ where
 ///
 /// The small overloads keep [`fetch_page_groups`] usable for both batches: the
 /// meta batch is keyed by the bare key name, the value batch by key + type.
-trait GroupItem: Clone {
+pub(crate) trait GroupItem: Clone {
     fn key(&self) -> &str;
 }
 
