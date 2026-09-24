@@ -121,7 +121,9 @@ describe('[tester] 屏 A 跳转不落历史（key 目标补桩）', () => {
 
     fireEvent.click(container.querySelector('[data-overview-recent-key="user:1"]') as Element);
 
-    await waitFor(() => expect(container.querySelector('[data-overview-jump-hint]')).not.toBeNull());
+    await waitFor(() =>
+      expect(container.querySelector('[data-overview-jump-hint]')).not.toBeNull(),
+    );
     expect(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY)).toBe(before);
   });
 
@@ -151,18 +153,19 @@ describe('[tester] 屏 A 跳转不落历史（key 目标补桩）', () => {
     expect(bucket[0]?.visitedAt ?? 0).toBeGreaterThan(1_700_000_000_000);
   });
 
-  it('writing history through the bridge stays limited to key targets (db cell)', async () => {
+  it('writing history through the bridge stays limited to key targets (non-key action)', async () => {
     // `handleJump` 的历史守卫是**双条件**：桥接成功 ∧ 目标是键。
-    // 上一例封「桥接成功」，本例封「目标是键」—— 缺它的话「落地跳转一律入历史」
-    // （db 格子 / 快捷动作也写）这个变异能在整条套件里存活。
+    // 本例封「目标是键」—— 缺它的话「落地跳转一律入历史」
+    // （快捷动作也写）这个变异能在整条套件里存活。
     const onOpenTarget = vi.fn();
     const { container } = render(<RedisOverviewHome {...homeProps({ onOpenTarget })} />);
     await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBeGreaterThanOrEqual(1),
+      expect(container.querySelectorAll('[data-overview-action]').length).toBeGreaterThanOrEqual(1),
     );
 
-    fireEvent.click(container.querySelector('[data-overview-db-cell="3"]') as Element);
-    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'database', dbIndex: 3 });
+    // 点一个非键目标（console）验证不写历史
+    fireEvent.click(container.querySelector('[data-overview-action="console"]') as Element);
+    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'console' });
 
     // 到了屏 B 但不是键 ⇒ 历史里不该出现任何条目。
     expect(readBucket()).toHaveLength(0);
@@ -175,9 +178,7 @@ describe('[tester] RecentKeysCard 行点击发出 key 跳转请求', () => {
     const onJump = vi.fn();
     const { container } = render(
       <RecentKeysCard
-        entries={[
-          { key: 'queue:jobs', dbIndex: 4, keyType: 'list', visitedAt: 1_700_000_000_000 },
-        ]}
+        entries={[{ key: 'queue:jobs', dbIndex: 4, keyType: 'list', visitedAt: 1_700_000_000_000 }]}
         onJump={onJump}
         onClear={vi.fn()}
       />,
@@ -219,45 +220,42 @@ describe('[tester] useOverviewData · 卸载后的迟到回复全部丢弃', () 
   it.each([
     { label: 'resolve', mode: 'resolve' as const },
     { label: 'reject', mode: 'reject' as const },
-  ])(
-    'drops every stale %$label reply after unmount (四个 stale 守卫全覆盖)',
-    async ({ mode }) => {
-      const gates = {
-        [OVERVIEW_COMMANDS.info]: deferred(),
-        [OVERVIEW_COMMANDS.dbSizes]: deferred(),
-        [OVERVIEW_COMMANDS.memorySample]: deferred(),
-        [OVERVIEW_COMMANDS.slowlogGet]: deferred(),
-      };
-      const invoke = vi.fn((_pluginId: string, command: string) => {
-        return gates[command as keyof typeof gates].promise;
-      }) as unknown as RedisInvokeFn;
+  ])('drops every stale %$label reply after unmount (四个 stale 守卫全覆盖)', async ({ mode }) => {
+    const gates = {
+      [OVERVIEW_COMMANDS.info]: deferred(),
+      [OVERVIEW_COMMANDS.dbSizes]: deferred(),
+      [OVERVIEW_COMMANDS.memorySample]: deferred(),
+      [OVERVIEW_COMMANDS.slowlogGet]: deferred(),
+    };
+    const invoke = vi.fn((_pluginId: string, command: string) => {
+      return gates[command as keyof typeof gates].promise;
+    }) as unknown as RedisInvokeFn;
 
-      const { result, unmount } = renderHook(() =>
-        useOverviewData({ dbSessionId: SESSION, dbIndex: 0, invoke }),
-      );
-      await waitFor(() => expect(invoke).toHaveBeenCalledTimes(4));
-      unmount();
+    const { result, unmount } = renderHook(() =>
+      useOverviewData({ dbSessionId: SESSION, dbIndex: 0, invoke }),
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(4));
+    unmount();
 
-      if (mode === 'resolve') {
-        gates[OVERVIEW_COMMANDS.info].resolve(INFO_OK);
-        gates[OVERVIEW_COMMANDS.dbSizes].resolve(DB_SIZES_OK);
-        gates[OVERVIEW_COMMANDS.memorySample].reject(new Error('late memory reply'));
-        gates[OVERVIEW_COMMANDS.slowlogGet].reject(new Error('late slowlog reply'));
-      } else {
-        gates[OVERVIEW_COMMANDS.info].reject(new Error('late info reply'));
-        gates[OVERVIEW_COMMANDS.dbSizes].reject(new Error('late db_sizes reply'));
-        gates[OVERVIEW_COMMANDS.memorySample].resolve(MEMORY_OK);
-        gates[OVERVIEW_COMMANDS.slowlogGet].resolve([]);
-      }
-      await new Promise((r) => setTimeout(r, 0));
+    if (mode === 'resolve') {
+      gates[OVERVIEW_COMMANDS.info].resolve(INFO_OK);
+      gates[OVERVIEW_COMMANDS.dbSizes].resolve(DB_SIZES_OK);
+      gates[OVERVIEW_COMMANDS.memorySample].reject(new Error('late memory reply'));
+      gates[OVERVIEW_COMMANDS.slowlogGet].reject(new Error('late slowlog reply'));
+    } else {
+      gates[OVERVIEW_COMMANDS.info].reject(new Error('late info reply'));
+      gates[OVERVIEW_COMMANDS.dbSizes].reject(new Error('late db_sizes reply'));
+      gates[OVERVIEW_COMMANDS.memorySample].resolve(MEMORY_OK);
+      gates[OVERVIEW_COMMANDS.slowlogGet].resolve([]);
+    }
+    await new Promise((r) => setTimeout(r, 0));
 
-      // 卸载 ⇒ token 失效，任何迟到回复都不得再写状态（不 setState-after-unmount）。
-      expect(result.current.info.status).toBe('loading');
-      expect(result.current.dbSizes.status).toBe('loading');
-      expect(result.current.memory.status).toBe('loading');
-      expect(result.current.slowlog.status).toBe('loading');
-    },
-  );
+    // 卸载 ⇒ token 失效，任何迟到回复都不得再写状态（不 setState-after-unmount）。
+    expect(result.current.info.status).toBe('loading');
+    expect(result.current.dbSizes.status).toBe('loading');
+    expect(result.current.memory.status).toBe('loading');
+    expect(result.current.slowlog.status).toBe('loading');
+  });
 });
 
 function gateway(plan: Record<string, unknown | Error> = {}) {
@@ -269,7 +267,9 @@ function gateway(plan: Record<string, unknown | Error> = {}) {
   };
   const invoke = vi.fn(async (_pluginId: string, command: string) => {
     if (!(command in replies)) throw new Error(`unexpected command ${command}`);
-    const value = Object.prototype.hasOwnProperty.call(plan, command) ? plan[command] : replies[command];
+    const value = Object.prototype.hasOwnProperty.call(plan, command)
+      ? plan[command]
+      : replies[command];
     // reject 包：允许测非 Error 形状的 reject（裸字符串），而不只是 Error。
     if (value && typeof value === 'object' && '__reject' in (value as object)) {
       return Promise.reject((value as { __reject: unknown }).__reject);
@@ -322,7 +322,9 @@ describe('[tester] useOverviewData · 失败与畸形载荷分支', () => {
 
   it('keeps a rejection thrown as a bare string in the failed bucket', async () => {
     // 非 Error 的 reject：message 走 String(error) 而不是 error.message。
-    const { result } = renderData({ [OVERVIEW_COMMANDS.slowlogGet]: { __reject: 'ERR bad reply' } });
+    const { result } = renderData({
+      [OVERVIEW_COMMANDS.slowlogGet]: { __reject: 'ERR bad reply' },
+    });
     await waitFor(() => expect(result.current.slowlog.status).toBe('failed'));
     expect(result.current.slowlog.message).toBe('ERR bad reply');
   });
@@ -345,9 +347,9 @@ describe('[tester] 内存条 ≥90% 的 danger 着色', () => {
     const { container } = render(<RedisOverviewHome {...homeProps()} />);
     await waitFor(() =>
       expect(
-        container.querySelector('[data-overview-memory-bar]')?.getAttribute(
-          'data-overview-memory-bar-percent',
-        ),
+        container
+          .querySelector('[data-overview-memory-bar]')
+          ?.getAttribute('data-overview-memory-bar-percent'),
       ).toBe('95'),
     );
     const hotFill = container.querySelector('[data-overview-memory-bar]')?.firstElementChild;
@@ -397,7 +399,9 @@ const BIG_KEY_SAMPLES = {
 async function renderBigKeys() {
   stubHome({ [OVERVIEW_COMMANDS.memorySample]: BIG_KEY_SAMPLES });
   const view = render(<RedisOverviewHome {...homeProps()} />);
-  await waitFor(() => expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(5));
+  await waitFor(() =>
+    expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(5),
+  );
   return view.container;
 }
 
@@ -452,12 +456,8 @@ describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () 
 
     // hash→success / list→warning / string→accent / set→danger（typeTone 词表）。
     expect(badgeOf(2)).not.toBeNull();
-    expect(
-      container.querySelector(`[data-overview-bigkey="1"] .text-accent`),
-    ).not.toBeNull();
-    expect(
-      container.querySelector(`[data-overview-bigkey="3"] .text-warning`),
-    ).not.toBeNull();
+    expect(container.querySelector(`[data-overview-bigkey="1"] .text-accent`)).not.toBeNull();
+    expect(container.querySelector(`[data-overview-bigkey="3"] .text-warning`)).not.toBeNull();
     expect(container.querySelector(`[data-overview-bigkey="5"] .text-danger`)).not.toBeNull();
     // 类型读不到 ⇒ 中性色 + 具名 unknown 占位（i18n key，非英文字面量）。
     const goneRow = container.querySelector('[data-overview-bigkey="4"]') as Element;

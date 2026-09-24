@@ -8,7 +8,6 @@ import {
   SLOWLOG_LIMIT,
   buildBannerPills,
   buildBigKeyRows,
-  buildKeySpaceModel,
   buildMemoryModel,
   buildServerRows,
   buildSlowlogRows,
@@ -21,9 +20,7 @@ import {
   type OverviewJumpTarget,
 } from './overviewNavigation';
 import { RedisOverviewBanner } from './RedisOverviewBanner';
-import { ServerInfoCard } from './ServerInfoCard';
-import { MemoryCard } from './MemoryCard';
-import { KeySpaceCard } from './KeySpaceCard';
+import { InstanceCard } from './InstanceCard';
 import { PerformanceCard } from './PerformanceCard';
 import { NavigationCard } from './NavigationCard';
 import { clearBrowseHistory, pushBrowseEntry, readBrowseHistory } from '../lib/redisBrowseHistory';
@@ -31,22 +28,14 @@ import { clearBrowseHistory, pushBrowseEntry, readBrowseHistory } from '../lib/r
 /**
  * 屏 A — Redis 连接总览（`kvSlots.connectionHome` 的驱动贡献）。
  *
- * Composition root only: it owns the jump intent + the pending-jump fallback and
- * hands each block its slice of the model. Four blocks in optimized layout —
- * banner + Row 1 (Server & Memory + Key Space) + Row 2 (Performance + Navigation)
- * — all fed by the four commands in `useOverviewData`, zero SCAN.
+ * Three full-width cards stacked vertically — no 2-col grid alignment issues:
+ *  1. InstanceCard (Server + Memory side-by-side)
+ *  2. PerformanceCard (Slowlog + Big Keys)
+ *  3. NavigationCard (Quick Actions + Recent Keys)
  *
- * The host wrapper (`ConnectionWorkspaceHome.tsx`) owns the scroll container and
- * the `data-slot="kv-connection-home"` marker; this component owns its layout.
+ * All fed by the commands in `useOverviewData`, zero SCAN.
  */
 export interface RedisOverviewHomeProps extends ConnectionHomeSlotProps {
-  /**
-   * Host bridge that opens a db panel / selects a key (屏 A → 屏 B).
-   *
-   * NOT part of the frozen `ConnectionHomeSlotProps` contract yet, so the host
-   * never passes it today: every jump then degrades to a named hint instead of
-   * pretending to work. See `overviewNavigation.ts` + the track ledger.
-   */
   onOpenTarget?: OverviewJumpHandler;
 }
 
@@ -73,7 +62,6 @@ export function RedisOverviewHome({
     () => buildBigKeyRows(data.memory.data, BIG_KEY_LIMIT),
     [data.memory.data],
   );
-  const keySpace = useMemo(() => buildKeySpaceModel(data.dbSizes.data), [data.dbSizes.data]);
   const slowlogRows = useMemo(
     () => buildSlowlogRows(data.slowlog.data, SLOWLOG_LIMIT),
     [data.slowlog.data],
@@ -85,7 +73,6 @@ export function RedisOverviewHome({
       const outcome = requestOverviewJump(target, onOpenTarget);
       if (outcome.handled) {
         setHintKey(null);
-        // PRD 最近浏览键 = 真正到过的键；只有桥接成功的 key 跳转才入历史。
         if (target.kind === 'key') {
           setRecent(
             pushBrowseEntry(connectionId, {
@@ -137,24 +124,16 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div data-overview-grid className="grid grid-cols-1 items-start gap-2 lg:grid-cols-2">
-          {/* Row 1: Server & Memory + Key Space */}
-          <ServerInfoCard status={data.info.status} rows={serverRows} onRetry={data.refresh} />
-          <MemoryCard
-            infoStatus={data.info.status}
-            memoryStatus={data.memory.status}
-            model={memoryModel}
-            onRetry={data.refreshMemory}
-          />
-          <KeySpaceCard
-            status={data.dbSizes.status}
-            model={keySpace}
+        <div data-overview-grid className="flex flex-col gap-2">
+          {/* 1. Instance: Server + Memory side-by-side, full width */}
+          <InstanceCard
+            status={data.info.status}
+            serverRows={serverRows}
+            memoryModel={memoryModel}
             onRetry={data.refresh}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
           />
 
-          {/* Row 2: Performance (Slowlog + Big Keys) + Navigation (Quick Actions + Recent) */}
+          {/* 2. Performance: Slowlog + Big Keys, full width */}
           <PerformanceCard
             slowlogStatus={data.slowlog.status}
             slowlogRows={slowlogRows}
@@ -166,6 +145,8 @@ export function RedisOverviewHome({
             onJump={handleJump}
             jumpHandler={onOpenTarget}
           />
+
+          {/* 3. Navigation: Quick Actions + Recent Keys, full width */}
           <NavigationCard
             defaultDbIndex={dbIndex}
             recentEntries={recent}

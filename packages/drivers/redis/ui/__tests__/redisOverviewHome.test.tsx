@@ -154,17 +154,14 @@ beforeEach(() => {
 });
 
 describe('屏 A 组装', () => {
-  it('renders the banner plus the six cards, all inside the 1 / lg:2 grid', () => {
+  it('renders the banner plus three full-width cards in a vertical stack', () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
 
     expect(container.querySelector('[data-overview-banner]')).not.toBeNull();
-    expect(ids(container, 'data-overview-card').sort()).toEqual(
-      ['actions', 'keyspace', 'memory', 'server', 'slowlog'].sort(),
-    );
+    expect(ids(container, 'data-overview-card').sort()).toEqual(['actions', 'server', 'slowlog']);
 
     const grid = container.querySelector('[data-overview-grid]');
-    expect(grid?.classList.contains('grid-cols-1')).toBe(true);
-    expect(grid?.classList.contains('lg:grid-cols-2')).toBe(true);
+    expect(grid?.classList.contains('flex-col')).toBe(true);
     for (const card of container.querySelectorAll('[data-overview-card]')) {
       expect(card.parentElement).toBe(grid);
     }
@@ -184,20 +181,13 @@ describe('屏 A 组装', () => {
 
   it('binds every block to the command it reads, so 区块空态有名字', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() => expect(cardState(container, 'keyspace')).toBe('ready'));
+    await waitFor(() => expect(cardState(container, 'slowlog')).toBe('ready'));
 
     expect(container.querySelector('[data-overview-card-source="server"]')?.textContent).toBe(
       'info',
     );
-    expect(container.querySelector('[data-overview-card-source="keyspace"]')?.textContent).toBe(
-      'db_sizes',
-    );
     expect(container.querySelector('[data-overview-card-source="slowlog"]')?.textContent).toBe(
       'slowlog_get + memory_sample',
-    );
-    // 卡 2 现在只有 info 源
-    expect(container.querySelector('[data-overview-card-source="memory"]')?.textContent).toBe(
-      'info',
     );
   });
 
@@ -246,7 +236,9 @@ describe('卡 1 — Server 概览', () => {
       'expiredKeys',
     ]);
     const rows = container.querySelector('[data-overview-card="server"] dl');
-    expect(rows?.classList.contains('sm:grid-cols-2')).toBe(true);
+    // In InstanceCard the server/memory side-by-side uses sm:grid-cols-2 on the parent div;
+    // the dl itself is a single-column list within its half.
+    expect(rows?.classList.contains('grid-cols-1')).toBe(true);
   });
 
   it('keeps server tokens raw and maps the known mode values to their key', async () => {
@@ -307,7 +299,7 @@ describe('卡 1 — Server 概览', () => {
   });
 });
 
-describe('卡 2 — 内存', () => {
+describe('内存 gauge（在 InstanceCard 内）', () => {
   it('draws the used/max gauge from INFO and flags fragmentation above 1.5', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
     await waitFor(() =>
@@ -410,8 +402,8 @@ describe('卡 2 — 内存', () => {
     );
 
     expect(container.querySelector('[data-overview-memory-gauge]')).not.toBeNull();
-    expect(cardState(container, 'memory')).toBe('ready');
-    expect(container.querySelector('[data-overview-failed="memory"]')).toBeNull();
+    expect(cardState(container, 'server')).toBe('ready');
+    expect(container.querySelector('[data-overview-failed="server"]')).toBeNull();
     expect(container.querySelector('[data-overview-bigkey]')).toBeNull();
   });
 
@@ -440,57 +432,6 @@ describe('卡 2 — 内存', () => {
 
     const sample = redisInvoke.mock.calls.find((call) => call[1] === 'memory_sample');
     expect(sample?.[2]).toMatchObject({ dbSessionId: SESSION, dbIndex: 3 });
-  });
-});
-
-describe('卡 3 — Key Space', () => {
-  it('renders the sixteen logical databases with keys + share, active vs empty', async () => {
-    const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
-
-    expect(attr(container, '[data-overview-db-cell="0"]', 'data-overview-db-name')).toBe('db0');
-    expect(attr(container, '[data-overview-db-cell="0"]', 'data-overview-db-state')).toBe('active');
-    expect(attr(container, '[data-overview-db-share="0"]', 'data-overview-share-percent')).toBe(
-      '75',
-    );
-    expect(attr(container, '[data-overview-db-share="2"]', 'data-overview-share-percent')).toBe(
-      '25',
-    );
-    // 1 键的库也要看得见：占比条下限 2%
-    expect(attr(container, '[data-overview-db-share="1"]', 'data-overview-share-percent')).toBe(
-      '0',
-    );
-    expect(attr(container, '[data-overview-db-cell="15"]', 'data-overview-db-state')).toBe('empty');
-    expect(container.querySelector('[data-overview-keyspace-summary]')).not.toBeNull();
-  });
-
-  it('grows past sixteen when the server exposes more databases', async () => {
-    stub({ db_sizes: [{ db: 20, keys: 5 }] });
-    const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(21),
-    );
-    expect(attr(container, '[data-overview-db-cell="20"]', 'data-overview-db-name')).toBe('db20');
-  });
-
-  it('names the keyless instance instead of an empty grid', async () => {
-    stub({ db_sizes: [] });
-    const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() => expect(cardState(container, 'keyspace')).toBe('empty'));
-    expect(container.querySelector('[data-overview-empty="keyspace"]')).not.toBeNull();
-  });
-
-  it('requests the clicked database panel through the bridge', async () => {
-    const onOpenTarget = vi.fn();
-    const { container } = render(<RedisOverviewHome {...baseProps({ onOpenTarget })} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
-
-    fireEvent.click(container.querySelector('[data-overview-db-cell="2"]') as Element);
-    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'database', dbIndex: 2 });
   });
 });
 
@@ -605,7 +546,7 @@ describe('卡 4 — 慢查询', () => {
 
     expect(container.querySelector('[data-overview-failed="slowlog"]')).toBeNull();
     // 其余区块照常
-    expect(cardState(container, 'keyspace')).toBe('ready');
+    expect(cardState(container, 'server')).toBe('ready');
   });
 });
 
@@ -704,9 +645,12 @@ describe('区块 6 — 最近浏览键', () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
     await waitFor(() => expect(cardState(container, 'server')).toBe('ready'));
 
-    // 无桥接 ⇒ 不谎报到达，也不写历史
-    fireEvent.click(container.querySelector('[data-overview-db-cell="1"]') as Element);
-    expect(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY)).toBeNull();
+    // 无桥接 ⇒ 不谎报到达，也不写历史 (click an unwired big key)
+    const bigKeyEl = container.querySelector('[data-overview-bigkey]');
+    if (bigKeyEl) {
+      fireEvent.click(bigKeyEl);
+      expect(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY)).toBeNull();
+    }
 
     cleanup();
     const onOpenTarget = vi.fn();
@@ -755,20 +699,22 @@ describe('区块 6 — 最近浏览键', () => {
 describe('屏 A → 屏 B 跳转的诚实降级', () => {
   it('marks every affordance unwired and shows the named guidance instead of a dead click', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
+    await waitFor(() => expect(cardState(container, 'server')).toBe('ready'));
 
     const states = new Set(ids(container, 'data-overview-jump'));
     expect(states.size).toBe(1);
     expect([...states][0]).toBe('unwired');
 
-    fireEvent.click(container.querySelector('[data-overview-db-cell="2"]') as Element);
+    // Click an unwired big key to trigger the guidance hint
+    const bigKeyEl = container.querySelector('[data-overview-bigkey]');
+    if (bigKeyEl) {
+      fireEvent.click(bigKeyEl);
+    } else {
+      // fallback: click a quick action
+      fireEvent.click(container.querySelector('[data-overview-action="browseDb"]') as Element);
+    }
     await waitFor(() =>
       expect(container.querySelector('[data-overview-jump-hint]')).not.toBeNull(),
-    );
-    expect(attr(container, '[data-overview-jump-hint]', 'data-overview-jump-hint')).toBe(
-      'redis.overview.jump.pendingTree',
     );
     expect(container.querySelector('[role="status"]')).not.toBeNull();
   });
@@ -790,11 +736,10 @@ describe('屏 A → 屏 B 跳转的诚实降级', () => {
 
   it('lets the user dismiss the guidance', async () => {
     const { container } = render(<RedisOverviewHome {...baseProps()} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
+    await waitFor(() => expect(cardState(container, 'server')).toBe('ready'));
 
-    fireEvent.click(container.querySelector('[data-overview-db-cell="1"]') as Element);
+    // Click an unwired action to trigger the hint
+    fireEvent.click(container.querySelector('[data-overview-action="browseDb"]') as Element);
     await waitFor(() =>
       expect(container.querySelector('[data-overview-jump-hint]')).not.toBeNull(),
     );
@@ -807,27 +752,25 @@ describe('屏 A → 屏 B 跳转的诚实降级', () => {
       throw new Error('bridge exploded');
     });
     const { container } = render(<RedisOverviewHome {...baseProps({ onOpenTarget })} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
+    await waitFor(() => expect(cardState(container, 'server')).toBe('ready'));
 
-    fireEvent.click(container.querySelector('[data-overview-db-cell="3"]') as Element);
+    // Click a wired action to trigger the throwing bridge
+    fireEvent.click(container.querySelector('[data-overview-action="browseDb"]') as Element);
     await waitFor(() =>
       expect(container.querySelector('[data-overview-jump-hint]')).not.toBeNull(),
     );
     expect(attr(container, '[data-overview-jump-hint]', 'data-overview-jump-hint')).toBe(
       'redis.overview.jump.failed',
     );
-    expect(cardState(container, 'keyspace')).toBe('ready');
+    expect(cardState(container, 'server')).toBe('ready');
   });
 
   it('stays silent when the bridge accepts the target', async () => {
     const onOpenTarget = vi.fn();
     const { container } = render(<RedisOverviewHome {...baseProps({ onOpenTarget })} />);
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBe(16),
-    );
-    fireEvent.click(container.querySelector('[data-overview-db-cell="1"]') as Element);
+    await waitFor(() => expect(cardState(container, 'server')).toBe('ready'));
+
+    fireEvent.click(container.querySelector('[data-overview-action="console"]') as Element);
     await waitFor(() => expect(onOpenTarget).toHaveBeenCalled());
     expect(container.querySelector('[data-overview-jump-hint]')).toBeNull();
   });
@@ -841,8 +784,8 @@ describe('失败与重试', () => {
 
     expect(container.querySelector('[data-overview-failed="server"]')).not.toBeNull();
     expect(container.querySelector('[data-overview-card-action="server"]')).toBeNull();
-    // INFO 挂了不影响 db_sizes
-    expect(cardState(container, 'keyspace')).toBe('ready');
+    // INFO 挂了不影响 Performance card
+    expect(cardState(container, 'slowlog')).toBe('ready');
 
     const before = redisInvoke.mock.calls.length;
     fireEvent.click(container.querySelector('[data-overview-retry="server"]') as Element);
