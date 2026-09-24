@@ -88,18 +88,26 @@
 //! exactly one reply per command, and [`key_object_info`] rejects a reply vector
 //! of any other length rather than mis-reading the slots.
 
+#[allow(unused_imports)]
 use std::collections::BTreeMap;
+#[allow(unused_imports)]
 use std::future::Future;
+#[allow(unused_imports)]
 use std::pin::Pin;
 
+#[allow(unused_imports)]
 use futures_util::FutureExt;
 use redis::aio::ConnectionLike;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+#[allow(unused_imports)]
 use redis::RedisFuture;
 use redis::Value as RValue;
+#[allow(unused_imports)]
 use serde::Serialize;
 
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use crate::driver::parse_scan_result;
 
 pub(crate) mod distribution;
@@ -113,8 +121,10 @@ pub use distribution::type_distribution;
 pub use key_info::key_object_info;
 pub use memory_sample::build_memory_sample_pipeline;
 pub(crate) use memory_sample::fetch_memory_sample_fields;
+#[allow(unused_imports)]
 pub use memory_sample::memory_sample_slots;
 pub use memory_sample::parse_memory_sample_fields;
+#[allow(unused_imports)]
 pub use memory_sample::MemorySampleFields;
 pub use memory_sample::MEMORY_SAMPLE_FIELDS_PER_KEY;
 pub use memory_sample::MEMORY_SAMPLE_KEYS_PER_PIPELINE;
@@ -147,14 +157,18 @@ pub use transport::SlotRoutedBatchFuture;
 pub use transport::SlotRoutedConnection;
 
 pub(crate) use distribution::sample_types;
+#[allow(unused_imports)]
 pub(crate) use shapes::slot;
 pub(crate) use shapes::unreadable_key_state;
 pub(crate) use transport::fetch_dbsize;
 pub(crate) use transport::is_connection_level_failure;
+#[allow(unused_imports)]
 pub(crate) use transport::issue_batch;
 pub(crate) use transport::master_route;
 pub(crate) use transport::pipeline_raw;
+#[allow(unused_imports)]
 pub(crate) use transport::routed_sequential;
+#[allow(unused_imports)]
 pub(crate) use transport::routed_single;
 
 #[cfg(test)]

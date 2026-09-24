@@ -24,8 +24,7 @@ use super::standalone::open_standalone_pubsub;
 use super::standalone::open_standalone_pubsub_with_fallback;
 use super::standalone::PREFER_TLS_PROBE;
 use super::tls::build_node_url;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
-use redis::sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
+use datazen_driver_api::{ConnectionConfig, DriverError};
 use std::time::Duration;
 
 pub fn build_connection_plan(config: &ConnectionConfig) -> Result<ConnectionPlan, DriverError> {

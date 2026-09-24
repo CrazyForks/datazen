@@ -1,9 +1,9 @@
 //! The connection *plan* value types: TLS material, topology, the three per-topology plans, and the live-connection handle.
 
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
+use datazen_driver_api::DriverError;
 use redis::aio::MultiplexedConnection;
 use redis::cluster_async::ClusterConnection;
-use redis::sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
+use redis::sentinel::SentinelClient;
 use std::time::Duration;
 
 /// Parsed TLS material paths and flags (no network I/O).

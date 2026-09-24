@@ -1,6 +1,7 @@
 //! Shared cursor / pipeline primitives: the sample-window ladder, the cluster scan anchor, and every batch-size cap the two commands size themselves from.
 
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 
 /// Default sample window for `type_distribution` when `sampleLimit` is omitted.

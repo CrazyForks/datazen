@@ -3,7 +3,9 @@
 use super::batch::scan_round;
 use super::batch::ScannedPage;
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use crate::ops::tree::budget::{is_exact_key_pattern, tree_scan_budget, ScanBudget, ScanLoopGuard};
+#[allow(unused_imports)]
 use crate::ops::workbench::{
     cluster_scan_anchor_slot, parse_opt_int, parse_type_token, type_reply_says_absent,
     SlotRoutedConnection, TTL_MISSING,

@@ -8,6 +8,7 @@ use super::transport::issue_batch;
 use super::transport::SlotRoutedConnection;
 use crate::connect::Topology;
 use redis::aio::ConnectionLike;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 
 /// Key attributes for the sidebar, in a single batch.

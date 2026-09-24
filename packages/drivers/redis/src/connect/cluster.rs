@@ -6,8 +6,8 @@ use super::sentinel::plaintext_url;
 use super::standalone::PREFER_TLS_PROBE;
 use super::tls::load_tls_certificates;
 use super::tls::tls_mode_for_plan;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
-use redis::cluster::{ClusterClient, TlsMode};
+use datazen_driver_api::DriverError;
+use redis::cluster::ClusterClient;
 use redis::cluster_async::ClusterConnection;
 use std::time::Duration;
 

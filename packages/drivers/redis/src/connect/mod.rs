@@ -18,37 +18,10 @@ pub use client::open_pinned_node_conn;
 pub use live::build_connection_plan;
 pub use live::open_live_conn;
 pub use live::open_pubsub_connection;
-pub use plan::ClusterPlan;
 pub use plan::ConnectionPlan;
 pub use plan::RedisLiveConn;
-pub use plan::SentinelPlan;
-pub use plan::StandalonePlan;
 pub use plan::TlsPlan;
 pub use plan::Topology;
-
-pub(crate) use client::open_standalone_client;
-pub(crate) use client::sentinel_node_info;
-pub(crate) use cluster::open_cluster_conn_with_fallback;
-pub(crate) use parse::connect_with_timeout;
-pub(crate) use parse::non_empty;
-pub(crate) use parse::opt_string;
-pub(crate) use parse::parse_db_index;
-pub(crate) use parse::parse_host_port;
-pub(crate) use parse::parse_node_urls;
-pub(crate) use parse::parse_sentinel_urls;
-pub(crate) use parse::parse_tls;
-pub(crate) use parse::parse_topology;
-pub(crate) use parse::scheme_for_tls;
-pub(crate) use sentinel::open_sentinel_conn;
-pub(crate) use sentinel::open_sentinel_pubsub;
-pub(crate) use sentinel::plaintext_sentinel_plan;
-pub(crate) use sentinel::plaintext_url;
-pub(crate) use standalone::open_standalone_conn_with_fallback;
-pub(crate) use standalone::open_standalone_pubsub;
-pub(crate) use standalone::open_standalone_pubsub_with_fallback;
-pub(crate) use tls::build_node_url;
-pub(crate) use tls::load_tls_certificates;
-pub(crate) use tls::tls_mode_for_plan;
 
 #[macro_export]
 macro_rules! with_redis_conn {
@@ -61,10 +34,12 @@ macro_rules! with_redis_conn {
     };
 }
 
-#[cfg(test)]
-use datazen_driver_api::{ConnectionConfig, SslMode};
-use serde_json::{json, Map};
 use std::time::Duration;
+
+#[cfg(test)]
+use datazen_driver_api::SslMode;
+#[cfg(test)]
+use serde_json::Map;
 
 #[cfg(test)]
 mod tests {

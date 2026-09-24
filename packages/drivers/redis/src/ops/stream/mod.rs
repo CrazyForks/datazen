@@ -1,10 +1,14 @@
 //! Redis Stream helpers: XRANGE/XADD, consumer groups, pending, and overview sampling.
 
+#[allow(unused_imports)]
 use std::collections::HashMap;
 
+#[allow(unused_imports)]
 use redis::AsyncCommands;
+#[allow(unused_imports)]
 use serde::Serialize;
 
+#[allow(unused_imports)]
 use crate::driver::parse_scan_result;
 
 pub mod entries;
@@ -26,15 +30,19 @@ pub use overview::stream_overview;
 pub use types::resolve_stream_overview_limit;
 pub use types::validate_xgroup_name;
 pub use types::ConsumerInfo;
+#[allow(unused_imports)]
 pub use types::StreamEntry;
 pub use types::StreamGroupInfo;
 pub use types::StreamLagResult;
 pub use types::StreamOverviewResult;
+#[allow(unused_imports)]
 pub use types::StreamOverviewRow;
 pub use types::XaddResult;
+#[allow(unused_imports)]
 pub use types::XpendingEntry;
 pub use types::XpendingResult;
 pub use types::XrangeResult;
+#[allow(unused_imports)]
 pub use types::DEFAULT_STREAM_OVERVIEW_LIMIT;
 
 pub(crate) use parse::parse_stream_entry;
@@ -42,7 +50,9 @@ pub(crate) use parse::parse_stream_id;
 pub(crate) use parse::parse_xinfo_consumers;
 pub(crate) use parse::parse_xinfo_groups;
 pub(crate) use parse::parse_xpending_entries;
+#[allow(unused_imports)]
 pub(crate) use parse::value_to_string;
+#[allow(unused_imports)]
 pub(crate) use parse::value_to_u64;
 
 #[cfg(test)]

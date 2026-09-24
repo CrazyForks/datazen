@@ -5,6 +5,7 @@
 
 pub(crate) mod exec;
 
+#[allow(unused_imports)]
 pub use exec::execute_redis_command;
 
 use datazen_driver_api::{

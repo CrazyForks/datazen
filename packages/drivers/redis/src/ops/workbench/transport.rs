@@ -1,10 +1,12 @@
 //! The addressed-batch transport: `SlotRoutedBatchFuture`, the `SlotRoutedConnection` extension point, the primitive-per-key routers, the batch issuer and `fetch_dbsize`.
 
 use super::shapes::parse_opt_int;
+#[allow(unused_imports)]
 use super::shapes::slot;
 use crate::connect::Topology;
 use futures_util::FutureExt;
 use redis::aio::ConnectionLike;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 use redis::RedisFuture;
 use redis::Value as RValue;

@@ -11,6 +11,7 @@ use super::transport::routed_sequential;
 use super::transport::SlotRoutedConnection;
 use crate::connect::Topology;
 use redis::aio::ConnectionLike;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 use redis::Value as RValue;
 

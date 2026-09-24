@@ -8,14 +8,11 @@ use super::standalone::open_standalone_conn_with_fallback;
 use super::tls::build_node_url;
 use super::tls::load_tls_certificates;
 use super::tls::tls_mode_for_plan;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
+use datazen_driver_api::DriverError;
 use redis::aio::MultiplexedConnection;
-use redis::cluster::{ClusterClient, TlsMode};
-use redis::sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
-use redis::{
-    Client, ClientTlsConfig, ConnectionInfo, RedisConnectionInfo,
-    TlsCertificates as RedisTlsCertificates,
-};
+use redis::cluster::TlsMode;
+use redis::sentinel::SentinelNodeConnectionInfo;
+use redis::{Client, ConnectionInfo, RedisConnectionInfo};
 
 fn connection_info_with_auth(
     url: &str,

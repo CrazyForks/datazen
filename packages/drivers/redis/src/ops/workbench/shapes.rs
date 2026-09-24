@@ -1,5 +1,6 @@
 //! The two reply shapes (`TypeDistribution`, `KeyObjectInfo`) with their constructors, and the reply parsers the probes fold into them.
 
+#[allow(unused_imports)]
 use super::key_info::key_object_info;
 use super::primitives::is_sample_truncated;
 use super::primitives::KEY_INFO_PIPELINE_LEN;

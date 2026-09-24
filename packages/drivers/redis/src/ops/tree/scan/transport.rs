@@ -1,6 +1,7 @@
 //! The cluster-safe batch transport: the addressed pipeline, the connection-vs-command failure classifier, and the per-command replay that keeps a rejected field from failing the whole batch.
 
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use crate::ops::workbench::{
     cluster_scan_anchor_slot, parse_opt_int, parse_type_token, type_reply_says_absent,
     SlotRoutedConnection, TTL_MISSING,

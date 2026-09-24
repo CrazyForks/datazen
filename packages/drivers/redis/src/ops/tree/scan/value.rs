@@ -5,10 +5,12 @@ use super::batch::PageKey;
 use super::meta::reply_at;
 use super::transport::VALUE_FIELDS_MAX;
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use crate::ops::workbench::{
     cluster_scan_anchor_slot, parse_opt_int, parse_type_token, type_reply_says_absent,
     SlotRoutedConnection, TTL_MISSING,
 };
+#[allow(unused_imports)]
 use crate::value::{
     parse_scan_result, preview_value_to_string, truncate_preview, value_to_string,
 };

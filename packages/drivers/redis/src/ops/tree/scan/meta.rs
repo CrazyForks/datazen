@@ -4,6 +4,7 @@ use super::batch::fetch_page_groups;
 use super::transport::META_FIELDS_BASE;
 use super::transport::META_FIELDS_MEMORY;
 use crate::connect::Topology;
+#[allow(unused_imports)]
 use crate::ops::workbench::{
     cluster_scan_anchor_slot, parse_opt_int, parse_type_token, type_reply_says_absent,
     SlotRoutedConnection, TTL_MISSING,

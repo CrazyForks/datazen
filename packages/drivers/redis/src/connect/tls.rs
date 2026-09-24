@@ -3,10 +3,10 @@
 use super::parse::non_empty;
 use super::parse::scheme_for_tls;
 use super::plan::TlsPlan;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
-use redis::cluster::{ClusterClient, TlsMode};
+use datazen_driver_api::DriverError;
+use redis::cluster::TlsMode;
 use redis::{
-    Client, ClientTlsConfig, ConnectionInfo, RedisConnectionInfo,
+    ClientTlsConfig,
     TlsCertificates as RedisTlsCertificates,
 };
 use std::fs;

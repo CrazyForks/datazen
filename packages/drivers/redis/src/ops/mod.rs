@@ -60,10 +60,12 @@ pub(crate) use parse::parse_zscan_result;
 pub(crate) use parse::value_to_string;
 pub(crate) use scan::scan_batch;
 pub use scan::scan_keys;
+#[allow(unused_imports)]
 pub use scan::scan_matching_keys;
 pub use set::set_add;
 pub use set::set_remove;
 pub use set::set_scan;
+#[allow(unused_imports)]
 pub(crate) use ttl::apply_ttl_command;
 pub use types::plan_rename_prefix;
 pub use types::resolve_expire_at;

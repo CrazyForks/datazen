@@ -7,6 +7,7 @@ use super::primitives::MAX_STALLED_SCAN_ROUNDS;
 use super::primitives::TYPE_PIPELINE_CHUNK;
 use super::primitives::TYPE_SCAN_COUNT;
 use super::shapes::parse_type_token;
+#[allow(unused_imports)]
 use super::shapes::slot;
 use super::shapes::TypeDistribution;
 use super::transport::fetch_dbsize;
@@ -16,6 +17,7 @@ use super::transport::SlotRoutedConnection;
 use crate::connect::Topology;
 use crate::driver::parse_scan_result;
 use redis::aio::ConnectionLike;
+#[allow(unused_imports)]
 use redis::cluster_routing::{get_slot, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 use std::collections::BTreeMap;
 
