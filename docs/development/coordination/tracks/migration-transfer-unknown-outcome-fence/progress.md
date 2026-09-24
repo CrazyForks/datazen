@@ -1,6 +1,6 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: READY_FOR_TEST
+Phase: FAILED
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
@@ -47,7 +47,35 @@ This track covers database Data and Structure+Data transactions. SQL-file output
 
 ## Tester
 
-Independent Tester handoff is ready for the two WDIO journeys. Run them serially with a dedicated `DATAZEN_DATA_DIR`, then verify fixture cleanup and release port 4445. `e2e/wdio.conf.ts` creates and drops its own uniquely named PostgreSQL worker database and cleans the app-data passed to the app; it does not honor `E2E_SKIP_WORKER_DATABASE`. Do not use `e2e/run.mjs` or setup scripts that mutate shared fixtures. The merged Sync history dialog includes the Transfer `partiallyApplied` label and warning style. The Coder did not run WDIO or access local databases.
+Independent Tester report for candidate `750f65e2f5cc5772d4d1c0ac90cf41cb246a3aa1`, branch `feature/migration-transfer-unknown-outcome-fence`; tester branch `feature/migration-transfer-unknown-outcome-fresh-tester`, same HEAD. Final status: **TEST_FAILED**.
+
+### Phase A — source review
+
+- Reviewed the candidate diff and relevant Rust transaction/DDL/checkpoint/outcome paths, command/workflow mappings, Transfer result UI, shared migration history, focused tests, and both new direction-specific WDIO specs. No production logic defect was established by static review.
+- The two WDIO specs create unique source/target table names and unique connection IDs, and their cleanup targets only those names/IDs. They do not call `setup-data-transfer-e2e.sh`, shared fixture reset helpers, `pnpm e2e`, or `node e2e/run.mjs`.
+- Both specs prove a known primary-key conflict followed by confirmed rollback and later-table commit with `stop_on_error=false`. Neither creates commit/rollback acknowledgement loss, asserts unknown history, verifies token invalidation or plan non-replay, or checks an ambiguous target readback. A normal constraint failure is not evidence of an unknown transaction outcome. This missing live journey is registered as BUG-003.
+- Independently verified the merged history behavior: `partiallyApplied` is rendered with Transfer’s localized label and amber warning only for Data Transfer. Sync and Schema Diff retain their raw neutral outcome behavior. Added a tester-only Sync history assertion; Transfer’s table result continues to use `transfer.tableOutcome.partiallyApplied`.
+
+### Phase B — independent checks
+
+- Focused Rust suite: `cargo test -p datazen --lib transfer -- --test-threads=1` with a private profile output and the serialized shared Cargo target: **151 passed, 0 failed**.
+- Focused UI suites (`DataTransferWindow.test.tsx` and `MigrationRunHistoryDialog.test.tsx`): **44 passed, 0 failed**, including the new tester-only Sync neutrality assertion.
+- Host type check exits 2 on two known unrelated integration diagnostics only: `ConnectionPage.tsx:718` (argument count) and `PanelContentRenderer.tsx:100` (`kvSlotState` not in `ConnectionViewProps`). No diagnostics were reported in changed Transfer files or the tester assertion.
+- `rustfmt --check`, Prettier on changed TS/TSX/E2E/locales, and `git diff --check` pass. The focused UI whole-file coverage report is 84.97% lines, 71.84% branches, and 86.92% functions; the runner exits nonzero because the repository’s whole-file branch threshold is 75%. Rust changed production executable-line coverage independently measured at **354/409 (86.55%)**, above the 80% gate. Per-file changed-line counts: `commands/data_transfer/exec.rs` 30/41; command `mod.rs` 0/0; `data_transfer/execute.rs` 192/222; data-transfer `mod.rs` 0/0; model 16/16; sql_file 4/10; structure 93/100; workflow/migration 19/20.
+
+### Phase C — coverage-driven test addition
+
+- Added `[tester]` case to `src/components/migration/__tests__/MigrationRunHistoryDialog.test.tsx` to prove a Sync `partiallyApplied` value remains raw and neutral after Transfer’s warning label/style was introduced. Reran both focused UI suites successfully (44/44). No production source changed.
+- The Rust changed-line gate is independently met. The whole-file Vitest branch threshold failure is reported separately and does not indicate changed-line Rust coverage shortfall.
+
+### Phase D — live integration and disposition
+
+- Required fresh `pnpm tauri:build:webdriver` was attempted. It stops in the Tauri `beforeBuildCommand` frontend build on the two Host TypeScript errors above, before Rust compilation or a candidate binary is produced. A retry with a Tauri config override hits the same script-level failure.
+- Existing candidate-adjacent debug app artifacts are stale and invalid as evidence: the executable/app binary timestamps are 2026-09-24 15:15 UTC, while candidate HEAD was committed 2026-09-24 16:31 UTC; the worktree backing that target remains at baseline `23a7c8a5`. The old app was not launched.
+- No WDIO spec ran; no app started; no private `DATAZEN_DATA_DIR` or DB fixture was created. Port 4445 was checked free. Cargo target lease was released after the build exited; WDIO port lease was never acquired. Thus there were no test fixtures or app-data artifacts to remove.
+- Release blocker: no candidate-provenance live PostgreSQL→MySQL and MySQL→PostgreSQL commit-ack-loss journeys verifying stop-on-unknown, no old-plan replay, history outcome, resume-token invalidation, and target readback. BUG-003 records the E2E gap. The two safe confirmed-rollback journeys remain unrun because only a stale binary was available and the required candidate build is blocked.
+
+Tester final status: **TEST_FAILED**. See `bugs/migration-transfer-unknown-outcome-fence-BUG-003.md`. Tester-only changes are committed separately from production implementation; no merge performed.
 
 ## Coder self-validation
 
