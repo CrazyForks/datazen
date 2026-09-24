@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::super::error::{CmdExt, CommandError};
@@ -10,11 +10,13 @@ use super::super::AppState;
 use super::inspect::inspect_data_transfer_impl;
 use super::jobs;
 use super::plans::{self, StoredTransferPlan};
+use crate::data_transfer::model::TableExecutionOutcome;
 use crate::data_transfer::model::TransferRunSelection;
 use crate::data_transfer::{
-    column_ir_types_by_source, create_target_tables, enforce_transfer_pairing,
-    execute_transfer_data, is_same_family, source_schema_to_target_ir, DropCreateContext,
-    TransferExecutionResult, TransferJob, TransferMode, TransferRunRequest, ValueFormatter,
+    column_ir_types_by_source, create_target_tables_with_write_observer, enforce_transfer_pairing,
+    execute_transfer_data_with_write_observer, is_same_family, source_schema_to_target_ir,
+    validate_no_self_table_overwrite, DropCreateContext, TransferExecutionResult, TransferJob,
+    TransferMode, TransferRunRequest, ValueFormatter,
 };
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use datazen_driver_api::TableType;
@@ -497,12 +499,27 @@ fn supports_bounded_resume(job: &TransferJob) -> bool {
 }
 
 fn has_unknown_outcome(result: &TransferExecutionResult) -> bool {
-    result.tables.iter().any(|table| {
-        table
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("outcome UNKNOWN"))
-    })
+    result
+        .tables
+        .iter()
+        .any(|table| table.outcome == Some(TableExecutionOutcome::Unknown))
+}
+
+fn has_unknown_table_outcome(
+    results: &[crate::data_transfer::model::TableExecutionResult],
+) -> bool {
+    results
+        .iter()
+        .any(|table| table.outcome == Some(TableExecutionOutcome::Unknown))
+}
+
+fn should_stop_after_structure_phase(
+    results: &[crate::data_transfer::model::TableExecutionResult],
+    cancelled: bool,
+    partial: bool,
+    stop_on_error: bool,
+) -> bool {
+    has_unknown_table_outcome(results) || cancelled || (partial && stop_on_error)
 }
 
 fn completed_tables_from_result(prior: &[String], result: &TransferExecutionResult) -> Vec<String> {
@@ -522,6 +539,14 @@ fn completed_tables_from_result(prior: &[String], result: &TransferExecutionResu
 pub(crate) async fn execute_data_transfer_impl(
     state: &AppState,
     request: TransferRunRequest,
+) -> Result<TransferExecutionResult, CommandError> {
+    execute_data_transfer_impl_with_write_observer(state, request, None).await
+}
+
+pub(crate) async fn execute_data_transfer_impl_with_write_observer(
+    state: &AppState,
+    request: TransferRunRequest,
+    write_started: Option<&AtomicBool>,
 ) -> Result<TransferExecutionResult, CommandError> {
     if request.plan_id.trim().is_empty() {
         return Err(CommandError::Validation(
@@ -664,6 +689,13 @@ pub(crate) async fn execute_data_transfer_impl(
         job.mode,
         TransferMode::Data | TransferMode::StructureAndData
     ) {
+        validate_no_self_table_overwrite(&job, &inspected).map_err(CommandError::from)?;
+    }
+
+    if matches!(
+        job.mode,
+        TransferMode::Data | TransferMode::StructureAndData
+    ) {
         tgt_driver
             .parameter_placeholder(1, None)
             .map_err(|error| CommandError::Validation(error.to_string()))?;
@@ -761,7 +793,7 @@ pub(crate) async fn execute_data_transfer_impl(
             }
         };
 
-        let structure_results = create_target_tables(
+        let structure_results = create_target_tables_with_write_observer(
             src_adapter,
             tgt_adapter,
             src_driver.as_ref(),
@@ -772,6 +804,7 @@ pub(crate) async fn execute_data_transfer_impl(
             &inspected,
             &source_schemas,
             cancelled.clone(),
+            write_started,
         )
         .await
         .map_err(CommandError::from)?;
@@ -787,10 +820,16 @@ pub(crate) async fn execute_data_transfer_impl(
                 }
             }
         }
-        all_tables.extend(structure_results);
         cancelled_flag = cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst));
+        let stop_after_structure = should_stop_after_structure_phase(
+            &structure_results,
+            cancelled_flag,
+            partial,
+            job.options.stop_on_error,
+        );
+        all_tables.extend(structure_results);
 
-        if cancelled_flag || (partial && job.options.stop_on_error) {
+        if stop_after_structure {
             if let Some(id) = job_id.as_deref() {
                 jobs::remove_job(id).await;
             }
@@ -857,7 +896,7 @@ pub(crate) async fn execute_data_transfer_impl(
             None
         };
 
-        let data_result = execute_transfer_data(
+        let data_result = execute_transfer_data_with_write_observer(
             src_driver.as_ref(),
             &src_handle,
             tgt_driver.as_ref(),
@@ -870,6 +909,7 @@ pub(crate) async fn execute_data_transfer_impl(
             tgt_config.read_only,
             cancelled.clone(),
             resume_completed.as_ref(),
+            write_started,
         )
         .await
         .map_err(CommandError::from)?;
@@ -915,4 +955,75 @@ pub(crate) async fn execute_data_transfer_impl(
     }
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data_transfer::model::{
+        Endpoint, TableExecutionOutcome, TableExecutionResult, TableMapping, TransferOptions,
+        WriteMode,
+    };
+
+    #[test]
+    fn unknown_structure_outcome_always_stops_before_data() {
+        let results = [TableExecutionResult::database(
+            "first",
+            "first",
+            None,
+            TableExecutionOutcome::Unknown,
+            Some("lost DDL acknowledgement".into()),
+        )];
+        assert!(should_stop_after_structure_phase(
+            &results, false, true, false
+        ));
+    }
+
+    #[test]
+    fn confirmed_structure_failure_follows_continue_preference() {
+        let results = [TableExecutionResult::database(
+            "first",
+            "first",
+            Some(0),
+            TableExecutionOutcome::NotStarted,
+            Some("preflight rejected table".into()),
+        )];
+        assert!(!should_stop_after_structure_phase(
+            &results, false, true, false
+        ));
+        assert!(should_stop_after_structure_phase(
+            &results, false, true, true
+        ));
+        assert!(should_stop_after_structure_phase(&[], true, false, false));
+    }
+
+    #[test]
+    fn partially_applied_preambles_cannot_create_or_replay_resume_tokens() {
+        let mut job = TransferJob {
+            source: Endpoint {
+                db_session_id: "source".into(),
+                database: "source_db".into(),
+                schema: None,
+            },
+            target: Some(Endpoint {
+                db_session_id: "target".into(),
+                database: "target_db".into(),
+                schema: None,
+            }),
+            sql_file_target: None,
+            mode: TransferMode::Data,
+            write_mode: WriteMode::Insert,
+            tables: vec![TableMapping::auto("users")],
+            options: TransferOptions::default(),
+        };
+
+        assert!(supports_bounded_resume(&job));
+        job.write_mode = WriteMode::TruncateInsert;
+        assert!(!supports_bounded_resume(&job));
+        job.write_mode = WriteMode::DropCreateInsert;
+        assert!(!supports_bounded_resume(&job));
+        job.write_mode = WriteMode::Insert;
+        job.mode = TransferMode::StructureAndData;
+        assert!(!supports_bounded_resume(&job));
+    }
 }

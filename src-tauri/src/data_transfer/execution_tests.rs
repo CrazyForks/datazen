@@ -1,5 +1,8 @@
 //! Generic execution journeys: bound values, projection, rollback and cancellation.
-use super::execute::{execute_same_family_data, map_row_values};
+use super::execute::{
+    execute_same_family_data, execute_transfer_data_with_write_observer, map_row_values,
+    ValueFormatter,
+};
 use super::filter::SourceFilter;
 use super::model::*;
 use async_trait::async_trait;
@@ -14,6 +17,9 @@ struct State {
     committed: Vec<Vec<Value>>,
     pending: Vec<Vec<Value>>,
     calls: usize,
+    execute_calls: usize,
+    begin_calls: usize,
+    schema_calls: usize,
     rollback: usize,
     metadata_refs: Vec<String>,
     source_queries: Vec<(String, Vec<Value>)>,
@@ -23,6 +29,13 @@ struct Driver {
     schema: TableSchema,
     state: Mutex<State>,
     fail_at: Option<usize>,
+    /// Inject a lost commit acknowledgement. `Some(true)` applies pending
+    /// rows before returning the error; `Some(false)` leaves them unapplied.
+    commit_error_after_effect: Option<bool>,
+    rollback_fails: bool,
+    begin_error_on_call: Option<usize>,
+    schema_error_on_call: Option<usize>,
+    execute_error_on_call: Option<usize>,
     stream_mode: u8,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -67,7 +80,14 @@ impl DatabaseDriver for Driver {
         _: &str,
         schema: Option<&str>,
     ) -> Result<TableSchema, DriverError> {
-        self.state.lock().unwrap().metadata_refs.push(match schema {
+        let mut state = self.state.lock().unwrap();
+        state.schema_calls += 1;
+        if self.schema_error_on_call == Some(state.schema_calls) {
+            return Err(DriverError::QueryFailed(
+                "injected target schema inspection failure".into(),
+            ));
+        }
+        state.metadata_refs.push(match schema {
             Some(schema) => format!("{schema}.{relation}"),
             None => relation.to_string(),
         });
@@ -93,6 +113,13 @@ impl DatabaseDriver for Driver {
         unsupported()
     }
     async fn execute(&self, _: &ConnectionHandle, _: &str) -> Result<u64, DriverError> {
+        let mut state = self.state.lock().unwrap();
+        state.execute_calls += 1;
+        if self.execute_error_on_call == Some(state.execute_calls) {
+            return Err(DriverError::QueryFailed(
+                "injected target DDL response loss".into(),
+            ));
+        }
         Ok(0)
     }
     async fn query_stream(
@@ -169,6 +196,13 @@ impl DatabaseDriver for Driver {
         &self,
         _: &ConnectionHandle,
     ) -> Result<TransactionHandle, DriverError> {
+        let mut state = self.state.lock().unwrap();
+        state.begin_calls += 1;
+        if self.begin_error_on_call == Some(state.begin_calls) {
+            return Err(DriverError::TransactionError(
+                "injected begin transaction failure".into(),
+            ));
+        }
         Ok(TransactionHandle {
             id: "tx".into(),
             connection_id: "target".into(),
@@ -198,14 +232,34 @@ impl DatabaseDriver for Driver {
     }
     async fn commit(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
+        match self.commit_error_after_effect {
+            Some(true) => {
+                let pending = std::mem::take(&mut state.pending);
+                state.committed.extend(pending);
+                return Err(DriverError::TransactionError(
+                    "injected lost commit acknowledgement after effect".into(),
+                ));
+            }
+            Some(false) => {
+                return Err(DriverError::TransactionError(
+                    "injected lost commit acknowledgement before effect".into(),
+                ));
+            }
+            None => {}
+        }
         let pending = std::mem::take(&mut state.pending);
         state.committed.extend(pending);
         Ok(())
     }
     async fn rollback(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
-        state.pending.clear();
         state.rollback += 1;
+        if self.rollback_fails {
+            return Err(DriverError::TransactionError(
+                "injected rollback failure".into(),
+            ));
+        }
+        state.pending.clear();
         Ok(())
     }
 }
@@ -245,8 +299,52 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
         schema,
         state: Mutex::new(State::default()),
         fail_at: None,
+        commit_error_after_effect: None,
+        rollback_fails: false,
+        begin_error_on_call: None,
+        schema_error_on_call: None,
+        execute_error_on_call: None,
         stream_mode: 0,
         cancel: None,
+    }
+}
+
+struct TestSourceAdapter;
+impl crate::transfer::adapter::SyncSourceAdapter for TestSourceAdapter {
+    fn column_to_ir(
+        &self,
+        column: &ColumnSchema,
+        _native_full_type: Option<&str>,
+    ) -> crate::transfer::ir::IRColumn {
+        crate::transfer::ir::IRColumn {
+            name: column.name.clone(),
+            ir_type: crate::transfer::ir::IRType::Text,
+            nullable: column.nullable,
+            default_expr: None,
+            is_primary_key: false,
+            is_auto_increment: false,
+            comment: None,
+        }
+    }
+}
+
+struct TestTargetAdapter;
+impl crate::transfer::adapter::SyncTargetAdapter for TestTargetAdapter {
+    fn ir_type_to_native(&self, _: &crate::transfer::ir::IRType) -> String {
+        "TEXT".into()
+    }
+    fn format_default(&self, _: &crate::transfer::ir::IRDefault) -> Option<String> {
+        None
+    }
+    fn format_literal(&self, _: &Option<Value>, _: &crate::transfer::ir::IRType) -> String {
+        "NULL".into()
+    }
+    fn transform_value(
+        &self,
+        value: &Option<Value>,
+        _: &crate::transfer::ir::IRType,
+    ) -> Option<Value> {
+        value.clone()
     }
 }
 fn job() -> TransferJob {
@@ -307,10 +405,22 @@ async fn run_with_batch_size(
     cancel: Option<Arc<AtomicBool>>,
     batch_size: u32,
 ) -> TransferExecutionResult {
+    run_with_options(source, target, tables, cancel, batch_size, false).await
+}
+async fn run_with_options(
+    source: &Driver,
+    target: &Driver,
+    tables: &[TableInspectResult],
+    cancel: Option<Arc<AtomicBool>>,
+    batch_size: u32,
+    stop_on_error: bool,
+) -> TransferExecutionResult {
     let schemas = tables
         .iter()
         .map(|table| (table.source_table.clone(), source.schema.clone()))
         .collect();
+    let mut transfer_job = job_with_batch_size(batch_size);
+    transfer_job.options.stop_on_error = stop_on_error;
     execute_same_family_data(
         source,
         &ConnectionHandle {
@@ -322,7 +432,7 @@ async fn run_with_batch_size(
             id: "target".into(),
             pool_id: "target".into(),
         },
-        &job_with_batch_size(batch_size),
+        &transfer_job,
         tables,
         &schemas,
         false,
@@ -520,13 +630,610 @@ async fn second_batch_failure_rolls_back_and_continues_next_table() {
     assert!(result.partial);
     assert_eq!(result.tables.len(), 2);
     assert!(!result.tables[0].success);
-    assert_eq!(result.tables[0].rows_inserted, 0);
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
     assert!(result.tables[1].success);
     assert_eq!(result.rows_inserted, 2);
     let state = target.state.lock().unwrap();
     assert_eq!(state.rollback, 1);
     assert_eq!(state.committed.len(), 2);
 }
+
+#[tokio::test]
+async fn unknown_commit_stops_later_tables_and_hides_unconfirmed_rows() {
+    for applied_before_ack_loss in [false, true] {
+        let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+        let mut target = driver(vec![], schema(&["id"]));
+        target.commit_error_after_effect = Some(applied_before_ack_loss);
+        let result = run(
+            &source,
+            &target,
+            &[
+                inspected("a", vec![mapping("id", "id")]),
+                inspected("b", vec![mapping("id", "id")]),
+            ],
+            None,
+        )
+        .await;
+
+        assert!(result.partial);
+        assert_eq!(result.rows_inserted, 0);
+        assert_eq!(result.tables.len(), 2);
+        assert_eq!(
+            result.tables[0].outcome,
+            Some(TableExecutionOutcome::Unknown)
+        );
+        assert_eq!(result.tables[0].rows_inserted, None);
+        assert_eq!(
+            result.tables[1].outcome,
+            Some(TableExecutionOutcome::NotStarted)
+        );
+        assert_eq!(result.tables[1].rows_inserted, Some(0));
+        let state = target.state.lock().unwrap();
+        assert_eq!(
+            state.calls, 1,
+            "the later table must not reach target writes"
+        );
+        assert_eq!(state.committed.len(), usize::from(applied_before_ack_loss));
+    }
+}
+
+#[tokio::test]
+async fn unknown_rollback_stops_later_tables_and_hides_unconfirmed_rows() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.fail_at = Some(1);
+    target.rollback_fails = true;
+    let result = run(
+        &source,
+        &target,
+        &[
+            inspected("a", vec![mapping("id", "id")]),
+            inspected("b", vec![mapping("id", "id")]),
+        ],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(result.tables[0].rows_inserted, None);
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(target.state.lock().unwrap().calls, 1);
+}
+
+#[tokio::test]
+async fn confirmed_rollback_stops_when_stop_on_error_is_enabled() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.fail_at = Some(1);
+    let result = run_with_options(
+        &source,
+        &target,
+        &[
+            inspected("a", vec![mapping("id", "id")]),
+            inspected("b", vec![mapping("id", "id")]),
+        ],
+        None,
+        1,
+        true,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(result.tables.len(), 1);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(target.state.lock().unwrap().calls, 1);
+}
+
+#[tokio::test]
+async fn preflight_failure_is_not_started_and_does_not_write_that_table() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let result = run(
+        &source,
+        &target,
+        &[
+            inspected("a", vec![]),
+            inspected("b", vec![mapping("id", "id")]),
+        ],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    assert_eq!(target.state.lock().unwrap().calls, 1);
+}
+
+#[tokio::test]
+async fn later_self_overwrite_is_rejected_before_earlier_table_can_write() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut valid_first = inspected("valid_first", vec![mapping("id", "id")]);
+    valid_first.target_table = "target_first".into();
+    let tables = [
+        valid_first,
+        inspected("shared_relation", vec![mapping("id", "id")]),
+    ];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.source.db_session_id = "target".into();
+    transfer_job.source.database = "same".into();
+    let target_endpoint = transfer_job.target.as_mut().unwrap();
+    target_endpoint.db_session_id = "target".into();
+    target_endpoint.database = "same".into();
+    let formatter = ValueFormatter::SameFamily;
+    let write_started = AtomicBool::new(false);
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        Some(&write_started),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(super::TransferError::Validation(message)) if message.contains("shared_relation")
+    ));
+    assert!(!write_started.load(Ordering::SeqCst));
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.calls, 0, "the valid first table must not write");
+    assert_eq!(state.execute_calls, 0, "no destructive DDL may run");
+    assert_eq!(state.begin_calls, 0, "no transaction is needed");
+}
+
+#[tokio::test]
+async fn missing_source_schema_is_not_started_and_does_not_mark_write_started() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let tables = [inspected("missing-schema", vec![mapping("id", "id")])];
+    let transfer_job = job();
+    let schemas = HashMap::new();
+    let formatter = ValueFormatter::SameFamily;
+    let write_started = AtomicBool::new(false);
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        Some(&write_started),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.tables.len(), 1);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert!(!write_started.load(Ordering::SeqCst));
+    assert_eq!(target.state.lock().unwrap().calls, 0);
+}
+
+#[tokio::test]
+async fn unknown_truncate_outcome_stops_later_tables_and_marks_run_started() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.execute_error_on_call = Some(1);
+    let tables = [
+        inspected("a", vec![mapping("id", "id")]),
+        inspected("b", vec![mapping("id", "id")]),
+    ];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.write_mode = WriteMode::TruncateInsert;
+    transfer_job.options.confirmed_destructive = true;
+    let formatter = ValueFormatter::SameFamily;
+    let write_started = AtomicBool::new(false);
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        Some(&write_started),
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(result.tables.len(), 2);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(result.tables[0].rows_inserted, None);
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(target.state.lock().unwrap().execute_calls, 1);
+    assert_eq!(target.state.lock().unwrap().calls, 0);
+    assert!(write_started.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn confirmed_truncate_preamble_is_partial_when_begin_fails_and_can_continue() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.begin_error_on_call = Some(1);
+    let tables = [
+        inspected("a", vec![mapping("id", "id")]),
+        inspected("b", vec![mapping("id", "id")]),
+    ];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.write_mode = WriteMode::TruncateInsert;
+    transfer_job.options.confirmed_destructive = true;
+    let formatter = ValueFormatter::SameFamily;
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(result.tables.len(), 2);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::PartiallyApplied)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(
+        state.execute_calls, 2,
+        "both truncate statements are confirmed"
+    );
+    assert_eq!(state.calls, 1, "the later table's row insert still runs");
+}
+
+#[tokio::test]
+async fn confirmed_truncate_preamble_is_partial_when_target_reinspection_fails() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.schema_error_on_call = Some(1);
+    let tables = [inspected("a", vec![mapping("id", "id")])];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.write_mode = WriteMode::TruncateInsert;
+    transfer_job.options.confirmed_destructive = true;
+    let formatter = ValueFormatter::SameFamily;
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(result.tables.len(), 1);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::PartiallyApplied)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    let state = target.state.lock().unwrap();
+    assert_eq!(
+        state.execute_calls, 1,
+        "truncate succeeded before reinspection"
+    );
+    assert_eq!(state.begin_calls, 0, "no row transaction was started");
+}
+
+#[tokio::test]
+async fn structure_and_data_created_table_reports_partial_after_confirmed_rollback() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.fail_at = Some(1);
+    let mut table = inspected("new_table", vec![mapping("id", "id")]);
+    table.status = TableMappingStatus::CreateNew;
+    let tables = [table];
+    let schemas = HashMap::from([("new_table".into(), source.schema.clone())]);
+    let mut transfer_job = job();
+    transfer_job.mode = TransferMode::StructureAndData;
+    let formatter = ValueFormatter::SameFamily;
+
+    // The command's structure phase confirmed CREATE before entering this data phase.
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        },
+        &target,
+        &ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        },
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::PartiallyApplied)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(target.state.lock().unwrap().rollback, 1);
+}
+
+#[tokio::test]
+async fn unknown_drop_create_preamble_stops_later_tables_before_data_writes() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.execute_error_on_call = Some(1);
+    let tables = [
+        inspected("a", vec![mapping("id", "id")]),
+        inspected("b", vec![mapping("id", "id")]),
+    ];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.write_mode = WriteMode::DropCreateInsert;
+    transfer_job.options.confirmed_destructive = true;
+    let source_handle = ConnectionHandle {
+        id: "source".into(),
+        pool_id: "source".into(),
+    };
+    let target_handle = ConnectionHandle {
+        id: "target".into(),
+        pool_id: "target".into(),
+    };
+    let source_adapter = TestSourceAdapter;
+    let target_adapter = TestTargetAdapter;
+    let drop_create = super::execute::DropCreateContext {
+        src_adapter: &source_adapter,
+        tgt_adapter: &target_adapter,
+        src_driver: &source,
+        src_handle: &source_handle,
+        tgt_driver: &target,
+        tgt_handle: &target_handle,
+        source_schemas: &schemas,
+    };
+    let formatter = ValueFormatter::SameFamily;
+    let write_started = AtomicBool::new(false);
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &source_handle,
+        &target,
+        &target_handle,
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        Some(&drop_create),
+        false,
+        None,
+        None,
+        Some(&write_started),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.tables.len(), 2);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(result.tables[0].rows_inserted, None);
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(target.state.lock().unwrap().execute_calls, 1);
+    assert_eq!(target.state.lock().unwrap().calls, 0);
+    assert!(write_started.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn confirmed_drop_create_preamble_is_partial_when_begin_fails_and_can_continue() {
+    let source = driver(vec![vec![Some(Value::Integer(1))]], schema(&["id"]));
+    let mut target = driver(vec![], schema(&["id"]));
+    target.begin_error_on_call = Some(1);
+    let tables = [
+        inspected("a", vec![mapping("id", "id")]),
+        inspected("b", vec![mapping("id", "id")]),
+    ];
+    let schemas = tables
+        .iter()
+        .map(|table| (table.source_table.clone(), source.schema.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut transfer_job = job();
+    transfer_job.write_mode = WriteMode::DropCreateInsert;
+    transfer_job.options.confirmed_destructive = true;
+    let source_handle = ConnectionHandle {
+        id: "source".into(),
+        pool_id: "source".into(),
+    };
+    let target_handle = ConnectionHandle {
+        id: "target".into(),
+        pool_id: "target".into(),
+    };
+    let source_adapter = TestSourceAdapter;
+    let target_adapter = TestTargetAdapter;
+    let drop_create = super::execute::DropCreateContext {
+        src_adapter: &source_adapter,
+        tgt_adapter: &target_adapter,
+        src_driver: &source,
+        src_handle: &source_handle,
+        tgt_driver: &target,
+        tgt_handle: &target_handle,
+        source_schemas: &schemas,
+    };
+    let formatter = ValueFormatter::SameFamily;
+
+    let result = execute_transfer_data_with_write_observer(
+        &source,
+        &source_handle,
+        &target,
+        &target_handle,
+        &transfer_job,
+        &tables,
+        &schemas,
+        &formatter,
+        Some(&drop_create),
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.partial);
+    assert_eq!(result.tables.len(), 2);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::PartiallyApplied)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
+    assert_eq!(
+        result.tables[1].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(
+        state.execute_calls, 4,
+        "each table's DROP and CREATE completed"
+    );
+    assert_eq!(state.calls, 1, "the later table's row insert still runs");
+}
+
 #[tokio::test]
 async fn cancel_after_write_reports_current_table_and_rolls_back() {
     let flag = Arc::new(AtomicBool::new(false));
@@ -547,6 +1254,11 @@ async fn cancel_after_write_reports_current_table_and_rolls_back() {
     assert!(result.partial);
     assert_eq!(result.tables.len(), 1);
     assert_eq!(result.rows_inserted, 0);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    assert_eq!(result.tables[0].rows_inserted, Some(0));
     let state = target.state.lock().unwrap();
     assert_eq!(state.rollback, 1);
     assert!(state.committed.is_empty());

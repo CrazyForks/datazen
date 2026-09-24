@@ -528,11 +528,7 @@ async fn run_transfer(
             conflicts: 0,
             cancelled: result.cancelled,
             success: !result.partial && !result.cancelled && failed == 0,
-            rollback_outcome: if result.partial {
-                "unknown"
-            } else {
-                "notRequired"
-            },
+            rollback_outcome: crate::commands::transfer_rollback_history_outcome(&result),
         })
     }
     .await;

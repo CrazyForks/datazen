@@ -519,14 +519,50 @@ pub struct TransferRunRequest {
     pub resume_token: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TableExecutionOutcome {
+    Committed,
+    RolledBack,
+    /// A destructive DDL preamble is confirmed, but the row transaction did
+    /// not commit. For example, a truncate succeeded before a later rollback.
+    PartiallyApplied,
+    NotStarted,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TableExecutionResult {
     pub source_table: String,
     pub target_table: String,
-    pub rows_inserted: u64,
+    /// `None` means the server cannot prove how many rows reached the target.
+    pub rows_inserted: Option<u64>,
     pub success: bool,
     pub error: Option<String>,
+    /// Database transfers report transaction state. SQL-file output has no
+    /// database transaction and leaves this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<TableExecutionOutcome>,
+}
+
+impl TableExecutionResult {
+    pub fn database(
+        source_table: impl Into<String>,
+        target_table: impl Into<String>,
+        rows_inserted: Option<u64>,
+        outcome: TableExecutionOutcome,
+        error: Option<String>,
+    ) -> Self {
+        Self {
+            source_table: source_table.into(),
+            target_table: target_table.into(),
+            rows_inserted,
+            success: outcome == TableExecutionOutcome::Committed,
+            error,
+            outcome: Some(outcome),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

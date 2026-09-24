@@ -2,7 +2,8 @@
 
 use crate::data_transfer::mapping::auto_map_columns;
 use crate::data_transfer::model::{
-    Endpoint, SqlFileTarget, TransferOptions, TransferRunOptions, TransferRunSelection,
+    Endpoint, SqlFileTarget, TableExecutionOutcome, TableExecutionResult, TransferExecutionResult,
+    TransferOptions, TransferRunOptions, TransferRunSelection,
 };
 use crate::data_transfer::{
     classify_transfer_pair, TableMapping, TransferJob, TransferMode, TransferProfile,
@@ -48,6 +49,82 @@ fn pairing_classifies_ir_and_unsupported() {
 
     let bad = classify_transfer_pair("postgresql", "redis");
     assert!(!bad.supported);
+}
+
+#[test]
+fn transfer_history_outcome_uses_typed_table_results() {
+    let result = |outcome| TransferExecutionResult {
+        tables: vec![TableExecutionResult::database(
+            "source",
+            "target",
+            None,
+            outcome,
+            Some("injected table result".into()),
+        )],
+        partial: true,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&result(TableExecutionOutcome::Unknown)),
+        "unknown"
+    );
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&result(TableExecutionOutcome::RolledBack)),
+        "rolledBack"
+    );
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&result(TableExecutionOutcome::PartiallyApplied)),
+        "partiallyApplied"
+    );
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&result(TableExecutionOutcome::NotStarted)),
+        "notStarted"
+    );
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&TransferExecutionResult::default()),
+        "notRequired"
+    );
+    let sql_file_partial = TransferExecutionResult {
+        tables: vec![TableExecutionResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            rows_inserted: Some(1),
+            success: false,
+            error: Some("injected SQL-file failure".into()),
+            outcome: None,
+        }],
+        partial: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        super::transfer_rollback_history_outcome(&sql_file_partial),
+        "unknown",
+        "SQL-file history semantics remain outside the typed DB outcomes"
+    );
+    let mixed = TransferExecutionResult {
+        tables: vec![
+            TableExecutionResult::database(
+                "committed-before-unknown",
+                "committed-before-unknown",
+                Some(1),
+                TableExecutionOutcome::RolledBack,
+                Some("confirmed rollback".into()),
+            ),
+            TableExecutionResult::database(
+                "unknown",
+                "unknown",
+                None,
+                TableExecutionOutcome::Unknown,
+                Some("lost acknowledgement".into()),
+            ),
+        ],
+        partial: true,
+        ..Default::default()
+    };
+    assert_eq!(super::transfer_rollback_history_outcome(&mixed), "unknown");
+    assert_eq!(super::transfer_error_history_outcome(false), "notStarted");
+    assert_eq!(super::transfer_error_history_outcome(true), "unknown");
 }
 
 #[test]
@@ -843,6 +920,80 @@ async fn transfer_partial_run_returns_resume_token_and_completes_once_recovered(
     .await
     .expect_err("a completed resume token must not be replayable");
     assert!(retry.to_string().contains("consumed"), "{retry}");
+}
+
+#[tokio::test]
+async fn unknown_commit_invalidates_resume_checkpoint_and_consumes_old_token() {
+    use crate::data_transfer::model::TableExecutionOutcome;
+    use crate::testing::app_state::TestAppState;
+    use crate::testing::mock_driver::MockDriver;
+
+    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let (_src_config, source) = test.save_and_connect("transfer-unknown-resume-src").await;
+    let (_tgt_config, target) = test.save_and_connect("transfer-unknown-resume-tgt").await;
+    let preview = super::preview_data_transfer_impl(&test.state, plan_job(source, target))
+        .await
+        .unwrap();
+
+    let mut failing_options = transfer_plan_test_options();
+    failing_options.query_error = Some("injected source scan failure".into());
+    test.registry
+        .register_test_driver("postgres", MockDriver::new("postgres", failing_options))
+        .await;
+    let request = TransferRunRequest {
+        plan_id: preview.plan_id.clone(),
+        selection: TransferRunSelection::default(),
+        options: TransferRunOptions::default(),
+        job_id: None,
+        resume_token: None,
+    };
+    let partial = super::execute_data_transfer_impl(&test.state, request.clone())
+        .await
+        .expect("a confirmed source-side failure should create a safe checkpoint");
+    let old_token = partial.resume_token.expect("partial run checkpoint");
+
+    let mut commit_loss_options = transfer_plan_test_options();
+    commit_loss_options.commit_error_on_call = Some(1);
+    commit_loss_options.commit_error_after_effect = true;
+    let commit_loss_driver = MockDriver::new("postgres", commit_loss_options);
+    test.registry
+        .register_test_driver("postgres", commit_loss_driver.clone())
+        .await;
+    let unknown = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            resume_token: Some(old_token.clone()),
+            ..request.clone()
+        },
+    )
+    .await
+    .expect("unknown commit outcomes should be reported as table results");
+
+    assert!(unknown.partial);
+    assert_eq!(unknown.resume_token, None);
+    assert_eq!(unknown.tables.len(), 1);
+    assert_eq!(
+        unknown.tables[0].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(unknown.tables[0].rows_inserted, None);
+    assert_eq!(commit_loss_driver.commit_calls(), 1);
+
+    let plan_replay = super::execute_data_transfer_impl(&test.state, request.clone())
+        .await
+        .expect_err("the claimed immutable plan must not be replayable");
+    assert!(plan_replay.to_string().contains("already consumed"));
+
+    let replay = super::execute_data_transfer_impl(
+        &test.state,
+        TransferRunRequest {
+            resume_token: Some(old_token),
+            ..request
+        },
+    )
+    .await
+    .expect_err("the old checkpoint must be invalidated after unknown commit");
+    assert!(replay.to_string().contains("consumed"), "{replay}");
 }
 
 #[tokio::test]

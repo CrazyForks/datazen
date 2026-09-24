@@ -13,8 +13,8 @@ use crate::transfer::ir::IRType;
 
 use super::error::TransferError;
 use super::model::{
-    ColumnMapping, TableExecutionResult, TableInspectResult, TransferExecutionResult, TransferJob,
-    TransferMode, WriteMode,
+    ColumnMapping, TableExecutionOutcome, TableExecutionResult, TableInspectResult,
+    TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use super::structure::{drop_and_recreate_table, table_eligible_for_data};
 
@@ -48,6 +48,30 @@ pub fn is_self_table_overwrite(
         && source.database == target.database
         && source.normalized_schema() == target.normalized_schema()
         && source_table == target_table
+}
+
+pub fn validate_no_self_table_overwrite(
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+) -> Result<(), TransferError> {
+    let target = job.database_target()?;
+    for table in inspected
+        .iter()
+        .filter(|table| table_eligible_for_data(table, job))
+    {
+        if is_self_table_overwrite(
+            &job.source,
+            target,
+            &table.source_table,
+            &table.target_table,
+        ) {
+            return Err(TransferError::validation(format!(
+                "self-overwrite of table '{}' is not allowed",
+                table.source_table
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn active_column_mappings(mappings: &[ColumnMapping]) -> Vec<&ColumnMapping> {
@@ -146,6 +170,39 @@ pub async fn execute_transfer_data(
     cancelled: Option<Arc<AtomicBool>>,
     completed_tables: Option<&HashSet<String>>,
 ) -> Result<TransferExecutionResult, TransferError> {
+    execute_transfer_data_with_write_observer(
+        src_driver,
+        src_handle,
+        tgt_driver,
+        tgt_handle,
+        job,
+        inspected,
+        source_schemas,
+        formatter,
+        drop_create,
+        target_read_only,
+        cancelled,
+        completed_tables,
+        None,
+    )
+    .await
+}
+
+pub async fn execute_transfer_data_with_write_observer(
+    src_driver: &dyn DatabaseDriver,
+    src_handle: &ConnectionHandle,
+    tgt_driver: &dyn DatabaseDriver,
+    tgt_handle: &ConnectionHandle,
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    formatter: &ValueFormatter<'_>,
+    drop_create: Option<&DropCreateContext<'_>>,
+    target_read_only: bool,
+    cancelled: Option<Arc<AtomicBool>>,
+    completed_tables: Option<&HashSet<String>>,
+    write_started: Option<&AtomicBool>,
+) -> Result<TransferExecutionResult, TransferError> {
     let target = job.database_target()?;
     if target_read_only {
         return Err(TransferError::validation(
@@ -183,7 +240,12 @@ pub async fn execute_transfer_data(
     let mut total_rows = 0u64;
     let mut partial = false;
 
-    for table in inspected.iter().filter(|t| table_eligible_for_data(t, job)) {
+    let transfer_tables: Vec<_> = inspected
+        .iter()
+        .filter(|table| table_eligible_for_data(table, job))
+        .collect();
+    validate_no_self_table_overwrite(job, inspected)?;
+    for (table_index, table) in transfer_tables.iter().enumerate() {
         if let Some(flag) = &cancelled {
             if flag.load(Ordering::SeqCst) {
                 return Ok(TransferExecutionResult {
@@ -200,27 +262,22 @@ pub async fn execute_transfer_data(
             continue;
         }
 
-        if is_self_table_overwrite(
-            &job.source,
-            target,
-            &table.source_table,
-            &table.target_table,
-        ) {
-            return Err(TransferError::validation(format!(
-                "self-overwrite of table '{}' is not allowed",
-                table.source_table
-            )));
-        }
+        // In Structure+Data, a successful create is an earlier, separately
+        // committed target write. Drop+Create is handled below as its own
+        // preamble and is skipped by the structure phase.
+        let mut known_preamble_applied = job.mode == TransferMode::StructureAndData
+            && table.status == super::model::TableMappingStatus::CreateNew
+            && job.write_mode != WriteMode::DropCreateInsert;
 
         let columns = active_column_mappings(&table.column_mappings);
         if columns.is_empty() {
-            tables_out.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: false,
-                error: Some("no column mappings".into()),
-            });
+            tables_out.push(TableExecutionResult::database(
+                &table.source_table,
+                &table.target_table,
+                Some(0),
+                outcome_before_data_transaction(known_preamble_applied),
+                Some("no column mappings".into()),
+            ));
             partial = true;
             if job.options.stop_on_error {
                 break;
@@ -229,13 +286,13 @@ pub async fn execute_transfer_data(
         }
 
         let Some(src_schema) = source_schemas.get(&table.source_table) else {
-            tables_out.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: false,
-                error: Some("source schema not loaded".into()),
-            });
+            tables_out.push(TableExecutionResult::database(
+                &table.source_table,
+                &table.target_table,
+                Some(0),
+                outcome_before_data_transaction(known_preamble_applied),
+                Some("source schema not loaded".into()),
+            ));
             partial = true;
             if job.options.stop_on_error {
                 break;
@@ -267,7 +324,7 @@ pub async fn execute_transfer_data(
             .tables
             .iter()
             .find(|mapping| mapping.source_table == table.source_table);
-        let source_scope = super::recordset::build_source_scope(
+        let source_scope = match super::recordset::build_source_scope(
             src_schema,
             mapping.and_then(|mapping| mapping.source_filter.as_ref()),
             mapping.and_then(|mapping| mapping.recordset.as_ref()),
@@ -285,13 +342,40 @@ pub async fn execute_transfer_data(
                     .find(|candidate| candidate.name == column)
                     .map(|candidate| candidate.data_type.clone())
             },
-        )?;
+        ) {
+            Ok(scope) => scope,
+            Err(error) => {
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    outcome_before_data_transaction(known_preamble_applied),
+                    Some(error.to_string()),
+                ));
+                partial = true;
+                if job.options.stop_on_error {
+                    break;
+                }
+                continue;
+            }
+        };
         source_scope.append_to(&mut base_sql);
 
         // Resolve capability and scan once before any destructive target operation.
-        tgt_driver
-            .parameter_placeholder(1, None)
-            .map_err(|e| TransferError::validation(e.to_string()))?;
+        if let Err(error) = tgt_driver.parameter_placeholder(1, None) {
+            tables_out.push(TableExecutionResult::database(
+                &table.source_table,
+                &table.target_table,
+                Some(0),
+                outcome_before_data_transaction(known_preamble_applied),
+                Some(error.to_string()),
+            ));
+            partial = true;
+            if job.options.stop_on_error {
+                break;
+            }
+            continue;
+        }
         let mut scan = match super::scan::scan_rows_with_params(
             src_driver,
             src_handle,
@@ -304,13 +388,13 @@ pub async fn execute_transfer_data(
         {
             Ok(scan) => scan,
             Err(error) => {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(error.to_string()),
-                });
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    outcome_before_data_transaction(known_preamble_applied),
+                    Some(error.to_string()),
+                ));
                 partial = true;
                 if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
                     return Ok(TransferExecutionResult {
@@ -344,22 +428,47 @@ pub async fn execute_transfer_data(
                 table,
                 job,
                 ctx.source_schemas,
+                write_started,
             )
             .await
             {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(e.to_string()),
-                });
+                let (outcome, error) = match e {
+                    super::structure::DropCreateFailure::NotStarted(error) => (
+                        outcome_before_data_transaction(known_preamble_applied),
+                        error.to_string(),
+                    ),
+                    super::structure::DropCreateFailure::Unknown(error) => {
+                        (TableExecutionOutcome::Unknown, error.to_string())
+                    }
+                };
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    (outcome != TableExecutionOutcome::Unknown).then_some(0),
+                    outcome,
+                    Some(error),
+                ));
                 partial = true;
+                if outcome == TableExecutionOutcome::Unknown {
+                    append_not_started_after_unknown(
+                        &mut tables_out,
+                        &transfer_tables[table_index + 1..],
+                        completed_tables,
+                    );
+                    return Ok(TransferExecutionResult {
+                        tables: tables_out,
+                        rows_inserted: total_rows,
+                        cancelled: false,
+                        partial: true,
+                        resume_token: None,
+                    });
+                }
                 if job.options.stop_on_error {
                     break;
                 }
                 continue;
             }
+            known_preamble_applied = true;
         } else if job.write_mode == WriteMode::TruncateInsert {
             let tgt_table_ref = qualify_relation_sql(
                 &tgt_family,
@@ -369,24 +478,35 @@ pub async fn execute_transfer_data(
                 tgt_quote,
             );
             let truncate_sql = build_truncate_sql_ref(&tgt_table_ref);
+            if let Some(write_started) = write_started {
+                write_started.store(true, Ordering::SeqCst);
+            }
             if let Err(e) = tgt_driver
                 .execute(tgt_handle, &truncate_sql)
                 .await
                 .map_err(|e| TransferError::validation(e.to_string()))
             {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(format!("truncate failed: {e}")),
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    None,
+                    TableExecutionOutcome::Unknown,
+                    Some(format!("truncate failed; outcome UNKNOWN: {e}")),
+                ));
+                append_not_started_after_unknown(
+                    &mut tables_out,
+                    &transfer_tables[table_index + 1..],
+                    completed_tables,
+                );
+                return Ok(TransferExecutionResult {
+                    tables: tables_out,
+                    rows_inserted: total_rows,
+                    cancelled: false,
+                    partial: true,
+                    resume_token: None,
                 });
-                partial = true;
-                if job.options.stop_on_error {
-                    break;
-                }
-                continue;
             }
+            known_preamble_applied = true;
         }
 
         let target_schema = match super::metadata::load_table_schema(
@@ -399,13 +519,13 @@ pub async fn execute_transfer_data(
         {
             Ok(schema) => schema,
             Err(error) => {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(error.to_string()),
-                });
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    outcome_before_data_transaction(known_preamble_applied),
+                    Some(error.to_string()),
+                ));
                 partial = true;
                 if job.options.stop_on_error {
                     break;
@@ -416,13 +536,13 @@ pub async fn execute_transfer_data(
         let tx = match tgt_driver.begin_transaction(tgt_handle).await {
             Ok(tx) => tx,
             Err(error) => {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(format!("cannot start data transaction: {error}")),
-                });
+                tables_out.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    outcome_before_data_transaction(known_preamble_applied),
+                    Some(format!("cannot start data transaction: {error}")),
+                ));
                 partial = true;
                 if job.options.stop_on_error {
                     break;
@@ -483,6 +603,9 @@ pub async fn execute_transfer_data(
                     break 'batches;
                 }
             };
+            if let Some(write_started) = write_started {
+                write_started.store(true, Ordering::SeqCst);
+            }
             match tgt_driver
                 .execute_with_params(tgt_handle, &sql, &parameters)
                 .await
@@ -500,29 +623,57 @@ pub async fn execute_transfer_data(
             was_cancelled = true;
             table_error = Some("transfer cancelled; current data transaction rolled back".into());
         }
-        if table_error.is_some() {
-            if let Err(error) = tgt_driver.rollback(tx).await {
-                table_error = Some(format!(
-                    "{}; rollback failed, outcome UNKNOWN: {error}",
-                    table_error.as_deref().unwrap_or("write failed")
-                ));
-            }
+        let outcome = if table_error.is_some() {
             table_rows = 0;
             partial = true;
+            match tgt_driver.rollback(tx).await {
+                Ok(()) => {
+                    if known_preamble_applied {
+                        TableExecutionOutcome::PartiallyApplied
+                    } else {
+                        TableExecutionOutcome::RolledBack
+                    }
+                }
+                Err(error) => {
+                    table_error = Some(format!(
+                        "{}; rollback failed, outcome UNKNOWN: {error}",
+                        table_error.as_deref().unwrap_or("write failed")
+                    ));
+                    TableExecutionOutcome::Unknown
+                }
+            }
         } else if let Err(error) = tgt_driver.commit(tx).await {
             table_error = Some(format!("commit failed, outcome UNKNOWN: {error}"));
             table_rows = 0;
             partial = true;
-        }
+            TableExecutionOutcome::Unknown
+        } else {
+            TableExecutionOutcome::Committed
+        };
         total_rows += table_rows;
 
-        tables_out.push(TableExecutionResult {
-            source_table: table.source_table.clone(),
-            target_table: table.target_table.clone(),
-            rows_inserted: table_rows,
-            success: table_error.is_none(),
-            error: table_error,
-        });
+        tables_out.push(TableExecutionResult::database(
+            &table.source_table,
+            &table.target_table,
+            (outcome != TableExecutionOutcome::Unknown).then_some(table_rows),
+            outcome,
+            table_error,
+        ));
+
+        if outcome == TableExecutionOutcome::Unknown {
+            append_not_started_after_unknown(
+                &mut tables_out,
+                &transfer_tables[table_index + 1..],
+                completed_tables,
+            );
+            return Ok(TransferExecutionResult {
+                tables: tables_out,
+                rows_inserted: total_rows,
+                cancelled: false,
+                partial: true,
+                resume_token: None,
+            });
+        }
 
         if was_cancelled {
             return Ok(TransferExecutionResult {
@@ -545,6 +696,33 @@ pub async fn execute_transfer_data(
         partial,
         resume_token: None,
     })
+}
+
+fn append_not_started_after_unknown(
+    results: &mut Vec<TableExecutionResult>,
+    remaining: &[&TableInspectResult],
+    completed_tables: Option<&HashSet<String>>,
+) {
+    for table in remaining {
+        if completed_tables.is_some_and(|completed| completed.contains(&table.source_table)) {
+            continue;
+        }
+        results.push(TableExecutionResult::database(
+            &table.source_table,
+            &table.target_table,
+            Some(0),
+            TableExecutionOutcome::NotStarted,
+            Some("not started because an earlier table has an unknown outcome".into()),
+        ));
+    }
+}
+
+fn outcome_before_data_transaction(preamble_applied: bool) -> TableExecutionOutcome {
+    if preamble_applied {
+        TableExecutionOutcome::PartiallyApplied
+    } else {
+        TableExecutionOutcome::NotStarted
+    }
 }
 
 /// Same-family convenience wrapper (kept for tests and backward compatibility).

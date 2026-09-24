@@ -179,9 +179,10 @@ export interface TransferPreview {
 export interface TransferTableExecution {
   sourceTable: string;
   targetTable: string;
-  rowsInserted: number;
+  rowsInserted: number | null;
   success: boolean;
   error?: string | null;
+  outcome?: 'committed' | 'rolledBack' | 'partiallyApplied' | 'notStarted' | 'unknown' | null;
 }
 
 export interface TransferExecutionResult {
