@@ -27,6 +27,15 @@ import {
 } from '../lib/schemaDiffFixtures.js';
 
 type Dialect = 'postgresql' | 'mysql';
+
+function sanitizeFixtureDiagnostic(message: string): string {
+  return message
+    .replace(/((?:password|passwd|pwd)\s*[:=]\s*)[^\s,;]*/gi, '$1[redacted]')
+    .replace(/\/\/([^/:\s]+):([^@\s]+)@/g, '//$1:[redacted]@')
+    .replace(/\s+/g, ' ')
+    .slice(0, 240);
+}
+
 type Fixture = {
   dialect: Dialect;
   sourceId: string;
@@ -44,6 +53,166 @@ type Fixture = {
   sourceConfig: ReturnType<typeof pgConnectionConfig> | ReturnType<typeof mysqlConnectionConfig>;
   targetConfig: ReturnType<typeof pgConnectionConfig> | ReturnType<typeof mysqlConnectionConfig>;
 };
+
+type MysqlCatalogFixture = {
+  sourceId: string;
+  targetId: string;
+  sourceName: string;
+  targetName: string;
+  functionName: string;
+  procedureName: string;
+  triggerName: string;
+  triggerTable: string;
+  viewName: string;
+  sourceConfig: ReturnType<typeof mysqlConnectionConfig>;
+  targetConfig: ReturnType<typeof mysqlConnectionConfig>;
+};
+
+function createMysqlCatalogFixture(): MysqlCatalogFixture {
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const sourceId = `e2e_unified_mysql_catalog_src_${stamp}`;
+  const targetId = `e2e_unified_mysql_catalog_tgt_${stamp}`;
+  const sourceName = `SD-UNIFIED-MYSQL-CATALOG-SRC-${stamp}`;
+  const targetName = `SD-UNIFIED-MYSQL-CATALOG-TGT-${stamp}`;
+  return {
+    sourceId,
+    targetId,
+    sourceName,
+    targetName,
+    functionName: `sd_u_${stamp}_fn`,
+    procedureName: `sd_u_${stamp}_proc`,
+    triggerName: `sd_u_${stamp}_trg`,
+    triggerTable: `sd_u_${stamp}_table`,
+    viewName: `sd_u_${stamp}_view`,
+    sourceConfig: mysqlConnectionConfig(sourceId, sourceName, 'datazen_sync_mysql_src'),
+    targetConfig: mysqlConnectionConfig(targetId, targetName, MYSQL_SYNC_DB),
+  };
+}
+
+async function mysqlCatalogFixtureCount(
+  connectionId: string,
+  fixture: MysqlCatalogFixture,
+): Promise<number> {
+  const result = await executeOn(
+    connectionId,
+    `SELECT (
+       (SELECT count(*) FROM information_schema.routines
+        WHERE routine_schema=DATABASE() AND routine_name IN ('${fixture.functionName}','${fixture.procedureName}')) +
+       (SELECT count(*) FROM information_schema.triggers
+        WHERE trigger_schema=DATABASE() AND trigger_name='${fixture.triggerName}') +
+       (SELECT count(*) FROM information_schema.views
+        WHERE table_schema=DATABASE() AND table_name='${fixture.viewName}') +
+       (SELECT count(*) FROM information_schema.tables
+        WHERE table_schema=DATABASE() AND table_name='${fixture.triggerTable}' AND table_type='BASE TABLE')
+     ) AS c`,
+  );
+  return queryScalar(result, 'c');
+}
+
+async function dropMysqlCatalogFixture(session: string, fixture: MysqlCatalogFixture) {
+  for (const sql of [
+    `DROP VIEW IF EXISTS ${fixture.viewName}`,
+    `DROP TRIGGER IF EXISTS ${fixture.triggerName}`,
+    `DROP PROCEDURE IF EXISTS ${fixture.procedureName}`,
+    `DROP FUNCTION IF EXISTS ${fixture.functionName}`,
+    `DROP TABLE IF EXISTS ${fixture.triggerTable}`,
+  ]) {
+    await dropExactFixtureObject(session, sql);
+  }
+}
+
+async function runMysqlCatalogSmokeJourney(fixture: MysqlCatalogFixture) {
+  try {
+    await Promise.all([
+      invokeBackend('save_connection', { config: fixture.sourceConfig }),
+      invokeBackend('save_connection', { config: fixture.targetConfig }),
+    ]);
+    const source = await invokeBackend<string>('connect', { connectionId: fixture.sourceId });
+    try {
+      await withSafeModeOff(async () => {
+        await dropMysqlCatalogFixture(source, fixture);
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE TABLE ${fixture.triggerTable} (id INT PRIMARY KEY) ENGINE=InnoDB`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE FUNCTION ${fixture.functionName}() RETURNS INT DETERMINISTIC RETURN 1`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE PROCEDURE ${fixture.procedureName}() SELECT 1`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE TRIGGER ${fixture.triggerName} BEFORE INSERT ON ${fixture.triggerTable} FOR EACH ROW SET NEW.id = NEW.id`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE VIEW ${fixture.viewName} AS SELECT 1 AS id`,
+        });
+      });
+    } finally {
+      await disconnectBackend(source);
+    }
+
+    const expected = [
+      ['function', fixture.functionName],
+      ['procedure', fixture.procedureName],
+      ['trigger', fixture.triggerName],
+      ['view', fixture.viewName],
+    ] as const;
+    for (const [kind, name] of expected) {
+      const session = await invokeBackend<string>('connect', { connectionId: fixture.sourceId });
+      try {
+        const objects = await invokeBackend<
+          Array<{
+            schema: string | null;
+            name: string;
+            targetSchema?: string | null;
+            targetName?: string | null;
+          }>
+        >('get_database_objects', { dbSessionId: session, kind });
+        const matches = objects.filter((object) => object.name === name);
+        expect(matches).toHaveLength(1);
+        expect(matches[0]?.schema).toBe('datazen_sync_mysql_src');
+        if (kind === 'trigger') {
+          expect(matches[0]?.targetSchema).toBe('datazen_sync_mysql_src');
+          expect(matches[0]?.targetName).toBe(fixture.triggerTable);
+        }
+        console.log(
+          `[SD-UNIFIED] mysql catalog kind=${kind} schema=${matches[0]?.schema} name=${name}`,
+        );
+      } finally {
+        await disconnectBackend(session);
+      }
+    }
+  } finally {
+    for (const connectionId of [fixture.sourceId, fixture.targetId]) {
+      try {
+        const session = await invokeBackend<string>('connect', { connectionId });
+        try {
+          await withSafeModeOff(async () => dropMysqlCatalogFixture(session, fixture));
+        } finally {
+          await disconnectBackend(session);
+        }
+      } catch {
+        // A partial fixture setup may leave one connection unavailable.
+      }
+    }
+    try {
+      const remaining = await Promise.all(
+        [fixture.sourceId, fixture.targetId].map((id) => mysqlCatalogFixtureCount(id, fixture)),
+      );
+      expect(remaining).toEqual([0, 0]);
+      console.log(
+        `[SD-UNIFIED] exact MySQL catalog cleanup source_remaining=${remaining[0]} target_remaining=${remaining[1]}`,
+      );
+    } finally {
+      await teardownSchemaDiffFixture([fixture.sourceId, fixture.targetId], [fixture.triggerTable]);
+    }
+  }
+}
 
 function createFixture(dialect: Dialect): Fixture {
   const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -105,30 +274,37 @@ async function selectSourceObject(
 ) {
   await browser.waitUntil(
     async () =>
-      browser.execute((args: { kind: string; name: string }) => {
-        const row = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            `[data-testid^="schema-diff-object-row-source-${args.kind}-"]`,
-          ),
-        ).some((candidate) => candidate.textContent?.includes(args.name));
-        const error = document.querySelector(
-          `[data-testid="schema-diff-object-error-source-${args.kind}"]`,
-        );
-        return row || Boolean(error);
-      }, { kind, name }),
+      browser.execute(
+        (args: { kind: string; name: string }) => {
+          const row = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              `[data-testid^="schema-diff-object-row-source-${args.kind}-"]`,
+            ),
+          ).some((candidate) => candidate.textContent?.includes(args.name));
+          const error = document.querySelector(
+            `[data-testid="schema-diff-object-error-source-${args.kind}"]`,
+          );
+          return row || Boolean(error);
+        },
+        { kind, name },
+      ),
     { timeout: 30000, timeoutMsg: `waiting for source ${kind} catalog row ${name}` },
   );
-  const rowTestId = await browser.execute((objectKind: string, objectName: string) => {
-    const rows = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        `[data-testid^="schema-diff-object-row-source-${objectKind}-"]`,
-      ),
-    );
-    const row = rows.find((candidate) => candidate.textContent?.includes(objectName));
-    const details = row?.closest('details');
-    if (details) details.open = true;
-    return row?.getAttribute('data-testid') ?? null;
-  }, kind, name);
+  const rowTestId = await browser.execute(
+    (objectKind: string, objectName: string) => {
+      const rows = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `[data-testid^="schema-diff-object-row-source-${objectKind}-"]`,
+        ),
+      );
+      const row = rows.find((candidate) => candidate.textContent?.includes(objectName));
+      const details = row?.closest('details');
+      if (details) details.open = true;
+      return row?.getAttribute('data-testid') ?? null;
+    },
+    kind,
+    name,
+  );
   if (!rowTestId) {
     const catalogError = await browser
       .$(`[data-testid="schema-diff-object-error-source-${kind}"]`)
@@ -238,14 +414,11 @@ async function assertSourceViewCatalog(fixture: Fixture) {
     fixture.dialect === 'postgresql'
       ? `SELECT count(*)::int AS c FROM information_schema.views WHERE table_schema='public' AND table_name='${fixture.view}'`
       : `SELECT count(*) AS c FROM information_schema.views WHERE table_schema=DATABASE() AND table_name='${fixture.view}'`;
-  const infoSchemaCount = queryScalar(
-    await executeOn(fixture.sourceId, sourceViewCountSql),
-    'c',
-  );
+  const infoSchemaCount = queryScalar(await executeOn(fixture.sourceId, sourceViewCountSql), 'c');
   const listSql =
     fixture.dialect === 'postgresql'
       ? `SELECT schemaname AS schema, viewname AS name FROM pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY 1,2`
-      : `SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1,2`;
+      : `SELECT TABLE_SCHEMA AS \`schema\`, TABLE_NAME AS name FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1,2`;
   const rawList = await executeOn(fixture.sourceId, listSql).catch(() => null);
   const rawListMatches = rawList
     ? parseQueryRows(rawList).filter((row) => String(row[1]) === fixture.view).length
@@ -263,6 +436,9 @@ async function assertSourceViewCatalog(fixture: Fixture) {
   let driverMatches = 0;
   let catalogError = '';
   let ddlContainsSemicolon: boolean | null = null;
+  let ddlError = '';
+  let viewDefinitionLength: number | null = null;
+  let viewDefinitionError = '';
   try {
     const objects = await invokeBackend<Array<{ name: string }>>('get_database_objects', {
       dbSessionId: session,
@@ -280,20 +456,30 @@ async function assertSourceViewCatalog(fixture: Fixture) {
         schema: fixture.dialect === 'postgresql' ? 'public' : null,
       });
       ddlContainsSemicolon = ddl.includes(';');
-    } catch {
+    } catch (error) {
       ddlContainsSemicolon = null;
+      ddlError = error instanceof Error ? error.message : String(error);
     }
     await disconnectBackend(session);
   }
-  const safeError = catalogError
-    .replace(/((?:password|passwd|pwd)\s*[:=]\s*)[^\s,;]*/gi, '$1[redacted]')
-    .replace(/\/\/([^/:\s]+):([^@\s]+)@/g, '//$1:[redacted]@')
-    .replace(/\s+/g, ' ')
-    .slice(0, 240);
+  if (fixture.dialect === 'mysql') {
+    try {
+      const definition = await executeOn(
+        fixture.sourceId,
+        `SELECT VIEW_DEFINITION AS ddl FROM information_schema.VIEWS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='${fixture.view}'`,
+      );
+      const value = parseQueryRows(definition)[0]?.[0];
+      viewDefinitionLength = value == null ? 0 : String(value).length;
+    } catch (error) {
+      viewDefinitionError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const safeError = sanitizeFixtureDiagnostic(catalogError);
   console.log(
-    `[SD-UNIFIED] source catalog dialect=${fixture.dialect} view_information_schema=${infoSchemaCount} view_raw_list_matches=${rawListMatches} view_driver_matches=${driverMatches} view_driver_error=${safeError || 'none'} ddl_contains_semicolon=${ddlContainsSemicolon} custom_type_column=${customTypeCatalog}`,
+    `[SD-UNIFIED] source catalog dialect=${fixture.dialect} view_information_schema=${infoSchemaCount} view_raw_list_matches=${rawListMatches} view_driver_matches=${driverMatches} view_driver_error=${safeError || 'none'} ddl_contains_semicolon=${ddlContainsSemicolon} ddl_error=${sanitizeFixtureDiagnostic(ddlError) || 'none'} view_definition_length=${viewDefinitionLength} view_definition_error=${sanitizeFixtureDiagnostic(viewDefinitionError) || 'none'} custom_type_column=${customTypeCatalog}`,
   );
   expect(infoSchemaCount).toBe(1);
+  expect(rawListMatches).toBe(1);
   expect(driverMatches).toBe(1);
 }
 
@@ -365,7 +551,25 @@ async function runPositiveJourney(fixture: Fixture, mainWindow: string) {
     await openObjectPicker(fixture);
     await selectPositiveChain(fixture);
     await clickSchemaDiffCompare();
-    await clickSchemaDiffGeneratePlan();
+    try {
+      await clickSchemaDiffGeneratePlan();
+    } catch (error) {
+      if (fixture.dialect === 'mysql') {
+        const diagnostics = await browser.execute(() => ({
+          body: document.body.innerText.slice(-5000),
+          alerts: Array.from(document.querySelectorAll('[role="alert"], .error-message'))
+            .map((element) => element.textContent?.trim() ?? '')
+            .filter(Boolean),
+          testIds: Array.from(document.querySelectorAll<HTMLElement>('[data-testid]'))
+            .map((element) => element.getAttribute('data-testid'))
+            .filter((testId): testId is string =>
+              Boolean(testId && testId.startsWith('schema-diff')),
+            ),
+        }));
+        console.log(`[SD-UNIFIED] mysql plan generation diagnostic=${JSON.stringify(diagnostics)}`);
+      }
+      throw error;
+    }
 
     const statements = await readPlanStatements();
     const parentIndex = statementIndex(statements, /\bCREATE\s+TABLE\b/i, fixture.parentTable);
@@ -377,7 +581,8 @@ async function runPositiveJourney(fixture: Fixture, mainWindow: string) {
     if ([parentIndex, tableIndex, viewIndex, fkIndex].some((index) => index < 0)) {
       const diagnostics = await browser.execute(() => ({
         requirements:
-          document.querySelector('[data-testid="schema-diff-plan-requirements"]')?.textContent ?? '',
+          document.querySelector('[data-testid="schema-diff-plan-requirements"]')?.textContent ??
+          '',
         errors: Array.from(document.querySelectorAll('.error-message'))
           .map((element) => element.textContent?.trim() ?? '')
           .filter(Boolean)
@@ -399,24 +604,36 @@ async function runPositiveJourney(fixture: Fixture, mainWindow: string) {
 
     if (fixture.type) {
       const typeIndex = statementIndex(statements, /\bCREATE\s+TYPE\b/i, fixture.type);
-      if (typeIndex < 0) throw new Error(`custom type operation missing:\n${statements.join('\n')}`);
+      if (typeIndex < 0)
+        throw new Error(`custom type operation missing:\n${statements.join('\n')}`);
       expect(typeIndex).toBeLessThan(tableIndex);
     }
     if (fixture.sequence) {
       const sequenceIndex = statementIndex(statements, /\bCREATE\s+SEQUENCE\b/i, fixture.sequence);
       const ownerIndex = statements.findIndex(
-        (sql) => /\bOWNED\s+BY\b/i.test(sql) && sql.includes(fixture.sequence!) && sql.includes(fixture.table),
+        (sql) =>
+          /\bOWNED\s+BY\b/i.test(sql) &&
+          sql.includes(fixture.sequence!) &&
+          sql.includes(fixture.table),
       );
-      if (sequenceIndex < 0) throw new Error(`sequence operation missing:\n${statements.join('\n')}`);
+      if (sequenceIndex < 0)
+        throw new Error(`sequence operation missing:\n${statements.join('\n')}`);
       expect(sequenceIndex).toBeLessThan(tableIndex);
       if (ownerIndex <= tableIndex) {
-        throw new Error(`sequence ownership phase missing or ordered before owner table:\n${statements.join('\n')}`);
+        throw new Error(
+          `sequence ownership phase missing or ordered before owner table:\n${statements.join('\n')}`,
+        );
       }
     }
     if (fixture.routine && fixture.trigger) {
-      const routineIndex = statementIndex(statements, /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i, fixture.routine);
+      const routineIndex = statementIndex(
+        statements,
+        /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i,
+        fixture.routine,
+      );
       const triggerIndex = statementIndex(statements, /\bCREATE\s+TRIGGER\b/i, fixture.trigger);
-      if (routineIndex < 0) throw new Error(`function operation missing:\n${statements.join('\n')}`);
+      if (routineIndex < 0)
+        throw new Error(`function operation missing:\n${statements.join('\n')}`);
       if (triggerIndex < 0) throw new Error(`trigger operation missing:\n${statements.join('\n')}`);
       expect(routineIndex).toBeLessThan(triggerIndex);
     }
@@ -518,4 +735,8 @@ describe('Schema Diff unified reviewed planner (SD-UNIFIED)', function () {
       await runInvalidDependencyJourney(createFixture(dialect), mainWindow);
     });
   }
+
+  it('SD-UNIFIED-mysql-catalog: lists functions, procedures, triggers, and views with exact schema identities', async () => {
+    await runMysqlCatalogSmokeJourney(createMysqlCatalogFixture());
+  });
 });
