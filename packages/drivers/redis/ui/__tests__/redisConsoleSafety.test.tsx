@@ -143,7 +143,7 @@ describe('blocked commands never reach the server', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'KEYS *');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
     expect(screen.getByTestId('redis-console-error').textContent).toContain(
@@ -159,7 +159,7 @@ describe('blocked commands never reach the server', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'JSON.GET doc');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
     const text = screen.getByTestId('redis-console-error').textContent ?? '';
@@ -173,7 +173,7 @@ describe('blocked commands never reach the server', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nEVAL "return 1" 0');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
     expect(screen.getByTestId('redis-console-error').textContent).toContain('EVAL "return 1" 0');
@@ -185,7 +185,7 @@ describe('blocked commands never reach the server', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
     expect(screen.getByTestId('redis-console-error').textContent).toContain(
@@ -201,7 +201,7 @@ describe('batch gate semantics (R-3)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b\nEXPIRE c 1');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(commandInvoke).toHaveBeenCalledTimes(1));
     expect(confirmCalls).toHaveLength(1);
@@ -215,7 +215,7 @@ describe('batch gate semantics (R-3)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(confirmCalls).toHaveLength(1));
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -227,7 +227,7 @@ describe('batch gate semantics (R-3)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1\nFLUSHDB');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(commandInvoke).toHaveBeenCalledTimes(1));
     expect(confirmCalls).toHaveLength(2);
@@ -245,7 +245,7 @@ describe('batch gate semantics (R-3)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(confirmCalls).toHaveLength(2));
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -257,7 +257,7 @@ describe('batch gate semantics (R-3)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(confirmCalls).toHaveLength(1));
     expect(confirmCalls[0].title).toBe('settings.safeMode');
@@ -279,7 +279,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nGET hash:1\nPING');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-failed-count')).toBeTruthy());
     expect(screen.getByTestId('redis-console-failed-count').textContent).toContain(
@@ -305,7 +305,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
     // `[a, b]` formatted as a scalar would print verbatim; as an array it becomes rows.
@@ -322,7 +322,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');
-    fireEvent.click(screen.getByTestId('redis-console-run'));
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
     expect(screen.getByTestId('redis-console-result').textContent).toContain('a');

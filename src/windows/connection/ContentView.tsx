@@ -275,6 +275,7 @@ export function ContentView({
     connectionContext: sidebarConnCtx,
     initialDatabase,
     onSlotAction: kvActions.request,
+    onSelectKvDb: selectKvDatabase,
   });
 
   const handleOpenSqlFile = useCallback(() => {

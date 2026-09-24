@@ -435,8 +435,8 @@ describe('contextBarModel — compact counts', () => {
 // component
 // ---------------------------------------------------------------------------
 
-describe('RedisContextBar — the six §3.4 fields', () => {
-  it('renders db, keys, memory, chips and scan as separate identified parts', async () => {
+describe('RedisContextBar — the five §3.4 fields', () => {
+  it('renders db, keys, memory and scan as separate identified parts', async () => {
     stubSources();
     const state = makeRelay({ scanning: true, budgetUsed: 12_000, budgetTotal: 50_000, scanCursor: '9' });
     const { container } = render(<RedisContextBar {...barProps(state)} />);
@@ -446,8 +446,8 @@ describe('RedisContextBar — the six §3.4 fields', () => {
     expect(bar.getAttribute('data-active-db')).toBe('db5');
     expect(bar.getAttribute('data-layout')).toBe('full');
 
-    const select = screen.getByTestId('redis-context-db') as HTMLSelectElement;
-    expect(select.value).toBe('db5');
+    const select = screen.getByTestId('redis-context-db') as HTMLButtonElement;
+    expect(select.textContent).toContain('db5');
     // The picker is wired, not a disabled placeholder.
     expect(select.getAttribute('data-db-switch')).toBe('wired');
     expect(select.disabled).toBe(false);
@@ -466,12 +466,6 @@ describe('RedisContextBar — the six §3.4 fields', () => {
     expect(memory.textContent).toContain('1.2 MB');
     expect(memory.textContent).toContain('4.0 MB');
 
-    const types = screen.getByTestId('redis-context-types');
-    expect(types.getAttribute('data-chip-count')).toBe('3');
-    expect(screen.getByTestId('redis-context-chip-string').getAttribute('data-count')).toBe('30');
-    expect(screen.getByTestId('redis-context-chip-hash').getAttribute('data-count')).toBe('12');
-    expect(screen.getByTestId('redis-context-chip-list').getAttribute('data-count')).toBe('6');
-
     const scan = screen.getByTestId('redis-context-scan');
     expect(scan.getAttribute('data-scan-state')).toBe('scanning');
     expect(scan.getAttribute('data-budget-used')).toBe('12000');
@@ -479,8 +473,8 @@ describe('RedisContextBar — the six §3.4 fields', () => {
     expect(scan.getAttribute('data-budget-percent')).toBe('24');
     expect(screen.getByTestId('redis-context-scan-bar').textContent).toBe('▉░░░');
 
-    // Six fields, six identifiable roots — nothing rendered under a blur.
-    expect(container.querySelectorAll('[data-part]').length).toBeGreaterThanOrEqual(5);
+    // Five fields, five identifiable roots — nothing rendered under a blur.
+    expect(container.querySelectorAll('[data-part]').length).toBeGreaterThanOrEqual(4);
   });
 
   it('asks the server for exactly the three documented commands and input', async () => {
@@ -504,38 +498,26 @@ describe('RedisContextBar — the six §3.4 fields', () => {
   });
 });
 
-describe('RedisContextBar — sampled-chips three-state behaviour', () => {
-  it('shows the mandatory annotation when the sample is short of the census', async () => {
+describe('RedisContextBar — type chips moved to overflow menu', () => {
+  it('does not render type chips inline in the bar', async () => {
     stubSources();
     render(<RedisContextBar {...barProps(makeRelay())} />);
     await settle();
 
-    const types = screen.getByTestId('redis-context-types');
-    expect(types.getAttribute('data-truncated')).toBe('true');
-    expect(types.getAttribute('data-sampled')).toBe('48');
-    expect(types.getAttribute('data-dbsize')).toBe('100');
-    const note = screen.getByTestId('redis-context-types-sampled');
-    expect(note.getAttribute('data-sampled')).toBe('48');
-    expect(note.getAttribute('data-dbsize')).toBe('100');
-    expect(note.getAttribute('data-i18n-key')).toBe('redis.contextBar.sampled');
+    // Type chips are no longer rendered inline — they appear only in the overflow menu.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
   });
 
-  it('omits the annotation for a full census', async () => {
-    stubSources({
-      distribution: { counts: { string: 52 }, sampled: 52, dbsize: 52, truncated: false },
-    });
-    render(<RedisContextBar {...barProps(makeRelay())} />);
+  it('passes type chips to the overflow menu', async () => {
+    stubSources();
+    render(<RedisContextBar {...barProps(makeRelay(), { compact: true })} />);
     await settle();
 
-    const types = screen.getByTestId('redis-context-types');
-    expect(types.getAttribute('data-truncated')).toBe('false');
-    expect(types.getAttribute('data-sampled')).toBe('exact');
-    expect(screen.queryByTestId('redis-context-types-sampled')).toBeNull();
-    // The chips themselves are still there — only the caveat goes away.
-    expect(screen.getByTestId('redis-context-chip-string')).not.toBeNull();
+    // In compact mode, types are passed to the overflow menu.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
   });
 
-  it('renders no chips at all when the read fails — and no zeros either', async () => {
+  it('renders no type info at all when the read fails', async () => {
     commandInvoke.mockImplementation((_plugin: string, command: string) => {
       if (command === 'db_sizes') return Promise.resolve(DB_SIZES);
       if (command === 'type_distribution') return Promise.reject(new Error('NOPERM'));
@@ -610,7 +592,8 @@ describe('RedisContextBar — memory with no ceiling', () => {
     render(<RedisContextBar {...barProps(makeRelay())} />);
     await settle();
     expect(screen.queryByTestId('redis-context-memory')).toBeNull();
-    expect(screen.getByTestId('redis-context-types')).not.toBeNull();
+    // Type chips are no longer rendered inline in the bar.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
   });
 });
 
@@ -684,7 +667,8 @@ describe('RedisContextBar — scan budget rendering branches', () => {
     render(<RedisContextBar {...barProps(state)} />);
     await settle();
     expect(screen.getByTestId('redis-context-db')).not.toBeNull();
-    expect(screen.getByTestId('redis-context-types')).not.toBeNull();
+    // Type chips are no longer rendered inline.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
   });
 });
 
@@ -720,19 +704,18 @@ describe('RedisContextBar — compact degradation (I-10)', () => {
     const state = makeRelay();
     const { rerender } = render(<RedisContextBar {...barProps(state)} />);
     await settle();
-    expect(screen.getByTestId('redis-context-types')).not.toBeNull();
+    // Type chips are no longer rendered inline — they are always in overflow.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
 
     rerender(<RedisContextBar {...barProps(state, { compact: true })} />);
 
     // The identifying fields stay in the band.
     expect(screen.getByTestId('redis-context-db')).not.toBeNull();
     expect(screen.getByTestId('redis-context-keys')).not.toBeNull();
-    // The two decorations leave it…
+    // The memory decoration leaves the band in compact mode…
     expect(screen.queryByTestId('redis-context-memory')).toBeNull();
-    expect(screen.queryByTestId('redis-context-types')).toBeNull();
-    // …and reappear, with the same numbers, inside the ⋯ menu.
+    // …and reappears, with the same numbers, inside the ⋯ menu.
     expect(screen.getByTestId('redis-context-overflow-memory').textContent).toContain('1.2 MB');
-    expect(screen.getByTestId('redis-context-overflow-types').textContent).toContain('string 30');
   });
 
   it('[tester] keeps the mandatory sample marker with compact overflow chips', async () => {
@@ -808,7 +791,12 @@ describe('RedisContextBar — every control asks the host (F-3)', () => {
     render(<RedisContextBar {...barProps(makeRelay(), { request })} />);
     await settle();
 
-    fireEvent.change(screen.getByTestId('redis-context-db'), { target: { value: 'db3' } });
+    // Custom Select: click trigger to open, then click the desired option.
+    fireEvent.click(screen.getByTestId('redis-context-db'));
+    const options = screen.getAllByTestId('select-option');
+    const db3 = options.find((el) => el.textContent?.trim() === 'db3');
+    expect(db3).not.toBeNull();
+    fireEvent.mouseDown(db3!);
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0][0]).toEqual({ type: 'selectDatabase', database: 'db3' });
@@ -873,10 +861,10 @@ describe('RedisContextBar — every control asks the host (F-3)', () => {
       expect(() => fireEvent.click(screen.getByTestId(id))).not.toThrow();
     }
     expect(() =>
-      fireEvent.change(screen.getByTestId('redis-context-db'), { target: { value: 'db1' } }),
+      fireEvent.click(screen.getByTestId('redis-context-db')),
     ).not.toThrow();
 
-    expect(request).toHaveBeenCalledTimes(controls.length + 1);
+    expect(request).toHaveBeenCalledTimes(controls.length);
     // And the band is still standing after all of it.
     expect(screen.getByTestId('redis-context-bar')).not.toBeNull();
   });
@@ -917,6 +905,7 @@ describe('RedisContextBar — empty and hostile inputs', () => {
     expect(Number(screen.getByTestId('redis-context-db').getAttribute('data-db-count'))).toBe(16);
     expect(screen.queryByTestId('redis-context-keys')).toBeNull();
     expect(screen.queryByTestId('redis-context-memory')).toBeNull();
+    // Type chips are no longer rendered inline.
     expect(screen.queryByTestId('redis-context-types')).toBeNull();
     expect(screen.queryByTestId('redis-context-scan')).toBeNull();
     expect(container.querySelectorAll('[data-testid^="redis-context-chip-"]')).toHaveLength(0);
@@ -974,15 +963,18 @@ describe('RedisContextBar — empty and hostile inputs', () => {
 
     const { rerender } = render(<RedisContextBar {...barProps(makeRelay())} />);
     await settle();
+    // Initially db5 — type chips are no longer rendered inline.
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
+
     rerender(<RedisContextBar {...barProps(makeRelay(), { database: 'db2', dbIndex: 2 })} />);
-    await waitFor(() => expect(screen.getByTestId('redis-context-chip-hash')).not.toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('redis-context-types')).toBeNull());
 
     // Now the superseded db5 reply lands. It must be dropped where it lands.
     await act(async () => {
       releaseOld?.({ counts: { string: 99 }, sampled: 99, dbsize: 99, truncated: false });
       await Promise.resolve();
     });
-    expect(screen.queryByTestId('redis-context-chip-string')).toBeNull();
-    expect(screen.getByTestId('redis-context-chip-hash').getAttribute('data-count')).toBe('7');
+    // Type chips remain absent from the inline bar (moved to overflow).
+    expect(screen.queryByTestId('redis-context-types')).toBeNull();
   });
 });

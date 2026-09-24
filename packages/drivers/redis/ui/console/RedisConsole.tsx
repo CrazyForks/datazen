@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { cn } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import {
   useBoundSettingsStore,
@@ -249,7 +249,7 @@ export function RedisConsole({
           setCompletionActive((idx) => (idx - 1 + completions.length) % completions.length);
           return;
         }
-        if (event.key === 'Tab' || (event.key === 'Enter' && !isMod)) {
+        if (event.key === 'Tab') {
           event.preventDefault();
           acceptCompletion(completionActive);
           return;
@@ -259,9 +259,12 @@ export function RedisConsole({
           setCompletionDismissed(true);
           return;
         }
+        // Any other key (including Enter) falls through to the handlers below;
+        // the popup will close itself once the text/cursor changes.
       }
 
-      if (isMod && event.key === 'Enter') {
+      // Plain Enter (or Cmd/Ctrl+Enter) executes the command.
+      if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         void handleExecute();
         return;
@@ -308,16 +311,8 @@ export function RedisConsole({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* ── top toolbar ──────────────────────────────────────────────── */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3">
-        <Button
-          variant="run"
-          className="h-7 gap-1 px-2 text-xs"
-          data-testid="redis-console-run"
-          onClick={() => void handleExecute()}
-          disabled={running || !commands.trim()}
-        >
-          {t('query.execute')}
-        </Button>
         <span className="text-[11px] text-fg-muted">{t('redis.console.hint')}</span>
         {commands.trim() && (
           <RedisConsoleDangerBadge assessment={badgeAssessment(commands, allowFlush)} t={t} />
@@ -332,38 +327,8 @@ export function RedisConsole({
         />
       </div>
 
-      <div className="relative min-h-[100px] border-b border-edge" style={{ height: '30%' }}>
-        <textarea
-          ref={textareaRef}
-          value={commands}
-          data-testid="redis-console-input"
-          onChange={(e) => {
-            setCommands(e.target.value);
-            setHistoryState((prev) =>
-              prev.index === null ? { ...prev, draft: e.target.value } : prev,
-            );
-            setCursor(e.target.selectionStart ?? 0);
-          }}
-          onClick={syncCursor}
-          onKeyUp={syncCursor}
-          onKeyDown={handleKeyDown}
-          spellCheck={false}
-          placeholder={t('redis.console.placeholder')}
-          className="h-full w-full resize-none bg-surface px-4 py-3 text-[13px] text-fg outline-none"
-          style={{ fontFamily: `${fontFamily}, ui-monospace, SFMono-Regular, Menlo, monospace` }}
-        />
-        {completionOpen && (
-          <CompletionPopup
-            items={completions}
-            activeIndex={completionActive}
-            loading={completion.loading}
-            onHover={(index) => setCompletionActive(index)}
-            onAccept={acceptCompletion}
-          />
-        )}
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* ── results area (scrollable, top) ───────────────────────────── */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
         {running && (
           <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -446,9 +411,6 @@ export function RedisConsole({
                   className="min-h-0 flex-1 overflow-auto p-4"
                   data-testid="redis-console-result"
                 >
-                  {/* P0-3: the renderer is fed the server's own `resultType`
-                      variant instead of re-inferring it from the formatted
-                      string, and every per-command error stays on screen. */}
                   <ConsoleResultView item={toConsoleResultItem(activeResult)} />
                 </div>
               </div>
@@ -460,6 +422,51 @@ export function RedisConsole({
           <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
             {t('redis.console.empty')}
           </div>
+        )}
+      </div>
+
+      {/* ── input bar (terminal-style, bottom) ───────────────────────── */}
+      <div className="relative shrink-0 border-t border-edge" style={{ minHeight: 48 }}>
+        <div className="flex items-stretch bg-surface">
+          <span
+            className="flex shrink-0 items-center pl-3 pr-1 font-mono text-[13px] text-accent select-none"
+            aria-hidden="true"
+          >
+            db{dbIndex}&gt;
+          </span>
+          <textarea
+            ref={textareaRef}
+            value={commands}
+            data-testid="redis-console-input"
+            onChange={(e) => {
+              setCommands(e.target.value);
+              setHistoryState((prev) =>
+                prev.index === null ? { ...prev, draft: e.target.value } : prev,
+              );
+              setCursor(e.target.selectionStart ?? 0);
+            }}
+            onClick={syncCursor}
+            onKeyUp={syncCursor}
+            onKeyDown={handleKeyDown}
+            spellCheck={false}
+            placeholder={t('redis.console.placeholder')}
+            rows={1}
+            className="min-h-[48px] w-full resize-none bg-transparent py-3 pr-4 text-[13px] text-fg outline-none"
+            style={{
+              fontFamily: `${fontFamily}, ui-monospace, SFMono-Regular, Menlo, monospace`,
+              height: 'auto',
+              overflowY: commands.split('\n').length > 3 ? 'auto' : 'hidden',
+            }}
+          />
+        </div>
+        {completionOpen && (
+          <CompletionPopup
+            items={completions}
+            activeIndex={completionActive}
+            loading={completion.loading}
+            onHover={(index) => setCompletionActive(index)}
+            onAccept={acceptCompletion}
+          />
         )}
       </div>
       {gateDialog}
