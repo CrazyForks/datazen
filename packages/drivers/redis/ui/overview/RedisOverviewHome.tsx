@@ -25,6 +25,9 @@ import { PerformanceCard } from './PerformanceCard';
 import { NavigationCard } from './NavigationCard';
 import { clearBrowseHistory, pushBrowseEntry, readBrowseHistory } from '../lib/redisBrowseHistory';
 
+/**概览屏 Recent Keys 最多显示条数（适配一屏布局）。 */
+const RECENT_KEYS_LIMIT = 3;
+
 /**
  * 屏 A — Redis 连接总览（`kvSlots.connectionHome` 的驱动贡献）。
  *
@@ -149,7 +152,7 @@ export function RedisOverviewHome({
           {/* 3. Navigation: Quick Actions + Recent Keys, full width */}
           <NavigationCard
             defaultDbIndex={dbIndex}
-            recentEntries={recent}
+            recentEntries={recent.slice(0, RECENT_KEYS_LIMIT)}
             onJump={handleJump}
             onClearRecent={handleClearRecent}
             jumpHandler={onOpenTarget}
