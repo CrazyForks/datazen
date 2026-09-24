@@ -1936,4 +1936,175 @@ mod tests {
         assert!(plan.statements.is_empty());
         assert!(!plan.requirements.is_empty());
     }
+
+    #[test]
+    fn test_tester_schema_object_converters_reject_incompatible_catalog_kinds() {
+        let view = SchemaObjectSnapshot::view(Some("public"), "orders_view", "SELECT 1");
+        assert!(view.as_migration_routine().is_err());
+        assert!(view.as_migration_trigger().is_err());
+        assert!(view.as_migration_sequence().is_err());
+        assert!(view.as_migration_type().is_err());
+
+        let mut trigger_without_target = SchemaObjectSnapshot::trigger(
+            Some("public"),
+            "orders_audit",
+            Some("public"),
+            "orders",
+            "CREATE TRIGGER orders_audit AFTER INSERT ON orders EXECUTE FUNCTION audit_row()",
+        );
+        trigger_without_target.target_name = None;
+        assert!(trigger_without_target
+            .as_migration_trigger()
+            .unwrap_err()
+            .contains("target relation is missing"));
+    }
+
+    #[test]
+    fn test_tester_object_plan_entry_points_fail_closed_without_a_registered_driver() {
+        let source = [SchemaObjectSnapshot::view(None, "v", "SELECT 1")];
+        let plans = [
+            build_view_migration_plan(&source, &[], "postgresql", "unknown_test_driver", false),
+            build_routine_trigger_migration_plan(
+                &[],
+                &[],
+                "postgresql",
+                "unknown_test_driver",
+                false,
+            ),
+            build_sequence_migration_plan(&[], &[], "postgresql", "unknown_test_driver", false),
+            build_type_migration_plan(&[], &[], "postgresql", "unknown_test_driver", false),
+        ];
+
+        for plan in plans {
+            assert!(plan.statements.is_empty());
+            assert!(matches!(
+                plan.requirements.as_slice(),
+                [PlanRequirement::Unsupported { reason, .. }]
+                    if reason.contains("No registered driver")
+            ));
+        }
+    }
+
+    #[test]
+    fn test_tester_object_planners_reject_wrong_kinds_duplicates_and_missing_identity_fields() {
+        let mut table_as_view = SchemaObjectSnapshot::view(None, "not_a_view", "SELECT 1");
+        table_as_view.kind = ObjectKind::Table;
+        let blank_view = SchemaObjectSnapshot::view(Some("public"), "  ", "SELECT 1");
+        let duplicate_view =
+            SchemaObjectSnapshot::view(Some("public"), "duplicate_view", "SELECT 1");
+        let view_plan = build_view_migration_plan_with_components(
+            &[
+                table_as_view.clone(),
+                blank_view.clone(),
+                duplicate_view.clone(),
+                duplicate_view,
+            ],
+            &[table_as_view, blank_view],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(view_plan.statements.is_empty());
+        assert!(format!("{:?}", view_plan.requirements).contains("duplicate view identities"));
+
+        let unsupported_routine = SchemaObjectSnapshot::view(None, "not_a_routine", "SELECT 1");
+        let blank_routine = routine(
+            ObjectKind::Function,
+            " ",
+            "CREATE FUNCTION blank_name() RETURNS integer AS $$ SELECT 1 $$",
+        );
+        let mut trigger_without_relation = SchemaObjectSnapshot::trigger(
+            Some("public"),
+            "orders_audit",
+            Some("public"),
+            "orders",
+            "CREATE TRIGGER orders_audit AFTER INSERT ON orders EXECUTE FUNCTION audit_row()",
+        );
+        trigger_without_relation.target_name = None;
+        let duplicate_routine = routine(
+            ObjectKind::Procedure,
+            "sync_order",
+            "CREATE PROCEDURE sync_order() LANGUAGE SQL AS $$ SELECT 1 $$",
+        );
+        let routine_plan = build_routine_trigger_migration_plan_with_components(
+            &[
+                unsupported_routine,
+                blank_routine,
+                trigger_without_relation,
+                duplicate_routine.clone(),
+                duplicate_routine,
+            ],
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(routine_plan.statements.is_empty());
+        let routine_requirements = format!("{:?}", routine_plan.requirements);
+        assert!(routine_requirements.contains("Only functions, procedures, and triggers"));
+        assert!(routine_requirements.contains("name must not be empty"));
+        assert!(routine_requirements.contains("Trigger target relation is required"));
+        assert!(routine_requirements.contains("duplicate routine/trigger identities"));
+
+        let sequence = sequence("orders_id_seq", 1);
+        let missing_schema = SchemaObjectSnapshot::sequence(
+            None,
+            "plain_seq",
+            "CREATE SEQUENCE plain_seq AS bigint",
+        );
+        let sequence_plan = build_sequence_migration_plan_with_components(
+            &[
+                unsupported_sequence(),
+                missing_schema,
+                sequence.clone(),
+                sequence,
+            ],
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(sequence_plan.statements.is_empty());
+        let sequence_requirements = format!("{:?}", sequence_plan.requirements);
+        assert!(sequence_requirements.contains("Only sequence objects"));
+        assert!(sequence_requirements.contains("schema-qualified identity is required"));
+        assert!(sequence_requirements.contains("duplicate sequence identities"));
+
+        let valid_type = SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "order_state",
+            "CREATE TYPE public.order_state AS ENUM ('new')",
+        );
+        let mut wrong_type_kind = valid_type.clone();
+        wrong_type_kind.kind = ObjectKind::View;
+        let blank_type = SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            " ",
+            "CREATE TYPE public.unnamed AS ENUM ('new')",
+        );
+        let type_plan = build_type_migration_plan_with_components(
+            &[wrong_type_kind, blank_type, valid_type.clone(), valid_type],
+            &[],
+            "postgresql",
+            "postgresql",
+            false,
+            &TestRenderer,
+            &TestCapabilities { replace: true },
+        );
+        assert!(type_plan.statements.is_empty());
+        let type_requirements = format!("{:?}", type_plan.requirements);
+        assert!(type_requirements.contains("Only user-defined type objects"));
+        assert!(type_requirements.contains("Type name must not be empty"));
+        assert!(type_requirements.contains("duplicate type identities"));
+    }
+
+    fn unsupported_sequence() -> SchemaObjectSnapshot {
+        SchemaObjectSnapshot::view(Some("public"), "not_a_sequence", "SELECT 1")
+    }
 }
