@@ -1,6 +1,6 @@
 # migration-schema-unified-planner
 
-- Phase: FAILED
+- Phase: READY_FOR_TEST
 
 - Task: One reviewed Schema Diff deployment plan across selected object kinds
 - Branch: `feature/migration-schema-unified-planner`
@@ -32,7 +32,7 @@ An unselected dependency may be accepted only when the target snapshot proves it
 - Object DDL is blocked when source and target schema scopes differ because the renderers do not provide a verified schema rewrite contract. Cross-dialect table-only plans continue through the existing type mapper; mixed object plans remain blocked.
 - PostgreSQL sequence ownership plus a table default can form a cycle. Unified creation now splits validated renderer DDL into `CREATE SEQUENCE` (unowned), the selected owner-table/default operation, and a distinct exact `OWNED BY` phase. Splitting requires matching structured `owned_by` and `column_default` records, complete dependency snapshots, and a selected table/column operation; an unselected table identity alone is not accepted. Rollback is `OWNED BY NONE`, the table inverse, then the renderer's `DROP SEQUENCE`.
 - Unified `DropSequence` and `ReplaceSequence` remain fail-closed. Owned sequences are blocked because table drops can implicitly remove them and the current renderer cannot stage safe detach/reattach; sequence mutations without ownership are also blocked because the target catalog does not yet prove the complete reverse set of column defaults. This explicit limitation must remain visible until catalog coverage and safe mutation phases are implemented.
-- PostgreSQL's live view dependency catalog previously reported the selected view itself as a dependency. Host preserves the exact-identity self-cycle blocker; it does not normalize the row. Driver commit `371a04ebf5780ef81612992f2bea9b773fd1788f` is integrated in the current feature head; its catalog behavior still needs independent retesting here before WDIO acceptance.
+- PostgreSQL's live view dependency catalog previously reported the selected view itself as a dependency. Host preserves the exact-identity self-cycle blocker; it does not normalize the row. Driver commit `371a04ebf5780ef81612992f2bea9b773fd1788f` is integrated by merge commit `61f38936`; independent driver/API checks and PG/MySQL live fixtures passed 1/1 each.
 - Opaque or incomplete driver catalogs remain blockers. MySQL routines/triggers and any unproven dependency kind must stay fail-closed until the driver supplies complete structured metadata.
 
 ## Host self-check before independent testing
@@ -45,7 +45,7 @@ An unselected dependency may be accepted only when the target snapshot proves it
 
 ## Independent Tester
 
-The Host implementation is not yet release-ready: the integrated driver view self-reference fix still needs live retesting here, and WDIO plus changed-core coverage remain unchecked. The Tester must exercise the real WDIO UI/IPC path and report database fixture cleanup evidence; this progress status does not claim those journeys have passed. `SERIAL`/`BIGSERIAL` creation is supported only when exact driver ownership/default usage metadata and a selected owner table operation prove the staged plan; unsupported/malformed attribution blocks before writes.
+The previous independent WDIO run failed on `BUG-003` and `BUG-004`. `BUG-003` is now fixed in commit `b36a2bee` and awaits a fresh independent re-test; `BUG-004` remains an open MySQL view-catalog blocker. Run real UI/IPC WDIO and live catalog checks before changing either status. `SERIAL`/`BIGSERIAL` creation is supported only when exact driver ownership/default usage metadata and a selected owner table operation prove the staged plan; unsupported/malformed attribution blocks before writes.
 
 ### Tester checkpoint · 2026-09-25
 
@@ -99,3 +99,9 @@ The Host implementation is not yet release-ready: the integrated driver view sel
 - [本机可执行] Integrated opt-in Driver API catalog fixtures passed from existing test binaries without a rebuild: PostgreSQL `structured_view_and_trigger_dependencies_are_exact_and_complete` 1/1 against the allowlisted `datazen_sync_src`; MySQL `view_dependency_catalog_returns_exact_table_and_routine_edges_when_visible` 1/1 against `datazen_test`. Both use UUID-scoped objects and completed their exact-object cleanup DDL successfully.
 - Build/run evidence: `pnpm tauri:build:webdriver` compiled the frontend and webdriver app but returned 1 in the final macOS DMG `bundle_dmg.sh` packaging step; the app binary was run directly. WDIO was invoked directly with `E2E_SKIP_WORKER_DATABASE=1`, `TAURI_WEBDRIVER_PORT=49177`, and the isolated `target/.../wdio-data-unified-20260925` data directory; no global worker DB setup or teardown ran. E2E TypeScript project checking reports 125 unrelated existing errors and no error in the changed dependency-order spec, including its final cleanup assertion.
 - Final blockers: `BUG-003` and `BUG-004`; Phase stays `FAILED`. Tester changes are limited to tests, bug reports, and this progress report.
+
+### Coder remediation checkpoint · 2026-09-25
+
+- `BUG-003` fix committed as `b36a2bee`: accepts a single trailing view terminator while rejecting multiple statements; retains exact PostgreSQL user-defined column types through `udt_schema`/`udt_name`; and adds exact dependency edges plus a narrow completeness proof only for PL/pgSQL `BEGIN RETURN NEW; END[;]`. Other function bodies, including hidden table references, stay incomplete and blocked.
+- Coder validation passed: Driver API 172/172, PostgreSQL driver 132/132, Host `cargo check -p datazen --lib`, Host `schema_diff::` 195/195, formatting, and `git diff --check`. The new `schema_function_dependency_catalog` opt-in integration target compiles with `--no-run` and tests that the safe empty dependency set passes while a hidden table reference stays incomplete.
+- This coder worktree had no isolated database configuration, so live PostgreSQL execution remains pending the next fresh Tester. `BUG-004` remains open. The final WDIO journey and command-layer runtime coverage are still required before release readiness.
