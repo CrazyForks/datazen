@@ -12,7 +12,8 @@ use crate::transfer::ir::{IRTable, IRType};
 
 use super::error::TransferError;
 use super::model::{
-    TableExecutionResult, TableInspectResult, TableMappingStatus, TransferJob, TransferMode,
+    TableExecutionOutcome, TableExecutionResult, TableInspectResult, TableMappingStatus,
+    TransferJob, TransferMode,
 };
 
 pub fn build_drop_table_sql(table: &str, tgt_adapter: &dyn SyncTargetAdapter) -> String {
@@ -236,6 +237,35 @@ pub async fn create_target_tables(
     source_schemas: &HashMap<String, TableSchema>,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<Vec<TableExecutionResult>, TransferError> {
+    create_target_tables_with_write_observer(
+        src_adapter,
+        tgt_adapter,
+        _src_driver,
+        _src_handle,
+        tgt_driver,
+        tgt_handle,
+        job,
+        inspected,
+        source_schemas,
+        cancelled,
+        None,
+    )
+    .await
+}
+
+pub async fn create_target_tables_with_write_observer(
+    src_adapter: &dyn SyncSourceAdapter,
+    tgt_adapter: &dyn SyncTargetAdapter,
+    _src_driver: &dyn DatabaseDriver,
+    _src_handle: &ConnectionHandle,
+    tgt_driver: &dyn DatabaseDriver,
+    tgt_handle: &ConnectionHandle,
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    cancelled: Option<Arc<AtomicBool>>,
+    write_started: Option<&AtomicBool>,
+) -> Result<Vec<TableExecutionResult>, TransferError> {
     if !matches!(
         job.mode,
         TransferMode::Structure | TransferMode::StructureAndData
@@ -250,65 +280,97 @@ pub async fn create_target_tables(
     }
     let mut results = Vec::new();
 
-    for table in inspected
+    let create_tables: Vec<_> = inspected
         .iter()
         .filter(|t| t.enabled && t.status == TableMappingStatus::CreateNew)
-    {
+        .collect();
+    for (table_index, table) in create_tables.iter().enumerate() {
         if let Some(flag) = &cancelled {
             if flag.load(Ordering::SeqCst) {
-                results.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(
+                results.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    TableExecutionOutcome::NotStarted,
+                    Some(
                         "transfer cancelled during structure; completed DDL remains applied".into(),
                     ),
-                });
+                ));
                 break;
             }
         }
 
         let Some(schema) = source_schemas.get(&table.source_table) else {
-            results.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: false,
-                error: Some("source schema not loaded".into()),
-            });
+            results.push(TableExecutionResult::database(
+                &table.source_table,
+                &table.target_table,
+                Some(0),
+                TableExecutionOutcome::NotStarted,
+                Some("source schema not loaded".into()),
+            ));
             if job.options.stop_on_error {
                 break;
             }
             continue;
         };
 
-        let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)?;
-
-        match tgt_driver.execute(tgt_handle, &ddl).await {
-            Ok(_) => results.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: true,
-                error: None,
-            }),
-            Err(e) => {
-                results.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(format!("CREATE failed: {e}")),
-                });
+        let ddl = match mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job) {
+            Ok(ddl) => ddl,
+            Err(error) => {
+                results.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    Some(0),
+                    TableExecutionOutcome::NotStarted,
+                    Some(error.to_string()),
+                ));
                 if job.options.stop_on_error {
                     break;
                 }
+                continue;
+            }
+        };
+
+        if let Some(write_started) = write_started {
+            write_started.store(true, Ordering::SeqCst);
+        }
+        match tgt_driver.execute(tgt_handle, &ddl).await {
+            Ok(_) => results.push(TableExecutionResult::database(
+                &table.source_table,
+                &table.target_table,
+                Some(0),
+                TableExecutionOutcome::Committed,
+                None,
+            )),
+            Err(e) => {
+                results.push(TableExecutionResult::database(
+                    &table.source_table,
+                    &table.target_table,
+                    None,
+                    TableExecutionOutcome::Unknown,
+                    Some(format!("CREATE failed; outcome UNKNOWN: {e}")),
+                ));
+                for not_started in create_tables.iter().skip(table_index + 1) {
+                    results.push(TableExecutionResult::database(
+                        &not_started.source_table,
+                        &not_started.target_table,
+                        Some(0),
+                        TableExecutionOutcome::NotStarted,
+                        Some("not started because an earlier table has an unknown outcome".into()),
+                    ));
+                }
+                break;
             }
         }
     }
 
     Ok(results)
+}
+
+#[derive(Debug)]
+pub enum DropCreateFailure {
+    NotStarted(TransferError),
+    Unknown(TransferError),
 }
 
 /// DROP + CREATE (IR) for a single table (DropCreateInsert preamble).
@@ -322,24 +384,34 @@ pub async fn drop_and_recreate_table(
     table: &TableInspectResult,
     job: &TransferJob,
     source_schemas: &HashMap<String, TableSchema>,
-) -> Result<(), TransferError> {
-    let schema = source_schemas
-        .get(&table.source_table)
-        .ok_or_else(|| TransferError::validation("source schema not loaded"))?;
+    write_started: Option<&AtomicBool>,
+) -> Result<(), DropCreateFailure> {
+    let schema = source_schemas.get(&table.source_table).ok_or_else(|| {
+        DropCreateFailure::NotStarted(TransferError::validation("source schema not loaded"))
+    })?;
     // Validate/render everything before the destructive first statement.
-    let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)?;
+    let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)
+        .map_err(DropCreateFailure::NotStarted)?;
     let drop_sql = format!(
         "DROP TABLE IF EXISTS {}",
         target_relation_ref(job, &table.target_table, tgt_adapter)
     );
+    if let Some(write_started) = write_started {
+        write_started.store(true, Ordering::SeqCst);
+    }
     tgt_driver
         .execute(tgt_handle, &drop_sql)
         .await
-        .map_err(|e| TransferError::validation(format!("DROP failed: {e}")))?;
-    tgt_driver
-        .execute(tgt_handle, &ddl)
-        .await
-        .map_err(|e| TransferError::validation(format!("CREATE failed: {e}")))?;
+        .map_err(|e| {
+            DropCreateFailure::Unknown(TransferError::validation(format!(
+                "DROP failed; outcome UNKNOWN: {e}"
+            )))
+        })?;
+    tgt_driver.execute(tgt_handle, &ddl).await.map_err(|e| {
+        DropCreateFailure::Unknown(TransferError::validation(format!(
+            "CREATE failed after DROP; outcome UNKNOWN: {e}"
+        )))
+    })?;
     Ok(())
 }
 
@@ -685,6 +757,327 @@ mod tests {
         };
         assert!(table_eligible_for_data(&table, &job));
     }
+
+    #[tokio::test]
+    async fn unknown_create_outcome_stops_following_structure_tables() {
+        use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
+        use std::sync::atomic::AtomicBool;
+
+        struct SourceAdapter;
+        impl SyncSourceAdapter for SourceAdapter {
+            fn column_to_ir(
+                &self,
+                column: &datazen_driver_api::ColumnSchema,
+                _native_full_type: Option<&str>,
+            ) -> IRColumn {
+                IRColumn {
+                    name: column.name.clone(),
+                    ir_type: IRType::Int32,
+                    nullable: column.nullable,
+                    default_expr: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                    comment: None,
+                }
+            }
+        }
+
+        let schema = TableSchema {
+            table_name: "a".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "id".into(),
+                data_type: "int".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: false,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let inspected: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|name| TableInspectResult {
+                source_table: name.into(),
+                target_table: name.into(),
+                status: TableMappingStatus::CreateNew,
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![super::super::model::ColumnMapping {
+                    source_column: "id".into(),
+                    target_column: "id".into(),
+                    skip: false,
+                    target_native_type: None,
+                }],
+                source_primary_keys: vec![],
+                source_columns: vec!["id".into()],
+                target_columns: vec![],
+                source_column_types: HashMap::new(),
+                incompatible_reason: None,
+                source_row_count: None,
+                recordset: None,
+            })
+            .collect();
+        let mut job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "source".into(),
+                database: "db".into(),
+                schema: None,
+            },
+            target: Some(super::super::model::Endpoint {
+                db_session_id: "target".into(),
+                database: "db".into(),
+                schema: None,
+            }),
+            sql_file_target: None,
+            mode: TransferMode::StructureAndData,
+            write_mode: WriteMode::Insert,
+            tables: vec![
+                super::super::model::TableMapping::auto("a"),
+                super::super::model::TableMapping::auto("b"),
+            ],
+            options: super::super::model::TransferOptions::default(),
+        };
+        job.options.stop_on_error = false;
+        let source_schemas =
+            HashMap::from([("a".into(), schema.clone()), ("b".into(), schema.clone())]);
+        let source_driver = MockDriver::new("postgres", MockDriverOptions::default());
+        let target_driver = MockDriver::new(
+            "mysql",
+            MockDriverOptions {
+                execute_error: Some("injected CREATE acknowledgement loss".into()),
+                ..Default::default()
+            },
+        );
+        let source_handle = ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        };
+        let target_handle = ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        };
+        let write_started = AtomicBool::new(false);
+
+        let results = create_target_tables_with_write_observer(
+            &SourceAdapter,
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            target_driver.as_ref(),
+            &target_handle,
+            &job,
+            &inspected,
+            &source_schemas,
+            None,
+            Some(&write_started),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Unknown));
+        assert_eq!(results[0].rows_inserted, None);
+        assert_eq!(results[1].outcome, Some(TableExecutionOutcome::NotStarted));
+        assert_eq!(target_driver.execute_calls(), 1);
+        assert!(write_started.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn structure_preflight_failures_are_not_started_and_success_can_continue() {
+        use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
+        use crate::transfer::ir::IRColumn;
+
+        struct SourceAdapter;
+        impl SyncSourceAdapter for SourceAdapter {
+            fn column_to_ir(
+                &self,
+                column: &datazen_driver_api::ColumnSchema,
+                _native_full_type: Option<&str>,
+            ) -> IRColumn {
+                IRColumn {
+                    name: column.name.clone(),
+                    ir_type: IRType::Int32,
+                    nullable: column.nullable,
+                    default_expr: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                    comment: None,
+                }
+            }
+        }
+
+        let schema = TableSchema {
+            table_name: "fixture".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "id".into(),
+                data_type: "integer".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: false,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec![],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let inspected: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|name| TableInspectResult {
+                source_table: name.into(),
+                target_table: name.into(),
+                status: TableMappingStatus::CreateNew,
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![super::super::model::ColumnMapping {
+                    source_column: "id".into(),
+                    target_column: "id".into(),
+                    skip: false,
+                    target_native_type: None,
+                }],
+                source_primary_keys: vec![],
+                source_columns: vec!["id".into()],
+                target_columns: vec![],
+                source_column_types: HashMap::new(),
+                incompatible_reason: None,
+                source_row_count: None,
+                recordset: None,
+            })
+            .collect();
+        let mut mappings: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(super::super::model::TableMapping::auto)
+            .collect();
+        mappings[1].column_mappings = vec![super::super::model::ColumnMapping {
+            source_column: "missing".into(),
+            target_column: "id".into(),
+            skip: false,
+            target_native_type: None,
+        }];
+        let mut job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "source".into(),
+                database: "db".into(),
+                schema: None,
+            },
+            target: Some(super::super::model::Endpoint {
+                db_session_id: "target".into(),
+                database: "db".into(),
+                schema: None,
+            }),
+            sql_file_target: None,
+            mode: TransferMode::Structure,
+            write_mode: WriteMode::Insert,
+            tables: mappings,
+            options: super::super::model::TransferOptions::default(),
+        };
+        job.options.stop_on_error = false;
+        let source_schemas = HashMap::from([("b".into(), schema.clone()), ("c".into(), schema)]);
+        let source_driver = MockDriver::new("postgres", MockDriverOptions::default());
+        let target_driver = MockDriver::new("mysql", MockDriverOptions::default());
+        let source_handle = ConnectionHandle {
+            id: "source".into(),
+            pool_id: "source".into(),
+        };
+        let target_handle = ConnectionHandle {
+            id: "target".into(),
+            pool_id: "target".into(),
+        };
+        let write_started = AtomicBool::new(false);
+        let results = create_target_tables_with_write_observer(
+            &SourceAdapter,
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            target_driver.as_ref(),
+            &target_handle,
+            &job,
+            &inspected,
+            &source_schemas,
+            None,
+            Some(&write_started),
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].outcome, Some(TableExecutionOutcome::NotStarted));
+        assert_eq!(results[1].outcome, Some(TableExecutionOutcome::NotStarted));
+        assert_eq!(results[2].outcome, Some(TableExecutionOutcome::Committed));
+        assert_eq!(target_driver.execute_calls(), 1);
+        assert!(write_started.load(Ordering::SeqCst));
+
+        let cancelled_target = MockDriver::new("mysql", MockDriverOptions::default());
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let cancelled_write_started = AtomicBool::new(false);
+        let cancelled_results = create_target_tables_with_write_observer(
+            &SourceAdapter,
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            cancelled_target.as_ref(),
+            &target_handle,
+            &job,
+            &inspected,
+            &source_schemas,
+            Some(cancelled),
+            Some(&cancelled_write_started),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cancelled_results.len(), 1);
+        assert_eq!(
+            cancelled_results[0].outcome,
+            Some(TableExecutionOutcome::NotStarted)
+        );
+        assert_eq!(cancelled_target.execute_calls(), 0);
+        assert!(!cancelled_write_started.load(Ordering::SeqCst));
+
+        job.mode = TransferMode::StructureAndData;
+        job.write_mode = WriteMode::DropCreateInsert;
+        let skipped_structure = create_target_tables_with_write_observer(
+            &SourceAdapter,
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            cancelled_target.as_ref(),
+            &target_handle,
+            &job,
+            &inspected,
+            &source_schemas,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(skipped_structure.is_empty());
+
+        let mut data_only = job.clone();
+        data_only.mode = TransferMode::Data;
+        data_only.write_mode = WriteMode::Insert;
+        let no_structure = create_target_tables(
+            &SourceAdapter,
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            target_driver.as_ref(),
+            &target_handle,
+            &data_only,
+            &inspected,
+            &source_schemas,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(no_structure.is_empty());
+    }
+
     #[test]
     fn mapped_create_projects_renames_and_does_not_invent_partial_primary_key() {
         let mut ir = IRTable {

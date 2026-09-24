@@ -1185,6 +1185,79 @@ describe('DataTransferWindow', () => {
     expect(screen.getByText('injected write failure')).toBeTruthy();
   });
 
+  it('renders an unknown commit outcome distinctly and does not offer resume', async () => {
+    vi.mocked(transferCommands.execute).mockResolvedValueOnce({
+      rowsInserted: 0,
+      partial: true,
+      cancelled: false,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          rowsInserted: null,
+          success: false,
+          outcome: 'unknown',
+          error: 'commit failed; outcome UNKNOWN',
+        },
+        {
+          sourceTable: 'orders',
+          targetTable: 'orders',
+          rowsInserted: 0,
+          success: false,
+          outcome: 'notStarted',
+          error: 'not started because an earlier table has an unknown outcome',
+        },
+      ],
+    });
+    await advanceToPreviewStep('insert');
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+    expect(screen.getByRole('status')).toHaveTextContent('transfer.runUnknownOutcome');
+    expect(screen.getByText('transfer.confirmedRowsInserted: 0')).toBeTruthy();
+    expect(screen.getByText(/transfer.tableOutcome.unknown/)).toBeTruthy();
+    expect(screen.getByText(/transfer.tableOutcome.notStarted/)).toBeTruthy();
+    expect(screen.getAllByText(/transfer.rowsInserted: transfer.rowsUnknown/)).toHaveLength(1);
+    expect(screen.queryByTestId('data-transfer-resume')).toBeNull();
+  });
+
+  it('renders a confirmed destructive preamble with rolled-back rows as partially applied', async () => {
+    vi.mocked(transferCommands.execute).mockResolvedValueOnce({
+      rowsInserted: 1,
+      partial: true,
+      cancelled: false,
+      tables: [
+        {
+          sourceTable: 'users',
+          targetTable: 'users',
+          rowsInserted: 0,
+          success: false,
+          outcome: 'partiallyApplied',
+          error: 'truncate was confirmed; data transaction did not start',
+        },
+        {
+          sourceTable: 'orders',
+          targetTable: 'orders',
+          rowsInserted: 1,
+          success: true,
+          outcome: 'committed',
+        },
+      ],
+    });
+    await advanceToPreviewStep('truncateInsert');
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-execute-confirm')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('data-transfer-execute-confirm-proceed'));
+
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+    expect(screen.getByRole('status')).toHaveTextContent('transfer.runPartial');
+    expect(screen.getByText(/transfer.tableOutcome.partiallyApplied/)).toBeTruthy();
+    expect(screen.getByTestId('data-transfer-table-result-users')).toHaveAttribute(
+      'data-outcome',
+      'partiallyApplied',
+    );
+  });
+
   it('[tester] renders a cancelled execution distinctly from success', async () => {
     vi.mocked(transferCommands.execute).mockResolvedValueOnce({
       rowsInserted: 0,

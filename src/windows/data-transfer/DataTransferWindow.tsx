@@ -667,79 +667,86 @@ export function DataTransferWindow() {
     [refreshEndpointSessions, buildJob, t],
   );
 
-  const runExecute = useCallback(async (resumeTokenOverride?: string) => {
-    const sessions = await refreshEndpointSessions();
-    const job = buildJob(sessions);
-    if (!job) return;
-    const planId = preview?.planId;
-    if (!planId) {
-      setErrorMsg('Transfer preview is missing its server plan; return to preview and try again.');
-      setErrorOpen(true);
-      return;
-    }
-    if (destinationMode === 'database' && targetReadOnly) {
-      setErrorMsg(t('transfer.readOnlyBlock'));
-      setErrorOpen(true);
-      return;
-    }
-    const jobId = crypto.randomUUID();
-    jobIdRef.current = jobId;
-    setExecuting(true);
-    const tableCount =
-      tables.length > 0
-        ? job.tables.filter((tbl) => tbl.enabled).length
-        : Math.max(preview?.writePlans.length ?? 0, preview?.ddl.length ?? 0);
-    setExecuteProgress(t('transfer.executingProgress', { count: tableCount }));
-    // SQL-file preview discovers the source table set on the server when
-    // the UI has not inspected a target database. An explicit empty list
-    // would otherwise disable every table in the immutable plan.
-    const selection =
-      destinationMode === 'sqlFile' && tables.length === 0
-        ? undefined
-        : {
-            sourceTables: job.tables
-              .filter((table) => table.enabled)
-              .map((table) => table.sourceTable),
-          };
-    try {
-      const selectedProfile = transferProfiles.find((profile) => profile.id === selectedProfileId);
-      const request = {
-        planId,
-        selection,
-        options: { confirmedDestructive },
-        jobId,
-        ...(resumeTokenOverride || resumeToken
-          ? { resumeToken: resumeTokenOverride ?? resumeToken ?? undefined }
-          : {}),
-      };
-      const profileRef = selectedProfile
-        ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
-        : undefined;
-      const execResult = profileRef
-        ? await transferCommands.execute(request, profileRef)
-        : await transferCommands.execute(request);
-      setResult(execResult);
-      setResumeToken(execResult.resumeToken ?? null);
-      setStep('result');
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-      setErrorOpen(true);
-    } finally {
-      setExecuting(false);
-      setExecuteProgress('');
-      jobIdRef.current = null;
-    }
-  }, [
-    refreshEndpointSessions,
-    buildJob,
-    preview,
-    targetReadOnly,
-    destinationMode,
-    tables.length,
-    confirmedDestructive,
-    resumeToken,
-    t,
-  ]);
+  const runExecute = useCallback(
+    async (resumeTokenOverride?: string) => {
+      const sessions = await refreshEndpointSessions();
+      const job = buildJob(sessions);
+      if (!job) return;
+      const planId = preview?.planId;
+      if (!planId) {
+        setErrorMsg(
+          'Transfer preview is missing its server plan; return to preview and try again.',
+        );
+        setErrorOpen(true);
+        return;
+      }
+      if (destinationMode === 'database' && targetReadOnly) {
+        setErrorMsg(t('transfer.readOnlyBlock'));
+        setErrorOpen(true);
+        return;
+      }
+      const jobId = crypto.randomUUID();
+      jobIdRef.current = jobId;
+      setExecuting(true);
+      const tableCount =
+        tables.length > 0
+          ? job.tables.filter((tbl) => tbl.enabled).length
+          : Math.max(preview?.writePlans.length ?? 0, preview?.ddl.length ?? 0);
+      setExecuteProgress(t('transfer.executingProgress', { count: tableCount }));
+      // SQL-file preview discovers the source table set on the server when
+      // the UI has not inspected a target database. An explicit empty list
+      // would otherwise disable every table in the immutable plan.
+      const selection =
+        destinationMode === 'sqlFile' && tables.length === 0
+          ? undefined
+          : {
+              sourceTables: job.tables
+                .filter((table) => table.enabled)
+                .map((table) => table.sourceTable),
+            };
+      try {
+        const selectedProfile = transferProfiles.find(
+          (profile) => profile.id === selectedProfileId,
+        );
+        const request = {
+          planId,
+          selection,
+          options: { confirmedDestructive },
+          jobId,
+          ...(resumeTokenOverride || resumeToken
+            ? { resumeToken: resumeTokenOverride ?? resumeToken ?? undefined }
+            : {}),
+        };
+        const profileRef = selectedProfile
+          ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
+          : undefined;
+        const execResult = profileRef
+          ? await transferCommands.execute(request, profileRef)
+          : await transferCommands.execute(request);
+        setResult(execResult);
+        setResumeToken(execResult.resumeToken ?? null);
+        setStep('result');
+      } catch (e) {
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setErrorOpen(true);
+      } finally {
+        setExecuting(false);
+        setExecuteProgress('');
+        jobIdRef.current = null;
+      }
+    },
+    [
+      refreshEndpointSessions,
+      buildJob,
+      preview,
+      targetReadOnly,
+      destinationMode,
+      tables.length,
+      confirmedDestructive,
+      resumeToken,
+      t,
+    ],
+  );
 
   const handleExecuteClick = useCallback(() => {
     if (writeMode !== 'insert') {
@@ -925,7 +932,10 @@ export function DataTransferWindow() {
 
   return (
     <div data-testid="data-transfer-window" className="flex h-screen flex-col bg-surface text-fg">
-      <TitleBar title={t('common.dataTransfer')} rightContent={<MigrationRunHistoryDialog operation="dataTransfer" />} />
+      <TitleBar
+        title={t('common.dataTransfer')}
+        rightContent={<MigrationRunHistoryDialog operation="dataTransfer" />}
+      />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">
@@ -1139,9 +1149,7 @@ export function DataTransferWindow() {
                         },
                       ]}
                       onChange={(value) => {
-                        setSqlFileEncoding(
-                          value as 'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be',
-                        );
+                        setSqlFileEncoding(value as 'utf8' | 'utf8Bom' | 'utf16Le' | 'utf16Be');
                         setPreview(null);
                       }}
                       triggerDataAttrs={{ 'data-testid': 'data-transfer-sql-file-encoding' }}
@@ -1490,36 +1498,82 @@ export function DataTransferWindow() {
               data-testid="data-transfer-result"
               className="space-y-3 rounded-lg border border-edge bg-surface-alt p-6 text-sm"
             >
-              <p className="text-base font-medium" role="status">
-                {result.cancelled
-                  ? t('transfer.runCancelled')
-                  : result.partial
-                    ? t('transfer.runPartial')
-                    : t('transfer.success')}
-              </p>
-              <p>
-                {t('transfer.rowsInserted')}: {result.rowsInserted}
-              </p>
-              {(result.cancelled || result.partial) && (
-                <p className="text-fg-muted">{t('transfer.partialExplanation')}</p>
-              )}
-              {result.tables.map((tbl) => (
-                <div
-                  key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}`}
-                  className="rounded-lg border border-edge bg-surface p-3"
-                >
-                  <div className="font-medium">
-                    {tbl.sourceTable}: {tbl.success ? t('transfer.success') : t('transfer.error')}
-                  </div>
-                  {!tbl.success && tbl.error ? (
-                    <CopyableError
-                      message={tbl.error}
-                      className="error-message mt-2 text-xs"
-                      copyButton
-                    />
-                  ) : null}
-                </div>
-              ))}
+              {(() => {
+                const hasUnknownOutcome = result.tables.some(
+                  (table) => table.outcome === 'unknown',
+                );
+                const getTableOutcomeLabel = (table: TransferExecutionResult['tables'][number]) => {
+                  switch (table.outcome) {
+                    case 'committed':
+                      return t('transfer.tableOutcome.committed');
+                    case 'rolledBack':
+                      return t('transfer.tableOutcome.rolledBack');
+                    case 'partiallyApplied':
+                      return t('transfer.tableOutcome.partiallyApplied');
+                    case 'notStarted':
+                      return t('transfer.tableOutcome.notStarted');
+                    case 'unknown':
+                      return t('transfer.tableOutcome.unknown');
+                    default:
+                      return table.success ? t('transfer.success') : t('transfer.error');
+                  }
+                };
+                return (
+                  <>
+                    <p className="text-base font-medium" role="status">
+                      {hasUnknownOutcome
+                        ? t('transfer.runUnknownOutcome')
+                        : result.cancelled
+                          ? t('transfer.runCancelled')
+                          : result.partial
+                            ? t('transfer.runPartial')
+                            : t('transfer.success')}
+                    </p>
+                    <p>
+                      {t(
+                        hasUnknownOutcome
+                          ? 'transfer.confirmedRowsInserted'
+                          : 'transfer.rowsInserted',
+                      )}
+                      : {result.rowsInserted}
+                    </p>
+                    {(result.cancelled || result.partial) && (
+                      <p className="text-fg-muted">
+                        {hasUnknownOutcome
+                          ? t('transfer.unknownOutcomeExplanation')
+                          : t('transfer.partialExplanation')}
+                      </p>
+                    )}
+                    {result.tables.map((tbl) => (
+                      <div
+                        key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}:${tbl.outcome ?? ''}`}
+                        data-testid={`data-transfer-table-result-${tbl.sourceTable}`}
+                        data-outcome={tbl.outcome}
+                        className="rounded-lg border border-edge bg-surface p-3"
+                      >
+                        <div className="font-medium">
+                          {tbl.sourceTable}: {getTableOutcomeLabel(tbl)}
+                        </div>
+                        {tbl.outcome ? (
+                          <p className="mt-1 text-fg-muted">
+                            {t('transfer.rowsInserted')}:{' '}
+                            {tbl.rowsInserted == null
+                              ? t('transfer.rowsUnknown')
+                              : tbl.rowsInserted}
+                          </p>
+                        ) : null}
+                        {!tbl.success && tbl.error ? (
+                          <CopyableError
+                            message={tbl.error}
+                            className="error-message mt-2 text-xs"
+                            copyButton
+                          />
+                        ) : null}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           )}
         </div>

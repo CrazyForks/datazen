@@ -29,15 +29,11 @@ const { getConnectionViewMock, schemaState, tableDataState, MockRedisView } = vi
       setCurrentDatabase: vi.fn(),
     },
     tableDataState: {
-      columns: [] as { name: string; dataType: string }[],
-      rows: [] as Record<string, unknown>[],
-      totalRows: 0,
-      selectedRows: new Set<number>(),
-      tableName: null as string | null,
-      detailRowIndex: null as number | null,
-      setDatabaseType: vi.fn(),
-      updateCell: vi.fn(),
+      byPanel: new Map<string, unknown>(),
+      removePanel: vi.fn(),
+      stageCellChange: vi.fn(),
       applyColumnToRows: vi.fn(),
+      invalidateCachedData: vi.fn(),
     },
   };
 });
@@ -245,6 +241,7 @@ describe('ContentView', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     getConnectionViewMock.mockImplementation(() => MockRedisView);
+    tableDataState.byPanel = new Map();
     schemaState.activeDbSessionId = null;
     schemaState.currentDatabase = null;
     schemaState.tables = [];
@@ -285,7 +282,15 @@ describe('ContentView', () => {
     });
 
     render(<ContentView />);
-    expect(screen.getByText(/users/)).toBeInTheDocument();
+    expect(screen.getByTestId('panel-tab')).toHaveTextContent('users');
+  });
+
+  it('prunes table-data slices whose panel no longer exists', () => {
+    tableDataState.byPanel.set('stale-panel', {});
+    panelStore.usePanelStore.setState({ panels: [], activePanelId: null });
+
+    render(<ContentView />);
+    expect(tableDataState.removePanel).toHaveBeenCalledWith('stale-panel');
   });
 
   it('shows toolbar buttons for SQL connections', () => {

@@ -94,8 +94,12 @@ export function useConnectionWorkspaceMeta(activePanel: Panel | null): Connectio
   const batchExportSupported = supportsFullTableExport(toolbarExportScope);
 
   // Guard: key-value / document panels (Redis, future MongoDB KV) hide SQL-oriented toolbar items.
-  // Uses DB_REGISTRY metadata instead of panel type literal so new KV drivers get the same behaviour.
-  const isKvPanel = activePanel?.type === 'redis-db' || toolbarDbMeta?.isKeyValue === true;
+  // DB_REGISTRY metadata is the single source of truth — the panel's own `databaseType` is set
+  // when the panel is created (`ConnectionPage` builds it from the saved connection), so the
+  // meta is always reachable from an active panel and no `'redis-db'` panel-type literal is
+  // needed here. A new KV driver gets this behaviour by declaring `isKeyValue: true` in its
+  // own meta, exactly like `dbCountsCommand` / `kvWorkspace` below.
+  const isKvPanel = toolbarDbMeta?.isKeyValue === true;
   const showNewQuery = !isKvPanel && toolbarDbMeta?.supportsSQL !== false && !!toolbarDbType;
   const showNewTable =
     !isKvPanel &&

@@ -98,6 +98,42 @@ mod tests {
     }
 
     #[test]
+    fn profile_round_trip_preserves_legacy_scalar_and_new_tuple_recordsets() {
+        let legacy_filter = serde_json::json!({
+            "filters": [],
+            "recordset": {
+                "orderBy": "id",
+                "start": {"value": "10", "inclusive": false},
+                "limit": 20
+            }
+        });
+        let tuple_filter = serde_json::json!({
+            "filters": [],
+            "recordset": {
+                "tupleRange": {
+                    "columns": ["tenant_id", "id"],
+                    "start": {"values": ["9223372036854775808", "01"], "inclusive": false},
+                    "end": {"values": ["9223372036854775808", "99"], "inclusive": true}
+                }
+            }
+        });
+        let mut value = serde_json::to_value(profile()).expect("serialize base profile");
+        value["tables"][0]["sourceFilter"] = legacy_filter.clone();
+        let legacy: SyncProfile = serde_json::from_value(value.clone()).expect("legacy profile");
+        assert_eq!(legacy.version, SyncProfile::CURRENT_VERSION);
+        assert_eq!(serde_json::to_value(&legacy).unwrap(), value);
+
+        value["tables"][0]["sourceFilter"] = tuple_filter.clone();
+        let tuple: SyncProfile = serde_json::from_value(value.clone()).expect("tuple profile");
+        assert_eq!(tuple.version, SyncProfile::CURRENT_VERSION);
+        assert_eq!(
+            tuple.tables[0].source_filter.as_ref().unwrap().0,
+            tuple_filter
+        );
+        assert_eq!(serde_json::to_value(tuple).unwrap(), value);
+    }
+
+    #[test]
     fn profile_rejects_unknown_fields_and_versions() {
         let mut value = serde_json::to_value(profile()).expect("serialize");
         value["unexpected"] = serde_json::json!(true);

@@ -43,6 +43,82 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+/// What the Data Sync executor can prove about this run. Unknown means that
+/// the transaction may have committed, but the application did not receive a
+/// confirmed commit or rollback response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionOutcome {
+    NotStarted,
+    Committed,
+    RolledBack,
+    Unknown,
+}
+
+/// IPC response that keeps the legacy result fields flat while adding an
+/// explicit, evidence-based outcome. Preflight errors are returned as
+/// `not_started` so callers do not incorrectly fence a run as unknown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSyncExecutionResponse {
+    #[serde(flatten)]
+    pub result: ExecutionResult,
+    pub outcome: ExecutionOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl DataSyncExecutionResponse {
+    pub fn from_result(result: ExecutionResult) -> Self {
+        let outcome = if result.rolled_back {
+            ExecutionOutcome::RolledBack
+        } else {
+            ExecutionOutcome::Committed
+        };
+        Self {
+            result,
+            outcome,
+            error: None,
+        }
+    }
+
+    pub fn failed_before_start(_error: impl Into<String>) -> Self {
+        Self {
+            result: ExecutionResult {
+                applied: 0,
+                rolled_back: false,
+                rollback_reason: None,
+                affected_rows: 0,
+                skipped: 0,
+                conflicts: Vec::new(),
+            },
+            outcome: ExecutionOutcome::NotStarted,
+            // Raw driver errors can include connection URIs, filesystem paths,
+            // SQL fragments, and filter values. This field crosses IPC inside
+            // an Ok payload, so keep it intentionally generic.
+            error: Some(
+                "Execution did not start. Check the plan and endpoint context, then compare again."
+                    .into(),
+            ),
+        }
+    }
+
+    pub fn unknown(_error: impl Into<String>) -> Self {
+        Self {
+            result: ExecutionResult {
+                applied: 0,
+                rolled_back: false,
+                rollback_reason: None,
+                affected_rows: 0,
+                skipped: 0,
+                conflicts: Vec::new(),
+            },
+            outcome: ExecutionOutcome::Unknown,
+            error: Some("Commit or rollback could not be confirmed. Compare current data before continuing.".into()),
+        }
+    }
+}
+
 #[async_trait]
 pub trait StatementExecutor: Send {
     fn is_read_only(&self) -> bool;
@@ -85,27 +161,15 @@ pub async fn execute_statements_with_policy(
         ));
     }
     if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-        return Ok(ExecutionResult {
-            applied: 0,
-            rolled_back: true,
-            rollback_reason: Some("execute cancelled before any changes were applied".into()),
-            affected_rows: 0,
-            skipped: 0,
-            conflicts: Vec::new(),
-        });
+        return Err(DataSyncError::not_started(
+            "execute cancelled before any changes were applied",
+        ));
     }
 
     if let Err(error) = executor.begin().await {
-        return Ok(ExecutionResult {
-            applied: 0,
-            rolled_back: true,
-            rollback_reason: Some(format!(
-                "transaction could not start; no changes were applied: {error}"
-            )),
-            affected_rows: 0,
-            skipped: 0,
-            conflicts: Vec::new(),
-        });
+        return Err(DataSyncError::not_started(format!(
+            "transaction could not start; no changes were applied: {error}"
+        )));
     }
     let mut applied = 0usize;
     let mut affected_rows = 0u64;
@@ -114,7 +178,7 @@ pub async fn execute_statements_with_policy(
     for stmt in statements {
         if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
             executor.rollback().await.map_err(|error| {
-                DataSyncError::validation(format!(
+                DataSyncError::outcome_unknown(format!(
                     "execute cancelled; rollback failed, outcome UNKNOWN: {error}"
                 ))
             })?;
@@ -153,7 +217,7 @@ pub async fn execute_statements_with_policy(
                         continue;
                     }
                     executor.rollback().await.map_err(|error| {
-                        DataSyncError::validation(format!(
+                        DataSyncError::outcome_unknown(format!(
                             "{message}; rollback failed, outcome UNKNOWN: {error}"
                         ))
                     })?;
@@ -177,7 +241,7 @@ pub async fn execute_statements_with_policy(
             Err(err) => {
                 let reason = format!("execution failed after {applied} statements: {err}");
                 executor.rollback().await.map_err(|rollback_error| {
-                    DataSyncError::validation(format!(
+                    DataSyncError::outcome_unknown(format!(
                         "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
                     ))
                 })?;
@@ -192,7 +256,11 @@ pub async fn execute_statements_with_policy(
             }
         }
     }
-    executor.commit().await?;
+    executor.commit().await.map_err(|error| {
+        DataSyncError::outcome_unknown(format!(
+            "commit result could not be confirmed; outcome UNKNOWN: {error}"
+        ))
+    })?;
     Ok(ExecutionResult {
         applied,
         rolled_back: false,
@@ -227,27 +295,15 @@ pub async fn execute_statement_batches_with_policy(
         ));
     }
     if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-        return Ok(ExecutionResult {
-            applied: 0,
-            rolled_back: true,
-            rollback_reason: Some("execute cancelled before any changes were applied".into()),
-            affected_rows: 0,
-            skipped: 0,
-            conflicts: Vec::new(),
-        });
+        return Err(DataSyncError::not_started(
+            "execute cancelled before any changes were applied",
+        ));
     }
 
     if let Err(error) = executor.begin().await {
-        return Ok(ExecutionResult {
-            applied: 0,
-            rolled_back: true,
-            rollback_reason: Some(format!(
-                "transaction could not start; no changes were applied: {error}"
-            )),
-            affected_rows: 0,
-            skipped: 0,
-            conflicts: Vec::new(),
-        });
+        return Err(DataSyncError::not_started(format!(
+            "transaction could not start; no changes were applied: {error}"
+        )));
     }
 
     let mut applied = 0usize;
@@ -266,7 +322,7 @@ pub async fn execute_statement_batches_with_policy(
                     let reason =
                         format!("statement generation failed after {applied} statements: {error}");
                     executor.rollback().await.map_err(|rollback_error| {
-                        DataSyncError::validation(format!(
+                        DataSyncError::outcome_unknown(format!(
                             "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
                         ))
                     })?;
@@ -285,7 +341,7 @@ pub async fn execute_statement_batches_with_policy(
         for stmt in statements {
             if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
                 executor.rollback().await.map_err(|error| {
-                    DataSyncError::validation(format!(
+                    DataSyncError::outcome_unknown(format!(
                         "execute cancelled; rollback failed, outcome UNKNOWN: {error}"
                     ))
                 })?;
@@ -324,7 +380,7 @@ pub async fn execute_statement_batches_with_policy(
                             continue;
                         }
                         executor.rollback().await.map_err(|error| {
-                            DataSyncError::validation(format!(
+                            DataSyncError::outcome_unknown(format!(
                                 "{message}; rollback failed, outcome UNKNOWN: {error}"
                             ))
                         })?;
@@ -348,7 +404,7 @@ pub async fn execute_statement_batches_with_policy(
                 Err(error) => {
                     let reason = format!("execution failed after {applied} statements: {error}");
                     executor.rollback().await.map_err(|rollback_error| {
-                        DataSyncError::validation(format!(
+                        DataSyncError::outcome_unknown(format!(
                             "{reason}; rollback failed, outcome UNKNOWN: {rollback_error}"
                         ))
                     })?;
@@ -365,7 +421,11 @@ pub async fn execute_statement_batches_with_policy(
         }
     }
 
-    executor.commit().await?;
+    executor.commit().await.map_err(|error| {
+        DataSyncError::outcome_unknown(format!(
+            "commit result could not be confirmed; outcome UNKNOWN: {error}"
+        ))
+    })?;
     Ok(ExecutionResult {
         applied,
         rolled_back: false,
@@ -505,7 +565,7 @@ mod tests {
         let mut exec = RecordingExecutor::default();
         let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
         let cancelled = Arc::new(AtomicBool::new(true));
-        let result = execute_statement_batches_with_policy(
+        let error = execute_statement_batches_with_policy(
             vec![stmt("INSERT")],
             &mut source,
             &mut exec,
@@ -513,14 +573,11 @@ mod tests {
             ConflictPolicy::Abort,
         )
         .await
-        .unwrap();
+        .unwrap_err();
 
-        assert!(result.rolled_back);
-        assert_eq!(result.applied, 0);
-        assert!(result
-            .rollback_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("before any changes")));
+        assert!(
+            matches!(error, DataSyncError::NotStarted(message) if message.contains("before any changes"))
+        );
         assert!(exec.calls.is_empty());
     }
 
@@ -552,7 +609,7 @@ mod tests {
 
         let mut exec = BeginFailureExecutor(Vec::new());
         let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
-        let result = execute_statement_batches_with_policy(
+        let error = execute_statement_batches_with_policy(
             vec![stmt("INSERT")],
             &mut source,
             &mut exec,
@@ -560,14 +617,11 @@ mod tests {
             ConflictPolicy::Abort,
         )
         .await
-        .unwrap();
+        .unwrap_err();
 
-        assert!(result.rolled_back);
-        assert_eq!(result.applied, 0);
-        assert!(result
-            .rollback_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("no changes were applied")));
+        assert!(
+            matches!(error, DataSyncError::NotStarted(message) if message.contains("no changes were applied"))
+        );
         assert_eq!(exec.0, vec!["begin"]);
     }
 
@@ -614,6 +668,80 @@ mod tests {
                 "commit".into(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn commit_response_loss_is_unknown_whether_commit_reached_the_server_or_not() {
+        struct CommitResponseLostExecutor {
+            commit_reached_server: bool,
+            server_committed: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl StatementExecutor for CommitResponseLostExecutor {
+            fn is_read_only(&self) -> bool {
+                false
+            }
+            async fn begin(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+            async fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64, DataSyncError> {
+                Ok(1)
+            }
+            async fn commit(&mut self) -> Result<(), DataSyncError> {
+                if self.commit_reached_server {
+                    self.server_committed.store(true, Ordering::SeqCst);
+                }
+                Err(DataSyncError::validation("commit response lost"))
+            }
+            async fn rollback(&mut self) -> Result<(), DataSyncError> {
+                Ok(())
+            }
+        }
+
+        for commit_reached_server in [false, true] {
+            for use_batches in [false, true] {
+                let server_committed = Arc::new(AtomicBool::new(false));
+                let mut executor = CommitResponseLostExecutor {
+                    commit_reached_server,
+                    server_committed: server_committed.clone(),
+                };
+                let mut source = batch_source(Vec::<Vec<SqlStatement>>::new());
+                let result = if use_batches {
+                    execute_statement_batches_with_policy(
+                        vec![stmt("INSERT")],
+                        &mut source,
+                        &mut executor,
+                        None,
+                        ConflictPolicy::Abort,
+                    )
+                    .await
+                } else {
+                    execute_statements(&[stmt("INSERT")], &mut executor, None).await
+                };
+                let error = result.unwrap_err();
+                assert!(matches!(error, DataSyncError::OutcomeUnknown(_)));
+                assert!(error.to_string().contains("outcome UNKNOWN"));
+                assert_eq!(
+                    server_committed.load(Ordering::SeqCst),
+                    commit_reached_server,
+                    "fake server outcome is not evidence available to the caller"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn execution_response_error_fields_never_echo_credentials_or_paths() {
+        let sensitive = "mysql://root:super-secret@localhost/db /Users/alice/private.sql";
+        let not_started = DataSyncExecutionResponse::failed_before_start(sensitive);
+        let unknown = DataSyncExecutionResponse::unknown(sensitive);
+
+        for response in [not_started, unknown] {
+            let error = response.error.expect("safe user-facing message");
+            assert!(!error.contains("super-secret"));
+            assert!(!error.contains("/Users/alice"));
+            assert!(!error.contains("mysql://"));
+        }
     }
 
     #[test]
@@ -860,14 +988,12 @@ mod tests {
     async fn cancel_before_start() {
         let mut exec = RecordingExecutor::default();
         let flag = Arc::new(AtomicBool::new(true));
-        let result = execute_statements(&[stmt("A")], &mut exec, Some(flag))
+        let error = execute_statements(&[stmt("A")], &mut exec, Some(flag))
             .await
-            .unwrap();
-        assert!(result.rolled_back);
-        assert!(result
-            .rollback_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("before any changes")));
+            .unwrap_err();
+        assert!(
+            matches!(error, DataSyncError::NotStarted(message) if message.contains("before any changes"))
+        );
         assert!(exec.calls.is_empty());
     }
 
@@ -893,15 +1019,12 @@ mod tests {
             }
         }
 
-        let result = execute_statements(&[stmt("INSERT")], &mut BeginFailureExecutor, None)
+        let error = execute_statements(&[stmt("INSERT")], &mut BeginFailureExecutor, None)
             .await
-            .unwrap();
-        assert!(result.rolled_back);
-        assert_eq!(result.applied, 0);
-        assert!(result
-            .rollback_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("no changes were applied")));
+            .unwrap_err();
+        assert!(
+            matches!(error, DataSyncError::NotStarted(message) if message.contains("no changes were applied"))
+        );
     }
 
     #[tokio::test]

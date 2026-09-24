@@ -33,14 +33,24 @@
 
 环境：`ubuntu-latest`；`DATAZEN_KEYRING=file`（无 OS 钥匙串）。
 
+结构：`frontend` 与 `rust` 两个**并行 job**（互不依赖，墙钟时间取较大者），外加聚合 job `ci`（`needs: [frontend, rust]`）作为分支保护的 required status check。
+
+### 2.1 frontend job（前端段）
+
 | 步骤 | 命令 / 动作 | 说明 |
 |------|-------------|------|
 | 依赖 | `pnpm install --frozen-lockfile` | Node **24**、pnpm **11**（与 workflow 一致） |
 | 代码生成 | `node scripts/generate-builtin-locales.mjs` | `builtinLocales.ts` 为 gitignore codegen |
 | 类型 | `pnpm typecheck` | `tsc --noEmit` |
-| 守卫 | `check-managed-stubs.mjs`、`check-structure-editor-guardrails.mjs` | 防止误提交 inject 产物 |
+| 守卫 | `check-managed-stubs.mjs`、`check-structure-editor-guardrails.mjs` 等 | 防止误提交 inject 产物 |
 | Host 单测 | `pnpm test:unit` | Vitest；`pretest:unit` 会 `--codegen-only --drivers=basic` |
-| Site（条件） | `check-site-seo.mjs` | 仅当 diff 含 `site/` |
+| Site（条件） | `check-site-seo.mjs` | 仅当 diff 含 `site/`（`fetch-depth: 0` 仅此 job 需要） |
+
+### 2.2 rust job（Rust 段，浅克隆）
+
+| 步骤 | 命令 / 动作 | 说明 |
+|------|-------------|------|
+| 依赖 | `pnpm install --frozen-lockfile` | 注入脚本链 import `fflate`，仍需 node_modules |
 | 驱动解析 | `resolve-drivers.mjs --drivers=basic` | 写入 `.driver-features.json`、codegen |
 | Rust | 见下表 | Rust **stable** |
 | 清理 | `driver-file-stash.mjs restore` | 恢复被 inject 的 tracked 文件（`if: always()`） |
@@ -49,11 +59,14 @@
 Rust 测试顺序（与 `ci.yml` 一致）：
 
 ```bash
-cargo test -p datazen-driver-api --lib
+# driver-api 与四个 path 驱动合为一次 cargo 调用（不依赖 --features）
+cargo test --lib -p datazen-driver-api -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis
+# datazen 需要 features 选择注入的驱动
 FEATURES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.driver-features.json','utf8')).features.join(','))")
 cargo test -p datazen --lib --features "$FEATURES"
-cargo test -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis --lib
+# 恢复被 inject 的 tracked 文件，确保后续步骤工作在干净状态
 node scripts/driver-file-stash.mjs restore
+# ai-api 不依赖注入产物，放在 restore 之后
 cargo test -p datazen-ai-api --lib
 ```
 
@@ -77,10 +90,9 @@ node scripts/generate-builtin-locales.mjs
 pnpm typecheck
 pnpm test:unit
 node scripts/resolve-drivers.mjs --drivers=basic
-cargo test -p datazen-driver-api --lib
+cargo test --lib -p datazen-driver-api -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis
 FEATURES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.driver-features.json','utf8')).features.join(','))")
 cargo test -p datazen --lib --features "$FEATURES"
-cargo test -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis --lib
 node scripts/driver-file-stash.mjs restore
 cargo test -p datazen-ai-api --lib
 ```

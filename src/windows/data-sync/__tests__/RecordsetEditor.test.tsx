@@ -66,4 +66,116 @@ describe('RecordsetEditor', () => {
     fireEvent.change(input, { target: { value: '10' } });
     expect(onChange).toHaveBeenLastCalledWith({ orderBy: 'id', limit: 10 });
   });
+
+  it('creates complete tuple ranges for composite keys and edits every component', () => {
+    const onChange = vi.fn();
+    const primaryKeys = ['tenant_id', 'bucket', 'id'];
+    render(<RecordsetEditor primaryKeys={primaryKeys} onChange={onChange} />);
+
+    fireEvent.click(screen.getByTestId('data-sync-recordset-toggle'));
+    expect(onChange).toHaveBeenLastCalledWith({ tupleRange: { columns: primaryKeys } });
+
+    const editor = render(
+      <RecordsetEditor
+        primaryKeys={primaryKeys}
+        recordset={{ tupleRange: { columns: primaryKeys } }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('data-sync-recordset-start-0'), {
+      target: { value: '9223372036854775808' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tupleRange: {
+        columns: primaryKeys,
+        start: { values: ['9223372036854775808', '', ''], inclusive: true },
+      },
+      orderBy: undefined,
+      start: undefined,
+      end: undefined,
+    });
+    editor.rerender(
+      <RecordsetEditor
+        primaryKeys={primaryKeys}
+        recordset={{
+          tupleRange: {
+            columns: primaryKeys,
+            start: { values: ['9223372036854775808', '', ''], inclusive: true },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('data-sync-recordset-start-1'), {
+      target: { value: '7' },
+    });
+    editor.rerender(
+      <RecordsetEditor
+        primaryKeys={primaryKeys}
+        recordset={{
+          tupleRange: {
+            columns: primaryKeys,
+            start: { values: ['9223372036854775808', '7', ''], inclusive: true },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('data-sync-recordset-start-2'), {
+      target: { value: '42' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tupleRange: {
+        columns: primaryKeys,
+        start: { values: ['9223372036854775808', '7', '42'], inclusive: true },
+      },
+      orderBy: undefined,
+      start: undefined,
+      end: undefined,
+    });
+  });
+
+  it('clears a tuple endpoint when all component values are cleared', () => {
+    const onChange = vi.fn();
+    const primaryKeys = ['tenant_id', 'id'];
+    const editor = render(
+      <RecordsetEditor
+        primaryKeys={primaryKeys}
+        recordset={{
+          tupleRange: {
+            columns: primaryKeys,
+            start: { values: ['10', '20'], inclusive: false },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('data-sync-recordset-start-0'), {
+      target: { value: '' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tupleRange: {
+        columns: primaryKeys,
+        start: { values: ['', '20'], inclusive: false },
+      },
+    });
+    editor.rerender(
+      <RecordsetEditor
+        primaryKeys={primaryKeys}
+        recordset={{
+          tupleRange: {
+            columns: primaryKeys,
+            start: { values: ['', '20'], inclusive: false },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('data-sync-recordset-start-1'), {
+      target: { value: '' },
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tupleRange: { columns: primaryKeys },
+    });
+  });
 });

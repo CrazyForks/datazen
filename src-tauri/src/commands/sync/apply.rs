@@ -234,44 +234,13 @@ async fn compare_data_sync_impl_inner(
         let pk_columns = schema.effective_primary_keys();
         let sync_filter = source_filters.get(&mapping.source_table).cloned();
         if let Some(filter) = sync_filter.as_ref() {
-            filter
-                .validate(&schema)
-                .map_err(|error| CommandError::Validation(error.to_string()))?;
-            filter.validate(&target_table_schema).map_err(|error| {
-                CommandError::Validation(format!(
-                    "{}: sync filter is not valid for target '{}': {error}",
-                    mapping.source_table, mapping.target_table
-                ))
-            })?;
-            for (driver, side, table_schema) in [
-                (src_driver.as_ref(), "source", &schema),
-                (tgt_driver.as_ref(), "target", &target_table_schema),
-            ] {
-                filter
-                    .build_where_typed_with_default_order(
-                        driver.quote_char(),
-                        1,
-                        (pk_columns.len() == 1).then(|| pk_columns[0].as_str()),
-                        |column| {
-                            table_schema
-                                .columns
-                                .iter()
-                                .find(|candidate| candidate.name == column)
-                                .map(|candidate| candidate.data_type.clone())
-                        },
-                        |index, data_type| {
-                            driver
-                                .parameter_placeholder(index, data_type)
-                                .map_err(|error| DataSyncError::validation(error.to_string()))
-                        },
-                    )
-                    .map_err(|error| {
-                        CommandError::Validation(format!(
-                            "{}: {side} driver cannot execute sync filter: {error}",
-                            mapping.source_table
-                        ))
-                    })?;
-            }
+            super::filter_validation::validate_filter_schemas(
+                filter,
+                &schema,
+                &target_table_schema,
+                &mapping.source_table,
+                &mapping.target_table,
+            )?;
         }
         let column_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
         let source_column_types: HashMap<String, String> = schema
@@ -296,49 +265,29 @@ async fn compare_data_sync_impl_inner(
             .transpose()
             .map_err(|error| CommandError::Validation(error.to_string()))?
             .flatten();
-        let mut src_contracts = Vec::with_capacity(pk_columns.len());
-        let mut tgt_contracts = Vec::with_capacity(pk_columns.len());
-        for pk in &pk_columns {
-            let source_column = schema
-                .columns
-                .iter()
-                .find(|c| &c.name == pk)
-                .ok_or_else(|| CommandError::Validation(format!("missing key column {pk}")))?;
-            let target_column = target_table_schema
-                .columns
-                .iter()
-                .find(|c| &c.name == pk)
-                .ok_or_else(|| {
-                    CommandError::Validation(format!(
-                        "target key column {pk} is missing; compare again"
-                    ))
-                })?;
-            let source_contract =
-                src_key_adapter
-                    .sync_key_contract(source_column)
-                    .map_err(|reason| {
-                        CommandError::Validation(format!(
-                            "{}: source key '{}': {reason}",
-                            mapping.source_table, pk
-                        ))
-                    })?;
-            let target_contract =
-                tgt_key_adapter
-                    .sync_key_contract(target_column)
-                    .map_err(|reason| {
-                        CommandError::Validation(format!(
-                            "{}: target key '{}': {reason}",
-                            mapping.target_table, pk
-                        ))
-                    })?;
-            if source_contract != target_contract {
-                return Err(CommandError::Validation(format!(
-                    "{}: key '{}' has incompatible source/target equality or ordering contract (source={source_contract:?}, target={target_contract:?})",
-                    mapping.source_table, pk
-                )));
-            }
-            src_contracts.push(source_contract);
-            tgt_contracts.push(target_contract);
+        let (src_contracts, tgt_contracts) = super::filter_validation::resolve_key_contracts(
+            &pk_columns,
+            src_key_adapter.as_ref(),
+            tgt_key_adapter.as_ref(),
+            &schema,
+            &target_table_schema,
+            &mapping.source_table,
+            &mapping.target_table,
+        )?;
+        if let Some(filter) = sync_filter.as_ref() {
+            super::filter_validation::validate_filter_endpoints(
+                filter,
+                &pk_columns,
+                src_driver.as_ref(),
+                tgt_driver.as_ref(),
+                src_key_adapter.as_ref(),
+                tgt_key_adapter.as_ref(),
+                &schema,
+                &target_table_schema,
+                &src_contracts,
+                &tgt_contracts,
+                &mapping.source_table,
+            )?;
         }
         let pk_indexes: Vec<usize> = pk_columns
             .iter()

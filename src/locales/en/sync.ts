@@ -7,9 +7,27 @@ const pack = {
   'migrationHistory.counts': 'Committed / failed / conflicts',
   'migrationHistory.rollback': 'Rollback',
   'migrationHistory.profile': 'Profile revision',
+  'migrationHistory.syncUnknownHint':
+    'The previous plan will not be reused. Reconnect, inspect current schemas, and compare current rows before reviewing a new plan.',
+  'migrationHistory.syncReconcile': 'Compare current data',
+  'migrationHistory.syncReconcileBusy':
+    'Wait for the current execution to finish before starting a new comparison.',
+  'migrationHistory.syncReconcileMissingConnection':
+    'A saved endpoint connection no longer exists. Select both endpoints again before comparing.',
+  'migrationHistory.syncReconcileProfileReady':
+    'Saved profile revision matched. Inspect and compare current data before reviewing a new plan.',
+  'migrationHistory.syncReconcileProfileChanged':
+    'The saved profile changed or was removed. Select the scope and filters again, then inspect and compare current data.',
+  'migrationHistory.syncReconcileScopeUnavailable':
+    'The saved profile scope could not be verified against the current databases. Select the scope and filters again, then inspect and compare current data.',
+  'migrationHistory.syncReconcileConfirmScope': 'I reviewed the selected scope',
+  'migrationHistory.syncReconcileNeedsScope':
+    'Select databases, schemas, tables, and any filters again, then inspect and compare current data.',
   // --- Data Sync ---
   'sync.executionUnknown':
     'The write outcome could not be confirmed. Compare again before retrying.',
+  'sync.executionNotStarted':
+    'Execution did not start. Review the endpoint context and compare again before retrying.',
   'sync.cancellingExecution': 'Cancellation requested. Waiting for the transaction outcome…',
   'sync.source': 'Source',
   'sync.target': 'Target',
@@ -236,9 +254,24 @@ const pack = {
   'transfer.error': 'Transfer error',
   'transfer.runCancelled': 'Cancelled',
   'transfer.runPartial': 'Transfer incomplete',
+  'transfer.runUnknownOutcome': 'Transfer outcome unknown',
   'transfer.partialExplanation':
     'Completed tables and DDL may remain applied. Current data writes are rolled back when possible. Check errors before retrying; unknown outcomes require verification.',
   'transfer.rowsInserted': 'Rows inserted',
+  'transfer.confirmedRowsInserted': 'Confirmed rows inserted',
+  'transfer.rowsUnknown': 'Rows with unknown outcome',
+  'transfer.unknownOutcomeExplanation':
+    'The database did not confirm whether the current write committed or rolled back. Verify the target data before retrying.',
+  'transfer.tableOutcome.committed': 'Committed',
+  'transfer.tableOutcome.rolledBack': 'Rolled back',
+  'transfer.tableOutcome.partiallyApplied': 'Partially applied',
+  'transfer.tableOutcome.notStarted': 'Not started',
+  'transfer.tableOutcome.unknown': 'Unknown',
+  'transfer.historyOutcome.notRequired': 'Not required',
+  'transfer.historyOutcome.notStarted': 'Not started',
+  'transfer.historyOutcome.rolledBack': 'Rolled back',
+  'transfer.historyOutcome.unknown': 'Unknown',
+  'transfer.historyOutcome.partiallyApplied': 'Partially applied',
   'transfer.success': 'Success',
   'transfer.step.endpoints': 'Endpoints',
   'transfer.step.setup': 'Setup',

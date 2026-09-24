@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   invokeCreateKey,
+  invokeDeleteKey,
+  invokeRename,
   invokeSetExpireAt,
   invokeSetString,
   invokeSetTtl,
@@ -11,29 +13,32 @@ import {
   type PluginInvokeFn,
 } from '../value-editors/keyEditorsInvokes';
 
-describe('invokeSetString (PR-1 KEEPTTL)', () => {
-  it('passes keepTtl=false by default', async () => {
+describe('invokeSetString (E-5: keepTtl removed — backend owns the default)', () => {
+  it('sends exactly four payload fields and never a keepTtl switch', async () => {
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
-    await invokeSetString('sess-1', 0, 'k1', 'v1', false, invoke);
+    await invokeSetString('sess-1', 0, 'k1', 'v1', invoke);
     expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
       dbSessionId: 'sess-1',
       dbIndex: 0,
       key: 'k1',
       value: 'v1',
-      keepTtl: false,
     });
+    expect(invoke.mock.calls[0]?.[2]).not.toHaveProperty('keepTtl');
   });
 
-  it('passes keepTtl=true for KEEPTTL path', async () => {
+  it('does not resurrect keepTtl for a key that already has a TTL', async () => {
+    // Pre-W3-C the backend default (`unwrap_or(false)`) drops the TTL; the
+    // coordinator accepted that rather than a second frontend switch.
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
-    await invokeSetString('sess-2', 3, 'cache:tmp', 'payload', true, invoke);
-    expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
+    await invokeSetString('sess-2', 3, 'cache:tmp', 'payload', invoke);
+    const payload = invoke.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(payload).toEqual({
       dbSessionId: 'sess-2',
       dbIndex: 3,
       key: 'cache:tmp',
       value: 'payload',
-      keepTtl: true,
     });
+    expect(payload).not.toHaveProperty('keepTtl');
   });
 });
 
@@ -79,15 +84,13 @@ describe('invokeCreateKey', () => {
   it('creates string key via set_string', async () => {
     const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
     await invokeCreateKey('sess-1', 0, 'new:str', 'string', 'hello', invoke);
-    expect(invoke).toHaveBeenCalledWith(
-      'redis',
-      'set_string',
-      expect.objectContaining({
-        key: 'new:str',
-        value: 'hello',
-        keepTtl: false,
-      }),
-    );
+    expect(invoke).toHaveBeenCalledWith('redis', 'set_string', {
+      dbSessionId: 'sess-1',
+      dbIndex: 0,
+      key: 'new:str',
+      value: 'hello',
+    });
+    expect(invoke.mock.calls[0]?.[2]).not.toHaveProperty('keepTtl');
   });
 
   it('creates hash key via hash_set', async () => {
@@ -275,5 +278,37 @@ describe('invokeZsetScan (PR-3)', () => {
     await invokeZsetScan('sess-1', 0, 'z', 0, 100, undefined, invoke);
     const args = invoke.mock.calls[0][2] as Record<string, unknown>;
     expect(args).not.toHaveProperty('matchPattern');
+  });
+});
+
+/* ── [tester] 第 1 轮复验补测：键头行两个新入口的出网形状 ─────────────────────
+ * 台账 §6 把 `keyEditorsInvokes:306-321` 归给「集合类批量 invoke 辅助（本轨未动其
+ * 语义）」并据此记为非缺口。实测该区间是 `invokeRename`(:296-311) 与
+ * `invokeDeleteKey`(:314-325)，后者是**本轨 E-4 新建**的单键删除入口 —— 属验收面，
+ * 故在此钉住其命令与载荷（键头行的两个写动作经 UI 旅程时被 mock 掉，真实函数当时
+ * 零覆盖）。见 bugs/redis-detail-ui-BUG-005.md。
+ */
+describe('[tester] invokeRename (E-4 header rename wire shape)', () => {
+  it('sends the rename command with both key names and nothing else', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);
+    await invokeRename('sess-9', 2, 'user:1', 'user:renamed', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'rename', {
+      dbSessionId: 'sess-9',
+      dbIndex: 2,
+      key: 'user:1',
+      newKey: 'user:renamed',
+    });
+  });
+});
+
+describe('[tester] invokeDeleteKey (E-4 header delete wire shape)', () => {
+  it('reuses the batch delete command with a one-element key list', async () => {
+    const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(1);
+    await invokeDeleteKey('sess-9', 0, 'user:1', invoke);
+    expect(invoke).toHaveBeenCalledWith('redis', 'delete_keys', {
+      dbSessionId: 'sess-9',
+      dbIndex: 0,
+      keys: ['user:1'],
+    });
   });
 });

@@ -4,6 +4,9 @@ mod apply;
 pub(crate) mod compare;
 mod comparison_store;
 mod exec;
+mod filter_validation;
+#[cfg(test)]
+mod filter_validation_tests;
 mod inspect;
 mod jobs;
 mod keyset_source;
@@ -17,8 +20,8 @@ mod tests;
 use super::error::CommandError;
 use super::AppState;
 use crate::data_sync::{
-    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncPairingView, SyncProfile,
-    SyncSourceFilter, TableMapping,
+    classify_data_sync_pair as classify_data_sync_pair_impl, DataSyncExecutionResponse,
+    DataSyncPairingView, SyncProfile, SyncSourceFilter, TableMapping,
 };
 use crate::store::SyncTask;
 #[cfg(test)]
@@ -196,9 +199,7 @@ pub async fn execute_data_sync(
     state: State<'_, AppState>,
     request: SyncRunRequest,
     profile: Option<crate::store::MigrationProfileRef>,
-) -> Result<crate::data_sync::ExecutionResult, CommandError> {
-    crate::commands::history::validate_migration_profile_ref(&state, "dataSync", profile.as_ref())
-        .await?;
+) -> Result<DataSyncExecutionResponse, CommandError> {
     let mut run =
         crate::commands::history::start_migration_run(&state, "dataSync", profile.as_ref()).await;
     run.selected_count = request.selection.rows.len() as u64;
@@ -212,33 +213,56 @@ pub async fn execute_data_sync(
             .owner_connection_id(&plan.target_db_session_id)
             .await;
     }
-    let result = execute_data_sync_plan_impl(&state, request).await;
-    match &result {
-        Ok(value) => {
-            crate::commands::history::finish_migration_run(
-                &state,
-                run,
-                !value.rolled_back,
-                false,
-                value.applied as u64,
-                0,
-                value.conflicts.len() as u64,
-                if value.rolled_back {
-                    "completed"
-                } else {
-                    "notRequired"
-                },
-            )
-            .await
+    let (response, cancelled) = match crate::commands::history::validate_migration_profile_ref(
+        &state,
+        "dataSync",
+        profile.as_ref(),
+    )
+    .await
+    {
+        Err(error) => (
+            DataSyncExecutionResponse::failed_before_start(error.to_string()),
+            false,
+        ),
+        Ok(()) => {
+            execution_response_and_cancelled(execute_data_sync_plan_impl(&state, request).await)
         }
-        Err(_) => {
-            crate::commands::history::finish_migration_run(
-                &state, run, false, false, 0, 1, 0, "unknown",
-            )
-            .await
+    };
+    crate::commands::history::finish_data_sync_migration_run(&state, run, &response, cancelled)
+        .await;
+    Ok(response)
+}
+
+pub(crate) fn execution_response_from_result(
+    result: Result<crate::data_sync::ExecutionResult, CommandError>,
+) -> DataSyncExecutionResponse {
+    match result {
+        Ok(result) => DataSyncExecutionResponse::from_result(result),
+        Err(CommandError::DataSyncOutcomeUnknown(error)) => {
+            DataSyncExecutionResponse::unknown(error)
         }
+        Err(error) => DataSyncExecutionResponse::failed_before_start(error.to_string()),
     }
-    result
+}
+
+fn execution_response_and_cancelled(
+    result: Result<crate::data_sync::ExecutionResult, CommandError>,
+) -> (DataSyncExecutionResponse, bool) {
+    let cancelled = match &result {
+        Err(CommandError::DataSyncNotStarted(message)) => message.starts_with("execute cancelled"),
+        Ok(value) => value
+            .rollback_reason
+            .as_deref()
+            .is_some_and(|message| message.starts_with("execute cancelled")),
+        _ => false,
+    };
+    (execution_response_from_result(result), cancelled)
+}
+
+#[cfg(feature = "webdriver")]
+#[tauri::command]
+pub fn set_data_sync_test_commit_fault(fault: String) -> Result<(), CommandError> {
+    exec::set_e2e_commit_fault(&fault).map_err(CommandError::Validation)
 }
 
 #[tauri::command]

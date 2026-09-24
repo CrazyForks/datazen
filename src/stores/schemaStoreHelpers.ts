@@ -1,5 +1,6 @@
 import type { DatabaseType, TableInfo } from '../types';
 import { collectTableLeafNames, type SqlNamespace } from '../lib/sqlNamespace';
+import { isSystemDatabaseName } from '../lib/objectFilter';
 
 /** Session multi-db UI: capability flag AND more than one *visible* database. */
 export function computeIsMultiDatabase(
@@ -16,7 +17,13 @@ export function resolvePreferredDatabase(
   if (preferredDatabase && databases.includes(preferredDatabase)) {
     return preferredDatabase;
   }
-  return databases[0] ?? null;
+  // A connection without a configured database used to land on `databases[0]`,
+  // which for MySQL is `information_schema` (and `postgres` for PostgreSQL) —
+  // so every database-scoped view opened on a cold connect showed an empty,
+  // useless target. Prefer the first user database; keep the old fallback when
+  // the server only exposes system databases.
+  const firstUserDatabase = databases.find((db) => !isSystemDatabaseName(db));
+  return firstUserDatabase ?? databases[0] ?? null;
 }
 
 /**
@@ -81,4 +88,12 @@ export interface LoadForConnectionOptions {
   preferredDatabase?: string;
   /** Used to resolve hasMultiDatabase for session isMultiDatabase. */
   databaseType?: DatabaseType | string;
+  /**
+   * Make this session the store's active one while (re)loading. Default true:
+   * opening/navigating to a connection SHOULD focus it. Background refresh
+   * paths pass `false` so refreshing another connection can never steal
+   * `activeDbSessionId` (and with it the flattened top-level `currentDatabase`
+   * that query panels read) from the session the user is working on.
+   */
+  activate?: boolean;
 }

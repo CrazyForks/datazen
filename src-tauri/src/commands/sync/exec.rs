@@ -5,13 +5,34 @@ use super::super::AppState;
 use super::apply::generate_data_sync_sql_impl;
 use super::comparison_store::{ComparisonStore, ComparisonTableMetadata};
 use super::plans::{self, SelectionMatcher, StoredSyncPlan, SyncRunRequest, SyncRunSelection};
+#[cfg(test)]
+use crate::data_sync::execute_statements;
 use crate::data_sync::{
-    execute_statement_batches_with_policy, execute_statements, DataSyncError, ExecutionResult,
-    StatementBatchSource, StatementExecutor, SyncOptions,
+    execute_statement_batches_with_policy, DataSyncError, ExecutionResult, StatementBatchSource,
+    StatementExecutor, SyncOptions,
 };
 use crate::db::{ConnectionHandle, DatabaseDriver, TransactionHandle, Value};
 use async_trait::async_trait;
+#[cfg(feature = "webdriver")]
+use std::sync::atomic::AtomicU8;
+#[cfg(feature = "webdriver")]
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+#[cfg(feature = "webdriver")]
+static E2E_COMMIT_FAULT: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(feature = "webdriver")]
+pub(crate) fn set_e2e_commit_fault(fault: &str) -> Result<(), String> {
+    let value = match fault {
+        "lost_after_commit" => 1,
+        "lost_before_commit" => 2,
+        "none" => 0,
+        _ => return Err("unsupported Data Sync E2E commit fault".into()),
+    };
+    E2E_COMMIT_FAULT.store(value, Ordering::SeqCst);
+    Ok(())
+}
 
 struct LiveExecutor {
     driver: Arc<dyn DatabaseDriver>,
@@ -49,6 +70,28 @@ impl StatementExecutor for LiveExecutor {
 
     async fn commit(&mut self) -> Result<(), crate::data_sync::DataSyncError> {
         if let Some(tx) = self.tx.take() {
+            #[cfg(feature = "webdriver")]
+            match E2E_COMMIT_FAULT.swap(0, Ordering::SeqCst) {
+                1 => {
+                    self.driver
+                        .commit(tx)
+                        .await
+                        .map_err(|e| crate::data_sync::DataSyncError::validation(e.to_string()))?;
+                    return Err(crate::data_sync::DataSyncError::outcome_unknown(
+                        "E2E injected commit response loss after commit",
+                    ));
+                }
+                2 => {
+                    // Drop the rollback acknowledgement too, modelling a lost
+                    // response at the transaction boundary. This branch exists
+                    // only in the webdriver build and consumes one armed fault.
+                    let _ = self.driver.rollback(tx).await;
+                    return Err(crate::data_sync::DataSyncError::outcome_unknown(
+                        "E2E injected commit response loss before commit",
+                    ));
+                }
+                _ => {}
+            }
             self.driver
                 .commit(tx)
                 .await

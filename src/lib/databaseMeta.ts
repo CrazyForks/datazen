@@ -11,6 +11,30 @@ import type { TypeCategory } from '../components/query-builder/typeCategory';
 
 export type ConnectionMode = 'server' | 'file' | 'url';
 
+/**
+ * Which KV workspace surfaces a driver is able to fill.
+ *
+ * These are *capabilities*, not driver ids: the host opens a slot only when the
+ * flag is set, and it still needs a component registered for that slot
+ * (`scripts/resolve-drivers.mjs` → `getDriverKvSlot`) before it renders one.
+ * Every flag is optional and defaults to `false`, so a driver that does not
+ * declare `kvWorkspace` keeps today's behaviour bit for bit — which is exactly
+ * the backward-compatibility contract of this field.
+ *
+ * Add the declaration in the driver's own meta file (e.g. redis:
+ * `packages/drivers/redis/ui/shared/meta.ts`), never in the host.
+ */
+export interface KvWorkspaceCapabilities {
+  /** Fill the 48px content-toolbar left cluster (db picker, key counts, …). */
+  contextBar?: boolean;
+  /** Replace the bottom status bar's centre cluster with KV facts. */
+  statusBar?: boolean;
+  /** Render a key-props sidebar in the detail drawer instead of the row table. */
+  keyPropsSidebar?: boolean;
+  /** Take over the connected landing screen (no panel open) with a KV overview. */
+  home?: boolean;
+}
+
 export interface DatabaseTypeMeta {
   /** Human-readable name, e.g. "PostgreSQL" */
   label: string;
@@ -92,6 +116,14 @@ export interface DatabaseTypeMeta {
    * Expected result: an array of `{ db: number; keys: number }`.
    */
   dbCountsCommand?: string;
+  /**
+   * KV workspace slots this driver can fill (context bar / status bar /
+   * key-props sidebar / connection home). Omit entirely — or leave a flag out —
+   * to keep the host's SQL-oriented default rendering for that surface; the
+   * host checks this capability before it even looks for a registered component.
+   * See {@link KvWorkspaceCapabilities}.
+   */
+  kvWorkspace?: KvWorkspaceCapabilities;
   /** Default page size for table data; unset uses per-table or global default */
   defaultPageSize?: number;
   /** Connection form variant — extensions can provide custom form identifiers */

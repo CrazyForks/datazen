@@ -105,8 +105,15 @@ describe('locales', () => {
     // locales entry mirrors what the app does when generated.ts loads the
     // driver UI meta. The host never aggregates driver keys itself.
     await import('../../packages/drivers/redis/locales');
-    expect(getAllTranslations('en')['redis.batchDelete']).toBe('Delete selected');
-    expect(getTranslation('en', 'redis.console')).toBe('Console');
+    // Resolution contract only: which copy a driver key maps to belongs to the
+    // driver's own en.ts, so no English value is pinned here (see
+    // docs/development/interaction-and-testing-principles.md).
+    for (const key of ['redis.batchDelete', 'redis.console'] as const) {
+      const fromSnapshot = getAllTranslations('en')[key];
+      expect(fromSnapshot?.length, key).toBeGreaterThan(0);
+      expect(fromSnapshot, key).not.toBe(key);
+      expect(getTranslation('en', key), key).not.toBe(key);
+    }
     expect(getTranslation('zh-CN', 'redis.console')).not.toBe('redis.console');
     // Absent from the host-only snapshot: the pack is driver-scoped.
     expect(getHostTranslations('en')['redis.batchDelete']).toBeUndefined();
@@ -177,18 +184,30 @@ describe('locales', () => {
   });
 
   it('interpolates UI polish labels that include context', () => {
-    expect(getTranslation('en', 'panel.closeTab', { title: 'Query' })).toBe('Close Query');
-    expect(getTranslation('zh-CN', 'panel.closeTab', { title: '查询' })).toBe('关闭 查询');
+    // Interpolation contract: the caller-supplied param lands in the resolved
+    // copy and no `{placeholder}` residue remains. The surrounding wording is
+    // owned by the dictionaries and is deliberately not pinned to a literal.
+    expect(getTranslation('en', 'panel.closeTab', { title: 'Query' })).toContain('Query');
+    expect(getTranslation('en', 'panel.closeTab', { title: 'Query' })).not.toContain('{');
+    expect(getTranslation('zh-CN', 'panel.closeTab', { title: '查询' })).toContain('查询');
+    expect(getTranslation('zh-CN', 'panel.closeTab', { title: '查询' })).not.toContain('{');
     expect(
       getTranslation('en', 'workflows.editor.parseError', { error: 'unexpected token' }),
     ).toContain('unexpected token');
   });
 
   it('contains snippet management keys in en', () => {
-    expect(getTranslation('en', 'query.snippets.add')).toBe('Add Snippet');
-    expect(getTranslation('en', 'query.snippets.builtin')).toBe('Built-in');
-    expect(getTranslation('en', 'query.snippets.syntaxGuideTitle')).toBe('Syntax Guide:');
-    expect(getTranslation('en', 'query.snippets.prefixDuplicate')).toBe('Prefix already exists');
+    // Presence + resolution (never the raw key), not the English wording.
+    for (const key of [
+      'query.snippets.add',
+      'query.snippets.builtin',
+      'query.snippets.syntaxGuideTitle',
+      'query.snippets.prefixDuplicate',
+    ] as const) {
+      const text = getTranslation('en', key);
+      expect(text.length, `en:${key}`).toBeGreaterThan(0);
+      expect(text, `en:${key}`).not.toBe(key);
+    }
   });
 
   it('en contains user-facing fallback strings', () => {

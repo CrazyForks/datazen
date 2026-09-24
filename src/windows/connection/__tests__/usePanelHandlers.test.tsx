@@ -166,7 +166,7 @@ describe('usePanelHandlers.handleNewQuery binds a database to the query tab', ()
   });
 });
 
-describe('usePanelHandlers.handleOpenErDiagram inherits the current panel schema', () => {
+describe('usePanelHandlers.handleOpenErDiagram binds the database and inherits the panel schema', () => {
   const connCtx: ConnectionContext = {
     connectionId: 'conn-1',
     dbSessionId: 'sess-1',
@@ -285,5 +285,103 @@ describe('usePanelHandlers.handleOpenErDiagram inherits the current panel schema
 
     expect(usePanelStore.getState().panels.filter((p) => p.type === 'er-diagram')).toHaveLength(1);
     expect(erPanel()?.schema).toBe('audit');
+  });
+
+  function renderErHandlers(props: { currentDatabase: string | null; initialDatabase?: string }) {
+    return renderHook(
+      ({ currentDatabase, initialDatabase }) =>
+        usePanelHandlers({
+          connCtx: {
+            connectionId: 'conn-1',
+            dbSessionId: 'sess-1',
+            connectionName: 'MyConn',
+            databaseType: 'mysql',
+          },
+          showStructureEditor: false,
+          currentDatabase,
+          initialDatabase,
+          lastTableSchema: null,
+          schemaViews: [],
+        }),
+      { initialProps: props },
+    );
+  }
+
+  it('carries the database selected at open time', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+
+  it('falls back to the configured database when the session has none', async () => {
+    const { result } = renderErHandlers({ currentDatabase: null, initialDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+
+  it('keeps its own database when another tab moves the session default', async () => {
+    const { result, rerender } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    rerender({ currentDatabase: 'analytics' });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+  });
+
+  it('re-binds an existing ER tab to an explicit target database', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+    // Tree context menu on another database passes the target explicitly.
+    await act(async () => {
+      result.current.handleOpenErDiagram(undefined, 'analytics');
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'analytics',
+    );
+  });
+
+  it('re-binds a bare toolbar invocation to the current session database', async () => {
+    const { result, rerender } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    // The user switches database, then hits the toolbar "查看 ER" again: the
+    // reused tab must follow the current selection, not stay stale.
+    rerender({ currentDatabase: 'analytics' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'analytics',
+    );
+  });
+
+  it('keeps the tab database for a focus-only invocation', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    // Focusing a table from inside the diagram must not rebind the database.
+    await act(async () => {
+      result.current.handleOpenErDiagram('orders');
+    });
+    const panel = usePanelStore.getState().panels.find((p) => p.type === 'er-diagram');
+    expect(panel?.database).toBe('app');
+    expect(panel?.focusTable).toBe('orders');
   });
 });

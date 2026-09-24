@@ -196,6 +196,8 @@ export const config: WebdriverIO.Config = {
       './specs/mysql.ts',
       './specs/multi-database.ts',
       './specs/data-sync-real.ts',
+      './specs/data-sync-tuple-range.ts',
+      './specs/data-sync-unknown-outcome.ts',
       './specs/data-sync-edge-cases.ts',
       './specs/client-parity.ts',
       './specs/host-contract-matrix.ts',
@@ -346,6 +348,7 @@ export const config: WebdriverIO.Config = {
       './specs/data-sync-edge-cases.ts',
       './specs/journeys/data-sync-journey.ts',
       './specs/data-sync-real.ts',
+      './specs/data-sync-tuple-range.ts',
     ],
     // Real scheduled/unattended migration workflow journeys. Opt in with
     // E2E_MIGRATION_LIVE=1; PostgreSQL/MySQL are skipped explicitly when the

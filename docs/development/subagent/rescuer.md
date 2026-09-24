@@ -17,9 +17,9 @@
 ## 2. 验证与台账收尾
 
 1. **套件全绿**：完成修改后必须执行该模块的三件套自验（cargo / vitest / tsc）。
-2. **修复 Bug 时的台账更新**：
-   - 在 `tracks/<track-id>/bugs.md` 中将对应 Bug 状态置为 `待验证(修复后)`，记录修复 commit hash 与验证说明。
-   - 在 `tracks/<track-id>/progress.md` 中将 Phase 更新为 `READY_FOR_TEST`。
+2. **修复 Bug 时的台账更新**（一 Bug 一文件：`tracks/<track-id>/bugs/<bug-id>.md`）：
+   - **只改**该文件内的 `- **状态**：` 行（→ `待复测`），**只追加** `## 修复记录（round-N）` 块（修复 commit hash + 验证说明 + 复测入口），**禁改** Tester 写的正文与重现步骤。
+   - 在 `tracks/<track-id>/progress.md` 中将 Phase 更新为 `READY_FOR_TEST`（修复细节写自己的「## 修复轮第 N 回合」节，不扩 Bug 文件写面）。
 3. **提交规范**：
    - 提交信息：`fix(<module>): <description>` 或 `chore(<module>): complete pending implementation`。
 4. **收尾汇报**：

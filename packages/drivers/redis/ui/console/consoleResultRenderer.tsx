@@ -1,10 +1,9 @@
 /**
  * Structured result renderer for Redis Console output.
  * Renders different result types (scalar, array, map, ok, nil, error) with
- * appropriate visual treatment.
+ * appropriate visual treatment. Pure renderer: the caller supplies the variant
+ * (P0-3 — this module never re-infers a server classification of its own).
  */
-
-import React from 'react';
 
 export type ResultType = 'scalar' | 'array' | 'map' | 'ok' | 'nil' | 'error';
 

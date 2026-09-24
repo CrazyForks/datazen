@@ -115,10 +115,25 @@ impl RowPageSource for DriverKeysetSource {
             .transpose()?;
         let (filter_sql, filter_params) = match self.sync_filter.as_ref() {
             Some(filter) => filter
-                .build_where_typed_with_default_order(
+                .build_where_typed_with_key_order(
                     quote,
                     after_key.map_or(0, |key| key.len()) + 1,
                     (self.pk_columns.len() == 1).then(|| self.pk_columns[0].as_str()),
+                    Some((&self.pk_columns, &self.key_order_expressions)),
+                    |column, value| {
+                        let index = self
+                            .pk_columns
+                            .iter()
+                            .position(|candidate| candidate == column)
+                            .ok_or_else(|| {
+                                DataSyncError::validation(format!(
+                                    "recordset key '{column}' has no verified key contract"
+                                ))
+                            })?;
+                        self.key_adapter
+                            .sync_key_seek_value(value, &self.key_contracts[index])
+                            .map_err(DataSyncError::validation)
+                    },
                     |column| self.column_types.get(column).cloned(),
                     |index, data_type| {
                         self.driver

@@ -43,11 +43,14 @@ docs/development/coordination/
 └── tracks/
     ├── <track-id>/
     │   ├── progress.md                 # 各轨独立维护：状态机、commit hash、心跳、自验结果
-    │   └── bugs.md                     # 各轨独立维护：<track-id>-BUG-nnn 清单
+    │   └── bugs/                       # 一 Bug 一文件（消除多代理共写单文件的合并冲突）
+    │       ├── <track-id>-BUG-001.md   # 文件名 = Bug ID；登记人建文件并拥有其正文
+    │       └── README.md               # 可选：轮次索引与「无缺陷」记录
 ```
 
 - **分支隔离原则**：各轨分支只提交本轨 `tracks/<track-id>/` 目录，禁止修改或提交 `hub.md`。
-- **合并零冲突**：各分支路径正交，`git merge` 时 0 冲突。
+- **Bug 文件所有权**：Tester 建文件并拥有正文；修复者**只追加** `## 修复记录（round-N）` 块、**只改** `- **状态**：` 行；复测者追加 `## 复测记录（round-N）` 块并把状态改判。历史单文件 `bugs.md` 只读兼容（聚合脚本双格式计数），不再新增。
+- **合并零冲突**：各分支路径正交 + Bug 文件按 ID 拆分，`git merge` 时 0 冲突。
 - **一键聚合**：协调者在合并后或需要时在主检出运行 `node scripts/aggregate-hub.mjs`，自动刷新 `hub.md`。
 
 ## 4. 简报模板目录

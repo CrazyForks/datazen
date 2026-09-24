@@ -160,7 +160,8 @@ const LEGACY_MAIN_ALIASES = new Set([
    - `activeConnectionStore`：内存态 `dbSessionId` 与连接状态；**永不落盘**。
 
 2. **按连接分区的前端状态**  
-   - `schemaStore`、`tableDataStore`：以 `connectionId` 为 key 分区；切换连接 Tab 时切换分区，不跨连接泄漏。  
+   - `schemaStore`：以 `dbSessionId` 为 key 分区（`schemas: Map<dbSessionId, …>`）；切换连接 Tab 时切换分区，不跨会话泄漏。  
+   - `tableDataStore`：以 `panelId` 为 key 分区（`byPanel: Map<panelId, TableState>`）；分页/筛选/暂存编辑归属具体 Tab，面板关闭时由 `ContentView` 回收对应切片。  
    - `panelStore`：面板元数据 + 查询执行（`queryExec`）；面板绑定 `{ connectionId, dbSessionId }`；执行 IPC 用 `dbSessionId`，历史/收藏过滤用 `connectionId`。
 
 3. **全局 UI**  

@@ -27,7 +27,11 @@ import { useI18n } from '../../hooks/useI18n';
 import { buildErNodeContextMenuItems } from '../../lib/erNodeContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import { TableNode } from './er/TableNode';
-import { buildErGraph, defaultCollapsedTables } from './er/buildErGraph';
+import {
+  buildErGraph,
+  defaultCollapsedTables,
+  dedupeSymmetricPredictions,
+} from './er/buildErGraph';
 import { ErRelationLegend } from './er/ErRelationLegend';
 import {
   applyHoverToEdges,
@@ -173,6 +177,7 @@ function ErDiagramInner({
       toTable: candidate.toTable,
       columnPairs: candidate.columnPairs,
       score: candidate.score,
+      ambiguous: candidate.ambiguous,
     }));
   }, [fkPredictionEnabled, schemas]);
 
@@ -244,11 +249,14 @@ function ErDiagramInner({
   const stats = useMemo(() => {
     const tableCount = schemas.length;
     const declaredCount = schemas.reduce((acc, s) => acc + s.foreignKeys.length, 0);
+    // Count what the diagram draws: the engine can guess the same link from both
+    // sides, and a total that promises more lines than appear is its own confusion.
+    const predictedCount = dedupeSymmetricPredictions(predictedRelations).length;
     return {
       tableCount,
       declaredCount,
-      predictedCount: predictedRelations.length,
-      relationCount: declaredCount + predictedRelations.length,
+      predictedCount,
+      relationCount: declaredCount + predictedCount,
     };
   }, [schemas, predictedRelations]);
 
@@ -296,10 +304,10 @@ function ErDiagramInner({
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (onSelectTable && node.data?.tableName) {
-        onSelectTable(node.data.tableName as string, null, database);
+        onSelectTable(node.data.tableName as string, schema, database);
       }
     },
-    [onSelectTable],
+    [onSelectTable, schema, database],
   );
 
   const handleFocusTable = useCallback(
@@ -327,7 +335,7 @@ function ErDiagramInner({
           handlers: {
             onOpenTable: onSelectTable
               ? () => {
-                  onSelectTable(tableName, null, database);
+                  onSelectTable(tableName, schema, database);
                 }
               : undefined,
             onCopyName: () => {
@@ -341,7 +349,7 @@ function ErDiagramInner({
         { x: event.clientX, y: event.clientY },
       );
     },
-    [t, onSelectTable, handleFocusTable],
+    [t, onSelectTable, handleFocusTable, schema, database],
   );
 
   const handleExportPng = useCallback(async () => {

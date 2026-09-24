@@ -46,6 +46,18 @@ pub struct MockDriverOptions {
     /// The default remains unsupported so tests that exercise capability
     /// gating keep their original behavior.
     pub parameterized_writes: bool,
+    /// Fail the selected commit call to model a lost acknowledgement. When
+    /// `commit_error_after_effect` is true, the transaction is removed before
+    /// returning the error; otherwise it remains open and unapplied.
+    pub commit_error_on_call: Option<u32>,
+    pub commit_error_after_effect: bool,
+    /// Fail the selected rollback call to model an unknown rollback outcome.
+    pub rollback_error_on_call: Option<u32>,
+    pub rollback_error: Option<String>,
+    /// Fail parameterized migration DML before it reaches the target.
+    pub execute_with_params_error: Option<String>,
+    /// Fail target DDL or another unparameterized mutation.
+    pub execute_error: Option<String>,
     /// F7: when true, `qualify_sql_target` rewrites SQL by appending a
     /// marker comment recording the requested target (capability simulation).
     pub rewrite_sql_target: bool,
@@ -99,6 +111,12 @@ impl Default for MockDriverOptions {
             cancel_error: None,
             execute_rows_affected: 0,
             parameterized_writes: false,
+            commit_error_on_call: None,
+            commit_error_after_effect: false,
+            rollback_error_on_call: None,
+            rollback_error: None,
+            execute_with_params_error: None,
+            execute_error: None,
             rewrite_sql_target: false,
             ddl_atomicity: None,
             tables_by_database: HashMap::new(),
@@ -118,6 +136,9 @@ pub struct MockDriver {
     get_columns_calls: AtomicU32,
     get_schema_calls: AtomicU32,
     query_calls: AtomicU32,
+    commit_calls: AtomicU32,
+    rollback_calls: AtomicU32,
+    execute_calls: AtomicU32,
     cancel_query_calls: AtomicU32,
     precise_cancel_query_calls: AtomicU32,
     last_query_limit: Mutex<Option<Option<u32>>>,
@@ -139,6 +160,9 @@ impl MockDriver {
             get_columns_calls: AtomicU32::new(0),
             get_schema_calls: AtomicU32::new(0),
             query_calls: AtomicU32::new(0),
+            commit_calls: AtomicU32::new(0),
+            rollback_calls: AtomicU32::new(0),
+            execute_calls: AtomicU32::new(0),
             cancel_query_calls: AtomicU32::new(0),
             precise_cancel_query_calls: AtomicU32::new(0),
             last_query_limit: Mutex::new(None),
@@ -211,6 +235,14 @@ impl MockDriver {
 
     pub fn query_calls(&self) -> u32 {
         self.query_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn commit_calls(&self) -> u32 {
+        self.commit_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn execute_calls(&self) -> u32 {
+        self.execute_calls.load(Ordering::Relaxed)
     }
 
     pub fn cancel_query_calls(&self) -> u32 {
@@ -497,6 +529,9 @@ impl DatabaseDriver for MockDriver {
         _sql: &str,
         _params: &[Value],
     ) -> Result<u64, DriverError> {
+        if let Some(error) = self.opts.execute_with_params_error.as_ref() {
+            return Err(DriverError::QueryFailed(error.clone()));
+        }
         if self.opts.parameterized_writes {
             Ok(self.opts.execute_rows_affected)
         } else {
@@ -507,6 +542,10 @@ impl DatabaseDriver for MockDriver {
     }
 
     async fn execute(&self, _handle: &ConnectionHandle, _sql: &str) -> Result<u64, DriverError> {
+        self.execute_calls.fetch_add(1, Ordering::Relaxed);
+        if let Some(error) = self.opts.execute_error.as_ref() {
+            return Err(DriverError::QueryFailed(error.clone()));
+        }
         Ok(self.opts.execute_rows_affected)
     }
 
@@ -609,16 +648,37 @@ impl DatabaseDriver for MockDriver {
     }
 
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
+        let call = self.commit_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        let injected_error = self.opts.commit_error_on_call == Some(call);
+        if injected_error && !self.opts.commit_error_after_effect {
+            return Err(DriverError::TransactionError(
+                "injected commit acknowledgement loss before effect".into(),
+            ));
+        }
         let mut txs = self.open_txs.lock().expect("mock open_txs");
         if !txs.remove(&tx.connection_id) {
             return Err(DriverError::TransactionError(
                 "Transaction not found or already ended".into(),
             ));
         }
+        if injected_error {
+            return Err(DriverError::TransactionError(
+                "injected commit acknowledgement loss after effect".into(),
+            ));
+        }
         Ok(())
     }
 
     async fn rollback(&self, tx: TransactionHandle) -> Result<(), DriverError> {
+        let call = self.rollback_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.opts.rollback_error_on_call == Some(call) {
+            return Err(DriverError::TransactionError(
+                self.opts
+                    .rollback_error
+                    .clone()
+                    .unwrap_or_else(|| "injected rollback failure".into()),
+            ));
+        }
         let mut txs = self.open_txs.lock().expect("mock open_txs");
         if !txs.remove(&tx.connection_id) {
             return Err(DriverError::TransactionError(

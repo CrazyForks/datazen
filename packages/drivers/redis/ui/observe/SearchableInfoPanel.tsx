@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Search, X } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { Button } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import {
@@ -35,12 +35,6 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function SearchableInfoPanel({
@@ -111,7 +105,7 @@ export function SearchableInfoPanel({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('redis.monitor.infoSearchPlaceholder', 'Search INFO keys/values...')}
+            placeholder={t('redis.monitor.infoSearchPlaceholder')}
             className="w-full rounded border border-border bg-background pl-7 pr-7 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
           />
           {search && (
@@ -124,13 +118,13 @@ export function SearchableInfoPanel({
           )}
         </div>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={fetchInfo}
           disabled={loading}
           className="shrink-0"
         >
-          {loading ? '...' : t('redis.monitor.refresh', 'Refresh')}
+          {loading ? '...' : t('redis.monitor.refresh')}
         </Button>
       </div>
 
@@ -138,10 +132,10 @@ export function SearchableInfoPanel({
       {rawInfo && (
         <div className="text-xs text-muted-foreground px-1">
           {search
-            ? `${filtered.matchedEntries} / ${filtered.totalEntries} ${t('redis.monitor.infoMatched', 'matched')}`
-            : `${filtered.totalEntries} ${t('redis.monitor.infoEntries', 'entries')}`}
+            ? `${filtered.matchedEntries} / ${filtered.totalEntries} ${t('redis.monitor.infoMatched')}`
+            : `${filtered.totalEntries} ${t('redis.monitor.infoEntries')}`}
           {filtered.sections.length > 0 &&
-            ` · ${filtered.sections.length} ${t('redis.monitor.infoSections', 'sections')}`}
+            ` · ${filtered.sections.length} ${t('redis.monitor.infoSections')}`}
         </div>
       )}
 
@@ -158,12 +152,12 @@ export function SearchableInfoPanel({
         ))}
         {rawInfo && filtered.sections.length === 0 && (
           <div className="text-xs text-muted-foreground text-center py-4">
-            {t('redis.monitor.infoNoMatch', 'No matching entries')}
+            {t('redis.monitor.infoNoMatch')}
           </div>
         )}
         {!rawInfo && !loading && (
           <div className="text-xs text-muted-foreground text-center py-4">
-            {t('redis.monitor.infoHint', 'Click Refresh to load INFO data')}
+            {t('redis.monitor.infoHint')}
           </div>
         )}
       </div>
@@ -221,7 +215,7 @@ function reconstructInfo(result: FilteredInfoResult): string {
   const lines: string[] = [];
   for (const sec of result.sections) {
     lines.push(`# ${sec.name}`);
-    for (const [k, v] of sec.entries) {
+    for (const { key: k, value: v } of sec.entries) {
       lines.push(`${k}:${v}`);
     }
   }
