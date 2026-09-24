@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 import type { DatabaseType } from '../../types';
 import type { TableContextInput, TableSqlActionKind } from '../tableSqlActions';
+import type { KvSlotState } from '@datazen/driver-sdk';
 
 export interface NodeContextMenuPayload {
   kind: string;
@@ -36,7 +37,7 @@ export interface ConnectionViewActions {
   openCreateDatabase?: () => void;
   openCreateSchema?: () => void;
   openCreateUser?: () => void;
-  openErDiagram: (focusTable?: string) => void;
+  openErDiagram: (focusTable?: string, database?: string) => void;
   refresh: () => void;
   openObject?: (
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
@@ -65,6 +66,8 @@ export interface ConnectionViewProps {
   hideSidebar?: boolean;
   /** Whether this view is the currently active (visible) tab. Shared refs are only wired when true. */
   isActive?: boolean;
+  /** Host-owned state relay shared by the KV connection view and its workspace slots. */
+  kvSlotState?: KvSlotState;
   /** Ref for the parent to receive the view's table-selection handler. */
   selectTableRef?: MutableRefObject<((table: string, schema?: string) => void) | undefined>;
   /** Ref for the parent to receive the view's context-menu handler (for table/view/blank nodes). */
