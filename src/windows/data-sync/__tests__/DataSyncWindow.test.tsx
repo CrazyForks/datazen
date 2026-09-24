@@ -1495,6 +1495,35 @@ describe('DataSyncWindow wizard', () => {
     },
   );
 
+  it('[tester] an explicit unknown execution response never renders a successful completion label', async () => {
+    inspectDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },
+    ]);
+    compareDataSyncMock.mockResolvedValue([
+      { sourceTable: 'users', targetTable: 'users', status: 'MATCHED', rows: [insertRow()] },
+    ]);
+    executeDataSyncMock.mockResolvedValue({
+      applied: 0,
+      rolledBack: false,
+      outcome: 'unknown',
+      error: 'sync.executionUnknown',
+    });
+    render(<DataSyncWindow />);
+    await advanceToPreview();
+    fireEvent.click(screen.getByTestId('data-sync-start'));
+
+    expect(await screen.findByTestId('data-sync-error')).toHaveTextContent('sync.executionUnknown');
+    await screen.findByTestId('data-sync-result');
+    const completionLabel = screen.getByTestId('data-sync-execute-done');
+    expect(completionLabel).not.toHaveTextContent('sync.executeDone');
+    expect(completionLabel).not.toHaveClass('text-green-700');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute('data-sync-state', 'unknown');
+    expect(screen.getByTestId('data-sync-window')).toHaveAttribute(
+      'data-write-outcome-uncertain',
+      'true',
+    );
+  });
+
   it('a confirmed rollback creates a fresh comparison plan before allowing another execute', async () => {
     inspectDataSyncMock.mockResolvedValue([
       { sourceTable: 'users', targetTable: 'users', status: 'MATCHED' },

@@ -1010,6 +1010,25 @@ fn execution_ipc_response_preserves_all_four_evidence_outcomes_flattened() {
 }
 
 #[test]
+fn test_tester_data_sync_error_conversion_keeps_not_started_and_unknown_distinct() {
+    use crate::commands::error::CommandError;
+    use crate::data_sync::DataSyncError;
+
+    assert!(matches!(
+        CommandError::from(DataSyncError::not_started("preflight rejected")),
+        CommandError::DataSyncNotStarted(message) if message == "preflight rejected"
+    ));
+    assert!(matches!(
+        CommandError::from(DataSyncError::outcome_unknown("commit acknowledgement lost")),
+        CommandError::DataSyncOutcomeUnknown(message) if message == "commit acknowledgement lost"
+    ));
+    assert!(matches!(
+        CommandError::from(DataSyncError::validation("invalid plan")),
+        CommandError::Validation(message) if message == "invalid plan"
+    ));
+}
+
+#[test]
 fn confirmed_sync_cancellation_is_distinguished_before_safe_error_redaction() {
     use crate::commands::error::CommandError;
     use crate::data_sync::ExecutionResult;
