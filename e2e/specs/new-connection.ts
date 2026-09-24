@@ -1,4 +1,5 @@
 import { expect, browser, $, $$ } from '@wdio/globals';
+import { t } from '../i18n.js';
 import {
   closeNewConnectionDialogFromUi,
   openNewConnectionDialogFromUi,
@@ -6,6 +7,7 @@ import {
   captureJourneyStep,
   expandAllGroups,
   selectNewConnectionDriver,
+  selectDzOptionInWrap,
   clickNewConnectionSave,
 } from '../helpers.js';
 
@@ -162,10 +164,32 @@ describe('新建连接 (CM-002, CM-005)', () => {
     await sslEl.waitForDisplayed({ timeout: 3000 });
     await expect(await $('div*=颜色标签')).toBeDisplayed();
     await expect(await $('div*=分组')).toBeDisplayed();
-    const sshToggle = await $('[data-testid="new-conn-ssh-toggle"]');
-    await sshToggle.waitForDisplayed({ timeout: 3000 });
-    await sshToggle.click();
-    await expect(await $('[data-testid="new-conn-ssh-tunnel-checkbox"]')).toBeDisplayed();
+    // The old `new-conn-ssh-toggle` no longer exists anywhere in src/: the
+    // advanced section now exposes a tunnel section whose source control
+    // ("inline") renders the SSH fields (kind auto-restores to 'ssh' and
+    // sshEnabled is turned on together with the source switch).
+    const tunnelToggle = await $('[data-testid="new-conn-tunnel-toggle"]');
+    await tunnelToggle.waitForDisplayed({ timeout: 3000 });
+    if ((await tunnelToggle.getAttribute('aria-expanded')) !== 'true') {
+      await tunnelToggle.click();
+      await browser.pause(300);
+    }
+    // Reach inline configuration: with no saved tunnels the empty-hint
+    // offers a one-click entry; otherwise pick the source option directly.
+    const createEntry = await $('[data-testid="new-conn-tunnel-create-entry"]');
+    if (await createEntry.isExisting().catch(() => false)) {
+      await createEntry.click();
+      await browser.pause(300);
+    } else if (
+      !(await $('[data-testid="new-conn-inline-tunnel"]').isExisting().catch(() => false))
+    ) {
+      await selectDzOptionInWrap('new-conn-tunnel-source', t('newConn.savedTunnelNone'));
+    }
+    const sshCheckbox = await $('[data-testid="new-conn-ssh-tunnel-checkbox"]');
+    await sshCheckbox.waitForDisplayed({ timeout: 5000 });
+    await expect(sshCheckbox).toBeDisplayed();
+    // Inline SSH auto-enables the tunnel — the SSH host field must be shown.
+    await expect(await $('input[placeholder="ssh.example.com"]')).toBeDisplayed();
     await captureJourneyStep('advanced-settings-expanded', 0, true);
   });
 

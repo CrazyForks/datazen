@@ -167,16 +167,32 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
     await setEditorContent('SELECT pg_sleep(5)');
     const execBtn = await $('[data-testid="editor-execute-button"]');
     await execBtn.click();
-    await browser.pause(500);
 
+    // The stop button only mounts while the stream is executing — wait for
+    // the observable running state instead of a fixed pause.
     const stopBtn = await $('[data-testid="editor-stop-button"]');
-    const isVisible = await stopBtn.isDisplayed();
-    expect(isVisible).toBe(true);
+    await stopBtn.waitForDisplayed({
+      timeout: 15000,
+      timeoutMsg: 'stop button did not appear while the query was running (SQ-001)',
+    });
+    await expect(stopBtn).toBeDisplayed();
     await captureJourneyStep('query-stop-visible');
 
-    // Cancel to not block other tests
-    await stopBtn.click();
-    await browser.pause(2000);
+    // Cancel via an in-page click. A protocol-level element click on this
+    // transient button wedged the WebDriver session in the failing run (log:
+    // execute 09:56:46.165 → cancel_query 09:56:46.688, yet mocha reported
+    // Timeout of 120000ms and the next test's SQL did not run until
+    // 10:02:19). A DOM click triggers the same React handler without the
+    // element-resolution round-trip.
+    await browser.execute(() => {
+      const btn = document.querySelector('[data-testid="editor-stop-button"]');
+      if (btn instanceof HTMLElement) btn.click();
+    });
+    // Confirm the run actually ended before leaving the test.
+    await browser.waitUntil(
+      async () => !(await $('[data-testid="editor-stop-button"]').isDisplayed().catch(() => false)),
+      { timeout: 15000, timeoutMsg: 'query was not cancelled after clicking stop (SQ-001)' },
+    );
   });
 
   // ── 执行查询 ───────────────────────────────────────────────────
@@ -275,6 +291,17 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
   // ── DML 语句 ───────────────────────────────────────────────────
 
   it('执行 DML 语句应显示影响行数 (SQ-012)', async () => {
+    // This spec deliberately connects with `database: ''` (multi-database
+    // selector path), so the session resolves to a database that does not
+    // contain the per-worker schema — unqualified DDL then fails with
+    // "no schema has been selected to create in" (log 10:02:26.656, and the
+    // qualified pg_tables probe earlier proves the session is not in
+    // E2E_PG_DB). CREATE SCHEMA does not depend on search_path; run it first
+    // so the CREATE/INSERT below resolve through the configured schema.
+    const workerSchema = process.env.E2E_WORKER_SCHEMA;
+    if (workerSchema) {
+      await executeSQL(`CREATE SCHEMA IF NOT EXISTS ${workerSchema}`);
+    }
     await setEditorContent(
       'CREATE TABLE IF NOT EXISTS _e2e_sql_test (id SERIAL PRIMARY KEY, val TEXT); ' +
         "INSERT INTO _e2e_sql_test (val) VALUES ('hello')",

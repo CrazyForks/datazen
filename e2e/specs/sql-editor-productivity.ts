@@ -314,47 +314,91 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
   });
 
   it('SE-PROD-021: 多次 Mod+D 应选择所有匹配项', async () => {
-    await setEditorContent('foo bar foo bar foo bar');
-    await browser.pause(300);
-
-    // Select the first 'foo'
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
+    const getRangeCount = () =>
+      browser.execute(() => {
+        const editors = Array.from(document.querySelectorAll('.cm-editor'));
+        let cmView: any = null;
+        for (let i = editors.length - 1; i >= 0; i--) {
+          if ((editors[i] as any)?.cmView?.view) {
+            cmView = (editors[i] as any).cmView.view;
+            break;
+          }
         }
-      }
-      if (!cmView) return;
-      cmView.focus();
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('foo');
-      if (idx >= 0) {
+        if (!cmView) return 1;
+        return cmView.state.selection.ranges.length;
+      });
+
+    const selectFirstFoo = () =>
+      browser.execute(() => {
+        const editors = Array.from(document.querySelectorAll('.cm-editor'));
+        let cmView: any = null;
+        for (let i = editors.length - 1; i >= 0; i--) {
+          if ((editors[i] as any)?.cmView?.view) {
+            cmView = (editors[i] as any).cmView.view;
+            break;
+          }
+        }
+        if (!cmView) return false;
+        cmView.focus();
+        const doc = cmView.state.doc.toString();
+        const idx = doc.indexOf('foo');
+        if (idx < 0) return false;
         cmView.dispatch({ selection: { anchor: idx, head: idx + 3 } });
-      }
-    });
-    await browser.pause(200);
+        return true;
+      });
 
-    // Press Mod+d twice more to select all three 'foo'
-    await browser.keys(['Meta', 'd']);
-    await browser.pause(200);
-    await browser.keys(['Meta', 'd']);
-    await browser.pause(300);
+    await setEditorContent('foo bar foo bar foo bar');
+    // setEditorContent writes through the DOM while the CodeMirror state
+    // document syncs asynchronously. Dispatching the selection against a
+    // stale doc silently finds no 'foo', leaves a collapsed cursor at the end
+    // of the document, and Mod+D then selects nothing — the observed
+    // "Expected >= 3, Received 1" (SE-PROD-020 passed only by timing luck).
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const editors = Array.from(document.querySelectorAll('.cm-editor'));
+          for (let i = editors.length - 1; i >= 0; i--) {
+            const view = (editors[i] as any)?.cmView?.view;
+            if (view && view.state.doc.toString().includes('foo bar foo bar foo bar')) return true;
+          }
+          return false;
+        }),
+      { timeout: 5000, timeoutMsg: 'editor state doc did not sync to SE-PROD-021 content' },
+    );
 
-    const selectionCount = await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
-        }
+    await selectFirstFoo();
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const editors = Array.from(document.querySelectorAll('.cm-editor'));
+          for (let i = editors.length - 1; i >= 0; i--) {
+            const view = (editors[i] as any)?.cmView?.view;
+            if (!view) continue;
+            const ranges = view.state.selection.ranges;
+            if (ranges.length !== 1) continue;
+            const text = view.state.doc.sliceString(ranges[0].from, ranges[0].to);
+            if (text === 'foo') return true;
+          }
+          return false;
+        }),
+      { timeout: 5000, timeoutMsg: 'selection did not land on the first foo' },
+    );
+
+    // Press Mod+D until all three occurrences are selected (bounded). If the
+    // selection collapses mid-way (focus steal), re-establish it once — the
+    // final assertion is unchanged, so a genuinely broken keybinding still
+    // fails this test.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const count = await getRangeCount();
+      if (count >= 3) break;
+      await browser.keys(['Meta', 'd']);
+      await browser.pause(250);
+      if (attempt === 1 && (await getRangeCount()) < 2) {
+        await selectFirstFoo();
       }
-      if (!cmView) return 1;
-      return cmView.state.selection.ranges.length;
-    });
+    }
+
+    const selectionCount = await getRangeCount();
     expect(selectionCount).toBeGreaterThanOrEqual(3);
   });
 
