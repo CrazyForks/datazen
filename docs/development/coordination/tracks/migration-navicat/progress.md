@@ -1,6 +1,19 @@
 # migration-navicat integration
 
-## Phase
+- Phase: ACTIVE — release gaps remain
+
+Integration branch: `codex/migration-navicat`
+Last update: 2026-09-25, after Schema dependency DAG merge `6210b2ec`.
+
+## Current release closure order
+
+1. Implement the unified cross-category Schema Diff planner and review/deploy path. The standalone table/FK dependency DAG is now independently verified and merged; it does not solve mixed table/type/view/sequence/routine/trigger plans.
+2. Close the remaining Data Sync boundaries: decide whether to add streamed/exportable SQL preview beyond the explicit 16 MiB IPC cap, stress large migrations and record memory results, and prove tuple/snapshot plus unknown-outcome behavior for every driver the product claims to support. Paged comparison storage, crash recovery, composite tuple selection, and paged transactional execution are already implemented.
+3. Close the remaining Data Transfer boundaries: extend the existing table-boundary resume token to safe bounded in-table chunks, and complete explicit cross-dialect structural mapping for database/schema, generated/identity columns, types, expressions, indexes, and foreign keys. Composite tuple recordsets and unknown-outcome fencing are already implemented for the tested paths.
+4. Complete SQLite table rebuild safety and rollback, then finish the declared-driver capability matrix and any table options not safely represented today.
+5. Run release validation for Windows file picker/atomic replacement and migration journeys, then record representative large-migration memory/performance results and remaining driver failure injection.
+
+The release checklist is complete only after these gaps are either implemented and verified or deliberately excluded from the supported product claim. DMG packaging is excluded from this feature gate per the explicit user instruction recorded in `AGENTS.md`.
 
 PASSED / READY_TO_MERGE
 
@@ -16,6 +29,7 @@ PASSED / READY_TO_MERGE
 - Live scheduled workflow journey: opt-in PostgreSQL/MySQL WebDriver coverage for fresh sessions, profile revision failures, unattended destructive policy, run history, SQL-file token redaction, and real scheduler execution.
 - Safe table-drop migration: explicit target-only `DropTable` planning with destructive approval, dependency ordering, no `CASCADE`, no synthetic rollback, transaction/unknown-outcome gates, and fail-closed empty/control/invalid identifier validation.
 - Object identity parity: routine overload signatures and trigger target relations now flow through driver metadata, Host IPC, ObjectBrowser, navigator keys, and panel actions without collisions; missing/ambiguous DDL fails closed.
+- Schema dependency DAG: typed identities and deterministic ordering now cover supported standalone planner boundaries; cycles and guessed references fail closed; PostgreSQL/MySQL catalog revalidation protects reviewed table drops. Fresh independent R4 passed 10/10 serial WDIO journeys, independently reproduced 588/688 changed executable lines (85.5%), and verified MySQL complete-catalog access. Merge: `6210b2ec`.
 
 ## Independent verification
 
@@ -34,6 +48,7 @@ PASSED / READY_TO_MERGE
 - Live workflow Tester: gate-off journey 10 skipped with explicit opt-in messaging; provisioned PostgreSQL/MySQL journey 10 passed, including real scheduler trigger after a clean WebDriver build.
 - Schema Safety Tester: Host Schema Diff 92, Driver API 134, PostgreSQL/MySQL/SQLite 116/94/54, migration focused 15/14/9, and Schema Diff Vitest 63 passed; invalid identifiers fail closed.
 - Object Catalog Tester: Driver API 140, PostgreSQL/MySQL/SQLite object suites 10/6/6+5, Host schema 14, and ObjectBrowser/navigator/panel Vitest 99 passed; overload and trigger identity collisions are covered.
+- Schema dependency DAG R4 Tester: Host Schema Diff 173, Driver API 156, PostgreSQL 132 plus live FK-introspection 1, MySQL 116 plus four cross-database tests passed; fresh PG/MySQL WDIO 10/10, with post-review FK mutation rejection and database read-back. MySQL complete-catalog scans covered 176 relations in about 1.19 seconds; PostgreSQL late-dependent revalidation covered two relations in 34 ms. Host TypeScript passed. Integration sanity after merge: `npx tsc --noEmit` passed and `cargo test -p datazen --lib` passed 1,925 / 3 ignored when local loopback access was permitted for existing mock-network tests.
 
 ## Independent baseline Tester (2026-09-23; reviewed `c7ff06d9`)
 
@@ -45,8 +60,10 @@ PASSED / READY_TO_MERGE
 - Coverage-driven test additions: a Host Rust regression in `plan_tests.rs` asserts MySQL numeric expression defaults must fail closed; it fails against this commit and captures the generated invalid PostgreSQL DDL. The Data Transfer mode-matrix E2E now verifies its source and target fixtures directly before UI steps, separating fixture setup failures from picker/UI regressions.
 - Tester test commit: `e31bc710`. The tester regression remains in `src-tauri/src/schema_diff/plan_tests.rs`; defect details and focused failure output are recorded in `migration-default-expression-review`.
 
-## Known limits
+## Remaining release gaps
 
-- Profile, run-history, scheduled-workflow, View migration, safe table-drop, and object identity/catalog paths are complete for this wave; full Navicat parity still requires CHECK constraints, table options, routine/trigger migration renderers, sequence translation, cross-dialect view translation, target-only picker wiring, and Windows packaging.
-- The live PostgreSQL/MySQL journey is opt-in and depends on provisioned fixtures; CI without those fixtures must keep the suite gated and report skips.
-- Targeted profile coverage is strong, but whole-file coverage for the large DataSyncWindow remains below the repository-wide 80% metric because unrelated wizard paths are outside this wave.
+- Schema Diff: implement one reviewed mixed-kind planner across selected tables/FKs, custom types, views, sequences, routines, and triggers; resolve dependencies using exact structured identities or fail closed. Add safe SQLite table rebuilds and rollback. Expand declared driver capability evidence for table options, collation, partitioning, compression, and object catalogs. Cross-dialect view/routine/trigger/type semantic translation remains unsupported where equivalence cannot be proven.
+- Data Sync: the production comparison sink/store and plan executor are paged and passed a 10,001-row storage path and a roughly 68 MiB ten-page WDIO execution. SQL preview remains a bounded full IPC response with a 16 MiB limit; a streaming preview/export path is a product decision and outstanding large-table memory/stress evidence should be recorded. Composite tuple ranges and comparison-store crash recovery are implemented; verify ordering/snapshot semantics and unknown-outcome recovery across every driver claimed as supported.
+- Data Transfer: resume is currently at completed table boundaries; extend it to large-table chunks with safe recovery evidence. Composite tuple recordsets and tested unknown-outcome fencing are implemented. Complete explicit heterogeneous structural mappings and precise blockers for unsupported types, expressions, generated columns, indexes, and FKs.
+- Release validation: publish a driver-by-driver Sync/Transfer/Schema capability matrix backed by executable tests; validate Windows SQL-file picker/atomic replacement and migration WDIO journeys; record large-migration memory/performance benchmarks and driver failure injection. DMG packaging remains excluded by user instruction.
+- Existing WDIO live-database suites require provisioned local PostgreSQL/MySQL fixtures. The release run must report their execution and any environment-gated skips explicitly.

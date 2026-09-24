@@ -1,6 +1,10 @@
 # migration-schema-dependency-dag
 
-Phase: PASSED
+- Phase: PASSED
+- coding_commit: `e71d0a55`
+- test_commit: `f46d0b09`
+- merge_commit: `6210b2ec`
+- branch: `feature/migration-schema-dependency-dag-repair`
 
 ## Scope
 
