@@ -116,6 +116,15 @@ interface UseSchemaDiffSavedSetupsOptions {
   onConfigExported: () => void;
 }
 
+interface SchemaDiffConfigEndpointIdentity {
+  sourceConnectionId: string;
+  targetConnectionId: string;
+  sourceDatabase: string;
+  targetDatabase: string;
+  sourceSchema: string;
+  targetSchema: string;
+}
+
 export function useSchemaDiffSavedSetups({
   endpoints,
   tablePicks,
@@ -152,7 +161,7 @@ export function useSchemaDiffSavedSetups({
   const [importConfigText, setImportConfigText] = useState('');
   const [importConfigError, setImportConfigError] = useState('');
   const profileLoadEndpointRef = useRef<SchemaDiffProfile | null>(null);
-  const configLoadEndpointRef = useRef<SchemaDiffConfigJson | null>(null);
+  const configLoadEndpointRef = useRef<SchemaDiffConfigEndpointIdentity | null>(null);
   const endpointStateRef = useRef({ endpoints, pendingProfileLoad, pendingConfigLoad });
   endpointStateRef.current = { endpoints, pendingProfileLoad, pendingConfigLoad };
 
@@ -175,9 +184,23 @@ export function useSchemaDiffSavedSetups({
     const endpointMatchesConfig =
       config &&
       current.sourceId === config.sourceConnectionId &&
-      current.targetId === config.targetConnectionId;
-    if (pendingProfile || pendingConfig || endpointMatchesProfile || endpointMatchesConfig) {
+      current.targetId === config.targetConnectionId &&
+      current.sourceDatabase === config.sourceDatabase &&
+      current.targetDatabase === config.targetDatabase &&
+      current.sourceSchema === config.sourceSchema &&
+      current.targetSchema === config.targetSchema;
+    const pendingConfigConnectionChange =
+      pendingConfig &&
+      (current.sourceId !== pendingConfig.sourceConnectionId ||
+        current.targetId !== pendingConfig.targetConnectionId);
+    if (
+      pendingProfile ||
+      pendingConfigConnectionChange ||
+      endpointMatchesProfile ||
+      endpointMatchesConfig
+    ) {
       if (endpointMatchesProfile) profileLoadEndpointRef.current = null;
+      if (endpointMatchesConfig) configLoadEndpointRef.current = null;
       return true;
     }
     if (config) configLoadEndpointRef.current = null;
@@ -241,7 +264,14 @@ export function useSchemaDiffSavedSetups({
           sourceObjects: parseObjectSelections(cfg.sourceObjects, t('schemaDiff.invalidConfig')),
           targetObjects: parseObjectSelections(cfg.targetObjects, t('schemaDiff.invalidConfig')),
         };
-        configLoadEndpointRef.current = importedConfig;
+        configLoadEndpointRef.current = {
+          sourceConnectionId: importedConfig.sourceConnectionId,
+          targetConnectionId: importedConfig.targetConnectionId,
+          sourceDatabase: endpoints.sourceDatabase,
+          targetDatabase: endpoints.targetDatabase,
+          sourceSchema: endpoints.sourceSchema,
+          targetSchema: endpoints.targetSchema,
+        };
         endpoints.setSourceId(cfg.sourceConnectionId);
         endpoints.setTargetId(cfg.targetConnectionId);
         const targetOnly = new Set(cfg.targetOnlyTables ?? []);

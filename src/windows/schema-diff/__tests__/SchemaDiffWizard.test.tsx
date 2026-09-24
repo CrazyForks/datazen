@@ -755,37 +755,59 @@ describe('complete schema migration wizard journeys', () => {
     expect(schemaDiffCommands.executeDeploy).not.toHaveBeenCalled();
   });
 
-  it('[tester] clears a reviewed plan after changing database following config import', async () => {
-    const view = render(<SchemaDiffWindow />);
-    await reachPlan();
-
-    fireEvent.click(screen.getByTestId('schema-diff-import-config'));
-    fireEvent.change(screen.getByTestId('schema-diff-import-config-text'), {
-      target: {
-        value: JSON.stringify({
-          version: 2,
-          sourceConnectionId: 'src',
-          targetConnectionId: 'tgt',
-          tables: ['users'],
-          allowDestructive: false,
-        }),
+  it.each([
+    {
+      endpoint: 'target database',
+      change: () => {
+        state.endpoints.targetDatabase = 'other-target';
       },
-    });
-    fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
-    await waitFor(() => expect(screen.getByTestId('schema-diff-next')).toBeEnabled());
+    },
+    {
+      endpoint: 'source schema',
+      change: () => {
+        state.endpoints.sourceSchema = 'other-source-schema';
+      },
+    },
+    {
+      endpoint: 'target schema',
+      change: () => {
+        state.endpoints.targetSchema = 'other-target-schema';
+      },
+    },
+  ])(
+    '[tester] clears a reviewed plan after imported config when $endpoint changes',
+    async ({ change }) => {
+      const view = render(<SchemaDiffWindow />);
+      await reachPlan();
 
-    next();
-    await screen.findByTestId('schema-diff-detail-panel');
-    next();
-    await screen.findByTestId('schema-diff-copy-sql');
+      fireEvent.click(screen.getByTestId('schema-diff-import-config'));
+      fireEvent.change(screen.getByTestId('schema-diff-import-config-text'), {
+        target: {
+          value: JSON.stringify({
+            version: 2,
+            sourceConnectionId: 'src',
+            targetConnectionId: 'tgt',
+            tables: ['users'],
+            allowDestructive: false,
+          }),
+        },
+      });
+      fireEvent.click(screen.getByTestId('schema-diff-import-config-confirm'));
+      await waitFor(() => expect(screen.getByTestId('schema-diff-next')).toBeEnabled());
 
-    state.endpoints.targetDatabase = 'other-target';
-    view.rerender(<SchemaDiffWindow />);
+      next();
+      await screen.findByTestId('schema-diff-detail-panel');
+      next();
+      await screen.findByTestId('schema-diff-copy-sql');
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('schema-diff-copy-sql')).not.toBeInTheDocument(),
-    );
-  });
+      change();
+      view.rerender(<SchemaDiffWindow />);
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('schema-diff-copy-sql')).not.toBeInTheDocument(),
+      );
+    },
+  );
 
   it.each([
     { targetDialect: 'mysql', rollbackCompleteness: { complete: true, missing: [] } },
