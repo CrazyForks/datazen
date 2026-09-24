@@ -247,21 +247,28 @@ pub fn postgres_type_dependencies_sql(name: &str, schema: Option<&str>) -> Strin
 /// owning relation; other dependency classes fail closed.
 pub fn postgres_sequence_dependencies_sql(name: &str, schema: Option<&str>) -> String {
     let name = sql_string(name);
-    let schema = sql_string(schema.unwrap_or("public"));
+    let schema_filter = schema
+        .map(|schema| format!(" AND sequence_ns.nspname = {}", sql_string(schema)))
+        .unwrap_or_default();
     format!(
         r#"
         WITH selected_sequences AS (
-            SELECT sequence.oid
+            SELECT sequence.oid, sequence.relname AS sequence_name,
+                   sequence_ns.nspname AS sequence_schema
             FROM pg_catalog.pg_class AS sequence
             JOIN pg_catalog.pg_namespace AS sequence_ns ON sequence_ns.oid = sequence.relnamespace
             WHERE sequence.relkind = 'S' AND sequence.relname = {name}
-              AND sequence_ns.nspname = {schema}
+              {schema_filter}
         ),
         catalog_dependencies AS (
             SELECT DISTINCT selected.oid AS selected_oid,
                 CASE owner_rel.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'view' ELSE 'table' END AS kind,
                 owner_ns.nspname AS dependency_schema, owner_rel.relname AS name,
-                NULL::text AS signature
+                NULL::text AS signature,
+                selected.sequence_schema, selected.sequence_name,
+                owner_ns.nspname AS owner_table_schema, owner_rel.relname AS owner_table_name,
+                owner_column.attname::text AS owner_column_name,
+                'owned_by'::text AS sequence_usage
             FROM selected_sequences AS selected
             JOIN pg_catalog.pg_depend AS dependency
               ON dependency.classid = 'pg_catalog.pg_class'::regclass
@@ -270,7 +277,11 @@ pub fn postgres_sequence_dependencies_sql(name: &str, schema: Option<&str>) -> S
              AND dependency.deptype IN ('a', 'i')
             JOIN pg_catalog.pg_class AS owner_rel ON owner_rel.oid = dependency.refobjid
             JOIN pg_catalog.pg_namespace AS owner_ns ON owner_ns.oid = owner_rel.relnamespace
-            WHERE owner_rel.relkind IN ('r', 'p', 'f', 'v', 'm')
+            LEFT JOIN pg_catalog.pg_attribute AS owner_column
+              ON owner_column.attrelid = owner_rel.oid
+             AND owner_column.attnum = dependency.refobjsubid
+             AND NOT owner_column.attisdropped
+            WHERE owner_rel.relkind IN ('r', 'p', 'f')
         ),
         unsupported_dependencies AS (
             SELECT DISTINCT selected.oid AS selected_oid, dependency.refclassid, dependency.refobjid
@@ -287,10 +298,29 @@ pub fn postgres_sequence_dependencies_sql(name: &str, schema: Option<&str>) -> S
                 )
               AND NOT (dependency.refclassid = 'pg_catalog.pg_type'::regclass
                        AND type_ns.nspname = 'pg_catalog')
+            UNION
+            SELECT DISTINCT selected.oid AS selected_oid, dependency.refclassid, dependency.refobjid
+            FROM selected_sequences AS selected
+            JOIN pg_catalog.pg_depend AS dependency
+              ON dependency.classid = 'pg_catalog.pg_class'::regclass
+             AND dependency.objid = selected.oid
+             AND dependency.refclassid = 'pg_catalog.pg_class'::regclass
+            LEFT JOIN pg_catalog.pg_class AS owner_rel ON owner_rel.oid = dependency.refobjid
+            LEFT JOIN pg_catalog.pg_attribute AS owner_column
+              ON owner_column.attrelid = owner_rel.oid
+             AND owner_column.attnum = dependency.refobjsubid
+             AND NOT owner_column.attisdropped
+            WHERE dependency.deptype NOT IN ('a', 'i')
+               OR owner_rel.relkind NOT IN ('r', 'p', 'f')
+               OR dependency.refobjsubid <= 0
+               OR owner_column.attnum IS NULL
         )
         SELECT (SELECT count(*)::bigint FROM selected_sequences) AS selected_count,
                (SELECT count(*)::bigint FROM unsupported_dependencies) AS unsupported_count,
-               dependencies.kind, dependencies.dependency_schema, dependencies.name, dependencies.signature
+               dependencies.kind, dependencies.dependency_schema, dependencies.name, dependencies.signature,
+               dependencies.sequence_schema, dependencies.sequence_name,
+               dependencies.owner_table_schema, dependencies.owner_table_name,
+               dependencies.owner_column_name, dependencies.sequence_usage
         FROM (SELECT 1) AS seed
         LEFT JOIN selected_sequences AS selected ON TRUE
         LEFT JOIN catalog_dependencies AS dependencies ON dependencies.selected_oid = selected.oid
@@ -307,7 +337,8 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
     format!(
         r#"
         WITH selected_tables AS (
-            SELECT relation.oid
+            SELECT relation.oid, relation.relname AS table_name,
+                   relation_ns.nspname AS schema_name
             FROM pg_catalog.pg_class AS relation
             JOIN pg_catalog.pg_namespace AS relation_ns ON relation_ns.oid = relation.relnamespace
             WHERE relation.relkind IN ('r', 'p', 'f') AND relation.relname = {name}
@@ -330,7 +361,15 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
                 CASE dependency_rel.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'view'
                     WHEN 'S' THEN 'sequence' WHEN 'c' THEN 'type' ELSE 'table' END AS kind,
                 dependency_ns.nspname AS dependency_schema, dependency_rel.relname AS name,
-                NULL::text AS signature, NULL::text AS type_usage, NULL::text AS column_name
+                NULL::text AS signature, NULL::text AS type_usage, NULL::text AS column_name,
+                CASE WHEN dependency_rel.relkind = 'S'
+                           AND owner.classid = 'pg_catalog.pg_attrdef'::regclass
+                           AND default_column.attnum IS NOT NULL THEN 'column_default'
+                     ELSE NULL::text END AS sequence_usage,
+                CASE WHEN dependency_rel.relkind = 'S' THEN dependency_ns.nspname ELSE NULL::text END AS sequence_schema,
+                CASE WHEN dependency_rel.relkind = 'S' THEN dependency_rel.relname ELSE NULL::text END AS sequence_name,
+                CASE WHEN dependency_rel.relkind = 'S' THEN default_column.attname::text ELSE NULL::text END
+                    AS owner_column_name
             FROM dependency_owners AS owner
             JOIN pg_catalog.pg_depend AS dependency
               ON dependency.classid = owner.classid AND dependency.objid = owner.objid
@@ -342,6 +381,13 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
             JOIN pg_catalog.pg_class AS dependency_rel
               ON dependency_rel.oid = COALESCE(referenced_index.indrelid, referenced_rel.oid)
             JOIN pg_catalog.pg_namespace AS dependency_ns ON dependency_ns.oid = dependency_rel.relnamespace
+            LEFT JOIN pg_catalog.pg_attrdef AS default_row
+              ON owner.classid = 'pg_catalog.pg_attrdef'::regclass
+             AND default_row.oid = owner.objid
+            LEFT JOIN pg_catalog.pg_attribute AS default_column
+              ON default_column.attrelid = default_row.adrelid
+             AND default_column.attnum = default_row.adnum
+             AND NOT default_column.attisdropped
             WHERE dependency_ns.nspname NOT IN ('pg_catalog', 'information_schema')
               AND dependency_rel.oid NOT IN (SELECT oid FROM selected_tables)
               AND dependency_rel.relkind IN ('r', 'p', 'f', 'v', 'm', 'S', 'c')
@@ -358,7 +404,9 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
                 END::text AS type_usage,
                 CASE WHEN owner.classid = 'pg_catalog.pg_class'::regclass
                            AND dependency.objsubid > 0 THEN dependency_column.attname::text
-                     ELSE NULL::text END AS column_name
+                     ELSE NULL::text END AS column_name,
+                NULL::text AS sequence_usage, NULL::text AS sequence_schema,
+                NULL::text AS sequence_name, NULL::text AS owner_column_name
             FROM dependency_owners AS owner
             JOIN pg_catalog.pg_depend AS dependency
               ON dependency.classid = owner.classid AND dependency.objid = owner.objid
@@ -380,7 +428,9 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
                 CASE procedure.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind,
                 procedure_ns.nspname AS dependency_schema, procedure.proname AS name,
                 pg_catalog.pg_get_function_identity_arguments(procedure.oid)::text AS signature,
-                NULL::text AS type_usage, NULL::text AS column_name
+                NULL::text AS type_usage, NULL::text AS column_name,
+                NULL::text AS sequence_usage, NULL::text AS sequence_schema,
+                NULL::text AS sequence_name, NULL::text AS owner_column_name
             FROM dependency_owners AS owner
             JOIN pg_catalog.pg_depend AS dependency
               ON dependency.classid = owner.classid AND dependency.objid = owner.objid
@@ -464,7 +514,10 @@ pub fn postgres_table_dependencies_sql(name: &str, schema: Option<&str>) -> Stri
         SELECT (SELECT count(*)::bigint FROM selected_tables) AS selected_count,
                (SELECT count(*)::bigint FROM unsupported_dependencies) AS unsupported_count,
                dependencies.kind, dependencies.dependency_schema, dependencies.name, dependencies.signature,
-               dependencies.type_usage, dependencies.column_name
+               dependencies.type_usage, dependencies.column_name,
+               selected.schema_name AS owner_table_schema, selected.table_name AS owner_table_name,
+               dependencies.sequence_schema, dependencies.sequence_name,
+               dependencies.owner_column_name, dependencies.sequence_usage
         FROM (SELECT 1) AS seed
         LEFT JOIN selected_tables AS selected ON TRUE
         LEFT JOIN catalog_dependencies AS dependencies ON dependencies.selected_oid = selected.oid

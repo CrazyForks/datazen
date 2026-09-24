@@ -24,6 +24,8 @@ pub struct SchemaObjectDependencies {
     pub dependencies: Vec<DatabaseObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub type_dependency_usages: Vec<TypeDependencyUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_dependency_usages: Option<Vec<SequenceDependencyUsage>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -43,12 +45,29 @@ pub enum TypeDependencyUsageKind {
     Constraint,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SequenceDependencyUsage {
+    pub sequence: DatabaseObject,
+    pub owner_table: DatabaseObject,
+    pub column_name: String,
+    pub usage: SequenceDependencyUsageKind,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SequenceDependencyUsageKind {
+    ColumnDefault,
+    OwnedBy,
+}
+
 impl SchemaObjectDependencies {
     pub fn incomplete() -> Self {
         Self {
             complete: false,
             dependencies: Vec::new(),
             type_dependency_usages: Vec::new(),
+            sequence_dependency_usages: None,
         }
     }
 }
@@ -85,6 +104,64 @@ pub(super) fn sql_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema_objects::DatabaseObject;
+
+    fn object(kind: &str, schema: &str, name: &str) -> DatabaseObject {
+        DatabaseObject {
+            kind: kind.into(),
+            schema: Some(schema.into()),
+            name: name.into(),
+            signature: None,
+            target_schema: None,
+            target_name: None,
+        }
+    }
+
+    #[test]
+    fn sequence_dependency_usage_serde_preserves_exact_identities_and_empty_proof() {
+        let owned = SchemaObjectDependencies {
+            complete: true,
+            dependencies: vec![object("table", "public", "serial_table")],
+            type_dependency_usages: Vec::new(),
+            sequence_dependency_usages: Some(vec![SequenceDependencyUsage {
+                sequence: object("sequence", "public", "serial_table_id_seq"),
+                owner_table: object("table", "public", "serial_table"),
+                column_name: "id".into(),
+                usage: SequenceDependencyUsageKind::OwnedBy,
+            }]),
+        };
+        let encoded = serde_json::to_value(owned).unwrap();
+        assert_eq!(
+            encoded["sequenceDependencyUsages"],
+            serde_json::json!([{
+                "sequence": {"kind":"sequence","schema":"public","name":"serial_table_id_seq"},
+                "ownerTable": {"kind":"table","schema":"public","name":"serial_table"},
+                "columnName": "id",
+                "usage": "owned_by"
+            }])
+        );
+
+        let unowned = SchemaObjectDependencies {
+            complete: true,
+            dependencies: Vec::new(),
+            type_dependency_usages: Vec::new(),
+            sequence_dependency_usages: Some(Vec::new()),
+        };
+        assert_eq!(
+            serde_json::to_value(unowned).unwrap()["sequenceDependencyUsages"],
+            serde_json::json!([]),
+            "an empty array proves the catalog found no sequence usages"
+        );
+
+        let unavailable = SchemaObjectDependencies::incomplete();
+        assert!(
+            serde_json::to_value(unavailable)
+                .unwrap()
+                .get("sequenceDependencyUsages")
+                .is_none(),
+            "incomplete catalogs must omit the optional proof field"
+        );
+    }
 
     #[test]
     fn postgres_dependency_sql_uses_full_catalog_and_exact_routine_identity() {
@@ -152,6 +229,20 @@ mod tests {
         assert!(sequence_sql.contains("sequence.relkind = 'S'"));
         assert!(sequence_sql.contains("dependency.deptype IN ('a', 'i')"));
         assert!(sequence_sql.contains("owner_rel.relname AS name"));
+        assert!(sequence_sql.contains("dependency.refobjsubid"));
+        assert!(sequence_sql.contains("owner_column.attname::text AS owner_column_name"));
+        assert!(sequence_sql.contains("'owned_by'::text AS sequence_usage"));
+        assert!(sequence_sql.contains("owner_column.attnum IS NULL"));
+        assert!(sequence_sql.contains("dependency.deptype NOT IN ('a', 'i')"));
+        assert!(sequence_sql.contains("owner_rel.relkind NOT IN ('r', 'p', 'f')"));
+        assert!(sequence_sql.contains("sequence_ns.nspname = 'sales'"));
+
+        let unqualified_sequence_sql = postgres_sequence_dependencies_sql("orders_id_seq", None);
+        assert!(unqualified_sequence_sql.contains("sequence.relname = 'orders_id_seq'"));
+        assert!(
+            !unqualified_sequence_sql.contains("sequence_ns.nspname = 'public'"),
+            "an omitted schema must detect same-name sequences in multiple schemas"
+        );
 
         let table_sql = postgres_table_dependencies_sql("orders", Some("sales"));
         assert!(table_sql.contains("referenced_type.typtype IN ('e', 'd', 'r', 'c')"));
@@ -161,6 +252,10 @@ mod tests {
         assert!(table_sql.contains("AS type_usage"));
         assert!(table_sql.contains("dependency_column.attname"));
         assert!(table_sql.contains("type_constraint.contype = 'c'"));
+        assert!(table_sql.contains("'column_default'"));
+        assert!(table_sql.contains("default_row.adnum"));
+        assert!(table_sql.contains("default_column.attname::text"));
+        assert!(table_sql.contains("AS sequence_schema"));
     }
 
     #[test]

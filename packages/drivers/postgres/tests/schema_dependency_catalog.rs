@@ -65,10 +65,14 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
     let typed_table = format!("dz_mig_dep_typed_table_{suffix}");
     let sequence_table = format!("dz_mig_dep_sequence_table_{suffix}");
     let sequence_name = format!("dz_mig_dep_sequence_{suffix}");
+    let standalone_sequence = format!("dzstandalone_{suffix}");
+    let ambiguous_sequence = format!("dzambiguous_{suffix}");
+    let missing_sequence_name = format!("{standalone_sequence}_missing");
     let fk_parent = format!("dz_mig_dep_fk_parent_{suffix}");
     let fk_child = format!("dz_mig_dep_fk_child_{suffix}");
-    let serial_table = format!("dz_mig_dep_serial_table_{suffix}");
+    let serial_table = format!("dz_serial_table_{suffix}");
     let serial_sequence = format!("{serial_table}_id_seq");
+    let bigserial_sequence = format!("{serial_table}_big_id_seq");
     let ambiguous_schema = format!("dz_mig_dep_schema_{suffix}");
 
     let driver = PostgresDriver::new();
@@ -203,6 +207,27 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             )
             .await
             .map_err(|error| error.to_string())?;
+        driver
+            .execute(
+                &handle,
+                &format!("CREATE SEQUENCE public.{standalone_sequence}"),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        driver
+            .execute(
+                &handle,
+                &format!("CREATE SEQUENCE public.{ambiguous_sequence}"),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        driver
+            .execute(
+                &handle,
+                &format!("CREATE SEQUENCE {ambiguous_schema}.{ambiguous_sequence}"),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
         let type_sql = datazen_driver_api::schema_dependencies::postgres_type_dependencies_sql(
             &custom_type,
             Some("public"),
@@ -214,9 +239,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         driver
             .execute(
                 &handle,
-                &format!(
-                    "CREATE TABLE public.{serial_table} (id BIGSERIAL PRIMARY KEY)"
-                ),
+                &format!("CREATE TABLE public.{serial_table} (id SERIAL PRIMARY KEY, big_id BIGSERIAL UNIQUE)"),
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -357,6 +380,33 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             .await
             .map_err(|error| error.to_string())?
             .data;
+        let standalone_sequence_dependencies = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"sequence","schema":"public","name":standalone_sequence}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let ambiguous_sequence_dependencies = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"sequence","name":ambiguous_sequence}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let missing_sequence_dependencies = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"sequence","schema":"public","name":missing_sequence_name}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
         let serial_table_dependencies = driver
             .execute_command(
                 &handle,
@@ -371,6 +421,15 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
                 &handle,
                 "get_object_dependencies",
                 json!({"kind":"sequence","schema":"public","name":serial_sequence}),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
+        let bigserial_sequence_dependencies = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({"kind":"sequence","schema":"public","name":bigserial_sequence}),
             )
             .await
             .map_err(|error| error.to_string())?
@@ -397,8 +456,12 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             domain_dependencies,
             range_dependencies,
             sequence,
+            standalone_sequence_dependencies,
+            ambiguous_sequence_dependencies,
+            missing_sequence_dependencies,
             serial_table_dependencies,
             serial_sequence_dependencies,
+            bigserial_sequence_dependencies,
             fk_child_dependencies,
         ))
     }
@@ -411,6 +474,8 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         format!("DROP TABLE IF EXISTS public.{trigger_table} CASCADE"),
         format!("DROP FUNCTION IF EXISTS public.{trigger_function}()"),
         format!("DROP SEQUENCE IF EXISTS public.{sequence_name}"),
+        format!("DROP SEQUENCE IF EXISTS public.{standalone_sequence}"),
+        format!("DROP SEQUENCE IF EXISTS public.{ambiguous_sequence}"),
         format!("DROP TABLE IF EXISTS public.{serial_table} CASCADE"),
         format!("DROP TABLE IF EXISTS public.{fk_child} CASCADE"),
         format!("DROP TABLE IF EXISTS public.{fk_parent} CASCADE"),
@@ -442,8 +507,12 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         domain_dependencies,
         range_dependencies,
         sequence,
+        standalone_sequence_dependencies,
+        ambiguous_sequence_dependencies,
+        missing_sequence_dependencies,
         serial_table_dependencies,
         serial_sequence_dependencies,
+        bigserial_sequence_dependencies,
         fk_child_dependencies,
     ) = lookup.expect("create fixtures and query dependency catalog");
 
@@ -498,16 +567,99 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         &sequence,
         &[("table", "public", sequence_table.as_str(), None)],
     );
+    assert_sequence_usages(
+        &sequence,
+        &[(
+            "public",
+            sequence_name.as_str(),
+            "public",
+            sequence_table.as_str(),
+            "id",
+            "owned_by",
+        )],
+    );
+    assert_dependencies(&standalone_sequence_dependencies, &[]);
+    assert_sequence_usages(&standalone_sequence_dependencies, &[]);
+    assert_eq!(
+        ambiguous_sequence_dependencies["complete"], false,
+        "same-name sequences across schemas must fail closed: {ambiguous_sequence_dependencies}"
+    );
+    assert!(
+        ambiguous_sequence_dependencies
+            .get("sequenceDependencyUsages")
+            .is_none(),
+        "ambiguous sequence identities must not expose a partial usage proof"
+    );
+    assert_eq!(
+        missing_sequence_dependencies["complete"], false,
+        "missing sequence {missing_sequence_name} must fail closed: {missing_sequence_dependencies}"
+    );
+    assert!(
+        missing_sequence_dependencies
+            .get("sequenceDependencyUsages")
+            .is_none(),
+        "missing sequence identity must not expose an empty proof"
+    );
     // Serial semantics create both edges: table default -> sequence and
     // sequence OWNED BY -> table. The Host must split/defer OWNED BY to break
     // this valid catalog cycle before deployment.
     assert_dependencies(
         &serial_table_dependencies,
-        &[("sequence", "public", serial_sequence.as_str(), None)],
+        &[
+            ("sequence", "public", serial_sequence.as_str(), None),
+            ("sequence", "public", bigserial_sequence.as_str(), None),
+        ],
+    );
+    assert_sequence_usages(
+        &serial_table_dependencies,
+        &[
+            (
+                "public",
+                serial_sequence.as_str(),
+                "public",
+                serial_table.as_str(),
+                "id",
+                "column_default",
+            ),
+            (
+                "public",
+                bigserial_sequence.as_str(),
+                "public",
+                serial_table.as_str(),
+                "big_id",
+                "column_default",
+            ),
+        ],
     );
     assert_dependencies(
         &serial_sequence_dependencies,
         &[("table", "public", serial_table.as_str(), None)],
+    );
+    assert_sequence_usages(
+        &serial_sequence_dependencies,
+        &[(
+            "public",
+            serial_sequence.as_str(),
+            "public",
+            serial_table.as_str(),
+            "id",
+            "owned_by",
+        )],
+    );
+    assert_dependencies(
+        &bigserial_sequence_dependencies,
+        &[("table", "public", serial_table.as_str(), None)],
+    );
+    assert_sequence_usages(
+        &bigserial_sequence_dependencies,
+        &[(
+            "public",
+            bigserial_sequence.as_str(),
+            "public",
+            serial_table.as_str(),
+            "big_id",
+            "owned_by",
+        )],
     );
     assert_dependencies(
         &fk_child_dependencies,
@@ -582,6 +734,37 @@ fn assert_dependencies(data: &Value, expected: &[(&str, &str, &str, Option<&str>
                     }
             }),
             "missing exact dependency {kind} {schema}.{name} {signature:?} in {data}"
+        );
+    }
+}
+
+fn assert_sequence_usages(data: &Value, expected: &[(&str, &str, &str, &str, &str, &str)]) {
+    assert_eq!(
+        data["complete"], true,
+        "sequence usage catalog is incomplete for {expected:?}: {data}"
+    );
+    let usages = data["sequenceDependencyUsages"]
+        .as_array()
+        .expect("sequenceDependencyUsages array in driver command result");
+    assert_eq!(
+        usages.len(),
+        expected.len(),
+        "sequence usage catalog contains missing or unexpected edges for {expected:?}: {data}"
+    );
+    for (sequence_schema, sequence_name, owner_schema, owner_table, column_name, usage) in expected
+    {
+        assert!(
+            usages.iter().any(|entry| {
+                entry["sequence"]["kind"] == "sequence"
+                    && entry["sequence"]["schema"] == *sequence_schema
+                    && entry["sequence"]["name"] == *sequence_name
+                    && entry["ownerTable"]["kind"] == "table"
+                    && entry["ownerTable"]["schema"] == *owner_schema
+                    && entry["ownerTable"]["name"] == *owner_table
+                    && entry["columnName"] == *column_name
+                    && entry["usage"] == *usage
+            }),
+            "missing exact sequence usage {usage} for {sequence_schema}.{sequence_name} -> {owner_schema}.{owner_table}.{column_name} in {data}"
         );
     }
 }

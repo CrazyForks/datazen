@@ -2,6 +2,9 @@
 
 use serde_json::{json, Value as JsonValue};
 
+mod dependencies;
+use dependencies::parse_object_dependency_catalog;
+
 use crate::command::{
     CommandAccessLevel, CommandCategory, CommandResult, DriverCommandDefinition,
     DriverCommandMetadata,
@@ -10,8 +13,7 @@ use crate::schema_dependencies::{
     mysql_dependency_grants_are_complete, postgres_sequence_dependencies_sql,
     postgres_table_dependencies_sql, postgres_trigger_dependencies_sql,
     postgres_type_dependencies_sql, view_dependencies_sql, SchemaObjectDependencies,
-    TypeDependencyUsage, TypeDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL,
-    MYSQL_UDF_CATALOG_SQL,
+    SequenceDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL, MYSQL_UDF_CATALOG_SQL,
 };
 use crate::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql_with_metadata, DatabaseObject,
@@ -164,6 +166,35 @@ pub fn schema_object_command_definitions() -> Vec<DriverCommandDefinition> {
                                 "columnName": { "type": "string" }
                             },
                             "required": ["dependency", "usage"]
+                        }
+                    },
+                    "sequenceDependencyUsages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sequence": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": { "type": "string" },
+                                        "schema": { "type": ["string", "null"] },
+                                        "name": { "type": "string" }
+                                    },
+                                    "required": ["kind", "name"]
+                                },
+                                "ownerTable": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": { "type": "string" },
+                                        "schema": { "type": ["string", "null"] },
+                                        "name": { "type": "string" }
+                                    },
+                                    "required": ["kind", "name"]
+                                },
+                                "columnName": { "type": "string" },
+                                "usage": { "type": "string", "enum": ["column_default", "owned_by"] }
+                            },
+                            "required": ["sequence", "ownerTable", "columnName", "usage"]
                         }
                     }
                 },
@@ -333,6 +364,11 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
     let Some(sql) = sql else {
         return SchemaObjectDependencies::incomplete();
     };
+    let required_sequence_usage = match (family, kind) {
+        ("postgresql", ObjectKind::Table) => Some(SequenceDependencyUsageKind::ColumnDefault),
+        ("postgresql", ObjectKind::Sequence) => Some(SequenceDependencyUsageKind::OwnedBy),
+        _ => None,
+    };
     let Ok(query_result) = driver.query(handle, &sql).await else {
         return SchemaObjectDependencies::incomplete();
     };
@@ -342,15 +378,20 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
         dependencies,
         type_dependency_usages,
         type_usage_complete,
+        sequence_dependency_usages,
+        sequence_usage_complete,
     )) = parse_object_dependency_catalog(
         &query_result,
         family == "postgresql" && kind == ObjectKind::Table,
+        required_sequence_usage,
     )
     else {
         return SchemaObjectDependencies::incomplete();
     };
-    let mut complete =
-        selected_count == Some(1) && unsupported_count == Some(0) && type_usage_complete;
+    let mut complete = selected_count == Some(1)
+        && unsupported_count == Some(0)
+        && type_usage_complete
+        && sequence_usage_complete;
 
     if family == "mysql" && kind == ObjectKind::View {
         complete = complete && mysql_dependency_catalog_visibility(driver, handle).await;
@@ -360,6 +401,8 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
         complete,
         dependencies,
         type_dependency_usages,
+        sequence_dependency_usages: required_sequence_usage
+            .and_then(|_| complete.then_some(sequence_dependency_usages)),
     }
 }
 
@@ -390,168 +433,6 @@ async fn mysql_dependency_catalog_visibility<D: DatabaseDriver + ?Sized>(
         .and_then(|row| value_as_string(row.get(index).and_then(Option::as_ref)))
         .and_then(|count| count.parse::<i64>().ok())
         == Some(0)
-}
-
-fn parse_object_dependency_catalog(
-    result: &QueryResult,
-    require_type_usage: bool,
-) -> Result<
-    (
-        Option<i64>,
-        Option<i64>,
-        Vec<DatabaseObject>,
-        Vec<TypeDependencyUsage>,
-        bool,
-    ),
-    DriverError,
-> {
-    let selected_idx = column_index(&result.columns, &["selected_count"]).ok_or_else(|| {
-        DriverError::QueryFailed("Dependency catalog query missing selected_count".into())
-    })?;
-    let unsupported_idx =
-        column_index(&result.columns, &["unsupported_count"]).ok_or_else(|| {
-            DriverError::QueryFailed("Dependency catalog query missing unsupported_count".into())
-        })?;
-    let kind_idx = column_index(&result.columns, &["kind"]);
-    let schema_idx = column_index(&result.columns, &["dependency_schema", "schema"]);
-    let name_idx = column_index(&result.columns, &["name"]);
-    let signature_idx = column_index(&result.columns, &["signature"]);
-    let type_usage_idx = column_index(&result.columns, &["type_usage"]);
-    let column_name_idx = column_index(&result.columns, &["column_name"]);
-    let first = result.rows.first().ok_or_else(|| {
-        DriverError::QueryFailed("Dependency catalog query returned no status row".into())
-    })?;
-    let selected_count = first
-        .get(selected_idx)
-        .and_then(Option::as_ref)
-        .and_then(|value| value_as_string(Some(value)))
-        .and_then(|count| count.parse::<i64>().ok());
-    let unsupported_count = first
-        .get(unsupported_idx)
-        .and_then(Option::as_ref)
-        .and_then(|value| value_as_string(Some(value)))
-        .and_then(|count| count.parse::<i64>().ok());
-    let Some(kind_idx) = kind_idx else {
-        return Err(DriverError::QueryFailed(
-            "Dependency catalog query missing kind column".into(),
-        ));
-    };
-    let Some(schema_idx) = schema_idx else {
-        return Err(DriverError::QueryFailed(
-            "Dependency catalog query missing schema column".into(),
-        ));
-    };
-    let Some(name_idx) = name_idx else {
-        return Err(DriverError::QueryFailed(
-            "Dependency catalog query missing name column".into(),
-        ));
-    };
-    let mut dependencies = std::collections::BTreeMap::new();
-    let mut type_dependency_usages = Vec::new();
-    let mut type_usage_complete = true;
-    for row in &result.rows {
-        let Some(kind) = row
-            .get(kind_idx)
-            .and_then(Option::as_ref)
-            .and_then(|value| value_as_string(Some(value)))
-        else {
-            continue;
-        };
-        let Some(schema) = row
-            .get(schema_idx)
-            .and_then(Option::as_ref)
-            .and_then(|value| value_as_string(Some(value)))
-        else {
-            return Err(DriverError::QueryFailed(
-                "Dependency catalog returned an unqualified dependency".into(),
-            ));
-        };
-        let Some(name) = row
-            .get(name_idx)
-            .and_then(Option::as_ref)
-            .and_then(|value| value_as_string(Some(value)))
-        else {
-            return Err(DriverError::QueryFailed(
-                "Dependency catalog returned a dependency without a name".into(),
-            ));
-        };
-        if !matches!(
-            kind.as_str(),
-            "table" | "view" | "function" | "procedure" | "sequence" | "type"
-        ) {
-            return Err(DriverError::QueryFailed(format!(
-                "Dependency catalog returned unsupported object kind: {kind}"
-            )));
-        }
-        let signature = signature_idx.and_then(|index| {
-            row.get(index)
-                .and_then(Option::as_ref)
-                .and_then(|value| value_as_string_allow_empty(Some(value)))
-        });
-        let object = DatabaseObject {
-            kind: kind.clone(),
-            schema: Some(schema.clone()),
-            name: name.clone(),
-            signature: signature.clone(),
-            target_schema: None,
-            target_name: None,
-        };
-        if kind == "type" {
-            if let Some(usage_idx) = type_usage_idx {
-                let usage = row
-                    .get(usage_idx)
-                    .and_then(Option::as_ref)
-                    .and_then(|value| value_as_string(Some(value)));
-                let column_name = column_name_idx.and_then(|index| {
-                    row.get(index)
-                        .and_then(Option::as_ref)
-                        .and_then(|value| value_as_string(Some(value)))
-                });
-                let usage = match usage.as_deref() {
-                    Some("column_type") if column_name.is_some() => {
-                        Some(TypeDependencyUsageKind::ColumnType)
-                    }
-                    Some("expression") => Some(TypeDependencyUsageKind::Expression),
-                    Some("constraint") => Some(TypeDependencyUsageKind::Constraint),
-                    _ => None,
-                };
-                if let Some(usage) = usage {
-                    type_dependency_usages.push(TypeDependencyUsage {
-                        dependency: object.clone(),
-                        usage,
-                        column_name,
-                    });
-                } else {
-                    type_usage_complete = false;
-                }
-            } else if require_type_usage {
-                type_usage_complete = false;
-            }
-        }
-        dependencies.insert((kind, schema, name, signature), object);
-    }
-    type_dependency_usages.sort_by(|left, right| {
-        (
-            &left.dependency.schema,
-            &left.dependency.name,
-            left.usage as u8,
-            &left.column_name,
-        )
-            .cmp(&(
-                &right.dependency.schema,
-                &right.dependency.name,
-                right.usage as u8,
-                &right.column_name,
-            ))
-    });
-    type_dependency_usages.dedup();
-    Ok((
-        selected_count,
-        unsupported_count,
-        dependencies.into_values().collect(),
-        type_dependency_usages,
-        type_usage_complete,
-    ))
 }
 
 fn value_as_string(value: Option<&Value>) -> Option<String> {
