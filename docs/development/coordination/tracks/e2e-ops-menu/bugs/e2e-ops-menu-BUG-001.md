@@ -1,7 +1,7 @@
 # e2e-ops-menu-BUG-001 · RC-3 关闭修复无效：closeAnyMenu 向 window 派发 mousedown 使 onDown 抛 TypeError，菜单从未真正关闭
 
 - **严重度**：高
-- **状态**：待修复
+- **状态**：待复测
 - **涉及文件**：
   - `e2e/specs/ops-process-server.ts`（`closeAnyMenu()` L45-62 / `dismissMenu()`）
   - `e2e/specs/ops-ddl-backup.ts`（`closeAnyMenu()` / `dismissMenu()`）
@@ -114,3 +114,13 @@ document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); // 
 ## 留待 R 回归
 
 - 【留待 R 回归】真实 E2E（WebKit WebDriver）运行表现：`pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`，前置条件：主检出执行 `pnpm tauri:build:webdriver` 产出二进制。
+
+## 修复记录（round-1）
+
+- **修复提交**：`__FIX_SHA_BACKFILL__`（修复内容在 message 为 `fix(e2e): resolve e2e-ops-menu-BUG-001 …` 的首个提交内；commit 无法包含自身 SHA，故由紧随其后的回填提交写入本行）
+- **修复方式（仅测试侧，未动 `src/`）**：三个 spec 的 `closeAnyMenu()` 派发目标由 `window` 改为 `document.body`——body 是 Node，且是菜单 portal root 的祖先（`rootRef.contains(body)` 为 false），冒泡到 window 监听器后 `hide()` 正常执行；同时移除 `waitUntil` 上吞错的 `.catch`，关闭失败将带 `右键菜单未关闭` timeoutMsg 抛错（菜单本就不存在时 `waitUntil` 立即成功；`rightClick` 中面向"无菜单目标"语义的 `.catch` 保留，navigator 负向断言依赖）。
+- **src/ 防御性补充未采纳**：生产真实 mousedown 的 target 必然是 Node，非 Node target 仅出现在合成 `window.dispatchEvent`（测试侧模式）中；按本轮"仅修 Bug、不改应用代码"约束未改 `WebContextMenu.onDown`，`if (!(e.target instanceof Node)) return;` 防御加固建议由协调者评估后另行派发。
+- **验证**：
+  - vitest 真实组件（临时取证文件，运行后已删除）：`document.body` 派发冒泡 `mousedown` → 菜单从 DOM 消失（根菜单、子菜单已打开两场景），2/2 通过。
+  - `npx tsc --noEmit -p e2e/tsconfig.json`：HEAD 70 → 修复后 70，逐条归一化 diff 完全一致（相对 HEAD 零新增、零移除）。
+- **复测入口**：主检出 `pnpm tauri:build:webdriver` 后执行 `pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`；回归用例 `[tester] OPS-PROC-T001` 必须转绿。

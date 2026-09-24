@@ -1,6 +1,6 @@
 # Track: e2e-ops-menu — E2E 运维菜单用例修复
 
-- **状态**: FAILED（测试第 1 轮：`e2e-ops-menu-BUG-001` 待修复；测试 commit 见文末「测试记录」）
+- **状态**: READY_FOR_TEST（修复轮第 1 回合：`e2e-ops-menu-BUG-001` 已修复，待复测；测试记录见文末「测试记录」，修复细节见文末「修复轮第 1 回合」）
 - **分支**: `feature/e2e-ops-menu`
 - **改动范围**: 仅 `e2e/specs/` 三个 spec 文件 + 本进度文件。未触碰 `src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、`e2e/lib/**`。
 
@@ -46,9 +46,12 @@ Error: database "e2e_w18662_0_4r71" does not exist
 原 spec 向 `document` 派发 **不冒泡** 的 `mousedown`，永远到不了 window 监听器
 → 菜单从不关闭，污染后续断言。
 
-**spec 内修复**：`closeAnyMenu()` 改为
-`window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`
-并 `waitUntil` 菜单真正消失（3s，容忍失败）。
+**spec 内修复**：`closeAnyMenu()` 向 `document.body` 派发冒泡 `mousedown`
+并 `waitUntil` 菜单真正消失（3s，失败带 timeoutMsg 抛错、不再吞掉）。
+
+> **round-1 更正**：round-0 曾改为向 `window` 派发，实测无效——`e.target === window`
+> 非 Node，`rootRef.contains(window)` 抛 TypeError → `hide()` 不执行
+> （`e2e-ops-menu-BUG-001`），详见文末「修复轮第 1 回合」。
 
 ## 二、逐文件根因与修复
 
@@ -90,7 +93,7 @@ seeded 连接（`[data-conn-item]` 首项不保证是已连接那条）；未使
 - **`rightClick`**：`pause(500)` → 先关残留菜单 + `waitUntil` 菜单出现
   （8s），但保留 `.catch` 以维持"无菜单处理器的目标节点 → `getMenuText()==''`"
   的旧语义（该 spec 大量用例依赖空菜单语义做 skip/负向断言）。
-- **`dismissMenu`**：RC-3 修复（window 冒泡 mousedown）。
+- **`dismissMenu`**：RC-3 修复（document.body 冒泡 mousedown；round-0 的 window 派发无效，见 BUG-001 round-1）。
 - **`hoverSubmenuTrigger`**：触发项 `waitForExist(8000)` 抛错 + 子菜单
   `waitUntil(5000)` 去 `.catch`（该函数仅被连接子菜单用例调用，目标单一）。
 
@@ -122,7 +125,7 @@ npx tsc --noEmit -p e2e/tsconfig.json   # worktree 内执行
    `connectBackend` + `disconnectBackend`，try/catch），或抽到
    `e2e/helpers.ts` 导出 `dropLeakedSeededSession(connectionId)` 供各 spec
    调用——届时可删除本 track 三份 spec 内的同名本地副本。
-2. **菜单等待/关闭工具**：把 `closeAnyMenu()`（window 冒泡 mousedown）与
+2. **菜单等待/关闭工具**：把 `closeAnyMenu()`（document.body 冒泡 mousedown，round-1 更正）与
    `waitContextMenuOpened(timeout)` 抽进 `e2e/helpers.ts`，统一替代散落的
    `pause(400/500)` 与 no-op `dismissMenu`。
 3. **tsc 基线清理**（非本 track 范围）：`e2e/helpers.ts:292/303/320/2414`、
@@ -201,3 +204,31 @@ pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigato
   bubbles），并建议在 `WebContextMenu.onDown` 对非 Node target 防御（属 `src/`，
   需协调者另行派发）。
 - 修复后 R 复测预期：`[tester] OPS-PROC-T001` 转绿即证明关闭路径真实生效。
+
+## 修复轮第 1 回合（BUG-001 · RC-3 关闭派发无效）
+
+- **Phase / 状态**: READY_FOR_TEST（BUG-001 已修复，待复测；修复 commit 见 BUG-001「修复记录（round-1）」）。
+- **根因（实测确认）**: round-0 的 `closeAnyMenu` 向 `window` 派发冒泡 mousedown
+  后事件确实到达 `WebContextMenu.onDown`，但 `e.target === window`（非 Node），
+  `rootRef.current?.contains(window)` 按 WebIDL 抛
+  `TypeError: parameter 1 is not of type 'Node'` → `hide()` 永不执行；`waitUntil(3s)`
+  超时又被 `.catch` 吞掉 → 三个 spec 的 `dismissMenu` 实质 no-op，`rightClick`
+  预关菜单失效，旧菜单可被误判为新菜单（复现点：`[tester] OPS-PROC-T001`）。
+- **修复（仅 3 个 spec，未动 `src/`）**:
+  1. 派发目标 `window` → `document.body`：body 是 Node、且是菜单 portal root 的
+     祖先（`contains(body)` 为 false）→ 冒泡到 window 监听器 → `hide()` 正常执行。
+  2. `closeAnyMenu` 移除吞错的 `.catch`：关闭失败带 `右键菜单未关闭` timeoutMsg
+     抛错（菜单本就不存在时 `waitUntil` 立即成功，不受影响）；`rightClick` 中面向
+     "无菜单目标"语义的 `.catch` 保留（navigator 负向断言依赖该空菜单语义）。
+- **src/ 防御未采纳**: 生产真实 mousedown 的 target 必然是 Node，非 Node target 只
+  出现在合成 `window.dispatchEvent` 中（纯测试侧模式）；按"仅修 Bug、不改应用代码"
+  约束未改 `WebContextMenu.onDown`。`if (!(e.target instanceof Node)) return;`
+  防御加固建议由协调者评估后另行派发（已写入 BUG 文件修复记录）。
+- **验证**:
+  - vitest 真实组件（临时取证文件，运行后已删除）：`document.body` 派发冒泡
+    `mousedown` → 菜单从 DOM 消失（根菜单、子菜单已打开两场景）2/2 通过。
+  - `npx tsc --noEmit -p e2e/tsconfig.json`：HEAD 70 → 修复后 70，逐条归一化
+    diff 完全一致（相对 HEAD 零新增、零移除）。
+- **复测入口**: 主检出 `pnpm tauri:build:webdriver` 后
+  `pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts`；
+  `[tester] OPS-PROC-T001` 必须转绿。

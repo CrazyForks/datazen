@@ -41,24 +41,28 @@ async function dropLeakedSeededSession() {
   }
 }
 
-/** 关闭可能残留的右键菜单并等待其真正消失（不抛错）。 */
+/**
+ * 关闭可能残留的右键菜单并等待其真正消失（无菜单时立即成功）。
+ * 关闭失败不再被 .catch 静默吞掉——会带 timeoutMsg 抛错（e2e-ops-menu-BUG-001）。
+ */
 async function closeAnyMenu() {
   await browser.execute(() => {
-    // WebContextMenu 监听 window 的 mousedown，target 不在菜单内即关闭；
-    // 原先向 document 派发不冒泡的 mousedown 永远到不了 window 监听器。
-    window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    // WebContextMenu 在 window 上监听 mousedown，用 rootRef.contains(e.target)
+    // 判断点按是否落在菜单外。派发目标必须是 Node：
+    //  - 向 document 派发不冒泡的事件 → 到不了 window 监听器（原始缺陷）；
+    //  - 向 window 派发 → e.target === window（非 Node），contains() 按 WebIDL
+    //    抛 TypeError → hide() 永不执行（BUG-001 实测）；
+    //  - document.body 既是 Node、又位于菜单 portal root 之外（body 是其祖先）
+    //    → 冒泡到 window，contains(body) 为 false → hide() 正常关闭。
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   });
-  await browser
-    .waitUntil(
-      async () => {
-        const menu = await $('[data-testid="web-context-menu"]');
-        return !(await menu.isExisting());
-      },
-      { timeout: 3000, timeoutMsg: '右键菜单未关闭' },
-    )
-    .catch(() => {
-      /* 菜单本就不存在 */
-    });
+  await browser.waitUntil(
+    async () => {
+      const menu = await $('[data-testid="web-context-menu"]');
+      return !(await menu.isExisting());
+    },
+    { timeout: 3000, timeoutMsg: '右键菜单未关闭' },
+  );
 }
 
 /** 右键点击一个 DOM 元素（按选择器 + 可作文本过滤）。 */
