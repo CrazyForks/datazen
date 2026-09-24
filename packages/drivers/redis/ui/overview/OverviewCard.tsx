@@ -77,7 +77,7 @@ export function OverviewCard({
         className,
       )}
     >
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3">
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3">
         <h3
           data-overview-card-title={cardId}
           className="truncate text-xs font-semibold uppercase tracking-wide text-fg-secondary"
@@ -93,21 +93,9 @@ export function OverviewCard({
           </code>
         ) : null}
         <span className="flex-1" />
-        {onRetry && state === 'ready' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-overview-card-action={cardId}
-            className="h-6 px-1.5 text-[11px]"
-            onClick={onRetry}
-          >
-            {t('redis.overview.refresh')}
-          </Button>
-        ) : null}
       </header>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0">
         {state === 'loading' ? (
           <div
             data-overview-loading={cardId}

@@ -24,8 +24,18 @@ export function buildQuickActions(defaultDbIndex: number): QuickAction[] {
       icon: Boxes,
       target: { kind: 'database', dbIndex: defaultDbIndex },
     },
-    { id: 'console', labelKey: 'redis.overview.action.console', icon: Terminal, target: { kind: 'console' } },
-    { id: 'pubsub', labelKey: 'redis.overview.action.pubsub', icon: Radio, target: { kind: 'pubsub' } },
+    {
+      id: 'console',
+      labelKey: 'redis.overview.action.console',
+      icon: Terminal,
+      target: { kind: 'console' },
+    },
+    {
+      id: 'pubsub',
+      labelKey: 'redis.overview.action.pubsub',
+      icon: Radio,
+      target: { kind: 'pubsub' },
+    },
     {
       id: 'importExport',
       labelKey: 'redis.overview.action.importExport',
@@ -53,11 +63,8 @@ export function QuickActionsCard({ defaultDbIndex, onJump, jumpHandler }: QuickA
   const actions = buildQuickActions(defaultDbIndex);
 
   return (
-    <OverviewCard
-      cardId="actions"
-      titleKey="redis.overview.actions.title"
-    >
-      <ul className="flex flex-wrap gap-1.5 p-3 text-xs">
+    <OverviewCard cardId="actions" titleKey="redis.overview.actions.title">
+      <ul className="flex flex-wrap gap-1.5 p-2.5 text-xs">
         {actions.map((action) => (
           <li key={action.id}>
             <button

@@ -1,4 +1,25 @@
+import type { ReactNode } from 'react';
 import type { KvSlotState } from '@datazen/driver-sdk';
+import type { KeyDetail } from '../shared/types';
+import type { RedisPendingAction } from '../overview/overviewNavigation';
+
+/**
+ * Props passed to the `renderRightPanel` callback, giving the caller full
+ * access to the detail state needed to render a custom right panel (e.g. the
+ * tabbed panel with 键详情/命令行/发布订阅/慢日志).
+ */
+export interface RightPanelRenderProps {
+  dbSessionId: string;
+  dbIndex: number;
+  selectedKey: string | null;
+  detail: KeyDetail | null;
+  detailLoading: boolean;
+  modules: string[] | null;
+  onRefresh: () => void;
+  onRenamed: (newKey: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onClose: () => void;
+}
 
 /**
  * Public prop/handle surface of `RedisWorkbench` (屏 B). Kept in its own module
@@ -28,9 +49,30 @@ export interface RedisWorkbenchProps {
    * driver declares no KV slot capability, so every publish below is optional.
    */
   kvSlotState?: KvSlotState;
+  /**
+   * One-shot action from the overview page (屏 A → 屏 B jump).  Consumed
+   * exactly once: tab switch, import/export dialog, new-key dialog, or key
+   * selection.  The ref-based consumption inside the workbench ensures the
+   * action fires even when the workbench mounts on a later render tick.
+   */
+  pendingAction?: RedisPendingAction;
+  /**
+   * Optional render prop for the right panel content.  When provided, replaces
+   * the default `DetailColumn` in the split layout.  The caller receives the
+   * full detail state and can render a tabbed panel (键详情/命令行/发布订阅/慢日志)
+   * or any other custom right-panel content.  When absent, the workbench falls
+   * back to rendering `DetailColumn` directly.
+   */
+  renderRightPanel?: (props: RightPanelRenderProps) => ReactNode;
 }
 
 export interface RedisWorkbenchHandle {
   refreshKeys: () => void;
   selectDatabase: (db: string) => void;
+  /**
+   * Jump to `key` in the given database. If the target db differs from the
+   * current one, switches first; then selects the key to open its editor.
+   * The draft-gate inside `selectKey` handles any unsaved state.
+   */
+  selectKey: (key: string, dbIndex?: number) => void;
 }

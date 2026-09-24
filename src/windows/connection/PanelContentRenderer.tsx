@@ -98,6 +98,7 @@ export function PanelContentRenderer({
         hideSidebar
         isActive
         kvSlotState={kvSlotState}
+        {...(kvPanel.pendingAction ? { pendingAction: kvPanel.pendingAction } : {})}
       />
     );
   }

@@ -10,21 +10,49 @@ import { useCallback, useState, type MouseEvent as ReactMouseEvent } from 'react
  *  - exit: `pointerup` removes **both** listeners, so a release anywhere
  *    (including outside the window's tree pane) ends the drag — no one-way latch.
  *
- * The width is component state on purpose: persisting it is a Wave 4 concern
- * (same as the container-query breakpoints, PRD §4 I-10).
+ * The width persists to localStorage so the user's preferred split survives
+ * across sessions.
  */
 
 export const DEFAULT_TREE_WIDTH = 360;
 export const MIN_TREE_WIDTH = 220;
 export const MAX_TREE_WIDTH = 900;
+const STORAGE_KEY = 'redis-workbench-split-width';
 
 export function clampTreeWidth(next: number): number {
   if (!Number.isFinite(next)) return DEFAULT_TREE_WIDTH;
   return Math.min(MAX_TREE_WIDTH, Math.max(MIN_TREE_WIDTH, Math.round(next)));
 }
 
-export function useWorkbenchSplit(initial: number = DEFAULT_TREE_WIDTH) {
-  const [treeWidth, setTreeWidth] = useState(() => clampTreeWidth(initial));
+function readPersistedWidth(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw !== null) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return clampTreeWidth(n);
+    }
+  } catch {
+    // localStorage unavailable (SSR / test env) — ignore.
+  }
+  return DEFAULT_TREE_WIDTH;
+}
+
+function persistWidth(width: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(width));
+  } catch {
+    // localStorage unavailable — ignore.
+  }
+}
+
+export function useWorkbenchSplit(initial?: number) {
+  const [treeWidth, setTreeWidth] = useState(() => clampTreeWidth(initial ?? readPersistedWidth()));
+
+  const updateWidth = useCallback((next: number) => {
+    const clamped = clampTreeWidth(next);
+    setTreeWidth(clamped);
+    persistWidth(clamped);
+  }, []);
 
   const startSplitDrag = useCallback(
     (e: ReactMouseEvent) => {
@@ -32,7 +60,7 @@ export function useWorkbenchSplit(initial: number = DEFAULT_TREE_WIDTH) {
       const startX = e.clientX;
       const startWidth = treeWidth;
       const onMove = (ev: globalThis.MouseEvent) => {
-        setTreeWidth(clampTreeWidth(startWidth + ev.clientX - startX));
+        updateWidth(startWidth + ev.clientX - startX);
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -41,8 +69,8 @@ export function useWorkbenchSplit(initial: number = DEFAULT_TREE_WIDTH) {
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [treeWidth],
+    [treeWidth, updateWidth],
   );
 
-  return { treeWidth, setTreeWidth, startSplitDrag };
+  return { treeWidth, setTreeWidth: updateWidth, startSplitDrag };
 }

@@ -34,6 +34,7 @@ export type {
   ProcessListCacheData,
   DatabaseObjectPanel,
   RedisDbPanel,
+  RedisPendingAction,
   Panel,
   ConnectionContext,
 } from './panelTypes';

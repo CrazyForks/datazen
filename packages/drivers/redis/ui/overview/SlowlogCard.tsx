@@ -2,6 +2,8 @@ import { useI18n } from '@datazen/ui';
 import { OverviewCard } from './OverviewCard';
 import type { SlowlogRow } from './overviewModel';
 import type { OverviewSourceStatus } from './useOverviewData';
+import type { OverviewJumpHandler, OverviewJumpTarget } from './overviewNavigation';
+import { jumpStateAttribute } from './overviewNavigation';
 
 /**
  * 卡 4 — 慢查询 Top5（PRD §3.1：序号 / 耗时 µs / 命令摘要 / 客户端地址）.
@@ -9,15 +11,26 @@ import type { OverviewSourceStatus } from './useOverviewData';
  * The empty state is not a blank hole: it explains what `SLOWLOG GET` reports and
  * why it can legitimately be empty (I-11). A locked-down server that refuses
  * `SLOWLOG GET` (`redis:allow-slowlog-get`) gets its own 未授权 wording.
+ *
+ * Clicking a row jumps to the slowlog sub-page inside the monitor tab (屏 B).
  */
 export interface SlowlogCardProps {
   status: OverviewSourceStatus;
   rows: SlowlogRow[];
   onRetry: () => void;
+  onJump?: OverviewJumpHandler;
+  jumpHandler?: OverviewJumpHandler;
 }
 
-export function SlowlogCard({ status, rows, onRetry }: SlowlogCardProps) {
+export function SlowlogCard({ status, rows, onRetry, onJump, jumpHandler }: SlowlogCardProps) {
   const { t } = useI18n();
+  const jumpState = jumpStateAttribute(jumpHandler);
+
+  const handleRowClick = () => {
+    if (!onJump) return;
+    const target: OverviewJumpTarget = { kind: 'monitor', section: 'slowlog' };
+    onJump(target);
+  };
 
   return (
     <OverviewCard
@@ -37,7 +50,9 @@ export function SlowlogCard({ status, rows, onRetry }: SlowlogCardProps) {
             <th className="w-6 px-3 py-1.5 font-medium">#</th>
             <th className="w-24 px-2 py-1.5 font-medium">{t('redis.overview.slowlog.duration')}</th>
             <th className="px-2 py-1.5 font-medium">{t('redis.overview.slowlog.command')}</th>
-            <th className="w-32 px-3 py-1.5 text-right font-medium">{t('redis.overview.slowlog.client')}</th>
+            <th className="w-32 px-3 py-1.5 text-right font-medium">
+              {t('redis.overview.slowlog.client')}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -45,7 +60,9 @@ export function SlowlogCard({ status, rows, onRetry }: SlowlogCardProps) {
             <tr
               key={`${row.id}-${row.rank}`}
               data-overview-slowlog-row={row.rank}
-              className="border-b border-edge/50 last:border-b-0"
+              data-overview-jump={jumpState}
+              className="border-b border-edge/50 last:border-b-0 transition-colors hover:bg-surface-raised"
+              onClick={handleRowClick}
             >
               <td className="px-3 py-1.5 font-mono text-fg-muted">{row.rank}</td>
               <td

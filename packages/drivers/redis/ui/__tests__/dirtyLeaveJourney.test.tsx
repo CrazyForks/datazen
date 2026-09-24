@@ -333,9 +333,7 @@ describe('I-1 拦截点逐一验证（workbench 级）', () => {
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
     // 放弃后重取继续，而 reloadDetail 只刷详情、不清选择（E-5 修的缺陷）。
     await waitFor(() => expect(getKey.mock.calls.length).toBeGreaterThan(readsBefore));
-    await waitFor(() =>
-      expect(column().getAttribute('data-selected-key')).toBe('user:1'),
-    );
+    await waitFor(() => expect(column().getAttribute('data-selected-key')).toBe('user:1'));
     expect(editor().getAttribute('data-string-dirty')).toBe('false');
   });
 
@@ -366,25 +364,27 @@ describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () =
     await selectAndDraft();
 
     // 进入：脏 + 切页签 ⇒ 对话框，页签还没动。
-    fireEvent.click(screen.getByTestId('redis-tab-console'));
+    fireEvent.click(screen.getByTestId('redis-right-tab-console'));
     await screen.findByTestId('redis-draft-discard');
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('true');
-    expect(screen.getByTestId('redis-tab-console').getAttribute('data-active')).toBe('false');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
+    expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe('false');
 
     // 继续编辑 ⇒ 留在键详情页签，草稿仍在。
     fireEvent.click(screen.getByTestId('redis-draft-keep'));
     await waitFor(() => expect(leaveDialog()).toBeNull());
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('true');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
 
     // 放弃更改 ⇒ 页签切换完成；keep-alive 下编辑面还挂着但已回滚干净。
-    fireEvent.click(screen.getByTestId('redis-tab-console'));
+    fireEvent.click(screen.getByTestId('redis-right-tab-console'));
     await screen.findByTestId('redis-draft-discard');
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tab-console').getAttribute('data-active')).toBe('true'),
+      expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe(
+        'true',
+      ),
     );
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('false');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('false');
     expect(screen.getByTestId('stub-console')).toBeTruthy();
     expect(editor().getAttribute('data-string-dirty')).toBe('false');
     expect(draftInput().value).toBe('hello');

@@ -40,6 +40,8 @@
 | tunnel-backend | — | 未开始 | — | — | — |
 | tunnel-form | — | 未开始 | — | — | — |
 | tunnel-settings | — | 未开始 | — | — | — |
+| e2e-ops-menu | — | 未开始 | — | — | — |
+| e2e-schema-tree | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -77,6 +79,8 @@
 | tunnel-backend | — | — | `feature/tunnel-backend`（worktree `.worktrees/datazen-tunnel-backend`） | 未开始 | — |
 | tunnel-form | — | — | `feature/tunnel-form`（worktree `.worktrees/datazen-tunnel-form`） | 未开始 | — |
 | tunnel-settings | — | — | `feature/tunnel-settings`（worktree `.worktrees/datazen-tunnel-settings`） | 未开始 | — |
+| e2e-ops-menu | — | — | `feature/e2e-ops-menu` | 未开始 | — |
+| e2e-schema-tree | — | — | feature/e2e-schema-tree | 未开始 | — |
 
 ## 波次记录
 

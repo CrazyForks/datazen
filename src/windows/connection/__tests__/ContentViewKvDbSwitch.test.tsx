@@ -171,7 +171,8 @@ describe('ContentView ⇄ useKvSlotActions — the selectDatabase sink is thread
     // `KvSlotAction.selectDatabase` carries only the db label; the connection
     // comes from the panel this layer resolved.
     expect(onSelectKvDb).toHaveBeenCalledTimes(1);
-    expect(onSelectKvDb).toHaveBeenCalledWith('cfg-1', 'db3');
+    // pendingAction is optional; the context-bar sink passes no action.
+    expect(onSelectKvDb).toHaveBeenCalledWith('cfg-1', 'db3', undefined);
   });
 
   it('leaves the sink undefined when the host threaded no callback down', () => {
@@ -200,7 +201,7 @@ describe('ContentView ⇄ useKvSlotActions — the selectDatabase sink is thread
     lastArgs().onSelectDatabase?.('db7');
 
     expect(first).not.toHaveBeenCalled();
-    expect(second).toHaveBeenCalledWith('cfg-1', 'db7');
+    expect(second).toHaveBeenCalledWith('cfg-1', 'db7', undefined);
   });
 });
 

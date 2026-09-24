@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Button, cn } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
@@ -16,9 +16,15 @@ export interface MonitorPanelProps {
   dbIndex?: number;
   pinnedNodeAddr?: string;
   onPinnedNodeAddrChange?: (addr: string) => void;
+  /**
+   * Sub-page to show on mount (from the overview jump bridge).  Consumed
+   * exactly once via a ref so subsequent renders never replay it.
+   */
+  initialSubPage?: MonitorSubPage;
 }
 
 type MonitorSubPage = 'info' | 'monitor' | 'memory' | 'slowlog' | 'streams';
+export type { MonitorSubPage };
 
 interface MemorySample {
   key: string;
@@ -71,12 +77,21 @@ export function MonitorPanel({
   dbIndex = 0,
   pinnedNodeAddr = '',
   onPinnedNodeAddrChange,
+  initialSubPage,
 }: MonitorPanelProps) {
   const { t } = useI18n();
   const driverSettings = useBoundSettingsStore((s) => s.settings.driverSettings);
   const clusterRouting = readClusterRouting(driverSettings?.redis);
   const nodeAddr = resolvePinnedNodeAddr(clusterRouting, pinnedNodeAddr);
-  const [subPage, setSubPage] = useState<MonitorSubPage>('info');
+  const [subPage, setSubPage] = useState<MonitorSubPage>(initialSubPage ?? 'info');
+  // Consume the initial sub-page exactly once.
+  const initialSubPageRef = useRef(initialSubPage);
+  useEffect(() => {
+    const target = initialSubPageRef.current;
+    if (!target) return;
+    initialSubPageRef.current = undefined;
+    setSubPage(target);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- one-shot
 
   const subPages = useMemo(
     () =>

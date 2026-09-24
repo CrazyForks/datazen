@@ -26,13 +26,7 @@ function barWidth(sharePercent: number, empty: boolean): number {
   return Math.max(2, Math.min(100, sharePercent));
 }
 
-export function KeySpaceCard({
-  status,
-  model,
-  onRetry,
-  onJump,
-  jumpHandler,
-}: KeySpaceCardProps) {
+export function KeySpaceCard({ status, model, onRetry, onJump, jumpHandler }: KeySpaceCardProps) {
   const { t } = useI18n();
   const jumpState = jumpStateAttribute(jumpHandler);
 
@@ -47,11 +41,8 @@ export function KeySpaceCard({
       unauthorizedKey="redis.overview.keyspace.unauthorized"
       onRetry={onRetry}
     >
-      <div className="flex flex-col gap-2 p-3 text-xs">
-        <p
-          data-overview-keyspace-summary
-          className="text-fg-muted"
-        >
+      <div className="flex flex-col gap-2 p-2.5 text-xs">
+        <p data-overview-keyspace-summary className="text-fg-muted">
           {t('redis.overview.keyspace.summary', {
             dbCount: model.dbCount,
             nonEmpty: model.nonEmptyCount,
@@ -80,7 +71,10 @@ export function KeySpaceCard({
                 <span className="font-mono font-semibold">{cell.name}</span>
                 <span
                   data-overview-db-keys={cell.dbIndex}
-                  className={cn('font-mono tabular-nums', cell.empty ? 'text-fg-muted' : 'text-accent')}
+                  className={cn(
+                    'font-mono tabular-nums',
+                    cell.empty ? 'text-fg-muted' : 'text-accent',
+                  )}
                 >
                   {cell.keys}
                 </span>

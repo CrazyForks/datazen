@@ -1,30 +1,22 @@
+/**
+ * Redis connection view: left-right split layout.
+ *
+ * Layout (post-refactoring to match prototype):
+ *  - Left: Key browser (RedisWorkbench with renderRightPanel override)
+ *  - Right: Tabbed detail panel (键详情 / 命令行 / 发布订阅 / 慢日志)
+ *
+ * The top-level tabs are gone; the right panel owns its own tab bar.  The key
+ * browser is always visible on the left, giving the user constant access to the
+ * key tree regardless of which right-panel tab is active.
+ */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useI18n } from '@datazen/ui';
-import { cn } from '@datazen/ui';
+
 import type { ConnectionViewProps } from '@datazen/driver-sdk';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
-import { RedisConsole } from '../console/RedisConsole';
-import { MonitorPanel } from '../observe/MonitorPanel';
-import { PubSubPanel } from '../observe/PubSubPanel';
+import { RedisRightPanel, type RightTab } from '../key-browser/RedisRightPanel';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
-import { requestDraftLeave } from '../shared/draftGuard';
-
-/**
- * 右列一级页签（裁定 8-1 = **4 枚**：键详情 / 命令行 / 发布订阅 / 监控）。
- * 慢日志作为 Monitor 的子页签，不再独立为一级 Tab。
- */
-export type ActiveTab = 'items' | 'console' | 'pubsub' | 'monitor';
-
-/** 页签顺序即 PRD §3.3 右列页签条顺序（发布订阅在监控之前）。 */
-export const TABS: ActiveTab[] = ['items', 'console', 'pubsub', 'monitor'];
-
-const TAB_LABEL_KEYS: Record<ActiveTab, string> = {
-  items: 'redis.items',
-  console: 'redis.console',
-  monitor: 'redis.monitor',
-  pubsub: 'redis.pubsub',
-};
+import type { RedisPendingAction } from '../overview/overviewNavigation';
 
 function parseRedisDbIndex(database?: string): number {
   const value = database?.trim().toLowerCase() ?? '';
@@ -36,29 +28,84 @@ function formatRedisDbName(database?: string): string {
   return `db${parseRedisDbIndex(database)}`;
 }
 
+/**
+ * Map legacy pending-action tab ids to the new right-panel tab ids.
+ *  - 'items' → 'detail' (键详情)
+ *  - 'console' → 'console'
+ *  - 'pubsub' → 'pubsub'
+ *  - 'monitor' → 'slowlog' when monitorSubPage is 'slowlog', else 'detail'
+ */
+function mapPendingTab(
+  tab: RedisPendingAction['tab'],
+  monitorSubPage?: RedisPendingAction['monitorSubPage'],
+): RightTab {
+  if (tab === 'console') return 'console';
+  if (tab === 'pubsub') return 'pubsub';
+  if (tab === 'monitor' && monitorSubPage === 'slowlog') return 'slowlog';
+  return 'detail';
+}
+
+interface RedisConnectionViewExtraProps {
+  /**
+   * One-shot action from the host (overview → panel jump bridge).  Consumed
+   * exactly once on mount / first render so repeated renders never replay it.
+   */
+  pendingAction?: RedisPendingAction;
+}
+
 export function RedisConnectionView({
-  // W3 host contract: `dbSessionId` = live runtime session id.
   dbSessionId,
   connectionName,
   initialDatabase,
   hideSidebar,
   isActive = true,
   selectTableRef,
-  // Host-owned selection/dirty atom of this panel; only present when the driver
-  // declared a KV workspace capability. The workbench is its single writer, so
-  // this view just forwards it (contract F-2 — no bare getter on the render path).
   kvSlotState,
-}: ConnectionViewProps) {
-  const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('items');
+  pendingAction,
+}: ConnectionViewProps & RedisConnectionViewExtraProps) {
   const [dbIndex, setDbIndex] = useState(() => parseRedisDbIndex(initialDatabase));
   const [selectedDb, setSelectedDb] = useState(() => formatRedisDbName(initialDatabase));
   const [keySuggestions, setKeySuggestions] = useState<string[]>([]);
   const [pinnedNodeAddr, setPinnedNodeAddr] = useState(() => readPinnedNodeAddr(dbSessionId));
-  // Panels stay mounted once visited so tab switches never lose their state
-  // (console draft/results, monitor samples, pub/sub subscriptions, …).
-  const [visitedTabs, setVisitedTabs] = useState<ActiveTab[]>(['items']);
   const workbenchRef = useRef<RedisWorkbenchHandle>(null);
+  const pendingActionRef = useRef<RedisPendingAction | undefined>(pendingAction);
+  // Right-panel tab state — the pending action may switch the active tab.
+  const [rightTab, setRightTab] = useState<RightTab>('detail');
+
+  // Sync the prop into the ref so that when the host calls `updatePanel` with a
+  // new pendingAction on an EXISTING panel, the consumption effect picks it up.
+  useEffect(() => {
+    if (pendingAction) pendingActionRef.current = pendingAction;
+  }, [pendingAction]);
+
+  // ── Phase 1: consume tab switch + stash key selection for phase 2 ──
+  const pendingKeyRef = useRef<{ key: string; dbIndex: number } | null>(null);
+
+  useEffect(() => {
+    const action = pendingActionRef.current;
+    if (!action) return;
+    pendingActionRef.current = undefined;
+
+    // Tab switch in the right panel.
+    if (action.tab) {
+      const targetTab = mapPendingTab(action.tab, action.monitorSubPage);
+      setRightTab(targetTab);
+    }
+
+    // Key selection — stash so phase 2 picks it up once the workbench is ready.
+    if (action.selectKey) {
+      pendingKeyRef.current = { key: action.selectKey, dbIndex: action.keyDbIndex ?? 0 };
+    }
+  }, [pendingAction]); // Re-run when the host sends a new pending action.
+
+  // ── Phase 2: key selection after workbench mount ──
+  useEffect(() => {
+    if (!pendingKeyRef.current) return;
+    if (!workbenchRef.current) return;
+    const { key, dbIndex: keyDbIndex } = pendingKeyRef.current;
+    pendingKeyRef.current = null;
+    workbenchRef.current.selectKey(key, keyDbIndex);
+  }, [dbIndex]); // Re-check after dbIndex update mounts the workbench.
 
   useEffect(() => {
     setDbIndex(parseRedisDbIndex(initialDatabase));
@@ -82,58 +129,16 @@ export function RedisConnectionView({
     };
   }, [selectTableRef, handleSelectDatabase, isActive]);
 
-  const handleTabClick = useCallback((tab: ActiveTab) => {
-    if (tab === activeTab) return;
-    // I-1: switching tabs hides the workbench, so an unsaved draft would be
-    // stranded. Ask first; the leave dialog lives inside the dirty editor and
-    // portals to `document.body`, so it stays visible on the hidden tab.
-    void (async () => {
-      if (!(await requestDraftLeave())) return;
-      setActiveTab(tab);
-      setVisitedTabs((prev) => (prev.includes(tab) ? prev : [...prev, tab]));
-    })();
-  }, [activeTab]);
+  /** Delegate right-panel tab switching to RedisRightPanel via callback. */
+  const handleRightTabChange = useCallback((tab: RightTab) => {
+    setRightTab(tab);
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-4"
-        data-testid="redis-tab-bar"
-        data-tab-count={TABS.length}
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            data-testid={`redis-tab-${tab}`}
-            data-active={activeTab === tab ? 'true' : 'false'}
-            className={cn(
-              'relative px-4 py-3 text-sm transition-colors',
-              activeTab === tab ? 'text-fg font-medium' : 'text-fg-secondary hover:text-fg',
-            )}
-            onClick={() => handleTabClick(tab)}
-          >
-            {t(TAB_LABEL_KEYS[tab])}
-            <span
-              className={cn(
-                'absolute inset-x-0 bottom-0 h-0.5 bg-accent transition-opacity duration-300',
-                activeTab === tab ? 'opacity-100' : 'opacity-0',
-              )}
-            />
-          </button>
-        ))}
-        <div className="flex-1" />
-        <span
-          className="max-w-[40%] truncate text-xs text-fg-muted"
-          title={`${connectionName} · ${selectedDb}`}
-          data-testid="redis-context"
-        >
-          {connectionName} · {selectedDb}
-        </span>
-      </div>
-
-      {visitedTabs.includes('items') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'items' && 'hidden')}>
+      <div className="flex min-h-0 flex-1">
+        {/* ── Left: key browser (always visible) ──────────────────────── */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <RedisWorkbench
             ref={workbenchRef}
             dbSessionId={dbSessionId}
@@ -143,35 +148,22 @@ export function RedisConnectionView({
             onDatabaseChange={handleDatabaseChange}
             onKeysChange={setKeySuggestions}
             kvSlotState={kvSlotState}
+            pendingAction={pendingAction}
+            renderRightPanel={(detailProps) => (
+              <RedisRightPanel
+                {...detailProps}
+                keySuggestions={keySuggestions}
+                pinnedNodeAddr={pinnedNodeAddr}
+                onPinnedNodeAddrChange={setPinnedNodeAddr}
+                connectionName={connectionName}
+                selectedDb={selectedDb}
+                activeTab={rightTab}
+                onTabChange={handleRightTabChange}
+              />
+            )}
           />
         </div>
-      )}
-      {visitedTabs.includes('console') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'console' && 'hidden')}>
-          <RedisConsole
-            dbSessionId={dbSessionId}
-            dbIndex={dbIndex}
-            keySuggestions={keySuggestions}
-            pinnedNodeAddr={pinnedNodeAddr}
-            onPinnedNodeAddrChange={setPinnedNodeAddr}
-          />
-        </div>
-      )}
-      {visitedTabs.includes('monitor') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'monitor' && 'hidden')}>
-          <MonitorPanel
-            dbSessionId={dbSessionId}
-            dbIndex={dbIndex}
-            pinnedNodeAddr={pinnedNodeAddr}
-            onPinnedNodeAddrChange={setPinnedNodeAddr}
-          />
-        </div>
-      )}
-      {visitedTabs.includes('pubsub') && (
-        <div className={cn('flex min-h-0 flex-1 flex-col', activeTab !== 'pubsub' && 'hidden')}>
-          <PubSubPanel dbSessionId={dbSessionId} />
-        </div>
-      )}
+      </div>
     </div>
   );
 }

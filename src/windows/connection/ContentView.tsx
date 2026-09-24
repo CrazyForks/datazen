@@ -62,7 +62,11 @@ export interface ContentViewProps {
    * `onSelectDatabase`, with the connection supplied here because only this
    * layer knows which one the active panel belongs to.
    */
-  onSelectKvDb?: (connectionId: string, dbName: string) => void;
+  onSelectKvDb?: (
+    connectionId: string,
+    dbName: string,
+    pendingAction?: import('../../stores/panelStore').RedisPendingAction,
+  ) => void;
 }
 
 export function ContentView({
@@ -249,11 +253,18 @@ export function ContentView({
   const selectKvDatabase = useMemo(
     () =>
       onSelectKvDb
-        ? (database: string) => {
-            onSelectKvDb(connectionId, database);
+        ? (
+            database: string,
+            pendingAction?: import('../../stores/panelStore').RedisPendingAction,
+          ) => {
+            // sidebarConnCtx carries the active connection identity derived from the
+            // running db session (even when no panel is open — the overview home).
+            // `connectionId` falls back to '' when activePanel is null, which would
+            // cause handleSelectKvDb to bail out silently.  Use sidebarConnCtx first.
+            onSelectKvDb(sidebarConnCtx?.connectionId ?? connectionId, database, pendingAction);
           }
         : undefined,
-    [onSelectKvDb, connectionId],
+    [onSelectKvDb, connectionId, sidebarConnCtx?.connectionId],
   );
   const kvActions = useKvSlotActions({
     onRefresh: handlers.handleRefresh,

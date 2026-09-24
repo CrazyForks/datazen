@@ -435,12 +435,14 @@ const locale = {
 
   // Card 3 · Key space grid
   'redis.overview.keyspace.title': 'Key Space',
-  'redis.overview.keyspace.summary': '{dbCount} databases · {nonEmpty} non-empty · {totalKeys} keys',
+  'redis.overview.keyspace.summary':
+    '{dbCount} databases · {nonEmpty} non-empty · {totalKeys} keys',
   'redis.overview.keyspace.empty': 'Every database is empty on this server',
   'redis.overview.keyspace.unauthorized': 'Not authorized to read database sizes',
 
-  // Card 4 · Slowlog
-  'redis.overview.slowlog.title': 'Slow queries',
+  // Card 4 · Performance (combined slowlog + big keys)
+  'redis.overview.performance.title': 'Performance',
+  'redis.overview.performance.empty': 'No performance data available',
   'redis.overview.slowlog.duration': 'Duration',
   'redis.overview.slowlog.command': 'Command',
   'redis.overview.slowlog.client': 'Client',
@@ -452,6 +454,7 @@ const locale = {
     'Grant the redis:allow-slowlog-get permission to enable this block.',
 
   // Quick actions (KV semantics, not SQL)
+  'redis.overview.navigation.title': 'Navigation',
   'redis.overview.actions.title': 'Quick actions',
   'redis.overview.action.browseDb': 'Browse keys',
   'redis.overview.action.console': 'Console',

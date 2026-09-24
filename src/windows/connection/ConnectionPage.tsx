@@ -18,7 +18,12 @@ import { openConnectionShareDialog } from '../../lib/connectionShare';
 import { hideNativeContextMenu } from '../../lib/nativeContextMenu';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useUiStore } from '../../stores/uiStore';
-import { usePanelStore, nextPanelId, type RedisDbPanel } from '../../stores/panelStore';
+import {
+  usePanelStore,
+  nextPanelId,
+  type RedisDbPanel,
+  type RedisPendingAction,
+} from '../../stores/panelStore';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import type { ConnectionViewActions } from '../../lib/connectionViews/types';
 import {
@@ -358,7 +363,7 @@ export function ConnectionPage() {
   );
 
   const handleSelectKvDb = useCallback(
-    (connectionId: string, dbName: string) => {
+    (connectionId: string, dbName: string, pendingAction?: RedisPendingAction) => {
       setWorkspaceMode('connections');
       handleSelectConnection(connectionId);
 
@@ -370,6 +375,11 @@ export function ConnectionPage() {
           (p as RedisDbPanel).dbName === dbName,
       );
       if (existing) {
+        // If a pending action is provided, update the existing panel so the
+        // driver view can pick it up on the next render cycle.
+        if (pendingAction) {
+          usePanelStore.getState().updatePanel(existing.id, { pendingAction });
+        }
         usePanelStore.getState().setActivePanel(existing.id);
         return;
       }
@@ -387,6 +397,7 @@ export function ConnectionPage() {
         databaseType: conn.databaseType,
         type: 'redis-db',
         dbName,
+        pendingAction,
       };
       usePanelStore.getState().addPanel(panel);
     },

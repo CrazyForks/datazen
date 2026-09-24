@@ -24,18 +24,17 @@ import { RedisOverviewBanner } from './RedisOverviewBanner';
 import { ServerInfoCard } from './ServerInfoCard';
 import { MemoryCard } from './MemoryCard';
 import { KeySpaceCard } from './KeySpaceCard';
-import { SlowlogCard } from './SlowlogCard';
-import { QuickActionsCard } from './QuickActionsCard';
-import { RecentKeysCard } from './RecentKeysCard';
+import { PerformanceCard } from './PerformanceCard';
+import { NavigationCard } from './NavigationCard';
 import { clearBrowseHistory, pushBrowseEntry, readBrowseHistory } from '../lib/redisBrowseHistory';
 
 /**
  * 屏 A — Redis 连接总览（`kvSlots.connectionHome` 的驱动贡献）。
  *
  * Composition root only: it owns the jump intent + the pending-jump fallback and
- * hands each block its slice of the model. Seven blocks per PRD §3.1 — banner +
- * 卡 1 Server 概览 + 卡 2 内存 + 卡 3 Key Space + 卡 4 慢查询 + KV 快捷动作 +
- * 最近浏览键 — all fed by the four commands in `useOverviewData`, zero SCAN.
+ * hands each block its slice of the model. Four blocks in optimized layout —
+ * banner + Row 1 (Server & Memory + Key Space) + Row 2 (Performance + Navigation)
+ * — all fed by the four commands in `useOverviewData`, zero SCAN.
  *
  * The host wrapper (`ConnectionWorkspaceHome.tsx`) owns the scroll container and
  * the `data-slot="kv-connection-home"` marker; this component owns its layout.
@@ -114,11 +113,10 @@ export function RedisOverviewHome({
         connectionName={connectionName}
         pills={pills}
         loading={data.info.status === 'loading'}
-        onJump={handleJump}
-        jumpHandler={onOpenTarget}
+        onRefresh={data.refresh}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {hintKey ? (
           <div
             role="status"
@@ -139,22 +137,14 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div data-overview-grid className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <ServerInfoCard
-            status={data.info.status}
-            rows={serverRows}
-            onRetry={data.refresh}
-          />
+        <div data-overview-grid className="grid grid-cols-1 items-start gap-2 lg:grid-cols-2">
+          {/* Row 1: Server & Memory + Key Space */}
+          <ServerInfoCard status={data.info.status} rows={serverRows} onRetry={data.refresh} />
           <MemoryCard
             infoStatus={data.info.status}
             memoryStatus={data.memory.status}
             model={memoryModel}
-            bigKeys={bigKeys}
-            sampledDbIndex={dbIndex}
-            truncated={data.memory.data?.truncated === true}
-            onRetry={data.refresh}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
+            onRetry={data.refreshMemory}
           />
           <KeySpaceCard
             status={data.dbSizes.status}
@@ -163,16 +153,24 @@ export function RedisOverviewHome({
             onJump={handleJump}
             jumpHandler={onOpenTarget}
           />
-          <SlowlogCard status={data.slowlog.status} rows={slowlogRows} onRetry={data.refresh} />
-          <QuickActionsCard
-            defaultDbIndex={dbIndex}
+
+          {/* Row 2: Performance (Slowlog + Big Keys) + Navigation (Quick Actions + Recent) */}
+          <PerformanceCard
+            slowlogStatus={data.slowlog.status}
+            slowlogRows={slowlogRows}
+            memoryStatus={data.memory.status}
+            bigKeys={bigKeys}
+            sampledDbIndex={dbIndex}
+            truncated={data.memory.data?.truncated === true}
+            onRetry={data.refresh}
             onJump={handleJump}
             jumpHandler={onOpenTarget}
           />
-          <RecentKeysCard
-            entries={recent}
+          <NavigationCard
+            defaultDbIndex={dbIndex}
+            recentEntries={recent}
             onJump={handleJump}
-            onClear={handleClearRecent}
+            onClearRecent={handleClearRecent}
             jumpHandler={onOpenTarget}
           />
         </div>

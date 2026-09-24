@@ -441,10 +441,6 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
                     try {
                       await connectionCommands.closeDatabase(dbSessionId, dbName);
                       clearDbLocalCache(connectionId, dbSessionId, dbName);
-                      onShowMessage?.(
-                        t('schemaTree.closeDatabaseConnectionDone', { name: dbName }),
-                        'success',
-                      );
                     } catch (err) {
                       onShowMessage?.(
                         extractErrorMessage(err, t('schemaTree.closeDatabaseConnectionFailed')),
