@@ -1,32 +1,21 @@
 /**
  * The 48px KV context bar — the `contextBar` slot (PRD §3.4, ruling 8-2 = full).
  *
- * Left → right, exactly as §3.4 specifies: `db ▾` · `52 keys` · `used / max` ·
- * type-distribution chips · scan cluster · right cluster (SafeMode badge,
- * refresh, `+`, import/export, ⋯ menu).
+ * Left → right: `db ▾` · `52 keys` · `used / max` · scan cluster · right
+ * cluster (SafeMode badge, refresh, `+`, import/export, ⋯ menu).
  *
- * This file is a rendering shell. Every decision that could be wrong — whether
- * the chips are a sample, whether `maxmemory 0` means "no ceiling", whether
- * there is a denominator for the scan bar, what `compact` drops first — lives in
+ * This file is a rendering shell. Every decision that could be wrong lives in
  * `contextBarModel.ts` and is unit-tested there (PRD §5 「组件薄 + 纯逻辑模块厚」).
  *
  * Two contract rules this component obeys rather than re-derives (W3-A F-3):
  *
  * 1. **Every clickable thing asks through `request`.** Never a callback prop,
- *    never a driver command: the host is the single decision point. Nothing here
- *    is hidden because the host "might not handle it" — an unwired action is the
- *    host's no-op + warning, and hiding a control the user needs is the dead
- *    surface PRD P-3 exists to eliminate.
+ *    never a driver command: the host is the single decision point.
  * 2. **`flushDb` does not confirm here.** The host's dispatcher runs the shared
- *    write gate (PRD I-6) before anything happens; a driver-side dialog would be
- *    the second confirmation system the contract forbids.
- *
- * `request` and `state` are both stable identities from the host (F-2/F-3), so
- * the effects below can depend on them without a per-render refetch.
+ *    write gate (PRD I-6) before anything happens.
  */
-import { ChevronDown } from 'lucide-react';
 import type { KvContextBarProps } from '@datazen/driver-sdk';
-import { useI18n } from '@datazen/ui';
+import { Select, useI18n } from '@datazen/ui';
 import { redisMeta } from '../shared/meta';
 import { formatSize } from '../shared/formatSize';
 import { ContextBarActions } from './ContextBarActions';
@@ -75,7 +64,6 @@ export function RedisContextBar({
 
   const inBand = (part: ContextBarPart) => partInBand(part, layout);
   const activeDb = database ?? (dbIndex === undefined ? '' : `db${dbIndex}`);
-  const showTypes = inBand('types') && types !== null;
 
   return (
     <div
@@ -86,32 +74,23 @@ export function RedisContextBar({
       data-scan-state={scan?.state ?? 'idle'}
     >
       {/* ── db selector ─────────────────────────────────────────────────── */}
-      <label className="flex shrink-0 items-center gap-1" data-part="db">
+      <span className="shrink-0" data-part="db">
         <span className="sr-only" data-i18n-key="redis.contextBar.db">
           {t('redis.contextBar.db')}
         </span>
-        <select
-          data-testid="redis-context-db"
-          data-db-switch="wired"
-          data-db-count={dbOptions.length}
-          className="h-7 max-w-[7rem] rounded border border-edge bg-surface px-1 font-mono text-xs text-fg"
+        <Select
           value={activeDb}
-          title={t('redis.contextBar.dbSelect')}
-          onChange={(event) => {
+          options={dbOptions.map((option) => ({ value: option.name, label: option.name }))}
+          onChange={(value) => {
             // One request per user pick; the host owns whether a panel already
             // exists for that db (contract F-3 `selectDatabase`).
-            request({ type: 'selectDatabase', database: event.target.value });
+            request({ type: 'selectDatabase', database: value });
           }}
-        >
-          {activeDb === '' && <option value="" />}
-          {dbOptions.map((option) => (
-            <option key={option.name} value={option.name}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-        <ChevronDown aria-hidden="true" className="h-3 w-3 shrink-0 text-fg-muted" />
-      </label>
+          className="h-7 max-w-[7rem] text-xs"
+          title={t('redis.contextBar.dbSelect')}
+          triggerDataAttrs={{ 'data-testid': 'redis-context-db', 'data-db-switch': 'wired', 'data-db-count': String(dbOptions.length) }}
+        />
+      </span>
 
       {/* ── key count of this db ────────────────────────────────────────── */}
       {keysInDb !== null && (
@@ -146,47 +125,6 @@ export function RedisContextBar({
                 used: formatSize(memory.usedBytes),
                 max: formatSize(memory.maxBytes),
               })}
-        </span>
-      )}
-
-      {/* ── type-distribution chips (sample ⇒ mandatory annotation) ─────── */}
-      {showTypes && types && (
-        <span
-          className="flex min-w-0 shrink items-center gap-1"
-          data-testid="redis-context-types"
-          data-part="types"
-          data-chip-count={types.chips.length}
-          data-sampled={types.sample ? types.sample.sampled : 'exact'}
-          data-dbsize={types.sample ? types.sample.dbsize : 'exact'}
-          data-truncated={types.sample ? 'true' : 'false'}
-        >
-          {types.chips.map((chip) => (
-            <span
-              key={chip.type}
-              className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px] text-fg-secondary"
-              data-testid={`redis-context-chip-${chip.type}`}
-              data-type={chip.type}
-              data-count={chip.count}
-            >
-              {chip.type} {formatCompactCount(chip.count)}
-            </span>
-          ))}
-          {types.sample && (
-            // §3.4 hard constraint: an estimate must say so, in the chips group
-            // itself. Never rendered when `sampled >= dbsize` (a full census).
-            <span
-              className="shrink-0 whitespace-nowrap text-[11px] text-warning"
-              data-testid="redis-context-types-sampled"
-              data-sampled={types.sample.sampled}
-              data-dbsize={types.sample.dbsize}
-              data-i18n-key="redis.contextBar.sampled"
-            >
-              {t('redis.contextBar.sampled', {
-                sampled: formatCompactCount(types.sample.sampled),
-                dbsize: formatCompactCount(types.sample.dbsize),
-              })}
-            </span>
-          )}
         </span>
       )}
 
@@ -227,9 +165,7 @@ export function RedisContextBar({
         request={request}
         compact={layout === 'compact'}
         memory={memory}
-        // In `compact` the band dropped the chips, so the menu carries them; in
-        // `full` it must not duplicate what is already on screen.
-        types={showTypes ? null : types}
+        types={types}
       />
     </div>
   );

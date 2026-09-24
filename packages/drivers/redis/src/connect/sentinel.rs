@@ -4,9 +4,9 @@ use super::client::sentinel_node_info;
 use super::parse::connect_with_timeout;
 use super::plan::SentinelPlan;
 use super::plan::TlsPlan;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
+use datazen_driver_api::DriverError;
 use redis::aio::MultiplexedConnection;
-use redis::sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
+use redis::sentinel::{Sentinel, SentinelClient, SentinelServerType};
 use std::time::Duration;
 
 pub(crate) async fn open_sentinel_conn(

@@ -5,40 +5,19 @@ use std::sync::{Arc, OnceLock};
 use datazen_driver_api::*;
 
 mod commands;
-mod commands_exec;
 mod connect;
 mod decode;
+mod driver;
 mod ops;
-mod ops_cluster;
-mod ops_exec;
-mod ops_io;
-mod ops_json;
-mod ops_key_probe;
-mod ops_monitor;
-mod ops_observe;
-mod ops_pubsub;
-mod ops_stream;
-mod ops_tree;
-mod ops_tree_budget;
-mod ops_tree_scan;
-mod ops_value_search;
-mod ops_workbench;
-mod ops_write;
-mod redis_driver;
-mod redis_driver_db;
-mod redis_driver_kv;
-mod redis_driver_on;
-mod redis_value;
-mod redis_value_preview;
-mod redis_value_rows;
 mod types;
+mod value;
 pub use connect::{build_connection_plan, ConnectionPlan, RedisLiveConn, TlsPlan, Topology};
 pub use ops::{set_settings_allow_flush, settings_allow_flush};
 
 /// Plugin settings key used by the host to locate this driver's settings block.
 /// Avoids the host hard-coding `"redis"` — the driver owns its key identity.
 pub const SETTINGS_KEY: &str = "redis";
-pub use redis_driver::*;
+pub use driver::*;
 
 #[cfg(feature = "tauri-plugin")]
 mod plugin;

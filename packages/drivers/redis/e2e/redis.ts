@@ -356,8 +356,8 @@ describe('Redis new pages E2E', () => {
       await input.click();
       await input.setValue('PING');
 
-      const runBtn = await $('[data-testid="redis-console-run"]');
-      await runBtn.click();
+      // Enter executes the command directly.
+      await browser.keys('Enter');
 
       // Wait for result to appear
       await browser.waitUntil(
@@ -380,15 +380,13 @@ describe('Redis new pages E2E', () => {
       const input = await $('[data-testid="redis-console-input"]');
       await input.click();
       await input.setValue('SET e2e:test:key hello');
-
-      const runBtn = await $('[data-testid="redis-console-run"]');
-      await runBtn.click();
+      await browser.keys('Enter');
       await browser.pause(800);
 
       // Now GET it
       await input.click();
       await input.setValue('GET e2e:test:key');
-      await runBtn.click();
+      await browser.keys('Enter');
 
       await browser.waitUntil(
         async () =>
@@ -405,9 +403,7 @@ describe('Redis new pages E2E', () => {
       const input = await $('[data-testid="redis-console-input"]');
       await input.click();
       await input.setValue('NOTACOMMAND');
-
-      const runBtn = await $('[data-testid="redis-console-run"]');
-      await runBtn.click();
+      await browser.keys('Enter');
       await browser.pause(800);
 
       // Should show an error result
@@ -532,6 +528,213 @@ describe('Redis new pages E2E', () => {
         (document.body.textContent || '').includes('hello from e2e'),
       );
       expect(hasMessage).toBe(true);
+    });
+  });
+
+  // ─── Tab bar: only 4 tabs (no Slowlog) ──────────────────────────
+
+  describe('Tab bar (no standalone Slowlog)', () => {
+    it('should render exactly 4 tabs: items, console, monitor, pubsub', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const tabBar = await $('[data-testid="redis-tab-bar"]');
+      await tabBar.waitForDisplayed({ timeout: 5000 });
+
+      const tabCount = await tabBar.getAttribute('data-tab-count');
+      expect(tabCount).toBe('4');
+
+      // Slowlog must NOT exist as a standalone tab
+      const slowlogTab = await $('[data-testid="redis-tab-slowlog"]');
+      expect(await slowlogTab.isExisting()).toBe(false);
+    });
+
+    it('should show exactly items, console, monitor, pubsub tabs', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      for (const tab of ['items', 'console', 'monitor', 'pubsub'] as const) {
+        const btn = await $(`[data-testid="redis-tab-${tab}"]`);
+        expect(await btn.isExisting()).toBe(true);
+      }
+    });
+  });
+
+  // ─── Console redesign: prompt, Enter-execute, Tab-completion ─────
+
+  describe('Console redesign (terminal-style)', () => {
+    it('should show the db{N}> prompt in the input bar', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      await clickTab('console');
+
+      // The prompt prefix "db{N}>" is rendered as a sibling <span> of the textarea.
+      const hasPrompt = await browser.execute(() => {
+        const textarea = document.querySelector('[data-testid="redis-console-input"]');
+        if (!textarea) return false;
+        const bar = textarea.closest('.flex.items-stretch');
+        if (!bar) return false;
+        const prompt = bar.querySelector('span');
+        return !!prompt && /db\d+>/.test(prompt.textContent || '');
+      });
+      expect(hasPrompt).toBe(true);
+    });
+
+    it('should NOT render an Execute button in the toolbar', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      await clickTab('console');
+
+      const hasRunBtn = await browser.execute(() =>
+        !!document.querySelector('[data-testid="redis-console-run"]'),
+      );
+      expect(hasRunBtn).toBe(false);
+    });
+
+    it('Enter key directly executes a command', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const input = await $('[data-testid="redis-console-input"]');
+      await input.click();
+      await input.setValue('PING');
+
+      await browser.keys('Enter');
+
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() => {
+            const result = document.querySelector('[data-testid="redis-console-result"]');
+            return result && (result.textContent || '').includes('PONG');
+          }),
+        { timeout: 10000, timeoutMsg: 'PING result not shown after Enter' },
+      );
+    });
+
+    it('Tab accepts a command-completion candidate when popup is open', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const input = await $('[data-testid="redis-console-input"]');
+      await input.click();
+      await input.setValue('PING');
+
+      // Type a partial command to trigger the completion popup
+      // (back up, re-type to trigger — use partial "PIN" which matches PING)
+      await input.setValue('PIN');
+
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() => !!document.querySelector('[data-testid="redis-completion-popup"]')),
+        { timeout: 5000, timeoutMsg: 'Completion popup not shown for "PIN"' },
+      );
+
+      // Tab should accept the first candidate
+      await browser.keys('Tab');
+      await browser.pause(300);
+
+      const valueAfterTab = await browser.execute(() => {
+        const textarea = document.querySelector('[data-testid="redis-console-input"]') as HTMLTextAreaElement;
+        return textarea?.value || '';
+      });
+      expect(valueAfterTab).toContain('PING');
+
+      // Popup should close after acceptance
+      const popupClosed = await browser.execute(
+        () => !document.querySelector('[data-testid="redis-completion-popup"]'),
+      );
+      expect(popupClosed).toBe(true);
+    });
+
+    it('key-name autocomplete appears when typing a key argument', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const input = await $('[data-testid="redis-console-input"]');
+      await input.click();
+      await input.setValue('GET demo');
+
+      // Wait for key completion popup to appear (mode = key, prefix = demo)
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() => !!document.querySelector('[data-testid="redis-completion-popup"]')),
+        { timeout: 8000, timeoutMsg: 'Key completion popup not shown for "GET demo"' },
+      );
+
+      // At least one key suggestion should mention "demo:"
+      const hasDemoKey = await browser.execute(() => {
+        const items = document.querySelectorAll('[data-testid^="redis-completion-item-"]');
+        return Array.from(items).some((el) =>
+          (el.textContent || '').includes('demo:'),
+        );
+      });
+      expect(hasDemoKey).toBe(true);
+    });
+  });
+
+  // ─── Context bar: custom Select (no native <select>) ─────────────
+
+  describe('Context bar (custom Select)', () => {
+    it('should use a button-based Select for db switching, not a native <select>', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      await clickTab('items');
+
+      const hasNativeSelect = await browser.execute(() => {
+        const ctxBar = document.querySelector('[data-testid="redis-context-bar"]');
+        return !!ctxBar?.querySelector('select');
+      });
+      expect(hasNativeSelect).toBe(false);
+
+      // The custom Select trigger should be a button
+      const hasCustomTrigger = await browser.execute(() => {
+        const trigger = document.querySelector('[data-testid="redis-context-db"]');
+        return trigger?.tagName === 'BUTTON';
+      });
+      expect(hasCustomTrigger).toBe(true);
+    });
+
+    it('clicking the db Select trigger opens a dropdown', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const trigger = await $('[data-testid="redis-context-db"]');
+      await trigger.waitForDisplayed({ timeout: 5000 });
+      await trigger.click();
+      await browser.pause(300);
+
+      // A listbox or menu should appear (data-radix or headless menu)
+      const hasDropdown = await browser.execute(() => {
+        const lists = document.querySelectorAll('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]');
+        return lists.length > 0;
+      });
+      expect(hasDropdown).toBe(true);
+    });
+  });
+
+  // ─── Quick Actions jump bridge (onOpenTarget wired) ─────────────
+
+  describe('Quick Actions jump bridge', () => {
+    it('should render action buttons with data-overview-jump="wired"', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      // Navigate to overview first (click Items tab which is the overview-like default)
+      // Quick Actions are on the overview/home page, accessible by navigating to the
+      // connection. We're already on the Redis connection panel from `openRedisInlinePanel`.
+      // The overview may or may not be visible depending on routing; check for action buttons.
+      const hasJumpWired = await browser.execute(() => {
+        const btns = document.querySelectorAll('[data-overview-action]');
+        if (btns.length === 0) return null; // overview not mounted
+        return Array.from(btns).every(
+          (b) => b.getAttribute('data-overview-jump') === 'wired',
+        );
+      });
+      // If overview is not on screen, skip gracefully
+      if (hasJumpWired === null) return;
+
+      expect(hasJumpWired).toBe(true);
+    });
+
+    it('each action button carries a valid target kind', async () => {
+      if (skipRequested() || !(await redisReachable())) return;
+      const validKinds = new Set(['database', 'console', 'pubsub', 'importExport', 'newKey']);
+
+      const targets = await browser.execute(() => {
+        const btns = document.querySelectorAll('[data-overview-action]');
+        return Array.from(btns).map((b) => ({
+          action: b.getAttribute('data-overview-action'),
+          kind: b.getAttribute('data-overview-action-target'),
+        }));
+      });
+      if (targets.length === 0) return; // overview not mounted
+
+      for (const t of targets) {
+        expect(validKinds.has(t.kind as string)).toBe(true);
+      }
     });
   });
 

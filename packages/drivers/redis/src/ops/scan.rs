@@ -1,6 +1,6 @@
 //! The shared `SCAN` walk (`scan_batch`) and the two keyspace readers built on it.
 
-use crate::redis_driver::parse_scan_result;
+use crate::driver::parse_scan_result;
 use redis::AsyncCommands;
 
 /// Issue one SCAN round-trip: `SCAN cursor COUNT n [MATCH p] [TYPE t]`.

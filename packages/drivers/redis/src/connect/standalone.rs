@@ -4,7 +4,7 @@ use super::client::open_standalone_client;
 use super::parse::connect_with_timeout;
 use super::plan::TlsPlan;
 use super::sentinel::plaintext_url;
-use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
+use datazen_driver_api::DriverError;
 use redis::aio::MultiplexedConnection;
 use std::time::Duration;
 

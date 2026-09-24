@@ -4,7 +4,6 @@ use super::plan::TlsPlan;
 use super::plan::Topology;
 use super::tls::build_node_url;
 use datazen_driver_api::{ConnectionConfig, DriverError, SslMode};
-use redis::sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
 use serde_json::Map;
 use std::future::Future;
 use std::time::Duration;
