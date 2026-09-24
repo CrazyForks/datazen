@@ -207,7 +207,10 @@ export function useSchemaTreeState({
       }
 
       if (dbLoading.has(dbName)) {
-        useSchemaStore.setState({ currentDatabase: dbName });
+        // Keyed write: this tree's `connectionId` IS the runtime db session
+        // id (see the loadForConnection call above). Channel-B setState would
+        // land on whatever session happens to be active.
+        useSchemaStore.getState().setCurrentDatabase(dbName, connectionId);
         return;
       }
 

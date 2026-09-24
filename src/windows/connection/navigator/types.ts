@@ -135,7 +135,7 @@ export interface ConnectionNavigatorTreeProps {
     openCreateDatabase?: () => void;
     openCreateSchema?: () => void;
     openCreateUser?: () => void;
-    openErDiagram?: (focusTable?: string) => void;
+    openErDiagram?: (focusTable?: string, database?: string) => void;
     refresh?: () => void;
     openObject?: (
       kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',

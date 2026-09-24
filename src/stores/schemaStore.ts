@@ -72,7 +72,12 @@ interface SchemaStore extends ConnectionSchemaState {
    * the store reflects the tab the user is on (prevents drift to the first
    * database after a reload, e.g. Settings round-trip). */
   setCurrentDatabase: (database: string | null, dbSessionId?: string) => void;
-  setLoadedTables: (database: string, all: TableInfo[], dbSessionId?: string) => void;
+  setLoadedTables: (
+    database: string,
+    all: TableInfo[],
+    dbSessionId?: string,
+    options?: { pinCurrentDatabase?: boolean },
+  ) => void;
   removeRelation: (name: string, dbSessionId?: string) => void;
   mergeNamespace: (
     segments: string[],
@@ -231,7 +236,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           pathAliases: {},
           namespaceOwnedByPlugin: false,
         },
-        { activate: true },
+        { activate: options?.activate !== false },
       );
       try {
         const allDatabases = await databaseCommands.getDatabases(dbSessionId);
@@ -287,7 +292,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         commitConnectionPatch(
           dbSessionId,
           { databases, isMultiDatabase, loading: false, currentDatabase },
-          { activate: true },
+          { activate: options?.activate !== false },
         );
         if (usesPluginDbList) {
           const aliasEntries = allDatabases.map(parsePathHierarchyDatabaseEntry);
@@ -308,7 +313,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
             error: e instanceof Error ? e.message : t('schema.loadDbFailed'),
             isMultiDatabase: false,
           },
-          { activate: true },
+          { activate: options?.activate !== false },
         );
       }
     },
@@ -457,9 +462,15 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       }
     },
 
-    setLoadedTables: (database, all, dbSessionIdOverride) => {
+    setLoadedTables: (database, all, dbSessionIdOverride, options) => {
       const dbSessionId = resolveTargetConnectionId(get(), dbSessionIdOverride);
       const schema = get().schemas.get(dbSessionId) ?? createEmptyConnectionSchema();
+      // Background cache refreshes (expanded-db fan-out, session refresh) pass
+      // { pinCurrentDatabase: false } so a late-completing reload cannot
+      // overwrite whichever database the user last selected in the tree —
+      // last-finish-wins used to fight the click itself (non-reproducible
+      // wrong-ER symptoms).
+      const pinCurrentDatabase = options?.pinCurrentDatabase !== false;
       const { databaseType, isMultiDatabase, namespaceTree, loadedPaths, namespaceOwnedByPlugin } =
         schema;
       const realItems = all.filter((item) => item.name !== '');
@@ -506,7 +517,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         tables,
         views,
         schemaNames,
-        currentDatabase: database,
+        ...(pinCurrentDatabase ? { currentDatabase: database } : {}),
         columnMap: {},
         typedColumnMap: {},
         namespaceTree: nextTree,

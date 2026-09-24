@@ -88,4 +88,12 @@ export interface LoadForConnectionOptions {
   preferredDatabase?: string;
   /** Used to resolve hasMultiDatabase for session isMultiDatabase. */
   databaseType?: DatabaseType | string;
+  /**
+   * Make this session the store's active one while (re)loading. Default true:
+   * opening/navigating to a connection SHOULD focus it. Background refresh
+   * paths pass `false` so refreshing another connection can never steal
+   * `activeDbSessionId` (and with it the flattened top-level `currentDatabase`
+   * that query panels read) from the session the user is working on.
+   */
+  activate?: boolean;
 }
