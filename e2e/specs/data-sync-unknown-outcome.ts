@@ -378,6 +378,16 @@ describe('Data Sync unknown outcome history recovery', () => {
               'objects',
             { timeout: 30000, timeoutMsg: 'fresh profile inspection did not finish' },
           );
+          await browser.waitUntil(
+            async () =>
+              (await $('[data-testid="data-sync-window"]').getAttribute('data-sync-state')) !==
+                'inspecting' && (await $('[data-testid="data-sync-next"]').isEnabled()),
+            {
+              timeout: 60000,
+              interval: 250,
+              timeoutMsg: 'object inspection did not finish or Next stayed disabled',
+            },
+          );
           await $('[data-testid="data-sync-next"]').click();
           await $('[data-testid="data-sync-summary"]').waitForDisplayed({ timeout: 120000 });
           await browser.waitUntil(
