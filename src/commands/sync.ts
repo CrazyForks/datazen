@@ -150,6 +150,10 @@ export interface DataSyncSqlStatement {
 export interface DataSyncExecutionResult {
   applied: number;
   rolledBack: boolean;
+  /** Evidence-based transaction outcome; optional for pre-v1 IPC responses. */
+  outcome?: 'not_started' | 'committed' | 'rolled_back' | 'unknown';
+  /** Present when execution could not proceed or its outcome is unknown. */
+  error?: string;
   rollbackReason?: string;
   /** Total database-reported affected rows; optional for older responses. */
   affectedRows?: number;

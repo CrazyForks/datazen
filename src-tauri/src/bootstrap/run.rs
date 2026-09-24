@@ -484,6 +484,8 @@ pub fn run() {
             crate::commands::test_inject_dialog_result,
             #[cfg(feature = "webdriver")]
             crate::commands::test_reset_dialog_queue,
+            #[cfg(feature = "webdriver")]
+            crate::commands::set_data_sync_test_commit_fault,
             // ── 应用菜单 ──
             crate::app_menu::rebuild_menu,
         ])

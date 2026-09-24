@@ -11,6 +11,7 @@ import { CopyableError } from '../../components/ui/CopyableError';
 import { aiCommands } from '../../commands/ai';
 import {
   syncCommands,
+  DEFAULT_SYNC_OPTIONS,
   type DataSyncExecutionResult,
   type DataSyncRowChange,
   type DataSyncSelectedRow,
@@ -46,6 +47,7 @@ import {
 import { useSyncPairingState } from '../../lib/syncPairing';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
+import type { MigrationRunRecord } from '../../commands/history';
 import type { ConnectionConfig } from '../../types';
 import { pickDefaultSchema, uniqueSchemasFromTables } from './utils';
 import { CompareSummary } from './CompareSummary';
@@ -165,6 +167,7 @@ export function DataSyncWindow() {
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
   const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
+  const [scopeReconfirmationRequired, setScopeReconfirmationRequired] = useState(false);
   const [lastExecutionResult, setLastExecutionResult] = useState<DataSyncExecutionResult | null>(
     null,
   );
@@ -755,6 +758,114 @@ export function DataSyncWindow() {
       setErrorOpen(true);
     }
   }, [loadSyncProfiles, selectedProfileId, t]);
+
+  const reconcileUnknownRun = useCallback(
+    async (run: MigrationRunRecord): Promise<boolean> => {
+      if (run.operation !== 'dataSync' || run.outcome !== 'unknown') return false;
+      if (writeInFlightRef.current) {
+        setErrorMsg(t('migrationHistory.syncReconcileBusy'));
+        setErrorOpen(true);
+        return false;
+      }
+
+      const [latestProfiles, latestConnections] = await Promise.all([
+        syncCommands.getSyncProfiles(),
+        invoke<ConnectionConfig[]>('get_connections'),
+      ]);
+      setSyncProfiles(latestProfiles);
+      setConnections(latestConnections);
+      const savedProfile = run.profileId
+        ? latestProfiles.find((profile) => profile.id === run.profileId)
+        : undefined;
+      const sameRevision =
+        !!savedProfile &&
+        !!run.profileRevision &&
+        Date.parse(savedProfile.updatedAt) === Date.parse(run.profileRevision);
+      const reusableProfile =
+        sameRevision &&
+        (!run.sourceConnectionId || run.sourceConnectionId === savedProfile.sourceConnectionId) &&
+        (!run.targetConnectionId || run.targetConnectionId === savedProfile.targetConnectionId)
+          ? savedProfile
+          : undefined;
+      const sourceConnectionId =
+        run.sourceConnectionId ?? reusableProfile?.sourceConnectionId ?? '';
+      const targetConnectionId =
+        run.targetConnectionId ?? reusableProfile?.targetConnectionId ?? '';
+      const connectionIds = new Set(latestConnections.map((connection) => connection.id));
+      if (
+        (sourceConnectionId && !connectionIds.has(sourceConnectionId)) ||
+        (targetConnectionId && !connectionIds.has(targetConnectionId))
+      ) {
+        setErrorMsg(t('migrationHistory.syncReconcileMissingConnection'));
+        setErrorOpen(true);
+        return false;
+      }
+
+      let profileScopeCanBeRestored = Boolean(reusableProfile);
+      let sourceDatabasesForRestore: string[] = [];
+      let targetDatabasesForRestore: string[] = [];
+      if (reusableProfile) {
+        try {
+          const [sourceCatalog, targetCatalog] = await Promise.all([
+            listDatabasesDedicated(sourceConnectionId),
+            listDatabasesDedicated(targetConnectionId),
+          ]);
+          sourceDatabasesForRestore = sourceCatalog.databases ?? [];
+          targetDatabasesForRestore = targetCatalog.databases ?? [];
+          profileScopeCanBeRestored = Boolean(
+            reusableProfile.sourceDatabase &&
+              reusableProfile.targetDatabase &&
+              sourceDatabasesForRestore.includes(reusableProfile.sourceDatabase) &&
+              targetDatabasesForRestore.includes(reusableProfile.targetDatabase),
+          );
+        } catch {
+          profileScopeCanBeRestored = false;
+        }
+      }
+
+      compareGenerationRef.current += 1;
+      jobIdRef.current = null;
+      jobKindRef.current = null;
+      cancelRequestedJobRef.current = null;
+      const restoredProfile = profileScopeCanBeRestored ? reusableProfile : undefined;
+      pendingProfileMappingsRef.current = restoredProfile?.tables ?? null;
+      setSelectedProfileId(restoredProfile?.id ?? '');
+      setProfileName(restoredProfile?.name ?? '');
+      setSourceId(sourceConnectionId);
+      setTargetId(targetConnectionId);
+      setSourceDatabase(restoredProfile?.sourceDatabase ?? '');
+      setTargetDatabase(restoredProfile?.targetDatabase ?? '');
+      setSourceSchema(restoredProfile?.sourceSchema ?? '');
+      setTargetSchema(restoredProfile?.targetSchema ?? '');
+      setSourceDatabases(sourceDatabasesForRestore);
+      setTargetDatabases(targetDatabasesForRestore);
+      setSourceSchemas([]);
+      setTargetSchemas([]);
+      setSyncOptions(restoredProfile?.options ?? DEFAULT_SYNC_OPTIONS);
+      resetCompareState();
+      setSelectedRows([]);
+      setTableSelections([]);
+      setPageIndex({});
+      setPageCursors({});
+      loadedPageRef.current.clear();
+      setLastExecutionResult(null);
+      setWriteOutcomeUncertain(true);
+      setScopeReconfirmationRequired(!restoredProfile);
+      setSyncState('unknown');
+      setStep('endpoints');
+      setStatusMsg(
+        restoredProfile
+          ? t('migrationHistory.syncReconcileProfileReady')
+          : reusableProfile
+            ? t('migrationHistory.syncReconcileScopeUnavailable')
+            : run.profileId
+              ? t('migrationHistory.syncReconcileProfileChanged')
+              : t('migrationHistory.syncReconcileNeedsScope'),
+      );
+      return true;
+    },
+    [resetCompareState, setStep, setSyncOptions, t],
+  );
 
   useEffect(() => {
     loadSyncProfiles();
@@ -1396,6 +1507,25 @@ export function DataSyncWindow() {
       writeInFlightRef.current = false;
       setLastExecutionResult(result);
 
+      const executionOutcome = result.outcome ?? (result.rolledBack ? 'rolled_back' : 'committed');
+      if (executionOutcome === 'not_started') {
+        setErrorMsg(result.error || t('sync.executionNotStarted'));
+        setErrorOpen(true);
+        setWriteOutcomeUncertain(false);
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
+      }
+      if (executionOutcome === 'unknown') {
+        setErrorMsg(`${t('sync.executionUnknown')} ${result.error || ''}`.trim());
+        setErrorOpen(true);
+        setWriteOutcomeUncertain(true);
+        setSyncState('unknown');
+        setStep('result');
+        setExecuteProgress('');
+        return;
+      }
+
       setExecuteProgress(t('sync.recomparing'));
       const recompareFilters = Object.fromEntries(
         tablesWithSelection
@@ -1764,6 +1894,7 @@ export function DataSyncWindow() {
             sourceDatabase &&
             targetDatabase &&
             activePairing?.supported &&
+            !scopeReconfirmationRequired &&
             !compareDisabled,
         );
       case 'setup':
@@ -1782,6 +1913,7 @@ export function DataSyncWindow() {
     sourceDatabase,
     targetDatabase,
     activePairing,
+    scopeReconfirmationRequired,
     compareDisabled,
     busy,
     inspectionComplete,
@@ -1869,6 +2001,11 @@ export function DataSyncWindow() {
     void handleCompare();
   }, [handleCompare]);
 
+  const lastExecutionOutcome =
+    lastExecutionResult?.outcome ?? (lastExecutionResult?.rolledBack ? 'rolled_back' : 'committed');
+  const lastExecutionIsUnknown = lastExecutionOutcome === 'unknown';
+  const lastExecutionWasRolledBack = lastExecutionOutcome === 'rolled_back';
+
   // All hooks above. Gate the body on the `sync` locale pack so the UI never
   // renders raw/un-translated `t('sync.*')` keys before it is imported.
   if (!localesReady) {
@@ -1885,7 +2022,9 @@ export function DataSyncWindow() {
     >
       <TitleBar
         title={t('common.dataSyncTitle')}
-        rightContent={<MigrationRunHistoryDialog operation="dataSync" />}
+        rightContent={
+          <MigrationRunHistoryDialog operation="dataSync" onReconcile={reconcileUnknownRun} />
+        }
       />
 
       <div className="border-b border-edge px-6 py-3">
@@ -1932,6 +2071,25 @@ export function DataSyncWindow() {
         >
           {step === 'endpoints' && (
             <div className="space-y-4">
+              {scopeReconfirmationRequired && (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3"
+                  data-testid="data-sync-recovery-scope-review"
+                  role="status"
+                >
+                  <p className="text-xs text-fg-secondary">
+                    {t('migrationHistory.syncReconcileNeedsScope')}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="data-sync-reconfirm-scope"
+                    onClick={() => setScopeReconfirmationRequired(false)}
+                  >
+                    {t('migrationHistory.syncReconcileConfirmScope')}
+                  </Button>
+                </div>
+              )}
               <div
                 data-testid="data-sync-profile-controls"
                 className="flex flex-wrap items-end gap-2 rounded-lg border border-edge bg-surface-alt p-3"
@@ -2190,15 +2348,18 @@ export function DataSyncWindow() {
                 data-testid="data-sync-execute-done"
                 className={cn(
                   'flex flex-wrap items-center gap-3 text-sm',
-                  lastExecutionResult?.rolledBack
+                  lastExecutionIsUnknown || lastExecutionWasRolledBack
                     ? 'text-amber-700 dark:text-amber-400'
                     : 'text-green-700 dark:text-green-400',
                 )}
+                role="status"
               >
                 <span>
-                  {lastExecutionResult?.rolledBack
-                    ? lastExecutionResult.rollbackReason || t('sync.rolledBack')
-                    : t('sync.executeDone')}
+                  {lastExecutionIsUnknown
+                    ? t('sync.executionUnknown')
+                    : lastExecutionWasRolledBack
+                      ? lastExecutionResult?.rollbackReason || t('sync.rolledBack')
+                      : t('sync.executeDone')}
                 </span>
                 {lastExecutionResult?.skipped ? (
                   <span className="text-amber-600 dark:text-amber-400">

@@ -1,5 +1,6 @@
 use super::error::{CmdExt, CommandError};
 use super::AppState;
+use crate::data_sync::{DataSyncExecutionResponse, ExecutionOutcome};
 use crate::store::MigrationProfileRef;
 use crate::store::{HistoryScope, MigrationRunFilter, MigrationRunPage, MigrationRunRecord};
 use chrono::Utc;
@@ -76,6 +77,68 @@ pub(crate) async fn finish_migration_run(
     }
     if let Err(error) = state.store.save_migration_run(&run).await {
         tracing::warn!(%error, "failed to persist migration run completion");
+    }
+}
+
+/// Persist Data Sync's evidence-based outcome without changing the shared
+/// Transfer / Schema Diff interpretation of `outcome` or `rollback_outcome`.
+pub(crate) async fn finish_data_sync_migration_run(
+    state: &AppState,
+    mut run: MigrationRunRecord,
+    response: &DataSyncExecutionResponse,
+    cancelled: bool,
+) {
+    let outcome = response.outcome;
+    run.status = if cancelled {
+        "cancelled"
+    } else if outcome == ExecutionOutcome::Committed {
+        "completed"
+    } else {
+        "failed"
+    }
+    .into();
+    run.outcome = match outcome {
+        ExecutionOutcome::NotStarted => "not_started",
+        ExecutionOutcome::Committed => "committed",
+        ExecutionOutcome::RolledBack => "rolled_back",
+        ExecutionOutcome::Unknown => "unknown",
+    }
+    .into();
+    run.phase = "finished".into();
+    run.finished_at = Some(Utc::now().to_rfc3339());
+    run.committed_count = if outcome == ExecutionOutcome::Committed {
+        response.result.applied as u64
+    } else {
+        0
+    };
+    run.failed_count = u64::from(matches!(
+        outcome,
+        ExecutionOutcome::NotStarted | ExecutionOutcome::RolledBack
+    ));
+    run.conflict_count = response.result.conflicts.len() as u64;
+    run.cancelled = cancelled;
+    run.rollback_outcome = match outcome {
+        ExecutionOutcome::NotStarted | ExecutionOutcome::Committed => "notRequired",
+        ExecutionOutcome::RolledBack => "completed",
+        ExecutionOutcome::Unknown => "unknown",
+    }
+    .into();
+    run.error_summary = match outcome {
+        ExecutionOutcome::Committed => None,
+        ExecutionOutcome::NotStarted => Some(
+            "Execution did not start. Review the endpoint context and run a fresh comparison."
+                .into(),
+        ),
+        ExecutionOutcome::RolledBack => {
+            Some("Execution did not commit; rollback was confirmed.".into())
+        }
+        ExecutionOutcome::Unknown => Some(
+            "Commit or rollback could not be confirmed. Compare current data before continuing."
+                .into(),
+        ),
+    };
+    if let Err(error) = state.store.save_migration_run(&run).await {
+        tracing::warn!(%error, "failed to persist Data Sync migration run completion");
     }
 }
 
@@ -243,5 +306,176 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, CommandError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn data_sync_unknown_history_keeps_only_stable_endpoint_and_profile_refs() {
+        let test = TestAppState::new().await;
+        let profile = MigrationProfileRef {
+            id: "sync-profile-a".into(),
+            revision: "2026-09-23T00:00:00Z".into(),
+        };
+        let mut run = start_migration_run(&test.state, "dataSync", Some(&profile)).await;
+        let run_id = run.id.clone();
+        run.source_connection_id = Some("source-connection".into());
+        run.target_connection_id = Some("target-connection".into());
+        run.selected_count = 3;
+        let response = DataSyncExecutionResponse::unknown(
+            "commit lost; do not persist this detailed error or any row literal",
+        );
+
+        finish_data_sync_migration_run(&test.state, run, &response, false).await;
+
+        let stored = test
+            .store
+            .get_migration_run(&run_id)
+            .await
+            .unwrap()
+            .expect("run is persisted");
+        assert_eq!(stored.outcome, "unknown");
+        assert_eq!(stored.rollback_outcome, "unknown");
+        assert_eq!(stored.profile_id.as_deref(), Some("sync-profile-a"));
+        let page = test
+            .store
+            .list_migration_runs(
+                &MigrationRunFilter {
+                    operation: Some("dataSync".into()),
+                    ..Default::default()
+                },
+                0,
+                10,
+            )
+            .await
+            .unwrap();
+        let stored = page
+            .items
+            .iter()
+            .find(|item| item.id == run_id)
+            .expect("run is listed");
+        assert_eq!(stored.outcome, "unknown");
+        assert_eq!(stored.rollback_outcome, "unknown");
+        assert_eq!(stored.profile_id.as_deref(), Some("sync-profile-a"));
+        assert_eq!(
+            stored.profile_revision.as_deref(),
+            Some("2026-09-23T00:00:00Z")
+        );
+        assert_eq!(
+            stored.source_connection_id.as_deref(),
+            Some("source-connection")
+        );
+        assert_eq!(
+            stored.target_connection_id.as_deref(),
+            Some("target-connection")
+        );
+        assert!(!stored
+            .error_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("row literal"));
+        let json = serde_json::to_value(stored).unwrap();
+        for forbidden in ["sql", "rows", "parameters", "credentials", "sourceFilter"] {
+            assert!(json.get(forbidden).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn data_sync_history_persists_not_started_commit_rollback_and_unknown_separately() {
+        use crate::data_sync::ExecutionResult;
+
+        let test = TestAppState::new().await;
+        let scenarios = [
+            (
+                "not-started",
+                DataSyncExecutionResponse::failed_before_start("stale plan"),
+                false,
+                "not_started",
+                "notRequired",
+                0,
+            ),
+            (
+                "committed",
+                DataSyncExecutionResponse::from_result(ExecutionResult {
+                    applied: 2,
+                    rolled_back: false,
+                    rollback_reason: None,
+                    affected_rows: 2,
+                    skipped: 0,
+                    conflicts: Vec::new(),
+                }),
+                false,
+                "committed",
+                "notRequired",
+                2,
+            ),
+            (
+                "rolled-back",
+                DataSyncExecutionResponse::from_result(ExecutionResult {
+                    applied: 2,
+                    rolled_back: true,
+                    rollback_reason: Some("statement rejected".into()),
+                    affected_rows: 2,
+                    skipped: 0,
+                    conflicts: Vec::new(),
+                }),
+                false,
+                "rolled_back",
+                "completed",
+                0,
+            ),
+            (
+                "unknown",
+                DataSyncExecutionResponse::unknown("commit response lost"),
+                false,
+                "unknown",
+                "unknown",
+                0,
+            ),
+            (
+                "cancelled-before-start",
+                DataSyncExecutionResponse::failed_before_start(
+                    "execute cancelled before any changes were applied",
+                ),
+                true,
+                "not_started",
+                "notRequired",
+                0,
+            ),
+        ];
+
+        for (id_suffix, response, cancelled, expected, rollback, committed_count) in scenarios {
+            let mut run = start_migration_run(&test.state, "dataSync", None).await;
+            let run_id = run.id.clone();
+            run.source_connection_id = Some("source-stable-id".into());
+            run.target_connection_id = Some("target-stable-id".into());
+            finish_data_sync_migration_run(&test.state, run, &response, cancelled).await;
+            let saved = test
+                .store
+                .get_migration_run(&run_id)
+                .await
+                .unwrap()
+                .expect("history run was saved");
+            assert_eq!(saved.outcome, expected, "{id_suffix}");
+            assert_eq!(saved.rollback_outcome, rollback);
+            assert_eq!(saved.committed_count, committed_count);
+            assert_eq!(
+                saved.source_connection_id.as_deref(),
+                Some("source-stable-id")
+            );
+            assert_eq!(
+                saved.target_connection_id.as_deref(),
+                Some("target-stable-id")
+            );
+            if cancelled {
+                assert_eq!(saved.status, "cancelled");
+                assert!(saved.cancelled);
+            } else if expected == "committed" {
+                assert_eq!(saved.status, "completed");
+            } else {
+                assert_eq!(saved.status, "failed");
+            }
+            if expected == "rolled_back" {
+                assert_eq!(saved.failed_count, 1);
+            }
+        }
     }
 }

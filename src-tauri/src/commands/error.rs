@@ -19,6 +19,8 @@ pub enum CommandError {
     NotFound(String),
     NotConfigured(String),
     Validation(String),
+    DataSyncNotStarted(String),
+    DataSyncOutcomeUnknown(String),
     Internal(String),
 }
 
@@ -34,6 +36,8 @@ impl std::fmt::Display for CommandError {
             Self::NotFound(msg)
             | Self::NotConfigured(msg)
             | Self::Validation(msg)
+            | Self::DataSyncNotStarted(msg)
+            | Self::DataSyncOutcomeUnknown(msg)
             | Self::Internal(msg) => {
                 write!(f, "{msg}")
             }
@@ -90,7 +94,15 @@ impl From<serde_json::Error> for CommandError {
 
 impl From<crate::data_sync::DataSyncError> for CommandError {
     fn from(e: crate::data_sync::DataSyncError) -> Self {
-        Self::Validation(e.to_string())
+        match e {
+            crate::data_sync::DataSyncError::NotStarted(message) => {
+                Self::DataSyncNotStarted(message)
+            }
+            crate::data_sync::DataSyncError::OutcomeUnknown(message) => {
+                Self::DataSyncOutcomeUnknown(message)
+            }
+            other => Self::Validation(other.to_string()),
+        }
     }
 }
 
