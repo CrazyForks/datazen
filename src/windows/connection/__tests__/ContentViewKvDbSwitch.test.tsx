@@ -28,10 +28,11 @@
  * workspace runtime involved.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, render } from '@testing-library/react';
 
 const captured = vi.hoisted(() => ({
   args: [] as Array<{ onRefresh: () => void; onSelectDatabase?: (db: string) => void }>,
+  handleOpenErDiagram: vi.fn(),
 }));
 
 vi.mock('../useKvSlotActions', () => ({
@@ -78,7 +79,7 @@ vi.mock('../usePanelHandlers', () => ({
     handleRefresh: () => {},
     handleNewQuery: () => {},
     handleCreateTable: () => {},
-    handleOpenErDiagram: () => {},
+    handleOpenErDiagram: captured.handleOpenErDiagram,
     handleOpenObjects: () => {},
     handleOpenPrivileges: () => {},
     handleSelectTable: () => {},
@@ -143,9 +144,11 @@ vi.mock('../../../lib/kvSlotState', () => ({ pruneKvSlotStates: () => {} }));
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ContentView } from '../ContentView';
+import type { ConnectionViewActions } from '../../../lib/connectionViews/types';
 
 beforeEach(() => {
   captured.args.length = 0;
+  captured.handleOpenErDiagram.mockReset();
 });
 
 afterEach(() => {
@@ -201,6 +204,19 @@ describe('ContentView ⇄ useKvSlotActions — the selectDatabase sink is thread
 
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledWith('cfg-1', 'db7');
+  });
+});
+
+describe('ContentView connection-view action ref', () => {
+  it('passes an explicit ER database target to the panel handler', () => {
+    const actionsRef: { current: ConnectionViewActions | undefined } = { current: undefined };
+    render(<ContentView actionsRef={actionsRef} />);
+
+    act(() => {
+      actionsRef.current?.openErDiagram(undefined, 'analytics');
+    });
+
+    expect(captured.handleOpenErDiagram).toHaveBeenCalledWith(undefined, 'analytics');
   });
 });
 
