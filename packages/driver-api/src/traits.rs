@@ -215,6 +215,18 @@ pub trait DatabaseDriver: Send + Sync {
 
     async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError>;
 
+    /// Whether the current database identity can inspect the full foreign-key
+    /// dependency catalog across every database on this server. Destructive
+    /// planners must fail closed when this cannot be proven. Drivers that do
+    /// not have a server-wide namespace or cannot prove complete visibility
+    /// keep the default `false`.
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        Ok(false)
+    }
+
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,
@@ -1140,6 +1152,20 @@ mod structure_defaults_tests {
     async fn default_ddl_atomicity_is_unknown() {
         let driver = StubDriver;
         assert_eq!(driver.ddl_atomicity(), DdlAtomicity::Unknown);
+    }
+
+    #[tokio::test]
+    async fn default_fk_catalog_visibility_fails_closed() {
+        let driver = StubDriver;
+        let handle = ConnectionHandle {
+            id: "conn".into(),
+            pool_id: "pool".into(),
+        };
+
+        assert!(!driver
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("default visibility capability"));
     }
 
     #[tokio::test]

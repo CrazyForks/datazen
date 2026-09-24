@@ -260,63 +260,79 @@ impl PostgresDriver {
             .collect();
 
         // ── foreign keys ──
-        //
-        // NOTE: the query below aggregates the referencing columns
-        // (`key_column_usage`) and the referenced columns
-        // (`constraint_column_usage`) *independently*, joined only by constraint
-        // name. A composite key therefore arrives with N x N entries —
-        // `(pa, pb) -> (a, b)` comes back as `[pa, pa, pb, pb]` against
-        // `[a, b, a, b]` — which is why the result rows are normalised through
-        // `normalise_fk_columns` before being handed out.
+        // Read both sides from pg_constraint's ordinal arrays. Joining the two
+        // information_schema column views independently can multiply composite
+        // keys, and joining only by constraint name can silently mix same-named
+        // constraints from different tables. Catalog OIDs and matching ordinal
+        // positions keep each FK tied to its owning table and preserve pairs.
         let fk_rows = sqlx::query(
             r#"
             SELECT
-                tc.constraint_name::text                                             AS fk_name,
-                array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position)       AS columns,
-                ccu.table_name::text                                                 AS ref_table,
-                array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position)       AS ref_columns,
-                rc.update_rule::text,
-                rc.delete_rule::text,
-                rc.is_deferrable::text,
-                rc.initially_deferred::text
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON kcu.constraint_name = tc.constraint_name
-             AND kcu.table_schema   = tc.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-              ON ccu.constraint_name = tc.constraint_name
-             AND ccu.table_schema   = tc.table_schema
-            JOIN information_schema.referential_constraints rc
-              ON rc.constraint_name = tc.constraint_name
-             AND rc.constraint_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_name = $1
-              AND ($2::text IS NULL OR tc.table_schema = $2)
-            GROUP BY tc.constraint_name, ccu.table_name, rc.update_rule, rc.delete_rule,
-                     rc.is_deferrable, rc.initially_deferred
-            ORDER BY tc.constraint_name
+                con.conname::text AS fk_name,
+                array_agg(src_att.attname::text ORDER BY src_key.ordinality) AS columns,
+                ref_class.relname::text AS ref_table,
+                ref_ns.nspname::text AS ref_schema,
+                array_agg(ref_att.attname::text ORDER BY src_key.ordinality) AS ref_columns,
+                CASE con.confupdtype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                END::text AS update_rule,
+                CASE con.confdeltype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                END::text AS delete_rule,
+                CASE WHEN con.condeferrable THEN 'YES' ELSE 'NO' END::text AS is_deferrable,
+                CASE WHEN con.condeferred THEN 'YES' ELSE 'NO' END::text AS initially_deferred
+            FROM pg_catalog.pg_constraint con
+            JOIN pg_catalog.pg_class src_class ON src_class.oid = con.conrelid
+            JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src_class.relnamespace
+            JOIN pg_catalog.pg_class ref_class ON ref_class.oid = con.confrelid
+            JOIN pg_catalog.pg_namespace ref_ns ON ref_ns.oid = ref_class.relnamespace
+            JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS src_key(attnum, ordinality)
+              ON true
+            JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS ref_key(attnum, ordinality)
+              ON ref_key.ordinality = src_key.ordinality
+            JOIN pg_catalog.pg_attribute src_att
+              ON src_att.attrelid = src_class.oid AND src_att.attnum = src_key.attnum
+            JOIN pg_catalog.pg_attribute ref_att
+              ON ref_att.attrelid = ref_class.oid AND ref_att.attnum = ref_key.attnum
+            WHERE con.contype = 'f'
+              AND src_class.relname = $1
+              AND ($2::text IS NULL OR src_ns.nspname = $2)
+            GROUP BY con.oid, con.conname, ref_class.relname, ref_ns.nspname, con.confupdtype,
+                     con.confdeltype, con.condeferrable, con.condeferred
+            ORDER BY con.conname
             "#,
         )
         .bind(bare_table)
         .bind(schema)
         .fetch_all(&pool)
         .await
-        .unwrap_or_default();
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
         let foreign_keys: Vec<ForeignKeyInfo> = fk_rows
             .iter()
             .filter_map(|r| {
                 let columns = r.get::<Vec<String>, _>("columns");
                 let referenced_columns = r.get::<Vec<String>, _>("ref_columns");
-                // Composite keys come back multiplied (see the helper) — a
-                // constraint whose sides cannot be reconciled is skipped rather
-                // than reported with an invented column pairing.
+                // Defend the typed schema boundary even though the catalog
+                // query pairs each referenced column by ordinality.
                 let (columns, referenced_columns) =
                     normalise_fk_columns(columns, referenced_columns)?;
                 Some(ForeignKeyInfo {
                     name: r.get("fk_name"),
                     columns,
-                    referenced_table: r.get("ref_table"),
+                    referenced_table: format!(
+                        "{}.{}",
+                        r.get::<String, _>("ref_schema"),
+                        r.get::<String, _>("ref_table")
+                    ),
                     referenced_columns,
                     on_update: r.get("update_rule"),
                     on_delete: r.get("delete_rule"),

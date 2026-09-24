@@ -25,7 +25,10 @@ use crate::services::job_registry::{cancel_job, ensure_job, remove_job};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
 use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::full_types::fetch_full_column_types;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 use tauri::State;
 
 async fn list_schema_views(
@@ -430,6 +433,117 @@ async fn fetch_target_table_schema(
     }
 }
 
+async fn fetch_target_table_dependency_catalog(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+    database: &str,
+    dialect: &str,
+    schema_scope: Option<&str>,
+    selected_snapshots: &[(String, crate::db::TableSchema)],
+) -> Result<Vec<(String, crate::db::TableSchema)>, CommandError> {
+    const CATALOG_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let started_at = std::time::Instant::now();
+    let (snapshots, table_count) = tokio::time::timeout(CATALOG_READ_TIMEOUT, async {
+        let databases = if normalize_dialect(dialect) == "mysql" {
+            if !driver
+                .has_complete_foreign_key_catalog_visibility(handle)
+                .await
+                .map_err(CommandError::Driver)?
+            {
+                return Err(CommandError::Validation(
+                    "MySQL target-only table drops require direct global SELECT or ALL PRIVILEGES on *.* with no partial REVOKE so every database dependency can be inspected; use a suitably privileged connection and retry.".into(),
+                ));
+            }
+            let databases = driver
+                .get_databases(handle)
+                .await
+                .map_err(CommandError::Driver)?;
+            if !databases.iter().any(|candidate| candidate == database) {
+                return Err(CommandError::Validation(
+                    "MySQL reported an incomplete database list despite global metadata visibility; target-only table drops are blocked.".into(),
+                ));
+            }
+            databases
+        } else {
+            vec![database.to_string()]
+        };
+        let mut snapshots = selected_snapshots.to_vec();
+        let mut seen = snapshots
+            .iter()
+            .map(|(table, _)| dependency_relation_identity(dialect, table, schema_scope))
+            .collect::<HashSet<_>>();
+        let mut table_count = 0usize;
+
+        for catalog_database in databases {
+            let tables = driver
+                .get_tables(handle, &catalog_database, None)
+                .await
+                .map_err(CommandError::Driver)?;
+            table_count += tables
+                .iter()
+                .filter(|table| matches!(&table.table_type, datazen_driver_api::TableType::Table))
+                .count();
+            for table in tables {
+                if !matches!(&table.table_type, datazen_driver_api::TableType::Table) {
+                    continue;
+                }
+                let relation = table
+                    .schema
+                    .as_deref()
+                    .filter(|schema| !schema.is_empty())
+                    .map(|schema| format!("{schema}.{}", table.name))
+                    .unwrap_or_else(|| table.name.clone());
+                let table_identity = if normalize_dialect(dialect) == "mysql"
+                    && catalog_database != database
+                {
+                    format!("{catalog_database}.{relation}")
+                } else {
+                    relation
+                };
+                let table_identity =
+                    dependency_relation_identity(dialect, &table_identity, schema_scope);
+                if !seen.insert(table_identity.clone()) {
+                    continue;
+                }
+                let mut schema = fetch_target_table_schema(
+                    driver,
+                    handle,
+                    &table.name,
+                    &catalog_database,
+                    table.schema.as_deref(),
+                )
+                .await?;
+                if normalize_dialect(dialect) == "mysql" {
+                    for foreign_key in &mut schema.foreign_keys {
+                        if let Some((referenced_database, referenced_table)) =
+                            foreign_key.referenced_table.split_once('.')
+                        {
+                            if referenced_database == database {
+                                foreign_key.referenced_table = referenced_table.to_string();
+                            }
+                        }
+                    }
+                }
+                snapshots.push((table_identity, schema));
+            }
+        }
+        Ok::<_, CommandError>((snapshots, table_count))
+    })
+    .await
+    .map_err(|_| {
+        CommandError::Internal(
+            "Reading the target foreign-key dependency catalog exceeded 30 seconds; scope the target selection or retry after reducing catalog load.".into(),
+        )
+    })??;
+
+    tracing::info!(
+        table_count,
+        elapsed_ms = started_at.elapsed().as_millis(),
+        "Schema Diff target dependency catalog read"
+    );
+    Ok(snapshots)
+}
+
 fn resolve_profile_table(dialect: &str, table: &str, schema: Option<&str>) -> String {
     let Some(schema) = schema.map(str::trim).filter(|value| !value.is_empty()) else {
         return resolve_table_for_dialect(dialect, table);
@@ -440,6 +554,108 @@ fn resolve_profile_table(dialect: &str, table: &str, schema: Option<&str>) -> St
         .map(|(_, name)| name)
         .unwrap_or_else(|| table.trim());
     format!("{schema}.{relation}")
+}
+
+fn dependency_relation_identity(dialect: &str, table: &str, schema_scope: Option<&str>) -> String {
+    let table = table.trim();
+    if normalize_dialect(dialect) == "postgresql" && !table.contains('.') {
+        if let Some(schema) = schema_scope.filter(|value| !value.trim().is_empty()) {
+            return format!("{}.{}", schema.trim(), table);
+        }
+    }
+    table.to_string()
+}
+
+fn resolve_reviewed_table_snapshot(
+    dialect: &str,
+    table: &str,
+    database_scope: &str,
+    schema_scope: Option<&str>,
+) -> (String, String, Option<String>) {
+    if normalize_dialect(dialect) == "postgresql" {
+        if let Some((schema, relation)) = table.rsplit_once('.') {
+            return (
+                relation.to_string(),
+                database_scope.to_string(),
+                Some(schema.to_string()),
+            );
+        }
+    }
+    if normalize_dialect(dialect) == "mysql" {
+        if let Some((database, relation)) = table.rsplit_once('.') {
+            return (relation.to_string(), database.to_string(), None);
+        }
+    }
+    (
+        table.to_string(),
+        database_scope.to_string(),
+        schema_scope.map(str::to_owned),
+    )
+}
+
+fn has_table_drop_statement(plan: &SchemaDiffPlan) -> bool {
+    plan.statements.iter().any(|statement| {
+        statement
+            .summary
+            .trim_start()
+            .to_ascii_uppercase()
+            .starts_with("DROP TABLE")
+    })
+}
+
+fn validate_target_dependency_catalog(
+    reviewed: &[(String, crate::db::TableSchema)],
+    current: &[(String, crate::db::TableSchema)],
+) -> Result<(), String> {
+    fn catalog_map<'a>(
+        snapshots: &'a [(String, crate::db::TableSchema)],
+    ) -> Result<BTreeMap<&'a str, &'a crate::db::TableSchema>, String> {
+        let mut catalog = BTreeMap::new();
+        for (identity, snapshot) in snapshots {
+            if catalog.insert(identity.as_str(), snapshot).is_some() {
+                return Err(format!(
+                    "Target dependency catalog contains duplicate relation identity `{identity}`"
+                ));
+            }
+        }
+        Ok(catalog)
+    }
+
+    let reviewed = catalog_map(reviewed)?;
+    let current = catalog_map(current)?;
+    if reviewed.len() != current.len()
+        || reviewed
+            .keys()
+            .any(|identity| !current.contains_key(identity))
+    {
+        let added = current
+            .keys()
+            .filter(|identity| !reviewed.contains_key(**identity))
+            .copied()
+            .collect::<Vec<_>>();
+        let removed = reviewed
+            .keys()
+            .filter(|identity| !current.contains_key(**identity))
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(format!(
+            "Target dependency catalog changed after review (new relations: [{}]; removed relations: [{}]); compare again before dropping tables",
+            added.join(", "),
+            removed.join(", ")
+        ));
+    }
+
+    for (identity, reviewed_snapshot) in reviewed {
+        let current_snapshot = current
+            .get(identity)
+            .ok_or_else(|| format!("Target relation `{identity}` disappeared after review"))?;
+        crate::schema_diff::reviewed::validate_snapshot(
+            identity,
+            reviewed_snapshot,
+            current_snapshot,
+        )?;
+    }
+    Ok(())
 }
 
 /// Prepare a DDL deploy plan (source = desired → target).
@@ -579,6 +795,12 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         .get_session(&target_db_session_id)
         .await
         .cmd_err("prepare_schema_diff_plan")?;
+    let target_dependency_schema_scope =
+        if normalize_dialect(&tgt_config.database_type) == "postgresql" {
+            target_schema_scope.or(tgt_driver.default_schema())
+        } else {
+            None
+        };
     ensure_distinct_schema_scope(
         src_driver.as_ref(),
         &src_handle,
@@ -672,6 +894,31 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         target_only_snapshots.push((tgt_table, tgt_schema));
     }
 
+    let mut selected_target_snapshots = pairs
+        .iter()
+        .map(|(table, _, target)| (table.clone(), target.clone()))
+        .collect::<Vec<_>>();
+    selected_target_snapshots.extend(target_only_snapshots.iter().cloned());
+
+    let (target_dependency_catalog, target_dependency_catalog_error) =
+        if allow_destructive && !target_only_tables.is_empty() {
+            match fetch_target_table_dependency_catalog(
+                tgt_driver.as_ref(),
+                &tgt_handle,
+                tgt_config.database.as_deref().unwrap_or_default(),
+                &tgt_config.database_type,
+                target_dependency_schema_scope,
+                &selected_target_snapshots,
+            )
+            .await
+            {
+                Ok(catalog) => (Some(catalog), None),
+                Err(error) => (None, Some(error.to_string())),
+            }
+        } else {
+            (None, None)
+        };
+
     let src_d = normalize_dialect(&src_config.database_type);
     let tgt_d = normalize_dialect(&tgt_config.database_type);
     let include_indexes = include_indexes.unwrap_or(true);
@@ -734,11 +981,14 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             ))
         };
 
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
             &pairs,
             &target_only_tables,
+            target_dependency_catalog.as_deref(),
             &src_d,
             &tgt_d,
+            tgt_config.database.as_deref(),
+            target_dependency_schema_scope,
             PlanOptions {
                 allow_destructive,
                 include_indexes,
@@ -747,11 +997,14 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             },
         )
     } else {
-        crate::schema_diff::plan::build_schema_diff_plan_with_target_only(
+        crate::schema_diff::plan::build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
             &pairs,
             &target_only_tables,
+            target_dependency_catalog.as_deref(),
             &src_d,
             &tgt_d,
+            tgt_config.database.as_deref(),
+            target_dependency_schema_scope,
             PlanOptions {
                 allow_destructive,
                 include_indexes,
@@ -761,20 +1014,51 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
         )
     };
 
-    crate::schema_diff::reviewed::freeze(
-        &mut plan,
-        target_db_session_id,
-        &tgt_handle,
-        &tgt_config,
-        pairs
-            .iter()
-            .map(|(table, _, target)| (table.clone(), target.clone()))
-            .chain(target_only_snapshots)
-            .collect(),
-        tgt_config.database.clone(),
-        target_schema_scope.map(str::to_owned),
-    )
-    .await;
+    if let Some(error) = target_dependency_catalog_error.as_deref() {
+        for requirement in &mut plan.requirements {
+            if let crate::schema_diff::types::PlanRequirement::Unsupported { operation, reason } =
+                requirement
+            {
+                if operation == "target-only-table-drop-order" {
+                    *reason = format!(
+                        "Could not inspect the target foreign-key dependency catalog ({error}). Confirm catalog access, select dependent tables, or remove their foreign keys before dropping a parent."
+                    );
+                }
+            }
+        }
+        plan.statements.clear();
+    }
+
+    let has_complete_target_dependency_catalog =
+        allow_destructive && !target_only_tables.is_empty() && target_dependency_catalog.is_some();
+    let frozen_target_snapshots = target_dependency_catalog
+        .clone()
+        .unwrap_or_else(|| selected_target_snapshots.clone());
+
+    if has_complete_target_dependency_catalog {
+        crate::schema_diff::reviewed::freeze_with_dependency_catalog(
+            &mut plan,
+            target_db_session_id,
+            &tgt_handle,
+            &tgt_config,
+            frozen_target_snapshots,
+            tgt_config.database.clone(),
+            target_schema_scope.map(str::to_owned),
+            target_dependency_schema_scope.map(str::to_owned),
+        )
+        .await;
+    } else {
+        crate::schema_diff::reviewed::freeze(
+            &mut plan,
+            target_db_session_id,
+            &tgt_handle,
+            &tgt_config,
+            frozen_target_snapshots,
+            tgt_config.database.clone(),
+            target_schema_scope.map(str::to_owned),
+        )
+        .await;
+    }
 
     tracing::info!(
         statements = plan.statements.len(),
@@ -1438,24 +1722,66 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
                 .await;
         }
     };
-    for (table, snapshot) in &reviewed.snapshots {
-        let current = match fetch_target_table_schema(
+    if has_table_drop_statement(&reviewed.plan) {
+        if !reviewed.has_complete_target_dependency_catalog {
+            return fail_schema_diff_deploy(
+                &state,
+                history_run,
+                CommandError::Validation(
+                    "Cannot verify the complete target dependency catalog for this table drop; compare again with full catalog visibility".into(),
+                ),
+            )
+            .await;
+        }
+        let current_catalog = match fetch_target_table_dependency_catalog(
             driver.as_ref(),
             &handle,
-            table,
             effective_target_database.unwrap_or_default(),
-            effective_target_schema,
+            &config.database_type,
+            reviewed.target_dependency_schema_scope.as_deref(),
+            &[],
         )
         .await
         {
-            Ok(value) => value,
+            Ok(catalog) => catalog,
             Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
         };
         if let Err(error) =
-            crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
+            validate_target_dependency_catalog(&reviewed.snapshots, &current_catalog)
         {
             return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
                 .await;
+        }
+    } else {
+        for (table, snapshot) in &reviewed.snapshots {
+            let (relation, snapshot_database, snapshot_schema) = resolve_reviewed_table_snapshot(
+                &config.database_type,
+                table,
+                effective_target_database.unwrap_or_default(),
+                effective_target_schema,
+            );
+            let current = match fetch_target_table_schema(
+                driver.as_ref(),
+                &handle,
+                &relation,
+                &snapshot_database,
+                snapshot_schema.as_deref(),
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
+            };
+            if let Err(error) =
+                crate::schema_diff::reviewed::validate_snapshot(table, snapshot, &current)
+            {
+                return fail_schema_diff_deploy(
+                    &state,
+                    history_run,
+                    CommandError::Validation(error),
+                )
+                .await;
+            }
         }
     }
     for snapshot in &reviewed.object_snapshots {
@@ -1706,6 +2032,9 @@ pub async fn compare_table_schemas(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{ColumnSchema, ForeignKeyDeferrability, ForeignKeyInfo, TableInfo, TableType};
+    use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
+    use std::collections::HashMap;
 
     fn test_profile() -> SchemaDiffProfile {
         let now = chrono::Utc::now();
@@ -1730,6 +2059,524 @@ mod tests {
         }
     }
 
+    fn pg_fk(name: &str) -> ForeignKeyInfo {
+        ForeignKeyInfo {
+            name: name.into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: "public.parent".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: ForeignKeyDeferrability::NotDeferrable,
+        }
+    }
+
+    fn pg_parent_schema(name: &str) -> crate::db::TableSchema {
+        crate::db::TableSchema {
+            table_name: name.into(),
+            columns: vec![ColumnSchema {
+                name: "id".into(),
+                data_type: "integer".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec!["id".into()],
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            table_options: Default::default(),
+        }
+    }
+
+    fn pg_child_schema(name: &str, include_fk: bool) -> crate::db::TableSchema {
+        crate::db::TableSchema {
+            table_name: name.into(),
+            columns: vec![
+                ColumnSchema {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                },
+                ColumnSchema {
+                    name: "parent_id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                },
+            ],
+            primary_keys: vec!["id".into()],
+            indexes: Vec::new(),
+            foreign_keys: if include_fk {
+                vec![pg_fk("fk_child_parent")]
+            } else {
+                Vec::new()
+            },
+            check_constraints: Vec::new(),
+            table_options: Default::default(),
+        }
+    }
+
+    async fn pg_command_test_sessions(
+        options: MockDriverOptions,
+    ) -> (crate::testing::app_state::TestAppState, String, String) {
+        let test = crate::testing::app_state::TestAppState::with_options(options).await;
+        for (id, database) in [("source", "source_db"), ("target", "target_db")] {
+            let mut config = crate::testing::app_state::sample_postgres_config(id);
+            config.database = Some(database.into());
+            config.schema = Some("public".into());
+            test.store
+                .save_connection(config)
+                .await
+                .expect("save fixture connection");
+        }
+        let source_session = test.connect_config("source").await;
+        let target_session = test.connect_config("target").await;
+        (test, source_session, target_session)
+    }
+
+    fn pg_mock_options(
+        source_schemas: HashMap<String, crate::db::TableSchema>,
+        target_schemas: HashMap<String, crate::db::TableSchema>,
+    ) -> MockDriverOptions {
+        MockDriverOptions {
+            has_schema_level: true,
+            default_schema: Some("public"),
+            table_schemas_by_database: HashMap::from([
+                ("source_db".into(), source_schemas),
+                ("target_db".into(), target_schemas),
+            ]),
+            ..Default::default()
+        }
+    }
+
+    async fn prepare_pg_table_plan(
+        test: &crate::testing::app_state::TestAppState,
+        source_session: &str,
+        target_session: &str,
+        tables: &[&str],
+    ) -> SchemaDiffPlan {
+        prepare_schema_diff_plan_with_schemas_impl(
+            &test.state,
+            source_session.to_string(),
+            target_session.to_string(),
+            tables.iter().map(|table| (*table).into()).collect(),
+            tables.iter().map(|table| (*table).into()).collect(),
+            Vec::new(),
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("prepare PostgreSQL table plan")
+    }
+
+    fn pg_target_drop_options() -> MockDriverOptions {
+        let parent_qualified = pg_parent_schema("public.parent");
+        let parent_bare = pg_parent_schema("parent");
+        let child_qualified = pg_child_schema("public.child", true);
+        let child_bare = pg_child_schema("child", true);
+        MockDriverOptions {
+            has_schema_level: true,
+            default_schema: Some("public"),
+            tables_by_database: HashMap::from([(
+                "target_db".into(),
+                vec![
+                    target_table("parent", Some("public")),
+                    target_table("child", Some("public")),
+                ],
+            )]),
+            table_schemas_by_database: HashMap::from([(
+                "target_db".into(),
+                HashMap::from([
+                    ("parent".into(), parent_bare),
+                    ("public.parent".into(), parent_qualified),
+                    ("child".into(), child_bare),
+                    ("public.child".into(), child_qualified),
+                ]),
+            )]),
+            ..Default::default()
+        }
+    }
+
+    async fn prepare_pg_target_only_drop_plan(
+        test: &crate::testing::app_state::TestAppState,
+        source_session: &str,
+        target_session: &str,
+        tables: &[&str],
+    ) -> SchemaDiffPlan {
+        prepare_schema_diff_plan_with_schemas_impl(
+            &test.state,
+            source_session.to_string(),
+            target_session.to_string(),
+            Vec::new(),
+            Vec::new(),
+            tables.iter().map(|table| (*table).into()).collect(),
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("prepare PostgreSQL target-only drop plan")
+    }
+
+    async fn deploy_pg_reviewed_plan(
+        test: &crate::testing::app_state::TestAppState,
+        target_session: &str,
+        plan: SchemaDiffPlan,
+    ) -> Result<crate::schema_diff::SchemaDiffDeployResult, CommandError> {
+        execute_schema_diff_deploy_impl(
+            &test.state,
+            target_session.to_string(),
+            plan,
+            Some(false),
+            Some(false),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    fn target_table(name: &str, schema: Option<&str>) -> TableInfo {
+        TableInfo {
+            name: name.into(),
+            schema: schema.map(str::to_owned),
+            table_type: TableType::Table,
+            row_count: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn target_dependency_catalog_reads_all_postgres_schemas_and_excludes_views() {
+        let options = MockDriverOptions {
+            has_schema_level: true,
+            tables: vec![
+                target_table("parent", Some("public")),
+                target_table("child", Some("archive")),
+                TableInfo {
+                    name: "active_view".into(),
+                    schema: Some("public".into()),
+                    table_type: TableType::View,
+                    row_count: None,
+                },
+            ],
+            table_schemas_by_database: HashMap::from([(
+                "target_db".into(),
+                HashMap::from([
+                    ("parent".into(), pg_parent_schema("parent")),
+                    ("child".into(), pg_child_schema("child", true)),
+                ]),
+            )]),
+            ..Default::default()
+        };
+        let driver = MockDriver::new("postgres", options);
+        let handle = datazen_driver_api::ConnectionHandle {
+            id: "catalog-session".into(),
+            pool_id: "catalog-pool".into(),
+        };
+        let selected = vec![("public.parent".into(), pg_parent_schema("public.parent"))];
+        let catalog = fetch_target_table_dependency_catalog(
+            driver.as_ref(),
+            &handle,
+            "target_db",
+            "postgresql",
+            Some("public"),
+            &selected,
+        )
+        .await
+        .expect("read PostgreSQL dependency catalog");
+
+        assert_eq!(catalog.len(), 2);
+        assert!(catalog
+            .iter()
+            .any(|(identity, _)| identity == "public.parent"));
+        let child = catalog
+            .iter()
+            .find(|(identity, _)| identity == "archive.child")
+            .expect("include table in a non-default schema");
+        assert_eq!(child.1.foreign_keys[0].referenced_table, "public.parent");
+    }
+
+    #[tokio::test]
+    async fn mysql_target_dependency_catalog_fails_closed_without_global_visibility() {
+        let driver = MockDriver::new("mysql", MockDriverOptions::default());
+        let handle = datazen_driver_api::ConnectionHandle {
+            id: "mysql-catalog-session".into(),
+            pool_id: "mysql-catalog-pool".into(),
+        };
+        let error = fetch_target_table_dependency_catalog(
+            driver.as_ref(),
+            &handle,
+            "target_db",
+            "mysql",
+            None,
+            &[],
+        )
+        .await
+        .expect_err("unproven server-wide visibility must block target-only drops");
+        assert!(error.to_string().contains("direct global SELECT"));
+    }
+
+    #[tokio::test]
+    async fn mysql_target_dependency_catalog_uses_database_qualified_identities() {
+        let mut archive_child = pg_child_schema("child", true);
+        archive_child.foreign_keys[0].referenced_table = "archive.parent".into();
+        let options = MockDriverOptions {
+            databases: vec!["target_db".into(), "archive".into()],
+            complete_foreign_key_catalog_visibility: true,
+            tables_by_database: HashMap::from([
+                (
+                    "target_db".into(),
+                    vec![target_table("parent", None), target_table("child", None)],
+                ),
+                (
+                    "archive".into(),
+                    vec![target_table("parent", None), target_table("child", None)],
+                ),
+            ]),
+            table_schemas_by_database: HashMap::from([
+                (
+                    "target_db".into(),
+                    HashMap::from([
+                        ("parent".into(), pg_parent_schema("parent")),
+                        ("child".into(), archive_child),
+                    ]),
+                ),
+                (
+                    "archive".into(),
+                    HashMap::from([
+                        ("parent".into(), pg_parent_schema("parent")),
+                        ("child".into(), pg_child_schema("child", false)),
+                    ]),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let driver = MockDriver::new("mysql", options);
+        let handle = datazen_driver_api::ConnectionHandle {
+            id: "mysql-catalog-session".into(),
+            pool_id: "mysql-catalog-pool".into(),
+        };
+        let catalog = fetch_target_table_dependency_catalog(
+            driver.as_ref(),
+            &handle,
+            "target_db",
+            "mysql",
+            None,
+            &[],
+        )
+        .await
+        .expect("read server-wide MySQL dependency catalog");
+
+        assert!(catalog.iter().any(|(identity, _)| identity == "parent"));
+        assert!(catalog
+            .iter()
+            .any(|(identity, _)| identity == "archive.parent"));
+        let child = catalog
+            .iter()
+            .find(|(identity, _)| identity == "child")
+            .expect("include selected database child");
+        assert_eq!(child.1.foreign_keys[0].referenced_table, "archive.parent");
+        assert_eq!(catalog.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn postgres_create_with_foreign_key_deploy_accepts_unchanged_reviewed_snapshots() {
+        let options = pg_mock_options(
+            HashMap::from([
+                ("public.parent".into(), pg_parent_schema("public.parent")),
+                ("public.child".into(), pg_child_schema("public.child", true)),
+            ]),
+            HashMap::new(),
+        );
+        let (test, source_session, target_session) = pg_command_test_sessions(options).await;
+        let plan = prepare_pg_table_plan(
+            &test,
+            &source_session,
+            &target_session,
+            &["public.parent", "public.child"],
+        )
+        .await;
+        assert!(plan.statements.iter().any(|statement| {
+            statement.summary.contains("CREATE TABLE")
+                && statement.summary.contains("public.parent")
+        }));
+        assert!(plan.statements.iter().any(|statement| {
+            statement.summary.contains("FOREIGN KEY") || statement.sql.contains("FOREIGN KEY")
+        }));
+
+        let result = deploy_pg_reviewed_plan(&test, &target_session, plan)
+            .await
+            .expect("unchanged create/FK plan should deploy");
+        assert_eq!(result.status, crate::schema_diff::DeployStatus::Committed);
+        assert!(result.executed_count > 0);
+        assert!(test.mock.execute_calls() > 0);
+    }
+
+    #[tokio::test]
+    async fn postgres_add_fk_deploy_accepts_unchanged_reviewed_snapshots() {
+        let source_child = pg_child_schema("public.child", true);
+        let target_child = pg_child_schema("public.child", false);
+        let options = pg_mock_options(
+            HashMap::from([
+                ("public.parent".into(), pg_parent_schema("public.parent")),
+                ("public.child".into(), source_child),
+            ]),
+            HashMap::from([
+                ("public.parent".into(), pg_parent_schema("public.parent")),
+                ("parent".into(), pg_parent_schema("parent")),
+                ("public.child".into(), target_child.clone()),
+                ("child".into(), target_child),
+            ]),
+        );
+        let (test, source_session, target_session) = pg_command_test_sessions(options).await;
+        let plan = prepare_pg_table_plan(
+            &test,
+            &source_session,
+            &target_session,
+            &["public.parent", "public.child"],
+        )
+        .await;
+        assert!(plan.statements.iter().any(|statement| {
+            statement.summary.contains("FOREIGN KEY") || statement.sql.contains("FOREIGN KEY")
+        }));
+
+        let result = deploy_pg_reviewed_plan(&test, &target_session, plan)
+            .await
+            .expect("unchanged add-FK plan should deploy");
+        assert_eq!(result.status, crate::schema_diff::DeployStatus::Committed);
+        assert!(result.executed_count > 0);
+    }
+
+    #[tokio::test]
+    async fn postgres_target_mutation_after_review_is_rejected_before_any_write() {
+        let target_child = pg_child_schema("public.child", false);
+        let options = pg_mock_options(
+            HashMap::from([
+                ("public.parent".into(), pg_parent_schema("public.parent")),
+                ("public.child".into(), pg_child_schema("public.child", true)),
+            ]),
+            HashMap::from([
+                ("public.parent".into(), pg_parent_schema("public.parent")),
+                ("parent".into(), pg_parent_schema("parent")),
+                ("public.child".into(), target_child.clone()),
+                ("child".into(), target_child),
+            ]),
+        );
+        let (test, source_session, target_session) = pg_command_test_sessions(options).await;
+        let plan = prepare_pg_table_plan(
+            &test,
+            &source_session,
+            &target_session,
+            &["public.parent", "public.child"],
+        )
+        .await;
+
+        test.mock
+            .set_table_schema_for_test("target_db", "child", pg_child_schema("child", true));
+        let error = deploy_pg_reviewed_plan(&test, &target_session, plan)
+            .await
+            .expect_err("a post-review FK change must invalidate the plan");
+        assert!(error
+            .to_string()
+            .contains("Target schema changed for public.child"));
+        assert_eq!(test.mock.execute_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn postgres_child_parent_drop_revalidates_qualified_catalog_before_deploy() {
+        let (test, source_session, target_session) =
+            pg_command_test_sessions(pg_target_drop_options()).await;
+        let plan = prepare_pg_target_only_drop_plan(
+            &test,
+            &source_session,
+            &target_session,
+            &["public.parent", "public.child"],
+        )
+        .await;
+        assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+        assert_eq!(plan.statements.len(), 2);
+        let child_drop = plan
+            .statements
+            .iter()
+            .position(|statement| statement.sql.contains("child"))
+            .expect("render child drop");
+        let parent_drop = plan
+            .statements
+            .iter()
+            .position(|statement| statement.sql.contains("parent"))
+            .expect("render parent drop");
+        assert!(child_drop < parent_drop, "{:?}", plan.statements);
+
+        let result = execute_schema_diff_deploy_impl(
+            &test.state,
+            target_session,
+            plan,
+            Some(false),
+            Some(false),
+            Some(crate::schema_diff::deploy::DESTRUCTIVE_CONFIRM_TOKEN.to_string()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("unchanged full target catalog should validate");
+        assert_eq!(result.status, crate::schema_diff::DeployStatus::Committed);
+        assert_eq!(result.executed_count, 2);
+    }
+
+    #[tokio::test]
+    async fn postgres_new_dependent_relation_after_review_blocks_drop_before_write() {
+        let (test, source_session, target_session) =
+            pg_command_test_sessions(pg_target_drop_options()).await;
+        let plan = prepare_pg_target_only_drop_plan(
+            &test,
+            &source_session,
+            &target_session,
+            &["public.parent", "public.child"],
+        )
+        .await;
+        test.mock
+            .add_table_for_test("target_db", target_table("late_child", Some("public")));
+
+        let error = execute_schema_diff_deploy_impl(
+            &test.state,
+            target_session,
+            plan,
+            Some(false),
+            Some(false),
+            Some(crate::schema_diff::deploy::DESTRUCTIVE_CONFIRM_TOKEN.to_string()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("a new dependency catalog relation must invalidate the drop plan");
+        assert!(error
+            .to_string()
+            .contains("Target dependency catalog changed after review"));
+        assert!(error.to_string().contains("public.late_child"));
+        assert_eq!(test.mock.execute_calls(), 0);
+    }
+
     #[test]
     fn is_table_missing_error_detects_various_patterns() {
         assert!(is_table_missing_error(
@@ -1742,6 +2589,66 @@ mod tests {
         assert!(is_table_missing_error("Table not found: users"));
         assert!(!is_table_missing_error("Connection refused"));
         assert!(!is_table_missing_error("Syntax error in SQL statement"));
+    }
+
+    #[test]
+    fn reviewed_relation_snapshot_uses_its_own_schema_scope() {
+        assert_eq!(
+            resolve_reviewed_table_snapshot("postgresql", "archive.events", "app", Some("public")),
+            ("events".into(), "app".into(), Some("archive".into()))
+        );
+        assert_eq!(
+            resolve_reviewed_table_snapshot("postgresql", "events", "app", Some("public")),
+            ("events".into(), "app".into(), Some("public".into()))
+        );
+        assert_eq!(
+            resolve_reviewed_table_snapshot("mysql", "events", "app", None),
+            ("events".into(), "app".into(), None)
+        );
+        assert_eq!(
+            resolve_reviewed_table_snapshot("mysql", "archive.events", "app", None),
+            ("events".into(), "archive".into(), None)
+        );
+    }
+
+    #[test]
+    fn complete_target_dependency_catalog_rejects_new_relations_and_changed_foreign_keys() {
+        let table = |name: &str| crate::db::TableSchema {
+            table_name: name.into(),
+            columns: Vec::new(),
+            primary_keys: Vec::new(),
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            table_options: Default::default(),
+        };
+        let reviewed = vec![("public.parent".into(), table("parent"))];
+        let mut current = reviewed.clone();
+        current.push(("public.child".into(), table("child")));
+        let error = validate_target_dependency_catalog(&reviewed, &current).unwrap_err();
+        assert!(error.contains("new relations: [public.child]"), "{error}");
+
+        let mut reviewed = current;
+        let mut changed_child = table("child");
+        changed_child.foreign_keys.push(crate::db::ForeignKeyInfo {
+            name: "fk_child_parent".into(),
+            columns: vec!["parent_id".into()],
+            referenced_table: "public.parent".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "NO ACTION".into(),
+            deferrability: crate::db::ForeignKeyDeferrability::NotDeferrable,
+        });
+        let changed = vec![
+            ("public.parent".into(), table("parent")),
+            ("public.child".into(), changed_child),
+        ];
+        let error = validate_target_dependency_catalog(&reviewed, &changed).unwrap_err();
+        assert!(
+            error.contains("Target schema changed for public.child"),
+            "{error}"
+        );
+        reviewed.pop();
     }
 
     #[test]

@@ -2,9 +2,12 @@
 
 pub mod compare;
 pub mod dependencies;
+pub mod dependency_graph;
 pub mod deploy;
 pub mod ir;
 pub mod objects;
+mod operation_dependencies;
+mod operation_dependency_references;
 pub mod operations;
 pub mod plan;
 pub mod profile;
