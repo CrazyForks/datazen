@@ -1,6 +1,6 @@
 # Track: e2e-ops-menu — E2E 运维菜单用例修复
 
-- **状态**: READY_FOR_TEST（已通过 `npx tsc --noEmit -p e2e/tsconfig.json` 增量校验；受环境限制未在本 worktree 跑全量 E2E）
+- **状态**: FAILED（测试第 1 轮：`e2e-ops-menu-BUG-001` 待修复；测试 commit 见文末「测试记录」）
 - **分支**: `feature/e2e-ops-menu`
 - **改动范围**: 仅 `e2e/specs/` 三个 spec 文件 + 本进度文件。未触碰 `src/`、`src-tauri/`、`packages/`、`e2e/helpers.ts`、`e2e/wdio.conf.ts`、`e2e/lib/**`。
 
@@ -136,3 +136,68 @@ npx tsc --noEmit -p e2e/tsconfig.json   # worktree 内执行
   `pnpm install` / 全量构建。需由协调者在具备 `pnpm tauri:build:webdriver`
   环境的主检出运行验证。
 - 本 track 不自评 PASSED，最终结论以测试 track 复跑为准。
+
+## 测试记录（第 1 轮 · 测试子代理）
+
+**结论：FAILED** — 登记 `e2e-ops-menu-BUG-001`（RC-3 关闭修复无效，严重度：高）。
+测试 commit：`ca0a178e6`（BUG 文件 + 复现用例同 commit）。
+
+### 阶段 A · 代码审查
+
+| 审查项 | 结论 |
+| --- | --- |
+| RC-1 会话泄漏根因 | ✅ 属实：Rust `connection_manager/tests.rs` `get_or_connect_session_reuses_existing_session` 等证复用语义；wdio.conf 每 spec 建/删 worker 库、UI 会话从不断开 → 跨 spec stale 会话链完整成立 |
+| RC-2 异步菜单构建 | ✅ 属实：`handleConnectionContextMenu` 为 `void (async …)`，先 `await getDriverCommands` 再 `show()`；8s/5s/10s waitUntil 上限合理（waitforTimeout 10s、mocha 120s），均带 timeoutMsg 快速失败、不掩盖 |
+| RC-3 根因分析 | ✅ 根因正确（document 不冒泡到 window 监听器，`WebContextMenu.tsx:181`），**但修复无效 → BUG-001** |
+| `hoverServerSubmenu/hoverSubmenuTrigger` 改抛错 | ✅ 语义变化仅影响"菜单未打开"场景（原来静默跳过后断言在空菜单下误报）；调用点均为正向断言（DDL-003 的 skip 分支在已连接 PG 下不可达，无害）；`server-submenu` 在 PG 已连接时必存在（`mainWindowContextMenu.ts:224`） |
+| `dropLeakedSeededSession` 副作用 | ✅ 三分支（复用→断开 / 新建→断开 / 抛错→吞）均无害；连接探测用的是已 seed 的当前 worker 库配置，断开后同 spec UI 连接正常新建会话 |
+| `rightClickConn` 按 `data-conn-name` 定位 | ✅ `NavigatorTreeRow.tsx:250-251` 两属性同节点；与 `E2E_PG_CONN_NAME` 一致 |
+| 零文案硬编码 | ✅ 新增定位均为 data-testid 或 `button[title="${t('processList.kill')}"]` 字典回读（zh-CN 同一份 `src/locales/zh-CN`），合规 |
+| tsc 自报 | ✅ 独立复测完全一致（见阶段 B） |
+
+**非 Bug 审查发现**（记录不立案）：① `rightClickConn` 的 `?? items[0]` 兜底会在按名定位失败时静默右键首项，报错信息可能误导；② OPS-PL-002 `if (!killBtn.isExisting()) return` 静默空过（本 commit 前既有）；③ `anyTableRows` 扫全文档 `[data-dt-row]`，极端下可被无关表格满足；④ navigator 无菜单节点的 `rightClick` 现需等满 8s（原 pause 500ms），全 spec 变慢但在 120s 内；⑤ `closeAnyMenu` 三份复制粘贴（已在§四建议抽 helpers）。
+
+### 阶段 B · 独立复验
+
+- BOOTSTRAP：worktree `.worktrees/datazen-e2e-ops-menu`、分支 `feature/e2e-ops-menu`、状态 clean、被测 HEAD `84d910097`。
+- `node scripts/generate-builtin-locales.mjs` ✅（写入 en/zh-CN）。
+- `npx tsc --noEmit -p e2e/tsconfig.json`：**基线 72 → HEAD 70，0 新增**——基线用 `git checkout HEAD~1 -- <3 spec>` 复测后已恢复；归一化逐行 diff 仅少 `ops-process-server.ts` 的 2×TS2345，`NEW errors: 0`。
+- navigator 14 个错误**基线/HEAD 签名完全一致**（13×`await $$().length` 同型写法 + helpers.ts:320 同型；1×`this.skip(1)` TS2554）；helpers(4)+lib(2)+其它 spec(50) 与自报吻合。测试代理新增用例后再测仍为 70、`ops-process-server.ts` 0 错误。
+- 前端单测：`npx vitest run src/components/ui/__tests__/WebContextMenu.test.tsx` 7/7 通过（改动不进 vitest 行覆盖率统计；本 track 无 src/ 改动，Rust 单测不适用）。
+- 全量 E2E：**【留待 R 回归】**（worktree 无编译产物，构建/安装按约束禁行）。
+
+### 阶段 C · 覆盖评估与 E2E 登记表
+
+改动文件为 e2e spec（不进 vitest 行覆盖率统计），按**修复点 → 用例**评估：
+
+| 修复点 | 覆盖用例 | 状态 |
+| --- | --- | --- |
+| `dropLeakedSeededSession`（3 spec before） | OPS-PROC-002/003/004、OPS-SS-002、OPS-PL-002、OPS-DDL-001~003、NCM before-all 建表断言 | 【留待 R 回归】 |
+| `waitUntil` 菜单渲染（RC-2） | OPS-PROC-001/002/003、OPS-DDL-001/002/003、NCM-001 起全部右键用例 | 【留待 R 回归】 |
+| `hoverServerSubmenu/hoverSubmenuTrigger` 抛错 | OPS-PROC-001~004、OPS-DDL-001/003、NCM-001/002 | 【留待 R 回归】 |
+| testid 选择器（kill title / refresh / tab / process-list-view） | OPS-PROC-004、OPS-SS-002、OPS-PL-002 | 【留待 R 回归】 |
+| **RC-3 关闭路径（原 0 断言，失败被 `.catch` 吞）** | **新增 `[tester] OPS-PROC-T001`（BUG-001 复现用例，修复前必红）** | 【留待 R 回归】 |
+
+**E2E 登记表**（复跑入口，前置：主检出 `pnpm tauri:build:webdriver` 产出二进制）：
+
+```bash
+pnpm e2e:skip-build -- --spec e2e/specs/ops-process-server.ts,e2e/specs/navigator-context-menu.ts,e2e/specs/ops-ddl-backup.ts
+```
+
+| 用例 | 执行条件 | 状态 |
+| --- | --- | --- |
+| OPS-PROC-001 ~ 004、OPS-SS-002、OPS-PL-002、`[tester] OPS-PROC-T001` | 同上复跑入口；依赖 seeded PG + worker 库 | 【留待 R 回归】 |
+| OPS-DDL-001 ~ 003 | 同上 | 【留待 R 回归】 |
+| navigator before-all + NCM 全量用例 | 同上（首条用例验证 RC-1 会话修复） | 【留待 R 回归】 |
+
+### 阶段 D · 判定
+
+- **BUG-001**：`closeAnyMenu` 向 window 派发 mousedown → `onDown` 内
+  `rootRef.current?.contains(window)` 抛 TypeError → `hide()` 不执行，菜单从不
+  关闭，3s 等待被 `.catch` 吞掉。真实组件 vitest/jsdom 实测（取证日志在 BUG 文件）：
+  window 派发 → 菜单仍在 DOM + `WebContextMenu.tsx:175` TypeError；body 派发
+  对照组通过。外部同型案例：SO 69208491、headlessui#2115。
+- 修复方向（建议，测试方不改）：派发目标改为 `document.body`（或 `document` +
+  bubbles），并建议在 `WebContextMenu.onDown` 对非 Node target 防御（属 `src/`，
+  需协调者另行派发）。
+- 修复后 R 复测预期：`[tester] OPS-PROC-T001` 转绿即证明关闭路径真实生效。
