@@ -389,6 +389,9 @@ fn every_tauri_command_is_registered_and_resolvable() {
                 .or_else(|| line.split_once("crate::app_menu::"))
                 .map(|(_, tail)| tail);
             if let Some(tail) = tail {
+                // Tauri accepts nested command module paths as registrations;
+                // compare the final function name with the declared command.
+                let tail = tail.rsplit("::").next().unwrap_or(tail);
                 let name: String = tail
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
