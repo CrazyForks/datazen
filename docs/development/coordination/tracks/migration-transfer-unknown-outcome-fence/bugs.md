@@ -21,6 +21,12 @@
 - **Description:** The previous live journeys exercised ordinary constraint failures only, so they could not establish behavior when a real target commit succeeds but its acknowledgement disappears.
 - **Evidence:** Both unique-fixture WDIO journeys assert unknown row counts, stop before the later table, verify committed target rows by readback, confirm Transfer history `unknown`, ensure no token/replay remains, and check cleanup. The injected fault occurs only after the actual driver commit returns successfully; it does not simulate a network partition.
 
+## migration-transfer-unknown-outcome-fence-BUG-004 — P1
+
+- **Status:** READY_FOR_TEST. Both ack-loss fixtures now refuse pre-existing database names and clean up only databases whose own create call succeeded in this run.
+- **Scope:** Per-database ownership flags and independent admin/fixture config/session cleanup are limited to the two PG↔MySQL specs. No product or shared fixture behavior changed.
+- **Validation:** Static checks passed; no database journey ran in the Coder phase. A fresh Tester should execute the unique-fixture journeys serially and verify cleanup.
+
 ## Deferred gap outside this track
 
 Large-table bounded chunk/recovery remains separate work. Current Transfer still has table-level, not mid-table, checkpoints; it does not promise bounded memory for fallback materialization or guaranteed interruption of an active source query. This track does not add a chunk cursor or claim those behaviors.

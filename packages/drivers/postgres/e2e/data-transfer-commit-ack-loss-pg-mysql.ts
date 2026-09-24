@@ -118,8 +118,14 @@ async function selectOnlyTables(selectedTables: string[]) {
 
 describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
   this.timeout(180_000);
-  let mainWindow: string;
-  let adminConnectionsSaved = false;
+  let mainWindow: string | undefined;
+  let sourceAdminConfigSaved = false;
+  let targetAdminConfigSaved = false;
+  let sourceConfigSaved = false;
+  let targetConfigSaved = false;
+  // A database is ours only after this run's CREATE DATABASE call returns successfully.
+  let sourceDatabaseCreated = false;
+  let targetDatabaseCreated = false;
   const stamp = Date.now().toString(36);
   const sourceId = `e2e_dt_ack_pgm_src_${stamp}`;
   const targetId = `e2e_dt_ack_pgm_tgt_${stamp}`;
@@ -139,71 +145,95 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
     await invokeBackend('save_connection', {
       config: pgConfig(sourceAdminId, `DT admin PG ${stamp}`, 'postgres'),
     });
+    sourceAdminConfigSaved = true;
     await invokeBackend('save_connection', {
       config: mysqlConfig(targetAdminId, `DT admin MySQL ${stamp}`, 'mysql'),
     });
-    adminConnectionsSaved = true;
-    const sourceAdminSession = await connectBackend(sourceAdminId);
-    const targetAdminSession = await connectBackend(targetAdminId);
+    targetAdminConfigSaved = true;
+    let sourceAdminSession: string | undefined;
+    let targetAdminSession: string | undefined;
     try {
+      sourceAdminSession = await connectBackend(sourceAdminId);
+      targetAdminSession = await connectBackend(targetAdminId);
+      const sourceCatalog = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: sourceAdminSession,
+        sql: `SELECT datname FROM pg_database WHERE datname = '${sourceDatabase}'`,
+      });
+      const targetCatalog = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetAdminSession,
+        sql: `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${targetDatabase}'`,
+      });
+      if (parseQueryRows(sourceCatalog).length > 0 || parseQueryRows(targetCatalog).length > 0) {
+        throw new Error(
+          `Refusing to use pre-existing Transfer fixture database ${sourceDatabase} or ${targetDatabase}`,
+        );
+      }
       await withSafeModeOff(async () => {
         await invokeBackend('execute_query', {
           dbSessionId: sourceAdminSession,
           sql: `CREATE DATABASE ${sourceDatabase}`,
         });
+        sourceDatabaseCreated = true;
         await invokeBackend('execute_query', {
           dbSessionId: targetAdminSession,
           sql: `CREATE DATABASE \`${targetDatabase}\``,
         });
+        targetDatabaseCreated = true;
       });
     } finally {
-      await disconnectBackend(sourceAdminSession);
-      await disconnectBackend(targetAdminSession);
+      if (sourceAdminSession) await disconnectBackend(sourceAdminSession);
+      if (targetAdminSession) await disconnectBackend(targetAdminSession);
     }
 
     await invokeBackend('save_connection', {
       config: pgConfig(sourceId, sourceName, sourceDatabase),
     });
+    sourceConfigSaved = true;
     await invokeBackend('save_connection', {
       config: mysqlConfig(targetId, targetName, targetDatabase),
     });
-    const sourceSession = await connectBackend(sourceId);
-    const targetSession = await invokeBackend<string>('connect_dedicated', {
-      connectionId: targetId,
-      database: targetDatabase,
-    });
+    targetConfigSaved = true;
+    let sourceSession: string | undefined;
+    let targetSession: string | undefined;
     try {
+      const sourceSessionId = await connectBackend(sourceId);
+      sourceSession = sourceSessionId;
+      const targetSessionId = await invokeBackend<string>('connect_dedicated', {
+        connectionId: targetId,
+        database: targetDatabase,
+      });
+      targetSession = targetSessionId;
       await withSafeModeOff(async () => {
         for (const table of tables) {
           await invokeBackend('execute_query', {
-            dbSessionId: sourceSession,
+            dbSessionId: sourceSessionId,
             sql: `CREATE TABLE ${table} (id INT PRIMARY KEY, payload TEXT NOT NULL)`,
           });
           await invokeBackend('execute_query', {
-            dbSessionId: targetSession,
+            dbSessionId: targetSessionId,
             sql: `CREATE TABLE ${table} (id INT PRIMARY KEY, payload TEXT NOT NULL) ENGINE=InnoDB`,
           });
         }
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: sourceSessionId,
           sql: `INSERT INTO ${earlierTable} VALUES (1, 'earlier known commit')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: sourceSessionId,
           sql: `INSERT INTO ${unknownTable} VALUES (2, 'committed before acknowledgement loss')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: sourceSession,
+          dbSessionId: sourceSessionId,
           sql: `INSERT INTO ${laterTable} VALUES (3, 'must not be copied')`,
         });
         await invokeBackend('execute_query', {
-          dbSessionId: targetSession,
+          dbSessionId: targetSessionId,
           sql: `INSERT INTO ${unknownTable} VALUES (2, 'temporary conflict for checkpoint')`,
         });
       });
     } finally {
-      await disconnectBackend(sourceSession);
-      await disconnectBackend(targetSession);
+      if (sourceSession) await disconnectBackend(sourceSession);
+      if (targetSession) await disconnectBackend(targetSession);
     }
   });
 
@@ -212,35 +242,81 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
     if (mainWindow) {
       await browser.url('tauri://localhost').catch(() => undefined);
       await browser.pause(400);
-      await closeExtraWindows(mainWindow);
+      await closeExtraWindows(mainWindow).catch(() => undefined);
     }
     let sourceAdminSession: string | undefined;
     let targetAdminSession: string | undefined;
+    const cleanupErrors: string[] = [];
     try {
-      if (adminConnectionsSaved) {
-        const sourceAdminConnection = await connectBackend(sourceAdminId);
-        sourceAdminSession = sourceAdminConnection;
-        const targetAdminConnection = await connectBackend(targetAdminId);
-        targetAdminSession = targetAdminConnection;
-        await withSafeModeOff(async () => {
-          await invokeBackend('execute_query', {
-            dbSessionId: sourceAdminConnection,
-            sql: `DROP DATABASE IF EXISTS ${sourceDatabase} WITH (FORCE)`,
+      if (sourceDatabaseCreated && sourceAdminConfigSaved) {
+        try {
+          sourceAdminSession = await connectBackend(sourceAdminId);
+        } catch (error) {
+          cleanupErrors.push(
+            `cannot reconnect PG admin to clean owned database ${sourceDatabase}: ${String(error)}`,
+          );
+        }
+      }
+      if (targetDatabaseCreated && targetAdminConfigSaved) {
+        try {
+          targetAdminSession = await connectBackend(targetAdminId);
+        } catch (error) {
+          cleanupErrors.push(
+            `cannot reconnect MySQL admin to clean owned database ${targetDatabase}: ${String(error)}`,
+          );
+        }
+      }
+      if (sourceDatabaseCreated && sourceAdminSession) {
+        const sourceAdminDbSession = sourceAdminSession;
+        try {
+          await withSafeModeOff(async () => {
+            await invokeBackend('execute_query', {
+              dbSessionId: sourceAdminDbSession,
+              sql: `DROP DATABASE IF EXISTS ${sourceDatabase} WITH (FORCE)`,
+            });
           });
-          await invokeBackend('execute_query', {
-            dbSessionId: targetAdminConnection,
-            sql: `DROP DATABASE IF EXISTS \`${targetDatabase}\``,
+          sourceDatabaseCreated = false;
+        } catch (error) {
+          cleanupErrors.push(
+            `failed to drop owned PG database ${sourceDatabase}: ${String(error)}`,
+          );
+        }
+      }
+      if (targetDatabaseCreated && targetAdminSession) {
+        const targetAdminDbSession = targetAdminSession;
+        try {
+          await withSafeModeOff(async () => {
+            await invokeBackend('execute_query', {
+              dbSessionId: targetAdminDbSession,
+              sql: `DROP DATABASE IF EXISTS \`${targetDatabase}\``,
+            });
           });
-        });
+          targetDatabaseCreated = false;
+        } catch (error) {
+          cleanupErrors.push(
+            `failed to drop owned MySQL database ${targetDatabase}: ${String(error)}`,
+          );
+        }
       }
     } finally {
       if (sourceAdminSession) await disconnectBackend(sourceAdminSession);
       if (targetAdminSession) await disconnectBackend(targetAdminSession);
-      await invokeBackend('delete_connection', { id: sourceId }).catch(() => undefined);
-      await invokeBackend('delete_connection', { id: targetId }).catch(() => undefined);
-      await invokeBackend('delete_connection', { id: sourceAdminId }).catch(() => undefined);
-      await invokeBackend('delete_connection', { id: targetAdminId }).catch(() => undefined);
-      if (mainWindow) await closeExtraWindows(mainWindow);
+      if (sourceConfigSaved) {
+        await invokeBackend('delete_connection', { id: sourceId }).catch(() => undefined);
+      }
+      if (targetConfigSaved) {
+        await invokeBackend('delete_connection', { id: targetId }).catch(() => undefined);
+      }
+      if (sourceAdminConfigSaved) {
+        await invokeBackend('delete_connection', { id: sourceAdminId }).catch(() => undefined);
+      }
+      if (targetAdminConfigSaved) {
+        await invokeBackend('delete_connection', { id: targetAdminId }).catch(() => undefined);
+      }
+      if (mainWindow) await closeExtraWindows(mainWindow).catch(() => undefined);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Transfer fixture cleanup incomplete: ${cleanupErrors.join('; ')}`);
     }
   });
 

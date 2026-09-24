@@ -1,6 +1,6 @@
 # migration-transfer-unknown-outcome-fence
 
-Phase: FAILED
+Phase: READY_FOR_TEST
 
 - Task: stop Data Transfer after an unknown per-table transaction outcome, regardless of the continue-on-error preference
 - Branch: `feature/migration-transfer-unknown-outcome-fence`
@@ -133,3 +133,9 @@ Final status: **TEST_FAILED**. BUG-004 was registered and committed separately a
 - Fresh debug binary and `.app/Contents/MacOS/datazen` have the same SHA-256: `824be4302259b39a727b736be4e79524f16afbc7a0b7e42831388442f9d6edab` (built 2026-09-24 19:06:14 CST). The embedded bundle contains `/assets/DataTransferWindow-CxqT7CrE.js`; the corresponding fresh `dist` chunk contains `__dataTransferRunCalls`. The binary also contains both `arm_data_transfer_test_commit_ack_loss` and `reset_data_transfer_test_commit_ack_loss`, confirming the debug/WebDriver IPC registration is in this candidate artifact.
 - **No WDIO journey was run.** The two ack-loss specs are paused by BUG-004 because their cleanup can delete an unowned database. Before considering the existing fixed-name rollback journeys, read-only catalog queries found both `dz_mig_0910_transfer_src` and `dz_mig_0910_transfer_tgt` already exist in MySQL (neither exists in PostgreSQL). Per the no-touch rule those shared MySQL databases were not opened, modified, or dropped, and the two old journeys are blocked. No app was started, no database was created/dropped, no private `DATAZEN_DATA_DIR` was created, `dz_dt_ack_` catalogs are empty, and port 4445 is free.
 - Tester conclusion: **`TEST_FAILED` / Phase `FAILED`** pending BUG-004 repair and a fresh full run of both ack-loss and confirmed-rollback journeys with safe fixture ownership. The previously reported Coder WDIO passes are not independent Tester evidence.
+
+## BUG-004 Coder repair complete
+
+The fresh Tester registered BUG-004 after finding that the two ack-loss fixtures could drop same-named databases without proving this run created them. The report-only commits were fast-forwarded into this branch. This repair is limited to the two ack-loss fixtures and BUG-004 tracking: add exact catalog preflight, per-database ownership set only after successful `CREATE DATABASE`, and cleanup gated by that ownership; independently track admin configs/sessions so partial setup cannot widen deletion. No database journey will run in this Coder phase.
+
+Both specs now check both exact catalog names before any create, mark each database owned only after that database's own create call succeeds, and drop only databases owned by this run. Admin and fixture configs/sessions have per-entry save/cleanup state, so partial setup cannot turn an unconfirmed database into a cleanup target. Host TypeScript, Prettier, and diff checks pass; full E2E-project typecheck reports existing harness errors but none in these two specs. No app was started and no database journey was run; ready for a fresh Tester.
