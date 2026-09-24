@@ -4,7 +4,7 @@
 //! Run only against an isolated migration database with explicit credentials:
 //! MIGRATION_TEST_DATABASE=<database> cargo test -p datazen-driver-postgres --test schema_function_dependency_catalog -- --ignored --nocapture
 
-use datazen_driver_api::{ConnectionConfig, DatabaseDriver};
+use datazen_driver_api::{ConnectionConfig, DatabaseDriver, Value};
 use datazen_driver_postgres::PostgresDriver;
 use serde_json::json;
 
@@ -48,7 +48,9 @@ async fn function_catalog_proves_only_exact_passthrough_and_table_snapshot_keeps
     let database = std::env::var("MIGRATION_TEST_DATABASE")
         .expect("MIGRATION_TEST_DATABASE must name a disposable database");
     assert!(
-        database.starts_with("dz_mig_") || database == "datazen_sync_src",
+        database.starts_with("dz_mig_")
+            || database == "datazen_sync_src"
+            || database == "datazen_e2e",
         "refuse non-test database"
     );
     let suffix = uuid::Uuid::new_v4().simple().to_string();
@@ -122,6 +124,23 @@ async fn function_catalog_proves_only_exact_passthrough_and_table_snapshot_keeps
             .await
             .unwrap_or_else(|error| panic!("fixture cleanup failed for owned object: {error}"));
     }
+    let cleanup_check = format!(
+        "SELECT NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'public' AND t.typname = '{enum_type}') \
+         AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = '{table}') \
+         AND NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname IN ('{safe_function}', '{hidden_function}')) AS fixture_objects_removed"
+    );
+    let cleanup_result = driver
+        .query(&handle, &cleanup_check)
+        .await
+        .expect("query exact fixture cleanup state");
+    assert!(
+        matches!(
+            cleanup_result.rows.first().and_then(|row| row.first()),
+            Some(Some(Value::Bool(true)))
+        ),
+        "UUID-scoped fixture objects remain after cleanup: {:?}",
+        cleanup_result.rows
+    );
     driver.disconnect(handle).await.expect("disconnect");
 
     let (safe, hidden, column_type) =
