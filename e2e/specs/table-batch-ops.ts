@@ -11,6 +11,7 @@ import {
   closeExtraWindows,
   connectSeededPgInWorkspace,
   executeSQL,
+  executeSQLChecked,
   openConnectionsWorkspace,
   openQueryTab,
   waitForTableInSidebar,
@@ -90,16 +91,20 @@ describe('数据表批量操作 (TC-TABLE-009~014)', () => {
     await openQueryTab();
 
     await withSafeModeOff(async () => {
-      await executeSQL(`DROP TABLE IF EXISTS ${BATCH_TABLE}`);
+      await executeSQLChecked(`DROP TABLE IF EXISTS ${BATCH_TABLE}`);
     });
-    await executeSQL(`
+    // Checked DDL: `executeSQL` swallows backend errors, so a stale session
+    // bound to a replaced worker DB used to slip through here and only
+    // surface as a `waitForTableInSidebar` timeout 30s later — despite the
+    // "closed-loop gate" comment below claiming errors would throw.
+    await executeSQLChecked(`
       CREATE TABLE ${BATCH_TABLE} (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         value INT DEFAULT 0
       )
     `);
-    await executeSQL(`
+    await executeSQLChecked(`
       INSERT INTO ${BATCH_TABLE} (name, value)
       SELECT 'row_' || g, g FROM generate_series(1, 55) g
     `);
