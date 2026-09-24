@@ -13,6 +13,7 @@ mod factory;
 mod query_stream;
 mod reuse;
 pub mod schema_catalog_commands;
+pub mod schema_dependencies;
 pub mod schema_migration;
 pub mod schema_object_commands;
 pub mod schema_objects;
@@ -45,6 +46,7 @@ pub use schema_catalog_commands::{
     parse_table_schema_from_command, parse_tables_from_command, schema_catalog_command_definitions,
     try_execute_schema_catalog_command,
 };
+pub use schema_dependencies::SchemaObjectDependencies;
 pub use schema_migration::{
     format_type, migration_object_kind, parse_type_parts, validate_check_expression,
     validate_migration_identifier, validate_object_definition,

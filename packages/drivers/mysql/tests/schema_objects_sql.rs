@@ -1,5 +1,6 @@
 //! MySQL dialect SQL for schema object browser queries (list / DDL / privileges).
 
+use datazen_driver_api::schema_dependencies::view_dependencies_sql;
 use datazen_driver_api::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql, ObjectKind,
 };
@@ -47,6 +48,15 @@ fn view_queries_return_view_body_metadata_contract() {
     let ddl = object_ddl_sql("mysql", ObjectKind::View, "active_users", None).unwrap();
     assert!(ddl.contains("VIEW_DEFINITION AS ddl"));
     assert!(ddl.contains("TABLE_NAME = 'active_users'"));
+}
+
+#[test]
+fn view_dependency_catalog_reads_structured_table_and_routine_usage() {
+    let sql = view_dependencies_sql("mysql", "active_users", Some("app")).unwrap();
+    assert!(sql.contains("information_schema.VIEW_TABLE_USAGE"));
+    assert!(sql.contains("information_schema.VIEW_ROUTINE_USAGE"));
+    assert!(sql.contains("information_schema.ROUTINES"));
+    assert!(sql.contains("routine.SPECIFIC_NAME = view_usage.SPECIFIC_NAME"));
 }
 
 #[test]

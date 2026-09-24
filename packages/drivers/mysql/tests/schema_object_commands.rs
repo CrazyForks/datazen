@@ -8,7 +8,12 @@ fn command_definitions_include_schema_object_commands() {
     let driver = MysqlDriver::new(false);
     let defs = driver.command_definitions();
     let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
-    for id in ["list_objects", "get_object_ddl", "list_privileges"] {
+    for id in [
+        "list_objects",
+        "get_object_ddl",
+        "get_object_dependencies",
+        "list_privileges",
+    ] {
         assert!(ids.contains(&id), "missing command {id}");
     }
     assert!(
