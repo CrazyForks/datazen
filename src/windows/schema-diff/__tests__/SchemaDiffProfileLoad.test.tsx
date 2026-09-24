@@ -474,4 +474,51 @@ describe('SchemaDiffWindow profile loading', () => {
       within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
     ).not.toBeChecked();
   });
+
+  it('[tester] reports saved object identities missing from the current catalogs', async () => {
+    profile.sourceObjects = [
+      {
+        kind: 'function',
+        schema: 'public',
+        name: 'calculate_total',
+        signature: 'integer',
+        targetSchema: null,
+        targetName: null,
+      },
+    ];
+    profile.targetObjects = [];
+    render(<SchemaDiffWindow />);
+
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-objects-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-detail-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-copy-sql');
+    chooseProfile(profile.name);
+    fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
+
+    await screen.findByText('schemaDiff.savedObjectsMissing');
+    expect(
+      screen.queryByTestId('schema-diff-object-row-source-function-0'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('[tester] closes import and profile dialogs through their cancel actions', async () => {
+    render(<SchemaDiffWindow />);
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-objects-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-detail-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-copy-sql');
+
+    fireEvent.click(screen.getByTestId('schema-diff-import-config'));
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    expect(screen.queryByTestId('schema-diff-import-config-dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save'));
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    expect(screen.queryByTestId('schema-diff-profile-dialog')).not.toBeInTheDocument();
+  });
 });

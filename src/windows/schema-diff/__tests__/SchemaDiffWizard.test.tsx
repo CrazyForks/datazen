@@ -90,6 +90,12 @@ function plan(overrides: Partial<SchemaDiffPlan> = {}): SchemaDiffPlan {
 }
 const next = () => fireEvent.click(screen.getByTestId('schema-diff-next'));
 const back = () => fireEvent.click(screen.getByRole('button', { name: 'schemaDiff.back' }));
+function suppressClipboardFeedbackTimeout() {
+  const realSetTimeout = window.setTimeout.bind(window);
+  vi.spyOn(window, 'setTimeout').mockImplementation((handler, timeout, ...args) =>
+    timeout === 2000 ? 0 : realSetTimeout(handler, timeout, ...args),
+  );
+}
 async function reachPlan() {
   next();
   await screen.findByTestId('schema-diff-table-row');
@@ -133,7 +139,10 @@ beforeEach(() => {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('complete schema migration wizard journeys', () => {
   it('selects mixed schema objects by exact identity and submits one unified plan', async () => {
@@ -309,6 +318,7 @@ describe('complete schema migration wizard journeys', () => {
     next();
     await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalled());
 
+    suppressClipboardFeedbackTimeout();
     fireEvent.click(screen.getByTestId('schema-diff-export-config'));
     await waitFor(() => expect(fileCommands.saveTextWithDialog).toHaveBeenCalled());
     const config = JSON.parse(vi.mocked(fileCommands.saveTextWithDialog).mock.calls[0][0]);
@@ -408,6 +418,7 @@ describe('complete schema migration wizard journeys', () => {
     fireEvent.click(screen.getByText('common.selectAll'));
     next();
     await screen.findByTestId('schema-diff-detail-panel');
+    suppressClipboardFeedbackTimeout();
     fireEvent.click(screen.getByText('schemaDiff.copySummary'));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
     expect(schemaDiffCommands.compareTableSchemas).toHaveBeenCalledTimes(2);
@@ -446,6 +457,7 @@ describe('complete schema migration wizard journeys', () => {
         }),
       ),
     );
+    suppressClipboardFeedbackTimeout();
     fireEvent.click(screen.getByTestId('schema-diff-copy-sql'));
     await waitFor(() =>
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -568,6 +580,7 @@ describe('complete schema migration wizard journeys', () => {
     next();
     await screen.findByTestId('schema-diff-copy-sql');
     await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalledOnce());
+    suppressClipboardFeedbackTimeout();
     fireEvent.click(screen.getByTestId('schema-diff-export-config'));
     await waitFor(() => expect(fileCommands.saveTextWithDialog).toHaveBeenCalled());
     const exportedText = vi.mocked(fileCommands.saveTextWithDialog).mock.calls[0]?.[0];
@@ -706,6 +719,30 @@ describe('complete schema migration wizard journeys', () => {
     next();
     await waitFor(() => expect(schemaDiffCommands.preparePlan).toHaveBeenCalledTimes(2));
     expect(schemaDiffCommands.prepareUnifiedPlan).not.toHaveBeenCalled();
+  });
+
+  it('[tester] reports an object catalog failure and clears it after retry', async () => {
+    let failFunctionLookup = true;
+    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) => {
+      if (sessionId === 'source-session' && kind === 'function' && failFunctionLookup) {
+        throw new Error('function catalog denied');
+      }
+      return [];
+    });
+    render(<SchemaDiffWindow />);
+    next();
+
+    await screen.findByTestId('schema-diff-object-error-source-function');
+    expect(screen.getByTestId('schema-diff-object-retry')).toBeEnabled();
+    failFunctionLookup = false;
+    fireEvent.click(screen.getByTestId('schema-diff-object-retry'));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('schema-diff-object-error-source-function'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('schema-diff-object-retry')).not.toBeInTheDocument();
   });
 
   it('clears reviewed artifacts when endpoint changes', async () => {
