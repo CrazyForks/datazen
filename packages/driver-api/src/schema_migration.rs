@@ -239,15 +239,16 @@ pub fn validate_migration_identifier(raw: &str) -> Result<&str, String> {
 }
 
 /// Validate a query body before it is embedded into one reviewed DDL
-/// statement. Definitions containing a semicolon are rejected so a source
-/// object cannot turn a single plan statement into an arbitrary script.
+/// statement. A single trailing statement terminator is allowed, while an
+/// interior terminator is rejected so a source object cannot turn a reviewed
+/// operation into an arbitrary script.
 pub fn validate_view_definition(definition: &str) -> Result<(), String> {
     let trimmed = definition.trim();
     if trimmed.is_empty() {
         return Err("view definition must not be empty".into());
     }
-    if trimmed.contains(';') {
-        return Err("view definition must contain one query without semicolons".into());
+    if has_non_trailing_statement_terminator(trimmed) {
+        return Err("view definition must contain one query".into());
     }
     if trimmed
         .chars()
@@ -1347,8 +1348,11 @@ mod type_parts_tests {
     #[test]
     fn view_definition_validation_rejects_empty_scripts_and_controls() {
         assert!(validate_view_definition("SELECT 1").is_ok());
+        assert!(validate_view_definition("SELECT 1;").is_ok());
+        assert!(validate_view_definition("SELECT ';' AS marker;").is_ok());
         assert!(validate_view_definition("  ").is_err());
         assert!(validate_view_definition("SELECT 1; DROP TABLE users").is_err());
+        assert!(validate_view_definition("SELECT 1; SELECT 2;").is_err());
         assert!(validate_view_definition("SELECT '\0'").is_err());
     }
 

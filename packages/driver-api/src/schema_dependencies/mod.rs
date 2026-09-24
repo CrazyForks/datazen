@@ -6,6 +6,7 @@
 
 mod mysql;
 mod postgres;
+mod postgres_function;
 
 use crate::schema_objects::{dialect_family, DatabaseObject};
 
@@ -16,6 +17,7 @@ pub use postgres::{
     postgres_sequence_dependencies_sql, postgres_table_dependencies_sql,
     postgres_trigger_dependencies_sql, postgres_type_dependencies_sql,
 };
+pub use postgres_function::postgres_function_dependencies_sql;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -210,6 +212,19 @@ mod tests {
         assert!(sql.contains("target_rel.relname = 'orders'"));
         assert!(sql.contains("unsupported_count"));
         assert!(sql.contains("selected.constraint_oid <> 0"));
+    }
+
+    #[test]
+    fn postgres_function_catalog_proves_only_the_exact_trigger_passthrough_body() {
+        let sql = postgres_function_dependencies_sql("audit'trigger", Some("app"), Some(""));
+        assert!(sql.contains("pg_catalog.pg_proc"));
+        assert!(sql.contains("pg_catalog.pg_depend"));
+        assert!(sql.contains("'BEGINRETURNNEW;END', 'BEGINRETURNNEW;END;'"));
+        assert!(sql.contains("lang.lanname = 'plpgsql'"));
+        assert!(sql.contains("pg_get_function_identity_arguments(proc.oid) = ''"));
+        assert!(sql.contains("proc.proname = 'audit''trigger'"));
+        assert!(sql.contains("unsupported_count"));
+        assert!(sql.contains("WHERE NOT selected.body_dependencies_proven_empty"));
     }
 
     #[test]

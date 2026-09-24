@@ -10,10 +10,11 @@ use crate::command::{
     DriverCommandMetadata,
 };
 use crate::schema_dependencies::{
-    mysql_dependency_grants_are_complete, postgres_sequence_dependencies_sql,
-    postgres_table_dependencies_sql, postgres_trigger_dependencies_sql,
-    postgres_type_dependencies_sql, view_dependencies_sql, SchemaObjectDependencies,
-    SequenceDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL, MYSQL_UDF_CATALOG_SQL,
+    mysql_dependency_grants_are_complete, postgres_function_dependencies_sql,
+    postgres_sequence_dependencies_sql, postgres_table_dependencies_sql,
+    postgres_trigger_dependencies_sql, postgres_type_dependencies_sql, view_dependencies_sql,
+    SchemaObjectDependencies, SequenceDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL,
+    MYSQL_UDF_CATALOG_SQL,
 };
 use crate::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql_with_metadata, DatabaseObject,
@@ -342,6 +343,7 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
         .as_str()
         .map(str::trim)
         .filter(|name| !name.is_empty());
+    let signature = input["signature"].as_str();
     let family = crate::schema_objects::dialect_family(db_type);
     let sql = match (family, kind) {
         (_, ObjectKind::View) => view_dependencies_sql(db_type, name, schema),
@@ -351,13 +353,16 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
             target_schema,
             target_name,
         )),
+        ("postgresql", ObjectKind::Function) => {
+            Some(postgres_function_dependencies_sql(name, schema, signature))
+        }
         ("postgresql", ObjectKind::Table) => Some(postgres_table_dependencies_sql(name, schema)),
         ("postgresql", ObjectKind::Sequence) => {
             Some(postgres_sequence_dependencies_sql(name, schema))
         }
         ("postgresql", ObjectKind::Type) => Some(postgres_type_dependencies_sql(name, schema)),
-        // MySQL trigger bodies and all routine bodies can have opaque SQL
-        // dependencies. Trigger targets are separately represented as
+        // MySQL routines/triggers and PostgreSQL procedure bodies can have
+        // opaque dependencies. Trigger targets are separately represented as
         // structured metadata and added by the Host planner.
         _ => None,
     };
