@@ -56,6 +56,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
     let view_function = format!("dz_mig_dep_view_fn_{suffix}");
     let trigger_table = format!("dz_mig_dep_trigger_table_{suffix}");
     let trigger_name = format!("dz_mig_dep_trigger_{suffix}");
+    let constraint_trigger_name = format!("dz_mig_dep_constraint_trigger_{suffix}");
     let trigger_function = format!("dz_mig_dep_trigger_fn_{suffix}");
     let custom_type = format!("dz_mig_dep_type_{suffix}");
     let expression_table = format!("dz_mig_dep_expression_table_{suffix}");
@@ -134,6 +135,15 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
                 &handle,
                 &format!(
                     "CREATE TRIGGER {trigger_name} BEFORE INSERT ON public.{trigger_table} FOR EACH ROW EXECUTE FUNCTION public.{trigger_function}()"
+                ),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        driver
+            .execute(
+                &handle,
+                &format!(
+                    "CREATE CONSTRAINT TRIGGER {constraint_trigger_name} AFTER INSERT ON public.{trigger_table} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.{trigger_function}()"
                 ),
             )
             .await
@@ -278,6 +288,21 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             .await
             .map_err(|error| error.to_string())?
             .data;
+        let constraint_trigger = driver
+            .execute_command(
+                &handle,
+                "get_object_dependencies",
+                json!({
+                    "kind":"trigger",
+                    "schema":"public",
+                    "name":constraint_trigger_name,
+                    "targetSchema":"public",
+                    "targetName":trigger_table
+                }),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .data;
         let table = driver
             .execute_command(
                 &handle,
@@ -365,6 +390,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
             missing_view,
             routine,
             trigger,
+            constraint_trigger,
             table,
             expression_table_dependencies,
             type_dependencies,
@@ -409,6 +435,7 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         missing_view,
         routine,
         trigger,
+        constraint_trigger,
         table,
         expression_table_dependencies,
         type_dependencies,
@@ -433,23 +460,15 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
         "opaque routine dependencies must fail closed: {routine}"
     );
     assert_dependencies(
-        &view,
-        &[
-            ("table", "public", base_table.as_str(), None),
-            (
-                "function",
-                "public",
-                view_function.as_str(),
-                Some("integer"),
-            ),
-        ],
-    );
-    assert_dependencies(
         &trigger,
         &[
             ("table", "public", trigger_table.as_str(), None),
             ("function", "public", trigger_function.as_str(), Some("")),
         ],
+    );
+    assert_eq!(
+        constraint_trigger["complete"], false,
+        "constraint trigger dependencies must fail closed: {constraint_trigger}"
     );
     assert_dependencies(&table, &[("type", "public", custom_type.as_str(), None)]);
     assert_type_usages(
@@ -493,6 +512,18 @@ async fn structured_view_and_trigger_dependencies_are_exact_and_complete() {
     assert_dependencies(
         &fk_child_dependencies,
         &[("table", "public", fk_parent.as_str(), None)],
+    );
+    assert_dependencies(
+        &view,
+        &[
+            ("table", "public", base_table.as_str(), None),
+            (
+                "function",
+                "public",
+                view_function.as_str(),
+                Some("integer"),
+            ),
+        ],
     );
 }
 
