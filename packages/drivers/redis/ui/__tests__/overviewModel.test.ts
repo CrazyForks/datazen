@@ -61,7 +61,9 @@ describe('flattenInfoFields', () => {
   });
 
   it('ignores blank values so a missing field never renders an empty hole', () => {
-    const flat = flattenInfoFields(parseInfoSections('# Server\r\nredis_version:\r\nmaxmemory:0\r\n'));
+    const flat = flattenInfoFields(
+      parseInfoSections('# Server\r\nredis_version:\r\nmaxmemory:0\r\n'),
+    );
     const rows = buildServerRows(flat);
     expect(rows.find((row) => row.id === 'version')?.value).toBeNull();
   });
@@ -96,7 +98,9 @@ describe('buildServerRows — PRD 卡 1', () => {
   it('flags evicted_keys > 0 as a warning row and keeps 0 clean', () => {
     const clean = buildServerRows(fields()).find((row) => row.id === 'evictedKeys');
     expect(clean?.warn).toBe(false);
-    const dirty = buildServerRows(fields(INFO_FIXTURE.replace('evicted_keys:0', 'evicted_keys:17')));
+    const dirty = buildServerRows(
+      fields(INFO_FIXTURE.replace('evicted_keys:0', 'evicted_keys:17')),
+    );
     expect(dirty.find((row) => row.id === 'evictedKeys')?.warn).toBe(true);
   });
 
@@ -107,7 +111,9 @@ describe('buildServerRows — PRD 卡 1', () => {
     expect(modeValueKey('something-new')).toBeNull();
     expect(modeValueKey(null)).toBeNull();
 
-    const rows = buildServerRows(fields(INFO_FIXTURE.replace('mode:standalone', 'mode:something-new')));
+    const rows = buildServerRows(
+      fields(INFO_FIXTURE.replace('mode:standalone', 'mode:something-new')),
+    );
     const mode = rows.find((row) => row.id === 'mode');
     expect(mode?.value).toBe('something-new');
     expect(mode?.valueIsKey).toBe(false);
@@ -121,6 +127,75 @@ describe('buildServerRows — PRD 卡 1', () => {
   });
 });
 
+describe('buildServerRows — 模式感知行集', () => {
+  it('standalone: 输出 10 行含 blockedClients / totalCommands / expiredKeys', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:standalone'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('blockedClients');
+    expect(ids).toContain('totalCommands');
+    expect(ids).toContain('expiredKeys');
+    expect(ids).not.toContain('clusterSlotsOk');
+    expect(ids).not.toContain('sentinelMasters');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('cluster: 输出 10 行含 clusterSlotsOk / clusterKnownNodes / clusterSize', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:cluster'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('clusterSlotsOk');
+    expect(ids).toContain('clusterKnownNodes');
+    expect(ids).toContain('clusterSize');
+    expect(ids).not.toContain('blockedClients');
+    expect(ids).not.toContain('expiredKeys');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('sentinel: 输出 10 行含 sentinelMasters / sentinelSlaves / sentinelSentinels', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:sentinel'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('sentinelMasters');
+    expect(ids).toContain('sentinelSlaves');
+    expect(ids).toContain('sentinelSentinels');
+    expect(ids).not.toContain('blockedClients');
+    expect(ids).not.toContain('expiredKeys');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('cluster: 读取 cluster_slots_ok 等字段值', () => {
+    const rows = buildServerRows(
+      fields(
+        '# Replication\r\nmode:cluster\r\n# Cluster\r\ncluster_slots_ok:16384\r\ncluster_known_nodes:6\r\ncluster_size:3',
+      ),
+    );
+    expect(rows.find((r) => r.id === 'clusterSlotsOk')?.value).toBe('16384');
+    expect(rows.find((r) => r.id === 'clusterKnownNodes')?.value).toBe('6');
+    expect(rows.find((r) => r.id === 'clusterSize')?.value).toBe('3');
+  });
+
+  it('sentinel: 读取 sentinel_masters 等字段值', () => {
+    const rows = buildServerRows(
+      fields(
+        '# Replication\r\nmode:sentinel\r\n# Sentinel\r\nsentinel_masters:2\r\nsentinel_slaves:4\r\nsentinel_sentinels:3',
+      ),
+    );
+    expect(rows.find((r) => r.id === 'sentinelMasters')?.value).toBe('2');
+    expect(rows.find((r) => r.id === 'sentinelSlaves')?.value).toBe('4');
+    expect(rows.find((r) => r.id === 'sentinelSentinels')?.value).toBe('3');
+  });
+
+  it('未知 mode 退化为 standalone 行集', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:unknown'));
+    expect(rows).toHaveLength(10);
+    expect(rows.map((r) => r.id)).toContain('blockedClients');
+  });
+
+  it('三种模式都恰好 10 行，适配双列 2×5 网格', () => {
+    expect(buildServerRows(fields('# Replication\r\nmode:standalone'))).toHaveLength(10);
+    expect(buildServerRows(fields('# Replication\r\nmode:cluster'))).toHaveLength(10);
+    expect(buildServerRows(fields('# Replication\r\nmode:sentinel'))).toHaveLength(10);
+  });
+});
+
 describe('buildMemoryModel — PRD 卡 2 gauge', () => {
   it('computes the used/max percentage from the raw byte fields', () => {
     const model = buildMemoryModel(fields());
@@ -131,7 +206,9 @@ describe('buildMemoryModel — PRD 卡 2 gauge', () => {
   });
 
   it('treats maxmemory 0 as unlimited and refuses to invent a percentage', () => {
-    const model = buildMemoryModel(fields(INFO_FIXTURE.replace('maxmemory:4194304', 'maxmemory:0')));
+    const model = buildMemoryModel(
+      fields(INFO_FIXTURE.replace('maxmemory:4194304', 'maxmemory:0')),
+    );
     expect(model.unlimited).toBe(true);
     expect(model.maxBytes).toBeNull();
     expect(model.maxHuman).toBeNull();
@@ -209,7 +286,13 @@ describe('buildKeySpaceModel — PRD 卡 3', () => {
   });
 
   it('survives a missing or malformed db_sizes reply', () => {
-    for (const input of [null, undefined, [], [{ db: -1, keys: 5 }], [{ db: 0, keys: Number.NaN }]]) {
+    for (const input of [
+      null,
+      undefined,
+      [],
+      [{ db: -1, keys: 5 }],
+      [{ db: 0, keys: Number.NaN }],
+    ]) {
       const model = buildKeySpaceModel(input as never);
       expect(model.cells).toHaveLength(DEFAULT_DATABASE_COUNT);
       expect(model.totalKeys).toBe(0);

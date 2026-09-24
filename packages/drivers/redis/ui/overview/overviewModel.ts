@@ -3,9 +3,10 @@
  *
  * Everything the overview cards render is derived here so the components stay
  * thin (PRD §5 "组件薄 + 纯逻辑模块厚") and every rule is unit-testable without
- * React: the ten Server rows, the memory gauge, the 16-cell key-space grid, the
- * Top-5 big keys, the Top-5 slowlog rows and the error classification behind the
- * named "unauthorized" empty states (PRD I-11).
+ * React: the ten mode-aware Server rows (7 common + 3 mode-specific for
+ * standalone/cluster/sentinel), the memory gauge, the 16-cell key-space grid,
+ * the Top-5 big keys, the Top-5 slowlog rows and the error classification behind
+ * the named "unauthorized" empty states (PRD I-11).
  *
  * HARD INVARIANT (PRD §3.0 / §3.1): 屏 A reads **only** `info`, `db_sizes`,
  * `slowlog_get` and `memory_sample`. No `scan_keys`, no `list_children`, no
@@ -114,7 +115,15 @@ export type ServerRowId =
   | 'opsPerSec'
   | 'totalCommands'
   | 'evictedKeys'
-  | 'expiredKeys';
+  | 'expiredKeys'
+  // Cluster 模式特有
+  | 'clusterSlotsOk'
+  | 'clusterKnownNodes'
+  | 'clusterSize'
+  // Sentinel 模式特有
+  | 'sentinelMasters'
+  | 'sentinelSlaves'
+  | 'sentinelSentinels';
 
 export interface ServerOverviewRow {
   id: ServerRowId;
@@ -141,6 +150,14 @@ const SERVER_ROW_LABEL: Record<ServerRowId, string> = {
   totalCommands: 'redis.overview.server.totalCommands',
   evictedKeys: 'redis.overview.server.evictedKeys',
   expiredKeys: 'redis.overview.server.expiredKeys',
+  // Cluster
+  clusterSlotsOk: 'redis.overview.server.clusterSlotsOk',
+  clusterKnownNodes: 'redis.overview.server.clusterKnownNodes',
+  clusterSize: 'redis.overview.server.clusterSize',
+  // Sentinel
+  sentinelMasters: 'redis.overview.server.sentinelMasters',
+  sentinelSlaves: 'redis.overview.server.sentinelSlaves',
+  sentinelSentinels: 'redis.overview.server.sentinelSentinels',
 };
 
 /** `mode` is a server token, not copy: known values map to i18n keys, the rest stays raw. */
@@ -168,43 +185,96 @@ function serverRow(
   };
 }
 
-/** The ten PRD-mandated rows, in display order, two columns of five. */
+/**
+ * 模式感知的 Server 行集：恰好 10 行（双列 2×5 网格）。
+ *
+ * - Standalone: 通用运维指标（clients / ops / evicted / expired）
+ * - Cluster:    集群拓扑健康（slots_ok / known_nodes / size）
+ * - Sentinel:   哨兵高可用拓扑（masters / replicas / sentinels）
+ *
+ * Cluster/Sentinel 下 blocked_clients / total_commands / expired_keys 移除：
+ * 单节点值在多节点拓扑下易误导，概览页应展示拓扑健康指标。
+ */
 export function buildServerRows(fields: Record<string, string>): ServerOverviewRow[] {
+  const mode = (rawField(fields, 'mode') ?? 'standalone').toLowerCase();
   const modeKey = modeValueKey(rawField(fields, 'mode'));
   const arch = numField(fields, 'arch_bits');
   const uptime = numField(fields, 'uptime_in_days');
   const connected = numField(fields, 'connected_clients');
-  const blocked = numField(fields, 'blocked_clients');
   const ops = numField(fields, 'instantaneous_ops_per_sec');
-  const total = numField(fields, 'total_commands_processed');
   const evicted = numField(fields, 'evicted_keys');
-  const expired = numField(fields, 'expired_keys');
 
-  return [
-    serverRow('version', rawField(fields, 'redis_version')),
-    modeKey
-      ? serverRow('mode', modeKey, { valueIsKey: true })
-      : serverRow('mode', rawField(fields, 'mode')),
-    serverRow('arch', arch === null ? null : String(arch), {
-      unitKey: 'redis.overview.unit.bits',
-    }),
-    serverRow('uptime', uptime === null ? null : String(uptime), {
-      unitKey: 'redis.overview.unit.days',
-    }),
-    serverRow('connectedClients', connected === null ? null : String(connected), {
+  const versionRow = serverRow('version', rawField(fields, 'redis_version'));
+  const modeRow_ = modeKey
+    ? serverRow('mode', modeKey, { valueIsKey: true })
+    : serverRow('mode', rawField(fields, 'mode'));
+  const archRow = serverRow('arch', arch === null ? null : String(arch), {
+    unitKey: 'redis.overview.unit.bits',
+  });
+  const uptimeRow = serverRow('uptime', uptime === null ? null : String(uptime), {
+    unitKey: 'redis.overview.unit.days',
+  });
+  const connectedRow = serverRow(
+    'connectedClients',
+    connected === null ? null : String(connected),
+    {
       unitKey: 'redis.overview.unit.clients',
-    }),
+    },
+  );
+  const opsRow = serverRow('opsPerSec', ops === null ? null : String(ops), {
+    unitKey: 'redis.overview.unit.opsPerSec',
+  });
+  // PRD §3.1: 淘汰过的键必须显眼 —— evicted_keys > 0 自动 warning 色。
+  const evictedRow = serverRow('evictedKeys', evicted === null ? null : String(evicted), {
+    warn: (evicted ?? 0) > 0,
+  });
+
+  if (mode === 'cluster') {
+    return [
+      versionRow,
+      modeRow_,
+      archRow,
+      uptimeRow,
+      connectedRow,
+      serverRow('clusterSlotsOk', rawField(fields, 'cluster_slots_ok')),
+      serverRow('clusterKnownNodes', rawField(fields, 'cluster_known_nodes')),
+      serverRow('clusterSize', rawField(fields, 'cluster_size')),
+      opsRow,
+      evictedRow,
+    ];
+  }
+
+  if (mode === 'sentinel') {
+    return [
+      versionRow,
+      modeRow_,
+      archRow,
+      uptimeRow,
+      connectedRow,
+      serverRow('sentinelMasters', rawField(fields, 'sentinel_masters')),
+      serverRow('sentinelSlaves', rawField(fields, 'sentinel_slaves')),
+      serverRow('sentinelSentinels', rawField(fields, 'sentinel_sentinels')),
+      opsRow,
+      evictedRow,
+    ];
+  }
+
+  // Standalone（默认）— 保持原始 PRD 顺序
+  const blocked = numField(fields, 'blocked_clients');
+  const total = numField(fields, 'total_commands_processed');
+  const expired = numField(fields, 'expired_keys');
+  return [
+    versionRow,
+    modeRow_,
+    archRow,
+    uptimeRow,
+    connectedRow,
     serverRow('blockedClients', blocked === null ? null : String(blocked), {
       unitKey: 'redis.overview.unit.clients',
     }),
-    serverRow('opsPerSec', ops === null ? null : String(ops), {
-      unitKey: 'redis.overview.unit.opsPerSec',
-    }),
+    opsRow,
     serverRow('totalCommands', total === null ? null : String(total)),
-    // PRD §3.1: 淘汰过的键必须显眼 —— evicted_keys > 0 自动 warning 色。
-    serverRow('evictedKeys', evicted === null ? null : String(evicted), {
-      warn: (evicted ?? 0) > 0,
-    }),
+    evictedRow,
     serverRow('expiredKeys', expired === null ? null : String(expired)),
   ];
 }
@@ -383,22 +453,30 @@ export function buildSlowlogRows(
   limit: number = SLOWLOG_LIMIT,
 ): SlowlogRow[] {
   const list = Array.isArray(entries) ? entries : [];
-  return [...list]
-    // Redis 已按发生顺序回，但托管代理偶尔乱序 —— 显式按 id 降序保证 Top5 稳定。
-    .sort((a, b) => Number(b.id) - Number(a.id))
-    .slice(0, Math.max(0, limit))
-    .map((entry, offset) => {
-      const addr = typeof entry.clientAddr === 'string' && entry.clientAddr.length > 0 ? entry.clientAddr : null;
-      const name = typeof entry.clientName === 'string' && entry.clientName.length > 0 ? entry.clientName : null;
-      return {
-        rank: offset + 1,
-        id: Number(entry.id),
-        durationUs: Number.isFinite(entry.durationUs) ? entry.durationUs : 0,
-        commandSummary: summariseSlowlogCommand(entry.command),
-        client: [addr, name].filter(Boolean).join(' · ') || null,
-        timestamp: Number(entry.timestamp),
-      };
-    });
+  return (
+    [...list]
+      // Redis 已按发生顺序回，但托管代理偶尔乱序 —— 显式按 id 降序保证 Top5 稳定。
+      .sort((a, b) => Number(b.id) - Number(a.id))
+      .slice(0, Math.max(0, limit))
+      .map((entry, offset) => {
+        const addr =
+          typeof entry.clientAddr === 'string' && entry.clientAddr.length > 0
+            ? entry.clientAddr
+            : null;
+        const name =
+          typeof entry.clientName === 'string' && entry.clientName.length > 0
+            ? entry.clientName
+            : null;
+        return {
+          rank: offset + 1,
+          id: Number(entry.id),
+          durationUs: Number.isFinite(entry.durationUs) ? entry.durationUs : 0,
+          commandSummary: summariseSlowlogCommand(entry.command),
+          client: [addr, name].filter(Boolean).join(' · ') || null,
+          timestamp: Number(entry.timestamp),
+        };
+      })
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +528,13 @@ const UNAUTHORIZED_PATTERNS: RegExp[] = [
  */
 export function classifyOverviewError(error: unknown): OverviewIssue {
   const message =
-    error instanceof Error ? error.message : typeof error === 'string' ? error : error === undefined || error === null ? '' : String(error);
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : error === undefined || error === null
+          ? ''
+          : String(error);
   if (!message) return 'failed';
   return UNAUTHORIZED_PATTERNS.some((pattern) => pattern.test(message)) ? 'unauthorized' : 'failed';
 }
