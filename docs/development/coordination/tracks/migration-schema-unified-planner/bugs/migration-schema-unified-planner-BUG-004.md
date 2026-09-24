@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-004 · MySQL schema-object listing SQL rejects the reserved schema alias
 
 - **严重度**：P1（阻断）
-- **状态**：待修复
+- **状态**：待复测
 - **涉及文件**：`packages/driver-api/src/schema_objects.rs`、`packages/driver-api/src/schema_object_commands.rs`、`e2e/specs/schema-diff-unified-planner.ts`
 
 ## 描述
@@ -30,3 +30,9 @@ driver_error=Query failed: error returned from database: 1064 (42000): You have 
 - 使用修复 `b36a2bee` 构建的独立 Host app 再跑 unified MySQL WDIO 正向和拒绝边界，两例均在 source view catalog discovery 处复现同一 `1064 (42000)` reserved alias 错误；`information_schema.views` 的精确 fixture row 数仍为 1，Driver IPC 返回匹配数为 0。
 - 正向与拒绝用例各自执行精确 source/target cleanup，两个 teardown 都确认计数为 0/0。此轮没有部署写入，也没有运行全局 worker database setup/teardown。
 - BUG-004 保持待修复，MySQL unified view acceptance 仍被阻断。
+
+## 修复记录（round-1）
+
+- 修复提交：`49fa1eb7`。
+- MySQL function、procedure、trigger、view 列表查询均使用反引号引用 `schema` 别名，同时保留 parser 所需的 `schema` 输出列名。
+- 编码测试：MySQL 116 个 lib 测试和 15 个 integration 测试通过，2 个隔离数据库测试忽略；Driver API 172/172 通过；fmt 和 diff-check 通过。
