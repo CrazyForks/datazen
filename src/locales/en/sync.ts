@@ -348,6 +348,7 @@ const pack = {
   'schemaDiff.tables': 'Tables',
   'schemaDiff.tablesPlaceholder': 'One table per line, or comma-separated',
   'schemaDiff.tableRequired': 'Select at least one table to compare',
+  'schemaDiff.selectionRequired': 'Select at least one table or schema object to migrate',
   'schemaDiff.compare': 'Compare',
   'schemaDiff.copySummary': 'Copy summary',
   'schemaDiff.generatePlan': 'Generate deploy script',
@@ -357,6 +358,11 @@ const pack = {
   'schemaDiff.regeneratePlan': 'Regenerate',
   'schemaDiff.crossDialectNote':
     'Cross-dialect plans map types via sync IR; unsupported types are skipped with warnings.',
+  'schemaDiff.crossDialectObjectNote':
+    'Schema objects use dialect-specific DDL and cannot migrate across database types. Saved selections are preserved; clear them to continue with table migration.',
+  'schemaDiff.crossDialectObjectBlocked':
+    'Clear the selected schema objects before continuing with a cross-dialect table migration.',
+  'schemaDiff.clearObjectSelections': 'Clear selected schema objects',
   'schemaDiff.warnings': 'Warnings',
   'schemaDiff.statements': 'statements',
   'schemaDiff.emptyPlan': 'No executable plan statements were generated',
@@ -383,7 +389,12 @@ const pack = {
     'Save the current endpoints, scope, table selection, and diff options.',
   'schemaDiff.profileNamePlaceholder': 'Profile name',
   'schemaDiff.profileNameRequired': 'Enter a profile name',
-  'schemaDiff.profileSetupRequired': 'Select both endpoints and at least one table before saving',
+  'schemaDiff.profileSetupRequired':
+    'Select both endpoints and at least one table or schema object before saving',
+  'schemaDiff.objectIdentityIncomplete':
+    'Routine selections require a signature, and trigger selections require their target table.',
+  'schemaDiff.savedObjectsMissing':
+    '{count} saved schema object selection(s) could not be restored because the exact identity is unavailable.',
   'schemaDiff.stepCompare': 'Compare',
   'schemaDiff.stepPlan': 'Plan',
   'schemaDiff.stepReview': 'Review / Deploy',
@@ -394,6 +405,28 @@ const pack = {
   'schemaDiff.step.deploy': 'Deploy',
   'schemaDiff.noTablesFound': 'No tables found in the selected source database or schema.',
   'schemaDiff.objectsSelected': '{count} of {total} tables selected',
+  'schemaDiff.schemaObjects': 'Views and database objects',
+  'schemaDiff.schemaObjectsHint':
+    'Choose both sides to compare or replace an object. Source-only selections create objects; target-only selections require destructive approval to drop them.',
+  'schemaDiff.schemaObjectsLoading': 'Loading views, types, sequences, routines, and triggers…',
+  'schemaDiff.objectSource': 'Source objects',
+  'schemaDiff.objectTarget': 'Target objects',
+  'schemaDiff.objectSideSelectionCount': '{count} of {total} objects selected',
+  'schemaDiff.objectSelectAllSource': 'Select all source objects',
+  'schemaDiff.objectSelectNoneSource': 'Clear source objects',
+  'schemaDiff.objectSelectAllTarget': 'Select all target objects',
+  'schemaDiff.objectSelectNoneTarget': 'Clear target objects',
+  'schemaDiff.objectKind.view': 'Views',
+  'schemaDiff.objectKind.type': 'Types',
+  'schemaDiff.objectKind.sequence': 'Sequences',
+  'schemaDiff.objectKind.function': 'Functions',
+  'schemaDiff.objectKind.procedure': 'Procedures',
+  'schemaDiff.objectKind.trigger': 'Triggers',
+  'schemaDiff.objectKindEmpty': 'No objects found',
+  'schemaDiff.objectLoadFailed': 'Could not load this object list: {error}',
+  'schemaDiff.objectPartialLoad':
+    'Some object lists could not be read. Expand the affected kind for details, or retry discovery.',
+  'schemaDiff.objectRetry': 'Retry object discovery',
   'schemaDiff.sourceOnly': 'Source only (ADD)',
   'schemaDiff.targetOnly': 'Target only (DROP)',
   'schemaDiff.sourceAndTarget': 'Both',

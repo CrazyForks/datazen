@@ -2,8 +2,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use super::types::ColumnTypeOverride;
+use crate::schema_objects::DatabaseObject;
 
 /// A reusable Schema Diff setup. Runtime sessions, generated plans and DDL are
 /// intentionally absent; the current connection configuration is resolved
@@ -25,6 +27,10 @@ pub struct SchemaDiffProfile {
     #[serde(default)]
     pub target_only_tables: Vec<String>,
     pub tables: Vec<String>,
+    #[serde(default)]
+    pub source_objects: Vec<DatabaseObject>,
+    #[serde(default)]
+    pub target_objects: Vec<DatabaseObject>,
     pub allow_destructive: bool,
     pub include_indexes: bool,
     pub require_rollback: bool,
@@ -59,18 +65,84 @@ impl SchemaDiffProfile {
                 "schema diff profile sourceDatabase and targetDatabase are required".into(),
             );
         }
-        if self.tables.is_empty() && self.target_only_tables.is_empty() {
-            return Err("schema diff profile requires at least one table".into());
-        }
-        if self.tables.iter().any(|table| table.trim().is_empty()) {
-            return Err("schema diff profile tables must not be empty".into());
-        }
-        if self
-            .target_only_tables
-            .iter()
-            .any(|table| table.trim().is_empty())
+        if self.tables.is_empty()
+            && self.target_only_tables.is_empty()
+            && self.source_objects.is_empty()
+            && self.target_objects.is_empty()
         {
-            return Err("schema diff profile target-only tables must not be empty".into());
+            return Err("schema diff profile requires at least one table or schema object".into());
+        }
+        let mut selected_tables = HashSet::new();
+        for table in self.tables.iter().chain(self.target_only_tables.iter()) {
+            if table.trim().is_empty() {
+                return Err("schema diff profile table names must not be empty".into());
+            }
+            if !selected_tables.insert(table) {
+                return Err(
+                    "schema diff profile table selections must not contain duplicates".into(),
+                );
+            }
+        }
+        for (label, objects) in [
+            ("source", &self.source_objects),
+            ("target", &self.target_objects),
+        ] {
+            let mut identities = HashSet::new();
+            for object in objects {
+                if !matches!(
+                    object.kind.as_str(),
+                    "view" | "type" | "sequence" | "function" | "procedure" | "trigger"
+                ) || object.name.trim().is_empty()
+                {
+                    return Err(format!(
+                        "schema diff profile {label} schema object kind and name are required"
+                    ));
+                }
+                if matches!(object.kind.as_str(), "function" | "procedure")
+                    && object.signature.as_deref().is_none_or(|signature| {
+                        !signature.is_empty() && signature.trim().is_empty()
+                    })
+                {
+                    return Err(format!(
+                        "schema diff profile {label} routine identity requires a signature"
+                    ));
+                }
+                if object.kind == "trigger" && object.target_name.is_none() {
+                    return Err(format!(
+                        "schema diff profile {label} trigger identity requires a target name"
+                    ));
+                }
+                if object
+                    .schema
+                    .as_ref()
+                    .is_some_and(|value| value.trim().is_empty())
+                    || object
+                        .target_schema
+                        .as_ref()
+                        .is_some_and(|value| value.trim().is_empty())
+                    || object
+                        .target_name
+                        .as_ref()
+                        .is_some_and(|value| value.trim().is_empty())
+                {
+                    return Err(format!(
+                        "schema diff profile {label} schema object identity parts must not be empty"
+                    ));
+                }
+                let identity = (
+                    object.kind.as_str(),
+                    object.schema.as_deref(),
+                    object.name.as_str(),
+                    object.signature.as_deref(),
+                    object.target_schema.as_deref(),
+                    object.target_name.as_deref(),
+                );
+                if !identities.insert(identity) {
+                    return Err(format!(
+                        "schema diff profile {label} schema object selections must not contain duplicates"
+                    ));
+                }
+            }
         }
         if self.type_overrides.iter().any(|override_| {
             override_.table.trim().is_empty()
@@ -101,6 +173,8 @@ mod tests {
             target_schema: Some("public".into()),
             target_only_tables: vec![],
             tables: vec!["public.users".into()],
+            source_objects: vec![],
+            target_objects: vec![],
             allow_destructive: false,
             include_indexes: true,
             require_rollback: false,
@@ -144,5 +218,107 @@ mod tests {
         value.tables.clear();
         value.target_only_tables = vec!["public.archive".into()];
         assert!(value.validate().is_ok());
+    }
+
+    fn object(
+        kind: &str,
+        schema: Option<&str>,
+        name: &str,
+        signature: Option<&str>,
+        target_schema: Option<&str>,
+        target_name: Option<&str>,
+    ) -> DatabaseObject {
+        DatabaseObject {
+            kind: kind.into(),
+            schema: schema.map(str::to_owned),
+            name: name.into(),
+            signature: signature.map(str::to_owned),
+            target_schema: target_schema.map(str::to_owned),
+            target_name: target_name.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn accepts_object_only_profiles_and_rejects_duplicate_or_invalid_identities() {
+        let mut value = profile();
+        value.tables.clear();
+        value.source_objects = vec![object(
+            "function",
+            Some("public"),
+            "calculate_total",
+            Some("integer, numeric"),
+            None,
+            None,
+        )];
+        assert!(value.validate().is_ok());
+
+        value.source_objects.push(value.source_objects[0].clone());
+        assert!(value.validate().is_err());
+
+        value.source_objects = vec![object("table", Some("public"), "users", None, None, None)];
+        assert!(value.validate().is_err());
+        value.source_objects = vec![object("view", Some("public"), "  ", None, None, None)];
+        assert!(value.validate().is_err());
+
+        value.source_objects = vec![object("function", Some("public"), "f", None, None, None)];
+        assert!(value.validate().is_err());
+        value.source_objects = vec![object(
+            "function",
+            Some("public"),
+            "f",
+            Some("   "),
+            None,
+            None,
+        )];
+        assert!(value.validate().is_err());
+        value.source_objects = vec![object("trigger", Some("public"), "trg", None, None, None)];
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn defaults_object_selections_for_older_profiles() {
+        let mut value = serde_json::to_value(profile()).expect("profile serializes");
+        value
+            .as_object_mut()
+            .expect("profile is an object")
+            .remove("sourceObjects");
+        value
+            .as_object_mut()
+            .expect("profile is an object")
+            .remove("targetObjects");
+
+        let decoded = serde_json::from_value::<SchemaDiffProfile>(value)
+            .expect("legacy profile without object selections loads");
+        assert!(decoded.source_objects.is_empty());
+        assert!(decoded.target_objects.is_empty());
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn round_trips_routine_signatures_and_trigger_targets() {
+        let mut value = profile();
+        value.source_objects = vec![object(
+            "function",
+            Some("public"),
+            "calculate_total",
+            Some("integer, numeric"),
+            None,
+            None,
+        )];
+        value.target_objects = vec![object(
+            "trigger",
+            Some("public"),
+            "audit_orders",
+            None,
+            Some("public"),
+            Some("orders"),
+        )];
+
+        let decoded = serde_json::from_str::<SchemaDiffProfile>(
+            &serde_json::to_string(&value).expect("profile serializes"),
+        )
+        .expect("profile deserializes");
+        assert_eq!(decoded, value);
+        assert!(decoded.validate().is_ok());
     }
 }
