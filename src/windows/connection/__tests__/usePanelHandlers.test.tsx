@@ -297,4 +297,51 @@ describe('usePanelHandlers.handleOpenErDiagram binds the database and inherits t
       'app',
     );
   });
+
+  it('re-binds an existing ER tab to an explicit target database', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'app',
+    );
+    // Tree context menu on another database passes the target explicitly.
+    await act(async () => {
+      result.current.handleOpenErDiagram(undefined, 'analytics');
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'analytics',
+    );
+  });
+
+  it('re-binds a bare toolbar invocation to the current session database', async () => {
+    const { result, rerender } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    // The user switches database, then hits the toolbar "查看 ER" again: the
+    // reused tab must follow the current selection, not stay stale.
+    rerender({ currentDatabase: 'analytics' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    expect(usePanelStore.getState().panels.find((p) => p.type === 'er-diagram')?.database).toBe(
+      'analytics',
+    );
+  });
+
+  it('keeps the tab database for a focus-only invocation', async () => {
+    const { result } = renderErHandlers({ currentDatabase: 'app' });
+    await act(async () => {
+      result.current.handleOpenErDiagram();
+    });
+    // Focusing a table from inside the diagram must not rebind the database.
+    await act(async () => {
+      result.current.handleOpenErDiagram('orders');
+    });
+    const panel = usePanelStore.getState().panels.find((p) => p.type === 'er-diagram');
+    expect(panel?.database).toBe('app');
+    expect(panel?.focusTable).toBe('orders');
+  });
 });

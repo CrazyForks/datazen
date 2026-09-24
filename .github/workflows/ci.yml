@@ -10,15 +10,24 @@ on:
 permissions:
   contents: read
 
+# 同一 PR / ref 连续 push 时，取消仍在跑的旧运行，只保留最新一次。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DATAZEN_KEYRING: file
+
 jobs:
-  test:
+  # ── 前端段：pnpm → codegen → typecheck → 守卫 → 单测 → site 检查 ──
+  # 与 rust job 并行：两者互不依赖（Rust 段不消费 typecheck/单测产物，
+  # 前端段不消费 cargo 产物），墙钟时间 = max(前端, Rust) 而非两者之和。
+  frontend:
     runs-on: ubuntu-latest
 
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      DATAZEN_KEYRING: file
-
     steps:
+      # 全量历史：site SEO/i18n 检查要用 base sha / event.before 做 diff。
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -46,26 +55,17 @@ jobs:
       - name: TypeScript typecheck
         run: pnpm typecheck
 
-      - name: Guard tracked driver-managed files are not injected
-        run: node scripts/check-managed-stubs.mjs
-
-      - name: Guard Host structure caps registry absent
-        run: node scripts/check-structure-editor-guardrails.mjs
-
-      - name: Guard ID terminology (connectionId / dbSessionId)
-        run: pnpm test:ids
-
-      - name: Guard module layers (editor / query builder peers)
-        run: pnpm test:layers
-
-      - name: Guard CI-docs consistency
-        run: pnpm test:ci-docs
-
-      - name: Guard version consistency
-        run: pnpm test:version
-
-      - name: Guard driver/host import boundaries
-        run: pnpm test:boundaries
+      # 7 个严格守卫合并为一步：任何失败立即停止（fail-fast），
+      # 输出清晰标注哪条命令失败。省掉 6 次 shell launch 开销。
+      - name: All strict guards (stubs, caps, IDs, layers, ci-docs, version, boundaries)
+        run: |
+          node scripts/check-managed-stubs.mjs
+          node scripts/check-structure-editor-guardrails.mjs
+          pnpm test:ids
+          pnpm test:layers
+          pnpm test:ci-docs
+          pnpm test:version
+          pnpm test:boundaries
 
       - name: Guard i18n sync (warning only)
         run: node scripts/i18n-sync-check.mjs
@@ -91,6 +91,32 @@ jobs:
       - name: Site SEO/i18n checks
         if: steps.site-changes.outputs.site_changed == 'true'
         run: node scripts/check-site-seo.mjs
+
+  # ── Rust 段：工具链 → 系统依赖 → rust-cache → 驱动注入 → cargo 测试 ──
+  rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 浅克隆即可：basic 预设全是 path 驱动，resolve-drivers 不做 git fetch；
+      # 需要全量历史的 site diff 只在 frontend job。
+      - uses: actions/checkout@v5
+
+      # resolve-drivers.mjs → resolve-pro.mjs → pack-ep.mjs 顶层 import 了
+      # fflate（ESM 静态解析），所以驱动注入同样需要 node_modules。
+      # pnpm store 走 setup-node 缓存，这一步开销很小。
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -118,16 +144,15 @@ jobs:
       - name: Resolve drivers (basic)
         run: node scripts/resolve-drivers.mjs --drivers=basic
 
-      - name: Rust unit tests (driver API)
-        run: cargo test -p datazen-driver-api --lib
+      # driver-api 与四个 path 驱动均不依赖 --features / 注入产物，合并为一次
+      # cargo 调用，省掉一次 workspace 加载与锁获取。
+      - name: Rust unit tests (driver API + basic path drivers)
+        run: cargo test --lib -p datazen-driver-api -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis
 
       - name: Rust unit tests (datazen)
         run: |
           FEATURES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.driver-features.json','utf8')).features.join(','))")
           cargo test -p datazen --lib --features "$FEATURES"
-
-      - name: Rust unit tests (basic path drivers)
-        run: cargo test -p datazen-driver-postgres -p datazen-driver-mysql -p datazen-driver-sqlite -p datazen-driver-redis --lib
 
       - name: Restore managed files
         if: always()
@@ -135,3 +160,12 @@ jobs:
 
       - name: Rust unit tests (datazen-ai-api)
         run: cargo test -p datazen-ai-api --lib
+
+  # ── 聚合 job：两段全绿才算 CI 通过。
+  # 分支保护的 required status check 盯 `ci` 一个即可，拆分 job 不影响它。
+  ci:
+    needs: [frontend, rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: echo "frontend + rust jobs passed"
