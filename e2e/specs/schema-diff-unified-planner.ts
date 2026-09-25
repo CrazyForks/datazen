@@ -753,6 +753,17 @@ async function runMysqlNonDefaultViewMetadataJourney(fixture: Fixture, mainWindo
           sql: `CREATE OR REPLACE VIEW ${fixture.view} AS SELECT id, state, parent_id FROM ${fixture.table} WITH CASCADED CHECK OPTION`,
         });
       });
+      const viewDdl = await invokeBackend<{
+        data: { ddl: string; viewMetadata: { checkOption: string } };
+      }>('execute_driver_command', {
+        request: {
+          dbSessionId: source,
+          command: 'get_object_ddl',
+          input: { kind: 'view', name: fixture.view, schema: MYSQL_SYNC_DB },
+        },
+      });
+      expect(viewDdl.data.ddl.trim().length).toBeGreaterThan(0);
+      expect(viewDdl.data.viewMetadata.checkOption).toBe('CASCADED');
     } finally {
       await disconnectBackend(source);
     }
@@ -761,7 +772,21 @@ async function runMysqlNonDefaultViewMetadataJourney(fixture: Fixture, mainWindo
     await setSchemaDiffTables(`${fixture.parentTable}, ${fixture.table}`);
     await selectSourceObject('view', fixture.view);
     await clickSchemaDiffCompare();
-    await clickSchemaDiffGeneratePlan();
+    try {
+      await clickSchemaDiffGeneratePlan();
+    } catch (error) {
+      const diagnostics = await browser.execute(() => ({
+        activeStep: Array.from(
+          document.querySelectorAll<HTMLElement>('[data-testid^="schema-diff-step-"]'),
+        ).find((element) => element.className.includes('font-semibold'))?.dataset.testid,
+        errors: Array.from(document.querySelectorAll('.error-message'))
+          .map((element) => element.textContent?.trim() ?? '')
+          .filter(Boolean),
+        plan: document.querySelector('[data-testid="schema-diff-plan-panel"]')?.textContent ?? '',
+      }));
+      console.log(`[SD-UNIFIED] mysql check-option plan diagnostic=${JSON.stringify(diagnostics)}`);
+      throw error;
+    }
 
     const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
     await requirements.waitForDisplayed({ timeout: 15000 });
