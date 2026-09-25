@@ -99,7 +99,7 @@ pub(crate) async fn attempt_resume_chunk(
     .await
     {
         Ok(schema) => schema,
-        Err(error) if saved_progress => {
+        Err(error) => {
             checkpoint.invalidate();
             return rejected(
                 context.table,
@@ -108,7 +108,6 @@ pub(crate) async fn attempt_resume_chunk(
                 "not started because resume target metadata could not be verified",
             );
         }
-        Err(_) => return ResumeChunkDispatch::NotApplicable,
     };
     let source_key = resume::resumable_primary_key(
         context.source_schema,
@@ -117,21 +116,24 @@ pub(crate) async fn attempt_resume_chunk(
     );
     let target_is_snapshot_safe =
         target_schema.table_options.supports_consistent_snapshot == Some(true);
-    if source_key.is_err() || !target_is_snapshot_safe {
+    if !target_is_snapshot_safe {
+        checkpoint.invalidate();
+        return rejected(
+            context.table,
+            saved_committed_chunk,
+            "target relation no longer has a verified transactional boundary; token was invalidated",
+            "not started because target transaction safety could not be reverified",
+        );
+    }
+    if let Err(error) = source_key {
         if !saved_progress {
             return ResumeChunkDispatch::NotApplicable;
         }
         checkpoint.invalidate();
-        let reason = source_key
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_else(|| {
-                "target relation no longer has a verified transactional snapshot".into()
-            });
         return rejected(
             context.table,
             saved_committed_chunk,
-            &format!("resume contract changed; token was invalidated: {reason}"),
+            &format!("resume contract changed; token was invalidated: {error}"),
             "not started because the saved in-table resume contract changed",
         );
     }

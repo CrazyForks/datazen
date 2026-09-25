@@ -40,6 +40,14 @@ pub(crate) fn resumable_primary_key(
                 "primary-key column '{key}' is not proven non-null by source metadata"
             )));
         }
+        if driver_type.eq_ignore_ascii_case("mysql")
+            && is_mysql_exact_numeric_type(&column.data_type)
+            && !mysql_integer_cursor_is_lossless(&column.data_type)
+        {
+            return Err(TransferError::unsupported(format!(
+                "MySQL primary-key column '{key}' uses exact numeric values with string cursor bindings; in-table resume is disabled for this key type"
+            )));
+        }
         super::super::recordset_bounds::ensure_supported_bound_type(&column.data_type, key)
             .map_err(|error| TransferError::unsupported(error.to_string()))?;
         if super::super::recordset_bounds::is_text_bound_type(&column.data_type) {
@@ -72,6 +80,49 @@ pub(crate) fn resumable_primary_key(
         }
     }
     Ok(keys)
+}
+
+fn is_mysql_exact_numeric_type(data_type: &str) -> bool {
+    let normalized = data_type.trim().to_ascii_lowercase();
+    let base = normalized
+        .split('(')
+        .next()
+        .unwrap_or(normalized.as_str())
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    matches!(
+        base,
+        "tinyint"
+            | "smallint"
+            | "mediumint"
+            | "int"
+            | "integer"
+            | "bigint"
+            | "decimal"
+            | "dec"
+            | "numeric"
+            | "fixed"
+            | "serial"
+    )
+}
+
+/// MySQL decodes TINYINT through INT into an i64/u32-backed Value::Integer.
+/// BIGINT and DECIMAL are represented as strings, and binding those strings
+/// through `?` loses the declared numeric type for exact keyset comparisons.
+fn mysql_integer_cursor_is_lossless(data_type: &str) -> bool {
+    let normalized = data_type.trim().to_ascii_lowercase();
+    let base = normalized
+        .split('(')
+        .next()
+        .unwrap_or(normalized.as_str())
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    matches!(
+        base,
+        "tinyint" | "smallint" | "mediumint" | "int" | "integer"
+    )
 }
 
 fn is_float_type(data_type: &str) -> bool {

@@ -63,6 +63,64 @@ type MigrationRun = {
   targetConnectionId: string | null;
 };
 
+type TargetObserverSample = {
+  ping?: boolean;
+  count: number;
+  response: QueryResultPayload;
+};
+
+async function sampleTargetCount(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  checkPing = true,
+): Promise<TargetObserverSample> {
+  const ping = checkPing
+    ? await invokeBackend<boolean>('ping_connection', { dbSessionId })
+    : undefined;
+  const response = await invokeBackend<QueryResultPayload>('execute_query', {
+    dbSessionId,
+    database,
+    sql: `SELECT COUNT(*) AS c FROM ${table}`,
+  });
+  return { ping, count: Number(queryScalar(response, 'c')), response };
+}
+
+async function waitForTargetCount(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  expected: number,
+  message: string,
+) {
+  let latest = 'no observer sample';
+  try {
+    await browser.waitUntil(
+      async () => {
+        try {
+          const sample = await sampleTargetCount(dbSessionId, database, table, false);
+          latest = JSON.stringify(sample);
+          return sample.count === expected;
+        } catch (error) {
+          latest = `observer error: ${String(error)}`;
+          return false;
+        }
+      },
+      { timeout: 30_000, interval: 150, timeoutMsg: message },
+    );
+  } catch (error) {
+    let finalSample = 'final ping/count failed';
+    try {
+      finalSample = JSON.stringify(await sampleTargetCount(dbSessionId, database, table));
+    } catch (sampleError) {
+      finalSample = String(sampleError);
+    }
+    throw new Error(
+      `${String(error)}; latest observer sample=${latest}; final ping/count=${finalSample}`,
+    );
+  }
+}
+
 function pgConfig(id: string, name: string, database: string) {
   return {
     id,
@@ -509,25 +567,21 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
       database: targetDatabase,
     });
     try {
+      const baseline = await sampleTargetCount(targetObserver, targetDatabase, chunkTable);
+      expect(baseline.ping).toBe(true);
+      expect(baseline.count).toBe(0);
       await (await $('[data-testid="data-transfer-execute"]')).click();
       await browser.waitUntil(async () => (await capturedTransferRuns()).length === 1, {
         timeout: 20_000,
         interval: 100,
         timeoutMsg: 'initial bounded transfer call did not start',
       });
-      await browser.waitUntil(
-        async () => {
-          const count = await invokeBackend<QueryResultPayload>('execute_query', {
-            dbSessionId: targetObserver,
-            sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
-          });
-          return Number(queryScalar(count, 'c')) === 2;
-        },
-        {
-          timeout: 30_000,
-          interval: 150,
-          timeoutMsg: 'first two-row target chunk was not confirmed',
-        },
+      await waitForTargetCount(
+        targetObserver,
+        targetDatabase,
+        chunkTable,
+        2,
+        'first two-row target chunk was not confirmed',
       );
       await (await $('[data-testid="data-transfer-cancel"]')).click();
       await browser.waitUntil(
@@ -555,21 +609,17 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
       expect(Number(queryScalar(pausedCount, 'c'))).toBe(2);
 
       await (await $('[data-testid="data-transfer-resume"]')).click();
-      await browser.waitUntil(
-        async () => {
-          const calls = await capturedTransferRuns();
-          if (calls.length < 2) return false;
-          const count = await invokeBackend<QueryResultPayload>('execute_query', {
-            dbSessionId: targetObserver,
-            sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
-          });
-          return Number(queryScalar(count, 'c')) === 4;
-        },
-        {
-          timeout: 45_000,
-          interval: 150,
-          timeoutMsg: 'second two-row target chunk was not confirmed',
-        },
+      await browser.waitUntil(async () => (await capturedTransferRuns()).length >= 2, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: 'resume transfer call did not start',
+      });
+      await waitForTargetCount(
+        targetObserver,
+        targetDatabase,
+        chunkTable,
+        4,
+        'second two-row target chunk was not confirmed',
       );
       await (await $('[data-testid="data-transfer-cancel"]')).click();
       await (await $('[data-testid="data-transfer-result"]')).waitForDisplayed({ timeout: 30_000 });
@@ -629,6 +679,9 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
           sql: `DELETE FROM ${chunkTable}`,
         });
       });
+      const baseline = await sampleTargetCount(targetObserver, targetDatabase, chunkTable);
+      expect(baseline.ping).toBe(true);
+      expect(baseline.count).toBe(0);
       const sourceMutationSession = await connectBackend(sourceId);
       sourceSession = sourceMutationSession;
 
@@ -650,19 +703,12 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
         interval: 100,
         timeoutMsg: 'initial bounded transfer call did not start',
       });
-      await browser.waitUntil(
-        async () => {
-          const count = await invokeBackend<QueryResultPayload>('execute_query', {
-            dbSessionId: targetObserver,
-            sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
-          });
-          return Number(queryScalar(count, 'c')) === 2;
-        },
-        {
-          timeout: 30_000,
-          interval: 150,
-          timeoutMsg: 'first two-row target chunk was not confirmed',
-        },
+      await waitForTargetCount(
+        targetObserver,
+        targetDatabase,
+        chunkTable,
+        2,
+        'first two-row target chunk was not confirmed',
       );
       await (await $('[data-testid="data-transfer-cancel"]')).click();
       await browser.waitUntil(

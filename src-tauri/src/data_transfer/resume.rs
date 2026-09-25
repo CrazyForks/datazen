@@ -101,7 +101,7 @@ pub(crate) struct ChunkedTableResult {
 pub(crate) fn supports_chunk_driver(driver_type: &str) -> bool {
     matches!(
         driver_type.trim().to_ascii_lowercase().as_str(),
-        "postgresql" | "mysql"
+        "postgresql" | "postgres" | "mysql"
     )
 }
 

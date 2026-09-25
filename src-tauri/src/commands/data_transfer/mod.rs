@@ -10,6 +10,8 @@ mod preview;
 mod types;
 
 #[cfg(test)]
+mod resume_preflight_tests;
+#[cfg(test)]
 mod tests;
 
 use super::error::CommandError;

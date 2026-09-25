@@ -87,7 +87,15 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
     // Context validation happens before the atomic claim. A stale schema or
     // changed read-only policy sends the user back to comparison without
     // burning a still-valid plan; once claimed, retries are always refused.
-    let context = validate_plan_context(state, &plan).await?;
+    let context = match validate_plan_context(state, &plan).await {
+        Ok(context) => context,
+        Err(error) => {
+            if let Some(token) = request.resume_token.as_deref() {
+                plans::invalidate_checkpoint(token);
+            }
+            return Err(error);
+        }
+    };
     let job_id = request.job_id.clone();
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(jobs::ensure_job(id).await),
@@ -222,6 +230,69 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         })?;
         source_schemas.insert(table.name.clone(), schema);
     }
+
+    let resume_preflight = if supports_bounded_resume(&job) {
+        match super::resume_preflight::inspect_resume_contract(
+            &job,
+            &inspected,
+            &source_schemas,
+            src_driver.as_ref(),
+            &src_handle,
+            tgt_driver.as_ref(),
+            &tgt_handle,
+        )
+        .await
+        {
+            Ok(preflight) => Some(preflight),
+            Err(reason) => {
+                checkpoint_session.invalidate();
+                checkpoint_session.abort();
+                if let Some(id) = job_id.as_deref() {
+                    jobs::remove_job(id).await;
+                }
+                return Err(CommandError::Validation(format!(
+                    "target metadata could not establish safe transfer checkpoint boundaries before writing: {reason}"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    if claimed_checkpoint.is_some()
+        && resume_preflight
+            .as_ref()
+            .is_some_and(|preflight| !preflight.table_boundary_safe())
+    {
+        let reason = resume_preflight
+            .as_ref()
+            .and_then(|preflight| preflight.table_boundary_reason.as_deref())
+            .unwrap_or("the target/session checkpoint contract is no longer proven");
+        checkpoint_session.invalidate();
+        checkpoint_session.abort();
+        if let Some(id) = job_id.as_deref() {
+            jobs::remove_job(id).await;
+        }
+        return Err(CommandError::Validation(format!(
+            "resume token was invalidated before writing: {reason}"
+        )));
+    }
+    let table_boundary_resume_safe = resume_preflight
+        .as_ref()
+        .is_some_and(|preflight| preflight.table_boundary_safe());
+    let resume_unavailable_reason = resume_preflight.as_ref().and_then(|preflight| {
+        if !preflight.table_boundary_safe() {
+            preflight
+                .table_boundary_reason
+                .as_deref()
+                .map(|reason| format!("resume token not issued: {reason}"))
+        } else {
+            preflight.chunk_reason.as_deref().map(|reason| {
+                format!(
+                    "row-level resume is unavailable ({reason}); any continuation is limited to atomic whole-table boundaries"
+                )
+            })
+        }
+    });
 
     let needs_adapters = !is_same_family(&pairing)
         || matches!(
@@ -372,6 +443,12 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
             None
         };
 
+        let checkpoint_hook: Option<&mut dyn TransferResumeCheckpoint> =
+            if table_boundary_resume_safe {
+                Some(&mut checkpoint_session)
+            } else {
+                None
+            };
         let data_result = execute_transfer_data_with_resume_checkpoint(
             src_driver.as_ref(),
             &src_handle,
@@ -386,7 +463,7 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
             cancelled.clone(),
             resume_completed.as_ref(),
             write_started,
-            Some(&mut checkpoint_session),
+            checkpoint_hook,
         )
         .await
         .map_err(CommandError::from)?;
@@ -404,7 +481,7 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         partial,
         resume_token: None,
     };
-    if supports_bounded_resume(&job) {
+    if supports_bounded_resume(&job) && table_boundary_resume_safe {
         if has_unknown_outcome(&output) {
             checkpoint_session.invalidate();
         }
@@ -415,9 +492,27 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
     } else {
         checkpoint_session.abort();
     }
+    if (output.partial || output.cancelled) && resume_unavailable_reason.is_some() {
+        append_resume_unavailable_reason(
+            &mut output,
+            resume_unavailable_reason
+                .as_deref()
+                .unwrap_or("checkpoint safety could not be proven"),
+        );
+    }
     if let Some(id) = job_id.as_deref() {
         jobs::remove_job(id).await;
     }
 
     Ok(output)
+}
+
+fn append_resume_unavailable_reason(output: &mut TransferExecutionResult, reason: &str) {
+    if let Some(table) = output.tables.iter_mut().find(|table| !table.success) {
+        let error = table.error.get_or_insert_with(String::new);
+        if !error.is_empty() {
+            error.push_str("; ");
+        }
+        error.push_str(reason);
+    }
 }

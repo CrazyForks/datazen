@@ -3,13 +3,17 @@ use datazen_driver_api::{ColumnSchema, IndexInfo, TableOptions};
 use sha2::{Digest, Sha256};
 
 fn source_schema(keys: &[&str]) -> TableSchema {
+    source_schema_with_type(keys, "BIGINT")
+}
+
+fn source_schema_with_type(keys: &[&str], data_type: &str) -> TableSchema {
     TableSchema {
         table_name: "items".into(),
         columns: keys
             .iter()
             .map(|name| ColumnSchema {
                 name: (*name).into(),
-                data_type: "BIGINT".into(),
+                data_type: data_type.into(),
                 nullable: false,
                 default_value: None,
                 comment: None,
@@ -101,13 +105,43 @@ fn only_exact_nonnullable_declared_primary_key_order_is_resumable() {
         vec!["id"]
     );
     assert_eq!(
-        resumable_primary_key(&source_schema(&["tenant", "id"]), None, "mysql").unwrap(),
+        resumable_primary_key(
+            &source_schema_with_type(&["tenant", "id"], "INT"),
+            None,
+            "mysql"
+        )
+        .unwrap(),
         vec!["tenant", "id"]
     );
     assert!(resumable_primary_key(&scalar, None, "sqlite").is_err());
     let mut nullable = scalar.clone();
     nullable.columns[0].nullable = true;
     assert!(resumable_primary_key(&nullable, None, "postgresql").is_err());
+}
+
+#[test]
+fn mysql_exact_numeric_keys_require_lossless_integer_cursor_decoding() {
+    for data_type in [
+        "BIGINT",
+        "BIGINT UNSIGNED",
+        "DECIMAL(65, 30)",
+        "NUMERIC(30, 10)",
+    ] {
+        let error =
+            resumable_primary_key(&source_schema_with_type(&["id"], data_type), None, "mysql")
+                .expect_err("MySQL exact numeric text cursors must fail closed");
+        assert!(
+            error.to_string().contains("string cursor bindings"),
+            "{error}"
+        );
+    }
+
+    assert!(resumable_primary_key(
+        &source_schema_with_type(&["id"], "INT UNSIGNED"),
+        None,
+        "mysql"
+    )
+    .is_ok());
 }
 
 #[test]

@@ -538,6 +538,7 @@ fn completed_tables_from_result(prior: &[String], result: &TransferExecutionResu
 }
 
 mod execution;
+mod resume_preflight;
 pub(crate) use execution::{
     execute_data_transfer_impl, execute_data_transfer_impl_with_write_observer,
 };

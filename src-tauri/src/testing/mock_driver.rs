@@ -28,6 +28,8 @@ pub struct MockDriverOptions {
     pub primary_keys: Vec<String>,
     pub table_schema: Option<TableSchema>,
     pub query_rows: Vec<Vec<Option<Value>>>,
+    /// Keyset pages after the first are empty for resume-executor tests.
+    pub empty_keyset_after_cursor: bool,
     pub count_total: i64,
     pub databases: Vec<String>,
     pub tables: Vec<TableInfo>,
@@ -100,6 +102,7 @@ impl Default for MockDriverOptions {
             primary_keys: Vec::new(),
             table_schema: None,
             query_rows: Vec::new(),
+            empty_keyset_after_cursor: false,
             count_total: 0,
             databases: Vec::new(),
             tables: Vec::new(),
@@ -559,9 +562,13 @@ impl DatabaseDriver for MockDriver {
         &self,
         handle: &ConnectionHandle,
         sql: &str,
-        _params: &[Value],
+        params: &[Value],
     ) -> Result<QueryResult, DriverError> {
-        self.query(handle, sql).await
+        let mut result = self.query(handle, sql).await?;
+        if self.opts.empty_keyset_after_cursor && sql.contains(" > ") && !params.is_empty() {
+            result.rows.clear();
+        }
+        Ok(result)
     }
 
     fn parameter_placeholder(
