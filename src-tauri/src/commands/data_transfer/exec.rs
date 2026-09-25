@@ -119,7 +119,7 @@ async fn execute_sql_file_target(
     }
     let mut validation_job = plan.job.clone();
     apply_selection(&mut validation_job, &request.selection);
-    let (driver, handle, inspected, mut schemas) =
+    let (driver, handle, mut inspected, mut schemas) =
         load_sql_source_snapshot(state, &validation_job).await?;
     if driver.driver_type() != plan.source_driver_type
         || plans::driver_protocol_version(driver.as_ref()) != plan.source_driver_protocol
@@ -199,7 +199,7 @@ async fn execute_sql_file_target(
     // fingerprint, otherwise a driver-reported placeholder such as
     // USER-DEFINED would be rejected (or hash differently) even though the
     // same source type was resolved successfully during preview.
-    if let Some((src_adapter, _)) = &adapters {
+    if let Some(src_adapter) = source_structure_adapter.as_ref() {
         crate::data_transfer::structure::enrich_source_types(
             src_adapter.as_ref(),
             driver.as_ref(),
@@ -208,6 +208,29 @@ async fn execute_sql_file_target(
             &mut schemas,
         )
         .await
+        .map_err(CommandError::from)?;
+        crate::data_transfer::structure::validate_transfer_source_columns(
+            &validation_job,
+            &inspected,
+            &schemas,
+            src_adapter.as_ref(),
+        )
+        .map_err(CommandError::from)?;
+    }
+    if let Some((src_adapter, target_adapter)) = &adapters {
+        crate::data_transfer::structure::enrich_create_new_target_types(
+            &mut inspected,
+            &schemas,
+            src_adapter.as_ref(),
+            target_adapter.as_ref(),
+        );
+        crate::data_transfer::structure::validate_transfer_column_types(
+            &validation_job,
+            &inspected,
+            &schemas,
+            src_adapter.as_ref(),
+            target_adapter.as_ref(),
+        )
         .map_err(CommandError::from)?;
         crate::data_transfer::sql_file::validate_target_ir(
             src_adapter.as_ref(),
@@ -253,8 +276,9 @@ async fn execute_sql_file_target(
     let immutable_structure = claimed.sql_file_structure.clone();
     let mut job = claimed.job;
     apply_selection(&mut job, &request.selection);
-    let (driver, handle, inspected, mut schemas) = load_sql_source_snapshot(state, &job).await?;
-    if let Some((src_adapter, _)) = &adapters {
+    let (driver, handle, mut inspected, mut schemas) =
+        load_sql_source_snapshot(state, &job).await?;
+    if let Some(src_adapter) = source_structure_adapter.as_ref() {
         crate::data_transfer::structure::enrich_source_types(
             src_adapter.as_ref(),
             driver.as_ref(),
@@ -263,6 +287,29 @@ async fn execute_sql_file_target(
             &mut schemas,
         )
         .await
+        .map_err(CommandError::from)?;
+        crate::data_transfer::structure::validate_transfer_source_columns(
+            &job,
+            &inspected,
+            &schemas,
+            src_adapter.as_ref(),
+        )
+        .map_err(CommandError::from)?;
+    }
+    if let Some((src_adapter, target_adapter)) = &adapters {
+        crate::data_transfer::structure::enrich_create_new_target_types(
+            &mut inspected,
+            &schemas,
+            src_adapter.as_ref(),
+            target_adapter.as_ref(),
+        );
+        crate::data_transfer::structure::validate_transfer_column_types(
+            &job,
+            &inspected,
+            &schemas,
+            src_adapter.as_ref(),
+            target_adapter.as_ref(),
+        )
         .map_err(CommandError::from)?;
         crate::data_transfer::sql_file::validate_target_ir(
             src_adapter.as_ref(),

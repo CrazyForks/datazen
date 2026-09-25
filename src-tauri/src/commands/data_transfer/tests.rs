@@ -600,7 +600,16 @@ async fn sql_file_target_renders_registered_mysql_dialect() {
     use crate::data_transfer::sql_file::register_path;
     use crate::testing::app_state::TestAppState;
 
-    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let mut options = transfer_plan_test_options();
+    // This test checks target-dialect quoting and file publication. Keep its
+    // source fixture to a portable scalar so an unmodeled PostgreSQL text
+    // collation does not imply a safe MySQL table definition.
+    options.columns.retain(|column| column.name == "id");
+    options.query_rows = vec![vec![Some(crate::db::Value::Integer(1))]];
+    let mut schema = crate::testing::mock_driver::MockDriver::default_table_schema("users");
+    schema.columns.retain(|column| column.name == "id");
+    options.table_schema = Some(schema);
+    let test = TestAppState::with_options(options).await;
     let (_config, source) = test.save_and_connect("transfer-sql-file-mysql-src").await;
     let dir = tempfile::tempdir().expect("temporary SQL output directory");
     let destination = dir.path().join("mysql.sql");

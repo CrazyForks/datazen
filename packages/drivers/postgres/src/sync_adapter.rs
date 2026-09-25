@@ -89,6 +89,55 @@ fn is_literal_default(value: &str) -> bool {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for PgSyncAdapter {
+    fn validate_transfer_source_column(&self, column: &ColumnSchema) -> Result<(), String> {
+        let native = column.data_type.trim().to_ascii_lowercase();
+        if native == "array" || native.ends_with("[]") || native.ends_with(" array") {
+            return Err(format!(
+                "PostgreSQL array type '{}' is not supported because the PostgreSQL transfer decoder does not yet decode arrays; convert it to a scalar JSON value before transferring",
+                column.data_type
+            ));
+        }
+        Ok(())
+    }
+
+    fn transfer_source_type_is_native_only(
+        &self,
+        _column: &ColumnSchema,
+        source_ir: &IRColumn,
+    ) -> bool {
+        matches!(source_ir.ir_type, IRType::Other(_))
+    }
+
+    fn transfer_source_text_limit_bytes(&self, column: &ColumnSchema) -> Option<u64> {
+        const PG_MAX_FIELD_BYTES: u64 = 1_073_741_823;
+        let native = column.data_type.trim().to_ascii_lowercase();
+        if native == "text" || native == "character varying" || native == "varchar" {
+            return Some(PG_MAX_FIELD_BYTES);
+        }
+        for prefix in ["character varying(", "varchar(", "character("] {
+            if let Some(length) = native
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .and_then(|length| length.parse::<u64>().ok())
+            {
+                return length.checked_mul(4);
+            }
+        }
+        None
+    }
+
+    fn transfer_source_requires_collation_preservation(&self, column: &ColumnSchema) -> bool {
+        let native = column.data_type.trim().to_ascii_lowercase();
+        native == "text"
+            || native.starts_with("character varying")
+            || native.starts_with("varchar")
+            || native == "character"
+            || native.starts_with("character(")
+            || native == "char"
+            || native.starts_with("char(")
+            || native == "bpchar"
+    }
+
     fn sync_key_order_expression(
         &self,
         quoted_column: &str,
@@ -467,6 +516,47 @@ mod tests {
                 scale: 2
             }
         );
+    }
+
+    #[test]
+    fn transfer_preflight_rejects_postgres_arrays() {
+        let adapter = PgSyncAdapter;
+        assert!(adapter
+            .validate_transfer_source_column(&col("tags", "text[]"))
+            .unwrap_err()
+            .contains("does not yet decode arrays"));
+        assert!(adapter
+            .validate_transfer_source_column(&col("tags", "ARRAY"))
+            .unwrap_err()
+            .contains("does not yet decode arrays"));
+        assert!(adapter
+            .validate_transfer_source_column(&col("name", "text"))
+            .is_ok());
+    }
+
+    #[test]
+    fn transfer_preflight_marks_custom_native_types_for_target_validation() {
+        let adapter = PgSyncAdapter;
+        let column = col("mood", "mood");
+        let enum_ir = adapter.column_to_ir(&column, None);
+        assert!(matches!(enum_ir.ir_type, IRType::Other(_)));
+        assert!(adapter.transfer_source_type_is_native_only(&column, &enum_ir));
+    }
+
+    #[test]
+    fn transfer_preflight_marks_postgres_character_collation_as_unproven() {
+        let adapter = PgSyncAdapter;
+        assert!(adapter.transfer_source_requires_collation_preservation(&col("body", "text")));
+        assert!(
+            adapter.transfer_source_requires_collation_preservation(&col(
+                "label",
+                "character varying(120)"
+            ))
+        );
+        assert!(
+            adapter.transfer_source_requires_collation_preservation(&col("code", "character(8)"))
+        );
+        assert!(!adapter.transfer_source_requires_collation_preservation(&col("id", "integer")));
     }
 
     #[test]

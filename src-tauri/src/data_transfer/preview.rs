@@ -61,6 +61,16 @@ pub fn build_preview(
         });
     }
 
+    if let Some(adapters) = &adapters {
+        super::structure::validate_transfer_column_types(
+            job,
+            inspected,
+            source_schemas,
+            adapters.src_adapter,
+            adapters.tgt_adapter,
+        )?;
+    }
+
     for table in inspected.iter().filter(|t| t.enabled) {
         if table.status == TableMappingStatus::Incompatible {
             block_reason.get_or_insert_with(|| {
@@ -348,6 +358,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
             recordset: None,
@@ -370,6 +381,26 @@ mod tests {
     #[test]
     fn preview_allows_ir_when_adapters_available() {
         let job = sample_job(TransferMode::Data, WriteMode::Insert);
+        let source_schemas = HashMap::from([(
+            "users".into(),
+            TableSchema {
+                table_name: "users".into(),
+                columns: vec![datazen_driver_api::ColumnSchema {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                }],
+                primary_keys: vec!["id".into()],
+                indexes: vec![],
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: Default::default(),
+            },
+        )]);
         let inspected = vec![TableInspectResult {
             source_table: "users".into(),
             target_table: "users".into(),
@@ -386,6 +417,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
             recordset: None,
@@ -394,7 +426,7 @@ mod tests {
             &job,
             &inspected,
             &SyncPairing::Ir,
-            &HashMap::new(),
+            &source_schemas,
             true,
             Some(TransferPreviewAdapters {
                 src_adapter: &DummySource,
@@ -425,6 +457,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(1),
             recordset: None,
@@ -535,6 +568,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(100),
             recordset: job.tables[0].recordset.clone(),
@@ -593,6 +627,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -666,6 +701,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -789,6 +825,7 @@ mod tests {
             source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,

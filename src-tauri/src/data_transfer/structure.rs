@@ -215,6 +215,190 @@ pub async fn validate_source_structure_metadata(
     Ok(())
 }
 
+/// Validate the selected source-to-target columns before preview acceptance or
+/// execution enters its first DDL/data write. Drivers opt into this
+/// Data-Transfer-only seam; Data Sync and Schema Diff never call it.
+pub fn validate_transfer_column_types(
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    source_adapter: &dyn SyncSourceAdapter,
+    target_adapter: &dyn SyncTargetAdapter,
+) -> Result<(), TransferError> {
+    validate_transfer_source_columns(job, inspected, source_schemas, source_adapter)?;
+    let structure_mode = matches!(
+        job.mode,
+        TransferMode::Structure | TransferMode::StructureAndData
+    );
+    for table in inspected.iter().filter(|table| table.enabled) {
+        if !matches!(
+            table.status,
+            TableMappingStatus::Matched | TableMappingStatus::CreateNew
+        ) {
+            continue;
+        }
+        let creates_target = (structure_mode && table.create_new)
+            || job.write_mode == super::model::WriteMode::DropCreateInsert;
+        let transfers_data = matches!(
+            job.mode,
+            TransferMode::Data | TransferMode::StructureAndData
+        );
+        if !creates_target && !transfers_data {
+            continue;
+        }
+
+        let schema = source_schemas.get(&table.source_table).ok_or_else(|| {
+            TransferError::validation(format!(
+                "source schema is unavailable for '{}' during transfer type validation",
+                table.source_table
+            ))
+        })?;
+        let active: Vec<_> = if table.column_mappings.is_empty() {
+            schema
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.name.as_str(), None))
+                .collect()
+        } else {
+            table
+                .column_mappings
+                .iter()
+                .filter(|mapping| !mapping.skip)
+                .map(|mapping| {
+                    (
+                        mapping.source_column.as_str(),
+                        mapping.target_column.as_str(),
+                        mapping.target_native_type.as_deref(),
+                    )
+                })
+                .collect()
+        };
+
+        for (source_name, target_name, configured_native) in active {
+            let source_column = schema
+                .columns
+                .iter()
+                .find(|column| column.name == source_name)
+                .ok_or_else(|| {
+                    TransferError::validation(format!(
+                        "source column '{}.{}' is unavailable during transfer type validation",
+                        table.source_table, source_name
+                    ))
+                })?;
+            let source_ir = source_adapter.column_to_ir(source_column, None);
+            let target_native = if creates_target {
+                configured_native
+                    .filter(|native| !native.trim().is_empty())
+                    .map(str::to_string)
+                    .or_else(|| Some(inferred_create_native_type(&source_ir, target_adapter)))
+            } else {
+                table
+                    .target_column_types
+                    .get(target_name)
+                    .filter(|native| !native.trim().is_empty())
+                    .cloned()
+            };
+            target_adapter
+                .validate_transfer_column_type(
+                    source_column,
+                    &source_ir,
+                    source_adapter.transfer_source_text_limit_bytes(source_column),
+                    source_adapter.transfer_source_requires_collation_preservation(source_column),
+                    source_adapter.transfer_source_type_is_native_only(source_column, &source_ir),
+                    target_native.as_deref(),
+                    creates_target,
+                )
+                .map_err(|reason| {
+                    TransferError::unsupported(format!(
+                        "cannot map source column '{}.{}' to '{}.{}': {reason}",
+                        table.source_table, source_name, table.target_table, target_name
+                    ))
+                })?;
+        }
+    }
+    Ok(())
+}
+
+/// Source-only half of transfer type preflight, also used by SQL-file exports
+/// whose target dialect may intentionally use the source adapter's renderer.
+/// This checks only mapped source columns and never adds structure-only checks to
+/// Data + Insert.
+pub fn validate_transfer_source_columns(
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    source_adapter: &dyn SyncSourceAdapter,
+) -> Result<(), TransferError> {
+    let needs_structure = matches!(
+        job.mode,
+        TransferMode::Structure | TransferMode::StructureAndData
+    ) || job.write_mode == super::model::WriteMode::DropCreateInsert;
+    let needs_data = matches!(
+        job.mode,
+        TransferMode::Data | TransferMode::StructureAndData
+    );
+    if !needs_structure && !needs_data {
+        return Ok(());
+    }
+    for table in inspected.iter().filter(|table| table.enabled) {
+        if !matches!(
+            table.status,
+            TableMappingStatus::Matched | TableMappingStatus::CreateNew
+        ) {
+            continue;
+        }
+        let creates_table = (matches!(
+            job.mode,
+            TransferMode::Structure | TransferMode::StructureAndData
+        ) && table.create_new)
+            || job.write_mode == super::model::WriteMode::DropCreateInsert;
+        if !needs_data && !creates_table {
+            continue;
+        }
+        let schema = source_schemas.get(&table.source_table).ok_or_else(|| {
+            TransferError::validation(format!(
+                "source schema is unavailable for '{}' during transfer source validation",
+                table.source_table
+            ))
+        })?;
+        let active_names: Vec<&str> = if table.column_mappings.is_empty() {
+            schema
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect()
+        } else {
+            table
+                .column_mappings
+                .iter()
+                .filter(|mapping| !mapping.skip)
+                .map(|mapping| mapping.source_column.as_str())
+                .collect()
+        };
+        for source_name in active_names {
+            let Some(source_column) = schema
+                .columns
+                .iter()
+                .find(|column| column.name == source_name)
+            else {
+                return Err(TransferError::validation(format!(
+                    "source column '{}.{}' is unavailable during transfer type validation",
+                    table.source_table, source_name
+                )));
+            };
+            source_adapter
+                .validate_transfer_source_column(source_column)
+                .map_err(|reason| {
+                    TransferError::unsupported(format!(
+                        "cannot transfer source column '{}.{}': {reason}",
+                        table.source_table, source_name
+                    ))
+                })?;
+        }
+    }
+    Ok(())
+}
+
 /// A DROP is unsafe while an unselected target relation has an incoming FK.
 /// Inspect the live target catalog before claiming/writing the immutable plan;
 /// this also catches dependencies added after preview.
@@ -349,15 +533,16 @@ pub fn enrich_create_new_target_types(
 /// identity type was actually customized. Keeping this in one helper avoids
 /// treating the populated suggestion field as a user override by itself.
 fn inferred_create_native_type(column: &IRColumn, tgt_adapter: &dyn SyncTargetAdapter) -> String {
-    let ddl_ir_type =
-        if column.default_expr.is_some() && !tgt_adapter.allows_column_default(&column.ir_type) {
-            tgt_adapter
-                .default_capable_type_for(&column.ir_type)
-                .unwrap_or_else(|| column.ir_type.clone())
-        } else {
-            column.ir_type.clone()
-        };
-    tgt_adapter.ir_type_to_native(&ddl_ir_type)
+    let ddl_ir_type = if column.default_expr.is_some()
+        && !tgt_adapter.transfer_allows_column_default(&column.ir_type)
+    {
+        tgt_adapter
+            .transfer_default_capable_type_for(&column.ir_type)
+            .unwrap_or_else(|| column.ir_type.clone())
+    } else {
+        column.ir_type.clone()
+    };
+    tgt_adapter.transfer_ir_type_to_native(&ddl_ir_type)
 }
 
 fn validate_identity_type_overrides(
@@ -445,7 +630,11 @@ pub fn apply_column_type_overrides(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            if !native.eq_ignore_ascii_case(tgt_adapter.ir_type_to_native(&column.ir_type).trim()) {
+            if !native.eq_ignore_ascii_case(
+                tgt_adapter
+                    .transfer_ir_type_to_native(&column.ir_type)
+                    .trim(),
+            ) {
                 column.ir_type = IRType::Other(native.to_string());
             }
         }
@@ -538,11 +727,16 @@ pub fn mapped_create_ddl(
                     table.source_table, column.name
                 )));
             }
-            if !tgt_adapter.allows_column_default(&column.ir_type)
-                && tgt_adapter
-                    .default_capable_type_for(&column.ir_type)
-                    .is_none()
-            {
+            if tgt_adapter.format_default(default).is_none() {
+                return Err(TransferError::unsupported(format!(
+                    "default on '{}.{}' cannot be rendered by the target adapter and would be lost",
+                    table.source_table, column.name
+                )));
+            }
+            if !crate::transfer::ddl::transfer_column_default_is_supported(
+                &column.ir_type,
+                tgt_adapter,
+            ) {
                 return Err(TransferError::unsupported(format!(
                     "default on '{}.{}' cannot be represented by the target type",
                     table.source_table, column.name
@@ -592,7 +786,7 @@ pub fn mapped_create_ddl(
             table.source_table
         )));
     }
-    Ok(crate::transfer::ddl::build_create_table_ddl_ref(
+    Ok(crate::transfer::ddl::build_transfer_create_table_ddl_ref(
         &ir,
         tgt_adapter,
         &target_relation_ref(job, &table.target_table, tgt_adapter),
@@ -653,6 +847,7 @@ pub async fn create_target_tables_with_write_observer(
     {
         return Ok(Vec::new());
     }
+    validate_transfer_column_types(job, inspected, source_schemas, src_adapter, tgt_adapter)?;
     let mut results = Vec::new();
 
     let create_tables: Vec<_> = inspected
@@ -764,6 +959,14 @@ pub async fn drop_and_recreate_table(
     let schema = source_schemas.get(&table.source_table).ok_or_else(|| {
         DropCreateFailure::NotStarted(TransferError::validation("source schema not loaded"))
     })?;
+    validate_transfer_column_types(
+        job,
+        std::slice::from_ref(table),
+        source_schemas,
+        src_adapter,
+        tgt_adapter,
+    )
+    .map_err(DropCreateFailure::NotStarted)?;
     // Validate/render everything before the destructive first statement.
     let ddl = mapped_create_ddl(src_adapter, tgt_adapter, schema, table, job)
         .map_err(DropCreateFailure::NotStarted)?;
@@ -959,6 +1162,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -1109,6 +1313,7 @@ mod tests {
             source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -1192,6 +1397,7 @@ mod tests {
                 source_columns: vec!["id".into()],
                 target_columns: vec![],
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: None,
                 recordset: None,
@@ -1267,8 +1473,21 @@ mod tests {
         use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
         use crate::transfer::ir::IRColumn;
 
-        struct SourceAdapter;
+        struct SourceAdapter {
+            reject_columns: bool,
+        }
         impl SyncSourceAdapter for SourceAdapter {
+            fn validate_transfer_source_column(
+                &self,
+                _column: &datazen_driver_api::ColumnSchema,
+            ) -> Result<(), String> {
+                if self.reject_columns {
+                    Err("source array columns are not decodable".into())
+                } else {
+                    Ok(())
+                }
+            }
+
             fn column_to_ir(
                 &self,
                 column: &datazen_driver_api::ColumnSchema,
@@ -1321,6 +1540,7 @@ mod tests {
                 source_columns: vec!["id".into()],
                 target_columns: vec![],
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: None,
                 recordset: None,
@@ -1354,7 +1574,11 @@ mod tests {
             options: super::super::model::TransferOptions::default(),
         };
         job.options.stop_on_error = false;
-        let source_schemas = HashMap::from([("b".into(), schema.clone()), ("c".into(), schema)]);
+        let source_schemas = HashMap::from([
+            ("a".into(), schema.clone()),
+            ("b".into(), schema.clone()),
+            ("c".into(), schema),
+        ]);
         let source_driver = MockDriver::new("postgres", MockDriverOptions::default());
         let target_driver = MockDriver::new("mysql", MockDriverOptions::default());
         let source_handle = ConnectionHandle {
@@ -1366,8 +1590,10 @@ mod tests {
             pool_id: "target".into(),
         };
         let write_started = AtomicBool::new(false);
-        let results = create_target_tables_with_write_observer(
-            &SourceAdapter,
+        let preflight_error = create_target_tables_with_write_observer(
+            &SourceAdapter {
+                reject_columns: true,
+            },
             &DummyTarget,
             source_driver.as_ref(),
             &source_handle,
@@ -1380,11 +1606,33 @@ mod tests {
             Some(&write_started),
         )
         .await
+        .unwrap_err();
+        assert!(preflight_error.to_string().contains("not decodable"));
+        assert_eq!(target_driver.execute_calls(), 0);
+        assert!(!write_started.load(Ordering::SeqCst));
+
+        let valid_inspected = vec![inspected[2].clone()];
+        let mut valid_job = job.clone();
+        valid_job.tables = vec![super::super::model::TableMapping::auto("c")];
+        let results = create_target_tables_with_write_observer(
+            &SourceAdapter {
+                reject_columns: false,
+            },
+            &DummyTarget,
+            source_driver.as_ref(),
+            &source_handle,
+            target_driver.as_ref(),
+            &target_handle,
+            &valid_job,
+            &valid_inspected,
+            &source_schemas,
+            None,
+            Some(&write_started),
+        )
+        .await
         .unwrap();
-        assert_eq!(results.len(), 3);
-        assert_eq!(results[0].outcome, Some(TableExecutionOutcome::NotStarted));
-        assert_eq!(results[1].outcome, Some(TableExecutionOutcome::NotStarted));
-        assert_eq!(results[2].outcome, Some(TableExecutionOutcome::Committed));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Committed));
         assert_eq!(target_driver.execute_calls(), 1);
         assert!(write_started.load(Ordering::SeqCst));
 
@@ -1392,14 +1640,16 @@ mod tests {
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let cancelled_write_started = AtomicBool::new(false);
         let cancelled_results = create_target_tables_with_write_observer(
-            &SourceAdapter,
+            &SourceAdapter {
+                reject_columns: false,
+            },
             &DummyTarget,
             source_driver.as_ref(),
             &source_handle,
             cancelled_target.as_ref(),
             &target_handle,
-            &job,
-            &inspected,
+            &valid_job,
+            &valid_inspected,
             &source_schemas,
             Some(cancelled),
             Some(&cancelled_write_started),
@@ -1414,17 +1664,19 @@ mod tests {
         assert_eq!(cancelled_target.execute_calls(), 0);
         assert!(!cancelled_write_started.load(Ordering::SeqCst));
 
-        job.mode = TransferMode::StructureAndData;
-        job.write_mode = WriteMode::DropCreateInsert;
+        valid_job.mode = TransferMode::StructureAndData;
+        valid_job.write_mode = WriteMode::DropCreateInsert;
         let skipped_structure = create_target_tables_with_write_observer(
-            &SourceAdapter,
+            &SourceAdapter {
+                reject_columns: false,
+            },
             &DummyTarget,
             source_driver.as_ref(),
             &source_handle,
             cancelled_target.as_ref(),
             &target_handle,
-            &job,
-            &inspected,
+            &valid_job,
+            &valid_inspected,
             &source_schemas,
             None,
             None,
@@ -1433,18 +1685,20 @@ mod tests {
         .unwrap();
         assert!(skipped_structure.is_empty());
 
-        let mut data_only = job.clone();
+        let mut data_only = valid_job.clone();
         data_only.mode = TransferMode::Data;
         data_only.write_mode = WriteMode::Insert;
         let no_structure = create_target_tables(
-            &SourceAdapter,
+            &SourceAdapter {
+                reject_columns: false,
+            },
             &DummyTarget,
             source_driver.as_ref(),
             &source_handle,
             target_driver.as_ref(),
             &target_handle,
             &data_only,
-            &inspected,
+            &valid_inspected,
             &source_schemas,
             None,
         )

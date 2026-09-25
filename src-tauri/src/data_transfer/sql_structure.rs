@@ -815,6 +815,7 @@ mod database_plan_tests {
             source_primary_keys: Vec::new(),
             target_columns: Vec::new(),
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -972,6 +973,47 @@ mod database_plan_tests {
     }
 
     #[test]
+    fn mysql_database_structure_preserves_defaults_for_varchar_override_and_rejects_longtext() {
+        let mut source_schema = schema("records", &[("value", false)]);
+        source_schema.columns[0].data_type = "date".into();
+        source_schema.columns[0].default_value = Some("'2024-01-01'::date".into());
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let inspected_tables = vec![inspected("records", "records_copy", &[("value", "value")])];
+
+        let make_job = |native_type: &str| {
+            let mut table = mapping("records", "records_copy", &[("value", "value")]);
+            table.column_mappings[0].target_native_type = Some(native_type.into());
+            job(vec![table])
+        };
+
+        let error = build_database_structure_plan(
+            &datazen_driver_postgres::PgSyncAdapter,
+            &datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false },
+            &make_job("LONGTEXT"),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect_err("LONGTEXT cannot preserve a MySQL column default");
+        assert!(error.to_string().contains("default on 'records.value'"));
+
+        let plan = build_database_structure_plan(
+            &datazen_driver_postgres::PgSyncAdapter,
+            &datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false },
+            &make_job("VARCHAR(64)"),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect("VARCHAR can retain this literal default without changing the override");
+        assert!(
+            plan[0]
+                .ddl
+                .contains("`value` VARCHAR(64) NOT NULL DEFAULT '2024-01-01'"),
+            "{}",
+            plan[0].ddl
+        );
+    }
+
+    #[test]
     fn database_plan_rejects_unmapped_mysql_collation_before_any_write() {
         let mut source_schema = schema("records", &[("id", true), ("name", false)]);
         source_schema.table_options = datazen_driver_api::TableOptions {
@@ -1080,6 +1122,43 @@ mod database_plan_tests {
         assert!(plan[0].ddl.contains("VARCHAR(120)"));
         assert_eq!(plan[1].kind, DdlPreviewKind::Index);
         assert!(plan[1].ddl.contains("`label`"));
+    }
+
+    #[test]
+    fn mysql_source_varchar_create_preflight_fails_closed_without_column_collation_metadata() {
+        let mut source_schema = schema("records", &[("id", true), ("label", false)]);
+        source_schema.columns[1].data_type = "varchar(80)".into();
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let mappings = vec![mapping(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+        let inspected_tables = vec![inspected(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+        let source = datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false };
+        let target = datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false };
+
+        let transfer_job = job(mappings);
+        let error = crate::data_transfer::structure::validate_transfer_column_types(
+            &transfer_job,
+            &inspected_tables,
+            &schemas,
+            &source,
+            &target,
+        )
+        .expect_err(
+            "CREATE preflight must not replace unknown source column collation with the target default",
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("source type 'varchar(80)' requires collation preservation"),
+            "{message}"
+        );
+        assert!(message.contains("not represented or proven"), "{message}");
     }
 
     #[test]

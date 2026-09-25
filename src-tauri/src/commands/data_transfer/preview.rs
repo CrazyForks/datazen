@@ -185,7 +185,7 @@ async fn preview_sql_file_target(
         })?;
         source_schemas.insert(table.name.clone(), schema);
     }
-    if let Some((src_adapter, _)) = &adapters {
+    if let Some((src_adapter, _)) = &structure_adapters {
         crate::data_transfer::structure::enrich_source_types(
             src_adapter.as_ref(),
             src_driver.as_ref(),
@@ -248,7 +248,7 @@ async fn preview_sql_file_target(
         .map_err(|error| CommandError::Validation(error.to_string()))?;
     }
     let empty_targets = Vec::new();
-    let inspected = crate::data_transfer::inspect_tables(
+    let mut inspected = crate::data_transfer::inspect_tables(
         &source_tables,
         &empty_targets,
         &job.tables,
@@ -257,6 +257,31 @@ async fn preview_sql_file_target(
         job.mode,
         &HashMap::new(),
     );
+    if let Some((source_adapter, _)) = structure_adapters.as_ref() {
+        crate::data_transfer::structure::validate_transfer_source_columns(
+            &job,
+            &inspected,
+            &source_schemas,
+            source_adapter.as_ref(),
+        )
+        .map_err(CommandError::from)?;
+    }
+    if let Some((source_adapter, target_adapter)) = structure_adapters.as_ref() {
+        crate::data_transfer::structure::enrich_create_new_target_types(
+            &mut inspected,
+            &source_schemas,
+            source_adapter.as_ref(),
+            target_adapter.as_ref(),
+        );
+        crate::data_transfer::structure::validate_transfer_column_types(
+            &job,
+            &inspected,
+            &source_schemas,
+            source_adapter.as_ref(),
+            target_adapter.as_ref(),
+        )
+        .map_err(CommandError::from)?;
+    }
     if matches!(
         job.mode,
         crate::data_transfer::TransferMode::Structure

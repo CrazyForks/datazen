@@ -165,6 +165,7 @@ pub fn inspect_tables(
                 source_columns,
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
                 recordset: mapping.recordset.clone(),
@@ -187,6 +188,7 @@ pub fn inspect_tables(
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: Some(format!(
                     "source table '{}' not found",
                     mapping.source_table
@@ -212,6 +214,7 @@ pub fn inspect_tables(
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: Some(format!(
                     "source '{}' is not a base table",
                     mapping.source_table
@@ -250,6 +253,7 @@ pub fn inspect_tables(
                 source_columns,
                 target_columns: Vec::new(),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: None,
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
                 recordset: mapping.recordset.clone(),
@@ -280,6 +284,7 @@ pub fn inspect_tables(
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: Some(reason),
                 source_row_count: source_row_counts.get(&mapping.source_table).copied(),
                 recordset: mapping.recordset.clone(),
@@ -302,6 +307,7 @@ pub fn inspect_tables(
                 source_columns: source_column_names(source_schemas, &mapping.source_table),
                 target_columns: target_column_names(target_schemas, &mapping.target_table),
                 source_column_types: HashMap::new(),
+                target_column_types: HashMap::new(),
                 incompatible_reason: Some(format!(
                     "target '{}' is not a base table",
                     mapping.target_table
@@ -338,6 +344,7 @@ pub fn inspect_tables(
             source_columns: source_column_names(source_schemas, &mapping.source_table),
             target_columns: target_column_names(target_schemas, &mapping.target_table),
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: source_row_counts.get(&mapping.source_table).copied(),
             recordset: mapping.recordset.clone(),
@@ -365,6 +372,7 @@ pub fn inspect_tables(
             source_columns: source_column_names(source_schemas, &table.name),
             target_columns: Vec::new(),
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: source_row_counts.get(&table.name).copied(),
             recordset: None,
@@ -389,6 +397,7 @@ pub fn inspect_tables(
             source_columns: Vec::new(),
             target_columns: target_column_names(target_schemas, &table.name),
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -396,6 +405,16 @@ pub fn inspect_tables(
     }
 
     for result in &mut results {
+        result.target_column_types = target_schemas
+            .get(result.target_table.as_str())
+            .map(|schema| {
+                schema
+                    .columns
+                    .iter()
+                    .map(|column| (column.name.clone(), column.data_type.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
         if result.source_table.is_empty() {
             continue;
         }
@@ -512,6 +531,34 @@ mod tests {
                 .map(|mapping| mapping.source_column.as_str())
                 .collect::<Vec<_>>(),
             vec!["id", "active"]
+        );
+    }
+
+    #[test]
+    fn inspect_results_retain_native_types_for_existing_target_columns() {
+        let source_tables = vec![table("payments")];
+        let target_tables = vec![table("payments")];
+        let source_schemas =
+            HashMap::from([("payments".into(), schema(&[("amount", "numeric(18,4)")]))]);
+        let target_schemas =
+            HashMap::from([("payments".into(), schema(&[("amount", "decimal(12,2)")]))]);
+
+        let results = inspect_tables(
+            &source_tables,
+            &target_tables,
+            &[],
+            &source_schemas,
+            &target_schemas,
+            TransferMode::Data,
+            &HashMap::new(),
+        );
+
+        assert_eq!(
+            results[0]
+                .target_column_types
+                .get("amount")
+                .map(String::as_str),
+            Some("decimal(12,2)")
         );
     }
 }

@@ -8,6 +8,40 @@ use std::sync::Arc;
 
 /// Converts native column metadata into IR (used for the *source* side of a sync).
 pub trait SyncSourceAdapter: Send + Sync {
+    /// Validate one source column for Data Transfer before any target write.
+    ///
+    /// This is intentionally separate from the Data Sync key contract and is
+    /// only called by the heterogeneous Data Transfer planner/executor. The
+    /// default keeps existing adapters source-compatible and behavior-neutral.
+    fn validate_transfer_source_column(&self, _column: &ColumnSchema) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Whether this source column is represented only by its native type name
+    /// in the transfer IR. Targets may preserve it only when they can prove the
+    /// same native type exists. This signal is Data Transfer-only.
+    fn transfer_source_type_is_native_only(
+        &self,
+        _column: &ColumnSchema,
+        _source_ir: &IRColumn,
+    ) -> bool {
+        false
+    }
+
+    /// Maximum source text size in bytes when the source type has a finite
+    /// documented bound. Used only by Data Transfer to compare an existing or
+    /// planned target type before writes. `None` means the adapter has no
+    /// transfer-specific bound to contribute.
+    fn transfer_source_text_limit_bytes(&self, _column: &ColumnSchema) -> Option<u64> {
+        None
+    }
+
+    /// Whether this source type needs a collation-preserving target mapping
+    /// that the source adapter cannot prove from its column metadata.
+    fn transfer_source_requires_collation_preservation(&self, _column: &ColumnSchema) -> bool {
+        false
+    }
+
     /// Describe the equality and total-order semantics that Data Sync may use
     /// for this column.  The default is conservative: an adapter must opt a
     /// key type in before the host can compare or page it.
@@ -149,6 +183,53 @@ pub trait SyncSourceAdapter: Send + Sync {
 pub trait SyncTargetAdapter: Send + Sync {
     /// Render an `IRType` as a native DDL type string.
     fn ir_type_to_native(&self, ir_type: &IRType) -> String;
+
+    /// Data Transfer-only type renderer. Defaults to the shared renderer so
+    /// existing Data Sync and Schema Diff behavior is unchanged.
+    fn transfer_ir_type_to_native(&self, ir_type: &IRType) -> String {
+        self.ir_type_to_native(ir_type)
+    }
+
+    /// Whether a default is valid for a Data Transfer-created column. The
+    /// shared default policy remains the fallback for existing adapters.
+    fn transfer_allows_column_default(&self, ir_type: &IRType) -> bool {
+        self.allows_column_default(ir_type)
+    }
+
+    /// Whether an explicit native type is known to support a Data Transfer
+    /// default. `None` means the adapter cannot prove the native type's
+    /// default semantics; Transfer then rejects the default before writing.
+    /// Shared DDL callers continue using `allows_column_default`.
+    fn transfer_native_type_allows_column_default(&self, _native_type: &str) -> Option<bool> {
+        None
+    }
+
+    /// Data Transfer-only fallback for a type whose source default cannot be
+    /// represented directly. Returning `None` makes the transfer planner fail
+    /// closed instead of narrowing or dropping the source default.
+    fn transfer_default_capable_type_for(&self, ir_type: &IRType) -> Option<IRType> {
+        self.default_capable_type_for(ir_type)
+    }
+
+    /// Validate a source-to-target column mapping for Data Transfer before
+    /// any target write. `target_native_type` is populated from the inspected
+    /// target catalog for existing tables and from the reviewed mapping for
+    /// CREATE plans. `creating_target` distinguishes schema portability from
+    /// data-only compatibility with an existing table.
+    ///
+    /// The default is a no-op so this does not alter Data Sync or Schema Diff.
+    fn validate_transfer_column_type(
+        &self,
+        _source_column: &ColumnSchema,
+        _source_ir: &IRColumn,
+        _source_text_limit_bytes: Option<u64>,
+        _source_requires_collation_preservation: bool,
+        _source_type_is_native_only: bool,
+        _target_native_type: Option<&str>,
+        _creating_target: bool,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Render an `IRDefault` as the content of a `DEFAULT` clause.
     /// Return `None` to omit the clause entirely (e.g. for auto-increment columns

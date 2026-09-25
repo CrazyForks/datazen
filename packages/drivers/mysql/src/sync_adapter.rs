@@ -66,6 +66,88 @@ fn parse_precision(s: &str, prefix: &str) -> (u8, u8) {
     (0, 0)
 }
 
+fn parse_decimal_capacity(native: &str, prefix: &str) -> Result<Option<(u32, u32)>, String> {
+    let lower = native.trim().to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix(prefix) else {
+        return Ok(None);
+    };
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let Some(args) = rest
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return Err(format!(
+            "cannot prove numeric precision for source type '{native}'"
+        ));
+    };
+    let parts: Vec<_> = args.split(',').map(str::trim).collect();
+    if parts.is_empty() || parts.len() > 2 {
+        return Err(format!(
+            "cannot prove numeric precision for source type '{native}'"
+        ));
+    }
+    let precision = parts[0]
+        .parse::<u32>()
+        .map_err(|_| format!("cannot prove numeric precision for source type '{native}'"))?;
+    let scale = parts
+        .get(1)
+        .map(|value| value.parse::<i32>())
+        .transpose()
+        .map_err(|_| format!("cannot prove numeric scale for source type '{native}'"))?
+        .unwrap_or(0);
+    if scale < 0 {
+        return Err(format!(
+            "source numeric type '{native}' uses a negative scale that MySQL cannot preserve"
+        ));
+    }
+    Ok(Some((precision, scale as u32)))
+}
+
+fn mysql_text_capacity_bytes(native: &str) -> Option<u64> {
+    let normalized = native.trim().to_ascii_lowercase();
+    let (base, args) = normalized
+        .split_once('(')
+        .map(|(base, args)| (base.trim(), args.split(')').next().unwrap_or_default()))
+        .unwrap_or((normalized.as_str(), ""));
+    match base {
+        "tinytext" | "tinyblob" => Some(255),
+        "text" | "blob" => Some(65_535),
+        "mediumtext" | "mediumblob" => Some(16_777_215),
+        "longtext" | "longblob" => Some(4_294_967_295),
+        "char" | "varchar" => args
+            .split(',')
+            .next()
+            .and_then(|length| length.trim().parse::<u64>().ok())
+            .and_then(|length| length.checked_mul(4))
+            .map(|bytes| bytes.min(65_535)),
+        _ => None,
+    }
+}
+
+fn mysql_integer_capacity(native: &str) -> Option<(u8, bool)> {
+    let normalized = native.trim().to_ascii_lowercase();
+    let unsigned = normalized.contains("unsigned") || normalized.contains("zerofill");
+    let base = normalized
+        .split('(')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches(" unsigned")
+        .trim_end_matches(" zerofill");
+    let bits = match base {
+        "tinyint" => 8,
+        "smallint" => 16,
+        "mediumint" => 24,
+        "int" | "integer" => 32,
+        "bigint" => 64,
+        _ => return None,
+    };
+    Some((bits, unsigned))
+}
+
 fn parse_mysql_default(raw: &str) -> Option<IRDefault> {
     let d = raw.trim();
     if d.is_empty() {
@@ -168,6 +250,31 @@ fn mysql_index_column_max_bytes(ir_type: &IRType, native: &str) -> Result<usize,
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for MysqlSyncAdapter {
+    fn transfer_source_text_limit_bytes(&self, column: &ColumnSchema) -> Option<u64> {
+        mysql_text_capacity_bytes(&column.data_type)
+    }
+
+    fn transfer_source_requires_collation_preservation(&self, column: &ColumnSchema) -> bool {
+        let native = column.data_type.trim().to_ascii_lowercase();
+        let base = native.split('(').next().unwrap_or_default().trim();
+        matches!(
+            base,
+            "char"
+                | "character"
+                | "varchar"
+                | "character varying"
+                | "nchar"
+                | "nvarchar"
+                | "tinytext"
+                | "text"
+                | "mediumtext"
+                | "longtext"
+                | "enum"
+                | "set"
+        ) || native.starts_with("national char")
+            || native.starts_with("national varchar")
+    }
+
     fn sync_key_order_expression(
         &self,
         quoted_column: &str,
@@ -358,11 +465,214 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
     fn default_capable_type_for(&self, ir_type: &IRType) -> Option<IRType> {
         match ir_type {
             IRType::Text | IRType::Other(_) => Some(IRType::Varchar {
-                // utf8mb4 row-limit friendly max; PG text longer than this may truncate.
+                // Shared sync/schema-diff renderer behavior; Data Transfer
+                // uses the stricter transfer_default_capable_type_for below.
                 length: Some(16_383),
             }),
             _ => None,
         }
+    }
+
+    fn transfer_ir_type_to_native(&self, ir_type: &IRType) -> String {
+        match ir_type {
+            IRType::Varchar { length: None } | IRType::Text => "LONGTEXT".into(),
+            _ => self.ir_type_to_native(ir_type),
+        }
+    }
+
+    fn transfer_allows_column_default(&self, ir_type: &IRType) -> bool {
+        if matches!(ir_type, IRType::Text | IRType::Varchar { length: None }) {
+            false
+        } else {
+            self.allows_column_default(ir_type)
+        }
+    }
+
+    fn transfer_default_capable_type_for(&self, ir_type: &IRType) -> Option<IRType> {
+        match ir_type {
+            IRType::Text | IRType::Varchar { length: None } | IRType::Other(_) => None,
+            _ => self.default_capable_type_for(ir_type),
+        }
+    }
+
+    fn transfer_native_type_allows_column_default(&self, native_type: &str) -> Option<bool> {
+        let normalized = native_type.trim().to_ascii_lowercase();
+        let base = normalized
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .next()
+            .unwrap_or_default();
+        match base {
+            "tinytext" | "text" | "mediumtext" | "longtext" | "tinyblob" | "blob"
+            | "mediumblob" | "longblob" | "json" | "geometry" | "point" | "linestring"
+            | "polygon" | "multipoint" | "multilinestring" | "multipolygon"
+            | "geometrycollection" => Some(false),
+            "char" | "varchar" | "binary" | "varbinary" | "tinyint" | "smallint" | "mediumint"
+            | "int" | "integer" | "bigint" | "decimal" | "numeric" | "float" | "double"
+            | "real" | "date" | "time" | "datetime" | "timestamp" | "year" | "bit" | "enum"
+            | "set" => Some(true),
+            _ => None,
+        }
+    }
+
+    fn validate_transfer_column_type(
+        &self,
+        source_column: &ColumnSchema,
+        source_ir: &IRColumn,
+        source_text_limit_bytes: Option<u64>,
+        source_requires_collation_preservation: bool,
+        source_type_is_native_only: bool,
+        target_native_type: Option<&str>,
+        creating_target: bool,
+    ) -> Result<(), String> {
+        let native_source = source_column.data_type.trim();
+        let lower_source = native_source.to_ascii_lowercase();
+        if source_type_is_native_only {
+            return Err(format!(
+                "source type '{native_source}' is represented only by its native name and has no supported MySQL mapping; convert custom types such as PostgreSQL enums to a portable scalar type at the source before transferring"
+            ));
+        }
+        let source_integer_bits = match &source_ir.ir_type {
+            IRType::Bool | IRType::Int8 => Some(8),
+            IRType::Int16 => Some(16),
+            IRType::Int32 => Some(32),
+            IRType::Int64 => Some(64),
+            _ => None,
+        };
+        if let Some(source_bits) = source_integer_bits {
+            let target_native = match target_native_type
+                .map(str::trim)
+                .filter(|native| !native.is_empty())
+            {
+                Some(native) => native.to_string(),
+                None if creating_target => self.transfer_ir_type_to_native(&source_ir.ir_type),
+                None => {
+                    return Err(
+                        "target integer type could not be inspected; preview the existing target schema before transferring".into(),
+                    );
+                }
+            };
+            let (target_bits, unsigned) = mysql_integer_capacity(&target_native).ok_or_else(|| {
+                format!("target type '{target_native}' cannot prove an integer range compatible with '{native_source}'")
+            })?;
+            if unsigned || target_bits < source_bits {
+                return Err(format!(
+                    "target type '{target_native}' cannot preserve the signed range of source type '{native_source}'"
+                ));
+            }
+        }
+        let decimal_source = if lower_source.starts_with("numeric") {
+            parse_decimal_capacity(native_source, "numeric")?
+        } else if lower_source.starts_with("decimal") {
+            parse_decimal_capacity(native_source, "decimal")?
+        } else if let IRType::Decimal { precision, scale } = &source_ir.ir_type {
+            (*precision > 0).then_some((u32::from(*precision), u32::from(*scale)))
+        } else {
+            None
+        };
+        if lower_source == "numeric" || lower_source == "decimal" {
+            if decimal_source.is_none() {
+                return Err(format!(
+                    "unbounded {native_source} cannot be represented exactly by MySQL DECIMAL (maximum precision 65 and scale 30)"
+                ));
+            }
+        }
+        if let Some((precision, scale)) = decimal_source {
+            if precision == 0 || precision > 65 || scale > 30 || scale > precision {
+                return Err(format!(
+                    "source numeric type '{native_source}' exceeds MySQL DECIMAL capacity (precision 65, scale 30)"
+                ));
+            }
+            let target_native = match target_native_type
+                .map(str::trim)
+                .filter(|native| !native.is_empty())
+            {
+                Some(native) => native.to_string(),
+                None if creating_target => self.transfer_ir_type_to_native(&source_ir.ir_type),
+                None => {
+                    return Err(
+                        "target numeric type could not be inspected; preview the existing target schema before transferring".into(),
+                    );
+                }
+            };
+            let lower_target = target_native.to_ascii_lowercase();
+            let target_capacity = if lower_target.starts_with("decimal") {
+                parse_decimal_capacity(&target_native, "decimal")?
+            } else if lower_target.starts_with("numeric") {
+                parse_decimal_capacity(&target_native, "numeric")?
+            } else {
+                None
+            }
+            .ok_or_else(|| {
+                format!(
+                    "target type '{target_native}' cannot preserve exact numeric values; map it to a sufficiently wide DECIMAL"
+                )
+            })?;
+            let (target_precision, target_scale) = target_capacity;
+            if target_precision < precision
+                || target_scale < scale
+                || target_precision.saturating_sub(target_scale) < precision.saturating_sub(scale)
+            {
+                return Err(format!(
+                    "target type '{target_native}' is narrower than source numeric type '{native_source}'"
+                ));
+            }
+        }
+
+        match &source_ir.ir_type {
+            IRType::Time {
+                with_timezone: true,
+            }
+            | IRType::Timestamp {
+                with_timezone: true,
+            } => {
+                return Err(format!(
+                    "MySQL {native_source} has no timezone-preserving column type; convert the source to a timezone-free value before transfer"
+                ));
+            }
+            _ => {}
+        }
+
+        if matches!(
+            source_ir.ir_type,
+            IRType::Text | IRType::Varchar { .. } | IRType::Char { .. }
+        ) {
+            if creating_target && source_requires_collation_preservation {
+                return Err(format!(
+                    "source type '{native_source}' requires collation preservation, but MySQL column collation equivalence is not represented or proven; choose a source/target collation mapping with explicit support before creating the table"
+                ));
+            }
+            let target_native = match target_native_type
+                .map(str::trim)
+                .filter(|native| !native.is_empty())
+            {
+                Some(native) => native.to_string(),
+                None if creating_target => self.transfer_ir_type_to_native(&source_ir.ir_type),
+                None => {
+                    return Err(
+                        "target string type could not be inspected; preview the existing target schema before transferring".into(),
+                    );
+                }
+            };
+            let available_bytes = mysql_text_capacity_bytes(&target_native).ok_or_else(|| {
+                format!("cannot prove target string capacity for type '{target_native}'")
+            })?;
+            if let Some(required_bytes) = source_text_limit_bytes {
+                if available_bytes < required_bytes {
+                    return Err(format!(
+                        "target type '{target_native}' holds at most {available_bytes} bytes, below the source type's {required_bytes}-byte limit"
+                    ));
+                }
+            }
+            if !creating_target {
+                return Err(format!(
+                    "target column '{target_native}' character set/collation was not inspected, so its byte capacity and character conversion cannot be proven; inspect the target column charset/collation or use a structure transfer with an explicitly supported mapping"
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn format_literal(&self, value: &Option<Value>, _ir_type: &IRType) -> String {
@@ -414,7 +724,7 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
     }
 
     fn validate_index_column_type(&self, column: &IRColumn) -> Result<(), String> {
-        let native = self.ir_type_to_native(&column.ir_type);
+        let native = self.transfer_ir_type_to_native(&column.ir_type);
         let base_type = native
             .trim()
             .split('(')
@@ -446,7 +756,7 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
         let mut key_bytes = 0usize;
         for column in columns {
             self.validate_index_column_type(column)?;
-            let native = self.ir_type_to_native(&column.ir_type);
+            let native = self.transfer_ir_type_to_native(&column.ir_type);
             let column_bytes = mysql_index_column_max_bytes(&column.ir_type, &native)?;
             key_bytes = key_bytes
                 .checked_add(column_bytes)
@@ -532,6 +842,18 @@ mod tests {
         MysqlSyncAdapter { is_mariadb: false }
     }
 
+    fn ir_column(name: &str, ir_type: IRType) -> IRColumn {
+        IRColumn {
+            name: name.into(),
+            ir_type,
+            nullable: true,
+            default_expr: None,
+            is_primary_key: false,
+            is_auto_increment: false,
+            comment: None,
+        }
+    }
+
     #[test]
     fn mysql_tinyint1_is_bool() {
         let ir = adapter().column_to_ir(&col("active", "tinyint(1)"), None);
@@ -613,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn mysql_text_with_default_maps_to_varchar() {
+    fn mysql_unbounded_text_does_not_fall_back_to_a_narrower_default_type() {
         let a = adapter();
         assert_eq!(
             a.default_capable_type_for(&IRType::Text),
@@ -621,12 +943,300 @@ mod tests {
                 length: Some(16_383)
             })
         );
+        assert_eq!(a.transfer_default_capable_type_for(&IRType::Text), None);
+        assert_eq!(
+            a.transfer_default_capable_type_for(&IRType::Varchar { length: None }),
+            None
+        );
+        assert!(a.allows_column_default(&IRType::Varchar { length: None }));
+        assert!(!a.transfer_allows_column_default(&IRType::Varchar { length: None }));
+        assert_eq!(
+            a.transfer_default_capable_type_for(&IRType::Other("VARCHAR(64)".into())),
+            None,
+            "an explicit native type must never be rewritten to a fallback type"
+        );
+        assert_eq!(
+            a.transfer_native_type_allows_column_default("VARCHAR(64)"),
+            Some(true)
+        );
+        assert_eq!(
+            a.transfer_native_type_allows_column_default("LONGTEXT"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn mysql_source_marks_character_columns_for_collation_preservation() {
+        let adapter = adapter();
+        for data_type in [
+            "varchar(64)",
+            "char(8)",
+            "text",
+            "tinytext",
+            "enum('active','disabled')",
+            "set('read','write')",
+        ] {
+            assert!(
+                adapter.transfer_source_requires_collation_preservation(&col("value", data_type)),
+                "{data_type} must fail closed when its column collation is unavailable"
+            );
+        }
+        for data_type in ["integer", "varbinary(32)", "blob"] {
+            assert!(
+                !adapter.transfer_source_requires_collation_preservation(&col("value", data_type)),
+                "{data_type} is not a character-collated MySQL type"
+            );
+        }
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_rejects_existing_string_targets_with_unknown_charset() {
+        let adapter = adapter();
+        let error = adapter
+            .validate_transfer_column_type(
+                &col("label", "character varying(100)"),
+                &ir_column("label", IRType::Varchar { length: Some(100) }),
+                Some(400),
+                true,
+                false,
+                Some("VARCHAR(255)"),
+                false,
+            )
+            .expect_err("uninspected target charset cannot prove source capacity/conversion");
+        assert!(
+            error.contains("character set/collation was not inspected"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_rejects_unbounded_and_overflow_numeric() {
+        let adapter = adapter();
+        let unbounded = adapter
+            .validate_transfer_column_type(
+                &col("amount", "numeric"),
+                &ir_column(
+                    "amount",
+                    IRType::Decimal {
+                        precision: 0,
+                        scale: 0,
+                    },
+                ),
+                None,
+                false,
+                false,
+                Some("DECIMAL(65,30)"),
+                true,
+            )
+            .unwrap_err();
+        assert!(unbounded.contains("unbounded numeric"), "{unbounded}");
+
+        let overflow = adapter
+            .validate_transfer_column_type(
+                &col("amount", "numeric(256,2)"),
+                &ir_column(
+                    "amount",
+                    IRType::Decimal {
+                        precision: 0,
+                        scale: 2,
+                    },
+                ),
+                None,
+                false,
+                false,
+                Some("DECIMAL(65,30)"),
+                true,
+            )
+            .unwrap_err();
+        assert!(
+            overflow.contains("exceeds MySQL DECIMAL capacity"),
+            "{overflow}"
+        );
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_rejects_source_native_only_types() {
+        let adapter = adapter();
+        let error = adapter
+            .validate_transfer_column_type(
+                &col("mood", "mood"),
+                &ir_column("mood", IRType::Other("mood".into())),
+                None,
+                false,
+                true,
+                Some("mood"),
+                true,
+            )
+            .unwrap_err();
+        assert!(error.contains("no supported MySQL mapping"), "{error}");
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_treats_zerofill_targets_as_unsigned() {
+        let adapter = adapter();
+        let error = adapter
+            .validate_transfer_column_type(
+                &col("id", "integer"),
+                &ir_column("id", IRType::Int32),
+                None,
+                false,
+                false,
+                Some("INT ZEROFILL"),
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            error.contains("cannot preserve the signed range"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_compares_exact_decimal_capacity() {
+        let adapter = adapter();
+        let source = col("amount", "numeric(18,4)");
+        let source_ir = ir_column(
+            "amount",
+            IRType::Decimal {
+                precision: 18,
+                scale: 4,
+            },
+        );
+        adapter
+            .validate_transfer_column_type(
+                &source,
+                &source_ir,
+                None,
+                false,
+                false,
+                Some("DECIMAL(20,6)"),
+                false,
+            )
+            .expect("wider exact DECIMAL target preserves source values");
+        let error = adapter
+            .validate_transfer_column_type(
+                &source,
+                &source_ir,
+                None,
+                false,
+                false,
+                Some("DECIMAL(18,5)"),
+                false,
+            )
+            .expect_err("wider scale with less integer capacity is narrower");
+        assert!(error.contains("narrower"), "{error}");
+        let missing_target = adapter
+            .validate_transfer_column_type(&source, &source_ir, None, false, false, None, false)
+            .expect_err("data-only numeric mappings require an inspected target type");
+        assert!(
+            missing_target.contains("target numeric type"),
+            "{missing_target}"
+        );
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_rejects_narrow_or_uninspected_integer_targets() {
+        let adapter = adapter();
+        let source = col("id", "integer");
+        let source_ir = ir_column("id", IRType::Int32);
+        let narrow = adapter
+            .validate_transfer_column_type(
+                &source,
+                &source_ir,
+                None,
+                false,
+                false,
+                Some("SMALLINT"),
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            narrow.contains("cannot preserve the signed range"),
+            "{narrow}"
+        );
+
+        let missing = adapter
+            .validate_transfer_column_type(&source, &source_ir, None, false, false, None, false)
+            .unwrap_err();
+        assert!(
+            missing.contains("target integer type could not be inspected"),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn mysql_transfer_preflight_rejects_timezone_and_narrow_text_types() {
+        let adapter = adapter();
+        for ir_type in [
+            IRType::Time {
+                with_timezone: true,
+            },
+            IRType::Timestamp {
+                with_timezone: true,
+            },
+        ] {
+            let error = adapter
+                .validate_transfer_column_type(
+                    &col("occurred_at", "timestamp with time zone"),
+                    &ir_column("occurred_at", ir_type),
+                    None,
+                    false,
+                    false,
+                    Some("DATETIME"),
+                    true,
+                )
+                .unwrap_err();
+            assert!(error.contains("no timezone-preserving"), "{error}");
+        }
+
+        let source = col("body", "text");
+        let text_ir = ir_column("body", IRType::Text);
+        let pg_text_limit = Some(1_073_741_823);
+        let error = adapter
+            .validate_transfer_column_type(
+                &source,
+                &text_ir,
+                pg_text_limit,
+                false,
+                false,
+                Some("TEXT"),
+                false,
+            )
+            .unwrap_err();
+        assert!(error.contains("below the source type's"), "{error}");
+        adapter
+            .validate_transfer_column_type(
+                &source,
+                &text_ir,
+                pg_text_limit,
+                false,
+                false,
+                Some("LONGTEXT"),
+                true,
+            )
+            .expect("LONGTEXT preserves PostgreSQL's maximum text size");
+        let collation_error = adapter
+            .validate_transfer_column_type(
+                &source,
+                &text_ir,
+                pg_text_limit,
+                true,
+                false,
+                Some("LONGTEXT"),
+                true,
+            )
+            .unwrap_err();
+        assert!(
+            collation_error.contains("collation equivalence"),
+            "{collation_error}"
+        );
     }
 
     #[test]
     fn mysql_text_column_default_not_allowed() {
         let a = adapter();
         assert!(!a.allows_column_default(&IRType::Text));
+        assert!(a.allows_column_default(&IRType::Varchar { length: None }));
         assert!(!a.allows_column_default(&IRType::Blob));
         assert!(!a.allows_column_default(&IRType::Json));
         assert!(a.allows_column_default(&IRType::Varchar { length: Some(100) }));
@@ -647,6 +1257,12 @@ mod tests {
             a.ir_type_to_native(&IRType::Varchar { length: None }),
             "VARCHAR(255)"
         );
+        assert_eq!(
+            a.transfer_ir_type_to_native(&IRType::Varchar { length: None }),
+            "LONGTEXT"
+        );
+        assert_eq!(a.ir_type_to_native(&IRType::Text), "TEXT");
+        assert_eq!(a.transfer_ir_type_to_native(&IRType::Text), "LONGTEXT");
         assert_eq!(
             a.ir_type_to_native(&IRType::Binary { length: Some(16) }),
             "VARBINARY(16)"

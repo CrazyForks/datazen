@@ -385,6 +385,7 @@ fn inspected(name: &str, mappings: Vec<ColumnMapping>) -> TableInspectResult {
         source_columns: vec![],
         target_columns: vec![],
         source_column_types: HashMap::new(),
+        target_column_types: HashMap::new(),
         incompatible_reason: None,
         source_row_count: None,
         recordset: None,

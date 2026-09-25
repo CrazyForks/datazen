@@ -609,7 +609,28 @@ pub(crate) fn create_table_sql_with_target(
     if let Some(mapping) = mapping {
         super::structure::apply_column_type_overrides(&mut ir, mapping, target_adapter)?;
     }
-    Ok(crate::transfer::ddl::build_create_table_ddl_ref(
+    for column in &ir.columns {
+        if let Some(default) = &column.default_expr {
+            if matches!(default, IRDefault::RawExpression(_))
+                || target_adapter.format_default(default).is_none()
+            {
+                return Err(TransferError::unsupported(format!(
+                    "default on '{}.{}' cannot be rendered by the SQL-file target without loss",
+                    table.source_table, column.name
+                )));
+            }
+            if !crate::transfer::ddl::transfer_column_default_is_supported(
+                &column.ir_type,
+                target_adapter,
+            ) {
+                return Err(TransferError::unsupported(format!(
+                    "default on '{}.{}' cannot be represented by the SQL-file target type",
+                    table.source_table, column.name
+                )));
+            }
+        }
+    }
+    Ok(crate::transfer::ddl::build_transfer_create_table_ddl_ref(
         &ir,
         target_adapter,
         &target_table_ref(target_driver, job, &table.target_table),
@@ -791,6 +812,30 @@ pub async fn execute_with_target(
         return Err(TransferError::validation(
             "SQL file target requires both source and target IR adapters",
         ));
+    }
+    if let Some(source_adapter) = source_adapter {
+        super::structure::validate_transfer_source_columns(
+            job,
+            inspected,
+            source_schemas,
+            source_adapter,
+        )?;
+        if let Some(target_adapter) = target_adapter {
+            super::structure::validate_transfer_column_types(
+                job,
+                inspected,
+                source_schemas,
+                source_adapter,
+                target_adapter,
+            )?;
+        }
+        validate_target_ir(
+            source_adapter,
+            source_driver,
+            target_driver,
+            source_schemas,
+            inspected,
+        )?;
     }
     validate_target_dialect_job(job)?;
     if let Some(target) = job.sql_file_target.as_ref() {
@@ -1183,6 +1228,7 @@ mod tests {
             source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -1299,6 +1345,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -1337,6 +1384,78 @@ mod tests {
         assert!(
             sql.contains("INSERT INTO `users` (`id`, `is_enabled`) VALUES (7, 1)"),
             "{sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_sql_file_ddl_preserves_varchar_override_default_and_rejects_longtext() {
+        let target_driver = datazen_driver_mysql::MysqlDriver::new(false);
+        let source_adapter = PgSyncAdapter;
+        let target_adapter = MysqlSyncAdapter { is_mariadb: false };
+        let (table, mut schema) = structure_table("records", "records_copy", &[("id", "date")]);
+        schema.columns[0].default_value = Some("'2024-01-01'::date".into());
+
+        let make_job = |native_type: &str| {
+            let table_mapping = TableMapping {
+                source_table: "records".into(),
+                target_table: "records_copy".into(),
+                create_new: true,
+                enabled: true,
+                column_mappings: vec![ColumnMapping {
+                    source_column: "id".into(),
+                    target_column: "id".into(),
+                    skip: false,
+                    target_native_type: Some(native_type.into()),
+                }],
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            };
+            TransferJob {
+                source: super::super::model::Endpoint {
+                    db_session_id: "source".into(),
+                    database: "source_db".into(),
+                    schema: Some("public".into()),
+                },
+                target: None,
+                sql_file_target: Some(super::super::model::SqlFileTarget {
+                    file_token: "opaque".into(),
+                    database_type: Some("mysql".into()),
+                    database: None,
+                    schema: None,
+                    encoding: None,
+                    compression: None,
+                }),
+                mode: TransferMode::Structure,
+                write_mode: WriteMode::Insert,
+                tables: vec![table_mapping],
+                options: Default::default(),
+            }
+        };
+
+        let error = create_table_sql_with_target(
+            &source_adapter,
+            &target_adapter,
+            &target_driver,
+            &make_job("LONGTEXT"),
+            &table,
+            &schema,
+        )
+        .expect_err("SQL-file CREATE must reject a default that LONGTEXT cannot store");
+        assert!(error.to_string().contains("default on 'records.id'"));
+
+        let ddl = create_table_sql_with_target(
+            &source_adapter,
+            &target_adapter,
+            &target_driver,
+            &make_job("VARCHAR(64)"),
+            &table,
+            &schema,
+        )
+        .expect("SQL-file CREATE can preserve the VARCHAR default");
+        assert!(
+            ddl.contains("`id` VARCHAR(64) NOT NULL DEFAULT '2024-01-01'"),
+            "{ddl}"
         );
     }
 
@@ -1406,6 +1525,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,
@@ -1747,6 +1867,7 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: Vec::new(),
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
             recordset: None,

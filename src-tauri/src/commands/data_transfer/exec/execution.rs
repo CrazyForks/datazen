@@ -350,6 +350,14 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         )
         .await
         .map_err(CommandError::from)?;
+        crate::data_transfer::structure::validate_transfer_column_types(
+            &job,
+            &inspected,
+            &source_schemas,
+            adapters.src_source.as_ref(),
+            adapters.tgt_target.as_ref(),
+        )
+        .map_err(CommandError::from)?;
         if matches!(
             job.mode,
             TransferMode::Structure | TransferMode::StructureAndData
