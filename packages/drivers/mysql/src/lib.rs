@@ -7,6 +7,7 @@ use datazen_driver_api::*;
 mod admin_commands;
 mod migration;
 mod mysql;
+mod schema_scope_mapping;
 mod sql_target;
 mod structure;
 mod sync_adapter;

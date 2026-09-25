@@ -1,6 +1,7 @@
 //! Dialect-neutral schema migration contracts exposed by the driver API.
 
 use crate::schema_objects::ObjectKind;
+use crate::schema_scope_mapping::{SchemaObjectScopeDependency, SchemaObjectScopeMapping};
 use crate::{CheckConstraint, ColumnSchema, ForeignKeyInfo, IndexInfo, TableOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1202,6 +1203,21 @@ pub struct MigrationStatement {
 
 pub trait MigrationRenderer: Send + Sync {
     fn render(&self, operation: &MigrationOperation) -> Result<MigrationStatement, String>;
+
+    /// Map a schema object's definition and exact dependencies from one scope
+    /// into another when the driver can prove the dialect-specific rewrite.
+    /// Returning `None` means this renderer does not support scope mapping.
+    /// The host validates the returned identities against the supplied pairs.
+    fn map_schema_object_scope(
+        &self,
+        _kind: ObjectKind,
+        _source_scope: &str,
+        _target_scope: &str,
+        _definition: &str,
+        _dependencies: &[SchemaObjectScopeDependency],
+    ) -> Result<Option<SchemaObjectScopeMapping>, String> {
+        Ok(None)
+    }
 }
 
 pub trait MigrationCapabilities: Send + Sync {

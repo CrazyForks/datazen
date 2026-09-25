@@ -14,7 +14,7 @@ use datazen_driver_api::{
     validate_object_definition_with_identity, validate_sequence_definition_with_identity,
     validate_type_definition_with_identity, validate_view_definition, MigrationCapabilities,
     MigrationRenderer, MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationType,
-    MigrationView, ObjectKind,
+    MigrationView, MySqlViewMetadata, ObjectKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -34,6 +34,9 @@ pub struct SchemaObjectSnapshot {
     /// Structured sequence usage metadata retained for ownership split and
     /// source-object stale validation.
     pub sequence_dependency_usages: Option<Vec<SequenceDependencyUsage>>,
+    /// Creation-semantic metadata for MySQL views. Missing metadata blocks
+    /// cross-database view mapping because rendering preserves only the body.
+    pub mysql_view_metadata: Option<MySqlViewMetadata>,
 }
 
 impl SchemaObjectSnapshot {
@@ -48,6 +51,7 @@ impl SchemaObjectSnapshot {
             definition: definition.to_owned(),
             dependencies: None,
             sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -68,6 +72,7 @@ impl SchemaObjectSnapshot {
             definition: definition.to_owned(),
             dependencies: None,
             sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -88,6 +93,7 @@ impl SchemaObjectSnapshot {
             definition: definition.to_owned(),
             dependencies: None,
             sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -102,6 +108,7 @@ impl SchemaObjectSnapshot {
             definition: definition.to_owned(),
             dependencies: None,
             sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -116,11 +123,17 @@ impl SchemaObjectSnapshot {
             definition: definition.to_owned(),
             dependencies: None,
             sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
     pub fn with_dependencies(mut self, dependencies: Vec<SchemaObjectIdentity>) -> Self {
         self.dependencies = Some(dependencies);
+        self
+    }
+
+    pub fn with_mysql_view_metadata(mut self, metadata: MySqlViewMetadata) -> Self {
+        self.mysql_view_metadata = Some(metadata);
         self
     }
 

@@ -16,6 +16,7 @@ pub mod reviewed;
 pub mod types;
 pub mod unified;
 mod unified_objects;
+pub(crate) mod unified_scope;
 mod unified_sequence;
 mod unified_type_validation;
 mod unified_validation;

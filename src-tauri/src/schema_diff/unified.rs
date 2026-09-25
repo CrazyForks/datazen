@@ -13,6 +13,7 @@ use super::{
     operations::MigrationOperation,
     types::*,
     unified_objects::{diff_schema_objects_to_operations, operation_node_key},
+    unified_scope::{map_source_objects_for_target_scope, MySqlViewScopeContext},
     unified_sequence::{render_sequence_phase, split_owned_sequence_operations},
     unified_validation::{
         empty_plan, operation_creates_or_replaces_identity, operation_drops_identity,
@@ -104,6 +105,56 @@ pub fn build_unified_schema_diff_plan_with_components(
     renderer: &dyn MigrationRenderer,
     capabilities: &dyn MigrationCapabilities,
 ) -> SchemaDiffPlan {
+    let inferred_source_scope = source_objects
+        .first()
+        .and_then(|object| object.schema.as_deref());
+    build_unified_schema_diff_plan_with_source_scope(
+        table_pairs,
+        target_only_tables,
+        source_objects,
+        target_objects,
+        target_catalog_objects,
+        source_table_dependencies,
+        target_catalog,
+        target_catalog_complete,
+        target_dependency_tables,
+        source_dialect,
+        target_dialect,
+        target_schema,
+        target_database,
+        allow_destructive,
+        include_indexes,
+        type_overrides,
+        renderer,
+        capabilities,
+        inferred_source_scope,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_unified_schema_diff_plan_with_source_scope(
+    table_pairs: &[(String, TableSchema, TableSchema)],
+    target_only_tables: &[String],
+    source_objects: &[SchemaObjectSnapshot],
+    target_objects: &[SchemaObjectSnapshot],
+    target_catalog_objects: &[SchemaObjectSnapshot],
+    source_table_dependencies: &[SchemaObjectDependencySnapshot],
+    target_catalog: &[SchemaObjectIdentity],
+    target_catalog_complete: bool,
+    target_dependency_tables: &[(String, TableSchema)],
+    source_dialect: &str,
+    target_dialect: &str,
+    target_schema: Option<&str>,
+    target_database: Option<&str>,
+    allow_destructive: bool,
+    include_indexes: bool,
+    type_overrides: &[ColumnTypeOverride],
+    renderer: &dyn MigrationRenderer,
+    capabilities: &dyn MigrationCapabilities,
+    configured_source_scope: Option<&str>,
+    target_view_context: Option<&MySqlViewScopeContext>,
+) -> SchemaDiffPlan {
     let source_dialect = normalize_dialect(source_dialect);
     let target_dialect = normalize_dialect(target_dialect);
     let mut requirements = Vec::new();
@@ -131,8 +182,42 @@ pub fn build_unified_schema_diff_plan_with_components(
     } else {
         target_database
     };
+    if target_dialect == "mysql" {
+        for object in target_objects
+            .iter()
+            .filter(|object| object.kind == datazen_driver_api::ObjectKind::View)
+        {
+            if let Err(reason) =
+                super::unified_scope::validate_mysql_view_snapshot_creation_semantics(
+                    object,
+                    target_view_context,
+                )
+            {
+                requirements.push(unsupported(object.identity().display_key(), reason));
+            }
+        }
+    }
+    let (planned_source_objects, scope_requirements) = map_source_objects_for_target_scope(
+        source_objects,
+        table_pairs,
+        &target_dialect,
+        configured_source_scope,
+        target_object_scope,
+        target_view_context,
+        renderer,
+    );
+    requirements.extend(scope_requirements);
+    if !requirements.is_empty() {
+        return empty_plan(
+            &source_dialect,
+            &target_dialect,
+            labels,
+            warnings,
+            requirements,
+        );
+    }
     if let Some(target_scope) = target_object_scope {
-        for source_object in source_objects {
+        for source_object in &planned_source_objects {
             if source_object
                 .schema
                 .as_deref()
@@ -148,7 +233,7 @@ pub fn build_unified_schema_diff_plan_with_components(
                 ));
             }
         }
-        for source_object in source_objects {
+        for source_object in &planned_source_objects {
             if target_objects.iter().any(|target_object| {
                 target_object.kind == source_object.kind
                     && target_object.name == source_object.name
@@ -220,7 +305,7 @@ pub fn build_unified_schema_diff_plan_with_components(
     }
 
     let object_batch = diff_schema_objects_to_operations(
-        source_objects,
+        &planned_source_objects,
         target_objects,
         &source_dialect,
         &target_dialect,
@@ -234,7 +319,7 @@ pub fn build_unified_schema_diff_plan_with_components(
     let (sequence_phase_edges, sequence_requirements) = split_owned_sequence_operations(
         &mut operations,
         &mut object_transitions,
-        source_objects,
+        &planned_source_objects,
         target_objects,
         source_table_dependencies,
         &target_dialect,

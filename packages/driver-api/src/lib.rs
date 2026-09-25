@@ -17,6 +17,7 @@ pub mod schema_dependencies;
 pub mod schema_migration;
 pub mod schema_object_commands;
 pub mod schema_objects;
+pub mod schema_scope_mapping;
 pub mod sql_dump;
 pub mod sql_split;
 pub mod sql_target;
@@ -61,8 +62,11 @@ pub use schema_object_commands::{
     schema_object_command_definitions,
 };
 pub use schema_objects::{
-    dialect_family, list_objects_sql, list_privileges_sql, object_ddl_sql,
-    object_ddl_sql_with_metadata, DatabaseObject, ObjectKind, PrivilegeGrant,
+    dialect_family, list_objects_sql, list_privileges_sql, mysql_show_create_view_sql,
+    object_ddl_sql, object_ddl_sql_with_metadata, DatabaseObject, ObjectKind, PrivilegeGrant,
+};
+pub use schema_scope_mapping::{
+    MySqlViewMetadata, SchemaObjectScopeDependency, SchemaObjectScopeMapping,
 };
 pub use sql_dump::{RestoreSession, RestoreStatementGuard};
 pub use sql_split::{SqlStatementScanner, Utf8ChunkDecoder};

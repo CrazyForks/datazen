@@ -485,6 +485,59 @@ fn checked_ddl_decodes_only_valid_utf8_bytes() {
 }
 
 #[test]
+fn mysql_view_metadata_is_extracted_as_required_creation_semantics() {
+    let result = QueryResult {
+        columns: vec![
+            col("ddl"),
+            col("view_definer"),
+            col("view_security_type"),
+            col("view_check_option"),
+            col("view_character_set_client"),
+            col("view_collation_connection"),
+        ],
+        rows: vec![vec![
+            Some(Value::String("SELECT 1".into())),
+            Some(Value::String("migrator@localhost".into())),
+            Some(Value::String("DEFINER".into())),
+            Some(Value::String("NONE".into())),
+            Some(Value::String("utf8mb4".into())),
+            Some(Value::String("utf8mb4_0900_ai_ci".into())),
+        ]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+    let show_create = QueryResult {
+        columns: vec![col("Create View")],
+        rows: vec![vec![Some(Value::String(
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1".into(),
+        ))]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+
+    let metadata = extract_mysql_view_metadata(&result, &show_create).unwrap();
+    assert_eq!(metadata.algorithm, "UNDEFINED");
+    assert!(!metadata.has_explicit_column_list);
+    assert_eq!(metadata.definer, "migrator@localhost");
+    assert_eq!(metadata.security_type, "DEFINER");
+    assert_eq!(metadata.check_option, "NONE");
+    assert_eq!(metadata.character_set_client, "utf8mb4");
+    assert_eq!(metadata.collation_connection, "utf8mb4_0900_ai_ci");
+
+    let non_default_show_create = QueryResult {
+        columns: vec![col("Create View")],
+        rows: vec![vec![Some(Value::String(
+            "CREATE ALGORITHM=MERGE DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` (`label`) AS SELECT 1".into(),
+        ))]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+    let non_default = extract_mysql_view_metadata(&result, &non_default_show_create).unwrap();
+    assert_eq!(non_default.algorithm, "MERGE");
+    assert!(non_default.has_explicit_column_list);
+}
+
+#[test]
 fn parse_privilege_list_skips_incomplete_rows() {
     let result = QueryResult {
         columns: vec![col("grantee"), col("schema"), col("name"), col("privilege")],

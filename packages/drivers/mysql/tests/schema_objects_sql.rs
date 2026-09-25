@@ -3,7 +3,7 @@
 use datazen_driver_api::schema_dependencies::view_dependencies_sql;
 use datazen_driver_api::schema_object_commands::parse_object_list;
 use datazen_driver_api::schema_objects::{
-    list_objects_sql, list_privileges_sql, object_ddl_sql, ObjectKind,
+    list_objects_sql, list_privileges_sql, mysql_show_create_view_sql, object_ddl_sql, ObjectKind,
 };
 use datazen_driver_api::{ColumnInfo, QueryResult, Value};
 
@@ -49,7 +49,16 @@ fn view_queries_return_view_body_metadata_contract() {
     assert!(list.contains("TABLE_SCHEMA AS `schema`"));
     let ddl = object_ddl_sql("mysql", ObjectKind::View, "active_users", None).unwrap();
     assert!(ddl.contains("VIEW_DEFINITION AS ddl"));
+    assert!(ddl.contains("DEFINER AS view_definer"));
+    assert!(ddl.contains("SECURITY_TYPE AS view_security_type"));
+    assert!(ddl.contains("CHECK_OPTION AS view_check_option"));
+    assert!(ddl.contains("CHARACTER_SET_CLIENT AS view_character_set_client"));
+    assert!(ddl.contains("COLLATION_CONNECTION AS view_collation_connection"));
     assert!(ddl.contains("TABLE_NAME = 'active_users'"));
+    assert_eq!(
+        mysql_show_create_view_sql("active`users", Some("source`db")),
+        "SHOW CREATE VIEW `source``db`.`active``users`"
+    );
 }
 
 #[test]
