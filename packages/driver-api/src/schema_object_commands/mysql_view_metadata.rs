@@ -1,6 +1,9 @@
 use super::{column_index, value_as_ddl_text};
 use crate::types::{DriverError, QueryResult};
-use sqlparser::ast::{GranteeName, ObjectName, ObjectNamePart, Query, VisitMut, VisitorMut};
+use sqlparser::ast::{
+    Expr, GranteeName, ObjectName, ObjectNamePart, Query, SelectItem,
+    SelectItemQualifiedWildcardKind, SetExpr, VisitMut, VisitorMut,
+};
 use std::ops::ControlFlow;
 
 pub(super) fn required_view_metadata_field(
@@ -62,6 +65,38 @@ struct OwnDatabaseQualifier<'a> {
 impl VisitorMut for OwnDatabaseQualifier<'_> {
     type Break = std::convert::Infallible;
 
+    fn pre_visit_query(&mut self, query: &mut Query) -> ControlFlow<Self::Break> {
+        normalize_query_wildcards(query, self.source_database);
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        match expr {
+            Expr::CompoundIdentifier(parts) => {
+                let has_own_database_qualifier = parts.len() == 3
+                    && parts
+                        .first()
+                        .is_some_and(|database| database.value == self.source_database);
+                if has_own_database_qualifier {
+                    parts.remove(0);
+                }
+            }
+            Expr::QualifiedWildcard(prefix, _) => {
+                let has_own_database_qualifier = prefix.0.len() == 2
+                    && prefix
+                        .0
+                        .first()
+                        .and_then(ObjectNamePart::as_ident)
+                        .is_some_and(|database| database.value == self.source_database);
+                if has_own_database_qualifier {
+                    prefix.0.remove(0);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+
     fn pre_visit_relation(&mut self, relation: &mut ObjectName) -> ControlFlow<Self::Break> {
         let has_own_database_qualifier = relation.0.len() == 2
             && relation
@@ -74,6 +109,46 @@ impl VisitorMut for OwnDatabaseQualifier<'_> {
         }
         ControlFlow::Continue(())
     }
+}
+
+fn normalize_query_wildcards(query: &mut Query, source_database: &str) {
+    fn normalize_set_expr(expression: &mut SetExpr, source_database: &str) {
+        match expression {
+            SetExpr::Select(select) => {
+                for projection in &mut select.projection {
+                    let SelectItem::QualifiedWildcard(
+                        SelectItemQualifiedWildcardKind::ObjectName(prefix),
+                        _,
+                    ) = projection
+                    else {
+                        continue;
+                    };
+                    let has_own_database_qualifier = prefix.0.len() == 2
+                        && prefix
+                            .0
+                            .first()
+                            .and_then(ObjectNamePart::as_ident)
+                            .is_some_and(|database| database.value == source_database);
+                    if has_own_database_qualifier {
+                        prefix.0.remove(0);
+                    }
+                }
+            }
+            SetExpr::Query(query) => normalize_query_wildcards(query, source_database),
+            SetExpr::SetOperation { left, right, .. } => {
+                normalize_set_expr(left, source_database);
+                normalize_set_expr(right, source_database);
+            }
+            SetExpr::Values(_)
+            | SetExpr::Insert(_)
+            | SetExpr::Update(_)
+            | SetExpr::Delete(_)
+            | SetExpr::Merge(_)
+            | SetExpr::Table(_) => {}
+        }
+    }
+
+    normalize_set_expr(&mut query.body, source_database);
 }
 
 pub(super) fn metadata_value_matches(
