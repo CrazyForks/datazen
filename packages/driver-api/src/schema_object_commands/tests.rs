@@ -2,6 +2,8 @@ use super::*;
 use crate::schema_dependencies::TypeDependencyUsageKind;
 use crate::types::ColumnInfo;
 
+mod dependency_route;
+
 fn col(name: &str) -> ColumnInfo {
     ColumnInfo {
         name: name.into(),
