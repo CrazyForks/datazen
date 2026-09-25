@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-009 · MySQL table dependency catalog is incomplete
 
 - **严重度**：P1（阻断）
-- **状态**：已由 Fresh Tester R7 独立复现；待单轨修复
+- **状态**：修复已提交 `b849a774`，等待 Fresh Tester 复验
 - **涉及范围**：MySQL driver `get_object_dependencies` for tables; unified planner source dependency validation
 
 ## 描述与重现
@@ -31,3 +31,18 @@ The normal MySQL positive mixed-chain journey therefore cannot reach a reviewed 
 - The separate MySQL missing-dependency journey still passes its exact target identity blocker, empty plan, disabled deploy, and pre-cleanup zero target count. This validates fail-closed behavior, not completeness for selected MySQL tables.
 - The `WITH CASCADED CHECK OPTION` journey timed out before plan assertions and did not independently establish its metadata blocker or explicit no-write assertion. It remains tracked under BUG-007.
 - See [round-7 retest report](../test-results/unified-planner-retest-r7.md). Overall track remains `FAILED`.
+
+## 修复
+
+- Added a MySQL table dependency query over `TABLES`, `TABLE_CONSTRAINTS`, `KEY_COLUMN_USAGE`, `REFERENTIAL_CONSTRAINTS`, and the referenced base-table catalog. It emits exact structured parent identities including schema, and deduplicates composite-key columns into one edge.
+- A table is complete only when exactly one selected base table is visible, all FK column metadata joins consistently, source and referenced positions span `1..N`, referenced identities are unambiguous and visible, and no orphan reference rows exist.
+- Before marking a result complete, the driver requires a direct global `SELECT` grant and rejects partial revokes. Query errors, missing/ambiguous tables, incomplete grants, and malformed catalog rows remain incomplete. Self-references are validated and omitted as intra-object edges; cross-schema identities remain qualified.
+- Added an opt-in isolated MySQL fixture for proven empty dependencies, composite FK deduplication, self-reference, two-table cycles, missing table, optional cross-schema FK, and exact cleanup. Cleanup attempts every owned drop and verifies remaining objects before reporting failures.
+
+## 编码验证
+
+- Driver API: `cargo test -p datazen-driver-api --lib` — 180 passed.
+- MySQL driver: `cargo test -p datazen-driver-mysql` — 139 passed, 3 ignored (isolated database fixtures).
+- Host: `cargo test -p datazen --lib schema_diff::` — 204 passed.
+- `cargo fmt --all -- --check` and `git diff --check` — passed.
+- The live catalog fixture was not run in the product worktree because it had no `MIGRATION_TEST_*` configuration and the default MySQL socket was unavailable. Fresh Tester must run the opt-in fixture and real WDIO journeys, then record exact cleanup evidence.

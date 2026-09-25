@@ -11,7 +11,8 @@ mod postgres_function;
 use crate::schema_objects::{dialect_family, DatabaseObject};
 
 pub use mysql::{
-    mysql_dependency_grants_are_complete, MYSQL_DEPENDENCY_GRANTS_SQL, MYSQL_UDF_CATALOG_SQL,
+    mysql_dependency_grants_are_complete, mysql_table_dependencies_sql,
+    mysql_table_dependency_grants_are_complete, MYSQL_DEPENDENCY_GRANTS_SQL, MYSQL_UDF_CATALOG_SQL,
 };
 pub use postgres::{
     postgres_sequence_dependencies_sql, postgres_table_dependencies_sql,
@@ -196,6 +197,33 @@ mod tests {
     }
 
     #[test]
+    fn mysql_table_sql_tracks_exact_composite_and_cross_schema_foreign_keys() {
+        let sql = mysql_table_dependencies_sql("child'table", Some("child_db"));
+        assert!(sql.contains("information_schema.TABLE_CONSTRAINTS"));
+        assert!(sql.contains("information_schema.KEY_COLUMN_USAGE"));
+        assert!(sql.contains("information_schema.REFERENTIAL_CONSTRAINTS"));
+        assert!(sql.contains("constraint_row.CONSTRAINT_TYPE = 'FOREIGN KEY'"));
+        assert!(sql.contains("key_column.REFERENCED_TABLE_SCHEMA"));
+        assert!(sql.contains("key_column.REFERENCED_TABLE_NAME"));
+        assert!(sql.contains("metadata.distinct_reference_positions = metadata.column_count"));
+        assert!(sql.contains(
+            "BINARY metadata.unique_constraint_schema = BINARY metadata.dependency_schema"
+        ));
+        assert!(sql.contains(
+            "BINARY referenced_table.TABLE_SCHEMA = BINARY key_column.REFERENCED_TABLE_SCHEMA"
+        ));
+        assert!(sql.contains(
+            "BINARY dependency.dependency_schema = BINARY (SELECT selected_schema FROM selected_tables)"
+        ));
+        assert!(sql.contains("BINARY TABLE_SCHEMA = BINARY 'child_db'"));
+        assert!(sql.contains("BINARY TABLE_NAME = BINARY 'child''table'"));
+        assert!(sql.contains("orphan_count"));
+
+        let current_database = mysql_table_dependencies_sql("child", None);
+        assert!(current_database.contains("BINARY TABLE_SCHEMA = BINARY DATABASE()"));
+    }
+
+    #[test]
     fn postgres_trigger_sql_returns_structured_relation_and_function_edges() {
         let sql = postgres_trigger_dependencies_sql(
             "audit'trigger",
@@ -293,5 +321,23 @@ mod tests {
             "GRANT SELECT, EXECUTE ON *.* TO 'reader'@'localhost'".into(),
             "REVOKE EXECUTE ON `private`.* FROM 'reader'@'localhost'".into(),
         ]));
+    }
+
+    #[test]
+    fn mysql_table_visibility_requires_global_select_and_no_partial_revokes() {
+        assert!(mysql_table_dependency_grants_are_complete(&[
+            "GRANT SELECT ON *.* TO 'reader'@'localhost'".into()
+        ]));
+        assert!(mysql_table_dependency_grants_are_complete(&[
+            "GRANT ALL PRIVILEGES ON *.* TO 'reader'@'localhost'".into()
+        ]));
+        assert!(!mysql_table_dependency_grants_are_complete(&[
+            "GRANT SELECT ON app.* TO 'reader'@'localhost'".into()
+        ]));
+        assert!(!mysql_table_dependency_grants_are_complete(&[
+            "GRANT SELECT ON *.* TO 'reader'@'localhost'".into(),
+            "REVOKE SELECT ON private_db.* FROM 'reader'@'localhost'".into()
+        ]));
+        assert!(!mysql_table_dependency_grants_are_complete(&[]));
     }
 }

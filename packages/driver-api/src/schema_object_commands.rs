@@ -15,7 +15,8 @@ use crate::command::{
     DriverCommandMetadata,
 };
 use crate::schema_dependencies::{
-    mysql_dependency_grants_are_complete, postgres_function_dependencies_sql,
+    mysql_dependency_grants_are_complete, mysql_table_dependencies_sql,
+    mysql_table_dependency_grants_are_complete, postgres_function_dependencies_sql,
     postgres_sequence_dependencies_sql, postgres_table_dependencies_sql,
     postgres_trigger_dependencies_sql, postgres_type_dependencies_sql, view_dependencies_sql,
     SchemaObjectDependencies, SequenceDependencyUsageKind, MYSQL_DEPENDENCY_GRANTS_SQL,
@@ -382,6 +383,7 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
         ("postgresql", ObjectKind::Function) => {
             Some(postgres_function_dependencies_sql(name, schema, signature))
         }
+        ("mysql", ObjectKind::Table) => Some(mysql_table_dependencies_sql(name, schema)),
         ("postgresql", ObjectKind::Table) => Some(postgres_table_dependencies_sql(name, schema)),
         ("postgresql", ObjectKind::Sequence) => {
             Some(postgres_sequence_dependencies_sql(name, schema))
@@ -427,6 +429,9 @@ async fn execute_object_dependencies<D: DatabaseDriver + ?Sized>(
     if family == "mysql" && kind == ObjectKind::View {
         complete = complete && mysql_dependency_catalog_visibility(driver, handle).await;
     }
+    if family == "mysql" && kind == ObjectKind::Table {
+        complete = complete && mysql_table_dependency_catalog_visibility(driver, handle).await;
+    }
 
     SchemaObjectDependencies {
         complete,
@@ -464,6 +469,21 @@ async fn mysql_dependency_catalog_visibility<D: DatabaseDriver + ?Sized>(
         .and_then(|row| value_as_string(row.get(index).and_then(Option::as_ref)))
         .and_then(|count| count.parse::<i64>().ok())
         == Some(0)
+}
+
+async fn mysql_table_dependency_catalog_visibility<D: DatabaseDriver + ?Sized>(
+    driver: &D,
+    handle: &ConnectionHandle,
+) -> bool {
+    let Ok(grants_result) = driver.query(handle, MYSQL_DEPENDENCY_GRANTS_SQL).await else {
+        return false;
+    };
+    let grant_strings = grants_result
+        .rows
+        .iter()
+        .filter_map(|row| value_as_string(row.first().and_then(Option::as_ref)))
+        .collect::<Vec<_>>();
+    mysql_table_dependency_grants_are_complete(&grant_strings)
 }
 
 fn value_as_string(value: Option<&Value>) -> Option<String> {
