@@ -75,16 +75,25 @@ pub fn build_preview(
 
         let table_mapping = table_mapping_for(job, &table.source_table);
 
-        // Resolve once, using the same renderer as both execution paths.
-        let create_sql = match (&adapters, source_schemas.get(&table.source_table)) {
-            (Some(adapters), Some(schema)) => Some(mapped_create_ddl(
-                adapters.src_adapter,
-                adapters.tgt_adapter,
-                schema,
-                table,
-                job,
-            )?),
-            _ => None,
+        // Resolve once, using the same renderer as both execution paths, but
+        // only for operations that actually create structure. In particular,
+        // Data + Insert into an existing table must not be blocked by source
+        // DDL properties (collation, comments, generated columns, etc.) that
+        // are irrelevant to the data-only write. DropCreateInsert is itself a
+        // structure operation even when selected with Data mode.
+        let create_sql = if needs_structure || job.write_mode == WriteMode::DropCreateInsert {
+            match (&adapters, source_schemas.get(&table.source_table)) {
+                (Some(adapters), Some(schema)) => Some(mapped_create_ddl(
+                    adapters.src_adapter,
+                    adapters.tgt_adapter,
+                    schema,
+                    table,
+                    job,
+                )?),
+                _ => None,
+            }
+        } else {
+            None
         };
         let create_ddl_for_table = |_source_table: &str, _target_table: &str| create_sql.clone();
 
@@ -395,6 +404,92 @@ mod tests {
         .unwrap();
         assert!(preview.can_execute, "{:?}", preview.block_reason);
         assert!(preview.block_reason.is_none());
+    }
+
+    #[test]
+    fn data_only_preview_skips_unportable_source_table_options() {
+        let job = sample_job(TransferMode::Data, WriteMode::Insert);
+        let inspected = vec![TableInspectResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            status: TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![super::super::model::ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id".into()],
+            source_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: Some(1),
+            recordset: None,
+        }];
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "users".into(),
+            TableSchema {
+                table_name: "users".into(),
+                columns: vec![datazen_driver_api::ColumnSchema {
+                    name: "id".into(),
+                    data_type: "int".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                }],
+                primary_keys: vec!["id".into()],
+                indexes: vec![],
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: datazen_driver_api::TableOptions {
+                    charset: Some("utf8mb4".into()),
+                    collation: Some("utf8mb4_0900_ai_ci".into()),
+                    comment: Some("source-only comment".into()),
+                    ..Default::default()
+                },
+            },
+        );
+
+        let preview = build_preview(
+            &job,
+            &inspected,
+            &SyncPairing::Ir,
+            &schemas,
+            true,
+            Some(TransferPreviewAdapters {
+                src_adapter: &DummySource,
+                tgt_adapter: &DummyTarget,
+            }),
+        )
+        .expect("data-only preview does not render source DDL");
+
+        assert!(preview.can_execute, "{:?}", preview.block_reason);
+        assert!(preview.block_reason.is_none());
+        assert!(preview.ddl.is_empty());
+        assert_eq!(preview.write_plans.len(), 1);
+
+        let mut drop_create_job = job;
+        drop_create_job.write_mode = WriteMode::DropCreateInsert;
+        drop_create_job.options.confirmed_destructive = true;
+        let error = build_preview(
+            &drop_create_job,
+            &inspected,
+            &SyncPairing::Ir,
+            &schemas,
+            true,
+            Some(TransferPreviewAdapters {
+                src_adapter: &DummySource,
+                tgt_adapter: &DummyTarget,
+            }),
+        )
+        .expect_err("DropCreateInsert still validates source DDL options");
+        assert!(error.to_string().contains("source table collation"));
     }
 
     #[test]

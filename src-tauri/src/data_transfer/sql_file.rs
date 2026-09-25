@@ -472,6 +472,11 @@ pub(crate) fn validate_target_dialect_job(job: &TransferJob) -> Result<(), Trans
         return Ok(());
     };
     target.validate_qualifiers()?;
+    if job.mode == TransferMode::Data && job.write_mode == WriteMode::DropCreateInsert {
+        return Err(TransferError::unsupported(
+            "SQL-file Data-only transfer cannot use Drop + Create + Insert because Data mode does not emit CREATE TABLE; select Structure + Data or choose Insert/Truncate + Insert",
+        ));
+    }
     if target.has_explicit_scope()
         && job.tables.iter().any(|mapping| {
             mapping.enabled
@@ -1542,6 +1547,34 @@ mod tests {
         assert!(error
             .to_string()
             .contains("explicit target database/schema"));
+    }
+
+    #[test]
+    fn sql_file_data_only_drop_create_is_rejected_before_export() {
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "s".into(),
+                database: "source".into(),
+                schema: None,
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: Some("postgresql".into()),
+                database: None,
+                schema: None,
+                encoding: None,
+                compression: None,
+            }),
+            mode: TransferMode::Data,
+            write_mode: WriteMode::DropCreateInsert,
+            tables: vec![],
+            options: Default::default(),
+        };
+
+        let error = validate_target_dialect_job(&job).unwrap_err();
+        assert!(error.to_string().contains("does not emit CREATE TABLE"));
+        assert!(error.to_string().contains("Structure + Data"));
     }
 
     #[test]

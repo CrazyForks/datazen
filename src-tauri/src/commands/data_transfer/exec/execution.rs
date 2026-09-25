@@ -353,7 +353,8 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         if matches!(
             job.mode,
             TransferMode::Structure | TransferMode::StructureAndData
-        ) {
+        ) || job.write_mode == crate::data_transfer::WriteMode::DropCreateInsert
+        {
             crate::data_transfer::structure::validate_source_structure_metadata(
                 adapters.src_source.as_ref(),
                 src_driver.as_ref(),
