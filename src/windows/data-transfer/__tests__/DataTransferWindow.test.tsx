@@ -134,13 +134,11 @@ const pgTgt: ConnectionConfig = {
   sslMode: 'disable',
 };
 
-const redisTgt: ConnectionConfig = {
+const unsupportedTgt: ConnectionConfig = {
   ...pgTgt,
-  id: 'redis-tgt',
-  name: 'Redis Tgt',
-  databaseType: 'redis',
-  database: '0',
-  port: 6379,
+  id: 'unsupported-tgt',
+  name: 'Unsupported Tgt',
+  databaseType: 'kiwi',
 };
 
 const inspectRows: TransferTableResult[] = [
@@ -406,16 +404,34 @@ describe('DataTransferWindow', () => {
     );
   });
 
+  it('[tester] reports missing endpoints when saving a named profile', async () => {
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await dismissLimitationsDialog();
+
+    fireEvent.change(screen.getByTestId('data-transfer-profile-name'), {
+      target: { value: 'Needs endpoints' },
+    });
+    fireEvent.click(screen.getByTestId('data-transfer-profile-save'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('data-transfer-error')).toHaveTextContent(
+        'transfer.profile.missingFields',
+      ),
+    );
+    expect(transferCommands.saveProfile).not.toHaveBeenCalled();
+  });
+
   it('[tester] marks unsupported target families and explains the pairing', async () => {
     urlParamMock.mockImplementation((name) => {
       const params: Record<string, string> = {
         sourceId: 'pg-src',
-        targetId: 'redis-tgt',
+        targetId: 'unsupported-tgt',
       };
       return params[name] ?? null;
     });
     invokeMock.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_connections') return [pgSrc, redisTgt];
+      if (cmd === 'get_connections') return [pgSrc, unsupportedTgt];
       if (cmd === 'connect_dedicated') {
         return `dedicated-${args?.connectionId as string}-${String(args?.database ?? 'default')}`;
       }
@@ -425,12 +441,17 @@ describe('DataTransferWindow', () => {
 
     const { DataTransferWindow } = await import('../DataTransferWindow');
     render(<DataTransferWindow />);
-    await waitFor(() =>
-      expect(screen.getByTestId('data-transfer-target')).toHaveTextContent('Redis Tgt'),
-    );
     await dismissLimitationsDialog();
+    await waitFor(() => expect(screen.getByTestId('data-transfer-path')).toBeTruthy());
 
-    expect(screen.getByTestId('data-transfer-path')).toHaveTextContent(/redis/i);
+    fireEvent.click(within(screen.getByTestId('data-transfer-target')).getAllByRole('button')[0]);
+    const options = await waitFor(() => screen.getAllByTestId('select-option'));
+    expect(
+      options.some(
+        (option) =>
+          option.getAttribute('aria-disabled') === 'true' && Boolean(option.getAttribute('title')),
+      ),
+    ).toBe(true);
     expect(screen.getByTestId('data-transfer-next')).toBeDisabled();
   });
 
@@ -494,6 +515,61 @@ describe('DataTransferWindow', () => {
       'transfer.destination.sqlCompressionGzip',
     );
     expect(screen.getByText('transfer.profile.chooseFile')).toBeTruthy();
+  });
+
+  it('[tester] updates an existing saved profile without replacing its identity', async () => {
+    const profile: TransferProfile = {
+      version: 1,
+      id: 'profile-update',
+      name: 'Nightly export',
+      sourceConnectionId: 'pg-src',
+      targetConnectionId: null,
+      sourceDatabase: 'src',
+      targetDatabase: null,
+      sourceSchema: null,
+      targetSchema: null,
+      destinationMode: 'sqlFile',
+      sqlFileDialect: 'mysql',
+      sqlFileEncoding: 'utf8Bom',
+      sqlFileCompression: 'gzip',
+      sqlFileDatabase: 'analytics',
+      sqlFileSchema: null,
+      mode: 'data',
+      writeMode: 'insert',
+      tables: [],
+      options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    vi.mocked(transferCommands.getProfiles).mockResolvedValue([profile]);
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await dismissLimitationsDialog();
+    await waitFor(() => expect(screen.getByTestId('data-transfer-profile-select')).toBeTruthy());
+    await pickSelect('data-transfer-profile-select', 'Nightly export');
+    fireEvent.click(screen.getByTestId('data-transfer-profile-load'));
+    await waitFor(() => expect(screen.getByText('transfer.profile.chooseFile')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'common.ok' }));
+    await waitFor(() => expect(screen.queryByTestId('data-transfer-error')).toBeNull());
+    fireEvent.click(screen.getByTestId('data-transfer-destination-sql-file'));
+    await waitFor(() =>
+      expect(screen.getByTestId('data-transfer-destination-sql-file')).toHaveTextContent(
+        'transfer.destination.sqlFileSelected',
+      ),
+    );
+    fireEvent.click(screen.getByTestId('data-transfer-profile-save'));
+
+    await waitFor(() => expect(transferCommands.saveProfile).toHaveBeenCalledTimes(1));
+    expect(transferCommands.saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'profile-update',
+        name: 'Nightly export',
+        createdAt: '2026-09-21T00:00:00.000Z',
+        destinationMode: 'sqlFile',
+        sqlFileDatabase: 'analytics',
+        sqlFileSchema: null,
+      }),
+    );
   });
 
   it('opens limitations dialog on first visit', async () => {
@@ -1005,6 +1081,16 @@ describe('DataTransferWindow', () => {
     fireEvent.change(batchInput, { target: { value: '25' } });
     expect(batchInput).toHaveValue(25);
     expect(screen.queryByTestId('data-transfer-batch-size-error')).toBeNull();
+    fireEvent.change(batchInput, { target: { value: '501' } });
+    expect(batchInput).toHaveValue(501);
+    expect(screen.getByTestId('data-transfer-batch-size-error')).toBeTruthy();
+    expect(screen.getByTestId('data-transfer-next')).toBeDisabled();
+    fireEvent.change(batchInput, { target: { value: '1.5' } });
+    expect(batchInput).toHaveValue(1.5);
+    expect(screen.getByTestId('data-transfer-batch-size-error')).toBeTruthy();
+    fireEvent.change(batchInput, { target: { value: '500' } });
+    expect(batchInput).toHaveValue(500);
+    expect(screen.queryByTestId('data-transfer-batch-size-error')).toBeNull();
     const stopOnError = within(
       screen.getByText('transfer.stopOnError').closest('label')!,
     ).getByRole('checkbox');
@@ -1295,6 +1381,14 @@ describe('DataTransferWindow', () => {
           success: true,
           outcome: 'committed',
         },
+        {
+          sourceTable: 'audit',
+          targetTable: 'audit',
+          rowsInserted: 0,
+          success: false,
+          outcome: 'rolledBack',
+          error: 'audit insert rolled back',
+        },
       ],
     });
     await advanceToPreviewStep('truncateInsert');
@@ -1309,6 +1403,7 @@ describe('DataTransferWindow', () => {
       'data-outcome',
       'partiallyApplied',
     );
+    expect(screen.getByText(/transfer.tableOutcome.rolledBack/)).toBeTruthy();
   });
 
   it('[tester] renders a cancelled execution distinctly from success', async () => {
