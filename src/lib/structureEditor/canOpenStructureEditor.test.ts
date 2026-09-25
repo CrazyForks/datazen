@@ -22,24 +22,6 @@ const sqlTableMeta = {
   connectionView: 'sql',
   databaseFieldType: 'name',
   connectionForm: 'standard',
-  qbTypeCategories: {
-    integer: 'numeric',
-    numeric: 'numeric',
-    decimal: 'numeric',
-    double: 'numeric',
-    real: 'numeric',
-    boolean: 'boolean',
-    date: 'temporal',
-    timestamp: 'temporal',
-    time: 'temporal',
-    varchar: 'text',
-    char: 'text',
-    text: 'text',
-    json: 'jsonb',
-    jsonb: 'jsonb',
-    bytea: 'binary',
-    binary: 'binary',
-  },
 } satisfies DatabaseTypeMeta;
 
 describe('canOpenStructureEditor', () => {

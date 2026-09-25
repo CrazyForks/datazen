@@ -1,6 +1,6 @@
 # Visual Query Builder
 
-> Status: **v3.5** — Navicat-style statement list, covered by four E2E journeys.
+> Status: **v3.5, SQL Editor Pro feature** — Navicat-style statement list, covered by four Pro E2E journeys. Community Edition does not include the Builder entry.
 > v3.5: **one chip per item in every clause** — clicking a chip (column, table,
 > condition, group-by key, order-by key) opens that item's dialog, its × removes
 > it. FROM tables and WHERE/HAVING conditions became chips too.
@@ -21,7 +21,7 @@ editor's job.
 
 ## How to Access
 
-1. Open a database connection and open a **Query** tab.
+1. Use a Pro edition with SQL Editor Pro activated, open a database connection and open a **Query** tab. Community Edition keeps the normal SQL editor and does not show the Builder entry.
 2. Toolbar → **More** menu (`query-toolbar-more-menu-trigger`) → **Visual Builder**
    (`more-menu-visual-builder`).
 3. The builder **replaces the query content area** (it is not stacked above the
@@ -228,7 +228,7 @@ Each line connects the two specific columns it relates, at that column's row.
 ### Validation
 
 Invalid states are **named and blocked** rather than emitted as confident-looking
-SQL. `validateQuery` (`components/query-builder/validation.ts`) reports:
+SQL. `validateQuery` (`packages/pro-extensions/sql-editor-pro/src/components/query-builder/validation.ts`) reports:
 
 | Diagnostic                                | Blocks OK | Why                                                                                                   |
 | ----------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
@@ -316,22 +316,22 @@ Shortcuts are active only while the builder is visible.
 
 ## E2E Coverage
 
-Four journeys, registered in the `query-builder` suite:
+Four journeys, registered in the Pro-only `pro-query-builder` suite:
 
 ```bash
-pnpm e2e:qb              # run all of them (uses the existing debug build)
-pnpm e2e:qb:build        # build first
+pnpm e2e:qb              # build a Pro WebDriver app, then run all four journeys
+pnpm e2e:qb:skip-build    # reuse an existing Pro WebDriver app
 pnpm e2e:qb:regression   # blast-radius guard: query panel / editor / navigator
 ```
 
 | Journey             | Spec                                                          | Covers                                                                                                                                                |
 | ------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A — normal          | `e2e/specs/journeys/visual-query-builder-journey.ts`          | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
-| B — abnormal        | `e2e/specs/journeys/visual-query-builder-edge-journey.ts`     | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                 |
-| C — high complexity | `e2e/specs/journeys/visual-query-builder-complex-journey.ts`  | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
-| D — clauses         | `e2e/specs/journeys/visual-query-builder-clauses-journey.ts`  | all six clause rows exist; WHERE/GROUP BY stay on screen with four columns selected and the whole statement fits once the canvas is collapsed; column options dialog (cancel writes nothing, OK applies); GROUP BY + ORDER BY pickers and the sort dialog's ASC/DESC; **HAVING exists only as a draft until OK** and `SUM(qty) >= 5` is committed and executed, filtering a group out of the result; `having-non-grouped` warns without blocking OK |
+| A — normal          | `packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-journey.ts`          | open from navigator → columns → tabs → splitter → collapse → WHERE → DISTINCT → OK → execute → reset → close; **A17–A20**: fixed-height card with an internally scrolling column list, height unchanged by scrolling, preview formatted / highlighted / filling the tab |
+| B — abnormal        | `packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-edge-journey.ts`     | empty state, OK never executes, replace/append/keep conflict paths, cancel rollback, no-relation hint, panel isolation                                 |
+| C — high complexity | `packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-complex-journey.ts`  | 3-table FK joins + LEFT re-type + aggregate/alias + GROUP BY + ORDER BY + DISTINCT + nested `AND (… OR …)` + IN list + LIMIT/OFFSET, then executes it; **C16**: composite FK as one trunk — axis-aligned segments, zero direction markers, a dot at both ends of each pair |
+| D — clauses         | `packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-clauses-journey.ts`  | all six clause rows exist; WHERE/GROUP BY stay on screen with four columns selected and the whole statement fits once the canvas is collapsed; column options dialog (cancel writes nothing, OK applies); GROUP BY + ORDER BY pickers and the sort dialog's ASC/DESC; **HAVING exists only as a draft until OK** and `SUM(qty) >= 5` is committed and executed, filtering a group out of the result; `having-non-grouped` warns without blocking OK |
 
-Shared drivers live in `e2e/specs/journeys/visualQueryBuilderHelpers.ts`.
+Shared drivers live in `packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visualQueryBuilderHelpers.ts`.
 
 Each journey brings up its **own disposable connection** and seeds its tables
 through the live panel. That is deliberate: the runner recreates the worker
@@ -350,18 +350,21 @@ The builder belongs to the query panel that opened it:
 
 ## Architecture
 
-- **State**: Zustand `queryBuilderStore` — canvas state plus panel-scoped view
+- **State**: the Pro extension's private Zustand store — canvas state plus panel-scoped view
   state (`openPanelId`, `bottomTab`, `canvasCollapsed`) and an entry snapshot
   used for the dirty check and cancel rollback.
 - **SQL generation**: pure `generateSql` in
-  `components/query-builder/hooks/useSqlGenerator.ts`.
-- **Join ordering**: `generateJoinClause` in `lib/sqlDialects/queryBuilder.ts`.
+  `packages/pro-extensions/sql-editor-pro/src/components/query-builder/hooks/useSqlGenerator.ts`.
+- **Join ordering**: `generateJoinClause` in
+  `packages/pro-extensions/sql-editor-pro/src/lib/sqlDialects/queryBuilder.ts`.
 - **Dialect adaptation**: `QbDialectAdapter`.
-- **Integration**: `QueryEditorSection.tsx` hosts the builder and owns the
-  commit/focus/toast behaviour; `QueryPanel.tsx` yields the result pane while
-  the builder is up.
-- **i18n**: all UI text uses `query.visualBuilder.*` (source of truth:
-  `src/locales/en/query.ts`).
+- **Integration**: Host `QueryEditorSection.tsx` supplies the active tab's schema
+  and owns commit/focus/toast behaviour; `QueryPanel.tsx` yields the result pane
+  while the Pro panel is open. CodeMirror remains mounted. The Builder writes
+  SQL into the editor and never executes it.
+- **i18n**: all UI text uses `query.visualBuilder.*` from the Pro extension's
+  `src/locales/en.ts` and `src/locales/zh-CN.ts`. The Host reads these registered
+  translations for the menu entry and completion toast.
 
 ## Foreign key prediction
 

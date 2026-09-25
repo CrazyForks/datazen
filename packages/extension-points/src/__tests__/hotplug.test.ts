@@ -13,6 +13,7 @@ import {
 } from '../lifecycle';
 import { SafeCompartmentWrapper } from '../safeCompartment';
 import { sqlEditorEnhancedEP, sqlEditorProEP } from '../sqlEditorEnhancedEP';
+import type { QueryBuilderContribution } from '../queryBuilder';
 
 interface DemoFeatures {
   label: string;
@@ -282,5 +283,27 @@ describe('EP hot-plug lifecycle (hotplug.test.ts)', () => {
     const fallbackImpl = extensionRegistry.get(sqlEditorEnhancedEP);
     expect(extensionRegistry.isEnhanced(sqlEditorEnhancedEP)).toBe(false);
     expect(fallbackImpl.createStatementDecorations?.()).toEqual([]);
+  });
+
+  it('keeps Query Builder absent in fallback and switches to the registered Pro contribution', () => {
+    const features = extensionRegistry.get(sqlEditorEnhancedEP);
+    expect(features.queryBuilder).toBeUndefined();
+
+    const panel = () => null;
+    const contribution: QueryBuilderContribution = {
+      getOpenPanelId: () => null,
+      subscribe: () => () => {},
+      openFor: () => {},
+      hideFor: () => {},
+      closeFor: () => {},
+      destroyFor: () => {},
+      Panel: panel,
+      dispose: () => {},
+    };
+    const unsub = extensionRegistry.register(sqlEditorEnhancedEP, { queryBuilder: contribution });
+
+    expect(extensionRegistry.get(sqlEditorEnhancedEP).queryBuilder).toBe(contribution);
+    unsub();
+    expect(extensionRegistry.get(sqlEditorEnhancedEP).queryBuilder).toBeUndefined();
   });
 });

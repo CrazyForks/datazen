@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type Ref } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type Ref,
+} from 'react';
 import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
@@ -14,8 +22,8 @@ import { useSchemaStore } from '../../../stores/schemaStore';
 import { QueryContextSelectors } from '../../../components/query/QueryContextSelectors';
 import { QueryExecutionStatus } from '../../../components/query/QueryExecutionStatus';
 import { Nl2SqlPanel } from '../../../components/ai/Nl2SqlPanel';
-import { QueryBuilderPanel } from '../../../components/query-builder/QueryBuilderPanel';
-import { useQueryBuilderStore } from '../../../stores/queryBuilderStore';
+import { QueryBuilderHostAdapter } from './QueryBuilderHostAdapter';
+import { useQueryBuilderContribution } from './useQueryBuilderContribution';
 import { sqlEditorEnhancedEP, useExtension } from '@datazen/extension-points';
 import { cn } from '../../../lib/cn';
 import { useI18n } from '../../../hooks/useI18n';
@@ -213,6 +221,7 @@ export function QueryEditorSection({
     (s) => s.settings.editorCompletionQuotePolicy ?? 'unquoted',
   );
   const enhanced = useExtension(sqlEditorEnhancedEP);
+  const { contribution: queryBuilder, openPanelId } = useQueryBuilderContribution();
   const editorExtensionSettings = useSettingsStore(
     (s) =>
       (s.settings.driverSettings?.['sql-editor-enhanced'] ??
@@ -221,15 +230,41 @@ export function QueryEditorSection({
   const bindParamPanelEnabled = editorExtensionSettings?.bindParamPanel !== false;
   const [isRefreshingCompletion, setIsRefreshingCompletion] = useState(false);
 
-  // ── Query Builder state ──────────────────────────────────────
-  // Panel-scoped: the builder is shown only by the query panel that opened it,
-  // so two query tabs can never mirror each other's canvas (PRD §6.4).
-  const qbOpen = useQueryBuilderStore((s) =>
-    s.openPanelId ? s.openPanelId === panelId : s.isOpen,
-  );
-  const openQbFor = useQueryBuilderStore((s) => s.openFor);
-  const closeQb = useQueryBuilderStore((s) => s.closeFor);
-  const hideQb = useQueryBuilderStore((s) => s.hideFor);
+  // The Pro contribution owns its private builder store; visibility remains
+  // scoped to the query tab that opened it.
+  const qbOpen = openPanelId === panelId;
+  const qbContextKey = JSON.stringify([
+    connectionId ?? '',
+    dbSessionId,
+    selectedDatabase ?? '',
+    selectedSchema ?? '',
+  ]);
+  const boundQbContextRef = useRef<{
+    contribution: typeof queryBuilder;
+    panelId: string;
+    contextKey: string;
+  } | null>(null);
+  const openQbForCurrentContext = useCallback(() => {
+    if (!queryBuilder) return;
+    boundQbContextRef.current = { contribution: queryBuilder, panelId, contextKey: qbContextKey };
+    queryBuilder.openFor(panelId, qbContextKey);
+  }, [queryBuilder, panelId, qbContextKey]);
+
+  // The selectors remain available while Builder is open. Rebind synchronously
+  // before paint so the Pro controller destroys the old draft before the panel
+  // can render or commit it using the newly selected database/schema props.
+  useLayoutEffect(() => {
+    if (!qbOpen || !queryBuilder) return;
+    const bound = boundQbContextRef.current;
+    if (
+      bound?.contribution === queryBuilder &&
+      bound.panelId === panelId &&
+      bound.contextKey === qbContextKey
+    ) {
+      return;
+    }
+    openQbForCurrentContext();
+  }, [qbOpen, queryBuilder, panelId, qbContextKey, openQbForCurrentContext]);
 
   // Non-blocking confirmation that the SQL landed in the editor.
   const [qbToast, setQbToast] = useState<string | null>(null);
@@ -253,11 +288,11 @@ export function QueryEditorSection({
     // The toolbar item is a visibility toggle, not a cancel: the canvas state
     // survives, so nothing is destroyed by collapsing the builder.
     if (qbOpen) {
-      hideQb();
+      queryBuilder?.hideFor();
     } else {
-      openQbFor(panelId);
+      openQbForCurrentContext();
     }
-  }, [qbOpen, hideQb, openQbFor, panelId]);
+  }, [qbOpen, queryBuilder, openQbForCurrentContext]);
 
   /** OK: write the generated SQL back, close, and focus the editor. */
   const handleQbCommit = useCallback(
@@ -265,18 +300,18 @@ export function QueryEditorSection({
       if (newSql !== null) {
         onUpdateSql(mode === 'append' ? `${sql.trimEnd()}\n${newSql}` : newSql);
       }
-      closeQb('ok');
+      queryBuilder?.closeFor('ok');
       pendingEditorFocusRef.current = true;
       setQbToast(t('query.visualBuilder.appliedToast'));
     },
-    [onUpdateSql, sql, closeQb, t],
+    [onUpdateSql, sql, queryBuilder, t],
   );
 
   /** Cancel / ×: discard the canvas changes and go back to the editor. */
   const handleQbCancel = useCallback(() => {
-    closeQb('cancel');
+    queryBuilder?.closeFor('cancel');
     pendingEditorFocusRef.current = true;
-  }, [closeQb]);
+  }, [queryBuilder]);
 
   /**
    * Prefer the editor's own selection-aware formatter (§4.2); `onFormat` stays
@@ -413,7 +448,7 @@ export function QueryEditorSection({
           onCommitTx={() => void onCommitTx()}
           onRollbackTx={() => void onRollbackTx()}
           onRefreshCompletion={() => void handleRefreshCompletion()}
-          onToggleQb={handleToggleQb}
+          onToggleQb={queryBuilder ? handleToggleQb : undefined}
           renderSnippetButton={() => (
             <SnippetMenuButton editorRef={editorRef} compact={compactToolbar} disabled={running} />
           )}
@@ -543,11 +578,15 @@ export function QueryEditorSection({
          * The builder replaces the editor area rather than stacking above it,
          * so the canvas owns the panel height (PRD §6.4 / G2).
          */}
-        {qbOpen && (
-          <QueryBuilderPanel
+        {qbOpen && queryBuilder && (
+          <QueryBuilderHostAdapter
+            contribution={queryBuilder}
             panelId={panelId}
+            connectionId={connectionId ?? ''}
             dbSessionId={dbSessionId}
-            databaseType={databaseType}
+            databaseType={databaseType ?? ''}
+            database={selectedDatabase ?? ''}
+            schema={selectedSchema ?? null}
             currentSql={sql}
             onCommit={handleQbCommit}
             onCancel={handleQbCancel}

@@ -9,5 +9,5 @@
     "`node scripts/publish-pro-prebuilt.mjs` if you also maintain the prebuilt release."
   ],
   "git": "https://github.com/flyxl/datazen-extension-sql-editor-pro.git",
-  "ref": "42320ac71173bcf3d95ec394d7b217613a521bcb"
+  "ref": "2a45c90f28041e81c948e67b9416fade8ac5472f"
 }

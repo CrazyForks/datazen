@@ -16,6 +16,7 @@ DataZen 确立了严格的开源宿主与闭源商业特权扩展物理隔离策
 │   • 源码：src/ (零 Pro 实现代码，Git 历史完全纯净)       │
 │   • 契约：packages/extension-points/ (共享扩展点接口)    │
 │   • 兜底：内置纯净基础功能 (Fallback)                   │
+│   • Query Builder：仅 Pro 激活时显示，Host 提供 query tab 数据适配 │
 └──────────────────────────┬─────────────────────────────┘
                            │ 编译期装配 / 动态激活
                            ▼
@@ -25,7 +26,7 @@ DataZen 确立了严格的开源宿主与闭源商业特权扩展物理隔离策
 │   • 本地路径：packages/pro-extensions/sql-editor-pro/  │
 │   • 协议：商业私有专有许可证 (免除 GPL 传染)             │
 │   • 职责：深度集成 CodeMirror，提供智能悬浮、函数提示、   │
-│          智能 JOIN 补全、Intention 意图操作、Paste-as-IN │
+│          智能 JOIN 补全、Intention 意图操作、Paste-as-IN、Query Builder │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -59,6 +60,8 @@ packages/pro-extensions/sql-editor-pro/
     ├── paste/                   # 智能粘贴 (Paste-as-IN) 与拖拽高亮 DropCaret
     ├── statement-gutter/        # 语句行号 Gutter 运行按钮与多语句高亮
     ├── bind-params/             # SQL 命名参数智能提取与绑定面板
+    ├── components/query-builder/ # Query Builder UI、私有 store、方言与 SQL 验证
+    ├── query-builder/           # Host contribution controller 和 E2E-only 测试 bridge
     └── locales/                 # 独立的 Pro 多语言资源 (en.ts, zh-CN.ts)
 ```
 
@@ -208,7 +211,19 @@ contributes: {
    | :--- | :--- | :--- |
    | `pnpm test:pro` | 运行 SQL Editor Pro 专属全部单元测试 | `packages/pro-extensions/sql-editor-pro` |
    | `pnpm test:unit` | 运行宿主核心单元测试（确保社区版 Fallback 完好） | `src/` 与共享 SDK |
-   | `pnpm test:scripts` | 验证驱动/Pro 构建装配脚本测试 | `scripts/__tests__/` |
+| `pnpm test:scripts` | 验证驱动/Pro 构建装配脚本测试 | `scripts/__tests__/` |
+
+Query Builder 的 UI、状态、SQL 生成、拖拽校验和专属单测均在 Pro 仓库。
+Community 不会注册其 toolbar entry，普通 Query 编辑、执行和结果区仍由 Host 提供。
+四条 WebDriver journey 从 Host 仓库通过以下命令运行：
+
+```bash
+pnpm e2e:qb              # 构建 Pro WebDriver app 并执行 pro-query-builder suite
+pnpm e2e:qb:skip-build    # 复用已构建的 Pro WebDriver app
+```
+
+Builder 的 OK 只写 SQL 回编辑器，不会执行查询；结果执行仍需要用户操作。
+生产插件包不包含 WebDriver 专用 `window.__qbTest` bridge。
 
 ---
 

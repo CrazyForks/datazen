@@ -9,7 +9,6 @@ import {
   tablesReferencedInSql,
 } from '../../lib/sqlEditorDefaults';
 import { usePanelStore } from '../../stores/panelStore';
-import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useQueryExec } from '../../hooks/useQueryExec';
 import { useSchemaStore } from '../../stores/schemaStore';
@@ -35,6 +34,7 @@ import { metadataCache } from '../../components/sql-editor/metadata/metadataCach
 import type { QueryPanelProps } from './query/contracts';
 import { QuerySidebarSection, useQueryContextPath } from './query/QuerySidebarSection';
 import { QueryEditorSection } from './query/QueryEditorSection';
+import { useQueryBuilderContribution } from './query/useQueryBuilderContribution';
 import {
   QueryTransactionModals,
   useQueryTransaction,
@@ -73,11 +73,10 @@ export function QueryPanel({
   const { t } = useI18n();
   const [confirmRetry, confirmRetryDialog] = useConfirmDialog();
   const exec = useQueryExec(panelId);
+  const { openPanelId } = useQueryBuilderContribution();
   // While the visual builder is up it replaces the whole query content area,
   // so the result pane yields its height to the canvas (PRD §6.4 / G2).
-  const qbOpenHere = useQueryBuilderStore((s) =>
-    s.openPanelId ? s.openPanelId === panelId : s.isOpen,
-  );
+  const qbOpenHere = openPanelId === panelId;
   // NOTE: the builder is torn down when the panel *tab* closes, not when this
   // component unmounts — switching tabs unmounts the inactive panel too, and
   // that must not throw its builder away. See ContentView's panel-diff effect.
