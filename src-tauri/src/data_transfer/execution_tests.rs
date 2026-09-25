@@ -7,7 +7,7 @@ use super::filter::SourceFilter;
 use super::model::*;
 use async_trait::async_trait;
 use datazen_driver_api::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -1179,6 +1179,7 @@ async fn unknown_drop_create_preamble_stops_later_tables_before_data_writes() {
         tgt_driver: &target,
         tgt_handle: &target_handle,
         source_schemas: &schemas,
+        structure_precreated: false,
     };
     let formatter = ValueFormatter::SameFamily;
     let write_started = AtomicBool::new(false);
@@ -1250,6 +1251,7 @@ async fn confirmed_drop_create_preamble_is_partial_when_begin_fails_and_can_cont
         tgt_driver: &target,
         tgt_handle: &target_handle,
         source_schemas: &schemas,
+        structure_precreated: false,
     };
     let formatter = ValueFormatter::SameFamily;
 
@@ -1545,4 +1547,55 @@ async fn same_session_catalog_and_normalized_schema_rejects_before_any_write() {
     assert_eq!(state.calls, 0);
     assert!(state.metadata_refs.is_empty());
     assert!(state.committed.is_empty());
+}
+
+#[tokio::test]
+async fn unknown_structure_ddl_fences_and_reports_every_unattempted_statement() {
+    let mut target = driver(vec![], schema(&["id"]));
+    target.execute_error_on_call = Some(1);
+    let handle = ConnectionHandle {
+        id: "target".into(),
+        pool_id: "target".into(),
+    };
+    let plan = vec![
+        DdlPreviewItem {
+            source_table: "child".into(),
+            target_table: "child_copy".into(),
+            ddl: "DROP TABLE IF EXISTS child_copy".into(),
+            kind: DdlPreviewKind::DropTable,
+            depends_on: Vec::new(),
+        },
+        DdlPreviewItem {
+            source_table: "parent".into(),
+            target_table: "parent_copy".into(),
+            ddl: "CREATE TABLE parent_copy (id INT)".into(),
+            kind: DdlPreviewKind::Table,
+            depends_on: Vec::new(),
+        },
+        DdlPreviewItem {
+            source_table: "parent".into(),
+            target_table: "parent_copy".into(),
+            ddl: "CREATE INDEX parent_idx ON parent_copy (id)".into(),
+            kind: DdlPreviewKind::Index,
+            depends_on: vec!["parent".into()],
+        },
+    ];
+
+    let results = super::structure::execute_database_structure_plan(
+        &target,
+        &handle,
+        &plan,
+        &HashSet::from(["child".into(), "parent".into()]),
+        super::structure::DatabaseStructurePhase::Prepare,
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Unknown));
+    assert!(results[1..]
+        .iter()
+        .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted)));
+    assert_eq!(target.state.lock().unwrap().execute_calls, 1);
 }

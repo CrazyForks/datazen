@@ -63,7 +63,27 @@ fn parse_sqlserver_default(raw: &str) -> Option<IRDefault> {
     {
         return Some(IRDefault::CurrentTimestamp);
     }
-    Some(IRDefault::Literal(u.to_string()))
+    let unprefixed_string = u.strip_prefix("N'").or_else(|| u.strip_prefix("n'"));
+    let hex_literal = u
+        .strip_prefix("0x")
+        .or_else(|| u.strip_prefix("0X"))
+        .is_some_and(|digits| {
+            !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_hexdigit())
+        });
+    let literal = u.parse::<i128>().is_ok()
+        || u.parse::<f64>().is_ok()
+        || matches!(u.to_ascii_lowercase().as_str(), "true" | "false" | "null")
+        || hex_literal
+        || (u.starts_with('\'') && u.ends_with('\''))
+        || unprefixed_string.is_some_and(|value| value.ends_with('\''));
+    if literal {
+        return Some(IRDefault::Literal(
+            unprefixed_string
+                .map(|value| format!("'{value}"))
+                .unwrap_or_else(|| u.to_string()),
+        ));
+    }
+    Some(IRDefault::RawExpression(u.to_string()))
 }
 
 fn base_type(raw: &str) -> String {
@@ -75,6 +95,59 @@ fn base_type(raw: &str) -> String {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for SqlServerSyncAdapter {
+    fn unsupported_transfer_structure_query(
+        &self,
+        database: &str,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<String> {
+        // SQL Server's current schema reader only exposes columns and PKs.
+        // Refuse source objects that would otherwise disappear from the
+        // transfer plan. Keep catalog qualifiers and user names safely quoted
+        // as identifiers/literals, including `]` and apostrophes.
+        let catalog = if database.trim().is_empty() {
+            String::new()
+        } else {
+            format!("[{}].", database.replace(']', "]]"))
+        };
+        let schema = schema.unwrap_or("dbo").replace('\'', "''");
+        let table = table.replace('\'', "''");
+        Some(format!(
+            "SELECT CONCAT('computed column ', c.name) AS unsupported_object \
+             FROM {catalog}sys.computed_columns c \
+             JOIN {catalog}sys.tables t ON t.object_id = c.object_id \
+             JOIN {catalog}sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE s.name = N'{schema}' AND t.name = N'{table}' \
+             UNION ALL \
+             SELECT CONCAT('secondary index ', i.name) \
+             FROM {catalog}sys.indexes i \
+             JOIN {catalog}sys.tables t ON t.object_id = i.object_id \
+             JOIN {catalog}sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE s.name = N'{schema}' AND t.name = N'{table}' \
+               AND i.index_id > 0 AND i.is_primary_key = 0 \
+             UNION ALL \
+             SELECT CONCAT('foreign key ', fk.name) \
+             FROM {catalog}sys.foreign_keys fk \
+             JOIN {catalog}sys.tables t ON t.object_id = fk.parent_object_id \
+             JOIN {catalog}sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE s.name = N'{schema}' AND t.name = N'{table}' \
+             UNION ALL \
+             SELECT CONCAT('CHECK constraint ', cc.name) \
+             FROM {catalog}sys.check_constraints cc \
+             JOIN {catalog}sys.tables t ON t.object_id = cc.parent_object_id \
+             JOIN {catalog}sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE s.name = N'{schema}' AND t.name = N'{table}' \
+             UNION ALL \
+             SELECT CONCAT('identity column ', ic.name, ' (non-default seed/increment)') \
+             FROM {catalog}sys.identity_columns ic \
+             JOIN {catalog}sys.tables t ON t.object_id = ic.object_id \
+             JOIN {catalog}sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE s.name = N'{schema}' AND t.name = N'{table}' \
+               AND (TRY_CONVERT(decimal(38,0), ic.seed_value) <> 1 \
+                    OR TRY_CONVERT(decimal(38,0), ic.increment_value) <> 1)"
+        ))
+    }
+
     fn column_to_ir(&self, column: &ColumnSchema, native_full_type: Option<&str>) -> IRColumn {
         let raw = native_full_type.unwrap_or(&column.data_type);
         let lower = base_type(raw);
@@ -230,6 +303,24 @@ impl SyncTargetAdapter for SqlServerSyncAdapter {
         format!("[{}]", name.replace(']', "]]"))
     }
 
+    fn qualify_relation(&self, database: &str, schema: Option<&str>, table: &str) -> String {
+        let quoted_table = self.quote_ident(table);
+        let quoted_schema = schema
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| self.quote_ident(value));
+        let quoted_database = (!database.trim().is_empty()).then(|| self.quote_ident(database));
+        match (quoted_database, quoted_schema) {
+            (Some(database), Some(schema)) => format!("{database}.{schema}.{quoted_table}"),
+            // SQL Server parses a two-part relation as schema.object, so a
+            // database-only scope must still include the driver's effective
+            // default schema. Data Transfer resolves this to dbo unless the
+            // endpoint/config supplies another schema.
+            (Some(database), None) => format!("{database}.[dbo].{quoted_table}"),
+            (None, Some(schema)) => format!("{schema}.{quoted_table}"),
+            (None, None) => quoted_table,
+        }
+    }
+
     fn auto_increment_keyword(&self) -> Option<&str> {
         Some("IDENTITY(1,1)")
     }
@@ -338,5 +429,47 @@ mod tests {
         assert_eq!(a.ir_type_to_native(&IRType::Int32), "INT");
         assert_eq!(a.ir_type_to_native(&IRType::Uuid), "UNIQUEIDENTIFIER");
         assert_eq!(a.auto_increment_keyword(), Some("IDENTITY(1,1)"));
+    }
+
+    #[test]
+    fn sqlserver_transfer_relation_keeps_database_and_schema_scope() {
+        assert_eq!(
+            SqlServerSyncAdapter.qualify_relation("archive", Some("dbo"), "users"),
+            "[archive].[dbo].[users]"
+        );
+        assert_eq!(
+            SqlServerSyncAdapter.qualify_relation("archive", None, "users"),
+            "[archive].[dbo].[users]"
+        );
+        assert_eq!(
+            SqlServerSyncAdapter.qualify_relation("", Some("sales"), "users"),
+            "[sales].[users]"
+        );
+    }
+
+    #[test]
+    fn sqlserver_source_preflight_rejects_unmodeled_structure_objects() {
+        let query = SqlServerSyncAdapter
+            .unsupported_transfer_structure_query("db]name", Some("sales' data"), "people's")
+            .expect("SQL Server source preflight query");
+        assert!(query.contains("[db]]name].sys.computed_columns"));
+        assert!(query.contains("s.name = N'sales'' data'"));
+        assert!(query.contains("t.name = N'people''s'"));
+        assert!(query.contains("secondary index "));
+        assert!(query.contains("foreign key "));
+        assert!(query.contains("CHECK constraint "));
+        assert!(query.contains("non-default seed/increment"));
+    }
+
+    #[test]
+    fn sqlserver_default_parser_fails_closed_for_expressions() {
+        assert_eq!(
+            parse_sqlserver_default("((N'hello'))"),
+            Some(IRDefault::Literal("'hello'".into()))
+        );
+        assert!(matches!(
+            parse_sqlserver_default("(NEXT VALUE FOR dbo.sequence)"),
+            Some(IRDefault::RawExpression(_))
+        ));
     }
 }

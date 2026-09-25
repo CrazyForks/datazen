@@ -2,7 +2,7 @@
 
 use super::ir::{IRColumn, IRDefault, IRForeignKey, IRIndex, IRTable, IRTableObjects, IRType};
 use super::key::{contract_from_column, SyncKeyContract, SyncKeyValue};
-use crate::{ColumnSchema, TableSchema, Value};
+use crate::{ColumnSchema, TableOptions, TableSchema, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -131,6 +131,18 @@ pub trait SyncSourceAdapter: Send + Sync {
     fn table_options_query(&self, _table: &str) -> Option<String> {
         None
     }
+
+    /// Optional query that returns one row per source object whose structure
+    /// is not represented in the transfer metadata model (for example a
+    /// generated column or expression/prefix index).
+    fn unsupported_transfer_structure_query(
+        &self,
+        _database: &str,
+        _schema: Option<&str>,
+        _table: &str,
+    ) -> Option<String> {
+        None
+    }
 }
 
 /// Renders IR back into native DDL fragments (used for the *target* side of a sync).
@@ -174,6 +186,20 @@ pub trait SyncTargetAdapter: Send + Sync {
         }
     }
 
+    /// Quote a table relation using the target engine's namespace rules.
+    /// The database endpoint is part of the reviewed transfer scope even when
+    /// an engine cannot express it as a relation qualifier (for example,
+    /// PostgreSQL uses the selected database connection and an optional
+    /// schema, while MySQL can qualify a relation with its database).
+    fn qualify_relation(&self, _database: &str, schema: Option<&str>, table: &str) -> String {
+        match schema {
+            Some(schema) if !schema.trim().is_empty() => {
+                format!("{}.{}", self.quote_ident(schema), self.quote_ident(table))
+            }
+            _ => self.quote_ident(table),
+        }
+    }
+
     /// Whether the target database supports inline PRIMARY KEY constraints
     /// in CREATE TABLE. OLAP engines typically do not.
     fn supports_primary_key(&self) -> bool {
@@ -184,6 +210,52 @@ pub trait SyncTargetAdapter: Send + Sync {
     /// Return `None` if the engine uses a different mechanism (e.g. PG SERIAL/IDENTITY).
     fn auto_increment_keyword(&self) -> Option<&str> {
         None
+    }
+
+    /// Whether the target accepts explicit values for identity/auto-increment
+    /// columns during INSERT. The transfer writer currently inserts mapped
+    /// source values directly and does not toggle engine-specific session
+    /// modes such as SQL Server IDENTITY_INSERT.
+    fn supports_explicit_identity_values(&self) -> bool {
+        false
+    }
+
+    /// Whether non-primary index names are local to a table on this target.
+    /// Unknown engines default to the stricter schema-wide rule so a transfer
+    /// plan cannot defer a duplicate-name failure until after writes begin.
+    fn index_names_are_table_scoped(&self) -> bool {
+        false
+    }
+
+    /// Whether foreign-key constraint names are local to a table on this
+    /// target. Unknown engines default to the stricter schema-wide rule.
+    fn foreign_key_names_are_table_scoped(&self) -> bool {
+        false
+    }
+
+    /// Whether quoted secondary-object names preserve case for uniqueness.
+    /// Engines with case-folded identifiers should keep the conservative
+    /// default; PostgreSQL quoted names are case-sensitive.
+    fn object_names_are_case_sensitive(&self) -> bool {
+        false
+    }
+
+    /// Map source catalog table options to a target CREATE suffix. The default
+    /// recognizes InnoDB as a portable transactional row-store detail and
+    /// refuses all options whose semantics cannot be represented.
+    fn render_source_table_options(
+        &self,
+        options: &TableOptions,
+    ) -> Result<Option<String>, String> {
+        if options.comment.is_some() || options.charset.is_some() {
+            return Err("table comment or character set cannot be preserved".into());
+        }
+        if let Some(engine) = options.engine.as_deref() {
+            if !engine.eq_ignore_ascii_case("innodb") {
+                return Err(format!("source table engine '{engine}' is unsupported"));
+            }
+        }
+        Ok(None)
     }
 
     /// Appended after `CREATE TABLE (...)` closing paren. Default: use `ir_table.table_options` if present.

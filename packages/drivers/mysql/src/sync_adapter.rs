@@ -74,7 +74,24 @@ fn parse_mysql_default(raw: &str) -> Option<IRDefault> {
     if d == "CURRENT_TIMESTAMP" || d == "current_timestamp()" {
         return Some(IRDefault::CurrentTimestamp);
     }
-    Some(IRDefault::Literal(d.to_string()))
+    if d.parse::<i64>().is_ok()
+        || d.parse::<f64>().is_ok()
+        || matches!(d.to_ascii_lowercase().as_str(), "true" | "false" | "null")
+        || (d.starts_with('\'') && d.ends_with('\''))
+    {
+        return Some(IRDefault::Literal(d.to_string()));
+    }
+    if d.contains('(')
+        || d.contains(')')
+        || d.contains("::")
+        || d.contains('+')
+        || d.contains('*')
+        || d.contains('/')
+        || d.contains('`')
+    {
+        return Some(IRDefault::RawExpression(d.to_string()));
+    }
+    Some(IRDefault::Literal(format!("'{}'", d.replace('\'', "''"))))
 }
 
 // ── SyncSourceAdapter ──────────────────────────────────────────────
@@ -171,6 +188,51 @@ impl SyncSourceAdapter for MysqlSyncAdapter {
             comment: column.comment.clone(),
         }
     }
+
+    fn unsupported_transfer_structure_query(
+        &self,
+        database: &str,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<String> {
+        // Hex + explicit UTF-8 conversion is independent of SQL mode, unlike
+        // backslash escaping which changes under NO_BACKSLASH_ESCAPES.
+        let catalog = if database.trim().is_empty() {
+            schema.filter(|value| !value.trim().is_empty())
+        } else {
+            Some(database)
+        };
+        let schema_expr = catalog
+            .map(mysql_utf8_hex_expression)
+            .unwrap_or_else(|| "DATABASE()".into());
+        let name_expr = mysql_utf8_hex_expression(table);
+        Some(format!(
+            "SELECT CONCAT('generated column ', COLUMN_NAME) AS unsupported_object \
+             FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = {schema_expr} AND TABLE_NAME = {name_expr} \
+               AND EXTRA LIKE '%GENERATED%' \
+             UNION ALL \
+             SELECT CONCAT('index ', INDEX_NAME, ' (prefix, functional, or descending column)') \
+             FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = {schema_expr} AND TABLE_NAME = {name_expr} \
+               AND (SUB_PART IS NOT NULL OR COLUMN_NAME IS NULL OR COLLATION = 'D') \
+             UNION ALL \
+             SELECT CONCAT('column ', c.COLUMN_NAME, ' (column-specific collation ', c.COLLATION_NAME, ')') \
+             FROM information_schema.COLUMNS c \
+             JOIN information_schema.TABLES t \
+               ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME \
+             WHERE c.TABLE_SCHEMA = {schema_expr} AND c.TABLE_NAME = {name_expr} \
+               AND c.COLLATION_NAME IS NOT NULL AND t.TABLE_COLLATION IS NOT NULL \
+               AND c.COLLATION_NAME <> t.TABLE_COLLATION \
+             UNION ALL \
+             SELECT CONCAT('table collation ', t.TABLE_COLLATION, ' (not the database default)') \
+             FROM information_schema.TABLES t \
+             JOIN information_schema.SCHEMATA s ON s.SCHEMA_NAME = t.TABLE_SCHEMA \
+             WHERE t.TABLE_SCHEMA = {schema_expr} AND t.TABLE_NAME = {name_expr} \
+               AND s.DEFAULT_COLLATION_NAME IS NOT NULL \
+               AND t.TABLE_COLLATION <> s.DEFAULT_COLLATION_NAME"
+        ))
+    }
 }
 
 // ── SyncTargetAdapter ──────────────────────────────────────────────
@@ -256,9 +318,65 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
         '`'
     }
 
+    fn qualify_relation(&self, database: &str, schema: Option<&str>, table: &str) -> String {
+        let catalog = if database.trim().is_empty() {
+            schema.filter(|value| !value.trim().is_empty())
+        } else {
+            Some(database)
+        };
+        match catalog {
+            Some(catalog) => format!("{}.{}", self.quote_ident(catalog), self.quote_ident(table)),
+            None => self.quote_ident(table),
+        }
+    }
+
     fn auto_increment_keyword(&self) -> Option<&str> {
         Some("AUTO_INCREMENT")
     }
+
+    fn supports_explicit_identity_values(&self) -> bool {
+        true
+    }
+
+    fn index_names_are_table_scoped(&self) -> bool {
+        true
+    }
+
+    fn render_source_table_options(
+        &self,
+        options: &datazen_driver_api::TableOptions,
+    ) -> Result<Option<String>, String> {
+        let mut parts = Vec::new();
+        if let Some(engine) = options.engine.as_deref() {
+            if !engine.eq_ignore_ascii_case("innodb") {
+                return Err(format!("source table engine '{engine}' is unsupported"));
+            }
+            parts.push("ENGINE=InnoDB".to_string());
+        }
+        if let Some(charset) = options.charset.as_deref() {
+            if charset.is_empty()
+                || !charset
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                return Err("source table character set is not a safe identifier".into());
+            }
+            parts.push(format!("DEFAULT CHARACTER SET={charset}"));
+        }
+        if let Some(comment) = options.comment.as_deref() {
+            parts.push(format!("COMMENT='{}'", comment.replace('\'', "''")));
+        }
+        Ok((!parts.is_empty()).then(|| parts.join(" ")))
+    }
+}
+
+fn mysql_utf8_hex_expression(value: &str) -> String {
+    let hex = value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+    format!("CONVERT(X'{hex}' USING utf8mb4)")
 }
 
 #[cfg(test)]
@@ -415,6 +533,42 @@ mod tests {
             a.format_literal(&Some(Value::Bytes(vec![0xFF])), &IRType::Blob),
             "X'ff'"
         );
+        assert!(a.index_names_are_table_scoped());
+        assert!(!a.foreign_key_names_are_table_scoped());
+    }
+
+    #[test]
+    fn mysql_structure_preflight_literals_are_sql_mode_independent() {
+        let query = adapter()
+            .unsupported_transfer_structure_query("données", None, "tbl'\\x")
+            .expect("MySQL preflight query");
+        assert!(query.contains(&mysql_utf8_hex_expression("données")));
+        assert!(query.contains(&mysql_utf8_hex_expression("tbl'\\x")));
+        assert!(!query.contains("tbl'\\x"));
+        assert!(query.contains("COLLATION = 'D'"));
+        assert!(query.contains("column-specific collation"));
+        assert!(query.contains("not the database default"));
+    }
+
+    #[test]
+    fn mysql_transfer_renders_captured_table_options_and_rejects_unknown_engine() {
+        let a = adapter();
+        let options = datazen_driver_api::TableOptions {
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            comment: Some("orders' archive".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            a.render_source_table_options(&options).unwrap().as_deref(),
+            Some("ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COMMENT='orders'' archive'")
+        );
+
+        let unsupported = datazen_driver_api::TableOptions {
+            engine: Some("MyISAM".into()),
+            ..Default::default()
+        };
+        assert!(a.render_source_table_options(&unsupported).is_err());
     }
 
     #[test]

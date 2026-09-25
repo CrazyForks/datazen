@@ -59,6 +59,10 @@ pub(crate) struct StoredTransferPlan {
     /// a second inspection, so object ordering and target mappings cannot
     /// drift between preview and publish.
     pub(crate) sql_file_structure: Option<Vec<DdlPreviewItem>>,
+    /// Database-target structure statements captured by preview. The DB
+    /// executor consumes this exact sequence so a changed source catalog or
+    /// adapter cannot silently alter object mappings after review.
+    pub(crate) database_structure: Option<Vec<DdlPreviewItem>>,
     expires_at: Instant,
     active_until: Option<Instant>,
     state: PlanState,
@@ -220,6 +224,11 @@ impl TransferPlanStore {
             .as_ref()
             .filter(|_| !preview.ddl.is_empty())
             .map(|_| preview.ddl.clone());
+        let database_structure = job
+            .target
+            .as_ref()
+            .filter(|_| !preview.ddl.is_empty())
+            .map(|_| preview.ddl.clone());
         let id = Uuid::new_v4().to_string();
         let plan = StoredTransferPlan {
             id: id.clone(),
@@ -235,6 +244,7 @@ impl TransferPlanStore {
             target_scope_fingerprint,
             target_read_only_at_preview: target_read_only,
             sql_file_structure,
+            database_structure,
             expires_at: Instant::now() + ttl,
             active_until: None,
             state: PlanState::Available,

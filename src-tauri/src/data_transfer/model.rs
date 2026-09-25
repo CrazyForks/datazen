@@ -435,6 +435,7 @@ pub enum DdlPreviewKind {
     Table,
     Index,
     ForeignKey,
+    DropTable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

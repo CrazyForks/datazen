@@ -71,6 +71,8 @@ pub struct DropCreateContext<'a> {
     pub tgt_driver: &'a dyn DatabaseDriver,
     pub tgt_handle: &'a ConnectionHandle,
     pub source_schemas: &'a HashMap<String, TableSchema>,
+    /// The immutable structure plan already performed the destructive preamble.
+    pub structure_precreated: bool,
 }
 
 pub enum ValueFormatter<'a> {

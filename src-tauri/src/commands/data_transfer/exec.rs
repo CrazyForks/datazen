@@ -117,8 +117,10 @@ async fn execute_sql_file_target(
             "SQL-file target scope changed since preview; return to comparison".into(),
         ));
     }
-    let (driver, handle, _inspected, mut schemas) =
-        load_sql_source_snapshot(state, &plan.job).await?;
+    let mut validation_job = plan.job.clone();
+    apply_selection(&mut validation_job, &request.selection);
+    let (driver, handle, inspected, mut schemas) =
+        load_sql_source_snapshot(state, &validation_job).await?;
     if driver.driver_type() != plan.source_driver_type
         || plans::driver_protocol_version(driver.as_ref()) != plan.source_driver_protocol
     {
@@ -178,6 +180,17 @@ async fn execute_sql_file_target(
     } else {
         None
     };
+    let source_structure_adapter = if let Some((source, _)) = adapters.as_ref() {
+        Some(source.clone())
+    } else if state
+        .sync_adapters
+        .ensure_type(&src_config.database_type)
+        .is_ok()
+    {
+        state.sync_adapters.get_source(&src_config.database_type)
+    } else {
+        None
+    };
     crate::data_transfer::sql_file::validate_target_dialect_job(&plan.job)
         .map_err(CommandError::from)?;
     // The preview plan fingerprints the source schemas after the optional
@@ -201,8 +214,27 @@ async fn execute_sql_file_target(
             driver.as_ref(),
             target_driver.as_ref(),
             &schemas,
+            &inspected,
         )
         .map_err(CommandError::from)?;
+    }
+    if matches!(
+        plan.job.mode,
+        crate::data_transfer::TransferMode::Structure
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        if let Some(source_adapter) = source_structure_adapter.as_ref() {
+            crate::data_transfer::structure::validate_source_structure_metadata(
+                source_adapter.as_ref(),
+                driver.as_ref(),
+                &handle,
+                &plan.job.source,
+                &schemas,
+                &inspected,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
     }
     let fingerprint =
         plans::fingerprint_schemas(plans::participating_tables(&plan.job).map(|table| {
@@ -237,8 +269,27 @@ async fn execute_sql_file_target(
             driver.as_ref(),
             target_driver.as_ref(),
             &schemas,
+            &inspected,
         )
         .map_err(CommandError::from)?;
+    }
+    if matches!(
+        job.mode,
+        crate::data_transfer::TransferMode::Structure
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        if let Some(source_adapter) = source_structure_adapter.as_ref() {
+            crate::data_transfer::structure::validate_source_structure_metadata(
+                source_adapter.as_ref(),
+                driver.as_ref(),
+                &handle,
+                &job.source,
+                &schemas,
+                &inspected,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
     }
     let cancelled = match request.job_id.as_deref() {
         Some(id) => Some(jobs::ensure_job(id).await),
@@ -411,6 +462,21 @@ async fn validate_plan_context(
         return Err(CommandError::Validation(
             "source or target schema changed since preview; return to comparison".into(),
         ));
+    }
+
+    if plan.job.mode == crate::data_transfer::TransferMode::StructureAndData
+        && plan.job.write_mode == crate::data_transfer::WriteMode::DropCreateInsert
+    {
+        if let Some(structure) = plan.database_structure.as_deref() {
+            crate::data_transfer::structure::validate_drop_create_target_dependencies(
+                tgt_driver.as_ref(),
+                &tgt_handle,
+                target,
+                structure,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
     }
 
     Ok(ValidatedTransferContext {

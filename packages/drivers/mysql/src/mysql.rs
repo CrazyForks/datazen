@@ -1106,15 +1106,32 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let engine: Option<String> = sqlx::query_scalar(
-            "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        let table_options_row = sqlx::query(
+            "SELECT t.ENGINE, collation_map.CHARACTER_SET_NAME AS TABLE_CHARSET, \
+                    NULLIF(t.TABLE_COMMENT, '') AS TABLE_COMMENT \
+             FROM information_schema.TABLES t \
+             LEFT JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY collation_map \
+               ON collation_map.COLLATION_NAME = t.TABLE_COLLATION \
+             WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?",
         )
         .bind(&db)
         .bind(Self::bare_table_name(table))
         .fetch_optional(&mut *conn)
         .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        .flatten();
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let engine = table_options_row
+            .as_ref()
+            .and_then(|row| row.try_get::<Option<String>, _>("ENGINE").ok().flatten());
+        let charset = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_CHARSET")
+                .ok()
+                .flatten()
+        });
+        let table_comment = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_COMMENT")
+                .ok()
+                .flatten()
+        });
 
         tracing::info!(%table, col_rows = col_rows.len(), idx_rows = idx_rows.len(),
             ms = t0.elapsed().as_millis() as u64,
@@ -1221,6 +1238,8 @@ impl DatabaseDriver for MysqlDriver {
                     engine.as_deref(),
                 )),
                 engine,
+                charset,
+                comment: table_comment,
                 ..TableOptions::default()
             },
         })

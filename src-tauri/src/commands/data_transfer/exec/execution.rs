@@ -2,6 +2,34 @@
 
 use super::*;
 
+fn validate_structure_selection(
+    plan: &StoredTransferPlan,
+    selection: &TransferRunSelection,
+) -> Result<(), crate::data_transfer::TransferError> {
+    let Some(structure) = plan.database_structure.as_ref() else {
+        return Ok(());
+    };
+    let selected: HashSet<String> = selected_source_tables(&plan.job, selection)
+        .into_iter()
+        .collect();
+    for item in structure.iter().filter(|item| {
+        item.kind == crate::data_transfer::model::DdlPreviewKind::ForeignKey
+            && selected.contains(&item.source_table)
+    }) {
+        if let Some(missing) = item
+            .depends_on
+            .iter()
+            .find(|dependency| !selected.contains(*dependency))
+        {
+            return Err(crate::data_transfer::TransferError::validation(format!(
+                "selected table '{}' has a foreign key that requires selected parent table '{}'",
+                item.source_table, missing
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn execute_data_transfer_impl(
     state: &AppState,
     request: TransferRunRequest,
@@ -65,6 +93,7 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
     } else {
         request.selection.clone()
     };
+    validate_structure_selection(&plan, &effective_selection).map_err(CommandError::from)?;
     if plan.job.write_mode.is_destructive()
         && !plan.job.options.confirmed_destructive
         && !request.options.confirmed_destructive
@@ -118,6 +147,7 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
             None,
         ),
     };
+    let immutable_structure = claimed.database_structure.clone();
     let mut job = claimed.job;
     apply_selection(&mut job, &effective_selection);
     let src_config = context.src_config;
@@ -320,6 +350,21 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         )
         .await
         .map_err(CommandError::from)?;
+        if matches!(
+            job.mode,
+            TransferMode::Structure | TransferMode::StructureAndData
+        ) {
+            crate::data_transfer::structure::validate_source_structure_metadata(
+                adapters.src_source.as_ref(),
+                src_driver.as_ref(),
+                &src_handle,
+                &job.source,
+                &source_schemas,
+                &inspected,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
     }
 
     let mut all_tables = Vec::new();
@@ -340,21 +385,45 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
             }
         };
 
-        let structure_results = create_target_tables_with_write_observer(
-            src_adapter,
-            tgt_adapter,
-            src_driver.as_ref(),
-            &src_handle,
-            tgt_driver.as_ref(),
-            &tgt_handle,
-            &job,
-            &inspected,
-            &source_schemas,
-            cancelled.clone(),
-            write_started,
-        )
-        .await
-        .map_err(CommandError::from)?;
+        let structure_results = if let Some(structure_plan) = immutable_structure.as_ref() {
+            let selected_tables: HashSet<String> = job
+                .tables
+                .iter()
+                .filter(|table| table.enabled)
+                .map(|table| table.source_table.clone())
+                .collect();
+            let phase = if job.mode == TransferMode::Structure {
+                crate::data_transfer::structure::DatabaseStructurePhase::All
+            } else {
+                crate::data_transfer::structure::DatabaseStructurePhase::Prepare
+            };
+            crate::data_transfer::structure::execute_database_structure_plan(
+                tgt_driver.as_ref(),
+                &tgt_handle,
+                structure_plan,
+                &selected_tables,
+                phase,
+                cancelled.clone(),
+                write_started,
+            )
+            .await
+        } else {
+            create_target_tables_with_write_observer(
+                src_adapter,
+                tgt_adapter,
+                src_driver.as_ref(),
+                &src_handle,
+                tgt_driver.as_ref(),
+                &tgt_handle,
+                &job,
+                &inspected,
+                &source_schemas,
+                cancelled.clone(),
+                write_started,
+            )
+            .await
+            .map_err(CommandError::from)?
+        };
 
         for r in &structure_results {
             if !r.success {
@@ -438,6 +507,9 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
                 tgt_driver: tgt_driver.as_ref(),
                 tgt_handle: &tgt_handle,
                 source_schemas: &source_schemas,
+                structure_precreated: job.mode == TransferMode::StructureAndData
+                    && job.write_mode == crate::data_transfer::WriteMode::DropCreateInsert
+                    && immutable_structure.is_some(),
             })
         } else {
             None
@@ -468,10 +540,58 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         .await
         .map_err(CommandError::from)?;
 
+        let data_phase_complete = !data_result.partial && !data_result.cancelled;
         total_rows = data_result.rows_inserted;
         cancelled_flag = data_result.cancelled;
         partial = partial || data_result.partial;
         all_tables.extend(data_result.tables);
+
+        if job.mode == TransferMode::StructureAndData {
+            if let Some(structure_plan) = immutable_structure.as_ref() {
+                let selected_tables: HashSet<String> = job
+                    .tables
+                    .iter()
+                    .filter(|table| table.enabled)
+                    .map(|table| table.source_table.clone())
+                    .collect();
+                if data_phase_complete {
+                    let constraint_results =
+                        crate::data_transfer::structure::execute_database_structure_plan(
+                            tgt_driver.as_ref(),
+                            &tgt_handle,
+                            structure_plan,
+                            &selected_tables,
+                            crate::data_transfer::structure::DatabaseStructurePhase::ForeignKeys,
+                            cancelled.clone(),
+                            write_started,
+                        )
+                        .await;
+                    if constraint_results.iter().any(|result| !result.success) {
+                        partial = true;
+                    }
+                    all_tables.extend(constraint_results);
+                } else {
+                    for item in structure_plan.iter().filter(|item| {
+                        item.kind == crate::data_transfer::model::DdlPreviewKind::ForeignKey
+                            && selected_tables.contains(&item.source_table)
+                    }) {
+                        all_tables.push(crate::data_transfer::model::TableExecutionResult::database(
+                            &item.source_table,
+                            &item.target_table,
+                            Some(0),
+                            crate::data_transfer::model::TableExecutionOutcome::NotStarted,
+                            Some("foreign key was not installed because the data phase did not complete".into()),
+                        ));
+                    }
+                    if structure_plan.iter().any(|item| {
+                        item.kind == crate::data_transfer::model::DdlPreviewKind::ForeignKey
+                            && selected_tables.contains(&item.source_table)
+                    }) {
+                        partial = true;
+                    }
+                }
+            }
+        }
     }
 
     let mut output = TransferExecutionResult {

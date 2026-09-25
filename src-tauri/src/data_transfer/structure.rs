@@ -1,6 +1,6 @@
 //! Structure phase: CREATE (IR) and DROP helpers for Data Transfer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -8,12 +8,12 @@ use datazen_driver_api::TableSchema;
 
 use crate::db::{ConnectionHandle, DatabaseDriver};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::ir::{IRTable, IRType};
+use crate::transfer::ir::{IRDefault, IRTable, IRType};
 
 use super::error::TransferError;
 use super::model::{
-    TableExecutionOutcome, TableExecutionResult, TableInspectResult, TableMappingStatus,
-    TransferJob, TransferMode,
+    DdlPreviewItem, DdlPreviewKind, TableExecutionOutcome, TableExecutionResult,
+    TableInspectResult, TableMappingStatus, TransferJob, TransferMode,
 };
 
 pub fn build_drop_table_sql(table: &str, tgt_adapter: &dyn SyncTargetAdapter) -> String {
@@ -25,17 +25,113 @@ pub fn target_relation_ref(
     table: &str,
     adapter: &dyn SyncTargetAdapter,
 ) -> String {
-    let schema = job
-        .target
-        .as_ref()
-        .and_then(|target| target.normalized_schema());
-    match schema {
-        Some(schema) => format!(
-            "{}.{}",
-            adapter.quote_ident(schema),
-            adapter.quote_ident(table)
-        ),
-        None => adapter.quote_ident(table),
+    let target = job.target.as_ref();
+    adapter.qualify_relation(
+        target
+            .map(|target| target.database.as_str())
+            .unwrap_or_default(),
+        target.and_then(|target| target.normalized_schema()),
+        table,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DatabaseStructurePhase {
+    /// Create every selected table and secondary index before row transfer.
+    Prepare,
+    /// Install foreign keys after row transfer so child-first mapping order
+    /// cannot reject rows whose parent table is selected later.
+    ForeignKeys,
+    /// Structure-only transfers have no data phase, so emit all planned DDL.
+    All,
+}
+
+/// Execute the immutable database structure statements captured at preview.
+/// The caller validates the whole plan and selected-table dependencies before
+/// entering this function, so a rejected mapping cannot partially write.
+pub(crate) async fn execute_database_structure_plan(
+    tgt_driver: &dyn DatabaseDriver,
+    tgt_handle: &ConnectionHandle,
+    plan: &[DdlPreviewItem],
+    selected_tables: &HashSet<String>,
+    phase: DatabaseStructurePhase,
+    cancelled: Option<Arc<AtomicBool>>,
+    write_started: Option<&AtomicBool>,
+) -> Vec<TableExecutionResult> {
+    let mut results = Vec::new();
+    let planned: Vec<_> = plan
+        .iter()
+        .filter(|item| {
+            selected_tables.contains(&item.source_table)
+                && match phase {
+                    DatabaseStructurePhase::Prepare => item.kind != DdlPreviewKind::ForeignKey,
+                    DatabaseStructurePhase::ForeignKeys => item.kind == DdlPreviewKind::ForeignKey,
+                    DatabaseStructurePhase::All => true,
+                }
+        })
+        .collect();
+    for (index, item) in planned.iter().enumerate() {
+        if cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        {
+            results.push(TableExecutionResult::database(
+                &item.source_table,
+                &item.target_table,
+                Some(0),
+                TableExecutionOutcome::NotStarted,
+                Some("transfer cancelled during structure; completed DDL remains applied".into()),
+            ));
+            append_unattempted_structure_results(&mut results, &planned[index + 1..]);
+            break;
+        }
+        if let Some(write_started) = write_started {
+            write_started.store(true, Ordering::SeqCst);
+        }
+        match tgt_driver.execute(tgt_handle, &item.ddl).await {
+            Ok(_) => results.push(TableExecutionResult::database(
+                &item.source_table,
+                &item.target_table,
+                Some(0),
+                TableExecutionOutcome::Committed,
+                None,
+            )),
+            Err(error) => {
+                let operation = match item.kind {
+                    DdlPreviewKind::DropTable => "DROP TABLE",
+                    DdlPreviewKind::Table => "CREATE TABLE",
+                    DdlPreviewKind::Index => "CREATE INDEX",
+                    DdlPreviewKind::ForeignKey => "ADD FOREIGN KEY",
+                };
+                results.push(TableExecutionResult::database(
+                    &item.source_table,
+                    &item.target_table,
+                    None,
+                    TableExecutionOutcome::Unknown,
+                    Some(format!("{operation} failed; outcome UNKNOWN: {error}")),
+                ));
+                // A DDL acknowledgement can be lost after applying the
+                // statement. Never send a later planned write in that case.
+                append_unattempted_structure_results(&mut results, &planned[index + 1..]);
+                break;
+            }
+        }
+    }
+    results
+}
+
+fn append_unattempted_structure_results(
+    results: &mut Vec<TableExecutionResult>,
+    items: &[&DdlPreviewItem],
+) {
+    for item in items {
+        results.push(TableExecutionResult::database(
+            &item.source_table,
+            &item.target_table,
+            Some(0),
+            TableExecutionOutcome::NotStarted,
+            Some("not started because an earlier structure statement stopped the phase".into()),
+        ));
     }
 }
 
@@ -48,7 +144,17 @@ pub async fn enrich_source_types(
     schemas: &mut HashMap<String, TableSchema>,
 ) -> Result<(), TransferError> {
     for (table, schema) in schemas {
-        let relation = super::metadata::metadata_relation_ref(endpoint, table)?;
+        let relation = if driver.sync_family() == "mysql"
+            && endpoint.normalized_schema().is_none()
+            && !endpoint.database.trim().is_empty()
+        {
+            // MySQL's selected catalog lives in `Endpoint.database`, while
+            // its connection's current database can differ from a transfer
+            // scope. Pass the explicit catalog to the driver-owned query.
+            format!("{}.{}", endpoint.database, table)
+        } else {
+            super::metadata::metadata_relation_ref(endpoint, table)?
+        };
         let full = crate::transfer::full_types::fetch_full_column_types(
             adapter, driver, handle, &relation,
         )
@@ -57,6 +163,126 @@ pub async fn enrich_source_types(
         for column in &mut schema.columns {
             if let Some(native) = full.get(&column.name) {
                 column.data_type = native.clone();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject source-generated columns whose expression is absent from the
+/// transfer structure IR. Driver adapters provide catalog SQL for their
+/// generated-column metadata; absence of rows means this specific gap is not
+/// present for the inspected relation.
+pub async fn validate_source_structure_metadata(
+    adapter: &dyn SyncSourceAdapter,
+    driver: &dyn DatabaseDriver,
+    handle: &ConnectionHandle,
+    endpoint: &super::model::Endpoint,
+    schemas: &HashMap<String, TableSchema>,
+    inspected: &[TableInspectResult],
+) -> Result<(), TransferError> {
+    for table in inspected
+        .iter()
+        .filter(|table| table.enabled)
+        .map(|table| table.source_table.as_str())
+    {
+        if !schemas.contains_key(table) {
+            continue;
+        }
+        // Validate the source relation syntax while keeping catalog, schema,
+        // and table as separate values for driver-owned catalog SQL.
+        super::metadata::metadata_relation_ref(endpoint, table)?;
+        let Some(sql) = adapter.unsupported_transfer_structure_query(
+            &endpoint.database,
+            endpoint.normalized_schema(),
+            table,
+        ) else {
+            continue;
+        };
+        let result = driver
+            .query(handle, &sql)
+            .await
+            .map_err(|error| TransferError::validation(error.to_string()))?;
+        if let Some(object) = result.rows.iter().find_map(|row| match row.first() {
+            Some(Some(crate::db::Value::String(object))) => Some(object.as_str()),
+            _ => None,
+        }) {
+            return Err(TransferError::unsupported(format!(
+                "source object '{object}' on '{table}' is not represented by the transfer structure plan"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A DROP is unsafe while an unselected target relation has an incoming FK.
+/// Inspect the live target catalog before claiming/writing the immutable plan;
+/// this also catches dependencies added after preview.
+pub async fn validate_drop_create_target_dependencies(
+    driver: &dyn DatabaseDriver,
+    handle: &ConnectionHandle,
+    endpoint: &super::model::Endpoint,
+    plan: &[DdlPreviewItem],
+) -> Result<(), TransferError> {
+    let selected: HashSet<String> = plan
+        .iter()
+        .filter(|item| item.kind == DdlPreviewKind::DropTable)
+        .map(|item| item.target_table.clone())
+        .collect();
+    if selected.is_empty() {
+        return Ok(());
+    }
+    let tables = driver
+        .get_tables(handle, &endpoint.database, None)
+        .await
+        .map_err(|error| TransferError::validation(error.to_string()))?;
+    for owner in tables
+        .iter()
+        .filter(|table| matches!(&table.table_type, datazen_driver_api::TableType::Table))
+    {
+        let bare_owner = owner.name.rsplit('.').next().unwrap_or(&owner.name);
+        let owner_schema = owner
+            .schema
+            .as_deref()
+            .or_else(|| endpoint.normalized_schema());
+        let owner_is_selected = selected.iter().any(|target_table| {
+            target_table == bare_owner
+                && endpoint
+                    .normalized_schema()
+                    .map_or(true, |target_schema| owner_schema == Some(target_schema))
+        });
+        if owner_is_selected {
+            continue;
+        }
+        let table_schema = owner
+            .schema
+            .as_deref()
+            .or_else(|| endpoint.normalized_schema());
+        let schema = driver
+            .get_table_schema(handle, bare_owner, &endpoint.database, table_schema)
+            .await
+            .map_err(|error| {
+                TransferError::validation(format!(
+                    "cannot verify Drop + Create dependencies for target table '{}': {error}",
+                    owner.name
+                ))
+            })?;
+        for foreign_key in &schema.foreign_keys {
+            let referenced = foreign_key.referenced_table.trim();
+            let parts: Vec<_> = referenced.split('.').collect();
+            let referenced_table = parts.last().copied().unwrap_or(referenced);
+            let referenced_schema = parts.get(parts.len().saturating_sub(2)).copied();
+            let hits_selected = selected.iter().any(|target_table| {
+                target_table == referenced_table
+                    && (referenced_schema.is_none()
+                        || endpoint.normalized_schema().is_none()
+                        || referenced_schema == endpoint.normalized_schema())
+            });
+            if hits_selected {
+                return Err(TransferError::validation(format!(
+                    "Drop + Create cannot replace target table '{}' while unselected table '{}' has foreign key '{}'; remove or redirect that dependency first",
+                    referenced, owner.name, foreign_key.name
+                )));
             }
         }
     }
@@ -206,16 +432,127 @@ pub fn mapped_create_ddl(
     job: &TransferJob,
 ) -> Result<String, TransferError> {
     let mapping = table_mapping_for(job, &table.source_table);
+    if !schema.check_constraints.is_empty() {
+        return Err(TransferError::unsupported(format!(
+            "table '{}' has CHECK constraints that the target adapter cannot preserve",
+            table.source_table
+        )));
+    }
+    for foreign_key in &schema.foreign_keys {
+        if foreign_key.deferrability != datazen_driver_api::ForeignKeyDeferrability::NotDeferrable {
+            return Err(TransferError::unsupported(format!(
+                "foreign key '{}' on '{}' has unknown or deferrable timing that cannot be preserved",
+                foreign_key.name, table.source_table
+            )));
+        }
+    }
+    let table_options = tgt_adapter
+        .render_source_table_options(&schema.table_options)
+        .map_err(|error| {
+            TransferError::unsupported(format!(
+                "cannot preserve table options on '{}': {error}",
+                table.source_table
+            ))
+        })?;
     if let Some(ddl) = mapping
         .and_then(|m| m.ddl_override.as_deref())
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
+        if table_options.is_some() {
+            return Err(TransferError::unsupported(format!(
+                "DDL override for '{}' cannot prove that the captured table options are preserved",
+                table.source_table
+            )));
+        }
+        if schema.columns.iter().any(|column| column.is_auto_increment) {
+            return Err(TransferError::unsupported(format!(
+                "DDL override for '{}' cannot prove that its identity/auto-increment columns are preserved",
+                table.source_table
+            )));
+        }
         return Ok(ddl.to_string());
     }
     let mut ir = source_schema_to_target_ir(src_adapter, schema, None, &table.target_table);
+    ir.table_options = table_options;
     if let Some(mapping) = mapping {
         apply_column_type_overrides(&mut ir, mapping, tgt_adapter)?;
+    }
+    for column in &ir.columns {
+        if let Some(default) = &column.default_expr {
+            if matches!(default, IRDefault::RawExpression(_)) {
+                return Err(TransferError::unsupported(format!(
+                    "default expression on '{}.{}' is not portable through the target renderer",
+                    table.source_table, column.name
+                )));
+            }
+            if !tgt_adapter.allows_column_default(&column.ir_type)
+                && tgt_adapter
+                    .default_capable_type_for(&column.ir_type)
+                    .is_none()
+            {
+                return Err(TransferError::unsupported(format!(
+                    "default on '{}.{}' cannot be represented by the target type",
+                    table.source_table, column.name
+                )));
+            }
+            if let IRDefault::Literal(value) = default {
+                let value = value.trim();
+                let portable = value.parse::<i64>().is_ok()
+                    || value.parse::<f64>().is_ok()
+                    || matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "true" | "false" | "null"
+                    )
+                    || (value.starts_with('\'') && value.ends_with('\''));
+                if !portable {
+                    return Err(TransferError::unsupported(format!(
+                        "default on '{}.{}' is not a portable literal",
+                        table.source_table, column.name
+                    )));
+                }
+            }
+        }
+    }
+    for column in ir.columns.iter().filter(|column| column.is_auto_increment) {
+        if tgt_adapter.auto_increment_keyword().is_none() {
+            return Err(TransferError::unsupported(format!(
+                "identity/auto-increment column '{}' on '{}' cannot be rendered by the target adapter",
+                column.name, table.source_table
+            )));
+        }
+        if !matches!(
+            column.ir_type,
+            IRType::Int8 | IRType::Int16 | IRType::Int32 | IRType::Int64
+        ) {
+            return Err(TransferError::unsupported(format!(
+                "identity/auto-increment column '{}' on '{}' requires an integer target type",
+                column.name, table.source_table
+            )));
+        }
+        if mapping.is_some_and(|mapping| {
+            mapping.column_mappings.iter().any(|binding| {
+                binding.target_column == column.name
+                    && binding
+                        .target_native_type
+                        .as_deref()
+                        .is_some_and(|native| !native.trim().is_empty())
+            })
+        }) {
+            return Err(TransferError::unsupported(format!(
+                "identity/auto-increment column '{}' on '{}' has a custom target type, so identity equivalence cannot be proven",
+                column.name, table.source_table
+            )));
+        }
+    }
+    if job.mode == TransferMode::StructureAndData
+        && !tgt_adapter.supports_explicit_identity_values()
+        && ir.columns.iter().any(|column| column.is_auto_increment)
+    {
+        return Err(TransferError::unsupported(format!(
+            "target cannot insert explicit values into identity columns for '{}'; choose Structure-only or remove the identity mapping",
+            table.source_table
+        )));
     }
     Ok(crate::transfer::ddl::build_create_table_ddl_ref(
         &ir,

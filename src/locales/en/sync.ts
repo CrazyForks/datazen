@@ -335,6 +335,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': 'Do not show this again',
   'transfer.ddlOverrideHint':
     'Edit the CREATE statement above; execute will run your modified SQL.',
+  'transfer.ddlKind.index': 'Index',
+  'transfer.ddlKind.foreignKey': 'Foreign key',
+  'transfer.ddlKind.dropTable': 'Drop table',
   'transfer.objects.noTablesFound':
     'No transferable tables were found in the selected source database.',
   'transfer.objects.noTablesHint':

@@ -196,16 +196,6 @@ async fn preview_sql_file_target(
         .await
         .map_err(CommandError::from)?;
     }
-    if let Some((src_adapter, _)) = &adapters {
-        crate::data_transfer::sql_file::validate_target_ir(
-            src_adapter.as_ref(),
-            src_driver.as_ref(),
-            target_driver.as_ref(),
-            &source_schemas,
-        )
-        .map_err(CommandError::from)?;
-    }
-
     let mappings = if job.tables.is_empty() {
         source_tables
             .iter()
@@ -267,6 +257,34 @@ async fn preview_sql_file_target(
         job.mode,
         &HashMap::new(),
     );
+    if matches!(
+        job.mode,
+        crate::data_transfer::TransferMode::Structure
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        if let Some((source_adapter, _)) = structure_adapters.as_ref() {
+            crate::data_transfer::structure::validate_source_structure_metadata(
+                source_adapter.as_ref(),
+                src_driver.as_ref(),
+                &src_handle,
+                &job.source,
+                &source_schemas,
+                &inspected,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
+    }
+    if let Some((src_adapter, _)) = &adapters {
+        crate::data_transfer::sql_file::validate_target_ir(
+            src_adapter.as_ref(),
+            src_driver.as_ref(),
+            target_driver.as_ref(),
+            &source_schemas,
+            &inspected,
+        )
+        .map_err(CommandError::from)?;
+    }
     let mut preview = TransferPreview {
         plan_id: String::new(),
         pairing_path: "sqlFile".into(),
@@ -440,8 +458,9 @@ pub(crate) async fn preview_data_transfer_impl(
         None,
         tgt_config.schema.as_deref(),
     );
+    let target = target.clone();
     crate::data_transfer::metadata::metadata_relation_ref(&job.source, "")?;
-    crate::data_transfer::metadata::metadata_relation_ref(target, "")?;
+    crate::data_transfer::metadata::metadata_relation_ref(&target, "")?;
 
     let pairing = enforce_transfer_pairing(&src_config.database_type, &tgt_config.database_type)
         .map_err(CommandError::from)?;
@@ -512,7 +531,7 @@ pub(crate) async fn preview_data_transfer_impl(
         let schema = crate::data_transfer::metadata::load_table_schema(
             target_driver.as_ref(),
             &target_handle,
-            target,
+            &target,
             &table.target_table,
         )
         .await
@@ -598,6 +617,22 @@ pub(crate) async fn preview_data_transfer_impl(
         )
         .await
         .map_err(CommandError::from)?;
+        if matches!(
+            job.mode,
+            crate::data_transfer::TransferMode::Structure
+                | crate::data_transfer::TransferMode::StructureAndData
+        ) {
+            crate::data_transfer::structure::validate_source_structure_metadata(
+                source.as_ref(),
+                src_driver.as_ref(),
+                &src_handle,
+                &job.source,
+                &source_schemas,
+                &inspected,
+            )
+            .await
+            .map_err(CommandError::from)?;
+        }
     }
 
     let adapters = adapter_handles
@@ -616,6 +651,36 @@ pub(crate) async fn preview_data_transfer_impl(
         adapters,
     )
     .map_err(CommandError::from)?;
+
+    if matches!(
+        job.mode,
+        crate::data_transfer::TransferMode::Structure
+            | crate::data_transfer::TransferMode::StructureAndData
+    ) {
+        if let Some((source_adapter, target_adapter)) = adapter_handles.as_ref() {
+            preview.ddl = crate::data_transfer::build_database_structure_plan(
+                source_adapter.as_ref(),
+                target_adapter.as_ref(),
+                &job,
+                &inspected,
+                &source_schemas,
+            )
+            .map_err(CommandError::from)?;
+        }
+    }
+
+    if job.mode == crate::data_transfer::TransferMode::StructureAndData
+        && job.write_mode == crate::data_transfer::WriteMode::DropCreateInsert
+    {
+        crate::data_transfer::structure::validate_drop_create_target_dependencies(
+            target_driver.as_ref(),
+            &target_handle,
+            &target,
+            &preview.ddl,
+        )
+        .await
+        .map_err(CommandError::from)?;
+    }
 
     // Return the same typed placeholder shape that execution will use. The
     // preview is review evidence, so an anonymous `?` would hide a PostgreSQL

@@ -29,7 +29,7 @@ use super::model::{
 use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, Value};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::ir::IRType;
+use crate::transfer::ir::{IRDefault, IRType};
 
 pub(crate) use super::sql_structure::build_structure_plan;
 
@@ -422,15 +422,27 @@ fn qualify_target_relation(
 ) -> String {
     let family = driver.driver_type().to_ascii_lowercase();
     if family == "sqlserver" {
-        let quote = driver.quote_char();
-        return [database, schema, Some(table)]
-            .into_iter()
-            .flatten()
-            .map(|part| quote_ident_sql(part, quote))
-            .collect::<Vec<_>>()
-            .join(".");
+        return qualify_sqlserver_target_relation(database, schema, table);
     }
     qualify_relation_sql(&family, database, schema, table, driver.quote_char())
+}
+
+fn qualify_sqlserver_target_relation(
+    database: Option<&str>,
+    schema: Option<&str>,
+    table: &str,
+) -> String {
+    let effective_schema = schema.or_else(|| database.map(|_| "dbo"));
+    [database, effective_schema, Some(table)]
+        .into_iter()
+        .flatten()
+        .map(quote_sqlserver_ident)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn quote_sqlserver_ident(name: &str) -> String {
+    format!("[{}]", name.replace(']', "]]"))
 }
 
 pub(crate) fn target_table_ref(
@@ -607,15 +619,32 @@ pub(crate) fn validate_target_ir(
     source_driver: &dyn DatabaseDriver,
     target_driver: &dyn DatabaseDriver,
     schemas: &HashMap<String, TableSchema>,
+    inspected: &[TableInspectResult],
 ) -> Result<(), TransferError> {
     if source_driver.sync_family() == target_driver.sync_family() {
         return Ok(());
     }
-    for (table, schema) in schemas {
+    let selected: std::collections::HashSet<&str> = inspected
+        .iter()
+        .filter(|table| table.enabled)
+        .map(|table| table.source_table.as_str())
+        .collect();
+    for (table, schema) in schemas
+        .iter()
+        .filter(|(table, _)| selected.contains(table.as_str()))
+    {
         for column in &source_adapter.table_to_ir(schema, None).columns {
             if let IRType::Other(native) = &column.ir_type {
                 return Err(TransferError::unsupported(format!(
                     "target dialect '{}' has no safe IR mapping for {}.{} ({native})",
+                    target_driver.driver_type(),
+                    table,
+                    column.name
+                )));
+            }
+            if let Some(IRDefault::RawExpression(expression)) = &column.default_expr {
+                return Err(TransferError::unsupported(format!(
+                    "target dialect '{}' cannot safely preserve default expression on {}.{} ({expression})",
                     target_driver.driver_type(),
                     table,
                     column.name
@@ -1422,6 +1451,19 @@ mod tests {
     }
 
     #[test]
+    fn sqlserver_target_relation_always_uses_database_schema_table_order() {
+        assert_eq!(
+            qualify_sqlserver_target_relation(Some("archive"), Some("sales"), "people"),
+            "[archive].[sales].[people]"
+        );
+        assert_eq!(
+            qualify_sqlserver_target_relation(Some("archive"), None, "people"),
+            "[archive].[dbo].[people]"
+        );
+        assert_eq!(quote_sqlserver_ident("peo]ple"), "[peo]]ple]");
+    }
+
+    #[test]
     fn target_scope_rejects_dotted_or_dialect_ambiguous_qualifiers() {
         let driver = datazen_driver_mysql::MysqlDriver::new(false);
         let dotted = super::super::model::SqlFileTarget {
@@ -1680,6 +1722,23 @@ mod tests {
     }
 
     #[test]
+    fn cross_dialect_sql_file_rejects_raw_defaults_only_for_selected_tables() {
+        let (table, mut schema) = structure_table("orders", "orders_copy", &[("id", "integer")]);
+        schema.columns[0].default_value = Some("tenant_sequence.next_value()".into());
+        let schemas = HashMap::from([("orders".into(), schema)]);
+        let source = datazen_driver_postgres::PostgresDriver::new();
+        let target = datazen_driver_mysql::MysqlDriver::new(false);
+        let adapter = PgSyncAdapter;
+
+        let error = validate_target_ir(&adapter, &source, &target, &schemas, &[table.clone()])
+            .expect_err("a source-only expression must fail before SQL-file publication");
+        assert!(error.to_string().contains("default expression"));
+
+        validate_target_ir(&adapter, &source, &target, &schemas, &[])
+            .expect("an unselected source table must not block this export");
+    }
+
+    #[test]
     fn structure_plan_orders_tables_then_indexes_then_foreign_keys_in_target_dialect() {
         let (parent, mut parent_schema) =
             structure_table("accounts", "accounts_copy", &[("id", "account_id")]);
@@ -1700,7 +1759,7 @@ mod tests {
             .push(datazen_driver_api::ForeignKeyInfo {
                 name: "invoice_account_fk".into(),
                 columns: vec!["account_id".into()],
-                referenced_table: "accounts".into(),
+                referenced_table: "public.accounts".into(),
                 referenced_columns: vec!["id".into()],
                 on_update: "NO ACTION".into(),
                 on_delete: "CASCADE".into(),

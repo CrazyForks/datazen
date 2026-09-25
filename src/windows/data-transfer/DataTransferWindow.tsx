@@ -1437,32 +1437,45 @@ export function DataTransferWindow() {
                   {preview.blockReason}
                 </p>
               )}
-              {preview.ddl.map((item) => {
+              {preview.ddl.map((item, ddlIndex) => {
                 const table = tables.find((row) => row.sourceTable === item.sourceTable);
+                const itemKind = item.kind ?? 'table';
                 const ddlValue =
-                  destinationMode === 'sqlFile' ? item.ddl : (table?.ddlOverride ?? item.ddl);
+                  destinationMode === 'sqlFile' || itemKind !== 'table'
+                    ? item.ddl
+                    : (table?.ddlOverride ?? item.ddl);
+                const kindLabel =
+                  itemKind === 'index'
+                    ? t('transfer.ddlKind.index')
+                    : itemKind === 'foreignKey'
+                      ? t('transfer.ddlKind.foreignKey')
+                      : itemKind === 'dropTable'
+                        ? t('transfer.ddlKind.dropTable')
+                        : null;
+                const ddlLabel = kindLabel
+                  ? `${item.sourceTable} → ${item.targetTable} (${kindLabel})`
+                  : `${item.sourceTable} → ${item.targetTable}`;
+                const rowKey = `${item.sourceTable}-${itemKind}-${ddlIndex}`;
                 return (
                   <div
-                    key={item.sourceTable}
+                    key={rowKey}
                     className="overflow-hidden rounded-lg border border-edge bg-surface-alt"
                   >
                     <div className="flex items-center justify-between gap-2 border-b border-edge px-3 py-1.5 text-xs text-fg-muted">
-                      <span>
-                        {item.sourceTable} → {item.targetTable}
-                      </span>
+                      <span>{ddlLabel}</span>
                       <Button
                         variant="ghost"
                         size="sm"
-                        data-testid={`data-transfer-copy-ddl-${item.sourceTable}`}
+                        data-testid={`data-transfer-copy-ddl-${item.sourceTable}${itemKind === 'table' ? '' : `-${itemKind}`}`}
                         onClick={() => void navigator.clipboard.writeText(ddlValue)}
                       >
                         {t('common.copyDdl')}
                       </Button>
                     </div>
-                    {destinationMode === 'sqlFile' ? (
+                    {destinationMode === 'sqlFile' || itemKind !== 'table' ? (
                       <pre
                         className="max-h-64 min-h-[12rem] overflow-auto whitespace-pre-wrap bg-surface p-3 font-mono text-xs"
-                        data-testid={`data-transfer-ddl-preview-${item.sourceTable}`}
+                        data-testid={`data-transfer-ddl-preview-${item.sourceTable}${destinationMode === 'sqlFile' && itemKind === 'table' ? '' : `-${itemKind}-${ddlIndex}`}`}
                       >
                         {ddlValue}
                       </pre>
