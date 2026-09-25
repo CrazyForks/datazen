@@ -4,7 +4,7 @@
 
 Query Builder 已迁入独立的 SQL Editor Pro 扩展，并通过第三轮独立验收。Pro 仓库 commit `2a45c90f28041e81c948e67b9416fade8ac5472f` 已发布到 `codex/qb-editor-pro` 分支；Host 的 `pro-extension.lock.json` 固定到该不可变 SHA。验收和剩余发行门槛见[轨道记录](coordination/tracks/qb-editor-pro/progress.md)。
 
-代码完成并不代表跨平台发行签名已完成：Community/Pro 完整 release build、Windows/Linux 构建、正式签名凭据、最终签名 manifest/hash 与远端 release 尚未验证。
+Host/Pro Community 与 Pro 的 all-driver macOS arm64 Tauri release bundle 均已成功构建。应用包当前为 ad-hoc 签名；跨平台发行签名尚未完成：Windows/Linux 构建、正式签名凭据、最终签名 manifest/hash 与远端 release 仍待验证。
 
 ## 运行时边界
 
@@ -38,8 +38,9 @@ Query Builder 已迁入独立的 SQL Editor Pro 扩展，并通过第三轮独�
 - 当前源码重建的 macOS Pro WebDriver app：4 journeys / 22 tests 通过，测试数据库 fixture 已清理。
 - Pro production Vite bundle 静态检查通过：无测试 bridge、Host 源码路径或未解析的 bare imports；共享运行时从 `__DATAZEN_HOST__` 获取。
 - 独立测试通过远端 `git ls-remote` 和实际 `ensureProCheckout` clean clone 验证：lock SHA 可达，checkout SHA 与 lock 一致，checkout clean；远端 main 未变。
+- 本机 macOS arm64 的 Community 与 Pro all-driver release builds 均通过，分别生成 `DataZen.app` 与 `DataZen_0.2.1_aarch64.dmg`。Pro bundle 内含 lock 对应的 `manifest.json`、`dist/index.esm.js` 和 `signature.sig`。`codesign -dv` 显示应用为 ad-hoc signature、无 TeamIdentifier；这不是正式 Developer ID 签名/公证结果。
 - `pnpm` 命令在本机无 TTY 环境会因依赖目录检查而尝试自动安装并中止（`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`）。为避免触碰共享 `node_modules`，已用项目 Node runner 和等价 Tauri 前端 build 命令完成 Pro WebDriver 构建；Tauri 配置随后恢复。
 
 ## 后续发行门槛
 
-发布前仍需在实际发行流水线运行 Community 与 Pro 完整 Tauri release build、常规 Query 执行和 `e2e:qb:regression`，在 Windows/Linux 构建并验证正式签名、manifest 与 bundle hash，再执行正式 release。全仓 i18n checker 的历史 Host/Redis 翻译差额也需由发布翻译流程处理；Pro `en` / `zh-CN` key parity 已通过。
+发布前仍需运行常规 Query 执行和 `e2e:qb:regression`，在 Windows/Linux 构建并验证正式签名、公证、manifest 与 bundle hash，再执行正式 release。全仓 i18n checker 的历史 Host/Redis 翻译差额也需由发布翻译流程处理；Pro `en` / `zh-CN` key parity 已通过。

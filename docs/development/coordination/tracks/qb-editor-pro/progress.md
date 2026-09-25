@@ -83,9 +83,17 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 
 ## 剩余发布门槛
 
-- Community Tauri 完整构建、常规 Query 执行 E2E、`e2e:qb:regression` 与完整 Pro Tauri release build 本轮未独立重跑。
-- Windows/Linux release builds、正式签名凭据、最终签名 manifest/bundle hash 与远端发布未验证。
-- 上述未验证项仍不能据本轮 macOS 自验标记为全平台发布通过。
+- 已补做本机 macOS arm64 Community 与 Pro all-driver Tauri release builds；产物、临时配置和 bundle 状态见“macOS Release Build”小节。
+- 常规 Query 执行 E2E 与 `e2e:qb:regression` 尚未运行；Windows/Linux release builds、正式 Developer ID 签名/公证、最终签名 manifest/bundle hash 与远端正式 release 未验证。
+- 因此本轮确认的是本机 macOS 构建可出包和 Pro extension pin 可复现，不代表跨平台正式发行签名已通过。
+
+## macOS Release Build
+
+- 标准 `pnpm tauri:build:community` 在执行脚本前因 PNPM 无 TTY 依赖目录检查中止，未运行安装。为不改动共享 `node_modules`，通过 `node scripts/tauri-build.mjs --edition=community --drivers=all` 执行同一 Host release build；构建期间仅临时把 `src-tauri/tauri.conf.json` 的 `beforeBuildCommand` 改为 `npx tsc --noEmit && npx vite build`，结束后恢复原始文件内容（当前仍为 `pnpm build`）。
+- Community all-driver release build 成功，15 个 path 驱动完成编译，生成 macOS arm64 `DataZen.app` 与 `DataZen_0.2.1_aarch64.dmg`。
+- Pro all-driver release build 使用 Host lock pin 的 Pro commit `2a45c90f28041e81c948e67b9416fade8ac5472f`，成功 clone/pack Pro、生成签名 extension staging 并通过 production Vite + Release Rust 编译；同样生成 `DataZen.app` 与 `DataZen_0.2.1_aarch64.dmg`。打包的 app resources 中有对应 `manifest.json`、`dist/index.esm.js` 和 `signature.sig`。
+- 对 Pro `.app` 执行 `codesign -dv --verbose=2` 显示 `Signature=adhoc`、`TeamIdentifier=not set`；这不是正式 Developer ID 签名或 notarization。Community 与 Pro 使用同一 Tauri bundle 路径，后一次 Pro build 覆盖前一次 Community bundle 目录，因此最终保留的 `.app`/DMG 是 Pro 产物。
+- 构建仅改写了生成产物和 Cargo lock 的驱动 feature 列表；驱动注入已恢复，自动生成的 `Cargo.lock` feature 变更已还原，Tauri 配置字节级恢复。Pro staging 在 `with-driver-inject` 退出后按脚本清理。
 
 ## Tester 与 Bug 记录
 
@@ -99,7 +107,7 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - Pro `npx vite build` 通过，生产 bundle 不含 `__qbTest`、`__qbStore`、`@host/` 或裸 external imports，并引用 `globalThis.__DATAZEN_HOST__` singleton。构建存在现有 host-globals sourcemap 提示。
 - 本轮独立重建当前源码的 macOS Pro WebDriver app：官方 `node e2e/run.mjs --pro -- --suite pro-query-builder` runner 通过；因 pnpm 的无 TTY 自动安装问题，将 `beforeBuildCommand` 临时改为 locale/menu 生成、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，Tauri 配置在运行完成后 byte-for-byte 恢复。Tauri webdriver app build 成功，`node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` 4 specs / 22 tests 通过，worker database teardown 完成。旧二进制单独复跑也通过，但早于 BUG-001 commit；只将新建 app 的结果计入修复复验。
 - **Round 2 历史判定：`TEST_FAILED`，BUG-002。** 当时独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 main；隔离 clone 无法 checkout Host lock pin。Bug 报告 commit：`7fb60778e`。该阻塞已在 Round 3 将同一 Pro commit 发布到 lock 配置的 feature branch 并通过 clean resolver clone 验证，详见上方。
-- 仍未独立验证的发布项：Community Tauri 完整构建、普通 Query 执行 E2E、`e2e:qb:regression`、完整 Pro release build、Windows/Linux release build、正式签名凭据、最终签名 manifest/bundle hash 与远端发布。
+- 本机 full release build 后仍未独立验证的发布项：普通 Query 执行 E2E、`e2e:qb:regression`、Windows/Linux release build、正式签名凭据/公证、最终签名 manifest/bundle hash 与远端正式 release。
 
 ## Tester 独立复验（Round 3）
 
