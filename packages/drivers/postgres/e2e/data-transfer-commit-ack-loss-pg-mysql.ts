@@ -1,5 +1,6 @@
 /** PG→MySQL Transfer journey: a real commit applies before its acknowledgement is lost. */
 import { expect, browser, $, $$ } from '@wdio/globals';
+import { execFileSync } from 'node:child_process';
 import {
   advanceTransferWizardToPreview,
   clickTransferNext,
@@ -33,6 +34,8 @@ type TransferExecutionResult = {
     error?: string | null;
   }>;
   rowsInserted: number;
+  partial?: boolean;
+  cancelled?: boolean;
   resumeToken?: string | null;
 };
 
@@ -60,6 +63,113 @@ type MigrationRun = {
   sourceConnectionId: string | null;
   targetConnectionId: string | null;
 };
+
+type TargetObserverSample = {
+  ping?: boolean;
+  count: number;
+  response: QueryResultPayload;
+};
+
+async function sampleTargetCount(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  checkPing = true,
+): Promise<TargetObserverSample> {
+  const ping = checkPing
+    ? await invokeBackend<boolean>('ping_connection', { dbSessionId })
+    : undefined;
+  const response = await invokeBackend<QueryResultPayload>('execute_query', {
+    dbSessionId,
+    database,
+    sql: `SELECT COUNT(*) AS c FROM ${table}`,
+  });
+  return { ping, count: Number(queryScalar(response, 'c')), response };
+}
+
+async function waitForTargetCount(
+  database: string,
+  table: string,
+  expected: number,
+  message: string,
+) {
+  const startedAt = Date.now();
+  type Sample = { elapsedMs: number; callMs: number; count?: number; error?: string };
+  const firstSamples: Sample[] = [];
+  const latestSamples: Sample[] = [];
+  const transitions: Array<{ elapsedMs: number; count: number }> = [];
+  const record = (callStartedAt: number, sample: Omit<Sample, 'elapsedMs' | 'callMs'>) => {
+    const elapsedMs = Date.now() - startedAt;
+    const entry = { elapsedMs, callMs: Date.now() - callStartedAt, ...sample };
+    if (firstSamples.length < 10) firstSamples.push(entry);
+    latestSamples.push(entry);
+    if (latestSamples.length > 10) latestSamples.shift();
+    if (sample.count !== undefined && transitions.at(-1)?.count !== sample.count) {
+      transitions.push({ elapsedMs, count: sample.count });
+      if (transitions.length > 20) transitions.shift();
+    }
+  };
+  try {
+    await browser.waitUntil(
+      async () => {
+        const callStartedAt = Date.now();
+        try {
+          const count = Number(
+            execFileSync(
+              'mysql',
+              [
+                '--protocol=TCP',
+                '--batch',
+                '--skip-column-names',
+                '--host',
+                process.env.E2E_MYSQL_HOST || '127.0.0.1',
+                '--port',
+                String(Number(process.env.E2E_MYSQL_PORT) || 3306),
+                '--user',
+                process.env.E2E_MYSQL_USER || 'root',
+                '--database',
+                database,
+                '--execute',
+                `SELECT COUNT(*) FROM \`${table}\``,
+              ],
+              {
+                encoding: 'utf8',
+                timeout: 5_000,
+                env: { ...process.env, MYSQL_PWD: process.env.E2E_MYSQL_PASSWORD || '' },
+              },
+            ).trim(),
+          );
+          record(callStartedAt, { count });
+          return count === expected;
+        } catch (error) {
+          record(callStartedAt, { error: String(error) });
+          return false;
+        }
+      },
+      { timeout: 30_000, interval: 150, timeoutMsg: message },
+    );
+  } catch (error) {
+    const executions = await capturedTransferRuns()
+      .then((runs) =>
+        JSON.stringify(
+          runs.map((run) => ({
+            error: run.error,
+            response: run.response && {
+              rowsInserted: run.response.rowsInserted,
+              partial: run.response.partial,
+              cancelled: run.response.cancelled,
+              resumeTokenPresent: Boolean(run.response.resumeToken),
+              tables: run.response.tables,
+            },
+          })),
+        ),
+      )
+      .catch((captureError) => String(captureError));
+    throw new Error(
+      `${String(error)}; direct MySQL count transitions=${JSON.stringify(transitions)}; initial samples=${JSON.stringify(firstSamples)}; latest samples=${JSON.stringify(latestSamples)}; captured transfer result=${executions}`,
+    );
+  }
+}
 
 function pgConfig(id: string, name: string, database: string) {
   return {
@@ -138,7 +248,9 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
   const earlierTable = `dt_ack_a_known_${stamp}`;
   const unknownTable = `dt_ack_b_unknown_${stamp}`;
   const laterTable = `dt_ack_c_later_${stamp}`;
-  const tables = [earlierTable, unknownTable, laterTable];
+  const chunkTable = `dt_chunk_resume_${stamp}`;
+  const tables = [earlierTable, unknownTable, laterTable, chunkTable];
+  const ackTables = [earlierTable, unknownTable, laterTable];
 
   before(async () => {
     mainWindow = await browser.getWindowHandle();
@@ -226,9 +338,19 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
           dbSessionId: sourceSessionId,
           sql: `INSERT INTO ${laterTable} VALUES (3, 'must not be copied')`,
         });
+        for (let id = 1; id <= 5; id++) {
+          await invokeBackend('execute_query', {
+            dbSessionId: sourceSessionId,
+            sql: `INSERT INTO ${chunkTable} VALUES (${id}, 'chunk-row-${id}')`,
+          });
+        }
         await invokeBackend('execute_query', {
           dbSessionId: targetSessionId,
           sql: `INSERT INTO ${unknownTable} VALUES (2, 'temporary conflict for checkpoint')`,
+        });
+        await invokeBackend('execute_query', {
+          dbSessionId: targetSessionId,
+          sql: `CREATE TRIGGER dt_chunk_pause_${stamp} BEFORE INSERT ON ${chunkTable} FOR EACH ROW SET @datazen_chunk_pause = IF(NEW.id IN (3, 5), SLEEP(8), 0)`,
         });
       });
     } finally {
@@ -339,7 +461,7 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
     expect(await stopOnError.isSelected()).toBe(true);
     await clickTransferNext();
 
-    await selectOnlyTables(tables);
+    await selectOnlyTables(ackTables);
     await clickTransferNext();
     await advanceTransferWizardToPreview();
 
@@ -405,7 +527,9 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
     );
     expect(unknownTableResult?.outcome).toBe('unknown');
     expect(unknownTableResult?.rowsInserted).toBeNull();
-    expect(unknownTableResult?.error).toContain('target commit succeeded');
+    expect(unknownTableResult?.error).toContain(
+      'target chunk committed but its acknowledgement was dropped',
+    );
     expect(laterTableResult?.outcome).toBe('notStarted');
     expect(laterTableResult?.rowsInserted).toBe(0);
     expect(unknownResult?.resumeToken).toBeUndefined();
@@ -473,5 +597,212 @@ describe('Data Transfer PG→MySQL commit acknowledgement loss', function () {
     expect(
       await $('[data-testid="migration-history-rollback-outcome"]').getAttribute('data-outcome'),
     ).toBe('unknown');
+  });
+
+  it('resumes bounded chunks after cancellation without duplicate or missing rows', async () => {
+    await openDataTransferWindow();
+    await installTransferRunCapture();
+    await selectDzOptionInWrap('data-transfer-source', sourceName);
+    await selectDzOptionInWrap('data-transfer-target', targetName);
+    await browser.pause(1_000);
+    await clickTransferNext();
+
+    await (await $('[data-testid="data-transfer-mode-data"]')).click();
+    await (await $('[data-testid="data-transfer-batch-size"]')).setValue('2');
+    await clickTransferNext();
+    await selectOnlyTables([chunkTable]);
+    await clickTransferNext();
+    await advanceTransferWizardToPreview();
+
+    const targetObserver = await invokeBackend<string>('connect_dedicated', {
+      connectionId: targetId,
+      database: targetDatabase,
+    });
+    try {
+      const baseline = await sampleTargetCount(targetObserver, targetDatabase, chunkTable);
+      expect(baseline.ping).toBe(true);
+      expect(baseline.count).toBe(0);
+      await (await $('[data-testid="data-transfer-execute"]')).click();
+      await browser.waitUntil(async () => (await capturedTransferRuns()).length === 1, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: 'initial bounded transfer call did not start',
+      });
+      await waitForTargetCount(
+        targetDatabase,
+        chunkTable,
+        2,
+        'first two-row target chunk was not confirmed',
+      );
+      await (await $('[data-testid="data-transfer-cancel"]')).click();
+      await browser.waitUntil(
+        async () => {
+          const calls = await capturedTransferRuns();
+          return calls.length === 1 && calls[0].response !== undefined;
+        },
+        {
+          timeout: 30_000,
+          interval: 150,
+          timeoutMsg: 'first chunk cancellation did not settle',
+        },
+      );
+
+      const firstCall = (await capturedTransferRuns())[0];
+      expect(firstCall?.response?.resumeToken).toEqual(expect.any(String));
+      expect(firstCall?.response?.rowsInserted).toBe(2);
+      expect(
+        firstCall?.response?.tables.find((table) => table.sourceTable === chunkTable)?.outcome,
+      ).toBe('partiallyApplied');
+      const pausedCount = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetObserver,
+        sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
+      });
+      expect(Number(queryScalar(pausedCount, 'c'))).toBe(2);
+
+      await (await $('[data-testid="data-transfer-resume"]')).click();
+      await browser.waitUntil(async () => (await capturedTransferRuns()).length >= 2, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: 'resume transfer call did not start',
+      });
+      await waitForTargetCount(
+        targetDatabase,
+        chunkTable,
+        4,
+        'second two-row target chunk was not confirmed',
+      );
+      await (await $('[data-testid="data-transfer-cancel"]')).click();
+      await (await $('[data-testid="data-transfer-result"]')).waitForDisplayed({ timeout: 30_000 });
+      const secondCall = (await capturedTransferRuns())[1];
+      expect(secondCall?.args.request.resumeToken).toBe(firstCall?.response?.resumeToken);
+      expect(secondCall?.response?.rowsInserted).toBe(2);
+      expect(secondCall?.response?.resumeToken).toBe(firstCall?.response?.resumeToken);
+
+      const secondPausedCount = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetObserver,
+        sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
+      });
+      expect(Number(queryScalar(secondPausedCount, 'c'))).toBe(4);
+
+      await (await $('[data-testid="data-transfer-resume"]')).click();
+      await browser.waitUntil(
+        async () => {
+          const calls = await capturedTransferRuns();
+          return calls.length === 3 && calls[2].response !== undefined;
+        },
+        {
+          timeout: 45_000,
+          interval: 150,
+          timeoutMsg: 'final resumed chunk did not complete',
+        },
+      );
+      const calls = await capturedTransferRuns();
+      expect(calls[2]?.args.request.resumeToken).toBe(firstCall?.response?.resumeToken);
+      expect(calls[2]?.response?.resumeToken).toBeUndefined();
+
+      const rows = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetObserver,
+        sql: `SELECT id, payload FROM ${chunkTable} ORDER BY id`,
+      });
+      expect(parseQueryRows(rows).map(([id, payload]) => [String(id), String(payload)])).toEqual([
+        ['1', 'chunk-row-1'],
+        ['2', 'chunk-row-2'],
+        ['3', 'chunk-row-3'],
+        ['4', 'chunk-row-4'],
+        ['5', 'chunk-row-5'],
+      ]);
+    } finally {
+      await disconnectBackend(targetObserver);
+    }
+  });
+
+  it('rejects resume after source mutation without writing another target chunk', async () => {
+    const targetObserver = await invokeBackend<string>('connect_dedicated', {
+      connectionId: targetId,
+      database: targetDatabase,
+    });
+    let sourceSession: string | undefined;
+    try {
+      await withSafeModeOff(async () => {
+        await invokeBackend('execute_query', {
+          dbSessionId: targetObserver,
+          sql: `DELETE FROM ${chunkTable}`,
+        });
+      });
+      const baseline = await sampleTargetCount(targetObserver, targetDatabase, chunkTable);
+      expect(baseline.ping).toBe(true);
+      expect(baseline.count).toBe(0);
+      const sourceMutationSession = await connectBackend(sourceId);
+      sourceSession = sourceMutationSession;
+
+      await openDataTransferWindow();
+      await installTransferRunCapture();
+      await selectDzOptionInWrap('data-transfer-source', sourceName);
+      await selectDzOptionInWrap('data-transfer-target', targetName);
+      await browser.pause(1_000);
+      await clickTransferNext();
+      await (await $('[data-testid="data-transfer-mode-data"]')).click();
+      await (await $('[data-testid="data-transfer-batch-size"]')).setValue('2');
+      await clickTransferNext();
+      await selectOnlyTables([chunkTable]);
+      await clickTransferNext();
+      await advanceTransferWizardToPreview();
+      await (await $('[data-testid="data-transfer-execute"]')).click();
+      await browser.waitUntil(async () => (await capturedTransferRuns()).length === 1, {
+        timeout: 20_000,
+        interval: 100,
+        timeoutMsg: 'initial bounded transfer call did not start',
+      });
+      await waitForTargetCount(
+        targetDatabase,
+        chunkTable,
+        2,
+        'first two-row target chunk was not confirmed',
+      );
+      await (await $('[data-testid="data-transfer-cancel"]')).click();
+      await browser.waitUntil(
+        async () => {
+          const calls = await capturedTransferRuns();
+          return calls.length === 1 && calls[0].response !== undefined;
+        },
+        {
+          timeout: 30_000,
+          interval: 150,
+          timeoutMsg: 'first chunk cancellation did not settle',
+        },
+      );
+      const resumeToken = (await capturedTransferRuns())[0]?.response?.resumeToken;
+      expect(resumeToken).toEqual(expect.any(String));
+
+      await withSafeModeOff(async () => {
+        await invokeBackend('execute_query', {
+          dbSessionId: sourceMutationSession,
+          sql: `UPDATE ${chunkTable} SET payload = 'changed while paused' WHERE id = 5`,
+        });
+      });
+      await (await $('[data-testid="data-transfer-resume"]')).click();
+      await browser.waitUntil(
+        async () => {
+          const calls = await capturedTransferRuns();
+          return calls.length === 2 && calls[1].response !== undefined;
+        },
+        {
+          timeout: 45_000,
+          interval: 150,
+          timeoutMsg: 'source mutation resume validation did not settle',
+        },
+      );
+      const resumedCall = (await capturedTransferRuns())[1];
+      expect(resumedCall?.args.request.resumeToken).toBe(resumeToken);
+      expect(resumedCall?.response?.resumeToken).toBeUndefined();
+      const count = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: targetObserver,
+        sql: `SELECT COUNT(*) AS c FROM ${chunkTable}`,
+      });
+      expect(Number(queryScalar(count, 'c'))).toBe(2);
+    } finally {
+      if (sourceSession) await disconnectBackend(sourceSession);
+      await disconnectBackend(targetObserver);
+    }
   });
 });

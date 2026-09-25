@@ -9,6 +9,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod checkpoint;
+use checkpoint::retain_live_checkpoints;
+pub(crate) use checkpoint::{TransferCheckpointSession, TransferResumeCheckpoint};
+
 use datazen_driver_api::{iter_driver_factories, DatabaseDriver, TableSchema, PROTOCOL_VERSION};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -17,34 +21,14 @@ use uuid::Uuid;
 use crate::data_transfer::{DdlPreviewItem, TransferError, TransferJob, TransferPreview};
 
 pub(crate) const TRANSFER_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
+pub(crate) const TRANSFER_CHECKPOINT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const TRANSFER_ACTIVE_LEASE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlanState {
     Available,
+    Executing,
     Consumed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResumeCheckpointState {
-    Available,
-    InFlight,
-}
-
-/// Server-owned progress for the bounded resumability contract.
-///
-/// The completed set contains committed source tables only. It deliberately
-/// has no row offset or client-provided payload: a resume reuses the immutable
-/// plan's source boundary and starts the next table transaction from its
-/// beginning.
-#[derive(Debug, Clone)]
-pub(crate) struct TransferResumeCheckpoint {
-    pub(crate) token: String,
-    pub(crate) plan_id: String,
-    pub(crate) source_boundary: String,
-    pub(crate) target_boundary: String,
-    pub(crate) selected_tables: Vec<String>,
-    pub(crate) completed_tables: Vec<String>,
-    state: ResumeCheckpointState,
 }
 
 /// Data needed to reproduce and validate the server-side execution plan.
@@ -76,6 +60,7 @@ pub(crate) struct StoredTransferPlan {
     /// drift between preview and publish.
     pub(crate) sql_file_structure: Option<Vec<DdlPreviewItem>>,
     expires_at: Instant,
+    active_until: Option<Instant>,
     state: PlanState,
 }
 
@@ -251,14 +236,22 @@ impl TransferPlanStore {
             target_read_only_at_preview: target_read_only,
             sql_file_structure,
             expires_at: Instant::now() + ttl,
+            active_until: None,
             state: PlanState::Available,
         };
         let mut plans = self
             .plans
             .lock()
             .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
+        let mut checkpoints = self
+            .checkpoints
+            .lock()
+            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
         let now = Instant::now();
-        plans.retain(|_, existing| existing.expires_at > now);
+        plans.retain(|_, existing| {
+            existing.expires_at > now || existing.active_until.is_some_and(|until| until > now)
+        });
+        retain_live_checkpoints(&mut checkpoints, &plans, now);
         plans.insert(id.clone(), plan);
         Ok(id)
     }
@@ -310,172 +303,9 @@ impl TransferPlanStore {
                 "transfer plan was already consumed; return to preview",
             ));
         }
-        plan.state = PlanState::Consumed;
+        plan.state = PlanState::Executing;
+        plan.active_until = Some(Instant::now() + TRANSFER_ACTIVE_LEASE);
         Ok(plan.clone())
-    }
-
-    pub(crate) fn create_checkpoint(
-        &self,
-        plan_id: &str,
-        selected_tables: Vec<String>,
-        completed_tables: Vec<String>,
-    ) -> Result<String, TransferError> {
-        let plans = self
-            .plans
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        let plan = plans.get(plan_id).ok_or_else(|| {
-            TransferError::validation("transfer plan is unknown or has expired; return to preview")
-        })?;
-        if plan.expires_at <= Instant::now() {
-            return Err(TransferError::validation(
-                "transfer plan has expired; return to preview",
-            ));
-        }
-        if plan.state != PlanState::Consumed {
-            return Err(TransferError::validation(
-                "transfer plan was not claimed; restart from preview",
-            ));
-        }
-        let source_boundary = source_boundary_fingerprint(plan)?;
-        let target_boundary = target_boundary_fingerprint(plan)?;
-        let token = Uuid::new_v4().to_string();
-        let checkpoint = TransferResumeCheckpoint {
-            token: token.clone(),
-            plan_id: plan_id.to_string(),
-            source_boundary,
-            target_boundary,
-            selected_tables,
-            completed_tables,
-            state: ResumeCheckpointState::Available,
-        };
-        drop(plans);
-        let mut checkpoints = self
-            .checkpoints
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        checkpoints.insert(token.clone(), checkpoint);
-        Ok(token)
-    }
-
-    pub(crate) fn peek_checkpoint(
-        &self,
-        token: &str,
-        plan_id: &str,
-    ) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
-        let plans = self
-            .plans
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        let checkpoint = self
-            .checkpoints
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        let saved = checkpoint.get(token).ok_or_else(|| {
-            TransferError::validation("resume token is unknown, consumed, or expired")
-        })?;
-        if saved.token != token {
-            return Err(TransferError::validation(
-                "resume token registry entry is invalid",
-            ));
-        }
-        if saved.plan_id != plan_id {
-            return Err(TransferError::validation(
-                "resume token does not belong to this transfer plan",
-            ));
-        }
-        if saved.state != ResumeCheckpointState::Available {
-            return Err(TransferError::validation(
-                "resume token is already running or its prior outcome is unknown",
-            ));
-        }
-        let plan = plans.get(plan_id).ok_or_else(|| {
-            TransferError::validation("transfer plan is unknown or has expired; return to preview")
-        })?;
-        if plan.expires_at <= Instant::now() {
-            return Err(TransferError::validation(
-                "transfer plan has expired; return to preview",
-            ));
-        }
-        Ok((plan.clone(), saved.clone()))
-    }
-
-    pub(crate) fn claim_checkpoint(
-        &self,
-        token: &str,
-        plan_id: &str,
-    ) -> Result<(StoredTransferPlan, TransferResumeCheckpoint), TransferError> {
-        let plans = self
-            .plans
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        let mut checkpoints = self
-            .checkpoints
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        let saved = checkpoints.get_mut(token).ok_or_else(|| {
-            TransferError::validation("resume token is unknown, consumed, or expired")
-        })?;
-        if saved.token != token {
-            return Err(TransferError::validation(
-                "resume token registry entry is invalid",
-            ));
-        }
-        if saved.plan_id != plan_id {
-            return Err(TransferError::validation(
-                "resume token does not belong to this transfer plan",
-            ));
-        }
-        if saved.state != ResumeCheckpointState::Available {
-            return Err(TransferError::validation(
-                "resume token is already running or its prior outcome is unknown",
-            ));
-        }
-        let plan = plans.get(plan_id).ok_or_else(|| {
-            TransferError::validation("transfer plan is unknown or has expired; return to preview")
-        })?;
-        if plan.expires_at <= Instant::now() {
-            return Err(TransferError::validation(
-                "transfer plan has expired; return to preview",
-            ));
-        }
-        saved.state = ResumeCheckpointState::InFlight;
-        Ok((plan.clone(), saved.clone()))
-    }
-
-    pub(crate) fn update_checkpoint(
-        &self,
-        token: &str,
-        completed_tables: Vec<String>,
-        finished: bool,
-    ) -> Result<(), TransferError> {
-        let mut checkpoints = self
-            .checkpoints
-            .lock()
-            .map_err(|_| TransferError::validation("transfer plan registry is unavailable"))?;
-        if finished {
-            checkpoints.remove(token);
-            return Ok(());
-        }
-        let saved = checkpoints.get_mut(token).ok_or_else(|| {
-            TransferError::validation("resume token is unknown, consumed, or expired")
-        })?;
-        if saved.state != ResumeCheckpointState::InFlight {
-            return Err(TransferError::validation(
-                "resume checkpoint is not in flight",
-            ));
-        }
-        saved.completed_tables = completed_tables;
-        saved.state = ResumeCheckpointState::Available;
-        Ok(())
-    }
-
-    /// Unknown commit/rollback outcomes are never resumable. Removing the
-    /// checkpoint forces a fresh preview instead of risking duplicate writes.
-    pub(crate) fn invalidate_checkpoint(&self, token: &str) {
-        if let Ok(mut checkpoints) = self.checkpoints.lock() {
-            checkpoints.remove(token);
-        }
     }
 }
 
@@ -576,400 +406,4 @@ pub(crate) fn invalidate_checkpoint(token: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::data_transfer::model::{
-        Endpoint, TransferMode, TransferOptions, TransferRunRequest, WriteMode,
-    };
-
-    fn job() -> TransferJob {
-        TransferJob {
-            source: Endpoint {
-                db_session_id: "src".into(),
-                database: "source_db".into(),
-                schema: Some("public".into()),
-            },
-            target: Some(Endpoint {
-                db_session_id: "tgt".into(),
-                database: "target_db".into(),
-                schema: Some("public".into()),
-            }),
-            sql_file_target: None,
-            mode: TransferMode::Data,
-            write_mode: WriteMode::Insert,
-            tables: vec![],
-            options: TransferOptions::default(),
-        }
-    }
-
-    #[test]
-    fn schema_fingerprint_is_order_independent_and_changes_with_schema() {
-        let first = fingerprint_schemas(vec![("a".into(), None), ("b".into(), None)]).unwrap();
-        let second = fingerprint_schemas(vec![("b".into(), None), ("a".into(), None)]).unwrap();
-        assert_eq!(first, second);
-        let changed = fingerprint_schemas(vec![
-            ("a".into(), None),
-            (
-                "b".into(),
-                Some(TableSchema {
-                    table_name: "b".into(),
-                    columns: vec![],
-                    primary_keys: vec![],
-                    indexes: vec![],
-                    foreign_keys: vec![],
-                    check_constraints: vec![],
-                    table_options: Default::default(),
-                }),
-            ),
-        ])
-        .unwrap();
-        assert_ne!(first, changed);
-    }
-
-    #[test]
-    fn disabled_mappings_are_excluded_from_the_plan_fingerprint_scope() {
-        let mut plan_job = job();
-        plan_job
-            .tables
-            .push(crate::data_transfer::model::TableMapping::auto("users"));
-        plan_job.tables.push({
-            let mut mapping = crate::data_transfer::model::TableMapping::auto("archived");
-            mapping.enabled = false;
-            mapping
-        });
-
-        let users_schema = TableSchema {
-            table_name: "users".into(),
-            columns: vec![],
-            primary_keys: vec![],
-            indexes: vec![],
-            foreign_keys: vec![],
-            check_constraints: vec![],
-            table_options: Default::default(),
-        };
-        let mut schemas: HashMap<String, TableSchema> = HashMap::new();
-        schemas.insert("users".into(), users_schema.clone());
-        schemas.insert(
-            "archived".into(),
-            TableSchema {
-                table_name: "archived".into(),
-                ..users_schema.clone()
-            },
-        );
-
-        let scoped = fingerprint_schemas(participating_tables(&plan_job).map(|table| {
-            (
-                table.source_table.clone(),
-                schemas.get(&table.source_table).cloned(),
-            )
-        }))
-        .unwrap();
-        let enabled_only = fingerprint_schemas(vec![("users".into(), Some(users_schema))]).unwrap();
-        assert_eq!(scoped, enabled_only);
-
-        // A schema change on a disabled relation cannot alter the immutable
-        // snapshot, because that relation is outside the execution scope.
-        schemas.insert(
-            "archived".into(),
-            TableSchema {
-                table_name: "archived-v2".into(),
-                ..TableSchema {
-                    table_name: "archived".into(),
-                    columns: vec![],
-                    primary_keys: vec![],
-                    indexes: vec![],
-                    foreign_keys: vec![],
-                    check_constraints: vec![],
-                    table_options: Default::default(),
-                }
-            },
-        );
-        let after_disabled_change =
-            fingerprint_schemas(participating_tables(&plan_job).map(|table| {
-                (
-                    table.source_table.clone(),
-                    schemas.get(&table.source_table).cloned(),
-                )
-            }))
-            .unwrap();
-        assert_eq!(scoped, after_disabled_change);
-    }
-
-    #[test]
-    fn expired_plan_is_rejected_and_consumed_plan_is_one_shot() {
-        let store = TransferPlanStore::new();
-        let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
-        let preview = TransferPreview {
-            plan_id: String::new(),
-            pairing_path: "direct".into(),
-            mode: TransferMode::Data,
-            write_mode: WriteMode::Insert,
-            ddl: vec![],
-            write_plans: vec![],
-            warnings: vec![],
-            can_execute: true,
-            block_reason: None,
-        };
-        let source = HashMap::new();
-        let target = HashMap::new();
-        let id = store
-            .issue_with_ttl(
-                job(),
-                &preview,
-                driver.as_ref(),
-                driver.as_ref(),
-                &source,
-                &target,
-                false,
-                Duration::from_secs(60),
-            )
-            .unwrap();
-        let claimed = store.claim(&id).unwrap();
-        assert_eq!(claimed.id, id);
-        assert!(store.claim(&id).is_err());
-
-        let expired = store
-            .issue_with_ttl(
-                job(),
-                &preview,
-                driver.as_ref(),
-                driver.as_ref(),
-                &source,
-                &target,
-                false,
-                Duration::ZERO,
-            )
-            .unwrap();
-        assert!(store.peek(&expired).is_err());
-    }
-
-    #[test]
-    fn run_request_rejects_client_replacement_payloads() {
-        let request = serde_json::from_value::<TransferRunRequest>(serde_json::json!({
-            "planId": "opaque-plan",
-            "job": { "source": {}, "target": {}, "tables": [] },
-        }));
-        assert!(request.is_err());
-    }
-
-    #[test]
-    fn source_scope_fingerprint_changes_when_recordset_changes() {
-        let mut first = job();
-        first.tables.push({
-            let mut mapping = crate::data_transfer::model::TableMapping::auto("users");
-            mapping.recordset = Some(crate::data_transfer::model::TransferRecordset {
-                order_by: Some("id".into()),
-                start: None,
-                end: None,
-                tuple_range: None,
-                limit: Some(10),
-            });
-            mapping
-        });
-        let first_fingerprint = filter_fingerprint(&first).unwrap();
-        first.tables[0].recordset.as_mut().unwrap().limit = Some(20);
-        assert_ne!(first_fingerprint, filter_fingerprint(&first).unwrap());
-        first.tables[0].recordset.as_mut().unwrap().limit = Some(10);
-        first.tables[0].recordset.as_mut().unwrap().start =
-            Some(crate::data_transfer::model::TransferRecordsetBound {
-                value: serde_json::json!(2),
-                inclusive: true,
-            });
-        assert_ne!(first_fingerprint, filter_fingerprint(&first).unwrap());
-
-        let recordset = first.tables[0].recordset.as_mut().unwrap();
-        recordset.order_by = None;
-        recordset.start = None;
-        recordset.tuple_range = Some(crate::data_transfer::model::TransferRecordsetTupleRange {
-            columns: vec!["tenant".into(), "sequence".into()],
-            start: Some(crate::data_transfer::model::TransferRecordsetTupleBound {
-                values: vec![serde_json::json!("a-雪"), serde_json::json!("-3")],
-                inclusive: false,
-            }),
-            end: None,
-        });
-        let tuple_fingerprint = filter_fingerprint(&first).unwrap();
-        first.tables[0]
-            .recordset
-            .as_mut()
-            .unwrap()
-            .tuple_range
-            .as_mut()
-            .unwrap()
-            .start
-            .as_mut()
-            .unwrap()
-            .values[1] = serde_json::json!("-2");
-        assert_ne!(tuple_fingerprint, filter_fingerprint(&first).unwrap());
-        first.tables[0]
-            .recordset
-            .as_mut()
-            .unwrap()
-            .tuple_range
-            .as_mut()
-            .unwrap()
-            .start
-            .as_mut()
-            .unwrap()
-            .values[1] = serde_json::json!("-3");
-        first.tables[0]
-            .recordset
-            .as_mut()
-            .unwrap()
-            .tuple_range
-            .as_mut()
-            .unwrap()
-            .columns = vec!["sequence".into(), "tenant".into()];
-        assert_ne!(tuple_fingerprint, filter_fingerprint(&first).unwrap());
-    }
-
-    #[test]
-    fn sql_file_target_dialect_is_bound_to_the_immutable_plan() {
-        let store = TransferPlanStore::new();
-        let source = crate::testing::mock_driver::MockDriver::new("postgresql", Default::default());
-        let target = crate::testing::mock_driver::MockDriver::new("mysql", Default::default());
-        let preview = TransferPreview {
-            plan_id: String::new(),
-            pairing_path: "sqlFile".into(),
-            mode: TransferMode::Data,
-            write_mode: WriteMode::Insert,
-            ddl: vec![DdlPreviewItem {
-                source_table: "users".into(),
-                target_table: "users".into(),
-                ddl: "CREATE TABLE `users` (`id` INT)".into(),
-                kind: crate::data_transfer::DdlPreviewKind::Table,
-                depends_on: vec![],
-            }],
-            write_plans: vec![],
-            warnings: vec!["mysql".into()],
-            can_execute: true,
-            block_reason: None,
-        };
-        let mut sql_job = job();
-        sql_job.target = None;
-        sql_job.sql_file_target = Some(crate::data_transfer::SqlFileTarget {
-            file_token: "opaque-file".into(),
-            database_type: Some("mysql".into()),
-            database: None,
-            schema: None,
-            encoding: None,
-            compression: None,
-        });
-        let id = store
-            .issue_with_ttl(
-                sql_job.clone(),
-                &preview,
-                source.as_ref(),
-                target.as_ref(),
-                &HashMap::new(),
-                &HashMap::new(),
-                false,
-                Duration::from_secs(60),
-            )
-            .unwrap();
-        sql_job.sql_file_target.as_mut().unwrap().database_type = Some("postgresql".into());
-        let stored = store.peek(&id).unwrap();
-        assert_eq!(stored.target_driver_type, "mysql");
-        assert_eq!(
-            stored
-                .job
-                .sql_file_target
-                .as_ref()
-                .and_then(|target| target.database_type.as_deref()),
-            Some("mysql")
-        );
-        assert_eq!(
-            stored
-                .sql_file_structure
-                .as_ref()
-                .and_then(|statements| statements.first())
-                .map(|statement| statement.ddl.as_str()),
-            Some("CREATE TABLE `users` (`id` INT)")
-        );
-        assert_eq!(
-            stored.target_scope_fingerprint.as_deref(),
-            target_scope_fingerprint(&stored.job).unwrap().as_deref()
-        );
-        let mut changed_scope = stored.job.clone();
-        changed_scope.sql_file_target.as_mut().unwrap().database = Some("other_catalog".into());
-        assert_ne!(
-            stored.target_scope_fingerprint,
-            target_scope_fingerprint(&changed_scope).unwrap()
-        );
-        let mut changed_format = stored.job.clone();
-        changed_format.sql_file_target.as_mut().unwrap().compression =
-            Some(crate::data_transfer::SqlFileCompression::Gzip);
-        assert_ne!(
-            stored.target_scope_fingerprint,
-            target_scope_fingerprint(&changed_format).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_tester_run_request_rejects_all_client_owned_execution_payloads() {
-        for field in ["sql", "ddl", "mapping", "rows"] {
-            let mut payload = serde_json::Map::new();
-            payload.insert("planId".into(), serde_json::json!("opaque-plan"));
-            payload.insert(field.into(), serde_json::json!([]));
-            let request =
-                serde_json::from_value::<TransferRunRequest>(serde_json::Value::Object(payload));
-            assert!(request.is_err(), "client field {field} must be rejected");
-        }
-    }
-
-    #[test]
-    fn resume_checkpoint_is_opaque_single_flight_and_consumed_on_success() {
-        let store = TransferPlanStore::new();
-        let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
-        let preview = TransferPreview {
-            plan_id: String::new(),
-            pairing_path: "direct".into(),
-            mode: TransferMode::Data,
-            write_mode: WriteMode::Insert,
-            ddl: vec![],
-            write_plans: vec![],
-            warnings: vec![],
-            can_execute: true,
-            block_reason: None,
-        };
-        let id = store
-            .issue_with_ttl(
-                job(),
-                &preview,
-                driver.as_ref(),
-                driver.as_ref(),
-                &HashMap::new(),
-                &HashMap::new(),
-                false,
-                Duration::from_secs(60),
-            )
-            .unwrap();
-        store.claim(&id).unwrap();
-        let token = store
-            .create_checkpoint(&id, vec!["users".into()], Vec::new())
-            .unwrap();
-        assert_ne!(token, id);
-        let (_, checkpoint) = store.peek_checkpoint(&token, &id).unwrap();
-        assert_eq!(checkpoint.selected_tables, vec!["users"]);
-        assert!(store.claim_checkpoint(&token, &id).is_ok());
-        assert!(store.peek_checkpoint(&token, &id).is_err());
-        store
-            .update_checkpoint(&token, vec!["users".into()], false)
-            .unwrap();
-        let (_, checkpoint) = store.peek_checkpoint(&token, &id).unwrap();
-        assert_eq!(checkpoint.completed_tables, vec!["users"]);
-        store.claim_checkpoint(&token, &id).unwrap();
-        store.update_checkpoint(&token, Vec::new(), true).unwrap();
-        assert!(store.peek_checkpoint(&token, &id).is_err());
-    }
-
-    #[test]
-    fn run_request_accepts_only_opaque_resume_token_field() {
-        let request = serde_json::from_value::<TransferRunRequest>(serde_json::json!({
-            "planId": "opaque-plan",
-            "resumeToken": "opaque-checkpoint",
-        }))
-        .unwrap();
-        assert_eq!(request.resume_token.as_deref(), Some("opaque-checkpoint"));
-    }
-}
+mod tests;

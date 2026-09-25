@@ -41,6 +41,30 @@ fn transfer_plan_test_options() -> crate::testing::mock_driver::MockDriverOption
     options
 }
 
+fn resumable_transfer_plan_test_options() -> crate::testing::mock_driver::MockDriverOptions {
+    use crate::testing::mock_driver::MockDriver;
+    use datazen_driver_api::{IndexInfo, TableOptions};
+
+    let mut options = transfer_plan_test_options();
+    let mut schema = MockDriver::default_table_schema("users");
+    schema.indexes.push(IndexInfo {
+        name: "users_pkey".into(),
+        columns: vec!["id".into()],
+        is_unique: true,
+        is_primary: true,
+        index_type: "BTREE".into(),
+    });
+    schema.table_options = TableOptions {
+        supports_consistent_snapshot: Some(true),
+        ..Default::default()
+    };
+    options.columns = schema.columns.clone();
+    options.primary_keys = schema.primary_keys.clone();
+    options.table_schema = Some(schema);
+    options.empty_keyset_after_cursor = true;
+    options
+}
+
 #[test]
 fn pairing_classifies_ir_and_unsupported() {
     let ok = classify_transfer_pair("postgresql", "mysql");
@@ -859,15 +883,15 @@ async fn transfer_partial_run_returns_resume_token_and_completes_once_recovered(
     use crate::testing::app_state::TestAppState;
     use crate::testing::mock_driver::MockDriver;
 
-    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let test = TestAppState::with_options(resumable_transfer_plan_test_options()).await;
     let (_src_config, source) = test.save_and_connect("transfer-plan-fail-src").await;
     let (_tgt_config, target) = test.save_and_connect("transfer-plan-fail-tgt").await;
     let preview = super::preview_data_transfer_impl(&test.state, plan_job(source, target))
         .await
         .unwrap();
 
-    let mut failing_options = transfer_plan_test_options();
-    failing_options.query_error = Some("injected source scan failure".into());
+    let mut failing_options = resumable_transfer_plan_test_options();
+    failing_options.execute_with_params_error = Some("injected target chunk failure".into());
     let failing = MockDriver::new("postgres", failing_options);
     test.registry
         .register_test_driver("postgres", failing)
@@ -888,16 +912,16 @@ async fn transfer_partial_run_returns_resume_token_and_completes_once_recovered(
     assert!(first.tables[0]
         .error
         .as_deref()
-        .is_some_and(|error| error.contains("source scan failure")));
+        .is_some_and(|error| error.contains("target chunk write failed")));
     let resume_token = first
         .resume_token
         .clone()
-        .expect("safe table-boundary failure should be resumable");
+        .expect("a failed transactional chunk should be resumable");
 
     test.registry
         .register_test_driver(
             "postgres",
-            MockDriver::new("postgres", transfer_plan_test_options()),
+            MockDriver::new("postgres", resumable_transfer_plan_test_options()),
         )
         .await;
     let resumed = super::execute_data_transfer_impl(
@@ -908,7 +932,7 @@ async fn transfer_partial_run_returns_resume_token_and_completes_once_recovered(
         },
     )
     .await
-    .expect("a safe partial run should resume from its table boundary");
+    .expect("a safe partial run should resume from its row cursor");
     assert!(!resumed.partial);
     assert_eq!(resumed.rows_inserted, 1);
 
@@ -930,15 +954,15 @@ async fn unknown_commit_invalidates_resume_checkpoint_and_consumes_old_token() {
     use crate::testing::app_state::TestAppState;
     use crate::testing::mock_driver::MockDriver;
 
-    let test = TestAppState::with_options(transfer_plan_test_options()).await;
+    let test = TestAppState::with_options(resumable_transfer_plan_test_options()).await;
     let (_src_config, source) = test.save_and_connect("transfer-unknown-resume-src").await;
     let (_tgt_config, target) = test.save_and_connect("transfer-unknown-resume-tgt").await;
     let preview = super::preview_data_transfer_impl(&test.state, plan_job(source, target))
         .await
         .unwrap();
 
-    let mut failing_options = transfer_plan_test_options();
-    failing_options.query_error = Some("injected source scan failure".into());
+    let mut failing_options = resumable_transfer_plan_test_options();
+    failing_options.execute_with_params_error = Some("injected target chunk failure".into());
     test.registry
         .register_test_driver("postgres", MockDriver::new("postgres", failing_options))
         .await;
@@ -951,10 +975,10 @@ async fn unknown_commit_invalidates_resume_checkpoint_and_consumes_old_token() {
     };
     let partial = super::execute_data_transfer_impl(&test.state, request.clone())
         .await
-        .expect("a confirmed source-side failure should create a safe checkpoint");
+        .expect("a confirmed chunk rollback should create a safe checkpoint");
     let old_token = partial.resume_token.expect("partial run checkpoint");
 
-    let mut commit_loss_options = transfer_plan_test_options();
+    let mut commit_loss_options = resumable_transfer_plan_test_options();
     commit_loss_options.commit_error_on_call = Some(1);
     commit_loss_options.commit_error_after_effect = true;
     let commit_loss_driver = MockDriver::new("postgres", commit_loss_options);

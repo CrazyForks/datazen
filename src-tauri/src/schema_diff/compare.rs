@@ -413,12 +413,14 @@ mod tests {
             comment: Some("orders".into()),
             engine: Some("InnoDB".into()),
             charset: Some("utf8mb4".into()),
+            ..TableOptions::default()
         };
         let mut tgt = schema(vec![col("id", "int")]);
         tgt.table_options = TableOptions {
             comment: None,
             engine: Some("InnoDB".into()),
             charset: Some("latin1".into()),
+            ..TableOptions::default()
         };
         let diff = diff_table_schemas("orders", &src, &tgt, None);
         let options = diff.table_options.expect("table option diff");

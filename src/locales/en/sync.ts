@@ -240,6 +240,11 @@ const pack = {
   'transfer.executeConfirm.introDrop':
     'The following target tables will be dropped and recreated before rows are inserted:',
   'transfer.batchSize': 'Batch size',
+  'transfer.batchSizeLimit': 'Choose a whole number from 1 to 500 rows.',
+  'transfer.resumeCapabilityHint':
+    'In-table resume is verified only for PostgreSQL/MySQL transfers between separate source and target sessions, into existing transactional tables (ordinary PostgreSQL table or MySQL InnoDB) with a complete supported primary key. Other tables keep whole-table transaction behavior. To resume, keep this app session open, use the token within 24 hours, and leave both the selected source rows and committed target rows unchanged. Source changes invalidate the token; target changes require manual reconciliation before continuing.',
+  'transfer.resumeAvailableHint':
+    'Resume is available from this open app session for up to 24 hours after the last checkpoint. Keep the selected source rows and all committed target rows unchanged while paused. Source changes invalidate the token; target changes are not checked automatically and must be reconciled before continuing.',
   'transfer.stopOnError': 'Stop on first error',
   'transfer.estimatedRows': 'Estimated rows',
   'transfer.sourceFilterPreview': 'Source filter',
@@ -325,7 +330,8 @@ const pack = {
   'transfer.limitations.crossDialect':
     'Cross-dialect transfers may drop timezone info or adjust column defaults',
   'transfer.limitations.baseTables': 'Base tables only (not views or materialized views)',
-  'transfer.limitations.noResume': 'No per-table resume; cancel stops the current job only',
+  'transfer.limitations.noResume':
+    'In-table resume is limited to verified PostgreSQL/MySQL primary-key tables; other tables retain whole-table transaction behavior',
   'transfer.limitations.dontShowAgain': 'Do not show this again',
   'transfer.ddlOverrideHint':
     'Edit the CREATE statement above; execute will run your modified SQL.',

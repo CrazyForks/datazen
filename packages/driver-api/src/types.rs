@@ -348,6 +348,12 @@ pub struct TableOptions {
     /// Default character set (currently populated by the MySQL-family driver only).
     #[serde(default)]
     pub charset: Option<String>,
+    /// Whether repeated reads of this relation are covered by the driver's
+    /// stable read-snapshot transaction contract. `None` means unknown and
+    /// must not be treated as resumable. Drivers should set this only when
+    /// the individual relation's storage/metadata proves snapshot behavior.
+    #[serde(default)]
+    pub supports_consistent_snapshot: Option<bool>,
 }
 
 impl Default for TableOptions {
@@ -356,6 +362,7 @@ impl Default for TableOptions {
             comment: None,
             engine: None,
             charset: None,
+            supports_consistent_snapshot: None,
         }
     }
 }

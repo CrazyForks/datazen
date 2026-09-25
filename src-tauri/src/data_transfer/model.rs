@@ -332,6 +332,11 @@ pub struct TransferOptions {
     pub confirmed_destructive: bool,
 }
 
+/// Upper bound for both a source keyset page and its target INSERT. Keeping
+/// this at the API boundary prevents a caller from turning a bounded query
+/// into an arbitrarily large materialized result or parameter batch.
+pub const MAX_TRANSFER_BATCH_SIZE: u32 = 500;
+
 impl Default for TransferOptions {
     fn default() -> Self {
         Self {
@@ -344,10 +349,10 @@ impl Default for TransferOptions {
 
 impl TransferOptions {
     pub fn validate(&self) -> Result<(), TransferError> {
-        if self.batch_size == 0 {
-            return Err(TransferError::validation(
-                "batchSize must be greater than 0",
-            ));
+        if self.batch_size == 0 || self.batch_size > MAX_TRANSFER_BATCH_SIZE {
+            return Err(TransferError::validation(format!(
+                "batchSize must be between 1 and {MAX_TRANSFER_BATCH_SIZE}"
+            )));
         }
         Ok(())
     }
