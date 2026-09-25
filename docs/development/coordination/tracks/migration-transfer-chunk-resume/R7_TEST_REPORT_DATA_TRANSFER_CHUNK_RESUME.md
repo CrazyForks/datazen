@@ -4,6 +4,7 @@
 - Tester branch: `codex/migration-transfer-chunk-resume-fresh-tester-r7`
 - Tester worktree: `/Users/flyxl/.codex/worktrees/datazen-migration-transfer-chunk-resume-fresh-tester-r7/datazen`
 - Result: **TEST_DONE**
+- Tester commits: `500d3b74b0df0d782ffe6fd0776f8e59976a852d` (frontend test correction), `5016f58dc7ac7dcdd7b378e836a6c85cce59a1f7` (Rust tests, report, progress, and BUG retest records).
 
 ## Review
 
