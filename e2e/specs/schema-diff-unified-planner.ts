@@ -661,6 +661,21 @@ async function runPositiveJourney(fixture: Fixture, mainWindow: string) {
     expect(await countOnTarget(fixture, baseTablesSql)).toBe(2);
     expect(await countOnTarget(fixture, viewSql)).toBe(1);
     expect(await countOnTarget(fixture, fkSql)).toBe(1);
+    if (fixture.dialect === 'mysql') {
+      await executeOn(fixture.targetId, `INSERT INTO ${fixture.parentTable} (id) VALUES (901)`);
+      await executeOn(
+        fixture.targetId,
+        `INSERT INTO ${fixture.table} (id, parent_id, state) VALUES (1901, 901, 'done')`,
+      );
+      const targetViewRows = parseQueryRows(
+        await executeOn(
+          fixture.targetId,
+          `SELECT id, state, parent_id FROM ${fixture.view} WHERE id=1901`,
+        ),
+      );
+      expect(targetViewRows).toHaveLength(1);
+      expect(targetViewRows[0]?.map(String)).toEqual(['1901', 'done', '901']);
+    }
     if (fixture.type) {
       expect(
         await countOnTarget(
@@ -712,6 +727,47 @@ async function runInvalidDependencyJourney(fixture: Fixture, mainWindow: string)
     await requirements.waitForDisplayed({ timeout: 15000 });
     const requirementText = (await requirements.getText()).toLowerCase();
     expect(requirementText).toMatch(/depend|select|table|object/);
+    if (fixture.dialect === 'mysql') {
+      expect(requirementText).toContain(`${MYSQL_SYNC_DB}.${fixture.table}`.toLowerCase());
+    }
+    expect(await readPlanStatements()).toEqual([]);
+    await advanceSchemaDiffToReview();
+    const deploy = await $('[data-testid="schema-diff-deploy"]');
+    await deploy.waitForDisplayed({ timeout: 8000 });
+    expect(await deploy.isEnabled()).toBe(false);
+    expect(await fixtureCount(fixture.targetId, fixture)).toBe(0);
+  } finally {
+    await cleanupFixture(fixture, mainWindow);
+  }
+}
+
+async function runMysqlNonDefaultViewMetadataJourney(fixture: Fixture, mainWindow: string) {
+  await addFixtureConnections(fixture);
+  try {
+    await setupFixture(fixture);
+    const source = await invokeBackend<string>('connect', { connectionId: fixture.sourceId });
+    try {
+      await withSafeModeOff(async () => {
+        await invokeBackend('execute_query', {
+          dbSessionId: source,
+          sql: `CREATE OR REPLACE VIEW ${fixture.view} AS SELECT id, state, parent_id FROM ${fixture.table} WITH CASCADED CHECK OPTION`,
+        });
+      });
+    } finally {
+      await disconnectBackend(source);
+    }
+
+    await openObjectPicker(fixture);
+    await setSchemaDiffTables(`${fixture.parentTable}, ${fixture.table}`);
+    await selectSourceObject('view', fixture.view);
+    await clickSchemaDiffCompare();
+    await clickSchemaDiffGeneratePlan();
+
+    const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+    await requirements.waitForDisplayed({ timeout: 15000 });
+    const requirementText = (await requirements.getText()).toLowerCase();
+    expect(requirementText).toContain('non-default creation semantics');
+    expect(await readPlanStatements()).toEqual([]);
     await advanceSchemaDiffToReview();
     const deploy = await $('[data-testid="schema-diff-deploy"]');
     await deploy.waitForDisplayed({ timeout: 8000 });
@@ -743,5 +799,9 @@ describe('Schema Diff unified reviewed planner (SD-UNIFIED)', function () {
 
   it('SD-UNIFIED-mysql-catalog: lists functions, procedures, triggers, and views with exact schema identities', async () => {
     await runMysqlCatalogSmokeJourney(createMysqlCatalogFixture());
+  });
+
+  it('SD-UNIFIED-mysql-view-metadata-blocked: blocks WITH CASCADED CHECK OPTION before target writes', async () => {
+    await runMysqlNonDefaultViewMetadataJourney(createFixture('mysql'), mainWindow);
   });
 });
