@@ -486,34 +486,19 @@ fn checked_ddl_decodes_only_valid_utf8_bytes() {
 
 #[test]
 fn mysql_view_metadata_is_extracted_as_required_creation_semantics() {
-    let result = QueryResult {
-        columns: vec![
-            col("ddl"),
-            col("view_definer"),
-            col("view_security_type"),
-            col("view_check_option"),
-            col("view_character_set_client"),
-            col("view_collation_connection"),
-        ],
-        rows: vec![vec![
-            Some(Value::String("SELECT 1".into())),
-            Some(Value::String("migrator@localhost".into())),
-            Some(Value::String("DEFINER".into())),
-            Some(Value::String("NONE".into())),
-            Some(Value::String("utf8mb4".into())),
-            Some(Value::String("utf8mb4_0900_ai_ci".into())),
-        ]],
-        rows_affected: None,
-        execution_time_ms: 0,
-    };
-    let show_create = QueryResult {
-        columns: vec![col("Create View")],
-        rows: vec![vec![Some(Value::String(
-            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1".into(),
-        ))]],
-        rows_affected: None,
-        execution_time_ms: 0,
-    };
+    let result = mysql_view_catalog_result(
+        "SELECT 1",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let show_create = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
 
     let metadata = extract_mysql_view_metadata(&result, &show_create).unwrap();
     assert_eq!(metadata.algorithm, "UNDEFINED");
@@ -524,17 +509,182 @@ fn mysql_view_metadata_is_extracted_as_required_creation_semantics() {
     assert_eq!(metadata.character_set_client, "utf8mb4");
     assert_eq!(metadata.collation_connection, "utf8mb4_0900_ai_ci");
 
-    let non_default_show_create = QueryResult {
-        columns: vec![col("Create View")],
-        rows: vec![vec![Some(Value::String(
-            "CREATE ALGORITHM=MERGE DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` (`label`) AS SELECT 1".into(),
-        ))]],
-        rows_affected: None,
-        execution_time_ms: 0,
-    };
+    let non_default_show_create = mysql_show_view_result(
+        "CREATE ALGORITHM=MERGE DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` (`label`) AS SELECT 1",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
     let non_default = extract_mysql_view_metadata(&result, &non_default_show_create).unwrap();
     assert_eq!(non_default.algorithm, "MERGE");
     assert!(non_default.has_explicit_column_list);
+}
+
+#[test]
+fn mysql_view_metadata_rejects_mixed_catalog_snapshots() {
+    let catalog = mysql_view_catalog_result(
+        "SELECT 1",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let show = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+
+    for (field, changed) in [
+        ("view_definer", "other@localhost"),
+        ("view_security_type", "INVOKER"),
+        ("view_check_option", "CASCADED"),
+        ("view_character_set_client", "latin1"),
+        ("view_collation_connection", "latin1_swedish_ci"),
+    ] {
+        let mut mismatched = catalog.clone();
+        let index = column_index(&mismatched.columns, &[field]).unwrap();
+        mismatched.rows[0][index] = Some(Value::String(changed.into()));
+        assert!(
+            extract_mysql_view_metadata(&mismatched, &show).is_err(),
+            "mixed snapshot must be rejected when {field} differs"
+        );
+    }
+
+    let changed_body = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 2",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let error = extract_mysql_view_metadata(&catalog, &changed_body).unwrap_err();
+    assert!(error.to_string().contains("different query bodies"));
+}
+
+#[test]
+fn mysql_view_metadata_rejects_show_create_semantics_not_in_catalog_snapshot() {
+    let catalog = mysql_view_catalog_result(
+        "SELECT 1",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    for (ddl, character_set, collation) in [
+        (
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`other`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1",
+            "utf8mb4",
+            "utf8mb4_0900_ai_ci",
+        ),
+        (
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY INVOKER VIEW `source_db`.`item_view` AS SELECT 1",
+            "utf8mb4",
+            "utf8mb4_0900_ai_ci",
+        ),
+        (
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1 /*!50013 WITH CASCADED CHECK OPTION */",
+            "utf8mb4",
+            "utf8mb4_0900_ai_ci",
+        ),
+        (
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1",
+            "latin1",
+            "utf8mb4_0900_ai_ci",
+        ),
+        (
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1",
+            "utf8mb4",
+            "latin1_swedish_ci",
+        ),
+    ] {
+        let show = mysql_show_view_result(ddl, character_set, collation);
+        assert!(
+            extract_mysql_view_metadata(&catalog, &show).is_err(),
+            "SHOW CREATE VIEW metadata must agree with INFORMATION_SCHEMA"
+        );
+    }
+}
+
+#[test]
+fn mysql_view_metadata_reads_check_option_from_show_create_version_comment() {
+    let catalog = mysql_view_catalog_result(
+        "SELECT 1",
+        "migrator@localhost",
+        "DEFINER",
+        "CASCADED",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let show = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 1 /*!50013 WITH CASCADED CHECK OPTION */",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let metadata = extract_mysql_view_metadata(&catalog, &show).unwrap();
+    assert_eq!(metadata.check_option, "CASCADED");
+
+    let body_with_phrase = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT 'WITH CASCADED CHECK OPTION' /* WITH LOCAL CHECK OPTION */",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let catalog_none = mysql_view_catalog_result(
+        "SELECT 'WITH CASCADED CHECK OPTION'",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let metadata = extract_mysql_view_metadata(&catalog_none, &body_with_phrase).unwrap();
+    assert_eq!(metadata.check_option, "NONE");
+}
+
+fn mysql_view_catalog_result(
+    body: &str,
+    definer: &str,
+    security: &str,
+    check_option: &str,
+    character_set: &str,
+    collation: &str,
+) -> QueryResult {
+    QueryResult {
+        columns: vec![
+            col("ddl"),
+            col("view_definer"),
+            col("view_security_type"),
+            col("view_check_option"),
+            col("view_character_set_client"),
+            col("view_collation_connection"),
+        ],
+        rows: vec![vec![
+            Some(Value::String(body.into())),
+            Some(Value::String(definer.into())),
+            Some(Value::String(security.into())),
+            Some(Value::String(check_option.into())),
+            Some(Value::String(character_set.into())),
+            Some(Value::String(collation.into())),
+        ]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    }
+}
+
+fn mysql_show_view_result(ddl: &str, character_set: &str, collation: &str) -> QueryResult {
+    QueryResult {
+        columns: vec![
+            col("Create View"),
+            col("character_set_client"),
+            col("collation_connection"),
+        ],
+        rows: vec![vec![
+            Some(Value::String(ddl.into())),
+            Some(Value::String(character_set.into())),
+            Some(Value::String(collation.into())),
+        ]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    }
 }
 
 #[test]
