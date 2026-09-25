@@ -483,6 +483,90 @@ fn chunk_checkpoint_binds_progress_and_claims_the_token_once() {
 }
 
 #[test]
+fn test_tester_concurrent_checkpoint_claim_allows_exactly_one_and_prevents_replay() {
+    let store = TransferPlanStore::new();
+    let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
+    let preview = TransferPreview {
+        plan_id: String::new(),
+        pairing_path: "direct".into(),
+        mode: TransferMode::Data,
+        write_mode: WriteMode::Insert,
+        ddl: vec![],
+        write_plans: vec![],
+        warnings: vec![],
+        can_execute: true,
+        block_reason: None,
+    };
+    let plan_id = store
+        .issue_with_ttl(
+            job(),
+            &preview,
+            driver.as_ref(),
+            driver.as_ref(),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    store.claim(&plan_id).unwrap();
+    let token = store
+        .start_chunk_checkpoint(
+            &plan_id,
+            vec!["users".into()],
+            Vec::new(),
+            ResumeTableProgress {
+                source_table: "users".into(),
+                target_table: "users_copy".into(),
+                key_columns: vec!["id".into()],
+                chunk_size: 2,
+                source_fingerprint: "source-digest-users".into(),
+                cursor: None,
+                rows_seen: 0,
+            },
+        )
+        .unwrap();
+    // Model the interruption path: execution releases a resumable checkpoint
+    // back to Available before a later run can claim it.
+    store.update_checkpoint(&token, Vec::new(), false).unwrap();
+
+    let store = std::sync::Arc::new(store);
+    let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let first = {
+        let store = std::sync::Arc::clone(&store);
+        let start = std::sync::Arc::clone(&start);
+        let token = token.clone();
+        let plan_id = plan_id.clone();
+        std::thread::spawn(move || {
+            start.wait();
+            store.claim_checkpoint(&token, &plan_id).is_ok()
+        })
+    };
+    let second = {
+        let store = std::sync::Arc::clone(&store);
+        let start = std::sync::Arc::clone(&start);
+        let token = token.clone();
+        let plan_id = plan_id.clone();
+        std::thread::spawn(move || {
+            start.wait();
+            store.claim_checkpoint(&token, &plan_id).is_ok()
+        })
+    };
+
+    start.wait();
+    let first_claimed = first.join().unwrap();
+    let second_claimed = second.join().unwrap();
+    assert_ne!(
+        first_claimed, second_claimed,
+        "exactly one concurrent claim wins"
+    );
+    assert!(
+        store.claim_checkpoint(&token, &plan_id).is_err(),
+        "a claimed checkpoint token cannot be replayed"
+    );
+}
+
+#[test]
 fn changed_source_digest_rejects_resume_and_session_invalidates_token() {
     let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
     let preview = TransferPreview {
@@ -613,4 +697,346 @@ fn run_request_accepts_only_opaque_resume_token_field() {
     }))
     .unwrap();
     assert_eq!(request.resume_token.as_deref(), Some("opaque-checkpoint"));
+}
+
+fn tester_claimed_chunk(store: &TransferPlanStore) -> (String, String) {
+    let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
+    let preview = TransferPreview {
+        plan_id: String::new(),
+        pairing_path: "direct".into(),
+        mode: TransferMode::Data,
+        write_mode: WriteMode::Insert,
+        ddl: vec![],
+        write_plans: vec![],
+        warnings: vec![],
+        can_execute: true,
+        block_reason: None,
+    };
+    let plan_id = store
+        .issue_with_ttl(
+            job(),
+            &preview,
+            driver.as_ref(),
+            driver.as_ref(),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    store.claim(&plan_id).unwrap();
+    let token = store
+        .start_chunk_checkpoint(
+            &plan_id,
+            vec!["users".into()],
+            Vec::new(),
+            ResumeTableProgress {
+                source_table: "users".into(),
+                target_table: "users_copy".into(),
+                key_columns: vec!["id".into()],
+                chunk_size: 2,
+                source_fingerprint: "source-digest-users".into(),
+                cursor: None,
+                rows_seen: 0,
+            },
+        )
+        .unwrap();
+    (plan_id, token)
+}
+
+#[test]
+fn test_tester_checkpoint_state_matrix_rejects_wrong_owner_regression_and_replay() {
+    let store = TransferPlanStore::new();
+    let (plan_id, token) = tester_claimed_chunk(&store);
+    store.update_checkpoint(&token, Vec::new(), false).unwrap();
+
+    assert!(store
+        .peek_checkpoint(&token, "different-plan")
+        .expect_err("opaque checkpoint must remain bound to its plan")
+        .to_string()
+        .contains("does not belong"));
+    assert!(store
+        .claim_checkpoint(&token, "different-plan")
+        .expect_err("a mismatched plan cannot claim the token")
+        .to_string()
+        .contains("does not belong"));
+    assert!(store
+        .update_checkpoint(&token, Vec::new(), false)
+        .expect_err("only an in-flight checkpoint can be released")
+        .to_string()
+        .contains("not in flight"));
+
+    store.claim_checkpoint(&token, &plan_id).unwrap();
+    assert!(store
+        .advance_checkpoint_table(
+            &token,
+            "users",
+            vec![crate::db::Value::Integer(1), crate::db::Value::Integer(2)],
+            2,
+        )
+        .expect_err("cursor width cannot diverge from the saved key")
+        .to_string()
+        .contains("primary-key order"));
+    store
+        .advance_checkpoint_table(&token, "users", vec![crate::db::Value::Integer(3)], 3)
+        .unwrap();
+    assert!(store
+        .advance_checkpoint_table(&token, "users", vec![crate::db::Value::Integer(2)], 2)
+        .expect_err("checkpoint progress cannot move backwards")
+        .to_string()
+        .contains("primary-key order"));
+    assert!(store
+        .prepare_checkpoint_table(
+            &token,
+            ResumeTableProgress {
+                source_table: "users".into(),
+                target_table: "users_copy".into(),
+                key_columns: vec!["id".into()],
+                chunk_size: 2,
+                source_fingerprint: "changed-source-digest".into(),
+                cursor: None,
+                rows_seen: 0,
+            },
+        )
+        .expect_err("a changed source fingerprint cannot consume prior progress")
+        .to_string()
+        .contains("changed since the checkpoint"));
+
+    store.update_checkpoint(&token, Vec::new(), false).unwrap();
+    store.claim_checkpoint(&token, &plan_id).unwrap();
+    store
+        .update_checkpoint(&token, vec!["users".into()], true)
+        .unwrap();
+    assert!(store.peek_checkpoint(&token, &plan_id).is_err());
+}
+
+#[test]
+fn test_tester_expired_checkpoint_is_removed_when_claimed() {
+    let store = TransferPlanStore::new();
+    let (plan_id, token) = tester_claimed_chunk(&store);
+    store
+        .checkpoints
+        .lock()
+        .expect("checkpoint lock")
+        .get_mut(&token)
+        .expect("new checkpoint")
+        .expires_at = Instant::now() - Duration::from_secs(1);
+
+    assert!(store
+        .claim_checkpoint(&token, &plan_id)
+        .expect_err("expired opaque tokens are not claimable")
+        .to_string()
+        .contains("resume token expired"));
+    assert!(!store.checkpoints.lock().unwrap().contains_key(&token));
+}
+
+#[test]
+fn test_tester_checkpoint_store_fails_closed_on_expiry_and_corruption_boundaries() {
+    let store = TransferPlanStore::new();
+    let (plan_id, token) = tester_claimed_chunk(&store);
+
+    assert!(store
+        .create_checkpoint("missing-plan", Vec::new(), Vec::new())
+        .expect_err("a checkpoint cannot be created without its immutable plan")
+        .to_string()
+        .contains("unknown or has expired"));
+
+    {
+        let mut plans = store.plans.lock().expect("plan lock");
+        plans.get_mut(&plan_id).expect("active plan").active_until =
+            Some(Instant::now() + Duration::from_secs(60));
+        store
+            .checkpoints
+            .lock()
+            .expect("checkpoint lock")
+            .get_mut(&token)
+            .expect("checkpoint")
+            .expires_at = Instant::now() - Duration::from_secs(1);
+        let mut checkpoints = store.checkpoints.lock().expect("checkpoint lock");
+        super::retain_live_checkpoints(&mut checkpoints, &plans, Instant::now());
+        assert!(checkpoints.contains_key(&token));
+    }
+    assert!(store
+        .peek_checkpoint(&token, &plan_id)
+        .expect_err("an expired token is not peekable even while its execution lease is live")
+        .to_string()
+        .contains("resume token expired"));
+
+    {
+        let mut plans = store.plans.lock().expect("plan lock");
+        plans.get_mut(&plan_id).expect("active plan").active_until =
+            Some(Instant::now() - Duration::from_secs(1));
+        let mut checkpoints = store.checkpoints.lock().expect("checkpoint lock");
+        super::retain_live_checkpoints(&mut checkpoints, &plans, Instant::now());
+        assert!(!checkpoints.contains_key(&token));
+        let plan = plans.get_mut(&plan_id).expect("active plan");
+        plan.expires_at = Instant::now() - Duration::from_secs(1);
+    }
+    assert!(store
+        .create_checkpoint(&plan_id, Vec::new(), Vec::new())
+        .expect_err("an expired execution without a live lease cannot create a token")
+        .to_string()
+        .contains("transfer plan has expired"));
+    store.finish_execution(&plan_id, false);
+    assert!(store
+        .create_checkpoint(&plan_id, Vec::new(), Vec::new())
+        .expect_err("a consumed plan cannot mint another checkpoint")
+        .to_string()
+        .contains("was not claimed"));
+    assert!(store.renew_execution("missing-plan", None).is_err());
+    assert!(store.renew_execution(&plan_id, None).is_err());
+    assert!(store.claim_checkpoint("missing-token", &plan_id).is_err());
+    assert!(store
+        .advance_checkpoint_table("missing-token", "users", Vec::new(), 0)
+        .is_err());
+
+    let (second_plan_id, second_token) = tester_claimed_chunk(&store);
+    {
+        let mut checkpoints = store.checkpoints.lock().expect("checkpoint lock");
+        checkpoints
+            .get_mut(&second_token)
+            .expect("checkpoint")
+            .token = "tampered-token".into();
+    }
+    assert!(store
+        .peek_checkpoint(&second_token, &second_plan_id)
+        .expect_err("the opaque token is bound to its registry key")
+        .to_string()
+        .contains("registry entry is invalid"));
+    assert!(store
+        .claim_checkpoint(&second_token, &second_plan_id)
+        .expect_err("a tampered token cannot be claimed")
+        .to_string()
+        .contains("registry entry is invalid"));
+    store
+        .checkpoints
+        .lock()
+        .expect("checkpoint lock")
+        .get_mut(&second_token)
+        .expect("checkpoint")
+        .token = second_token.clone();
+
+    assert!(store
+        .advance_checkpoint_table(&second_token, "other-table", Vec::new(), 0)
+        .expect_err("progress must already exist for the source table")
+        .to_string()
+        .contains("state disappeared"));
+    store
+        .update_checkpoint(&second_token, Vec::new(), false)
+        .expect("release the simulated interrupted execution");
+    let expected = ResumeTableProgress {
+        source_table: "users".into(),
+        target_table: "users_copy".into(),
+        key_columns: vec!["id".into()],
+        chunk_size: 2,
+        source_fingerprint: "source-digest-users".into(),
+        cursor: None,
+        rows_seen: 0,
+    };
+    assert!(store
+        .prepare_checkpoint_table(&second_token, expected)
+        .expect_err("available checkpoints cannot be prepared as in-flight")
+        .to_string()
+        .contains("no longer active"));
+    {
+        let mut plans = store.plans.lock().expect("plan lock");
+        let plan = plans.get_mut(&second_plan_id).expect("second plan");
+        plan.state = PlanState::Executing;
+        plan.expires_at = Instant::now() - Duration::from_secs(1);
+        plan.active_until = None;
+    }
+    assert!(store
+        .peek_checkpoint(&second_token, &second_plan_id)
+        .expect_err("an expired plan without an active lease cannot be resumed")
+        .to_string()
+        .contains("transfer plan has expired"));
+    assert!(store
+        .renew_execution(&second_plan_id, Some(&second_token))
+        .expect_err("an available checkpoint is not renewable as an active execution")
+        .to_string()
+        .contains("no longer in flight"));
+}
+
+#[test]
+fn test_tester_unfinalized_checkpoint_session_drop_fences_resume_token() {
+    let driver = crate::testing::mock_driver::MockDriver::new("fixture", Default::default());
+    let preview = TransferPreview {
+        plan_id: String::new(),
+        pairing_path: "direct".into(),
+        mode: TransferMode::Data,
+        write_mode: WriteMode::Insert,
+        ddl: vec![],
+        write_plans: vec![],
+        warnings: vec![],
+        can_execute: true,
+        block_reason: None,
+    };
+    let plan_id = global_store()
+        .issue(
+            job(),
+            &preview,
+            driver.as_ref(),
+            driver.as_ref(),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        )
+        .expect("issue immutable plan");
+    global_store().claim(&plan_id).expect("claim plan");
+    let mut session =
+        TransferCheckpointSession::new(plan_id.clone(), vec!["users".into()], Vec::new(), None);
+    session
+        .prepare_table(
+            "users",
+            "users_copy",
+            &["id".into()],
+            2,
+            "source-digest-users",
+        )
+        .expect("create first chunk checkpoint");
+    let token = session.token().expect("opaque checkpoint token");
+    drop(session);
+    assert!(global_store()
+        .peek_checkpoint(&token, &plan_id)
+        .expect_err("dropping an unfinished session must fence its token")
+        .to_string()
+        .contains("unknown, consumed, or expired"));
+}
+
+#[test]
+fn test_tester_expired_inflight_checkpoint_is_removed_when_released() {
+    let store = TransferPlanStore::new();
+    let (_plan_id, token) = tester_claimed_chunk(&store);
+    store
+        .checkpoints
+        .lock()
+        .expect("checkpoint lock")
+        .get_mut(&token)
+        .expect("in-flight checkpoint")
+        .expires_at = Instant::now() - Duration::from_secs(1);
+
+    assert!(store
+        .update_checkpoint(&token, Vec::new(), false)
+        .expect_err("an expired in-flight token cannot become available again")
+        .to_string()
+        .contains("expired during execution"));
+    assert!(!store.checkpoints.lock().unwrap().contains_key(&token));
+}
+
+#[test]
+fn test_tester_invalidated_session_cannot_renew_or_advance_without_token() {
+    let mut session =
+        TransferCheckpointSession::new("nonexistent-plan", vec!["users".into()], Vec::new(), None);
+    session.invalidate();
+
+    assert!(session
+        .renew()
+        .expect_err("an invalidated session cannot renew its execution lease")
+        .to_string()
+        .contains("invalidated"));
+    assert!(session
+        .advance_table("users", vec![crate::db::Value::Integer(1)], 1)
+        .expect_err("a chunk cannot advance before the opaque checkpoint exists")
+        .to_string()
+        .contains("was not created before writing"));
 }

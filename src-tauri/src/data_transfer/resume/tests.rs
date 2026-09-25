@@ -1,3 +1,4 @@
+use super::fingerprint::last_cursor;
 use super::*;
 use datazen_driver_api::{ColumnInfo, ColumnSchema, IndexInfo, QueryResult, TableOptions};
 use sha2::{Digest, Sha256};
@@ -251,4 +252,493 @@ fn batch_size_hard_limit_is_user_visible_api_validation() {
     assert_eq!(effective_chunk_size(500, 1_000).unwrap(), 60);
     assert!(remaining_page_limit(500, 5, Some(6)).is_some_and(|limit| limit == 1));
     assert!(remaining_page_limit(500, 6, Some(6)).is_none());
+}
+
+#[test]
+fn test_tester_rejects_ambiguous_primary_key_resume_contracts() {
+    let mut no_primary_key = source_schema(&["id"]);
+    no_primary_key.primary_keys.clear();
+    assert!(resumable_primary_key(&no_primary_key, None, "postgresql")
+        .expect_err("a keyless relation cannot be resumed")
+        .to_string()
+        .contains("declared primary key"));
+
+    let mut duplicate_key = source_schema(&["id"]);
+    duplicate_key.primary_keys = vec!["id".into(), "id".into()];
+    assert!(resumable_primary_key(&duplicate_key, None, "postgresql")
+        .expect_err("duplicated PK metadata must fail closed")
+        .to_string()
+        .contains("unique primary-key metadata"));
+
+    let mut missing_column = source_schema(&["id"]);
+    missing_column.columns.clear();
+    assert!(resumable_primary_key(&missing_column, None, "postgresql")
+        .expect_err("a PK absent from inspected columns is unsafe")
+        .to_string()
+        .contains("missing from inspected source metadata"));
+
+    let mut unverified_column = source_schema(&["id"]);
+    unverified_column.columns[0].is_primary_key = false;
+    assert!(
+        resumable_primary_key(&unverified_column, None, "postgresql")
+            .expect_err("column metadata must corroborate the declared key")
+            .to_string()
+            .contains("not proven non-null")
+    );
+
+    let mut index_mismatch = source_schema(&["id"]);
+    index_mismatch.indexes.clear();
+    assert!(resumable_primary_key(&index_mismatch, None, "postgresql")
+        .expect_err("the full PK index order must be available")
+        .to_string()
+        .contains("index order could not be verified"));
+
+    for data_type in ["TEXT", "DOUBLE PRECISION"] {
+        assert!(
+            resumable_primary_key(
+                &source_schema_with_type(&["id"], data_type),
+                None,
+                "postgresql"
+            )
+            .is_err(),
+            "unsafe ordered key type {data_type} must be rejected"
+        );
+    }
+
+    let mut recordset_schema = source_schema(&["id"]);
+    recordset_schema.columns.push(ColumnSchema {
+        name: "label".into(),
+        data_type: "TEXT".into(),
+        nullable: true,
+        default_value: None,
+        comment: None,
+        is_primary_key: false,
+        is_auto_increment: false,
+    });
+    let recordset = crate::data_transfer::model::TransferRecordset {
+        order_by: Some("label".into()),
+        start: None,
+        end: None,
+        tuple_range: None,
+        limit: None,
+    };
+    assert!(
+        resumable_primary_key(&recordset_schema, Some(&recordset), "postgresql")
+            .expect_err("a user range cannot change the complete PK scan order")
+            .to_string()
+            .contains("recordset order to match")
+    );
+}
+
+fn tester_placeholder(_: usize, _: Option<&str>) -> Result<String, TransferError> {
+    Ok("?".into())
+}
+
+fn tester_reject_placeholder(_: usize, _: Option<&str>) -> Result<String, TransferError> {
+    Err(TransferError::unsupported("no typed bind contract"))
+}
+
+#[test]
+fn test_tester_keyset_builder_fails_closed_on_incomplete_or_unsafe_cursors() {
+    let no_keys = build_keyset_page(
+        "SELECT `id` FROM `items`",
+        None,
+        &[],
+        &[],
+        None,
+        2,
+        '`',
+        tester_placeholder,
+        |_| None,
+    )
+    .expect_err("keyset scans need a declared key");
+    assert!(no_keys.to_string().contains("complete source primary key"));
+
+    let wrong_arity = build_keyset_page(
+        "SELECT `tenant`, `id` FROM `items`",
+        None,
+        &[],
+        &["tenant".into(), "id".into()],
+        Some(&[Value::String("north".into())]),
+        2,
+        '`',
+        tester_placeholder,
+        |_| Some("TEXT".into()),
+    )
+    .expect_err("a composite cursor must bind every key component");
+    assert!(wrong_arity
+        .to_string()
+        .contains("complete source primary key"));
+
+    let null_cursor = build_keyset_page(
+        "SELECT `id` FROM `items`",
+        None,
+        &[],
+        &["id".into()],
+        Some(&[Value::Null]),
+        2,
+        '`',
+        tester_placeholder,
+        |_| Some("BIGINT".into()),
+    )
+    .expect_err("NULL cannot define a keyset continuation");
+    assert!(null_cursor.to_string().contains("NULL primary-key value"));
+
+    let too_many_parameters = vec![Value::Integer(1); MAX_BOUND_QUERY_PARAMETERS + 1];
+    assert!(build_keyset_page(
+        "SELECT `id` FROM `items`",
+        None,
+        &too_many_parameters,
+        &["id".into()],
+        None,
+        2,
+        '`',
+        tester_placeholder,
+        |_| Some("BIGINT".into()),
+    )
+    .expect_err("the source page must remain below the driver bind limit")
+    .to_string()
+    .contains("safe limit"));
+
+    let placeholder_error = build_keyset_page(
+        "SELECT `id` FROM `items`",
+        None,
+        &[],
+        &["id".into()],
+        Some(&[Value::Integer(1)]),
+        2,
+        '`',
+        tester_reject_placeholder,
+        |_| Some("BIGINT".into()),
+    )
+    .expect_err("a driver placeholder failure must propagate");
+    assert!(placeholder_error
+        .to_string()
+        .contains("typed bind contract"));
+}
+
+#[test]
+fn test_tester_hash_and_cursor_helpers_cover_supported_value_tags() {
+    let values = [
+        None,
+        Some(Value::Null),
+        Some(Value::Bool(true)),
+        Some(Value::Integer(-42)),
+        Some(Value::Float(f64::from_bits(0x3ff0_0000_0000_0001))),
+        Some(Value::String("utf8 雪".into())),
+        Some(Value::Bytes(vec![0, 127, 255])),
+        Some(Value::Timestamp("2026-09-25T12:00:00Z".into())),
+        Some(Value::Json(serde_json::json!({"a": [1, true]}))),
+    ];
+    let mut digest = Sha256::new();
+    for value in &values {
+        hash_value(&mut digest, value.as_ref());
+    }
+    assert_ne!(digest.finalize(), Sha256::digest(b""));
+
+    assert!(cursor_value_supported(&Value::Integer(1)));
+    assert!(cursor_value_supported(&Value::String("key".into())));
+    assert!(cursor_value_supported(&Value::Bool(false)));
+    assert!(!cursor_value_supported(&Value::Float(1.0)));
+    assert!(last_cursor(&[], &[0]).is_err());
+    assert!(last_cursor(&[vec![Some(Value::Null)]], &[0]).is_err());
+    assert!(last_cursor(&[vec![Some(Value::Float(1.0))]], &[0]).is_err());
+}
+
+#[derive(Default)]
+struct TesterCheckpoint {
+    progress: Option<ResumeTableProgress>,
+    renew_calls: usize,
+    fail_renew_on_call: Option<usize>,
+    fail_prepare: bool,
+    fail_advance: bool,
+    invalidated: bool,
+}
+
+impl TransferResumeCheckpoint for TesterCheckpoint {
+    fn renew(&mut self) -> Result<(), TransferError> {
+        self.renew_calls += 1;
+        if self.fail_renew_on_call == Some(self.renew_calls) {
+            return Err(TransferError::validation(
+                "injected checkpoint renewal failure",
+            ));
+        }
+        Ok(())
+    }
+
+    fn prepare_table(
+        &mut self,
+        source_table: &str,
+        target_table: &str,
+        key_columns: &[String],
+        chunk_size: u32,
+        source_fingerprint: &str,
+    ) -> Result<ResumeTableProgress, TransferError> {
+        if self.fail_prepare {
+            return Err(TransferError::validation(
+                "injected checkpoint prepare failure",
+            ));
+        }
+        Ok(self
+            .progress
+            .get_or_insert_with(|| ResumeTableProgress {
+                source_table: source_table.into(),
+                target_table: target_table.into(),
+                key_columns: key_columns.to_vec(),
+                chunk_size,
+                source_fingerprint: source_fingerprint.into(),
+                cursor: None,
+                rows_seen: 0,
+            })
+            .clone())
+    }
+
+    fn advance_table(
+        &mut self,
+        source_table: &str,
+        cursor: Vec<Value>,
+        rows_seen: u64,
+    ) -> Result<(), TransferError> {
+        if self.fail_advance {
+            return Err(TransferError::validation(
+                "injected checkpoint advancement failure",
+            ));
+        }
+        let progress = self
+            .progress
+            .as_mut()
+            .filter(|progress| progress.source_table == source_table)
+            .ok_or_else(|| TransferError::validation("missing checkpoint table"))?;
+        progress.cursor = Some(cursor);
+        progress.rows_seen = rows_seen;
+        Ok(())
+    }
+
+    fn token(&self) -> Option<String> {
+        Some("tester-opaque-token".into())
+    }
+
+    fn has_table_progress(&self, source_table: &str) -> bool {
+        self.progress
+            .as_ref()
+            .is_some_and(|progress| progress.source_table == source_table)
+    }
+
+    fn table_has_committed_chunks(&self, source_table: &str) -> bool {
+        self.progress
+            .as_ref()
+            .is_some_and(|progress| progress.source_table == source_table && progress.rows_seen > 0)
+    }
+
+    fn is_invalidated(&self) -> bool {
+        self.invalidated
+    }
+
+    fn invalidate(&mut self) {
+        self.invalidated = true;
+    }
+}
+
+fn chunk_test_drivers(
+    query_error: Option<String>,
+    source_rollback_error: bool,
+) -> (
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+    TableSchema,
+    TableSchema,
+) {
+    use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
+
+    let source_schema = source_schema(&["id"]);
+    let mut target_schema = source_schema.clone();
+    target_schema.table_name = "items_copy".into();
+    let source = MockDriver::new(
+        "postgresql",
+        MockDriverOptions {
+            columns: source_schema.columns.clone(),
+            table_schema: Some(source_schema.clone()),
+            query_rows: vec![vec![Some(Value::Integer(1))]],
+            empty_keyset_after_cursor: true,
+            parameterized_writes: true,
+            query_error,
+            rollback_error_on_call: source_rollback_error.then_some(1),
+            rollback_error: Some("injected source snapshot rollback failure".into()),
+            ..Default::default()
+        },
+    );
+    let target = MockDriver::new(
+        "mysql",
+        MockDriverOptions {
+            columns: target_schema.columns.clone(),
+            table_schema: Some(target_schema.clone()),
+            parameterized_writes: true,
+            execute_rows_affected: 1,
+            ..Default::default()
+        },
+    );
+    (source, target, source_schema, target_schema)
+}
+
+async fn run_test_chunk(
+    checkpoint: &mut TesterCheckpoint,
+    query_error: Option<String>,
+    source_rollback_error: bool,
+) -> (
+    Result<ChunkedTableResult, TransferError>,
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+) {
+    let (source, target, source_schema, target_schema) =
+        chunk_test_drivers(query_error, source_rollback_error);
+    let source_handle = crate::db::ConnectionHandle {
+        id: "source-session".into(),
+        pool_id: "source-pool".into(),
+    };
+    let target_handle = crate::db::ConnectionHandle {
+        id: "target-session".into(),
+        pool_id: "target-pool".into(),
+    };
+    let mut mapping = crate::data_transfer::model::TableMapping::auto("items");
+    mapping.target_table = "items_copy".into();
+    mapping.column_mappings = vec![ColumnMapping {
+        source_column: "id".into(),
+        target_column: "id".into(),
+        skip: false,
+        target_native_type: None,
+    }];
+    let job = TransferJob {
+        source: crate::data_transfer::model::Endpoint {
+            db_session_id: source_handle.id.clone(),
+            database: "app".into(),
+            schema: None,
+        },
+        target: Some(crate::data_transfer::model::Endpoint {
+            db_session_id: target_handle.id.clone(),
+            database: "app".into(),
+            schema: None,
+        }),
+        sql_file_target: None,
+        mode: crate::data_transfer::model::TransferMode::Data,
+        write_mode: crate::data_transfer::model::WriteMode::Insert,
+        tables: vec![mapping],
+        options: crate::data_transfer::model::TransferOptions {
+            batch_size: 2,
+            stop_on_error: true,
+            confirmed_destructive: false,
+        },
+    };
+    let table = TableInspectResult {
+        source_table: "items".into(),
+        target_table: "items_copy".into(),
+        status: crate::data_transfer::model::TableMappingStatus::Matched,
+        create_new: false,
+        enabled: true,
+        column_mappings: job.tables[0].column_mappings.clone(),
+        source_columns: vec!["id".into()],
+        source_primary_keys: vec!["id".into()],
+        target_columns: vec!["id".into()],
+        source_column_types: Default::default(),
+        incompatible_reason: None,
+        source_row_count: Some(1),
+        recordset: None,
+    };
+    let source_scope = SourceScope {
+        where_sql: None,
+        recordset_sql: None,
+        params: Vec::new(),
+        count_params: Vec::new(),
+    };
+    let columns: Vec<_> = job.tables[0].column_mappings.iter().collect();
+    let formatter = ValueFormatter::SameFamily;
+    let result = execute_chunked_table(ChunkedTransferContext {
+        source_driver: source.as_ref(),
+        source_handle: &source_handle,
+        target_driver: target.as_ref(),
+        target_handle: &target_handle,
+        job: &job,
+        table: &table,
+        source_schema: &source_schema,
+        target_schema: &target_schema,
+        source_scope: &source_scope,
+        source_table_ref: "items",
+        target_table_ref: "items_copy",
+        source_quote: '"',
+        target_type: "mysql",
+        columns: &columns,
+        formatter: &formatter,
+        cancelled: None,
+        write_started: None,
+        checkpoint,
+    })
+    .await;
+    (result, source, target)
+}
+
+#[tokio::test]
+async fn test_tester_confirmed_chunk_commit_fences_failed_checkpoint_advance() {
+    let mut checkpoint = TesterCheckpoint {
+        fail_advance: true,
+        ..Default::default()
+    };
+    let (result, source, target) = run_test_chunk(&mut checkpoint, None, false).await;
+    let result = result.expect("a confirmed target commit should return typed partial state");
+
+    assert_eq!(
+        result.result.outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    assert_eq!(result.result.rows_inserted, Some(1));
+    assert_eq!(result.confirmed_rows, 1);
+    assert!(result.stop_later_tables_reason.is_some());
+    assert!(checkpoint.invalidated);
+    assert_eq!(target.commit_calls(), 1);
+    assert_eq!(source.open_transaction_count(), 0);
+    assert_eq!(target.open_transaction_count(), 0);
+}
+
+#[tokio::test]
+async fn test_tester_chunk_ack_loss_fences_checkpoint_after_target_commit() {
+    use super::super::execute::{arm_test_commit_ack_loss, clear_test_commit_ack_loss};
+
+    let _reset = clear_test_commit_ack_loss();
+    arm_test_commit_ack_loss("items_copy").expect("the one-shot test seam should arm");
+    let mut checkpoint = TesterCheckpoint::default();
+    let (result, source, target) = run_test_chunk(&mut checkpoint, None, false).await;
+    clear_test_commit_ack_loss();
+    let result = result.expect("unknown commit acknowledgement is a typed table result");
+
+    assert_eq!(result.result.outcome, Some(TableExecutionOutcome::Unknown));
+    assert_eq!(result.result.rows_inserted, None);
+    assert!(checkpoint.invalidated);
+    assert_eq!(target.commit_calls(), 1);
+    assert_eq!(target.open_transaction_count(), 0);
+    assert_eq!(source.open_transaction_count(), 0);
+}
+
+#[tokio::test]
+async fn test_tester_source_fingerprint_failure_with_unknown_snapshot_rollback_fences_resume() {
+    let mut checkpoint = TesterCheckpoint::default();
+    let (result, source, target) = run_test_chunk(
+        &mut checkpoint,
+        Some("injected source fingerprint query failure".into()),
+        true,
+    )
+    .await;
+    let result = result.expect("unknown snapshot cleanup is returned as a fenced outcome");
+
+    assert_eq!(
+        result.result.outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(result.result.rows_inserted, None);
+    assert!(result.stop_later_tables_reason.is_some());
+    assert!(result
+        .result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("source snapshot rollback outcome is UNKNOWN")));
+    assert!(checkpoint.invalidated);
+    assert_eq!(target.commit_calls(), 0);
+    assert_eq!(source.open_transaction_count(), 1);
 }

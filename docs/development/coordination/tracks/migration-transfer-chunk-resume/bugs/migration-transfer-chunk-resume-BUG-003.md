@@ -68,3 +68,8 @@ The rebuilt local PG→MySQL bounded-chunk WDIO journey then passed (1 passing, 
 ## Independent retest R4
 
 R4 independently passed the PG→MySQL and MySQL→PG multi-boundary cancellation/resume journeys and the PG→MySQL source-mutation refusal, including exact target row counts/readbacks and the final empty page. The new resumed-cancel UI path was exercised. See `R4_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`; the remaining R4 failures were only stale acknowledgement-loss error-message expectations tracked separately in BUG-004/005. BUG-003 is therefore independently verified; overall feature release gates remain open.
+
+
+## 复测记录（round-7）
+
+Independent Tester R7 reran the isolated WDIO suite. Both PostgreSQL → MySQL and MySQL → PostgreSQL cancel/resume journeys passed at the strict chunk-count gates and verified ordered final rows. PostgreSQL → MySQL source mutation while paused was rejected before additional target writes. The R7 app was stopped, port 4445 released, and run-owned fixtures cleaned. See `R7_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`.

@@ -1,6 +1,6 @@
 # BUG-002 — Unsafe legacy fallback can issue tokens without target atomicity proof
 
-- Status: `待复测`
+- Status: `已复测通过`
 - Severity: P1 — when target write atomicity is unknown or false, a partial legacy write can be presented as resumable even though no safe per-table boundary is guaranteed.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Evidence: source-code review of the executor capability gate, per-table dispatcher, and checkpoint lifecycle.
@@ -32,3 +32,8 @@ Preserve the existing safe table-boundary resume when row-key chunking is unavai
 ## 修复记录（round-1）
 
 Commit `c08a907e` adds a write preflight for selected existing targets and session identity. A fresh transfer may continue through the ordinary writer when target transaction metadata is unknown, but it receives no replayable token and the partial result explains why. A transfer with an existing token is rejected and invalidated before any write if the target/session boundary is no longer proven. Unsupported source snapshot/keyset capabilities still permit the verified transactional whole-table fallback; changed/unknown target transaction capability does not. Focused tests cover unknown target metadata, changed target contract with zero replacement commits and consumed-token replay, source snapshot fallback, and MySQL BIGINT fallback. Independent R3 should recheck these behaviors.
+
+
+## 复测记录（round-7）
+
+Independent Tester R7 passed `unknown_target_transaction_metadata_allows_transfer_without_token`: the partial result has no resume token and no confirmed target commit when transaction metadata is unknown. `changed_target_transaction_contract_invalidates_before_legacy_write` also passed: a changed unsafe target contract is rejected before replacement writes, consumes the checkpoint, and rejects token replay. The unsafe fallback/token gap is closed for the tested contract boundaries.
