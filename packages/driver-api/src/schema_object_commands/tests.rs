@@ -2,6 +2,8 @@ use super::*;
 use crate::schema_dependencies::TypeDependencyUsageKind;
 use crate::types::ColumnInfo;
 
+mod dependency_route;
+
 fn col(name: &str) -> ColumnInfo {
     ColumnInfo {
         name: name.into(),
@@ -638,6 +640,23 @@ fn mysql_view_metadata_reads_check_option_from_show_create_version_comment() {
     );
     let metadata = extract_mysql_view_metadata(&catalog_none, &body_with_phrase).unwrap();
     assert_eq!(metadata.check_option, "NONE");
+}
+
+#[test]
+fn mysql_view_check_option_lexer_ignores_quoted_and_line_comment_phrases() {
+    let cases = [
+        r#"SELECT 'prefix ''WITH LOCAL CHECK OPTION'' suffix'"#,
+        r#"SELECT 'escaped \' WITH CASCADED CHECK OPTION'"#,
+        "SELECT 1 -- WITH CASCADED CHECK OPTION\n -- WITH LOCAL CHECK OPTION",
+    ];
+
+    for sql in cases {
+        assert_eq!(
+            mysql_show_create_view_check_option(sql).unwrap(),
+            "NONE",
+            "quoted or commented text must not become view metadata: {sql}"
+        );
+    }
 }
 
 #[test]
