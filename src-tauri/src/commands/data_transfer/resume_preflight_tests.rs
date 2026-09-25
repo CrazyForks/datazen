@@ -371,3 +371,101 @@ async fn unknown_source_snapshot_close_preserves_committed_chunk_and_stops_later
     assert!(replay.to_string().contains("resume token"), "{replay}");
     assert_eq!(close_failure_driver.commit_calls(), 2);
 }
+
+#[tokio::test]
+async fn chunk_write_and_rollback_failure_fences_later_table_and_consumes_checkpoint() {
+    let test = TestAppState::with_options(two_table_safe_options()).await;
+    let (_, source) = test
+        .save_and_connect("transfer-resume-chunk-rollback-source")
+        .await;
+    let (_, target) = test
+        .save_and_connect("transfer-resume-chunk-rollback-target")
+        .await;
+    let mut transfer = job(source, target);
+    transfer.tables.push(TableMapping::auto("orders"));
+    transfer.options.stop_on_error = true;
+    let preview = preview_data_transfer_impl(&test.state, transfer)
+        .await
+        .expect("preview should include both snapshot-safe tables");
+    let plan_id = preview.plan_id.clone();
+
+    let mut write_failure_options = two_table_safe_options();
+    write_failure_options.execute_with_params_error =
+        Some("injected target chunk write failure".into());
+    test.registry
+        .register_test_driver(
+            "postgres",
+            MockDriver::new("postgres", write_failure_options),
+        )
+        .await;
+    let first = execute_data_transfer_impl(&test.state, request(plan_id.clone(), None))
+        .await
+        .expect("a confirmed target rollback should return a checkpoint");
+    let old_token = first
+        .resume_token
+        .expect("a failed chunk with confirmed rollback should be resumable");
+    assert!(first.tables[0]
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("target chunk write failed")));
+
+    let mut rollback_failure_options = two_table_safe_options();
+    rollback_failure_options.execute_with_params_error =
+        Some("injected target chunk write failure".into());
+    // The command first rolls back its target capability probe; fail the next
+    // rollback, which belongs to the actual target row chunk.
+    rollback_failure_options.rollback_error_on_call = Some(2);
+    rollback_failure_options.rollback_error = Some("injected target chunk rollback failure".into());
+    let rollback_failure_driver = MockDriver::new("postgres", rollback_failure_options);
+    test.registry
+        .register_test_driver("postgres", rollback_failure_driver.clone())
+        .await;
+    let unknown = execute_data_transfer_impl(
+        &test.state,
+        request(plan_id.clone(), Some(old_token.clone())),
+    )
+    .await
+    .expect("a chunk rollback error must be reported as an unknown table result");
+
+    assert!(unknown.partial);
+    assert_eq!(unknown.resume_token, None);
+    assert_eq!(unknown.tables.len(), 2);
+    assert_eq!(unknown.tables[0].source_table, "users");
+    assert_eq!(
+        unknown.tables[0].outcome,
+        Some(TableExecutionOutcome::Unknown)
+    );
+    assert_eq!(unknown.tables[0].rows_inserted, None);
+    let error = unknown.tables[0].error.as_deref().unwrap_or_default();
+    assert!(error.contains("target chunk write failed"), "{error}");
+    assert!(
+        error.contains("target rollback outcome is UNKNOWN"),
+        "{error}"
+    );
+    assert!(
+        error.contains("injected target chunk rollback failure"),
+        "{error}"
+    );
+    assert_eq!(unknown.tables[1].source_table, "orders");
+    assert_eq!(
+        unknown.tables[1].outcome,
+        Some(TableExecutionOutcome::NotStarted)
+    );
+    assert_eq!(unknown.tables[1].rows_inserted, Some(0));
+    assert_eq!(rollback_failure_driver.commit_calls(), 0);
+    assert_eq!(
+        rollback_failure_driver.open_transaction_count(),
+        1,
+        "the failed target rollback leaves only its transaction outcome unknown"
+    );
+
+    let plan_replay = execute_data_transfer_impl(&test.state, request(plan_id.clone(), None))
+        .await
+        .expect_err("the immutable plan must stay consumed after unknown rollback");
+    assert!(plan_replay.to_string().contains("already consumed"));
+    let checkpoint_replay =
+        execute_data_transfer_impl(&test.state, request(plan_id, Some(old_token)))
+            .await
+            .expect_err("the checkpoint token must not be replayable after an unknown rollback");
+    assert!(checkpoint_replay.to_string().contains("consumed"));
+}
