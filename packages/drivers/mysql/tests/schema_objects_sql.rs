@@ -1,6 +1,8 @@
 //! MySQL dialect SQL for schema object browser queries (list / DDL / privileges).
 
-use datazen_driver_api::schema_dependencies::view_dependencies_sql;
+use datazen_driver_api::schema_dependencies::{
+    mysql_table_dependencies_sql, view_dependencies_sql,
+};
 use datazen_driver_api::schema_object_commands::parse_object_list;
 use datazen_driver_api::schema_objects::{
     list_objects_sql, list_privileges_sql, mysql_show_create_view_sql, object_ddl_sql, ObjectKind,
@@ -116,6 +118,29 @@ fn view_dependency_catalog_reads_structured_table_and_routine_usage() {
     assert!(sql.contains("information_schema.VIEW_ROUTINE_USAGE"));
     assert!(sql.contains("information_schema.ROUTINES"));
     assert!(sql.contains("routine.SPECIFIC_NAME = view_usage.SPECIFIC_NAME"));
+}
+
+#[test]
+fn table_dependency_catalog_proves_selected_fk_metadata_before_emitting_edges() {
+    let sql = mysql_table_dependencies_sql("child_table", Some("source_db"));
+    assert!(sql.contains("information_schema.TABLES"));
+    assert!(sql.contains("TABLE_TYPE = 'BASE TABLE'"));
+    assert!(sql.contains("information_schema.TABLE_CONSTRAINTS"));
+    assert!(sql.contains("information_schema.KEY_COLUMN_USAGE"));
+    assert!(sql.contains("information_schema.REFERENTIAL_CONSTRAINTS"));
+    assert!(sql.contains("constraint_row.CONSTRAINT_TYPE = 'FOREIGN KEY'"));
+    assert!(sql.contains("BINARY TABLE_SCHEMA = BINARY 'source_db'"));
+    assert!(sql.contains("selected_count"));
+    assert!(sql.contains("unsupported_count"));
+    assert!(sql.contains("orphan_key_rows"));
+    assert!(sql.contains("COUNT(DISTINCT key_column.POSITION_IN_UNIQUE_CONSTRAINT)"));
+    assert!(sql.contains(
+        "BINARY referenced_table.TABLE_SCHEMA = BINARY key_column.REFERENCED_TABLE_SCHEMA"
+    ));
+    assert!(sql.contains("SELECT DISTINCT dependency_schema, dependency_name"));
+    assert!(sql.contains(
+        "BINARY dependency.dependency_name = BINARY (SELECT selected_name FROM selected_tables)"
+    ));
 }
 
 #[test]
