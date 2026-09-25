@@ -190,38 +190,54 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
             continue;
         }
 
-        match super::super::resume_dispatch::attempt_resume_chunk(
-            super::super::resume_dispatch::ResumeChunkContext {
-                source_driver: src_driver,
-                source_handle: src_handle,
-                target_driver: tgt_driver,
-                target_handle: tgt_handle,
-                job,
-                table,
-                source_schema: src_schema,
-                source_scope: &source_scope,
-                source_table_ref: &src_table_ref,
-                target_table_ref: &tgt_table_ref,
-                source_quote: src_quote,
-                target_session_id: &target.db_session_id,
-                source_family: &src_family,
-                target_family: &tgt_family,
-                recordset: mapping.and_then(|mapping| mapping.recordset.as_ref()),
-                columns: &columns,
-                formatter,
-                cancelled: cancelled.clone(),
-                write_started,
-                checkpoint: resume_checkpoint.as_deref_mut(),
-            },
-        )
-        .await
-        {
+        macro_rules! resume_chunk_context {
+            ($checkpoint:expr) => {
+                super::super::resume_dispatch::ResumeChunkContext {
+                    source_driver: src_driver,
+                    source_handle: src_handle,
+                    target_driver: tgt_driver,
+                    target_handle: tgt_handle,
+                    job,
+                    table,
+                    source_schema: src_schema,
+                    source_scope: &source_scope,
+                    source_table_ref: &src_table_ref,
+                    target_table_ref: &tgt_table_ref,
+                    source_quote: src_quote,
+                    target_session_id: &target.db_session_id,
+                    source_family: &src_family,
+                    target_family: &tgt_family,
+                    recordset: mapping.and_then(|mapping| mapping.recordset.as_ref()),
+                    columns: &columns,
+                    formatter,
+                    cancelled: cancelled.clone(),
+                    write_started,
+                    checkpoint: $checkpoint,
+                }
+            };
+        }
+        let resume_attempt = match resume_checkpoint.as_mut() {
+            Some(checkpoint) => {
+                super::super::resume_dispatch::attempt_resume_chunk(resume_chunk_context!(Some(
+                    &mut **checkpoint
+                )))
+                .await
+            }
+            None => {
+                super::super::resume_dispatch::attempt_resume_chunk(resume_chunk_context!(None))
+                    .await
+            }
+        };
+        match resume_attempt {
             super::super::resume_dispatch::ResumeChunkDispatch::NotApplicable => {}
             super::super::resume_dispatch::ResumeChunkDispatch::Rejected {
                 result,
                 later_tables_reason,
             } => {
-                if let Some(checkpoint) = resume_checkpoint.as_deref_mut() {
+                if let Some(checkpoint) = resume_checkpoint
+                    .as_mut()
+                    .map(|checkpoint| &mut **checkpoint)
+                {
                     checkpoint.invalidate();
                 }
                 tables_out.push(result);
@@ -246,7 +262,10 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
                     .unwrap_or(TableExecutionOutcome::NotStarted);
                 total_rows = total_rows.saturating_add(chunked.confirmed_rows);
                 if outcome == TableExecutionOutcome::Unknown {
-                    if let Some(checkpoint) = resume_checkpoint.as_deref_mut() {
+                    if let Some(checkpoint) = resume_checkpoint
+                        .as_mut()
+                        .map(|checkpoint| &mut **checkpoint)
+                    {
                         checkpoint.invalidate();
                     }
                     tables_out.push(chunked.result);

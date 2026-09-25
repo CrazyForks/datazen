@@ -7,12 +7,13 @@ use crate::data_transfer::resume::{ResumeTableProgress, TransferResumeCheckpoint
 use crate::data_transfer::TransferError;
 
 use super::{
-    global_store, PlanState, StoredTransferPlan, TransferPlanStore, TRANSFER_ACTIVE_LEASE,
-    TRANSFER_CHECKPOINT_TTL,
+    global_store, source_boundary_fingerprint, target_boundary_fingerprint, PlanState,
+    StoredTransferPlan, TransferPlanStore, TRANSFER_ACTIVE_LEASE, TRANSFER_CHECKPOINT_TTL,
+    TRANSFER_PLAN_TTL,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResumeCheckpointState {
+pub(super) enum ResumeCheckpointState {
     Available,
     InFlight,
 }

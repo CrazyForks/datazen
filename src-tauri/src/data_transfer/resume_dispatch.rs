@@ -16,7 +16,7 @@ use super::model::{
 use super::recordset::SourceScope;
 use super::resume::{self, ChunkedTableResult, ChunkedTransferContext, TransferResumeCheckpoint};
 
-pub(super) struct ResumeChunkContext<'a> {
+pub(crate) struct ResumeChunkContext<'a, 'checkpoint, 'formatter> {
     pub(super) source_driver: &'a dyn DatabaseDriver,
     pub(super) source_handle: &'a ConnectionHandle,
     pub(super) target_driver: &'a dyn DatabaseDriver,
@@ -33,13 +33,13 @@ pub(super) struct ResumeChunkContext<'a> {
     pub(super) target_family: &'a str,
     pub(super) recordset: Option<&'a TransferRecordset>,
     pub(super) columns: &'a [&'a ColumnMapping],
-    pub(super) formatter: &'a ValueFormatter<'a>,
+    pub(super) formatter: &'a ValueFormatter<'formatter>,
     pub(super) cancelled: Option<Arc<AtomicBool>>,
     pub(super) write_started: Option<&'a AtomicBool>,
-    pub(super) checkpoint: Option<&'a mut dyn TransferResumeCheckpoint>,
+    pub(super) checkpoint: Option<&'checkpoint mut dyn TransferResumeCheckpoint>,
 }
 
-pub(super) enum ResumeChunkDispatch {
+pub(crate) enum ResumeChunkDispatch {
     NotApplicable,
     Executed(ChunkedTableResult),
     Rejected {
@@ -48,8 +48,8 @@ pub(super) enum ResumeChunkDispatch {
     },
 }
 
-pub(super) async fn attempt_resume_chunk(
-    mut context: ResumeChunkContext<'_>,
+pub(crate) async fn attempt_resume_chunk(
+    mut context: ResumeChunkContext<'_, '_, '_>,
 ) -> ResumeChunkDispatch {
     let saved_progress = context
         .checkpoint
@@ -83,7 +83,7 @@ pub(super) async fn attempt_resume_chunk(
         return ResumeChunkDispatch::NotApplicable;
     }
 
-    let Some(mut checkpoint) = context.checkpoint else {
+    let Some(checkpoint) = context.checkpoint else {
         return ResumeChunkDispatch::NotApplicable;
     };
     let target = match context.job.database_target() {
@@ -211,7 +211,7 @@ pub(super) async fn attempt_resume_chunk(
     }
 }
 
-fn invalidate(context: &mut ResumeChunkContext<'_>) {
+fn invalidate(context: &mut ResumeChunkContext<'_, '_, '_>) {
     if let Some(checkpoint) = context.checkpoint.as_deref_mut() {
         checkpoint.invalidate();
     }

@@ -16,7 +16,7 @@ use crate::transfer::ir::IRType;
 use super::error::TransferError;
 use super::model::{
     ColumnMapping, TableExecutionOutcome, TableExecutionResult, TableInspectResult,
-    TableMappingStatus, TransferExecutionResult, TransferJob, TransferMode, WriteMode,
+    TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use super::structure::{drop_and_recreate_table, table_eligible_for_data};
 

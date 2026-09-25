@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 
 /// Accept only exact declared primary-key order. A column flag fallback is
 /// insufficient for a composite key because it loses constraint order.
-pub(super) fn resumable_primary_key(
+pub(crate) fn resumable_primary_key(
     schema: &TableSchema,
     recordset: Option<&super::super::model::TransferRecordset>,
     driver_type: &str,

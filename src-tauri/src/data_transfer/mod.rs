@@ -12,7 +12,7 @@ pub mod profile;
 pub mod recordset;
 pub(crate) mod recordset_bounds;
 pub(crate) mod resume;
-mod resume_dispatch;
+pub(crate) mod resume_dispatch;
 mod scan;
 pub mod sql_file;
 mod sql_structure;

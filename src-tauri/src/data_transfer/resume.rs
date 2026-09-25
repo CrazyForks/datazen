@@ -69,7 +69,7 @@ pub(crate) trait TransferResumeCheckpoint: Send {
     fn invalidate(&mut self);
 }
 
-pub(crate) struct ChunkedTransferContext<'a> {
+pub(crate) struct ChunkedTransferContext<'a, 'checkpoint, 'formatter> {
     pub(crate) source_driver: &'a dyn DatabaseDriver,
     pub(crate) source_handle: &'a ConnectionHandle,
     pub(crate) target_driver: &'a dyn DatabaseDriver,
@@ -84,10 +84,10 @@ pub(crate) struct ChunkedTransferContext<'a> {
     pub(crate) source_quote: char,
     pub(crate) target_type: &'a str,
     pub(crate) columns: &'a [&'a ColumnMapping],
-    pub(crate) formatter: &'a ValueFormatter<'a>,
+    pub(crate) formatter: &'a ValueFormatter<'formatter>,
     pub(crate) cancelled: Option<Arc<AtomicBool>>,
     pub(crate) write_started: Option<&'a AtomicBool>,
-    pub(crate) checkpoint: &'a mut dyn TransferResumeCheckpoint,
+    pub(crate) checkpoint: &'checkpoint mut dyn TransferResumeCheckpoint,
 }
 
 #[derive(Debug)]
@@ -190,7 +190,7 @@ pub(crate) fn build_keyset_page(
 }
 
 pub(crate) async fn execute_chunked_table(
-    mut context: ChunkedTransferContext<'_>,
+    context: ChunkedTransferContext<'_, '_, '_>,
 ) -> Result<ChunkedTableResult, TransferError> {
     let mapping = context
         .job
@@ -751,5 +751,5 @@ mod tests;
 pub(crate) use fingerprint::resumable_primary_key;
 use fingerprint::{
     build_page_for_context, cursor_value_supported, effective_chunk_size, fingerprint_source_rows,
-    hash_value, last_cursor, remaining_page_limit, source_projection, validate_page,
+    hash_value, remaining_page_limit, source_projection, validate_page,
 };

@@ -2,6 +2,7 @@ use super::*;
 use crate::data_transfer::model::{
     Endpoint, TransferMode, TransferOptions, TransferRunRequest, WriteMode,
 };
+use crate::data_transfer::resume::{ResumeTableProgress, TransferResumeCheckpoint};
 
 fn job() -> TransferJob {
     TransferJob {
