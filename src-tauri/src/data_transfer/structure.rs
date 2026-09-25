@@ -8,7 +8,7 @@ use datazen_driver_api::TableSchema;
 
 use crate::db::{ConnectionHandle, DatabaseDriver};
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::ir::{IRDefault, IRTable, IRType};
+use crate::transfer::ir::{IRColumn, IRDefault, IRTable, IRType};
 
 use super::error::TransferError;
 use super::model::{
@@ -340,18 +340,56 @@ pub fn enrich_create_new_target_types(
             let Some(ir_col) = ir.columns.iter().find(|c| c.name == col_map.source_column) else {
                 continue;
             };
-            let ddl_ir_type = if ir_col.default_expr.is_some()
-                && !tgt_adapter.allows_column_default(&ir_col.ir_type)
-            {
-                tgt_adapter
-                    .default_capable_type_for(&ir_col.ir_type)
-                    .unwrap_or_else(|| ir_col.ir_type.clone())
-            } else {
-                ir_col.ir_type.clone()
-            };
-            col_map.target_native_type = Some(tgt_adapter.ir_type_to_native(&ddl_ir_type));
+            col_map.target_native_type = Some(inferred_create_native_type(ir_col, tgt_adapter));
         }
     }
+}
+
+/// The preview suggestion is also the baseline for deciding whether an
+/// identity type was actually customized. Keeping this in one helper avoids
+/// treating the populated suggestion field as a user override by itself.
+fn inferred_create_native_type(column: &IRColumn, tgt_adapter: &dyn SyncTargetAdapter) -> String {
+    let ddl_ir_type =
+        if column.default_expr.is_some() && !tgt_adapter.allows_column_default(&column.ir_type) {
+            tgt_adapter
+                .default_capable_type_for(&column.ir_type)
+                .unwrap_or_else(|| column.ir_type.clone())
+        } else {
+            column.ir_type.clone()
+        };
+    tgt_adapter.ir_type_to_native(&ddl_ir_type)
+}
+
+fn validate_identity_type_overrides(
+    ir: &IRTable,
+    mapping: &super::model::TableMapping,
+    tgt_adapter: &dyn SyncTargetAdapter,
+) -> Result<(), TransferError> {
+    for column in ir.columns.iter().filter(|column| column.is_auto_increment) {
+        let Some(binding) = mapping
+            .column_mappings
+            .iter()
+            .find(|binding| binding.source_column == column.name && !binding.skip)
+        else {
+            continue;
+        };
+        let Some(native) = binding
+            .target_native_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|native| !native.is_empty())
+        else {
+            continue;
+        };
+        let inferred = inferred_create_native_type(column, tgt_adapter);
+        if !native.eq_ignore_ascii_case(inferred.trim()) {
+            return Err(TransferError::unsupported(format!(
+                "identity/auto-increment column '{}.{}' has custom target type '{}'; inferred type '{}' is required to preserve identity semantics",
+                mapping.source_table, column.name, native, inferred
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Apply the exact active projection to CREATE, including key renames. An empty
@@ -476,6 +514,7 @@ pub fn mapped_create_ddl(
     let mut ir = source_schema_to_target_ir(src_adapter, schema, None, &table.target_table);
     ir.table_options = table_options;
     if let Some(mapping) = mapping {
+        validate_identity_type_overrides(&ir, mapping, tgt_adapter)?;
         apply_column_type_overrides(&mut ir, mapping, tgt_adapter)?;
     }
     for column in &ir.columns {
@@ -527,20 +566,6 @@ pub fn mapped_create_ddl(
         ) {
             return Err(TransferError::unsupported(format!(
                 "identity/auto-increment column '{}' on '{}' requires an integer target type",
-                column.name, table.source_table
-            )));
-        }
-        if mapping.is_some_and(|mapping| {
-            mapping.column_mappings.iter().any(|binding| {
-                binding.target_column == column.name
-                    && binding
-                        .target_native_type
-                        .as_deref()
-                        .is_some_and(|native| !native.trim().is_empty())
-            })
-        }) {
-            return Err(TransferError::unsupported(format!(
-                "identity/auto-increment column '{}' on '{}' has a custom target type, so identity equivalence cannot be proven",
                 column.name, table.source_table
             )));
         }
