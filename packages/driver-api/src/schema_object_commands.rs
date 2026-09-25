@@ -7,7 +7,7 @@ use dependencies::parse_object_dependency_catalog;
 mod mysql_view_metadata;
 use mysql_view_metadata::{
     metadata_value_matches, missing_show_view_metadata, mysql_show_create_view_check_option,
-    mysql_view_definer_identity, required_view_metadata_field,
+    mysql_view_definer_identity, mysql_view_query_bodies_match, required_view_metadata_field,
 };
 
 use crate::command::{
@@ -538,9 +538,10 @@ fn extract_mysql_view_metadata(
             ));
         }
     };
-    if body_query.as_ref() != query.as_ref() {
+    let source_database = required_view_metadata_field(result, "view_schema")?;
+    if !mysql_view_query_bodies_match(body_query, query, &source_database) {
         return Err(DriverError::QueryFailed(
-            "MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies".into(),
+            "MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies or database identities".into(),
         ));
     }
 

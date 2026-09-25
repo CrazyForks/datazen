@@ -1,6 +1,7 @@
 use super::{column_index, value_as_ddl_text};
 use crate::types::{DriverError, QueryResult};
-use sqlparser::ast::GranteeName;
+use sqlparser::ast::{GranteeName, ObjectName, ObjectNamePart, Query, VisitMut, VisitorMut};
+use std::ops::ControlFlow;
 
 pub(super) fn required_view_metadata_field(
     result: &QueryResult,
@@ -32,6 +33,46 @@ pub(super) fn mysql_view_definer_identity(definer: &GranteeName) -> Result<Strin
         GranteeName::ObjectName(_) => Err(DriverError::QueryFailed(
             "MySQL SHOW CREATE VIEW returned an unsupported DEFINER identity".into(),
         )),
+    }
+}
+
+/// Compare the catalog body and SHOW body while ignoring only an explicit
+/// qualifier that names this exact view database. External database names and
+/// all table identifiers remain part of the equality check.
+pub(super) fn mysql_view_query_bodies_match(
+    catalog: &Query,
+    show_create: &Query,
+    source_database: &str,
+) -> bool {
+    if source_database.trim().is_empty() {
+        return false;
+    }
+    let mut catalog = catalog.clone();
+    let mut show_create = show_create.clone();
+    let mut normalizer = OwnDatabaseQualifier { source_database };
+    let _ = catalog.visit(&mut normalizer);
+    let _ = show_create.visit(&mut normalizer);
+    catalog == show_create
+}
+
+struct OwnDatabaseQualifier<'a> {
+    source_database: &'a str,
+}
+
+impl VisitorMut for OwnDatabaseQualifier<'_> {
+    type Break = std::convert::Infallible;
+
+    fn pre_visit_relation(&mut self, relation: &mut ObjectName) -> ControlFlow<Self::Break> {
+        let has_own_database_qualifier = relation.0.len() == 2
+            && relation
+                .0
+                .first()
+                .and_then(ObjectNamePart::as_ident)
+                .is_some_and(|database| database.value == self.source_database);
+        if has_own_database_qualifier {
+            relation.0.remove(0);
+        }
+        ControlFlow::Continue(())
     }
 }
 
