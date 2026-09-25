@@ -39,6 +39,7 @@ struct Driver {
     schema_error_on_call: Option<usize>,
     execute_error_on_call: Option<usize>,
     identity_sync_error: bool,
+    affected_override: Option<u64>,
     stream_mode: u8,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -253,7 +254,7 @@ impl DatabaseDriver for Driver {
             .split_once("VALUES ")
             .map(|(_, values)| values.matches('(').count() as u64)
             .unwrap_or(1);
-        Ok(affected)
+        Ok(self.affected_override.unwrap_or(affected))
     }
     async fn commit(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
@@ -331,6 +332,7 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
         schema_error_on_call: None,
         execute_error_on_call: None,
         identity_sync_error: false,
+        affected_override: None,
         stream_mode: 0,
         cancel: None,
     }
@@ -521,6 +523,34 @@ async fn successful_explicit_identity_import_synchronizes_before_commit() {
     assert_eq!(state.committed.len(), 1);
     assert_eq!(state.rollback, 0);
     assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+}
+
+#[tokio::test]
+async fn explicit_identity_import_synchronizes_when_driver_reports_zero_affected_rows() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    // Model a successful conflict-ignore batch: the INSERT was issued with
+    // explicit IDs, but the driver reports no newly affected rows.
+    target.affected_override = Some(0);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.identity_sync_calls.len(), 1);
+    assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+    assert_eq!(state.committed.len(), 1);
 }
 
 #[tokio::test]

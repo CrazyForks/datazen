@@ -498,6 +498,7 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
         let mut table_rows = 0u64;
         let mut table_error: Option<String> = None;
         let mut was_cancelled = false;
+        let mut successful_data_batches = false;
         'batches: loop {
             if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
                 was_cancelled = true;
@@ -557,6 +558,7 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
             {
                 Ok(affected) => {
                     table_rows += affected;
+                    successful_data_batches = true;
                 }
                 Err(error) => {
                     table_error = Some(error.to_string());
@@ -568,7 +570,11 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
             was_cancelled = true;
             table_error = Some("transfer cancelled; current data transaction rolled back".into());
         }
-        if table_error.is_none() && table_rows > 0 {
+        // `affected` can be zero for a successful INSERT ... ON CONFLICT
+        // DO NOTHING / ignore batch that still carried explicit identity
+        // values. Reseed based on successful batch execution, not row-count
+        // reporting, so the target sequence remains beyond imported IDs.
+        if table_error.is_none() && successful_data_batches {
             let explicit_identity_columns = columns
                 .iter()
                 .filter(|mapping| {
