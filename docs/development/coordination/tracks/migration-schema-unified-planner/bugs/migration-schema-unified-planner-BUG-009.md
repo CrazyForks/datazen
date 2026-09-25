@@ -41,7 +41,7 @@ The normal MySQL positive mixed-chain journey therefore cannot reach a reviewed 
 
 ## 编码验证
 
-- Driver API: `cargo test -p datazen-driver-api --lib` — 180 passed.
+- Driver API: `cargo test -p datazen-driver-api --lib` — 196 passed. A fresh isolated Rust coverage run using Xcode `llvm-profdata`/`llvm-cov` covered `execute_object_dependencies` at 74/74 lines (100%) and `schema_object_commands.rs` at 556/677 lines (82.13%).
 - MySQL driver: `cargo test -p datazen-driver-mysql` — 139 passed, 3 ignored (isolated database fixtures).
 - Host: `cargo test -p datazen --lib schema_diff::` — 204 passed.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
