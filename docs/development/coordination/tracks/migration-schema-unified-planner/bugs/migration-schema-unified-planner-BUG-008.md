@@ -48,3 +48,9 @@ The failure is reproducible for a standard view over same-database tables. MySQL
 - R7 focused Driver API metadata tests passed 5/5; the full Driver API suite passed 180/180; MySQL library tests 123/123; `schema_objects_sql` integration 8/8; Host Schema Diff Rust tests 213/213; Schema Diff Vitest 62/62.
 - Isolated LLVM coverage measured `mysql_view_query_bodies_match` at 14/15 executable lines (93.33%) and `OwnDatabaseQualifier::pre_visit_relation` at 12/12 (100%). The whole `mysql_view_metadata.rs` helper module measured 79.07%, below the 80% gate when interpreted at module scope; see R7 report for the scope and limitation. BUG-008's changed matcher and visitor exceed 80%, but the broader changed-core coverage gate remains open.
 - The full MySQL positive planner journey remains blocked before deploy by the separate incomplete table dependency catalog, registered as [BUG-009](migration-schema-unified-planner-BUG-009.md). See the [round-7 retest report](../test-results/unified-planner-retest-r7.md).
+
+## Fresh Tester R8 evidence
+
+- On the fresh R8 app, MySQL's ordinary same-database view passed DDL extraction and participated in the mixed parent/child/view plan, deploy, readback, and target-side `SELECT`. The separate exact dependency-blocker and four-kind catalog journeys also passed.
+- This independently confirms the ordinary-view qualifier normalization in the end-to-end path. The check-option metadata-negative journey remains unproven under BUG-007, and full helper-module coverage is still below 80%; those do not undo the successful BUG-008 behavior check.
+- See the [round-8 retest report](../test-results/unified-planner-retest-r8.md).

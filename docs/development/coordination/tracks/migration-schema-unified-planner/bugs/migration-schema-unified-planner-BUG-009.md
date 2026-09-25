@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-009 · MySQL table dependency catalog is incomplete
 
 - **严重度**：P1（阻断）
-- **状态**：修复已提交 `b849a774`，等待 Fresh Tester 复验
+- **状态**：修复已提交 `b849a774`；Fresh Tester R8 已通过 live IPC、隔离 MySQL 集成 fixture 与混合计划旅程独立验证
 - **涉及范围**：MySQL driver `get_object_dependencies` for tables; unified planner source dependency validation
 
 ## 描述与重现
@@ -46,3 +46,10 @@ The normal MySQL positive mixed-chain journey therefore cannot reach a reviewed 
 - Host: `cargo test -p datazen --lib schema_diff::` — 204 passed.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
 - The live catalog fixture was not run in the product worktree because it had no `MIGRATION_TEST_*` configuration and the default MySQL socket was unavailable. Fresh Tester must run the opt-in fixture and real WDIO journeys, then record exact cleanup evidence.
+
+## Fresh Tester R8 evidence
+
+- The new retained live WDIO diagnostic returned `complete=true` with no dependencies for the parent, and `complete=true` with exactly the parent table edge for the child. It also verified that the child's self-FK was omitted as an intra-object edge. Exact post-test MySQL source and target fixture counts were `0/0`; both temporary connection configurations were removed.
+- The opt-in `schema_dependency_catalog` Rust integration target passed **2/2** against the test's allowlisted `datazen_test` database. Its table fixture covered proven empty dependencies, composite FK deduplication, self-reference, cycles, missing objects, optional cross-schema references, and exact fixture cleanup; the view fixture also passed. The test guard and fixture cleanup remained active.
+- The full six-journey WDIO suite passed the MySQL mixed parent/child/view plan, deploy, readback, and target-side view query, as well as the exact missing-dependency zero-write case and four-kind catalog smoke. All started journeys ended with exact `0/0` cleanup. The only failed/unproven journey is BUG-007's metadata blocker.
+- See the [round-8 retest report](../test-results/unified-planner-retest-r8.md). This closes BUG-009's functional verification; the separate >=80% coverage gate is still pending because the full helper module and dependency dispatcher measured below that threshold.

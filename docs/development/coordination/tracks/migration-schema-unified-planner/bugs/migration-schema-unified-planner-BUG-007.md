@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：一致性修复已合入；Fresh Tester R7 未能独立到达 `WITH CASCADED CHECK OPTION` 的元数据阻断断言，保持待复验
+- **状态**：一致性修复已合入；Fresh Tester R8 再次未能到达 `WITH CASCADED CHECK OPTION` 的元数据阻断及零写断言，保持待复验
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
 ## 描述
@@ -36,3 +36,10 @@
 - The rebuilt app completed the MySQL catalog smoke and successfully retrieved the fixture view's DDL through live IPC, so ordinary view extraction proceeds past the BUG-008 same-database qualifier issue.
 - The `WITH CASCADED CHECK OPTION` journey timed out in `clickSchemaDiffGeneratePlan()` before the plan panel and metadata assertions. No deploy was clicked, but the explicit post-plan zero-write assertion was not reached. Exact teardown counts were 0/0. Therefore R7 does not independently verify BUG-007's intended metadata blocker; keep this card open until that journey produces and asserts the blocker.
 - Full evidence is in the [round-7 retest report](../test-results/unified-planner-retest-r7.md).
+
+## Fresh Tester R8 evidence
+
+- On a newly built app, the same journey again timed out in `clickSchemaDiffGeneratePlan()` (`e2e/helpers.ts:2308`) with `等待结构对比计划自动生成超时`. It did not reach the requirements selector, empty-plan assertion, disabled-deploy assertion, or explicit target-count-zero assertion. No deploy was clicked, and teardown verified exact source/target cleanup `0/0`.
+- The other five unified-planner journeys passed, including the MySQL ordinary-view mixed plan/deploy/readback. This establishes that the normal view path works, but does not verify rejection of `WITH CASCADED CHECK OPTION` metadata.
+- R8's app output contained no schema-diff error and WDIO retained no screenshot or trace for the timed-out wait. Keep BUG-007 open until the negative case reaches and asserts the blocker and zero-write condition.
+- Full evidence is in the [round-8 retest report](../test-results/unified-planner-retest-r8.md).
