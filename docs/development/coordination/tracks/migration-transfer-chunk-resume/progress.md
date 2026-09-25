@@ -1,12 +1,33 @@
 # migration-transfer-chunk-resume
 
-- Phase: READY_FOR_TEST
+- Phase: FAILED
+- Tester result: TEST_FAILED
 - Task: bounded, resumable Data Transfer chunks within a table
 - Branch: `feature/migration-transfer-chunk-resume`
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume`
 - Base: `codex/migration-navicat` after Schema Unified Planner R11 merge
 - Prior implementation commit: `96789bbc`
 - Latest repair commit: `c08a907e`
+
+### R3 independent Tester
+
+- Tester worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume-fresh-tester-r2`; branch `codex/migration-transfer-chunk-resume-fresh-tester-r3`.
+- Candidate product implementation under test: `c08a907ef9c3ed64f2c524518a070f3d8c45456e`; Tester report/progress commits do not change product implementation.
+- Bootstrap verified the exact tester worktree, clean starting checkout at `b8628f01`, and physical worktree-local `node_modules`. Phase A reviewed every candidate-changed file; no new confirmed code-review defect.
+- Phase B passed locale generation, `pnpm typecheck`, focused DataTransferWindow Vitest (34/34), `cargo test -p datazen --lib data_transfer` (146/146), Rust formatting, Prettier on both changed driver journeys, and `git diff --check`. `pnpm tauri:build:webdriver` generated the app binary; its later DMG packaging step failed and is excluded by the track constraint.
+- Direct isolated WDIO run (`E2E_WD_PORT=4445 E2E_SKIP_WORKER_DATABASE=1 pnpm exec wdio run e2e/wdio.migration-transfer-ack-loss.conf.ts`) finished 2 passing / 3 failing. Both acknowledgement-loss journeys passed. Both-direction cancellation/resume and PG→MySQL source-mutation journeys failed their strict initial `COUNT(*) === 2` wait; every final observer sample was `ping=true,count=5`. Thus cancellation, resume, source-mutation refusal, and exact ordered final rows were not reached or verified. BUG-003 remains unresolved; the evidence confirms observer reachability and the final five-row target state but does not establish why the intermediate count of two was not observed.
+- Phase C coverage gate: changed executable Rust line coverage is **not measured** and therefore is not verified at the required ≥80%. `cargo-llvm-cov` and `cargo-tarpaulin` are unavailable; no R3-prefixed `.profraw` files were produced by the ordinary uninstrumented Cargo run. Only 2.6 GiB remained, so no instrumented second Cargo target was built. The report records the static changed-path-to-test map and limitations; no `.profraw` file was deleted or overwritten.
+- Phase D recorded in `R3_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md` and BUG-003 round-2. Read-only MySQL/PostgreSQL catalog queries found no remaining `dz_dt_ack_%` fixture databases; the R3 app process was stopped and port 4445 had no listener. `Cargo.lock`'s temporary Redis driver injection was audited and reverted. Track result: `FAILED`, not release-ready.
+
+### R3 E2E registration and result
+
+| Journey registered in isolated `e2e/wdio.migration-transfer-ack-loss.conf.ts` | R3 result | Reached acceptance assertions |
+| --- | --- | --- |
+| PG→MySQL commit acknowledgement loss | Passed | Unknown-commit result and fixture cleanup completed |
+| MySQL→PG commit acknowledgement loss | Passed | Unknown-commit result and fixture cleanup completed |
+| PG→MySQL chunk cancel/resume | Failed at initial exact target count 2 wait; final sample `ping=true,count=5` | Cancel, resume, and exact rows not reached |
+| MySQL→PG chunk cancel/resume | Failed at initial exact target count 2 wait; final sample `ping=true,count=5` | Cancel, resume, and exact rows not reached |
+| PG→MySQL source mutation while paused | Failed at initial exact target count 2 wait; final sample `ping=true,count=5` | Mutation and zero-new-row refusal not reached |
 
 ## Scope
 

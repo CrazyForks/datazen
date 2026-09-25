@@ -1,6 +1,6 @@
 # BUG-003 — R2 chunk-resume journeys time out before cancellation
 
-- Status: `待复测`
+- Status: `待修复`
 - Severity: P1 — all three bounded chunk-resume WDIO journeys failed before exercising cancellation or resume.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Independent test report: `R2_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`, commit `7d1377c967287fd8582c698d3b9df189343f4f99`.
@@ -38,3 +38,15 @@ This report records an observed journey failure only. It does **not** establish 
 ## 修复记录（round-1）
 
 Commit `c08a907e` updates both direction-specific WDIO journeys with dedicated observer diagnostics: verify the observer connection with `ping_connection`, record the zero-row baseline before execution, preserve the latest count response or polling error, and include a final ping/count sample in timeout errors. The exact row-count assertions remain strict. These changes improve evidence collection but do not establish a fix or root cause; the cause remains unknown until a fresh R3 run exercises the journeys and inspects the new samples.
+
+## 复测记录（round-2）
+
+Independent Tester R3 used candidate product commit `c08a907ef9c3ed64f2c524518a070f3d8c45456e` and directly ran the isolated WDIO configuration. Result: 2 passed, 3 failed. Both acknowledgement-loss journeys passed. All three chunk journeys still timed out at the initial strict target-count-two gate, before cancellation/resume or source-mutation assertions.
+
+R3's latest/final timeout samples were successful observer queries with `ping=true,count=5`:
+
+- PG→MySQL cancellation/resume: `dz_dt_ack_pgm_tgt_mugpnglq.dt_chunk_resume_mugpnglq` returned count 5.
+- MySQL→PG cancellation/resume: `public.dt_chunk_resume_mugpphzp` returned count 5.
+- PG→MySQL source-mutation refusal: `ping=true,count=5` at the same initial count-two wait.
+
+The observer was reachable and returned the final count for the intended fixture relation. This does not explain why the intermediate count of two was not observed; R3 does not attribute the failure to the app, UI, or observer sampling. No count assertion was loosened. Cancellation, resume, exact final rows, source mutation, and zero-new-row refusal remain unverified. The R3 report is `R3_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`. Read-only catalog queries found no databases with the R3 `dz_dt_ack_%` prefix, and the app process was stopped with port 4445 free. Status returns to `待修复` pending diagnosis and a passing independent rerun.
