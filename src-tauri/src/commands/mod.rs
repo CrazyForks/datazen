@@ -22,7 +22,7 @@ pub mod mcp;
 mod query;
 mod sample;
 mod schema;
-mod schema_diff;
+pub mod schema_diff;
 mod structure;
 mod sync;
 mod theme;

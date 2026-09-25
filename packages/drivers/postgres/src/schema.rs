@@ -158,7 +158,12 @@ impl PostgresDriver {
 
         let cols = sqlx::query(
             r#"
-            SELECT column_name, data_type, is_nullable, column_default,
+            SELECT column_name,
+                   CASE WHEN data_type = 'USER-DEFINED'
+                        THEN quote_ident(udt_schema) || '.' || quote_ident(udt_name)
+                        ELSE data_type
+                   END AS migration_data_type,
+                   is_nullable, column_default,
                    col_description((quote_ident(table_schema)||'.'||quote_ident(table_name))::regclass, ordinal_position) as comment
             FROM information_schema.columns
             WHERE table_name = $1
@@ -215,7 +220,7 @@ impl PostgresDriver {
                 ColumnSchema {
                     is_primary_key: pk_names.contains(&name),
                     name,
-                    data_type: r.get("data_type"),
+                    data_type: r.get("migration_data_type"),
                     nullable: nullable == "YES",
                     default_value,
                     comment: r.get("comment"),

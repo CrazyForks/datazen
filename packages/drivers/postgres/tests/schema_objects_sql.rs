@@ -1,5 +1,6 @@
 //! PostgreSQL dialect SQL for schema object browser queries (list / DDL / privileges).
 
+use datazen_driver_api::schema_dependencies::view_dependencies_sql;
 use datazen_driver_api::schema_objects::{
     list_objects_sql, list_privileges_sql, object_ddl_sql, object_ddl_sql_with_metadata, ObjectKind,
 };
@@ -25,6 +26,16 @@ fn view_queries_return_schema_and_query_body_metadata() {
     .unwrap();
     assert!(ddl.contains("pg_get_viewdef"));
     assert!(ddl.contains("'public'"));
+}
+
+#[test]
+fn view_dependency_catalog_uses_pg_depend_and_resolves_exact_routine_overloads() {
+    let sql = view_dependencies_sql("postgresql", "active_users", Some("public")).unwrap();
+    assert!(sql.contains("pg_catalog.pg_depend"));
+    assert!(sql.contains("information_schema.view_table_usage"));
+    assert!(sql.contains("information_schema.view_routine_usage"));
+    assert!(sql.contains("pg_catalog.nameconcatoid(procedure.proname, procedure.oid)"));
+    assert!(sql.contains("pg_catalog.pg_get_function_identity_arguments(procedure.oid)"));
 }
 
 #[test]

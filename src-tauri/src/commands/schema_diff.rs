@@ -1,5 +1,7 @@
 //! Schema Diff Deploy IPC commands.
 
+pub mod unified_plan;
+
 use super::error::{CmdExt, CommandError};
 use super::sync::compare::diff_table_schemas_ir;
 use super::AppState;
@@ -134,17 +136,25 @@ async fn fetch_schema_view(
         .unwrap_or_default()
         .trim()
         .to_owned();
+    let mysql_view_metadata = result
+        .data
+        .get("viewMetadata")
+        .cloned()
+        .map(serde_json::from_value::<datazen_driver_api::MySqlViewMetadata>)
+        .transpose()
+        .map_err(|error| {
+            CommandError::Internal(format!("invalid MySQL view creation metadata: {error}"))
+        })?;
     if definition.is_empty() {
         return Err(CommandError::Validation(format!(
             "View {} disappeared while it was being inspected",
             object.name
         )));
     }
-    Ok(SchemaObjectSnapshot::view(
-        object.schema.as_deref(),
-        &object.name,
-        &definition,
-    ))
+    let mut snapshot =
+        SchemaObjectSnapshot::view(object.schema.as_deref(), &object.name, &definition);
+    snapshot.mysql_view_metadata = mysql_view_metadata;
+    Ok(snapshot)
 }
 
 async fn list_schema_objects(
@@ -204,6 +214,15 @@ async fn fetch_schema_object(
         .unwrap_or_default()
         .trim()
         .to_owned();
+    let mysql_view_metadata = result
+        .data
+        .get("viewMetadata")
+        .cloned()
+        .map(serde_json::from_value::<datazen_driver_api::MySqlViewMetadata>)
+        .transpose()
+        .map_err(|error| {
+            CommandError::Internal(format!("invalid MySQL view creation metadata: {error}"))
+        })?;
     if definition.is_empty() {
         return Err(CommandError::Validation(format!(
             "{} {} disappeared while it was being inspected",
@@ -213,7 +232,10 @@ async fn fetch_schema_object(
     }
     Ok(match kind {
         datazen_driver_api::ObjectKind::View => {
-            SchemaObjectSnapshot::view(object.schema.as_deref(), &object.name, &definition)
+            let mut snapshot =
+                SchemaObjectSnapshot::view(object.schema.as_deref(), &object.name, &definition);
+            snapshot.mysql_view_metadata = mysql_view_metadata;
+            snapshot
         }
         datazen_driver_api::ObjectKind::Function | datazen_driver_api::ObjectKind::Procedure => {
             SchemaObjectSnapshot::routine(
@@ -1144,6 +1166,11 @@ pub async fn prepare_schema_view_plan(
     }
     let src_dialect = normalize_dialect(&src_config.database_type);
     let tgt_dialect = normalize_dialect(&tgt_config.database_type);
+    let target_mysql_view_scope_context = if src_dialect == "mysql" && tgt_dialect == "mysql" {
+        unified_plan::read_mysql_view_scope_context(tgt_driver.as_ref(), &tgt_handle).await
+    } else {
+        None
+    };
     let Some(renderer) = tgt_driver.migration_renderer() else {
         return Err(CommandError::Validation(format!(
             "Driver {} does not expose schema migration rendering",
@@ -1165,7 +1192,32 @@ pub async fn prepare_schema_view_plan(
         renderer.as_ref(),
         capabilities.as_ref(),
     );
-    crate::schema_diff::reviewed::freeze_with_objects(
+    if tgt_dialect == "mysql" {
+        for object in source_snapshots.iter().chain(&target_snapshots) {
+            if let Err(reason) =
+                crate::schema_diff::unified_scope::validate_mysql_view_snapshot_creation_semantics(
+                    object,
+                    target_mysql_view_scope_context.as_ref(),
+                )
+            {
+                plan.requirements
+                    .push(crate::schema_diff::types::PlanRequirement::Unsupported {
+                        operation: object.identity().display_key(),
+                        reason,
+                    });
+            }
+        }
+        if src_config.database.as_deref() != tgt_config.database.as_deref() {
+            plan.requirements.push(crate::schema_diff::types::PlanRequirement::Unsupported {
+                operation: "mysql-view-scope".into(),
+                reason: "Cross-database MySQL view migration requires the unified dependency-reviewed plan; this object-only plan cannot prove source-to-target relation mapping.".into(),
+            });
+        }
+        if !plan.requirements.is_empty() {
+            plan.statements.clear();
+        }
+    }
+    crate::schema_diff::reviewed::freeze_with_objects_and_mysql_view_context(
         &mut plan,
         target_db_session_id,
         &tgt_handle,
@@ -1174,6 +1226,7 @@ pub async fn prepare_schema_view_plan(
         target_snapshots,
         tgt_config.database.clone(),
         tgt_config.schema.clone(),
+        target_mysql_view_scope_context,
     )
     .await;
     Ok(plan)
@@ -1804,6 +1857,74 @@ pub(crate) async fn execute_schema_diff_deploy_impl(
                 .await;
         }
     }
+    if reviewed.has_complete_target_object_catalog {
+        let mut current_catalog_complete = true;
+        let (_, current_object_catalog) = match unified_plan::read_target_object_catalog(
+            driver.as_ref(),
+            &handle,
+            config.database.as_deref().unwrap_or_default(),
+            &config.database_type,
+            reviewed.target_dependency_schema_scope.as_deref(),
+            &mut current_catalog_complete,
+        )
+        .await
+        {
+            value if current_catalog_complete => value,
+            _ => {
+                return fail_schema_diff_deploy(
+                    &state,
+                    history_run,
+                    CommandError::Validation(
+                        "Target object dependency catalog can no longer be proved complete; compare again".into(),
+                    ),
+                )
+                .await
+            }
+        };
+        if let Err(error) = crate::schema_diff::reviewed::validate_object_dependency_catalog(
+            &reviewed.object_dependency_catalog,
+            &current_object_catalog,
+        ) {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
+        let current_table_catalog = match unified_plan::read_target_table_identities(
+            driver.as_ref(),
+            &handle,
+            config.database.as_deref().unwrap_or_default(),
+            &config.database_type,
+            reviewed.target_dependency_schema_scope.as_deref(),
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => return fail_schema_diff_deploy(&state, history_run, error).await,
+        };
+        if let Err(error) = crate::schema_diff::reviewed::validate_table_identity_catalog(
+            &reviewed.target_table_identity_catalog,
+            &current_table_catalog,
+        ) {
+            return fail_schema_diff_deploy(&state, history_run, CommandError::Validation(error))
+                .await;
+        }
+    }
+    if let Some(expected_context) = reviewed.target_mysql_view_scope_context.as_ref() {
+        let current_context =
+            unified_plan::read_mysql_view_scope_context(driver.as_ref(), &handle).await;
+        if current_context.as_ref() != Some(expected_context) {
+            return fail_schema_diff_deploy(
+                &state,
+                history_run,
+                CommandError::Validation(
+                    "Target MySQL view creation context changed after review; compare again".into(),
+                ),
+            )
+            .await;
+        }
+    }
+    if let Err(error) = unified_plan::revalidate_source_snapshot(&state, &reviewed).await {
+        return fail_schema_diff_deploy(&state, history_run, error).await;
+    }
     let plan = reviewed.plan;
     let cancelled = match job_id.as_deref() {
         Some(id) => Some(ensure_job(id).await),
@@ -2050,6 +2171,8 @@ mod tests {
             target_schema: None,
             target_only_tables: vec![],
             tables: vec!["users".into()],
+            source_objects: vec![],
+            target_objects: vec![],
             allow_destructive: false,
             include_indexes: true,
             require_rollback: false,

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SchemaDiffWindow } from '../SchemaDiffWindow';
+import type { SchemaDiffObjectIdentity } from '../../../commands/schemaDiff';
+import type { DatabaseObject } from '../../../types';
 
 const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hoisted(() => {
   const state = {
@@ -23,6 +25,8 @@ const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hois
     targetSchema: 'public',
     targetOnlyTables: [],
     tables: ['public.users'],
+    sourceObjects: [] as SchemaDiffObjectIdentity[],
+    targetObjects: [] as SchemaDiffObjectIdentity[],
     allowDestructive: true,
     includeIndexes: false,
     requireRollback: true,
@@ -57,12 +61,25 @@ const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hois
         rollbackCompleteness: { complete: true, missing: [] },
         typeSuggestions: [],
       }),
+      prepareUnifiedPlan: vi.fn().mockResolvedValue({
+        table: 'schema objects',
+        tables: [],
+        sourceDialect: 'postgresql',
+        targetDialect: 'postgresql',
+        sameDialect: true,
+        statements: [],
+        warnings: [],
+        requirements: [],
+        rollbackCompleteness: { complete: true, missing: [] },
+        typeSuggestions: [],
+      }),
       executeDeploy: vi.fn(),
     },
     databaseCommands: {
       getTables: vi
         .fn()
         .mockResolvedValue([{ name: 'users', schema: 'public', tableType: 'table' }]),
+      getDatabaseObjects: vi.fn().mockResolvedValue([]),
     },
   };
 });
@@ -161,7 +178,10 @@ describe('SchemaDiffWindow profile loading', () => {
     endpointState.targetDatabase = 'initial-db';
     endpointState.sourceSchema = '';
     endpointState.targetSchema = '';
+    profile.tables = ['public.users'];
     profile.targetOnlyTables = [];
+    profile.sourceObjects = [];
+    profile.targetObjects = [];
     vi.clearAllMocks();
     schemaDiffCommands.getProfiles.mockResolvedValue([profile]);
     schemaDiffCommands.compareTableSchemas.mockResolvedValue({
@@ -184,6 +204,22 @@ describe('SchemaDiffWindow profile loading', () => {
       rollbackCompleteness: { complete: true, missing: [] },
       typeSuggestions: [],
     });
+    schemaDiffCommands.prepareUnifiedPlan.mockResolvedValue({
+      table: 'schema objects',
+      tables: [],
+      sourceDialect: 'postgresql',
+      targetDialect: 'postgresql',
+      sameDialect: true,
+      statements: [],
+      warnings: [],
+      requirements: [],
+      rollbackCompleteness: { complete: true, missing: [] },
+      typeSuggestions: [],
+    });
+    databaseCommands.getTables.mockResolvedValue([
+      { name: 'users', schema: 'public', tableType: 'table' },
+    ]);
+    databaseCommands.getDatabaseObjects.mockResolvedValue([]);
   });
 
   afterEach(() => cleanup());
@@ -293,5 +329,196 @@ describe('SchemaDiffWindow profile loading', () => {
         }),
       ),
     );
+  });
+
+  it('saves an object-only profile with exact routine and trigger identities', async () => {
+    const sourceRoutine: DatabaseObject = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'integer, numeric',
+    };
+    const targetTrigger: DatabaseObject = {
+      kind: 'trigger',
+      schema: 'public',
+      name: 'audit_orders',
+      targetSchema: 'public',
+      targetName: 'orders',
+    };
+    databaseCommands.getTables.mockResolvedValue([]);
+    databaseCommands.getDatabaseObjects.mockImplementation(
+      async (sessionId: string, kind: string) =>
+        (sessionId === 'source-session' ? [sourceRoutine] : [targetTrigger]).filter(
+          (object) => object.kind === kind,
+        ),
+    );
+
+    render(<SchemaDiffWindow />);
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-unified-object-picker');
+    fireEvent.click(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    );
+    const targetTriggerGroup = screen.getByTestId('schema-diff-object-kind-target-trigger');
+    fireEvent.click(within(targetTriggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    fireEvent.click(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    );
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save'));
+    fireEvent.change(screen.getByTestId('schema-diff-profile-name'), {
+      target: { value: 'Objects only' },
+    });
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save-confirm'));
+
+    await waitFor(() => expect(schemaDiffCommands.saveProfile).toHaveBeenCalled());
+    expect(schemaDiffCommands.saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tables: [],
+        targetOnlyTables: [],
+        sourceObjects: [
+          {
+            kind: 'function',
+            schema: 'public',
+            name: 'calculate_total',
+            signature: 'integer, numeric',
+            targetSchema: null,
+            targetName: null,
+          },
+        ],
+        targetObjects: [
+          {
+            kind: 'trigger',
+            schema: 'public',
+            name: 'audit_orders',
+            signature: null,
+            targetSchema: 'public',
+            targetName: 'orders',
+          },
+        ],
+      }),
+    );
+  });
+
+  it('restores only exact saved identities after profile catalogs finish loading', async () => {
+    const desiredSource: SchemaDiffObjectIdentity = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'integer, numeric',
+      targetSchema: null,
+      targetName: null,
+    };
+    const otherOverload: DatabaseObject = {
+      kind: 'function',
+      schema: 'public',
+      name: 'calculate_total',
+      signature: 'text',
+    };
+    const desiredTarget: SchemaDiffObjectIdentity = {
+      kind: 'trigger',
+      schema: 'public',
+      name: 'audit_orders',
+      signature: null,
+      targetSchema: 'public',
+      targetName: 'orders',
+    };
+    const otherTrigger: DatabaseObject = {
+      kind: 'trigger',
+      schema: 'public',
+      name: 'audit_orders',
+      targetSchema: 'public',
+      targetName: 'invoices',
+    };
+    profile.tables = [];
+    profile.sourceObjects = [desiredSource];
+    profile.targetObjects = [desiredTarget];
+    databaseCommands.getDatabaseObjects.mockImplementation(
+      async (sessionId: string, kind: string) =>
+        (sessionId === 'source-session'
+          ? [otherOverload, { ...desiredSource }]
+          : [otherTrigger, { ...desiredTarget }]
+        ).filter((object) => object.kind === kind),
+    );
+    databaseCommands.getTables.mockResolvedValue([]);
+
+    render(<SchemaDiffWindow />);
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-unified-object-picker');
+    fireEvent.click(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    );
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await waitFor(() => expect(schemaDiffCommands.prepareUnifiedPlan).toHaveBeenCalled());
+    chooseProfile(profile.name);
+    fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('schema-diff-object-row-source-function-1')).getByRole(
+          'checkbox',
+        ),
+      ).toBeChecked(),
+    );
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-source-function-0')).getByRole('checkbox'),
+    ).not.toBeChecked();
+    const targetTriggerGroup = screen.getByTestId('schema-diff-object-kind-target-trigger');
+    fireEvent.click(within(targetTriggerGroup).getByText('schemaDiff.objectKind.trigger'));
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-1')).getByRole('checkbox'),
+    ).toBeChecked();
+    expect(
+      within(screen.getByTestId('schema-diff-object-row-target-trigger-0')).getByRole('checkbox'),
+    ).not.toBeChecked();
+  });
+
+  it('[tester] reports saved object identities missing from the current catalogs', async () => {
+    profile.sourceObjects = [
+      {
+        kind: 'function',
+        schema: 'public',
+        name: 'calculate_total',
+        signature: 'integer',
+        targetSchema: null,
+        targetName: null,
+      },
+    ];
+    profile.targetObjects = [];
+    render(<SchemaDiffWindow />);
+
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-objects-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-detail-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-copy-sql');
+    chooseProfile(profile.name);
+    fireEvent.click(screen.getByTestId('schema-diff-profile-load'));
+
+    await screen.findByText('schemaDiff.savedObjectsMissing');
+    expect(
+      screen.queryByTestId('schema-diff-object-row-source-function-0'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('[tester] closes import and profile dialogs through their cancel actions', async () => {
+    render(<SchemaDiffWindow />);
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-objects-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-detail-panel');
+    fireEvent.click(screen.getByTestId('schema-diff-next'));
+    await screen.findByTestId('schema-diff-copy-sql');
+
+    fireEvent.click(screen.getByTestId('schema-diff-import-config'));
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    expect(screen.queryByTestId('schema-diff-import-config-dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('schema-diff-profile-save'));
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    expect(screen.queryByTestId('schema-diff-profile-dialog')).not.toBeInTheDocument();
   });
 });

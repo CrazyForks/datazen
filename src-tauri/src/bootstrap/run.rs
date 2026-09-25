@@ -469,6 +469,7 @@ pub fn run() {
             crate::commands::execute_schema_diff_deploy,
             crate::commands::get_schema_diff_profiles,
             crate::commands::prepare_schema_diff_plan,
+            crate::commands::schema_diff::unified_plan::prepare_schema_unified_plan,
             crate::commands::prepare_schema_routine_trigger_plan,
             crate::commands::prepare_schema_sequence_plan,
             crate::commands::prepare_schema_type_plan,

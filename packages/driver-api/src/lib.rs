@@ -13,9 +13,11 @@ mod factory;
 mod query_stream;
 mod reuse;
 pub mod schema_catalog_commands;
+pub mod schema_dependencies;
 pub mod schema_migration;
 pub mod schema_object_commands;
 pub mod schema_objects;
+pub mod schema_scope_mapping;
 pub mod sql_dump;
 pub mod sql_split;
 pub mod sql_target;
@@ -45,9 +47,10 @@ pub use schema_catalog_commands::{
     parse_table_schema_from_command, parse_tables_from_command, schema_catalog_command_definitions,
     try_execute_schema_catalog_command,
 };
+pub use schema_dependencies::SchemaObjectDependencies;
 pub use schema_migration::{
-    format_type, migration_object_kind, parse_type_parts, validate_check_expression,
-    validate_migration_identifier, validate_object_definition,
+    format_type, migration_object_kind, parse_type_parts, split_sequence_definition,
+    validate_check_expression, validate_migration_identifier, validate_object_definition,
     validate_object_definition_with_identity, validate_sequence_definition_with_identity,
     validate_type_definition_with_identity, validate_view_definition, MigrationCapabilities,
     MigrationColumn, MigrationOperation, MigrationRenderer, MigrationRequirement, MigrationRisk,
@@ -59,8 +62,11 @@ pub use schema_object_commands::{
     schema_object_command_definitions,
 };
 pub use schema_objects::{
-    dialect_family, list_objects_sql, list_privileges_sql, object_ddl_sql,
-    object_ddl_sql_with_metadata, DatabaseObject, ObjectKind, PrivilegeGrant,
+    dialect_family, list_objects_sql, list_privileges_sql, mysql_show_create_view_sql,
+    object_ddl_sql, object_ddl_sql_with_metadata, DatabaseObject, ObjectKind, PrivilegeGrant,
+};
+pub use schema_scope_mapping::{
+    MySqlViewMetadata, SchemaObjectScopeDependency, SchemaObjectScopeMapping,
 };
 pub use sql_dump::{RestoreSession, RestoreStatementGuard};
 pub use sql_split::{SqlStatementScanner, Utf8ChunkDecoder};

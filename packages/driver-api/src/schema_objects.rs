@@ -122,21 +122,21 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
                 .into(),
         ),
         ("mysql", ObjectKind::Function) => Some(
-            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+            "SELECT ROUTINE_SCHEMA AS `schema`, ROUTINE_NAME AS name \
              FROM information_schema.ROUTINES \
              WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'FUNCTION' \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("mysql", ObjectKind::Procedure) => Some(
-            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name \
+            "SELECT ROUTINE_SCHEMA AS `schema`, ROUTINE_NAME AS name \
              FROM information_schema.ROUTINES \
              WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE = 'PROCEDURE' \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("mysql", ObjectKind::Trigger) => Some(
-            "SELECT TRIGGER_SCHEMA AS schema, TRIGGER_NAME AS name, \
+            "SELECT TRIGGER_SCHEMA AS `schema`, TRIGGER_NAME AS name, \
                     EVENT_OBJECT_SCHEMA AS target_schema, EVENT_OBJECT_TABLE AS target_name \
              FROM information_schema.TRIGGERS \
              WHERE TRIGGER_SCHEMA = DATABASE() \
@@ -144,7 +144,7 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
                 .into(),
         ),
         ("mysql", ObjectKind::View) => Some(
-            "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name \
+            "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS name \
              FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() \
              ORDER BY 1, 2"
                 .into(),
@@ -375,7 +375,11 @@ pub fn object_ddl_sql_with_metadata(
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
         ("mysql", ObjectKind::View) => Some(format!(
-            "SELECT VIEW_DEFINITION AS ddl FROM information_schema.VIEWS \
+            "SELECT TABLE_SCHEMA AS view_schema, VIEW_DEFINITION AS ddl, DEFINER AS view_definer, \
+             SECURITY_TYPE AS view_security_type, CHECK_OPTION AS view_check_option, \
+             CHARACTER_SET_CLIENT AS view_character_set_client, \
+             COLLATION_CONNECTION AS view_collation_connection \
+             FROM information_schema.VIEWS \
              WHERE TABLE_SCHEMA = COALESCE(NULLIF({}, ''), DATABASE()) AND TABLE_NAME = {}",
             sql_string(schema.filter(|s| !s.is_empty()).unwrap_or("")),
             sql_string(name),
@@ -465,6 +469,17 @@ pub fn object_ddl_sql_with_metadata(
             None
         }
     }
+}
+
+/// Build a MySQL `SHOW CREATE VIEW` query used to capture the definition
+/// options omitted by `information_schema.VIEWS.VIEW_DEFINITION`.
+pub fn mysql_show_create_view_sql(name: &str, schema: Option<&str>) -> String {
+    let name = quote_ident("mysql", name);
+    let qualified = schema
+        .filter(|schema| !schema.is_empty())
+        .map(|schema| format!("{}.{}", quote_ident("mysql", schema), name))
+        .unwrap_or(name);
+    format!("SHOW CREATE VIEW {qualified}")
 }
 
 pub fn list_privileges_sql(db_type: &str) -> Option<String> {

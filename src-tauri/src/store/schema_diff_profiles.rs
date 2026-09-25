@@ -118,6 +118,8 @@ mod tests {
             target_schema: None,
             target_only_tables: vec![],
             tables: vec!["users".into()],
+            source_objects: vec![],
+            target_objects: vec![],
             allow_destructive: false,
             include_indexes: true,
             require_rollback: false,
@@ -172,6 +174,22 @@ mod tests {
         expected.allow_destructive = true;
         expected.include_indexes = false;
         expected.require_rollback = true;
+        expected.source_objects = vec![crate::schema_objects::DatabaseObject {
+            kind: "function".into(),
+            schema: Some("source_schema".into()),
+            name: "calculate_total".into(),
+            signature: Some("integer, numeric".into()),
+            target_schema: None,
+            target_name: None,
+        }];
+        expected.target_objects = vec![crate::schema_objects::DatabaseObject {
+            kind: "trigger".into(),
+            schema: Some("target_schema".into()),
+            name: "audit_orders".into(),
+            signature: None,
+            target_schema: Some("target_schema".into()),
+            target_name: Some("orders".into()),
+        }];
         expected.type_overrides = vec![crate::schema_diff::types::ColumnTypeOverride {
             table: "source_schema.users".into(),
             column: "name".into(),

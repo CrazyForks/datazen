@@ -4,6 +4,7 @@
 //! host only compares identities, applies safety gates, and asks the target
 //! renderer for statements.
 
+use super::object_identity::{SchemaObjectIdentity, SequenceDependencyUsage};
 use super::operations::MigrationOperation;
 use super::types::{
     normalize_dialect, PlanRequirement, PlanStatement, RollbackCompleteness, SchemaDiffPlan,
@@ -13,7 +14,7 @@ use datazen_driver_api::{
     validate_object_definition_with_identity, validate_sequence_definition_with_identity,
     validate_type_definition_with_identity, validate_view_definition, MigrationCapabilities,
     MigrationRenderer, MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationType,
-    MigrationView, ObjectKind,
+    MigrationView, MySqlViewMetadata, ObjectKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -27,6 +28,15 @@ pub struct SchemaObjectSnapshot {
     pub target_name: Option<String>,
     /// Query body without the `CREATE VIEW ... AS` wrapper.
     pub definition: String,
+    /// `Some` means the driver supplied a complete structured dependency set.
+    /// `None` means dependencies are opaque and a unified deploy must block.
+    pub dependencies: Option<Vec<SchemaObjectIdentity>>,
+    /// Structured sequence usage metadata retained for ownership split and
+    /// source-object stale validation.
+    pub sequence_dependency_usages: Option<Vec<SequenceDependencyUsage>>,
+    /// Creation-semantic metadata for MySQL views. Missing metadata blocks
+    /// cross-database view mapping because rendering preserves only the body.
+    pub mysql_view_metadata: Option<MySqlViewMetadata>,
 }
 
 impl SchemaObjectSnapshot {
@@ -39,6 +49,9 @@ impl SchemaObjectSnapshot {
             target_schema: None,
             target_name: None,
             definition: definition.to_owned(),
+            dependencies: None,
+            sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -57,6 +70,9 @@ impl SchemaObjectSnapshot {
             target_schema: None,
             target_name: None,
             definition: definition.to_owned(),
+            dependencies: None,
+            sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -75,6 +91,9 @@ impl SchemaObjectSnapshot {
             target_schema: target_schema.map(str::to_owned),
             target_name: Some(target_name.to_owned()),
             definition: definition.to_owned(),
+            dependencies: None,
+            sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -87,6 +106,9 @@ impl SchemaObjectSnapshot {
             target_schema: None,
             target_name: None,
             definition: definition.to_owned(),
+            dependencies: None,
+            sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
@@ -99,10 +121,39 @@ impl SchemaObjectSnapshot {
             target_schema: None,
             target_name: None,
             definition: definition.to_owned(),
+            dependencies: None,
+            sequence_dependency_usages: None,
+            mysql_view_metadata: None,
         }
     }
 
-    fn key(
+    pub fn with_dependencies(mut self, dependencies: Vec<SchemaObjectIdentity>) -> Self {
+        self.dependencies = Some(dependencies);
+        self
+    }
+
+    pub fn with_mysql_view_metadata(mut self, metadata: MySqlViewMetadata) -> Self {
+        self.mysql_view_metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_sequence_dependency_usages(mut self, usages: Vec<SequenceDependencyUsage>) -> Self {
+        self.sequence_dependency_usages = Some(usages);
+        self
+    }
+
+    pub fn identity(&self) -> SchemaObjectIdentity {
+        SchemaObjectIdentity {
+            kind: self.kind,
+            schema: self.schema.clone(),
+            name: self.name.clone(),
+            signature: self.signature.clone(),
+            target_schema: self.target_schema.clone(),
+            target_name: self.target_name.clone(),
+        }
+    }
+
+    pub(super) fn key(
         &self,
     ) -> (
         Option<String>,
@@ -122,7 +173,7 @@ impl SchemaObjectSnapshot {
         )
     }
 
-    fn as_migration_view(&self) -> MigrationView {
+    pub(super) fn as_migration_view(&self) -> MigrationView {
         MigrationView {
             schema: self.schema.clone(),
             name: self.name.clone(),
@@ -130,7 +181,7 @@ impl SchemaObjectSnapshot {
         }
     }
 
-    fn as_migration_routine(&self) -> Result<MigrationRoutine, String> {
+    pub(super) fn as_migration_routine(&self) -> Result<MigrationRoutine, String> {
         if !matches!(self.kind, ObjectKind::Function | ObjectKind::Procedure) {
             return Err("schema object is not a routine".into());
         }
@@ -143,7 +194,7 @@ impl SchemaObjectSnapshot {
         })
     }
 
-    fn as_migration_trigger(&self) -> Result<MigrationTrigger, String> {
+    pub(super) fn as_migration_trigger(&self) -> Result<MigrationTrigger, String> {
         if self.kind != ObjectKind::Trigger {
             return Err("schema object is not a trigger".into());
         }
@@ -159,7 +210,7 @@ impl SchemaObjectSnapshot {
         })
     }
 
-    fn as_migration_sequence(&self) -> Result<MigrationSequence, String> {
+    pub(super) fn as_migration_sequence(&self) -> Result<MigrationSequence, String> {
         if self.kind != ObjectKind::Sequence {
             return Err("schema object is not a sequence".into());
         }
@@ -170,7 +221,7 @@ impl SchemaObjectSnapshot {
         })
     }
 
-    fn as_migration_type(&self) -> Result<MigrationType, String> {
+    pub(super) fn as_migration_type(&self) -> Result<MigrationType, String> {
         if self.kind != ObjectKind::Type {
             return Err("schema object is not a user-defined type".into());
         }

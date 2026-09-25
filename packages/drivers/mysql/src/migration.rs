@@ -691,6 +691,23 @@ impl MigrationRenderer for MysqlMigrationRenderer {
             }
         }
     }
+
+    fn map_schema_object_scope(
+        &self,
+        kind: ObjectKind,
+        source_scope: &str,
+        target_scope: &str,
+        definition: &str,
+        dependencies: &[SchemaObjectScopeDependency],
+    ) -> Result<Option<SchemaObjectScopeMapping>, String> {
+        crate::schema_scope_mapping::map_view_scope(
+            kind,
+            source_scope,
+            target_scope,
+            definition,
+            dependencies,
+        )
+    }
 }
 
 pub struct MysqlMigrationCapabilities;
