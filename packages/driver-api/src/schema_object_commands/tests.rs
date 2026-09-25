@@ -640,6 +640,71 @@ fn mysql_view_metadata_reads_check_option_from_show_create_version_comment() {
     assert_eq!(metadata.check_option, "NONE");
 }
 
+#[test]
+fn mysql_view_metadata_normalizes_only_its_own_database_qualifiers() {
+    let local_catalog = mysql_view_catalog_result(
+        "SELECT c.id FROM `source_db`.`child` AS c",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let local_show = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT c.id FROM `child` AS c",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    assert!(extract_mysql_view_metadata(&local_catalog, &local_show).is_ok());
+
+    let unquoted_catalog = mysql_view_catalog_result(
+        "SELECT c.id FROM source_db.child AS c",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let unquoted_show = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT c.id FROM child AS c",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    assert!(extract_mysql_view_metadata(&unquoted_catalog, &unquoted_show).is_ok());
+
+    let differently_cased_local = mysql_view_catalog_result(
+        "SELECT c.id FROM `SOURCE_DB`.`child` AS c",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    assert!(extract_mysql_view_metadata(&differently_cased_local, &local_show).is_err());
+
+    let external_catalog = mysql_view_catalog_result(
+        "SELECT c.id FROM `archive_db`.`child` AS c",
+        "migrator@localhost",
+        "DEFINER",
+        "NONE",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    let same_external_show = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT c.id FROM `archive_db`.`child` AS c",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    assert!(extract_mysql_view_metadata(&external_catalog, &same_external_show).is_ok());
+
+    let external_changed_to_local = mysql_show_view_result(
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`migrator`@`localhost` SQL SECURITY DEFINER VIEW `source_db`.`item_view` AS SELECT c.id FROM `child` AS c",
+        "utf8mb4",
+        "utf8mb4_0900_ai_ci",
+    );
+    assert!(extract_mysql_view_metadata(&external_catalog, &external_changed_to_local).is_err());
+}
+
 fn mysql_view_catalog_result(
     body: &str,
     definer: &str,
@@ -650,6 +715,7 @@ fn mysql_view_catalog_result(
 ) -> QueryResult {
     QueryResult {
         columns: vec![
+            col("view_schema"),
             col("ddl"),
             col("view_definer"),
             col("view_security_type"),
@@ -658,6 +724,7 @@ fn mysql_view_catalog_result(
             col("view_collation_connection"),
         ],
         rows: vec![vec![
+            Some(Value::String("source_db".into())),
             Some(Value::String(body.into())),
             Some(Value::String(definer.into())),
             Some(Value::String(security.into())),

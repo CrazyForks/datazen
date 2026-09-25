@@ -375,7 +375,7 @@ pub fn object_ddl_sql_with_metadata(
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
         ("mysql", ObjectKind::View) => Some(format!(
-            "SELECT VIEW_DEFINITION AS ddl, DEFINER AS view_definer, \
+            "SELECT TABLE_SCHEMA AS view_schema, VIEW_DEFINITION AS ddl, DEFINER AS view_definer, \
              SECURITY_TYPE AS view_security_type, CHECK_OPTION AS view_check_option, \
              CHARACTER_SET_CLIENT AS view_character_set_client, \
              COLLATION_CONNECTION AS view_collation_connection \

@@ -49,6 +49,7 @@ fn view_queries_return_view_body_metadata_contract() {
     assert!(list.contains("TABLE_SCHEMA AS `schema`"));
     let ddl = object_ddl_sql("mysql", ObjectKind::View, "active_users", None).unwrap();
     assert!(ddl.contains("VIEW_DEFINITION AS ddl"));
+    assert!(ddl.contains("TABLE_SCHEMA AS view_schema"));
     assert!(ddl.contains("DEFINER AS view_definer"));
     assert!(ddl.contains("SECURITY_TYPE AS view_security_type"));
     assert!(ddl.contains("CHECK_OPTION AS view_check_option"));
