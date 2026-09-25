@@ -3,6 +3,7 @@ use crate::schema_dependencies::TypeDependencyUsageKind;
 use crate::types::ColumnInfo;
 
 mod dependency_route;
+mod view_check_option;
 
 fn col(name: &str) -> ColumnInfo {
     ColumnInfo {

@@ -5,8 +5,10 @@ use serde_json::{json, Value as JsonValue};
 mod dependencies;
 use dependencies::parse_object_dependency_catalog;
 mod mysql_view_metadata;
+#[cfg(test)]
+use mysql_view_metadata::mysql_show_create_view_check_option;
 use mysql_view_metadata::{
-    metadata_value_matches, missing_show_view_metadata, mysql_show_create_view_check_option,
+    metadata_value_matches, missing_show_view_metadata, mysql_show_create_view_for_parser,
     mysql_view_definer_identity, mysql_view_query_bodies_match, required_view_metadata_field,
 };
 
@@ -527,7 +529,8 @@ fn extract_mysql_view_metadata(
     // the parsed query must match so two catalog moments cannot be combined.
     let catalog_field = |name: &str| required_view_metadata_field(result, name);
     let create_view = extract_object_ddl_checked(show_create)?;
-    let statements = Parser::parse_sql(&MySqlDialect {}, &create_view).map_err(|error| {
+    let (parser_ddl, check_option) = mysql_show_create_view_for_parser(&create_view)?;
+    let statements = Parser::parse_sql(&MySqlDialect {}, &parser_ddl).map_err(|error| {
         DriverError::QueryFailed(format!("parse MySQL SHOW CREATE VIEW result: {error}"))
     })?;
     if statements.len() != 1 {
@@ -591,7 +594,6 @@ fn extract_mysql_view_metadata(
             CreateViewSecurity::Invoker => "INVOKER",
         })
         .ok_or_else(|| missing_show_view_metadata("SQL SECURITY"))?;
-    let check_option = mysql_show_create_view_check_option(&create_view)?;
     let character_set_client = required_view_metadata_field(show_create, "character_set_client")?;
     let collation_connection = required_view_metadata_field(show_create, "collation_connection")?;
 
