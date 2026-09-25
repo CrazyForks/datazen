@@ -4,6 +4,11 @@ use serde_json::{json, Value as JsonValue};
 
 mod dependencies;
 use dependencies::parse_object_dependency_catalog;
+mod mysql_view_metadata;
+use mysql_view_metadata::{
+    metadata_value_matches, missing_show_view_metadata, mysql_show_create_view_check_option,
+    mysql_view_definer_identity, required_view_metadata_field,
+};
 
 use crate::command::{
     CommandAccessLevel, CommandCategory, CommandResult, DriverCommandDefinition,
@@ -23,7 +28,11 @@ use crate::schema_objects::{
 use crate::traits::DatabaseDriver;
 use crate::types::{ColumnInfo, DriverError, QueryResult, Value};
 use crate::ConnectionHandle;
-use sqlparser::{ast::Statement, dialect::MySqlDialect, parser::Parser};
+use sqlparser::{
+    ast::{CreateViewSecurity, Statement},
+    dialect::MySqlDialect,
+    parser::Parser,
+};
 
 const SCHEMA_OBJECT_COMMANDS: &[&str] = &[
     "list_objects",
@@ -492,19 +501,11 @@ fn extract_mysql_view_metadata(
     result: &QueryResult,
     show_create: &QueryResult,
 ) -> Result<crate::schema_scope_mapping::MySqlViewMetadata, DriverError> {
-    let field = |name: &str| {
-        let index = column_index(&result.columns, &[name]).ok_or_else(|| {
-            DriverError::QueryFailed(format!("MySQL view metadata missing `{name}` column"))
-        })?;
-        result
-            .rows
-            .first()
-            .and_then(|row| value_as_ddl_text(row.get(index).and_then(Option::as_ref)))
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                DriverError::QueryFailed(format!("MySQL view metadata `{name}` is unavailable"))
-            })
-    };
+    // SHOW CREATE VIEW is authoritative for creation options and returns the
+    // character-set context in the same result. INFORMATION_SCHEMA still
+    // supplies the renderer's original query body, but every shared field and
+    // the parsed query must match so two catalog moments cannot be combined.
+    let catalog_field = |name: &str| required_view_metadata_field(result, name);
     let create_view = extract_object_ddl_checked(show_create)?;
     let statements = Parser::parse_sql(&MySqlDialect {}, &create_view).map_err(|error| {
         DriverError::QueryFailed(format!("parse MySQL SHOW CREATE VIEW result: {error}"))
@@ -542,19 +543,60 @@ fn extract_mysql_view_metadata(
             "MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies".into(),
         ));
     }
+
+    let params = params.as_ref().ok_or_else(|| {
+        DriverError::QueryFailed(
+            "MySQL SHOW CREATE VIEW omitted creation parameters needed for a consistent snapshot"
+                .into(),
+        )
+    })?;
     let algorithm = params
+        .algorithm
         .as_ref()
-        .and_then(|params| params.algorithm.as_ref())
         .map(ToString::to_string)
-        .unwrap_or_else(|| "UNDEFINED".into())
+        .ok_or_else(|| missing_show_view_metadata("ALGORITHM"))?
         .to_ascii_uppercase();
+    let definer = params
+        .definer
+        .as_ref()
+        .map(mysql_view_definer_identity)
+        .transpose()?
+        .ok_or_else(|| missing_show_view_metadata("DEFINER"))?;
+    let security_type = params
+        .security
+        .as_ref()
+        .map(|security| match security {
+            CreateViewSecurity::Definer => "DEFINER",
+            CreateViewSecurity::Invoker => "INVOKER",
+        })
+        .ok_or_else(|| missing_show_view_metadata("SQL SECURITY"))?;
+    let check_option = mysql_show_create_view_check_option(&create_view)?;
+    let character_set_client = required_view_metadata_field(show_create, "character_set_client")?;
+    let collation_connection = required_view_metadata_field(show_create, "collation_connection")?;
+
+    let catalog_definer = catalog_field("view_definer")?;
+    let catalog_security = catalog_field("view_security_type")?;
+    let catalog_check_option = catalog_field("view_check_option")?;
+    let catalog_character_set = catalog_field("view_character_set_client")?;
+    let catalog_collation = catalog_field("view_collation_connection")?;
+    if !metadata_value_matches(&definer, &catalog_definer, false)
+        || !metadata_value_matches(security_type, &catalog_security, true)
+        || !metadata_value_matches(&check_option, &catalog_check_option, true)
+        || !metadata_value_matches(&character_set_client, &catalog_character_set, true)
+        || !metadata_value_matches(&collation_connection, &catalog_collation, true)
+    {
+        return Err(DriverError::QueryFailed(
+            "MySQL INFORMATION_SCHEMA.VIEWS and SHOW CREATE VIEW creation metadata disagree; retry the schema comparison".into(),
+        ));
+    }
+
     Ok(crate::schema_scope_mapping::MySqlViewMetadata {
         algorithm,
-        definer: field("view_definer")?,
-        security_type: field("view_security_type")?,
-        check_option: field("view_check_option")?,
-        character_set_client: field("view_character_set_client")?,
-        collation_connection: field("view_collation_connection")?,
+        definer,
+        security_type: security_type.into(),
+        check_option,
+        character_set_client,
+        collation_connection,
         has_explicit_column_list: !columns.is_empty(),
     })
 }

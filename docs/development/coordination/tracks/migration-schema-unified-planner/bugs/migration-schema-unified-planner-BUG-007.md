@@ -1,20 +1,26 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：待修复
-- **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source/target snapshot validation
+- **状态**：修复完成，待 Fresh Tester 复验
+- **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
-## 描述与代码审查证据
+## 描述
 
-`get_object_ddl(view)` first reads `VIEW_DEFINITION`, `DEFINER`, `SECURITY_TYPE`, `CHECK_OPTION`, `CHARACTER_SET_CLIENT`, and `COLLATION_CONNECTION` from `INFORMATION_SCHEMA.VIEWS`. It then issues a separate `SHOW CREATE VIEW` query. The parser compares only the two query bodies; it takes `ALGORITHM` and explicit-column-list metadata from `SHOW CREATE VIEW`, but does not compare its definer/security/check-option fields with the first result.
+`get_object_ddl(view)` previously read `VIEW_DEFINITION` and creation metadata from `INFORMATION_SCHEMA.VIEWS`, then separately read `SHOW CREATE VIEW`. It compared only the two query bodies and derived only algorithm and explicit column-list metadata from the SHOW result. A concurrent metadata-only `ALTER VIEW` could therefore mix different catalog moments while leaving the query body unchanged; the combined snapshot could pass the planner's renderer-equivalence gate despite changed security, definer, check-option, or collation semantics.
 
-If a concurrent `ALTER VIEW` changes creation semantics while keeping the query body unchanged, the two reads can describe different catalog states. For example, the first read can report `CHECK_OPTION=NONE`, then `SHOW CREATE VIEW` can report `WITH CASCADED CHECK OPTION`. Because only the query bodies are compared, the combined snapshot can retain `NONE` and pass the planner's body-only renderer gate. The migration could then silently remove the later view's write-check behavior. The same split also applies to definer and security semantics; the charset/collation values come only from the first query.
+## 修复与安全边界
 
-This finding is from independent source review of `packages/driver-api/src/schema_object_commands.rs::extract_mysql_view_metadata`; it has not yet been reproduced with concurrent DDL. It is separate from BUG-006's cross-database mapping acceptance.
+- `SHOW CREATE VIEW` is now authoritative for algorithm, definer, SQL security, check option, client character set, and connection collation. Required fields missing from SHOW fail closed.
+- The returned body remains the renderer-compatible `VIEW_DEFINITION`, but it is accepted only when its parsed query matches the query in the same SHOW result. Every creation field also exposed by `INFORMATION_SCHEMA.VIEWS` must match SHOW; disagreement returns an error before a schema-object snapshot or reviewed plan can be produced.
+- The check-option parser recognizes MySQL's executable version-comment suffix and ignores quoted strings and ordinary comments. Legacy string and valid UTF-8 byte extraction remains supported; invalid UTF-8 remains rejected.
 
-## Required fix and verification
+## Fresh Tester R5 review evidence
 
-- Build one authoritative metadata snapshot from one `SHOW CREATE VIEW` result, including algorithm, explicit columns, definer, SQL security, check option, client character set, and connection collation, where exposed by MySQL.
-- If catalog fields from a separate query remain necessary, compare every creation-semantic field with the `SHOW CREATE VIEW` result and fail closed on any mismatch or missing field. Comparing only the query AST is insufficient.
-- Add parser tests for consistent metadata and mismatched security/check-option/definer data, plus a verification test that proves a metadata mismatch cannot yield a deployable plan.
-- Re-run the full independent MySQL metadata blocker and positive view readback journeys after merging the fix.
+- R5 identified the issue by source review; concurrent DDL was not reproduced. The finding is that two non-atomic reads can describe different states unless every overlapping field and the parsed view body are checked.
+- R5 prepared WDIO assertions for the MySQL view readback, exact mapped dependency blocker/zero writes, and `WITH CASCADED CHECK OPTION` rejection. Those journeys remain unrun pending this fix and a new independent Tester.
+
+## 编码验证
+
+- API regressions cover consistent metadata, INFORMATION_SCHEMA→SHOW mismatch and SHOW→INFORMATION_SCHEMA mismatch for definer/security/check-option/charset/collation, view-body mismatch, and check-option phrases inside strings/comments.
+- Host Schema Diff: 204/204; Driver API: 177/177; MySQL driver library: 123/123; MySQL `schema_objects_sql` integration: 8/8.
+- `cargo fmt --all -- --check` and `git diff --check` pass. Fresh Tester must rerun the real WDIO positive/negative journeys; this card does not claim independent runtime verification.
