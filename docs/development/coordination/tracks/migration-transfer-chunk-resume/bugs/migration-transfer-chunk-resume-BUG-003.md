@@ -1,6 +1,6 @@
 # BUG-003 — R2 chunk-resume journeys time out before cancellation
 
-- Status: `待复测`
+- Status: `已复测通过`
 - Severity: P1 — all three bounded chunk-resume WDIO journeys failed before exercising cancellation or resume.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Independent test report: `R2_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`, commit `7d1377c967287fd8582c698d3b9df189343f4f99`.
@@ -63,4 +63,8 @@ The repair accepts absent column metadata only for an empty page; every non-empt
 
 After the empty-page repair made the first exact-count gate pass, the same journey exposed a second, independent bug: clicking Resume called `runExecute(resumeToken)` while the wizard remained on the `result` step, but the Cancel control was rendered only on the `preview` step. A resumed transfer therefore had no user-visible Cancel control. The UI now returns to the preview/execution step as soon as a resume begins, so the normal progress and Cancel controls are available until that invocation settles. A focused UI test holds a resumed execution open and proves the Cancel action remains available.
 
-The rebuilt local PG→MySQL bounded-chunk WDIO journey then passed (1 passing, 46.5s): the strict target counts of 2 and 4 were observed, both cancellation/resume boundaries completed, and the final ordered rows assertion for ids 1–5 passed. Its fixture cleanup completed, read-only catalog checks found no remaining run-specific source/target databases, and the app was stopped with port 4445 clear. This is a local Coder verification, not the independent Tester R4 gate; reverse-direction cancellation/resume, source-mutation refusal, and the full isolated suite still need fresh independent verification.
+The rebuilt local PG→MySQL bounded-chunk WDIO journey then passed (1 passing, 46.5s): the strict target counts of 2 and 4 were observed, both cancellation/resume boundaries completed, and the final ordered rows assertion for ids 1–5 passed. Its fixture cleanup completed, read-only catalog checks found no remaining run-specific source/target databases, and the app was stopped with port 4445 clear.
+
+## Independent retest R4
+
+R4 independently passed the PG→MySQL and MySQL→PG multi-boundary cancellation/resume journeys and the PG→MySQL source-mutation refusal, including exact target row counts/readbacks and the final empty page. The new resumed-cancel UI path was exercised. See `R4_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`; the remaining R4 failures were only stale acknowledgement-loss error-message expectations tracked separately in BUG-004/005. BUG-003 is therefore independently verified; overall feature release gates remain open.

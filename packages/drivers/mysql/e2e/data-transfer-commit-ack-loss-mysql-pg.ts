@@ -534,7 +534,9 @@ describe('Data Transfer MySQL→PG commit acknowledgement loss', function () {
     );
     expect(unknownTableResult?.outcome).toBe('unknown');
     expect(unknownTableResult?.rowsInserted).toBeNull();
-    expect(unknownTableResult?.error).toContain('target commit succeeded');
+    expect(unknownTableResult?.error).toContain(
+      'target chunk committed but its acknowledgement was dropped',
+    );
     expect(laterTableResult?.outcome).toBe('notStarted');
     expect(laterTableResult?.rowsInserted).toBe(0);
     expect(unknownResult?.resumeToken).toBeUndefined();
