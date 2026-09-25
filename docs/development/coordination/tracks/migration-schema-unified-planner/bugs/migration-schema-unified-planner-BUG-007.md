@@ -43,3 +43,11 @@
 - The other five unified-planner journeys passed, including the MySQL ordinary-view mixed plan/deploy/readback. This establishes that the normal view path works, but does not verify rejection of `WITH CASCADED CHECK OPTION` metadata.
 - R8's app output contained no schema-diff error and WDIO retained no screenshot or trace for the timed-out wait. Keep BUG-007 open until the negative case reaches and asserts the blocker and zero-write condition.
 - Full evidence is in the [round-8 retest report](../test-results/unified-planner-retest-r8.md).
+
+## Fresh Tester R9 evidence
+
+- The first broad R9 run passed the other five cases but used the target database identity (`datazen_sync_mysql_tgt`) for a view created on the source database. Treat that initial CHECK OPTION failure as a verifier fixture mistake, not product evidence.
+- After correcting the test to use `datazen_sync_mysql_src`, live `information_schema.VIEWS` returned exactly one row with `VIEW_DEFINITION` length 1180 and `CHECK_OPTION=CASCADED`. `SHOW CREATE VIEW` returned one 374-character DDL result containing the CASCADED suffix.
+- `get_object_ddl` fails while parsing the SHOW result: `Expected: end of statement, found: WITH at Line: 1, Column: 349`. An env-gated UI diagnostic showed `schema-diff-step-plan`, an inline error containing the same parser failure, and `clickSchemaDiffGeneratePlan()` timing out after 45.4 seconds before requirement, empty-plan, disabled-deploy, or explicit zero-write assertions. No deploy was clicked; exact source/target teardown was `0/0`.
+- This confirms a product blocker: the plain trailing CHECK OPTION clause is rejected before the metadata gate can return its intended blocker. Keep BUG-007 open until the parser is repaired and a fresh full WDIO run reaches the metadata and zero-write assertions.
+- See the [round-9 retest report](../test-results/unified-planner-retest-r9.md) for the build, corrected diagnostic, test-fixture mistake, and exact coverage scope.

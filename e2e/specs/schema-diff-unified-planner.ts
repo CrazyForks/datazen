@@ -28,6 +28,8 @@ import {
 
 type Dialect = 'postgresql' | 'mysql';
 
+const MYSQL_SOURCE_DB = 'datazen_sync_mysql_src';
+
 function sanitizeFixtureDiagnostic(message: string): string {
   return message
     .replace(/((?:password|passwd|pwd)\s*[:=]\s*)[^\s,;]*/gi, '$1[redacted]')
@@ -220,7 +222,7 @@ function createFixture(dialect: Dialect): Fixture {
   const targetId = `e2e_unified_${dialect}_tgt_${stamp}`;
   const sourceName = `SD-UNIFIED-${dialect}-SRC-${stamp}`;
   const targetName = `SD-UNIFIED-${dialect}-TGT-${stamp}`;
-  const database = dialect === 'postgresql' ? PG_SYNC_DB : 'datazen_sync_mysql_src';
+  const database = dialect === 'postgresql' ? PG_SYNC_DB : MYSQL_SOURCE_DB;
   const targetDatabase = dialect === 'postgresql' ? PG_SYNC_TGT_DB : MYSQL_SYNC_DB;
   const parentTable = `sd_unified_${dialect}_${stamp}_parent`;
   const table = `sd_unified_${dialect}_${stamp}_child`;
@@ -753,17 +755,54 @@ async function runMysqlNonDefaultViewMetadataJourney(fixture: Fixture, mainWindo
           sql: `CREATE OR REPLACE VIEW ${fixture.view} AS SELECT id, state, parent_id FROM ${fixture.table} WITH CASCADED CHECK OPTION`,
         });
       });
-      const viewDdl = await invokeBackend<{
-        data: { ddl: string; viewMetadata: { checkOption: string } };
-      }>('execute_driver_command', {
-        request: {
-          dbSessionId: source,
-          command: 'get_object_ddl',
-          input: { kind: 'view', name: fixture.view, schema: MYSQL_SYNC_DB },
-        },
+      const rawViewMetadata = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: source,
+        sql: `SELECT TABLE_SCHEMA, TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '${MYSQL_SOURCE_DB}' AND TABLE_NAME = '${fixture.view}'`,
       });
-      expect(viewDdl.data.ddl.trim().length).toBeGreaterThan(0);
-      expect(viewDdl.data.viewMetadata.checkOption).toBe('CASCADED');
+      const rawViewRow = parseQueryRows(rawViewMetadata)[0];
+      const rawCheckOption = rawViewRow?.[3];
+      const checkOption = Array.isArray(rawCheckOption)
+        ? String.fromCharCode(...rawCheckOption.map((byte) => Number(byte)))
+        : String(rawCheckOption);
+      const showCreateResult = await invokeBackend<QueryResultPayload>('execute_query', {
+        dbSessionId: source,
+        sql: `SHOW CREATE VIEW \`${MYSQL_SOURCE_DB}\`.\`${fixture.view}\``,
+      });
+      const showCreateRow = parseQueryRows(showCreateResult)[0];
+      const showCreateColumns = showCreateResult.results?.[0]?.columns?.map((column) =>
+        typeof column === 'string' ? column : column.name,
+      );
+      const showCreateIndex = showCreateColumns?.findIndex(
+        (column) => column.toLowerCase() === 'create view',
+      );
+      const showCreateDdl =
+        showCreateRow?.[showCreateIndex != null && showCreateIndex >= 0 ? showCreateIndex : 1];
+      const showCreateText = showCreateDdl == null ? '' : String(showCreateDdl);
+      console.log(
+        `[SD-UNIFIED] mysql check-option raw metadata schema=${String(rawViewRow?.[0])} name=${String(rawViewRow?.[1])} row_count=${parseQueryRows(rawViewMetadata).length} definition_length=${rawViewRow?.[2] == null ? 0 : String(rawViewRow[2]).length} check_option=${checkOption} show_create_rows=${parseQueryRows(showCreateResult).length} show_create_ddl_length=${showCreateText.length} show_create_has_cascaded_suffix=${/WITH\s+CASCADED\s+CHECK\s+OPTION/i.test(showCreateText)}`,
+      );
+      let viewDdlError = '';
+      try {
+        const viewDdl = await invokeBackend<{
+          data: { ddl: string; viewMetadata: { checkOption: string } };
+        }>('execute_driver_command', {
+          request: {
+            dbSessionId: source,
+            command: 'get_object_ddl',
+            input: { kind: 'view', name: fixture.view, schema: MYSQL_SOURCE_DB },
+          },
+        });
+        expect(viewDdl.data.ddl.trim().length).toBeGreaterThan(0);
+        expect(viewDdl.data.viewMetadata.checkOption).toBe('CASCADED');
+      } catch (error) {
+        viewDdlError = sanitizeFixtureDiagnostic(
+          error instanceof Error ? error.message : String(error),
+        );
+        if (process.env.SD_UNIFIED_CAPTURE_CHECK_OPTION_UI !== '1') throw error;
+      }
+      if (viewDdlError) {
+        console.log(`[SD-UNIFIED] mysql check-option direct DDL error=${viewDdlError}`);
+      }
     } finally {
       await disconnectBackend(source);
     }
