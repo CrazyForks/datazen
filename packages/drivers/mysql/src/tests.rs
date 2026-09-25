@@ -5,6 +5,14 @@ use datazen_driver_api::DatabaseDriver;
 use std::collections::HashMap;
 
 #[test]
+fn only_innodb_tables_claim_consistent_snapshot_support() {
+    assert!(supports_consistent_snapshot_engine(Some("InnoDB")));
+    assert!(supports_consistent_snapshot_engine(Some("innodb")));
+    assert!(!supports_consistent_snapshot_engine(Some("MyISAM")));
+    assert!(!supports_consistent_snapshot_engine(None));
+}
+
+#[test]
 fn mysql_group_replication_members_share_canonical_database_identity() {
     let member_a = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("ONLINE")));
     let member_b = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("online")));

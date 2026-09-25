@@ -9,6 +9,14 @@ use std::collections::HashMap;
 /// Relation kinds that own columns (mirrors the table listing query).
 const COLUMN_BEARING_RELKINDS: &str = "'r', 'v', 'm', 'f', 'p'";
 
+fn relation_supports_consistent_snapshot(
+    relkind: &str,
+    is_partition: bool,
+    participates_in_inheritance: bool,
+) -> bool {
+    relkind == "r" && !is_partition && !participates_in_inheritance
+}
+
 /// Fail loudly when `schema.table` does not resolve in the *current* database.
 ///
 /// `information_schema.columns` is resolved against the session's active
@@ -189,6 +197,28 @@ impl PostgresDriver {
                 table_options: TableOptions::default(),
             });
         }
+
+        let relation_snapshot_safe = sqlx::query(
+            "SELECT c.relkind::text AS relkind, c.relispartition AS is_partition, \
+                    EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i \
+                            WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) \
+                        AS participates_in_inheritance \
+             FROM pg_catalog.pg_class c WHERE c.oid = $1::regclass",
+        )
+        .bind(&regclass)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+        .is_some_and(|row| {
+            let relkind: String = row.get("relkind");
+            let is_partition: bool = row.get("is_partition");
+            let participates_in_inheritance: bool = row.get("participates_in_inheritance");
+            relation_supports_consistent_snapshot(
+                &relkind,
+                is_partition,
+                participates_in_inheritance,
+            )
+        });
 
         let pk_rows = sqlx::query(
             r#"
@@ -379,7 +409,10 @@ impl PostgresDriver {
             indexes,
             foreign_keys,
             check_constraints,
-            table_options: TableOptions::default(),
+            table_options: TableOptions {
+                supports_consistent_snapshot: Some(relation_snapshot_safe),
+                ..TableOptions::default()
+            },
         })
     }
 
@@ -541,7 +574,10 @@ fn parse_pg_check_definition(definition: &str) -> Option<String> {
 
 #[cfg(test)]
 mod schema_tests {
-    use super::{normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability};
+    use super::{
+        normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability,
+        relation_supports_consistent_snapshot,
+    };
     use datazen_driver_api::ForeignKeyDeferrability;
 
     fn owned(values: &[&str]) -> Vec<String> {
@@ -585,6 +621,17 @@ mod schema_tests {
             normalise_fk_columns(owned(&["b", "a"]), owned(&["pb", "pa"])).expect("reconcilable");
         assert_eq!(from, owned(&["b", "a"]));
         assert_eq!(to, owned(&["pb", "pa"]));
+    }
+
+    #[test]
+    fn only_local_postgres_table_relations_claim_snapshot_support() {
+        assert!(relation_supports_consistent_snapshot("r", false, false));
+        assert!(!relation_supports_consistent_snapshot("r", true, false));
+        assert!(!relation_supports_consistent_snapshot("r", false, true));
+        assert!(!relation_supports_consistent_snapshot("p", false, false));
+        assert!(!relation_supports_consistent_snapshot("f", false, false));
+        assert!(!relation_supports_consistent_snapshot("v", false, false));
+        assert!(!relation_supports_consistent_snapshot("m", false, false));
     }
 
     #[test]

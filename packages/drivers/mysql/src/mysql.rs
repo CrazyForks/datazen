@@ -15,6 +15,10 @@ mod type_decode;
 #[path = "tests.rs"]
 mod tests;
 
+fn supports_consistent_snapshot_engine(engine: Option<&str>) -> bool {
+    engine.is_some_and(|value| value.eq_ignore_ascii_case("InnoDB"))
+}
+
 use crate::structure;
 use async_trait::async_trait;
 use catalog::{
@@ -1102,6 +1106,15 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let engine: Option<String> = sqlx::query_scalar(
+            "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        )
+        .bind(&db)
+        .bind(Self::bare_table_name(table))
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+        .flatten();
 
         tracing::info!(%table, col_rows = col_rows.len(), idx_rows = idx_rows.len(),
             ms = t0.elapsed().as_millis() as u64,
@@ -1203,7 +1216,13 @@ impl DatabaseDriver for MysqlDriver {
             indexes,
             foreign_keys,
             check_constraints,
-            table_options: TableOptions::default(),
+            table_options: TableOptions {
+                supports_consistent_snapshot: Some(supports_consistent_snapshot_engine(
+                    engine.as_deref(),
+                )),
+                engine,
+                ..TableOptions::default()
+            },
         })
     }
 

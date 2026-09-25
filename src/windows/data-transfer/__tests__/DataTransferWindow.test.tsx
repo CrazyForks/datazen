@@ -999,9 +999,12 @@ describe('DataTransferWindow', () => {
 
     const batchInput = screen.getByRole('spinbutton');
     fireEvent.change(batchInput, { target: { value: '0' } });
-    expect(batchInput).toHaveValue(500);
+    expect(batchInput).toHaveValue(0);
+    expect(screen.getByTestId('data-transfer-batch-size-error')).toBeTruthy();
+    expect(screen.getByTestId('data-transfer-next')).toBeDisabled();
     fireEvent.change(batchInput, { target: { value: '25' } });
     expect(batchInput).toHaveValue(25);
+    expect(screen.queryByTestId('data-transfer-batch-size-error')).toBeNull();
     const stopOnError = within(
       screen.getByText('transfer.stopOnError').closest('label')!,
     ).getByRole('checkbox');

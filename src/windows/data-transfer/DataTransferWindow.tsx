@@ -767,6 +767,7 @@ export function DataTransferWindow() {
   }, []);
 
   const stepIndex = STEPS.indexOf(step);
+  const validBatchSize = Number.isInteger(batchSize) && batchSize >= 1 && batchSize <= 500;
 
   const canNext = useMemo(() => {
     switch (step) {
@@ -779,6 +780,7 @@ export function DataTransferWindow() {
               : targetId && targetDatabase && pairing?.supported),
         );
       case 'setup':
+        if (!validBatchSize) return false;
         if (writeMode !== 'insert' && !confirmedDestructive) return false;
         return true;
       case 'objects':
@@ -800,6 +802,7 @@ export function DataTransferWindow() {
     tables,
     writeMode,
     confirmedDestructive,
+    validBatchSize,
   ]);
 
   const canExecute = useMemo(
@@ -1285,11 +1288,31 @@ export function DataTransferWindow() {
                   <input
                     type="number"
                     min={1}
+                    max={500}
+                    step={1}
+                    aria-invalid={!validBatchSize}
+                    data-testid="data-transfer-batch-size"
                     className="mt-1 w-full rounded border border-edge bg-surface px-2 py-1"
                     value={batchSize}
-                    onChange={(e) => setBatchSize(Number(e.target.value) || 500)}
+                    onChange={(e) => setBatchSize(Number(e.target.value))}
                   />
                 </label>
+                {!validBatchSize ? (
+                  <p
+                    className="text-xs text-danger"
+                    role="alert"
+                    data-testid="data-transfer-batch-size-error"
+                  >
+                    {t('transfer.batchSizeLimit')}
+                  </p>
+                ) : null}
+                <p
+                  className="text-xs text-fg-muted"
+                  role="note"
+                  data-testid="data-transfer-resume-capability-hint"
+                >
+                  {t('transfer.resumeCapabilityHint')}
+                </p>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -1544,6 +1567,15 @@ export function DataTransferWindow() {
                           : t('transfer.partialExplanation')}
                       </p>
                     )}
+                    {result.resumeToken ? (
+                      <p
+                        className="text-fg-muted"
+                        role="note"
+                        data-testid="data-transfer-resume-availability-hint"
+                      >
+                        {t('transfer.resumeAvailableHint')}
+                      </p>
+                    ) : null}
                     {result.tables.map((tbl) => (
                       <div
                         key={`${tbl.sourceTable}:${tbl.targetTable}:${tbl.success}:${tbl.outcome ?? ''}`}

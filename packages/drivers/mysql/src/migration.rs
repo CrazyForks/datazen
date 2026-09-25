@@ -830,11 +830,13 @@ mod tests {
                     engine: Some("InnoDB".into()),
                     charset: Some("latin1".into()),
                     comment: Some("old note".into()),
+                    ..TableOptions::default()
                 },
                 to: TableOptions {
                     engine: Some("InnoDB".into()),
                     charset: Some("utf8mb4".into()),
                     comment: Some("owner's orders".into()),
+                    ..TableOptions::default()
                 },
             })
             .unwrap();
@@ -854,6 +856,7 @@ mod tests {
                     engine: Some("InnoDB".into()),
                     charset: None,
                     comment: None,
+                    ..TableOptions::default()
                 },
             })
         );
