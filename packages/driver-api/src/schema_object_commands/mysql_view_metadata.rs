@@ -90,23 +90,54 @@ pub(super) fn metadata_value_matches(
     }
 }
 
-/// Read CHECK OPTION from SHOW CREATE VIEW's executable comment suffix.
-/// MySQL emits this clause in a versioned comment on versions that need it.
-/// Other comment/literal contents are ignored so a string mentioning the
-/// phrase cannot be mistaken for view creation metadata.
+/// Read the trailing CHECK OPTION from SHOW CREATE VIEW. MySQL may emit it as
+/// a plain clause or a versioned-comment suffix; other comments and literals
+/// are ignored so phrases in query text cannot become creation metadata.
+#[cfg(test)]
 pub(super) fn mysql_show_create_view_check_option(sql: &str) -> Result<String, DriverError> {
-    let tokens = mysql_view_metadata_tokens(sql);
+    mysql_view_check_option_suffix(sql).map(|(check_option, _)| check_option)
+}
+
+/// Return a parser-compatible CREATE VIEW definition and its separately
+/// validated CHECK OPTION. sqlparser does not accept MySQL's trailing clause;
+/// remove only that recognized suffix for AST parsing, while preserving the
+/// extracted creation semantics for the metadata snapshot.
+pub(super) fn mysql_show_create_view_for_parser(
+    sql: &str,
+) -> Result<(String, String), DriverError> {
+    let (check_option, suffix) = mysql_view_check_option_suffix(sql)?;
+    let Some((start, end)) = suffix else {
+        return Ok((sql.to_owned(), check_option));
+    };
+    let mut parser_sql = String::with_capacity(sql.len() - (end - start) + 1);
+    parser_sql.push_str(&sql[..start]);
+    parser_sql.push(' ');
+    parser_sql.push_str(&sql[end..]);
+    Ok((parser_sql, check_option))
+}
+
+fn mysql_view_check_option_suffix(
+    sql: &str,
+) -> Result<(String, Option<(usize, usize)>), DriverError> {
+    let tokens = mysql_view_metadata_tokens(sql)?;
     let patterns: &[(&[&str], &str)] = &[
         (&["WITH", "CASCADED", "CHECK", "OPTION"], "CASCADED"),
         (&["WITH", "LOCAL", "CHECK", "OPTION"], "LOCAL"),
         (&["WITH", "CHECK", "OPTION"], "CASCADED"),
     ];
     let mut found: Option<&str> = None;
+    let mut suffix: Option<(usize, usize)> = None;
     for (pattern, value) in patterns {
         let starts = tokens
             .windows(pattern.len())
             .enumerate()
-            .filter_map(|(index, window)| (window == *pattern).then_some(index))
+            .filter_map(|(index, window)| {
+                window
+                    .iter()
+                    .zip(pattern.iter())
+                    .all(|(token, expected)| token.text.eq_ignore_ascii_case(expected))
+                    .then_some(index)
+            })
             .collect::<Vec<_>>();
         for start in starts {
             if start + pattern.len() != tokens.len() {
@@ -119,17 +150,82 @@ pub(super) fn mysql_show_create_view_check_option(sql: &str) -> Result<String, D
                     "MySQL SHOW CREATE VIEW contains conflicting CHECK OPTION metadata".into(),
                 ));
             }
+            let suffix_tokens = &tokens[start..start + pattern.len()];
+            let executable_comment = suffix_tokens[0].executable_comment;
+            if suffix_tokens
+                .iter()
+                .any(|token| token.executable_comment != executable_comment)
+            {
+                return Err(DriverError::QueryFailed(
+                    "MySQL SHOW CREATE VIEW contains a split CHECK OPTION suffix".into(),
+                ));
+            }
+            let range = executable_comment
+                .unwrap_or((suffix_tokens[0].start, suffix_tokens[pattern.len() - 1].end));
+            if let Some((comment_start, comment_end)) = executable_comment {
+                let comment_tokens = tokens
+                    .iter()
+                    .filter(|token| token.executable_comment == executable_comment)
+                    .count();
+                let prefix = &sql[comment_start + 3..suffix_tokens[0].start];
+                let clause_end = suffix_tokens[pattern.len() - 1].end;
+                let comment_body_end = comment_end.checked_sub(2).ok_or_else(|| {
+                    DriverError::QueryFailed(
+                        "MySQL SHOW CREATE VIEW contains malformed executable comment bounds"
+                            .into(),
+                    )
+                })?;
+                let trailing = &sql[clause_end..comment_body_end];
+                if comment_tokens != pattern.len()
+                    || !prefix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_whitespace() || byte.is_ascii_digit())
+                    || !trailing.bytes().all(|byte| byte.is_ascii_whitespace())
+                {
+                    return Err(DriverError::QueryFailed(
+                        "MySQL SHOW CREATE VIEW executable comment contains unsupported CHECK OPTION syntax".into(),
+                    ));
+                }
+            }
+            if found.is_some() && suffix != Some(range) {
+                return Err(DriverError::QueryFailed(
+                    "MySQL SHOW CREATE VIEW contains multiple CHECK OPTION suffixes".into(),
+                ));
+            }
             found = Some(value);
+            suffix = Some(range);
         }
     }
-    Ok(found.unwrap_or("NONE").into())
+    Ok((found.unwrap_or("NONE").into(), suffix))
 }
 
-fn mysql_view_metadata_tokens(sql: &str) -> Vec<String> {
+#[derive(Clone)]
+struct MysqlViewMetadataToken {
+    text: String,
+    start: usize,
+    end: usize,
+    executable_comment: Option<(usize, usize)>,
+}
+
+fn mysql_view_metadata_tokens(sql: &str) -> Result<Vec<MysqlViewMetadataToken>, DriverError> {
     let bytes = sql.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
+    let mut executable_comment = None;
     while index < bytes.len() {
+        if let Some((_, end)) = executable_comment {
+            if bytes[index..].starts_with(b"*/") {
+                index += 2;
+                executable_comment = None;
+                if index > end {
+                    return Err(DriverError::QueryFailed(
+                        "MySQL SHOW CREATE VIEW contains malformed executable comment bounds"
+                            .into(),
+                    ));
+                }
+                continue;
+            }
+        }
         if let Some(quote) = bytes
             .get(index)
             .copied()
@@ -166,6 +262,17 @@ fn mysql_view_metadata_tokens(sql: &str) -> Vec<String> {
             continue;
         }
         if bytes[index..].starts_with(b"/*!") {
+            let start = index;
+            let end = bytes[index..]
+                .windows(2)
+                .position(|window| window == b"*/")
+                .map(|offset| index + offset + 2)
+                .ok_or_else(|| {
+                    DriverError::QueryFailed(
+                        "MySQL SHOW CREATE VIEW contains an unterminated executable comment".into(),
+                    )
+                })?;
+            executable_comment = Some((start, end));
             index += 3;
             while bytes.get(index).is_some_and(u8::is_ascii_digit) {
                 index += 1;
@@ -188,10 +295,15 @@ fn mysql_view_metadata_tokens(sql: &str) -> Vec<String> {
             {
                 index += 1;
             }
-            tokens.push(sql[start..index].to_ascii_uppercase());
+            tokens.push(MysqlViewMetadataToken {
+                text: sql[start..index].to_ascii_uppercase(),
+                start,
+                end: index,
+                executable_comment,
+            });
             continue;
         }
         index += 1;
     }
-    tokens
+    Ok(tokens)
 }
