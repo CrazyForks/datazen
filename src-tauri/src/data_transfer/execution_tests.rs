@@ -23,6 +23,8 @@ struct State {
     rollback: usize,
     metadata_refs: Vec<String>,
     source_queries: Vec<(String, Vec<Value>)>,
+    identity_sync_calls: Vec<(Option<String>, String, Vec<String>)>,
+    transfer_order: Vec<&'static str>,
 }
 struct Driver {
     rows: Rows,
@@ -36,6 +38,7 @@ struct Driver {
     begin_error_on_call: Option<usize>,
     schema_error_on_call: Option<usize>,
     execute_error_on_call: Option<usize>,
+    identity_sync_error: bool,
     stream_mode: u8,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -208,6 +211,27 @@ impl DatabaseDriver for Driver {
             connection_id: "target".into(),
         })
     }
+    async fn advance_transfer_identity_sequences(
+        &self,
+        _: &ConnectionHandle,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<(), DriverError> {
+        let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("sync");
+        state.identity_sync_calls.push((
+            schema.map(str::to_string),
+            table.to_string(),
+            columns.to_vec(),
+        ));
+        if self.identity_sync_error {
+            return Err(DriverError::QueryFailed(
+                "injected identity sequence synchronization failure".into(),
+            ));
+        }
+        Ok(())
+    }
     async fn execute_with_params(
         &self,
         _: &ConnectionHandle,
@@ -216,6 +240,7 @@ impl DatabaseDriver for Driver {
     ) -> Result<u64, DriverError> {
         assert!(sql.contains("VALUES (?"));
         let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("write");
         state.calls += 1;
         if self.fail_at == Some(state.calls) {
             return Err(DriverError::QueryFailed("injected write failure".into()));
@@ -232,6 +257,7 @@ impl DatabaseDriver for Driver {
     }
     async fn commit(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("commit");
         match self.commit_error_after_effect {
             Some(true) => {
                 let pending = std::mem::take(&mut state.pending);
@@ -304,6 +330,7 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
         begin_error_on_call: None,
         schema_error_on_call: None,
         execute_error_on_call: None,
+        identity_sync_error: false,
         stream_mode: 0,
         cancel: None,
     }
@@ -465,6 +492,94 @@ async fn batched_insert_reports_all_affected_rows_with_one_target_call() {
     assert_eq!(state.calls, 1);
     assert_eq!(state.committed.len(), 1);
     assert_eq!(state.committed[0].len(), 2);
+}
+
+#[tokio::test]
+async fn successful_explicit_identity_import_synchronizes_before_commit() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["renamed_id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let target = driver(vec![], target_schema);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "renamed_id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(
+        state.identity_sync_calls,
+        vec![(None, "source_table".into(), vec!["renamed_id".into()])]
+    );
+    assert_eq!(state.committed.len(), 1);
+    assert_eq!(state.rollback, 0);
+    assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+}
+
+#[tokio::test]
+async fn identity_sync_failure_rolls_back_the_successful_row_batches() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    target.identity_sync_error = true;
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.identity_sync_calls.len(), 1);
+    assert_eq!(state.rollback, 1);
+    assert!(state.pending.is_empty());
+    assert!(state.committed.is_empty());
+}
+
+#[tokio::test]
+async fn failed_identity_import_never_synchronizes_sequence() {
+    let source = driver(
+        vec![
+            vec![Some(Value::Integer(31))],
+            vec![Some(Value::Integer(41))],
+        ],
+        schema(&["id"]),
+    );
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    target.fail_at = Some(1);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    let state = target.state.lock().unwrap();
+    assert!(state.identity_sync_calls.is_empty());
+    assert_eq!(state.rollback, 1);
+    assert!(state.committed.is_empty());
 }
 
 #[test]
@@ -1301,6 +1416,7 @@ async fn cancel_after_write_reports_current_table_and_rolls_back() {
         schema(&["id"]),
     );
     let mut target = driver(vec![], schema(&["id"]));
+    target.schema.columns[0].is_auto_increment = true;
     target.cancel = Some(Arc::clone(&flag));
     let result = run(
         &source,
@@ -1321,6 +1437,7 @@ async fn cancel_after_write_reports_current_table_and_rolls_back() {
     let state = target.state.lock().unwrap();
     assert_eq!(state.rollback, 1);
     assert!(state.committed.is_empty());
+    assert!(state.identity_sync_calls.is_empty());
 }
 
 #[test]

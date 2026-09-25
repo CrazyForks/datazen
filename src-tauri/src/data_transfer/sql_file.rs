@@ -1099,6 +1099,24 @@ pub async fn execute_with_target(
             }
         } else {
             total += rows;
+            if rows > 0 {
+                let target_columns = mappings
+                    .iter()
+                    .map(|mapping| mapping.target_column.clone())
+                    .collect::<Vec<_>>();
+                for sql in target_driver
+                    .render_transfer_identity_sequence_sync_sql(
+                        job.sql_file_target
+                            .as_ref()
+                            .and_then(|target| target.schema.as_deref()),
+                        &table.target_table,
+                        &target_columns,
+                    )
+                    .map_err(|error| TransferError::unsupported(error.to_string()))?
+                {
+                    output.line(&format!("{sql};"))?;
+                }
+            }
             results.push(TableExecutionResult {
                 source_table: table.source_table.clone(),
                 target_table: table.target_table.clone(),
@@ -1152,7 +1170,7 @@ pub async fn execute_with_target(
 mod tests {
     use super::*;
     use crate::data_transfer::model::TableMapping;
-    use crate::testing::mock_driver::MockDriver;
+    use crate::testing::mock_driver::{MockDriver, MockDriverOptions};
     use crate::transfer::adapter::SyncSourceAdapter;
     use datazen_driver_api::{ColumnSchema, TableSchema};
     use datazen_driver_mysql::MysqlSyncAdapter;
@@ -1187,6 +1205,119 @@ mod tests {
         assert!(serde_json::from_str::<SqlFileEncoding>(r#""utf16Le""#).is_ok());
         assert!(serde_json::from_str::<SqlFileEncoding>(r#""cp936""#).is_err());
         assert!(serde_json::from_str::<SqlFileCompression>(r#""brotli""#).is_err());
+    }
+
+    #[tokio::test]
+    async fn postgres_sql_file_emits_identity_sequence_sync_after_data_inserts() {
+        let source_schema = TableSchema {
+            table_name: "source".into(),
+            columns: vec![ColumnSchema {
+                name: "id".into(),
+                data_type: "BIGINT".into(),
+                nullable: false,
+                default_value: Some("nextval('source_id_seq'::regclass)".into()),
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: true,
+            }],
+            primary_keys: vec!["id".into()],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let source = MockDriver::new(
+            "postgresql",
+            MockDriverOptions {
+                columns: source_schema.columns.clone(),
+                query_rows: vec![vec![Some(Value::Integer(41))]],
+                ..Default::default()
+            },
+        );
+        let target = datazen_driver_postgres::PostgresDriver::new();
+        let adapter = PgSyncAdapter;
+        let table = TableInspectResult {
+            source_table: "source".into(),
+            target_table: "table.with\"quote".into(),
+            status: super::super::model::TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id.with\"quote".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id.with\"quote".into()],
+            source_column_types: HashMap::from([("id".into(), "BIGINT".into())]),
+            target_column_types: HashMap::from([("id.with\"quote".into(), "BIGINT".into())]),
+            incompatible_reason: None,
+            source_row_count: Some(1),
+            recordset: None,
+        };
+        let suffix = Uuid::new_v4().simple().to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join(format!("identity-{suffix}.sql"));
+        let job = TransferJob {
+            source: super::super::model::Endpoint {
+                db_session_id: "source".into(),
+                database: "source_db".into(),
+                schema: Some("public".into()),
+            },
+            target: None,
+            sql_file_target: Some(super::super::model::SqlFileTarget {
+                file_token: "token".into(),
+                database_type: Some("postgresql".into()),
+                database: None,
+                schema: Some("target \"schema".into()),
+                encoding: None,
+                compression: None,
+            }),
+            mode: TransferMode::Data,
+            write_mode: WriteMode::Insert,
+            tables: vec![TableMapping {
+                source_table: "source".into(),
+                target_table: table.target_table.clone(),
+                create_new: false,
+                enabled: true,
+                column_mappings: table.column_mappings.clone(),
+                ddl_override: None,
+                source_filter: None,
+                recordset: None,
+            }],
+            options: Default::default(),
+        };
+        let schemas = HashMap::from([("source".into(), source_schema)]);
+        let result = execute_with_target(
+            source.as_ref(),
+            &target,
+            Some(&adapter),
+            Some(&adapter),
+            &ConnectionHandle {
+                id: "source".into(),
+                pool_id: "source".into(),
+            },
+            &job,
+            &[table],
+            &schemas,
+            destination.clone(),
+            None,
+            None,
+        )
+        .await
+        .expect("SQL-file transfer should finish");
+
+        assert!(!result.partial);
+        let script = fs::read_to_string(destination).unwrap();
+        let insert_at = script.find("INSERT INTO").unwrap();
+        let sync_at = script.find("pg_get_serial_sequence").unwrap();
+        let commit_at = script.rfind("COMMIT;").unwrap();
+        assert!(insert_at < sync_at && sync_at < commit_at, "{script}");
+        assert!(script.contains("\"target \"\"schema\".\"table.with\"\"quote\""));
+        assert!(script.contains("'id.with\"quote'"));
+        assert!(script.contains("ALTER SEQUENCE %s RESTART WITH %s"));
     }
 
     #[test]

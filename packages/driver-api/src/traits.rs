@@ -539,6 +539,33 @@ pub trait DatabaseDriver: Send + Sync {
         ))
     }
 
+    /// Synchronize generated identity/serial sequences after a Data Transfer
+    /// table batch has inserted explicit values. The call runs inside the
+    /// table's active data transaction, after every batch succeeded and before
+    /// commit. Drivers whose generated-value state advances automatically may
+    /// keep the default no-op implementation.
+    async fn advance_transfer_identity_sequences(
+        &self,
+        _handle: &ConnectionHandle,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// Render Data Transfer sequence synchronization statements for an SQL
+    /// file targeting this driver's dialect. Drivers without such a concept
+    /// may keep the empty default.
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(Vec::new())
+    }
+
     /// Begin a read-only transaction with a stable snapshot for a multi-page
     /// comparison. Drivers must override this when their normal transaction
     /// isolation does not guarantee that every statement sees the same

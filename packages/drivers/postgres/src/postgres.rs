@@ -370,6 +370,28 @@ impl DatabaseDriver for PostgresDriver {
         Self::begin_transaction_impl(self, handle).await
     }
 
+    async fn advance_transfer_identity_sequences(
+        &self,
+        handle: &ConnectionHandle,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<(), DriverError> {
+        self.advance_transfer_identity_sequences_impl(handle, schema, table, columns)
+            .await
+    }
+
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(crate::transfer_identity::render_sync_sql(
+            self, schema, table, columns,
+        ))
+    }
+
     async fn begin_read_snapshot(
         &self,
         handle: &ConnectionHandle,

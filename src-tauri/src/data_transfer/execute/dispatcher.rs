@@ -568,6 +568,36 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
             was_cancelled = true;
             table_error = Some("transfer cancelled; current data transaction rolled back".into());
         }
+        if table_error.is_none() && table_rows > 0 {
+            let explicit_identity_columns = columns
+                .iter()
+                .filter(|mapping| {
+                    target_schema.columns.iter().any(|column| {
+                        column.name == mapping.target_column && column.is_auto_increment
+                    })
+                })
+                .map(|mapping| mapping.target_column.clone())
+                .collect::<Vec<_>>();
+            if !explicit_identity_columns.is_empty() {
+                if let Err(error) = tgt_driver
+                    .advance_transfer_identity_sequences(
+                        tgt_handle,
+                        target.schema.as_deref(),
+                        &table.target_table,
+                        &explicit_identity_columns,
+                    )
+                    .await
+                {
+                    table_error = Some(format!(
+                        "cannot safely synchronize generated identity values: {error}"
+                    ));
+                }
+            }
+        }
+        if table_error.is_none() && cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+            was_cancelled = true;
+            table_error = Some("transfer cancelled; current data transaction rolled back".into());
+        }
         let outcome = if table_error.is_some() {
             table_rows = 0;
             partial = true;
