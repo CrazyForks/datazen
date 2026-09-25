@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-005 · MySQL view DDL lookup fails for a visible view
 
 - **严重度**：P1（阻断）
-- **状态**：待复测
+- **状态**：已修复
 - **涉及文件**：`packages/driver-api/src/schema_objects.rs`、`packages/driver-api/src/schema_object_commands.rs`、`src/windows/schema-diff/`、`e2e/specs/schema-diff-unified-planner.ts`
 
 ## 描述
@@ -32,3 +32,10 @@ Query failed: Object was not found or its DDL is unavailable
 - 修复提交：`04b309cb`。
 - DDL-only bytes handling：DDL 提取器只将有效 UTF-8 的 `Value::Bytes` 解码为文本；不会对任意二进制值做 lossy 转换。
 - 非法 UTF-8 仍作为不可用 DDL 拒绝；回归测试覆盖长多字节定义成功提取和非法 UTF-8 拒绝。
+
+## 复测记录（round-1）
+
+- 独立复测确认 `get_object_ddl(view)` 已能从 MySQL catalog bytes 返回非空定义：本轮 fixture 返回 252 个非空白字符；同一 view 的原始 `VIEW_DEFINITION` 为 886 字符。WDIO 新增非空断言，避免只验证对象可见。
+- Driver API 全套 175/175 通过，其中包括有效长 UTF-8 bytes、非法 UTF-8 拒绝和既有 `Value::String` 兼容路径；无 lossy decoding。
+- MySQL 后续正向 planner 测试被既有跨 schema 安全门拦截（source `datazen_sync_mysql_src`、target `datazen_sync_mysql_tgt`）。该错误发生在 DDL 提取之后，明确提示对象 DDL 暂不跨 schema 改写；它不是本卡所述 DDL 查找缺陷。本卡按直接 DDL 与编码路径实测关闭，整体轨道仍因 MySQL 正向计划验收未过而保持 `FAILED`。
+- 完整记录见 `test-results/unified-planner-retest-r4.md`。
