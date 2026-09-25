@@ -4,7 +4,7 @@
 > **创建日期**: 2026-08-06
 > **作者**: DataZen 产品团队
 > **参考**: Navicat Query Builder (Part 1 & Part 3) + DataZen 代码基线
-> **状态**: **已实现并验收** — 四条 QB E2E journey 全绿（`pnpm e2e:qb`）
+> **状态**: v1.9 功能与旧版验收记录；当前实现已迁至独立 SQL Editor Pro 仓库。本文其余 `src/...` 文件落点描述迁移前 Host 实现。当前发布验收以 [迁移与发布记录](../development/coordination/tracks/qb-editor-pro/progress.md) 和 [Pro Query Builder 实现](../../packages/pro-extensions/sql-editor-pro/README.md) 为准。
 >
 > **变更记录**
 >

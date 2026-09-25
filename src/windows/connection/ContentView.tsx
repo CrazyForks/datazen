@@ -14,12 +14,12 @@ import { useTableDataStore } from '../../stores/tableDataStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { usePanelStore, type ViewPanel } from '../../stores/panelStore';
-import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { ContentToolbar } from './ContentToolbar';
 import { PanelTabBar } from './PanelTabBar';
 import { ContentStatusBar } from './ContentStatusBar';
 import { PanelContentRenderer } from './PanelContentRenderer';
+import { useQueryBuilderContribution } from './query/useQueryBuilderContribution';
 import { usePanelHandlers } from './usePanelHandlers';
 import { useConnectionContextMenu } from './useConnectionContextMenu';
 import { useConnectionWorkspaceMeta } from './useConnectionWorkspaceMeta';
@@ -77,6 +77,7 @@ export function ContentView({
   onSelectKvDb,
 }: ContentViewProps) {
   const { t } = useI18n();
+  const { contribution: queryBuilder } = useQueryBuilderContribution();
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
 
   const allPanels = usePanelStore((s) => s.panels);
@@ -196,15 +197,14 @@ export function ContentView({
   // The visual builder belongs to the query panel that opened it, so it is torn
   // down when that panel is closed — not when the component unmounts, because
   // switching tabs unmounts the inactive panel and its canvas must survive that.
-  const destroyQbForPanel = useQueryBuilderStore((s) => s.destroyFor);
   const knownPanelIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const liveIds = new Set(allPanels.map((p) => p.id));
     for (const id of knownPanelIdsRef.current) {
-      if (!liveIds.has(id)) destroyQbForPanel(id);
+      if (!liveIds.has(id)) queryBuilder?.destroyFor(id);
     }
     knownPanelIdsRef.current = liveIds;
-  }, [allPanels, destroyQbForPanel]);
+  }, [allPanels, queryBuilder]);
 
   // Table-data slices live and die with their panel; prune the ones left behind
   // when a tab (or a whole connection) closes.

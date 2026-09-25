@@ -239,7 +239,7 @@ export async function verifyExtensionPackage(
   }
 
   const engineCheck = checkEngineCompatibility(options.manifest, hostVersion);
-  if (!engineCheck.compatible) {
+  if (engineCheck.compatible === false) {
     return {
       ok: false,
       code: 'engine-incompatible',

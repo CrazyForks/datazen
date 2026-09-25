@@ -7,7 +7,6 @@ import {
   supportsFullTableExport,
 } from '../exportCapability';
 import type { DatabaseTypeMeta } from '../databaseMeta';
-import { TypeCategory } from '../../components/query-builder/typeCategory';
 
 const meta = (partial: Partial<DatabaseTypeMeta>): DatabaseTypeMeta => ({
   label: 'x',
@@ -29,7 +28,6 @@ const meta = (partial: Partial<DatabaseTypeMeta>): DatabaseTypeMeta => ({
   connectionView: 'sql',
   databaseFieldType: 'name',
   connectionForm: 'x',
-  qbTypeCategories: { integer: TypeCategory.Numeric },
   ...partial,
 });
 

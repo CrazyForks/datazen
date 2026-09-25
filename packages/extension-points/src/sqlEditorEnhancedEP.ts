@@ -8,6 +8,7 @@ import type { Extension } from '@codemirror/state';
 import type { CompletionSource } from '@codemirror/autocomplete';
 import type React from 'react';
 import { createExtensionPoint } from './extensionPoints';
+import type { QueryBuilderContribution } from './queryBuilder';
 
 /** Compartment option bags passed from host; typed loosely for cross-repo linking. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +57,8 @@ export interface ExtensionSettingsContribution {
 }
 
 export interface SqlEditorEnhancedFeatures {
+  /** Pro-only visual SQL query builder UI and lifecycle. */
+  queryBuilder?: QueryBuilderContribution;
   /** S4-A: statement frame + gutter run button extensions. */
   createStatementDecorations?: (opts?: SqlEditorEnhancedOptions) => Extension[];
   /** S4-C: Alt+Enter intentions + INSERT/function inlay hints. */
@@ -133,7 +136,7 @@ export const sqlEditorEnhancedEP = createExtensionPoint<SqlEditorEnhancedFeature
   id: 'editor.sql.enhanced',
   name: 'SQL Editor Enhanced',
   description:
-    'Privileged SQL editor capabilities: intentions, hover, signature help, JOIN completion, paste-as-IN, drop caret, linter.',
+    'Privileged SQL editor capabilities: visual query builder, intentions, hover, signature help, JOIN completion, paste-as-IN, drop caret, linter.',
   getDefault: () => fallbackFeatures,
 });
 

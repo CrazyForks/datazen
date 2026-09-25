@@ -108,6 +108,14 @@ const isPro =
 if (isPro) {
   process.env.DATAZEN_EDITION = 'pro';
 }
+const runsProQueryBuilderSuite = args.some(
+  (arg, index) => arg === '--suite' && args[index + 1] === 'pro-query-builder',
+);
+if (isPro && runsProQueryBuilderSuite) {
+  // resolve-pro packs the extension before e2e-tauri-build sets its own env;
+  // pass the test-only bridge flag into that earlier packaging step.
+  process.env.VITE_E2E = '1';
+}
 if (screenshotTrace) {
   process.env.E2E_SCREENSHOT = '1';
   fs.mkdirSync(path.join(__dirname, 'screenshots'), { recursive: true });

@@ -216,6 +216,10 @@ export const config: WebdriverIO.Config = {
     // migrated to the Pro extension's own e2e dir — requires a Pro build:
     // `pnpm e2e:pro:sql-editor`. Not part of the default Community run.
     'pro-sql-editor': ['../packages/pro-extensions/sql-editor-pro/e2e/specs/*.ts'],
+    // Query Builder journeys belong to the Pro extension and require its test bridge.
+    'pro-query-builder': [
+      '../packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-*.ts',
+    ],
     // AI features (`pnpm e2e:ai`)
     ai: [
       './specs/ai-features.ts',
@@ -282,24 +286,9 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/query-edge-journey.ts',
       './specs/journeys/query-row-limit-journey.ts',
       './specs/journeys/first-run-edge-journey.ts',
-      // Visual Query Builder journeys (normal / abnormal / high-complexity /
-      // clause list). These were previously unregistered, which is how the spec
-      // drifted away from the shipped UI without anyone noticing.
-      './specs/journeys/visual-query-builder-journey.ts',
-      './specs/journeys/visual-query-builder-edge-journey.ts',
-      './specs/journeys/visual-query-builder-complex-journey.ts',
-      './specs/journeys/visual-query-builder-clauses-journey.ts',
       // First-run journey (onboarding wizard). Runs last on purpose: its cases
       // rewrite the onboarding gate and restore it in `after`.
       './specs/journeys/onboarding-journey.ts',
-    ],
-    // Visual Query Builder only (`pnpm e2e:qb`) — normal, abnormal,
-    // high-complexity and clause-list statement journeys.
-    'query-builder': [
-      './specs/journeys/visual-query-builder-journey.ts',
-      './specs/journeys/visual-query-builder-edge-journey.ts',
-      './specs/journeys/visual-query-builder-complex-journey.ts',
-      './specs/journeys/visual-query-builder-clauses-journey.ts',
     ],
     // Blast-radius guard for the Query Builder work (`pnpm e2e:qb:regression`).
     // The builder shares the query panel, the SQL editor host and the

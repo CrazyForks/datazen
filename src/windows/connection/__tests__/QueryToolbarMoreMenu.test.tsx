@@ -58,6 +58,19 @@ describe('QueryToolbarMoreMenu', () => {
     expect(onExplain).toHaveBeenCalled();
   });
 
+  it('shows Visual Builder only when the Pro contribution provides it', () => {
+    renderMenu();
+    openMenu();
+    expect(screen.queryByTestId('more-menu-visual-builder')).not.toBeInTheDocument();
+
+    cleanup();
+    const onToggleQb = vi.fn();
+    renderMenu({ onToggleQb });
+    openMenu();
+    fireEvent.click(screen.getByTestId('more-menu-visual-builder'));
+    expect(onToggleQb).toHaveBeenCalledOnce();
+  });
+
   it('hides Explain when supportsExplain is false', () => {
     renderMenu({ supportsExplain: false });
 
