@@ -462,6 +462,29 @@ fn checked_ddl_rejects_missing_and_ambiguous_results() {
 }
 
 #[test]
+fn checked_ddl_decodes_only_valid_utf8_bytes() {
+    let ddl = format!(
+        "CREATE VIEW `fixture_view` AS SELECT '{}';",
+        "雪".repeat(300)
+    );
+    let encoded = QueryResult {
+        columns: vec![col("ddl")],
+        rows: vec![vec![Some(Value::Bytes(ddl.as_bytes().to_vec()))]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+    assert_eq!(extract_object_ddl_checked(&encoded).unwrap(), ddl);
+
+    let invalid_utf8 = QueryResult {
+        columns: vec![col("ddl")],
+        rows: vec![vec![Some(Value::Bytes(vec![0x43, 0x52, 0xff, 0x54]))]],
+        rows_affected: None,
+        execution_time_ms: 0,
+    };
+    assert!(extract_object_ddl_checked(&invalid_utf8).is_err());
+}
+
+#[test]
 fn parse_privilege_list_skips_incomplete_rows() {
     let result = QueryResult {
         columns: vec![col("grantee"), col("schema"), col("name"), col("privilege")],

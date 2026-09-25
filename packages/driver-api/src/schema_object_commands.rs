@@ -462,6 +462,15 @@ fn column_index(columns: &[ColumnInfo], names: &[&str]) -> Option<usize> {
         .position(|c| names.iter().any(|n| c.name.eq_ignore_ascii_case(n)))
 }
 
+fn value_as_ddl_text(value: Option<&Value>) -> Option<String> {
+    match value {
+        // Some MySQL catalog text columns are exposed with a binary wire type.
+        // DDL is text, so accept only valid UTF-8 and never replace invalid bytes.
+        Some(Value::Bytes(bytes)) => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        value => value_as_string(value),
+    }
+}
+
 pub fn parse_object_list(
     result: &QueryResult,
     kind: &str,
@@ -534,7 +543,7 @@ pub fn extract_object_ddl(result: &QueryResult) -> String {
     result
         .rows
         .first()
-        .and_then(|row| value_as_string(row.get(idx).and_then(|v| v.as_ref())))
+        .and_then(|row| value_as_ddl_text(row.get(idx).and_then(|v| v.as_ref())))
         .unwrap_or_default()
 }
 
