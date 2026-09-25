@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-009 · MySQL table dependency catalog is incomplete
 
 - **严重度**：P1（阻断）
-- **状态**：修复已提交 `b849a774`；Fresh Tester R8 已通过 live IPC、隔离 MySQL 集成 fixture 与混合计划旅程独立验证
+- **状态**：修复已提交 `b849a774` 并经 Fresh Tester R8 功能验证；R10 命令路径覆盖率仍略低于 80% gate
 - **涉及范围**：MySQL driver `get_object_dependencies` for tables; unified planner source dependency validation
 
 ## 描述与重现
@@ -53,3 +53,8 @@ The normal MySQL positive mixed-chain journey therefore cannot reach a reviewed 
 - The opt-in `schema_dependency_catalog` Rust integration target passed **2/2** against the test's allowlisted `datazen_test` database. Its table fixture covered proven empty dependencies, composite FK deduplication, self-reference, cycles, missing objects, optional cross-schema references, and exact fixture cleanup; the view fixture also passed. The test guard and fixture cleanup remained active.
 - The full six-journey WDIO suite passed the MySQL mixed parent/child/view plan, deploy, readback, and target-side view query, as well as the exact missing-dependency zero-write case and four-kind catalog smoke. All started journeys ended with exact `0/0` cleanup. The only failed/unproven journey is BUG-007's metadata blocker.
 - See the [round-8 retest report](../test-results/unified-planner-retest-r8.md). This closes BUG-009's functional verification; the separate >=80% coverage gate is still pending because the full helper module and dependency dispatcher measured below that threshold.
+
+## Fresh Tester R10 coverage evidence
+
+- The updated, isolated API-unit coverage run passed 191/191 and measured the MySQL table success/visibility path added for BUG-009. `execute_object_dependencies` is 59/74 lines (79.73%); the full `schema_object_commands.rs` file is 513/677 (75.78%). The dispatcher remains just below the function threshold and the complete changed file is below the 80% gate.
+- Uncovered production paths include PostgreSQL object dispatch and sequence usage, MySQL view visibility, and empty optional schema/target-name filters. Exact uncovered line groups and scope are in the [round-10 retest report](../test-results/unified-planner-retest-r10.md). Keep the coverage gate open for meaningful tests; the R8 live functional verification of BUG-009 remains valid.

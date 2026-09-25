@@ -778,8 +778,28 @@ async function runMysqlNonDefaultViewMetadataJourney(fixture: Fixture, mainWindo
       const showCreateDdl =
         showCreateRow?.[showCreateIndex != null && showCreateIndex >= 0 ? showCreateIndex : 1];
       const showCreateText = showCreateDdl == null ? '' : String(showCreateDdl);
+      const rawCatalogBody = rawViewRow?.[2];
+      const catalogBody = Array.isArray(rawCatalogBody)
+        ? String.fromCharCode(...rawCatalogBody.map((byte) => Number(byte)))
+        : rawCatalogBody == null
+          ? ''
+          : String(rawCatalogBody);
+      const showCreateQueryBody = showCreateText
+        .replace(/^.*?\sAS\s/i, '')
+        .replace(/\sWITH\s+CASCADED\s+CHECK\s+OPTION\s*;?\s*$/i, '')
+        .trim();
+      const sanitizedShowCreateText = showCreateText.replace(
+        /DEFINER=`[^`]*`@`[^`]*`/i,
+        'DEFINER=`[redacted]`@`[redacted]`',
+      );
       console.log(
         `[SD-UNIFIED] mysql check-option raw metadata schema=${String(rawViewRow?.[0])} name=${String(rawViewRow?.[1])} row_count=${parseQueryRows(rawViewMetadata).length} definition_length=${rawViewRow?.[2] == null ? 0 : String(rawViewRow[2]).length} check_option=${checkOption} show_create_rows=${parseQueryRows(showCreateResult).length} show_create_ddl_length=${showCreateText.length} show_create_has_cascaded_suffix=${/WITH\s+CASCADED\s+CHECK\s+OPTION/i.test(showCreateText)}`,
+      );
+      console.log(
+        `[SD-UNIFIED] mysql check-option exact bodies catalog=${catalogBody.replace(/\s+/g, ' ').trim()} show_create=${showCreateQueryBody.replace(/\s+/g, ' ').trim()}`,
+      );
+      console.log(
+        `[SD-UNIFIED] mysql check-option full SHOW CREATE (definer redacted)=${sanitizedShowCreateText.replace(/\s+/g, ' ').trim()}`,
       );
       let viewDdlError = '';
       try {

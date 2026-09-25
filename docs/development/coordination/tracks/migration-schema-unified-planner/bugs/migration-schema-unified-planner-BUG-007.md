@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：一致性修复已合入；Fresh Tester R8 再次未能到达 `WITH CASCADED CHECK OPTION` 的元数据阻断及零写断言，保持待复验
+- **状态**：一致性与后缀解析修复已合入；Fresh Tester R10 在到达元数据阻断前遇到 BUG-008 的三段列标识归一化失败，保持待修复及复验
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
 ## 描述
@@ -52,3 +52,10 @@
 - `get_object_ddl` fails while parsing the SHOW result: `Expected: end of statement, found: WITH at Line: 1, Column: 349`. An env-gated UI diagnostic showed `schema-diff-step-plan`, an inline error containing the same parser failure, and `clickSchemaDiffGeneratePlan()` timing out after 45.4 seconds before requirement, empty-plan, disabled-deploy, or explicit zero-write assertions. No deploy was clicked; exact source/target teardown was `0/0`.
 - This confirms a product blocker: the plain trailing CHECK OPTION clause is rejected before the metadata gate can return its intended blocker. Keep BUG-007 open until the parser is repaired and a fresh full WDIO run reaches the metadata and zero-write assertions.
 - See the [round-9 retest report](../test-results/unified-planner-retest-r9.md) for the build, corrected diagnostic, test-fixture mistake, and exact coverage scope.
+
+## Fresh Tester R10 evidence
+
+- The suffix parser repair no longer produces the R9 `Expected end of statement, found WITH` error. The focused live fixture returned `CHECK_OPTION=CASCADED` and a matching `SHOW CREATE VIEW` suffix, then failed at the next fail-closed check: `MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies or database identities`.
+- The fixture body comparison failure is tracked as a remaining BUG-008 normalization case: `VIEW_DEFINITION` qualifies each column as `source_db.table.column` and `SHOW CREATE VIEW` emits `table.column`. The failure occurred before the planner metadata blocker, empty-plan check, disabled-deploy check, and explicit zero-write assertion. No planner plan or deploy was issued; exact source/target cleanup was `0/0` and both temporary connection configurations were removed.
+- The complete six-journey WDIO suite passed 5/6; the other five journeys, including ordinary MySQL view planning and deployment, passed. The check-option fixture is the only remaining functional failure on this build.
+- See the [round-10 retest report](../test-results/unified-planner-retest-r10.md). BUG-007 remains open until a fresh run reaches and asserts the metadata blocker and zero-write condition.

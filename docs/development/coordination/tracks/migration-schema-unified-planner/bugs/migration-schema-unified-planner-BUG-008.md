@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-008 · MySQL view body consistency check rejects same-database qualification normalization
 
 - **严重度**：P1（阻断）
-- **状态**：修复完成并经 Fresh Tester R7 独立验证；MySQL planner 仍被 BUG-009 阻断
+- **状态**：普通别名视图路径已修复并经 R8 独立验证；R10 发现未别名列引用仍保留本数据库限定符，待补充修复及复验
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; BUG-007 `VIEW_DEFINITION` / `SHOW CREATE VIEW` query-body comparison
 
 ## 描述与重现
@@ -17,6 +17,7 @@ The failure is reproducible for a standard view over same-database tables. MySQL
 ## 修复要求
 
 - Compare the body from `VIEW_DEFINITION` with the query body from the same `SHOW CREATE VIEW` result while accounting only for MySQL's normalization of references to the view's own database.
+- Normalize the exact source database qualifier in both relation nodes and three-part compound column identifiers such as `source_db.table.column`; keep external database identities and all column/table identity intact.
 - Preserve exact identity for references to other databases. Do not erase all qualifiers or accept a body that changes an external dependency into a local dependency.
 - Keep the creation-metadata consistency checks and fail-closed behavior for actual body or metadata disagreement.
 - Add regressions for same-database qualification normalization, retained external-database qualifiers, and a genuine body mismatch; rerun the six live WDIO journeys and assert exact fixture cleanup.
@@ -54,3 +55,10 @@ The failure is reproducible for a standard view over same-database tables. MySQL
 - On the fresh R8 app, MySQL's ordinary same-database view passed DDL extraction and participated in the mixed parent/child/view plan, deploy, readback, and target-side `SELECT`. The separate exact dependency-blocker and four-kind catalog journeys also passed.
 - This independently confirms the ordinary-view qualifier normalization in the end-to-end path. The check-option metadata-negative journey remains unproven under BUG-007, and full helper-module coverage is still below 80%; those do not undo the successful BUG-008 behavior check.
 - See the [round-8 retest report](../test-results/unified-planner-retest-r8.md).
+
+## Fresh Tester R10 evidence
+
+- A fresh CHECK OPTION view uses unaliased projected columns. MySQL's `VIEW_DEFINITION` returned three-part column references and a two-part table reference qualified with `datazen_sync_mysql_src`; the same `SHOW CREATE VIEW` query uses two-part column references and an unqualified table. The exact decoded bodies and the full `SHOW CREATE VIEW` string (definer redacted) are recorded in the [round-10 retest report](../test-results/unified-planner-retest-r10.md).
+- `mysql_view_query_bodies_match` currently removes the exact source database only from a two-part relation node, so it leaves the database component in compound column identifiers. `get_object_ddl` rejects the otherwise matching body before the planner can classify the CASCADED metadata. This is a remaining BUG-008 defect; preserve exact external database identity while normalizing this additional AST form.
+- The five other live WDIO journeys passed, including ordinary aliased MySQL views; the CHECK OPTION case failed before planning. Its fixture cleanup asserted source/target `0/0` and removed both connection configurations.
+- R10 coverage: `mysql_view_query_bodies_match` 14/15 executable lines and `mysql_view_metadata.rs` 235/278 lines (84.53%). The complete `schema_object_commands.rs` file remains below the 80% gate at 513/677 lines (75.78%). Keep that gate open for targeted tests of the uncovered command paths.
