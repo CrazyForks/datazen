@@ -1653,4 +1653,68 @@ mod type_parts_tests {
         )
         .is_ok());
     }
+
+    #[test]
+    fn test_tester_mysql_definer_nested_arguments_and_postgres_identity_validation() {
+        let mysql_definition = "CREATE DEFINER=`migrator`@`%` FUNCTION `app`.`sum_amount`(IN p_amount DECIMAL(10,2), OUT p_label VARCHAR(20)) RETURNS DECIMAL(10,2) RETURN p_amount";
+        assert!(validate_object_definition_with_identity(
+            mysql_definition,
+            ObjectKind::Function,
+            "sum_amount",
+            None,
+        )
+        .is_ok());
+        assert_eq!(
+            object_declaration_identity(mysql_definition),
+            Some((
+                ObjectKind::Function,
+                "sum_amount".into(),
+                Some("IN P_AMOUNT DECIMAL(10, 2), OUT P_LABEL VARCHAR(20)".into()),
+            ))
+        );
+        let postgres_definition = "CREATE FUNCTION app.sum_amount(p_amount numeric, p_label character varying) RETURNS numeric LANGUAGE SQL AS $$ SELECT p_amount $$";
+        assert!(validate_object_definition_with_identity(
+            postgres_definition,
+            ObjectKind::Function,
+            "sum_amount",
+            Some("numeric, character varying"),
+        )
+        .is_ok());
+        assert!(validate_object_definition_with_identity(
+            postgres_definition,
+            ObjectKind::Function,
+            "sum_amount",
+            Some("integer, character varying"),
+        )
+        .is_err());
+        assert!(object_declaration_identity("CREATE DEFINER FUNCTION f() RETURNS int").is_none());
+        assert!(object_declaration_identity("CREATE DEFINER = FUNCTION f() RETURNS int").is_none());
+    }
+
+    #[test]
+    fn test_tester_sequence_split_fails_closed_on_ambiguous_statement_framing() {
+        for invalid in [
+            "CREATE SEQUENCE public.orders_id_seq AS bigint;;",
+            "CREATE SEQUENCE \"public.orders_id_seq AS bigint",
+            "CREATE SEQUENCE public.orders_id_seq AS bigint; ALTER SEQUENCE public.orders_id_seq OWNED BY public.orders",
+            "CREATE SEQUENCE public.orders_id_seq AS bigint; ALTER SEQUENCE public.orders_id_seq OWNED BY public.orders.id.extra",
+        ] {
+            assert!(
+                split_sequence_definition(invalid, Some("public"), "orders_id_seq").is_err(),
+                "{invalid}"
+            );
+        }
+
+        assert!(
+            ownership_reset_statement("ALTER SEQUENCE public.orders_id_seq RESTART WITH 1")
+                .unwrap_err()
+                .contains("missing OWNED BY")
+        );
+        assert!(parse_sequence_ownership(
+            "ALTER TABLE public.orders OWNED BY public.orders.id",
+            Some("public"),
+            "orders_id_seq",
+        )
+        .is_err());
+    }
 }

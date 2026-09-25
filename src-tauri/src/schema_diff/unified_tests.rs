@@ -1,5 +1,6 @@
 use super::*;
 use crate::schema_diff::object_identity::SchemaObjectIdentity;
+use crate::schema_diff::operations::MigrationOperation as HostMigrationOperation;
 use datazen_driver_api::{
     CheckConstraint, ColumnSchema, ForeignKeyDeferrability, ForeignKeyInfo, MigrationOperation,
     MigrationRisk, MigrationStatement, ObjectKind, TableOptions, TableSchema,
@@ -9,6 +10,8 @@ use datazen_driver_api::{
 mod scope_mapping;
 #[path = "unified_tests/sequence_ownership.rs"]
 mod sequence_ownership;
+#[path = "unified_tests/table_catalog.rs"]
+mod table_catalog;
 #[path = "unified_tests/type_validation.rs"]
 mod type_validation;
 #[path = "unified_tests/view_self_dependency.rs"]
@@ -683,4 +686,152 @@ fn table_catalog_sequence_edges_order_unowned_sequence_and_block_owned_default_c
     );
     assert!(cycle.statements.is_empty());
     assert!(format!("{:?}", cycle.requirements).contains("cycle"));
+}
+
+#[test]
+fn test_tester_unified_object_diff_emits_exact_replace_and_drop_operations() {
+    let source = [
+        SchemaObjectSnapshot::view(Some("public"), "active_view", "SELECT 2"),
+        SchemaObjectSnapshot::routine(
+            ObjectKind::Function,
+            Some("public"),
+            "audit_row",
+            None,
+            "CREATE FUNCTION audit_row() RETURNS integer AS $$ SELECT 2 $$",
+        ),
+        SchemaObjectSnapshot::trigger(
+            Some("public"),
+            "orders_audit",
+            Some("public"),
+            "orders",
+            "CREATE TRIGGER orders_audit AFTER INSERT ON orders EXECUTE FUNCTION audit_row()",
+        ),
+        SchemaObjectSnapshot::sequence(
+            Some("public"),
+            "orders_id_seq",
+            "CREATE SEQUENCE public.orders_id_seq AS bigint INCREMENT BY 2",
+        ),
+        SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "order_state",
+            "CREATE TYPE public.order_state AS ENUM ('new', 'ready')",
+        ),
+    ];
+    let target = [
+        SchemaObjectSnapshot::view(Some("public"), "active_view", "SELECT 1"),
+        SchemaObjectSnapshot::routine(
+            ObjectKind::Function,
+            Some("public"),
+            "audit_row",
+            None,
+            "CREATE FUNCTION audit_row() RETURNS integer AS $$ SELECT 1 $$",
+        ),
+        SchemaObjectSnapshot::trigger(
+            Some("public"),
+            "orders_audit",
+            Some("public"),
+            "orders",
+            "CREATE TRIGGER orders_audit AFTER UPDATE ON orders EXECUTE FUNCTION audit_row()",
+        ),
+        SchemaObjectSnapshot::sequence(
+            Some("public"),
+            "orders_id_seq",
+            "CREATE SEQUENCE public.orders_id_seq AS bigint INCREMENT BY 1",
+        ),
+        SchemaObjectSnapshot::type_definition(
+            Some("public"),
+            "order_state",
+            "CREATE TYPE public.order_state AS ENUM ('new')",
+        ),
+        SchemaObjectSnapshot::view(Some("public"), "retired_view", "SELECT 0"),
+    ];
+
+    let batch = crate::schema_diff::unified_objects::diff_schema_objects_to_operations(
+        &source,
+        &target,
+        "postgresql",
+        "postgresql",
+        true,
+    );
+    assert!(batch.requirements.is_empty(), "{:?}", batch.requirements);
+    assert_eq!(batch.operations.len(), 6);
+    assert_eq!(batch.transitions.len(), 6);
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::ReplaceView { .. })));
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::ReplaceRoutine { .. })));
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::ReplaceTrigger { .. })));
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::ReplaceSequence { .. })));
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::ReplaceType { .. })));
+    assert!(batch
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, HostMigrationOperation::DropView { view } if view.name == "retired_view")));
+}
+
+#[test]
+fn test_tester_unified_object_diff_blocks_invalid_scopes_and_unapproved_drops() {
+    let source_view = SchemaObjectSnapshot::view(Some("public"), "active_view", "SELECT 1");
+    let cross_dialect = crate::schema_diff::unified_objects::diff_schema_objects_to_operations(
+        &[source_view.clone()],
+        &[],
+        "postgresql",
+        "mysql",
+        false,
+    );
+    assert!(cross_dialect.operations.is_empty());
+    assert!(format!("{:?}", cross_dialect.requirements).contains("Cross-dialect"));
+
+    let mut table_as_object = source_view.clone();
+    table_as_object.kind = ObjectKind::Table;
+    let unnamed_view = SchemaObjectSnapshot::view(Some("public"), "  ", "SELECT 1");
+    let missing_sequence_schema = SchemaObjectSnapshot::sequence(
+        None,
+        "orders_id_seq",
+        "CREATE SEQUENCE orders_id_seq AS bigint",
+    );
+    let invalid = crate::schema_diff::unified_objects::diff_schema_objects_to_operations(
+        &[table_as_object, unnamed_view, missing_sequence_schema],
+        &[],
+        "postgresql",
+        "postgresql",
+        false,
+    );
+    assert!(invalid.operations.is_empty());
+    assert_eq!(invalid.requirements.len(), 3, "{:?}", invalid.requirements);
+
+    let duplicate = crate::schema_diff::unified_objects::diff_schema_objects_to_operations(
+        &[source_view.clone(), source_view.clone()],
+        &[],
+        "postgresql",
+        "postgresql",
+        false,
+    );
+    assert!(format!("{:?}", duplicate.requirements).contains("duplicate object identities"));
+
+    let skipped_drop = crate::schema_diff::unified_objects::diff_schema_objects_to_operations(
+        &[],
+        &[source_view.clone()],
+        "postgresql",
+        "postgresql",
+        false,
+    );
+    assert!(skipped_drop.operations.is_empty());
+    assert!(skipped_drop
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Skipped destructive operation")));
 }

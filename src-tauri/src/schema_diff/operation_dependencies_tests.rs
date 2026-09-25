@@ -187,3 +187,82 @@ fn sequence_operations_have_deterministic_create_replace_drop_order() {
     let sorted = resolve_dependencies(vec![drop.clone(), create.clone(), replace.clone()]);
     assert_eq!(sorted, vec![create, replace, drop]);
 }
+
+#[test]
+fn test_tester_foreign_key_removal_precedes_every_referenced_structure_change() {
+    let foreign_key = crate::db::ForeignKeyInfo {
+        name: "orders_user_id_fk".into(),
+        columns: vec!["user_id".into()],
+        referenced_table: "users".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "CASCADE".into(),
+        on_delete: "RESTRICT".into(),
+        deferrability: crate::db::ForeignKeyDeferrability::NotDeferrable,
+    };
+    let drop_fk = MigrationOperation::DropForeignKey {
+        table: "orders".into(),
+        foreign_key: foreign_key.clone(),
+    };
+    let candidates = vec![
+        MigrationOperation::DropColumn {
+            table: "orders".into(),
+            column: snap("user_id"),
+        },
+        MigrationOperation::DropPrimaryKey {
+            table: "users".into(),
+            columns: vec!["id".into()],
+        },
+        MigrationOperation::AlterColumnType {
+            table: "orders".into(),
+            column: "user_id".into(),
+            from: "integer".into(),
+            to: "bigint".into(),
+        },
+        MigrationOperation::SetNullable {
+            table: "orders".into(),
+            column: "user_id".into(),
+            nullable: true,
+        },
+        MigrationOperation::SetDefault {
+            table: "orders".into(),
+            column: "user_id".into(),
+            from: None,
+            to: Some("0".into()),
+        },
+        MigrationOperation::SetComment {
+            table: "orders".into(),
+            column: "user_id".into(),
+            from: None,
+            to: Some("owner".into()),
+        },
+        MigrationOperation::SetAutoIncrement {
+            table: "orders".into(),
+            column: "user_id".into(),
+            from: false,
+            to: true,
+        },
+        MigrationOperation::DropIndex {
+            table: "orders".into(),
+            index: crate::db::IndexInfo {
+                name: "orders_user_id_idx".into(),
+                columns: vec!["user_id".into()],
+                is_unique: false,
+                is_primary: false,
+                index_type: "btree".into(),
+            },
+        },
+        MigrationOperation::DropTable {
+            table: "users".into(),
+        },
+    ];
+
+    for change in candidates {
+        let sorted = resolve_dependencies(vec![change.clone(), drop_fk.clone()]);
+        let fk_position = sorted.iter().position(|operation| operation == &drop_fk);
+        let change_position = sorted.iter().position(|operation| operation == &change);
+        assert!(
+            matches!((fk_position, change_position), (Some(fk), Some(change)) if fk < change),
+            "foreign key must be removed before {change:?}; got {sorted:?}"
+        );
+    }
+}

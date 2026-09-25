@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-006 · MySQL cross-database view plans block before dependency review
 
 - **严重度**：P1（阻断）
-- **状态**：修复完成，待 Fresh Tester 复验
+- **状态**：修复已合入；round-6 的 MySQL planner 旅程被 BUG-008 阻断，待 BUG-008 修复后复验
 - **涉及范围**：统一 Schema Diff Host planner、Driver API schema-object DDL metadata、MySQL view scope mapper
 
 ## 描述与重现
@@ -9,6 +9,17 @@
 Fresh Tester round-4 从 `datazen_sync_mysql_src` 迁移到 `datazen_sync_mysql_tgt` 时，source view 的 DDL 已由 `get_object_ddl` 返回非空，但 unified planner 在建图前以“object DDL is not rewritten across schemas”阻断。测试因此没有生成任何 SQL（0 statements），也无法到达 view→table 的依赖验证；同一 round 的缺失依赖场景同样停在 scope blocker，没有命中应有的精确缺失依赖诊断。
 
 该缺陷阻止轨道要求的 MySQL table/FK/view 正向 mixed journey。简单放开 schema mismatch 会把 source database identity 与 view body 中的 source-qualified relation 带到 target，存在错误目标写入风险。
+
+## Fresh Tester round-4 discovery evidence
+
+- The complete WDIO run was 4 passed / 1 failed: PostgreSQL positive and blocked journeys passed, MySQL catalog smoke found all four object kinds, and the MySQL positive migration remained blocked at the cross-scope guard. The MySQL missing-dependency case hit that same guard, so it did not yet verify the intended dependency diagnostic.
+- All five random fixture journeys cleaned their source and target catalogs to exact 0/0 counts. Direct MySQL view DDL retrieval succeeded, confirming that the remaining failure was in planning rather than catalog discovery or DDL extraction.
+- Detailed evidence: [round-4 retest report](../test-results/unified-planner-retest-r4.md).
+
+## Fresh Tester round-6 evidence
+
+- PostgreSQL positive and blocked journeys passed. Both MySQL planner journeys failed earlier in live view DDL extraction because BUG-008 rejects MySQL's equivalent same-database qualification normalization; the MySQL missing-dependency diagnostic and mixed deploy/readback are therefore still unverified.
+- The MySQL four-kind catalog journey passed. All six source/target fixture pairs, including the metadata-negative journey, ended at exact 0/0 after teardown. See the [round-6 retest report](../test-results/unified-planner-retest-r6.md).
 
 ## 修复设计与安全边界
 
