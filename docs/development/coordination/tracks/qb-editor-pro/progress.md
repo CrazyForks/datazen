@@ -107,7 +107,7 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - Pro `npx vite build` 通过，生产 bundle 不含 `__qbTest`、`__qbStore`、`@host/` 或裸 external imports，并引用 `globalThis.__DATAZEN_HOST__` singleton。构建存在现有 host-globals sourcemap 提示。
 - 本轮独立重建当前源码的 macOS Pro WebDriver app：官方 `node e2e/run.mjs --pro -- --suite pro-query-builder` runner 通过；因 pnpm 的无 TTY 自动安装问题，将 `beforeBuildCommand` 临时改为 locale/menu 生成、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，Tauri 配置在运行完成后 byte-for-byte 恢复。Tauri webdriver app build 成功，`node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` 4 specs / 22 tests 通过，worker database teardown 完成。旧二进制单独复跑也通过，但早于 BUG-001 commit；只将新建 app 的结果计入修复复验。
 - **Round 2 历史判定：`TEST_FAILED`，BUG-002。** 当时独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 main；隔离 clone 无法 checkout Host lock pin。Bug 报告 commit：`7fb60778e`。该阻塞已在 Round 3 将同一 Pro commit 发布到 lock 配置的 feature branch 并通过 clean resolver clone 验证，详见上方。
-- 本机 full release build 后仍未独立验证的发布项：普通 Query 执行 E2E、`e2e:qb:regression`、Windows/Linux release build、正式签名凭据/公证、最终签名 manifest/bundle hash 与远端正式 release。
+- 本机 full release build 后仍未独立验证的发行项：Windows/Linux release build、正式签名凭据/公证、最终签名 manifest/bundle hash 与远端正式 release。
 
 ## Tester 独立复验（Round 3）
 
@@ -118,3 +118,11 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - BUG-001 focused regression：`npx vitest run src/windows/connection/query/__tests__/QueryEditorSection.qbContext.test.tsx` — 1 file / 1 test 通过。
 - 前两轮 Host 全量单测（456 files / 4,514 tests）、Pro 全量单测（62 files / 774 tests）、Host/Pro TypeScript 检查、Panel（83.88%）及 DiagramCanvas（96.72%）行覆盖率、以及当前源码重建后 Pro WebDriver journey（4 specs / 22 tests）结果仍对应当前代码：Host 业务源码提交仍为 `d1c44f3cedf3d4685e8d767e698258edeb89bee9`，Pro 源码 HEAD 仍为 `2a45c90f28041e81c948e67b9416fade8ac5472f`；两者后续仅 Host 追踪文档提交，没有源码变更。Pro bundle、TypeScript 与 E2E 对应源码 commit 均未变化。
 - 当前 Host 工作树只有临时未跟踪实现说明 `query-builder-editor-pro-implementation.md`；Pro 工作树 clean。Host `git diff --check d1c44f3..HEAD` 与 Pro `git diff --check e87541f..HEAD` 通过。全仓历史 i18n 缺口和未覆盖的发行构建门槛仍按前文记录，不计作本轮 pin gate 通过。
+
+## 主分支集成后复核
+
+- Host `feature/qb-editor-pro` 已用 merge commit `5c756c34945c2f60e06aa043f880f41ca8c414ca` 集成至本地 `main`；用户原有 Redis 原型文件和实现施工单仍保留为未跟踪文件，没有进入提交。集成后的 Host `npx vitest run` 456 files / 4,514 tests、`npx tsc --noEmit` 均通过。
+- 使用当前源码之前刚生成的 Pro WebDriver app 运行 Pro SQL Editor E2E：`node e2e/run.mjs --pro --skip-build -- --suite pro-sql-editor` — 3 specs / 16 tests 通过。
+- Blast-radius Query regression：`node e2e/run.mjs --pro --skip-build --instances 5 -- --suite qb-regression` — 5/5 workers 通过；包含连接后执行 SQL、query edge、工具栏响应式、navigator expansion 与 table-data；fixture teardown 完成。
+- 以上 `--skip-build` 运行的 WebDriver binary 来自本次 BUG-001 修复后的 fresh Pro WebDriver build；随后只运行了 Vite production build 和 Tauri release build，Host/Pro runtime 源码未改变。runner 因 dist 时间戳更新显示 stale warning，但 E2E 覆盖的是同一 runtime commit。
+- 本地构建只在 main 合并后重跑了 Host 全量测试/typecheck；Pro 全量测试、coverage、typecheck、fresh QB journey 和 pin clean-clone 检查由 Tester Round 2/3 对同一源码 SHA 独立完成。
