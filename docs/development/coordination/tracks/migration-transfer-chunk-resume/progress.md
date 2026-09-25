@@ -6,7 +6,7 @@
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume`
 - Base: `codex/migration-navicat` after Schema Unified Planner R11 merge
 - Prior implementation commit: `96789bbc`
-- Latest repair commit: pending
+- Latest repair commit: `c08a907e`
 
 ## Scope
 
