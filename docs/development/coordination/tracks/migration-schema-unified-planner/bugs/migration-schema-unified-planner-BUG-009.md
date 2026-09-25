@@ -17,7 +17,7 @@ Fresh Tester R7 created uniquely named InnoDB parent and child tables with a for
 
 ## Validation
 
-- Driver API: `cargo test -p datazen-driver-api --lib` — 180 passed.
+- Driver API: `cargo test -p datazen-driver-api --lib` — 196 passed. A fresh isolated Rust coverage run using Xcode `llvm-profdata`/`llvm-cov` covered `execute_object_dependencies` at 74/74 lines (100%) and `schema_object_commands.rs` at 556/677 lines (82.13%).
 - MySQL driver: `cargo test -p datazen-driver-mysql` — 139 passed, 3 ignored (isolated database fixtures).
 - Host: `cargo test -p datazen --lib schema_diff::` — 204 passed.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
