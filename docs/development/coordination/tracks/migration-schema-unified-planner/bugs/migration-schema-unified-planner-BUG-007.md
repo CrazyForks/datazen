@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：修复完成，待 Fresh Tester 复验
+- **状态**：修复已合入；Fresh Tester round-6 发现等价 MySQL view body 被拒绝（BUG-008），待修复并复验
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
 ## 描述
@@ -18,6 +18,12 @@
 
 - R5 identified the issue by source review; concurrent DDL was not reproduced. The finding is that two non-atomic reads can describe different states unless every overlapping field and the parsed view body are checked.
 - R5 prepared WDIO assertions for the MySQL view readback, exact mapped dependency blocker/zero writes, and `WITH CASCADED CHECK OPTION` rejection. Those journeys remain unrun pending this fix and a new independent Tester.
+
+## Fresh Tester round-6 evidence
+
+- The independent WDIO run exercised the new view metadata path. MySQL positive and missing-dependency journeys received `Query failed: MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies` for ordinary same-database table references. The metadata-negative journey timed out before a plan was produced, so the `WITH CASCADED CHECK OPTION` blocker did not independently pass.
+- Live reproduction shows `VIEW_DEFINITION` qualifies local references with the selected source database while `SHOW CREATE VIEW` omits that same-database qualifier. BUG-008 records the compatibility defect and the requirement to retain external-database identity when comparing the bodies.
+- See the [round-6 retest report](../test-results/unified-planner-retest-r6.md). This round does not close BUG-007 or claim the MySQL planner acceptance path passed.
 
 ## 编码验证
 
