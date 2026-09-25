@@ -641,6 +641,23 @@ fn mysql_view_metadata_reads_check_option_from_show_create_version_comment() {
 }
 
 #[test]
+fn mysql_view_check_option_lexer_ignores_quoted_and_line_comment_phrases() {
+    let cases = [
+        r#"SELECT 'prefix ''WITH LOCAL CHECK OPTION'' suffix'"#,
+        r#"SELECT 'escaped \' WITH CASCADED CHECK OPTION'"#,
+        "SELECT 1 -- WITH CASCADED CHECK OPTION\n -- WITH LOCAL CHECK OPTION",
+    ];
+
+    for sql in cases {
+        assert_eq!(
+            mysql_show_create_view_check_option(sql).unwrap(),
+            "NONE",
+            "quoted or commented text must not become view metadata: {sql}"
+        );
+    }
+}
+
+#[test]
 fn mysql_view_metadata_normalizes_only_its_own_database_qualifiers() {
     let local_catalog = mysql_view_catalog_result(
         "SELECT c.id FROM `source_db`.`child` AS c",
