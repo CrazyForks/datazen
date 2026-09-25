@@ -5,6 +5,8 @@ use datazen_driver_api::{
     MigrationRisk, MigrationStatement, ObjectKind, TableOptions, TableSchema,
 };
 
+#[path = "unified_tests/scope_mapping.rs"]
+mod scope_mapping;
 #[path = "unified_tests/sequence_ownership.rs"]
 mod sequence_ownership;
 #[path = "unified_tests/type_validation.rs"]
@@ -535,7 +537,8 @@ fn object_creation_blocks_when_source_schema_cannot_map_to_target_scope() {
         &TestCapabilities,
     );
     assert!(plan.statements.is_empty());
-    assert!(format!("{:?}", plan.requirements).contains("not rewritten across schemas"));
+    assert!(format!("{:?}", plan.requirements)
+        .contains("Cross-scope migration is only proven for MySQL views"));
 }
 
 #[test]

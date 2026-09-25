@@ -1,17 +1,49 @@
 use super::*;
 mod catalog;
 mod revalidation;
+use crate::schema_diff::unified_scope::MySqlViewScopeContext;
 use crate::schema_diff::{
     object_identity::{SchemaObjectDependencySnapshot, SchemaObjectIdentity},
     objects::SchemaObjectSnapshot,
     reviewed::ReviewedSourceSnapshot,
-    unified::build_unified_schema_diff_plan_with_components,
+    unified::build_unified_schema_diff_plan_with_source_scope,
 };
 pub(super) use catalog::read_target_object_catalog;
 use catalog::{fetch_object_dependency_snapshot, fetch_object_snapshot};
 use datazen_driver_api::{DatabaseObject, ObjectKind, TableInfo, TableType};
 pub(super) use revalidation::revalidate_source_snapshot;
 use std::collections::BTreeSet;
+
+pub(super) async fn read_mysql_view_scope_context(
+    driver: &dyn datazen_driver_api::DatabaseDriver,
+    handle: &datazen_driver_api::ConnectionHandle,
+) -> Option<MySqlViewScopeContext> {
+    let result = driver
+        .query(
+            handle,
+            "SELECT CURRENT_USER() AS `current_user`, @@character_set_client AS `character_set_client`, @@collation_connection AS `collation_connection`",
+        )
+        .await
+        .ok()?;
+    let read = |name: &str| {
+        let index = result
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))?;
+        match result.rows.first()?.get(index)?.as_ref()? {
+            datazen_driver_api::Value::String(value) => Some(value.clone()),
+            datazen_driver_api::Value::Bytes(value) => {
+                std::str::from_utf8(value).ok().map(str::to_owned)
+            }
+            _ => None,
+        }
+    };
+    Some(MySqlViewScopeContext {
+        current_user: read("current_user")?,
+        character_set_client: read("character_set_client")?,
+        collation_connection: read("collation_connection")?,
+    })
+}
 
 const UNIFIED_OBJECT_KINDS: [ObjectKind; 6] = [
     ObjectKind::View,
@@ -160,6 +192,20 @@ pub async fn prepare_schema_unified_plan(
     let selected_source = resolve_object_selectors(&source_selectors, &source_catalog, "source")?;
     let selected_target =
         resolve_object_selectors(&target_selectors, &target_object_list, "target")?;
+    let target_mysql_view_scope_context = if normalize_dialect(&source_config.database_type)
+        == "mysql"
+        && normalize_dialect(&target_config.database_type) == "mysql"
+        && (selected_source
+            .iter()
+            .any(|object| ObjectKind::parse(&object.kind) == Some(ObjectKind::View))
+            || selected_target
+                .iter()
+                .any(|object| ObjectKind::parse(&object.kind) == Some(ObjectKind::View)))
+    {
+        read_mysql_view_scope_context(target_driver.as_ref(), &target_handle).await
+    } else {
+        None
+    };
 
     let mut source_snapshots = Vec::with_capacity(selected_source.len());
     for object in &selected_source {
@@ -276,6 +322,17 @@ pub async fn prepare_schema_unified_plan(
 
     let mut planner_source_snapshots = source_snapshots.clone();
     for snapshot in &mut planner_source_snapshots {
+        let target_object_scope = if normalize_dialect(&target_config.database_type) == "postgresql"
+        {
+            target_dependency_schema_scope
+        } else {
+            target_config.database.as_deref()
+        };
+        if snapshot.kind == ObjectKind::View && snapshot.schema.as_deref() != target_object_scope {
+            // Cross-scope view dependencies must retain their source identities
+            // until the target driver's scope mapper returns exact mapped pairs.
+            continue;
+        }
         if let Some(dependencies) = snapshot.dependencies.as_mut() {
             for dependency in dependencies {
                 if let Some(target_identity) = source_to_target_table.get(dependency) {
@@ -419,7 +476,12 @@ pub async fn prepare_schema_unified_plan(
             target_config.database_type
         )));
     };
-    let mut plan = build_unified_schema_diff_plan_with_components(
+    let source_object_scope = if normalize_dialect(&source_config.database_type) == "postgresql" {
+        source_schema_scope.or(source_driver.default_schema())
+    } else {
+        source_config.database.as_deref()
+    };
+    let mut plan = build_unified_schema_diff_plan_with_source_scope(
         &table_pairs,
         &target_only_tables,
         &planner_source_snapshots,
@@ -438,6 +500,8 @@ pub async fn prepare_schema_unified_plan(
         type_overrides.as_deref().unwrap_or_default(),
         renderer.as_ref(),
         capabilities.as_ref(),
+        source_object_scope,
+        target_mysql_view_scope_context.as_ref(),
     );
     crate::schema_diff::reviewed::freeze_with_unified_catalog(
         &mut plan,
@@ -463,6 +527,7 @@ pub async fn prepare_schema_unified_plan(
             object_snapshots: source_snapshots,
             table_dependency_catalog: source_table_dependency_catalog,
         },
+        target_mysql_view_scope_context,
     )
     .await;
     Ok(plan)
@@ -561,6 +626,7 @@ fn catalog_entry_snapshot(entry: &SchemaObjectDependencySnapshot) -> SchemaObjec
         definition: String::new(),
         dependencies: entry.dependencies.clone(),
         sequence_dependency_usages: entry.sequence_dependency_usages.clone(),
+        mysql_view_metadata: None,
     }
 }
 

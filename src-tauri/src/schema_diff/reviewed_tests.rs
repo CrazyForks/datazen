@@ -1,5 +1,5 @@
 use super::*;
-use datazen_driver_api::ObjectKind;
+use datazen_driver_api::{MySqlViewMetadata, ObjectKind};
 fn config() -> ConnectionConfig {
     serde_json::from_value(serde_json::json!({"id":"target","name":"target","databaseType":"postgresql","host":"localhost","port":5432,"database":"test","connectionTimeout":30,"maxPoolSize":3})).unwrap()
 }
@@ -579,6 +579,28 @@ fn target_object_snapshot_detects_definition_or_identity_changes() {
     changed = old.clone();
     changed.schema = Some("other".into());
     assert!(validate_object_snapshot(&old, &changed).is_err());
+}
+
+#[test]
+fn reviewed_mysql_view_snapshot_detects_creation_semantic_changes() {
+    let metadata = MySqlViewMetadata {
+        algorithm: "UNDEFINED".into(),
+        definer: "migrator@localhost".into(),
+        security_type: "DEFINER".into(),
+        check_option: "NONE".into(),
+        character_set_client: "utf8mb4".into(),
+        collation_connection: "utf8mb4_0900_ai_ci".into(),
+        has_explicit_column_list: false,
+    };
+    let reviewed = SchemaObjectSnapshot::view(Some("source_db"), "item_view", "SELECT 1")
+        .with_mysql_view_metadata(metadata.clone());
+    assert!(validate_object_snapshot(&reviewed, &reviewed).is_ok());
+    let changed = SchemaObjectSnapshot::view(Some("source_db"), "item_view", "SELECT 1")
+        .with_mysql_view_metadata(MySqlViewMetadata {
+            security_type: "INVOKER".into(),
+            ..metadata
+        });
+    assert!(validate_object_snapshot(&reviewed, &changed).is_err());
 }
 
 #[test]

@@ -23,6 +23,7 @@ use crate::schema_objects::{
 use crate::traits::DatabaseDriver;
 use crate::types::{ColumnInfo, DriverError, QueryResult, Value};
 use crate::ConnectionHandle;
+use sqlparser::{ast::Statement, dialect::MySqlDialect, parser::Parser};
 
 const SCHEMA_OBJECT_COMMANDS: &[&str] = &[
     "list_objects",
@@ -293,7 +294,23 @@ pub async fn execute_schema_object_command<D: DatabaseDriver + ?Sized>(
             };
             let result = driver.query(handle, &sql).await?;
             let ddl = extract_object_ddl_checked(&result)?;
-            Ok(CommandResult::new(json!({ "ddl": ddl })))
+            let view_metadata = if parsed == ObjectKind::View
+                && crate::schema_objects::dialect_family(db_type) == "mysql"
+            {
+                let show_create_sql =
+                    crate::schema_objects::mysql_show_create_view_sql(name, schema);
+                let show_create = driver.query(handle, &show_create_sql).await?;
+                Some(extract_mysql_view_metadata(&result, &show_create)?)
+            } else {
+                None
+            };
+            let mut response = json!({ "ddl": ddl });
+            if let Some(metadata) = view_metadata {
+                response["viewMetadata"] = serde_json::to_value(metadata).map_err(|error| {
+                    DriverError::QueryFailed(format!("serialize MySQL view metadata: {error}"))
+                })?;
+            }
+            Ok(CommandResult::new(response))
         }
         "get_object_dependencies" => {
             let result = execute_object_dependencies(driver, db_type, handle, &input).await;
@@ -471,6 +488,77 @@ fn value_as_ddl_text(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn extract_mysql_view_metadata(
+    result: &QueryResult,
+    show_create: &QueryResult,
+) -> Result<crate::schema_scope_mapping::MySqlViewMetadata, DriverError> {
+    let field = |name: &str| {
+        let index = column_index(&result.columns, &[name]).ok_or_else(|| {
+            DriverError::QueryFailed(format!("MySQL view metadata missing `{name}` column"))
+        })?;
+        result
+            .rows
+            .first()
+            .and_then(|row| value_as_ddl_text(row.get(index).and_then(Option::as_ref)))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                DriverError::QueryFailed(format!("MySQL view metadata `{name}` is unavailable"))
+            })
+    };
+    let create_view = extract_object_ddl_checked(show_create)?;
+    let statements = Parser::parse_sql(&MySqlDialect {}, &create_view).map_err(|error| {
+        DriverError::QueryFailed(format!("parse MySQL SHOW CREATE VIEW result: {error}"))
+    })?;
+    if statements.len() != 1 {
+        return Err(DriverError::QueryFailed(
+            "MySQL SHOW CREATE VIEW returned an unexpected statement count".into(),
+        ));
+    }
+    let Statement::CreateView {
+        columns,
+        params,
+        query,
+        ..
+    } = &statements[0]
+    else {
+        return Err(DriverError::QueryFailed(
+            "MySQL SHOW CREATE VIEW did not return a CREATE VIEW definition".into(),
+        ));
+    };
+    let body = extract_object_ddl_checked(result)?;
+    let body_statements = Parser::parse_sql(&MySqlDialect {}, &body).map_err(|error| {
+        DriverError::QueryFailed(format!("parse MySQL VIEW_DEFINITION body: {error}"))
+    })?;
+    let body_query = match body_statements.as_slice() {
+        [Statement::Query(query)] => query,
+        _ => {
+            return Err(DriverError::QueryFailed(
+                "MySQL VIEW_DEFINITION did not return exactly one SELECT query".into(),
+            ));
+        }
+    };
+    if body_query.as_ref() != query.as_ref() {
+        return Err(DriverError::QueryFailed(
+            "MySQL VIEW_DEFINITION and SHOW CREATE VIEW describe different query bodies".into(),
+        ));
+    }
+    let algorithm = params
+        .as_ref()
+        .and_then(|params| params.algorithm.as_ref())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "UNDEFINED".into())
+        .to_ascii_uppercase();
+    Ok(crate::schema_scope_mapping::MySqlViewMetadata {
+        algorithm,
+        definer: field("view_definer")?,
+        security_type: field("view_security_type")?,
+        check_option: field("view_check_option")?,
+        character_set_client: field("view_character_set_client")?,
+        collation_connection: field("view_collation_connection")?,
+        has_explicit_column_list: !columns.is_empty(),
+    })
+}
+
 pub fn parse_object_list(
     result: &QueryResult,
     kind: &str,
@@ -522,6 +610,7 @@ pub fn extract_object_ddl(result: &QueryResult) -> String {
         &result.columns,
         &[
             "ddl",
+            "Create View",
             "Create Function",
             "Create Procedure",
             "Create Trigger",

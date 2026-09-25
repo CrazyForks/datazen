@@ -30,6 +30,7 @@ pub struct ReviewedPlan {
     pub object_dependency_catalog: Vec<SchemaObjectDependencySnapshot>,
     pub target_table_identity_catalog: Vec<SchemaObjectIdentity>,
     pub has_complete_target_object_catalog: bool,
+    pub(crate) target_mysql_view_scope_context: Option<super::unified_scope::MySqlViewScopeContext>,
     pub source_snapshot: Option<ReviewedSourceSnapshot>,
     created: Instant,
 }
@@ -101,6 +102,7 @@ pub async fn freeze(
         false,
         None,
         None,
+        None,
     )
     .await;
 }
@@ -130,6 +132,7 @@ pub async fn freeze_with_dependency_catalog(
         true,
         dependency_schema_scope,
         None,
+        None,
     )
     .await;
 }
@@ -143,6 +146,31 @@ pub async fn freeze_with_objects(
     object_snapshots: Vec<SchemaObjectSnapshot>,
     target_database_scope: Option<String>,
     target_schema_scope: Option<String>,
+) {
+    freeze_with_objects_and_mysql_view_context(
+        plan,
+        session,
+        handle,
+        config,
+        snapshots,
+        object_snapshots,
+        target_database_scope,
+        target_schema_scope,
+        None,
+    )
+    .await;
+}
+
+pub(crate) async fn freeze_with_objects_and_mysql_view_context(
+    plan: &mut SchemaDiffPlan,
+    session: String,
+    handle: &ConnectionHandle,
+    config: &ConnectionConfig,
+    snapshots: Vec<(String, TableSchema)>,
+    object_snapshots: Vec<SchemaObjectSnapshot>,
+    target_database_scope: Option<String>,
+    target_schema_scope: Option<String>,
+    target_mysql_view_scope_context: Option<super::unified_scope::MySqlViewScopeContext>,
 ) {
     freeze_internal(
         plan,
@@ -159,13 +187,14 @@ pub async fn freeze_with_objects(
         false,
         None,
         None,
+        target_mysql_view_scope_context,
     )
     .await;
 }
 
 /// Freeze one unified plan together with its full target object dependency catalog.
 /// Deploy re-reads this catalog before executing any statement.
-pub async fn freeze_with_unified_catalog(
+pub(crate) async fn freeze_with_unified_catalog(
     plan: &mut SchemaDiffPlan,
     session: String,
     handle: &ConnectionHandle,
@@ -180,6 +209,7 @@ pub async fn freeze_with_unified_catalog(
     target_schema_scope: Option<String>,
     dependency_schema_scope: Option<String>,
     source_snapshot: ReviewedSourceSnapshot,
+    target_mysql_view_scope_context: Option<super::unified_scope::MySqlViewScopeContext>,
 ) {
     freeze_internal(
         plan,
@@ -196,6 +226,7 @@ pub async fn freeze_with_unified_catalog(
         has_complete_target_dependency_catalog,
         dependency_schema_scope,
         Some(source_snapshot),
+        target_mysql_view_scope_context,
     )
     .await;
 }
@@ -216,6 +247,7 @@ async fn freeze_internal(
     has_complete_target_dependency_catalog: bool,
     target_dependency_schema_scope: Option<String>,
     source_snapshot: Option<ReviewedSourceSnapshot>,
+    target_mysql_view_scope_context: Option<super::unified_scope::MySqlViewScopeContext>,
 ) {
     let id = uuid::Uuid::new_v4().to_string();
     plan.plan_id = Some(id.clone());
@@ -247,6 +279,7 @@ async fn freeze_internal(
             object_dependency_catalog,
             target_table_identity_catalog,
             has_complete_target_object_catalog,
+            target_mysql_view_scope_context,
             source_snapshot,
             created: Instant::now(),
         },
@@ -460,6 +493,7 @@ pub fn validate_object_snapshot(
         || reviewed.target_schema != current.target_schema
         || reviewed.target_name != current.target_name
         || reviewed.definition.trim() != current.definition.trim()
+        || reviewed.mysql_view_metadata != current.mysql_view_metadata
     {
         return Err(format!(
             "Target object {} changed after review; compare again",

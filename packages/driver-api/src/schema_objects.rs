@@ -375,7 +375,11 @@ pub fn object_ddl_sql_with_metadata(
         }
         ("mysql", ObjectKind::Table) => Some(format!("SHOW CREATE TABLE {qualified}")),
         ("mysql", ObjectKind::View) => Some(format!(
-            "SELECT VIEW_DEFINITION AS ddl FROM information_schema.VIEWS \
+            "SELECT VIEW_DEFINITION AS ddl, DEFINER AS view_definer, \
+             SECURITY_TYPE AS view_security_type, CHECK_OPTION AS view_check_option, \
+             CHARACTER_SET_CLIENT AS view_character_set_client, \
+             COLLATION_CONNECTION AS view_collation_connection \
+             FROM information_schema.VIEWS \
              WHERE TABLE_SCHEMA = COALESCE(NULLIF({}, ''), DATABASE()) AND TABLE_NAME = {}",
             sql_string(schema.filter(|s| !s.is_empty()).unwrap_or("")),
             sql_string(name),
@@ -465,6 +469,17 @@ pub fn object_ddl_sql_with_metadata(
             None
         }
     }
+}
+
+/// Build a MySQL `SHOW CREATE VIEW` query used to capture the definition
+/// options omitted by `information_schema.VIEWS.VIEW_DEFINITION`.
+pub fn mysql_show_create_view_sql(name: &str, schema: Option<&str>) -> String {
+    let name = quote_ident("mysql", name);
+    let qualified = schema
+        .filter(|schema| !schema.is_empty())
+        .map(|schema| format!("{}.{}", quote_ident("mysql", schema), name))
+        .unwrap_or(name);
+    format!("SHOW CREATE VIEW {qualified}")
 }
 
 pub fn list_privileges_sql(db_type: &str) -> Option<String> {
