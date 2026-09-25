@@ -589,6 +589,21 @@ async fn run_test_chunk(
     std::sync::Arc<crate::testing::mock_driver::MockDriver>,
     std::sync::Arc<crate::testing::mock_driver::MockDriver>,
 ) {
+    let _guard = crate::data_transfer::TEST_COMMIT_ACK_LOSS_TEST_LOCK
+        .lock()
+        .await;
+    run_test_chunk_without_ack_fault_lock(checkpoint, query_error, source_rollback_error).await
+}
+
+async fn run_test_chunk_without_ack_fault_lock(
+    checkpoint: &mut TesterCheckpoint,
+    query_error: Option<String>,
+    source_rollback_error: bool,
+) -> (
+    Result<ChunkedTableResult, TransferError>,
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+    std::sync::Arc<crate::testing::mock_driver::MockDriver>,
+) {
     let (source, target, source_schema, target_schema) =
         chunk_test_drivers(query_error, source_rollback_error);
     let source_handle = crate::db::ConnectionHandle {
@@ -701,10 +716,14 @@ async fn test_tester_confirmed_chunk_commit_fences_failed_checkpoint_advance() {
 async fn test_tester_chunk_ack_loss_fences_checkpoint_after_target_commit() {
     use super::super::execute::{arm_test_commit_ack_loss, clear_test_commit_ack_loss};
 
+    let _guard = crate::data_transfer::TEST_COMMIT_ACK_LOSS_TEST_LOCK
+        .lock()
+        .await;
     let _reset = clear_test_commit_ack_loss();
     arm_test_commit_ack_loss("items_copy").expect("the one-shot test seam should arm");
     let mut checkpoint = TesterCheckpoint::default();
-    let (result, source, target) = run_test_chunk(&mut checkpoint, None, false).await;
+    let (result, source, target) =
+        run_test_chunk_without_ack_fault_lock(&mut checkpoint, None, false).await;
     clear_test_commit_ack_loss();
     let result = result.expect("unknown commit acknowledgement is a typed table result");
 

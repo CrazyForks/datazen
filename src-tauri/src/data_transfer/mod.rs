@@ -39,4 +39,8 @@ pub(crate) use structure::create_target_tables_with_write_observer;
 pub use structure::{column_ir_types_by_source, create_target_tables, source_schema_to_target_ir};
 
 #[cfg(test)]
+pub(crate) static TEST_COMMIT_ACK_LOSS_TEST_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
 mod execution_tests;
