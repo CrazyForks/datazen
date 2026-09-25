@@ -19,6 +19,14 @@ fn supports_consistent_snapshot_engine(engine: Option<&str>) -> bool {
     engine.is_some_and(|value| value.eq_ignore_ascii_case("InnoDB"))
 }
 
+const MYSQL_TABLE_OPTIONS_QUERY: &str =
+    "SELECT t.ENGINE, collation_map.CHARACTER_SET_NAME AS TABLE_CHARSET, \
+            t.TABLE_COLLATION AS TABLE_COLLATION, NULLIF(t.TABLE_COMMENT, '') AS TABLE_COMMENT \
+     FROM information_schema.TABLES t \
+     LEFT JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY collation_map \
+       ON collation_map.COLLATION_NAME = t.TABLE_COLLATION \
+     WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?";
+
 use crate::structure;
 use async_trait::async_trait;
 use catalog::{
@@ -1106,24 +1114,22 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let table_options_row = sqlx::query(
-            "SELECT t.ENGINE, collation_map.CHARACTER_SET_NAME AS TABLE_CHARSET, \
-                    NULLIF(t.TABLE_COMMENT, '') AS TABLE_COMMENT \
-             FROM information_schema.TABLES t \
-             LEFT JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY collation_map \
-               ON collation_map.COLLATION_NAME = t.TABLE_COLLATION \
-             WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?",
-        )
-        .bind(&db)
-        .bind(Self::bare_table_name(table))
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let table_options_row = sqlx::query(MYSQL_TABLE_OPTIONS_QUERY)
+            .bind(&db)
+            .bind(Self::bare_table_name(table))
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let engine = table_options_row
             .as_ref()
             .and_then(|row| row.try_get::<Option<String>, _>("ENGINE").ok().flatten());
         let charset = table_options_row.as_ref().and_then(|row| {
             row.try_get::<Option<String>, _>("TABLE_CHARSET")
+                .ok()
+                .flatten()
+        });
+        let collation = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_COLLATION")
                 .ok()
                 .flatten()
         });
@@ -1239,6 +1245,7 @@ impl DatabaseDriver for MysqlDriver {
                 )),
                 engine,
                 charset,
+                collation,
                 comment: table_comment,
                 ..TableOptions::default()
             },

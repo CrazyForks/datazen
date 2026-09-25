@@ -348,6 +348,11 @@ pub struct TableOptions {
     /// Default character set (currently populated by the MySQL-family driver only).
     #[serde(default)]
     pub charset: Option<String>,
+    /// Default table collation (currently populated by the MySQL-family driver only).
+    /// A target must preserve or explicitly reject this because matching
+    /// character encodings do not prove equivalent comparison semantics.
+    #[serde(default)]
+    pub collation: Option<String>,
     /// Whether repeated reads of this relation are covered by the driver's
     /// stable read-snapshot transaction contract. `None` means unknown and
     /// must not be treated as resumable. Drivers should set this only when
@@ -362,6 +367,7 @@ impl Default for TableOptions {
             comment: None,
             engine: None,
             charset: None,
+            collation: None,
             supports_consistent_snapshot: None,
         }
     }

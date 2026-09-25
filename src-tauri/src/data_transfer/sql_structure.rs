@@ -935,6 +935,41 @@ mod database_plan_tests {
     }
 
     #[test]
+    fn database_plan_rejects_unmapped_mysql_collation_before_any_write() {
+        let mut source_schema = schema("records", &[("id", true), ("name", false)]);
+        source_schema.table_options = datazen_driver_api::TableOptions {
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            collation: Some("utf8mb4_0900_ai_ci".into()),
+            ..Default::default()
+        };
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let mappings = vec![mapping(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("name", "name")],
+        )];
+        let inspected_tables = vec![inspected(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("name", "name")],
+        )];
+
+        let error = build_database_structure_plan(
+            &Source,
+            &datazen_driver_postgres::PgSyncAdapter,
+            &job(mappings),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect_err("unproven collation semantics must stop plan creation before DDL");
+        let message = error.to_string();
+        assert!(message.contains("utf8mb4_0900_ai_ci"), "{message}");
+        assert!(message.contains("no proven equivalent"), "{message}");
+        assert!(message.contains("PostgreSQL UTF8"), "{message}");
+    }
+
+    #[test]
     fn database_plan_rejects_schema_scoped_postgres_index_name_collisions() {
         let mut first = schema("first", &[("id", true), ("value", false)]);
         let mut second = schema("second", &[("id", true), ("value", false)]);

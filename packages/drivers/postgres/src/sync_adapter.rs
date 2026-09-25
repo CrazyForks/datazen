@@ -690,6 +690,23 @@ mod tests {
     }
 
     #[test]
+    fn pg_structure_refuses_unmapped_mysql_collation_despite_utf8_encoding() {
+        let options = datazen_driver_api::TableOptions {
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            collation: Some("utf8mb4_0900_ai_ci".into()),
+            ..Default::default()
+        };
+        let error = PgSyncAdapter
+            .render_source_table_options(&options)
+            .expect_err("UTF8-compatible encoding does not prove collation equivalence");
+        assert!(error.contains("utf8mb4_0900_ai_ci"), "{error}");
+        assert!(error.contains("no proven equivalent"), "{error}");
+        assert!(error.contains("UTF8MB4 character encoding can map to PostgreSQL UTF8"));
+        assert!(error.contains("sort, case, or accent rules"));
+    }
+
+    #[test]
     fn test_tester_pg_structure_preflight_covers_sequence_ownership_and_options() {
         let query = PgSyncAdapter
             .unsupported_transfer_structure_query("application", Some("public"), "users")

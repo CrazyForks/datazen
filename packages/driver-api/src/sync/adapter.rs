@@ -247,6 +247,25 @@ pub trait SyncTargetAdapter: Send + Sync {
         &self,
         options: &TableOptions,
     ) -> Result<Option<String>, String> {
+        if let Some(collation) = options
+            .collation
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let charset_note = if options
+                .charset
+                .as_deref()
+                .is_some_and(|charset| charset.eq_ignore_ascii_case("utf8mb4"))
+            {
+                " The source UTF8MB4 character encoding can map to PostgreSQL UTF8, but that does not prove equivalent sort, case, or accent rules."
+            } else {
+                " Matching character encodings do not prove equivalent sort, case, or accent rules."
+            };
+            return Err(format!(
+                "source table collation '{collation}' has no proven equivalent on this target; choose a target collation with reviewed matching semantics or create the target table with an explicit reviewed conversion.{charset_note}"
+            ));
+        }
         if options.comment.is_some() || options.charset.is_some() {
             return Err("table comment or character set cannot be preserved".into());
         }

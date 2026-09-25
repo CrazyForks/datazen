@@ -346,6 +346,16 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
         &self,
         options: &datazen_driver_api::TableOptions,
     ) -> Result<Option<String>, String> {
+        if let Some(collation) = options
+            .collation
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Err(format!(
+                "source table collation '{collation}' is not verified as available with equivalent semantics on the target MySQL-family server; confirm a supported target collation before retrying"
+            ));
+        }
         let mut parts = Vec::new();
         if let Some(engine) = options.engine.as_deref() {
             if !engine.eq_ignore_ascii_case("innodb") {
@@ -569,6 +579,18 @@ mod tests {
             ..Default::default()
         };
         assert!(a.render_source_table_options(&unsupported).is_err());
+
+        let unverified_collation = datazen_driver_api::TableOptions {
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            collation: Some("utf8mb4_0900_ai_ci".into()),
+            ..Default::default()
+        };
+        let error = a
+            .render_source_table_options(&unverified_collation)
+            .expect_err("target server version/collation availability is not proven");
+        assert!(error.contains("utf8mb4_0900_ai_ci"), "{error}");
+        assert!(error.contains("not verified as available"), "{error}");
     }
 
     #[test]
