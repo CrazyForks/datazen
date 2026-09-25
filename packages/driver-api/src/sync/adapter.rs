@@ -328,6 +328,23 @@ pub trait SyncTargetAdapter: Send + Sync {
         )))
     }
 
+    /// Validate a mapped target column before placing it in an ordinary
+    /// secondary index. Engines that require prefix lengths or special index
+    /// forms for some native types should reject those types here so the host
+    /// can stop before any table DDL is executed.
+    fn validate_index_column_type(&self, _column: &IRColumn) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Validate a complete index key after its target columns have been
+    /// projected and mapped. Implementations may enforce aggregate key limits.
+    fn validate_index_columns(&self, columns: &[IRColumn]) -> Result<(), String> {
+        for column in columns {
+            self.validate_index_column_type(column)?;
+        }
+        Ok(())
+    }
+
     /// Render one foreign key after all table definitions and row data. The
     /// caller supplies a target relation reference so source catalogs never
     /// leak into a generated SQL-file artifact.

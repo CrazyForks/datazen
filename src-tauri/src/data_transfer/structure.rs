@@ -392,6 +392,23 @@ fn validate_identity_type_overrides(
     Ok(())
 }
 
+/// Build the same mapped column projection used by CREATE so dependent-object
+/// preflight can validate target capabilities against the actual target types.
+pub(crate) fn mapped_target_table_ir(
+    src_adapter: &dyn SyncSourceAdapter,
+    tgt_adapter: &dyn SyncTargetAdapter,
+    schema: &TableSchema,
+    table: &TableInspectResult,
+    job: &TransferJob,
+) -> Result<IRTable, TransferError> {
+    let mut ir = source_schema_to_target_ir(src_adapter, schema, None, &table.target_table);
+    if let Some(mapping) = table_mapping_for(job, &table.source_table) {
+        validate_identity_type_overrides(&ir, mapping, tgt_adapter)?;
+        apply_column_type_overrides(&mut ir, mapping, tgt_adapter)?;
+    }
+    Ok(ir)
+}
+
 /// Apply the exact active projection to CREATE, including key renames. An empty
 /// mapping means automatic identity mapping; an explicit all-skipped mapping fails.
 pub fn apply_column_type_overrides(
@@ -511,12 +528,8 @@ pub fn mapped_create_ddl(
         }
         return Ok(ddl.to_string());
     }
-    let mut ir = source_schema_to_target_ir(src_adapter, schema, None, &table.target_table);
+    let mut ir = mapped_target_table_ir(src_adapter, tgt_adapter, schema, table, job)?;
     ir.table_options = table_options;
-    if let Some(mapping) = mapping {
-        validate_identity_type_overrides(&ir, mapping, tgt_adapter)?;
-        apply_column_type_overrides(&mut ir, mapping, tgt_adapter)?;
-    }
     for column in &ir.columns {
         if let Some(default) = &column.default_expr {
             if matches!(default, IRDefault::RawExpression(_)) {

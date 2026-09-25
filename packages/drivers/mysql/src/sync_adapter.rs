@@ -94,6 +94,77 @@ fn parse_mysql_default(raw: &str) -> Option<IRDefault> {
     Some(IRDefault::Literal(format!("'{}'", d.replace('\'', "''"))))
 }
 
+fn mysql_index_column_max_bytes(ir_type: &IRType, native: &str) -> Result<usize, String> {
+    let checked_product = |length: usize, bytes_per_char: usize| {
+        length
+            .checked_mul(bytes_per_char)
+            .ok_or_else(|| format!("target index key size overflows for type '{native}'"))
+    };
+    let native_length = || {
+        native
+            .trim()
+            .split_once('(')
+            .and_then(|(_, args)| args.split_once(')'))
+            .and_then(|(length, _)| length.split(',').next())
+            .and_then(|length| length.trim().parse::<usize>().ok())
+    };
+    let decimal_bytes = |precision: usize| precision.div_ceil(9).saturating_mul(4);
+    let native_base = || {
+        native
+            .trim()
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_uppercase()
+    };
+
+    match ir_type {
+        IRType::Bool | IRType::Int8 => Ok(1),
+        IRType::Int16 => Ok(2),
+        IRType::Int32 | IRType::Float32 => Ok(4),
+        IRType::Int64 | IRType::Float64 => Ok(8),
+        IRType::Decimal { precision, .. } => Ok(decimal_bytes(if *precision == 0 {
+            65
+        } else {
+            usize::from(*precision)
+        })),
+        IRType::Char { length } => checked_product(*length as usize, 4),
+        IRType::Varchar { length } => checked_product(length.map_or(255, |n| n as usize), 4),
+        IRType::Binary { length: Some(length) } => Ok(*length as usize),
+        IRType::Bit { length } => Ok((*length as usize).div_ceil(8)),
+        IRType::Date => Ok(3),
+        IRType::Time { .. } | IRType::Timestamp { .. } => Ok(8),
+        IRType::Uuid => Ok(36 * 4),
+        IRType::Other(_) => match native_base().as_str() {
+            "CHAR" | "VARCHAR" => checked_product(native_length().ok_or_else(|| {
+                format!("cannot prove target index key size for type '{native}'")
+            })?, 4),
+            "BINARY" | "VARBINARY" => native_length()
+                .ok_or_else(|| format!("cannot prove target index key size for type '{native}'")),
+            "TINYINT" | "BOOL" | "BOOLEAN" => Ok(1),
+            "SMALLINT" => Ok(2),
+            "MEDIUMINT" => Ok(3),
+            "INT" | "INTEGER" | "FLOAT" => Ok(4),
+            "BIGINT" | "DOUBLE" => Ok(8),
+            "DECIMAL" | "NUMERIC" => Ok(decimal_bytes(native_length().ok_or_else(|| {
+                format!("cannot prove target index key size for type '{native}'")
+            })?)),
+            "DATE" => Ok(3),
+            "TIME" | "DATETIME" | "TIMESTAMP" => Ok(8),
+            "YEAR" => Ok(1),
+            _ => Err(format!(
+                "cannot prove target index key size for type '{native}'; map the column to a known bounded type"
+            )),
+        },
+        IRType::Text | IRType::Blob | IRType::Binary { length: None } | IRType::Json => {
+            Err(format!(
+                "ordinary MySQL indexes cannot represent target type '{native}' without a prefix or generated expression, which Data Transfer does not model"
+            ))
+        }
+    }
+}
+
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for MysqlSyncAdapter {
@@ -340,6 +411,58 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
 
     fn index_names_are_table_scoped(&self) -> bool {
         true
+    }
+
+    fn validate_index_column_type(&self, column: &IRColumn) -> Result<(), String> {
+        let native = self.ir_type_to_native(&column.ir_type);
+        let base_type = native
+            .trim()
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_uppercase();
+        if matches!(
+            base_type.as_str(),
+            "TINYTEXT"
+                | "TEXT"
+                | "MEDIUMTEXT"
+                | "LONGTEXT"
+                | "TINYBLOB"
+                | "BLOB"
+                | "MEDIUMBLOB"
+                | "LONGBLOB"
+                | "JSON"
+        ) {
+            return Err(format!(
+                "target column '{}' has type '{native}'; ordinary MySQL indexes need a prefix or generated expression that Data Transfer does not model; map it to a bounded VARCHAR/BINARY type or omit the index",
+                column.name
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_index_columns(&self, columns: &[IRColumn]) -> Result<(), String> {
+        let mut key_bytes = 0usize;
+        for column in columns {
+            self.validate_index_column_type(column)?;
+            let native = self.ir_type_to_native(&column.ir_type);
+            let column_bytes = mysql_index_column_max_bytes(&column.ir_type, &native)?;
+            key_bytes = key_bytes
+                .checked_add(column_bytes)
+                .ok_or_else(|| "target index key size overflows".to_string())?;
+        }
+
+        // Use the 767-byte InnoDB key ceiling as a conservative bound. Newer
+        // servers with dynamic row format may allow more, but this transfer
+        // plan does not inspect page size or target row-format settings.
+        const CONSERVATIVE_INNODB_KEY_LIMIT: usize = 767;
+        if key_bytes > CONSERVATIVE_INNODB_KEY_LIMIT {
+            return Err(format!(
+                "target index key may require {key_bytes} bytes, exceeding this planner's conservative {CONSERVATIVE_INNODB_KEY_LIMIT}-byte InnoDB bound; this may reject keys on newer servers that support larger limits because target page size and row format are not inspected; narrow the mapped columns or wait for target-capability probing before relying on a larger limit"
+            ));
+        }
+        Ok(())
     }
 
     fn render_source_table_options(
@@ -591,6 +714,33 @@ mod tests {
             .expect_err("target server version/collation availability is not proven");
         assert!(error.contains("utf8mb4_0900_ai_ci"), "{error}");
         assert!(error.contains("not verified as available"), "{error}");
+    }
+
+    #[test]
+    fn mysql_index_preflight_rejects_unbounded_text_and_allows_bounded_varchar() {
+        let adapter = adapter();
+        let text = IRColumn {
+            name: "label".into(),
+            ir_type: IRType::Text,
+            nullable: false,
+            default_expr: None,
+            is_primary_key: false,
+            is_auto_increment: false,
+            comment: None,
+        };
+        let error = adapter
+            .validate_index_column_type(&text)
+            .expect_err("MySQL requires a prefix to index unbounded TEXT");
+        assert!(error.contains("TEXT"), "{error}");
+        assert!(error.contains("prefix"), "{error}");
+
+        let varchar = IRColumn {
+            ir_type: IRType::Varchar { length: Some(120) },
+            ..text
+        };
+        adapter
+            .validate_index_column_type(&varchar)
+            .expect("bounded VARCHAR can use an ordinary MySQL index");
     }
 
     #[test]

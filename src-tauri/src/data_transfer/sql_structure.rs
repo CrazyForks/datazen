@@ -390,6 +390,43 @@ pub(crate) fn build_database_structure_plan(
         let mapping = table_mapping_for(job, &source_table);
         for index in objects.indexes.iter().filter(|index| !index.is_primary) {
             let mapped = map_index_columns(index, mapping)?;
+            let table = create_tables
+                .iter()
+                .find(|table| table.source_table == source_table)
+                .ok_or_else(|| TransferError::validation("structure table disappeared"))?;
+            let schema = source_schemas.get(&source_table).ok_or_else(|| {
+                TransferError::validation(format!(
+                    "source schema is unavailable for '{source_table}'"
+                ))
+            })?;
+            let target_ir = super::structure::mapped_target_table_ir(
+                source_adapter,
+                target_adapter,
+                schema,
+                table,
+                job,
+            )?;
+            let mut index_columns = Vec::with_capacity(mapped.columns.len());
+            for column_name in &mapped.columns {
+                let column = target_ir
+                    .columns
+                    .iter()
+                    .find(|column| column.name == *column_name)
+                    .ok_or_else(|| {
+                        TransferError::validation(format!(
+                            "mapped target index column '{column_name}' was not created"
+                        ))
+                    })?;
+                index_columns.push(column.clone());
+            }
+            target_adapter
+                .validate_index_columns(&index_columns)
+                .map_err(|error| {
+                    TransferError::unsupported(format!(
+                        "cannot preserve index '{}' on '{}': {error}",
+                        index.name, source_table
+                    ))
+                })?;
             let table_ref =
                 super::structure::target_relation_ref(job, &target_table, target_adapter);
             let ddl = target_adapter
@@ -967,6 +1004,124 @@ mod database_plan_tests {
         assert!(message.contains("utf8mb4_0900_ai_ci"), "{message}");
         assert!(message.contains("no proven equivalent"), "{message}");
         assert!(message.contains("PostgreSQL UTF8"), "{message}");
+    }
+
+    #[test]
+    fn mysql_structure_plan_rejects_unbounded_text_index_before_any_ddl() {
+        let mut source_schema = schema("records", &[("id", true), ("label", false)]);
+        source_schema.columns[1].data_type = "text".into();
+        source_schema.indexes.push(IndexInfo {
+            name: "ix_records_label".into(),
+            columns: vec!["label".into()],
+            is_unique: false,
+            is_primary: false,
+            index_type: "btree".into(),
+        });
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let mappings = vec![mapping(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+        let inspected_tables = vec![inspected(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+
+        let error = build_database_structure_plan(
+            &datazen_driver_postgres::PgSyncAdapter,
+            &datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false },
+            &job(mappings),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect_err("unbounded TEXT index must block the full DDL plan");
+        let message = error.to_string();
+        assert!(message.contains("ix_records_label"), "{message}");
+        assert!(message.contains("target column 'label'"), "{message}");
+        assert!(
+            message.contains("map it to a bounded VARCHAR/BINARY type"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn mysql_structure_plan_keeps_bounded_varchar_indexes_portable() {
+        let mut source_schema = schema("records", &[("id", true), ("label", false)]);
+        source_schema.columns[1].data_type = "character varying(120)".into();
+        source_schema.indexes.push(IndexInfo {
+            name: "ix_records_label".into(),
+            columns: vec!["label".into()],
+            is_unique: false,
+            is_primary: false,
+            index_type: "btree".into(),
+        });
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let mappings = vec![mapping(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+        let inspected_tables = vec![inspected(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("label", "label")],
+        )];
+
+        let plan = build_database_structure_plan(
+            &datazen_driver_postgres::PgSyncAdapter,
+            &datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false },
+            &job(mappings),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect("bounded VARCHAR supports a normal secondary index on MySQL");
+        assert!(plan[0].ddl.contains("VARCHAR(120)"));
+        assert_eq!(plan[1].kind, DdlPreviewKind::Index);
+        assert!(plan[1].ddl.contains("`label`"));
+    }
+
+    #[test]
+    fn mysql_structure_plan_rejects_composite_key_over_conservative_limit() {
+        let mut source_schema = schema(
+            "records",
+            &[("id", true), ("first", false), ("second", false)],
+        );
+        source_schema.columns[1].data_type = "character varying(100)".into();
+        source_schema.columns[2].data_type = "character varying(100)".into();
+        source_schema.indexes.push(IndexInfo {
+            name: "ix_records_both".into(),
+            columns: vec!["first".into(), "second".into()],
+            is_unique: false,
+            is_primary: false,
+            index_type: "btree".into(),
+        });
+        let schemas = HashMap::from([("records".into(), source_schema)]);
+        let mappings = vec![mapping(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("first", "first"), ("second", "second")],
+        )];
+        let inspected_tables = vec![inspected(
+            "records",
+            "records_copy",
+            &[("id", "id"), ("first", "first"), ("second", "second")],
+        )];
+
+        let error = build_database_structure_plan(
+            &datazen_driver_postgres::PgSyncAdapter,
+            &datazen_driver_mysql::MysqlSyncAdapter { is_mariadb: false },
+            &job(mappings),
+            &inspected_tables,
+            &schemas,
+        )
+        .expect_err("composite index beyond conservative InnoDB key size must be refused");
+        let message = error.to_string();
+        assert!(message.contains("ix_records_both"), "{message}");
+        assert!(message.contains("800 bytes"), "{message}");
+        assert!(message.contains("767-byte InnoDB bound"), "{message}");
+        assert!(message.contains("newer servers"), "{message}");
     }
 
     #[test]
