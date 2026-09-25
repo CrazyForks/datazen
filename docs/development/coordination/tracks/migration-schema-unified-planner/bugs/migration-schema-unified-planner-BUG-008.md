@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-008 · MySQL view body consistency check rejects same-database qualification normalization
 
 - **严重度**：P1（阻断）
-- **状态**：修复完成，待 Fresh Tester 复验
+- **状态**：修复完成并经 Fresh Tester R7 独立验证；MySQL planner 仍被 BUG-009 阻断
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; BUG-007 `VIEW_DEFINITION` / `SHOW CREATE VIEW` query-body comparison
 
 ## 描述与重现
@@ -40,3 +40,11 @@ The failure is reproducible for a standard view over same-database tables. MySQL
 - Driver API regressions cover quoted and unquoted same-database references, case-mismatched local qualifiers, unchanged external database qualifiers, external-to-local changes, and a genuine query-body mismatch.
 - Focused Driver API view metadata tests: 5/5; full Driver API: 178/178; MySQL driver library: 123/123; MySQL `schema_objects_sql` integration: 8/8; Host Schema Diff: 204/204.
 - `cargo fmt --all -- --check` and `git diff --check` pass. This worktree did not run live WDIO; Fresh Tester must rerun the MySQL positive mixed-object journey and missing-dependency zero-write case, plus verify exact fixture cleanup.
+
+## Fresh Tester R7 evidence
+
+- Independent source review confirmed that exact `TABLE_SCHEMA` is passed to the AST normalization and that only a two-part relation node whose first identifier exactly matches that source database is normalized. The visitor walks relation AST nodes, so literals and non-relational expressions cannot be rewritten. External database qualifiers, case mismatches, external-to-local changes, and body mismatches remain significant and have regression coverage.
+- Focused live MySQL catalog smoke and the MySQL positive journey both retrieved the source fixture view DDL successfully; the former passed all four catalog kinds. This verifies that the original same-database body comparison no longer rejects the ordinary view.
+- R7 focused Driver API metadata tests passed 5/5; the full Driver API suite passed 180/180; MySQL library tests 123/123; `schema_objects_sql` integration 8/8; Host Schema Diff Rust tests 213/213; Schema Diff Vitest 62/62.
+- Isolated LLVM coverage measured `mysql_view_query_bodies_match` at 14/15 executable lines (93.33%) and `OwnDatabaseQualifier::pre_visit_relation` at 12/12 (100%). The whole `mysql_view_metadata.rs` helper module measured 79.07%, below the 80% gate when interpreted at module scope; see R7 report for the scope and limitation. BUG-008's changed matcher and visitor exceed 80%, but the broader changed-core coverage gate remains open.
+- The full MySQL positive planner journey remains blocked before deploy by the separate incomplete table dependency catalog, registered as [BUG-009](migration-schema-unified-planner-BUG-009.md). See the [round-7 retest report](../test-results/unified-planner-retest-r7.md).

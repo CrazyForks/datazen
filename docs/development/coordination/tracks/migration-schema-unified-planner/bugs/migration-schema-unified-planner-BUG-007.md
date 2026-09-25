@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：修复已合入；Fresh Tester round-6 发现等价 MySQL view body 被拒绝（BUG-008），待修复并复验
+- **状态**：一致性修复已合入；Fresh Tester R7 未能独立到达 `WITH CASCADED CHECK OPTION` 的元数据阻断断言，保持待复验
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
 ## 描述
@@ -30,3 +30,9 @@
 - API regressions cover consistent metadata, INFORMATION_SCHEMA→SHOW mismatch and SHOW→INFORMATION_SCHEMA mismatch for definer/security/check-option/charset/collation, view-body mismatch, and check-option phrases inside strings/comments.
 - Host Schema Diff: 204/204; Driver API: 177/177; MySQL driver library: 123/123; MySQL `schema_objects_sql` integration: 8/8.
 - `cargo fmt --all -- --check` and `git diff --check` pass. Fresh Tester must rerun the real WDIO positive/negative journeys; this card does not claim independent runtime verification.
+
+## Fresh Tester R7 evidence
+
+- The rebuilt app completed the MySQL catalog smoke and successfully retrieved the fixture view's DDL through live IPC, so ordinary view extraction proceeds past the BUG-008 same-database qualifier issue.
+- The `WITH CASCADED CHECK OPTION` journey timed out in `clickSchemaDiffGeneratePlan()` before the plan panel and metadata assertions. No deploy was clicked, but the explicit post-plan zero-write assertion was not reached. Exact teardown counts were 0/0. Therefore R7 does not independently verify BUG-007's intended metadata blocker; keep this card open until that journey produces and asserts the blocker.
+- Full evidence is in the [round-7 retest report](../test-results/unified-planner-retest-r7.md).
