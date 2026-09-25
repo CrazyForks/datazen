@@ -1,8 +1,10 @@
 - 任务：将 Visual Query Builder 实现、私有状态、单测与 WebDriver journeys 迁入独立 SQL Editor Pro；Host 保留公共契约、Query tab 适配与容器。
-- 状态：TEST_FAILED
-- 编码 commit：Host `497accbd665519d67a07cec83b19d44c90e0cdbf`；Pro `e87541fed6759d79971a4e8e9cfc01d3b9ba4a7b`
+- 状态：READY_FOR_TEST（Round 1 的 BUG-001 与 UI 覆盖率问题已修复，等待 Tester Round 2）
+- 初始迁移编码 commit：Host `497accbd665519d67a07cec83b19d44c90e0cdbf`；Pro `e87541fed6759d79971a4e8e9cfc01d3b9ba4a7b`
 - Tester bug/test commit：Host `075ed41d76b87084563e5704abf6e5330a04b176`
-- Tester 收尾 commit：由本次进度记录提交
+- Tester 收尾 commit：Host `fe92c2d650cf73336b41cc0f9e669645bd7b1a09`
+- Round 2 Pro 覆盖测试 commit：`2a45c90f28041e81c948e67b9416fade8ac5472f`
+- Round 2 Host 修复/进度 commit：提交后记录
 - Worktree：`.worktrees/datazen-qb-editor-pro`
 - Host 分支：`feature/qb-editor-pro`
 - Pro 初始 HEAD：`c60f7fc8e1d552c6a37d3f70128d9c8e42555750`
@@ -28,7 +30,7 @@
 | 阶段 | 结果 | 自验 |
 |---|---|---|
 | 公共 EP 契约与 Host adapter/lifecycle | 完成 | Host `npx tsc --noEmit` 通过；Host 全量 Vitest 455 files / 4,513 tests 通过 |
-| Pro QB 核心、私有 store、生命周期与拖放校验 | 完成 | Pro `npx tsc --noEmit` 通过；Pro 全量 Vitest 61 files / 767 tests 通过 |
+| Pro QB 核心、私有 store、生命周期与拖放校验 | 完成 | Pro `npx tsc --noEmit` 通过；Round 2 全量 Vitest 62 files / 774 tests 通过 |
 | 旧 Host QB 清理、Locales、E2E 与文档 | 完成 | Host `QueryToolbarMoreMenu.test.tsx` 11/11 通过；Pro E2E TypeScript 检查通过；四条 WebDriver spec 4/4 通过（22 条用例） |
 | 生产 bundle / Pro 打包 | 本机 macOS Pro webdriver app 可加载；完整发行构建仍待发布流程 | Tester 重跑 Pro `npx vite build` 并验证无 `__qbTest` / `__qbStore` / `@host/`、bare external imports，且使用 `__DATAZEN_HOST__` 单例 |
 
@@ -58,17 +60,26 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - `node scripts/generate-builtin-locales.mjs`：通过。
 - Host `npx vitest run`：455 files / 4,513 tests 通过；新加回归测试后 `npx vitest run src/windows/connection/query/__tests__/QueryEditorSection.qbContext.test.tsx` 以预期断言失败复现 BUG-001。Host `npx tsc --noEmit`（含新增测试）、`node scripts/check-module-layers.mjs`、两仓 commit `git diff --check`：通过。
 - Pro `pnpm test` 在测试脚本执行前触发 pnpm 自动安装并因无 TTY 中止（`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`）；使用现存依赖独立执行 `npx vitest run`：61 files / 767 tests 通过。Pro `npx tsc --noEmit`、`npx vite build`：通过。
-- 覆盖率命令：Pro `npx vitest run --coverage --coverage.include='src/components/query-builder/**/*.ts' --coverage.include='src/components/query-builder/**/*.tsx' --coverage.include='src/query-builder/**/*.ts' --coverage.include='src/query-builder/**/*.tsx' --coverage.include='src/stores/queryBuilderStore.ts' --coverage.include='src/lib/sqlDialects/queryBuilder.ts' --coverage.reporter=json --coverage.reporter=text`。收集范围 lines 85.30%、statements 83.97%、branches 74.04%、functions 82.54%。核心逻辑 `contribution.tsx` 97.36%、store 86.44%、SQL generator 97.67%、validation 89.10%、dialect 82.41%、drop parser 96.29% lines；主要 UI 模块 `QueryBuilderPanel.tsx` 76.85%、`DiagramCanvas.tsx` 64.75%，尚未达到核心模块 ≥80% 的测试目标，需补覆盖。
+- Round 1 覆盖率基线：原 include scope 的总体 lines 85.30%、statements 83.97%、branches 74.04%、functions 82.54%；`QueryBuilderPanel.tsx` 76.85%、`DiagramCanvas.tsx` 64.75% lines。两处 UI 门槛已在 Round 2 补测后通过，结果见下文。
 - Pro production bundle 静态检查通过：无 `__qbTest`、`__qbStore`、`@host/` 或裸 external imports；确认 React/EP/UI 运行时从 `__DATAZEN_HOST__` 共享。
 - `node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder`：4 specs / 22 tests 通过，测试 worker fixture teardown 完成。该次使用现成 macOS Pro WebDriver app；runner 提示 app binary 早于刚生成的 Host `dist/index.html`，因此本轮证明 E2E 可运行，不等同于独立完成最终签名发行包重建。
 - `node scripts/i18n-sync-check.mjs --from HEAD`：仍失败，报告 3,845 missing 与 1,650 stale translations（8 个 Host locales；Redis 两 locale packs 未报 driver pack issue）。Pro en/zh-CN QB key parity 在 Pro Vitest 中通过。Host/Redis 全仓差额需发布前由 i18n 流程处理。
+
+## Round 2 修复与复验
+
+- **BUG-001 上下文切换**：Host `QueryEditorSection` 记录 Builder 当前绑定的 contribution/panel/context；Builder 保持打开且 connection/session/database/schema props 变化时，通过 `useLayoutEffect` 在绘制前调用 `openFor` 重绑上下文，使 Pro controller 清除旧 draft 后再用新 props 展示。BUG 报告已更新为“已修复，待 Tester 复测”。
+- **新增行为测试**：Host `QueryEditorSection.qbContext.test.tsx` 覆盖打开 Builder 后 database/schema 变化会再次绑定当前 panel/context。Pro `QueryBuilderPanelCommit.test.tsx` 增加 formatter 异常 fallback、Ctrl+Enter 提交和 Escape 保留/丢弃流程；`DiagramCanvas.interactions.test.tsx` 覆盖卡片操作回调、手动 join 完成/自连接拒绝与取消、列列表滚动更新关系锚点。
+- **Host tests/typecheck**：BUG-001 focused test 1/1、Query 目录 7 files / 125 tests、Host 全量 `npx vitest run` 456 files / 4,514 tests 均通过；Host `npx tsc --noEmit` 通过。
+- **Pro tests/typecheck/coverage**：`npx vitest run` — 62 files / 774 tests 通过；Pro `npx tsc --noEmit` 通过。覆盖率命令保持 Round 1 原始 include scope，62 files / 774 tests 通过，`QueryBuilderPanel.tsx` lines 83.88%、`DiagramCanvas.tsx` lines 96.72%，总 lines 88.72%。
+- **WebDriver**：项目入口 `pnpm e2e:qb:build` 因 pnpm 检查共享 `node_modules` 后在无 TTY 时尝试 install 而中止（`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`，未触发安装）。按此前自验流程临时覆盖 Tauri `beforeBuildCommand` 为 locale/menu generation、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，并在 Pro 打包阶段与 Host 前端阶段均设置 `VITE_E2E=1`；通过 `with-driver-inject` 和 `e2e-tauri-build --pro` 重建后恢复 `tauri.conf.json`。命令 `node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` — 4 specs / 22 tests 通过，用时 2m47s；E2E fixtures 已 teardown。
+- **当前变更范围**：Host 修改 Builder context lifecycle、Pro lock pin 与本轨 bug/progress 文档；Pro commit `2a45c90f28041e81c948e67b9416fade8ac5472f` 只增加两组 UI 行为测试。
 
 ## 剩余发布门槛
 
 - Community Tauri 完整构建、常规 Query 执行 E2E、`e2e:qb:regression` 与完整 Pro Tauri release build 本轮未独立重跑。
 - Windows/Linux release builds、正式签名凭据、最终签名 manifest/bundle hash 与远端发布未验证。
-- 上述未验证项与 `QueryBuilderPanel` / `DiagramCanvas` 覆盖率未达目标，均不能据本轮结果标记为全平台发布通过。
+- 上述未验证项仍不能据本轮 macOS 自验标记为全平台发布通过。
 
 ## Tester 与 Bug 记录
 
-第 1 轮 Tester 判定：`TEST_FAILED`。Bug：`bugs/qb-editor-pro-BUG-001.md`。修复后需由全新 Tester 重跑完整 Pro / Host 套件、覆盖率与发布门槛。
+第 1 轮 Tester 判定：`TEST_FAILED`。Bug：`bugs/qb-editor-pro-BUG-001.md`。Coder 已完成 Round 2 修复与自验，当前状态 `READY_FOR_TEST`，等待独立 Tester 复核；本轮未标记为 `PASSED`。

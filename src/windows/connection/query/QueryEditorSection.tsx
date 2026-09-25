@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type Ref } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type Ref,
+} from 'react';
 import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
@@ -225,6 +233,38 @@ export function QueryEditorSection({
   // The Pro contribution owns its private builder store; visibility remains
   // scoped to the query tab that opened it.
   const qbOpen = openPanelId === panelId;
+  const qbContextKey = JSON.stringify([
+    connectionId ?? '',
+    dbSessionId,
+    selectedDatabase ?? '',
+    selectedSchema ?? '',
+  ]);
+  const boundQbContextRef = useRef<{
+    contribution: typeof queryBuilder;
+    panelId: string;
+    contextKey: string;
+  } | null>(null);
+  const openQbForCurrentContext = useCallback(() => {
+    if (!queryBuilder) return;
+    boundQbContextRef.current = { contribution: queryBuilder, panelId, contextKey: qbContextKey };
+    queryBuilder.openFor(panelId, qbContextKey);
+  }, [queryBuilder, panelId, qbContextKey]);
+
+  // The selectors remain available while Builder is open. Rebind synchronously
+  // before paint so the Pro controller destroys the old draft before the panel
+  // can render or commit it using the newly selected database/schema props.
+  useLayoutEffect(() => {
+    if (!qbOpen || !queryBuilder) return;
+    const bound = boundQbContextRef.current;
+    if (
+      bound?.contribution === queryBuilder &&
+      bound.panelId === panelId &&
+      bound.contextKey === qbContextKey
+    ) {
+      return;
+    }
+    openQbForCurrentContext();
+  }, [qbOpen, queryBuilder, panelId, qbContextKey, openQbForCurrentContext]);
 
   // Non-blocking confirmation that the SQL landed in the editor.
   const [qbToast, setQbToast] = useState<string | null>(null);
@@ -250,15 +290,9 @@ export function QueryEditorSection({
     if (qbOpen) {
       queryBuilder?.hideFor();
     } else {
-      const contextKey = JSON.stringify([
-        connectionId ?? '',
-        dbSessionId,
-        selectedDatabase ?? '',
-        selectedSchema ?? '',
-      ]);
-      queryBuilder?.openFor(panelId, contextKey);
+      openQbForCurrentContext();
     }
-  }, [qbOpen, queryBuilder, panelId, connectionId, dbSessionId, selectedDatabase, selectedSchema]);
+  }, [qbOpen, queryBuilder, openQbForCurrentContext]);
 
   /** OK: write the generated SQL back, close, and focus the editor. */
   const handleQbCommit = useCallback(
