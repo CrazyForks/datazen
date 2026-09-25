@@ -172,7 +172,97 @@ impl SyncSourceAdapter for PgSyncAdapter {
              FROM pg_catalog.pg_constraint con \
              WHERE con.conrelid = '{escaped}'::regclass AND con.contype = 'f' \
                AND (con.confmatchtype <> 's' OR NOT con.convalidated \
-                    OR NULLIF(to_jsonb(con)->>'confdelsetcols', 'null') IS NOT NULL)"
+                    OR NULLIF(to_jsonb(con)->>'confdelsetcols', 'null') IS NOT NULL) \
+             UNION ALL \
+             SELECT format('sequence on column %I (unowned, shared, or non-default sequence options)', a.attname)::text \
+             FROM pg_catalog.pg_attribute a \
+             LEFT JOIN pg_catalog.pg_attrdef ad \
+               ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+             CROSS JOIN LATERAL ( \
+               SELECT pg_get_expr(ad.adbin, ad.adrelid) AS expression \
+             ) default_expression \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.refobjid)::integer AS sequence_count, \
+                      (array_agg(DISTINCT d.refobjid))[1] AS sequence_oid \
+               FROM pg_catalog.pg_depend d \
+               JOIN pg_catalog.pg_class candidate_seq \
+                 ON candidate_seq.oid = d.refobjid AND candidate_seq.relkind = 'S' \
+               WHERE d.classid = 'pg_attrdef'::regclass AND d.objid = ad.oid \
+                 AND d.refclassid = 'pg_class'::regclass \
+             ) default_sequence ON true \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.objid)::integer AS sequence_count, \
+                      (array_agg(DISTINCT d.objid))[1] AS sequence_oid \
+               FROM pg_catalog.pg_depend d \
+               JOIN pg_catalog.pg_class candidate_seq \
+                 ON candidate_seq.oid = d.objid AND candidate_seq.relkind = 'S' \
+               WHERE d.classid = 'pg_class'::regclass AND d.objsubid = 0 \
+                 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.refobjid = a.attrelid AND d.refobjsubid = a.attnum \
+                 AND d.deptype IN ('a', 'i') \
+             ) owned_sequence ON true \
+             CROSS JOIN LATERAL ( \
+               SELECT CASE WHEN COALESCE(to_jsonb(a)->>'attidentity', '') <> '' \
+                           THEN owned_sequence.sequence_oid \
+                           ELSE default_sequence.sequence_oid END AS sequence_oid \
+             ) sequence_candidate \
+             LEFT JOIN pg_catalog.pg_class seq \
+               ON seq.oid = sequence_candidate.sequence_oid AND seq.relkind = 'S' \
+             LEFT JOIN pg_catalog.pg_sequence seq_options ON seq_options.seqrelid = seq.oid \
+             LEFT JOIN LATERAL ( \
+               SELECT count(*)::integer AS owner_count, \
+                      bool_or(d.refobjid = a.attrelid AND d.refobjsubid = a.attnum) AS owner_matches_column, \
+                      bool_or(d.deptype = 'a') AS has_auto_owner, \
+                      bool_or(d.deptype = 'i') AS has_internal_owner \
+               FROM pg_catalog.pg_depend d \
+               WHERE d.classid = 'pg_class'::regclass AND d.objid = seq.oid \
+                 AND d.objsubid = 0 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.deptype IN ('a', 'i') \
+             ) sequence_owners ON true \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.objid)::integer AS default_count, \
+                      bool_or(d.objid = ad.oid) AS includes_current_default \
+               FROM pg_catalog.pg_depend d \
+               WHERE d.classid = 'pg_attrdef'::regclass \
+                 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.refobjid = seq.oid \
+             ) sequence_defaults ON true \
+             WHERE a.attrelid = '{escaped}'::regclass AND a.attnum > 0 \
+               AND NOT a.attisdropped \
+               AND (COALESCE(to_jsonb(a)->>'attidentity', '') <> '' \
+                    OR COALESCE(lower(default_expression.expression), '') LIKE '%nextval(%') \
+               AND (sequence_candidate.sequence_oid IS NULL \
+                    OR seq.oid IS NULL \
+                    OR (CASE WHEN COALESCE(to_jsonb(a)->>'attidentity', '') <> '' THEN \
+                           owned_sequence.sequence_count <> 1 \
+                           OR sequence_defaults.default_count <> 0 \
+                         ELSE default_sequence.sequence_count <> 1 \
+                           OR owned_sequence.sequence_count <> 1 \
+                           OR owned_sequence.sequence_oid IS DISTINCT FROM default_sequence.sequence_oid \
+                           OR sequence_defaults.default_count <> 1 \
+                           OR sequence_defaults.includes_current_default IS DISTINCT FROM true \
+                           OR lower(default_expression.expression) NOT LIKE 'nextval(%::regclass)' \
+                           OR length(lower(default_expression.expression)) \
+                              - length(replace(lower(default_expression.expression), 'nextval(', '')) \
+                              <> length('nextval(') \
+                         END) \
+                    OR sequence_owners.owner_count <> 1 \
+                    OR sequence_owners.owner_matches_column IS DISTINCT FROM true \
+                    OR sequence_owners.has_auto_owner IS DISTINCT FROM \
+                       (COALESCE(to_jsonb(a)->>'attidentity', '') = '') \
+                    OR sequence_owners.has_internal_owner IS DISTINCT FROM \
+                       (COALESCE(to_jsonb(a)->>'attidentity', '') <> '') \
+                    OR seq_options.seqtypid IS DISTINCT FROM a.atttypid \
+                    OR seq_options.seqstart IS DISTINCT FROM 1 \
+                    OR seq_options.seqincrement IS DISTINCT FROM 1 \
+                    OR seq_options.seqmin IS DISTINCT FROM 1 \
+                    OR seq_options.seqmax IS DISTINCT FROM CASE a.atttypid \
+                         WHEN 'smallint'::regtype THEN 32767::bigint \
+                         WHEN 'integer'::regtype THEN 2147483647::bigint \
+                         WHEN 'bigint'::regtype THEN 9223372036854775807::bigint \
+                         ELSE NULL::bigint END \
+                    OR seq_options.seqcache IS DISTINCT FROM 1 \
+                    OR seq_options.seqcycle IS DISTINCT FROM false)"
         ))
     }
 
@@ -597,5 +687,34 @@ mod tests {
         assert!(!adapter.index_names_are_table_scoped());
         assert!(adapter.foreign_key_names_are_table_scoped());
         assert!(adapter.object_names_are_case_sensitive());
+    }
+
+    #[test]
+    fn test_tester_pg_structure_preflight_covers_sequence_ownership_and_options() {
+        let query = PgSyncAdapter
+            .unsupported_transfer_structure_query("application", Some("public"), "users")
+            .expect("PostgreSQL structure preflight");
+        let lower = query.to_ascii_lowercase();
+        for required_catalog_evidence in [
+            "pg_depend",
+            "pg_sequence",
+            "deptype in ('a', 'i')",
+            "sequence_defaults.default_count <> 1",
+            "sequence_owners.owner_count <> 1",
+            "sequence_owners.owner_matches_column",
+            "seqtypid",
+            "seqstart",
+            "seqincrement",
+            "seqmin",
+            "seqmax",
+            "seqcache",
+            "seqcycle",
+            "nextval(",
+        ] {
+            assert!(
+                lower.contains(required_catalog_evidence),
+                "sequence structure preflight must inspect {required_catalog_evidence} so custom, shared, or non-default sequences are rejected before DDL"
+            );
+        }
     }
 }
