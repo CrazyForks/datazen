@@ -1,6 +1,6 @@
 # migration-schema-unified-planner
 
-- Phase: FAILED
+- Phase: TEST_DONE / PASSED
 
 - Task: One reviewed Schema Diff deployment plan across selected object kinds
 - Branch: `feature/migration-schema-unified-planner`
@@ -22,8 +22,8 @@ An unselected dependency may be accepted only when the target snapshot proves it
 - [x] Apply order is deterministic and topological across kinds; rollback is a safe reverse order only when the renderer supplies verified rollback SQL.
 - [x] Existing review confirmation, destructive approval, plan fingerprinting, source/target schema revalidation, and unknown transaction outcome behavior cover the unified plan.
 - [x] Unit tests cover type→table→FK→view/routine→trigger chains, existing-target dependencies, cross-kind replacements/drops, cycles, missing/ambiguous nodes, stale snapshots, and partial rollback availability.
-- [ ] PostgreSQL and MySQL WDIO journeys create and drop a mixed object chain through one reviewed plan, read back the deployed objects, and prove invalid graphs write nothing.
-- [ ] Changed-core coverage reaches at least 80%; independent Tester to measure after integration.
+- [x] PostgreSQL and MySQL WDIO journeys create and drop a mixed object chain through one reviewed plan, read back the deployed objects, and prove invalid graphs write nothing.
+- [x] Changed-core line coverage reaches at least 80%; R11 measured both changed Driver API files above 80%. The command file's separate region coverage is 78.04% and is recorded in the R11 report.
 
 ## Implementation notes
 
@@ -207,3 +207,11 @@ The fresh round-2 tester confirmed the PostgreSQL fix in `b36a2bee` with both li
 - Independent review registered **BUG-007 (P1)**: `INFORMATION_SCHEMA.VIEWS` and `SHOW CREATE VIEW` were read separately; only the query body was compared, so a metadata-only ALTER VIEW could mix creation semantics across reads and incorrectly pass the renderer gate.
 - R5 added WDIO assertions for a real MySQL target-side view SELECT/readback, the exact mapped target dependency blocker with zero statements/writes, and a `WITH CASCADED CHECK OPTION` negative journey. Prettier and `git diff --check` passed. E2E TypeScript checking still reports existing suite-wide errors but none in the changed spec.
 - R5 did not build or launch the app after finding BUG-007. The 13 legacy `.profraw` files remain untouched. Independent runtime verification must be repeated with a new Tester after the fix.
+
+### Fresh Tester R11 unified-planner result · 2026-09-25 · `TEST_DONE / PASSED`
+
+- Independently reviewed the BUG-008 fix (`1369db7`) and verified it with a newly built webdriver app. The focused MySQL CHECK OPTION journey reached and asserted the metadata blocker, empty plan, disabled deploy, and zero target objects; its exact source/target cleanup was 0/0 and both temporary connection configs were removed.
+- The complete six-journey WDIO suite passed 6/6: PostgreSQL positive deploy/readback and missing-dependency zero-write; MySQL positive mixed-chain plan/deploy/readback and target `SELECT`, exact missing-dependency zero-write, four-kind catalog smoke, and CHECK OPTION metadata blocker. Every journey asserted exact source/target cleanup 0/0.
+- Driver API tests passed 198/198. On the merged R11 test commit, isolated LLVM line coverage measured `schema_object_commands.rs` at 556/677 (82.13%) and `mysql_view_metadata.rs` at 274/334 (82.04%). `execute_object_dependencies` is 74/74 lines in its tested driver instantiation. The full command file has 78.04% region coverage, recorded separately as below 80%; the changed-core line-coverage gate passes. Only 11 R11 profiles were merged; R10 and the 13 root `.profraw` files were untouched.
+- BUG-007 and BUG-008 are closed by the R11 live assertions and preserved external-identity regressions. BUG-009's R8 functional verification remains intact and its coverage gate now passes on the R11 line result. Required webdriver build produced the binary and `.app`; only excluded DMG packaging returned nonzero. The app is stopped while the R11 binary, `.app`, and logs remain local.
+- All listed acceptance criteria pass. The unified-planner track is `TEST_DONE / PASSED`; exact test commands, build scope, cleanup, and coverage limitations are in [round-11 report](test-results/unified-planner-retest-r11.md).

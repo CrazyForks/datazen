@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-008 · MySQL view body consistency check rejects same-database qualification normalization
 
 - **严重度**：P1（阻断）
-- **状态**：普通别名视图路径已修复并经 R8 独立验证；R10 发现未别名列引用仍保留本数据库限定符，待补充修复及复验
+- **状态**：普通别名与未别名列引用已修复，并经 Fresh Tester R11 的六个 live journeys 独立验证
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; BUG-007 `VIEW_DEFINITION` / `SHOW CREATE VIEW` query-body comparison
 
 ## 描述与重现
@@ -62,3 +62,10 @@ The failure is reproducible for a standard view over same-database tables. MySQL
 - `mysql_view_query_bodies_match` currently removes the exact source database only from a two-part relation node, so it leaves the database component in compound column identifiers. `get_object_ddl` rejects the otherwise matching body before the planner can classify the CASCADED metadata. This is a remaining BUG-008 defect; preserve exact external database identity while normalizing this additional AST form.
 - The five other live WDIO journeys passed, including ordinary aliased MySQL views; the CHECK OPTION case failed before planning. Its fixture cleanup asserted source/target `0/0` and removed both connection configurations.
 - R10 coverage: `mysql_view_query_bodies_match` 14/15 executable lines and `mysql_view_metadata.rs` 235/278 lines (84.53%). The complete `schema_object_commands.rs` file remains below the 80% gate at 513/677 lines (75.78%). Keep that gate open for targeted tests of the uncovered command paths.
+
+## Fresh Tester R11 evidence
+
+- Reviewed fix `1369db7`: it normalizes only the exact source database qualifier in relation nodes, three-part column identifiers, and qualified wildcards. Regressions cover local qualification, unchanged external database references, and external-to-local changes; no additional correctness defect was found.
+- The focused live unaliased CHECK OPTION view now passes DDL extraction and reaches the planner metadata blocker. The full six-journey WDIO suite passed 6/6, including both ordinary MySQL view planner journeys and the CHECK OPTION no-write case. All fixture cleanups were exactly `0/0`.
+- R11 Driver API line coverage is 274/334 (82.04%) for `mysql_view_metadata.rs`; the matching helper is 14/15 lines (93.33%). The related `schema_object_commands.rs` file is 556/677 lines (82.13%). See [round-11 report](../test-results/unified-planner-retest-r11.md), which separately records the command file's 78.04% region result.
+- BUG-008 is closed as independently fixed and verified.

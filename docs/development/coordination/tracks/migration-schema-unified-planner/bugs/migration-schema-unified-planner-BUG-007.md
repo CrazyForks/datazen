@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-007 · MySQL view metadata can mix two catalog moments
 
 - **严重度**：P1（阻断）
-- **状态**：一致性与后缀解析修复已合入；Fresh Tester R10 在到达元数据阻断前遇到 BUG-008 的三段列标识归一化失败，保持待修复及复验
+- **状态**：一致性与后缀解析修复已合入并经 Fresh Tester R11 独立验证；CHECK OPTION 视图在部署前阻断且目标无写入
 - **涉及范围**：Driver API MySQL `get_object_ddl` view metadata extraction; unified planner source snapshot
 
 ## 描述
@@ -59,3 +59,9 @@
 - The fixture body comparison failure is tracked as a remaining BUG-008 normalization case: `VIEW_DEFINITION` qualifies each column as `source_db.table.column` and `SHOW CREATE VIEW` emits `table.column`. The failure occurred before the planner metadata blocker, empty-plan check, disabled-deploy check, and explicit zero-write assertion. No planner plan or deploy was issued; exact source/target cleanup was `0/0` and both temporary connection configurations were removed.
 - The complete six-journey WDIO suite passed 5/6; the other five journeys, including ordinary MySQL view planning and deployment, passed. The check-option fixture is the only remaining functional failure on this build.
 - See the [round-10 retest report](../test-results/unified-planner-retest-r10.md). BUG-007 remains open until a fresh run reaches and asserts the metadata blocker and zero-write condition.
+
+## Fresh Tester R11 evidence
+
+- On the fresh post-fix app, the live source catalog returned the fixture view with `CHECK_OPTION=CASCADED`, and `SHOW CREATE VIEW` contained the CASCADED suffix. `get_object_ddl` returned the consistent view snapshot after BUG-008's source-qualifier normalization.
+- The focused WDIO journey reached the non-default-creation-semantics requirement, asserted an empty plan, confirmed deploy was disabled, and observed zero target fixture objects before cleanup. The full six-journey suite repeated the same case successfully. Exact source/target cleanup was `0/0` and both temporary connection configurations were deleted.
+- This closes BUG-007's live blocker and zero-write verification. See the [round-11 retest report](../test-results/unified-planner-retest-r11.md).

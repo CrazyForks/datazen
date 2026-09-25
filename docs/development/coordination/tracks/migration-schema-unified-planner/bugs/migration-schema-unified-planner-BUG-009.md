@@ -1,7 +1,7 @@
 # migration-schema-unified-planner-BUG-009 · MySQL table dependency catalog is incomplete
 
 - **严重度**：P1（阻断）
-- **状态**：修复已提交 `b849a774` 并经 Fresh Tester R8 功能验证；R10 命令路径覆盖率仍略低于 80% gate
+- **状态**：修复已提交 `b849a774` 并经 Fresh Tester R8 功能验证；R11 独立 Driver API line coverage 关闭 80% gate
 - **涉及范围**：MySQL driver `get_object_dependencies` for tables; unified planner source dependency validation
 
 ## 描述与重现
@@ -58,3 +58,8 @@ The normal MySQL positive mixed-chain journey therefore cannot reach a reviewed 
 
 - The updated, isolated API-unit coverage run passed 191/191 and measured the MySQL table success/visibility path added for BUG-009. `execute_object_dependencies` is 59/74 lines (79.73%); the full `schema_object_commands.rs` file is 513/677 (75.78%). The dispatcher remains just below the function threshold and the complete changed file is below the 80% gate.
 - Uncovered production paths include PostgreSQL object dispatch and sequence usage, MySQL view visibility, and empty optional schema/target-name filters. Exact uncovered line groups and scope are in the [round-10 retest report](../test-results/unified-planner-retest-r10.md). Keep the coverage gate open for meaningful tests; the R8 live functional verification of BUG-009 remains valid.
+
+## Fresh Tester R11 coverage evidence
+
+- The R8 live IPC, opt-in MySQL dependency fixture, and mixed-plan functional verification remain unchanged and valid. On the merged R11 test commit, `execute_object_dependencies` is 74/74 lines in its tested driver instantiation; the complete `schema_object_commands.rs` file is 556/677 lines (82.13%). This closes the 80% line-coverage gate for the changed command module.
+- The full command file's region coverage is 78.04%, which remains below 80 and is reported separately; it is not presented as line coverage. The focused line and region scopes are documented in the [round-11 retest report](../test-results/unified-planner-retest-r11.md).
