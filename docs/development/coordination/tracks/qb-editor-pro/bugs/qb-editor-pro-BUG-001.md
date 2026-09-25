@@ -24,3 +24,7 @@
 - Host `npx vitest run` 全量通过（456 files / 4,514 tests），包括 `QueryEditorSection.qbContext.test.tsx`；Host `npx tsc --noEmit` 通过。
 - 使用当前源码重新构建 macOS Pro WebDriver app 后运行 `node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder`，4 specs / 22 tests 通过。新 app 时间戳晚于本轮 Host `dist/index.html`；完整结果见 track progress。
 - 本 bug 独立复测通过，状态为已修复。发现的远端 Pro lock 可达性问题另行登记为 `qb-editor-pro-BUG-002`。
+
+## 复核记录（round-3）
+
+- 再次独立运行 `npx vitest run src/windows/connection/query/__tests__/QueryEditorSection.qbContext.test.tsx`：1 file / 1 test 通过；BUG-001 回归测试仍通过。

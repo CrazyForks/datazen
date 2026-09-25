@@ -1,5 +1,5 @@
 - 任务：将 Visual Query Builder 实现、私有状态、单测与 WebDriver journeys 迁入独立 SQL Editor Pro；Host 保留公共契约、Query tab 适配与容器。
-- 状态：READY_FOR_TEST（Round 2 的上游 Pro ref 阻塞已修复；等待 fresh Tester Round 3 复核）
+- 状态：TEST_DONE（Round 3 独立验证通过；Pro release pin 可从配置的远端干净解析，BUG-001 回归测试仍通过）
 - 初始迁移编码 commit：Host `497accbd665519d67a07cec83b19d44c90e0cdbf`；Pro `e87541fed6759d79971a4e8e9cfc01d3b9ba4a7b`
 - Tester bug/test commit：Host `075ed41d76b87084563e5704abf6e5330a04b176`
 - Tester 收尾 commit：Host `fe92c2d650cf73336b41cc0f9e669645bd7b1a09`
@@ -100,3 +100,12 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - 本轮独立重建当前源码的 macOS Pro WebDriver app：官方 `node e2e/run.mjs --pro -- --suite pro-query-builder` runner 通过；因 pnpm 的无 TTY 自动安装问题，将 `beforeBuildCommand` 临时改为 locale/menu 生成、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，Tauri 配置在运行完成后 byte-for-byte 恢复。Tauri webdriver app build 成功，`node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` 4 specs / 22 tests 通过，worker database teardown 完成。旧二进制单独复跑也通过，但早于 BUG-001 commit；只将新建 app 的结果计入修复复验。
 - **Round 2 历史判定：`TEST_FAILED`，BUG-002。** 当时独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 main；隔离 clone 无法 checkout Host lock pin。Bug 报告 commit：`7fb60778e`。该阻塞已在 Round 3 将同一 Pro commit 发布到 lock 配置的 feature branch 并通过 clean resolver clone 验证，详见上方。
 - 仍未独立验证的发布项：Community Tauri 完整构建、普通 Query 执行 E2E、`e2e:qb:regression`、完整 Pro release build、Windows/Linux release build、正式签名凭据、最终签名 manifest/bundle hash 与远端发布。
+
+## Tester 独立复验（Round 3）
+
+- Host lock 精确内容：`git=https://github.com/flyxl/datazen-extension-sql-editor-pro.git`，`ref=2a45c90f28041e81c948e67b9416fade8ac5472f`；与 Pro 分支 `codex/qb-editor-pro` HEAD 一致。
+- 独立 `git ls-remote --heads <lock.git> refs/heads/codex/qb-editor-pro refs/heads/main` 返回 feature ref=`2a45c90f28041e81c948e67b9416fade8ac5472f`、main=`c60f7fc8e1d552c6a37d3f70128d9c8e42555750`。只发布并更新 feature branch，main 未变。
+- 从 Host lock 读取 URL/ref，独立调用 `scripts/resolve-pro.mjs` 的真实 `ensureProCheckout` 在新临时目录 clone + detached checkout；返回 `HEAD=2a45c90f28041e81c948e67b9416fade8ac5472f`，与 lock 完全相同；`git status --porcelain` 为空，验证后已清理临时 clone。
+- BUG-001 focused regression：`npx vitest run src/windows/connection/query/__tests__/QueryEditorSection.qbContext.test.tsx` — 1 file / 1 test 通过。
+- 前两轮 Host 全量单测（456 files / 4,514 tests）、Pro 全量单测（62 files / 774 tests）、Host/Pro TypeScript 检查、Panel（83.88%）及 DiagramCanvas（96.72%）行覆盖率、以及当前源码重建后 Pro WebDriver journey（4 specs / 22 tests）结果仍对应当前代码：Host 业务源码提交仍为 `d1c44f3cedf3d4685e8d767e698258edeb89bee9`，Pro 源码 HEAD 仍为 `2a45c90f28041e81c948e67b9416fade8ac5472f`；两者后续仅 Host 追踪文档提交，没有源码变更。Pro bundle、TypeScript 与 E2E 对应源码 commit 均未变化。
+- 当前 Host 工作树只有临时未跟踪实现说明 `query-builder-editor-pro-implementation.md`；Pro 工作树 clean。Host `git diff --check d1c44f3..HEAD` 与 Pro `git diff --check e87541f..HEAD` 通过。全仓历史 i18n 缺口和未覆盖的发行构建门槛仍按前文记录，不计作本轮 pin gate 通过。
