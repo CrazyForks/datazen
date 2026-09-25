@@ -103,6 +103,7 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 
 ## Tester 独立复验（Round 3）
 
+- Round 3 独立复验报告 commit：Host `eb409fc1ca63855a631ca5df8b5fc336f05e044b`。
 - Host lock 精确内容：`git=https://github.com/flyxl/datazen-extension-sql-editor-pro.git`，`ref=2a45c90f28041e81c948e67b9416fade8ac5472f`；与 Pro 分支 `codex/qb-editor-pro` HEAD 一致。
 - 独立 `git ls-remote --heads <lock.git> refs/heads/codex/qb-editor-pro refs/heads/main` 返回 feature ref=`2a45c90f28041e81c948e67b9416fade8ac5472f`、main=`c60f7fc8e1d552c6a37d3f70128d9c8e42555750`。只发布并更新 feature branch，main 未变。
 - 从 Host lock 读取 URL/ref，独立调用 `scripts/resolve-pro.mjs` 的真实 `ensureProCheckout` 在新临时目录 clone + detached checkout；返回 `HEAD=2a45c90f28041e81c948e67b9416fade8ac5472f`，与 lock 完全相同；`git status --porcelain` 为空，验证后已清理临时 clone。
