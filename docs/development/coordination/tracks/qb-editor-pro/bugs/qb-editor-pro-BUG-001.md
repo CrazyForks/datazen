@@ -1,7 +1,7 @@
 # qb-editor-pro-BUG-001 · Builder context changes do not invalidate the open draft
 
 - **严重度**：P1
-- **状态**：已修复，待 Tester 复测
+- **状态**：已修复
 - **涉及文件**：`src/windows/connection/query/QueryEditorSection.tsx`、`src/windows/connection/query/QueryBuilderHostAdapter.tsx`、`packages/pro-extensions/sql-editor-pro/src/query-builder/contribution.tsx`
 - **描述**：Query tab 的 database/schema selector 在 Builder 打开时仍可操作；切换后 React 将新的 database/schema/catalog props 传给已打开的 Pro panel，但 Host 没有用新的 context key 再调用 `queryBuilder.openFor(panelId, contextKey)`。`openFor` 是清理该 panel 旧会话的唯一入口，因此画布仍保留旧 database/schema 下的 tables、joins、conditions 和 selections，却按新 context 加载元数据并生成 SQL。相同表名在新库存在时，用户可能把旧画布内容写进针对新库的编辑器语句。
 - **重现步骤**：
@@ -17,3 +17,10 @@
 - Host 回归测试 `QueryEditorSection.qbContext.test.tsx` 通过（1/1）；Query 目录单测通过（7 files / 125 tests）；Pro contribution lifecycle 测试在 Pro 全量套件内通过。
 - Pro WebDriver QB suite 以当前 Host 源码重建后通过（4 specs / 22 tests）。
 - 当前状态等待独立 Tester Round 2 复核。
+
+## 复测记录（round-2）
+
+- 独立复核 `QueryEditorSection` 在 Builder 打开时监听 connection/session/database/schema context；`useLayoutEffect` 在 Pro panel 新 props 绘制前调用 `openFor`。Pro controller 对变化的 context key 执行 `destroyFor(panelId)` 后重新打开，丢弃旧草稿；tab 销毁仍由 `ContentView` 调用 `destroyFor`。
+- Host `npx vitest run` 全量通过（456 files / 4,514 tests），包括 `QueryEditorSection.qbContext.test.tsx`；Host `npx tsc --noEmit` 通过。
+- 使用当前源码重新构建 macOS Pro WebDriver app 后运行 `node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder`，4 specs / 22 tests 通过。新 app 时间戳晚于本轮 Host `dist/index.html`；完整结果见 track progress。
+- 本 bug 独立复测通过，状态为已修复。发现的远端 Pro lock 可达性问题另行登记为 `qb-editor-pro-BUG-002`。

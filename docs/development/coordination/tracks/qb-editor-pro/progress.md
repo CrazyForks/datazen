@@ -1,5 +1,5 @@
 - 任务：将 Visual Query Builder 实现、私有状态、单测与 WebDriver journeys 迁入独立 SQL Editor Pro；Host 保留公共契约、Query tab 适配与容器。
-- 状态：READY_FOR_TEST（Round 1 的 BUG-001 与 UI 覆盖率问题已修复，等待 Tester Round 2）
+- 状态：FAILED（Round 2 独立测试通过；发现 Pro release lock 指向上游不可达 revision，见 BUG-002）
 - 初始迁移编码 commit：Host `497accbd665519d67a07cec83b19d44c90e0cdbf`；Pro `e87541fed6759d79971a4e8e9cfc01d3b9ba4a7b`
 - Tester bug/test commit：Host `075ed41d76b87084563e5704abf6e5330a04b176`
 - Tester 收尾 commit：Host `fe92c2d650cf73336b41cc0f9e669645bd7b1a09`
@@ -82,4 +82,14 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 
 ## Tester 与 Bug 记录
 
-第 1 轮 Tester 判定：`TEST_FAILED`。Bug：`bugs/qb-editor-pro-BUG-001.md`。Coder 已完成 Round 2 修复与自验，当前状态 `READY_FOR_TEST`，等待独立 Tester 复核；本轮未标记为 `PASSED`。
+第 1 轮 Tester 判定：`TEST_FAILED`。BUG-001 已由 Round 2 独立复测确认修复。
+
+## Tester 独立复验（Round 2）
+
+- Host commit `d1c44f3cedf3d4685e8d767e698258edeb89bee9` 与 Pro commit `2a45c90f28041e81c948e67b9416fade8ac5472f` 已核对；Host `pro-extension.lock.json` ref 与 Pro HEAD 完全一致。本轮 Pro 工作树干净；Host 仅有未跟踪临时实现说明 `query-builder-editor-pro-implementation.md`，两仓 `git diff --check` 通过。
+- `node scripts/generate-builtin-locales.mjs`：通过。Host `npx vitest run`：456 files / 4,514 tests 通过；`npx tsc --noEmit` 与 `node scripts/check-module-layers.mjs` 通过。Pro `npx vitest run`：62 files / 774 tests 通过；Pro `npx tsc --noEmit` 与 `npx tsc --noEmit -p e2e/tsconfig.json` 通过。
+- 覆盖率使用 Round 1 原始 include scope：`npx vitest run --coverage --coverage.include='src/components/query-builder/**/*.ts' --coverage.include='src/components/query-builder/**/*.tsx' --coverage.include='src/query-builder/**/*.ts' --coverage.include='src/query-builder/**/*.tsx' --coverage.include='src/stores/queryBuilderStore.ts' --coverage.include='src/lib/sqlDialects/queryBuilder.ts' --coverage.reporter=json --coverage.reporter=text`。总行覆盖率 88.72%；`QueryBuilderPanel.tsx` 83.88%（Round 1：76.85%）；`DiagramCanvas.tsx` 96.72%（Round 1：64.75%）。两项均达到 ≥80%。
+- Pro `npx vite build` 通过，生产 bundle 不含 `__qbTest`、`__qbStore`、`@host/` 或裸 external imports，并引用 `globalThis.__DATAZEN_HOST__` singleton。构建存在现有 host-globals sourcemap 提示。
+- 本轮独立重建当前源码的 macOS Pro WebDriver app：官方 `node e2e/run.mjs --pro -- --suite pro-query-builder` runner 通过；因 pnpm 的无 TTY 自动安装问题，将 `beforeBuildCommand` 临时改为 locale/menu 生成、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，Tauri 配置在运行完成后 byte-for-byte 恢复。Tauri webdriver app build 成功，`node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` 4 specs / 22 tests 通过，worker database teardown 完成。旧二进制单独复跑也通过，但早于 BUG-001 commit；只将新建 app 的结果计入修复复验。
+- **Round 2 判定：`TEST_FAILED`，BUG-002。** 独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 `main` / `HEAD`=`c60f7fc8e1d552c6a37d3f70128d9c8e42555750`。在隔离临时目录克隆该上游后，checkout Host lock pin `2a45c90f28041e81c948e67b9416fade8ac5472f` 得到 `fatal: reference is not a tree`。标准干净 Pro release checkout 因此无法完成。Bug 报告 commit：`7fb60778e`。必须先发布 Pro commit 至配置的上游，或将 lock 改为预期发布源可达的 revision，再启动新 Tester 全量复测。
+- 仍未独立验证的发布项：Community Tauri 完整构建、普通 Query 执行 E2E、`e2e:qb:regression`、完整 Pro release build、Windows/Linux release build、正式签名凭据、最终签名 manifest/bundle hash 与远端发布。
