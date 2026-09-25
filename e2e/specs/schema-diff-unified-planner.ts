@@ -436,6 +436,7 @@ async function assertSourceViewCatalog(fixture: Fixture) {
   let driverMatches = 0;
   let catalogError = '';
   let ddlContainsSemicolon: boolean | null = null;
+  let ddlLength = 0;
   let ddlError = '';
   let viewDefinitionLength: number | null = null;
   let viewDefinitionError = '';
@@ -455,6 +456,7 @@ async function assertSourceViewCatalog(fixture: Fixture) {
         name: fixture.view,
         schema: fixture.dialect === 'postgresql' ? 'public' : null,
       });
+      ddlLength = ddl.trim().length;
       ddlContainsSemicolon = ddl.includes(';');
     } catch (error) {
       ddlContainsSemicolon = null;
@@ -476,11 +478,14 @@ async function assertSourceViewCatalog(fixture: Fixture) {
   }
   const safeError = sanitizeFixtureDiagnostic(catalogError);
   console.log(
-    `[SD-UNIFIED] source catalog dialect=${fixture.dialect} view_information_schema=${infoSchemaCount} view_raw_list_matches=${rawListMatches} view_driver_matches=${driverMatches} view_driver_error=${safeError || 'none'} ddl_contains_semicolon=${ddlContainsSemicolon} ddl_error=${sanitizeFixtureDiagnostic(ddlError) || 'none'} view_definition_length=${viewDefinitionLength} view_definition_error=${sanitizeFixtureDiagnostic(viewDefinitionError) || 'none'} custom_type_column=${customTypeCatalog}`,
+    `[SD-UNIFIED] source catalog dialect=${fixture.dialect} view_information_schema=${infoSchemaCount} view_raw_list_matches=${rawListMatches} view_driver_matches=${driverMatches} view_driver_error=${safeError || 'none'} ddl_length=${ddlLength} ddl_contains_semicolon=${ddlContainsSemicolon} ddl_error=${sanitizeFixtureDiagnostic(ddlError) || 'none'} view_definition_length=${viewDefinitionLength} view_definition_error=${sanitizeFixtureDiagnostic(viewDefinitionError) || 'none'} custom_type_column=${customTypeCatalog}`,
   );
   expect(infoSchemaCount).toBe(1);
   expect(rawListMatches).toBe(1);
   expect(driverMatches).toBe(1);
+  // [tester] Prove Host get_object_ddl returns the view body, not just a visible catalog row.
+  expect(ddlError).toBe('');
+  expect(ddlLength).toBeGreaterThan(0);
 }
 
 async function cleanupFixture(fixture: Fixture, mainWindow: string) {
