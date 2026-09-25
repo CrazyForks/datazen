@@ -2,13 +2,13 @@
 
 # 数据迁移三件套交付跟踪
 
-范围仅包括 Data Sync、Data Transfer、Schema Diff。最后核对：2026-09-25。集成分支 `codex/migration-navicat` 当前为 `6210b2ec`，`main` 已是其祖先。当前仍有明确发布差距；Schema dependency DAG 已独立测试并合入，统一跨对象类型的 Schema Diff reviewed plan 正在独立 worktree 开发。DMG 打包按用户明确要求排除；Windows 迁移体验验证仍属于发布验收。
+范围仅包括 Data Sync、Data Transfer、Schema Diff。最后核对：2026-09-25。集成分支为 `codex/migration-navicat`，`main` 已是其祖先。Schema Unified Planner 已通过 R11 独立验证并合入；当前按序推进 Data Transfer 表内有界 checkpoint。DMG 打包按用户明确要求排除；Windows 迁移体验验证仍属于发布验收。
 
 ## 功能总览表
 
 | Track | 任务 | 状态 | 编码 Commit | 测试 Commit | 合并 Commit |
 |-------|------|------|------------|------------|------------|
-| migration-connection-view-contracts | — | **TEST_DONE / PASSED** | — | — | — |
+| migration-connection-view-contracts | — | TEST_DONE / PASSED | — | — | — |
 | migration-default-expression-review | — | PASSED | — | — | — |
 | migration-export-lossless | — | 未开始 | — | — | — |
 | migration-live-workflow-e2e | — | READY_TO_MERGE | — | — | — |
@@ -24,7 +24,7 @@
 | migration-schema-objects | — | READY_TO_MERGE | — | — | — |
 | migration-schema-profiles | — | PASSED / READY_TO_MERGE | — | — | — |
 | migration-schema-safety | — | READY_TO_MERGE | — | — | — |
-| migration-schema-unified-planner | One reviewed Schema Diff deployment plan across selected object kinds | ACTIVE | — | — | — |
+| migration-schema-unified-planner | One reviewed Schema Diff deployment plan across selected object kinds | TEST_DONE / PASSED | `1369db71` | `00ab5c48` | `b8a74681` |
 | migration-sequence | — | TEST_DONE | — | — | — |
 | migration-source-filters | — | 未开始 | — | — | — |
 | migration-sync-bounded | — | TEST_DONE | — | — | — |
@@ -49,6 +49,7 @@
 | migration-sync-unknown-outcome-reconciliation | classify Data Sync execution outcomes accurately and let users start a fresh, reviewable comparison from an unknown run | PASSED | — | — | — |
 | migration-table-options | — | PASSED | — | — | — |
 | migration-target-table-picker | — | READY_TO_MERGE | — | — | — |
+| migration-transfer-chunk-resume | bounded, resumable Data Transfer chunks within a table | PLANNED | — | — | — |
 | migration-transfer-core | — | PASSED | — | — | — |
 | migration-transfer-encoding | — | READY_TO_MERGE | — | — | — |
 | migration-transfer-plan | — | READY_TO_MERGE（BUG-001/002/003 已关闭） | — | — | — |
@@ -62,7 +63,7 @@
 
 | Track | 写锁代理 | Worktree | Branch | Phase | 最后心跳 |
 |-------|----------|----------|--------|-------|----------|
-| migration-connection-view-contracts | — | `.worktrees/datazen-migration-connection-view-contracts` | `feature/migration-connection-view-contracts`（基准 `codex/migration-navicat` @ `23a7c8a5`） | **TEST_DONE / PASSED** | — |
+| migration-connection-view-contracts | — | `.worktrees/datazen-migration-connection-view-contracts` | `feature/migration-connection-view-contracts`（基准 `codex/migration-navicat` @ `23a7c8a5`） | TEST_DONE / PASSED | — |
 | migration-default-expression-review | — | — | feature/migration-default-expression-review | PASSED | — |
 | migration-export-lossless | — | — | feature/migration-export-lossless | 未开始 | — |
 | migration-live-workflow-e2e | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-live-workflow-e2e` | `feature/migration-live-workflow-e2e` | READY_TO_MERGE | — |
@@ -78,7 +79,7 @@
 | migration-schema-objects | — | — | feature/migration-schema-objects | READY_TO_MERGE | — |
 | migration-schema-profiles | — | — | feature/migration-schema-profiles | PASSED / READY_TO_MERGE | — |
 | migration-schema-safety | — | — | feature/migration-schema-safety | READY_TO_MERGE | — |
-| migration-schema-unified-planner | — | `.worktrees/datazen-migration-schema-unified-planner` | `feature/migration-schema-unified-planner` | ACTIVE | — |
+| migration-schema-unified-planner | — | `.worktrees/datazen-migration-schema-unified-planner` | `feature/migration-schema-unified-planner` | TEST_DONE / PASSED | — |
 | migration-sequence | — | — | feature/migration-sequence | TEST_DONE | — |
 | migration-source-filters | — | — | feature/migration-source-filters | 未开始 | — |
 | migration-sync-bounded | — | — | feature/migration-sync-bounded | TEST_DONE | — |
@@ -103,6 +104,7 @@
 | migration-sync-unknown-outcome-reconciliation | — | `.worktrees/datazen-migration-sync-unknown-outcome-reconciliation` | `feature/migration-sync-unknown-outcome-reconciliation` | PASSED | — |
 | migration-table-options | — | — | feature/migration-table-options | PASSED | — |
 | migration-target-table-picker | — | — | feature/migration-target-table-picker | READY_TO_MERGE | — |
+| migration-transfer-chunk-resume | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume` | `feature/migration-transfer-chunk-resume` | PLANNED | — |
 | migration-transfer-core | — | .worktrees/datazen-migration-transfer-core | codex/migration-transfer-core | PASSED | — |
 | migration-transfer-encoding | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-encoding` | `feature/migration-transfer-encoding` | READY_TO_MERGE | — |
 | migration-transfer-plan | — | `.worktrees/datazen-migration-transfer-plan` | codex/migration-transfer-plan | READY_TO_MERGE（BUG-001/002/003 已关闭） | — |
@@ -118,11 +120,12 @@
 - Data Transfer 已覆盖跨方言参数化写入、过滤/映射、SQL 文件原子发布、结构依赖、复合 tuple recordset、profile、编码/压缩和表边界恢复点；未知结果 fencing 已由独立 WDIO 验证，未知结果会阻止后续写入并消费旧计划/恢复令牌。
 - Schema Diff 已覆盖目标专属对象选择、CHECK、MySQL/MariaDB 表选项、同方言视图、PG/MySQL routines/triggers、PG sequence 与 enum/domain/composite/range；没有可信语义或 renderer 的路径继续 fail closed。
 - Schema dependency DAG 已在 `6210b2ec` 合入。独立 R4 在获准的本机 PostgreSQL/MySQL 上串行通过 10/10 WDIO；Host Schema Diff 173、Driver API 156、PostgreSQL 132 + 真实 FK introspection 1、MySQL 116 + 跨库集成 4 均通过；改动生产行覆盖率 588/688（85.5%）。合入后的 `npx tsc --noEmit` 和 `cargo test -p datazen --lib` 通过，后者 1,925 passed / 3 ignored。MySQL 176 个 relation 的完整目录扫描约 1.19 秒，PG 两个 relation 的复核扫描 34 毫秒。
+- Schema Unified Planner 已完成：R11 新鲜 webdriver app 的六项 PG/MySQL WDIO 全部通过，含混合对象计划部署/读回、依赖阻断、CHECK OPTION 零写入；Driver API 198/198，关键命令文件行覆盖率 82.13%。
 - 既有验证：Vitest 482 个文件、4,986 项通过；Data Sync 4 个 spec / 56 项，Data Transfer 8 个 spec / 40 项，Schema Diff 7 个 spec / 38 项的真实数据库 WDIO 旅程通过。WebDriver 构建可产出可运行 app；DMG 阶段排除。
 
 ## 跨轨风险
 
-1. **Schema Diff 统一计划（当前轨）**：统一选择的表/FK、自定义类型、view、sequence、routine、trigger 操作到一个 reviewed plan，以精确结构化 identity 验证跨类依赖；不透明 SQL 依赖无法证明时必须阻断。沿用 stale-plan、destructive approval、fingerprint、rollback 和 unknown-outcome 规则，并通过 PG/MySQL 混合对象链路 WDIO 验收。
+1. **Data Transfer 表内恢复（当前轨）**：将恢复点推进到有界 chunk，固定稳定键序，只有明确确认目标事务提交后才推进 checkpoint；未知提交结果必须阻断后续写入并拒绝重放不确定 chunk。
 2. **Schema Diff 剩余能力**：SQLite table rebuild 与完整风险/rollback 尚未实现；跨方言 view/routine/trigger/type 语义转换、collation、partition、compression 等只有在驱动可证明时才可声明支持；需要补全每个注册驱动的对象目录和能力矩阵。
 3. **Data Sync 预览与驱动覆盖**：比较存储回收和大计划分页执行已实现；SQL preview 仍为明确拒绝超过 16 MiB 的 bounded IPC response。评估是否提供分页/导出预览，并验证 composite tuple 排序、snapshot/type 和 unknown-outcome reconciliation 对所有声明支持驱动成立；补录大迁移内存/压力结果。
 4. **Data Transfer 大表恢复与结构映射**：目前恢复 token 在已提交表边界，未支持表内有界 chunk；需证明未知 commit 后幂等恢复安全。tuple recordset 和所测路径的未知结果 fencing 已完成；仍需补足 database/schema、identity/generated 列、类型/表达式、索引/FK 的异构映射和明确阻断。
@@ -134,7 +137,7 @@
 - [x] Data Sync 与 Data Transfer 已有多页/tuple能力和已测试路径的未知事务结果安全门。
 - [x] Schema standalone dependency DAG、stale catalog 和 PostgreSQL reviewed-snapshot 修复已通过独立 WDIO 和覆盖率门槛。
 - [x] 当前集成点 Host TypeScript 与全量 Host Rust 单测通过。
-- [ ] 完成并独立复测统一跨对象类型的 Schema Diff reviewed plan。
+- [x] 统一跨对象类型的 Schema Diff reviewed plan 已经 R11 独立复测并合入。
 - [ ] 完成 SQLite rebuild/rollback 和适用的异构结构映射验证。
 - [ ] 完成剩余 Sync/Transfer driver coverage、preview 范围判断、表内 checkpoint 和大迁移性能/故障注入。
 - [ ] 运行完整三件套回归、各声明驱动能力矩阵与 Windows 验收。

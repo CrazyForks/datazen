@@ -1,6 +1,6 @@
 # Data migration trio release-gap plan
 
-Scope: Data Sync, Data Transfer, and Schema Diff. Integration branch: `codex/migration-navicat` at `6210b2ec` (2026-09-25); `main` is an ancestor. Only one product track is actively being implemented at a time, following the user's instruction. DMG packaging is excluded from the feature gate by the explicit user instruction recorded in `AGENTS.md`.
+Scope: Data Sync, Data Transfer, and Schema Diff. Integration branch: `codex/migration-navicat` (`main` is an ancestor). Last reviewed: 2026-09-25. Only one product track is actively being implemented at a time, following the user's instruction. DMG packaging is excluded from the feature gate by the explicit user instruction recorded in `AGENTS.md`.
 
 ## Delivered and verified
 
@@ -22,17 +22,17 @@ Scope: Data Sync, Data Transfer, and Schema Diff. Integration branch: `codex/mig
 
 - Reviewed table operations, CHECK constraints, supported table options, same-dialect views, supported PostgreSQL/MySQL routines/triggers, PostgreSQL sequences and custom types, target-only table selection, and fail-closed renderer/identity checks.
 - A typed deterministic dependency DAG now guards supported standalone planner boundaries. PostgreSQL/MySQL create/FK/drop ordering and post-review catalog changes passed 10/10 fresh WDIO journeys; changed executable production-line coverage is 588/688 (85.5%). The fix is merged as `6210b2ec`.
-- The independent dependency-DAG result does not create one plan across object kinds; see the active release gate below.
+- One Host-owned reviewed deployment plan now covers selected tables/FKs, custom types, views, sequences, routines, and triggers. R11 independently passed all six PostgreSQL/MySQL WDIO journeys, including mixed deploy/readback, exact dependency blockers, and a CHECK OPTION zero-write blocker; changed Driver API core files exceed 80% line coverage. See `tracks/migration-schema-unified-planner/progress.md` and `test-results/unified-planner-retest-r11.md`.
 
 ## Remaining work — execute serially
 
-### Active: `migration-schema-unified-planner`
+### Active: `migration-transfer-chunk-resume`
 
-Implement one Host-owned reviewed plan and deployment boundary for selected table/FK, custom type, view, sequence, routine, and trigger operations. Build from immutable source/target snapshots and typed identities; accept unselected dependencies only when the target snapshot proves them; opaque SQL dependencies that cannot be proven must block execution. Preserve deterministic apply order, safe renderer-backed rollback, review confirmation, destructive approval, plan fingerprints, stale snapshot checks, one-shot execution and unknown-outcome rules. Show the mixed order and actionable blockers in the UI. Verify PostgreSQL and MySQL mixed-kind deploy/readback and invalid graphs with no writes. Detailed scope and acceptance are in `tracks/migration-schema-unified-planner/progress.md`.
+Extend Transfer's committed table-boundary resume to safe, bounded in-table checkpoints. Freeze the row-order/key contract in the reviewed plan, persist a checkpoint only after an acknowledged target commit, and define retry behavior for lost commit acknowledgements so unknown writes cannot be replayed. Prove the behavior on PostgreSQL and MySQL with large fixtures, interruption at chunk boundaries, exact target readback, plan/checkpoint replay rejection, and cleanup. Keep unsupported ordering or drivers without a stable key fail-closed. Track-specific scope and acceptance will be recorded in its own worktree before implementation.
 
 ### Later tracks, one at a time
 
-1. **Data Transfer:** extend safe table-boundary resume to bounded in-table checkpoints, proving idempotency and behavior after unknown commits. Complete explicit heterogeneous structure mapping for database/schema paths, generated/identity columns, types/expressions, indexes, and foreign keys. Preserve tuple recordsets already implemented.
+1. **Data Transfer:** complete explicit heterogeneous structure mapping for database/schema paths, generated/identity columns, types/expressions, indexes, and foreign keys. Preserve tuple recordsets and the new checkpoint semantics.
 2. **Data Sync:** decide and implement a paged/exportable SQL preview path if the 16 MiB full-response ceiling is insufficient for the product claim. Verify tuple ordering, snapshot/type semantics, and unknown-outcome recovery for every driver advertised as supported. Record large-migration memory and stress results. Comparison-store recovery, composite tuple selection, and paged transactional execution are complete.
 3. **Schema Diff:** implement SQLite table rebuild and safe rollback; add only cross-dialect view/routine/trigger/type translations that have a driver-owned equivalence contract. Finish schema object/catalog and supported table-option capability evidence per declared driver.
 4. **Release evidence:** publish a driver-by-driver Sync/Transfer/Schema capability matrix backed by executable tests; validate Windows SQL-file picker/atomic replacement and migration journeys; record large-migration performance and driver failure-injection results.
