@@ -1,6 +1,6 @@
 # BUG-002 — Unsafe legacy fallback can issue tokens without target atomicity proof
 
-- Status: `修复中` (included in the active repair wave; no fix is claimed by this tester report).
+- Status: `待复测`
 - Severity: P1 — when target write atomicity is unknown or false, a partial legacy write can be presented as resumable even though no safe per-table boundary is guaranteed.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Evidence: source-code review of the executor capability gate, per-table dispatcher, and checkpoint lifecycle.
@@ -28,3 +28,7 @@ The unsafe gap is specifically the combination of fallback and token lifecycle: 
 ## Expected behavior
 
 Preserve the existing safe table-boundary resume when row-key chunking is unavailable but target per-table atomic commit and distinct source/target sessions are verified. In that case, replaying an uncompleted table from its boundary is safe. However, if target transaction capability is unknown or false, the sessions are shared, or the saved resume contract is invalid, fail closed before the legacy writer can create an untracked partial target state; do not issue or consume a token that implies an atomic boundary the executor has not proved. Issue a row-chunk token only after a verified page commit and cursor advance; issue a table-boundary token only after verified per-table atomicity; retain existing replay protections for invalidated contracts.
+
+## 修复记录（round-1）
+
+Commit `c08a907e` adds a write preflight for selected existing targets and session identity. A fresh transfer may continue through the ordinary writer when target transaction metadata is unknown, but it receives no replayable token and the partial result explains why. A transfer with an existing token is rejected and invalidated before any write if the target/session boundary is no longer proven. Unsupported source snapshot/keyset capabilities still permit the verified transactional whole-table fallback; changed/unknown target transaction capability does not. Focused tests cover unknown target metadata, changed target contract with zero replacement commits and consumed-token replay, source snapshot fallback, and MySQL BIGINT fallback. Independent R3 should recheck these behaviors.

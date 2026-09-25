@@ -1,6 +1,6 @@
 # BUG-003 — R2 chunk-resume journeys time out before cancellation
 
-- Status: `调查中` (the first-page observation failure is under investigation; root cause is unknown).
+- Status: `待复测`
 - Severity: P1 — all three bounded chunk-resume WDIO journeys failed before exercising cancellation or resume.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Independent test report: `R2_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`, commit `7d1377c967287fd8582c698d3b9df189343f4f99`.
@@ -34,3 +34,7 @@ Because each journey failed before clicking the UI Cancel control, none reached 
 - The direct WDIO run reported no fixture-cleanup hook failure. Read-only PostgreSQL and MySQL catalog queries after the run returned no databases matching this run's `dz_dt_ack_%` fixture prefix. PID 49519 was stopped, port 4445 had no listener, and the unique app data directory was preserved. Disk free space was about 4.0 GiB.
 
 This report records an observed journey failure only. It does **not** establish a product-code root cause; the mismatch between the expected first-page observation and the logs requires investigation before attributing the failure to the resume implementation or changing the journey's assertion.
+
+## 修复记录（round-1）
+
+Commit `c08a907e` updates both direction-specific WDIO journeys with dedicated observer diagnostics: verify the observer connection with `ping_connection`, record the zero-row baseline before execution, preserve the latest count response or polling error, and include a final ping/count sample in timeout errors. The exact row-count assertions remain strict. These changes improve evidence collection but do not establish a fix or root cause; the cause remains unknown until a fresh R3 run exercises the journeys and inspects the new samples.

@@ -1,6 +1,6 @@
 # BUG-001 — MySQL exact numeric primary-key cursors are rebound as strings
 
-- Status: `修复中` (included in the active repair wave; no fix is claimed by this tester report).
+- Status: `待复测`
 - Severity: P1 — bounded resume can skip source rows when advancing past large or high-precision numeric keys.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Evidence: source-code review of the MySQL decode/bind and keyset query paths; supported by the MySQL 8.4 Reference Manual.
@@ -31,3 +31,7 @@ As a result, a BIGINT above the safe-integer boundary and every DECIMAL cursor r
 ## Expected behavior
 
 Keyset cursor binds must preserve the source key's exact numeric type and value through MySQL comparison, including signed/unsigned BIGINT and DECIMAL. If the driver cannot bind a key type exactly, the chunk-resume path must fail closed before issuing a token or writing a page. Add real MySQL tests for adjacent values above 2^53 and a high-precision DECIMAL, asserting exact ordered source/destination key equality across multiple pages.
+
+## 修复记录（round-1）
+
+Commit `c08a907e` conservatively disables MySQL row-level resume for exact numeric primary-key types whose cursor is decoded and rebound as a string, including BIGINT and DECIMAL/NUMERIC forms. This does not claim exact numeric row-cursor binding is supported. When the target is proven transactional and source/target sessions are distinct, the transfer can still use safe atomic whole-table boundary resume. Focused tests cover the MySQL numeric key gate and BIGINT whole-table fallback; live exact-numeric pagination remains for independent R3 verification.
