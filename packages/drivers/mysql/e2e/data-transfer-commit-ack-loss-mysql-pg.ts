@@ -1,5 +1,6 @@
 /** MySQL→PG Transfer journey: a real commit applies before its acknowledgement is lost. */
 import { expect, browser, $, $$ } from '@wdio/globals';
+import { execFileSync } from 'node:child_process';
 import {
   advanceTransferWizardToPreview,
   clickTransferNext,
@@ -87,36 +88,88 @@ async function sampleTargetCount(
 }
 
 async function waitForTargetCount(
-  dbSessionId: string,
   database: string,
   table: string,
   expected: number,
   message: string,
 ) {
-  let latest = 'no observer sample';
+  const startedAt = Date.now();
+  type Sample = { elapsedMs: number; callMs: number; count?: number; error?: string };
+  const firstSamples: Sample[] = [];
+  const latestSamples: Sample[] = [];
+  const transitions: Array<{ elapsedMs: number; count: number }> = [];
+  const record = (callStartedAt: number, sample: Omit<Sample, 'elapsedMs' | 'callMs'>) => {
+    const elapsedMs = Date.now() - startedAt;
+    const entry = { elapsedMs, callMs: Date.now() - callStartedAt, ...sample };
+    if (firstSamples.length < 10) firstSamples.push(entry);
+    latestSamples.push(entry);
+    if (latestSamples.length > 10) latestSamples.shift();
+    if (sample.count !== undefined && transitions.at(-1)?.count !== sample.count) {
+      transitions.push({ elapsedMs, count: sample.count });
+      if (transitions.length > 20) transitions.shift();
+    }
+  };
   try {
     await browser.waitUntil(
       async () => {
+        const callStartedAt = Date.now();
         try {
-          const sample = await sampleTargetCount(dbSessionId, database, table, false);
-          latest = JSON.stringify(sample);
-          return sample.count === expected;
+          const count = Number(
+            execFileSync(
+              'psql',
+              [
+                '-X',
+                '-A',
+                '-t',
+                '-q',
+                '-v',
+                'ON_ERROR_STOP=1',
+                '-h',
+                process.env.E2E_PG_HOST || '127.0.0.1',
+                '-p',
+                String(Number(process.env.E2E_PG_PORT) || 5432),
+                '-U',
+                process.env.E2E_PG_USER || 'postgres',
+                '-d',
+                database,
+                '-c',
+                `SELECT COUNT(*) FROM public."${table}"`,
+              ],
+              {
+                encoding: 'utf8',
+                timeout: 5_000,
+                env: { ...process.env, PGPASSWORD: process.env.E2E_PG_PASSWORD || '' },
+              },
+            ).trim(),
+          );
+          record(callStartedAt, { count });
+          return count === expected;
         } catch (error) {
-          latest = `observer error: ${String(error)}`;
+          record(callStartedAt, { error: String(error) });
           return false;
         }
       },
       { timeout: 30_000, interval: 150, timeoutMsg: message },
     );
   } catch (error) {
-    let finalSample = 'final ping/count failed';
-    try {
-      finalSample = JSON.stringify(await sampleTargetCount(dbSessionId, database, table));
-    } catch (sampleError) {
-      finalSample = String(sampleError);
-    }
+    const executions = await capturedTransferRuns()
+      .then((runs) =>
+        JSON.stringify(
+          runs.map((run) => ({
+            error: run.error,
+            response: run.response && {
+              rowsInserted: run.response.rowsInserted,
+              partial: run.response.partial,
+              cancelled: run.response.cancelled,
+              resumeTokenPresent: Boolean(run.response.resumeToken),
+              tables: run.response.tables,
+            },
+          })),
+        ),
+      )
+      .catch((captureError) => String(captureError));
     throw new Error(
-      `${String(error)}; latest observer sample=${latest}; final ping/count=${finalSample}`,
+      `${String(error)}; direct PostgreSQL count transitions=${JSON.stringify(transitions)}; initial samples=${JSON.stringify(firstSamples)}; latest samples=${JSON.stringify(latestSamples)}; captured transfer result=${executions}`,
     );
   }
 }
@@ -581,7 +634,6 @@ describe('Data Transfer MySQL→PG commit acknowledgement loss', function () {
         timeoutMsg: 'initial bounded transfer call did not start',
       });
       await waitForTargetCount(
-        targetObserver,
         targetDatabase,
         chunkTable,
         2,
@@ -609,7 +661,6 @@ describe('Data Transfer MySQL→PG commit acknowledgement loss', function () {
         timeoutMsg: 'resume transfer call did not start',
       });
       await waitForTargetCount(
-        targetObserver,
         targetDatabase,
         chunkTable,
         4,

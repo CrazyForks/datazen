@@ -687,6 +687,7 @@ export function DataTransferWindow() {
       }
       const jobId = crypto.randomUUID();
       jobIdRef.current = jobId;
+      if (resumeTokenOverride) setStep('preview');
       setExecuting(true);
       const tableCount =
         tables.length > 0

@@ -1,6 +1,6 @@
 # BUG-003 — R2 chunk-resume journeys time out before cancellation
 
-- Status: `待修复`
+- Status: `待复测`
 - Severity: P1 — all three bounded chunk-resume WDIO journeys failed before exercising cancellation or resume.
 - Candidate: `e774e3554a07e889383be02d757395f315e7fdf6`.
 - Independent test report: `R2_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`, commit `7d1377c967287fd8582c698d3b9df189343f4f99`.
@@ -50,3 +50,17 @@ R3's latest/final timeout samples were successful observer queries with `ping=tr
 - PG→MySQL source-mutation refusal: `ping=true,count=5` at the same initial count-two wait.
 
 The observer was reachable and returned the final count for the intended fixture relation. This does not explain why the intermediate count of two was not observed; R3 does not attribute the failure to the app, UI, or observer sampling. No count assertion was loosened. Cancellation, resume, exact final rows, source mutation, and zero-new-row refusal remain unverified. The R3 report is `R3_TEST_REPORT_DATA_TRANSFER_CHUNK_RESUME.md`. Read-only catalog queries found no databases with the R3 `dz_dt_ack_%` prefix, and the app process was stopped with port 4445 free. Status returns to `待修复` pending diagnosis and a passing independent rerun.
+
+## 修复记录（round-2）
+
+An instrumented local PG→MySQL WDIO attempt reproduced the failure before reaching cancellation. The app log identified the exact fallback reason: `source page projection changed while transfer was running`. The transfer had selected the bounded-resume candidate, then its initial full-source fingerprint failed before checkpoint progress and dispatch fell back to the legacy atomic table writer. This is consistent with the strict observer seeing no two-row prefix and later seeing all five rows.
+
+Root cause: PostgreSQL and MySQL result decoders build `QueryResult.columns` from `rows.first()`. A valid empty keyset page therefore has both `rows=[]` and `columns=[]`. The fingerprint scan and copy loop share `validate_page`, which previously compared that empty metadata vector to the expected projection and treated the terminator as a schema/projection change.
+
+The repair accepts absent column metadata only for an empty page; every non-empty page must still match the exact inspected projection, and row-count/row-width bounds remain enforced. The mismatch error now includes the expected and actual column vectors. A focused unit test covers an empty terminator (including the trailing empty page after an exact chunk-size multiple), rejects a non-empty projection in the wrong order, and rejects a page larger than its hard limit. The dispatcher keeps a debug-level reason when safe row-chunk initialization falls back. The PG→MySQL first-page journey again waits for exact `COUNT(*) = 2`; the count assertion was not weakened. This fix has not yet passed an independent post-fix WDIO run.
+
+### Separate UI defect found by the post-fingerprint probe
+
+After the empty-page repair made the first exact-count gate pass, the same journey exposed a second, independent bug: clicking Resume called `runExecute(resumeToken)` while the wizard remained on the `result` step, but the Cancel control was rendered only on the `preview` step. A resumed transfer therefore had no user-visible Cancel control. The UI now returns to the preview/execution step as soon as a resume begins, so the normal progress and Cancel controls are available until that invocation settles. A focused UI test holds a resumed execution open and proves the Cancel action remains available.
+
+The rebuilt local PG→MySQL bounded-chunk WDIO journey then passed (1 passing, 46.5s): the strict target counts of 2 and 4 were observed, both cancellation/resume boundaries completed, and the final ordered rows assertion for ids 1–5 passed. Its fixture cleanup completed, read-only catalog checks found no remaining run-specific source/target databases, and the app was stopped with port 4445 clear. This is a local Coder verification, not the independent Tester R4 gate; reverse-direction cancellation/resume, source-mutation refusal, and the full isolated suite still need fresh independent verification.

@@ -297,9 +297,15 @@ pub(super) fn validate_page(
         .iter()
         .map(|column| column.name.clone())
         .collect();
-    if actual != expected_columns {
+    // Some drivers derive result-column metadata from the first returned row.
+    // An empty bounded page therefore has no `columns` even though the SELECT
+    // projection is unchanged. The query itself was constructed from the
+    // inspected schema, so accept absent metadata only when there are no rows.
+    if actual != expected_columns && !(page.rows.is_empty() && actual.is_empty()) {
         return Err(TransferError::validation(
-            "source page projection changed while transfer was running",
+            format!(
+                "source page projection changed while transfer was running (expected {expected_columns:?}, got {actual:?})"
+            ),
         ));
     }
     if page.rows.len() > max_rows {

@@ -1,5 +1,5 @@
 use super::*;
-use datazen_driver_api::{ColumnSchema, IndexInfo, TableOptions};
+use datazen_driver_api::{ColumnInfo, ColumnSchema, IndexInfo, QueryResult, TableOptions};
 use sha2::{Digest, Sha256};
 
 fn source_schema(keys: &[&str]) -> TableSchema {
@@ -95,6 +95,57 @@ fn keyset_page_refuses_unbounded_or_oversized_limits() {
         )
         .is_err());
     }
+}
+
+#[test]
+fn empty_bounded_page_without_decoded_column_metadata_is_a_valid_terminator() {
+    // Both PG and MySQL derive QueryResult.columns from the first returned
+    // row. A SELECT that returns no rows therefore has no column metadata,
+    // including the final empty page after an exact chunk-size multiple.
+    let empty = QueryResult {
+        columns: Vec::new(),
+        rows: Vec::new(),
+        rows_affected: Some(0),
+        execution_time_ms: 0,
+    };
+    assert!(validate_page(&empty, &["id".into(), "payload".into()], 2).is_ok());
+
+    let wrong_nonempty_projection = QueryResult {
+        columns: ["payload", "id"]
+            .into_iter()
+            .map(|name| ColumnInfo {
+                name: name.into(),
+                data_type: "INT".into(),
+                nullable: false,
+            })
+            .collect(),
+        rows: vec![vec![Some(Value::Integer(1)), Some(Value::Integer(2))]],
+        rows_affected: Some(1),
+        execution_time_ms: 0,
+    };
+    let error = validate_page(
+        &wrong_nonempty_projection,
+        &["id".into(), "payload".into()],
+        2,
+    )
+    .expect_err("non-empty pages must still match the inspected projection");
+    assert!(error.to_string().contains("expected [\"id\", \"payload\"]"));
+    assert!(error.to_string().contains("got [\"payload\", \"id\"]"));
+
+    let oversized = QueryResult {
+        columns: vec![ColumnInfo {
+            name: "id".into(),
+            data_type: "INT".into(),
+            nullable: false,
+        }],
+        rows: vec![vec![Some(Value::Integer(1))], vec![Some(Value::Integer(2))]],
+        rows_affected: Some(2),
+        execution_time_ms: 0,
+    };
+    assert!(validate_page(&oversized, &["id".into()], 1)
+        .expect_err("a driver must not exceed the hard page size")
+        .to_string()
+        .contains("bounded page limit"));
 }
 
 #[test]

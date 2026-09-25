@@ -58,19 +58,41 @@ pub(crate) async fn attempt_resume_chunk(
     let saved_committed_chunk = context.checkpoint.as_deref().is_some_and(|checkpoint| {
         checkpoint.table_has_committed_chunks(&context.table.source_table)
     });
-    let candidate = context.job.mode == TransferMode::Data
-        && context.job.write_mode == WriteMode::Insert
-        && context.table.status == TableMappingStatus::Matched
-        && resume::supports_chunk_driver(context.source_family)
-        && resume::supports_chunk_driver(context.target_family)
-        && context.job.source.db_session_id.as_str() != context.target_session_id
-        && context
-            .source_schema
-            .table_options
-            .supports_consistent_snapshot
-            == Some(true);
+    let data_mode = context.job.mode == TransferMode::Data;
+    let insert_mode = context.job.write_mode == WriteMode::Insert;
+    let existing_target = context.table.status == TableMappingStatus::Matched;
+    let source_driver_supported = resume::supports_chunk_driver(context.source_family);
+    let target_driver_supported = resume::supports_chunk_driver(context.target_family);
+    let sessions_are_distinct =
+        context.job.source.db_session_id.as_str() != context.target_session_id;
+    let source_snapshot_safe = context
+        .source_schema
+        .table_options
+        .supports_consistent_snapshot
+        == Some(true);
+    let candidate = data_mode
+        && insert_mode
+        && existing_target
+        && source_driver_supported
+        && target_driver_supported
+        && sessions_are_distinct
+        && source_snapshot_safe;
 
     if !candidate {
+        tracing::debug!(
+            table = %context.table.source_table,
+            data_mode,
+            insert_mode,
+            existing_target,
+            source_family = %context.source_family,
+            source_driver_supported,
+            target_family = %context.target_family,
+            target_driver_supported,
+            sessions_are_distinct,
+            source_snapshot_safe,
+            saved_progress,
+            "bounded row-resume candidate rejected before execution"
+        );
         if saved_progress {
             invalidate(&mut context);
             return rejected(
@@ -84,6 +106,10 @@ pub(crate) async fn attempt_resume_chunk(
     }
 
     let Some(checkpoint) = context.checkpoint else {
+        tracing::debug!(
+            table = %context.table.source_table,
+            "bounded row-resume candidate had no checkpoint hook; using table-boundary path"
+        );
         return ResumeChunkDispatch::NotApplicable;
     };
     let target = match context.job.database_target() {
@@ -126,6 +152,12 @@ pub(crate) async fn attempt_resume_chunk(
         );
     }
     if let Err(error) = source_key {
+        tracing::debug!(
+            table = %context.table.source_table,
+            reason = %error,
+            saved_progress,
+            "bounded row-resume primary-key contract rejected"
+        );
         if !saved_progress {
             return ResumeChunkDispatch::NotApplicable;
         }
@@ -207,6 +239,11 @@ pub(crate) async fn attempt_resume_chunk(
                     stop_later_tables_reason: None,
                 })
             } else {
+                tracing::debug!(
+                    table = %context.table.source_table,
+                    reason = %error,
+                    "bounded row-resume initialization failed before progress; falling back to atomic table transfer"
+                );
                 ResumeChunkDispatch::NotApplicable
             }
         }

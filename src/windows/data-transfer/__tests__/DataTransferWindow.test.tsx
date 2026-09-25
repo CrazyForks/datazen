@@ -1164,6 +1164,56 @@ describe('DataTransferWindow', () => {
     expect(screen.queryByText('transfer.partialExplanation')).toBeNull();
   });
 
+  it('[tester] keeps cancellation available while resuming from a partial result', async () => {
+    let finishResume!: (result: TransferExecutionResult) => void;
+    vi.mocked(transferCommands.cancel).mockResolvedValueOnce(false);
+    vi.mocked(transferCommands.execute)
+      .mockResolvedValueOnce({
+        rowsInserted: 2,
+        partial: true,
+        cancelled: true,
+        resumeToken: 'resume-token',
+        tables: [
+          {
+            sourceTable: 'users',
+            targetTable: 'users',
+            rowsInserted: 2,
+            success: true,
+            outcome: 'partiallyApplied',
+          },
+        ],
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishResume = resolve;
+          }),
+      );
+
+    await advanceToPreviewStep('insert');
+    fireEvent.click(screen.getByTestId('data-transfer-execute'));
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('data-transfer-resume'));
+    await waitFor(() => expect(transferCommands.execute).toHaveBeenCalledTimes(2));
+    expect(transferCommands.execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ resumeToken: 'resume-token' }),
+    );
+    expect(screen.getByTestId('data-transfer-preview')).toBeTruthy();
+    expect(screen.queryByTestId('data-transfer-result')).toBeNull();
+    fireEvent.click(screen.getByTestId('data-transfer-cancel'));
+    await waitFor(() => expect(transferCommands.cancel).toHaveBeenCalledTimes(1));
+
+    finishResume({
+      rowsInserted: 2,
+      partial: true,
+      cancelled: true,
+      resumeToken: 'resume-token',
+      tables: [],
+    });
+    await waitFor(() => expect(screen.getByTestId('data-transfer-result')).toBeTruthy());
+  });
+
   it('[tester] renders partial execution as incomplete with recovery guidance', async () => {
     vi.mocked(transferCommands.execute).mockResolvedValueOnce({
       rowsInserted: 0,
