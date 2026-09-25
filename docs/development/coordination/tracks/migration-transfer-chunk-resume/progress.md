@@ -1,6 +1,9 @@
 # migration-transfer-chunk-resume
 
 - Phase: PASSED
+- Coding Commit: `c3ef7f467038994461f9e24b3ae04303f8865e71`
+- Test Commit: `6b58c755891981e108e621671c2d2825d531f388`
+- Merge Commit: `f3c21a26` + integration follow-up `7d62ebab`
 - Tester result: TEST_DONE
 - Task: bounded, resumable Data Transfer chunks within a table
 - Branch: `feature/migration-transfer-chunk-resume`

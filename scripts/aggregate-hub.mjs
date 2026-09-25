@@ -20,6 +20,8 @@ const customDir = process.argv.find(arg => !arg.startsWith('--') && arg !== proc
 const COORD_DIR = path.resolve(REPO_ROOT, customDir || 'docs/development/coordination');
 const TRACKS_DIR = path.join(COORD_DIR, 'tracks');
 const HUB_FILE = path.join(COORD_DIR, 'hub.md');
+// The root coordination directory also stores unrelated historical tracks.
+const isMigrationNavicatHub = fs.existsSync(path.join(COORD_DIR, 'migration-navicat-plan.md'));
 
 if (!fs.existsSync(COORD_DIR)) {
   if (isCheck) {
@@ -40,7 +42,8 @@ if (fs.existsSync(HUB_FILE)) {
 let planContent = '';
 const planFiles = fs.readdirSync(COORD_DIR).filter(f => f.endsWith('-plan.md'));
 if (planFiles.length > 0) {
-  planContent = fs.readFileSync(path.join(COORD_DIR, planFiles[0]), 'utf8');
+  const migrationPlan = planFiles.find(f => f === 'migration-navicat-plan.md');
+  planContent = fs.readFileSync(path.join(COORD_DIR, migrationPlan || planFiles[0]), 'utf8');
 }
 
 // 从 plan.md 提取 track -> 任务摘要 的映射
@@ -55,6 +58,41 @@ if (planContent) {
       }
     }
   }
+}
+
+// Progress metadata takes precedence; retain existing rows for legacy tracks
+// that do not yet have a progress.md header.
+const existingTrackRows = new Map();
+const overviewMatch = existingHub.match(/##\s+功能总览表([\s\S]*?)(?=\n##\s+|$)/);
+if (overviewMatch) {
+  for (const line of overviewMatch[1].split('\n')) {
+    const fields = line.split('|').slice(1, -1).map(field => field.trim());
+    if (fields.length !== 6 || !/^[a-zA-Z0-9_-]+$/.test(fields[0])) continue;
+    existingTrackRows.set(fields[0], {
+      task: fields[1] || '—',
+      phase: fields[2] || '未开始',
+      codingCommit: fields[3] || '—',
+      testCommit: fields[4] || '—',
+      mergeCommit: fields[5] || '—',
+    });
+  }
+}
+
+function initialTrackData(trackId) {
+  const existing = existingTrackRows.get(trackId) || {};
+  return {
+    track: trackId,
+    task: taskMap.get(trackId) || existing.task || '—',
+    phase: existing.phase || '未开始',
+    codingCommit: existing.codingCommit || '—',
+    testCommit: existing.testCommit || '—',
+    mergeCommit: existing.mergeCommit || '—',
+    agent: '—',
+    worktree: '—',
+    branch: `feature/${trackId}`,
+    lastHeartbeat: '—',
+    unresolvedBugs: 0,
+  };
 }
 
 // Bug 开放态计数：新格式为 bugs/<id>.md 一 Bug 一文件（消除多人共写单文件的合并冲突）；
@@ -82,19 +120,7 @@ function countOpenBugs(trackId) {
 
 // 解析单个 progress.md
 function parseProgress(trackId, content) {
-  const data = {
-    track: trackId,
-    task: taskMap.get(trackId) || '—',
-    phase: '未开始',
-    codingCommit: '—',
-    testCommit: '—',
-    mergeCommit: '—',
-    agent: '—',
-    worktree: '—',
-    branch: `feature/${trackId}`,
-    lastHeartbeat: '—',
-    unresolvedBugs: 0,
-  };
+  const data = initialTrackData(trackId);
 
   // 只读文件头部（首个 `## ` 之前）的元信息条目。正文里的 `- …: …` 叙述行（覆盖率、
   // 拓扑分支、禁止事项等）不是台账字段，把它们当字段读会让总览表整行错位。
@@ -109,9 +135,9 @@ function parseProgress(trackId, content) {
     if (key.length > 24 || key.includes('`') || key.includes('（')) continue;
 
     if (key === 'phase' || key === '状态') data.phase = val;
-    else if (key.includes('编码 commit') || key === 'coding_commit' || key === 'codingcommit') data.codingCommit = val;
-    else if (key.includes('测试 commit') || key === 'test_commit' || key === 'testcommit') data.testCommit = val;
-    else if (key.includes('合并 commit') || key === 'merge_commit' || key === 'mergecommit') data.mergeCommit = val;
+    else if (key.includes('编码 commit') || key.includes('coding commit') || key === 'coding_commit' || key === 'codingcommit') data.codingCommit = val;
+    else if (key.includes('测试 commit') || key.includes('test commit') || key === 'test_commit' || key === 'testcommit') data.testCommit = val;
+    else if (key.includes('合并 commit') || key.includes('merge commit') || key === 'merge_commit' || key === 'mergecommit') data.mergeCommit = val;
     else if (key.includes('代理') || key.includes('agent')) data.agent = val;
     else if (key.includes('worktree')) data.worktree = val;
     else if (key.includes('branch') || key.includes('分支')) data.branch = val;
@@ -132,24 +158,13 @@ if (fs.existsSync(TRACKS_DIR)) {
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const trackId = entry.name;
+      if (isMigrationNavicatHub && !trackId.startsWith('migration-')) continue;
       const progressPath = path.join(TRACKS_DIR, trackId, 'progress.md');
       if (fs.existsSync(progressPath)) {
         const content = fs.readFileSync(progressPath, 'utf8');
         tracks.push(parseProgress(trackId, content));
       } else {
-        tracks.push({
-          track: trackId,
-          task: taskMap.get(trackId) || '—',
-          phase: '未开始',
-          codingCommit: '—',
-          testCommit: '—',
-          mergeCommit: '—',
-          agent: '—',
-          worktree: '—',
-          branch: `feature/${trackId}`,
-          lastHeartbeat: '—',
-          unresolvedBugs: 0,
-        });
+        tracks.push(initialTrackData(trackId));
       }
     }
   }
@@ -187,6 +202,10 @@ let header = '# Coordination Hub — 协调总览\n\n> **状态**：所有波次
 const headerMatch = rawHub.match(/^(# [^\n]+[\s\S]*?)(?=\n## )/);
 if (headerMatch && tracks.length > 0) {
   header = headerMatch[1].trim();
+  const currentStatus = planContent.match(/^Current status:\s*(.+)$/m)?.[1]?.trim();
+  if (isMigrationNavicatHub && currentStatus) {
+    header = header.replace(/当前[^。]*。/, `当前：${currentStatus.replace(/[。.!?]+$/, '')}。`);
+  }
 }
 
 const waveSection = tracks.length > 0

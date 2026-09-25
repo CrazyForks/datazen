@@ -2,13 +2,13 @@
 
 # 数据迁移三件套交付跟踪
 
-范围仅包括 Data Sync、Data Transfer、Schema Diff。最后核对：2026-09-25。集成分支为 `codex/migration-navicat`，`main` 已是其祖先。Schema Unified Planner 已通过 R11 独立验证并合入；当前按序推进 Data Transfer 表内有界 checkpoint。DMG 打包按用户明确要求排除；Windows 迁移体验验证仍属于发布验收。
+范围仅包括 Data Sync、Data Transfer、Schema Diff。最后核对：2026-09-25。集成分支为 `codex/migration-navicat`，`main` 已是其祖先。Schema Unified Planner 已通过 R11 独立验证并合入；当前：Data Transfer 表内分块恢复已合入并通过集成 TypeScript 与 Host Rust 门禁；下一条按序推进 `migration-transfer-structure-mapping`。DMG 打包按用户明确要求排除；Windows 迁移体验验证仍属于发布验收。
 
 ## 功能总览表
 
 | Track | 任务 | 状态 | 编码 Commit | 测试 Commit | 合并 Commit |
 |-------|------|------|------------|------------|------------|
-| migration-connection-view-contracts | — | TEST_DONE / PASSED | — | — | — |
+| migration-connection-view-contracts | — | **TEST_DONE / PASSED** | — | — | — |
 | migration-default-expression-review | — | PASSED | — | — | — |
 | migration-export-lossless | — | 未开始 | — | — | — |
 | migration-live-workflow-e2e | — | READY_TO_MERGE | — | — | — |
@@ -49,7 +49,7 @@
 | migration-sync-unknown-outcome-reconciliation | classify Data Sync execution outcomes accurately and let users start a fresh, reviewable comparison from an unknown run | PASSED | — | — | — |
 | migration-table-options | — | PASSED | — | — | — |
 | migration-target-table-picker | — | READY_TO_MERGE | — | — | — |
-| migration-transfer-chunk-resume | bounded, resumable Data Transfer chunks within a table | PLANNED | — | — | — |
+| migration-transfer-chunk-resume | bounded, resumable Data Transfer chunks within a table | PASSED | `c3ef7f467038994461f9e24b3ae04303f8865e71` | `6b58c755891981e108e621671c2d2825d531f388` | `f3c21a26` + integration follow-up `7d62ebab` |
 | migration-transfer-core | — | PASSED | — | — | — |
 | migration-transfer-encoding | — | READY_TO_MERGE | — | — | — |
 | migration-transfer-plan | — | READY_TO_MERGE（BUG-001/002/003 已关闭） | — | — | — |
@@ -63,7 +63,7 @@
 
 | Track | 写锁代理 | Worktree | Branch | Phase | 最后心跳 |
 |-------|----------|----------|--------|-------|----------|
-| migration-connection-view-contracts | — | `.worktrees/datazen-migration-connection-view-contracts` | `feature/migration-connection-view-contracts`（基准 `codex/migration-navicat` @ `23a7c8a5`） | TEST_DONE / PASSED | — |
+| migration-connection-view-contracts | — | `.worktrees/datazen-migration-connection-view-contracts` | `feature/migration-connection-view-contracts`（基准 `codex/migration-navicat` @ `23a7c8a5`） | **TEST_DONE / PASSED** | — |
 | migration-default-expression-review | — | — | feature/migration-default-expression-review | PASSED | — |
 | migration-export-lossless | — | — | feature/migration-export-lossless | 未开始 | — |
 | migration-live-workflow-e2e | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-live-workflow-e2e` | `feature/migration-live-workflow-e2e` | READY_TO_MERGE | — |
@@ -104,7 +104,7 @@
 | migration-sync-unknown-outcome-reconciliation | — | `.worktrees/datazen-migration-sync-unknown-outcome-reconciliation` | `feature/migration-sync-unknown-outcome-reconciliation` | PASSED | — |
 | migration-table-options | — | — | feature/migration-table-options | PASSED | — |
 | migration-target-table-picker | — | — | feature/migration-target-table-picker | READY_TO_MERGE | — |
-| migration-transfer-chunk-resume | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume` | `feature/migration-transfer-chunk-resume` | PLANNED | — |
+| migration-transfer-chunk-resume | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume-fresh-tester-r2`; branch `codex/migration-transfer-chunk-resume-fresh-tester-r3`. | `feature/migration-transfer-chunk-resume` | PASSED | — |
 | migration-transfer-core | — | .worktrees/datazen-migration-transfer-core | codex/migration-transfer-core | PASSED | — |
 | migration-transfer-encoding | — | `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-encoding` | `feature/migration-transfer-encoding` | READY_TO_MERGE | — |
 | migration-transfer-plan | — | `.worktrees/datazen-migration-transfer-plan` | codex/migration-transfer-plan | READY_TO_MERGE（BUG-001/002/003 已关闭） | — |
