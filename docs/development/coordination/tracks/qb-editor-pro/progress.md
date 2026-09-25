@@ -1,5 +1,5 @@
 - 任务：将 Visual Query Builder 实现、私有状态、单测与 WebDriver journeys 迁入独立 SQL Editor Pro；Host 保留公共契约、Query tab 适配与容器。
-- 状态：FAILED（Round 2 独立测试通过；发现 Pro release lock 指向上游不可达 revision，见 BUG-002）
+- 状态：READY_FOR_TEST（Round 2 的上游 Pro ref 阻塞已修复；等待 fresh Tester Round 3 复核）
 - 初始迁移编码 commit：Host `497accbd665519d67a07cec83b19d44c90e0cdbf`；Pro `e87541fed6759d79971a4e8e9cfc01d3b9ba4a7b`
 - Tester bug/test commit：Host `075ed41d76b87084563e5704abf6e5330a04b176`
 - Tester 收尾 commit：Host `fe92c2d650cf73336b41cc0f9e669645bd7b1a09`
@@ -74,6 +74,13 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - **WebDriver**：项目入口 `pnpm e2e:qb:build` 因 pnpm 检查共享 `node_modules` 后在无 TTY 时尝试 install 而中止（`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`，未触发安装）。按此前自验流程临时覆盖 Tauri `beforeBuildCommand` 为 locale/menu generation、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，并在 Pro 打包阶段与 Host 前端阶段均设置 `VITE_E2E=1`；通过 `with-driver-inject` 和 `e2e-tauri-build --pro` 重建后恢复 `tauri.conf.json`。命令 `node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` — 4 specs / 22 tests 通过，用时 2m47s；E2E fixtures 已 teardown。
 - **当前变更范围**：Host 修改 Builder context lifecycle、Pro lock pin 与本轨 bug/progress 文档；Pro commit `2a45c90f28041e81c948e67b9416fade8ac5472f` 只增加两组 UI 行为测试。
 
+## Round 3 修复：Pro lock ref 上游可达
+
+- **BUG-002**：Host lock 中的 Pro commit 原先仅存在于本地 feature branch，上游 clean clone 无法 checkout。已将现有 Pro 分支 `codex/qb-editor-pro` 非强制推送到 Host lock 所配置的远端 `https://github.com/flyxl/datazen-extension-sql-editor-pro.git`；Pro commit SHA 未变，Host lock 无需改动。
+- **远端确认**：`git ls-remote --heads <lock.git> refs/heads/codex/qb-editor-pro refs/heads/main` 返回 `refs/heads/codex/qb-editor-pro`=`2a45c90f28041e81c948e67b9416fade8ac5472f`，`refs/heads/main` 仍为 `c60f7fc8e1d552c6a37d3f70128d9c8e42555750`。仅创建并更新 feature branch；未强推、未改 main、未创建 release。
+- **Clean resolver clone**：从 `pro-extension.lock.json` 读取 URL/ref，调用 `scripts/resolve-pro.mjs` 的 `ensureProCheckout` 在全新临时目录 clone 并 detached checkout；打印 `HEAD=2a45c90f28041e81c948e67b9416fade8ac5472f`、与 lock 一致，clone `status=clean`。临时 clone 已清理。
+- BUG-002 报告已更新为“已修复，待 Tester Round 3 复测”。本轮未修改 Pro 源码或 Host lock；等待独立 Tester 从公开远端重新验证。
+
 ## 剩余发布门槛
 
 - Community Tauri 完整构建、常规 Query 执行 E2E、`e2e:qb:regression` 与完整 Pro Tauri release build 本轮未独立重跑。
@@ -91,5 +98,5 @@ E2E 暴露一个旧 helper 使用全局 schemaStore schema、与 Query tab 配�
 - 覆盖率使用 Round 1 原始 include scope：`npx vitest run --coverage --coverage.include='src/components/query-builder/**/*.ts' --coverage.include='src/components/query-builder/**/*.tsx' --coverage.include='src/query-builder/**/*.ts' --coverage.include='src/query-builder/**/*.tsx' --coverage.include='src/stores/queryBuilderStore.ts' --coverage.include='src/lib/sqlDialects/queryBuilder.ts' --coverage.reporter=json --coverage.reporter=text`。总行覆盖率 88.72%；`QueryBuilderPanel.tsx` 83.88%（Round 1：76.85%）；`DiagramCanvas.tsx` 96.72%（Round 1：64.75%）。两项均达到 ≥80%。
 - Pro `npx vite build` 通过，生产 bundle 不含 `__qbTest`、`__qbStore`、`@host/` 或裸 external imports，并引用 `globalThis.__DATAZEN_HOST__` singleton。构建存在现有 host-globals sourcemap 提示。
 - 本轮独立重建当前源码的 macOS Pro WebDriver app：官方 `node e2e/run.mjs --pro -- --suite pro-query-builder` runner 通过；因 pnpm 的无 TTY 自动安装问题，将 `beforeBuildCommand` 临时改为 locale/menu 生成、`npx tsc --noEmit` 与 `VITE_E2E=1 npx vite build`，Tauri 配置在运行完成后 byte-for-byte 恢复。Tauri webdriver app build 成功，`node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder` 4 specs / 22 tests 通过，worker database teardown 完成。旧二进制单独复跑也通过，但早于 BUG-001 commit；只将新建 app 的结果计入修复复验。
-- **Round 2 判定：`TEST_FAILED`，BUG-002。** 独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 `main` / `HEAD`=`c60f7fc8e1d552c6a37d3f70128d9c8e42555750`。在隔离临时目录克隆该上游后，checkout Host lock pin `2a45c90f28041e81c948e67b9416fade8ac5472f` 得到 `fatal: reference is not a tree`。标准干净 Pro release checkout 因此无法完成。Bug 报告 commit：`7fb60778e`。必须先发布 Pro commit 至配置的上游，或将 lock 改为预期发布源可达的 revision，再启动新 Tester 全量复测。
+- **Round 2 历史判定：`TEST_FAILED`，BUG-002。** 当时独立 `git ls-remote https://github.com/flyxl/datazen-extension-sql-editor-pro.git HEAD refs/heads/main refs/heads/master` 仅返回上游 main；隔离 clone 无法 checkout Host lock pin。Bug 报告 commit：`7fb60778e`。该阻塞已在 Round 3 将同一 Pro commit 发布到 lock 配置的 feature branch 并通过 clean resolver clone 验证，详见上方。
 - 仍未独立验证的发布项：Community Tauri 完整构建、普通 Query 执行 E2E、`e2e:qb:regression`、完整 Pro release build、Windows/Linux release build、正式签名凭据、最终签名 manifest/bundle hash 与远端发布。
