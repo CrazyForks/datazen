@@ -4,6 +4,7 @@ use crate::types::ColumnInfo;
 
 mod dependency_route;
 mod view_check_option;
+mod view_scope_mapping;
 
 fn col(name: &str) -> ColumnInfo {
     ColumnInfo {
