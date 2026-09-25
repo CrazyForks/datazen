@@ -7,7 +7,7 @@
 - Worktree: `/Users/flyxl/code/datazen/.worktrees/datazen-migration-transfer-chunk-resume`
 - Base: `codex/migration-navicat` after Schema Unified Planner R11 merge
 - Prior implementation commit: `96789bbc`
-- Latest repair commit: `fe52c1e7` — BUG-004/005 acknowledgement-loss assertion fix
+- Latest repair commit: `effc413f` — BUG-004/005 acknowledgement-loss assertion fix
 
 ### R3 independent Tester
 
