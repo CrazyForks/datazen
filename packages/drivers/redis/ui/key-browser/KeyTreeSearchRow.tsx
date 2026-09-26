@@ -1,4 +1,4 @@
-import { Clock, Search, Sparkles } from 'lucide-react';
+import { Asterisk, Clock, Search } from 'lucide-react';
 import { Button, Input, cn, useI18n } from '@datazen/ui';
 
 /**
@@ -84,7 +84,15 @@ export function KeyTreeSearchRow({
         active={fuzzy}
         activeValue={fuzzy ? 'on' : 'off'}
         title={t('redis.tree.fuzzyHint')}
-        Icon={Sparkles}
+        /*
+         * `Asterisk`, not the `Sparkles` this used to wear. Sparkles read as
+         * "something clever happens here", which is the wrong promise: fuzzy is
+         * a plain substring match, and a user who believes it is magic will not
+         * form the mental model they need. The asterisk is the wildcard they can
+         * also type by hand, so the chip and the `*` label beside it name the
+         * same thing the pattern field does.
+         */
+        Icon={Asterisk}
         label="*"
         onClick={() => onFuzzyChange(!fuzzy)}
       />
