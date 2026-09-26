@@ -80,5 +80,6 @@ const pack = {
   'mcpClient.addEnv': 'Add variable',
   'mcpClient.removeEnv': 'Remove variable',
   'mcpClient.noEnvVars': 'No environment variables configured.',
+  'mcp.saved': 'Saved',
 } as const;
 export default pack;

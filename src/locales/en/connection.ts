@@ -285,5 +285,21 @@ const pack = {
   // KV context facts injected into an AI request (W3-A §1.3).
   'redis.ai.context.tooltip': 'Ask the assistant about the selected key',
   'redis.ai.context.attached': 'Asking about key',
+  // --- Document (MongoDB) browser ---
+  'mongo.databases': 'Databases',
+  'mongo.collections': 'Collections',
+  'mongo.searchCollections': 'Search collections',
+  'mongo.noCollections': 'No collections',
+  'mongo.documents': 'Documents',
+  'mongo.queries': 'Queries',
+  'mongo.selectCollection': 'Select a collection',
+  'mongo.noDocuments': 'No documents',
+  'mongo.queryHint': 'Run a query to see its results here',
+  'mongo.documentDetail': 'Document detail',
+  'mongo.insert': 'Insert document',
+  'mongo.filter': 'Filter',
+  'mongo.applyFilter': 'Apply filter',
+  'mongo.docCount': '{count} document(s)',
+  'mongo.noIdHint': 'This document has no _id, so it cannot be saved',
 } as const;
 export default pack;

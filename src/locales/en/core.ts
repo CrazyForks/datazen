@@ -7,6 +7,7 @@ const pack = {
   'common.save': 'Save',
   'common.close': 'Close',
   'common.delete': 'Delete',
+  'common.stop': 'Stop',
   'common.retry': 'Retry',
   'common.loading': 'Loading…',
   'common.default': 'Default',
