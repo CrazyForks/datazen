@@ -1,5 +1,5 @@
 import { Clock, Search, Sparkles } from 'lucide-react';
-import { Input, cn, useI18n } from '@datazen/ui';
+import { Button, Input, cn, useI18n } from '@datazen/ui';
 
 /**
  * Row R2 of the key-tree column header (PRD §3.2 屏 B 左列): the pattern input
@@ -10,12 +10,20 @@ import { Input, cn, useI18n } from '@datazen/ui';
  *    {@link toScanPattern}); a pattern that already carries a glob char is sent
  *    verbatim, so the chip can never silently widen a hand-written glob;
  *  - `仅无过期` maps to `noTtlOnly` (server-side filter, re-scans).
+ *
+ * 模糊 and 仅无过期 deliberately do *not* behave alike, and the apply button is
+ * what makes that legible: `noTtlOnly` is an argument to the scan that is
+ * re-issued on toggle, so it re-runs by itself, while 模糊 only rewrites the
+ * pattern at apply time — the same moment `Enter` uses. Without a visible way to
+ * apply, clicking 模糊 read as a dead chip next to a live one. The button gives
+ * that moment a target, and it is the one control that makes every combination
+ * of input + both chips reachable without knowing the keyboard.
  */
 
 export interface KeyTreeSearchRowProps {
   pattern: string;
   onPatternChange: (pattern: string) => void;
-  /** `Enter` / search button — resolves the pattern and restarts the scan. */
+  /** `Enter` / the apply button — resolves the pattern and restarts the scan. */
   onApply: () => void;
   /**
    * `Esc` — the row's exit transition: clear the input **and** the applied
@@ -82,6 +90,21 @@ export function KeyTreeSearchRow({
         label={t('redis.noTtlOnly')}
         onClick={() => onNoTtlOnlyChange(!noTtlOnly)}
       />
+      {/*
+        The explicit apply. Same call as `Enter`, same destination — this exists
+        so the 模糊 modifier has a visible moment of effect, not so the keyboard
+        shortcut stops working.
+      */}
+      <Button
+        variant="ghost"
+        className="h-7 w-7 shrink-0 p-0"
+        title={t('redis.search.apply')}
+        aria-label={t('redis.search.apply')}
+        data-testid="redis-search-apply"
+        onClick={onApply}
+      >
+        <Search className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 }

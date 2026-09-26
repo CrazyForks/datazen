@@ -158,6 +158,7 @@ const locale = {
   'redis.search.scanning': 'Scanning…',
   'redis.search.noResults': 'No matches yet.',
   'redis.search.valuePlaceholder': 'Search values…',
+  'redis.search.apply': 'Apply search',
   // Value viewer (R8/R9) — codec (decode) + view buttons
   'redis.codec.label': 'Decode',
   'redis.codec.none': 'None',

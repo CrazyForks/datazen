@@ -88,17 +88,29 @@ export function KeyTreeHeader({
       <div className="flex h-10 shrink-0 items-center gap-2" data-testid="redis-tree-toolbar-row">
         <SearchModeTabs mode={searchMode} onChange={onSearchModeChange} />
         <span className="h-4 w-px shrink-0 bg-edge" />
-        <span
-          className="min-w-0 truncate text-[11px] text-fg-muted"
-          data-testid="redis-tree-count"
-          data-loaded={loadedCount}
-          data-total={totalCount}
-          data-partial={scanning ? 'true' : 'false'}
-        >
-          {t('redis.tree.loadedOfTotal')
-            .replace('{loaded}', loadedLabel)
-            .replace('{total}', String(totalCount))}
-        </span>
+        {/*
+          The counter counts *scanned keys*, so it only has a meaning while the
+          key scope owns the column. In the value / all scopes the column is
+          `ValueSearchResults`, which renders its own status bar directly below
+          this row (scanned / maxKeys + hit count). Leaving this one up would put
+          a frozen key-scan number next to the live value-search numbers — two
+          rows of counters disagreeing about what the column is showing. Hiding it
+          is also what keeps it from duplicating the hit count the bar below
+          already owns.
+        */}
+        {searchMode === 'key' && (
+          <span
+            className="min-w-0 truncate text-[11px] text-fg-muted"
+            data-testid="redis-tree-count"
+            data-loaded={loadedCount}
+            data-total={totalCount}
+            data-partial={scanning ? 'true' : 'false'}
+          >
+            {t('redis.tree.loadedOfTotal')
+              .replace('{loaded}', loadedLabel)
+              .replace('{total}', String(totalCount))}
+          </span>
+        )}
         <div className="flex-1" />
         <div className="flex shrink-0 items-center gap-1">
           <HeaderIcon

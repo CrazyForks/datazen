@@ -664,3 +664,79 @@ describe('R1 the select-all button becomes the delete button over the selection'
     );
   });
 });
+
+/*
+ * R1's counter counts *scanned keys*, so it only means anything while the key
+ * scope owns the column. The value scope's own status bar reports the value
+ * search instead; the two must never both be on screen claiming the column.
+ */
+describe('the key counter yields to the scope that owns the column', () => {
+  it('drops the key counter for the value scope, which brings its own', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    // Key scope: the counter is present and describes the key scan.
+    await waitFor(() => expect(screen.getByTestId('redis-tree-count')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe(
+        'value',
+      ),
+    );
+    // Gone — not stale, not zero: a key-scan count next to value-search numbers
+    // is a contradiction, so the whole counter leaves.
+    expect(screen.queryByTestId('redis-tree-count')).toBeNull();
+    // And the value scope does own a count of its own (the i18n key, identity `t`).
+    expect(screen.getByText('redis.search.hits')).toBeTruthy();
+  });
+
+  it('brings the counter back on the way home to the key scope', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() => expect(screen.queryByTestId('redis-tree-count')).toBeNull());
+
+    fireEvent.click(screen.getByTestId('redis-search-mode-key'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-count')).toBeTruthy());
+    expect(screen.queryByText('redis.search.hits')).toBeNull();
+  });
+});
+
+/*
+ * 模糊 is a modifier that only rewrites the pattern at apply time, while
+ * 仅无过期 is a scan argument that re-issues on toggle. That asymmetry is fine
+ * as long as the apply step is reachable without the keyboard — the button is
+ * what makes 模糊 read as a pending change rather than a dead chip.
+ */
+describe('R2 apply is reachable by pointer, not only by Enter', () => {
+  it('the fuzzy chip alone changes nothing; the apply button spends it', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+    const before = scanKeys.mock.calls.length;
+
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.change(input, { target: { value: 'user' } });
+    fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
+    expect(screen.getByTestId('redis-tree-chip-fuzzy').getAttribute('data-active')).toBe('on');
+    // The modifier is armed but unspent: no rescan, and the input still holds the
+    // literal the user typed.
+    expect(scanKeys.mock.calls.length).toBe(before);
+    expect((input as HTMLInputElement).value).toBe('user');
+
+    // The button is the missing trigger: it wraps the literal and scans.
+    fireEvent.click(screen.getByTestId('redis-search-apply'));
+    await waitFor(() => expect(lastScan().pattern).toBe('*user*'));
+  });
+
+  it('applies what is already in the box with no chip touched', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const before = scanKeys.mock.calls.length;
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app' } });
+    expect(scanKeys.mock.calls.length).toBe(before);
+
+    fireEvent.click(screen.getByTestId('redis-search-apply'));
+    await waitFor(() => expect(lastScan().pattern).toBe('app'));
+  });
+});
