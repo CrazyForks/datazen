@@ -83,7 +83,14 @@ bindSettingsStore(
   })),
 );
 bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
-bindConfirmDialog(() => [async () => true, null]);
+/*
+ * Controllable so the R1 select-all → delete journey can walk both branches of
+ * the gate order (confirm refused ⇒ nothing is sent at all). Defaults to `true`,
+ * which is what every other journey in this file already assumed.
+ */
+let confirmAnswer = true;
+const confirmSpy = vi.fn(async () => confirmAnswer);
+bindConfirmDialog(() => [confirmSpy, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
     databases: ['db0', 'db1'],
@@ -136,6 +143,7 @@ async function expectEmptyState(state: string): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  confirmAnswer = true;
   // Default flat scan: both keys on one finished page (cursor drained ⇒ the
   // counter is exact and `scanning` never masks an empty state by accident).
   scanKeys.mockImplementation(async () => ({
@@ -520,5 +528,139 @@ describe('row delete journeys (I-6 write gate, D-0 extraction)', () => {
     expect(((call as unknown[])[2] as { pattern: string }).pattern).toBe('app:*');
     await waitFor(() => expect(rootCalls()).toBeGreaterThan(rootsBefore));
     expect(screen.queryByTestId('redis-batch-ttl-confirm')).toBeNull();
+  });
+});
+
+/* ── R1 select-all slot morphs into the delete action ────────────────────── */
+
+describe('R1 the select-all button becomes the delete button over the selection', () => {
+  /** The identity R1's single action slot is wearing right now. */
+  function actionSlot(): { testId: string; labelKey: string } {
+    const el =
+      screen.queryByTestId('redis-tree-select-all') ??
+      screen.queryByTestId('redis-tree-delete-selected');
+    if (!el) throw new Error('[journey] R1 has no action button at all');
+    return {
+      testId: el.getAttribute('data-testid') as string,
+      labelKey: el.getAttribute('data-action-label-key') as string,
+    };
+  }
+
+  /** `delete_keys` payloads, in call order. */
+  function deleteCalls(): string[][] {
+    return redisCommand.mock.calls
+      .filter((c) => String((c as unknown[])[1]) === 'delete_keys')
+      .map((c) => ((c as unknown[])[2] as { keys: string[] }).keys);
+  }
+
+  it('walks select-all → delete → summary → back to select-all, one step at a time', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+
+    // 1. Resting state: the slot is select-all, and it is enabled.
+    expect(actionSlot()).toEqual({
+      testId: 'redis-tree-select-all',
+      labelKey: 'redis.tree.selectAll',
+    });
+    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(false);
+
+    // 2. Select all loaded — the very next paint is the delete action.
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+    expect(actionSlot().labelKey).toBe('redis.deleteSelected');
+    // The select-all identity is *gone*, not merely hidden: one slot, and it
+    // is the delete one now.
+    expect(screen.queryByTestId('redis-tree-select-all')).toBeNull();
+
+    // 3. Both loaded keys are the payload — the same set the button selected.
+    fireEvent.click(screen.getByTestId('redis-tree-delete-selected'));
+    await waitFor(() => expect(deleteCalls()).toHaveLength(1));
+    expect(deleteCalls()[0].sort()).toEqual(['app:user:1', 'app:user:2']);
+
+    // 4. The write reports back through the shared banner, in its text form.
+    const banner = await screen.findByTestId('redis-batch-summary');
+    expect(banner.getAttribute('data-kind')).toBe('text');
+
+    // 5. The refresh dropped the selection, so the slot reverted by itself.
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    expect(screen.queryByTestId('redis-tree-delete-selected')).toBeNull();
+  });
+
+  it('a hand-ticked row arms the same delete action (it keys off the selection, not the button)', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    // Expand the folder first — a leaf row only exists to tick once its
+    // subtree is on screen.
+    fireEvent.click(screen.getByTestId('redis-tree-folder-app:'));
+    const leaf = await screen.findByTestId('redis-tree-key-check-app:user:1');
+    fireEvent.click(leaf);
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // Un-ticking the last row disarms it again — the button tracks the state,
+    // it does not latch.
+    fireEvent.click(leaf);
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    expect(deleteCalls()).toHaveLength(0);
+  });
+
+  it('Esc leaves the delete state without deleting anything', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // `Escape` is treeNavAction's `clear` chord — the exit transition.
+    fireEvent.keyDown(screen.getByTestId('redis-key-tree'), { key: 'Escape' });
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    // Refused ⇒ not even the confirm was shown: no write was ever on the table.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(deleteCalls()).toHaveLength(0);
+  });
+
+  it('a refused confirm sends nothing and keeps the selection armed', async () => {
+    confirmAnswer = false;
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('redis-tree-delete-selected'));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    // Identity `t` ⇒ the message equals its i18n key. The count is interpolated
+    // into that string, so asserting on the key (not on prose) is what this
+    // file's policy allows; `en.ts` owns whether `{count}` is in it.
+    const arg = confirmSpy.mock.calls[0][0] as { message: string; kind: string };
+    expect(arg.message).toBe('redis.deleteSelectedConfirm');
+    expect(arg.kind).toBe('warning');
+
+    expect(deleteCalls()).toHaveLength(0);
+    expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy();
+  });
+
+  it('the value scope parks the delete action disabled, selection intact', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // Switching scope only re-roots the column; it does not apply a search, so
+    // it does not run I-1 and the selection survives. The ticked rows are just
+    // not on screen, which is why the action is disabled rather than hidden:
+    // the selection is real, it just has no tree to delete from right now.
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe(
+        'value',
+      ),
+    );
+    const parked = screen.getByTestId('redis-tree-delete-selected');
+    expect(parked.disabled).toBe(true);
+    expect(deleteCalls()).toHaveLength(0);
+
+    // Back in the key scope it is live again — the selection outlived the trip.
+    fireEvent.click(screen.getByTestId('redis-search-mode-key'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-tree-delete-selected').disabled).toBe(false),
+    );
   });
 });

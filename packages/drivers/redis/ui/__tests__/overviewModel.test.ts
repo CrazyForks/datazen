@@ -13,7 +13,6 @@ import {
   parseInfoFieldsFromRaw,
   summariseSlowlogCommand,
   SLOWLOG_COMMAND_SUMMARY_MAX,
-  DEFAULT_DATABASE_COUNT,
   type ServerRowId,
 } from '../overview/overviewModel';
 import { parseInfoSections } from '../observe/infoParse';

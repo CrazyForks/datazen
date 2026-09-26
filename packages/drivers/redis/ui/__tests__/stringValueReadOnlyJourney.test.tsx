@@ -41,7 +41,8 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { VIEWS } from '../value-editors/valueView/views';
-import { CODECS, bytesToBase64 } from '../value-editors/valueView/codecs';
+import { CODECS } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 import { BIG_VALUE_SENTINEL_BYTES } from '../value-editors/redisBigValue';
 
 bindSettingsStore(
@@ -165,9 +166,7 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
     expect(screen.queryByTestId('redis-string-mode-toggle')).toBeNull();
     expectEditable();
     // Codec / View 两行仍在（渲染预检），但输出区让位给编辑区：不再叠一份只读预览。
-    expect(screen.getByTestId('redis-value-viewer').getAttribute('data-show-output')).toBe(
-      'false',
-    );
+    expect(screen.getByTestId('redis-value-viewer').getAttribute('data-show-output')).toBe('false');
     expect(screen.getByTestId('redis-view-group')).toBeTruthy();
     expect(screen.getByTestId('redis-codec-group')).toBeTruthy();
     expect(screen.queryByTestId('redis-value-text')).toBeNull();
@@ -251,16 +250,14 @@ describe('常驻编辑面 → 字节视图只读 → 回到可编辑（一条连
 describe('大 value / 截断载荷（I-5 只读态②）', () => {
   it('locks a string over the sentinel read-only and names its size', async () => {
     const bytes = BIG_VALUE_SENTINEL_BYTES + 1;
-    getKeyRaw.mockResolvedValue(
-      frame({ logicalLen: bytes, rawB64: null, truncated: false }),
-    );
+    getKeyRaw.mockResolvedValue(frame({ logicalLen: bytes, rawB64: null, truncated: false }));
     editor();
 
     // BUG-006 后：超哨兵（truncated=false）⇒ 载荷完整，走 bigValueComplete 文案。
     await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValueComplete'));
-    expect(reason()!.querySelector('[data-big-value-bytes]')!.getAttribute('data-big-value-bytes')).toBe(
-      String(bytes),
-    );
+    expect(
+      reason()!.querySelector('[data-big-value-bytes]')!.getAttribute('data-big-value-bytes'),
+    ).toBe(String(bytes));
     // 截断载荷不接受键盘写入（jsdom 的 change 会绕过 DOM 只读，所以逻辑层也要挡）。
     fireEvent.change(input(), { target: { value: 'overwrite' } });
     expect(surface().getAttribute('data-string-dirty')).toBe('false');
@@ -291,9 +288,7 @@ describe('大 value / 截断载荷（I-5 只读态②）', () => {
   });
 
   it('prefers the byte-view reason while a byte view is active on a huge value', async () => {
-    getKeyRaw.mockResolvedValue(
-      frame({ truncated: true, logicalLen: 6_000_000, rawB64: null }),
-    );
+    getKeyRaw.mockResolvedValue(frame({ truncated: true, logicalLen: 6_000_000, rawB64: null }));
     editor();
     await waitFor(() => expectReadOnlyState('big-value', 'redis.detail.readonly.bigValue'));
     // 用户当场能切回去的那个原因更可操作。

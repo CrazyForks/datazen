@@ -19,9 +19,6 @@
  */
 import { parseInfoSections, type InfoSection } from '../observe/infoParse';
 
-/** Redis 报告 16 个逻辑库（`redisMeta.maxDatabaseIndex` = 15）。 */
-export const DEFAULT_DATABASE_COUNT = 16;
-
 /** 碎片率超过该值视为异常（PRD §3.1 卡 1/卡 2 的 warning 判定位）。 */
 export const FRAGMENTATION_WARN_RATIO = 1.5;
 

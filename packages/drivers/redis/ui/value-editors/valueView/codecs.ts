@@ -22,8 +22,6 @@ export const CODECS = [
 
 export type Codec = (typeof CODECS)[number];
 
-/** Codecs resolved entirely in the browser from the raw bytes. */
-export const BROWSER_CODECS: readonly Codec[] = ['none', 'gzip', 'zlib', 'deflate', 'base64'];
 /** Codecs delegated to the backend `decode_value` command. */
 export const BACKEND_CODECS: readonly Codec[] = ['msgpack', 'pickle', 'php', 'java'];
 
@@ -61,17 +59,6 @@ export function base64ToBytes(b64: string): Uint8Array {
     }
   }
   return out.subarray(0, o);
-}
-
-/** bytes → base64 (STANDARD, padded). */
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  // eslint-disable-next-line no-restricted-globals
-  return btoa(binary);
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

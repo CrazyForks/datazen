@@ -5,7 +5,6 @@ import {
   openKeyCtxTtl,
   type KeyCtxDialog,
 } from './KeyWorkbenchDialogs';
-import type { BatchSummaryPayload } from './batchErrors';
 
 /**
  * Transient overlays of the key workbench: the batch-result banner, the import /
@@ -19,9 +18,9 @@ import type { BatchSummaryPayload } from './batchErrors';
  */
 
 export interface WorkbenchOverlays {
-  /** `null` ⇒ hidden; a string ⇒ one-line result; a summary ⇒ I-8 breakdown. */
-  batchSummary: BatchSummaryPayload | null;
-  setBatchSummary: (message: BatchSummaryPayload | null) => void;
+  /** `null` ⇒ hidden; otherwise the one-line result of the last write. */
+  batchSummary: string | null;
+  setBatchSummary: (message: string | null) => void;
   importExportOpen: boolean;
   setImportExportOpen: (open: boolean) => void;
   createOpen: boolean;
@@ -44,7 +43,7 @@ const KEY_CTX_OPENERS: Record<KeyCtxAction, (key: string) => KeyCtxDialog> = {
 };
 
 export function useWorkbenchOverlays(): WorkbenchOverlays {
-  const [batchSummary, setBatchSummary] = useState<BatchSummaryPayload | null>(null);
+  const [batchSummary, setBatchSummary] = useState<string | null>(null);
   const [importExportOpen, setImportExportOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [flushDialog, setFlushDialog] = useState<'db' | 'all' | null>(null);

@@ -45,7 +45,7 @@ vi.mock('../value-editors/stringKeyValue', async (importOriginal) => ({
 import type { DecompressResult } from '../value-editors/stringKeyValue';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -82,12 +82,14 @@ function renderEditor() {
     <KeyDetailEditor
       dbSessionId="sess-d"
       dbIndex={0}
-      detail={{
-        key: 'app:blob',
-        keyType: 'string',
-        ttl: -1,
-        value: { value: RAW },
-      } as unknown as KeyDetail}
+      detail={
+        {
+          key: 'app:blob',
+          keyType: 'string',
+          ttl: -1,
+          value: { value: RAW },
+        } as unknown as KeyDetail
+      }
       modules={[]}
       onRefresh={() => {}}
     />,
@@ -98,9 +100,8 @@ const surface = () => screen.getByTestId('redis-string-editor');
 const button = () => screen.getByText('redis.decompressView') as HTMLButtonElement;
 /** Panels carry no `data-testid` upstream, so locate them by their i18n key text. */
 const panelWithKeyText = (keyText: string): HTMLElement | null =>
-  Array.from(surface().querySelectorAll('div')).find((el) =>
-    el.textContent?.includes(keyText),
-  ) ?? null;
+  Array.from(surface().querySelectorAll('div')).find((el) => el.textContent?.includes(keyText)) ??
+  null;
 
 async function settle(ms = 20) {
   await act(async () => {
@@ -153,9 +154,7 @@ describe('[tester] 解压预检：进入 / 成功 / 判不出 / 抛错（常驻�
     await settle();
 
     // 判不出 ⇒ 具名失败态（i18n key 文本），且不留下半截结果面板。
-    await waitFor(() =>
-      expect(panelWithKeyText('redis.decompressFailed')).not.toBeNull(),
-    );
+    await waitFor(() => expect(panelWithKeyText('redis.decompressFailed')).not.toBeNull());
     expect(panelWithKeyText('redis.decompressCodec')).toBeNull();
     expect(button()).not.toBeDisabled();
   });
@@ -169,9 +168,7 @@ describe('[tester] 解压预检：进入 / 成功 / 判不出 / 抛错（常驻�
     await settle();
 
     // 异常原文属服务器数据（该支路无对应词条）；关键是 busy 必须落回 false。
-    await waitFor(() =>
-      expect(surface().textContent).toContain('truncated deflate stream'),
-    );
+    await waitFor(() => expect(surface().textContent).toContain('truncated deflate stream'));
     expect(button()).not.toBeDisabled();
     expect(panelWithKeyText('redis.decompressCodec')).toBeNull();
   });

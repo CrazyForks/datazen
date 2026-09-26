@@ -22,7 +22,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { ValueViewer } from '../value-editors/ValueViewer';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 const HOSTILE_B64 = bytesToBase64(new Uint8Array([0x00, 0x01, 0xff, 0x41]));
 const frame = {
@@ -163,13 +163,7 @@ describe('[tester] ValueViewer read-only preview actions (E-3 reachability)', ()
 
   it('renders only the codec/view rows when the host keeps the output (showOutput=false)', () => {
     render(
-      <ValueViewer
-        dbSessionId="sess-1"
-        frame={frame}
-        view="hex"
-        codec="none"
-        showOutput={false}
-      />,
+      <ValueViewer dbSessionId="sess-1" frame={frame} view="hex" codec="none" showOutput={false} />,
     );
     const viewer = screen.getByTestId('redis-value-viewer');
     expect(viewer.getAttribute('data-show-output')).toBe('false');

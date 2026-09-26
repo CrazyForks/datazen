@@ -24,8 +24,6 @@
 export type DangerLevel = 'safe' | 'write' | 'danger' | 'ultra-danger';
 
 /** Strictness order used to fold a multi-command batch into one level. */
-export const DANGER_LEVELS: readonly DangerLevel[] = ['safe', 'write', 'danger', 'ultra-danger'];
-
 const LEVEL_RANK: Record<DangerLevel, number> = {
   safe: 0,
   write: 1,

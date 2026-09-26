@@ -9,14 +9,14 @@
  * copy.
  */
 import { describe, expect, it } from 'vitest';
+import { assessCommand, isBlockedLevel, type DangerLevel } from '../console/redisConsoleDanger';
 import {
-  DANGER_LEVELS,
-  assessCommand,
-  isBlockedLevel,
-} from '../console/redisConsoleDanger';
-import { assessCommands, badgeAssessment, splitConsoleCommands } from '../console/consoleCommandBatch';
+  assessCommands,
+  badgeAssessment,
+  splitConsoleCommands,
+} from '../console/consoleCommandBatch';
 
-const STRICTEST = DANGER_LEVELS[DANGER_LEVELS.length - 1];
+const STRICTEST: DangerLevel = 'ultra-danger';
 
 /** Commands that are not part of the known vocabulary, in any spelling. */
 const UNRECOGNISED = [

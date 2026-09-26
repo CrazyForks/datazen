@@ -29,6 +29,8 @@ export interface KeyTreePaneProps {
   detail: KeyDetailState;
   onKeyContextMenu: (e: ReactMouseEvent, key: string) => void;
   onDeleteRow: (target: KeyTreeDeleteTarget) => void;
+  /** R1's select-all slot flips to delete over the ticked keys. */
+  onDeleteSelected: (keys: string[]) => void;
   /** `DBSIZE` — the denominator of R1's `已加载 N / 共 M`. */
   totalCount: number;
   /** R2's fuzzy chip: literal → `*literal*` on apply. */
@@ -47,6 +49,7 @@ export function KeyTreePane({
   detail,
   onKeyContextMenu,
   onDeleteRow,
+  onDeleteSelected,
   totalCount,
   fuzzy,
   onFuzzyChange,
@@ -73,6 +76,8 @@ export function KeyTreePane({
         totalCount={totalCount}
         scanning={scan.cursor !== 0}
         onSelectAll={selectAllLoaded}
+        selectionCount={selection.selectedKeys.size}
+        onDeleteSelected={() => onDeleteSelected([...selection.selectedKeys])}
         onRefresh={onRefresh}
         onCreateKey={onCreateKey}
       >

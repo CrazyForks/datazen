@@ -224,13 +224,14 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     useKvSlotRelay(kvSlotState, dbSessionId, detail.selectedKey, detail.editorDirty);
 
     // Row context menu + hover delete (confirm → write gate → refresh).
-    const { handleKeyContextMenu, handleDeleteRow, actionDialogs } = useKeyRowActions({
-      dbSessionId,
-      dbIndex,
-      onRefreshKeys: refreshKeys,
-      onBatchSummary: overlays.setBatchSummary,
-      onKeyCtxDialog: overlays.setKeyCtxDialog,
-    });
+    const { handleKeyContextMenu, handleDeleteRow, handleDeleteSelected, actionDialogs } =
+      useKeyRowActions({
+        dbSessionId,
+        dbIndex,
+        onRefreshKeys: refreshKeys,
+        onBatchSummary: overlays.setBatchSummary,
+        onKeyCtxDialog: overlays.setKeyCtxDialog,
+      });
 
     // Dialog-side refresh (BUG-002): dirty ⇒ rescan only; clean ⇒ full refresh.
     const refreshKeysForDialogs = useCallback(() => {
@@ -277,6 +278,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     detail={detail}
                     onKeyContextMenu={handleKeyContextMenu}
                     onDeleteRow={handleDeleteRow}
+                    onDeleteSelected={handleDeleteSelected}
                     totalCount={scan.dbSize}
                     fuzzy={fuzzyPattern}
                     onFuzzyChange={setFuzzyPattern}

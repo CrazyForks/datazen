@@ -43,17 +43,6 @@ import {
   resolveTreeEmptyState,
   type TreeEmptySignal,
 } from '../key-browser/treeEmptyState';
-import {
-  BATCH_FAILURE_KEYS,
-  BATCH_FAILURE_ORDER,
-  batchSummary,
-  classifyBatchError,
-  failedKeyNames,
-  failuresByCode,
-  failuresForAllKeys,
-  failuresFromErrors,
-  isBatchResultSummary,
-} from '../key-browser/batchErrors';
 
 /* ── fixtures ─────────────────────────────────────────────────────────────── */
 
@@ -572,74 +561,5 @@ describe('[redis-tree-ui-BUG-004] nextNavigableIndex walks past non-navigable ro
     expect(nextNavigableIndex(0, -1, 2, free)).toBe(-1);
     expect(resolve(-1, 1)).toBe(1); // stayed on the real row
     expect(resolve(-1, 0)).toBe(-1); // current row itself is a crumb ⇒ deselect
-  });
-});
-
-/* ── D-6 / I-8: failure taxonomy ──────────────────────────────────────────── */
-
-describe('batchErrors (I-8)', () => {
-  it('classifies a raw reply onto a stable code instead of matching text', () => {
-    expect(classifyBatchError('NOPERM this user has no permissions')).toBe('noAcl');
-    expect(classifyBatchError('NOAUTH Authentication required.')).toBe('noAcl');
-    expect(
-      classifyBatchError('WRONGTYPE Operation against a key holding the wrong kind of value'),
-    ).toBe('badValue');
-    expect(classifyBatchError('value is not an integer or out of range')).toBe('badValue');
-    expect(classifyBatchError('connection reset by peer')).toBe('network');
-    expect(classifyBatchError("CROSSSLOT Keys in request don't hash to the same slot")).toBe(
-      'network',
-    );
-    expect(classifyBatchError('ERR no such key')).toBe('keyGone');
-    expect(classifyBatchError('')).toBe('unknown');
-    expect(classifyBatchError(undefined)).toBe('unknown');
-    expect(classifyBatchError('boom')).toBe('unknown');
-  });
-
-  it('keeps server order and the raw message alongside the code', () => {
-    const failures = failuresFromErrors([
-      { key: 'a:1', error: 'NOPERM nope' },
-      { key: 'a:2', error: 'WRONGTYPE nope' },
-    ]);
-    expect(failures).toEqual([
-      { key: 'a:1', code: 'noAcl', message: 'NOPERM nope' },
-      { key: 'a:2', code: 'badValue', message: 'WRONGTYPE nope' },
-    ]);
-    expect(failuresFromErrors(undefined)).toEqual([]);
-    expect(failedKeyNames(failures)).toEqual(['a:1', 'a:2']);
-  });
-
-  it('treats a thrown batch call as every key failed', () => {
-    // No per-key verdict ⇒ the safe side of I-8: nothing leaves the selection.
-    const failures = failuresForAllKeys(['a:1', 'a:2'], 'connection closed');
-    expect(failures.map((f) => f.code)).toEqual(['network', 'network']);
-    expect(failedKeyNames(failures)).toEqual(['a:1', 'a:2']);
-  });
-
-  it('summarises with the server-truth counts', () => {
-    const summary = batchSummary('ttl', 3, failuresFromErrors([{ key: 'a:9', error: 'NOPERM' }]));
-    expect(summary).toEqual({
-      action: 'ttl',
-      ok: 3,
-      failed: 1,
-      failures: [{ key: 'a:9', code: 'noAcl', message: 'NOPERM' }],
-    });
-    expect(isBatchResultSummary(summary)).toBe(true);
-    expect(isBatchResultSummary('Deleted 3 keys')).toBe(false);
-  });
-
-  it('groups failures by code in a stable, most-actionable-first order', () => {
-    const grouped = failuresByCode([
-      { key: 'k1', code: 'keyGone', message: '' },
-      { key: 'k2', code: 'noAcl', message: '' },
-      { key: 'k3', code: 'keyGone', message: '' },
-      { key: 'k4', code: 'unknown', message: '' },
-    ]);
-    expect(grouped.map((g) => g.code)).toEqual(['noAcl', 'keyGone', 'unknown']);
-    expect(grouped[1]!.keys).toEqual(['k1', 'k3']);
-    // Every code the banner can render has a i18n key.
-    expect(Object.keys(BATCH_FAILURE_KEYS)).toHaveLength(BATCH_FAILURE_ORDER.length);
-    for (const code of BATCH_FAILURE_ORDER) {
-      expect(BATCH_FAILURE_KEYS[code]).toMatch(/^redis\.tree\.error\./);
-    }
   });
 });

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { CheckSquare, ListChecks, Plus, RefreshCw } from 'lucide-react';
-import { Button, useI18n } from '@datazen/ui';
+import { CheckSquare, ListChecks, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Button, cn, useI18n } from '@datazen/ui';
 import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
 
 /**
@@ -30,6 +30,10 @@ export interface KeyTreeHeaderProps {
   /** Scan cursor still open ⇒ the loaded set is partial (`N+`). */
   scanning: boolean;
   onSelectAll: () => void;
+  /** How many keys the tree's checkboxes currently hold. `0` ⇒ no selection. */
+  selectionCount: number;
+  /** R1's select-all slot becomes the delete action once anything is ticked. */
+  onDeleteSelected: () => void;
   onRefresh: () => void;
   onCreateKey: () => void;
   children?: ReactNode;
@@ -42,6 +46,8 @@ export function KeyTreeHeader({
   totalCount,
   scanning,
   onSelectAll,
+  selectionCount,
+  onDeleteSelected,
   onRefresh,
   onCreateKey,
   children,
@@ -49,6 +55,22 @@ export function KeyTreeHeader({
   const { t } = useI18n();
   const isKeyMode = searchMode === 'key';
   const loadedLabel = scanning ? `${loadedCount}+` : String(loadedCount);
+  /*
+   * One slot, two actions. R1 has no room for a second button without widening
+   * the row that was just lined up with the right panel's tab bar, so the
+   * select-all button *becomes* the delete button the moment anything is
+   * ticked — the tree needs an exit for its own selection, and a second
+   * permanently-red button next to refresh is the way to offer one.
+   *
+   * Keyed off the selection rather than off "the select-all button was
+   * clicked": ticking three boxes by hand is the same state as clicking
+   * select-all, and leaving those users without a delete would be arbitrary.
+   *
+   * Exit from the delete state is `Esc` (treeNavAction's `clear` chord) or
+   * unticking; the button's own title says so, because a button that changed
+   * identity is the one place the affordance needs to be spelled out.
+   */
+  const hasSelection = selectionCount > 0;
 
   return (
     <div
@@ -80,11 +102,17 @@ export function KeyTreeHeader({
         <div className="flex-1" />
         <div className="flex shrink-0 items-center gap-1">
           <HeaderIcon
-            testId="redis-tree-select-all"
-            labelKey="redis.tree.selectAll"
-            Icon={CheckSquare}
-            disabled={!isKeyMode || loadedCount === 0}
-            onClick={onSelectAll}
+            testId={hasSelection ? 'redis-tree-delete-selected' : 'redis-tree-select-all'}
+            labelKey={hasSelection ? 'redis.deleteSelected' : 'redis.tree.selectAll'}
+            Icon={hasSelection ? Trash2 : CheckSquare}
+            /*
+             * The delete state is keyed off the selection, so it is enabled
+             * whenever anything is ticked; the select-all state still needs a
+             * loaded set to take and the key scope to exist at all.
+             */
+            disabled={!isKeyMode || (!hasSelection && loadedCount === 0)}
+            onClick={hasSelection ? onDeleteSelected : onSelectAll}
+            tone={hasSelection ? 'danger' : 'default'}
           />
           <HeaderIcon
             testId="redis-tree-refresh"
@@ -111,15 +139,34 @@ interface HeaderIconProps {
   Icon: typeof ListChecks;
   disabled?: boolean;
   onClick: () => void;
+  /**
+   * `danger` recolours a ghost button rather than switching it to the design
+   * system's solid `danger` variant: a 28px block of `bg-danger` in a toolbar
+   * that also holds refresh and create would out-shout the row it lives in, and
+   * it appears the moment anything is ticked rather than after a deliberate
+   * click on it.
+   */
+  tone?: 'default' | 'danger';
   children?: ReactNode;
 }
 
-function HeaderIcon({ testId, labelKey, Icon, disabled, onClick, children }: HeaderIconProps) {
+function HeaderIcon({
+  testId,
+  labelKey,
+  Icon,
+  disabled,
+  onClick,
+  tone = 'default',
+  children,
+}: HeaderIconProps) {
   const { t } = useI18n();
   return (
     <Button
       variant="ghost"
-      className="relative h-7 w-7 shrink-0 p-0"
+      className={cn(
+        'relative h-7 w-7 shrink-0 p-0',
+        tone === 'danger' && 'text-danger hover:bg-danger/10 hover:text-danger',
+      )}
       title={t(labelKey)}
       aria-label={t(labelKey)}
       data-testid={testId}
