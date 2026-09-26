@@ -23,8 +23,7 @@
  *  - exit: the panel is unmounted when the connection closes.
  */
 import { useCallback, useState } from 'react';
-import { Plus } from 'lucide-react';
-import { Button, cn, useI18n } from '@datazen/ui';
+import { cn, useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { DetailColumn } from './DetailColumn';
 import { RedisConsole } from '../console/RedisConsole';
@@ -69,11 +68,6 @@ export interface RedisRightPanelProps {
   activeTab?: RightTab;
   /** Callback when the user clicks a tab (controlled by parent). */
   onTabChange?: (tab: RightTab) => void;
-  /**
-   * Open the create-key dialog. Rendered as the tab bar's only action button:
-   * the workbench owns the overlay, so the button needs no host round-trip.
-   */
-  onCreateKey?: () => void;
 }
 
 /**
@@ -98,7 +92,6 @@ export function RedisRightPanel({
   selectedDb,
   activeTab: controlledTab,
   onTabChange,
-  onCreateKey,
 }: RedisRightPanelProps) {
   const { t } = useI18n();
   // Support both controlled and uncontrolled tab mode.
@@ -124,8 +117,16 @@ export function RedisRightPanel({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="redis-right-panel">
       {/* Tab bar */}
+      {/*
+        `h-10` is the shared column-header height. The key tree's R1 toolbar row
+        (`KeyTreeHeader`) is pinned to the same value, so the two columns' first
+        rows line up instead of differing by whatever padding each happened to
+        carry. Both sides must name the literal class — a Tailwind size token
+        cannot be shared through a constant and still be extracted — and
+        `columnHeaderHeight.test.tsx` is what keeps the two literals in step.
+      */}
       <div
-        className="flex shrink-0 items-center gap-0 border-b border-edge bg-surface-alt"
+        className="flex h-10 shrink-0 items-center gap-0 border-b border-edge bg-surface-alt"
         data-testid="redis-right-tab-bar"
       >
         {RIGHT_TABS.map((tab) => (
@@ -135,7 +136,10 @@ export function RedisRightPanel({
             data-testid={`redis-right-tab-${tab}`}
             data-active={activeTab === tab ? 'true' : 'false'}
             className={cn(
-              'relative px-4 py-2.5 text-xs transition-colors',
+              // `h-full` (not `py-*`): the active-tab underline is positioned
+              // against the button's own box, so the button has to reach the
+              // bar's bottom edge for the underline to sit on the border.
+              'relative flex h-full items-center px-4 text-xs transition-colors',
               activeTab === tab ? 'text-fg font-medium' : 'text-fg-secondary hover:text-fg',
             )}
             onClick={() => void handleTabClick(tab)}
@@ -150,25 +154,6 @@ export function RedisRightPanel({
           </button>
         ))}
         <div className="flex-1" />
-        {/*
-          The panel's only action control. It used to live in the host toolbar's
-          KV context bar, which put a create-key affordance for *this* panel on a
-          row shared with every other driver surface; the workbench already owns
-          the overlay, so the button belongs next to the tabs it creates into.
-        */}
-        {onCreateKey && (
-          <Button
-            variant="secondary"
-            className="mr-2 h-7 shrink-0 gap-1 px-2 text-xs"
-            title={t('redis.createKey')}
-            aria-label={t('redis.createKey')}
-            data-testid="redis-right-create-key"
-            onClick={onCreateKey}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span className="whitespace-nowrap">{t('redis.createKey')}</span>
-          </Button>
-        )}
         {connectionName && selectedDb && (
           <span
             className="max-w-[40%] truncate px-3 text-[11px] text-fg-muted"

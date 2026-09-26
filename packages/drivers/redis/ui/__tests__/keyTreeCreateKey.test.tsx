@@ -1,22 +1,25 @@
 /**
- * The right panel's Create key button — the replacement for the action row that
- * used to live in the host toolbar's 48px KV context band.
+ * Create key, after the right panel's copy of the button was removed.
  *
- * Why this file exists: that band was removed, and with it every other action
- * button (refresh / import / export / overflow). Create key is the one action
- * that survived, so it is the one thing here that must be proven twice:
+ * The action itself is not what moved: the workbench still owns the create-key
+ * overlay and still issues `set_string`. What changed is that the button now
+ * lives in exactly one place — the key tree's R1 toolbar row — and the right
+ * panel's tab bar carries no action controls at all.
  *
- * 1. **The button is owned by the panel, not the host.** It renders inside the
- *    tab bar next to the tabs it creates into, and it is driven straight from
- *    the workbench's own overlay state — no KV slot action, no host round-trip.
- * 2. **It is wired, not decorative.** Clicking it opens the real create-key
- *    dialog and submitting it reaches `set_string`, i.e. the feature the user
- *    asked to keep actually works from its new home.
+ * So the coverage follows the *function*, not the button:
  *
- * Rendered through `RedisConnectionView` rather than `RedisRightPanel` alone,
- * because that is the only path where `renderRightPanel` exists — the prop
- * under test is handed to the panel by the workbench, and a panel-only mount
- * would never see it.
+ * 1. The right panel's tab bar stays free of action buttons. It once carried a
+ *    Create key copy, and before that the host's 48px KV context band carried
+ *    refresh / import / export / overflow. Both were removed on purpose; a
+ *    button quietly reappearing in the tab bar would undo that.
+ * 2. The surviving button is the key tree's, and it is wired to the workbench's
+ *    own overlay — clicking it opens the real dialog and submitting reaches
+ *    `set_string`. A button that renders but opens nothing would look like the
+ *    feature survived when it did not.
+ *
+ * Rendered through `RedisConnectionView` because that is the only path where the
+ * workbench mounts; the dialog overlay is reached through the same hook
+ * (`overlays.setCreateOpen`) from both sides of the split.
  *
  * 只断言 `data-testid` / `data-*`（PRD §7-6：禁英文字面量）; the i18n `t()` is
  * mocked to echo the key.
@@ -56,7 +59,7 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 }));
 
 // The console / pubsub / slowlog bodies open their own heavy panels; the tab
-// bar and its action button are what this suite is about.
+// bar is what this suite is about.
 vi.mock('../console/RedisConsole', () => ({
   RedisConsole: () => <div data-testid="stub-console" />,
 }));
@@ -123,34 +126,35 @@ function buttonWithKey(container: HTMLElement, key: string): HTMLButtonElement {
   return found as HTMLButtonElement;
 }
 
-describe('Right-panel Create key button', () => {
-  it('lives in the tab bar, not in a host toolbar row', async () => {
+describe('Create key — one button, in the key tree', () => {
+  it('is the only create-key affordance on screen', async () => {
     renderView();
     await act(async () => {});
 
-    const button = screen.getByTestId('redis-right-create-key');
-    // Inside the tab bar ⇒ it travels with the panel wherever the panel mounts,
-    // instead of depending on a host row that KV panels no longer render.
-    expect(screen.getByTestId('redis-right-tab-bar').contains(button)).toBe(true);
-    // Labelled from copy, not a bare glyph.
-    expect(button.getAttribute('aria-label')).toBe('redis.createKey');
+    // A second entry point would mean two different-looking ways to do the same
+    // thing in two columns; the user asked for one.
+    expect(screen.getAllByTestId('redis-tree-create-key')).toHaveLength(1);
+    // It belongs to the key column's own toolbar row, not to a host band.
+    expect(
+      screen
+        .getByTestId('redis-tree-toolbar-row')
+        .contains(screen.getByTestId('redis-tree-create-key')),
+    ).toBe(true);
   });
 
-  it('is the only action control the panel header carries', async () => {
+  it('leaves the right panel tab bar with no action controls', async () => {
     renderView();
     await act(async () => {});
 
-    // The deleted context band also offered refresh / import / export and an
-    // overflow menu. None of them may creep back into the tab bar: this driver
-    // has no import/export surface in the panel, and a refresh that silently
-    // did nothing was worse than no button at all.
+    // Every `redis-right-*` button in the bar is a tab; the tabs carry
+    // `data-active`, so anything left is an action control. The removed ones
+    // (Create key, and earlier the band's refresh / import / export / overflow)
+    // must not creep back into a row the user asked to be tabs only.
     const bar = screen.getByTestId('redis-right-tab-bar');
-    const controls = Array.from(
-      bar.querySelectorAll<HTMLElement>('[data-testid^="redis-right-"][data-testid]'),
-    ).filter((el) => el.tagName === 'BUTTON' && !el.getAttribute('data-active'));
-    expect(controls.map((el) => el.getAttribute('data-testid'))).toEqual([
-      'redis-right-create-key',
-    ]);
+    const actions = Array.from(bar.querySelectorAll<HTMLElement>('button')).filter(
+      (el) => !el.hasAttribute('data-active'),
+    );
+    expect(actions).toEqual([]);
   });
 
   it('opens the workbench create dialog and reaches set_string on submit', async () => {
@@ -161,19 +165,18 @@ describe('Right-panel Create key button', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('redis-right-create-key'));
+      fireEvent.click(screen.getByTestId('redis-tree-create-key'));
     });
 
     // In-state: the workbench's own overlay opened the real dialog — proof the
-    // prop reached the panel and the panel reaches the overlay.
+    // button still reaches the state machine rather than only rendering.
     const dialog = await dialogByTitle('redis.createKey');
     const nameField = dialog.querySelector('input[placeholder="redis.keyName"]');
     expect(nameField).toBeTruthy();
     fireEvent.change(nameField as HTMLInputElement, { target: { value: 'new:key' } });
     fireEvent.click(buttonWithKey(dialog, 'redis.create'));
 
-    // Exit transition: the command the create-key form always issued, now
-    // reached from the panel's own button.
+    // Exit transition: the command the create-key form always issued.
     await waitFor(() =>
       expect(execute).toHaveBeenCalledWith(
         'redis',

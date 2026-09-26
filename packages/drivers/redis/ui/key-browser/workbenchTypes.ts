@@ -19,12 +19,6 @@ export interface RightPanelRenderProps {
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onClose: () => void;
-  /**
-   * Open the create-key dialog. Handed to the right panel so its tab bar can
-   * carry the workbench's only action button without a host round-trip — the
-   * overlay state is owned right here.
-   */
-  onCreateKey?: () => void;
 }
 
 /**

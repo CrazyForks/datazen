@@ -52,11 +52,18 @@ export function KeyTreeHeader({
 
   return (
     <div
-      className="flex shrink-0 flex-col gap-1 border-b border-edge bg-surface-alt px-2 py-1.5"
+      className="flex shrink-0 flex-col gap-1 border-b border-edge bg-surface-alt px-2 pb-1.5"
       data-testid="redis-tree-header"
       data-search-mode={searchMode}
     >
-      <div className="flex items-center gap-2">
+      {/*
+        R1 is the column's toolbar row. `h-10` is shared with the right panel's
+        tab bar so the two columns' first rows line up; the top padding that
+        used to add to it is dropped rather than kept, because the height would
+        then be the sum of two numbers living in two files. `pb-1.5` above
+        belongs to the search row below, not to this row.
+      */}
+      <div className="flex h-10 shrink-0 items-center gap-2" data-testid="redis-tree-toolbar-row">
         <SearchModeTabs mode={searchMode} onChange={onSearchModeChange} />
         <span className="h-4 w-px shrink-0 bg-edge" />
         <span
