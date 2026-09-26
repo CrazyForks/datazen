@@ -19,6 +19,10 @@ export interface RightPanelRenderProps {
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onClose: () => void;
+  /** Toolbar action: open the create-key dialog. */
+  onCreateKey?: () => void;
+  /** Toolbar action: open the import/export dialog. */
+  onImportExport?: () => void;
 }
 
 /**

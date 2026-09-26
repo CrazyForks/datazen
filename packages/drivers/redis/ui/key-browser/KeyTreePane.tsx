@@ -34,7 +34,6 @@ export interface KeyTreePaneProps {
   /** R2's fuzzy chip: literal → `*literal*` on apply. */
   fuzzy: boolean;
   onFuzzyChange: (fuzzy: boolean) => void;
-  onCreateKey: () => void;
   /** ⌘R / header refresh (also the I-9 chord target inside the tree). */
   onRefresh: () => void;
 }
@@ -50,7 +49,6 @@ export function KeyTreePane({
   totalCount,
   fuzzy,
   onFuzzyChange,
-  onCreateKey,
   onRefresh,
 }: KeyTreePaneProps) {
   const { tree: treeState, treeRows, visibleKeys, emptyState, separator } = view;
@@ -72,9 +70,6 @@ export function KeyTreePane({
         loadedCount={visibleKeys.length}
         totalCount={totalCount}
         scanning={scan.cursor !== 0}
-        onSelectAll={selectAllLoaded}
-        onRefresh={onRefresh}
-        onCreateKey={onCreateKey}
       >
         <KeyTreeSearchRow
           scope={search.searchMode}

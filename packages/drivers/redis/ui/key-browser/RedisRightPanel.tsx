@@ -23,7 +23,8 @@
  *  - exit: the panel is unmounted when the connection closes.
  */
 import { useCallback, useState } from 'react';
-import { cn, useI18n } from '@datazen/ui';
+import { FolderInput, Plus, RefreshCw } from 'lucide-react';
+import { Button, cn, useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { DetailColumn } from './DetailColumn';
 import { RedisConsole } from '../console/RedisConsole';
@@ -68,6 +69,9 @@ export interface RedisRightPanelProps {
   activeTab?: RightTab;
   /** Callback when the user clicks a tab (controlled by parent). */
   onTabChange?: (tab: RightTab) => void;
+  /** Toolbar action callbacks — rendered in the tab bar. */
+  onCreateKey?: () => void;
+  onImportExport?: () => void;
 }
 
 /**
@@ -92,6 +96,8 @@ export function RedisRightPanel({
   selectedDb,
   activeTab: controlledTab,
   onTabChange,
+  onCreateKey,
+  onImportExport,
 }: RedisRightPanelProps) {
   const { t } = useI18n();
   // Support both controlled and uncontrolled tab mode.
@@ -143,6 +149,43 @@ export function RedisRightPanel({
           </button>
         ))}
         <div className="flex-1" />
+        {/* Action buttons */}
+        <div className="flex items-center gap-1 pr-2">
+          <Button
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            title={t('connWin.refresh')}
+            aria-label={t('connWin.refresh')}
+            data-testid="redis-right-refresh"
+            onClick={onRefresh}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+          {onCreateKey && (
+            <Button
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              title={t('redis.createKey')}
+              aria-label={t('redis.createKey')}
+              data-testid="redis-right-create-key"
+              onClick={onCreateKey}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {onImportExport && (
+            <Button
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              title={t('redis.importExportTitle')}
+              aria-label={t('redis.importExportTitle')}
+              data-testid="redis-right-import-export"
+              onClick={onImportExport}
+            >
+              <FolderInput className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
         {connectionName && selectedDb && (
           <span
             className="max-w-[40%] truncate px-3 text-[11px] text-fg-muted"
