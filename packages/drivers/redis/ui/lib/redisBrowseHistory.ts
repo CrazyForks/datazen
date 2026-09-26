@@ -108,7 +108,10 @@ function readAllBuckets(storage: StorageLike | null): Record<string, BrowseHisto
   return buckets;
 }
 
-function writeAllBuckets(storage: StorageLike | null, buckets: Record<string, BrowseHistoryEntry[]>): void {
+function writeAllBuckets(
+  storage: StorageLike | null,
+  buckets: Record<string, BrowseHistoryEntry[]>,
+): void {
   if (!storage) return;
   try {
     const compacted = Object.fromEntries(
@@ -173,8 +176,6 @@ export function clearBrowseHistory(connectionId: string, storage?: StorageLike |
   writeAllBuckets(target, buckets);
 }
 
-export type RelativeTimeUnit = 'seconds' | 'minutes' | 'hours' | 'days';
-
 export interface RelativeTimeParts {
   value: number;
   /** `redis.overview.timeAgo.<unit>` — the component renders `t(unitKey, { value })`. */
@@ -192,8 +193,14 @@ const DAY = 24 * HOUR;
  */
 export function relativeTimeParts(visitedAt: number, now: number = Date.now()): RelativeTimeParts {
   const delta = Math.max(0, Math.floor(now) - Math.floor(visitedAt));
-  if (delta < MINUTE) return { value: Math.max(1, Math.round(delta / SECOND)), unitKey: 'redis.overview.timeAgo.seconds' };
-  if (delta < HOUR) return { value: Math.round(delta / MINUTE), unitKey: 'redis.overview.timeAgo.minutes' };
-  if (delta < DAY) return { value: Math.round(delta / HOUR), unitKey: 'redis.overview.timeAgo.hours' };
+  if (delta < MINUTE)
+    return {
+      value: Math.max(1, Math.round(delta / SECOND)),
+      unitKey: 'redis.overview.timeAgo.seconds',
+    };
+  if (delta < HOUR)
+    return { value: Math.round(delta / MINUTE), unitKey: 'redis.overview.timeAgo.minutes' };
+  if (delta < DAY)
+    return { value: Math.round(delta / HOUR), unitKey: 'redis.overview.timeAgo.hours' };
   return { value: Math.round(delta / DAY), unitKey: 'redis.overview.timeAgo.days' };
 }

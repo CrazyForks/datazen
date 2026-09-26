@@ -2,7 +2,7 @@
  * redis-tree-backend BUG-002 (round-1 coder fix) — `count_matching` consumer guard.
  *
  * W3-B changed that command's payload from a bare number to the frozen object
- * `{ count, truncated, consumed, dbsize }`, but the two key-browser dialogs kept
+ * `{ count, truncated, consumed, dbsize }`, but the key-browser consumers kept
  * reading it `as number`, so every "match N keys" label rendered
  * `[object Object]` and its `!== null` empty-state check could never fall back.
  * `tsc` said nothing (an explicit cast silences it) and the drivers suite stayed
@@ -35,52 +35,20 @@ vi.mock('@datazen/ui', async (importOriginal) => ({
   }),
 }));
 
-// The write gate reads both host bridges at render time.
+// `ImportExport` opens its write gate through this hook, which reads the host
+// bridges at render time — stub it so a live component can be rendered here
+// without the full workbench binding.
 vi.mock('../shared/useRedisGate', () => ({
   useRedisGate: () => ({ gateWrite: async () => true, gateDialog: null }),
 }));
 
-import { formatMatchCount, invokeCountMatching } from '../key-browser/BatchBar';
-import { useBatchActions } from '../key-browser/useBatchActions';
-import { BatchPatternBar } from '../key-browser/BatchBar';
+import { formatMatchCount, invokeCountMatching } from '../key-browser/batchInvokes';
 import { ImportExport, type ImportExportProps } from '../key-browser/ImportExport';
 import type { CountMatchingResult } from '../shared/redisInvoke';
 
 /** The wire payload the `## 契约冻结` manufactures. */
 function outcome(overrides: Partial<CountMatchingResult> = {}): CountMatchingResult {
   return { count: 777, truncated: false, consumed: 1000, dbsize: 90_000, ...overrides };
-}
-
-/**
- * Harness for the pattern strip (D-1 moved the dialogs into `useBatchActions`,
- * so the strip alone cannot open them). Renders the same pair the workbench
- * mounts: the controller hook's dialogs plus the strip that triggers them.
- */
-function PatternStripHarness({
-  dbSessionId = 'sess',
-  dbIndex = 3,
-  selectedKeys = ['app:a'],
-  searchPattern = 'app:*',
-}: {
-  dbSessionId?: string;
-  dbIndex?: number;
-  selectedKeys?: string[];
-  searchPattern?: string;
-}) {
-  const actions = useBatchActions({
-    dbSessionId,
-    dbIndex,
-    selectedKeys,
-    searchPattern,
-    onRemoveFromSelection: () => {},
-    onRefresh: async () => {},
-  });
-  return (
-    <>
-      <BatchPatternBar actions={actions} dbIndex={dbIndex} />
-      {actions.dialogs}
-    </>
-  );
 }
 
 function exportProps(overrides: Partial<ImportExportProps> = {}): ImportExportProps {
@@ -132,48 +100,6 @@ describe('formatMatchCount', () => {
   it('marks a truncated floor with + and leaves a census bare', () => {
     expect(formatMatchCount(outcome({ count: 777, truncated: false }))).toBe('777');
     expect(formatMatchCount(outcome({ count: 777, truncated: true }))).toBe('777+');
-  });
-});
-
-describe('BatchBar pattern dialog', () => {
-  /** Open the dialog, type a pattern, and let the blur-triggered count land. */
-  async function openAndCount(payload: CountMatchingResult) {
-    commandInvoke.mockResolvedValue(payload);
-    render(<PatternStripHarness />);
-    expect(screen.queryByTestId('redis-batch-pattern-count')).toBeNull();
-
-    fireEvent.click(screen.getByTestId('redis-batch-pattern'));
-    // `request()` awaits the write gate before the dialog mounts, so wait for
-    // the confirm marker rather than assuming the inputs exist synchronously.
-    await screen.findByTestId('redis-batch-pattern-confirm');
-    const input = screen.getByTestId('redis-batch-pattern-input');
-    fireEvent.change(input, { target: { value: 'app:*' } });
-    fireEvent.blur(input);
-
-    const label = await screen.findByTestId('redis-batch-pattern-count');
-    return { label };
-  }
-
-  it('renders .count for a complete census', async () => {
-    const { label } = await openAndCount(outcome({ count: 777, truncated: false }));
-    expect(label.textContent).toBe('777');
-    expect(label.textContent).not.toContain('[object');
-    expect(countCall().input.pattern).toBe('app:*');
-  });
-
-  it('renders n+ when the budget truncated the census', async () => {
-    const { label } = await openAndCount(outcome({ count: 1000, truncated: true }));
-    expect(label.textContent).toBe('1000+');
-  });
-
-  it('clears a stale count when the pattern changes', async () => {
-    const { label } = await openAndCount(outcome({ count: 42 }));
-    expect(label.textContent).toBe('42');
-    // Typing resets the read, so the old number cannot be quoted for a new filter.
-    fireEvent.change(screen.getByTestId('redis-batch-pattern-input'), {
-      target: { value: 'other:*' },
-    });
-    expect(screen.queryByTestId('redis-batch-pattern-count')).toBeNull();
   });
 });
 

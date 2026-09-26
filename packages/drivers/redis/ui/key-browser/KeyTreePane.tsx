@@ -7,7 +7,7 @@
  * This pane is *presentation only*: every object it reads is owned elsewhere
  * (`useKeyTreeView` for the view + rows, `useRedisKeyScan` for the flat list,
  * `useWorkbenchSearch` for the scope, `useKeySelection` for the checks,
- * `useKeyDetailState` for the mounted key, `useBatchActions` for the writes), so
+ * `useKeyDetailState` for the mounted key, `useKeyRowActions` for the writes), so
  * no state and no I/O moved here — only the wiring of one to the other.
  */
 import { KeyTreeColumn } from './KeyTreeColumn';

@@ -62,9 +62,3 @@ export function judgeBigValue(
     limitBytes,
   };
 }
-
-/** 集合类键的元素个数文案（徽标行用，不是字节）。 */
-export function formatElementCount(count: number): string {
-  if (!Number.isFinite(count) || count < 0) return '—';
-  return String(count);
-}

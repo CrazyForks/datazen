@@ -5,7 +5,6 @@ import type { RedisInvokeFn } from '../shared/redisInvoke';
 import { formatSize } from '../shared/formatSize';
 import { BROWSE_HISTORY_STORAGE_KEY, pushBrowseEntry } from '../lib/redisBrowseHistory';
 import { OVERVIEW_COMMANDS, useOverviewData } from '../overview/useOverviewData';
-import { RecentKeysCard } from '../overview/RecentKeysCard';
 import { RedisOverviewHome } from '../overview/RedisOverviewHome';
 
 /**
@@ -19,8 +18,6 @@ import { RedisOverviewHome } from '../overview/RedisOverviewHome';
  *    指引；接线 ⇒ 条目重新置顶并刷新时间戳。
  * 2. **useOverviewData 失败/畸形载荷分支** — dbSizes 独立失败、非字符串 INFO、
  *    `samples` 非数组、`truncated` 非严格 true、非数组 slowlog、非 Error reject。
- * 3. **RecentKeysCard 行内 onJump** — 本轨改动文件中唯一零覆盖函数。
- * 4. **内存条 ≥90% danger 着色**（MemoryCard 高水位分支）。
  *
  * 断言口径与存量 spec 一致：`data-*` / i18n key / 服务端 token，零可见英文文案
  * （PRD §7-6）。
@@ -170,35 +167,6 @@ describe('[tester] 屏 A 跳转不落历史（key 目标补桩）', () => {
     // 到了屏 B 但不是键 ⇒ 历史里不该出现任何条目。
     expect(readBucket()).toHaveLength(0);
     expect(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY)).toBeNull();
-  });
-});
-
-describe('[tester] RecentKeysCard 行点击发出 key 跳转请求', () => {
-  it('sends the entry db + name through onJump and carries the unwired state', () => {
-    const onJump = vi.fn();
-    const { container } = render(
-      <RecentKeysCard
-        entries={[{ key: 'queue:jobs', dbIndex: 4, keyType: 'list', visitedAt: 1_700_000_000_000 }]}
-        onJump={onJump}
-        onClear={vi.fn()}
-      />,
-    );
-
-    const row = container.querySelector('[data-overview-recent-key="queue:jobs"]') as Element;
-    expect(row.getAttribute('data-overview-key-type')).toBe('list');
-    // BUG-001: the type is now a *visible* badge, not only a data attribute.
-    expect(row.textContent).toContain('list');
-    expect(row.getAttribute('data-overview-jump')).toBe('unwired');
-
-    fireEvent.click(row);
-    // BUG-001: the known type is forwarded on the jump so the host can
-    // pre-colour the 屏 B selection.
-    expect(onJump).toHaveBeenCalledWith({
-      kind: 'key',
-      dbIndex: 4,
-      key: 'queue:jobs',
-      keyType: 'list',
-    });
   });
 });
 
@@ -438,7 +406,7 @@ describe('[tester] 大 key 行 TTL 列的四态互不塌陷', () => {
   });
 });
 
-describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () => {
+describe('[tester] 大 key 行的类型徽标带上 tone class', () => {
   it('paints each row badge with its typeTone class, unknown stays neutral', async () => {
     const container = await renderBigKeys();
     const badgeOf = (rank: number) =>
@@ -452,30 +420,10 @@ describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () 
     expect(container.querySelector('[data-overview-bigkey="4"]')).toBeNull();
     expect(container.querySelector('[data-overview-bigkey="5"]')).toBeNull();
   });
-
-  it('paints the recent-key badge with the same class vocabulary', () => {
-    const { container } = render(
-      <RecentKeysCard
-        entries={[
-          { key: 'user:1', dbIndex: 1, keyType: 'string', visitedAt: 1_700_000_000_000 },
-          { key: 'gone:1', dbIndex: 1, keyType: null, visitedAt: 1_700_000_000_000 },
-        ]}
-        onJump={vi.fn()}
-        onClear={vi.fn()}
-      />,
-    );
-
-    const known = container.querySelector('[data-overview-recent-key="user:1"]') as Element;
-    expect(known.querySelector('.text-accent')).not.toBeNull();
-    expect(known.textContent).toContain('string');
-    const unknown = container.querySelector('[data-overview-recent-key="gone:1"]') as Element;
-    expect(unknown.querySelector('.border-edge')).not.toBeNull();
-    expect(unknown.textContent).toContain('redis.overview.typeUnknown');
-  });
 });
 
 // ---------------------------------------------------------------------------
-// [tester] 第 2 轮：maxmemory 有人数、无 human 形制时的回退（MemoryCard:139）
+// [tester] 第 2 轮：maxmemory 有人数、无 human 形制时的回退
 //
 // 覆盖率报告里本轨唯一剩下的真实未覆盖分支：托管端 INFO 常只给 `maxmemory`
 // 而漏掉 `maxmemory_human`，此时上限格必须退化成 `formatSize(maxBytes)`，

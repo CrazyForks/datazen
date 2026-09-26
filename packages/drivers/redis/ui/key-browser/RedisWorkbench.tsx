@@ -2,10 +2,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { Database } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
 import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
-import { BatchPatternBar } from './BatchBar';
 import { ImportExport } from './ImportExport';
 import { KeyTreePane } from './KeyTreePane';
-import { useBatchActions } from './useBatchActions';
 import { DetailColumn } from './DetailColumn';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTreeView } from './useKeyTreeView';
@@ -196,16 +194,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       void loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
 
-    // I-8 (D-6) + I-1: clean state reloads data only; dirty state asks first.
-    const refreshAfterWrite = useCallback(async () => {
-      if (isDraftDirty()) {
-        if (!(await requestDraftLeave())) return;
-        clearFocus();
-      }
-      scanRefresh();
-      tree.refresh();
-    }, [clearFocus, scanRefresh, tree.refresh]);
-
     // 屏 A → 屏 B jump bridge: key selection + dialog pending actions.
     const { selectKey } = useKeyJump({
       dbIndex,
@@ -244,17 +232,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       onKeyCtxDialog: overlays.setKeyCtxDialog,
     });
 
-    // One controller for every batch write (R1 header + pattern strip, D-1).
-    const batchActions = useBatchActions({
-      dbSessionId,
-      dbIndex,
-      selectedKeys: [...selection.selectedKeys],
-      searchPattern: scan.searchPattern,
-      onRemoveFromSelection: selection.removeKeys,
-      onRefresh: refreshAfterWrite,
-      onSummary: overlays.setBatchSummary,
-    });
-
     // Dialog-side refresh (BUG-002): dirty ⇒ rescan only; clean ⇒ full refresh.
     const refreshKeysForDialogs = useCallback(() => {
       if (isDraftDirty()) {
@@ -284,8 +261,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                 summary={overlays.batchSummary}
                 onDismiss={() => overlays.setBatchSummary(null)}
               />
-
-              <BatchPatternBar actions={batchActions} dbIndex={dbIndex} />
 
               <div className="flex min-h-0 flex-1">
                 <div
@@ -398,7 +373,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         />
 
         {actionDialogs}
-        {batchActions.dialogs}
       </div>
     );
   },

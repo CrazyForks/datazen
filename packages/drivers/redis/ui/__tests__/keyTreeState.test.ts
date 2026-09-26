@@ -24,7 +24,6 @@ import {
   nextNavigableIndex,
   parentIndexOf,
   rowIndent,
-  rowPrefix,
   stickyFolderChain,
   treeNavAction,
 } from '../key-browser/treeRowSpec';
@@ -260,7 +259,9 @@ describe('treeLevels: fetch modes (I-4 refresh / collapse)', () => {
 describe('treeLevels: cross-level signals (I-11 inputs)', () => {
   it('any open cursor or in-flight pass means "this is a subset"', () => {
     expect(anyLevelScanning({ '': finishedAgainStatic() })).toBe(false);
-    expect(anyLevelScanning({ '': { ...finishedAgainStatic(), cursor: 5, done: false } })).toBe(true);
+    expect(anyLevelScanning({ '': { ...finishedAgainStatic(), cursor: 5, done: false } })).toBe(
+      true,
+    );
     expect(anyLevelScanning({ '': { ...finishedAgainStatic(), pass: [] } })).toBe(true);
     expect(anyLevelScanning({})).toBe(false);
   });
@@ -268,13 +269,19 @@ describe('treeLevels: cross-level signals (I-11 inputs)', () => {
   it('only a failed root can claim "we know nothing"', () => {
     expect(rootLevelFailed({ '': { ...finishedAgainStatic(), error: true } })).toBe(true);
     expect(
-      rootLevelFailed({ '': finishedAgainStatic(), 'app:': { ...finishedAgainStatic(), error: true } }),
+      rootLevelFailed({
+        '': finishedAgainStatic(),
+        'app:': { ...finishedAgainStatic(), error: true },
+      }),
     ).toBe(false);
     expect(rootLevelFailed({})).toBe(false);
   });
 
   function finishedAgainStatic(): TreeLevel {
-    return applyFetch(beginFetch(EMPTY_LEVEL, 'reset'), 'reset', { children: [leaf('a')], cursor: 0 });
+    return applyFetch(beginFetch(EMPTY_LEVEL, 'reset'), 'reset', {
+      children: [leaf('a')],
+      cursor: 0,
+    });
   }
 });
 
@@ -374,11 +381,6 @@ describe('treeRowSpec: keyboard navigation (I-9)', () => {
     expect(parentIndexOf(rows, 3)).toBe(3);
     expect(parentIndexOf(rows, 9)).toBe(9);
   });
-
-  it('names the prefix a row was fetched under', () => {
-    expect(rowPrefix(rows[0]!)).toBe('app:');
-    expect(rowPrefix(rows[2]!)).toBe('app:cache:1');
-  });
 });
 
 /* ── D-3: per-connection preferences ──────────────────────────────────────── */
@@ -399,17 +401,22 @@ describe('treePreferences (R3 / D-3)', () => {
   });
 
   it('rejects a corrupt payload, an old shape and a foreign separator', () => {
-    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{not json' })))
-      .toEqual(DEFAULT_TREE_PREFS);
-    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '[1,2]' })))
-      .toEqual(DEFAULT_TREE_PREFS);
-    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: 'null' })))
-      .toEqual(DEFAULT_TREE_PREFS);
+    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{not json' }))).toEqual(
+      DEFAULT_TREE_PREFS,
+    );
+    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '[1,2]' }))).toEqual(
+      DEFAULT_TREE_PREFS,
+    );
+    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: 'null' }))).toEqual(
+      DEFAULT_TREE_PREFS,
+    );
     // Partially valid: the known field survives, the junk falls back.
-    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{"c":{"view":"list"}}' })))
-      .toEqual({ view: 'list', separator: DEFAULT_TREE_PREFS.separator });
-    expect(readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{"c":{"sep":"|"}}' })))
-      .toEqual(DEFAULT_TREE_PREFS);
+    expect(
+      readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{"c":{"view":"list"}}' })),
+    ).toEqual({ view: 'list', separator: DEFAULT_TREE_PREFS.separator });
+    expect(
+      readTreePrefs('c', fakeStorage({ [TREE_PREFS_STORAGE_KEY]: '{"c":{"sep":"|"}}' })),
+    ).toEqual(DEFAULT_TREE_PREFS);
     expect(readTreePrefs('', fakeStorage())).toEqual(DEFAULT_TREE_PREFS);
   });
 
@@ -502,8 +509,10 @@ describe('[redis-tree-ui-BUG-004] nextNavigableIndex walks past non-navigable ro
    * direction), exit (run off either end ⇒ -1 — callers stay put).
    * `first` is inclusive: callers advance before asking.
    */
-  const rowsOf = (navigable: boolean[]): ((i: number) => boolean) => (i) =>
-    i >= 0 && i < navigable.length && navigable[i];
+  const rowsOf =
+    (navigable: boolean[]): ((i: number) => boolean) =>
+    (i) =>
+      i >= 0 && i < navigable.length && navigable[i];
 
   it('entry: starting on a blocked candidate walks forward to the next free row', () => {
     const free = rowsOf([false, false, true, false, true]);
@@ -572,11 +581,15 @@ describe('batchErrors (I-8)', () => {
   it('classifies a raw reply onto a stable code instead of matching text', () => {
     expect(classifyBatchError('NOPERM this user has no permissions')).toBe('noAcl');
     expect(classifyBatchError('NOAUTH Authentication required.')).toBe('noAcl');
-    expect(classifyBatchError("WRONGTYPE Operation against a key holding the wrong kind of value")).toBe('badValue');
+    expect(
+      classifyBatchError('WRONGTYPE Operation against a key holding the wrong kind of value'),
+    ).toBe('badValue');
     expect(classifyBatchError('value is not an integer or out of range')).toBe('badValue');
     expect(classifyBatchError('connection reset by peer')).toBe('network');
-    expect(classifyBatchError('CROSSSLOT Keys in request don\'t hash to the same slot')).toBe('network');
-    expect(classifyBatchError("ERR no such key")).toBe('keyGone');
+    expect(classifyBatchError("CROSSSLOT Keys in request don't hash to the same slot")).toBe(
+      'network',
+    );
+    expect(classifyBatchError('ERR no such key')).toBe('keyGone');
     expect(classifyBatchError('')).toBe('unknown');
     expect(classifyBatchError(undefined)).toBe('unknown');
     expect(classifyBatchError('boom')).toBe('unknown');

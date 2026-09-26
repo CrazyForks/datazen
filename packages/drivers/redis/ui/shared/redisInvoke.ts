@@ -266,21 +266,3 @@ export async function invokeDecodeValue(
     data: dataB64,
   })) as DecodeValueResult;
 }
-
-/** Binary-safe SET from base64 raw bytes (R9 write-back channel). */
-export async function invokeSetStringRaw(
-  dbSessionId: string,
-  dbIndex: number,
-  key: string,
-  dataB64: string,
-  keepTtl = false,
-  invoke: RedisInvokeFn = redisCommandInvoke,
-): Promise<void> {
-  await invoke('redis', 'set_string_raw', {
-    dbSessionId,
-    dbIndex,
-    key,
-    dataB64,
-    keepTtl,
-  });
-}

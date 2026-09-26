@@ -90,7 +90,10 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 
 vi.mock('@datazen/driver-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@datazen/driver-sdk')>();
-  return { ...actual, showNativeContextMenu: (...args: unknown[]) => showNativeContextMenu(...args) };
+  return {
+    ...actual,
+    showNativeContextMenu: (...args: unknown[]) => showNativeContextMenu(...args),
+  };
 });
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
@@ -98,7 +101,7 @@ import { keyUnderFolder, type KeyTreeRow } from '../key-browser/keyTree';
 import { parentIndexOf } from '../key-browser/treeRowSpec';
 import { useKeyTree } from '../key-browser/useKeyTree';
 import { EMPTY_LEVEL } from '../key-browser/treeLevels';
-import { invokeBatchRenamePrefix, invokeCountMatching } from '../key-browser/batchInvokes';
+import { invokeCountMatching } from '../key-browser/batchInvokes';
 import {
   DEFAULT_TREE_WIDTH,
   MAX_TREE_WIDTH,
@@ -160,9 +163,19 @@ function renderWorkbench() {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
-  getKey.mockResolvedValue({ key: 'k', keyType: 'string', ttl: -1, value: 'v', size: 1, memory: null });
+  getKey.mockResolvedValue({
+    key: 'k',
+    keyType: 'string',
+    ttl: -1,
+    value: 'v',
+    size: 1,
+    memory: null,
+  });
   redisCommand.mockResolvedValue(undefined);
-  dbSizes.mockResolvedValue([{ db: 0, keys: 2 }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 2 },
+    { db: 1, keys: 0 },
+  ]);
   scanKeys.mockResolvedValue({
     keys: [
       { key: 'app:user:1', keyType: 'string', ttl: -1, size: 4, preview: '' },
@@ -219,16 +232,13 @@ describe('[tester] keyUnderFolder owns the folder/leaf boundary (D-4)', () => {
 describe('[tester] R1/行规格: an unfinished level counts as n+ (D-5)', () => {
   it('renders the folder count with the partial key while its level keeps scanning', async () => {
     // Root answers with an OPEN cursor ⇒ every child count is a lower bound.
-    listChildren.mockImplementation(async (
-      _s: string,
-      _i: number,
-      prefix: string,
-      cursor: number,
-    ) => {
-      if (prefix !== '') return { children: [leaf('app:user:1')], cursor: 0 };
-      if (cursor === 0) return { children: [folder('app:', 2)], cursor: 41 };
-      return { children: [leaf('app:user:2')], cursor: 0 };
-    });
+    listChildren.mockImplementation(
+      async (_s: string, _i: number, prefix: string, cursor: number) => {
+        if (prefix !== '') return { children: [leaf('app:user:1')], cursor: 0 };
+        if (cursor === 0) return { children: [folder('app:', 2)], cursor: 41 };
+        return { children: [leaf('app:user:2')], cursor: 0 };
+      },
+    );
     renderWorkbench();
     const count = await screen.findByTestId('redis-tree-folder-count-app:');
     expect(count.getAttribute('data-count')).toBe('2');
@@ -289,14 +299,16 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     // suites never reach (they all go through selectMany / toggleKeys).
     fireEvent.click(check);
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
-        'true',
-      ),
+      expect(
+        screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked'),
+      ).toBe('true'),
     );
     expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
       'false',
     );
-    expect(screen.getByTestId('redis-tree-batch-delete-count').getAttribute('data-count')).toBe('1');
+    expect(screen.getByTestId('redis-tree-batch-delete-count').getAttribute('data-count')).toBe(
+      '1',
+    );
 
     // Unticking is the exit; the badge disappears with the empty selection.
     fireEvent.click(screen.getByTestId('redis-tree-key-check-app:user:1'));
@@ -325,14 +337,20 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
 
     fireEvent.keyDown(tree, { key: 'ArrowDown' });
     expect(tree.getAttribute('data-active-index')).toBe('0');
-    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe('false');
+    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe(
+      'false',
+    );
 
     fireEvent.keyDown(tree, { key: 'Enter' });
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe('true'),
+      expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe(
+        'true',
+      ),
     );
     // Enter on a folder opens it; it never mounts a detail for a prefix.
-    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-row-kind')).toBe('folder');
+    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-row-kind')).toBe(
+      'folder',
+    );
     expect(getKey.mock.calls).toHaveLength(0);
   });
 
@@ -364,7 +382,9 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
       ),
     );
     // Folding drops the subtree rows, so the pin is released with them.
-    await waitFor(() => expect(screen.getByTestId('redis-key-tree').getAttribute('data-sticky-depth')).toBe('0'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-key-tree').getAttribute('data-sticky-depth')).toBe('0'),
+    );
   });
 
   it('right-clicking a leaf hands the row identity to the web context menu', async () => {
@@ -372,7 +392,10 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     const row = await screen.findByTestId('redis-key-row-app:user:1');
     fireEvent.contextMenu(row);
     expect(showNativeContextMenu).toHaveBeenCalledOnce();
-    const [items, point] = showNativeContextMenu.mock.calls[0] as unknown as [unknown[], { x: number; y: number }];
+    const [items, point] = showNativeContextMenu.mock.calls[0] as unknown as [
+      unknown[],
+      { x: number; y: number },
+    ];
     // Bound by data, not geometry: the menu is built for *this* key.
     expect(Array.isArray(items) && items.length).toBeGreaterThan(0);
     expect(point).toBeTruthy();
@@ -385,7 +408,8 @@ describe('[tester] useKeyTree: the scheduling that the fold functions cannot see
   it('drops a stale reply for the same prefix instead of folding it in', async () => {
     let respond: ((v: { children: ChildEntry[]; cursor: number }) => void)[] = [];
     listChildren.mockImplementation(
-      () => new Promise<{ children: ChildEntry[]; cursor: number }>((resolve) => respond.push(resolve)),
+      () =>
+        new Promise<{ children: ChildEntry[]; cursor: number }>((resolve) => respond.push(resolve)),
     );
     const hook = useHook(() => useKeyTree({ dbSessionId: 's', dbIndex: 0, enabled: true }));
     await waitFor(() => expect(respond).toHaveLength(1));
@@ -395,11 +419,17 @@ describe('[tester] useKeyTree: the scheduling that the fold functions cannot see
     await waitFor(() => expect(respond).toHaveLength(2));
     const [first, second] = respond;
     act(() => second!({ children: [folder('fresh:', 1)], cursor: 0 }));
-    await waitFor(() => expect(hook.current.levels['']?.children.map((c) => (c as { prefix?: string }).prefix)).toEqual(['fresh:']));
+    await waitFor(() =>
+      expect(
+        hook.current.levels['']?.children.map((c) => (c as { prefix?: string }).prefix),
+      ).toEqual(['fresh:']),
+    );
     // The late reply for the *superseded* request must be discarded.
     act(() => first!({ children: [folder('stale:', 9)], cursor: 0 }));
     await new Promise((r) => setTimeout(r, 0));
-    expect(hook.current.levels['']?.children.map((c) => (c as { prefix?: string }).prefix)).toEqual(['fresh:']);
+    expect(hook.current.levels['']?.children.map((c) => (c as { prefix?: string }).prefix)).toEqual(
+      ['fresh:'],
+    );
   });
 
   it('re-fetches every still-expanded prefix when the tree is re-rooted', async () => {
@@ -421,7 +451,9 @@ describe('[tester] useKeyTree: the scheduling that the fold functions cannot see
 
   it('pages an unfinished level forward only when it is neither done nor loading', async () => {
     listChildren.mockImplementation(async (_s: string, _i: number, _p: string, cursor: number) =>
-      cursor === 0 ? { children: [folder('app:', 2)], cursor: 77 } : { children: [leaf('app:x')], cursor: 0 },
+      cursor === 0
+        ? { children: [folder('app:', 2)], cursor: 77 }
+        : { children: [leaf('app:x')], cursor: 0 },
     );
     const hook = useHook(() => useKeyTree({ dbSessionId: 's', dbIndex: 0, enabled: true }));
     await waitFor(() => expect(hook.current.levels['']?.done).toBe(false));
@@ -528,7 +560,9 @@ describe('[tester] KeyTreeColumn swaps the tree for the value-hit list by scope 
     // the column must hand the tree its props again, not a dead div.
     fireEvent.click(screen.getByTestId('redis-search-mode-value'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe('value'),
+      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe(
+        'value',
+      ),
     );
     expect(screen.queryByTestId('redis-key-tree')).toBeNull();
     // The column really is the hit list now, not an empty div that happens to
@@ -544,68 +578,9 @@ describe('[tester] KeyTreeColumn swaps the tree for the value-hit list by scope 
   });
 });
 
-/* ── 9. the pattern strip is the second trigger surface of the same controller ─ */
-
-describe('[tester] BatchPatternBar triggers the shared controller (D-1 两触发面)', () => {
-  it('opens the pattern and rename dialogs from the strip', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-batch-bar');
-    expect(screen.getByTestId('redis-batch-bar').getAttribute('data-selection-count')).toBe('0');
-
-    // `useBatchActions` documents the header and the strip as two surfaces over
-    // one controller; the coder's suite never clicked the strip, so its wiring
-    // (`request('pattern')` / `request('rename')`) was untested.
-    fireEvent.click(screen.getByTestId('redis-batch-pattern'));
-    expect(await screen.findByTestId('redis-batch-pattern-confirm')).toBeTruthy();
-    // The pattern dialog seeds itself from the current filter.
-    expect(screen.getByTestId('redis-batch-pattern-input')).toHaveValue('*');
-    fireEvent.click(screen.getByTestId('redis-batch-pattern-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-pattern-confirm')).toBeNull());
-
-    fireEvent.click(screen.getByTestId('redis-batch-rename'));
-    expect(await screen.findByTestId('redis-batch-rename-confirm')).toBeTruthy();
-    // Enter guard: confirm stays disabled without an old prefix, so the dialog
-    // cannot be submitted as a no-op rename.
-    expect((screen.getByTestId('redis-batch-rename-confirm') as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    fireEvent.click(screen.getByTestId('redis-batch-rename-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-rename-confirm')).toBeNull());
-  });
-});
-
-/* ── 10. the batch invoke seam speaks camelCase to the host (I-8 feed) ─────── */
+/* ── 9. the batch invoke seam speaks camelCase to the host (I-8 feed) ─────── */
 
 describe('[tester] batchInvokes payload contract (D-6 seam)', () => {
-  it('names every rename argument in camelCase for the Tauri snake_case mapping', async () => {
-    const invoke = vi.fn(async (..._args: unknown[]) => ({ renamed: 1, errors: [] }));
-    await invokeBatchRenamePrefix('sess-1', 3, 'app:', 'cache:', ['a', 'b'], invoke);
-    const [driver, command, payload] = invoke.mock.calls[0] as unknown as [
-      string,
-      string,
-      Record<string, unknown>,
-    ];
-    expect(driver).toBe('redis');
-    expect(command).toBe('batch_rename_prefix');
-    // A `db_index` here would arrive as `undefined` and rename against db 0.
-    expect(Object.keys(payload).sort()).toEqual([
-      'dbIndex',
-      'dbSessionId',
-      'keys',
-      'newPrefix',
-      'oldPrefix',
-    ]);
-  });
-
-  it('sends null (not an absent key) for the whole-keyspace rename scope', async () => {
-    const invoke = vi.fn(async (..._args: unknown[]) => ({ renamed: 0, errors: [] }));
-    await invokeBatchRenamePrefix('sess-1', 0, 'a', 'b', undefined, invoke);
-    const payload = (invoke.mock.calls[0] as unknown as [string, string, Record<string, unknown>])[2];
-    // `null` means "whole keyspace"; an omitted key lets the Rust default and the
-    // UI's intent diverge silently.
-    expect(payload.keys).toBeNull();
-  });
-
   it('passes the count_matching pattern through as the preview it is (not a write)', async () => {
     const invoke = vi.fn(async (..._args: unknown[]) => 7);
     await expect(invokeCountMatching('sess-1', 2, 'app:*', invoke)).resolves.toBe(7);
@@ -620,7 +595,7 @@ describe('[tester] batchInvokes payload contract (D-6 seam)', () => {
   });
 });
 
-/* ── 11. split clamp (the pure, UI-free half of useWorkbenchSplit) ────────── */
+/* ── 10. split clamp (the pure, UI-free half of useWorkbenchSplit) ────────── */
 
 describe('[tester] clampTreeWidth keeps the split inside its bounds', () => {
   it('clamps both ends, rounds, and refuses non-finite widths', () => {

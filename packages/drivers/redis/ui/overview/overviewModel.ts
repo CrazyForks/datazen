@@ -17,7 +17,6 @@
  * Copy-free by construction: rows carry **i18n keys** (`labelKey` / `unitKey`)
  * plus raw server values; only components call `t()`.
  */
-import type { DbSize } from '../shared/redisInvoke';
 import { parseInfoSections, type InfoSection } from '../observe/infoParse';
 
 /** Redis 报告 16 个逻辑库（`redisMeta.maxDatabaseIndex` = 15）。 */
@@ -329,64 +328,6 @@ export function buildMemoryModel(fields: Record<string, string>): MemoryModel {
     fragWarn: fragRatio !== null && fragRatio > FRAGMENTATION_WARN_RATIO,
     policy: rawField(fields, 'maxmemory_policy'),
   };
-}
-
-// ---------------------------------------------------------------------------
-// Card 3 — Key space
-// ---------------------------------------------------------------------------
-
-export interface KeySpaceCell {
-  dbIndex: number;
-  /** 显示名 `db0`…（非文案，是 Redis 的逻辑库标识）。 */
-  name: string;
-  keys: number;
-  /** 占全实例键数的百分比（0–100，`keys === 0` ⇒ 0）。 */
-  sharePercent: number;
-  empty: boolean;
-}
-
-export interface KeySpaceModel {
-  cells: KeySpaceCell[];
-  totalKeys: number;
-  nonEmptyCount: number;
-  dbCount: number;
-}
-
-/**
- * 16 格网格（服务端报了更多库时按实际数量扩展）。`db_sizes` 是唯一数据源，
- * 因此不需要 `INFO keyspace` 的第二次往返。
- */
-export function buildKeySpaceModel(
-  dbSizes: DbSize[] | null | undefined,
-  minDbCount: number = DEFAULT_DATABASE_COUNT,
-): KeySpaceModel {
-  const counts = new Map<number, number>();
-  let highest = -1;
-  for (const entry of dbSizes ?? []) {
-    const index = Number(entry.db);
-    if (!Number.isFinite(index) || index < 0) continue;
-    const keys = Number.isFinite(entry.keys) ? Math.max(0, entry.keys) : 0;
-    counts.set(index, keys);
-    if (index > highest) highest = index;
-  }
-  const dbCount = Math.max(minDbCount, highest + 1);
-  let totalKeys = 0;
-  for (const keys of counts.values()) totalKeys += keys;
-
-  let nonEmptyCount = 0;
-  const cells: KeySpaceCell[] = [];
-  for (let index = 0; index < dbCount; index += 1) {
-    const keys = counts.get(index) ?? 0;
-    if (keys > 0) nonEmptyCount += 1;
-    cells.push({
-      dbIndex: index,
-      name: `db${index}`,
-      keys,
-      sharePercent: totalKeys > 0 ? (keys / totalKeys) * 100 : 0,
-      empty: keys === 0,
-    });
-  }
-  return { cells, totalKeys, nonEmptyCount, dbCount };
 }
 
 // ---------------------------------------------------------------------------

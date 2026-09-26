@@ -21,7 +21,6 @@ import {
   type DangerLevel,
 } from '../console/redisConsoleDanger';
 import { REDIS_COMMAND_META } from '../console/consoleCompletion/commandMeta';
-import { REDIS_COMMANDS } from '../console/redisCommands';
 
 type Case = readonly [command: string, expected: DangerLevel];
 
@@ -156,13 +155,11 @@ describe('redisConsoleDanger', () => {
 
     it('knows every command shipped in the completion catalog', () => {
       // A catalog entry with no classification would be silently blocked in the
-      // UI; this pins the two lists against the vocabulary.
-      const unknownCatalog = REDIS_COMMAND_META.filter((meta) => assessCommand(meta.name).unknown).map(
-        (meta) => meta.name,
-      );
-      const unknownList = REDIS_COMMANDS.filter((name) => assessCommand(name).unknown);
+      // UI; this pins the shipped vocabulary against the classification table.
+      const unknownCatalog = REDIS_COMMAND_META.filter(
+        (meta) => assessCommand(meta.name).unknown,
+      ).map((meta) => meta.name);
       expect(unknownCatalog).toEqual([]);
-      expect(unknownList).toEqual([]);
     });
   });
 

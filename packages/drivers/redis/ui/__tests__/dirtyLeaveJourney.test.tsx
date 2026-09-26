@@ -64,9 +64,6 @@ globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObse
 vi.mock('../console/RedisConsole', () => ({
   RedisConsole: () => <div data-testid="stub-console" />,
 }));
-vi.mock('../observe/MonitorPanel', () => ({
-  MonitorPanel: () => <div data-testid="stub-monitor" />,
-}));
 vi.mock('../observe/PubSubPanel', () => ({
   PubSubPanel: () => <div data-testid="stub-pubsub" />,
 }));

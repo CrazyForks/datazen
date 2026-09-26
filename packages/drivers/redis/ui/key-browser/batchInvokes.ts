@@ -6,13 +6,13 @@ import {
 
 /**
  * Driver-command seam for the batch write operations of the key tree
- * (`delete_keys` / `batch_delete_pattern` / `batch_set_ttl` /
- * `batch_rename_prefix` / `count_matching`).
+ * (`delete_keys` / `batch_delete_pattern` / `count_matching`).
  *
- * Lives in its own module (D-1) so the header action group, the pattern strip and
- * the row delete all call one place, and so a test can substitute `invoke`
- * without pulling any UI into the graph. Every payload key is camelCase — the
- * Tauri layer maps to the Rust snake_case args (frontend convention).
+ * Lives in its own module (D-1) so the row delete, the key dialogs and the
+ * import/export pattern estimate all call one place, and so a test can
+ * substitute `invoke` without pulling any UI into the graph. Every payload key
+ * is camelCase — the Tauri layer maps to the Rust snake_case args (frontend
+ * convention).
  */
 
 export interface BatchOperationErrors {
@@ -22,16 +22,6 @@ export interface BatchOperationErrors {
 
 export interface BatchDeleteResult {
   deleted: number;
-  errors: BatchOperationErrors[];
-}
-
-export interface BatchSetTtlResult {
-  updated: number;
-  errors: BatchOperationErrors[];
-}
-
-export interface BatchRenameResult {
-  renamed: number;
   errors: BatchOperationErrors[];
 }
 
@@ -61,38 +51,6 @@ export async function invokeBatchDeletePattern(
     dbIndex: dbIndex,
     pattern,
   })) as BatchDeleteResult;
-}
-
-export async function invokeBatchSetTtl(
-  dbSessionId: string,
-  dbIndex: number,
-  keys: string[],
-  ttlSeconds: number,
-  invoke: PluginInvokeFn = redisCommandInvoke,
-): Promise<BatchSetTtlResult> {
-  return (await invoke('redis', 'batch_set_ttl', {
-    dbSessionId: dbSessionId,
-    dbIndex: dbIndex,
-    keys,
-    ttlSeconds: ttlSeconds,
-  })) as BatchSetTtlResult;
-}
-
-export async function invokeBatchRenamePrefix(
-  dbSessionId: string,
-  dbIndex: number,
-  oldPrefix: string,
-  newPrefix: string,
-  keys: string[] | undefined,
-  invoke: PluginInvokeFn = redisCommandInvoke,
-): Promise<BatchRenameResult> {
-  return (await invoke('redis', 'batch_rename_prefix', {
-    dbSessionId: dbSessionId,
-    dbIndex: dbIndex,
-    oldPrefix: oldPrefix,
-    newPrefix: newPrefix,
-    keys: keys ?? null,
-  })) as BatchRenameResult;
 }
 
 export async function invokeCountMatching(

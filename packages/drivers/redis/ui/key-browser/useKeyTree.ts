@@ -248,6 +248,4 @@ export function useKeyTree({
     clearTree,
   };
 }
-
-export type KeyTreeState = ReturnType<typeof useKeyTree>;
 export type { TreeLevel };

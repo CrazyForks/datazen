@@ -18,15 +18,6 @@ pub struct JsonDelResult {
     pub deleted: u64,
 }
 
-/// Returns true when `MODULE LIST` includes ReJSON / RedisJSON.
-#[allow(dead_code)] // used by upcoming JSON console / RedisJSON capability detection
-pub fn has_redis_json(modules: &[String]) -> bool {
-    modules.iter().any(|name| {
-        let lower = name.to_ascii_lowercase();
-        lower == "rejson" || lower == "redisjson"
-    })
-}
-
 fn normalize_key(key: &str) -> Result<&str, String> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
@@ -178,19 +169,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn has_redis_json_detects_rejson_and_redisjson() {
-        assert!(has_redis_json(&["ReJSON".into()]));
-        assert!(has_redis_json(&["redisjson".into()]));
-        assert!(has_redis_json(&["RedisJSON".into(), "other".into()]));
-    }
-
-    #[test]
-    fn has_redis_json_false_when_absent() {
-        assert!(!has_redis_json(&[]));
-        assert!(!has_redis_json(&["search".into(), "timeseries".into()]));
-    }
 
     #[test]
     fn unwrap_json_get_root_unwraps_single_element_array() {

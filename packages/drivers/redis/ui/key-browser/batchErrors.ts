@@ -9,8 +9,10 @@ import type { BatchOperationErrors } from './batchInvokes';
  * and only *shows* the message. That is what lets the banner group "why did these
  * 7 keys fail" without string equality on an English sentence.
  *
- * The companion rule (I-8) lives in `useBatchActions`: the keys whose identity
- * appears in `errors` stay checked, everything else is dropped from the selection.
+ * The companion rule (I-8): the keys whose identity appears in `errors` stay
+ * checked, everything else is dropped from the selection. A producer that has no
+ * per-key verdict — a whole-call throw, or a plain string summary — reports that
+ * honestly instead of inventing one, and the banner renders the string as-is.
  */
 export type BatchFailureCode = 'noAcl' | 'keyGone' | 'badValue' | 'network' | 'unknown';
 

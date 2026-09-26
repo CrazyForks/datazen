@@ -10,7 +10,7 @@ import {
   redisCommandInvoke,
   type CountMatchingResult,
 } from '../shared/redisInvoke';
-import { formatMatchCount, invokeCountMatching } from './BatchBar';
+import { formatMatchCount, invokeCountMatching } from './batchInvokes';
 import { useRedisGate } from '../shared/useRedisGate';
 import {
   base64ToZip,

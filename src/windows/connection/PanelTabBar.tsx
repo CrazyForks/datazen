@@ -47,7 +47,19 @@ export function PanelTabBar({
   };
 
   return (
-    <div className="flex shrink-0 items-center border-b border-edge bg-surface-alt pb-0.5">
+    // Height contract: this bar and the navigator's "Databases" title row are
+    // the window's two column headers, so both are pinned to `h-12` instead of
+    // each being sized by whatever its own buttons happened to add up to.
+    // `NavigatorToolbar` is the reference; `PanelTabBarHeight.test.tsx` is what
+    // keeps the two literals from drifting apart again.
+    //
+    // `items-stretch` (not `items-center`) is what lets the tab's `h-full`
+    // resolve at all: the scrollable tab list is the only child, and a
+    // percentage height against an `auto` parent is just `auto`.
+    <div
+      className="flex h-12 min-h-[48px] shrink-0 items-stretch border-b border-edge bg-surface-alt"
+      data-testid="panel-tab-bar"
+    >
       <div
         role="tablist"
         aria-label={t('panel.tabListLabel')}
@@ -66,7 +78,10 @@ export function PanelTabBar({
               key={panel.id}
               data-testid="panel-tab"
               className={cn(
-                'group relative flex items-center gap-1.5 border-r border-edge px-3 py-2 text-xs transition-colors',
+                // `h-full` rather than `py-2`: the bar owns the height, and the
+                // active-tab underline resolves against this box, so the tab has
+                // to reach the bar's bottom edge to sit on the border.
+                'group relative flex h-full items-center gap-1.5 border-r border-edge px-3 text-xs transition-colors',
                 isActive
                   ? 'bg-surface text-fg'
                   : 'text-fg-secondary hover:bg-surface-raised hover:text-fg',

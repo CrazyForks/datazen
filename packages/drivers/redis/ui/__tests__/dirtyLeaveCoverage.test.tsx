@@ -76,7 +76,7 @@ class MockResizeObserver {
 globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObserver;
 
 /**
- * Single IPC seam. `BatchBar` / `KeyWorkbenchDialogs` build their invoke helpers
+ * Single IPC seam. `batchInvokes` / `KeyWorkbenchDialogs` build their invoke helpers
  * on top of `redisCommandInvoke` (a cross-module import, so it IS interceptable)
  * — mocking the helper modules themselves would miss their internal calls.
  */
@@ -186,9 +186,7 @@ async function dialogByTitle(titleKey: string): Promise<HTMLElement> {
 }
 
 function buttonWithKey(container: HTMLElement, key: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === key,
-  );
+  const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === key);
   if (!found) throw new Error(`no button ${key} in dialog`);
   return found as HTMLButtonElement;
 }

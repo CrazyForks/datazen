@@ -34,47 +34,6 @@ export function readRedisOptions(raw: Record<string, unknown> | undefined): Redi
   };
 }
 
-export function buildRedisOptions(
-  partial: RedisConnectionOptions,
-): Record<string, unknown> | undefined {
-  const out: Record<string, unknown> = {};
-  if (partial.topology && partial.topology !== 'standalone') {
-    out.topology = partial.topology;
-  }
-  if (partial.clusterNodes?.length) {
-    out.clusterNodes = partial.clusterNodes;
-  }
-  if (partial.sentinelNodes?.length) {
-    out.sentinelNodes = partial.sentinelNodes;
-  }
-  if (partial.sentinelMasterName) {
-    out.sentinelMasterName = partial.sentinelMasterName;
-  }
-  if (partial.sentinelNodePassword) {
-    out.sentinelNodePassword = partial.sentinelNodePassword;
-  }
-  if (partial.pinnedNodeAddr) {
-    out.pinnedNodeAddr = partial.pinnedNodeAddr;
-  }
-  const tls = buildTlsOptions(partial.tls);
-  if (tls) {
-    out.tls = tls;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildTlsOptions(tls: RedisTlsOptions | undefined): Record<string, unknown> | undefined {
-  if (!tls) return undefined;
-  const out: Record<string, unknown> = {};
-  if (tls.enabled) out.enabled = true;
-  if (tls.caPath) out.caPath = tls.caPath;
-  if (tls.certPath) out.certPath = tls.certPath;
-  if (tls.keyPath) out.keyPath = tls.keyPath;
-  if (tls.keyPassphrase) out.keyPassphrase = tls.keyPassphrase;
-  if (tls.insecureSkipVerify) out.insecureSkipVerify = true;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 function readTopology(value: unknown): RedisTopology {
   if (value === 'cluster' || value === 'sentinel') return value;
   return 'standalone';

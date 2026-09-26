@@ -4,7 +4,6 @@ import {
   FRAGMENTATION_WARN_RATIO,
   buildBannerPills,
   buildBigKeyRows,
-  buildKeySpaceModel,
   buildMemoryModel,
   buildServerRows,
   buildSlowlogRows,
@@ -251,53 +250,6 @@ describe('buildMemoryModel — PRD 卡 2 gauge', () => {
     expect(model.fragRatio).toBeNull();
     expect(model.fragWarn).toBe(false);
     expect(model.policy).toBeNull();
-  });
-});
-
-describe('buildKeySpaceModel — PRD 卡 3', () => {
-  it('renders 16 cells with db0 first and share percentages summing to 100', () => {
-    const model = buildKeySpaceModel([
-      { db: 0, keys: 75 },
-      { db: 1, keys: 25 },
-    ]);
-    expect(model.dbCount).toBe(DEFAULT_DATABASE_COUNT);
-    expect(model.cells).toHaveLength(16);
-    expect(model.cells[0]).toMatchObject({ dbIndex: 0, name: 'db0', keys: 75, empty: false });
-    expect(model.cells[1]?.sharePercent).toBeCloseTo(25, 5);
-    expect(model.totalKeys).toBe(100);
-    expect(model.nonEmptyCount).toBe(2);
-  });
-
-  it('greys out empty databases and keeps them addressable', () => {
-    const model = buildKeySpaceModel([{ db: 0, keys: 1 }]);
-    const empty = model.cells.filter((cell) => cell.empty);
-    expect(empty).toHaveLength(15);
-    expect(empty.every((cell) => cell.keys === 0 && cell.sharePercent === 0)).toBe(true);
-    expect(model.cells[3]?.name).toBe('db3');
-  });
-
-  it('grows past 16 when the server reports more databases', () => {
-    const model = buildKeySpaceModel([
-      { db: 0, keys: 1 },
-      { db: 31, keys: 2 },
-    ]);
-    expect(model.dbCount).toBe(32);
-    expect(model.cells).toHaveLength(32);
-  });
-
-  it('survives a missing or malformed db_sizes reply', () => {
-    for (const input of [
-      null,
-      undefined,
-      [],
-      [{ db: -1, keys: 5 }],
-      [{ db: 0, keys: Number.NaN }],
-    ]) {
-      const model = buildKeySpaceModel(input as never);
-      expect(model.cells).toHaveLength(DEFAULT_DATABASE_COUNT);
-      expect(model.totalKeys).toBe(0);
-      expect(model.nonEmptyCount).toBe(0);
-    }
   });
 });
 

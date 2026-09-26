@@ -37,7 +37,16 @@ export function NavigatorToolbar({
 }: NavigatorToolbarProps) {
   return (
     <>
-      <div className="flex h-12 min-h-[48px] shrink-0 items-center justify-between border-b border-edge px-2">
+      {/*
+        The window's left column header, and the height reference for the panel
+        tab bar to its right. Pinned rather than derived from its own buttons so
+        the two headers cannot drift apart; `PanelTabBarHeight.test.tsx` holds
+        both sides to the same literal.
+      */}
+      <div
+        className="flex h-12 min-h-[48px] shrink-0 items-center justify-between border-b border-edge px-2"
+        data-testid="navigator-title-row"
+      >
         <span className="min-w-0 shrink truncate text-[13px] font-semibold text-fg">
           {t('nav.databases')}
         </span>
