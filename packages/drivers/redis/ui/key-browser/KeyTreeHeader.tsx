@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { useI18n } from '@datazen/ui';
+import { CheckSquare, ListChecks, Plus, RefreshCw } from 'lucide-react';
+import { Button, useI18n } from '@datazen/ui';
 import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
 
 /**
@@ -8,15 +9,15 @@ import { SearchModeTabs, type SearchMode } from './SearchModeTabs';
  * This row is *resident*: the search-scope segment control used to sit in the
  * database sidebar, which the host hides whenever it renders its own navigator
  * tree (`hideSidebar`) — so in the normal layout the user could never switch
- * between key / value / all search. R1 owns the segment control and the
- * loaded-vs-total counter.
+ * between key / value / all search. R1 owns the segment control, the loaded-vs-total
+ * counter and the action group that the tree's selection feeds.
  *
  * Counter semantics (PRD §3.2 R1 + I-4): `已加载 N / 共 M` while the scan cursor is
  * exhausted, `N+` while it is not — an unfinished scan never presents a partial
  * subset as a total.
  *
- * R2 search row mounts as `children` so the header stays one bordered block
- * instead of sibling divs in the workbench.
+ * R2 search and R3 grouping rows mount as `children` so the header stays one
+ * bordered block instead of sibling divs in the workbench.
  */
 
 export interface KeyTreeHeaderProps {
@@ -28,6 +29,9 @@ export interface KeyTreeHeaderProps {
   totalCount: number;
   /** Scan cursor still open ⇒ the loaded set is partial (`N+`). */
   scanning: boolean;
+  onSelectAll: () => void;
+  onRefresh: () => void;
+  onCreateKey: () => void;
   children?: ReactNode;
 }
 
@@ -37,9 +41,13 @@ export function KeyTreeHeader({
   loadedCount,
   totalCount,
   scanning,
+  onSelectAll,
+  onRefresh,
+  onCreateKey,
   children,
 }: KeyTreeHeaderProps) {
   const { t } = useI18n();
+  const isKeyMode = searchMode === 'key';
   const loadedLabel = scanning ? `${loadedCount}+` : String(loadedCount);
 
   return (
@@ -62,8 +70,58 @@ export function KeyTreeHeader({
             .replace('{loaded}', loadedLabel)
             .replace('{total}', String(totalCount))}
         </span>
+        <div className="flex-1" />
+        <div className="flex shrink-0 items-center gap-1">
+          <HeaderIcon
+            testId="redis-tree-select-all"
+            labelKey="redis.tree.selectAll"
+            Icon={CheckSquare}
+            disabled={!isKeyMode || loadedCount === 0}
+            onClick={onSelectAll}
+          />
+          <HeaderIcon
+            testId="redis-tree-refresh"
+            labelKey="connWin.refresh"
+            Icon={RefreshCw}
+            onClick={onRefresh}
+          />
+          <HeaderIcon
+            testId="redis-tree-create-key"
+            labelKey="redis.createKey"
+            Icon={Plus}
+            onClick={onCreateKey}
+          />
+        </div>
       </div>
       {children}
     </div>
+  );
+}
+
+interface HeaderIconProps {
+  testId: string;
+  labelKey: string;
+  Icon: typeof ListChecks;
+  disabled?: boolean;
+  onClick: () => void;
+  children?: ReactNode;
+}
+
+function HeaderIcon({ testId, labelKey, Icon, disabled, onClick, children }: HeaderIconProps) {
+  const { t } = useI18n();
+  return (
+    <Button
+      variant="ghost"
+      className="relative h-7 w-7 shrink-0 p-0"
+      title={t(labelKey)}
+      aria-label={t(labelKey)}
+      data-testid={testId}
+      data-action-label-key={labelKey}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {children}
+    </Button>
   );
 }

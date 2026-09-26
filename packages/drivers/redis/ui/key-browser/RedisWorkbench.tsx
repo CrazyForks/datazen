@@ -305,6 +305,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     totalCount={scan.dbSize}
                     fuzzy={fuzzyPattern}
                     onFuzzyChange={setFuzzyPattern}
+                    onCreateKey={() => overlays.setCreateOpen(true)}
                     onRefresh={handleRefresh}
                   />
                 </div>
@@ -333,8 +334,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                       },
                       onDirtyChange: detail.setEditorDirty,
                       onClose: detail.clearDetailGuarded,
-                      onCreateKey: () => overlays.setCreateOpen(true),
-                      onImportExport: () => overlays.setImportExportOpen(true),
                     })
                   ) : (
                     <DetailColumn
