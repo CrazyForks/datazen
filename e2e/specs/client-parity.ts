@@ -209,19 +209,17 @@ describe('Client parity P0–P2', () => {
     await connectSeededPgInWorkspace();
     await openQueryTab();
 
-    const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu.waitForDisplayed({ timeout: 10000 });
-    await moreMenu.click();
-    await expect(await $('[data-testid="more-menu-format"]')).toBeDisplayed();
-    await expect(await $('[data-testid="more-menu-begin-tx"]')).toBeDisplayed();
+    const formatBtn = await $('[data-testid="editor-format-button"]');
+    await formatBtn.waitForDisplayed({ timeout: 10000 });
+    await expect(await $('[data-testid="editor-begin-tx-button"]')).toBeDisplayed();
     await expect(await $('[data-testid="query-safe-mode"]')).toBeDisplayed();
 
     await setEditorContent('select id from t where id = :uid');
-    await expect(await $('[data-testid="more-menu-format"]')).toBeEnabled();
+    await expect(formatBtn).toBeEnabled();
     const body = await $('body').getText();
     expect(body).toContain(':uid');
 
-    await $('[data-testid="more-menu-format"]').click();
+    await formatBtn.click();
     await browser.pause(400);
     const formatted = await browser.execute(() => {
       const el = document.querySelector('[data-testid="sql-editor-content"]') as HTMLElement | null;

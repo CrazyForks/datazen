@@ -12,11 +12,34 @@ describe('queryToolbarExpandedMinWidth', () => {
       databases: [],
       contextPath: [],
     });
-    // 32 padding + 7 buttons * 84 + 6 gaps + 8 separator
-    expect(width).toBe(32 + 7 * 84 + 6 * 8 + 8);
+    // 32 padding + 11 icon-only buttons * 32 + 10 gaps * 8 + 236 status zone + 8
+    expect(width).toBe(32 + 11 * 32 + 10 * 8 + 236 + 8);
   });
 
-  it('adds commit and rollback buttons when in transaction', () => {
+  it('adds the Explain button when the driver supports it', () => {
+    const withoutExplain = queryToolbarExpandedMinWidth({
+      hasContextSelectors: false,
+      isPathHierarchy: false,
+      isMultiDb: false,
+      namespaceTree: {},
+      pathAliases: {},
+      databases: [],
+      contextPath: [],
+    });
+    const withExplain = queryToolbarExpandedMinWidth({
+      hasContextSelectors: false,
+      isPathHierarchy: false,
+      isMultiDb: false,
+      supportsExplain: true,
+      namespaceTree: {},
+      pathAliases: {},
+      databases: [],
+      contextPath: [],
+    });
+    expect(withExplain - withoutExplain).toBe(32 + 8);
+  });
+
+  it('replaces begin transaction with commit and rollback when in transaction', () => {
     const idle = queryToolbarExpandedMinWidth({
       hasContextSelectors: false,
       isPathHierarchy: false,
@@ -37,7 +60,8 @@ describe('queryToolbarExpandedMinWidth', () => {
       databases: [],
       contextPath: [],
     });
-    expect(inTx - idle).toBe(2 * 84 + 2 * 8);
+    // One extra icon button plus one extra gap.
+    expect(inTx - idle).toBe(32 + 8);
   });
 
   it('calculates compact required width with consolidated layout', () => {

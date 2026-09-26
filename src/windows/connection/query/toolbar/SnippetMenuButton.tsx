@@ -21,11 +21,12 @@ import type { SqlEditorHandle } from '../../../../components/SqlEditor';
 
 export interface SnippetMenuButtonProps {
   editorRef: MutableRefObject<SqlEditorHandle | null>;
-  compact?: boolean;
+  /** Icon-only trigger; the full name stays in the tooltip / aria-label. */
+  iconOnly?: boolean;
   disabled?: boolean;
 }
 
-export function SnippetMenuButton({ editorRef, compact, disabled }: SnippetMenuButtonProps) {
+export function SnippetMenuButton({ editorRef, iconOnly, disabled }: SnippetMenuButtonProps) {
   const { t } = useI18n();
   const userSnippets = useSettingsStore((s) => s.settings.sqlSnippets);
 
@@ -52,7 +53,7 @@ export function SnippetMenuButton({ editorRef, compact, disabled }: SnippetMenuB
 
   return (
     <ToolbarButton
-      compact={compact}
+      iconOnly={iconOnly}
       variant="ghost"
       label={t('query.snippets')}
       title={t('query.snippetsTitle')}

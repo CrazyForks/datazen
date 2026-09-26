@@ -190,7 +190,10 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
     });
     // Confirm the run actually ended before leaving the test.
     await browser.waitUntil(
-      async () => !(await $('[data-testid="editor-stop-button"]').isDisplayed().catch(() => false)),
+      async () =>
+        !(await $('[data-testid="editor-stop-button"]')
+          .isDisplayed()
+          .catch(() => false)),
       { timeout: 15000, timeoutMsg: 'query was not cancelled after clicking stop (SQ-001)' },
     );
   });
@@ -589,10 +592,7 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
 
   it('SQ-EXPLAIN-001: EXPLAIN 按钮应打开计划面板', async () => {
     await setEditorContent('SELECT 1 AS n');
-    const moreMenu = await $('[data-testid="query-toolbar-more-menu-trigger"]');
-    await moreMenu.waitForDisplayed({ timeout: 8000 });
-    await moreMenu.click();
-    const explainBtn = await $('[data-testid="more-menu-explain"]');
+    const explainBtn = await $('[data-testid="editor-explain-button"]');
     await explainBtn.waitForDisplayed({ timeout: 8000 });
     await explainBtn.click();
     await browser.pause(1500);

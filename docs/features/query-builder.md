@@ -22,14 +22,14 @@ editor's job.
 ## How to Access
 
 1. Use a Pro edition with SQL Editor Pro activated, open a database connection and open a **Query** tab. Community Edition keeps the normal SQL editor and does not show the Builder entry.
-2. Toolbar → **More** menu (`query-toolbar-more-menu-trigger`) → **Visual Builder**
-   (`more-menu-visual-builder`).
+2. Toolbar → **Visual Builder** icon button (`editor-visual-builder-button`); the
+   query toolbar is icon-only, so the name shows in the tooltip.
 3. The builder **replaces the query content area** (it is not stacked above the
    editor). The left `ConnectionNavigatorTree` stays visible and doubles as the
    builder's object source — the builder has no tree of its own.
 
 Closing: **OK** commits to the editor, **Cancel** / **×** discard and return to
-the editor, and the More-menu entry toggles the builder hidden/shown without
+the editor, and the toolbar entry toggles the builder hidden/shown without
 discarding (the canvas state survives).
 
 ## Layout

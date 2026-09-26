@@ -103,4 +103,23 @@ describe('ToolbarButton', () => {
     );
     expect(getByRole('button', { name: 'Refresh' })).toHaveAttribute('title', 'Reload data');
   });
+
+  it('[tester] iconOnly drops the visible label but keeps title and accessible name', () => {
+    const { getByRole, queryByText } = render(
+      <ToolbarButton
+        iconOnly
+        label="Format SQL"
+        title="Format SQL (Ctrl+Shift+F)"
+        icon={<span>✦</span>}
+      />,
+    );
+
+    const btn = getByRole('button', { name: 'Format SQL' });
+    expect(queryByText('Format SQL')).toBeNull();
+    expect(btn.textContent).toBe('✦');
+    expect(btn).toHaveAttribute('title', 'Format SQL (Ctrl+Shift+F)');
+    // Fixed square so a row of icon-only actions stays visually even.
+    expect(btn.className).toContain('w-7');
+    expect(btn.className).toContain('justify-center');
+  });
 });

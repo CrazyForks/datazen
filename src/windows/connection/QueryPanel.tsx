@@ -263,6 +263,7 @@ export function QueryPanel({
           databases,
           contextPath: contextPathState.contextPath,
           currentDatabase: selectedDatabase,
+          supportsExplain,
         }),
       [
         hasContextSelectors,
@@ -275,6 +276,7 @@ export function QueryPanel({
         databases,
         contextPathState.contextPath,
         selectedDatabase,
+        supportsExplain,
       ],
     ),
   );

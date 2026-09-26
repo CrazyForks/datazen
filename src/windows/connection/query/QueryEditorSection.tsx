@@ -7,7 +7,20 @@ import {
   type MutableRefObject,
   type Ref,
 } from 'react';
-import { Bookmark, Check, Clock, Loader2, Play, Save, Sparkles, Undo2 } from 'lucide-react';
+import {
+  Bookmark,
+  Check,
+  CirclePlay,
+  Clock,
+  FileSearch,
+  Loader2,
+  Play,
+  Save,
+  Sparkles,
+  Undo2,
+  Wand2,
+  WandSparkles,
+} from 'lucide-react';
 import { ToolbarShell } from '../../../components/ui/ToolbarShell';
 import { ToolbarButton } from '../../../components/ui/ToolbarButton';
 import { SqlEditor } from '../../../components/SqlEditor';
@@ -15,10 +28,7 @@ import type { SqlEditorHandle } from '../../../components/SqlEditor';
 import type { EditorMetadataSnapshot } from '../../../components/sql-editor/metadata/types';
 import { SnippetMenuButton } from './toolbar/SnippetMenuButton';
 import { ExecutionStrategySelect } from './toolbar/ExecutionStrategySelect';
-import { QueryToolbarMoreMenu } from './QueryToolbarMoreMenu';
-import { metadataCache } from '../../../components/sql-editor/metadata/metadataCache';
-import { invalidateSchemaCache } from '../../../lib/schemaCache';
-import { useSchemaStore } from '../../../stores/schemaStore';
+import { RefreshCompletionButton } from './toolbar/RefreshCompletionButton';
 import { QueryContextSelectors } from '../../../components/query/QueryContextSelectors';
 import { QueryExecutionStatus } from '../../../components/query/QueryExecutionStatus';
 import { Nl2SqlPanel } from '../../../components/ai/Nl2SqlPanel';
@@ -30,6 +40,7 @@ import { useI18n } from '../../../hooks/useI18n';
 import { usePlatform } from '../../../hooks/usePlatform';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { tid } from '../../../lib/tid';
+import { formatShortcutForDisplay, getActionShortcut } from '../../../lib/keymap';
 import { showNativeContextMenu } from '../../../lib/nativeContextMenu';
 import { buildSqlEditorContextMenuItems } from '../../../lib/sqlEditorContextMenu';
 import type { QueryExecutionViewModel } from '../../../lib/queryExecutionViewModel';
@@ -220,6 +231,8 @@ export function QueryEditorSection({
   const completionQuotePolicy = useSettingsStore(
     (s) => s.settings.editorCompletionQuotePolicy ?? 'unquoted',
   );
+  const keymapPreset = useSettingsStore((s) => s.settings.keymapPreset);
+  const customKeymap = useSettingsStore((s) => s.settings.customKeymap);
   const enhanced = useExtension(sqlEditorEnhancedEP);
   const { contribution: queryBuilder, openPanelId } = useQueryBuilderContribution();
   const editorExtensionSettings = useSettingsStore(
@@ -228,7 +241,11 @@ export function QueryEditorSection({
         s.settings.driverSettings?.['sql-editor-pro']) as Record<string, unknown> | undefined,
   );
   const bindParamPanelEnabled = editorExtensionSettings?.bindParamPanel !== false;
-  const [isRefreshingCompletion, setIsRefreshingCompletion] = useState(false);
+
+  // The toolbar is icon-only, so keymap hints live in the tooltips.
+  const formatShortcut = formatShortcutForDisplay(
+    getActionShortcut('formatSql', keymapPreset, customKeymap),
+  );
 
   // The Pro contribution owns its private builder store; visibility remains
   // scoped to the query tab that opened it.
@@ -325,21 +342,6 @@ export function QueryEditorSection({
     onFormat();
   }, [editorRef, onFormat]);
 
-  const handleRefreshCompletion = useCallback(async () => {
-    if (!dbSessionId || isRefreshingCompletion) return;
-    setIsRefreshingCompletion(true);
-    try {
-      invalidateSchemaCache(dbSessionId);
-      metadataCache.invalidateSession(dbSessionId);
-      if (selectedDatabase) {
-        await useSchemaStore.getState().loadTables(selectedDatabase, dbSessionId);
-      }
-      onCompletionRefreshed(t('query.refreshCompletionDone'));
-    } finally {
-      setIsRefreshingCompletion(false);
-    }
-  }, [dbSessionId, selectedDatabase, isRefreshingCompletion, onCompletionRefreshed, t]);
-
   const handleToggleNl2sql = useCallback(() => {
     onToggleNl2sql();
   }, [onToggleNl2sql]);
@@ -400,7 +402,7 @@ export function QueryEditorSection({
           <QueryExecutionStatus viewModel={executionViewModel} onCancel={onCancel} />
         ) : (
           <ToolbarButton
-            compact={compactToolbar}
+            iconOnly
             variant="run"
             label={t('query.execute')}
             title={`${t('query.execute')} (${executeShortcutLabel})`}
@@ -416,9 +418,9 @@ export function QueryEditorSection({
             {...tid('editor-execute-button')}
           />
         )}
-        <ExecutionStrategySelect compact={compactToolbar} disabled={running} />
+        <ExecutionStrategySelect iconOnly disabled={running} />
         <ToolbarButton
-          compact={compactToolbar}
+          iconOnly
           variant="ghost"
           label={t('common.save')}
           icon={<Save className="h-3.5 w-3.5" />}
@@ -427,37 +429,63 @@ export function QueryEditorSection({
           {...tid('editor-save-button')}
         />
         <ToolbarButton
-          compact={compactToolbar}
+          iconOnly
           variant={nl2sqlVisible ? 'secondary' : 'ghost'}
           label={t('nl2sql.title')}
           icon={<Sparkles className="h-3.5 w-3.5" />}
           onClick={handleToggleNl2sql}
+          {...tid('editor-nl2sql-button')}
         />
-        <QueryToolbarMoreMenu
-          compact={compactToolbar}
+        {/*
+         * Every action lives directly in the toolbar: the window has room for
+         * the whole set, and an overflow menu would hide two-click actions
+         * behind an extra hop. Names and shortcuts moved to the tooltips.
+         */}
+        <div className="mx-0.5 h-4 w-px shrink-0 bg-edge" />
+        <ToolbarButton
+          iconOnly
+          variant="ghost"
+          label={t('query.format')}
+          title={`${t('query.format')} (${formatShortcut})`}
+          icon={<Wand2 className="h-3.5 w-3.5" />}
+          onClick={handleFormatClick}
+          disabled={running || !sql.trim()}
+          {...tid('editor-format-button')}
+        />
+        {supportsExplain && (
+          <ToolbarButton
+            iconOnly
+            variant="ghost"
+            label={t('explain.title')}
+            icon={<FileSearch className="h-3.5 w-3.5" />}
+            onClick={() => void onExplain()}
+            disabled={running || !sql.trim()}
+            {...tid('editor-explain-button')}
+          />
+        )}
+        <SnippetMenuButton editorRef={editorRef} iconOnly disabled={running} />
+        <RefreshCompletionButton
+          dbSessionId={dbSessionId}
+          database={selectedDatabase}
+          iconOnly
           disabled={running}
-          supportsExplain={supportsExplain}
-          explainDisabled={running || !sql.trim()}
-          formatDisabled={running || !sql.trim()}
-          refreshCompletionDisabled={isRefreshingCompletion}
-          inTransaction={inTransaction}
-          txBusy={txBusy}
-          onFormat={handleFormatClick}
-          onExplain={() => void onExplain()}
-          onBeginTx={() => void onBeginTx()}
-          onCommitTx={() => void onCommitTx()}
-          onRollbackTx={() => void onRollbackTx()}
-          onRefreshCompletion={() => void handleRefreshCompletion()}
-          onToggleQb={queryBuilder ? handleToggleQb : undefined}
-          renderSnippetButton={() => (
-            <SnippetMenuButton editorRef={editorRef} compact={compactToolbar} disabled={running} />
-          )}
+          onRefreshed={onCompletionRefreshed}
         />
-        {inTransaction && (
+        {queryBuilder && (
+          <ToolbarButton
+            iconOnly
+            variant={qbOpen ? 'secondary' : 'ghost'}
+            label={t('query.visualBuilder.title')}
+            icon={<WandSparkles className="h-3.5 w-3.5" />}
+            onClick={handleToggleQb}
+            {...tid('editor-visual-builder-button')}
+          />
+        )}
+        {inTransaction ? (
           <>
-            <div className="mx-1 h-4 w-px shrink-0 bg-edge" />
+            <div className="mx-0.5 h-4 w-px shrink-0 bg-edge" />
             <ToolbarButton
-              compact={compactToolbar}
+              iconOnly
               variant="ghost"
               label={t('query.commitTx')}
               icon={<Check className="h-3.5 w-3.5 text-success" />}
@@ -466,7 +494,7 @@ export function QueryEditorSection({
               data-testid="query-commit-tx"
             />
             <ToolbarButton
-              compact={compactToolbar}
+              iconOnly
               variant="ghost"
               label={t('query.rollbackTx')}
               icon={<Undo2 className="h-3.5 w-3.5 text-danger" />}
@@ -481,6 +509,16 @@ export function QueryEditorSection({
               {compactToolbar ? 'TX' : t('query.inTransaction')}
             </span>
           </>
+        ) : (
+          <ToolbarButton
+            iconOnly
+            variant="ghost"
+            label={t('query.beginTx')}
+            icon={<CirclePlay className="h-3.5 w-3.5" />}
+            onClick={() => void onBeginTx()}
+            disabled={running || txBusy}
+            {...tid('editor-begin-tx-button')}
+          />
         )}
         <div className="min-w-0 flex-1" />
         {safeMode && (
@@ -519,7 +557,7 @@ export function QueryEditorSection({
           </span>
         )}
         <ToolbarButton
-          compact={compactToolbar}
+          iconOnly
           variant={historyVisible ? 'secondary' : 'ghost'}
           label={t('query.history')}
           icon={<Clock className="h-3.5 w-3.5" />}
@@ -527,7 +565,7 @@ export function QueryEditorSection({
           {...tid('editor-history-toggle')}
         />
         <ToolbarButton
-          compact={compactToolbar}
+          iconOnly
           variant={favoritesVisible ? 'secondary' : 'ghost'}
           label={t('query.favorites')}
           icon={<Bookmark className="h-3.5 w-3.5" />}

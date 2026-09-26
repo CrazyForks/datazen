@@ -812,10 +812,6 @@ describe('[tester] query/QueryEditorSection', () => {
     vi.unstubAllEnvs();
   });
 
-  function openMoreMenu() {
-    fireEvent.click(screen.getByTestId('query-toolbar-more-menu-trigger'));
-  }
-
   function renderSection(overrides: Partial<ComponentProps<typeof QueryEditorSection>> = {}) {
     const editorRef = {
       current: { getSelection: () => 'SELECT 2', insertAt: vi.fn(), toggleLineComment: vi.fn() },
@@ -950,10 +946,8 @@ describe('[tester] query/QueryEditorSection', () => {
 
     fireEvent.click(screen.getByTestId('editor-save-button'));
     fireEvent.click(screen.getByRole('button', { name: 'query.execute' }));
-    openMoreMenu();
-    fireEvent.click(screen.getByTestId('more-menu-explain'));
-    openMoreMenu();
-    fireEvent.click(screen.getByTestId('more-menu-format'));
+    fireEvent.click(screen.getByTestId('editor-explain-button'));
+    fireEvent.click(screen.getByTestId('editor-format-button'));
     fireEvent.click(screen.getByRole('button', { name: 'query.commitTx' }));
     fireEvent.click(screen.getByRole('button', { name: 'query.rollbackTx' }));
     fireEvent.click(screen.getByRole('button', { name: 'query.history' }));
@@ -982,8 +976,7 @@ describe('[tester] query/QueryEditorSection', () => {
   it('shows in-transaction badge and begin transaction when idle', () => {
     const onBeginTx = vi.fn();
     renderSection({ inTransaction: false, onBeginTx });
-    openMoreMenu();
-    fireEvent.click(screen.getByTestId('more-menu-begin-tx'));
+    fireEvent.click(screen.getByTestId('editor-begin-tx-button'));
     expect(onBeginTx).toHaveBeenCalled();
     expect(screen.queryByText('TX')).toBeNull();
   });
@@ -1025,10 +1018,8 @@ describe('[tester] query/QueryEditorSection', () => {
     const onCompletionRefreshed = vi.fn();
     renderSection({ onCompletionRefreshed });
 
-    openMoreMenu();
-    fireEvent.click(screen.getByTestId('more-menu-refresh-completion'));
-    openMoreMenu();
-    fireEvent.click(screen.getByTestId('more-menu-refresh-completion'));
+    fireEvent.click(screen.getByTestId('editor-refresh-completion-button'));
+    fireEvent.click(screen.getByTestId('editor-refresh-completion-button'));
 
     expect(schemaStoreState.loadTables).toHaveBeenCalledTimes(1);
     expect(onCompletionRefreshed).not.toHaveBeenCalled();
@@ -1040,6 +1031,48 @@ describe('[tester] query/QueryEditorSection', () => {
     await waitFor(() =>
       expect(onCompletionRefreshed).toHaveBeenCalledWith('query.refreshCompletionDone'),
     );
+  });
+
+  it('renders every toolbar action as an icon-only button and drops the overflow menu', () => {
+    renderSection();
+
+    // No overflow menu: each action is reachable in one click from the toolbar.
+    expect(screen.queryByTestId('query-toolbar-more-menu-trigger')).toBeNull();
+    for (const testId of [
+      'editor-execute-button',
+      'editor-execution-strategy-button',
+      'editor-save-button',
+      'editor-format-button',
+      'editor-explain-button',
+      'editor-snippets-button',
+      'editor-refresh-completion-button',
+      'editor-begin-tx-button',
+      'editor-history-toggle',
+      'editor-favorites-toggle',
+    ]) {
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    }
+
+    // Icon-only: the name survives as tooltip/accessible name, never as text.
+    const execute = screen.getByTestId('editor-execute-button');
+    expect(execute).toHaveAttribute('title', 'query.execute (⌘ Enter)');
+    expect(execute.textContent).toBe('');
+    expect(screen.getByRole('button', { name: 'query.history' })).toHaveAttribute(
+      'title',
+      'query.history',
+    );
+    expect(screen.getByRole('button', { name: 'query.format' })).toHaveAttribute(
+      'title',
+      expect.stringContaining('Shift+') as unknown as string,
+    );
+  });
+
+  it('hides Explain and the visual builder when the driver lacks them', () => {
+    renderSection({ supportsExplain: false });
+
+    expect(screen.queryByTestId('editor-explain-button')).toBeNull();
+    // Community build: no Pro contribution, so no visual-builder button.
+    expect(screen.queryByTestId('editor-visual-builder-button')).toBeNull();
   });
 });
 

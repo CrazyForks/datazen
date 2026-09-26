@@ -16,7 +16,8 @@ import { tid } from '../../../../lib/tid';
 export interface RefreshCompletionButtonProps {
   dbSessionId: string;
   database?: string | null;
-  compact?: boolean;
+  /** Icon-only trigger; the full name stays in the tooltip / aria-label. */
+  iconOnly?: boolean;
   disabled?: boolean;
   onRefreshed: (message: string) => void;
 }
@@ -24,7 +25,7 @@ export interface RefreshCompletionButtonProps {
 export function RefreshCompletionButton({
   dbSessionId,
   database,
-  compact,
+  iconOnly,
   disabled,
   onRefreshed,
 }: RefreshCompletionButtonProps) {
@@ -50,7 +51,7 @@ export function RefreshCompletionButton({
 
   return (
     <ToolbarButton
-      compact={compact}
+      iconOnly={iconOnly}
       variant="ghost"
       label={t('query.refreshCompletion')}
       title={t('query.refreshCompletionTitle')}

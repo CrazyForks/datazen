@@ -13,15 +13,6 @@ vi.mock('../../../../components/SqlEditor', async () => {
   return { SqlEditor: forwardRef(() => <div data-testid="mock-sql-editor" />) };
 });
 
-vi.mock('../QueryToolbarMoreMenu', () => ({
-  QueryToolbarMoreMenu: ({ onToggleQb }: { onToggleQb?: () => void }) =>
-    onToggleQb ? (
-      <button type="button" data-testid="toggle-query-builder" onClick={onToggleQb}>
-        Toggle builder
-      </button>
-    ) : null,
-}));
-
 vi.mock('../QueryBuilderHostAdapter', () => ({
   QueryBuilderHostAdapter: () => <div data-testid="mock-query-builder-panel" />,
 }));
@@ -35,7 +26,19 @@ vi.mock('../../../../components/ui/ToolbarShell', () => ({
 }));
 
 vi.mock('../../../../components/ui/ToolbarButton', () => ({
-  ToolbarButton: () => <button type="button" />,
+  ToolbarButton: ({
+    label,
+    onClick,
+    'data-testid': testId,
+  }: {
+    label: string;
+    onClick?: () => void;
+    'data-testid'?: string;
+  }) => (
+    <button type="button" aria-label={label} data-testid={testId} onClick={onClick}>
+      {label}
+    </button>
+  ),
 }));
 
 vi.mock('../../../../components/query/QueryExecutionStatus', () => ({
@@ -173,11 +176,15 @@ describe('QueryEditorSection Query Builder context', () => {
     } as SqlEditorEnhancedFeatures);
 
     const view = render(<QueryEditorSection {...props()} />);
-    act(() => fireEvent.click(screen.getByTestId('toggle-query-builder')));
+    // `tid()` is stripped outside E2E builds, so the icon-only button is
+    // addressed through its accessible name.
+    act(() => fireEvent.click(screen.getByRole('button', { name: 'query.visualBuilder.title' })));
     expect(contribution.openFor).toHaveBeenCalledTimes(1);
 
     view.rerender(
-      <QueryEditorSection {...props({ selectedDatabase: 'analytics', selectedSchema: 'private' })} />,
+      <QueryEditorSection
+        {...props({ selectedDatabase: 'analytics', selectedSchema: 'private' })}
+      />,
     );
 
     expect(contribution.openFor).toHaveBeenLastCalledWith(
